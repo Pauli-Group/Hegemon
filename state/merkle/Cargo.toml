@@ -1,0 +1,8 @@
+[package]
+name = "state-merkle"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "1"
+transaction-circuit = { path = "../../circuits/transaction" }
