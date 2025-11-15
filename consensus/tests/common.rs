@@ -16,6 +16,29 @@ pub struct TestValidator {
     pub secret: MlDsaSecretKey,
 }
 
+pub struct BftBlockParams<'a> {
+    pub height: u64,
+    pub view: u64,
+    pub parent_hash: [u8; 32],
+    pub timestamp_ms: u64,
+    pub transactions: Vec<Transaction>,
+    pub validators: &'a [TestValidator],
+    pub signer_indices: &'a [usize],
+    pub base_nullifiers: &'a NullifierSet,
+    pub base_state_root: [u8; 32],
+}
+
+pub struct PowBlockParams<'a> {
+    pub height: u64,
+    pub parent_hash: [u8; 32],
+    pub timestamp_ms: u64,
+    pub transactions: Vec<Transaction>,
+    pub miner: &'a TestValidator,
+    pub base_nullifiers: &'a NullifierSet,
+    pub base_state_root: [u8; 32],
+    pub target: u32,
+}
+
 pub fn make_validators(count: usize, stake: u64) -> Vec<TestValidator> {
     (0..count)
         .map(|idx| {
@@ -69,16 +92,19 @@ pub fn accumulate_state(mut root: [u8; 32], transactions: &[Transaction]) -> [u8
 }
 
 pub fn assemble_bft_block(
-    height: u64,
-    view: u64,
-    parent_hash: [u8; 32],
-    timestamp_ms: u64,
-    transactions: Vec<Transaction>,
-    validators: &[TestValidator],
-    signer_indices: &[usize],
-    base_nullifiers: &NullifierSet,
-    base_state_root: [u8; 32],
+    params: BftBlockParams<'_>,
 ) -> Result<(ConsensusBlock, NullifierSet, [u8; 32]), ConsensusError> {
+    let BftBlockParams {
+        height,
+        view,
+        parent_hash,
+        timestamp_ms,
+        transactions,
+        validators,
+        signer_indices,
+        base_nullifiers,
+        base_state_root,
+    } = params;
     let new_nullifiers = apply_nullifiers(base_nullifiers, &transactions)?;
     let nullifier_root = new_nullifiers.commitment();
     let proof_commitment = compute_proof_commitment(&transactions);
@@ -98,7 +124,7 @@ pub fn assemble_bft_block(
         fee_commitment,
         validator_set_commitment: validator_set.validator_set_commitment(),
         signature_aggregate: Vec::new(),
-        signature_bitmap: Some(vec![0u8; (validators.len() + 7) / 8]),
+        signature_bitmap: Some(vec![0u8; validators.len().div_ceil(8)]),
         pow: None,
     };
     let signing_hash = header.signing_hash()?;
@@ -124,15 +150,18 @@ pub fn assemble_bft_block(
 
 #[allow(dead_code)]
 pub fn assemble_pow_block(
-    height: u64,
-    parent_hash: [u8; 32],
-    timestamp_ms: u64,
-    transactions: Vec<Transaction>,
-    miner: &TestValidator,
-    base_nullifiers: &NullifierSet,
-    base_state_root: [u8; 32],
-    target: u32,
+    params: PowBlockParams<'_>,
 ) -> Result<(ConsensusBlock, NullifierSet, [u8; 32]), ConsensusError> {
+    let PowBlockParams {
+        height,
+        parent_hash,
+        timestamp_ms,
+        transactions,
+        miner,
+        base_nullifiers,
+        base_state_root,
+        target,
+    } = params;
     let new_nullifiers = apply_nullifiers(base_nullifiers, &transactions)?;
     let nullifier_root = new_nullifiers.commitment();
     let proof_commitment = compute_proof_commitment(&transactions);
