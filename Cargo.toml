@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "crypto",
+    "circuits/transaction",
+]
+resolver = "2"
