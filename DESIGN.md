@@ -1,0 +1,300 @@
+## 0. Design goals (what we’re optimizing for)
+
+I’d keep (roughly) Zcash’s original goals, updated for 2025:
+
+1. **One canonical privacy pool** (no Sprout/Sapling/Orchard zoo).
+2. **End-to-end PQ security**
+
+   * No ECC, no pairings, no RSA anywhere.
+   * Only:
+
+     * Lattice-based KEM/signatures (NIST PQC: ML-KEM, ML-DSA, etc.), ([NIST][1])
+     * Hash-based commitments, Merkle trees, PRFs,
+     * Hash-based or STARK-style ZK.
+3. **Transparent proving system**
+
+   * No trusted setup.
+   * SNARK/STARK based only on collision-resistant hashes (FRI-style IOPs etc.). ([C# Corner][2])
+4. **Bitcoin-like mental model**: UTXO-ish “notes” with strong privacy, plus viewing keys.
+5. **Upgradability**: built-in versioning and “escape hatches” for *future* PQ breaks.
+
+Everything else is negotiable.
+
+---
+
+## 1. Cryptographic stack (primitives only)
+
+### 1.1 Signatures
+
+Use *only* NIST PQC signatures:
+
+* Primary: **ML-DSA** (Dilithium, FIPS 204) for “everyday” signatures. ([NIST][1])
+* Backup: **SLH-DSA** (SPHINCS+, FIPS 205) for long-lived roots of trust (genesis multisig, governance keys, etc.). ([Cloud Security Alliance][3])
+
+Where they’re used:
+
+* **Consensus / networking**:
+
+  * Block producers sign block headers with ML-DSA.
+  * Nodes/validators identity keys = ML-DSA.
+* **User layer**:
+
+  * Surprisingly little: within the shielded protocol, we can get rid of *per-input signatures* entirely and instead authorize spends by proving knowledge of a secret key in ZK (like Zcash already does with spend authorizing keys; here we do it with hash/lattice PRFs rather than ECC).
+
+So: signatures are *mostly* a consensus/network thing, not something you see for each coin input.
+
+---
+
+### 1.2 Key exchange / encryption
+
+For note encryption and any “view key” derivation:
+
+* Use **ML-KEM (Kyber, FIPS 203)** as the KEM to establish shared secrets. ([NIST][1])
+* Use a standard AEAD like **AES-256-GCM** or **ChaCha20-Poly1305**:
+
+  * Symmetric is already “quantum-ok” modulo Grover; 256-bit keys give you ~128-bit quantum security.
+
+Design pattern:
+
+* Each address has a long-term **KEM public key** `pk_enc`.
+* For each note, sender:
+
+  * generates an ephemeral KEM keypair,
+  * encapsulates to `pk_enc`,
+  * runs a KDF on the shared secret to get the AEAD key and per-note diversifier.
+
+This is directly analogous to ECIES-style note encryption in Zcash, but with ML-KEM.
+
+---
+
+### 1.3 Hashes, commitments, PRFs
+
+To avoid any discrete-log assumptions:
+
+* **Global hash**:
+
+  * Use something boring and well-analyzed like **SHA-256** or **BLAKE3** as the global hash for block headers, Merkle trees, etc.
+  * 256-bit outputs ⇒ ~128-bit security under Grover. ([ISACA][4])
+* **Field-friendly hash for ZK**:
+
+  * Inside the STARK, use a hash designed for Fp (e.g. Poseidon-ish / Rescue Prime / any modern STARK-friendly permutation).
+  * These are *purely algebraic permutations*, so they rely on symmetric-style assumptions and are fine for PQ (again, Grover only).
+
+Commitments:
+
+* **Hash-based commitments** everywhere. A minimal design:
+
+  * `Com(m, r) = H("c" || m || r)`
+    is the commitment to `m` with randomness `r`.
+* **Note commitment tree**:
+
+  * Same conceptual tree as Zcash, but using the global hash or the STARK hash consistently; no Pedersen, no Sinsemilla, no EC cofactor dance.
+
+PRFs:
+
+* All “note identifiers”, nullifiers, etc. are derived with keyed hashes:
+
+  * `nk = H("nk" || sk_spend)`
+  * `nullifier = H("nf" || nk || note_position || rho)`
+
+No group operations anywhere in user-visible cryptography.
+
+---
+
+## 2. ZK proving system: single STARKish stack
+
+Rather than BCTV14 → Groth16 → Halo2, we pick **one** family: hash-based IOP → STARK-style.
+
+Properties:
+
+* **Transparent**: no trusted setup (only hash assumptions). ([C# Corner][2])
+* **Post-quantum**: soundness reduces to collision resistance of the hashes + random oracle, so Shor has nothing to grab; Grover just reduces effective hash security by ~½.
+* **Recursive-friendly**: pick something in the Plonky2/Plonky3 / Winterfell space that supports efficient recursion and aggregation. ([C# Corner][2])
+
+Concretely:
+
+* Base field: a 64-bit-friendly prime like 2⁶⁴×k−1 suitable for FFTs and FRI.
+* Prover:
+
+  * CPU-friendly (no big-integer pairings).
+  * Highly parallelizable (good for GPU/prover markets).
+* Verifier:
+
+  * Maybe ~tens of milliseconds, proof sizes in the tens of kB (we accept ZK/STARK size inflation vs SNARK).
+
+**Lesson from Zcash:** we do *not* change proving systems mid-flight if we can avoid it. We pick one transparent, STARK-ish scheme and stick with it, using recursion for evolution rather than entire new pools.
+
+---
+
+## 3. Ledger model: one PQ shielded pool, no transparent pool
+
+### 3.1 Objects: notes and nullifiers
+
+We keep the Zcash mental model, but trimmed:
+
+* A **note** is a record:
+
+  * `value` (e.g. 64-bit or 128-bit integer)
+  * `asset_id` (for a MASP-like multi-asset pool)
+  * `pk_view` (recipient’s viewing key material, see below)
+  * `rho` (per-note secret)
+  * `r` (commitment randomness)
+* The chain stores only:
+
+  * a **commitment** `cm = Com(value, asset_id, pk_view, rho; r)`,
+  * a Merkle tree of note commitments,
+  * a **nullifier** `nf` when the note is spent.
+
+The ZK proof shows:
+
+* “I know some opening `(value, asset_id, pk_view, rho, r)` and secret key `sk_spend` such that:
+
+  * `cm` is in the tree,
+  * `nf = PRF(sk_spend, rho, position, …)`,
+  * total inputs = total outputs (value-conservation),
+  * overflow conditions don’t happen.”
+
+No ECDSA/EdDSA/RedDSA anywhere; the “authorization” is just knowledge of `sk_spend` inside the ZK proof.
+
+### 3.2 Transaction structure
+
+A transaction includes:
+
+* List of **input nullifiers** `nf_i`.
+* List of **new note commitments** `cm_j`.
+* Encrypted **note ciphertexts** for recipients (KEM+AEAD).
+* One or more **STARK proofs** attesting the statements above.
+
+Consensus checks:
+
+* All `nf_i` are unique and not previously seen.
+* STARK proofs verify.
+* Block value balance is respected (including fees and issuance).
+
+No transparent outputs; everything is in this one PQ pool from day 1.
+
+---
+
+## 4. Addresses and keys (PQ analogue of Sapling/Orchard)
+
+We still want:
+
+* **Spending keys**
+* **Full viewing keys**
+* **Incoming-only viewing keys**
+* Public addresses derived from those.
+
+### 4.1 Secret key hierarchy
+
+Let’s define base secret material:
+
+* `sk_root` – master secret for the wallet.
+* Derive sub-keys via KDFs:
+
+  * `sk_spend = H("spend" || sk_root)`
+  * `sk_view = H("view" || sk_root)`
+  * `sk_enc = H("enc" || sk_root)`
+
+From this we derive:
+
+* **Spending authorization material**:
+
+  * The STARK circuit uses `sk_spend` for nullifiers and for a commitment to “this user is allowed to spend this note”.
+* **Viewing keys**:
+
+  * `vk_full`: includes enough to derive both incoming and outgoing note info (e.g. seeds to recompute all `pk_view`, plus the PRFs used in the circuit).
+  * `vk_incoming`: only the KEM/AEAD decryption info and the ability to scan for your notes, not to reconstruct spends.
+
+Everything is done via hash-based PRFs / KDFs; no ECC.
+
+### 4.2 Address encoding
+
+A **shielded address** contains:
+
+* A version byte (for future evolution).
+* A **KEM public key** `pk_enc` (for ML-KEM).
+* An **address-id / diversifier** derived from `sk_view` via PRF.
+
+You can have multiple diversified addresses derived from the same underlying key material (like Zcash’s diversified addresses), but each is defined by basically: `(pk_enc, addr_tag)` where `addr_tag = H("addr" || sk_view || index)`.
+
+---
+
+## 5. Privacy & “store now, decrypt later”
+
+Because we’re using only PQ primitives, the main “store-now-decrypt-later” concern is:
+
+* Hashes & symmetric: we dimension them (e.g. 256-bit hash output, 256-bit AEAD keys) to keep ≈128-bit post-quantum security even with Grover. ([ISACA][4])
+* Lattice schemes: we stick close to NIST’s strength categories for ML-KEM/ML-DSA. ([NIST][1])
+
+Architecturally, we:
+
+* Ensure that **address privacy** is not tied to any structure that might become classically invertible (no dlog; only KDFs).
+* Use **one-time KEM keys** per transaction where helpful to add forward secrecy: sender can include ephemeral KEM pk in the ciphertext, so even compromise of recipient’s long-term `sk_enc` only reveals part of the past, not all.
+
+The nice bit vs current Zcash: if a “Shor-class” machine appears, *nothing* trivially collapses, because there’s nothing ECC-based to break.
+
+---
+
+## 6. Upgradability & future-PQC break handling
+
+We can hard-bake in lessons from the whole “quantum-recoverability” ZIP saga, but in a PQ setting:
+
+1. **Versioned proofs & circuits**
+
+   * Every transaction carries:
+
+     * a circuit version ID,
+     * a commitment to its statement in a version-agnostic way.
+   * Recursion allows a new circuit to verify old proofs, so we can move from “Circuit v1” to “Circuit v2” without spinning up a new pool.
+2. **Algorithm agility** for KEM/signatures:
+
+   * Address versioning encodes `(KEM_id, Sig_id)`.
+   * Wallets can rotate to, say, ML-KEM-v2 or a code-based KEM if lattices get scary.
+3. **Escape hatch**:
+
+   * If some PQ primitive looks shaky, nodes can:
+
+     * stop accepting new TXs using that primitive,
+     * require users to “upgrade notes” via a special circuit that proves correct transfer into a new algorithm set.
+
+So you get the “compartmentalization” Zcash achieved by multiple pools, but implemented via *versioning & recursion* rather than parallel pools.
+
+---
+
+## 7. What we explicitly **prune** from legacy Zcash
+
+If we’re being ruthless:
+
+1. **No transparent pool**
+
+   * Every coin is shielded from genesis.
+   * If you want transparency, you can reveal with a “view key” or build a public accounting layer on top, but the base protocol doesn’t do cleartext UTXOs.
+
+2. **No multiple curve zoo**
+
+   * No BN254, BLS12-381, Jubjub, Pallas, Vesta, etc.
+   * All “algebra” is just over:
+
+     * One STARK field for proofs,
+     * Integer fields for value arithmetic,
+     * Hash permutations for commitments.
+
+3. **No trusted setups, no separate SNARK generations**
+
+   * One transparent STARK family from day one.
+   * Migration handled via recursion and circuit versions, not by creating Sapling/Orchard-style new pools.
+
+4. **No ECC-based in-circuit commitments**
+
+   * No Pedersen, no Sinsemilla.
+   * Only hash-based commitments and Merkle proofs.
+
+5. **Simplified key hierarchy**
+
+   * One main shielded address type, with a clean, hash/KEM-based derivation for spend/view/enc keys.
+   * No proliferation of key types and curves.
+
+[1]: https://csrc.nist.gov/projects/post-quantum-cryptography
+[2]: https://www.c-sharpcorner.com/article/zk-snarks-vs-zk-starks/
+[3]: https://cloudsecurityalliance.org/artifacts/post-quantum-cryptography-and-zero-knowledge-proofs/
+[4]: https://www.isaca.org/resources/isaca-journal/issues/2020/volume-2/quantum-computing-and-post-quantum-cryptography
