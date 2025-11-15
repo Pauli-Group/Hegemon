@@ -93,11 +93,8 @@ impl VersionSchedule {
         I: IntoIterator<Item = VersionBinding>,
     {
         let allowed = self.allowed_at(height);
-        for version in versions {
-            if !allowed.contains(&version) {
-                return Some(version);
-            }
-        }
-        None
+        versions
+            .into_iter()
+            .find(|version| !allowed.contains(version))
     }
 }
