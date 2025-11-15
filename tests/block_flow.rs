@@ -1,7 +1,7 @@
 use block_circuit::{prove_block, verify_block, BlockError};
 use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
-use std::collections::HashMap;
 use state_merkle::CommitmentTree;
+use std::collections::HashMap;
 use transaction_circuit::{
     constants::NATIVE_ASSET_ID,
     hashing::Felt,
@@ -98,8 +98,8 @@ fn block_proof_updates_state_and_verifies() {
     assert_eq!(block_proof.ending_root, tree.root());
 
     let mut verification_tree = CommitmentTree::new(depth).expect("tree depth");
-    let report = verify_block(&mut verification_tree, &block_proof, &verifying_keys)
-        .expect("verify block");
+    let report =
+        verify_block(&mut verification_tree, &block_proof, &verifying_keys).expect("verify block");
     assert!(report.verified);
     assert_eq!(verification_tree.root(), tree.root());
 }
@@ -170,8 +170,8 @@ fn mixed_versions_require_declared_keys() {
     }
     let mut verifying_keys = HashMap::new();
     verifying_keys.insert(DEFAULT_VERSION_BINDING, verifying_key.clone());
-    let err = prove_block(&mut tree.clone(), &proofs, &verifying_keys)
-        .expect_err("missing version key");
+    let err =
+        prove_block(&mut tree.clone(), &proofs, &verifying_keys).expect_err("missing version key");
     assert!(matches!(err, BlockError::UnsupportedVersion { .. }));
 
     verifying_keys.insert(
@@ -180,8 +180,8 @@ fn mixed_versions_require_declared_keys() {
     );
     let block_proof = prove_block(&mut tree, &proofs, &verifying_keys).expect("block proof");
     let mut verification_tree = CommitmentTree::new(depth).expect("tree depth");
-    let report = verify_block(&mut verification_tree, &block_proof, &verifying_keys)
-        .expect("verify block");
+    let report =
+        verify_block(&mut verification_tree, &block_proof, &verifying_keys).expect("verify block");
     assert!(report.verified);
     assert_eq!(block_proof.version_counts.len(), 2);
 }
