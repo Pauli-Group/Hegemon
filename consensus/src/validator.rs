@@ -56,6 +56,10 @@ impl ValidatorSet {
         self.validators.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.validators.is_empty()
+    }
+
     pub fn total_stake(&self) -> u128 {
         self.total_stake
     }

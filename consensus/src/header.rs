@@ -61,7 +61,7 @@ impl BlockHeader {
                 if self
                     .signature_bitmap
                     .as_ref()
-                    .map_or(true, |bm| bm.is_empty())
+                    .is_none_or(|bm| bm.is_empty())
                 {
                     return Err(ConsensusError::InvalidHeader("missing signature bitmap"));
                 }
