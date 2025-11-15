@@ -85,7 +85,7 @@ pub(crate) mod serde_vec_felt {
         D: Deserializer<'de>,
     {
         let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        if bytes.len() % 8 != 0 {
+        if !bytes.len().is_multiple_of(8) {
             return Err(serde::de::Error::custom("invalid field encoding"));
         }
         Ok(bytes

@@ -18,32 +18,32 @@ fn round_constant(round: usize, position: usize) -> Felt {
 
 fn mix(state: &mut [Felt; POSEIDON_WIDTH]) {
     const MIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
+    let state_snapshot = *state;
     let mut tmp = [Felt::ZERO; POSEIDON_WIDTH];
-    for i in 0..POSEIDON_WIDTH {
-        let mut acc = Felt::ZERO;
-        for j in 0..POSEIDON_WIDTH {
-            acc += state[j] * Felt::new(MIX[i][j]);
-        }
-        tmp[i] = acc;
+    for (row, output) in MIX.iter().zip(tmp.iter_mut()) {
+        *output = row
+            .iter()
+            .zip(state_snapshot.iter())
+            .fold(Felt::ZERO, |acc, (&coef, value)| {
+                acc + *value * Felt::new(coef)
+            });
     }
     *state = tmp;
 }
 
 fn permutation(state: &mut [Felt; POSEIDON_WIDTH]) {
     for round in 0..POSEIDON_ROUNDS {
-        for position in 0..POSEIDON_WIDTH {
-            state[position] += round_constant(round, position);
+        for (position, value) in state.iter_mut().enumerate() {
+            *value += round_constant(round, position);
         }
-        for position in 0..POSEIDON_WIDTH {
-            state[position] = state[position].exp(5u64);
-        }
+        state.iter_mut().for_each(|value| *value = value.exp(5u64));
         mix(state);
     }
 }
 
 fn absorb(state: &mut [Felt; POSEIDON_WIDTH], chunk: &[Felt]) {
-    for (slot, value) in chunk.iter().enumerate() {
-        state[slot] += *value;
+    for (state_slot, value) in state.iter_mut().zip(chunk.iter()) {
+        *state_slot += *value;
     }
     permutation(state);
 }
@@ -55,9 +55,7 @@ fn sponge(domain_tag: u64, inputs: &[Felt]) -> Felt {
     while cursor < inputs.len() {
         let take = core::cmp::min(rate, inputs.len() - cursor);
         let mut chunk = [Felt::ZERO; POSEIDON_WIDTH - 1];
-        for i in 0..take {
-            chunk[i] = inputs[cursor + i];
-        }
+        chunk[..take].copy_from_slice(&inputs[cursor..cursor + take]);
         absorb(&mut state, &chunk);
         cursor += take;
     }
