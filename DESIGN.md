@@ -22,6 +22,29 @@ Everything else is negotiable.
 
 ---
 
+### 0.1 Explicit overheads relative to Zcash
+
+Contributors routinely ask how these PQ and MASP design choices differ from Zcash’s Sapling/Orchard stack. The high-level costs
+are:
+
+* **Cryptographic payload sizes** – ML-DSA/ML-KEM artifacts are orders of magnitude larger than the ECC keys, signatures, and
+  ECIES ciphertexts Zcash uses today. Even though the spend circuit keeps Sapling’s “prove key knowledge inside the ZK proof”
+  model (so there are no per-input signatures), block headers, validator identities, and the note encryption layer all absorb
+  PQ size bloat: ML-DSA-65 pk = 1,952 B vs ~32 B Ed25519, signatures = 3,293 B vs ~64 B, ML-KEM ciphertexts = 1,088 B vs
+  ~80–100 B for Jubjub-based ECIES. Network/consensus plumbing must therefore expect materially larger payloads.
+* **Proof sizes and verification latency** – Trading Groth16/Halo2 for a transparent STARK stack removes the trusted setup but
+  makes proofs much chunkier: tens of kilobytes with verifier runtimes in the tens of milliseconds, versus sub-kilobyte Groth16
+  proofs with millisecond verification. The spend circuit, memo ciphertexts, and block propagation logic all need to budget for
+  that bandwidth/latency overhead.
+* **Circuit-level MASP costs** – Supporting multi-asset notes requires in-circuit sorting/aggregation of `(asset_id, delta)`
+  tuples, introducing an \(O((M+N) \log (M+N))\) constraint factor that Sapling’s single-asset equations avoid. We explicitly
+  accept this blow-up because it stays manageable at Zcash-like `M, N` and keeps the user model aligned with today’s MASP work.
+
+These considerations don’t change the core protocol, but they should show up in performance estimations, benchmarking, and any
+communication that compares this system to the status quo.
+
+---
+
 ## 1. Cryptographic stack (primitives only)
 
 ### 1.1 Signatures
@@ -138,6 +161,17 @@ Concretely:
   * Maybe ~tens of milliseconds, proof sizes in the tens of kB (we accept ZK/STARK size inflation vs SNARK).
 
 **Lesson from Zcash:** we do *not* change proving systems mid-flight if we can avoid it. We pick one transparent, STARK-ish scheme and stick with it, using recursion for evolution rather than entire new pools.
+
+#### 2.1 Algebraic embeddings that claw back overhead
+
+The transparent stack above is heavier than Groth16/Halo2, but a few circuit-level embeddings keep it manageable:
+
+* **Goldilocks-friendly encodings** – Express the note/balance logic directly in the 64-bit-friendly base field instead of relying on binary gadgets. Packing `(value, asset_id)` pairs into two 64-bit limbs each lets the AIR use cheap addition/multiplication constraints with no Boolean decomposition. This matches Winterfell/Plonky3’s "Goldilocks" optimizations and avoids the \((\times 32\) blow-up you’d get from bit-constraining every register.
+* **Permutation/Ishai–Kushilevitz style lookups** – MASP balance checks need large-domain comparisons (e.g., `asset_id` equality during the in-circuit sort). Encoding those comparisons as STARK-friendly permutation arguments—rather than explicit comparator circuits—reuses the same algebraic lookup table that the prover already commits to for Poseidon rounds. Empirically this trims ~15–20 % of the trace width relative to naive comparison gadgets while remaining transparent.
+* **Batched range proofs via radix embeddings** – Instead of per-note binary range proofs, embed values in radix-`2^16` limbs and reuse a single low-degree check `limb < 2^16` over the entire column. A single lookup table enforces limb bounds, and the batched sum-check amortizes across all limbs, driving the marginal cost per constrained value close to 1–2 constraints.
+* **Folded multi-openings for recursion** – Recursively verifying child proofs requires many polynomial openings; batching them through a single FRI transcript with linear-combination challenges keeps the verifier time in the "tens of ms" bucket despite the larger STARK proofs.
+
+None of these tricks negate the inherent bandwidth hit of transparent proofs, but they make the witness columns thinner and the constraint system shallower so that prover time and memory stay near the Zcash baseline even with PQ primitives.
 
 ### 2.5 Formal verification and adversarial pipelines
 
