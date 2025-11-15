@@ -1,5 +1,10 @@
 use std::fs;
+use std::fs::File;
+use std::io::BufWriter;
+use std::io::Write;
 use std::path::Path;
+
+use serde::Serialize;
 
 use transaction_circuit::hashing::Felt;
 use transaction_circuit::keys::generate_keys;
@@ -69,15 +74,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let valid_path = fixtures_dir.join("valid_proof.json");
     let invalid_path = fixtures_dir.join("invalid_balance.json");
 
-    fs::write(
-        &proving_key_path,
-        serde_json::to_vec_pretty(&proving_key)?,
-    )?;
-    fs::write(
-        &verifying_key_path,
-        serde_json::to_vec_pretty(&verifying_key)?,
-    )?;
-    fs::write(&valid_path, serde_json::to_vec_pretty(&proof)?)?;
+    write_fixture(&proving_key_path, &proving_key)?;
+    write_fixture(&verifying_key_path, &verifying_key)?;
+    write_fixture(&valid_path, &proof)?;
 
     let mut invalid_proof: TransactionProof = proof.clone();
     if let Some(slot) = invalid_proof
@@ -87,8 +86,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         slot.delta += 1;
     }
-    fs::write(&invalid_path, serde_json::to_vec_pretty(&invalid_proof)?)?;
+    write_fixture(&invalid_path, &invalid_proof)?;
 
     println!("fixtures written to {}", fixtures_dir.display());
+    Ok(())
+}
+
+fn write_fixture<T: Serialize>(path: &Path, value: &T) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = File::create(path)?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(&mut writer, value)?;
+    writer.flush()?;
     Ok(())
 }
