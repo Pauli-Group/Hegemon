@@ -1,0 +1,13 @@
+[package]
+name = "block-circuit"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"
+transaction-circuit = { path = "../transaction" }
+state-merkle = { path = "../../state/merkle" }
+
+[dev-dependencies]
+rand = { version = "0.8", features = ["std"] }

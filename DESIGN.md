@@ -270,6 +270,8 @@ We can hard-bake in lessons from the whole “quantum-recoverability” ZIP saga
 
 So you get the “compartmentalization” Zcash achieved by multiple pools, but implemented via *versioning & recursion* rather than parallel pools.
 
+Concrete modules in the repository now reflect this plan. A dedicated `state/merkle` crate maintains the append-only commitment tree with poseidon-style hashing, while a `circuits/block` crate replays ordered transaction proofs, enforces nullifier uniqueness, tracks the root trace, and records a recursive aggregation digest that can later be replaced by a true recursive STARK. Block producers call `prove_block` with their current tree, and validators call `verify_block` with their own state to ensure the final root matches before committing the block.
+
 ---
 
 ## 7. What we explicitly **prune** from legacy Zcash

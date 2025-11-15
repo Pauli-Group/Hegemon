@@ -3,7 +3,8 @@ use winterfell::math::{fields::f64::BaseElement, FieldElement};
 
 use crate::{
     constants::{
-        BALANCE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON_ROUNDS, POSEIDON_WIDTH,
+        BALANCE_DOMAIN_TAG, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
+        POSEIDON_ROUNDS, POSEIDON_WIDTH,
     },
     public_inputs::BalanceSlot,
 };
@@ -81,6 +82,10 @@ pub fn note_commitment(value: u64, asset_id: u64, pk: &[u8], rho: &[u8], r: &[u8
     inputs.extend(bytes_to_field_elements(rho));
     inputs.extend(bytes_to_field_elements(r));
     sponge(NOTE_DOMAIN_TAG, &inputs)
+}
+
+pub fn merkle_node(left: Felt, right: Felt) -> Felt {
+    sponge(MERKLE_DOMAIN_TAG, &[left, right])
 }
 
 pub fn nullifier(prf_key: Felt, rho: &[u8], position: u64) -> Felt {
