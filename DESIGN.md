@@ -110,6 +110,10 @@ The repository now includes a standalone Rust crate at `crypto/` that collects t
 
 Everything derives deterministic test vectors using a ChaCha20-based RNG seeded via SHA-256 so that serialization and domain separation match the simple hash-based definitions above. Integration tests under `crypto/tests/` lock in the byte-level expectations for key generation, signing, verification, KEM encapsulation/decapsulation, and commitment/nullifier derivation.
 
+### 1.5 External cryptanalysis cadence
+
+Every time we tweak the parameter sets above—or annually even without code drift—we commission an external lattice/hash review as captured in `docs/SECURITY_REVIEWS.md`. Vendors receive `DESIGN.md §1`, `METHODS.md`, and the relevant source paths (`crypto/`, `circuits/transaction/src/hashing.rs`) so they can re-derive the Poseidon constants and deterministic RNG taps we use for ML-DSA, ML-KEM, and SLH-DSA. Findings are logged using the JSON template in the same doc and each accepted change must reference that ID inside this file plus `METHODS.md`. This keeps the declared parameter choices in sync with the state of the art in lattice reduction and ensures that side-channel or collision discoveries are reflected in our primitives immediately.
+
 ---
 
 ## 2. ZK proving system: single STARKish stack
@@ -134,6 +138,10 @@ Concretely:
   * Maybe ~tens of milliseconds, proof sizes in the tens of kB (we accept ZK/STARK size inflation vs SNARK).
 
 **Lesson from Zcash:** we do *not* change proving systems mid-flight if we can avoid it. We pick one transparent, STARK-ish scheme and stick with it, using recursion for evolution rather than entire new pools.
+
+### 2.5 Formal verification and adversarial pipelines
+
+The `circuits/formal/transaction_balance.tla` model captures the MASP balance rules (nullifier uniqueness + per-asset conservation) using a compact TLA+ spec. Any change to the AIR/witness layout must update that spec plus rerun TLC/Apalache, recording the outcome in the associated README and in `docs/SECURITY_REVIEWS.md`. On the implementation side, `circuits/transaction/tests/security_fuzz.rs` performs property-based fuzzing of `TransactionWitness::balance_slots` and `public_inputs` to catch serialization edge cases. Both the formal model and the fuzz harness are wired into the `security-adversarial` CI job, so contributors get immediate feedback when the balance/tag logic drifts.
 
 ---
 
@@ -354,3 +362,11 @@ These scaffolds exist to keep the design’s PQ security assumptions observable.
 1. The relevant crate README (`crypto/README.md`, `circuits/README.md`, `consensus/README.md`, `wallet/README.md`).
 2. The API entry in `docs/API_REFERENCE.md` and the guardrails in `docs/THREAT_MODEL.md`.
 3. This section of DESIGN.md plus the operational instructions in `METHODS.md` so reviewers can verify code and documentation move together.
+
+## 8. Security assurance program
+
+- **Cryptanalysis & audits** – `docs/SECURITY_REVIEWS.md` defines how we commission lattice/hash reviews and third-party audits. Design-impacting findings must be mirrored in the sections above plus `METHODS.md`, and every mitigation PR links back to the finding ID logged there.
+- **Formal verification** – TLA+ specs under `circuits/formal/` (transaction balance) and `consensus/spec/formal/` (HotStuff safety/liveness) are now part of the release checklist. Any modification to witness layouts, balance tags, or consensus phases must update the corresponding spec and README.
+- **Continuous adversarial testing** – The `security-adversarial` CI job runs the new property-based tests for transaction validation, network handshakes, wallet address encoding, and the root-level adversarial flow in `tests/security_pipeline.rs`. Operators follow `runbooks/security_testing.md` when the job fails, capturing artifacts for auditors before re-running.
+
+Together these loops ensure PQ parameter choices, circuit semantics, and validator logic stay observable and auditable as the system evolves.
