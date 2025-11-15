@@ -150,7 +150,7 @@ fn fold_digest(mut acc: Felt, proof: &TransactionProof) -> Felt {
     for value in &proof.public_inputs.commitments {
         acc = merkle_node(acc, *value);
     }
-    acc = merkle_node(acc, Felt::new(proof.public_inputs.native_fee as u64));
+    acc = merkle_node(acc, Felt::new(proof.public_inputs.native_fee));
     acc
 }
 
