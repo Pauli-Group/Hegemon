@@ -769,3 +769,49 @@ The crate’s `tests/crypto_vectors.rs` fixture loads `tests/vectors.json` to as
 * hash-based commitment, PRF key derivation, nullifier derivation, SHA-256, BLAKE3, and Poseidon outputs.
 
 Run `cargo test` from the `crypto/` directory to regenerate and validate all vectors.
+
+## 6. Monorepo workflows and CI hooks
+
+Implementation hygiene now mirrors the layout introduced in `DESIGN.md §6` and the documentation hub under `docs/`.
+
+### Required commands before every PR
+
+1. **Rust formatting and linting** – `cargo fmt --all` then `cargo clippy --workspace --all-targets --all-features -D warnings`.
+2. **Workspace tests** – `cargo test --workspace` ensures crypto, circuits, consensus, wallet, and protocol crates are still coherent.
+3. **Targeted checks**:
+   - `cargo test -p synthetic-crypto` for deterministic PQ primitive vectors.
+   - `cargo test -p transaction-circuit && cargo test -p block-circuit` for circuit constraints.
+   - `cargo test -p wallet` for CLI/integration fixtures.
+4. **Benchmarks (smoke mode)**:
+   - `cargo run -p circuits-bench -- --smoke --prove --json` – validates witness → proof → block aggregation loop.
+   - `cargo run -p wallet-bench -- --smoke --json` – stresses key derivation, encryption, and nullifier derivations.
+   - `(cd consensus/bench && go test ./... && go run ./cmd/netbench --smoke --json)` – ensures the Go simulator compiles/tests while reporting PQ throughput budgets.
+
+Document benchmark outputs in pull requests when they change noticeably; CI will surface them via the `benchmarks` job but reviewers rely on human summaries for regressions.
+
+### CI job map (`.github/workflows/ci.yml`)
+
+| Job | Purpose |
+| --- | --- |
+| `rust-lints` | Runs fmt + clippy on the entire workspace. |
+| `rust-tests` | Executes `cargo test --workspace`. |
+| `crypto-tests` | Locks in ML-DSA/ML-KEM behavior with focused tests. |
+| `circuits-proof` | Runs the transaction/block tests and ensures `circuits-bench --smoke --prove` succeeds. |
+| `wallet` | Runs wallet tests and the wallet benchmark smoke profile. |
+| `go-net` | Runs `go test ./...` and the `netbench` simulator. |
+| `cpp-style` | Applies `clang-format --dry-run` if any `*.cpp`/`*.h` files exist (no-op otherwise). |
+| `benchmarks` | Executes all smoke benchmarks with `continue-on-error: true` so regressions surface as warnings. |
+
+All jobs operate on Ubuntu runners with Rust stable, Go 1.21, and clang-format installed via `apt`. Adding new languages or toolchains requires updating this table, the workflow, and `docs/CONTRIBUTING.md`.
+
+### Documentation + threat-model synchronization
+
+Whenever you touch an API, threat mitigation, or performance assumption:
+
+1. Update the component README (e.g., `wallet/README.md`) with the new commands or invariants.
+2. Update `docs/API_REFERENCE.md` so integrators can find the function signatures.
+3. Update `docs/THREAT_MODEL.md` when security margins move.
+4. Reflect the architectural impact in `DESIGN.md §6` (or the relevant subsystem section) and record the operational/testing changes here in METHODS.
+5. Mention the change in `docs/CONTRIBUTING.md` so future contributors know which CI jobs/benchmarks cover it.
+
+PRs missing any of these sync points should be blocked during review; CI surfaces the changed docs alongside code so reviewers can verify everything moved together.

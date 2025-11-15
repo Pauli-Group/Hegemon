@@ -3,10 +3,12 @@ members = [
     "crypto",
     "circuits/transaction",
     "circuits/block",
+    "circuits/bench",
     "state/merkle",
     "consensus",
     "protocol/versioning",
     "network",
     "wallet",
+    "wallet/bench",
 ]
 resolver = "2"
