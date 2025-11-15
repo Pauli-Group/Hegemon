@@ -15,6 +15,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: stable
           components: rustfmt, clippy
       - name: Cargo fmt
         run: cargo fmt --all -- --check
@@ -27,6 +28,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
       - name: Cargo test (workspace)
         run: cargo test --workspace
 
@@ -36,6 +39,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
       - name: Crypto tests
         run: cargo test -p synthetic-crypto
 
@@ -45,6 +50,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
       - name: Transaction circuit tests
         run: cargo test -p transaction-circuit
       - name: Block circuit tests
@@ -58,6 +65,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
       - name: Wallet tests
         run: cargo test -p wallet
       - name: Wallet benchmark smoke test
@@ -98,6 +107,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
       - uses: actions/setup-go@v5
         with:
           go-version: '1.21'
