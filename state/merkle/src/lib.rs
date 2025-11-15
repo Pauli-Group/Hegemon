@@ -62,6 +62,10 @@ impl CommitmentTree {
         self.leaf_count
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.leaf_count == 0
+    }
+
     pub fn capacity(&self) -> usize {
         1usize << self.depth
     }
@@ -88,7 +92,7 @@ impl CommitmentTree {
         let mut current = value;
         let mut position = index;
         for level in 0..self.depth {
-            if position % BRANCH_FACTOR == 0 {
+            if position.is_multiple_of(BRANCH_FACTOR) {
                 current = merkle_node(current, self.default_nodes[level]);
             } else {
                 let left = self.levels[level][position - 1];
@@ -125,7 +129,7 @@ impl CommitmentTree {
         let mut path = Vec::with_capacity(self.depth);
         let mut position = index;
         for level in 0..self.depth {
-            let sibling_pos = if position % BRANCH_FACTOR == 0 {
+            let sibling_pos = if position.is_multiple_of(BRANCH_FACTOR) {
                 position + 1
             } else {
                 position - 1
