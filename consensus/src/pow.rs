@@ -176,8 +176,8 @@ impl<V: ProofVerifier> PowConsensus<V> {
 }
 
 fn compact_to_target(seal: &PowSeal) -> Result<BigUint, ConsensusError> {
-    let exponent = (seal.target >> 24) as u32;
-    let mantissa = (seal.target & 0x00ff_ffff) as u32;
+    let exponent = seal.target >> 24;
+    let mantissa = seal.target & 0x00ff_ffff;
     if mantissa == 0 {
         return Err(ConsensusError::Pow("zero mantissa".into()));
     }

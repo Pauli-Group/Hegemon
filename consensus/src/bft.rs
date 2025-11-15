@@ -170,16 +170,17 @@ impl<V: ProofVerifier> BftConsensus<V> {
         let mut slashing = Vec::new();
         for validator in signers {
             let vote_entry = self.vote_history.entry(validator).or_default();
-            if let Some(previous_hash) = vote_entry.insert(block.header.view, block_hash) {
-                if previous_hash != block_hash {
-                    slashing.push(SlashingEvidence {
-                        validator,
-                        view: block.header.view,
-                        first_hash: previous_hash,
-                        second_hash: block_hash,
-                    });
-                    self.validator_set.mark_slashed(&validator);
-                }
+            if let Some(previous_hash) = vote_entry
+                .insert(block.header.view, block_hash)
+                .filter(|previous| previous != &block_hash)
+            {
+                slashing.push(SlashingEvidence {
+                    validator,
+                    view: block.header.view,
+                    first_hash: previous_hash,
+                    second_hash: block_hash,
+                });
+                self.validator_set.mark_slashed(&validator);
             }
         }
 
