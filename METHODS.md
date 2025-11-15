@@ -358,6 +358,16 @@ You can decide whether you want nullifier computation to be *derivable* from vie
 * If you want watch‑only wallets to see spent status, you derive a “viewing nullifier key” `vnk` from `sk_view` that mirrors `nk` but cannot be used to spend.
 * If you want stricter separation, only `sk_spend` can compute nullifiers, and watch‑only wallets infer spentness by tracking spends by inference (less robust).
 
+### 4.5 Implementation details
+
+*Key derivations and addresses.* `wallet/src/keys.rs` implements `RootSecret::derive()` using the domain-separated label `wallet-hkdf` and SHA-256 to expand `(label || sk_root)` into the 32-byte subkeys for spend/view/enc/diversifier. `AddressKeyMaterial` then uses `addr-seed` and `addr-tag` labels to deterministically derive the ML-KEM key pair and 32-byte hint tag for each diversifier index. `wallet/src/address.rs` serializes `(version, index, pk_recipient, pk_enc, hint_tag)` as a Bech32m string (HRP `shca`) so senders can round-trip addresses through QR codes or the CLI.
+
+*Note encryption.* `wallet/src/notes.rs` consumes the recipient’s Bech32 data, runs ML-KEM encapsulation with a random seed, and stretches the shared secret into two ChaCha20-Poly1305 keys via `expand_to_length("wallet-aead", shared_secret || label, 44)`. The first 32 bytes drive the AEAD key and the final 12 bytes form the nonce so both note payload and memo use disjoint key/nonce pairs. Ciphertexts record the diversifier index, hint tag, and ML-KEM ciphertext so incoming viewing keys can reconstruct the exact `AddressKeyMaterial` needed for decryption.
+
+*Viewing keys and nullifiers.* `wallet/src/viewing.rs` defines `IncomingViewingKey` (scan + decrypt), `OutgoingViewingKey` (derive address tags/pk_recipient for audit), and `FullViewingKey` (incoming + nullifier key). Full viewing keys store the SHA-256 nullifier PRF output derived from `sk_spend`, letting watch-only tooling compute chain nullifiers without exposing the spend key itself. `RecoveredNote::to_input_witness` converts decrypted notes into `transaction_circuit::note::InputNoteWitness` values by reusing the same `NoteData` and taking the best-effort `rho_seed = rho` placeholder until the circuit’s derivation is finalized.
+
+*CLI and fixtures.* `wallet/src/bin/wallet.rs` exposes the commands described in DESIGN.md: `wallet generate`, `wallet address`, `wallet tx-craft`, and `wallet scan`. JSON fixtures for transaction inputs/recipients follow the `transaction_circuit` `serde` representation so the witness builder plugs directly into existing proving code. `wallet/tests/cli.rs` runs those commands via `cargo_bin_cmd!`, writes temporary JSON files, and confirms that balance recovery via `wallet scan` matches the crafted transaction outputs.
+
 ---
 
 ## 5. Upgrade path / versioning in the circuit layer
