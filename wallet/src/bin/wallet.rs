@@ -85,16 +85,16 @@ fn main() -> Result<()> {
             witness_out,
             ciphertext_out,
             rng_seed,
-        } => cmd_tx_craft(
-            &root,
-            &inputs,
-            &recipients,
+        } => cmd_tx_craft(TxCraftParams {
+            root_hex: &root,
+            inputs_path: inputs.as_path(),
+            recipients_path: recipients.as_path(),
+            witness_out: witness_out.as_path(),
+            ciphertext_out: ciphertext_out.as_path(),
             merkle_root,
             fee,
-            &witness_out,
-            &ciphertext_out,
             rng_seed,
-        ),
+        }),
         Commands::Scan { ivk, ledger, out } => cmd_scan(&ivk, &ledger, out.as_deref()),
     }
 }
@@ -121,21 +121,23 @@ fn cmd_address(root_hex: &str, index: u32) -> Result<()> {
     Ok(())
 }
 
-fn cmd_tx_craft(
-    root_hex: &str,
-    inputs_path: &PathBuf,
-    recipients_path: &PathBuf,
+struct TxCraftParams<'a> {
+    root_hex: &'a str,
+    inputs_path: &'a Path,
+    recipients_path: &'a Path,
+    witness_out: &'a Path,
+    ciphertext_out: &'a Path,
     merkle_root: u64,
     fee: u64,
-    witness_out: &PathBuf,
-    ciphertext_out: &PathBuf,
     rng_seed: Option<u64>,
-) -> Result<()> {
-    let root = parse_root(root_hex)?;
+}
+
+fn cmd_tx_craft(params: TxCraftParams<'_>) -> Result<()> {
+    let root = parse_root(params.root_hex)?;
     let keys = root.derive();
-    let inputs: Vec<InputNoteWitness> = read_json(inputs_path)?;
-    let recipients: Vec<RecipientSpec> = read_json(recipients_path)?;
-    let mut rng = match rng_seed {
+    let inputs: Vec<InputNoteWitness> = read_json(params.inputs_path)?;
+    let recipients: Vec<RecipientSpec> = read_json(params.recipients_path)?;
+    let mut rng = match params.rng_seed {
         Some(seed) => StdRng::seed_from_u64(seed),
         None => StdRng::from_entropy(),
     };
@@ -166,15 +168,15 @@ fn cmd_tx_craft(
         inputs,
         outputs,
         sk_spend: keys.spend.to_bytes(),
-        merkle_root: Felt::new(merkle_root),
-        fee,
+        merkle_root: Felt::new(params.merkle_root),
+        fee: params.fee,
     };
-    write_json(witness_out, &witness)?;
-    write_json(ciphertext_out, &ciphertexts)?;
+    write_json(params.witness_out, &witness)?;
+    write_json(params.ciphertext_out, &ciphertexts)?;
     Ok(())
 }
 
-fn cmd_scan(ivk_path: &PathBuf, ledger_path: &PathBuf, out: Option<&Path>) -> Result<()> {
+fn cmd_scan(ivk_path: &Path, ledger_path: &Path, out: Option<&Path>) -> Result<()> {
     let ivk: IncomingViewingKey = read_json(ivk_path)?;
     let ciphertexts: Vec<NoteCiphertext> = read_json(ledger_path)?;
     let mut totals: BTreeMap<u64, u64> = BTreeMap::new();
@@ -210,12 +212,12 @@ fn parse_root(hex_str: &str) -> Result<RootSecret> {
     Ok(RootSecret::from_bytes(arr))
 }
 
-fn read_json<T: for<'de> Deserialize<'de>>(path: &PathBuf) -> Result<T> {
+fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
     let data = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
     Ok(serde_json::from_slice(&data)?)
 }
 
-fn write_json<T: Serialize>(path: &PathBuf, value: &T) -> Result<()> {
+fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let data = serde_json::to_vec_pretty(value)?;
     fs::write(path, data).with_context(|| format!("failed to write {}", path.display()))
 }
