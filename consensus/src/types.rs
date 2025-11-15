@@ -1,4 +1,5 @@
 use crypto::hashes::sha256;
+use protocol_versioning::{VersionBinding, VersionMatrix};
 use sha2::{Digest, Sha384};
 
 pub type Nullifier = [u8; 32];
@@ -9,6 +10,7 @@ pub type ValidatorSetCommitment = [u8; 32];
 pub type BlockHash = [u8; 32];
 pub type ValidatorId = [u8; 32];
 pub type StarkCommitment = [u8; 48];
+pub type VersionCommitment = [u8; 32];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transaction {
@@ -16,6 +18,7 @@ pub struct Transaction {
     pub nullifiers: Vec<Nullifier>,
     pub commitments: Vec<Commitment>,
     pub balance_tag: BalanceTag,
+    pub version: VersionBinding,
 }
 
 impl Transaction {
@@ -23,18 +26,25 @@ impl Transaction {
         nullifiers: Vec<Nullifier>,
         commitments: Vec<Commitment>,
         balance_tag: BalanceTag,
+        version: VersionBinding,
     ) -> Self {
-        let id = compute_transaction_id(&nullifiers, &commitments, &balance_tag);
+        let id = compute_transaction_id(&nullifiers, &commitments, &balance_tag, version);
         Self {
             id,
             nullifiers,
             commitments,
             balance_tag,
+            version,
         }
     }
 
     pub fn hash(&self) -> BlockHash {
-        compute_transaction_id(&self.nullifiers, &self.commitments, &self.balance_tag)
+        compute_transaction_id(
+            &self.nullifiers,
+            &self.commitments,
+            &self.balance_tag,
+            self.version,
+        )
     }
 }
 
@@ -42,8 +52,11 @@ fn compute_transaction_id(
     nullifiers: &[Nullifier],
     commitments: &[Commitment],
     balance_tag: &BalanceTag,
+    version: VersionBinding,
 ) -> BlockHash {
     let mut hasher = Sha384::new();
+    hasher.update(version.circuit.to_le_bytes());
+    hasher.update(version.crypto.to_le_bytes());
     for nf in nullifiers {
         hasher.update(nf);
     }
@@ -95,20 +108,60 @@ pub fn compute_proof_commitment(transactions: &[Transaction]) -> StarkCommitment
     out
 }
 
+pub fn compute_version_matrix(transactions: &[Transaction]) -> VersionMatrix {
+    let mut matrix = VersionMatrix::new();
+    for tx in transactions {
+        matrix.observe(tx.version);
+    }
+    matrix
+}
+
+pub fn compute_version_commitment(transactions: &[Transaction]) -> VersionCommitment {
+    let matrix = compute_version_matrix(transactions);
+    matrix.commitment()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use protocol_versioning::DEFAULT_VERSION_BINDING;
 
     #[test]
     fn transaction_id_is_deterministic() {
-        let tx = Transaction::new(vec![[1u8; 32]], vec![[2u8; 32]], [3u8; 32]);
+        let tx = Transaction::new(
+            vec![[1u8; 32]],
+            vec![[2u8; 32]],
+            [3u8; 32],
+            DEFAULT_VERSION_BINDING,
+        );
         assert_eq!(tx.hash(), tx.id);
     }
 
     #[test]
+    fn transaction_version_changes_hash() {
+        let base_nullifiers = vec![[1u8; 32]];
+        let base_commitments = vec![[2u8; 32]];
+        let base_tag = [3u8; 32];
+        let v1 = Transaction::new(
+            base_nullifiers.clone(),
+            base_commitments.clone(),
+            base_tag,
+            DEFAULT_VERSION_BINDING,
+        );
+        let upgraded_version = VersionBinding::new(2, DEFAULT_VERSION_BINDING.crypto);
+        let v2 = Transaction::new(
+            base_nullifiers,
+            base_commitments,
+            base_tag,
+            upgraded_version,
+        );
+        assert_ne!(v1.id, v2.id);
+    }
+
+    #[test]
     fn fee_commitment_sorted() {
-        let tx_a = Transaction::new(vec![[1u8; 32]], vec![], [3u8; 32]);
-        let tx_b = Transaction::new(vec![[2u8; 32]], vec![], [1u8; 32]);
+        let tx_a = Transaction::new(vec![[1u8; 32]], vec![], [3u8; 32], DEFAULT_VERSION_BINDING);
+        let tx_b = Transaction::new(vec![[2u8; 32]], vec![], [1u8; 32], DEFAULT_VERSION_BINDING);
         let tag = compute_fee_commitment(&[tx_a.clone(), tx_b.clone()]);
         let tag_swapped = compute_fee_commitment(&[tx_b, tx_a]);
         assert_eq!(tag, tag_swapped);
@@ -116,10 +169,27 @@ mod tests {
 
     #[test]
     fn proof_commitment_depends_on_transaction_order() {
-        let tx_a = Transaction::new(vec![[1u8; 32]], vec![], [3u8; 32]);
-        let tx_b = Transaction::new(vec![[2u8; 32]], vec![], [4u8; 32]);
+        let tx_a = Transaction::new(vec![[1u8; 32]], vec![], [3u8; 32], DEFAULT_VERSION_BINDING);
+        let tx_b = Transaction::new(vec![[2u8; 32]], vec![], [4u8; 32], DEFAULT_VERSION_BINDING);
         let commitment = compute_proof_commitment(&[tx_a.clone(), tx_b.clone()]);
         let commitment_swapped = compute_proof_commitment(&[tx_b, tx_a]);
         assert_ne!(commitment, commitment_swapped);
+    }
+
+    #[test]
+    fn version_commitment_tracks_counts() {
+        let tx_v1 = Transaction::new(vec![[1u8; 32]], vec![], [3u8; 32], DEFAULT_VERSION_BINDING);
+        let tx_v2 = Transaction::new(
+            vec![[4u8; 32]],
+            vec![],
+            [5u8; 32],
+            VersionBinding::new(2, DEFAULT_VERSION_BINDING.crypto),
+        );
+        let matrix = compute_version_matrix(&[tx_v1.clone(), tx_v1.clone(), tx_v2.clone()]);
+        let counts = matrix.counts();
+        assert_eq!(counts.get(&DEFAULT_VERSION_BINDING), Some(&2));
+        assert_eq!(counts.get(&tx_v2.version), Some(&1));
+        let commitment = compute_version_commitment(&[tx_v1, tx_v2]);
+        assert_ne!(commitment, [0u8; 32]);
     }
 }

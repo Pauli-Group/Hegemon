@@ -1,9 +1,12 @@
 use consensus::BalanceTag;
+use consensus::DEFAULT_VERSION_BINDING;
+use consensus::VersionBinding;
 use consensus::error::ConsensusError;
 use consensus::header::{BlockHeader, PowSeal};
 use consensus::nullifier::NullifierSet;
 use consensus::types::{
     ConsensusBlock, Transaction, compute_fee_commitment, compute_proof_commitment,
+    compute_version_commitment,
 };
 use consensus::validator::{Validator, ValidatorSet};
 use crypto::hashes::sha256;
@@ -57,10 +60,14 @@ pub fn validator_set(validators: &[TestValidator]) -> ValidatorSet {
 
 #[allow(dead_code)]
 pub fn dummy_transaction(tag_seed: u8) -> Transaction {
+    dummy_transaction_with_version(tag_seed, DEFAULT_VERSION_BINDING)
+}
+
+pub fn dummy_transaction_with_version(tag_seed: u8, version: VersionBinding) -> Transaction {
     let nullifier = [tag_seed; 32];
     let commitment = [tag_seed.wrapping_add(1); 32];
     let balance_tag: BalanceTag = [tag_seed.wrapping_add(2); 32];
-    Transaction::new(vec![nullifier], vec![commitment], balance_tag)
+    Transaction::new(vec![nullifier], vec![commitment], balance_tag, version)
 }
 
 pub fn apply_nullifiers(
@@ -108,6 +115,7 @@ pub fn assemble_bft_block(
     let new_nullifiers = apply_nullifiers(base_nullifiers, &transactions)?;
     let nullifier_root = new_nullifiers.commitment();
     let proof_commitment = compute_proof_commitment(&transactions);
+    let version_commitment = compute_version_commitment(&transactions);
     let fee_commitment = compute_fee_commitment(&transactions);
     let state_root = accumulate_state(base_state_root, &transactions);
     let validator_set = validator_set(validators);
@@ -120,6 +128,7 @@ pub fn assemble_bft_block(
         state_root,
         nullifier_root,
         proof_commitment,
+        version_commitment,
         tx_count: transactions.len() as u32,
         fee_commitment,
         validator_set_commitment: validator_set.validator_set_commitment(),
@@ -165,6 +174,7 @@ pub fn assemble_pow_block(
     let new_nullifiers = apply_nullifiers(base_nullifiers, &transactions)?;
     let nullifier_root = new_nullifiers.commitment();
     let proof_commitment = compute_proof_commitment(&transactions);
+    let version_commitment = compute_version_commitment(&transactions);
     let fee_commitment = compute_fee_commitment(&transactions);
     let state_root = accumulate_state(base_state_root, &transactions);
     let mut header = BlockHeader {
@@ -176,6 +186,7 @@ pub fn assemble_pow_block(
         state_root,
         nullifier_root,
         proof_commitment,
+        version_commitment,
         tx_count: transactions.len() as u32,
         fee_commitment,
         validator_set_commitment: sha256(&miner.validator.public_key().to_bytes()),

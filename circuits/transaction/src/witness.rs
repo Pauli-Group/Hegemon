@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
 use serde::{Deserialize, Serialize};
 use winterfell::math::FieldElement;
 
@@ -22,6 +23,8 @@ pub struct TransactionWitness {
     #[serde(with = "crate::witness::serde_felt")]
     pub merkle_root: Felt,
     pub fee: u64,
+    #[serde(default = "TransactionWitness::default_version_binding")]
+    pub version: VersionBinding,
 }
 
 impl TransactionWitness {
@@ -108,7 +111,12 @@ impl TransactionWitness {
             commitments,
             balance_slots,
             self.fee,
+            self.version,
         )
+    }
+
+    pub fn default_version_binding() -> VersionBinding {
+        DEFAULT_VERSION_BINDING
     }
 }
 

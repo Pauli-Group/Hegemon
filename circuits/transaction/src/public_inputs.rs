@@ -1,3 +1,4 @@
+use protocol_versioning::{CircuitVersion, CryptoSuiteId, VersionBinding};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -24,6 +25,8 @@ pub struct TransactionPublicInputs {
     pub native_fee: u64,
     #[serde(with = "crate::public_inputs::serde_felt")]
     pub balance_tag: Felt,
+    pub circuit_version: CircuitVersion,
+    pub crypto_suite: CryptoSuiteId,
 }
 
 impl TransactionPublicInputs {
@@ -33,6 +36,7 @@ impl TransactionPublicInputs {
         commitments: Vec<Felt>,
         balance_slots: Vec<BalanceSlot>,
         native_fee: u64,
+        version: VersionBinding,
     ) -> Result<Self, TransactionCircuitError> {
         if nullifiers.len() != MAX_INPUTS {
             return Err(TransactionCircuitError::NullifierMismatch(nullifiers.len()));
@@ -63,7 +67,13 @@ impl TransactionPublicInputs {
             balance_slots,
             native_fee,
             balance_tag,
+            circuit_version: version.circuit,
+            crypto_suite: version.crypto,
         })
+    }
+
+    pub fn version_binding(&self) -> VersionBinding {
+        VersionBinding::new(self.circuit_version, self.crypto_suite)
     }
 }
 
