@@ -1,6 +1,6 @@
 mod common;
 
-use common::{assemble_bft_block, make_validators, validator_set};
+use common::{BftBlockParams, assemble_bft_block, make_validators, validator_set};
 use consensus::{BftConsensus, HashVerifier, NullifierSet, Transaction};
 use proptest::prelude::*;
 
@@ -21,19 +21,19 @@ proptest! {
         let duplicates = has_duplicates(&nullifiers);
         let validators = make_validators(3, 10);
         let validator_set = validator_set(&validators);
-        let mut consensus = BftConsensus::new(validator_set, [0u8; 32], HashVerifier::default());
+        let mut consensus = BftConsensus::new(validator_set, [0u8; 32], HashVerifier);
         let transaction = Transaction::new(nullifiers.clone(), vec![[9u8; 32]], [7u8; 32]);
-        let result = assemble_bft_block(
-            1,
-            1,
-            [0u8; 32],
-            1234,
-            vec![transaction],
-            &validators,
-            &[0, 1, 2],
-            &NullifierSet::new(),
-            [0u8; 32],
-        );
+        let result = assemble_bft_block(BftBlockParams {
+            height: 1,
+            view: 1,
+            parent_hash: [0u8; 32],
+            timestamp_ms: 1234,
+            transactions: vec![transaction],
+            validators: &validators,
+            signer_indices: &[0, 1, 2],
+            base_nullifiers: &NullifierSet::new(),
+            base_state_root: [0u8; 32],
+        });
         if duplicates {
             prop_assert!(result.is_err());
         } else {
