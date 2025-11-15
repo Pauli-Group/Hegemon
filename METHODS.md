@@ -786,6 +786,11 @@ Implementation hygiene now mirrors the layout introduced in `DESIGN.md §6` and 
    - `cargo run -p circuits-bench -- --smoke --prove --json` – validates witness → proof → block aggregation loop.
    - `cargo run -p wallet-bench -- --smoke --json` – stresses key derivation, encryption, and nullifier derivations.
    - `(cd consensus/bench && go test ./... && go run ./cmd/netbench --smoke --json)` – ensures the Go simulator compiles/tests while reporting PQ throughput budgets.
+5. **Security harnesses** – run the adversarial property tests locally before pushing:
+   - `PROPTEST_MAX_CASES=64 cargo test -p transaction-circuit --test security_fuzz` (transaction witness invariants).
+   - `PROPTEST_MAX_CASES=64 cargo test -p network --test adversarial` (handshake tampering).
+   - `PROPTEST_MAX_CASES=64 cargo test -p wallet --test address_fuzz` (address encode/decode mutations).
+   - `cargo test tests::security_pipeline` (root-level cross-component simulation).
 
 Document benchmark outputs in pull requests when they change noticeably; CI will surface them via the `benchmarks` job but reviewers rely on human summaries for regressions.
 
@@ -801,8 +806,15 @@ Document benchmark outputs in pull requests when they change noticeably; CI will
 | `go-net` | Runs `go test ./...` and the `netbench` simulator. |
 | `cpp-style` | Applies `clang-format --dry-run` if any `*.cpp`/`*.h` files exist (no-op otherwise). |
 | `benchmarks` | Executes all smoke benchmarks with `continue-on-error: true` so regressions surface as warnings. |
+| `security-adversarial` | Runs the property-based harnesses for transaction witnesses, network handshakes, wallet addresses, and the root `tests/security_pipeline.rs` flow. |
 
 All jobs operate on Ubuntu runners with Rust stable, Go 1.21, and clang-format installed via `apt`. Adding new languages or toolchains requires updating this table, the workflow, and `docs/CONTRIBUTING.md`.
+
+### Security assurance workflow
+
+- Follow `docs/SECURITY_REVIEWS.md` whenever commissioning cryptanalysis or third-party audits. Every finding recorded there must reference the code path touched plus the mitigation PR.
+- `circuits/formal/README.md` and `consensus/spec/formal/README.md` explain how to run the new TLA+ models. Include the TLC/Apalache output summary in PR descriptions when those specs change.
+- `runbooks/security_testing.md` documents how to rerun the `security-adversarial` job locally, capture artifacts, and notify auditors if a regression appears on CI. Treat it as mandatory reading before release tagging.
 
 ### Documentation + threat-model synchronization
 

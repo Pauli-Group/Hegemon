@@ -73,6 +73,25 @@ jobs:
       - name: Wallet benchmark smoke test
         run: cargo run -p wallet-bench -- --smoke --json
 
+  security-adversarial:
+    runs-on: ubuntu-latest
+    needs: rust-tests
+    env:
+      PROPTEST_MAX_CASES: 64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Transaction circuit security fuzzing
+        run: cargo test -p transaction-circuit --test security_fuzz -- --nocapture
+      - name: Network adversarial tests
+        run: cargo test -p network --test adversarial -- --nocapture
+      - name: Wallet address fuzzing
+        run: cargo test -p wallet --test address_fuzz -- --nocapture
+      - name: Cross-component adversarial flow
+        run: cargo test --test security_pipeline -- --nocapture
+
   go-net:
     runs-on: ubuntu-latest
     steps:

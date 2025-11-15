@@ -551,6 +551,7 @@ dependencies = [
  "aead",
  "aes-gcm",
  "bincode",
+ "proptest",
  "rand 0.8.5",
  "serde",
  "sha2",
@@ -1060,6 +1061,7 @@ name = "transaction-circuit"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "proptest",
  "protocol-versioning",
  "rand 0.8.5",
  "serde",
@@ -1130,6 +1132,7 @@ dependencies = [
  "clap",
  "hex",
  "predicates",
+ "proptest",
  "rand 0.8.5",
  "serde",
  "serde_json",
