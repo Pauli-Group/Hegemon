@@ -1,7 +1,7 @@
 use bincode::serialize;
 use proptest::prelude::*;
 
-use network::{establish_secure_channel, NetworkError, PeerIdentity};
+use network::{NetworkError, PeerIdentity, establish_secure_channel};
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(48))]
