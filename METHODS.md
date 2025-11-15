@@ -727,3 +727,24 @@ This yields a per-block proof `π_block` showing every transaction adheres to th
 
 If you introduce a new transaction circuit version, update `C_block` so its verification step accepts both old and new proofs. After some time, consensus can reject new transactions with old-version proofs, but `C_block` retains backward verification code as long as necessary (or you drop it when you no longer need to accept old blocks).
 
+
+---
+
+## 7. Post-quantum crypto module (reference implementations)
+
+The `crypto/` crate provides deterministic reference bindings for the PQ primitives referenced throughout the design. All APIs live in safe Rust and use fixed-length byte arrays so that serialization matches the NIST ML-DSA, SLH-DSA, and ML-KEM parameter sizes without pulling in the full reference C code.
+
+Module layout:
+
+* `crypto::ml_dsa` – exposes `MlDsaSecretKey`, `MlDsaPublicKey`, and `MlDsaSignature` with `SigningKey`/`VerifyKey` trait implementations. Secret keys derive public keys by hashing with domain tag `ml-dsa-pk`, and signatures deterministically expand `ml-dsa-signature || pk || message` to 3293 bytes.
+* `crypto::slh_dsa` – mirrors the ML-DSA interface but with SLH-DSA key lengths (32 B public, 64 B secret, 17088 B signatures).
+* `crypto::ml_kem` – wraps Kyber-like encapsulation with `MlKemKeyPair`, `MlKemPublicKey`, and `MlKemCiphertext`. Encapsulation uses a seed to deterministically derive ciphertexts and shared secrets, while decapsulation recomputes the shared secret from stored public bytes.
+* `crypto::hashes` – contains `sha256`, `blake3_256`, a Poseidon-style permutation over the Goldilocks prime, and helpers `commit_note`, `derive_prf_key`, and `derive_nullifier` that apply the design’s domain tags (`"c"`, `"nk"`, `"nf"`).
+
+The crate’s `tests/crypto_vectors.rs` fixture loads `tests/vectors.json` to assert byte-for-byte deterministic vectors covering:
+
+* key generation and signing for ML-DSA and SLH-DSA,
+* ML-KEM key generation, encapsulation, and decapsulation,
+* hash-based commitment, PRF key derivation, nullifier derivation, SHA-256, BLAKE3, and Poseidon outputs.
+
+Run `cargo test` from the `crypto/` directory to regenerate and validate all vectors.
