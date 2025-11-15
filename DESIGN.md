@@ -22,6 +22,29 @@ Everything else is negotiable.
 
 ---
 
+### 0.1 Explicit overheads relative to Zcash
+
+Contributors routinely ask how these PQ and MASP design choices differ from Zcash’s Sapling/Orchard stack. The high-level costs
+are:
+
+* **Cryptographic payload sizes** – ML-DSA/ML-KEM artifacts are orders of magnitude larger than the ECC keys, signatures, and
+  ECIES ciphertexts Zcash uses today. Even though the spend circuit keeps Sapling’s “prove key knowledge inside the ZK proof”
+  model (so there are no per-input signatures), block headers, validator identities, and the note encryption layer all absorb
+  PQ size bloat: ML-DSA-65 pk = 1,952 B vs ~32 B Ed25519, signatures = 3,293 B vs ~64 B, ML-KEM ciphertexts = 1,088 B vs
+  ~80–100 B for Jubjub-based ECIES. Network/consensus plumbing must therefore expect materially larger payloads.
+* **Proof sizes and verification latency** – Trading Groth16/Halo2 for a transparent STARK stack removes the trusted setup but
+  makes proofs much chunkier: tens of kilobytes with verifier runtimes in the tens of milliseconds, versus sub-kilobyte Groth16
+  proofs with millisecond verification. The spend circuit, memo ciphertexts, and block propagation logic all need to budget for
+  that bandwidth/latency overhead.
+* **Circuit-level MASP costs** – Supporting multi-asset notes requires in-circuit sorting/aggregation of `(asset_id, delta)`
+  tuples, introducing an \(O((M+N) \log (M+N))\) constraint factor that Sapling’s single-asset equations avoid. We explicitly
+  accept this blow-up because it stays manageable at Zcash-like `M, N` and keeps the user model aligned with today’s MASP work.
+
+These considerations don’t change the core protocol, but they should show up in performance estimations, benchmarking, and any
+communication that compares this system to the status quo.
+
+---
+
 ## 1. Cryptographic stack (primitives only)
 
 ### 1.1 Signatures
