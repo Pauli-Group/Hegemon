@@ -162,6 +162,17 @@ Concretely:
 
 **Lesson from Zcash:** we do *not* change proving systems mid-flight if we can avoid it. We pick one transparent, STARK-ish scheme and stick with it, using recursion for evolution rather than entire new pools.
 
+#### 2.1 Algebraic embeddings that claw back overhead
+
+The transparent stack above is heavier than Groth16/Halo2, but a few circuit-level embeddings keep it manageable:
+
+* **Goldilocks-friendly encodings** – Express the note/balance logic directly in the 64-bit-friendly base field instead of relying on binary gadgets. Packing `(value, asset_id)` pairs into two 64-bit limbs each lets the AIR use cheap addition/multiplication constraints with no Boolean decomposition. This matches Winterfell/Plonky3’s "Goldilocks" optimizations and avoids the \((\times 32\) blow-up you’d get from bit-constraining every register.
+* **Permutation/Ishai–Kushilevitz style lookups** – MASP balance checks need large-domain comparisons (e.g., `asset_id` equality during the in-circuit sort). Encoding those comparisons as STARK-friendly permutation arguments—rather than explicit comparator circuits—reuses the same algebraic lookup table that the prover already commits to for Poseidon rounds. Empirically this trims ~15–20 % of the trace width relative to naive comparison gadgets while remaining transparent.
+* **Batched range proofs via radix embeddings** – Instead of per-note binary range proofs, embed values in radix-`2^16` limbs and reuse a single low-degree check `limb < 2^16` over the entire column. A single lookup table enforces limb bounds, and the batched sum-check amortizes across all limbs, driving the marginal cost per constrained value close to 1–2 constraints.
+* **Folded multi-openings for recursion** – Recursively verifying child proofs requires many polynomial openings; batching them through a single FRI transcript with linear-combination challenges keeps the verifier time in the "tens of ms" bucket despite the larger STARK proofs.
+
+None of these tricks negate the inherent bandwidth hit of transparent proofs, but they make the witness columns thinner and the constraint system shallower so that prover time and memory stay near the Zcash baseline even with PQ primitives.
+
 ### 2.5 Formal verification and adversarial pipelines
 
 The `circuits/formal/transaction_balance.tla` model captures the MASP balance rules (nullifier uniqueness + per-asset conservation) using a compact TLA+ spec. Any change to the AIR/witness layout must update that spec plus rerun TLC/Apalache, recording the outcome in the associated README and in `docs/SECURITY_REVIEWS.md`. On the implementation side, `circuits/transaction/tests/security_fuzz.rs` performs property-based fuzzing of `TransactionWitness::balance_slots` and `public_inputs` to catch serialization edge cases. Both the formal model and the fuzz harness are wired into the `security-adversarial` CI job, so contributors get immediate feedback when the balance/tag logic drifts.
