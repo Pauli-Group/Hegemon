@@ -1,0 +1,119 @@
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID},
+    error::TransactionCircuitError,
+    hashing::{balance_commitment, Felt},
+};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BalanceSlot {
+    pub asset_id: u64,
+    pub delta: i128,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransactionPublicInputs {
+    #[serde(with = "crate::public_inputs::serde_felt")]
+    pub merkle_root: Felt,
+    #[serde(with = "crate::public_inputs::serde_vec_felt")]
+    pub nullifiers: Vec<Felt>,
+    #[serde(with = "crate::public_inputs::serde_vec_felt")]
+    pub commitments: Vec<Felt>,
+    pub balance_slots: Vec<BalanceSlot>,
+    pub native_fee: u64,
+    #[serde(with = "crate::public_inputs::serde_felt")]
+    pub balance_tag: Felt,
+}
+
+impl TransactionPublicInputs {
+    pub fn new(
+        merkle_root: Felt,
+        nullifiers: Vec<Felt>,
+        commitments: Vec<Felt>,
+        balance_slots: Vec<BalanceSlot>,
+        native_fee: u64,
+    ) -> Result<Self, TransactionCircuitError> {
+        if nullifiers.len() != MAX_INPUTS {
+            return Err(TransactionCircuitError::NullifierMismatch(nullifiers.len()));
+        }
+        if commitments.len() != MAX_OUTPUTS {
+            return Err(TransactionCircuitError::CommitmentMismatch(
+                commitments.len(),
+            ));
+        }
+        if balance_slots.len() != BALANCE_SLOTS {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "balance slot vector must match BALANCE_SLOTS",
+            ));
+        }
+
+        let native_delta = balance_slots
+            .iter()
+            .find(|slot| slot.asset_id == NATIVE_ASSET_ID)
+            .map(|slot| slot.delta)
+            .unwrap_or(0);
+        let expected_balance_tag = balance_commitment(native_delta, &balance_slots);
+        let balance_tag = expected_balance_tag;
+
+        Ok(Self {
+            merkle_root,
+            nullifiers,
+            commitments,
+            balance_slots,
+            native_fee,
+            balance_tag,
+        })
+    }
+}
+
+pub(crate) mod serde_vec_felt {
+    use serde::{Deserializer, Serializer};
+    use std::convert::TryInto;
+    use winterfell::math::fields::f64::BaseElement;
+
+    pub fn serialize<S>(values: &[BaseElement], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let bytes: Vec<[u8; 8]> = values.iter().map(|v| v.as_int().to_be_bytes()).collect();
+        serializer.serialize_bytes(&bytes.concat())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<BaseElement>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        if !bytes.len().is_multiple_of(8) {
+            return Err(serde::de::Error::custom("invalid field encoding"));
+        }
+        Ok(bytes
+            .chunks(8)
+            .map(|chunk| BaseElement::new(u64::from_be_bytes(chunk.try_into().unwrap())))
+            .collect())
+    }
+
+    use serde::Deserialize;
+}
+pub(crate) mod serde_felt {
+    use serde::{Deserializer, Serializer};
+    use winterfell::math::fields::f64::BaseElement;
+
+    pub fn serialize<S>(value: &BaseElement, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u64(value.as_int())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BaseElement, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = u64::deserialize(deserializer)?;
+        Ok(BaseElement::new(value))
+    }
+
+    use serde::Deserialize;
+}
