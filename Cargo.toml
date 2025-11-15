@@ -4,5 +4,7 @@ members = [
     "circuits/transaction",
     "circuits/block",
     "state/merkle",
+    "consensus",
+    "network",
 ]
 resolver = "2"
