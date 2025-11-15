@@ -1,7 +1,7 @@
 use network::{establish_secure_channel, PeerIdentity};
 use transaction_circuit::hashing::Felt;
 use transaction_circuit::note::{InputNoteWitness, NoteData, OutputNoteWitness};
-use transaction_circuit::{TransactionWitness};
+use transaction_circuit::TransactionWitness;
 use wallet::RootSecret;
 
 fn sample_witness() -> TransactionWitness {
@@ -82,5 +82,8 @@ fn end_to_end_adversarial_flow() {
     let slots = witness.balance_slots().expect("balance slots");
     assert_eq!(slots.len(), transaction_circuit::constants::BALANCE_SLOTS);
     let public_inputs = witness.public_inputs().expect("public inputs");
-    assert_eq!(public_inputs.nullifiers.len(), transaction_circuit::constants::MAX_INPUTS);
+    assert_eq!(
+        public_inputs.nullifiers.len(),
+        transaction_circuit::constants::MAX_INPUTS
+    );
 }
