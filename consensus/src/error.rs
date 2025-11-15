@@ -1,4 +1,5 @@
 use crate::types::{BlockHash, Nullifier, ValidatorId};
+use protocol_versioning::VersionBinding;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -23,6 +24,11 @@ pub enum ConsensusError {
     Pow(String),
     #[error("serialization error: {0}")]
     Serialization(#[from] bincode::Error),
+    #[error("transaction version {version:?} not active at height {height}")]
+    UnsupportedVersion {
+        version: VersionBinding,
+        height: u64,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -33,6 +39,8 @@ pub enum ProofError {
     TransactionCount,
     #[error("invalid fee commitment")]
     FeeCommitment,
+    #[error("version commitment mismatch")]
+    VersionCommitment,
     #[error("verifier internal error: {0}")]
     Internal(&'static str),
 }

@@ -5,6 +5,7 @@ members = [
     "circuits/block",
     "state/merkle",
     "consensus",
+    "protocol/versioning",
     "network",
     "wallet",
 ]

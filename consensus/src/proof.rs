@@ -1,6 +1,7 @@
 use crate::error::ProofError;
 use crate::types::{
-    Block, FeeCommitment, StarkCommitment, compute_fee_commitment, compute_proof_commitment,
+    Block, FeeCommitment, StarkCommitment, VersionCommitment, compute_fee_commitment,
+    compute_proof_commitment, compute_version_commitment,
 };
 
 pub trait ProofVerifier: Send + Sync {
@@ -25,6 +26,7 @@ pub trait HeaderProofExt {
     fn proof_commitment(&self) -> StarkCommitment;
     fn fee_commitment(&self) -> FeeCommitment;
     fn transaction_count(&self) -> u32;
+    fn version_commitment(&self) -> VersionCommitment;
 }
 
 impl HeaderProofExt for crate::header::BlockHeader {
@@ -38,6 +40,10 @@ impl HeaderProofExt for crate::header::BlockHeader {
 
     fn transaction_count(&self) -> u32 {
         self.tx_count
+    }
+
+    fn version_commitment(&self) -> VersionCommitment {
+        self.version_commitment
     }
 }
 
@@ -55,6 +61,10 @@ where
     let computed_fee = compute_fee_commitment(&block.transactions);
     if computed_fee != block.header.fee_commitment() {
         return Err(ProofError::FeeCommitment);
+    }
+    let computed_versions = compute_version_commitment(&block.transactions);
+    if computed_versions != block.header.version_commitment() {
+        return Err(ProofError::VersionCommitment);
     }
     Ok(())
 }

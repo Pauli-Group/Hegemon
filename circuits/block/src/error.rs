@@ -1,3 +1,4 @@
+use protocol_versioning::VersionBinding;
 use thiserror::Error;
 use transaction_circuit::{hashing::Felt, TransactionCircuitError};
 
@@ -31,4 +32,11 @@ pub enum BlockError {
     StartingRootMismatch { expected: Felt, observed: Felt },
     #[error("block root trace mismatch")]
     RootTraceMismatch,
+    #[error("transaction proof at index {index} declared unsupported version {version:?}")]
+    UnsupportedVersion {
+        index: usize,
+        version: VersionBinding,
+    },
+    #[error("reported version census does not match execution")]
+    VersionMatrixMismatch,
 }

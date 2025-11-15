@@ -8,6 +8,7 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 transaction-circuit = { path = "../transaction" }
 state-merkle = { path = "../../state/merkle" }
+protocol-versioning = { path = "../../protocol/versioning" }
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }

@@ -197,6 +197,7 @@ dependencies = [
 name = "block-circuit"
 version = "0.1.0"
 dependencies = [
+ "protocol-versioning",
  "rand 0.8.5",
  "serde",
  "state-merkle",
@@ -322,6 +323,8 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "proptest",
+ "protocol-versioning",
+ "serde",
  "sha2",
  "synthetic-crypto",
  "thiserror",
@@ -689,6 +692,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "protocol-versioning"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sha2",
+]
+
+[[package]]
 name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1033,6 +1044,7 @@ name = "transaction-circuit"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "protocol-versioning",
  "rand 0.8.5",
  "serde",
  "serde_json",
