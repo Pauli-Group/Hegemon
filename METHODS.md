@@ -395,3 +395,335 @@ On algorithm deprecation:
 
 * Consensus can forbid new transactions with, say, `kem_id = ML‑KEM‑768` after block X, but still allow spends of existing notes for some grace period.
 * You can also add a “must migrate by height H” rule for certain key types, enforced by a special migration circuit.
+
+---
+
+## Appendix: Concrete Parameters and Protocol Details
+
+### 1. Concrete parameters
+
+#### 1.1 Field
+
+Take a “Goldilocks” prime:
+
+* \(p = 2^{64} - 2^{32} + 1\).
+
+Properties:
+
+* Fits in 64 bits, which is convenient for CPU implementations.
+* Large enough that 64-bit values plus a few dozen additions will not overflow modulo \(p\).
+* Has a large 2-power multiplicative subgroup, which is useful for FFT/FRI.
+
+Everything arithmetized in the STARK (commitments, Merkle hashes, PRFs) lives in \(\mathbb{F}_p\).
+
+#### 1.2 Internal hash / permutation
+
+Define a Poseidon-like permutation \(P: \mathbb{F}_p^t \to \mathbb{F}_p^t\):
+
+* Width \(t = 12\) so we can absorb multiple words at once.
+* Round constants and MDS matrix chosen per the standard Poseidon recipe for this field.
+* Rounds: for example, \(R_F = 8\) full and \(R_P = 56\) partial (numbers can be tuned; assume we choose something with at least a 128-bit post-quantum security margin).
+
+We derive a field hash by sponge:
+
+\[
+H_f(x_0, \ldots, x_{k-1}) = \operatorname{Sponge}(P, \text{capacity}=4, \text{rate}=8, x_0, \ldots, x_{k-1})
+\]
+
+The output is one field element (the first state word).
+
+Outside the circuit (for block headers, addresses, etc.) we can still use standard SHA-256 as a byte-oriented hash. Inside, we stick to \(H_f\).
+
+#### 1.3 Merkle tree
+
+* Each leaf: one field element \(cm \in \mathbb{F}_p\).
+* Parent hash: for children \(L, R \in \mathbb{F}_p\),
+
+\[
+\text{parent} = H_f(\text{domain}_{\text{merkle}}, L, R)
+\]
+
+where \(\text{domain}_{\text{merkle}}\) is a fixed field element.
+
+* Tree depth: say 32 or 40 (gives capacity for \(2^{32}\)–\(2^{40}\) notes; you can always roll a new tree later via a transition proof).
+
+#### 1.4 PQC choices
+
+To have something specific in mind:
+
+* KEM: ML-KEM-768 (Kyber-768 equivalent) with \(|pk| \approx 1184\) bytes, \(|ct| \approx 1088\) bytes, 192-bit classical and roughly 96-bit post-quantum security.
+* Signature: ML-DSA-65xx (Dilithium-level) or category-3 equivalent with approximately 2–3 KB signatures and 1–2 KB public keys.
+
+We do not need signatures inside the shielded circuit, only for block authentication and possibly transaction-level authentication.
+
+### 2. Object definitions (bits, fields, encodings)
+
+#### 2.1 Value and asset ID
+
+* \(v\): 64-bit unsigned integer, value of note.
+* Encoded into one field element \(v \in \mathbb{F}_p\) via the natural embedding (\(0 \le v < 2^{64} \subset \mathbb{F}_p\)).
+* \(a\): 256-bit asset ID (for MASP) represented as four field elements \(a_0, a_1, a_2, a_3 \in \mathbb{F}_p\), each encoding 64 bits of the asset ID.
+
+#### 2.2 Address tag and randomness
+
+* \(\text{addr\_tag}\): 256-bit tag derived from the recipient’s view key and diversifier index, represented as four field elements \(t_0, t_1, t_2, t_3\).
+* \(\rho\): 256-bit per-note secret, represented as four field elements \(\rho_0, \rho_1, \rho_2, \rho_3\).
+* \(r\): 256-bit blinding, represented as four field elements \(r_0, r_1, r_2, r_3\).
+
+#### 2.3 Note commitment
+
+Take the 1-word capacity / 8-word rate sponge and define
+
+\[
+\begin{aligned}
+cm = H_f(&\text{domain}_{cm},
+    v, \\
+    &a_0, a_1, a_2, a_3, \\
+    &t_0, t_1, t_2, t_3, \\
+    &\rho_0, \rho_1, \rho_2, \rho_3, \\
+    &r_0, r_1, r_2, r_3)
+\end{aligned}
+\]
+
+Inputs are a sequence of field elements. \(\text{domain}_{cm}\) is a constant field element. On chain, the note commitment tree leaf is exactly \(cm\).
+
+#### 2.4 Nullifier
+
+* Spend secret: \(sk_{\text{spend}}\) is a 256-bit integer, but never placed on chain.
+* Nullifier key: first map \(sk_{\text{spend}}\) to field elements \(ssk_0, \ldots, ssk_3 \in \mathbb{F}_p\) (four 64-bit chunks), then
+
+\[
+nk = H_f(\text{domain}_{nk}, ssk_0, ssk_1, ssk_2, ssk_3).
+\]
+
+For each note with position \(\text{pos}\) (e.g., a 32-bit index):
+
+* Represent \(\text{pos}\) as a single field element (since \(\text{pos} < 2^{32} < p\)).
+* Represent \(\rho\) as above (\(\rho_0, \ldots, \rho_3\)).
+
+Define
+
+\[
+nf = H_f(\text{domain}_{nf}, nk, \text{pos}, \rho_0, \rho_1, \rho_2, \rho_3).
+\]
+
+This \(nf \in \mathbb{F}_p\) is the on-chain nullifier.
+
+### 3. Key / address hierarchy with ML-KEM
+
+#### 3.1 Seed and derivations
+
+Let `seed` be a 256-bit root (e.g., from BIP-39). Derive
+
+```
+sk_spend = SHA256("spend" || seed)
+sk_view  = SHA256("view"  || seed)
+sk_enc   = SHA256("enc"   || seed)
+```
+
+To get deterministic KEM keypairs, use `sk_enc` as the seed to the KEM keygen’s RNG. In practice:
+
+```
+(pk_enc, sk_enc_KEM) = MLKEM.KeyGen(seed = sk_enc || "0")
+```
+
+#### 3.2 Diversified addresses
+
+To get multiple addresses from one wallet, for diversifier index \(i \in \{0, \ldots, 2^{32}-1\}\):
+
+```
+div_i      = SHA256("div" || sk_view || i)   // 256 bits
+addr_tag_i = div_i                            // 256 bits, used directly
+(pk_enc_i, sk_enc_i) = MLKEM.KeyGen(seed = sk_enc || encode(i))
+```
+
+The address \(\text{Addr}_i\) is then
+
+```
+Addr_i = Encode(version || i || pk_enc_i || addr_tag_i)
+```
+
+The wallet stores `sk_spend`, `sk_view`, and either `sk_enc` or all `sk_enc_i` derived on demand.
+
+#### 3.3 Viewing keys
+
+* Incoming Viewing Key (IVK): `ivk = (sk_view, sk_enc)` can recompute all `addr_tag_i` and `sk_enc_i`, decrypt all notes, and see all incoming funds.
+* Full Viewing Key (FVK): `fvk = (sk_view, sk_enc, vk_nf)` where `vk_nf = SHA256("view_nf" || sk_spend)`.
+
+In the circuit we derive `nk = H_f(domain_nk, ssk_0, \ldots, ssk_3)`, but for viewing we derive a view-only nullifier key `vk_nf` outside the circuit that allows watch-only wallets to detect nullifiers corresponding to their notes but not to spend. You can tune whether `vk_nf` equals `nk` or is a one-way function of it, depending on how tightly you want to tie full viewing to spending.
+
+### 4. Note encryption details
+
+Given recipient \(\text{Addr}_i\) with `(pk_enc_i, addr_tag_i)`:
+
+#### 4.1 Plaintext
+
+Plaintext structure:
+
+```
+note_plain = (
+  v:      uint64,
+  a:      32 bytes,
+  rho:    32 bytes,
+  r:      32 bytes,
+  addr_i: 32-bit index i,
+  tag:    32 bytes (addr_tag_i),
+  maybe extra fields (memo pointer, etc.)
+)
+```
+
+#### 4.2 KEM + AEAD
+
+Sender:
+
+1. `(ct_kem, ss) = MLKEM.Encaps(pk_enc_i)`
+2. `k = HKDF(ss, info = "note_enc" || txid || output_index)`
+3. `ct_aead = AEAD_Enc(k, nonce, note_plain, ad = txid || output_index)`
+
+On chain per output:
+
+* `cm ∈ F_p`
+* `ct_kem` (≈1.1 KB)
+* `ct_aead` (|note_plain| + tag, say ≈100 bytes)
+* Optional small `scan_tag` if you want faster scanning.
+
+Recipient with IVK/FVK:
+
+* Recomputes all `sk_enc_i` and `pk_enc_i`.
+* For each output:
+  * Try `MLKEM.Decaps(sk_enc_i, ct_kem)` → either fail or give `ss`.
+  * Derive `k`, attempt AEAD decrypt.
+  * If AEAD succeeds, this note belongs to address `i`.
+
+### 5. Main “join–split” circuit in detail
+
+Assume the base circuit handles up to `M` inputs (e.g., 4) and `N` outputs (e.g., 4). Per transaction, you produce one STARK proof for these `M + N` notes.
+
+#### 5.1 Public inputs
+
+The circuit’s public inputs (fed into its transcript) are:
+
+* `root_before ∈ F_p` – Merkle root at which inputs are valid.
+* `root_after ∈ F_p` – Merkle root after adding outputs and any other block-level updates if handled here.
+* For each input `i`: `nf_in[i] ∈ F_p`.
+* For each output `j`: `cm_out[j] ∈ F_p`.
+* For each asset slot `k` (see MASP below): `Δ_native` or some balance tag (optional; could all be enforced privately).
+* A domain-separated commitment to transaction metadata (`txid`) to tie the proof to that transaction.
+
+#### 5.2 Witness (private inputs)
+
+For each input `i`:
+
+* `v_in[i] ∈ [0, 2^64)`
+* `a_in[i]` (asset id) as 4 field elements
+* `addr_tag_in[i]` as 4 field elements
+* `rho_in[i]` as 4 field elements
+* `r_in[i]` as 4 field elements
+* Merkle auth path: `sibling_in[i][d] ∈ F_p` and `bit_in[i][d] ∈ {0,1}` for `d = 0 .. D-1`
+* `pos_in[i]` as a field element (or bit decomposition)
+* The global spend secret `sk_spend`
+
+For each output `j`:
+
+* `v_out[j]`
+* `a_out[j]`
+* `addr_tag_out[j]`
+* `rho_out[j]`
+* `r_out[j]`
+* `pos_out[j]` (if the transaction is responsible for tree updates; otherwise position is implicit or handled at block level)
+
+#### 5.3 Constraints: input note verification
+
+For each input `i`:
+
+1. **Recompute commitment and check membership**
+
+   * Compute
+
+   \[
+   cm_{\text{in}}[i] = H_f(\text{domain}_{cm}, v_{\text{in}}[i], a_{\text{in}}[i][0..3], \text{addr\_tag}_{\text{in}}[i][0..3], \rho_{\text{in}}[i][0..3], r_{\text{in}}[i][0..3]).
+   \]
+
+   * Compute the root via the Merkle path by iterating the sponge with `domain_merkle` and enforcing boolean constraints on each `bit_in[i][d]`.
+   * Constrain the resulting root to equal `root_before`.
+
+2. **Nullifier**
+
+   * Derive the nullifier key once: split `sk_spend` into four field words `ssk_0 .. ssk_3` and compute `nk = H_f(domain_nk, ssk_0, ssk_1, ssk_2, ssk_3)`.
+   * For each input note, compute
+
+   \[
+   nf_{\text{calc}}[i] = H_f(\text{domain}_{nf}, nk, pos_{\text{in}}[i], \rho_{\text{in}}[i][0..3])
+   \]
+
+   and constrain `nf_calc[i] == nf_in[i]`.
+
+#### 5.4 Constraints: output commitments
+
+For each output `j`, enforce
+
+\[
+cm_{\text{calc}}[j] = H_f(\text{domain}_{cm}, v_{\text{out}}[j], a_{\text{out}}[j][0..3], \text{addr\_tag}_{\text{out}}[j][0..3], \rho_{\text{out}}[j][0..3], r_{\text{out}}[j][0..3]) = cm_{\text{out}}[j].
+\]
+
+#### 5.5 Value range checks
+
+For any value `v` (input or output), decompose into 64 bits with boolean constraints `b_k (b_k - 1) = 0` for `k = 0 .. 63` and reconstruct `v = Σ b_k 2^k`. Use PLONK range gates or a custom bit-packing gate to reduce cost.
+
+#### 5.6 MASP: per-asset balance with a small number of slots
+
+Assume each transaction can involve at most `K` distinct assets (e.g., `K = 4`). Allocate `K` asset slots in the circuit.
+
+Witness for MASP:
+
+* For `k = 0 .. K-1`: `asset_slot[k]` (4 field words of a 256-bit asset id) and `sum_in[k]`, `sum_out[k]` (field elements representing 64-bit totals).
+* For each input note `i`, a slot index `slot_i ∈ {0 .. K-1}`.
+* For each output note `j`, a slot index `slot'_j ∈ {0 .. K-1}`.
+
+Constraints:
+
+1. **Slot index correctness** – represent each `slot_i` as boolean bits and constrain membership in `{0 .. K-1}`; same for `slot'_j`.
+2. **Asset-id consistency** – enforce that each note’s `asset_id` equals the asset stored in its assigned slot.
+3. **Summation** – accumulate `sum_in` and `sum_out` per slot via chained additions.
+4. **Conservation per slot** – enforce `net_k = sum_in[k] - sum_out[k]`. For the native asset slot (say slot 0 with `asset_id = 0…0`), constrain `net_0` to equal `fee_native + issuance_native` (public inputs or constants). For other slots, constrain `net_k = 0`. Optionally require sorted, duplicate-free asset slots for canonicalization.
+
+This MASP approach is cheaper than sorting an arbitrary `(asset_id, delta)` multiset but restricts how many assets can appear in one transaction.
+
+### 6. Tree evolution and block-level recursion
+
+To avoid putting Merkle tree updates in every transaction circuit, handle them at the block level.
+
+#### 6.1 Per-transaction proof
+
+The transaction proof shows:
+
+* Inputs are members of `root_before`.
+* Commitments `cm_out` are well formed.
+* Nullifiers `nf_in` are correctly derived.
+* Value balance per asset holds.
+
+It does not assert anything about `root_after`.
+
+#### 6.2 Block state
+
+The node maintains a canonical commitment tree with current root `root_state`. A block contains a list of transactions `T_1 .. T_m` and for each transaction a public `root_before` that must equal the block’s running root when that transaction is applied in order.
+
+#### 6.3 Block circuit and proof
+
+Define a second circuit `C_block` with
+
+* Public inputs: `root_prev` (root at start of block), `root_new` (root after applying all transactions), and a list or hash of all transaction identifiers and their `nf_in`, `cm_out`, and `root_before` values to tie things together.
+* Witness: the sequence of changes to the commitment tree (indices and sibling hashes) and the transaction-level proofs `π_tx` or their verification data.
+
+Constraints in `C_block`:
+
+1. **Verify each transaction proof** – for each transaction `T_i`, feed its public inputs to the embedded STARK verifier and constrain the verifier’s accept flag to 1 (using recursive STARK techniques).
+2. **Reproduce tree evolution** – start with `root = root_prev` and iteratively insert each `cm_out[j]` at the next available leaf position (or a consensus-defined position), recomputing the root with `H_f`. After all insertions, enforce that the final root equals `root_new`.
+3. **Check transaction ordering** – enforce `root_before[i]` matches the running root before applying `T_i`.
+
+This yields a per-block proof `π_block` showing every transaction adheres to the join–split semantics and that the global note tree root evolves correctly from `root_prev` to `root_new`. Nodes can verify `π_block` once to accept the block or verify transaction proofs individually and recompute the tree themselves.
+
+#### 6.4 Circuit versioning
+
+If you introduce a new transaction circuit version, update `C_block` so its verification step accepts both old and new proofs. After some time, consensus can reject new transactions with old-version proofs, but `C_block` retains backward verification code as long as necessary (or you drop it when you no longer need to accept old blocks).
+
