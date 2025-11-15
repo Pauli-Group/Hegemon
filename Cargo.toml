@@ -2,5 +2,7 @@
 members = [
     "crypto",
     "circuits/transaction",
+    "circuits/block",
+    "state/merkle",
 ]
 resolver = "2"
