@@ -92,7 +92,7 @@ impl ViewKey {
     pub fn address_tag(&self, index: u32) -> [u8; KEY_SIZE] {
         let mut hasher = Sha256::new();
         hasher.update(b"addr-tag");
-        hasher.update(&self.0);
+        hasher.update(self.0);
         hasher.update(index.to_le_bytes());
         hasher.finalize().into()
     }
@@ -119,7 +119,7 @@ impl DiversifierKey {
     pub fn derive(&self, index: u32) -> [u8; KEY_SIZE] {
         let mut hasher = Sha256::new();
         hasher.update(b"diversifier");
-        hasher.update(&self.0);
+        hasher.update(self.0);
         hasher.update(index.to_le_bytes());
         hasher.finalize().into()
     }
