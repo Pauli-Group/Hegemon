@@ -50,11 +50,11 @@ impl FieldElement {
 
 fn poseidon_round_constants() -> [[FieldElement; POSEIDON_WIDTH]; POSEIDON_ROUNDS] {
     let mut constants = [[FieldElement::zero(); POSEIDON_WIDTH]; POSEIDON_ROUNDS];
-    for round in 0..POSEIDON_ROUNDS {
-        for idx in 0..POSEIDON_WIDTH {
+    for (round, round_constants) in constants.iter_mut().enumerate() {
+        for (idx, constant) in round_constants.iter_mut().enumerate() {
             let material = [round as u8, idx as u8];
             let bytes = expand_to_length(b"poseidon-constants", &material, 8);
-            constants[round][idx] = FieldElement::from_bytes(&bytes);
+            *constant = FieldElement::from_bytes(&bytes);
         }
     }
     constants
@@ -63,12 +63,12 @@ fn poseidon_round_constants() -> [[FieldElement; POSEIDON_WIDTH]; POSEIDON_ROUND
 fn poseidon_mix(state: &mut [FieldElement; POSEIDON_WIDTH]) {
     const MIX_MATRIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
     let mut new_state = [FieldElement::zero(); POSEIDON_WIDTH];
-    for i in 0..POSEIDON_WIDTH {
+    for (new_slot, mix_row) in new_state.iter_mut().zip(MIX_MATRIX.iter()) {
         let mut acc = FieldElement::zero();
-        for j in 0..POSEIDON_WIDTH {
-            acc = acc.add(state[j].mul(FieldElement::from_u64(MIX_MATRIX[i][j])));
+        for (value, coeff) in state.iter().zip(mix_row.iter()) {
+            acc = acc.add(value.mul(FieldElement::from_u64(*coeff)));
         }
-        new_state[i] = acc;
+        *new_slot = acc;
     }
     *state = new_state;
 }
@@ -83,12 +83,12 @@ pub fn poseidon_hash(inputs: &[FieldElement]) -> FieldElement {
 
     for input in inputs {
         state[0] = state[0].add(*input);
-        for round in 0..POSEIDON_ROUNDS {
-            for idx in 0..POSEIDON_WIDTH {
-                state[idx] = state[idx].add(constants[round][idx]);
+        for round_constants in constants.iter() {
+            for (state_slot, constant) in state.iter_mut().zip(round_constants.iter()) {
+                *state_slot = state_slot.add(*constant);
             }
-            for idx in 0..POSEIDON_WIDTH {
-                state[idx] = state[idx].pow5();
+            for state_slot in &mut state {
+                *state_slot = state_slot.pow5();
             }
             poseidon_mix(&mut state);
         }
