@@ -329,3 +329,28 @@ If we’re being ruthless:
 [2]: https://www.c-sharpcorner.com/article/zk-snarks-vs-zk-starks/
 [3]: https://cloudsecurityalliance.org/artifacts/post-quantum-cryptography-and-zero-knowledge-proofs/
 [4]: https://www.isaca.org/resources/isaca-journal/issues/2020/volume-2/quantum-computing-and-post-quantum-cryptography
+
+## 6. Monorepo structure, docs, and benchmarking
+
+Implementation now follows an explicit monorepo layout so each subsystem’s tests, docs, and benchmarks stay synchronized:
+
+- `crypto/` – Rust crate `synthetic-crypto` that implements ML-DSA/SLH-DSA signatures, ML-KEM, and the SHA-256/BLAKE3/Poseidon-style hashing used throughout this design. Changes here must update `docs/API_REFERENCE.md#crypto` plus the guardrails in `docs/THREAT_MODEL.md` that spell out the PQ security margins (≥128-bit post-Grover strength for all primitives).
+- `circuits/transaction`, `circuits/block`, and the new `circuits/bench` binary crate – contain the canonical STARK circuits and a CLI (`cargo run -p circuits-bench -- --prove`) that compiles dummy witnesses, produces transaction proofs, and optionally runs block aggregation via the recursive digest described above. The benchmark keeps track of constraint row counts, hash invocations, and elapsed time so that any change to witness construction or proving fidelity can be measured. Section 2 should be updated in lockstep with these outputs.
+- `consensus/` and `consensus/bench` – the Rust validator logic still enforces version bindings and PQ signature validation, while the Go `netbench` simulator replays synthetic payloads sized to ML-DSA signatures plus STARK proofs. Its output feeds directly into the threat model’s DoS budgets because it reports achieved messages/second under PQ payload sizes.
+- `wallet/` and `wallet/bench` – the CLI plus a Rust benchmark that derives keys, encrypts/decrypts notes, and computes nullifiers using the same derivations in §3–4. This ensures wallet UX changes keep Grover-aware 256-bit symmetric margins.
+- `docs/` – authoritative contributor docs, threat models, and API references. The new files explicitly call out which paragraphs inside this DESIGN and `METHODS.md` must change together. Any interface change now requires edits in all three locations (code, DESIGN, docs) before CI will pass.
+
+Continuous integration (see `.github/workflows/ci.yml`) mirrors this structure. Jobs cover:
+
+1. Rust linting/tests across the workspace (crypto, circuits, consensus, wallet, state, protocol).
+2. Targeted crypto tests to ensure ML-DSA/ML-KEM fixtures stay deterministic.
+3. Circuit proof checks plus the `circuits-bench --smoke --prove` run so the proving pipeline always compiles.
+4. Wallet CLI/integration tests alongside the `wallet-bench` smoke test to exercise note encryption and nullifier derivations.
+5. Go-based network simulator tests (`consensus/bench`) to keep PQ throughput budgets measurable.
+6. A non-blocking `benchmarks` job that executes all smoke benchmarks and posts their JSON output in the build log for regression tracking.
+
+These scaffolds exist to keep the design’s PQ security assumptions observable. Any change that alters signature sizes, hash widths, or witness semantics must update:
+
+1. The relevant crate README (`crypto/README.md`, `circuits/README.md`, `consensus/README.md`, `wallet/README.md`).
+2. The API entry in `docs/API_REFERENCE.md` and the guardrails in `docs/THREAT_MODEL.md`.
+3. This section of DESIGN.md plus the operational instructions in `METHODS.md` so reviewers can verify code and documentation move together.

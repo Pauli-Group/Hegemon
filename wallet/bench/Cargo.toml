@@ -1,0 +1,14 @@
+[package]
+name = "wallet-bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+rand = { version = "0.8", features = ["std"] }
+rand_chacha = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wallet = { path = ".." }
+synthetic-crypto = { path = "../../crypto" }
