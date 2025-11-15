@@ -99,6 +99,17 @@ PRFs:
 
 No group operations anywhere in user-visible cryptography.
 
+### 1.4 Reference module layout
+
+The repository now includes a standalone Rust crate at `crypto/` that collects the post-quantum primitives into a single API suiting the plan above. The crate exposes:
+
+* `ml_dsa` – deterministic key generation, signing, verification, and serialization helpers sized to ML-DSA-65 (Dilithium3) keys (pk = 1952 B, sk = 4000 B, sig = 3293 B).
+* `slh_dsa` – the analogous interface for SLH-DSA (SPHINCS+-SHA2-128f) with pk = 32 B, sk = 64 B, signature = 17088 B.
+* `ml_kem` – Kyber-768-style encapsulation/decapsulation with pk = 1184 B, sk = 2400 B, ciphertext = 1088 B, shared secret = 32 B.
+* `hashes` – SHA-256, BLAKE3-256, and a Poseidon-inspired permutation over the Goldilocks prime, plus helpers for commitments (`b"c"` tag), PRF key derivation (`b"nk"`), and nullifiers (`b"nf"`).
+
+Everything derives deterministic test vectors using a ChaCha20-based RNG seeded via SHA-256 so that serialization and domain separation match the simple hash-based definitions above. Integration tests under `crypto/tests/` lock in the byte-level expectations for key generation, signing, verification, KEM encapsulation/decapsulation, and commitment/nullifier derivation.
+
 ---
 
 ## 2. ZK proving system: single STARKish stack
