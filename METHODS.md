@@ -710,6 +710,10 @@ The node maintains a canonical commitment tree with current root `root_state`. A
 
 #### 6.3 Block circuit and proof
 
+The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same poseidon-style `Felt` hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. On top of that, the `circuits/block` crate processes sequences of `TransactionProof`s. Its `prove_block` entry point re-verifies each transaction against the transaction verifying key, checks that each proof’s published `merkle_root` matches the running tree root, rejects repeated nullifiers by inserting their `as_int()` encodings into a set, appends every non-zero commitment through the `CommitmentTree`, and records the intermediate root trace. It also collapses each transaction’s public inputs, nullifiers, commitments, and native fee into a folded hash recorded as `RecursiveAggregation`, giving consensus a succinct digest of the block contents until full recursive proof composition lands.
+
+`verify_block` expects validators to supply the current tree state. It replays the same verification and append logic, recomputes the aggregation digest, and only mutates local state when the recomputed root trace and digest match the prover’s output. This provides a concrete path from transaction proofs to a block-level proof artifact that consensus can check in one step.
+
 Define a second circuit `C_block` with
 
 * Public inputs: `root_prev` (root at start of block), `root_new` (root after applying all transactions), and a list or hash of all transaction identifiers and their `nf_in`, `cm_out`, and `root_before` values to tie things together.

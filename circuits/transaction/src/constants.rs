@@ -25,5 +25,8 @@ pub const NULLIFIER_DOMAIN_TAG: u64 = 2;
 /// Domain separation tag for balance commitment/tagging.
 pub const BALANCE_DOMAIN_TAG: u64 = 3;
 
+/// Domain separation tag for Merkle tree nodes.
+pub const MERKLE_DOMAIN_TAG: u64 = 4;
+
 /// Identifier reserved for the native asset in the MASP balance rules.
 pub const NATIVE_ASSET_ID: u64 = 0;
