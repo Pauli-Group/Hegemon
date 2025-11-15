@@ -268,6 +268,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "circuits-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "block-circuit",
+ "clap",
+ "protocol-versioning",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "serde",
+ "serde_json",
+ "state-merkle",
+ "transaction-circuit",
+]
+
+[[package]]
 name = "clap"
 version = "4.5.51"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1122,6 +1138,20 @@ dependencies = [
  "tempfile",
  "thiserror",
  "transaction-circuit",
+]
+
+[[package]]
+name = "wallet-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "serde",
+ "serde_json",
+ "synthetic-crypto",
+ "wallet",
 ]
 
 [[package]]
