@@ -1,0 +1,136 @@
+use blake3::Hasher as Blake3Hasher;
+use sha2::{Digest, Sha256};
+
+use crate::deterministic::expand_to_length;
+
+const FIELD_MODULUS: u128 = 0xffffffff00000001;
+const POSEIDON_WIDTH: usize = 3;
+const POSEIDON_ROUNDS: usize = 8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FieldElement(u64);
+
+impl FieldElement {
+    pub fn zero() -> Self {
+        Self(0)
+    }
+
+    pub fn from_u64(value: u64) -> Self {
+        Self((value as u128 % FIELD_MODULUS) as u64)
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let mut acc = 0u128;
+        for &b in bytes {
+            acc = ((acc << 8) + b as u128) % FIELD_MODULUS;
+        }
+        Self(acc as u64)
+    }
+
+    fn add(self, other: Self) -> Self {
+        let sum = (self.0 as u128 + other.0 as u128) % FIELD_MODULUS;
+        Self(sum as u64)
+    }
+
+    fn mul(self, other: Self) -> Self {
+        let product = (self.0 as u128 * other.0 as u128) % FIELD_MODULUS;
+        Self(product as u64)
+    }
+
+    fn pow5(self) -> Self {
+        let sq = self.mul(self);
+        let fourth = sq.mul(sq);
+        fourth.mul(self)
+    }
+
+    pub fn to_bytes(self) -> [u8; 8] {
+        self.0.to_be_bytes()
+    }
+}
+
+fn poseidon_round_constants() -> [[FieldElement; POSEIDON_WIDTH]; POSEIDON_ROUNDS] {
+    let mut constants = [[FieldElement::zero(); POSEIDON_WIDTH]; POSEIDON_ROUNDS];
+    for round in 0..POSEIDON_ROUNDS {
+        for idx in 0..POSEIDON_WIDTH {
+            let material = [round as u8, idx as u8];
+            let bytes = expand_to_length(b"poseidon-constants", &material, 8);
+            constants[round][idx] = FieldElement::from_bytes(&bytes);
+        }
+    }
+    constants
+}
+
+fn poseidon_mix(state: &mut [FieldElement; POSEIDON_WIDTH]) {
+    const MIX_MATRIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
+    let mut new_state = [FieldElement::zero(); POSEIDON_WIDTH];
+    for i in 0..POSEIDON_WIDTH {
+        let mut acc = FieldElement::zero();
+        for j in 0..POSEIDON_WIDTH {
+            acc = acc.add(state[j].mul(FieldElement::from_u64(MIX_MATRIX[i][j])));
+        }
+        new_state[i] = acc;
+    }
+    *state = new_state;
+}
+
+pub fn poseidon_hash(inputs: &[FieldElement]) -> FieldElement {
+    let constants = poseidon_round_constants();
+    let mut state = [
+        FieldElement::from_u64(1),
+        FieldElement::from_u64(inputs.len() as u64),
+        FieldElement::zero(),
+    ];
+
+    for input in inputs {
+        state[0] = state[0].add(*input);
+        for round in 0..POSEIDON_ROUNDS {
+            for idx in 0..POSEIDON_WIDTH {
+                state[idx] = state[idx].add(constants[round][idx]);
+            }
+            for idx in 0..POSEIDON_WIDTH {
+                state[idx] = state[idx].pow5();
+            }
+            poseidon_mix(&mut state);
+        }
+    }
+
+    state[0]
+}
+
+pub fn sha256(data: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher.finalize().into()
+}
+
+pub fn blake3_256(data: &[u8]) -> [u8; 32] {
+    let mut hasher = Blake3Hasher::new();
+    hasher.update(data);
+    let mut out = [0u8; 32];
+    hasher.finalize_xof().fill(&mut out);
+    out
+}
+
+pub fn commit_note(message: &[u8], randomness: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"c");
+    hasher.update(message);
+    hasher.update(randomness);
+    hasher.finalize().into()
+}
+
+pub fn derive_prf_key(sk_spend: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"nk");
+    hasher.update(sk_spend);
+    hasher.finalize().into()
+}
+
+pub fn derive_nullifier(prf_key: &[u8], note_position: u64, rho: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"nf");
+    hasher.update(prf_key);
+    hasher.update(note_position.to_be_bytes());
+    hasher.update(rho);
+    hasher.finalize().into()
+}
