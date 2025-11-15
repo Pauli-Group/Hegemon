@@ -17,7 +17,7 @@ use crate::{address::ShieldedAddress, error::WalletError, keys::AddressKeyMateri
 const AEAD_KEY_SIZE: usize = 32;
 const AEAD_NONCE_SIZE: usize = 12;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct MemoPlaintext(#[serde(with = "serde_bytes_vec")] pub Vec<u8>);
 
 impl MemoPlaintext {
@@ -27,12 +27,6 @@ impl MemoPlaintext {
 
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
-    }
-}
-
-impl Default for MemoPlaintext {
-    fn default() -> Self {
-        Self(Vec::new())
     }
 }
 
@@ -244,7 +238,7 @@ mod serde_bytes32 {
 mod serde_bytes_vec {
     use serde::{Deserialize, Deserializer, Serializer};
 
-    pub fn serialize<S>(value: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
