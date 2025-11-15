@@ -1,4 +1,6 @@
 use block_circuit::{prove_block, verify_block, BlockError};
+use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
+use std::collections::HashMap;
 use state_merkle::CommitmentTree;
 use transaction_circuit::{
     constants::NATIVE_ASSET_ID,
@@ -60,6 +62,7 @@ fn make_witness(root: Felt, seed: u64) -> TransactionWitness {
         sk_spend: [seed as u8 + 15; 32],
         merkle_root: root,
         fee: 5,
+        version: DEFAULT_VERSION_BINDING,
     }
 }
 
@@ -76,6 +79,8 @@ fn block_proof_updates_state_and_verifies() {
     let mut tree = CommitmentTree::new(depth).expect("tree depth");
     let mut expected_tree = tree.clone();
     let (proving_key, verifying_key) = generate_keys();
+    let mut verifying_keys = HashMap::new();
+    verifying_keys.insert(DEFAULT_VERSION_BINDING, verifying_key.clone());
 
     let mut proofs = Vec::new();
     for seed in 0..2u64 {
@@ -86,14 +91,14 @@ fn block_proof_updates_state_and_verifies() {
         proofs.push(proof);
     }
 
-    let block_proof = prove_block(&mut tree, &proofs, &verifying_key).expect("block proof");
+    let block_proof = prove_block(&mut tree, &proofs, &verifying_keys).expect("block proof");
     assert_eq!(tree.root(), expected_tree.root());
     assert_eq!(block_proof.root_trace.len(), proofs.len() + 1);
     assert_eq!(block_proof.starting_root, block_proof.root_trace[0]);
     assert_eq!(block_proof.ending_root, tree.root());
 
     let mut verification_tree = CommitmentTree::new(depth).expect("tree depth");
-    let report = verify_block(&mut verification_tree, &block_proof, &verifying_key)
+    let report = verify_block(&mut verification_tree, &block_proof, &verifying_keys)
         .expect("verify block");
     assert!(report.verified);
     assert_eq!(verification_tree.root(), tree.root());
@@ -105,6 +110,8 @@ fn duplicate_nullifiers_trigger_error() {
     let mut tree = CommitmentTree::new(depth).expect("tree depth");
     let mut expected_tree = tree.clone();
     let (proving_key, verifying_key) = generate_keys();
+    let mut verifying_keys = HashMap::new();
+    verifying_keys.insert(DEFAULT_VERSION_BINDING, verifying_key.clone());
 
     let root = expected_tree.root();
     let witness_a = make_witness(root, 0);
@@ -117,7 +124,7 @@ fn duplicate_nullifiers_trigger_error() {
     proof_b.public_inputs.nullifiers[0] = proof_a.nullifiers[0];
 
     let proofs = vec![proof_a.clone(), proof_b];
-    let err = prove_block(&mut tree, &proofs, &verifying_key).expect_err("duplicate");
+    let err = prove_block(&mut tree, &proofs, &verifying_keys).expect_err("duplicate");
     assert!(matches!(err, BlockError::DuplicateNullifier(_)));
 }
 
@@ -127,6 +134,8 @@ fn root_ordering_is_enforced() {
     let mut tree = CommitmentTree::new(depth).expect("tree depth");
     let mut expected_tree = tree.clone();
     let (proving_key, verifying_key) = generate_keys();
+    let mut verifying_keys = HashMap::new();
+    verifying_keys.insert(DEFAULT_VERSION_BINDING, verifying_key.clone());
 
     let mut proofs = Vec::new();
     for seed in 0..2u64 {
@@ -138,6 +147,41 @@ fn root_ordering_is_enforced() {
     }
 
     let swapped = vec![proofs[1].clone(), proofs[0].clone()];
-    let err = prove_block(&mut tree, &swapped, &verifying_key).expect_err("ordering");
+    let err = prove_block(&mut tree, &swapped, &verifying_keys).expect_err("ordering");
     assert!(matches!(err, BlockError::UnexpectedMerkleRoot { .. }));
+}
+
+#[test]
+fn mixed_versions_require_declared_keys() {
+    let depth = 8;
+    let mut tree = CommitmentTree::new(depth).expect("tree depth");
+    let mut expected_tree = tree.clone();
+    let (proving_key, verifying_key) = generate_keys();
+    let mut proofs = Vec::new();
+    for seed in 0..2u64 {
+        let root = expected_tree.root();
+        let mut witness = make_witness(root, seed);
+        if seed == 1 {
+            witness.version = VersionBinding::new(2, DEFAULT_VERSION_BINDING.crypto);
+        }
+        let proof = prove(&witness, &proving_key).expect("prove");
+        apply_commitments(&mut expected_tree, &proof);
+        proofs.push(proof);
+    }
+    let mut verifying_keys = HashMap::new();
+    verifying_keys.insert(DEFAULT_VERSION_BINDING, verifying_key.clone());
+    let err = prove_block(&mut tree.clone(), &proofs, &verifying_keys)
+        .expect_err("missing version key");
+    assert!(matches!(err, BlockError::UnsupportedVersion { .. }));
+
+    verifying_keys.insert(
+        VersionBinding::new(2, DEFAULT_VERSION_BINDING.crypto),
+        verifying_key.clone(),
+    );
+    let block_proof = prove_block(&mut tree, &proofs, &verifying_keys).expect("block proof");
+    let mut verification_tree = CommitmentTree::new(depth).expect("tree depth");
+    let report = verify_block(&mut verification_tree, &block_proof, &verifying_keys)
+        .expect("verify block");
+    assert!(report.verified);
+    assert_eq!(block_proof.version_counts.len(), 2);
 }

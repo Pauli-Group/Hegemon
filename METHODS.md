@@ -392,6 +392,13 @@ You can also build a **transition circuit** that:
 
 That’s “in‑pool recursion” for upgrades.
 
+The current implementation wires those abstractions into code:
+
+* `protocol-versioning` defines the canonical `VersionBinding { circuit, crypto }`, `VersionMatrix`, and helper commitments that every transaction and block now expose. `TransactionWitness` carries a binding, `TransactionPublicInputs` serializes `circuit_version`/`crypto_suite`, and `TransactionProof::version_binding()` lets the block circuit pick the right verifying key for each proof.
+* `circuits/block` accepts a `HashMap<VersionBinding, VerifyingKey>`, folds `(circuit_version, crypto_suite)` into the recursive digest, and records per-version counts so consensus can hash them into the header’s `version_commitment`.
+* `consensus::version_policy::VersionSchedule` stores ZIP-style `VersionProposal`s (activation height, optional retirement, optional `UpgradeDirective` that points at the special migration circuit binding). Both BFT and PoW consensus paths call `schedule.first_unsupported(...)` and surface `ConsensusError::UnsupportedVersion` if a block contains an unscheduled binding.
+* Governance documentation (`governance/VERSIONING.md`) specifies how to draft a proposal, vote on it, and publish the activation window, while the operational runbook (`runbooks/emergency_version_swap.md`) walks operators through emergency swaps: announce the swap, enable the upgrade circuit, watch `version_counts` to ensure old notes migrate, then retire the deprecated binding at the scheduled height.
+
 ### 5.2 Algorithm agility
 
 Keys include algorithm identifiers:

@@ -6,6 +6,7 @@ use crate::header::{ConsensusMode, PowSeal};
 use crate::nullifier::NullifierSet;
 use crate::proof::{ProofVerifier, verify_commitments};
 use crate::types::{ConsensusBlock, ValidatorId};
+use crate::version_policy::VersionSchedule;
 use crypto::hashes::sha256;
 use crypto::ml_dsa::{ML_DSA_SIGNATURE_LEN, MlDsaPublicKey, MlDsaSignature};
 use crypto::traits::VerifyKey;
@@ -40,10 +41,25 @@ pub struct PowConsensus<V: ProofVerifier> {
     miners: HashMap<ValidatorId, MlDsaPublicKey>,
     nodes: HashMap<[u8; 32], PowNode>,
     best: [u8; 32],
+    version_schedule: VersionSchedule,
 }
 
 impl<V: ProofVerifier> PowConsensus<V> {
     pub fn new(miner_keys: Vec<MlDsaPublicKey>, genesis_state_root: [u8; 32], verifier: V) -> Self {
+        Self::with_schedule(
+            miner_keys,
+            genesis_state_root,
+            verifier,
+            VersionSchedule::default(),
+        )
+    }
+
+    pub fn with_schedule(
+        miner_keys: Vec<MlDsaPublicKey>,
+        genesis_state_root: [u8; 32],
+        verifier: V,
+        version_schedule: VersionSchedule,
+    ) -> Self {
         let miners = miner_keys
             .into_iter()
             .map(|pk| (sha256(&pk.to_bytes()), pk))
@@ -64,7 +80,12 @@ impl<V: ProofVerifier> PowConsensus<V> {
             miners,
             nodes,
             best: GENESIS_HASH,
+            version_schedule,
         }
+    }
+
+    pub fn version_schedule_mut(&mut self) -> &mut VersionSchedule {
+        &mut self.version_schedule
     }
 
     pub fn apply_block(
@@ -76,6 +97,15 @@ impl<V: ProofVerifier> PowConsensus<V> {
         }
         block.header.ensure_structure()?;
         verify_commitments(&block)?;
+        if let Some(version) = self.version_schedule.first_unsupported(
+            block.header.height,
+            block.transactions.iter().map(|tx| tx.version),
+        ) {
+            return Err(ConsensusError::UnsupportedVersion {
+                version,
+                height: block.header.height,
+            });
+        }
         self.verifier.verify_block(&block)?;
 
         let pow = block

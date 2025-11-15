@@ -11,6 +11,8 @@ num-bigint = "0.4"
 num-traits = "0.2"
 sha2 = "0.10"
 thiserror = "1"
+protocol-versioning = { path = "../protocol/versioning" }
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 network = { path = "../network" }
