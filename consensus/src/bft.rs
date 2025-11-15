@@ -6,6 +6,7 @@ use crate::nullifier::NullifierSet;
 use crate::proof::{ProofVerifier, verify_commitments};
 use crate::types::{ConsensusBlock, ValidatorId};
 use crate::validator::ValidatorSet;
+use crate::version_policy::VersionSchedule;
 use crypto::hashes::sha256;
 
 const GENESIS_HASH: [u8; 32] = [0u8; 32];
@@ -96,16 +97,36 @@ pub struct BftConsensus<V: ProofVerifier> {
     verifier: V,
     fork: ForkTree,
     vote_history: HashMap<ValidatorId, HashMap<u64, [u8; 32]>>,
+    version_schedule: VersionSchedule,
 }
 
 impl<V: ProofVerifier> BftConsensus<V> {
     pub fn new(validator_set: ValidatorSet, genesis_state_root: [u8; 32], verifier: V) -> Self {
+        Self::with_schedule(
+            validator_set,
+            genesis_state_root,
+            verifier,
+            VersionSchedule::default(),
+        )
+    }
+
+    pub fn with_schedule(
+        validator_set: ValidatorSet,
+        genesis_state_root: [u8; 32],
+        verifier: V,
+        version_schedule: VersionSchedule,
+    ) -> Self {
         Self {
             validator_set,
             verifier,
             fork: ForkTree::new(genesis_state_root),
             vote_history: HashMap::new(),
+            version_schedule,
         }
+    }
+
+    pub fn version_schedule_mut(&mut self) -> &mut VersionSchedule {
+        &mut self.version_schedule
     }
 
     pub fn apply_block(
@@ -117,6 +138,15 @@ impl<V: ProofVerifier> BftConsensus<V> {
         }
         block.header.ensure_structure()?;
         verify_commitments(&block)?;
+        if let Some(version) = self.version_schedule.first_unsupported(
+            block.header.height,
+            block.transactions.iter().map(|tx| tx.version),
+        ) {
+            return Err(ConsensusError::UnsupportedVersion {
+                version,
+                height: block.header.height,
+            });
+        }
         if block.header.validator_set_commitment != self.validator_set.validator_set_commitment() {
             return Err(ConsensusError::ValidatorSetMismatch);
         }

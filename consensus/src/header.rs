@@ -1,5 +1,7 @@
 use crate::error::ConsensusError;
-use crate::types::{BlockHash, FeeCommitment, StarkCommitment, ValidatorSetCommitment};
+use crate::types::{
+    BlockHash, FeeCommitment, StarkCommitment, ValidatorSetCommitment, VersionCommitment,
+};
 use crypto::hashes::sha256;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -12,6 +14,7 @@ pub struct BlockHeader {
     pub state_root: BlockHash,
     pub nullifier_root: BlockHash,
     pub proof_commitment: StarkCommitment,
+    pub version_commitment: VersionCommitment,
     pub tx_count: u32,
     pub fee_commitment: FeeCommitment,
     pub validator_set_commitment: ValidatorSetCommitment,
@@ -77,7 +80,7 @@ impl BlockHeader {
 }
 
 fn encode_signing_fields(header: &BlockHeader) -> Vec<u8> {
-    let mut data = Vec::with_capacity(4 + 8 * 3 + 32 * 5);
+    let mut data = Vec::with_capacity(4 + 8 * 3 + 32 * 6);
     data.extend_from_slice(&header.version.to_le_bytes());
     data.extend_from_slice(&header.height.to_le_bytes());
     data.extend_from_slice(&header.view.to_le_bytes());
@@ -86,6 +89,7 @@ fn encode_signing_fields(header: &BlockHeader) -> Vec<u8> {
     data.extend_from_slice(&header.state_root);
     data.extend_from_slice(&header.nullifier_root);
     data.extend_from_slice(&header.proof_commitment);
+    data.extend_from_slice(&header.version_commitment);
     data.extend_from_slice(&header.tx_count.to_le_bytes());
     data.extend_from_slice(&header.fee_commitment);
     data.extend_from_slice(&header.validator_set_commitment);

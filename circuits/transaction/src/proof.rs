@@ -1,3 +1,4 @@
+use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -24,6 +25,12 @@ pub struct TransactionProof {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct VerificationReport {
     pub verified: bool,
+}
+
+impl TransactionProof {
+    pub fn version_binding(&self) -> VersionBinding {
+        self.public_inputs.version_binding()
+    }
 }
 
 pub fn prove(

@@ -170,6 +170,7 @@ fn cmd_tx_craft(params: TxCraftParams<'_>) -> Result<()> {
         sk_spend: keys.spend.to_bytes(),
         merkle_root: Felt::new(params.merkle_root),
         fee: params.fee,
+        version: TransactionWitness::default_version_binding(),
     };
     write_json(params.witness_out, &witness)?;
     write_json(params.ciphertext_out, &ciphertexts)?;

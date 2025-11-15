@@ -1,5 +1,6 @@
+use protocol_versioning::{VersionBinding, VersionMatrix};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use state_merkle::CommitmentTree;
 use transaction_circuit::{
@@ -35,6 +36,13 @@ pub struct BlockProof {
     pub root_trace: Vec<Felt>,
     pub aggregation: RecursiveAggregation,
     pub transactions: Vec<TransactionProof>,
+    pub version_counts: Vec<VersionCount>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VersionCount {
+    pub version: VersionBinding,
+    pub count: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -45,23 +53,24 @@ pub struct BlockVerificationReport {
 pub fn prove_block(
     tree: &mut CommitmentTree,
     transactions: &[TransactionProof],
-    verifying_key: &VerifyingKey,
+    verifying_keys: &HashMap<VersionBinding, VerifyingKey>,
 ) -> Result<BlockProof, BlockError> {
     let starting_root = tree.root();
-    let execution = execute_block(tree, transactions, verifying_key)?;
+    let execution = execute_block(tree, transactions, verifying_keys)?;
     Ok(BlockProof {
         starting_root,
         ending_root: execution.ending_root,
         root_trace: execution.root_trace,
         aggregation: execution.aggregation,
         transactions: transactions.to_vec(),
+        version_counts: serialize_version_counts(&execution.version_matrix),
     })
 }
 
 pub fn verify_block(
     tree: &mut CommitmentTree,
     proof: &BlockProof,
-    verifying_key: &VerifyingKey,
+    verifying_keys: &HashMap<VersionBinding, VerifyingKey>,
 ) -> Result<BlockVerificationReport, BlockError> {
     let observed_start = tree.root();
     if observed_start != proof.starting_root {
@@ -70,7 +79,7 @@ pub fn verify_block(
             observed: observed_start,
         });
     }
-    let execution = execute_block(tree, &proof.transactions, verifying_key)?;
+    let execution = execute_block(tree, &proof.transactions, verifying_keys)?;
     if execution.root_trace != proof.root_trace {
         return Err(BlockError::RootTraceMismatch);
     }
@@ -79,6 +88,9 @@ pub fn verify_block(
         || execution.aggregation.transaction_count != proof.aggregation.transaction_count
     {
         return Err(BlockError::AggregationMismatch);
+    }
+    if !version_counts_match(&proof.version_counts, &execution.version_matrix) {
+        return Err(BlockError::VersionMatrixMismatch);
     }
     Ok(BlockVerificationReport { verified: true })
 }
@@ -89,20 +101,29 @@ struct ExecutionArtifacts {
     root_trace: Vec<Felt>,
     ending_root: Felt,
     aggregation: RecursiveAggregation,
+    version_matrix: VersionMatrix,
 }
 
 fn execute_block(
     tree: &mut CommitmentTree,
     transactions: &[TransactionProof],
-    verifying_key: &VerifyingKey,
+    verifying_keys: &HashMap<VersionBinding, VerifyingKey>,
 ) -> Result<ExecutionResult, BlockError> {
     let mut root_trace = Vec::with_capacity(transactions.len() + 1);
     root_trace.push(tree.root());
     let mut seen_nullifiers: HashSet<u64> = HashSet::new();
     let mut digest = Felt::new(0);
     let zero = Felt::new(0);
+    let mut version_matrix = VersionMatrix::new();
 
     for (index, proof) in transactions.iter().enumerate() {
+        let binding = proof.version_binding();
+        let verifying_key = verifying_keys
+            .get(&binding)
+            .ok_or(BlockError::UnsupportedVersion {
+                index,
+                version: binding,
+            })?;
         let report = proof::verify(proof, verifying_key)
             .map_err(|source| BlockError::TransactionVerification { index, source })?;
         if !report.verified {
@@ -132,16 +153,21 @@ fn execute_block(
 
         root_trace.push(tree.root());
         digest = fold_digest(digest, proof);
+        version_matrix.observe(binding);
     }
 
     Ok(ExecutionArtifacts {
         root_trace,
         ending_root: tree.root(),
         aggregation: RecursiveAggregation::new(digest, transactions.len()),
+        version_matrix,
     })
 }
 
 fn fold_digest(mut acc: Felt, proof: &TransactionProof) -> Felt {
+    let binding = proof.version_binding();
+    acc = merkle_node(acc, Felt::new(u64::from(binding.circuit)));
+    acc = merkle_node(acc, Felt::new(u64::from(binding.crypto)));
     acc = merkle_node(acc, proof.public_inputs.merkle_root);
     acc = merkle_node(acc, proof.public_inputs.balance_tag);
     for value in &proof.public_inputs.nullifiers {
@@ -152,6 +178,23 @@ fn fold_digest(mut acc: Felt, proof: &TransactionProof) -> Felt {
     }
     acc = merkle_node(acc, Felt::new(proof.public_inputs.native_fee));
     acc
+}
+
+fn serialize_version_counts(matrix: &VersionMatrix) -> Vec<VersionCount> {
+    matrix
+        .counts()
+        .iter()
+        .map(|(version, count)| VersionCount {
+            version: *version,
+            count: *count,
+        })
+        .collect()
+}
+
+fn version_counts_match(counts: &[VersionCount], execution: &VersionMatrix) -> bool {
+    let reported =
+        VersionMatrix::from_counts(counts.iter().map(|entry| (entry.version, entry.count)));
+    reported.counts() == execution.counts()
 }
 
 mod serde_felt {

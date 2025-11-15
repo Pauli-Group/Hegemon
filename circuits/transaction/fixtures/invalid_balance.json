@@ -56,7 +56,9 @@
       }
     ],
     "native_fee": 5,
-    "balance_tag": 4497180135201505100
+    "balance_tag": 4497180135201505100,
+    "circuit_version": 1,
+    "crypto_suite": 1
   },
   "nullifiers": [
     113,
