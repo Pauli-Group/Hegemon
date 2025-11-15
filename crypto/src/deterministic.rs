@@ -34,7 +34,7 @@ pub fn expand_to_length(domain: &[u8], input: &[u8], length: usize) -> Vec<u8> {
     while output.len() < length {
         let mut hasher = Sha256::new();
         hasher.update(domain);
-        hasher.update(&counter.to_be_bytes());
+        hasher.update(counter.to_be_bytes());
         hasher.update(input);
         let digest = hasher.finalize();
         let take = std::cmp::min(length - output.len(), digest.len());
