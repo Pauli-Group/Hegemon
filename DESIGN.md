@@ -228,6 +228,22 @@ A **shielded address** contains:
 
 You can have multiple diversified addresses derived from the same underlying key material (like Zcash’s diversified addresses), but each is defined by basically: `(pk_enc, addr_tag)` where `addr_tag = H("addr" || sk_view || index)`.
 
+### 4.3 Wallet crate implementation
+
+The repository now contains a `wallet` crate that wires these ideas into code:
+
+* `wallet/src/keys.rs` defines `RootSecret`, `DerivedKeys`, and `AddressKeyMaterial`. A SHA-256-based HKDF (`wallet-hkdf`) produces `sk_spend`, `sk_view`, `sk_enc`, and `sk_derive`, and diversified addresses are computed deterministically from `(sk_view, sk_enc, sk_derive, index)`.
+* `wallet/src/address.rs` encodes addresses as Bech32m (`shca1…`) strings that bundle the version, diversifier index, ML-KEM public key, `pk_recipient`, and a 32-byte hint tag. Decoding performs the inverse mapping so senders can rebuild the ML-KEM key and note metadata.
+* `wallet/src/notes.rs` handles ML-KEM encapsulation plus ChaCha20-Poly1305 AEAD wrapping for both the note payload and memo. The shared secret is expanded with a domain-separated label (`wallet-aead`) so note payloads and memos use independent nonces/keys.
+* `wallet/src/viewing.rs` exposes `IncomingViewingKey`, `OutgoingViewingKey`, and `FullViewingKey`. Incoming keys decrypt ciphertexts and rebuild `NoteData`/`InputNoteWitness` objects for the transaction circuit, outgoing keys let wallets audit their own sent notes, and full viewing keys add the nullifier PRF material needed for spentness tracking.
+* `wallet/src/bin/wallet.rs` ships a CLI with the following flow:
+  * `wallet generate --count N` prints a JSON export containing the root secret (hex), the first `N` addresses, and serialized viewing keys.
+  * `wallet address --root <hex> --index <n>` derives additional diversified addresses on demand.
+  * `wallet tx-craft ...` reads JSON inputs/recipients, creates `TransactionWitness` JSON for the circuit, and emits ML-KEM note ciphertexts for the recipients.
+  * `wallet scan --ivk <path> --ledger <path>` decrypts ledger ciphertexts with an incoming viewing key and returns per-asset balances plus recovered note summaries.
+
+Integration tests in `wallet/tests/cli.rs` exercise those CLI flows, so anyone can watch address derivation, note encryption, and viewing-key-based balance recovery stay compatible with the proving system.
+
 ---
 
 ## 5. Privacy & “store now, decrypt later”
