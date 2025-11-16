@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 import { PageShell } from '../components/PageShell';
 import { LogPanel } from '../components/LogPanel';
 import { getActionBySlug, quickstartAction } from '../data/actions';
-import { useActionRunner, type CommandStatus } from '../hooks/useActionRunner';
+import { useActionRunner, type CommandStatus, type LogEntry } from '../hooks/useActionRunner';
 import { useToasts } from '../components/ToastProvider';
 import styles from './QuickstartPage.module.css';
 
@@ -58,8 +58,13 @@ export function QuickstartPage() {
     const prefix = command.cwd ? `cd ${command.cwd} && ` : '';
     return `${index + 1}. ${prefix}${command.argv.join(' ')}`;
   });
+  const placeholderEntries: LogEntry[] = defaultLogLines.map((text, index) => ({
+    level: 'info',
+    text,
+    commandIndex: index,
+  }));
 
-  const displayLines = logs.length > 0 ? logs : isStreaming ? [] : defaultLogLines;
+  const displayLines = logs.length > 0 ? logs : isStreaming ? [] : placeholderEntries;
 
   const statusLabels: Record<CommandStatus, string> = {
     pending: 'Pending',
@@ -174,6 +179,7 @@ export function QuickstartPage() {
             lines={displayLines}
             isStreaming={isStreaming}
             shimmerCount={6}
+            exportFileName="quickstart-run.txt"
           />
         </>
       )}

@@ -67,7 +67,8 @@ test('quickstart timeline runs the end-to-end action', async ({ page }) => {
   await expect(runButton).toBeVisible();
   await runButton.click();
 
-  await expect(page.getByTestId('log-shimmer')).toBeVisible();
+  const copyButton = page.getByTestId('copy-logs-button');
+  await expect(copyButton).toBeVisible();
 
   const firstStatusChip = page.getByTestId('command-status-1');
   await expect(firstStatusChip).not.toHaveText(/Pending/i, { timeout: 15000 });
