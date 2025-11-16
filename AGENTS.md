@@ -9,3 +9,7 @@ Always consult DESIGN.md and METHODS.md before making code changes to ensure the
 # README Whitepaper
 
 Maintain the opening section of `README.md` as the canonical whitepaper for the project. The whitepaper must appear before the "Monorepo layout" and "Getting started" sections and must preserve the document title and subtitle.
+
+# Branding Guidelines
+
+Whenever you design or adjust any visual element, interface component, or documentation mock-up, consult `BRAND.md` to ensure colors, typography, layout, and motion adhere to the shared system. Document any intentional deviations in the relevant pull request.
