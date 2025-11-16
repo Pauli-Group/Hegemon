@@ -14,4 +14,7 @@ export default defineConfig({
       allow: ['..'],
     },
   },
+  test: {
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+  },
 });
