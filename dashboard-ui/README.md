@@ -41,6 +41,13 @@ During development you can pass `--host 0.0.0.0 --port 4173` to `npm run dev` to
 - If the proxy is unreachable or errors, the badge flips to Guard Rail red with “Mock data,” every panel surfaces a tooltip explaining why mocks are in use, and a `DataStatusBanner` appears above the affected grids.
 - Restoring the FastAPI proxy (re-run `python ../scripts/dashboard_service.py` with the correct `NODE_RPC_URL`/token) clears the banner on the next poll and flips the badge back to Proof Green.
 
+## Log severity & export workflow
+
+- `LogPanel` renders each NDJSON event as a JetBrains Mono row with a left border keyed to severity: Proof Green (`#19B37E`) for completed commands, Guard Rail (`#FF4E4E`) for failures/warnings, and a neutral surface accent for informational telemetry. This mirrors the color roles defined in `BRAND.md` so every dashboard surface reports status consistently.
+- A header toolbar now ships with “Copy logs” and “Download .txt” controls. Both buttons bundle the buffered output (up to the last 50 lines) so operators can paste directly into PRs or attach the `.txt` artifact when responding to incidents.
+- The 50-line limit matches the evidence request in `runbooks/security_testing.md`, making it trivial to capture the required snippets right after a guard-rail alert fires.
+- Copy/export buttons follow the 150–200 ms ease-out motion rule: hover/focus states use the cyan accent ring while keeping the neutral base fill for idle states.
+
 ## Available scripts
 
 | Command | Purpose |

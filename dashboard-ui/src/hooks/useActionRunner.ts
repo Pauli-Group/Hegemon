@@ -3,6 +3,13 @@ import { dashboardServiceUrl } from '../config';
 
 export type RunStatus = 'idle' | 'running' | 'success' | 'error';
 export type CommandStatus = 'pending' | 'running' | 'success' | 'error';
+export type LogLevel = 'info' | 'success' | 'error';
+
+export interface LogEntry {
+  level: LogLevel;
+  text: string;
+  commandIndex?: number;
+}
 
 const formatDuration = (value?: number) =>
   typeof value === 'number' ? value.toFixed(2) : '0.00';
@@ -16,7 +23,7 @@ type Completion = {
 
 interface RunnerState {
   status: RunStatus;
-  logs: string[];
+  logs: LogEntry[];
   error?: string;
   isStreaming: boolean;
   lastCompletion?: Completion;
@@ -36,30 +43,55 @@ interface ActionEvent {
   command?: string;
 }
 
-function formatLine(event: ActionEvent): string | null {
+const getLogLevel = (event: ActionEvent): LogLevel => {
   switch (event.type) {
-    case 'action_start':
-      return `▶︎ Starting ${event.slug}`;
-    case 'command_start':
-      return `→ [${(event.command_index ?? 0) + 1}] ${event.command}`;
     case 'command_end':
-      return `✓ Command ${(event.command_index ?? 0) + 1} ${
-        event.exit_code === 0 ? 'completed' : 'failed'
-      } in ${formatDuration(event.duration)}s`;
+      return event.exit_code === 0 ? 'success' : 'error';
     case 'action_complete':
-      return `✔︎ Action ${event.slug} completed in ${formatDuration(event.duration)}s`;
+      return 'success';
     case 'action_error':
-      return `✖ Action ${event.slug} failed (command ${(event.command_index ?? 0) + 1})`;
-    case 'command_output':
-      return event.line ?? '';
+      return 'error';
     default:
-      return null;
+      return 'info';
   }
+};
+
+function formatLine(event: ActionEvent): LogEntry | null {
+  const text = (() => {
+    switch (event.type) {
+      case 'action_start':
+        return `▶︎ Starting ${event.slug}`;
+      case 'command_start':
+        return `→ [${(event.command_index ?? 0) + 1}] ${event.command}`;
+      case 'command_end':
+        return `✓ Command ${(event.command_index ?? 0) + 1} ${
+          event.exit_code === 0 ? 'completed' : 'failed'
+        } in ${formatDuration(event.duration)}s`;
+      case 'action_complete':
+        return `✔︎ Action ${event.slug} completed in ${formatDuration(event.duration)}s`;
+      case 'action_error':
+        return `✖ Action ${event.slug} failed (command ${(event.command_index ?? 0) + 1})`;
+      case 'command_output':
+        return event.line ?? '';
+      default:
+        return null;
+    }
+  })();
+
+  if (!text) {
+    return null;
+  }
+
+  return {
+    level: getLogLevel(event),
+    text,
+    commandIndex: event.command_index,
+  };
 }
 
 export function useActionRunner(slug?: string): RunnerState {
   const [status, setStatus] = useState<RunStatus>('idle');
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [error, setError] = useState<string | undefined>(undefined);
   const [isStreaming, setIsStreaming] = useState(false);
   const [lastCompletion, setLastCompletion] = useState<Completion | undefined>(undefined);
