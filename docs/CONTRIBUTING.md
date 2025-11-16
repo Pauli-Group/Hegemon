@@ -12,7 +12,7 @@ This repository is a single monorepo that houses the cryptography primitives (`c
 | --- | --- | --- |
 | PQ primitives (`crypto/`) | Rust 1.75+ | `cargo fmt --all`, `cargo clippy --workspace --all-targets --all-features`, `cargo test -p synthetic-crypto` |
 | Circuits (`circuits/block`, `circuits/transaction`, `circuits/bench`) | Rust 1.75+ | `cargo test -p block-circuit`, `cargo test -p transaction-circuit`, `cargo run -p circuits-bench -- --smoke` |
-| Consensus/network benchmarks (`consensus`, `consensus/bench`) | Rust + Go 1.21 | `cargo test -p consensus`, `go test ./...` inside `consensus/bench` |
+| Miner coordination & network benchmarks (`consensus`, `consensus/bench`) | Rust + Go 1.21 | `cargo test -p consensus`, `go test ./...` inside `consensus/bench` |
 | Wallet (`wallet`, `wallet/bench`) | Rust 1.75+ | `cargo test -p wallet`, `cargo run -p wallet-bench -- --smoke` |
 | C++ utilities (future) | C++20 + clang-format | `cmake -S cpp -B target/cpp && cmake --build target/cpp`, `clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h')` |
 
@@ -39,7 +39,7 @@ When you add a new crate or language toolchain, extend CI accordingly **and** do
 Three benchmarking harnesses exist to make performance work repeatable:
 
 1. `cargo run -p circuits-bench -- --smoke` – exercises circuit witness generation and proof verification loops with bounded rows, reporting hash rounds per second.
-2. `go run ./cmd/netbench --smoke` (inside `consensus/bench`) – simulates validator gossip and reports achieved messages/second given synthetic PQ signature sizes.
+2. `go run ./cmd/netbench --smoke` (inside `consensus/bench`) – simulates miner gossip and reports achieved messages/second given synthetic PQ signature sizes and payload targets.
 3. `cargo run -p wallet-bench -- --smoke` – constructs shielded notes, derives nullifiers, and signs view keys to report wallet ops/second.
 
 Each harness supports `--iterations <N>` and `--prove/--no-prove` toggles for deeper profiling. Capture benchmark deltas in pull requests when you optimize anything in the hot path.
