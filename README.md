@@ -92,6 +92,18 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 ## Getting started
 
+### Fast path
+
+1. `./scripts/dev-setup.sh` installs Rust, Go, clang-format, jq, and the other CLI dependencies on Debian/Ubuntu hosts. The script is idempotent, so re-running it will simply ensure the required toolchains stay patched.
+2. `make check` formats, lints, and tests the entire workspace with the same flags that CI enforces.
+3. `make bench` executes the smoke benchmarks for the prover, wallet, and networking stacks so you can capture baseline performance before touching hot paths.
+4. `make wallet-demo` runs `scripts/wallet-demo.sh` which walks through generating a throwaway wallet, crafting a sample transaction, and scanning the resulting ciphertexts. The artifacts land in `wallet-demo-artifacts/` for easy inspection or debugging.
+5. Read `docs/CONTRIBUTING.md` and keep `DESIGN.md`/`METHODS.md` synchronized with any implementation updates.
+
+### Manual install/run steps
+
+If you prefer to provision dependencies yourself:
+
 1. Install Rust 1.75+, Go 1.21, and (optionally) clang-format for C++ style checks.
 2. Run the full Rust workspace tests:
    ```bash
@@ -105,6 +117,14 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
    cargo run -p wallet-bench -- --smoke --json
    (cd consensus/bench && go run ./cmd/netbench --smoke --json)
    ```
-4. Read `docs/CONTRIBUTING.md` and keep `DESIGN.md`/`METHODS.md` synchronized with any implementation updates.
 
 CI (`.github/workflows/ci.yml`) runs these commands automatically plus targeted crypto, consensus, and wallet jobs. See `docs/CONTRIBUTING.md` for the exact job breakdown.
+
+### Helpful `make` targets
+
+| Target | Purpose |
+| --- | --- |
+| `make setup` | Runs `scripts/dev-setup.sh` to install toolchains and CLI prerequisites. |
+| `make check` | Formats, lints, and tests the entire Rust workspace. |
+| `make bench` | Executes the prover, wallet, and network smoke benchmarks. |
+| `make wallet-demo` | Generates example wallet artifacts plus a balance report inside `wallet-demo-artifacts/`. |
