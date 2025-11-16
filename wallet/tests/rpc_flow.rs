@@ -22,7 +22,7 @@ use wallet::{
     store::WalletStore,
     sync::WalletSyncEngine,
     tx_builder::Recipient,
-    MemoPlaintext as WalletMemo, RootSecret, ShieldedAddress,
+    MemoPlaintext as WalletMemo, RootSecret, ShieldedAddress, TransferRecipient,
 };
 
 #[test]
@@ -65,11 +65,21 @@ fn wallet_send_receive_flow() {
         .mark_notes_pending(&built.spent_note_indexes, true)
         .unwrap();
     let tx_id = client.submit_transaction(&built.bundle).unwrap();
+    let recipient_meta = TransferRecipient {
+        address: sender_address
+            .encode()
+            .expect("encode sender address for metadata"),
+        value: recipients[0].value,
+        asset_id: recipients[0].asset_id,
+        memo: Some("hello".into()),
+    };
     sender_store
         .record_pending_submission(
             tx_id,
             built.nullifiers.clone(),
             built.spent_note_indexes.clone(),
+            vec![recipient_meta],
+            0,
         )
         .unwrap();
 

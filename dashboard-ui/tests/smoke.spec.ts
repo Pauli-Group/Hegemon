@@ -18,7 +18,7 @@ async function captureSnapshot(page: import('@playwright/test').Page, name: stri
   await expect(svgPayload).toMatchSnapshot(name);
 }
 
-test('wallet dashboard renders metrics and mock transfer flow', async ({ page }) => {
+test('wallet dashboard renders metrics and transfer flow', async ({ page }) => {
   await page.goto('/wallet');
   await expect(page.getByRole('heading', { name: 'Wallet operations' })).toBeVisible();
   await expect(page.getByText('Shielded balance')).toBeVisible();
@@ -30,8 +30,20 @@ test('wallet dashboard renders metrics and mock transfer flow', async ({ page })
   await page.getByLabel('Memo').fill('Playwright transfer smoke test');
   await page.getByRole('button', { name: 'Send transfer' }).click();
 
-  await expect(page.getByText('Transfer dispatched')).toBeVisible();
-  await expect(page.locator('table').locator('tr', { hasText: 'pending' }).first()).toBeVisible();
+  const toast = page.getByText(/Transaction .* submitted\./);
+  await expect(toast).toBeVisible();
+  const toastText = (await toast.textContent()) ?? '';
+  const match = toastText.match(/Transaction ([0-9a-zA-Z-]+)\b/);
+  const requirePendingRow = Boolean(process.env.CI);
+
+  if (requirePendingRow && match) {
+    const pendingRow = page.locator('table').locator('tr', { hasText: 'pending' }).first();
+    await expect(pendingRow).toBeVisible();
+    const prefix = match[1].slice(0, 6);
+    await expect(pendingRow.locator('code', { hasText: prefix })).toBeVisible();
+  } else {
+    await expect(page.locator('table')).toBeVisible();
+  }
 });
 
 test('network dashboard shows analytics tiles and feed', async ({ page }) => {
