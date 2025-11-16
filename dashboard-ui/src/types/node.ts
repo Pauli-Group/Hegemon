@@ -5,6 +5,11 @@ export interface TelemetrySnapshot {
   mempool_depth: number;
   difficulty_bits: number;
   stale_share_rate: number;
+  tls_enabled?: boolean;
+  mtls_enabled?: boolean;
+  tor_enabled?: boolean;
+  vpn_overlay?: boolean;
+  exposure_scope?: string;
 }
 
 export interface NoteStatus {
