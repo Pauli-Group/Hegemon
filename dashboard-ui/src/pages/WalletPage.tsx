@@ -5,7 +5,8 @@ import { MetricTile } from '../components/MetricTile';
 import { TransactionTable } from '../components/TransactionTable';
 import { useNodeMetrics, useTransferLedger, useWalletNotes } from '../hooks/useNodeData';
 import { useToasts } from '../components/ToastProvider';
-import type { TransferRecord } from '../types/node';
+import { ConnectionBadge } from '../components/ConnectionBadge';
+import { DataStatusBanner } from '../components/DataStatusBanner';
 import styles from './WalletPage.module.css';
 
 const VIEW_KEY = import.meta.env.VITE_DEMO_VIEW_KEY || 'view_sapling_demo_1qv9k8';
@@ -18,19 +19,22 @@ interface TransferFormState {
 }
 
 export function WalletPage() {
-  const { data: notes } = useWalletNotes();
-  const { data: metrics } = useNodeMetrics();
+  const walletNotes = useWalletNotes();
+  const nodeMetrics = useNodeMetrics();
   const transfersQuery = useTransferLedger();
   const { pushToast } = useToasts();
   const [form, setForm] = useState<TransferFormState>({ address: '', amount: 0.5, memo: '', fee: 0.001 });
+
+  const notes = walletNotes.data?.data;
+  const metrics = nodeMetrics.data?.data;
 
   const estimatedBalance = notes ? notes.leaf_count * 0.0005 : 0;
   const coverage = notes ? `${notes.leaf_count.toLocaleString()} notes` : '—';
 
   const transfers = useMemo(() => {
-    const items = transfersQuery.data?.transfers ?? [];
+    const items = transfersQuery.data?.data?.transfers ?? [];
     return [...items].sort((a, b) => (a.created_at > b.created_at ? -1 : 1));
-  }, [transfersQuery.data?.transfers]);
+  }, [transfersQuery.data?.data?.transfers]);
 
   const isSubmitting = transfersQuery.submitTransfer.isPending;
 
@@ -65,6 +69,35 @@ export function WalletPage() {
       title="Wallet operations"
       intro="Monitor balances, notes, and confirmations while sending or receiving shielded transfers through the node RPC."
     >
+      <div className={styles.sectionHeader}>
+        <div>
+          <p className={styles.kicker}>Wallet telemetry feed</p>
+        </div>
+        <div className={styles.badgeRow}>
+          <ConnectionBadge
+            source={walletNotes.data?.source ?? 'mock'}
+            error={walletNotes.data?.error}
+            label="Wallet notes feed"
+          />
+          <ConnectionBadge
+            source={nodeMetrics.data?.source ?? 'mock'}
+            error={nodeMetrics.data?.error}
+            label="Node metrics feed"
+          />
+        </div>
+      </div>
+
+      <DataStatusBanner
+        label="Wallet notes feed"
+        result={walletNotes.data}
+        isPlaceholder={walletNotes.isPlaceholderData}
+      />
+      <DataStatusBanner
+        label="Node metrics feed"
+        result={nodeMetrics.data}
+        isPlaceholder={nodeMetrics.isPlaceholderData}
+      />
+
       <div className={styles.metricsGrid}>
         <MetricTile label="Shielded balance" value={`${estimatedBalance.toFixed(2)} SHC`} helper="Estimated from note depth" />
         <MetricTile label="Notes committed" value={coverage} helper={`Tree depth ${notes?.depth ?? '—'}`} />
@@ -153,15 +186,22 @@ export function WalletPage() {
       </section>
 
       <section>
-        <header className={styles.historyHeader}>
+        <header className={`${styles.historyHeader} ${styles.sectionHeader}`}>
           <div>
             <p className={styles.kicker}>Transaction history</p>
             <h3>Transfers & confirmations</h3>
           </div>
+          <ConnectionBadge
+            source={transfersQuery.data?.source ?? 'mock'}
+            error={transfersQuery.data?.error}
+            label="Transfer ledger"
+          />
         </header>
-        {transfersQuery.error ? (
-          <p className={styles.errorBanner}>Unable to refresh wallet transfers: {(transfersQuery.error as Error).message}</p>
-        ) : null}
+        <DataStatusBanner
+          label="Transfer ledger"
+          result={transfersQuery.data}
+          isPlaceholder={transfersQuery.isPlaceholderData}
+        />
         <TransactionTable records={transfers} />
       </section>
     </PageShell>

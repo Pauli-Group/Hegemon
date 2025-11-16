@@ -211,20 +211,20 @@ async def _wallet_request(method: str, path: str, payload: Optional[Dict[str, An
 
 async def _proxy_metrics() -> Dict[str, Any]:
     if not NODE_RPC_URL:
-        return dict(SAMPLE_TELEMETRY)
+        return _with_mock_flag(SAMPLE_TELEMETRY)
     try:
         return await _fetch_node_json("/metrics")
     except httpx.HTTPError:
-        return dict(SAMPLE_TELEMETRY)
+        return _with_mock_flag(SAMPLE_TELEMETRY)
 
 
 async def _proxy_note_status() -> Dict[str, Any]:
     if not NODE_RPC_URL:
-        return dict(SAMPLE_NOTE_STATUS)
+        return _with_mock_flag(SAMPLE_NOTE_STATUS)
     try:
         return await _fetch_node_json("/wallet/notes")
     except httpx.HTTPError:
-        return dict(SAMPLE_NOTE_STATUS)
+        return _with_mock_flag(SAMPLE_NOTE_STATUS)
 
 
 async def _node_event_messages() -> AsyncIterator[str]:
@@ -393,8 +393,11 @@ async def node_wallet_notes() -> Dict[str, Any]:
 @app.get("/node/miner/status")
 async def node_miner_status() -> Dict[str, Any]:
     metrics = await _proxy_metrics()
+    mock_flag = bool(metrics.pop("__mock_source", False))
     payload = MINER_STATE.as_dict()
     payload["metrics"] = metrics
+    if mock_flag:
+        payload["__mock_source"] = True
     return payload
 
 
@@ -412,14 +415,14 @@ async def node_miner_control(payload: MinerControlPayload) -> Dict[str, Any]:
 @app.get("/node/wallet/transfers")
 async def node_transfer_history() -> Dict[str, Any]:
     if not WALLET_API_URL:
-        return {"transfers": MOCK_TRANSFERS}
+        return _with_mock_flag({"transfers": MOCK_TRANSFERS})
     try:
         return await _wallet_request("GET", "/transfers")
     except httpx.HTTPStatusError as exc:  # pragma: no cover - bubble status
         detail = exc.response.json() if exc.response.headers.get("content-type", "").startswith("application/json") else {"error": exc.response.text}
         raise HTTPException(status_code=exc.response.status_code, detail=detail)
     except httpx.HTTPError:
-        return {"transfers": MOCK_TRANSFERS}
+        return _with_mock_flag({"transfers": MOCK_TRANSFERS})
 
 
 @app.post("/node/wallet/transfers")
@@ -497,3 +500,8 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover - manual entrypoint
     main()
+def _with_mock_flag(payload: Dict[str, Any]) -> Dict[str, Any]:
+    body = dict(payload)
+    body["__mock_source"] = True
+    return body
+
