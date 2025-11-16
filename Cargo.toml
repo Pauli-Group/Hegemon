@@ -10,6 +10,6 @@ members = [
     "network",
     "wallet",
     "wallet/bench",
-    "tests",
+    "tests", "node",
 ]
 resolver = "2"
