@@ -171,3 +171,18 @@ logs, Guard Rail red error highlights, Proof Green confirmation toasts, and
 progress shimmers that mirror the CLI execution order. See
 `runbooks/dashboard_troubleshooting.md` for tips that map UI actions back to
 `make dashboard` and `./scripts/dashboard.py --run <slug>` commands.
+
+The wallet route now speaks to the unlocked wallet daemon over HTTP. Launch the
+daemon with `--http-listen <addr>` and export three environment variables before
+starting the dashboard service so the proxy can authenticate against the right
+store:
+
+```bash
+export WALLET_STORE_PATH=$HOME/.synthetic/miner.wallet        # encrypted store
+export WALLET_PASSPHRASE_FILE=$HOME/.synthetic/miner.pass     # file containing the passphrase
+export WALLET_API_URL=http://127.0.0.1:9090                   # wallet daemon HTTP listener
+```
+
+`scripts/full-quickstart.sh` reads those variables, unlocks the wallet using the
+passphrase file, and starts `wallet daemon --http-listen` after the CLI
+bootstrapping steps so the React dashboard can list/submit real transfers.

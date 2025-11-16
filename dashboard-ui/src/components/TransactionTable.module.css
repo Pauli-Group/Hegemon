@@ -47,6 +47,13 @@ tr:last-child td {
   color: rgba(244, 247, 251, 0.8);
 }
 
+.txId {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: rgba(244, 247, 251, 0.7);
+  white-space: nowrap;
+}
+
 .empty {
   margin: 0;
   padding: 16px;

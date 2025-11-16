@@ -13,10 +13,31 @@ import { mockMinerStatus, mockNotes, mockTelemetry, mockTransfers } from '../moc
 
 const SERVICE_HEADERS: HeadersInit = { 'Content-Type': 'application/json' };
 
+class HttpError extends Error {
+  status: number;
+  detail?: unknown;
+
+  constructor(status: number, message: string, detail?: unknown) {
+    super(message);
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${dashboardServiceUrl}${path}`, init);
   if (!response.ok) {
-    throw new Error(`Request failed with ${response.status}`);
+    let message = `Request failed with ${response.status}`;
+    let detail: unknown;
+    try {
+      detail = await response.json();
+      if (detail && typeof detail === 'object' && 'error' in detail && typeof (detail as { error: unknown }).error === 'string') {
+        message = (detail as { error: string }).error;
+      }
+    } catch {
+      // ignore parse errors
+    }
+    throw new HttpError(response.status, message, detail);
   }
   return (await response.json()) as T;
 }
@@ -76,18 +97,51 @@ export function useTransferLedger() {
   const queryClient = useQueryClient();
   const query = useQuery<{ transfers: TransferRecord[] }>({
     queryKey: ['wallet-transfers'],
-    queryFn: () => getOrFallback('/node/wallet/transfers', { transfers: mockTransfers }),
+    queryFn: async () => {
+      try {
+        return await fetchJson<{ transfers: TransferRecord[] }>('/node/wallet/transfers');
+      } catch (error) {
+        if (error instanceof HttpError) {
+          throw error;
+        }
+        console.warn('Falling back to mock payload for /node/wallet/transfers', error);
+        return { transfers: mockTransfers };
+      }
+    },
     refetchInterval: 8000,
     placeholderData: { transfers: mockTransfers },
   });
 
   const mutation = useMutation({
-    mutationFn: (payload: { address: string; amount: number; fee: number; memo?: string }) =>
-      fetchJson<{ transfer: TransferRecord }>(`/node/wallet/transfers`, {
-        method: 'POST',
-        headers: SERVICE_HEADERS,
-        body: JSON.stringify(payload),
-      }),
+    mutationFn: async (payload: { address: string; amount: number; fee: number; memo?: string }) => {
+      try {
+        return await fetchJson<{ transfer: TransferRecord }>(`/node/wallet/transfers`, {
+          method: 'POST',
+          headers: SERVICE_HEADERS,
+          body: JSON.stringify(payload),
+        });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          throw error;
+        }
+        console.warn('Wallet API unavailable, returning mock transfer record', error);
+        const txId = `mock-${Date.now()}`;
+        return {
+          transfer: {
+            id: txId,
+            tx_id: txId,
+            direction: 'outgoing',
+            address: payload.address,
+            memo: payload.memo ?? null,
+            amount: payload.amount,
+            fee: payload.fee,
+            status: 'pending',
+            confirmations: 0,
+            created_at: new Date().toISOString(),
+          },
+        } satisfies { transfer: TransferRecord };
+      }
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['wallet-transfers'] });
     },

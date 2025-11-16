@@ -353,6 +353,8 @@ impl WalletStore {
         tx_id: [u8; 32],
         nullifiers: Vec<[u8; 32]>,
         spent_note_indexes: Vec<usize>,
+        recipients: Vec<TransferRecipient>,
+        fee: u64,
     ) -> Result<(), WalletError> {
         let submitted_at = current_timestamp();
         self.with_mut(|state| {
@@ -362,6 +364,8 @@ impl WalletStore {
                 spent_note_indexes,
                 submitted_at,
                 status: PendingStatus::InMempool,
+                recipients,
+                fee,
             });
             Ok(())
         })
@@ -499,6 +503,10 @@ pub struct PendingTransaction {
     pub spent_note_indexes: Vec<usize>,
     pub submitted_at: u64,
     pub status: PendingStatus,
+    #[serde(default)]
+    pub recipients: Vec<TransferRecipient>,
+    #[serde(default)]
+    pub fee: u64,
 }
 
 impl PendingTransaction {
@@ -514,6 +522,14 @@ impl PendingTransaction {
 pub enum PendingStatus {
     InMempool,
     Mined { height: u64 },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransferRecipient {
+    pub address: String,
+    pub value: u64,
+    pub asset_id: u64,
+    pub memo: Option<String>,
 }
 
 #[derive(Clone, Debug)]
