@@ -11,6 +11,12 @@ state-merkle = { path = "../state/merkle" }
 network = { path = "../network" }
 wallet = { path = "../wallet" }
 protocol-versioning = { path = "../protocol/versioning" }
+node = { path = "../node", features = ["test-utils"] }
+consensus = { path = "../consensus" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tempfile = "3"
+rand = "0.8"
+url = "2"
 
 [[test]]
 name = "block_flow"
@@ -19,3 +25,7 @@ path = "block_flow.rs"
 [[test]]
 name = "security_pipeline"
 path = "security_pipeline.rs"
+
+[[test]]
+name = "node_wallet_daemon"
+path = "node_wallet_daemon.rs"

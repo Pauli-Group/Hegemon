@@ -324,15 +324,28 @@ impl NodeService {
     }
 
     fn publish_template(&self) -> NodeResult<()> {
+        match self.assemble_pending_block()? {
+            Some(block) => {
+                let bits = block.header.pow.as_ref().map(|s| s.pow_bits).unwrap_or(0);
+                self.telemetry.set_difficulty(bits);
+                let _ = self.template_tx.send(Some(BlockTemplate { block }));
+            }
+            None => {
+                let _ = self.template_tx.send(None);
+                self.telemetry.set_difficulty(0);
+            }
+        }
+        Ok(())
+    }
+
+    fn assemble_pending_block(&self) -> NodeResult<Option<ConsensusBlock>> {
         let entries = self
             .mempool
             .collect(self.config.template_tx_limit)
             .into_iter()
             .collect::<Vec<_>>();
         if entries.is_empty() {
-            let _ = self.template_tx.send(None);
-            self.telemetry.set_difficulty(0);
-            return Ok(());
+            return Ok(None);
         }
         let ledger = self.ledger.lock();
         let parent_hash = ledger.best_hash;
@@ -373,15 +386,27 @@ impl NodeService {
             miner_id: self.miner_id,
         };
         let header = build_header(&header_context, &transactions, &self.miner_secret)?;
-        self.telemetry
-            .set_difficulty(header.pow.as_ref().map(|s| s.pow_bits).unwrap_or(0));
-        let block = ConsensusBlock {
+        Ok(Some(ConsensusBlock {
             header,
             transactions,
             coinbase: Some(coinbase),
-        };
-        let _ = self.template_tx.send(Some(BlockTemplate { block }));
-        Ok(())
+        }))
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub async fn seal_pending_block(&self) -> NodeResult<Option<ConsensusBlock>> {
+        if let Some(block) = self.assemble_pending_block()? {
+            let cloned = block.clone();
+            self.accept_block(block, true).await?;
+            Ok(Some(cloned))
+        } else {
+            Ok(None)
+        }
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub async fn apply_block_for_test(&self, block: ConsensusBlock) -> NodeResult<()> {
+        self.accept_block(block, false).await
     }
 
     async fn accept_block(&self, block: ConsensusBlock, propagate: bool) -> NodeResult<()> {
