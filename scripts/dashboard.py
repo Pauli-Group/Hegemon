@@ -18,7 +18,7 @@ import textwrap
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HOME = Path.home()
@@ -79,15 +79,22 @@ def _command_to_string(cmd: CommandSpec) -> str:
     return readable
 
 
-def _run_command(cmd: CommandSpec) -> tuple[bool, float]:
+def prepare_command(cmd: CommandSpec) -> Tuple[List[str], Path, Dict[str, str]]:
+    """Return argv/cwd/env for launching a dashboard command."""
+
     env = os.environ.copy()
     _ensure_toolchain_paths(env)
     if cmd.env:
         env.update(cmd.env)
     cwd = cmd.cwd or REPO_ROOT
+    return list(cmd.argv), cwd, env
+
+
+def _run_command(cmd: CommandSpec) -> tuple[bool, float]:
+    argv, cwd, env = prepare_command(cmd)
     start = time.perf_counter()
     try:
-        subprocess.run(cmd.argv, cwd=cwd, env=env, check=True)
+        subprocess.run(argv, cwd=cwd, env=env, check=True)
         return True, time.perf_counter() - start
     except subprocess.CalledProcessError as exc:  # pragma: no cover - CLI feedback
         duration = time.perf_counter() - start
