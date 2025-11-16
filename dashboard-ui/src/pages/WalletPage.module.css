@@ -1,5 +1,8 @@
-.grid {
+.metricsGrid {
   margin-bottom: 32px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 24px;
 }
 
 .panels {
