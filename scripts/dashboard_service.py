@@ -172,7 +172,32 @@ class MinerControlPayload(BaseModel):
     thread_count: Optional[int] = Field(default=None, ge=1)
 
 
+class NodeRoutingPayload(BaseModel):
+    tls: bool = True
+    mtls: bool = False
+    doh: bool = False
+    vpn: bool = False
+    tor: bool = False
+    local_only: bool = False
+
+
+class NodeLifecyclePayload(BaseModel):
+    mode: Literal["genesis", "join"]
+    host: str = Field(..., min_length=1)
+    port: int = Field(..., ge=1, le=65535)
+    peer_url: Optional[str] = Field(default=None, min_length=6)
+    routing: NodeRoutingPayload
+
+
 MINER_STATE = MinerControlState()
+NODE_LIFECYCLE_STATE: Dict[str, Any] = {
+    "mode": "genesis",
+    "host": "127.0.0.1",
+    "port": 8545,
+    "peer_url": None,
+    "routing": NodeRoutingPayload().model_dump(),
+    "applied_at": _now_iso(),
+}
 
 
 def _node_headers() -> Dict[str, str]:
@@ -207,6 +232,56 @@ async def _wallet_request(method: str, path: str, payload: Optional[Dict[str, An
         response = await client.request(method, url, headers=_wallet_headers(), json=payload)
     response.raise_for_status()
     return response.json()
+
+
+def _build_node_url(host: str, port: int, tls_enabled: bool) -> str:
+    scheme = "https" if tls_enabled else "http"
+    return f"{scheme}://{host}:{port}"
+
+
+def _routing_overlays(routing: NodeRoutingPayload) -> List[str]:
+    overlays: List[str] = []
+    if routing.vpn:
+        overlays.append("vpn")
+    if routing.tor:
+        overlays.append("tor")
+    if routing.doh:
+        overlays.append("doh")
+    return overlays
+
+
+def _validate_lifecycle_payload(payload: NodeLifecyclePayload) -> None:
+    if payload.mode == "join" and not payload.peer_url:
+        raise HTTPException(status_code=422, detail={"error": "Joining a network requires a peer node_url."})
+    if payload.routing.mtls and not payload.routing.tls:
+        raise HTTPException(status_code=422, detail={"error": "Mutual TLS requires TLS to be enabled."})
+    if payload.routing.local_only and (payload.routing.vpn or payload.routing.tor):
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "Local-only RPC cannot be combined with Tor or VPN relays."},
+        )
+
+
+def _record_lifecycle(payload: NodeLifecyclePayload) -> Dict[str, Any]:
+    node_url = _build_node_url(payload.host, payload.port, payload.routing.tls)
+    NODE_LIFECYCLE_STATE.update(
+        {
+            "mode": payload.mode,
+            "host": payload.host,
+            "port": payload.port,
+            "peer_url": payload.peer_url,
+            "routing": payload.routing.model_dump(),
+            "node_url": node_url,
+            "applied_at": _now_iso(),
+            "overlays": _routing_overlays(payload.routing),
+        }
+    )
+    return {
+        "node_url": node_url,
+        "routing": NODE_LIFECYCLE_STATE["routing"],
+        "overlays": NODE_LIFECYCLE_STATE["overlays"],
+        "applied_at": NODE_LIFECYCLE_STATE["applied_at"],
+    }
 
 
 async def _proxy_metrics() -> Dict[str, Any]:
@@ -378,6 +453,23 @@ def run_action(slug: str) -> StreamingResponse:
         raise HTTPException(status_code=404, detail=f"Unknown action slug: {slug}")
     generator = _generate_stream(action)
     return StreamingResponse(generator, media_type="application/x-ndjson")
+
+
+@app.post("/node/lifecycle")
+async def node_lifecycle(payload: NodeLifecyclePayload) -> Dict[str, Any]:
+    _validate_lifecycle_payload(payload)
+    record = _record_lifecycle(payload)
+    response = {
+        "status": "ok",
+        "mode": payload.mode,
+        "node_url": record["node_url"],
+        "peer_url": payload.peer_url,
+        "routing": record["routing"],
+        "local_rpc_only": payload.routing.local_only,
+        "overlays": record["overlays"],
+        "applied_at": record["applied_at"],
+    }
+    return response
 
 
 @app.get("/node/metrics")
