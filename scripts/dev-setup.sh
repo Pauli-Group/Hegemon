@@ -13,6 +13,18 @@ have_cmd() {
     command -v "$1" >/dev/null 2>&1
 }
 
+print_tool_version() {
+    local label=$1
+    shift
+    if have_cmd "$1"; then
+        local cmd=$1
+        shift || true
+        echo "$label $("$cmd" "$@" 2>/dev/null)"
+    else
+        echo "$label (not found)"
+    fi
+}
+
 # shellcheck disable=SC2120
 ensure_apt_packages() {
     if ! have_cmd apt-get; then
@@ -83,7 +95,25 @@ ensure_go() {
     local tmp
     tmp=$(mktemp -d)
     trap 'rm -rf "${tmp:-}"' RETURN
-    local archive="go${GO_VERSION}.linux-amd64.tar.gz"
+    local go_os
+    case "$(uname -s)" in
+        Linux) go_os="linux" ;;
+        Darwin) go_os="darwin" ;;
+        *)
+            echo "error: unsupported OS for Go binary install: $(uname -s)" >&2
+            exit 1
+            ;;
+    esac
+    local go_arch
+    case "$(uname -m)" in
+        x86_64 | amd64) go_arch="amd64" ;;
+        arm64 | aarch64) go_arch="arm64" ;;
+        *)
+            echo "error: unsupported CPU architecture for Go binary install: $(uname -m)" >&2
+            exit 1
+            ;;
+    esac
+    local archive="go${GO_VERSION}.${go_os}-${go_arch}.tar.gz"
     local url="https://go.dev/dl/${archive}"
     echo "Installing Go ${GO_VERSION} from ${url}"
     curl -sSfL "$url" -o "$tmp/$archive"
@@ -114,11 +144,11 @@ main() {
     install_rust_toolchain
     ensure_go
     echo "Toolchains ready!"
-    echo "Rust $(rustc --version)"
-    echo "Cargo $(cargo --version)"
-    echo "Go $(go version)"
-    echo "clang-format $(clang-format --version | head -n1)"
-    echo "jq $(jq --version)"
+    print_tool_version "Rust" rustc --version
+    print_tool_version "Cargo" cargo --version
+    print_tool_version "Go" go version
+    print_tool_version "clang-format" clang-format --version
+    print_tool_version "jq" jq --version
 }
 
 main "$@"
