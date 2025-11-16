@@ -21,6 +21,7 @@ pub struct Transaction {
     pub commitments: Vec<Commitment>,
     pub balance_tag: BalanceTag,
     pub version: VersionBinding,
+    pub ciphertexts: Vec<Vec<u8>>,
 }
 
 impl Transaction {
@@ -29,14 +30,22 @@ impl Transaction {
         commitments: Vec<Commitment>,
         balance_tag: BalanceTag,
         version: VersionBinding,
+        ciphertexts: Vec<Vec<u8>>,
     ) -> Self {
-        let id = compute_transaction_id(&nullifiers, &commitments, &balance_tag, version);
+        let id = compute_transaction_id(
+            &nullifiers,
+            &commitments,
+            &balance_tag,
+            version,
+            &ciphertexts,
+        );
         Self {
             id,
             nullifiers,
             commitments,
             balance_tag,
             version,
+            ciphertexts,
         }
     }
 
@@ -46,6 +55,7 @@ impl Transaction {
             &self.commitments,
             &self.balance_tag,
             self.version,
+            &self.ciphertexts,
         )
     }
 }
@@ -90,6 +100,7 @@ fn compute_transaction_id(
     commitments: &[Commitment],
     balance_tag: &BalanceTag,
     version: VersionBinding,
+    ciphertexts: &[Vec<u8>],
 ) -> BlockHash {
     let mut hasher = Sha384::new();
     hasher.update(version.circuit.to_le_bytes());
@@ -99,6 +110,10 @@ fn compute_transaction_id(
     }
     for cm in commitments {
         hasher.update(cm);
+    }
+    for ct in ciphertexts {
+        hasher.update((ct.len() as u32).to_le_bytes());
+        hasher.update(ct);
     }
     hasher.update(balance_tag);
     let digest = hasher.finalize();
@@ -172,6 +187,7 @@ mod tests {
             vec![[2u8; 32]],
             [3u8; 32],
             DEFAULT_VERSION_BINDING,
+            vec![],
         );
         assert_eq!(tx.hash(), tx.id);
     }
@@ -186,6 +202,7 @@ mod tests {
             base_commitments.clone(),
             base_tag,
             DEFAULT_VERSION_BINDING,
+            vec![],
         );
         let upgraded_version = VersionBinding::new(2, DEFAULT_VERSION_BINDING.crypto);
         let v2 = Transaction::new(
@@ -193,14 +210,27 @@ mod tests {
             base_commitments,
             base_tag,
             upgraded_version,
+            vec![],
         );
         assert_ne!(v1.id, v2.id);
     }
 
     #[test]
     fn fee_commitment_sorted() {
-        let tx_a = Transaction::new(vec![[1u8; 32]], vec![], [3u8; 32], DEFAULT_VERSION_BINDING);
-        let tx_b = Transaction::new(vec![[2u8; 32]], vec![], [1u8; 32], DEFAULT_VERSION_BINDING);
+        let tx_a = Transaction::new(
+            vec![[1u8; 32]],
+            vec![],
+            [3u8; 32],
+            DEFAULT_VERSION_BINDING,
+            vec![],
+        );
+        let tx_b = Transaction::new(
+            vec![[2u8; 32]],
+            vec![],
+            [1u8; 32],
+            DEFAULT_VERSION_BINDING,
+            vec![],
+        );
         let tag = compute_fee_commitment(&[tx_a.clone(), tx_b.clone()]);
         let tag_swapped = compute_fee_commitment(&[tx_b, tx_a]);
         assert_eq!(tag, tag_swapped);
@@ -208,8 +238,20 @@ mod tests {
 
     #[test]
     fn proof_commitment_depends_on_transaction_order() {
-        let tx_a = Transaction::new(vec![[1u8; 32]], vec![], [3u8; 32], DEFAULT_VERSION_BINDING);
-        let tx_b = Transaction::new(vec![[2u8; 32]], vec![], [4u8; 32], DEFAULT_VERSION_BINDING);
+        let tx_a = Transaction::new(
+            vec![[1u8; 32]],
+            vec![],
+            [3u8; 32],
+            DEFAULT_VERSION_BINDING,
+            vec![],
+        );
+        let tx_b = Transaction::new(
+            vec![[2u8; 32]],
+            vec![],
+            [4u8; 32],
+            DEFAULT_VERSION_BINDING,
+            vec![],
+        );
         let commitment = compute_proof_commitment(&[tx_a.clone(), tx_b.clone()]);
         let commitment_swapped = compute_proof_commitment(&[tx_b, tx_a]);
         assert_ne!(commitment, commitment_swapped);
@@ -217,12 +259,19 @@ mod tests {
 
     #[test]
     fn version_commitment_tracks_counts() {
-        let tx_v1 = Transaction::new(vec![[1u8; 32]], vec![], [3u8; 32], DEFAULT_VERSION_BINDING);
+        let tx_v1 = Transaction::new(
+            vec![[1u8; 32]],
+            vec![],
+            [3u8; 32],
+            DEFAULT_VERSION_BINDING,
+            vec![],
+        );
         let tx_v2 = Transaction::new(
             vec![[4u8; 32]],
             vec![],
             [5u8; 32],
             VersionBinding::new(2, DEFAULT_VERSION_BINDING.crypto),
+            vec![],
         );
         let matrix = compute_version_matrix(&[tx_v1.clone(), tx_v1.clone(), tx_v2.clone()]);
         let counts = matrix.counts();

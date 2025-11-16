@@ -13,6 +13,7 @@ pub struct ValidatedTransaction {
     pub timestamp: Instant,
     pub commitments: Vec<Felt>,
     pub nullifiers: Vec<[u8; 32]>,
+    pub ciphertexts: Vec<Vec<u8>>,
 }
 
 pub fn felt_to_bytes(value: Felt) -> [u8; 32] {
@@ -44,9 +45,10 @@ pub fn felt_vec_to_nullifiers(values: &[Felt]) -> Vec<[u8; 32]> {
 pub fn proof_to_transaction(
     proof: &TransactionProof,
     version: VersionBinding,
+    ciphertexts: Vec<Vec<u8>>,
 ) -> ConsensusTransaction {
     let commitments = felt_vec_to_commitments(&proof.public_inputs.commitments);
     let nullifiers = felt_vec_to_nullifiers(&proof.public_inputs.nullifiers);
     let balance_tag = balance_tag_bytes(proof.public_inputs.balance_tag);
-    ConsensusTransaction::new(nullifiers, commitments, balance_tag, version)
+    ConsensusTransaction::new(nullifiers, commitments, balance_tag, version, ciphertexts)
 }

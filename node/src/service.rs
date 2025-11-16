@@ -18,7 +18,7 @@ use protocol_versioning::{DEFAULT_VERSION_BINDING, VersionBinding};
 use tokio::sync::{broadcast, mpsc, watch};
 use transaction_circuit::hashing::Felt;
 use transaction_circuit::keys::{VerifyingKey, generate_keys};
-use transaction_circuit::proof::{TransactionProof, verify};
+use transaction_circuit::proof::verify;
 
 use crate::codec::{deserialize_block, serialize_block};
 use crate::config::NodeConfig;
@@ -28,6 +28,7 @@ use crate::miner::{self, BlockTemplate};
 use crate::storage::{ChainMeta, Storage};
 use crate::telemetry::{Telemetry, TelemetrySnapshot};
 use crate::transaction::{ValidatedTransaction, felt_to_bytes, proof_to_transaction};
+use wallet::TransactionBundle;
 
 const EVENT_CHANNEL_SIZE: usize = 256;
 const BLOCK_BROADCAST_CAPACITY: usize = 8;
@@ -181,8 +182,8 @@ impl NodeService {
         while let Ok(message) = rx.recv().await {
             match message {
                 GossipMessage::Transaction(data) => {
-                    if let Ok(proof) = bincode::deserialize::<TransactionProof>(&data) {
-                        let _ = self.validate_and_add_transaction(proof, false).await;
+                    if let Ok(bundle) = bincode::deserialize::<TransactionBundle>(&data) {
+                        let _ = self.validate_and_add_transaction(bundle, false).await;
                     }
                 }
                 GossipMessage::Block(data) => {
@@ -209,7 +210,20 @@ impl NodeService {
             leaf_count: ledger.tree.len() as u64,
             depth: ledger.tree.depth() as u64,
             root: ledger.tree.root().as_int(),
+            next_index: ledger.tree.len() as u64,
         }
+    }
+
+    pub fn commitment_slice(&self, start: u64, limit: usize) -> NodeResult<Vec<(u64, Felt)>> {
+        self.storage.load_commitments_range(start, limit)
+    }
+
+    pub fn ciphertext_slice(&self, start: u64, limit: usize) -> NodeResult<Vec<(u64, Vec<u8>)>> {
+        self.storage.load_ciphertexts(start, limit)
+    }
+
+    pub fn nullifier_list(&self) -> NodeResult<Vec<[u8; 32]>> {
+        self.storage.load_nullifiers()
     }
 
     pub fn merkle_root(&self) -> Felt {
@@ -228,8 +242,8 @@ impl NodeService {
         }
     }
 
-    pub async fn submit_transaction(&self, proof: TransactionProof) -> NodeResult<[u8; 32]> {
-        let tx_id = self.validate_and_add_transaction(proof, true).await?;
+    pub async fn submit_transaction(&self, bundle: TransactionBundle) -> NodeResult<[u8; 32]> {
+        let tx_id = self.validate_and_add_transaction(bundle, true).await?;
         Ok(tx_id)
     }
 
@@ -243,9 +257,11 @@ impl NodeService {
 
     async fn validate_and_add_transaction(
         &self,
-        proof: TransactionProof,
+        bundle: TransactionBundle,
         broadcast: bool,
     ) -> NodeResult<[u8; 32]> {
+        let proof = bundle.proof;
+        let ciphertexts = bundle.ciphertexts;
         let version = proof.version_binding();
         let verifying_key = self
             .verifying_keys
@@ -269,15 +285,18 @@ impl NodeService {
             }
         }
         drop(ledger);
-        let tx = proof_to_transaction(&proof, version);
-        let nullifiers = tx.nullifiers.clone();
-        let commitments = proof
+        let commitments: Vec<_> = proof
             .public_inputs
             .commitments
             .iter()
             .copied()
             .filter(|value| value.as_int() != 0)
             .collect();
+        if ciphertexts.len() != commitments.len() {
+            return Err(NodeError::Invalid("ciphertext count mismatch"));
+        }
+        let tx = proof_to_transaction(&proof, version, ciphertexts.clone());
+        let nullifiers = tx.nullifiers.clone();
         let validated = ValidatedTransaction {
             id: tx.hash(),
             proof: proof.clone(),
@@ -286,6 +305,7 @@ impl NodeService {
             timestamp: Instant::now(),
             commitments,
             nullifiers,
+            ciphertexts,
         };
         self.mempool.insert(validated.clone())?;
         self.telemetry.set_mempool_depth(self.mempool.len());
@@ -294,7 +314,10 @@ impl NodeService {
             tx_id: validated.id,
         });
         if broadcast {
-            let payload = bincode::serialize(&validated.proof)?;
+            let payload = bincode::serialize(&TransactionBundle {
+                proof: validated.proof.clone(),
+                ciphertexts: validated.ciphertexts.clone(),
+            })?;
             let _ = self.gossip.broadcast_transaction(payload);
         }
         Ok(validated.id)
@@ -380,10 +403,12 @@ impl NodeService {
             .unwrap_or(ledger.pow_bits);
         let mut commitment_index = ledger.tree.len() as u64;
         for tx in &block.transactions {
-            for cm in &tx.commitments {
+            for (cm, ciphertext) in tx.commitments.iter().zip(tx.ciphertexts.iter()) {
                 if let Some(value) = commitment_to_felt(cm) {
                     let _ = ledger.tree.append(value);
                     self.storage.append_commitment(commitment_index, value)?;
+                    self.storage
+                        .append_ciphertext(commitment_index, ciphertext)?;
                     commitment_index += 1;
                 }
             }
@@ -518,4 +543,5 @@ pub struct NoteStatus {
     pub leaf_count: u64,
     pub depth: u64,
     pub root: u64,
+    pub next_index: u64,
 }

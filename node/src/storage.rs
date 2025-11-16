@@ -27,6 +27,7 @@ pub struct Storage {
     meta: sled::Tree,
     notes: sled::Tree,
     nullifiers: sled::Tree,
+    ciphertexts: sled::Tree,
 }
 
 impl Storage {
@@ -36,12 +37,14 @@ impl Storage {
         let meta = db.open_tree("meta")?;
         let notes = db.open_tree("notes")?;
         let nullifiers = db.open_tree("nullifiers")?;
+        let ciphertexts = db.open_tree("ciphertexts")?;
         Ok(Self {
             db,
             blocks,
             meta,
             notes,
             nullifiers,
+            ciphertexts,
         })
     }
 
@@ -67,7 +70,12 @@ impl Storage {
     pub fn append_commitment(&self, index: u64, value: Felt) -> NodeResult<()> {
         let mut bytes = [0u8; 8];
         bytes.copy_from_slice(&value.as_int().to_be_bytes());
-        self.notes.insert(index.to_be_bytes(), &bytes)?;
+        self.notes.insert(index_key(index), &bytes)?;
+        Ok(())
+    }
+
+    pub fn append_ciphertext(&self, index: u64, bytes: &[u8]) -> NodeResult<()> {
+        self.ciphertexts.insert(index_key(index), bytes)?;
         Ok(())
     }
 
@@ -78,6 +86,36 @@ impl Storage {
             values.push(bytes_to_felt(&bytes));
         }
         Ok(values)
+    }
+
+    pub fn load_commitments_range(&self, start: u64, limit: usize) -> NodeResult<Vec<(u64, Felt)>> {
+        let mut out = Vec::new();
+        for entry in self.notes.range(index_key(start)..) {
+            let (key, bytes) = entry?;
+            let mut idx_bytes = [0u8; 8];
+            idx_bytes.copy_from_slice(&key);
+            let index = u64::from_be_bytes(idx_bytes);
+            out.push((index, bytes_to_felt(&bytes)));
+            if out.len() == limit {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn load_ciphertexts(&self, start: u64, limit: usize) -> NodeResult<Vec<(u64, Vec<u8>)>> {
+        let mut out = Vec::new();
+        for entry in self.ciphertexts.range(index_key(start)..) {
+            let (key, value) = entry?;
+            let mut idx_bytes = [0u8; 8];
+            idx_bytes.copy_from_slice(&key);
+            let index = u64::from_be_bytes(idx_bytes);
+            out.push((index, value.to_vec()));
+            if out.len() == limit {
+                break;
+            }
+        }
+        Ok(out)
     }
 
     pub fn insert_block(&self, hash: [u8; 32], block: &ConsensusBlock) -> NodeResult<()> {
@@ -118,4 +156,8 @@ fn bytes_to_felt(bytes: &IVec) -> Felt {
     let mut buf = [0u8; 8];
     buf.copy_from_slice(&bytes[..8]);
     Felt::new(u64::from_be_bytes(buf))
+}
+
+fn index_key(index: u64) -> [u8; 8] {
+    index.to_be_bytes()
 }

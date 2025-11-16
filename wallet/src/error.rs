@@ -24,10 +24,37 @@ pub enum WalletError {
 
     #[error("serialization error: {0}")]
     Serialization(String),
+
+    #[error("http error: {0}")]
+    Http(String),
+
+    #[error("wallet is watch-only")]
+    WatchOnly,
+
+    #[error("invalid wallet state: {0}")]
+    InvalidState(&'static str),
+
+    #[error("invalid argument: {0}")]
+    InvalidArgument(&'static str),
+
+    #[error("insufficient funds (needed {needed}, available {available})")]
+    InsufficientFunds { needed: u64, available: u64 },
 }
 
 impl From<bincode::Error> for WalletError {
     fn from(err: bincode::Error) -> Self {
+        Self::Serialization(err.to_string())
+    }
+}
+
+impl From<reqwest::Error> for WalletError {
+    fn from(err: reqwest::Error) -> Self {
+        Self::Http(err.to_string())
+    }
+}
+
+impl From<std::io::Error> for WalletError {
+    fn from(err: std::io::Error) -> Self {
         Self::Serialization(err.to_string())
     }
 }
