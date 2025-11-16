@@ -5,6 +5,9 @@ A Vite + React + TypeScript shell that mirrors the CLI workflows declared in `sc
 - **Action catalog** – grouped cards for every dashboard action with filtering.
 - **Action run view** – JetBrains Mono playback of the exact CLI commands.
 - **Quickstart summary** – timeline for the `quickstart` action plus dependent prep steps.
+- **Wallet console** – balances, shielded send forms, and transaction history sourced from the node RPC.
+- **Mining console** – live telemetry, start/stop controls, and target hash-rate configuration.
+- **Network analytics** – spark-lines and alerts for stale blocks, mempool depth, and block confirmations.
 
 Design tokens come directly from `docs/ui/brand_tokens.json` (via `src/design/tokens.ts`) so the colors, typography, spacing, and motion rules stay aligned with `BRAND.md`.
 
@@ -14,7 +17,19 @@ Design tokens come directly from `docs/ui/brand_tokens.json` (via `src/design/to
 cd dashboard-ui
 npm install
 npm run sync-actions   # exports scripts/dashboard.py actions and copies docs/ui/brand_tokens.json
-npm run dev
+pip install -r ../scripts/dashboard_requirements.txt
+NODE_RPC_URL=http://127.0.0.1:8080 NODE_RPC_TOKEN=local-dev-token python ../scripts/dashboard_service.py --host 127.0.0.1 --port 8001
+# in a second terminal
+VITE_DASHBOARD_SERVICE_URL=http://127.0.0.1:8001 npm run dev
+```
+
+If no `NODE_RPC_URL` is provided the FastAPI proxy streams the deterministic mock payloads defined in `scripts/dashboard_service.py`, so designers can still develop UI flows offline.
+
+To verify the proxy is reachable:
+
+```bash
+curl http://127.0.0.1:8001/node/metrics | jq
+curl http://127.0.0.1:8001/node/wallet/notes | jq
 ```
 
 During development you can pass `--host 0.0.0.0 --port 4173` to `npm run dev` to expose the server externally (useful for screenshots with Playwright).
@@ -28,6 +43,7 @@ During development you can pass `--host 0.0.0.0 --port 4173` to `npm run dev` to
 | `npm run preview` | Preview the production build locally. |
 | `npm run sync-actions` | Re-export CLI actions into `src/data/actions.json` so the UI matches the CLI. |
 | `npm run lint` | Run ESLint using the template defaults. |
+| `npm run screenshot` | Start the proxy + Vite dev server and assert the `/mining` vector snapshot via Playwright. |
 
 ## Data and design layers
 
@@ -38,4 +54,5 @@ During development you can pass `--host 0.0.0.0 --port 4173` to `npm run dev` to
 
 ## Screenshot guidance
 
-When you make visual changes, start the dev server (`npm run dev -- --host 0.0.0.0 --port 4173`) and capture a browser screenshot that highlights the catalog grid or quickstart timeline to document layout updates.
+- The Playwright harness (`npm run screenshot`) spins up the FastAPI proxy plus Vite dev server, loads `/mining`, and serializes the `main` region into an SVG snapshot stored at `tests/screenshot.spec.ts-snapshots/mining-console.svg`. This keeps the artifact vector-based so it remains readable in code review without committing binary PNGs.
+- When iterating manually you can still start `npm run dev -- --host 0.0.0.0 --port 4173` and capture additional visuals (prefer SVG or other vector exports when checking in artifacts).
