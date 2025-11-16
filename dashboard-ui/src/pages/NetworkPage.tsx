@@ -43,7 +43,7 @@ export function NetworkPage() {
         </div>
       )}
 
-      <div className={`grid-12 ${styles.grid}`}>
+      <div className={styles.metricGrid}>
         <MetricTile label="Best height" value={`${bestHeight}`} helper="Latest confirmed block" />
         <MetricTile label="Total hashes" value={totalHashesLabel} helper="Since node start" />
         <MetricTile label="Stale rate" value={`${(staleRate * 100).toFixed(2)}%`} helper="Past 5 samples" />

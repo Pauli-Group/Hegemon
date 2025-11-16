@@ -106,7 +106,7 @@ export function MiningPage() {
         isPlaceholder={miner.isPlaceholderData}
       />
 
-      <div className={`grid-12 ${styles.grid}`}>
+      <div className={styles.metricGrid}>
         <MetricTile label="Hash rate" value={`${hashRateValue.toFixed(2)} H/s`} helper={`Threads ${minerData?.thread_count ?? 0}`}>
           <Sparkline data={hashRateSeries} label="24 samples" />
         </MetricTile>
