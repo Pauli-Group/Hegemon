@@ -96,7 +96,7 @@ impl NodeService {
         for nf in storage.load_nullifiers()? {
             let _ = nullifiers.insert(nf);
         }
-        let meta = storage.load_meta()?.unwrap_or_else(|| ChainMeta {
+        let meta = storage.load_meta()?.unwrap_or(ChainMeta {
             best_hash: [0u8; 32],
             height: 0,
             state_root: [0u8; 32],
@@ -115,8 +115,7 @@ impl NodeService {
             pow_bits: meta.pow_bits,
         };
         let miner_pubkeys = vec![miner_secret.verify_key()];
-        let mut consensus =
-            PowConsensus::new(miner_pubkeys, meta.state_root, HashVerifier::default());
+        let mut consensus = PowConsensus::new(miner_pubkeys, meta.state_root, HashVerifier);
         let mut persisted_blocks = storage.load_blocks()?;
         persisted_blocks.sort_by_key(|block| block.header.height);
         for block in persisted_blocks {
@@ -257,8 +256,7 @@ impl NodeService {
         if !ledger
             .tree
             .root_history()
-            .iter()
-            .any(|root| *root == proof.public_inputs.merkle_root)
+            .contains(&proof.public_inputs.merkle_root)
         {
             return Err(NodeError::Invalid("unknown merkle root"));
         }
@@ -342,17 +340,16 @@ impl NodeService {
                 .ok_or(NodeError::Invalid("supply overflow"))?;
         let state_root = accumulate_state(base_state_root, &transactions);
         let nullifier_root = nullifier_set.commitment();
-        let header = build_header(
+        let header_context = HeaderContext {
             parent_hash,
             parent_height,
             state_root,
             nullifier_root,
-            &transactions,
-            supply,
+            supply_digest: supply,
             pow_bits,
-            &self.miner_secret,
-            self.miner_id,
-        )?;
+            miner_id: self.miner_id,
+        };
+        let header = build_header(&header_context, &transactions, &self.miner_secret)?;
         self.telemetry
             .set_difficulty(header.pow.as_ref().map(|s| s.pow_bits).unwrap_or(0));
         let block = ConsensusBlock {
@@ -437,16 +434,20 @@ fn build_verifying_keys(versions: &[VersionBinding]) -> HashMap<VersionBinding, 
     keys
 }
 
-fn build_header(
+struct HeaderContext {
     parent_hash: [u8; 32],
     parent_height: u64,
     state_root: [u8; 32],
     nullifier_root: [u8; 32],
-    transactions: &[Transaction],
     supply_digest: u128,
     pow_bits: u32,
-    secret: &MlDsaSecretKey,
     miner_id: [u8; 32],
+}
+
+fn build_header(
+    context: &HeaderContext,
+    transactions: &[Transaction],
+    secret: &MlDsaSecretKey,
 ) -> NodeResult<consensus::header::BlockHeader> {
     use consensus::header::{BlockHeader, PowSeal};
     let proof_commitment = consensus::types::compute_proof_commitment(transactions);
@@ -456,23 +457,23 @@ fn build_header(
     let timestamp_ms = current_time_ms();
     let mut header = BlockHeader {
         version: 1,
-        height: parent_height + 1,
+        height: context.parent_height + 1,
         view: 0,
         timestamp_ms,
-        parent_hash,
-        state_root,
-        nullifier_root,
+        parent_hash: context.parent_hash,
+        state_root: context.state_root,
+        nullifier_root: context.nullifier_root,
         proof_commitment,
         version_commitment,
         tx_count,
         fee_commitment,
-        supply_digest,
-        validator_set_commitment: miner_id,
+        supply_digest: context.supply_digest,
+        validator_set_commitment: context.miner_id,
         signature_aggregate: Vec::new(),
         signature_bitmap: None,
         pow: Some(PowSeal {
             nonce: [0u8; 32],
-            pow_bits,
+            pow_bits: context.pow_bits,
         }),
     };
     let signing_hash = header.signing_hash()?;
