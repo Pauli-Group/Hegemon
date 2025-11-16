@@ -21,10 +21,10 @@ bench:
 	( cd consensus/bench && go run ./cmd/netbench --smoke --json )
 
 wallet-demo:
-        ./scripts/wallet-demo.sh --out wallet-demo-artifacts
+	./scripts/wallet-demo.sh --out wallet-demo-artifacts
 
 dashboard:
-./scripts/dashboard.py
+	./scripts/dashboard.py
 
 quickstart:
-./scripts/dashboard.py --run quickstart
+	./scripts/dashboard.py --run quickstart
