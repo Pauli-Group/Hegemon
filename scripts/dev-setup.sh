@@ -74,34 +74,38 @@ ensure_go() {
         version=$(go version | awk '{print $3}' | sed 's/go//')
         if [[ -z "$version" ]]; then
             echo "warning: could not detect go version; reinstalling" >&2
-        elif printf '%s\n' "$version" "1.21" | sort -V | tail -n1 | grep -qx "$version"; then
+        elif printf '%s\n' "$version" "$GO_VERSION" | sort -V | tail -n1 | grep -qx "$version"; then
             return
         else
-            echo "Detected Go $version (<1.21); reinstalling"
+            echo "Detected Go $version (<${GO_VERSION}); reinstalling"
         fi
     fi
     local tmp
     tmp=$(mktemp -d)
-    trap 'rm -rf "$tmp"' RETURN
+    trap 'rm -rf "${tmp:-}"' RETURN
     local archive="go${GO_VERSION}.linux-amd64.tar.gz"
     local url="https://go.dev/dl/${archive}"
     echo "Installing Go ${GO_VERSION} from ${url}"
     curl -sSfL "$url" -o "$tmp/$archive"
-    local install_root="/usr/local"
-    if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
-        if have_cmd sudo; then
-            sudo rm -rf "$install_root/go"
-            sudo tar -C "$install_root" -xzf "$tmp/$archive"
-        else
-            echo "error: need root privileges or sudo to install Go to ${install_root}" >&2
-            exit 1
-        fi
+
+    local install_root
+    if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+        install_root="/usr/local"
     else
-        rm -rf "$install_root/go"
-        tar -C "$install_root" -xzf "$tmp/$archive"
+        install_root="$HOME/.local"
+        mkdir -p "$install_root"
     fi
-    echo "Go installed to ${install_root}/go"
-    echo "Add /usr/local/go/bin to your PATH if it is missing"
+
+    local go_prefix="$install_root/go"
+    rm -rf "$go_prefix"
+    tar -C "$install_root" -xzf "$tmp/$archive"
+
+    local go_bin="$go_prefix/bin"
+    if [[ ":${PATH}:" != *":${go_bin}:"* ]]; then
+        export PATH="$go_bin:$PATH"
+    fi
+    echo "Go installed to ${go_prefix}"
+    echo "Add ${go_bin} to your PATH if it is missing"
 }
 
 main() {
