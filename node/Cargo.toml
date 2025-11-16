@@ -1,0 +1,34 @@
+[package]
+name = "node"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+axum = { version = "0.7", features = ["json", "ws"] }
+bincode = "1.3"
+clap = { version = "4.5", features = ["derive"] }
+consensus = { path = "../consensus" }
+crypto = { path = "../crypto", package = "synthetic-crypto" }
+futures = "0.3"
+hex = "0.4"
+network = { path = "../network" }
+num-bigint = "0.4"
+num-traits = "0.2"
+parking_lot = "0.12"
+protocol_versioning = { path = "../protocol/versioning", package = "protocol-versioning" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sled = "0.34"
+state-merkle = { path = "../state/merkle", package = "state-merkle" }
+thiserror = "1.0"
+tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "sync", "time", "signal", "fs"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+transaction_circuit = { path = "../circuits/transaction", package = "transaction-circuit" }
+
+[dev-dependencies]
+rand = "0.8"
+tempfile = "3.8"
+block-circuit = { path = "../circuits/block" }
