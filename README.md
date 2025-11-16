@@ -4,7 +4,7 @@ Quantum-resistant private payments
 
 ![Synthetic Hegemonic Currency emblem](docs/assets/shc-logo.svg)
 
-> The refreshed emblem introduces a layered shield and clearly gated orbital rails, addressing the previous mark's amorphous glow and giving the protocol a crisper, more institutional identity that still nods to private settlement flows.
+> The aurora crest replaces the prior heavy-handed glow with glass-layered shading, precise concentric rails, and a spectral S-stroke so the mark feels like a premium Apple-grade system rather than an amorphous experiment.
 
 ## Whitepaper
 
