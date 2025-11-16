@@ -45,6 +45,7 @@ struct StoredTransaction {
     balance_tag: [u8; 32],
     version_circuit: u16,
     version_crypto: u16,
+    ciphertexts: Vec<Vec<u8>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -103,6 +104,7 @@ impl From<&ConsensusBlock> for StoredBlock {
                 balance_tag: tx.balance_tag,
                 version_circuit: tx.version.circuit,
                 version_crypto: tx.version.crypto,
+                ciphertexts: tx.ciphertexts.clone(),
             })
             .collect();
         let coinbase = block.coinbase.as_ref().map(|cb| StoredCoinbase {
@@ -163,6 +165,7 @@ impl StoredBlock {
                     stored.commitments,
                     stored.balance_tag,
                     version,
+                    stored.ciphertexts,
                 )
             })
             .collect();
