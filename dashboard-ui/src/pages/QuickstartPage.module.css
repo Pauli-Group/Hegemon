@@ -1,0 +1,111 @@
+.catalogLink {
+  text-decoration: none;
+  color: var(--color-accent-primary);
+  font-weight: 600;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 40px;
+}
+
+.summaryCard {
+  background: rgba(244, 247, 251, 0.08);
+  border-radius: 20px;
+  padding: 16px 20px;
+  border: 1px solid rgba(244, 247, 251, 0.12);
+}
+
+.label {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  color: rgba(244, 247, 251, 0.6);
+  margin: 0 0 8px;
+}
+
+.value {
+  margin: 0;
+  font-size: 22px;
+}
+
+.timelineSection h2,
+.dependencies h2 {
+  margin-top: 0;
+}
+
+.timeline {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.timeline li {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.stepBadge {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(27, 231, 255, 0.15);
+  border: 1px solid var(--color-accent-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+}
+
+.stepCommand {
+  margin: 0;
+  font-family: var(--font-mono);
+}
+
+.stepMeta {
+  margin: 4px 0 0;
+  color: rgba(244, 247, 251, 0.65);
+  font-size: 14px;
+}
+
+.dependencies {
+  margin-bottom: 40px;
+}
+
+.depGrid {
+  width: 100%;
+}
+
+.depCard {
+  grid-column: span 6;
+  background: rgba(244, 247, 251, 0.07);
+  border-radius: 24px;
+  border: 1px solid rgba(244, 247, 251, 0.15);
+  padding: 20px;
+}
+
+.depCard h3 {
+  margin: 0 0 8px;
+}
+
+.depCard p {
+  margin: 0 0 12px;
+}
+
+.depCard a {
+  text-decoration: none;
+  color: var(--color-accent-primary);
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .depCard {
+    grid-column: span 4;
+  }
+}
