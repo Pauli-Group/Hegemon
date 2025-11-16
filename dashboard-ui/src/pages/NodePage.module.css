@@ -111,6 +111,34 @@
   gap: 14px;
 }
 
+.shareableActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.secondaryButton {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(244, 247, 251, 0.24);
+  color: var(--color-foreground);
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color 0.2s ease, transform 0.15s ease;
+}
+
+.secondaryButton:hover:not(:disabled) {
+  border-color: rgba(27, 231, 255, 0.4);
+  transform: translateY(-1px);
+}
+
+.secondaryButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .controlRow {
   display: flex;
   flex-wrap: wrap;

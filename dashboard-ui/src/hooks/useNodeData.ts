@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { dashboardServiceUrl } from '../config';
+import { useNodeConnection } from '../providers/NodeConnectionProvider';
 import type {
   MinerStatus,
   NoteStatus,
@@ -24,8 +24,19 @@ export class HttpError extends Error {
   }
 }
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${dashboardServiceUrl}${path}`, init);
+function mergeHeaders(authToken?: string, headers?: HeadersInit): HeadersInit {
+  const merged: HeadersInit = { ...SERVICE_HEADERS, ...(headers ?? {}) };
+  if (authToken) {
+    (merged as Record<string, string>).Authorization = `Bearer ${authToken}`;
+  }
+  return merged;
+}
+
+async function fetchJson<T>(serviceUrl: string, path: string, authToken?: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${serviceUrl}${path}`, {
+    ...init,
+    headers: mergeHeaders(authToken, init?.headers),
+  });
   if (!response.ok) {
     let message = `Request failed with ${response.status}`;
     let detail: unknown;
@@ -72,12 +83,14 @@ function isDeepEqual(a: unknown, b: unknown): boolean {
 }
 
 async function getOrFallback<T>(
+  serviceUrl: string,
   path: string,
   fallback: T,
   options: GetOrFallbackOptions = { detectMockData: true },
+  authToken?: string,
 ): Promise<FallbackResult<T>> {
   try {
-    const raw = await fetchJson<T & { __mock_source?: boolean }>(path);
+    const raw = await fetchJson<T & { __mock_source?: boolean }>(serviceUrl, path, authToken);
     const { __mock_source, ...rest } = raw;
     const data = rest as T;
     const shouldMarkMock = FORCE_MOCK_INDICATOR || (options.detectMockData && ((__mock_source ?? false) || isDeepEqual(data, fallback)));
@@ -90,37 +103,39 @@ async function getOrFallback<T>(
 }
 
 export function useNodeMetrics() {
+  const { serviceUrl, authToken } = useNodeConnection();
   return useQuery<FallbackResult<TelemetrySnapshot>>({
-    queryKey: ['node-metrics'],
-    queryFn: () => getOrFallback('/node/metrics', mockTelemetry),
+    queryKey: ['node-metrics', serviceUrl],
+    queryFn: () => getOrFallback(serviceUrl, '/node/metrics', mockTelemetry, { detectMockData: true }, authToken),
     refetchInterval: 5000,
     placeholderData: { data: mockTelemetry, source: 'mock' },
   });
 }
 
 export function useWalletNotes() {
+  const { serviceUrl, authToken } = useNodeConnection();
   return useQuery<FallbackResult<NoteStatus>>({
-    queryKey: ['wallet-notes'],
-    queryFn: () => getOrFallback('/node/wallet/notes', mockNotes),
+    queryKey: ['wallet-notes', serviceUrl],
+    queryFn: () => getOrFallback(serviceUrl, '/node/wallet/notes', mockNotes, { detectMockData: true }, authToken),
     refetchInterval: 7000,
     placeholderData: { data: mockNotes, source: 'mock' },
   });
 }
 
 export function useMinerStatus() {
+  const { serviceUrl, authToken } = useNodeConnection();
   const queryClient = useQueryClient();
   const query = useQuery<FallbackResult<MinerStatus>>({
-    queryKey: ['miner-status'],
-    queryFn: () => getOrFallback('/node/miner/status', mockMinerStatus),
+    queryKey: ['miner-status', serviceUrl],
+    queryFn: () => getOrFallback(serviceUrl, '/node/miner/status', mockMinerStatus, { detectMockData: true }, authToken),
     refetchInterval: 4000,
     placeholderData: { data: mockMinerStatus, source: 'mock' },
   });
 
   const mutation = useMutation({
     mutationFn: (body: { action: 'start' | 'stop'; target_hash_rate?: number; thread_count?: number }) =>
-      fetchJson<{ status: string; state: MinerStatus }>(`/node/miner/control`, {
+      fetchJson<{ status: string; state: MinerStatus }>(serviceUrl, `/node/miner/control`, authToken, {
         method: 'POST',
-        headers: SERVICE_HEADERS,
         body: JSON.stringify(body),
       }),
     onSuccess: () => {
@@ -132,10 +147,11 @@ export function useMinerStatus() {
 }
 
 export function useTransferLedger() {
+  const { serviceUrl, authToken } = useNodeConnection();
   const queryClient = useQueryClient();
   const query = useQuery<FallbackResult<{ transfers: TransferRecord[] }>>({
-    queryKey: ['wallet-transfers'],
-    queryFn: () => getOrFallback('/node/wallet/transfers', { transfers: mockTransfers }),
+    queryKey: ['wallet-transfers', serviceUrl],
+    queryFn: () => getOrFallback(serviceUrl, '/node/wallet/transfers', { transfers: mockTransfers }, { detectMockData: true }, authToken),
     refetchInterval: 8000,
     placeholderData: { data: { transfers: mockTransfers }, source: 'mock' },
   });
@@ -143,9 +159,8 @@ export function useTransferLedger() {
   const mutation = useMutation({
     mutationFn: async (payload: { address: string; amount: number; fee: number; memo?: string }) => {
       try {
-        return await fetchJson<{ transfer: TransferRecord }>(`/node/wallet/transfers`, {
+        return await fetchJson<{ transfer: TransferRecord }>(serviceUrl, `/node/wallet/transfers`, authToken, {
           method: 'POST',
-          headers: SERVICE_HEADERS,
           body: JSON.stringify(payload),
         });
       } catch (error) {
@@ -216,12 +231,12 @@ export interface NodeLifecycleResponse {
 }
 
 export function useNodeLifecycle() {
+  const { serviceUrl, authToken } = useNodeConnection();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: NodeLifecyclePayload) =>
-      fetchJson<NodeLifecycleResponse>('/node/lifecycle', {
+      fetchJson<NodeLifecycleResponse>(serviceUrl, '/node/lifecycle', authToken, {
         method: 'POST',
-        headers: SERVICE_HEADERS,
         body: JSON.stringify(payload),
       }),
     onSuccess: () => {
@@ -237,6 +252,7 @@ function appendPoint(series: TelemetryPoint[], value: number, maxSamples: number
 }
 
 export function useNodeEventStream(maxSamples = 32) {
+  const { serviceUrl } = useNodeConnection();
   const [events, setEvents] = useState<NodeEvent[]>([]);
   const [hashRateSeries, setHashRateSeries] = useState<TelemetryPoint[]>([]);
   const [mempoolSeries, setMempoolSeries] = useState<TelemetryPoint[]>([]);
@@ -250,7 +266,7 @@ export function useNodeEventStream(maxSamples = 32) {
     let retryHandle: number | undefined;
 
     const connect = () => {
-      source = new EventSource(`${dashboardServiceUrl}/node/events/stream`);
+      source = new EventSource(`${serviceUrl}/node/events/stream`);
       source.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data) as NodeEvent;
@@ -281,7 +297,7 @@ export function useNodeEventStream(maxSamples = 32) {
         window.clearTimeout(retryHandle);
       }
     };
-  }, [maxSamples]);
+  }, [maxSamples, serviceUrl]);
 
   const latestTelemetry = useMemo(() => events.find((event) => event.type === 'telemetry'), [events]);
 

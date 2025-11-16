@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { dashboardServiceUrl } from '../config';
+import { useNodeConnection } from '../providers/NodeConnectionProvider';
 
 export type RunStatus = 'idle' | 'running' | 'success' | 'error';
 export type CommandStatus = 'pending' | 'running' | 'success' | 'error';
@@ -90,6 +90,7 @@ function formatLine(event: ActionEvent): LogEntry | null {
 }
 
 export function useActionRunner(slug?: string): RunnerState {
+  const { serviceUrl, authToken } = useNodeConnection();
   const [status, setStatus] = useState<RunStatus>('idle');
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -113,7 +114,7 @@ export function useActionRunner(slug?: string): RunnerState {
 
   useEffect(() => {
     reset();
-  }, [reset, slug]);
+  }, [reset, serviceUrl, slug]);
 
   const handleEvent = useCallback((event: ActionEvent, currentRunId: number) => {
     const formatted = formatLine(event);
@@ -175,9 +176,10 @@ export function useActionRunner(slug?: string): RunnerState {
     setActiveCommandIndex(undefined);
 
     try {
-      const response = await fetch(`${dashboardServiceUrl}/run/${slug}`, {
+      const response = await fetch(`${serviceUrl}/run/${slug}`, {
         method: 'POST',
         signal: controller.signal,
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
       });
       if (!response.ok || !response.body) {
         throw new Error(`Service responded with ${response.status}`);
@@ -230,7 +232,7 @@ export function useActionRunner(slug?: string): RunnerState {
         error: message,
       });
     }
-  }, [handleEvent, slug]);
+  }, [authToken, handleEvent, serviceUrl, slug]);
 
   return {
     status,
