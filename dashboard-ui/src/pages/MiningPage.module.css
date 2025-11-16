@@ -1,0 +1,82 @@
+.grid {
+  margin-bottom: 32px;
+}
+
+.actionRow {
+  display: flex;
+  gap: 12px;
+}
+
+.primaryButton {
+  background: var(--color-accent-primary);
+  color: #04162e;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.controlGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+  margin-bottom: 32px;
+}
+
+.controlCard {
+  background: rgba(14, 28, 54, 0.65);
+  border: 1px solid rgba(244, 247, 251, 0.08);
+  border-radius: 24px;
+  padding: 20px;
+}
+
+.sliderRow {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.sliderRow input[type='range'] {
+  flex: 1;
+}
+
+.sliderValue {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+}
+
+.numberField {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.numberField input {
+  width: 80px;
+  background: rgba(244, 247, 251, 0.05);
+  border: 1px solid rgba(244, 247, 251, 0.2);
+  border-radius: 12px;
+  padding: 10px;
+  color: var(--text-on-dark);
+}
+
+.logSection {
+  display: grid;
+  grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(244, 247, 251, 0.6);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 900px) {
+  .logSection {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,16 @@
+.sparkline {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.label {
+  margin: 0;
+  font-size: 0.8rem;
+  color: rgba(244, 247, 251, 0.7);
+}
+
+.placeholder {
+  color: rgba(244, 247, 251, 0.5);
+  font-size: 0.85rem;
+}
