@@ -4,7 +4,7 @@ A Vite + React + TypeScript shell that mirrors the CLI workflows declared in `sc
 
 - **Action catalog** – grouped cards for every dashboard action with filtering.
 - **Action run view** – JetBrains Mono playback of the exact CLI commands.
-- **Quickstart summary** – timeline for the `quickstart` action plus dependent prep steps.
+- **Quickstart summary** – timeline for the `quickstart` action plus dependent prep steps, with a one-click “Run quickstart” CTA that streams the entire setup directly from the page.
 - **Wallet console** – balances, shielded send forms, and transaction history sourced from the node RPC.
 - **Mining console** – live telemetry, start/stop controls, and target hash-rate configuration.
 - **Network analytics** – spark-lines and alerts for stale blocks, mempool depth, and block confirmations.

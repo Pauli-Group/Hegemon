@@ -25,7 +25,7 @@ export function LogPanel({ title, lines, isStreaming = false, shimmerCount = 4 }
       <pre ref={preRef} className={styles.log}>
         <code>
           {showShimmer && (
-            <div className={styles.shimmerStack}>
+            <div className={styles.shimmerStack} data-testid="log-shimmer">
               {Array.from({ length: shimmerCount }).map((_, index) => (
                 <span key={index} className={styles.shimmer} />
               ))}

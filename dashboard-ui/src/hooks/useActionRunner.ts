@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { dashboardServiceUrl } from '../config';
 
 export type RunStatus = 'idle' | 'running' | 'success' | 'error';
+export type CommandStatus = 'pending' | 'running' | 'success' | 'error';
 
 const formatDuration = (value?: number) =>
   typeof value === 'number' ? value.toFixed(2) : '0.00';
@@ -21,6 +22,8 @@ interface RunnerState {
   lastCompletion?: Completion;
   runAction: () => Promise<void>;
   reset: () => void;
+  commandProgress: Record<number, CommandStatus>;
+  activeCommandIndex?: number;
 }
 
 interface ActionEvent {
@@ -60,6 +63,8 @@ export function useActionRunner(slug?: string): RunnerState {
   const [error, setError] = useState<string | undefined>(undefined);
   const [isStreaming, setIsStreaming] = useState(false);
   const [lastCompletion, setLastCompletion] = useState<Completion | undefined>(undefined);
+  const [commandProgress, setCommandProgress] = useState<Record<number, CommandStatus>>({});
+  const [activeCommandIndex, setActiveCommandIndex] = useState<number | undefined>(undefined);
   const runIdRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -70,6 +75,8 @@ export function useActionRunner(slug?: string): RunnerState {
     setLogs([]);
     setError(undefined);
     setIsStreaming(false);
+    setCommandProgress({});
+    setActiveCommandIndex(undefined);
   }, []);
 
   useEffect(() => {
@@ -81,9 +88,25 @@ export function useActionRunner(slug?: string): RunnerState {
     if (formatted) {
       setLogs((prev) => [...prev, formatted]);
     }
+    if (typeof event.command_index === 'number') {
+      if (event.type === 'command_start') {
+        setCommandProgress((prev) => ({ ...prev, [event.command_index!]: 'running' }));
+        setActiveCommandIndex(event.command_index);
+      }
+      if (event.type === 'command_end') {
+        const statusForCommand = event.exit_code === 0 ? 'success' : 'error';
+        setCommandProgress((prev) => ({ ...prev, [event.command_index!]: statusForCommand }));
+        setActiveCommandIndex((current) => (current === event.command_index ? undefined : current));
+      }
+      if (event.type === 'action_error') {
+        setCommandProgress((prev) => ({ ...prev, [event.command_index!]: 'error' }));
+        setActiveCommandIndex(undefined);
+      }
+    }
     if (event.type === 'action_complete') {
       setStatus('success');
       setIsStreaming(false);
+      setActiveCommandIndex(undefined);
       setLastCompletion({ runId: currentRunId, status: 'success', duration: event.duration });
     }
     if (event.type === 'action_error') {
@@ -93,6 +116,7 @@ export function useActionRunner(slug?: string): RunnerState {
       setError(message);
       setStatus('error');
       setIsStreaming(false);
+      setActiveCommandIndex(undefined);
       setLastCompletion({
         runId: currentRunId,
         status: 'error',
@@ -115,6 +139,8 @@ export function useActionRunner(slug?: string): RunnerState {
     setLogs([]);
     setError(undefined);
     setIsStreaming(true);
+    setCommandProgress({});
+    setActiveCommandIndex(undefined);
 
     try {
       const response = await fetch(`${dashboardServiceUrl}/run/${slug}`, {
@@ -165,6 +191,7 @@ export function useActionRunner(slug?: string): RunnerState {
       setError(message);
       setStatus('error');
       setIsStreaming(false);
+      setActiveCommandIndex(undefined);
       setLastCompletion({
         runId: currentRunId,
         status: 'error',
@@ -173,5 +200,15 @@ export function useActionRunner(slug?: string): RunnerState {
     }
   }, [handleEvent, slug]);
 
-  return { status, logs, error, isStreaming, lastCompletion, runAction, reset };
+  return {
+    status,
+    logs,
+    error,
+    isStreaming,
+    lastCompletion,
+    runAction,
+    reset,
+    commandProgress,
+    activeCommandIndex,
+  };
 }

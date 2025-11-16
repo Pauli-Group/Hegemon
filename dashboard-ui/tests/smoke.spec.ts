@@ -60,3 +60,15 @@ test('network dashboard shows analytics tiles and feed', async ({ page }) => {
   await expect(page.getByText('Blocks')).toBeVisible();
   await expect(page.getByText('Transactions').first()).toBeVisible();
 });
+
+test('quickstart timeline runs the end-to-end action', async ({ page }) => {
+  await page.goto('/quickstart');
+  const runButton = page.getByRole('button', { name: /Run quickstart/i });
+  await expect(runButton).toBeVisible();
+  await runButton.click();
+
+  await expect(page.getByTestId('log-shimmer')).toBeVisible();
+
+  const firstStatusChip = page.getByTestId('command-status-1');
+  await expect(firstStatusChip).not.toHaveText(/Pending/i, { timeout: 15000 });
+});
