@@ -28,5 +28,5 @@ assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
 proptest = "1"
-axum = { version = "0.7", default-features = false, features = ["macros"] }
+axum = { version = "0.7", default-features = false, features = ["macros", "json", "query", "http1", "tokio"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
