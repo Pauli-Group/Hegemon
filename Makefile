@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: setup fmt lint test check bench wallet-demo
+.PHONY: setup fmt lint test check bench wallet-demo dashboard
 
 setup:
 	./scripts/dev-setup.sh
@@ -21,4 +21,7 @@ bench:
 	( cd consensus/bench && go run ./cmd/netbench --smoke --json )
 
 wallet-demo:
-	./scripts/wallet-demo.sh --out wallet-demo-artifacts
+        ./scripts/wallet-demo.sh --out wallet-demo-artifacts
+
+dashboard:
+        ./scripts/dashboard.py

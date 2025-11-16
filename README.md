@@ -128,3 +128,21 @@ CI (`.github/workflows/ci.yml`) runs these commands automatically plus targeted 
 | `make check` | Formats, lints, and tests the entire Rust workspace. |
 | `make bench` | Executes the prover, wallet, and network smoke benchmarks. |
 | `make wallet-demo` | Generates example wallet artifacts plus a balance report inside `wallet-demo-artifacts/`. |
+| `make dashboard` | Launches the interactive dashboard that wraps setup, test, demo, and benchmark workflows. |
+
+### Operations dashboard
+
+The `scripts/dashboard.py` CLI exposes the most common repo workflows through a
+single menu:
+
+```bash
+./scripts/dashboard.py          # interactive menu
+./scripts/dashboard.py --list   # print the catalog of actions
+./scripts/dashboard.py --run check   # run a specific action by slug
+```
+
+Each action simply shells out to the documented commands (`make check`,
+`cargo run -p circuits-bench …`, etc.), so the dashboard doubles as living
+documentation for the official workflows. Use it when you need to install
+toolchains, run the wallet demo, or capture benchmark baselines without
+memorizing the exact commands.
