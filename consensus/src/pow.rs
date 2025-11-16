@@ -172,12 +172,12 @@ impl<V: ProofVerifier> PowConsensus<V> {
             .coinbase
             .as_ref()
             .ok_or(ConsensusError::MissingCoinbase)?;
-        if let CoinbaseSource::TransactionIndex(idx) = coinbase.source {
-            if idx >= block.transactions.len() {
-                return Err(ConsensusError::InvalidCoinbase(
-                    "transaction index out of bounds",
-                ));
-            }
+        if let CoinbaseSource::TransactionIndex(idx) = coinbase.source
+            && idx >= block.transactions.len()
+        {
+            return Err(ConsensusError::InvalidCoinbase(
+                "transaction index out of bounds",
+            ));
         }
         if coinbase.balance_tag(&block.transactions).is_none() {
             return Err(ConsensusError::InvalidCoinbase("missing balance tag"));
@@ -306,7 +306,7 @@ impl<V: ProofVerifier> PowConsensus<V> {
         if new_height == 0 {
             return Ok(self.genesis_pow_bits);
         }
-        if RETARGET_WINDOW == 0 || new_height % RETARGET_WINDOW != 0 {
+        if RETARGET_WINDOW == 0 || !new_height.is_multiple_of(RETARGET_WINDOW) {
             return Ok(parent_node.pow_bits);
         }
         if parent_node.height + 1 < RETARGET_WINDOW {

@@ -57,7 +57,7 @@ pub enum CoinbaseSource {
 }
 
 impl CoinbaseSource {
-    pub fn balance_tag<'a>(&self, transactions: &'a [Transaction]) -> Option<BalanceTag> {
+    pub fn balance_tag(&self, transactions: &[Transaction]) -> Option<BalanceTag> {
         match self {
             CoinbaseSource::TransactionIndex(idx) => {
                 transactions.get(*idx).map(|tx| tx.balance_tag)
@@ -76,7 +76,7 @@ pub struct CoinbaseData {
 }
 
 impl CoinbaseData {
-    pub fn balance_tag<'a>(&self, transactions: &'a [Transaction]) -> Option<BalanceTag> {
+    pub fn balance_tag(&self, transactions: &[Transaction]) -> Option<BalanceTag> {
         self.source.balance_tag(transactions)
     }
 
