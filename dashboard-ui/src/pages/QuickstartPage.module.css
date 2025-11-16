@@ -4,6 +4,29 @@
   font-weight: 600;
 }
 
+.headerActions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.runButton {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 20px;
+  font-weight: 600;
+  font-size: 15px;
+  cursor: pointer;
+  background: var(--color-accent-primary);
+  color: #05060a;
+  transition: opacity 160ms ease;
+}
+
+.runButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .summaryGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -74,6 +97,37 @@
   font-size: 14px;
 }
 
+.statusChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  margin-top: 8px;
+}
+
+.statusPending {
+  border-color: rgba(244, 247, 251, 0.25);
+  color: rgba(244, 247, 251, 0.7);
+}
+
+.statusRunning {
+  border-color: var(--color-accent-primary);
+  color: var(--color-accent-primary);
+}
+
+.statusSuccess {
+  border-color: #19b37e;
+  color: #19b37e;
+}
+
+.statusError {
+  border-color: #ff4e4e;
+  color: #ff4e4e;
+}
+
 .dependencies {
   margin-bottom: 40px;
 }
@@ -102,6 +156,12 @@
   text-decoration: none;
   color: var(--color-accent-primary);
   font-weight: 600;
+}
+
+.guardRailCopy {
+  color: #ff4e4e;
+  font-weight: 600;
+  margin: 16px 0 8px;
 }
 
 @media (max-width: 768px) {
