@@ -111,6 +111,48 @@
   gap: 14px;
 }
 
+.controlRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.actionButton {
+  background: linear-gradient(120deg, #61e8f7, #6a7bff);
+  border: 1px solid rgba(27, 231, 255, 0.4);
+  color: #050d1f;
+  padding: 12px 18px;
+  border-radius: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+  box-shadow: 0 10px 30px rgba(27, 231, 255, 0.28);
+}
+
+.actionButton:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.actionButton:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px rgba(27, 231, 255, 0.35);
+}
+
+.controlMeta {
+  flex: 1;
+  min-width: 240px;
+}
+
+.errorText {
+  color: #ffb4c1;
+  margin: 6px 0 0 0;
+  font-weight: 700;
+}
+
 .nodeUrl {
   font-family: var(--font-mono);
   font-size: 1.05rem;
