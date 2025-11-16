@@ -41,6 +41,8 @@ def _prepend_path(env: Dict[str, str], new_path: Path) -> None:
 def _ensure_toolchain_paths(env: Dict[str, str]) -> None:
     _prepend_path(env, HOME / ".cargo" / "bin")
     _prepend_path(env, HOME / ".local" / "go" / "bin")
+    _prepend_path(env, HOME / ".local" / "node" / "bin")
+    _prepend_path(env, Path("/usr/local/node/bin"))
 
 
 @dataclass(frozen=True)

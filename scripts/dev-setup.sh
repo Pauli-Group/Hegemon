@@ -7,6 +7,8 @@ set -euo pipefail
 
 RUST_TOOLCHAIN="stable"
 GO_VERSION="1.21.6"
+NODE_VERSION="20.18.0"
+NODE_INSTALL_DIR=${NODE_INSTALL_DIR:-"$HOME/.local/node"}
 APT_PACKAGES=(build-essential pkg-config libssl-dev clang-format jq)
 
 have_cmd() {
@@ -138,15 +140,84 @@ ensure_go() {
     echo "Add ${go_bin} to your PATH if it is missing"
 }
 
+ensure_node() {
+    local desired="$NODE_VERSION"
+    if have_cmd node; then
+        local version
+        version=$(node --version | sed 's/^v//')
+        if [[ -z "$version" ]]; then
+            echo "warning: could not detect node version; reinstalling" >&2
+        elif printf '%s\n' "$version" "$desired" | sort -V | tail -n1 | grep -qx "$version"; then
+            return
+        else
+            echo "Detected Node v$version (<${desired}); reinstalling"
+        fi
+    fi
+    if ! have_cmd curl; then
+        echo "error: curl is required to install Node.js" >&2
+        exit 1
+    fi
+    local tmp
+    tmp=$(mktemp -d)
+    trap 'rm -rf "${tmp:-}"' RETURN
+    local node_os
+    case "$(uname -s)" in
+        Linux) node_os="linux" ;;
+        Darwin) node_os="darwin" ;;
+        *)
+            echo "error: unsupported OS for Node.js binary install: $(uname -s)" >&2
+            exit 1
+            ;;
+    esac
+    local node_arch
+    case "$(uname -m)" in
+        x86_64 | amd64) node_arch="x64" ;;
+        arm64 | aarch64) node_arch="arm64" ;;
+        *)
+            echo "error: unsupported CPU architecture for Node.js binary install: $(uname -m)" >&2
+            exit 1
+            ;;
+    esac
+    local archive="node-v${desired}-${node_os}-${node_arch}.tar.gz"
+    local url="https://nodejs.org/dist/v${desired}/${archive}"
+    echo "Installing Node.js ${desired} from ${url}"
+    curl -sSfL "$url" -o "$tmp/$archive"
+    tar -C "$tmp" -xzf "$tmp/$archive"
+
+    local install_root
+    if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+        install_root="/usr/local"
+    else
+        install_root="$HOME/.local"
+        mkdir -p "$install_root"
+    fi
+
+    local node_prefix="$NODE_INSTALL_DIR"
+    [[ ${node_prefix} == /* ]] || node_prefix="$install_root/${node_prefix}"
+    rm -rf "$node_prefix"
+    mkdir -p "$(dirname "$node_prefix")"
+    mv "$tmp/node-v${desired}-${node_os}-${node_arch}" "$node_prefix"
+
+    local node_bin="$node_prefix/bin"
+    if [[ ":${PATH}:" != *":${node_bin}:"* ]]; then
+        export PATH="$node_bin:$PATH"
+    fi
+    echo "Node.js installed to ${node_prefix}"
+    echo "Add ${node_bin} to your PATH if it is missing"
+}
+
 main() {
     ensure_apt_packages
     install_rustup
     install_rust_toolchain
     ensure_go
+    ensure_node
     echo "Toolchains ready!"
     print_tool_version "Rust" rustc --version
     print_tool_version "Cargo" cargo --version
     print_tool_version "Go" go version
+    print_tool_version "Node" node --version
+    print_tool_version "npm" npm --version
     print_tool_version "clang-format" clang-format --version
     print_tool_version "jq" jq --version
 }
