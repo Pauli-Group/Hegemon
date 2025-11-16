@@ -150,3 +150,21 @@ Each action simply shells out to the documented commands (`make check`,
 documentation for the official workflows. Use it when you need to install
 toolchains, run the wallet demo, or capture benchmark baselines without
 memorizing the exact commands.
+
+Need a graphical experience? Start the FastAPI wrapper and the Vite UI, which
+drive the same `_actions()` catalog via streaming NDJSON events:
+
+```bash
+pip install -r scripts/dashboard_requirements.txt
+uvicorn scripts.dashboard_service:app --host 0.0.0.0 --port 8001
+
+cd dashboard-ui
+npm install
+VITE_DASHBOARD_SERVICE_URL=http://127.0.0.1:8001 npm run dev
+```
+
+Open `http://localhost:5173` and click any action to watch live JetBrains Mono
+logs, Guard Rail red error highlights, Proof Green confirmation toasts, and
+progress shimmers that mirror the CLI execution order. See
+`runbooks/dashboard_troubleshooting.md` for tips that map UI actions back to
+`make dashboard` and `./scripts/dashboard.py --run <slug>` commands.
