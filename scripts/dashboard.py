@@ -21,6 +21,26 @@ from pathlib import Path
 from typing import Dict, List, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+HOME = Path.home()
+
+
+def _prepend_path(env: Dict[str, str], new_path: Path) -> None:
+    if not new_path.exists():
+        return
+    current = env.get("PATH", "")
+    path_parts = current.split(os.pathsep) if current else []
+    new_path_str = str(new_path)
+    if new_path_str in path_parts:
+        return
+    if current:
+        env["PATH"] = os.pathsep.join([new_path_str] + path_parts)
+    else:
+        env["PATH"] = new_path_str
+
+
+def _ensure_toolchain_paths(env: Dict[str, str]) -> None:
+    _prepend_path(env, HOME / ".cargo" / "bin")
+    _prepend_path(env, HOME / ".local" / "go" / "bin")
 
 
 @dataclass(frozen=True)
@@ -61,6 +81,7 @@ def _command_to_string(cmd: CommandSpec) -> str:
 
 def _run_command(cmd: CommandSpec) -> tuple[bool, float]:
     env = os.environ.copy()
+    _ensure_toolchain_paths(env)
     if cmd.env:
         env.update(cmd.env)
     cwd = cmd.cwd or REPO_ROOT
@@ -153,6 +174,7 @@ def _actions() -> Dict[str, DashboardAction]:
                             "--workspace",
                             "--all-targets",
                             "--all-features",
+                            "--",
                             "-D",
                             "warnings",
                         ],
