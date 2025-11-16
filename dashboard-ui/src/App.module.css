@@ -1,0 +1,40 @@
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px 32px;
+  max-width: var(--page-max-width);
+  margin: 0 auto;
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(244, 247, 251, 0.8);
+}
+
+.navLinks {
+  display: flex;
+  gap: 16px;
+}
+
+.navLinks a {
+  text-decoration: none;
+  padding: 8px 16px;
+  border-radius: 999px;
+  color: rgba(244, 247, 251, 0.8);
+  border: 1px solid transparent;
+}
+
+.navLinks a.active {
+  border-color: var(--color-accent-primary);
+  color: var(--color-accent-primary);
+}
+
+@media (max-width: 768px) {
+  .navbar {
+    flex-direction: column;
+    gap: 16px;
+  }
+}

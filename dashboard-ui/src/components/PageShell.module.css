@@ -1,0 +1,56 @@
+.shell {
+  background: rgba(244, 247, 251, 0.03);
+  border: 1px solid rgba(244, 247, 251, 0.12);
+  border-radius: 32px;
+  padding: 48px;
+  margin: 32px auto 80px;
+  max-width: var(--page-max-width);
+  box-shadow: var(--shadow-soft);
+}
+
+.headerRow {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.headerRow h1 {
+  font-size: 32px;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 12px;
+  color: rgba(244, 247, 251, 0.72);
+  margin: 0 0 12px;
+}
+
+.intro {
+  margin: 12px 0 0;
+  max-width: 60ch;
+  color: rgba(244, 247, 251, 0.85);
+}
+
+.headerActions {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.body {
+  margin-top: 48px;
+}
+
+@media (max-width: 768px) {
+  .shell {
+    padding: 32px 20px;
+    margin: 24px 16px 64px;
+  }
+
+  .headerRow {
+    gap: 16px;
+  }
+}

@@ -1,0 +1,75 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --color-midnight: #0e1c36;
+  --color-surface-high: #f4f7fb;
+  --color-surface-mid: #e1e6ee;
+  --color-accent-primary: #1be7ff;
+  --color-accent-secondary: #f5a623;
+  --color-success: #19b37e;
+  --color-danger: #ff4e4e;
+  --font-primary: 'Space Grotesk', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'SFMono-Regular', Menlo, Consolas, monospace;
+  --text-on-dark: #f4f7fb;
+  --text-on-light: #0e1c36;
+  --grid-columns-desktop: 12;
+  --grid-columns-mobile: 4;
+  --grid-gutter: 24px;
+  --page-max-width: 1280px;
+  --border-radius: 16px;
+  --shadow-soft: 0 12px 32px rgba(14, 28, 54, 0.35);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: var(--color-midnight);
+  color: var(--text-on-dark);
+  font-family: var(--font-primary);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+textarea {
+  font-family: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: radial-gradient(circle at top, rgba(27, 231, 255, 0.18), transparent 50%),
+    radial-gradient(circle at top right, rgba(245, 166, 35, 0.25), transparent 60%),
+    var(--color-midnight);
+}
+
+.grid-12 {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: var(--grid-gutter);
+}
+
+@media (max-width: 768px) {
+  .grid-12 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
