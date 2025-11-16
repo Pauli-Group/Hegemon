@@ -95,6 +95,11 @@ SAMPLE_TELEMETRY = {
     "mempool_depth": 32,
     "difficulty_bits": 50331670,
     "stale_share_rate": 0.012,
+    "tls_enabled": True,
+    "mtls_enabled": True,
+    "tor_enabled": False,
+    "vpn_overlay": False,
+    "exposure_scope": "local",
 }
 
 SAMPLE_NOTE_STATUS = {

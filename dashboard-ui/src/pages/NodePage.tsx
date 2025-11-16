@@ -89,11 +89,46 @@ export function NodePage() {
   const shareableUrl = `${protocol}://${host}:${port}`;
   const isActiveEndpoint =
     activeEndpoint.host === host && activeEndpoint.port === Number(port) && activeEndpoint.protocol === protocol;
-  const activeRouting = routingOptions.filter((option) => routing[option.key]);
+
+  const telemetryRouting = useMemo(() => {
+    const snapshot = metricsQuery.data?.data;
+    if (!snapshot) {
+      return null;
+    }
+    const { tls_enabled, mtls_enabled, tor_enabled, vpn_overlay, exposure_scope } = snapshot;
+    const hasFlags = [tls_enabled, mtls_enabled, tor_enabled, vpn_overlay, exposure_scope].some(
+      (value) => value !== undefined,
+    );
+    if (!hasFlags) {
+      return null;
+    }
+    return {
+      tls: tls_enabled ?? undefined,
+      mtls: mtls_enabled ?? undefined,
+      tor: tor_enabled ?? undefined,
+      vpn: vpn_overlay ?? undefined,
+      exposureScope: exposure_scope,
+      localOnly: exposure_scope ? exposure_scope !== 'public' : undefined,
+    } satisfies Partial<RoutingState> & { exposureScope?: string };
+  }, [metricsQuery.data]);
+
+  const effectiveRouting: RoutingState = useMemo(
+    () => ({
+      tls: telemetryRouting?.tls ?? routing.tls,
+      doh: routing.doh,
+      vpn: telemetryRouting?.vpn ?? routing.vpn,
+      tor: telemetryRouting?.tor ?? routing.tor,
+      mtls: telemetryRouting?.mtls ?? routing.mtls,
+      localOnly: telemetryRouting?.localOnly ?? routing.localOnly,
+    }),
+    [routing, telemetryRouting],
+  );
+
+  const activeRouting = routingOptions.filter((option) => effectiveRouting[option.key]);
 
   const privacyScore = useMemo(() => {
     const activeWeight = routingOptions.reduce((total, option) => {
-      return routing[option.key] ? total + option.weight : total;
+      return effectiveRouting[option.key] ? total + option.weight : total;
     }, 0);
     const normalized = Math.min(100, Math.round((activeWeight / maxRoutingWeight) * 100) + (mode === 'genesis' ? 6 : 0));
     if (normalized >= 78) {
@@ -103,14 +138,31 @@ export function NodePage() {
       return { label: 'Moderate', value: normalized, guidance: 'Add Tor or VPN and enforce client auth to harden against metadata leaks.' };
     }
     return { label: 'Weak', value: normalized, guidance: 'Enable TLS + mutual auth at minimum, and prefer private routing for peers.' };
-  }, [mode, routing]);
+  }, [effectiveRouting, mode]);
 
   const hygieneChecklist = routingOptions.map((option) => ({
     ...option,
-    enabled: routing[option.key],
+    enabled: effectiveRouting[option.key],
   }));
 
   const connectionSource = metricsQuery.data?.source ?? 'mock';
+  const postureSourceLabel = telemetryRouting ? 'Telemetry-reported hygiene' : 'Selected routing toggles';
+
+  const discrepancyForOption = (optionKey: keyof RoutingState) => {
+    if (!telemetryRouting) {
+      return null;
+    }
+    const reported = telemetryRouting[optionKey];
+    if (reported === undefined || reported === routing[optionKey]) {
+      return null;
+    }
+    const status = optionKey === 'localOnly' && telemetryRouting.exposureScope
+      ? `exposure is ${telemetryRouting.exposureScope}`
+      : reported
+        ? 'enabled on the node'
+        : 'disabled on the node';
+    return `${optionKey === 'localOnly' ? 'Exposure scope' : 'Telemetry'} reports this as ${status}. Align the checkbox or reapply routing to reconcile.`;
+  };
 
   const validationMessage = useMemo(() => {
     if (!host.trim()) {
@@ -420,6 +472,9 @@ export function NodePage() {
                 <div>
                   <div className={styles.optionTitle}>{option.label}</div>
                   <p className={styles.optionDescription}>{option.description}</p>
+                  {discrepancyForOption(option.key) && (
+                    <p className={styles.warningText}>{discrepancyForOption(option.key)}</p>
+                  )}
                 </div>
               </label>
             ))}
@@ -434,6 +489,14 @@ export function NodePage() {
             </div>
             <span className={styles.scoreBadge}>{privacyScore.label}</span>
           </header>
+          <p className={styles.helperText}>
+            {postureSourceLabel}
+            {telemetryRouting?.exposureScope
+              ? ` · Exposure scope: ${telemetryRouting.exposureScope}`
+              : routing.localOnly
+                ? ' · Exposure scope: local-only'
+                : ''}
+          </p>
           <div className={styles.scoreRow}>
             <div className={styles.scoreBar}>
               <div className={styles.scoreFill} style={{ width: `${privacyScore.value}%` }} aria-hidden />
