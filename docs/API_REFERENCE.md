@@ -26,10 +26,12 @@ This reference summarizes the public APIs of the monorepo components and points 
 
 ## `consensus/`
 
-- Rust crate `consensus` exposes `BlockBuilder`, `ValidatorId`, `LedgerState`, and PQ signature helpers via `crypto`.
+- Rust crate `consensus` exposes `BlockBuilder`, ledger-state transition helpers, and PQ signature utilities that miners call w
+hen assembling payloads.
 - Go benchmarking module `consensus/bench` offers `cmd/netbench`:
-  - Flags: `--validators`, `--payload-bytes`, `--smoke`.
-  - Output: JSON summary with `messages_per_second`, `avg_latency_ms`, `pq_signature_bytes`.
+  - Flags: `--miners`, `--payload-bytes`, `--pq-signature-bytes`, `--smoke`.
+  - Output: JSON summary with `messages_per_second`, `avg_latency_ms`, `pq_signature_bytes` so operators can project miner gossi
+p budgets.
 
 ## `wallet/`
 

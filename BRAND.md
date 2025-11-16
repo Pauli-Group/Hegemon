@@ -38,7 +38,8 @@ Justification: both faces are open-source, legible at micro sizes, and render co
 ## Layout, Density, and Spacing
 - Base spacing unit: 8px; stack components in multiples to simplify responsive design.
 - Maintain a 12-column grid on desktop, collapsing to 4 on mobile.
-- Critical data (balances, validator health) must appear in the upper-left quadrant to match scanning habits of ops teams.
+- Critical data (chain balances, miner fleet health, pool alerts) must appear in the upper-left quadrant to match scanning habits of ops teams.
+- Miner telemetry tiles should summarize hash rate, stale share percentage, and pool payout timers with consistent iconography so at-a-glance reviews stay aligned with PoW expectations.
 - Cards should never exceed 80% viewport height; favor scrollable sub-panels to preserve situational awareness.
 
 ## Motion and Interaction

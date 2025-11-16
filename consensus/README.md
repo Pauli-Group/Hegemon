@@ -1,6 +1,6 @@
-# `consensus/`: Validator Logic and Net Benchmarks
+# `consensus/`: Miner Coordination and PoW Net Benchmarks
 
-`consensus/` contains the Rust crate that maintains ledger state, block validation, and validator APIs. It also owns the Go benchmarking tools under `bench/` that stress gossip throughput with PQ-sized payloads.
+`consensus/` contains the Rust crate that maintains ledger state, block validation, and miner-facing APIs. It also owns the Go benchmarking tools under `bench/` that stress gossip throughput with PQ-sized payloads and simulate proof-of-work miner traffic.
 
 ## Quickstart
 
@@ -10,7 +10,7 @@ cargo test -p consensus
 (cd bench && go run ./cmd/netbench --smoke)
 ```
 
-The Go bench outputs JSON metrics describing achieved throughput and latency with configurable validator counts (`--validators`) and payload sizes (`--payload-bytes`).
+The Go bench outputs JSON metrics describing achieved throughput and latency with configurable miner counts (`--miners`), payload sizes (`--payload-bytes`), and PQ signature assumptions (`--pq-signature-bytes`). Use these knobs to tune miner payload composition before rolling changes into production pools.
 
 ## Doc Sync
 
@@ -19,4 +19,4 @@ The Go bench outputs JSON metrics describing achieved throughput and latency wit
 - API cross-reference: `docs/API_REFERENCE.md#consensus`.
 - Benchmarks and CI instructions: `docs/CONTRIBUTING.md`.
 
-Update all four whenever block formats, validator APIs, or benchmark parameters change.
+Update all four whenever block formats, miner APIs, or benchmark parameters change.

@@ -329,7 +329,7 @@ def create_home_highfi() -> None:
     rounded_rect(dwg, log_card, fill='#FFFFFF', stroke=COLORS['card_border'])
     add_text(dwg, 'Recent signals', (log_card[0] + 24, log_card[1] + 24), FONT_TITLE, COLORS['text_dark'])
     log_lines = [
-        '08:34:21 validator/03 synced in 182 ms',
+        '08:34:21 miner/03 synced in 182 ms',
         '08:34:24 swap-router defused guard rail limit',
         '08:34:28 streaming proof window recalculated',
     ]
