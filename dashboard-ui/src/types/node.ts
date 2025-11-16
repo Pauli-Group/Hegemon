@@ -24,6 +24,7 @@ export interface MinerStatus {
 
 export interface TransferRecord {
   id: string;
+  tx_id: string;
   direction: 'incoming' | 'outgoing';
   address: string;
   memo?: string | null;

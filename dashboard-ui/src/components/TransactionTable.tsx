@@ -13,6 +13,7 @@ export function TransactionTable({ records }: TransactionTableProps) {
     <table className={styles.table}>
       <thead>
         <tr>
+          <th>Tx ID</th>
           <th>Direction</th>
           <th>Address</th>
           <th>Amount</th>
@@ -24,6 +25,9 @@ export function TransactionTable({ records }: TransactionTableProps) {
       <tbody>
         {records.map((record) => (
           <tr key={record.id}>
+            <td className={styles.txId}>
+              <code>{record.tx_id.slice(0, 18)}{record.tx_id.length > 18 ? '…' : ''}</code>
+            </td>
             <td>
               <span className={`${styles.badge} ${record.direction === 'incoming' ? styles.incoming : styles.outgoing}`}>
                 {record.direction}

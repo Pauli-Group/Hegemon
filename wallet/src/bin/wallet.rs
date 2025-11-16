@@ -1,13 +1,25 @@
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::fs;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use axum::routing::get;
+use axum::{Json, Router};
+use chrono::{TimeZone, Utc};
 use clap::{Parser, Subcommand};
 use rand::{rngs::StdRng, SeedableRng};
 use serde::{Deserialize, Serialize};
+use tokio::net::TcpListener;
+use tokio::runtime::Builder as RuntimeBuilder;
+use tokio::task;
 use transaction_circuit::{
     hashing::Felt,
     note::{InputNoteWitness, OutputNoteWitness},
@@ -21,10 +33,11 @@ use wallet::{
     keys::{DerivedKeys, RootSecret},
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
     rpc::WalletRpcClient,
-    store::{WalletMode, WalletStore},
+    store::{PendingStatus, PendingTransaction, TransferRecipient, WalletMode, WalletStore},
     sync::WalletSyncEngine,
     tx_builder::Recipient,
     viewing::{IncomingViewingKey, OutgoingViewingKey},
+    WalletError,
 };
 
 #[derive(Parser)]
@@ -120,6 +133,8 @@ struct DaemonArgs {
     auth_token: String,
     #[arg(long, default_value_t = 10)]
     interval_secs: u64,
+    #[arg(long)]
+    http_listen: Option<SocketAddr>,
 }
 
 #[derive(Parser)]
@@ -323,9 +338,12 @@ fn cmd_sync(args: SyncArgs) -> Result<()> {
 }
 
 fn cmd_daemon(args: DaemonArgs) -> Result<()> {
-    let store = WalletStore::open(&args.store, &args.passphrase)?;
-    let client = rpc_client(&args.rpc_url, &args.auth_token)?;
-    let engine = WalletSyncEngine::new(&client, &store);
+    let store = Arc::new(WalletStore::open(&args.store, &args.passphrase)?);
+    let client = Arc::new(rpc_client(&args.rpc_url, &args.auth_token)?);
+    if let Some(addr) = args.http_listen {
+        spawn_wallet_api(addr, store.clone(), client.clone())?;
+    }
+    let engine = WalletSyncEngine::new(client.as_ref(), store.as_ref());
     loop {
         match engine.sync_once() {
             Ok(outcome) => print_sync_outcome(&outcome),
@@ -368,8 +386,9 @@ fn cmd_send(args: SendArgs) -> Result<()> {
     let client = rpc_client(&args.rpc_url, &args.auth_token)?;
     let engine = WalletSyncEngine::new(&client, &store);
     engine.sync_once()?;
-    let specs: Vec<SendRecipientSpec> = read_json(&args.recipients)?;
-    let recipients = parse_recipients(&specs)?;
+    let specs: Vec<RecipientSpec> = read_json(&args.recipients)?;
+    let recipients = parse_recipients(&specs).map_err(|err| anyhow!(err.to_string()))?;
+    let metadata = transfer_recipients_from_specs(&specs);
     let built = build_transaction(&store, &recipients, args.fee)?;
     store.mark_notes_pending(&built.spent_note_indexes, true)?;
     match client.submit_transaction(&built.bundle) {
@@ -378,6 +397,8 @@ fn cmd_send(args: SendArgs) -> Result<()> {
                 tx_id,
                 built.nullifiers.clone(),
                 built.spent_note_indexes.clone(),
+                metadata,
+                args.fee,
             )?;
             println!("submitted transaction {}", hex::encode(tx_id));
         }
@@ -437,11 +458,11 @@ fn rpc_client(url: &str, token: &str) -> Result<WalletRpcClient> {
     Ok(WalletRpcClient::new(parsed, token.to_string())?)
 }
 
-fn parse_recipients(specs: &[SendRecipientSpec]) -> Result<Vec<Recipient>> {
+fn parse_recipients(specs: &[RecipientSpec]) -> Result<Vec<Recipient>, WalletError> {
     specs
         .iter()
         .map(|spec| {
-            let address = map_wallet(ShieldedAddress::decode(&spec.address))?;
+            let address = ShieldedAddress::decode(&spec.address)?;
             let memo = MemoPlaintext::new(spec.memo.clone().unwrap_or_default().into_bytes());
             Ok(Recipient {
                 address,
@@ -451,6 +472,255 @@ fn parse_recipients(specs: &[SendRecipientSpec]) -> Result<Vec<Recipient>> {
             })
         })
         .collect()
+}
+
+fn transfer_recipients_from_specs(specs: &[RecipientSpec]) -> Vec<TransferRecipient> {
+    specs
+        .iter()
+        .map(|spec| TransferRecipient {
+            address: spec.address.clone(),
+            value: spec.value,
+            asset_id: spec.asset_id,
+            memo: spec.memo.clone(),
+        })
+        .collect()
+}
+
+fn spawn_wallet_api(
+    addr: SocketAddr,
+    store: Arc<WalletStore>,
+    client: Arc<WalletRpcClient>,
+) -> Result<()> {
+    let (ready_tx, ready_rx) = mpsc::channel::<Result<(), anyhow::Error>>();
+    thread::Builder::new()
+        .name("wallet-http".into())
+        .spawn(move || {
+            let runtime = match RuntimeBuilder::new_multi_thread().enable_all().build() {
+                Ok(rt) => rt,
+                Err(err) => {
+                    let _ = ready_tx.send(Err(anyhow!(err)));
+                    return;
+                }
+            };
+            let state = ApiState { store, client };
+            let app = Router::new()
+                .route("/transfers", get(list_transfers).post(submit_transfer))
+                .with_state(state);
+            runtime.block_on(async move {
+                match TcpListener::bind(addr).await {
+                    Ok(listener) => {
+                        let _ = ready_tx.send(Ok(()));
+                        if let Err(err) = axum::serve(listener, app).await {
+                            eprintln!("wallet http server exited: {}", err);
+                        }
+                    }
+                    Err(err) => {
+                        let _ = ready_tx.send(Err(anyhow!(err)));
+                    }
+                }
+            });
+        })?;
+    ready_rx
+        .recv()
+        .map_err(|_| anyhow!("wallet http thread failed to report readiness"))??;
+    println!("wallet http api listening on http://{addr}");
+    Ok(())
+}
+
+#[derive(Clone)]
+struct ApiState {
+    store: Arc<WalletStore>,
+    client: Arc<WalletRpcClient>,
+}
+
+#[derive(Deserialize, Clone)]
+struct TransferRequest {
+    recipients: Vec<RecipientSpec>,
+    fee: u64,
+}
+
+#[derive(Serialize)]
+struct TransfersResponse {
+    transfers: Vec<TransferRecord>,
+}
+
+#[derive(Serialize)]
+struct TransferRecord {
+    id: String,
+    tx_id: String,
+    direction: String,
+    address: String,
+    memo: Option<String>,
+    amount: u64,
+    fee: u64,
+    status: String,
+    confirmations: u64,
+    created_at: String,
+}
+
+#[derive(Serialize)]
+struct SubmitTransferResponse {
+    transfer: TransferRecord,
+}
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    error: String,
+}
+
+struct ApiError {
+    status: StatusCode,
+    message: String,
+}
+
+impl ApiError {
+    fn new(status: StatusCode, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            message: message.into(),
+        }
+    }
+
+    fn internal(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
+    }
+}
+
+impl From<WalletError> for ApiError {
+    fn from(err: WalletError) -> Self {
+        let status = match err {
+            WalletError::InvalidArgument(_) | WalletError::InsufficientFunds { .. } => {
+                StatusCode::BAD_REQUEST
+            }
+            WalletError::WatchOnly => StatusCode::FORBIDDEN,
+            WalletError::Http(_) => StatusCode::BAD_GATEWAY,
+            WalletError::AddressEncoding(_)
+            | WalletError::UnknownDiversifier(_)
+            | WalletError::Crypto(_)
+            | WalletError::Serialization(_)
+            | WalletError::DecryptionFailure
+            | WalletError::NoteMismatch(_) => StatusCode::BAD_REQUEST,
+            WalletError::InvalidState(_) => StatusCode::CONFLICT,
+            WalletError::EncryptionFailure => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        ApiError::new(status, err.to_string())
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> axum::response::Response {
+        let body = Json(ErrorResponse {
+            error: self.message,
+        });
+        (self.status, body).into_response()
+    }
+}
+
+async fn list_transfers(
+    State(state): State<ApiState>,
+) -> Result<Json<TransfersResponse>, ApiError> {
+    let store = state.store.clone();
+    let response = task::spawn_blocking(move || snapshot_transfers(&store))
+        .await
+        .map_err(|err| ApiError::internal(err.to_string()))??;
+    Ok(Json(response))
+}
+
+async fn submit_transfer(
+    State(state): State<ApiState>,
+    Json(payload): Json<TransferRequest>,
+) -> Result<Json<SubmitTransferResponse>, ApiError> {
+    let store = state.store.clone();
+    let client = state.client.clone();
+    let record = task::spawn_blocking(move || process_transfer_submission(store, client, payload))
+        .await
+        .map_err(|err| ApiError::internal(err.to_string()))??;
+    Ok(Json(SubmitTransferResponse { transfer: record }))
+}
+
+fn snapshot_transfers(store: &Arc<WalletStore>) -> Result<TransfersResponse, WalletError> {
+    let latest = store.last_synced_height()?;
+    let mut pending = store.pending_transactions()?;
+    pending.sort_by_key(|tx| Reverse(tx.submitted_at));
+    let transfers = pending
+        .iter()
+        .map(|tx| render_transfer(tx, latest))
+        .collect();
+    Ok(TransfersResponse { transfers })
+}
+
+fn render_transfer(tx: &PendingTransaction, latest_height: u64) -> TransferRecord {
+    let tx_id = hex::encode(tx.tx_id);
+    let amount: u64 = tx.recipients.iter().map(|rec| rec.value).sum();
+    let address = tx
+        .recipients
+        .first()
+        .map(|rec| rec.address.clone())
+        .unwrap_or_else(|| "—".to_string());
+    let memo = tx.recipients.first().and_then(|rec| rec.memo.clone());
+    TransferRecord {
+        id: tx_id.clone(),
+        tx_id,
+        direction: "outgoing".to_string(),
+        address,
+        memo,
+        amount,
+        fee: tx.fee,
+        status: match tx.status {
+            PendingStatus::InMempool => "pending".to_string(),
+            PendingStatus::Mined { .. } => "confirmed".to_string(),
+        },
+        confirmations: tx.confirmations(latest_height),
+        created_at: format_timestamp(tx.submitted_at),
+    }
+}
+
+fn process_transfer_submission(
+    store: Arc<WalletStore>,
+    client: Arc<WalletRpcClient>,
+    payload: TransferRequest,
+) -> Result<TransferRecord, WalletError> {
+    let specs = payload.recipients.clone();
+    let fee = payload.fee;
+    let metadata = transfer_recipients_from_specs(&specs);
+    let recipients = parse_recipients(&specs)?;
+    let built = build_transaction(store.as_ref(), &recipients, fee)?;
+    store.mark_notes_pending(&built.spent_note_indexes, true)?;
+    match client.submit_transaction(&built.bundle) {
+        Ok(tx_id) => {
+            store.record_pending_submission(
+                tx_id,
+                built.nullifiers.clone(),
+                built.spent_note_indexes.clone(),
+                metadata,
+                fee,
+            )?;
+            let latest = store.last_synced_height()?;
+            let pending = store.pending_transactions()?;
+            let record = pending
+                .iter()
+                .find(|tx| tx.tx_id == tx_id)
+                .map(|tx| render_transfer(tx, latest))
+                .ok_or(WalletError::InvalidState("pending transfer missing"))?;
+            Ok(record)
+        }
+        Err(err) => {
+            store.mark_notes_pending(&built.spent_note_indexes, false)?;
+            Err(err)
+        }
+    }
+}
+
+fn format_timestamp(secs: u64) -> String {
+    let secs_i64 = secs as i64;
+    Utc.timestamp_opt(secs_i64, 0)
+        .single()
+        .unwrap_or_else(|| {
+            Utc.timestamp_opt(0, 0)
+                .single()
+                .expect("unix epoch must be representable")
+        })
+        .to_rfc3339()
 }
 
 struct TxCraftParams<'a> {
@@ -515,16 +785,8 @@ struct BalanceReport {
     recovered: Vec<NoteSummary>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct RecipientSpec {
-    address: String,
-    value: u64,
-    asset_id: u64,
-    memo: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct SendRecipientSpec {
     address: String,
     value: u64,
     asset_id: u64,

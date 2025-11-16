@@ -3,7 +3,7 @@ import QRCode from 'react-qr-code';
 import { PageShell } from '../components/PageShell';
 import { MetricTile } from '../components/MetricTile';
 import { TransactionTable } from '../components/TransactionTable';
-import { useNodeMetrics, useNodeEventStream, useTransferLedger, useWalletNotes } from '../hooks/useNodeData';
+import { useNodeMetrics, useTransferLedger, useWalletNotes } from '../hooks/useNodeData';
 import { useToasts } from '../components/ToastProvider';
 import type { TransferRecord } from '../types/node';
 import styles from './WalletPage.module.css';
@@ -20,7 +20,6 @@ interface TransferFormState {
 export function WalletPage() {
   const { data: notes } = useWalletNotes();
   const { data: metrics } = useNodeMetrics();
-  const { events } = useNodeEventStream(24);
   const transfersQuery = useTransferLedger();
   const { pushToast } = useToasts();
   const [form, setForm] = useState<TransferFormState>({ address: '', amount: 0.5, memo: '', fee: 0.001 });
@@ -28,50 +27,27 @@ export function WalletPage() {
   const estimatedBalance = notes ? notes.leaf_count * 0.0005 : 0;
   const coverage = notes ? `${notes.leaf_count.toLocaleString()} notes` : '—';
 
-  const eventTransfers = useMemo<TransferRecord[]>(() => {
-    return events
-      .filter((event) => event.type === 'transaction')
-      .map((event) => ({
-        id: event.tx_id,
-        direction: 'incoming',
-        address: event.tx_id.slice(0, 16).padEnd(16, '0'),
-        memo: 'Network inbound',
-        amount: 0,
-        fee: 0,
-        status: 'pending',
-        confirmations: 0,
-        created_at: event.timestamp || new Date().toISOString(),
-      }));
-  }, [events]);
-
   const transfers = useMemo(() => {
-    const seen = new Set<string>();
-    const merged: TransferRecord[] = [];
-    for (const record of eventTransfers) {
-      if (!seen.has(record.id)) {
-        merged.push(record);
-        seen.add(record.id);
-      }
-    }
-    const persisted = transfersQuery.data?.transfers ?? [];
-    for (const record of persisted) {
-      if (!seen.has(record.id)) {
-        merged.push(record);
-      }
-    }
-    return merged.sort((a, b) => (a.created_at > b.created_at ? -1 : 1));
-  }, [eventTransfers, transfersQuery.data?.transfers]);
+    const items = transfersQuery.data?.transfers ?? [];
+    return [...items].sort((a, b) => (a.created_at > b.created_at ? -1 : 1));
+  }, [transfersQuery.data?.transfers]);
 
   const isSubmitting = transfersQuery.submitTransfer.isPending;
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     try {
-      await transfersQuery.submitTransfer.mutateAsync(form);
-      pushToast({ kind: 'success', title: 'Transfer dispatched', description: 'Check the history for confirmation counts.' });
+      const response = await transfersQuery.submitTransfer.mutateAsync(form);
+      const txId = response.transfer.tx_id || response.transfer.id;
+      pushToast({
+        kind: 'success',
+        title: 'Transfer dispatched',
+        description: `Transaction ${txId.slice(0, 12)}… submitted.`,
+      });
       setForm((prev) => ({ ...prev, address: '', memo: '' }));
     } catch (error) {
-      pushToast({ kind: 'error', title: 'Transfer failed', description: (error as Error).message });
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      pushToast({ kind: 'error', title: 'Transfer failed', description: message });
     }
   };
 
@@ -183,6 +159,9 @@ export function WalletPage() {
             <h3>Transfers & confirmations</h3>
           </div>
         </header>
+        {transfersQuery.error ? (
+          <p className={styles.errorBanner}>Unable to refresh wallet transfers: {(transfersQuery.error as Error).message}</p>
+        ) : null}
         <TransactionTable records={transfers} />
       </section>
     </PageShell>

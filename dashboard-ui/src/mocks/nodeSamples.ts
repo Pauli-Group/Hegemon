@@ -29,6 +29,7 @@ export const mockMinerStatus: MinerStatus = {
 export const mockTransfers: TransferRecord[] = [
   {
     id: 'mock-transfer-1',
+    tx_id: 'mock-transfer-1',
     direction: 'incoming',
     address: 'shield1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
     memo: 'Genesis allocation',
