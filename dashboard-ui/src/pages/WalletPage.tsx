@@ -1,4 +1,5 @@
 import { FormEvent, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import QRCode from 'react-qr-code';
 import { PageShell } from '../components/PageShell';
 import { MetricTile } from '../components/MetricTile';
@@ -91,11 +92,13 @@ export function WalletPage() {
         label="Wallet notes feed"
         result={walletNotes.data}
         isPlaceholder={walletNotes.isPlaceholderData}
+        cta={<Link to="/node">Configure a node</Link>}
       />
       <DataStatusBanner
         label="Node metrics feed"
         result={nodeMetrics.data}
         isPlaceholder={nodeMetrics.isPlaceholderData}
+        cta={<Link to="/node">Configure a node</Link>}
       />
 
       <div className={styles.metricsGrid}>
