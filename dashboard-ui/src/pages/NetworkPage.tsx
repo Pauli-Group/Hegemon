@@ -2,14 +2,20 @@ import { PageShell } from '../components/PageShell';
 import { MetricTile } from '../components/MetricTile';
 import { Sparkline } from '../components/Sparkline';
 import { useNodeMetrics, useNodeEventStream } from '../hooks/useNodeData';
+import { ConnectionBadge } from '../components/ConnectionBadge';
+import { DataStatusBanner } from '../components/DataStatusBanner';
 import styles from './NetworkPage.module.css';
 
 export function NetworkPage() {
-  const metrics = useNodeMetrics();
+  const metricsQuery = useNodeMetrics();
   const { events, hashRateSeries, mempoolSeries, latestTelemetry } = useNodeEventStream(36);
   const blockEvents = events.filter((event) => event.type === 'block').slice(0, 6);
   const txEvents = events.filter((event) => event.type === 'transaction').slice(0, 6);
-  const staleRate = latestTelemetry?.type === 'telemetry' ? latestTelemetry.stale_share_rate : metrics.data?.stale_share_rate ?? 0;
+  const metrics = metricsQuery.data?.data;
+  const staleRate =
+    latestTelemetry?.type === 'telemetry' ? latestTelemetry.stale_share_rate : metrics?.stale_share_rate ?? 0;
+  const bestHeight = metrics?.best_height ?? 0;
+  const totalHashesLabel = (metrics?.total_hashes ?? 0).toLocaleString();
   const showAlert = staleRate > 0.05;
 
   return (
@@ -17,6 +23,20 @@ export function NetworkPage() {
       title="Network analytics"
       intro="Surface consensus depth, mempool churn, and block propagation alerts for the synthetic hegemonic currency network."
     >
+      <div className={styles.sectionHeader}>
+        <p className={styles.kicker}>Network telemetry feed</p>
+        <ConnectionBadge
+          source={metricsQuery.data?.source ?? 'mock'}
+          error={metricsQuery.data?.error}
+          label="Network telemetry feed"
+        />
+      </div>
+      <DataStatusBanner
+        label="Network telemetry feed"
+        result={metricsQuery.data}
+        isPlaceholder={metricsQuery.isPlaceholderData}
+      />
+
       {showAlert && (
         <div className={styles.alertBanner}>
           <p>High stale share rate detected ({(staleRate * 100).toFixed(2)}%). Investigate peer connectivity.</p>
@@ -24,8 +44,8 @@ export function NetworkPage() {
       )}
 
       <div className={`grid-12 ${styles.grid}`}>
-        <MetricTile label="Best height" value={`${metrics.data?.best_height ?? 0}`} helper="Latest confirmed block" />
-        <MetricTile label="Total hashes" value={(metrics.data?.total_hashes ?? 0).toLocaleString()} helper="Since node start" />
+        <MetricTile label="Best height" value={`${bestHeight}`} helper="Latest confirmed block" />
+        <MetricTile label="Total hashes" value={totalHashesLabel} helper="Since node start" />
         <MetricTile label="Stale rate" value={`${(staleRate * 100).toFixed(2)}%`} helper="Past 5 samples" />
       </div>
 

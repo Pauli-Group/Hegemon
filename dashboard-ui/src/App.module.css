@@ -5,6 +5,8 @@
   padding: 24px 32px;
   max-width: var(--page-max-width);
   margin: 0 auto;
+  flex-wrap: wrap;
+  gap: 16px;
 }
 
 .brand {
@@ -12,6 +14,13 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(244, 247, 251, 0.8);
+}
+
+.brandRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .navLinks {
@@ -36,6 +45,6 @@
 @media (max-width: 768px) {
   .navbar {
     flex-direction: column;
-    gap: 16px;
+    align-items: flex-start;
   }
 }

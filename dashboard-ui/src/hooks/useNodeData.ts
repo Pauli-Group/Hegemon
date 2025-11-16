@@ -42,40 +42,78 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function getOrFallback<T>(path: string, fallback: T): Promise<T> {
+export interface FallbackResult<T> {
+  data: T;
+  source: 'live' | 'mock';
+  error?: Error;
+}
+
+interface GetOrFallbackOptions {
+  detectMockData?: boolean;
+}
+
+function normalizeForComparison(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeForComparison(item));
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = normalizeForComparison((value as Record<string, unknown>)[key]);
+        return acc;
+      }, {});
+  }
+  return value;
+}
+
+function isDeepEqual(a: unknown, b: unknown): boolean {
+  return JSON.stringify(normalizeForComparison(a)) === JSON.stringify(normalizeForComparison(b));
+}
+
+async function getOrFallback<T>(
+  path: string,
+  fallback: T,
+  options: GetOrFallbackOptions = { detectMockData: true },
+): Promise<FallbackResult<T>> {
   try {
-    return await fetchJson<T>(path);
+    const raw = await fetchJson<T & { __mock_source?: boolean }>(path);
+    const { __mock_source, ...rest } = raw;
+    const data = rest as T;
+    const shouldMarkMock = FORCE_MOCK_INDICATOR || (options.detectMockData && ((__mock_source ?? false) || isDeepEqual(data, fallback)));
+    return { data, source: shouldMarkMock ? 'mock' : 'live' } satisfies FallbackResult<T>;
   } catch (error) {
+    const normalizedError = error instanceof Error ? error : new Error('Unknown error');
     console.warn(`Falling back to mock payload for ${path}`, error);
-    return fallback;
+    return { data: fallback, source: 'mock', error: normalizedError } satisfies FallbackResult<T>;
   }
 }
 
 export function useNodeMetrics() {
-  return useQuery<TelemetrySnapshot>({
+  return useQuery<FallbackResult<TelemetrySnapshot>>({
     queryKey: ['node-metrics'],
     queryFn: () => getOrFallback('/node/metrics', mockTelemetry),
     refetchInterval: 5000,
-    placeholderData: mockTelemetry,
+    placeholderData: { data: mockTelemetry, source: 'mock' },
   });
 }
 
 export function useWalletNotes() {
-  return useQuery<NoteStatus>({
+  return useQuery<FallbackResult<NoteStatus>>({
     queryKey: ['wallet-notes'],
     queryFn: () => getOrFallback('/node/wallet/notes', mockNotes),
     refetchInterval: 7000,
-    placeholderData: mockNotes,
+    placeholderData: { data: mockNotes, source: 'mock' },
   });
 }
 
 export function useMinerStatus() {
   const queryClient = useQueryClient();
-  const query = useQuery<MinerStatus>({
+  const query = useQuery<FallbackResult<MinerStatus>>({
     queryKey: ['miner-status'],
     queryFn: () => getOrFallback('/node/miner/status', mockMinerStatus),
     refetchInterval: 4000,
-    placeholderData: mockMinerStatus,
+    placeholderData: { data: mockMinerStatus, source: 'mock' },
   });
 
   const mutation = useMutation({
@@ -95,21 +133,11 @@ export function useMinerStatus() {
 
 export function useTransferLedger() {
   const queryClient = useQueryClient();
-  const query = useQuery<{ transfers: TransferRecord[] }>({
+  const query = useQuery<FallbackResult<{ transfers: TransferRecord[] }>>({
     queryKey: ['wallet-transfers'],
-    queryFn: async () => {
-      try {
-        return await fetchJson<{ transfers: TransferRecord[] }>('/node/wallet/transfers');
-      } catch (error) {
-        if (error instanceof HttpError) {
-          throw error;
-        }
-        console.warn('Falling back to mock payload for /node/wallet/transfers', error);
-        return { transfers: mockTransfers };
-      }
-    },
+    queryFn: () => getOrFallback('/node/wallet/transfers', { transfers: mockTransfers }),
     refetchInterval: 8000,
-    placeholderData: { transfers: mockTransfers },
+    placeholderData: { data: { transfers: mockTransfers }, source: 'mock' },
   });
 
   const mutation = useMutation({
@@ -206,3 +234,5 @@ export function useNodeEventStream(maxSamples = 32) {
 
   return { events, hashRateSeries, mempoolSeries, difficultySeries, latestTelemetry };
 }
+const FORCE_MOCK_INDICATOR = import.meta.env.VITE_FORCE_MOCK_DATA_INDICATOR === 'true';
+
