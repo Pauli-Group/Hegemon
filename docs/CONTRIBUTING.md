@@ -18,6 +18,8 @@ This repository is a single monorepo that houses the cryptography primitives (`c
 
 All commands above are invoked by CI (see below). Run them locally before opening a pull request.
 
+> Tip: `make setup` runs `scripts/dev-setup.sh` to provision the Rust, Go, jq, and clang-format toolchains on Debian/Ubuntu hosts, while `make check` mirrors the fmt/lint/test combo locally.
+
 ## Continuous integration
 
 GitHub Actions runs `.github/workflows/ci.yml` on every push/PR. Jobs:
