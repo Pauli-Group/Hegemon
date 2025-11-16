@@ -12,6 +12,7 @@ use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{InputNoteWitness, NoteData, OutputNoteWitness};
 use transaction_circuit::proof::prove;
 use transaction_circuit::witness::TransactionWitness;
+use wallet::TransactionBundle;
 
 fn test_witness(root: Felt, seed: u64) -> TransactionWitness {
     let input_native = InputNoteWitness {
@@ -89,10 +90,18 @@ async fn nodes_share_blocks_over_gossip() {
     let root = handle_a.service.merkle_root();
     let witness = test_witness(root, 7);
     let proof = prove(&witness, &proving_key).expect("proof generation");
+    let ciphertexts = proof
+        .public_inputs
+        .commitments
+        .iter()
+        .filter(|felt| felt.as_int() != 0)
+        .map(|_| Vec::new())
+        .collect();
+    let bundle = TransactionBundle { proof, ciphertexts };
 
     handle_a
         .service
-        .submit_transaction(proof)
+        .submit_transaction(bundle)
         .await
         .expect("submit transaction");
 

@@ -76,7 +76,13 @@ pub fn dummy_transaction_with_version(tag_seed: u8, version: VersionBinding) -> 
     let nullifier = [tag_seed; 32];
     let commitment = [tag_seed.wrapping_add(1); 32];
     let balance_tag: BalanceTag = [tag_seed.wrapping_add(2); 32];
-    Transaction::new(vec![nullifier], vec![commitment], balance_tag, version)
+    Transaction::new(
+        vec![nullifier],
+        vec![commitment],
+        balance_tag,
+        version,
+        vec![],
+    )
 }
 
 pub fn dummy_coinbase(height: u64) -> CoinbaseData {
