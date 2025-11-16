@@ -2,6 +2,10 @@
 
 When writing complex features or significant refactors, use an ExecPlan (as described in .agent/PLANS.md) from design to implementation.
 
+# First-Run Setup
+
+Every fresh clone must begin with `make quickstart`. This single command bootstraps the toolchains, runs the guard-rail checks, and launches the FastAPI streaming service plus the Vite dashboard UI so contributors land inside the graphical experience immediately (press Ctrl+C when you want to stop it).
+
 # Design and Methods Docs
 
 Always consult DESIGN.md and METHODS.md before making code changes to ensure the implementation aligns with the documented plans, and update those documents whenever the architecture or methods evolve.

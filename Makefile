@@ -27,4 +27,4 @@ dashboard:
 	./scripts/dashboard.py
 
 quickstart:
-	./scripts/dashboard.py --run quickstart
+	./scripts/full-quickstart.sh
