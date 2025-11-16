@@ -4,6 +4,7 @@ import { ConnectionBadge } from '../components/ConnectionBadge';
 import { DataStatusBanner } from '../components/DataStatusBanner';
 import { useToasts } from '../components/ToastProvider';
 import { HttpError, type NodeLifecyclePayload, useNodeLifecycle, useNodeMetrics } from '../hooks/useNodeData';
+import { useNodeConnection } from '../providers/NodeConnectionProvider';
 import styles from './NodePage.module.css';
 
 type NodeMode = 'genesis' | 'join';
@@ -69,6 +70,7 @@ export function NodePage() {
   const metricsQuery = useNodeMetrics();
   const lifecycle = useNodeLifecycle();
   const { pushToast } = useToasts();
+  const { markActiveEndpoint, endpoint: activeEndpoint } = useNodeConnection();
   const [mode, setMode] = useState<NodeMode>('genesis');
   const [host, setHost] = useState('10.0.0.18');
   const [port, setPort] = useState('8545');
@@ -85,6 +87,8 @@ export function NodePage() {
 
   const protocol = routing.tls ? 'https' : 'http';
   const shareableUrl = `${protocol}://${host}:${port}`;
+  const isActiveEndpoint =
+    activeEndpoint.host === host && activeEndpoint.port === Number(port) && activeEndpoint.protocol === protocol;
   const activeRouting = routingOptions.filter((option) => routing[option.key]);
 
   const privacyScore = useMemo(() => {
@@ -200,6 +204,37 @@ export function NodePage() {
   const errorMessage = serverError ?? validationMessage;
   const isSubmitting = lifecycle.isPending;
 
+  const handleCopyNodeUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(shareableUrl);
+      pushToast({
+        kind: 'success',
+        title: 'Node URL copied',
+        description: 'Share this endpoint with collaborators or pin it as the active dashboard node.',
+      });
+    } catch (error) {
+      pushToast({
+        kind: 'error',
+        title: 'Unable to copy node_url',
+        description: error instanceof Error ? error.message : 'Clipboard unavailable in this browser.',
+      });
+    }
+  };
+
+  const handleActivateEndpoint = () => {
+    if (validationMessage) {
+      setServerError(validationMessage);
+      return;
+    }
+    const parsedPort = Number(port);
+    markActiveEndpoint({ protocol, host, port: parsedPort });
+    pushToast({
+      kind: 'success',
+      title: 'Endpoint marked active',
+      description: `${shareableUrl} is now the live dashboard target.`,
+    });
+  };
+
   return (
     <PageShell
       title="Node orchestration"
@@ -304,6 +339,24 @@ export function NodePage() {
                 {mode === 'genesis'
                   ? 'Distribute this endpoint so peers can join your genesis block with the same routing posture.'
                   : 'Advertise your node_url back to the peer so they can add you to their allow-list.'}
+              </p>
+              <div className={styles.shareableActions}>
+                <button type="button" className={styles.secondaryButton} onClick={handleCopyNodeUrl}>
+                  Copy node_url
+                </button>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={handleActivateEndpoint}
+                  disabled={Boolean(validationMessage) || isActiveEndpoint}
+                >
+                  {isActiveEndpoint ? 'Active for this session' : 'Use for dashboard session'}
+                </button>
+              </div>
+              <p className={styles.helperText}>
+                {isActiveEndpoint
+                  ? 'Dashboard requests are targeting this endpoint right now.'
+                  : 'Mark this endpoint as active to have the dashboard query it live.'}
               </p>
             </div>
             <div className={styles.activeRoutes}>
