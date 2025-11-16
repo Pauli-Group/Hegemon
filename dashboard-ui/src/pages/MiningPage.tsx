@@ -7,6 +7,7 @@ import { useMinerStatus, useNodeEventStream } from '../hooks/useNodeData';
 import { useToasts } from '../components/ToastProvider';
 import { ConnectionBadge } from '../components/ConnectionBadge';
 import { DataStatusBanner } from '../components/DataStatusBanner';
+import type { LogEntry } from '../hooks/useActionRunner';
 import styles from './MiningPage.module.css';
 
 export function MiningPage() {
@@ -36,19 +37,39 @@ export function MiningPage() {
     }
   };
 
-  const logLines = useMemo(() => {
-    return events.slice(0, 20).map((event) => {
+  const logLines: LogEntry[] = useMemo(() => {
+    return events.slice(0, 20).map((event, index) => {
       switch (event.type) {
         case 'telemetry':
-          return `Telemetry ▸ hash ${event.hash_rate.toFixed(2)} H/s, mempool ${event.mempool_depth}`;
+          return {
+            level: 'info',
+            text: `Telemetry ▸ hash ${event.hash_rate.toFixed(2)} H/s, mempool ${event.mempool_depth}`,
+            commandIndex: index,
+          } satisfies LogEntry;
         case 'block':
-          return `Block ▸ height ${event.height}`;
+          return {
+            level: 'success',
+            text: `Block ▸ height ${event.height}`,
+            commandIndex: index,
+          } satisfies LogEntry;
         case 'transaction':
-          return `Tx ▸ ${event.tx_id}`;
+          return {
+            level: 'success',
+            text: `Tx ▸ ${event.tx_id}`,
+            commandIndex: index,
+          } satisfies LogEntry;
         case 'warning':
-          return `Warning ▸ ${event.message}`;
+          return {
+            level: 'error',
+            text: `Warning ▸ ${event.message}`,
+            commandIndex: index,
+          } satisfies LogEntry;
         default:
-          return 'Event';
+          return {
+            level: 'info',
+            text: 'Event',
+            commandIndex: index,
+          } satisfies LogEntry;
       }
     });
   }, [events]);
@@ -141,7 +162,12 @@ export function MiningPage() {
           <p className={styles.kicker}>Realtime feed</p>
           <h3>Telemetry & confirmations</h3>
         </div>
-        <LogPanel lines={logLines} isStreaming />
+        <LogPanel
+          title="Live output"
+          lines={logLines}
+          isStreaming
+          exportFileName="telemetry-feed.txt"
+        />
       </section>
     </PageShell>
   );

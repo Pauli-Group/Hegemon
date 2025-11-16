@@ -3,7 +3,7 @@ import { useEffect } from 'react';
 import { PageShell } from '../components/PageShell';
 import { LogPanel } from '../components/LogPanel';
 import { formatCommandLine, getActionBySlug } from '../data/actions';
-import { useActionRunner, type RunStatus } from '../hooks/useActionRunner';
+import { useActionRunner, type LogEntry, type RunStatus } from '../hooks/useActionRunner';
 import { useToasts } from '../components/ToastProvider';
 import styles from './ActionRunPage.module.css';
 
@@ -55,6 +55,12 @@ export function ActionRunPage() {
     return `${index + 1}. ${prefix}${formatCommandLine(command.argv)}`;
   });
 
+  const placeholderEntries: LogEntry[] = logLines.map((text, index) => ({
+    level: 'info',
+    text,
+    commandIndex: index,
+  }));
+
   const statusLabel: Record<RunStatus, string> = {
     idle: 'Idle',
     running: 'Running',
@@ -69,7 +75,7 @@ export function ActionRunPage() {
     error: styles.statusError,
   }[status];
 
-  const displayLines = logs.length > 0 ? logs : isStreaming ? [] : logLines;
+  const displayLines = logs.length > 0 ? logs : isStreaming ? [] : placeholderEntries;
 
   return (
     <PageShell
@@ -110,7 +116,13 @@ export function ActionRunPage() {
         </button>
       </div>
       {error && <p className={styles.errorHint}>{error}</p>}
-      <LogPanel title="Live output" lines={displayLines} isStreaming={isStreaming} shimmerCount={6} />
+      <LogPanel
+        title="Live output"
+        lines={displayLines}
+        isStreaming={isStreaming}
+        shimmerCount={6}
+        exportFileName={`action-${action.slug}-logs.txt`}
+      />
     </PageShell>
   );
 }
