@@ -29,6 +29,13 @@ The FastAPI service (`scripts/dashboard_service.py`) simply wraps `_actions()` a
 
 ## Troubleshooting scenarios
 
+### Connection badge turns Guard Rail red
+- **Symptom:** The nav pill and panel badges read “Mock data,” banners explain that mock payloads are in use, and telemetry tiles stop updating.
+- **Fix:**
+  1. Confirm `scripts/dashboard_service.py` is running and reachable at the URL exported via `VITE_DASHBOARD_SERVICE_URL`. If it is not running, restart it with the correct `NODE_RPC_URL`/token so the badge can flip back to Proof Green on the next poll.
+  2. If the service is running, tail its stdout/stderr for FastAPI errors (authentication, upstream RPC failures, etc.) and resolve the underlying issue. The `DataStatusBanner` tooltip mirrors the exception message reported by the proxy.
+  3. After remediation, refresh the dashboard. The banners disappear automatically once live data flows again.
+
 ### Service port conflicts
 - **Symptom:** UI cannot connect; fetch calls fail with `ECONNREFUSED`.
 - **Fix:** Ensure `uvicorn scripts.dashboard_service:app --port 8001` is running. If port 8001 is occupied, pass `--port 8010` and update `VITE_DASHBOARD_SERVICE_URL` accordingly.

@@ -8,6 +8,7 @@ A Vite + React + TypeScript shell that mirrors the CLI workflows declared in `sc
 - **Wallet console** – balances, shielded send forms, and transaction history sourced from the node RPC.
 - **Mining console** – live telemetry, start/stop controls, and target hash-rate configuration.
 - **Network analytics** – spark-lines and alerts for stale blocks, mempool depth, and block confirmations.
+- **Connection indicator** – a Proof Green nav pill that flips to Guard Rail when the UI falls back to mock payloads.
 
 Design tokens come directly from `docs/ui/brand_tokens.json` (via `src/design/tokens.ts`) so the colors, typography, spacing, and motion rules stay aligned with `BRAND.md`.
 
@@ -33,6 +34,12 @@ curl http://127.0.0.1:8001/node/wallet/notes | jq
 ```
 
 During development you can pass `--host 0.0.0.0 --port 4173` to `npm run dev` to expose the server externally (useful for screenshots with Playwright).
+
+## Connection badge & fallbacks
+
+- The nav renders a `ConnectionBadge` sourced from `useNodeMetrics()`. When the FastAPI proxy answers requests it glows Proof Green and reads “Live data.”
+- If the proxy is unreachable or errors, the badge flips to Guard Rail red with “Mock data,” every panel surfaces a tooltip explaining why mocks are in use, and a `DataStatusBanner` appears above the affected grids.
+- Restoring the FastAPI proxy (re-run `python ../scripts/dashboard_service.py` with the correct `NODE_RPC_URL`/token) clears the banner on the next poll and flips the badge back to Proof Green.
 
 ## Available scripts
 
