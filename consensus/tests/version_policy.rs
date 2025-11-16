@@ -28,6 +28,7 @@ fn version_schedule_controls_activation() {
         signer_indices: &[0, 1, 2],
         base_nullifiers: &NullifierSet::new(),
         base_state_root: [0u8; 32],
+        supply_digest: 0,
     };
     let (block, _, _) = assemble_bft_block(params).expect("block");
     let err = consensus
@@ -55,6 +56,7 @@ fn version_schedule_controls_activation() {
         signer_indices: &[0, 1, 2],
         base_nullifiers: &NullifierSet::new(),
         base_state_root: [0u8; 32],
+        supply_digest: 0,
     };
     let (block, _, _) = assemble_bft_block(params).expect("block");
     consensus.apply_block(block).expect("version allowed");

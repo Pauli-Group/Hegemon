@@ -11,6 +11,8 @@ pub type BlockHash = [u8; 32];
 pub type ValidatorId = [u8; 32];
 pub type StarkCommitment = [u8; 48];
 pub type VersionCommitment = [u8; 32];
+pub type SupplyDigest = u128;
+pub type Amount = u64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transaction {
@@ -48,6 +50,41 @@ impl Transaction {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CoinbaseSource {
+    TransactionIndex(usize),
+    BalanceTag(BalanceTag),
+}
+
+impl CoinbaseSource {
+    pub fn balance_tag(&self, transactions: &[Transaction]) -> Option<BalanceTag> {
+        match self {
+            CoinbaseSource::TransactionIndex(idx) => {
+                transactions.get(*idx).map(|tx| tx.balance_tag)
+            }
+            CoinbaseSource::BalanceTag(tag) => Some(*tag),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CoinbaseData {
+    pub minted: Amount,
+    pub fees: i64,
+    pub burns: Amount,
+    pub source: CoinbaseSource,
+}
+
+impl CoinbaseData {
+    pub fn balance_tag(&self, transactions: &[Transaction]) -> Option<BalanceTag> {
+        self.source.balance_tag(transactions)
+    }
+
+    pub fn net_native_delta(&self) -> i128 {
+        self.minted as i128 + self.fees as i128 - self.burns as i128
+    }
+}
+
 fn compute_transaction_id(
     nullifiers: &[Nullifier],
     commitments: &[Commitment],
@@ -74,6 +111,7 @@ fn compute_transaction_id(
 pub struct Block<BH> {
     pub header: BH,
     pub transactions: Vec<Transaction>,
+    pub coinbase: Option<CoinbaseData>,
 }
 
 impl<BH> Block<BH> {
@@ -81,6 +119,7 @@ impl<BH> Block<BH> {
         Block {
             header,
             transactions: self.transactions,
+            coinbase: self.coinbase,
         }
     }
 }

@@ -1,8 +1,8 @@
 mod common;
 
 use common::{
-    BftBlockParams, PowBlockParams, assemble_bft_block, assemble_pow_block, dummy_transaction,
-    make_validators, validator_set,
+    BftBlockParams, PowBlockParams, assemble_bft_block, assemble_pow_block, dummy_coinbase,
+    dummy_transaction, make_validators, validator_set,
 };
 use consensus::{BftConsensus, HashVerifier, NullifierSet, PowConsensus};
 use network::{GossipMessage, GossipRouter, PeerIdentity, establish_secure_channel};
@@ -27,6 +27,7 @@ async fn bft_consensus_liveness_and_slashing() {
         signer_indices: &[0, 1, 2],
         base_nullifiers: &base_nullifiers,
         base_state_root,
+        supply_digest: 0,
     })
     .expect("assemble block");
 
@@ -74,6 +75,7 @@ async fn bft_consensus_liveness_and_slashing() {
         signer_indices: &[0, 1, 2],
         base_nullifiers: &NullifierSet::new(),
         base_state_root: [0u8; 32],
+        supply_digest: 0,
     })
     .expect("assemble conflicting block");
     let update_conflict = consensus
@@ -95,7 +97,7 @@ fn pow_chain_accepts_valid_work() {
     let base_nullifiers = NullifierSet::new();
     let base_state_root = [0u8; 32];
     let transactions = vec![dummy_transaction(11)];
-    let target = 0x3f00ffff; // extremely easy target
+    let pow_bits = 0x3f00ffff; // extremely easy target
     let (block, _, _) = assemble_pow_block(PowBlockParams {
         height: 1,
         parent_hash: [0u8; 32],
@@ -104,7 +106,10 @@ fn pow_chain_accepts_valid_work() {
         miner: &miner,
         base_nullifiers: &base_nullifiers,
         base_state_root,
-        target,
+        pow_bits,
+        nonce: [0u8; 32],
+        parent_supply: 0,
+        coinbase: dummy_coinbase(1),
     })
     .expect("assemble pow block");
     let update = consensus.apply_block(block).expect("pow block");

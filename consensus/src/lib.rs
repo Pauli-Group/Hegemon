@@ -4,6 +4,7 @@ pub mod header;
 pub mod nullifier;
 pub mod pow;
 pub mod proof;
+pub mod reward;
 pub mod types;
 pub mod validator;
 pub mod version_policy;
@@ -19,8 +20,8 @@ pub use protocol_versioning::{
     DEFAULT_VERSION_BINDING, VersionBinding, VersionMatrix,
 };
 pub use types::{
-    BalanceTag, Commitment, ConsensusBlock, FeeCommitment, Nullifier, StarkCommitment, Transaction,
-    VersionCommitment,
+    BalanceTag, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, FeeCommitment, Nullifier,
+    StarkCommitment, SupplyDigest, Transaction, VersionCommitment,
 };
 pub use validator::{Validator, ValidatorSet};
 pub use version_policy::{UpgradeDirective, VersionProposal, VersionSchedule};
