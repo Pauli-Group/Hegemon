@@ -1797,10 +1797,16 @@ name = "security-tests"
 version = "0.1.0"
 dependencies = [
  "block-circuit",
+ "consensus",
  "network",
+ "node",
  "protocol-versioning",
+ "rand 0.8.5",
  "state-merkle",
+ "tempfile",
+ "tokio",
  "transaction-circuit",
+ "url",
  "wallet",
 ]
 
