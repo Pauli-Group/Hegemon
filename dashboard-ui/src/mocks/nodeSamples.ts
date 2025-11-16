@@ -9,6 +9,11 @@ export const mockTelemetry: TelemetrySnapshot = {
   mempool_depth: 32,
   difficulty_bits: 50331670,
   stale_share_rate: 0.012,
+  tls_enabled: true,
+  mtls_enabled: true,
+  tor_enabled: false,
+  vpn_overlay: false,
+  exposure_scope: 'local',
 };
 
 export const mockNotes: NoteStatus = {

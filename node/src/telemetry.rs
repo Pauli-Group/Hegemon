@@ -1,7 +1,23 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use parking_lot::RwLock;
 use serde::Serialize;
+use std::sync::Arc;
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct TelemetryPosture {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mtls_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tor_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vpn_overlay: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exposure_scope: Option<String>,
+}
 
 #[derive(Debug)]
 pub struct Telemetry {
@@ -12,6 +28,7 @@ pub struct Telemetry {
     best_height: AtomicU64,
     mempool_depth: AtomicU64,
     difficulty: AtomicU64,
+    posture: Arc<RwLock<TelemetryPosture>>,
 }
 
 impl Default for Telemetry {
@@ -30,6 +47,7 @@ impl Clone for Telemetry {
             best_height: AtomicU64::new(self.best_height.load(Ordering::Relaxed)),
             mempool_depth: AtomicU64::new(self.mempool_depth.load(Ordering::Relaxed)),
             difficulty: AtomicU64::new(self.difficulty.load(Ordering::Relaxed)),
+            posture: Arc::new(RwLock::new(self.posture.read().clone())),
         }
     }
 }
@@ -44,6 +62,7 @@ impl Telemetry {
             best_height: AtomicU64::new(0),
             mempool_depth: AtomicU64::new(0),
             difficulty: AtomicU64::new(0),
+            posture: Arc::new(RwLock::new(TelemetryPosture::default())),
         }
     }
 
@@ -71,6 +90,10 @@ impl Telemetry {
         self.difficulty.store(bits as u64, Ordering::Relaxed);
     }
 
+    pub fn set_privacy_posture(&self, posture: TelemetryPosture) {
+        *self.posture.write() = posture;
+    }
+
     pub fn snapshot(&self) -> TelemetrySnapshot {
         let elapsed = self.start.elapsed();
         let hashes = self.hashes.load(Ordering::Relaxed);
@@ -87,6 +110,7 @@ impl Telemetry {
         } else {
             0.0
         };
+        let posture = self.posture.read().clone();
         TelemetrySnapshot {
             hash_rate,
             total_hashes: hashes,
@@ -94,6 +118,11 @@ impl Telemetry {
             mempool_depth: self.mempool_depth.load(Ordering::Relaxed),
             difficulty_bits: self.difficulty.load(Ordering::Relaxed) as u32,
             stale_share_rate: stale_rate,
+            tls_enabled: posture.tls_enabled,
+            mtls_enabled: posture.mtls_enabled,
+            tor_enabled: posture.tor_enabled,
+            vpn_overlay: posture.vpn_overlay,
+            exposure_scope: posture.exposure_scope,
         }
     }
 }
@@ -106,4 +135,14 @@ pub struct TelemetrySnapshot {
     pub mempool_depth: u64,
     pub difficulty_bits: u32,
     pub stale_share_rate: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mtls_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tor_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vpn_overlay: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exposure_scope: Option<String>,
 }
