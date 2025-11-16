@@ -243,6 +243,10 @@ The PoW fork mirrors Bitcoin/Zcash mechanics so operators can reason about liven
 
 No transparent outputs; everything is in this one PQ pool from day 1.
 
+`node/src/api.rs` exposes that state machine over HTTP so operators can monitor the same fields remotely. `/blocks/latest` and `/metrics` stream hash rate, mempool depth, stale share rate, best height, and compact difficulty values that miners compare against the reward policy in `consensus/src/reward.rs` (`INITIAL_SUBSIDY = 50 · 10⁸`, `HALVING_INTERVAL = 840_000`). Every mined block updates the header’s `supply_digest`, and the quickstart playbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through querying those endpoints before wiring wallets to the node API.
+
+The workspace-level test `tests/node_wallet_daemon.rs` keeps the HTTP API, miner loop, and wallet RPC client in sync by spinning two nodes, verifying the minted supply, and forcing a user-facing transfer. Its telemetry expectations match the `/wallet` and `/network` dashboard views, so the Playwright smoke tests (`dashboard-ui/tests/smoke.spec.ts`) double-check the same metrics with brand-compliant snapshots.
+
 ---
 
 ## 4. Addresses and keys (PQ analogue of Sapling/Orchard)
@@ -302,6 +306,10 @@ The repository now contains a `wallet` crate that wires these ideas into code:
   * `wallet scan --ivk <path> --ledger <path>` decrypts ledger ciphertexts with an incoming viewing key and returns per-asset balances plus recovered note summaries.
 
 Integration tests in `wallet/tests/cli.rs` exercise those CLI flows, so anyone can watch address derivation, note encryption, and viewing-key-based balance recovery stay compatible with the proving system.
+
+Long-lived wallets rely on the RPC client (`wallet/src/rpc.rs`) and sync engine (`wallet/src/sync.rs`) rather than ad-hoc scripts. `WalletSyncEngine` pages through `/wallet/notes`, `/wallet/commitments`, `/wallet/ciphertexts`, `/wallet/nullifiers`, and `/blocks/latest`, storing commitments inside the encrypted `WalletStore` so daemons can resume after crashes. The runbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through starting those daemons against two nodes, and the `tests/node_wallet_daemon.rs` integration test codifies the same flow so CI fails if either the RPC contract or the local merkle bookkeeping drifts.
+
+`dashboard-ui/` consumes that same RPC catalog through the FastAPI proxy (`scripts/dashboard_service.py`). `/wallet` summarizes balances, note coverage, and transaction history while `/network` charts hash rate, mempool churn, stale share rate, and the live block/transaction feeds. The Playwright suite (`dashboard-ui/tests/screenshot.spec.ts` and `dashboard-ui/tests/smoke.spec.ts`) captures SVG snapshots of the mining, wallet, and network routes using the typography and color palette from `BRAND.md`, so any analytics regression surfaces as a visual diff in CI.
 
 ---
 
