@@ -4,7 +4,7 @@ When writing complex features or significant refactors, use an ExecPlan (as desc
 
 # First-Run Setup
 
-Every fresh clone must begin with `make quickstart`. This single command bootstraps the toolchains, runs the guard-rail checks, and ensures everyone shares the same baseline before touching the code or UI.
+Every fresh clone must begin with `make quickstart`. This single command bootstraps the toolchains, runs the guard-rail checks, and launches the FastAPI streaming service plus the Vite dashboard UI so contributors land inside the graphical experience immediately (press Ctrl+C when you want to stop it).
 
 # Design and Methods Docs
 
