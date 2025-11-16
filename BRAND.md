@@ -6,6 +6,8 @@ These branding guidelines ensure that every user-facing artifact communicates th
 - **Legibility first** – interfaces must remain usable in low-light trading floors and bright control rooms.
 - **High-trust neutrality** – visual tone should feel neutral but precise, highlighting data integrity over hype.
 - **Efficient scalability** – every element should scale across dashboards, CLI renderers, and documentation illustrations.
+- **Secure, seamless delight** – every interaction must reinforce safety, reduce friction, and end with a positive confirmation
+  cue so operators feel confident and delighted.
 
 ## Color System
 | Role | Color | Usage | Justification |
