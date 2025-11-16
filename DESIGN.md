@@ -17,9 +17,9 @@ I’d keep (roughly) Zcash’s original goals, updated for 2025:
    * SNARK/STARK based only on collision-resistant hashes (FRI-style IOPs etc.). ([C# Corner][2])
 4. **Bitcoin-like mental model**: UTXO-ish “notes” with strong privacy, plus viewing keys.
 5. **Upgradability**: built-in versioning and “escape hatches” for *future* PQ breaks.
-6. **Secure, seamless, delighting UX**: wallet, governance, and validator touchpoints must keep the PQ stack invisible, provide
-   ergonomic flows across devices, and surface positive confirmation cues so users feel safe and delighted without facing
-   operational friction.
+6. **Secure, seamless, delighting UX**: wallet, governance, and miner/operator touchpoints must keep the PQ stack invisible,
+   provide ergonomic flows across devices, and surface positive confirmation cues so users feel safe and delighted without
+   facing operational friction.
 
 Everything else is negotiable.
 
@@ -32,8 +32,8 @@ are:
 
 * **Cryptographic payload sizes** – ML-DSA/ML-KEM artifacts are orders of magnitude larger than the ECC keys, signatures, and
   ECIES ciphertexts Zcash uses today. Even though the spend circuit keeps Sapling’s “prove key knowledge inside the ZK proof”
-  model (so there are no per-input signatures), block headers, validator identities, and the note encryption layer all absorb
-  PQ size bloat: ML-DSA-65 pk = 1,952 B vs ~32 B Ed25519, signatures = 3,293 B vs ~64 B, ML-KEM ciphertexts = 1,088 B vs
+  model (so there are no per-input signatures), block headers, miner identities, and the note encryption layer all absorb PQ
+  size bloat: ML-DSA-65 pk = 1,952 B vs ~32 B Ed25519, signatures = 3,293 B vs ~64 B, ML-KEM ciphertexts = 1,088 B vs
   ~80–100 B for Jubjub-based ECIES. Network/consensus plumbing must therefore expect materially larger payloads.
 * **Proof sizes and verification latency** – Trading Groth16/Halo2 for a transparent STARK stack removes the trusted setup but
   makes proofs much chunkier: tens of kilobytes with verifier runtimes in the tens of milliseconds, versus sub-kilobyte Groth16
@@ -62,7 +62,7 @@ Where they’re used:
 * **Consensus / networking**:
 
   * Block producers sign block headers with ML-DSA.
-  * Nodes/validators identity keys = ML-DSA.
+  * Mining node identity keys = ML-DSA.
 * **User layer**:
 
   * Surprisingly little: within the shielded protocol, we can get rid of *per-input signatures* entirely and instead authorize spends by proving knowledge of a secret key in ZK (like Zcash already does with spend authorizing keys; here we do it with hash/lattice PRFs rather than ECC).
@@ -331,9 +331,9 @@ We can hard-bake in lessons from the whole “quantum-recoverability” ZIP saga
 
 So you get the “compartmentalization” Zcash achieved by multiple pools, but implemented via *versioning & recursion* rather than parallel pools.
 
-Concrete modules in the repository now reflect this plan. A dedicated `state/merkle` crate maintains the append-only commitment tree with poseidon-style hashing, while a `circuits/block` crate replays ordered transaction proofs, enforces nullifier uniqueness, tracks the root trace, and records a recursive aggregation digest that can later be replaced by a true recursive STARK. Block producers call `prove_block` with their current tree, and validators call `verify_block` with their own state to ensure the final root matches before committing the block. The new `protocol-versioning` crate defines a `VersionBinding { circuit, crypto }` pair plus helpers for recording per-block version matrices. Every transaction now commits to its binding, the block header publishes a 32-byte `version_commitment`, and recursive block proofs expose `version_counts` so consensus can attest exactly how many transactions ran under each circuit/primitive pair.
+Concrete modules in the repository now reflect this plan. A dedicated `state/merkle` crate maintains the append-only commitment tree with poseidon-style hashing, while a `circuits/block` crate replays ordered transaction proofs, enforces nullifier uniqueness, tracks the root trace, and records a recursive aggregation digest that can later be replaced by a true recursive STARK. Block-producing miners call `prove_block` with their current tree before attempting a PoW solution, and other miners call `verify_block` with their own state to ensure the final root matches before relaying or extending the block. The new `protocol-versioning` crate defines a `VersionBinding { circuit, crypto }` pair plus helpers for recording per-block version matrices. Every transaction now commits to its binding, the block header publishes a 32-byte `version_commitment`, and recursive block proofs expose `version_counts` so consensus can attest exactly how many transactions ran under each circuit/primitive pair even when miners operate autonomously.
 
-Consensus enforces version rollouts via `VersionSchedule`, a governance-friendly structure that records which bindings are allowed at which heights. ZIP-style `VersionProposal`s (see `governance/VERSIONING.md`) specify activation heights, optional retirement heights, and any special upgrade circuits required to migrate notes from a deprecated primitive to a fresh one. Both BFT and PoW consensus paths consult the schedule before accepting a block, so validators can mix v1 and v2 proofs during a rollout without ever spawning a parallel privacy pool. When an emergency primitive swap is required, operators follow the runbook in `runbooks/emergency_version_swap.md` to publish an activation proposal, enable the upgrade circuit, and shepherd users through note migrations before the retirement height lands.
+Consensus enforces version rollouts via `VersionSchedule`, a governance-friendly structure that records which bindings are allowed at which heights. ZIP-style `VersionProposal`s (see `governance/VERSIONING.md`) specify activation heights, optional retirement heights, and any special upgrade circuits required to migrate notes from a deprecated primitive to a fresh one. The PoW network consults the schedule before accepting a block, so solo miners and pools can mix v1 and v2 proofs during a rollout without coordination beyond rebasing on the canonical chain. When an emergency primitive swap is required, operators follow the runbook in `runbooks/emergency_version_swap.md` to publish an activation proposal, enable the upgrade circuit, and shepherd users through note migrations before the retirement height lands; the recursion layer’s `version_counts` tell PoW-only nodes which bindings were active long before they see the finality depth they trust.
 
 ---
 
@@ -381,7 +381,7 @@ Implementation now follows an explicit monorepo layout so each subsystem’s tes
 
 - `crypto/` – Rust crate `synthetic-crypto` that implements ML-DSA/SLH-DSA signatures, ML-KEM, and the SHA-256/BLAKE3/Poseidon-style hashing used throughout this design. Changes here must update `docs/API_REFERENCE.md#crypto` plus the guardrails in `docs/THREAT_MODEL.md` that spell out the PQ security margins (≥128-bit post-Grover strength for all primitives).
 - `circuits/transaction`, `circuits/block`, and the new `circuits/bench` binary crate – contain the canonical STARK circuits and a CLI (`cargo run -p circuits-bench -- --prove`) that compiles dummy witnesses, produces transaction proofs, and optionally runs block aggregation via the recursive digest described above. The benchmark keeps track of constraint row counts, hash invocations, and elapsed time so that any change to witness construction or proving fidelity can be measured. Section 2 should be updated in lockstep with these outputs.
-- `consensus/` and `consensus/bench` – the Rust validator logic still enforces version bindings and PQ signature validation, while the Go `netbench` simulator replays synthetic payloads sized to ML-DSA signatures plus STARK proofs. Its output feeds directly into the threat model’s DoS budgets because it reports achieved messages/second under PQ payload sizes.
+- `consensus/` and `consensus/bench` – the Rust miner node logic still enforces version bindings and PQ signature validation, while the Go `netbench` simulator replays synthetic payloads sized to ML-DSA signatures plus STARK proofs. Its output feeds directly into the threat model’s DoS budgets because it reports achieved messages/second under PQ payload sizes.
 - `wallet/` and `wallet/bench` – the CLI plus a Rust benchmark that derives keys, encrypts/decrypts notes, and computes nullifiers using the same derivations in §3–4. This ensures wallet UX changes keep Grover-aware 256-bit symmetric margins.
 - `docs/` – authoritative contributor docs, threat models, and API references. The new files explicitly call out which paragraphs inside this DESIGN and `METHODS.md` must change together. Any interface change now requires edits in all three locations (code, DESIGN, docs) before CI will pass.
 
@@ -406,4 +406,4 @@ These scaffolds exist to keep the design’s PQ security assumptions observable.
 - **Formal verification** – TLA+ specs under `circuits/formal/` (transaction balance) and `consensus/spec/formal/` (HotStuff safety/liveness) are now part of the release checklist. Any modification to witness layouts, balance tags, or consensus phases must update the corresponding spec and README.
 - **Continuous adversarial testing** – The `security-adversarial` CI job runs the new property-based tests for transaction validation, network handshakes, wallet address encoding, and the root-level adversarial flow in `tests/security_pipeline.rs`. Operators follow `runbooks/security_testing.md` when the job fails, capturing artifacts for auditors before re-running.
 
-Together these loops ensure PQ parameter choices, circuit semantics, and validator logic stay observable and auditable as the system evolves.
+Together these loops ensure PQ parameter choices, circuit semantics, and miner logic stay observable and auditable as the system evolves.
