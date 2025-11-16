@@ -824,6 +824,17 @@ Document benchmark outputs in pull requests when they change noticeably; CI will
 
 All jobs operate on Ubuntu runners with Rust stable, Go 1.21, and clang-format installed via `apt`. Adding new languages or toolchains requires updating this table, the workflow, and `docs/CONTRIBUTING.md`.
 
+## 6. Node, wallet, and UI operations
+
+Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) whenever you need a reproducible two-party demo:
+
+1. Launch two `node` binaries with dedicated API ports and `pow_bits = 0x3f00ffff` so the embedded miners immediately grind blocks. The reward schedule in `consensus/src/reward.rs` (`INITIAL_SUBSIDY = 50 · 10⁸`, halving every `840,000` blocks) and the header’s `supply_digest` give you the guard rails to check `/blocks/latest` against.
+2. Start the FastAPI proxy (`scripts/dashboard_service.py`) and the dashboard UI (`dashboard-ui/`). `/wallet` exposes shielded balances, committed notes, and transaction history; `/network` charts hash rate, mempool depth, stale share rate, and the recent block/transaction feed.
+3. Initialize stores with `wallet init`, then run `wallet daemon` against each node so `WalletSyncEngine` can page through `/wallet/{notes,commitments,ciphertexts,nullifiers}` plus `/blocks/latest`, persisting commitments locally before every poll.
+4. Fund Alice (using the deterministic faucet in `tests/node_wallet_daemon.rs` or a bespoke devnet faucet), run `wallet send` with Bob’s Bech32 address, and wait for both daemons to mark the nullifiers as mined.
+
+CI mirrors that flow via `tests/node_wallet_daemon.rs`—two nodes, two daemons, a mined subsidy, and a user-visible transfer—so the RPC contract breaks loudly. `dashboard-ui/tests/screenshot.spec.ts` and `dashboard-ui/tests/smoke.spec.ts` capture SVG snapshots of the mining, wallet, and network routes using the typography and color palette defined in `BRAND.md`, ensuring the analytics rendered to operators match the RPC telemetry the integration test enforces.
+
 ### Security assurance workflow
 
 - Follow `docs/SECURITY_REVIEWS.md` whenever commissioning cryptanalysis or third-party audits. Every finding recorded there must reference the code path touched plus the mitigation PR.

@@ -83,6 +83,8 @@ def _now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
 
+GENESIS_TRANSFER_TIMESTAMP = "2025-01-01T00:00:00Z"
+
 SAMPLE_TELEMETRY = {
     "hash_rate": 1_250_000.0,
     "total_hashes": 12_480_000,
@@ -190,7 +192,7 @@ TRANSFER_LOG: Deque[TransferRecord] = deque(
             fee=0.0,
             status="confirmed",
             confirmations=64,
-            created_at=_now_iso(),
+            created_at=GENESIS_TRANSFER_TIMESTAMP,
         )
     ],
     maxlen=256,

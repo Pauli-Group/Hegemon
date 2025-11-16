@@ -1,5 +1,7 @@
 import type { MinerStatus, NoteStatus, TelemetrySnapshot, TransferRecord } from '../types/node';
 
+const STATIC_TIMESTAMP = '2025-01-01T00:00:00.000Z';
+
 export const mockTelemetry: TelemetrySnapshot = {
   hash_rate: 1250000,
   total_hashes: 12480000,
@@ -21,7 +23,7 @@ export const mockMinerStatus: MinerStatus = {
   is_running: true,
   target_hash_rate: 1300000,
   thread_count: 2,
-  last_updated: Date.now() / 1000,
+  last_updated: Date.parse(STATIC_TIMESTAMP) / 1000,
 };
 
 export const mockTransfers: TransferRecord[] = [
@@ -34,6 +36,6 @@ export const mockTransfers: TransferRecord[] = [
     fee: 0,
     status: 'confirmed',
     confirmations: 64,
-    created_at: new Date().toISOString(),
+    created_at: STATIC_TIMESTAMP,
   },
 ];
