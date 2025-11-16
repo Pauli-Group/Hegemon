@@ -19,11 +19,10 @@ import subprocess
 import sys
 import time
 import uuid
-from collections import deque
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, AsyncIterator, Deque, Dict, Iterator, List, Optional, Literal
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Literal
 
 import httpx
 import websockets
@@ -67,6 +66,10 @@ NODE_RPC_URL = os.environ.get("NODE_RPC_URL")
 if NODE_RPC_URL:
     NODE_RPC_URL = NODE_RPC_URL.rstrip("/")
 NODE_RPC_TOKEN = os.environ.get("NODE_RPC_TOKEN", "")
+WALLET_API_URL = os.environ.get("WALLET_API_URL")
+if WALLET_API_URL:
+    WALLET_API_URL = WALLET_API_URL.rstrip("/")
+WALLET_API_TOKEN = os.environ.get("WALLET_API_TOKEN", "")
 STREAM_RECONNECT_SECONDS = 3.0
 
 
@@ -124,6 +127,21 @@ SAMPLE_EVENTS: List[Dict[str, Any]] = [
     },
 ]
 
+MOCK_TRANSFERS: List[Dict[str, Any]] = [
+    {
+        "id": "bootstrap-transfer",
+        "tx_id": "bootstrap-transfer",
+        "direction": "incoming",
+        "address": "shield1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "memo": "Genesis airdrop",
+        "amount": 42.0,
+        "fee": 0.0,
+        "status": "confirmed",
+        "confirmations": 64,
+        "created_at": GENESIS_TRANSFER_TIMESTAMP,
+    }
+]
+
 
 @dataclass
 class MinerControlState:
@@ -141,32 +159,6 @@ class MinerControlState:
         }
 
 
-@dataclass
-class TransferRecord:
-    id: str
-    direction: Literal["incoming", "outgoing"]
-    address: str
-    memo: Optional[str]
-    amount: float
-    fee: float
-    status: Literal["pending", "confirmed"]
-    confirmations: int
-    created_at: str
-
-    def as_dict(self) -> Dict[str, Any]:
-        return {
-            "id": self.id,
-            "direction": self.direction,
-            "address": self.address,
-            "memo": self.memo,
-            "amount": self.amount,
-            "fee": self.fee,
-            "status": self.status,
-            "confirmations": self.confirmations,
-            "created_at": self.created_at,
-        }
-
-
 class TransferPayload(BaseModel):
     address: str = Field(..., min_length=4)
     amount: float = Field(..., ge=0.0)
@@ -181,22 +173,6 @@ class MinerControlPayload(BaseModel):
 
 
 MINER_STATE = MinerControlState()
-TRANSFER_LOG: Deque[TransferRecord] = deque(
-    [
-        TransferRecord(
-            id="bootstrap-transfer",
-            direction="incoming",
-            address="shield1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
-            memo="Genesis airdrop",
-            amount=42.0,
-            fee=0.0,
-            status="confirmed",
-            confirmations=64,
-            created_at=GENESIS_TRANSFER_TIMESTAMP,
-        )
-    ],
-    maxlen=256,
-)
 
 
 def _node_headers() -> Dict[str, str]:
@@ -212,6 +188,23 @@ async def _fetch_node_json(path: str) -> Dict[str, Any]:
     url = f"{NODE_RPC_URL}{path}"
     async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
         response = await client.get(url, headers=_node_headers())
+    response.raise_for_status()
+    return response.json()
+
+
+def _wallet_headers() -> Dict[str, str]:
+    headers: Dict[str, str] = {}
+    if WALLET_API_TOKEN:
+        headers["x-wallet-token"] = WALLET_API_TOKEN
+    return headers
+
+
+async def _wallet_request(method: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if not WALLET_API_URL:
+        raise RuntimeError("WALLET_API_URL is not configured")
+    url = f"{WALLET_API_URL}{path}"
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+        response = await client.request(method, url, headers=_wallet_headers(), json=payload)
     response.raise_for_status()
     return response.json()
 
@@ -259,21 +252,6 @@ async def _node_event_messages() -> AsyncIterator[str]:
             index += 1
             await asyncio.sleep(5)
 
-
-def _append_transfer(payload: TransferPayload) -> TransferRecord:
-    record = TransferRecord(
-        id=uuid.uuid4().hex,
-        direction="outgoing",
-        address=payload.address,
-        memo=payload.memo,
-        amount=float(payload.amount),
-        fee=float(payload.fee),
-        status="pending",
-        confirmations=0,
-        created_at=_now_iso(),
-    )
-    TRANSFER_LOG.appendleft(record)
-    return record
 
 class CommandFailure(RuntimeError):
     def __init__(self, slug: str, command_index: int, exit_code: int, duration: float) -> None:
@@ -432,14 +410,57 @@ async def node_miner_control(payload: MinerControlPayload) -> Dict[str, Any]:
 
 
 @app.get("/node/wallet/transfers")
-def node_transfer_history() -> Dict[str, Any]:
-    return {"transfers": [record.as_dict() for record in TRANSFER_LOG]}
+async def node_transfer_history() -> Dict[str, Any]:
+    if not WALLET_API_URL:
+        return {"transfers": MOCK_TRANSFERS}
+    try:
+        return await _wallet_request("GET", "/transfers")
+    except httpx.HTTPStatusError as exc:  # pragma: no cover - bubble status
+        detail = exc.response.json() if exc.response.headers.get("content-type", "").startswith("application/json") else {"error": exc.response.text}
+        raise HTTPException(status_code=exc.response.status_code, detail=detail)
+    except httpx.HTTPError:
+        return {"transfers": MOCK_TRANSFERS}
 
 
 @app.post("/node/wallet/transfers")
 async def node_submit_transfer(payload: TransferPayload) -> Dict[str, Any]:
-    record = _append_transfer(payload)
-    return {"transfer": record.as_dict()}
+    wallet_payload = {
+        "recipients": [
+            {
+                "address": payload.address,
+                "value": int(payload.amount),
+                "asset_id": 1,
+                "memo": payload.memo,
+            }
+        ],
+        "fee": int(payload.fee),
+    }
+    if not WALLET_API_URL:
+        mock = MOCK_TRANSFERS.copy()
+        tx_id = uuid.uuid4().hex
+        mock.insert(
+            0,
+            {
+                "id": tx_id,
+                "tx_id": tx_id,
+                "direction": "outgoing",
+                "address": payload.address,
+                "memo": payload.memo,
+                "amount": float(payload.amount),
+                "fee": float(payload.fee),
+                "status": "pending",
+                "confirmations": 0,
+                "created_at": _now_iso(),
+            },
+        )
+        return {"transfer": mock[0]}
+    try:
+        return await _wallet_request("POST", "/transfers", wallet_payload)
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.json() if exc.response.headers.get("content-type", "").startswith("application/json") else {"error": exc.response.text}
+        raise HTTPException(status_code=exc.response.status_code, detail=detail)
+    except httpx.HTTPError:
+        return {"transfer": MOCK_TRANSFERS[0]}
 
 
 @app.get("/node/events/stream")

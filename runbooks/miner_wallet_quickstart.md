@@ -78,6 +78,7 @@ cargo run -p wallet --bin wallet -- daemon \
   --passphrase hunter2 \
   --rpc-url http://127.0.0.1:8080 \
   --auth-token devnet-token \
+  --http-listen 127.0.0.1:9090 \
   --interval-secs 5
 ```
 
@@ -87,6 +88,7 @@ cargo run -p wallet --bin wallet -- daemon \
   --passphrase horse3 \
   --rpc-url http://127.0.0.1:8081 \
   --auth-token devnet-token \
+  --http-listen 127.0.0.1:9091 \
   --interval-secs 5
 ```
 
@@ -136,5 +138,15 @@ The command selects notes, proves them with `transaction_circuit`, encrypts Bob�
 ## 8. Verify balances and telemetry
 
 Use `cargo run -p wallet --bin wallet -- status --store /tmp/alice.wallet --passphrase hunter2` to check that Alice’s balance dropped by 26 (25 + 1 fee) and Bob’s watch-only or full wallet shows `25` confirmed units. The dashboard `/wallet` route should list the pending transfer followed by its confirmation count, and `/network` should show the new block height and transaction hash in the event streams. Hash rate, mempool depth, and stale share tiles echo the telemetry the Playwright smoke tests exercise, so any regressions here will also fail CI.
+
+To surface those transfers inside the dashboard service automatically, point the FastAPI proxy at the wallet HTTP interface by exporting:
+
+```bash
+export WALLET_STORE_PATH=/tmp/alice.wallet
+export WALLET_PASSPHRASE_FILE=$HOME/.synthetic/alice.passphrase
+export WALLET_API_URL=http://127.0.0.1:9090
+```
+
+`scripts/full-quickstart.sh` consumes the same variables to start `wallet daemon --http-listen` after the CLI bootstrapping, so the React UI can issue `/transfers` GET/POST requests against the real encrypted store without duplicating sync logic.
 
 Stop the wallet daemons with `Ctrl+C`, then shut down the node processes once you have captured whatever metrics you needed.

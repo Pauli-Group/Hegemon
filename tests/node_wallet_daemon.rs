@@ -19,6 +19,7 @@ use wallet::address::ShieldedAddress;
 use wallet::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 use wallet::rpc::{TransactionBundle, WalletRpcClient};
 use wallet::tx_builder::{build_transaction, Recipient};
+use wallet::TransferRecipient;
 use wallet::WalletStore;
 use wallet::WalletSyncEngine;
 
@@ -102,11 +103,21 @@ async fn node_wallet_daemons_execute_transfer() {
     let tx_id = submit_transaction(alice_client.clone(), built.bundle.clone())
         .await
         .expect("submit bundle");
+    let bob_address_encoded = bob_recipient
+        .encode()
+        .expect("encode recipient address for metadata");
     alice_store
         .record_pending_submission(
             tx_id,
             built.nullifiers.clone(),
             built.spent_note_indexes.clone(),
+            vec![TransferRecipient {
+                address: bob_address_encoded,
+                value: 25,
+                asset_id: NATIVE_ASSET_ID,
+                memo: Some("integration transfer".into()),
+            }],
+            1,
         )
         .expect("record pending");
 

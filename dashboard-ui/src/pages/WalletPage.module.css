@@ -123,6 +123,16 @@
   font-size: 0.85rem;
 }
 
+.errorBanner {
+  margin: 0 0 12px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 123, 123, 0.4);
+  background: rgba(255, 123, 123, 0.08);
+  color: rgba(255, 197, 197, 0.95);
+  font-size: 0.9rem;
+}
+
 @media (max-width: 768px) {
   .qrRow {
     flex-direction: column;
