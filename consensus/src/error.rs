@@ -22,6 +22,16 @@ pub enum ConsensusError {
     Timestamp,
     #[error("pow target invalid: {0}")]
     Pow(String),
+    #[error("coinbase missing from PoW block")]
+    MissingCoinbase,
+    #[error("invalid coinbase: {0}")]
+    InvalidCoinbase(&'static str),
+    #[error("subsidy limit exceeded at height {height}: minted {minted}, allowed {allowed}")]
+    Subsidy {
+        height: u64,
+        minted: u64,
+        allowed: u64,
+    },
     #[error("serialization error: {0}")]
     Serialization(#[from] bincode::Error),
     #[error("transaction version {version:?} not active at height {height}")]

@@ -1,6 +1,7 @@
 use crate::error::ConsensusError;
 use crate::types::{
-    BlockHash, FeeCommitment, StarkCommitment, ValidatorSetCommitment, VersionCommitment,
+    BlockHash, FeeCommitment, StarkCommitment, SupplyDigest, ValidatorSetCommitment,
+    VersionCommitment,
 };
 use crypto::hashes::sha256;
 
@@ -17,6 +18,7 @@ pub struct BlockHeader {
     pub version_commitment: VersionCommitment,
     pub tx_count: u32,
     pub fee_commitment: FeeCommitment,
+    pub supply_digest: SupplyDigest,
     pub validator_set_commitment: ValidatorSetCommitment,
     pub signature_aggregate: Vec<u8>,
     pub signature_bitmap: Option<Vec<u8>>,
@@ -26,7 +28,7 @@ pub struct BlockHeader {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PowSeal {
     pub nonce: [u8; 32],
-    pub target: u32,
+    pub pow_bits: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,7 +72,11 @@ impl BlockHeader {
                 }
             }
             ConsensusMode::Pow => {
-                if self.pow.is_none() {
+                if let Some(seal) = &self.pow {
+                    if seal.pow_bits == 0 {
+                        return Err(ConsensusError::InvalidHeader("pow bits missing"));
+                    }
+                } else {
                     return Err(ConsensusError::InvalidHeader("pow seal missing"));
                 }
             }
@@ -92,6 +98,7 @@ fn encode_signing_fields(header: &BlockHeader) -> Vec<u8> {
     data.extend_from_slice(&header.version_commitment);
     data.extend_from_slice(&header.tx_count.to_le_bytes());
     data.extend_from_slice(&header.fee_commitment);
+    data.extend_from_slice(&header.supply_digest.to_le_bytes());
     data.extend_from_slice(&header.validator_set_commitment);
     data
 }
@@ -112,7 +119,7 @@ fn encode_full_header(header: &BlockHeader) -> Vec<u8> {
         Some(seal) => {
             data.push(1);
             data.extend_from_slice(&seal.nonce);
-            data.extend_from_slice(&seal.target.to_le_bytes());
+            data.extend_from_slice(&seal.pow_bits.to_le_bytes());
         }
         None => data.push(0),
     }
