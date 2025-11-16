@@ -1,37 +1,60 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
-  <title id="title">Synthetic Hegemonic Currency Logo</title>
-  <desc id="desc">Circular emblem combining shielded layers and orbital consensus arcs.</desc>
+  <title id="title">Synthetic Hegemonic Currency emblem</title>
+  <desc id="desc">Layered shield with orbital rails and a luminous currency stroke.</desc>
   <defs>
-    <radialGradient id="orb" cx="50%" cy="45%" r="70%">
-      <stop offset="0%" stop-color="#1b263b" />
-      <stop offset="50%" stop-color="#14213d" />
-      <stop offset="100%" stop-color="#03071e" />
+    <radialGradient id="void" cx="50%" cy="45%" r="70%">
+      <stop offset="0%" stop-color="#121826" />
+      <stop offset="60%" stop-color="#0c1120" />
+      <stop offset="100%" stop-color="#050812" />
     </radialGradient>
-    <linearGradient id="ring" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#80ffdb" />
-      <stop offset="50%" stop-color="#56cfe1" />
-      <stop offset="100%" stop-color="#5390d9" />
+    <linearGradient id="aura" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#74f3ff" />
+      <stop offset="50%" stop-color="#57c1ff" />
+      <stop offset="100%" stop-color="#7c6dff" />
+    </linearGradient>
+    <linearGradient id="innerRing" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#182c46" />
+      <stop offset="100%" stop-color="#0f1c31" />
+    </linearGradient>
+    <linearGradient id="shield" x1="20%" y1="0%" x2="80%" y2="100%">
+      <stop offset="0%" stop-color="#0ef3c5" />
+      <stop offset="50%" stop-color="#14a4f8" />
+      <stop offset="100%" stop-color="#3c1dda" />
     </linearGradient>
     <linearGradient id="signal" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" stop-color="#ffd166" />
-      <stop offset="50%" stop-color="#ff9f1c" />
-      <stop offset="100%" stop-color="#ff5d8f" />
+      <stop offset="0%" stop-color="#ffe066" />
+      <stop offset="45%" stop-color="#ff9a5a" />
+      <stop offset="80%" stop-color="#ff5d8f" />
+      <stop offset="100%" stop-color="#e150ff" />
     </linearGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="4" result="blur" />
+    <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
       <feMerge>
         <feMergeNode in="blur" />
         <feMergeNode in="SourceGraphic" />
       </feMerge>
     </filter>
+    <filter id="innerShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feOffset dx="0" dy="4" />
+      <feGaussianBlur stdDeviation="6" result="shadow" />
+      <feComposite in="shadow" in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1" />
+      <feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.8 0" />
+      <feBlend in="SourceGraphic" mode="normal" />
+    </filter>
   </defs>
-  <circle cx="256" cy="256" r="220" fill="url(#orb)" stroke="url(#ring)" stroke-width="28" />
-  <path d="M256 112c-72 0-130 58-130 130s58 130 130 130 130-58 130-130" fill="none" stroke="#8ecae6" stroke-width="18" stroke-linecap="round" stroke-dasharray="420 40" />
-  <path d="M152 172c30-46 64-68 104-68 66 0 120 54 120 120 0 60-44 112-92 154-56-38-100-92-132-160" fill="none" stroke="#ffd166" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" />
-  <g filter="url(#glow)">
-    <path d="M196 196c24-28 52-42 84-42 38 0 70 18 70 54 0 26-15 45-48 59l-42 18c-18 8-24 16-24 28 0 10 8 20 20 26 10 4 22 6 36 6 22 0 40-6 54-18" fill="none" stroke="url(#signal)" stroke-width="20" stroke-linecap="round" stroke-linejoin="round" />
+  <circle cx="256" cy="256" r="228" fill="url(#void)" />
+  <circle cx="256" cy="256" r="212" fill="none" stroke="url(#aura)" stroke-width="28" />
+  <circle cx="256" cy="256" r="178" fill="none" stroke="url(#innerRing)" stroke-width="32" opacity="0.35" />
+  <path d="M256 110L360 152v98c0 78-48 150-104 176-56-26-104-98-104-176v-98z" fill="url(#shield)" stroke="#1af0ff" stroke-width="6" filter="url(#innerShadow)" />
+  <path d="M110 244c10-88 90-150 170-150 72 0 132 44 164 108" fill="none" stroke="#6fe4ff" stroke-width="18" stroke-linecap="round" stroke-dasharray="120 28" opacity="0.6" />
+  <path d="M118 288c24 86 98 156 190 156 60 0 124-30 164-90" fill="none" stroke="#5ad0ff" stroke-width="14" stroke-linecap="round" stroke-dasharray="100 30" opacity="0.75" />
+  <g filter="url(#softGlow)">
+    <path d="M322 168c-42-36-142-14-142 38 0 30 32 46 70 58 44 14 78 28 78 66 0 60-94 78-142 32" fill="none" stroke="url(#signal)" stroke-width="20" stroke-linecap="round" stroke-linejoin="round" />
   </g>
-  <circle cx="152" cy="172" r="16" fill="#80ffdb" />
-  <circle cx="360" cy="342" r="14" fill="#ff5d8f" />
-  <circle cx="228" cy="352" r="12" fill="#ffd166" />
+  <path d="M176 192c24-48 76-78 136-66" fill="none" stroke="#92f5ff" stroke-width="8" stroke-linecap="round" opacity="0.5" />
+  <circle cx="140" cy="208" r="14" fill="#7ef9ff" />
+  <circle cx="398" cy="172" r="12" fill="#7ef9ff" />
+  <circle cx="404" cy="348" r="18" fill="#ff5d8f" />
+  <circle cx="188" cy="384" r="16" fill="#ffd166" />
+  <circle cx="124" cy="300" r="10" fill="#60f6c2" />
 </svg>
