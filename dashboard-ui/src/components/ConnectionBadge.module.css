@@ -1,0 +1,32 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+  text-transform: none;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 12px currentColor;
+}
+
+.live {
+  color: var(--color-success);
+  border-color: rgba(25, 179, 126, 0.5);
+  background: rgba(25, 179, 126, 0.15);
+}
+
+.mock {
+  color: var(--color-danger);
+  border-color: rgba(255, 78, 78, 0.5);
+  background: rgba(255, 78, 78, 0.15);
+}

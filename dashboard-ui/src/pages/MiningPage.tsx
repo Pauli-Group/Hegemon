@@ -5,24 +5,27 @@ import { Sparkline } from '../components/Sparkline';
 import { LogPanel } from '../components/LogPanel';
 import { useMinerStatus, useNodeEventStream } from '../hooks/useNodeData';
 import { useToasts } from '../components/ToastProvider';
+import { ConnectionBadge } from '../components/ConnectionBadge';
+import { DataStatusBanner } from '../components/DataStatusBanner';
 import styles from './MiningPage.module.css';
 
 export function MiningPage() {
   const miner = useMinerStatus();
   const { events, hashRateSeries, mempoolSeries, difficultySeries, latestTelemetry } = useNodeEventStream(48);
   const { pushToast } = useToasts();
-  const [targetRate, setTargetRate] = useState(miner.data?.target_hash_rate ?? 0);
-  const [threads, setThreads] = useState(miner.data?.thread_count ?? 2);
+  const minerData = miner.data?.data;
+  const [targetRate, setTargetRate] = useState(minerData?.target_hash_rate ?? 0);
+  const [threads, setThreads] = useState(minerData?.thread_count ?? 2);
 
   useEffect(() => {
-    if (!miner.data) {
+    if (!minerData) {
       return;
     }
-    setTargetRate(miner.data.target_hash_rate);
-    setThreads(miner.data.thread_count);
-  }, [miner.data]);
+    setTargetRate(minerData.target_hash_rate);
+    setThreads(minerData.thread_count);
+  }, [minerData]);
 
-  const hashRateValue = miner.data?.metrics.hash_rate ?? latestTelemetry?.hash_rate ?? 0;
+  const hashRateValue = minerData?.metrics.hash_rate ?? latestTelemetry?.hash_rate ?? 0;
 
   const sendControl = async (action: 'start' | 'stop') => {
     try {
@@ -50,8 +53,8 @@ export function MiningPage() {
     });
   }, [events]);
 
-  const staleHelper = miner.data?.metrics.stale_share_rate
-    ? `${(miner.data.metrics.stale_share_rate * 100).toFixed(2)}% stale`
+  const staleHelper = minerData?.metrics.stale_share_rate
+    ? `${(minerData.metrics.stale_share_rate * 100).toFixed(2)}% stale`
     : 'Healthy';
 
   return (
@@ -60,25 +63,36 @@ export function MiningPage() {
       intro="Adjust workers and targets while monitoring live hash rate, mempool depth, and stale share alerts."
       actions={
         <div className={styles.actionRow}>
+          <ConnectionBadge
+            source={miner.data?.source ?? 'mock'}
+            error={miner.data?.error}
+            label="Miner status feed"
+          />
           <button
             type="button"
             className={styles.primaryButton}
-            onClick={() => sendControl(miner.data?.is_running ? 'stop' : 'start')}
+            onClick={() => sendControl(minerData?.is_running ? 'stop' : 'start')}
             disabled={miner.controlMiner.isPending}
           >
-            {miner.data?.is_running ? 'Pause mining' : 'Resume mining'}
+            {minerData?.is_running ? 'Pause mining' : 'Resume mining'}
           </button>
         </div>
       }
     >
+      <DataStatusBanner
+        label="Miner status feed"
+        result={miner.data}
+        isPlaceholder={miner.isPlaceholderData}
+      />
+
       <div className={`grid-12 ${styles.grid}`}>
-        <MetricTile label="Hash rate" value={`${hashRateValue.toFixed(2)} H/s`} helper={`Threads ${miner.data?.thread_count ?? 0}`}>
+        <MetricTile label="Hash rate" value={`${hashRateValue.toFixed(2)} H/s`} helper={`Threads ${minerData?.thread_count ?? 0}`}>
           <Sparkline data={hashRateSeries} label="24 samples" />
         </MetricTile>
-        <MetricTile label="Mempool" value={`${miner.data?.metrics.mempool_depth ?? 0} tx`} helper="Live backlog">
+        <MetricTile label="Mempool" value={`${minerData?.metrics.mempool_depth ?? 0} tx`} helper="Live backlog">
           <Sparkline data={mempoolSeries} color="var(--color-accent-secondary)" label="Txn depth" />
         </MetricTile>
-        <MetricTile label="Difficulty" value={`${miner.data?.metrics.difficulty_bits ?? 0}`} helper={staleHelper}>
+        <MetricTile label="Difficulty" value={`${minerData?.metrics.difficulty_bits ?? 0}`} helper={staleHelper}>
           <Sparkline data={difficultySeries} color="var(--color-success)" label="Bits" />
         </MetricTile>
       </div>

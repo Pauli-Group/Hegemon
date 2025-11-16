@@ -6,14 +6,24 @@ import { NotFoundPage } from './pages/NotFoundPage';
 import { WalletPage } from './pages/WalletPage';
 import { MiningPage } from './pages/MiningPage';
 import { NetworkPage } from './pages/NetworkPage';
+import { useNodeMetrics } from './hooks/useNodeData';
+import { ConnectionBadge } from './components/ConnectionBadge';
 import styles from './App.module.css';
 
 function App() {
+  const nodeMetrics = useNodeMetrics();
   return (
     <BrowserRouter>
       <div className="app-shell">
         <header className={styles.navbar}>
-          <span className={styles.brand}>Ops dashboard</span>
+          <div className={styles.brandRow}>
+            <span className={styles.brand}>Ops dashboard</span>
+            <ConnectionBadge
+              source={nodeMetrics.data?.source ?? 'mock'}
+              error={nodeMetrics.data?.error}
+              label="Node metrics feed"
+            />
+          </div>
           <nav className={styles.navLinks}>
             <NavLink to="/" end>
               Catalog

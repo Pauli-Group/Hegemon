@@ -28,6 +28,7 @@ export default defineConfig({
       env: {
         ...process.env,
         VITE_DASHBOARD_SERVICE_URL: 'http://127.0.0.1:8001',
+        VITE_FORCE_MOCK_DATA_INDICATOR: 'true',
       },
     },
   ],
