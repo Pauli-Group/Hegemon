@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { PageShell } from '../components/PageShell';
 import { MetricTile } from '../components/MetricTile';
 import { Sparkline } from '../components/Sparkline';
@@ -35,6 +36,7 @@ export function NetworkPage() {
         label="Network telemetry feed"
         result={metricsQuery.data}
         isPlaceholder={metricsQuery.isPlaceholderData}
+        cta={<Link to="/network">Join a network</Link>}
       />
 
       {showAlert && (
