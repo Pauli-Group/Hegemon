@@ -1,0 +1,41 @@
+.backLink {
+  text-decoration: none;
+  color: var(--color-accent-primary);
+  font-weight: 600;
+}
+
+.metaGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.metaCard {
+  background: rgba(244, 247, 251, 0.06);
+  border-radius: 20px;
+  padding: 16px 20px;
+  border: 1px solid rgba(244, 247, 251, 0.12);
+}
+
+.label {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 12px;
+  color: rgba(244, 247, 251, 0.6);
+  margin: 0 0 8px;
+}
+
+.value {
+  margin: 0;
+  font-size: 20px;
+}
+
+.notes {
+  background: rgba(245, 166, 35, 0.15);
+  border-left: 4px solid var(--color-accent-secondary);
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin: 0 0 24px;
+  color: var(--color-accent-secondary);
+}
