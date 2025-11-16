@@ -13,7 +13,7 @@ import { mockMinerStatus, mockNotes, mockTelemetry, mockTransfers } from '../moc
 
 const SERVICE_HEADERS: HeadersInit = { 'Content-Type': 'application/json' };
 
-class HttpError extends Error {
+export class HttpError extends Error {
   status: number;
   detail?: unknown;
 
@@ -176,6 +176,59 @@ export function useTransferLedger() {
   });
 
   return { ...query, submitTransfer: mutation };
+}
+
+export type NodeLifecycleMode = 'genesis' | 'join';
+
+export interface NodeRoutingConfig {
+  tls: boolean;
+  doh: boolean;
+  vpn: boolean;
+  tor: boolean;
+  mtls: boolean;
+  localOnly: boolean;
+}
+
+export interface NodeLifecyclePayload {
+  mode: NodeLifecycleMode;
+  host: string;
+  port: number;
+  peer_url?: string;
+  routing: {
+    tls: boolean;
+    doh: boolean;
+    vpn: boolean;
+    tor: boolean;
+    mtls: boolean;
+    local_only: boolean;
+  };
+}
+
+export interface NodeLifecycleResponse {
+  status: string;
+  mode: NodeLifecycleMode;
+  node_url: string;
+  peer_url?: string | null;
+  routing: NodeLifecyclePayload['routing'];
+  overlays?: string[];
+  local_rpc_only: boolean;
+  applied_at?: string;
+}
+
+export function useNodeLifecycle() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: NodeLifecyclePayload) =>
+      fetchJson<NodeLifecycleResponse>('/node/lifecycle', {
+        method: 'POST',
+        headers: SERVICE_HEADERS,
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['node-metrics'] });
+      queryClient.invalidateQueries({ queryKey: ['miner-status'] });
+    },
+  });
 }
 
 function appendPoint(series: TelemetryPoint[], value: number, maxSamples: number): TelemetryPoint[] {
