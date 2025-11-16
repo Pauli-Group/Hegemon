@@ -17,6 +17,9 @@ I’d keep (roughly) Zcash’s original goals, updated for 2025:
    * SNARK/STARK based only on collision-resistant hashes (FRI-style IOPs etc.). ([C# Corner][2])
 4. **Bitcoin-like mental model**: UTXO-ish “notes” with strong privacy, plus viewing keys.
 5. **Upgradability**: built-in versioning and “escape hatches” for *future* PQ breaks.
+6. **Secure, seamless, delighting UX**: wallet, governance, and validator touchpoints must keep the PQ stack invisible, provide
+   ergonomic flows across devices, and surface positive confirmation cues so users feel safe and delighted without facing
+   operational friction.
 
 Everything else is negotiable.
 
