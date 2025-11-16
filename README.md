@@ -2,6 +2,8 @@
 
 Quantum-resistant private payments
 
+![Synthetic Hegemonic Currency emblem](docs/assets/shc-logo.svg)
+
 ## Whitepaper
 
 ### Abstract
