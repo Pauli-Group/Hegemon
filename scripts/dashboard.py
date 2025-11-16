@@ -107,6 +107,22 @@ def _actions() -> Dict[str, DashboardAction]:
                 category="Setup & demos",
             ),
             DashboardAction(
+                slug="quickstart",
+                title="Full workstation quickstart",
+                description="Run dev setup, CI-equivalent checks, benchmarks, and the wallet demo so a new contributor can bootstrap everything in one go.",
+                commands=[
+                    CommandSpec(["./scripts/dev-setup.sh"], cwd=REPO_ROOT),
+                    CommandSpec(["make", "check"], cwd=REPO_ROOT),
+                    CommandSpec(["make", "bench"], cwd=REPO_ROOT),
+                    CommandSpec(
+                        ["./scripts/wallet-demo.sh", "--out", "wallet-demo-artifacts"],
+                        cwd=REPO_ROOT,
+                    ),
+                ],
+                category="Setup & demos",
+                notes="Equivalent to running dev-setup, make check, make bench, and the wallet demo sequentially.",
+            ),
+            DashboardAction(
                 slug="wallet-demo",
                 title="Wallet demo",
                 description="Generate throwaway wallet artifacts and inspect a sample shielded transfer.",
