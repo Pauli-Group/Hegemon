@@ -14,6 +14,12 @@ pub struct Telemetry {
     difficulty: AtomicU64,
 }
 
+impl Default for Telemetry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Clone for Telemetry {
     fn clone(&self) -> Self {
         Self {
@@ -85,7 +91,7 @@ impl Telemetry {
             hash_rate,
             total_hashes: hashes,
             best_height: self.best_height.load(Ordering::Relaxed),
-            mempool_depth: self.mempool_depth.load(Ordering::Relaxed) as u64,
+            mempool_depth: self.mempool_depth.load(Ordering::Relaxed),
             difficulty_bits: self.difficulty.load(Ordering::Relaxed) as u32,
             stale_share_rate: stale_rate,
         }

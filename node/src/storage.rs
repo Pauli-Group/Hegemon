@@ -67,8 +67,7 @@ impl Storage {
     pub fn append_commitment(&self, index: u64, value: Felt) -> NodeResult<()> {
         let mut bytes = [0u8; 8];
         bytes.copy_from_slice(&value.as_int().to_be_bytes());
-        self.notes
-            .insert(index.to_be_bytes().to_vec(), bytes.to_vec())?;
+        self.notes.insert(index.to_be_bytes(), &bytes)?;
         Ok(())
     }
 

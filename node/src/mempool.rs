@@ -29,6 +29,10 @@ impl Mempool {
         self.inner.lock().entries.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn contains_nullifier(&self, nf: &[u8; 32]) -> bool {
         self.inner.lock().nullifiers.contains(nf)
     }
