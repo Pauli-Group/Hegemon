@@ -2,6 +2,8 @@
 
 Quantum-resistant private payments
 
+![Interlocking triad logo showing three rhombi forming a hexagon](docs/assets/shc-interlocking-triad.svg)
+
 ## Whitepaper
 
 ### Abstract
