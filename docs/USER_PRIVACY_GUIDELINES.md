@@ -24,6 +24,7 @@ These guidelines explain how to use Synthetic Hegemonic Currency (SHC) software 
 Additional wallet-specific recommendations:
 - Pin the `VersionSchedule` hash emitted by your consensus peers before crafting a transaction so you do not build proofs against deprecated circuits.
 - Use the wallet’s built-in address book tags instead of plaintext memos when referencing counterparties; tags stay local and prevent memo correlation.
+- Enable `wallet send --randomize-memo-order` (or set the flag in wrapper scripts) before the public alpha launch so deterministic memo ordering never reveals which recipients were co-batched in a shielded transaction.
 - Never re-use transparent fallback addresses when shielded notes are available. Transparent outputs should remain disabled unless governance explicitly mandates an escape hatch.
 
 ## 4. Node and network hygiene

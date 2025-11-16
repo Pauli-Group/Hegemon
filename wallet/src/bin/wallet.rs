@@ -15,7 +15,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use chrono::{TimeZone, Utc};
 use clap::{Parser, Subcommand};
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::runtime::Builder as RuntimeBuilder;
@@ -159,6 +159,8 @@ struct SendArgs {
     recipients: PathBuf,
     #[arg(long, default_value_t = 0)]
     fee: u64,
+    #[arg(long, default_value_t = false)]
+    randomize_memo_order: bool,
 }
 
 #[derive(Parser)]
@@ -387,8 +389,9 @@ fn cmd_send(args: SendArgs) -> Result<()> {
     let engine = WalletSyncEngine::new(&client, &store);
     engine.sync_once()?;
     let specs: Vec<RecipientSpec> = read_json(&args.recipients)?;
-    let recipients = parse_recipients(&specs).map_err(|err| anyhow!(err.to_string()))?;
-    let metadata = transfer_recipients_from_specs(&specs);
+    let randomized_specs = randomize_recipient_specs(&specs, args.randomize_memo_order);
+    let recipients = parse_recipients(&randomized_specs).map_err(|err| anyhow!(err.to_string()))?;
+    let metadata = transfer_recipients_from_specs(&randomized_specs);
     let built = build_transaction(&store, &recipients, args.fee)?;
     store.mark_notes_pending(&built.spent_note_indexes, true)?;
     match client.submit_transaction(&built.bundle) {
@@ -472,6 +475,25 @@ fn parse_recipients(specs: &[RecipientSpec]) -> Result<Vec<Recipient>, WalletErr
             })
         })
         .collect()
+}
+
+pub(crate) fn randomize_recipient_specs(
+    specs: &[RecipientSpec],
+    randomize: bool,
+) -> Vec<RecipientSpec> {
+    let mut randomized = specs.to_vec();
+    if !randomize || randomized.len() <= 1 || !has_distinct_specs(specs) {
+        return randomized;
+    }
+    let mut rng = StdRng::from_entropy();
+    while randomized == specs {
+        randomized.shuffle(&mut rng);
+    }
+    randomized
+}
+
+fn has_distinct_specs(specs: &[RecipientSpec]) -> bool {
+    specs.windows(2).any(|window| window[0] != window[1])
 }
 
 fn transfer_recipients_from_specs(specs: &[RecipientSpec]) -> Vec<TransferRecipient> {
@@ -785,8 +807,8 @@ struct BalanceReport {
     recovered: Vec<NoteSummary>,
 }
 
-#[derive(Clone, Deserialize)]
-struct RecipientSpec {
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+pub(crate) struct RecipientSpec {
     address: String,
     value: u64,
     asset_id: u64,

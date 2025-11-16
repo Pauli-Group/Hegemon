@@ -130,10 +130,13 @@ cargo run -p wallet --bin wallet -- send \
   --rpc-url http://127.0.0.1:8080 \
   --auth-token devnet-token \
   --recipients /tmp/recipients.json \
-  --fee 1
+  --fee 1 \
+  --randomize-memo-order
 ```
 
 The command selects notes, proves them with `transaction_circuit`, encrypts Bob’s ciphertext, submits the bundle to `/transactions`, and records the pending nullifiers. The daemon marks the transfer as mined as soon as the nullifiers appear in `/wallet/nullifiers`.
+
+Always pass `--randomize-memo-order` before the public alpha release so memo ordering in a multi-recipient transfer cannot be used as a metadata fingerprint by counterparties or shared RPC operators.
 
 ## 8. Verify balances and telemetry
 
