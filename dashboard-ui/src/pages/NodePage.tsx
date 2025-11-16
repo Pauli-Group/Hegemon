@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { PageShell } from '../components/PageShell';
 import { ConnectionBadge } from '../components/ConnectionBadge';
 import { DataStatusBanner } from '../components/DataStatusBanner';
-import { useNodeMetrics } from '../hooks/useNodeData';
+import { useToasts } from '../components/ToastProvider';
+import { HttpError, type NodeLifecyclePayload, useNodeLifecycle, useNodeMetrics } from '../hooks/useNodeData';
 import styles from './NodePage.module.css';
 
 type NodeMode = 'genesis' | 'join';
@@ -66,6 +67,8 @@ const maxRoutingWeight = routingOptions.reduce((total, option) => total + option
 
 export function NodePage() {
   const metricsQuery = useNodeMetrics();
+  const lifecycle = useNodeLifecycle();
+  const { pushToast } = useToasts();
   const [mode, setMode] = useState<NodeMode>('genesis');
   const [host, setHost] = useState('10.0.0.18');
   const [port, setPort] = useState('8545');
@@ -78,6 +81,7 @@ export function NodePage() {
     mtls: true,
     localOnly: false,
   });
+  const [serverError, setServerError] = useState<string | null>(null);
 
   const protocol = routing.tls ? 'https' : 'http';
   const shareableUrl = `${protocol}://${host}:${port}`;
@@ -103,6 +107,98 @@ export function NodePage() {
   }));
 
   const connectionSource = metricsQuery.data?.source ?? 'mock';
+
+  const validationMessage = useMemo(() => {
+    if (!host.trim()) {
+      return 'Host or IP is required to advertise your node_url.';
+    }
+    const parsedPort = Number(port);
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
+      return 'Port must be between 1 and 65535.';
+    }
+    if (mode === 'join' && !peerUrl.trim()) {
+      return 'Joining a network requires a peer node_url.';
+    }
+    if (!routing.tls && routing.mtls) {
+      return 'Mutual auth requires TLS to be enabled.';
+    }
+    if (routing.localOnly && (routing.vpn || routing.tor)) {
+      return 'Local-only RPC cannot be combined with Tor or VPN relays.';
+    }
+    return null;
+  }, [host, mode, peerUrl, port, routing]);
+
+  useEffect(() => {
+    setServerError(null);
+  }, [host, mode, peerUrl, port, routing]);
+
+  const formatError = (error: unknown) => {
+    if (error instanceof HttpError) {
+      if (error.detail && typeof error.detail === 'object' && 'error' in (error.detail as Record<string, unknown>)) {
+        const detail = (error.detail as Record<string, unknown>).error;
+        if (typeof detail === 'string') {
+          return detail;
+        }
+      }
+      return error.message;
+    }
+    if (error instanceof Error) {
+      return error.message;
+    }
+    return 'Unexpected error while contacting the dashboard service.';
+  };
+
+  const handleLifecycle = () => {
+    if (validationMessage) {
+      setServerError(validationMessage);
+      return;
+    }
+    setServerError(null);
+    const payload: NodeLifecyclePayload = {
+      mode,
+      host,
+      port: Number(port),
+      peer_url: mode === 'join' ? peerUrl : undefined,
+      routing: {
+        tls: routing.tls,
+        doh: routing.doh,
+        vpn: routing.vpn,
+        tor: routing.tor,
+        mtls: routing.mtls,
+        local_only: routing.localOnly,
+      },
+    };
+
+    lifecycle.mutate(payload, {
+      onMutate: () => {
+        pushToast({
+          kind: 'success',
+          title: mode === 'genesis' ? 'Dispatching genesis start' : 'Dispatching join request',
+          description: 'Sending routing hints to the node process...',
+        });
+      },
+      onSuccess: (response) => {
+        metricsQuery.refetch();
+        pushToast({
+          kind: 'success',
+          title: mode === 'genesis' ? 'Genesis node started' : 'Join request applied',
+          description: `Routing posture saved for ${response.node_url}`,
+        });
+      },
+      onError: (error) => {
+        const message = formatError(error);
+        setServerError(message);
+        pushToast({
+          kind: 'error',
+          title: 'Node orchestration failed',
+          description: message,
+        });
+      },
+    });
+  };
+
+  const errorMessage = serverError ?? validationMessage;
+  const isSubmitting = lifecycle.isPending;
 
   return (
     <PageShell
@@ -220,6 +316,29 @@ export function NodePage() {
                   </span>
                 ))}
               </div>
+            </div>
+          </div>
+
+          <div className={styles.controlRow}>
+            <button
+              type="button"
+              className={styles.actionButton}
+              onClick={handleLifecycle}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Applying routing posture…' : mode === 'genesis' ? 'Start genesis node' : 'Join network'}
+            </button>
+            <div className={styles.controlMeta}>
+              <p className={styles.helperText}>
+                {isSubmitting
+                  ? 'Dispatching configuration to the node process.'
+                  : 'Push these routing/auth choices into the active node runtime.'}
+              </p>
+              {errorMessage && (
+                <p className={styles.errorText} role="alert">
+                  {errorMessage}
+                </p>
+              )}
             </div>
           </div>
         </article>
