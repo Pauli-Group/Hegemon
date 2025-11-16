@@ -46,6 +46,11 @@ Justification: both faces are open-source, legible at micro sizes, and render co
 - On loading states, use progress shimmers in neutral grays rather than spinners to indicate determinate processing.
 - Never animate critical numeric values faster than 2 updates per second to avoid flicker-related misreads.
 
+### Dashboard UI status cues (2025-02)
+- Live log panels display neutral (#E1E6EE) shimmer placeholders for in-flight commands so motion stays within the prescribed shimmer rule instead of spinners.
+- Toast confirmations slide in/out over 180 ms: Proof Green (`#19B37E`) backgrounds for success and Guard Rail red (`#FF4E4E`) for errors. Status badges share the same color logic to reinforce outcomes.
+- Positive confirmations always follow command completion (“Completed <slug>”) and errors cite the failing command index to match the CLI semantics.
+
 ## Imagery and Data Visualization
 - Prefer line and area charts over pie charts to communicate temporal dynamics.
 - Chart palettes must follow the color system: base lines in `#1BE7FF`, secondary in `#F5A623`, thresholds in `#FF4E4E`.
