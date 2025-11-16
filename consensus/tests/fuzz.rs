@@ -27,6 +27,7 @@ proptest! {
             vec![[9u8; 32]],
             [7u8; 32],
             DEFAULT_VERSION_BINDING,
+            vec![],
         );
         let result = assemble_bft_block(BftBlockParams {
             height: 1,

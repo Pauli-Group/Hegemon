@@ -21,6 +21,30 @@ The wallet crate exposes a `wallet` binary with the following common flows:
 | `cargo run -p wallet --bin wallet -- address --root <HEX> --index 0` | Re-derives a single address from a root secret without touching disk. |
 | `cargo run -p wallet --bin wallet -- tx-craft --root <HEX> --inputs inputs.json --recipients recipients.json --ciphertext-out ledger.json --witness-out witness.json` | Crafts a transaction witness plus encrypted note ciphertexts for the provided recipients. |
 | `cargo run -p wallet --bin wallet -- scan --ivk ivk.json --ledger ledger.json --out balances.json` | Decrypts ciphertexts with an incoming viewing key and emits the balances it recovers. |
+| `cargo run -p wallet --bin wallet -- init --store ~/.synthetic/wallet.db --passphrase hunter2` | Creates an encrypted wallet store from a random root secret. Use `--root-hex` to import an existing secret or `--viewing-key <PATH>` for watch-only mode. |
+| `cargo run -p wallet --bin wallet -- sync --store ~/.synthetic/wallet.db --passphrase hunter2 --rpc-url http://127.0.0.1:8080 --auth-token dev-token` | Performs a one-shot RPC sync against the node, downloading commitments, ciphertexts, and nullifiers before updating balances. |
+| `cargo run -p wallet --bin wallet -- daemon --store ~/.synthetic/wallet.db --passphrase hunter2 --rpc-url http://127.0.0.1:8080 --auth-token dev-token --interval-secs 5` | Runs the background sync loop continuously, keeping the local commitment tree and balance view current. |
+| `cargo run -p wallet --bin wallet -- status --store ~/.synthetic/wallet.db --passphrase hunter2` | Prints the latest cached balances plus any pending transactions (including mined/confirmation status). |
+| `cargo run -p wallet --bin wallet -- send --store ~/.synthetic/wallet.db --passphrase hunter2 --rpc-url http://127.0.0.1:8080 --auth-token dev-token --recipients recipients.json --fee 0` | Builds a fully encrypted transaction using locally selected notes, proves it with the circuit, submits it to the node’s mempool, and records the pending nullifiers for tracking. |
+| `cargo run -p wallet --bin wallet -- export-viewing-key --store ~/.synthetic/wallet.db --passphrase hunter2 --out ivk.json` | Exports the `IncomingViewingKey` for a friend. They can run `wallet init --viewing-key ivk.json` to operate a watch-only daemon that detects inbound funds without exposing the root secret. |
+
+When using the RPC-enabled commands you **must** pass the node’s base URL and authentication token (the node HTTP API uses the `x-auth-token` header). The wallet stores all secrets, tracked notes, pending transactions, and local Merkle tree cursors inside an encrypted file (Argon2 key derivation + ChaCha20-Poly1305). Every mutation writes through to disk using a temp-file + rename flow so abrupt crashes never leave a partially written store.
+
+### Syncing and daemon workflow
+
+The sync engine (`wallet sync` or `wallet daemon`) performs the following steps every iteration:
+
+1. Fetch `/wallet/notes` to learn the current tree depth, leaf count, and cursor.
+2. Page through `/wallet/commitments` and `/wallet/ciphertexts` to rebuild the local `state_merkle::CommitmentTree`, decrypting each ciphertext with the wallet’s incoming viewing key and recording any recovered notes.
+3. Download `/wallet/nullifiers` plus `/blocks/latest` to mark locally tracked notes as spent, refresh pending transaction status (in-mempool vs. mined + confirmation count), and snapshot the latest observed block height.
+
+The daemon repeats that loop every `--interval-secs`, while `wallet sync` just runs it once. Watch-only stores (created via `wallet init --viewing-key`) maintain the exact same cursors and Merkle tree but skip all spending operations.
+
+### Initiating payments
+
+`wallet send` consumes a JSON document that lists recipients (address/value/asset/memo). The command selects local notes, computes fees/change, proves the transaction with the `transaction_circuit`, encrypts the note plaintexts, and posts a `TransactionBundle` to `/transactions`. Pending nullifiers are cached inside the store so the daemon can mark them as mined once the node reports them in the nullifier set. Use `wallet status` at any time to view balances and pending transaction confirmations.
+
+To share funds with a friend without handing over your root secret, run `wallet export-viewing-key` and hand them the JSON file. They can call `wallet init --viewing-key friend_ivk.json` followed by `wallet daemon ...` to run a watch-only wallet that detects inbound notes addressed to them.
 
 Files such as `inputs.json`, `recipients.json`, and `ivk.json` are ordinary JSON documents; see `scripts/wallet-demo.sh` for a complete, reproducible example that creates them automatically.
 

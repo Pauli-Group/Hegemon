@@ -374,7 +374,12 @@ You can decide whether you want nullifier computation to be *derivable* from vie
 
 *Viewing keys and nullifiers.* `wallet/src/viewing.rs` defines `IncomingViewingKey` (scan + decrypt), `OutgoingViewingKey` (derive address tags/pk_recipient for audit), and `FullViewingKey` (incoming + nullifier key). Full viewing keys store the SHA-256 nullifier PRF output derived from `sk_spend`, letting watch-only tooling compute chain nullifiers without exposing the spend key itself. `RecoveredNote::to_input_witness` converts decrypted notes into `transaction_circuit::note::InputNoteWitness` values by reusing the same `NoteData` and taking the best-effort `rho_seed = rho` placeholder until the circuit’s derivation is finalized.
 
-*CLI and fixtures.* `wallet/src/bin/wallet.rs` exposes the commands described in DESIGN.md: `wallet generate`, `wallet address`, `wallet tx-craft`, and `wallet scan`. JSON fixtures for transaction inputs/recipients follow the `transaction_circuit` `serde` representation so the witness builder plugs directly into existing proving code. `wallet/tests/cli.rs` runs those commands via `cargo_bin_cmd!`, writes temporary JSON files, and confirms that balance recovery via `wallet scan` matches the crafted transaction outputs.
+*CLI, daemon, and fixtures.* `wallet/src/bin/wallet.rs` now ships two families of commands:
+
+  * Offline helpers (`generate`, `address`, `tx-craft`, `scan`) that mirror the deterministic witness tooling described in DESIGN.md.
+  * RPC-backed wallet management (`init`, `sync`, `daemon`, `status`, `send`, `export-viewing-key`). `wallet init` writes an encrypted store (Argon2 + ChaCha20-Poly1305) containing the root secret or an imported viewing key. `wallet sync` and `wallet daemon` talk to `/wallet/{commitments,ciphertexts,nullifiers}` plus `/wallet/notes` and `/blocks/latest` to maintain a local Merkle tree/nullifier set, while `wallet send` crafts witnesses, proves them locally, and submits a `TransactionBundle` to `/transactions` before tracking the pending nullifiers.
+
+JSON fixtures for transaction inputs/recipients still follow the `transaction_circuit` `serde` representation so the witness builder plugs directly into existing proving code. `wallet/tests/cli.rs` exercises the offline commands via `cargo_bin_cmd!`, while `wallet/tests/rpc_flow.rs` spins up a lightweight test node, runs two wallet stores (one full, one watch-only), and asserts end-to-end send/receive plus nullifier tracking.
 
 ---
 
@@ -790,6 +795,7 @@ Implementation hygiene now mirrors the layout introduced in `DESIGN.md §6` and 
    - `cargo test -p synthetic-crypto` for deterministic PQ primitive vectors.
    - `cargo test -p transaction-circuit && cargo test -p block-circuit` for circuit constraints.
    - `cargo test -p wallet` for CLI/integration fixtures.
+   - `cargo test -p wallet --test rpc_flow` spins up the lightweight test node and runs the RPC-driven send/receive/nullifier flow between a full wallet and a watch-only wallet.
 4. **Benchmarks (smoke mode)**:
    - `cargo run -p circuits-bench -- --smoke --prove --json` – validates witness → proof → block aggregation loop.
    - `cargo run -p wallet-bench -- --smoke --json` – stresses key derivation, encryption, and nullifier derivations.

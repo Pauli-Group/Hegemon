@@ -1,8 +1,8 @@
-use std::{
-    collections::BTreeMap,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
@@ -13,11 +13,17 @@ use transaction_circuit::{
     note::{InputNoteWitness, OutputNoteWitness},
     witness::TransactionWitness,
 };
+use url::Url;
 
 use wallet::{
     address::ShieldedAddress,
+    build_transaction,
     keys::{DerivedKeys, RootSecret},
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
+    rpc::WalletRpcClient,
+    store::{WalletMode, WalletStore},
+    sync::WalletSyncEngine,
+    tx_builder::Recipient,
     viewing::{IncomingViewingKey, OutgoingViewingKey},
 };
 
@@ -69,6 +75,85 @@ enum Commands {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    Init(InitArgs),
+    Sync(SyncArgs),
+    Daemon(DaemonArgs),
+    Status(StoreArgs),
+    Send(SendArgs),
+    #[command(name = "export-viewing-key")]
+    ExportViewingKey(ExportArgs),
+}
+
+#[derive(Parser)]
+struct InitArgs {
+    #[arg(long)]
+    store: PathBuf,
+    #[arg(long)]
+    passphrase: String,
+    #[arg(long)]
+    root_hex: Option<String>,
+    #[arg(long)]
+    viewing_key: Option<PathBuf>,
+}
+
+#[derive(Parser)]
+struct SyncArgs {
+    #[arg(long)]
+    store: PathBuf,
+    #[arg(long)]
+    passphrase: String,
+    #[arg(long)]
+    rpc_url: String,
+    #[arg(long)]
+    auth_token: String,
+}
+
+#[derive(Parser)]
+struct DaemonArgs {
+    #[arg(long)]
+    store: PathBuf,
+    #[arg(long)]
+    passphrase: String,
+    #[arg(long)]
+    rpc_url: String,
+    #[arg(long)]
+    auth_token: String,
+    #[arg(long, default_value_t = 10)]
+    interval_secs: u64,
+}
+
+#[derive(Parser)]
+struct StoreArgs {
+    #[arg(long)]
+    store: PathBuf,
+    #[arg(long)]
+    passphrase: String,
+}
+
+#[derive(Parser)]
+struct SendArgs {
+    #[arg(long)]
+    store: PathBuf,
+    #[arg(long)]
+    passphrase: String,
+    #[arg(long)]
+    rpc_url: String,
+    #[arg(long)]
+    auth_token: String,
+    #[arg(long)]
+    recipients: PathBuf,
+    #[arg(long, default_value_t = 0)]
+    fee: u64,
+}
+
+#[derive(Parser)]
+struct ExportArgs {
+    #[arg(long)]
+    store: PathBuf,
+    #[arg(long)]
+    passphrase: String,
+    #[arg(long)]
+    out: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -96,6 +181,12 @@ fn main() -> Result<()> {
             rng_seed,
         }),
         Commands::Scan { ivk, ledger, out } => cmd_scan(&ivk, &ledger, out.as_deref()),
+        Commands::Init(args) => cmd_init(args),
+        Commands::Sync(args) => cmd_sync(args),
+        Commands::Daemon(args) => cmd_daemon(args),
+        Commands::Status(args) => cmd_status(args),
+        Commands::Send(args) => cmd_send(args),
+        Commands::ExportViewingKey(args) => cmd_export_viewing_key(args),
     }
 }
 
@@ -121,17 +212,6 @@ fn cmd_address(root_hex: &str, index: u32) -> Result<()> {
     Ok(())
 }
 
-struct TxCraftParams<'a> {
-    root_hex: &'a str,
-    inputs_path: &'a Path,
-    recipients_path: &'a Path,
-    witness_out: &'a Path,
-    ciphertext_out: &'a Path,
-    merkle_root: u64,
-    fee: u64,
-    rng_seed: Option<u64>,
-}
-
 fn cmd_tx_craft(params: TxCraftParams<'_>) -> Result<()> {
     let root = parse_root(params.root_hex)?;
     let keys = root.derive();
@@ -148,9 +228,7 @@ fn cmd_tx_craft(params: TxCraftParams<'_>) -> Result<()> {
         let memo_bytes = spec
             .memo
             .as_deref()
-            .map(hex::decode)
-            .transpose()
-            .map_err(|err| anyhow!(err.to_string()))?
+            .map(|value| value.as_bytes().to_vec())
             .unwrap_or_default();
         let note = NotePlaintext::random(
             spec.value,
@@ -203,6 +281,126 @@ fn cmd_scan(ivk_path: &Path, ledger_path: &Path, out: Option<&Path>) -> Result<(
     Ok(())
 }
 
+fn cmd_init(args: InitArgs) -> Result<()> {
+    if args.viewing_key.is_some() && args.root_hex.is_some() {
+        anyhow::bail!("specify either --root-hex or --viewing-key");
+    }
+    let store = if let Some(path) = args.viewing_key {
+        let ivk: IncomingViewingKey = read_json(&path)?;
+        WalletStore::import_viewing_key(&args.store, &args.passphrase, ivk)?
+    } else if let Some(root_hex) = args.root_hex {
+        let root = parse_root(&root_hex)?;
+        WalletStore::create_from_root(&args.store, &args.passphrase, root)?
+    } else {
+        WalletStore::create_full(&args.store, &args.passphrase)?
+    };
+    let mode = store.mode()?;
+    println!("wallet initialized: mode={mode:?}");
+    let first = if mode == WalletMode::Full {
+        store
+            .derived_keys()?
+            .and_then(|keys| keys.address(0).ok())
+            .map(|mat| mat.shielded_address())
+    } else {
+        store
+            .incoming_key()
+            .ok()
+            .and_then(|ivk| ivk.shielded_address(0).ok())
+    };
+    if let Some(address) = first {
+        println!("first address: {}", map_wallet(address.encode())?);
+    }
+    Ok(())
+}
+
+fn cmd_sync(args: SyncArgs) -> Result<()> {
+    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    let client = rpc_client(&args.rpc_url, &args.auth_token)?;
+    let engine = WalletSyncEngine::new(&client, &store);
+    let outcome = engine.sync_once()?;
+    print_sync_outcome(&outcome);
+    Ok(())
+}
+
+fn cmd_daemon(args: DaemonArgs) -> Result<()> {
+    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    let client = rpc_client(&args.rpc_url, &args.auth_token)?;
+    let engine = WalletSyncEngine::new(&client, &store);
+    loop {
+        match engine.sync_once() {
+            Ok(outcome) => print_sync_outcome(&outcome),
+            Err(err) => eprintln!("sync error: {}", err),
+        }
+        thread::sleep(Duration::from_secs(args.interval_secs));
+    }
+}
+
+fn cmd_status(args: StoreArgs) -> Result<()> {
+    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    let balances = store.balances()?;
+    println!("Balances:");
+    for (asset, value) in balances {
+        println!("  asset {} => {}", asset, value);
+    }
+    let pending = store.pending_transactions()?;
+    if pending.is_empty() {
+        println!("No pending transactions");
+    } else {
+        let height = store.last_synced_height()?;
+        println!("Pending transactions:");
+        for tx in pending {
+            println!(
+                "  {} status={:?} confirmations={}",
+                hex::encode(tx.tx_id),
+                tx.status,
+                tx.confirmations(height)
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_send(args: SendArgs) -> Result<()> {
+    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    if store.mode()? == WalletMode::WatchOnly {
+        anyhow::bail!("watch-only wallets cannot send");
+    }
+    let client = rpc_client(&args.rpc_url, &args.auth_token)?;
+    let engine = WalletSyncEngine::new(&client, &store);
+    engine.sync_once()?;
+    let specs: Vec<SendRecipientSpec> = read_json(&args.recipients)?;
+    let recipients = parse_recipients(&specs)?;
+    let built = build_transaction(&store, &recipients, args.fee)?;
+    store.mark_notes_pending(&built.spent_note_indexes, true)?;
+    match client.submit_transaction(&built.bundle) {
+        Ok(tx_id) => {
+            store.record_pending_submission(
+                tx_id,
+                built.nullifiers.clone(),
+                built.spent_note_indexes.clone(),
+            )?;
+            println!("submitted transaction {}", hex::encode(tx_id));
+        }
+        Err(err) => {
+            store.mark_notes_pending(&built.spent_note_indexes, false)?;
+            return Err(anyhow!(err));
+        }
+    }
+    Ok(())
+}
+
+fn cmd_export_viewing_key(args: ExportArgs) -> Result<()> {
+    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    let ivk = store.incoming_key()?;
+    let json = serde_json::to_string_pretty(&ivk)?;
+    if let Some(path) = args.out {
+        fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?;
+    } else {
+        println!("{}", json);
+    }
+    Ok(())
+}
+
 fn parse_root(hex_str: &str) -> Result<RootSecret> {
     let bytes = hex::decode(hex_str.trim())?;
     if bytes.len() != 32 {
@@ -221,6 +419,49 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let data = serde_json::to_vec_pretty(value)?;
     fs::write(path, data).with_context(|| format!("failed to write {}", path.display()))
+}
+
+fn map_wallet<T>(value: std::result::Result<T, wallet::WalletError>) -> Result<T> {
+    value.map_err(|err| anyhow!(err.to_string()))
+}
+
+fn print_sync_outcome(outcome: &wallet::SyncOutcome) {
+    println!(
+        "synced: {} commitments, {} ciphertexts, {} notes, {} spent",
+        outcome.commitments, outcome.ciphertexts, outcome.recovered, outcome.spent
+    );
+}
+
+fn rpc_client(url: &str, token: &str) -> Result<WalletRpcClient> {
+    let parsed = Url::parse(url).map_err(|err| anyhow!("invalid rpc url: {}", err))?;
+    Ok(WalletRpcClient::new(parsed, token.to_string())?)
+}
+
+fn parse_recipients(specs: &[SendRecipientSpec]) -> Result<Vec<Recipient>> {
+    specs
+        .iter()
+        .map(|spec| {
+            let address = map_wallet(ShieldedAddress::decode(&spec.address))?;
+            let memo = MemoPlaintext::new(spec.memo.clone().unwrap_or_default().into_bytes());
+            Ok(Recipient {
+                address,
+                value: spec.value,
+                asset_id: spec.asset_id,
+                memo,
+            })
+        })
+        .collect()
+}
+
+struct TxCraftParams<'a> {
+    root_hex: &'a str,
+    inputs_path: &'a Path,
+    recipients_path: &'a Path,
+    witness_out: &'a Path,
+    ciphertext_out: &'a Path,
+    merkle_root: u64,
+    fee: u64,
+    rng_seed: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -254,22 +495,10 @@ impl WalletExport {
     }
 }
 
-fn map_wallet<T>(value: std::result::Result<T, wallet::WalletError>) -> Result<T> {
-    value.map_err(|err| anyhow!(err.to_string()))
-}
-
 #[derive(Serialize)]
 struct AddressExport {
     index: u32,
     address: String,
-}
-
-#[derive(Deserialize)]
-struct RecipientSpec {
-    address: String,
-    value: u64,
-    asset_id: u64,
-    memo: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -284,4 +513,20 @@ struct NoteSummary {
 struct BalanceReport {
     totals: BTreeMap<u64, u64>,
     recovered: Vec<NoteSummary>,
+}
+
+#[derive(Deserialize)]
+struct RecipientSpec {
+    address: String,
+    value: u64,
+    asset_id: u64,
+    memo: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SendRecipientSpec {
+    address: String,
+    value: u64,
+    asset_id: u64,
+    memo: Option<String>,
 }
