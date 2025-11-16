@@ -100,6 +100,8 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 4. `make wallet-demo` runs `scripts/wallet-demo.sh` which walks through generating a throwaway wallet, crafting a sample transaction, and scanning the resulting ciphertexts. The artifacts land in `wallet-demo-artifacts/` for easy inspection or debugging.
 5. Read `docs/CONTRIBUTING.md` and keep `DESIGN.md`/`METHODS.md` synchronized with any implementation updates.
 
+Want everything above bundled together? Run `make quickstart` (or `./scripts/dashboard.py --run quickstart`) to execute the setup script, CI-equivalent `make check`, the full benchmark suite, and the wallet demo sequentially via the dashboard.
+
 ### Manual install/run steps
 
 If you prefer to provision dependencies yourself:
@@ -129,6 +131,7 @@ CI (`.github/workflows/ci.yml`) runs these commands automatically plus targeted 
 | `make bench` | Executes the prover, wallet, and network smoke benchmarks. |
 | `make wallet-demo` | Generates example wallet artifacts plus a balance report inside `wallet-demo-artifacts/`. |
 | `make dashboard` | Launches the interactive dashboard that wraps setup, test, demo, and benchmark workflows. |
+| `make quickstart` | Calls the dashboard's quickstart action (dev setup → `make check` → `make bench` → wallet demo). |
 
 ### Operations dashboard
 
@@ -139,6 +142,7 @@ single menu:
 ./scripts/dashboard.py          # interactive menu
 ./scripts/dashboard.py --list   # print the catalog of actions
 ./scripts/dashboard.py --run check   # run a specific action by slug
+./scripts/dashboard.py --run quickstart   # run the full workstation bootstrap sequence
 ```
 
 Each action simply shells out to the documented commands (`make check`,
