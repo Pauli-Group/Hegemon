@@ -1,0 +1,265 @@
+.statusRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.badgeRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(244, 247, 251, 0.6);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.helperText {
+  color: rgba(244, 247, 251, 0.72);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.grid {
+  margin-top: 20px;
+  gap: 18px;
+}
+
+.card {
+  background: rgba(14, 28, 54, 0.8);
+  border: 1px solid rgba(244, 247, 251, 0.1);
+  border-radius: 20px;
+  padding: 20px;
+  box-shadow: 0 20px 40px rgba(2, 11, 26, 0.35);
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.modeSwitcher {
+  display: flex;
+  gap: 8px;
+}
+
+.modeSwitcher label {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(244, 247, 251, 0.1);
+  border-radius: 14px;
+  padding: 8px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.modeSwitcher input {
+  accent-color: var(--color-accent-primary);
+}
+
+.modeSelected {
+  border-color: var(--color-accent-primary);
+  background: rgba(27, 231, 255, 0.08);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 16px;
+  margin-bottom: 14px;
+}
+
+.peerField {
+  grid-column: 1 / -1;
+}
+
+.label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: rgba(244, 247, 251, 0.82);
+}
+
+.input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(244, 247, 251, 0.12);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--color-foreground);
+}
+
+.shareableBox {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px dashed rgba(244, 247, 251, 0.28);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.nodeUrl {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  word-break: break-all;
+  color: var(--color-foreground);
+  margin: 0 0 6px 0;
+}
+
+.activeRoutes {
+  align-self: center;
+}
+
+.routeChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.routeChip {
+  background: rgba(27, 231, 255, 0.15);
+  color: var(--color-accent-primary);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-weight: 600;
+  border: 1px solid rgba(27, 231, 255, 0.35);
+}
+
+.emptyChip {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  padding: 6px 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+}
+
+.optionList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.optionRow {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(244, 247, 251, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.optionRow input {
+  width: 18px;
+  height: 18px;
+  margin-top: 3px;
+  accent-color: var(--color-accent-primary);
+}
+
+.optionTitle {
+  font-weight: 700;
+  color: var(--color-foreground);
+}
+
+.optionDescription {
+  margin: 2px 0 0 0;
+  color: rgba(244, 247, 251, 0.7);
+}
+
+.scoreRow {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.scoreBar {
+  flex: 1;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  border: 1px solid rgba(244, 247, 251, 0.12);
+}
+
+.scoreFill {
+  height: 100%;
+  background: linear-gradient(90deg, #61e8f7, #6a7bff);
+}
+
+.scoreValue {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.scoreBadge {
+  background: rgba(27, 231, 255, 0.12);
+  color: var(--color-accent-primary);
+  border-radius: 999px;
+  padding: 6px 12px;
+  border: 1px solid rgba(27, 231, 255, 0.28);
+  font-weight: 700;
+}
+
+.guidance {
+  margin-top: 0;
+  color: rgba(244, 247, 251, 0.82);
+}
+
+.checklist {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checklist li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(244, 247, 251, 0.1);
+}
+
+.checkOn {
+  background: rgba(33, 189, 128, 0.1);
+  border-color: rgba(33, 189, 128, 0.35);
+}
+
+.checkOff {
+  background: rgba(255, 255, 255, 0.02);
+  border-style: dashed;
+}
+
+.bullet {
+  font-size: 1.2rem;
+  color: var(--color-accent-primary);
+}
+
+.launchGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px 18px;
+}
+
+.routeChips,
+.optionList,
+.launchGrid {
+  margin-top: 6px;
+}
