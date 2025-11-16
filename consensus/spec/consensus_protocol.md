@@ -26,12 +26,13 @@ Each block header contains:
 1. `parent_hash`
 2. `height`
 3. `timestamp`
-4. `pow_bits` (compact target encoding)
-5. `nonce`
-6. `state_root` (commitment to execution state)
-7. `nullifier_root`
-8. `proof_commitment` (STARK accumulator commitment)
-9. `supply_digest` (cumulative minted + burned total)
+4. `state_root` (commitment to execution state)
+5. `nullifier_root`
+6. `proof_commitment` (STARK accumulator commitment)
+7. `version_commitment`
+8. `fee_commitment`
+9. `supply_digest` (little-endian 128-bit running total of net issuance)
+10. Optional PoW seal containing `pow_bits` (compact target) and a 256-bit `nonce`
 
 A block is valid if `sha256d(header_without_proof) ≤ target(pow_bits)` where `target()` expands the compact encoding above.
 
@@ -52,9 +53,12 @@ Before propagating or extending a block, miners and full nodes MUST execute the 
 4. **Nullifier uniqueness**
    - Apply each transaction’s nullifiers to the nullifier accumulator. Reject blocks containing any nullifier that already
      exists in the global set.
-5. **Supply rules**
-   - Reconstruct the sum of minted rewards, transaction fees, and explicit burns. The resulting `supply_digest` must be
-     deterministic from `parent.supply_digest` plus the block delta; minting above the scheduled subsidy is invalid.
+5. **Supply rules and coinbase commitment**
+   - Every PoW block must include a coinbase commitment describing how many native units were minted, how many fees were
+     aggregated, and any explicit burns. This commitment can be a dedicated transaction referenced by index or a standalone
+     `balance_tag`, but it must exist so the MASP circuit sees the same data. Nodes recompute the running `supply_digest`
+     as `parent_digest + minted + fees − burns` and reject blocks that exceed the scheduled subsidy or whose digest fails to
+     match the header field.
 6. **State commitment**
    - Recompute the post-state Merkle root (notes, commitments, nullifiers). The resulting `state_root` and `nullifier_root`
      must match the header values.
@@ -109,10 +113,12 @@ purely state-based: duplicate detection results in block rejection and the offen
 
 ## Supply and Reward Schedule
 
-- Each block mints the configured subsidy `R(height)` plus aggregates all transaction fees for inclusion.
-- The supply digest is `parent.supply_digest + R(height) + fees − burns`. Nodes recompute this deterministic value while
-  verifying blocks.
-- Subsidy halving or decay events must be encoded in `R(height)` so all implementations derive identical minting totals.
+- Each block mints `R(height)` native units. `R()` starts at 50 · 10⁸ base units and halves every 840,000 blocks, mirroring
+  the Bitcoin/Zcash cadence. After 64 halvings the subsidy floor remains at zero.
+- The coinbase commitment tracks `(minted, fees, burns)` so the MASP proof can enforce balance. The consensus layer only
+  accepts coinbase commitments whose `minted` component is ≤ `R(height)`.
+- The `supply_digest` accumulates the net delta deterministically: `parent_digest + minted + fees − burns`. Because it is a
+  plain 128-bit counter, full nodes can audit total issuance without replaying the entire history.
 
 ## Finality and Reorg Expectations
 
@@ -136,3 +142,9 @@ purely state-based: duplicate detection results in block rejection and the offen
 
 This PoW-focused specification supersedes the earlier staking/HotStuff design. All client implementations must track the
 parameters defined above to remain interoperable.
+### Coinbase encoding
+
+Block template builders must either (a) include an explicit coinbase transaction and reference it via index or (b) supply a
+standalone `balance_tag` that matches the MASP proof’s public inputs. In either case miners must encode the minted amount,
+fee total, and burn total so full nodes can recompute `supply_digest`. Templates that omit the coinbase data or fail to link it
+to a transaction are invalid and will be rejected by consensus.

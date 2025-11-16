@@ -1,9 +1,14 @@
+#![allow(dead_code)]
 use consensus::BalanceTag;
+use consensus::CoinbaseData;
+use consensus::CoinbaseSource;
 use consensus::DEFAULT_VERSION_BINDING;
+use consensus::SupplyDigest;
 use consensus::VersionBinding;
 use consensus::error::ConsensusError;
 use consensus::header::{BlockHeader, PowSeal};
 use consensus::nullifier::NullifierSet;
+use consensus::reward::{block_subsidy, update_supply_digest};
 use consensus::types::{
     ConsensusBlock, Transaction, compute_fee_commitment, compute_proof_commitment,
     compute_version_commitment,
@@ -29,6 +34,7 @@ pub struct BftBlockParams<'a> {
     pub signer_indices: &'a [usize],
     pub base_nullifiers: &'a NullifierSet,
     pub base_state_root: [u8; 32],
+    pub supply_digest: SupplyDigest,
 }
 
 pub struct PowBlockParams<'a> {
@@ -39,7 +45,10 @@ pub struct PowBlockParams<'a> {
     pub miner: &'a TestValidator,
     pub base_nullifiers: &'a NullifierSet,
     pub base_state_root: [u8; 32],
-    pub target: u32,
+    pub pow_bits: u32,
+    pub nonce: [u8; 32],
+    pub parent_supply: SupplyDigest,
+    pub coinbase: CoinbaseData,
 }
 
 pub fn make_validators(count: usize, stake: u64) -> Vec<TestValidator> {
@@ -68,6 +77,15 @@ pub fn dummy_transaction_with_version(tag_seed: u8, version: VersionBinding) -> 
     let commitment = [tag_seed.wrapping_add(1); 32];
     let balance_tag: BalanceTag = [tag_seed.wrapping_add(2); 32];
     Transaction::new(vec![nullifier], vec![commitment], balance_tag, version)
+}
+
+pub fn dummy_coinbase(height: u64) -> CoinbaseData {
+    CoinbaseData {
+        minted: block_subsidy(height),
+        fees: 0,
+        burns: 0,
+        source: CoinbaseSource::BalanceTag([0u8; 32]),
+    }
 }
 
 pub fn apply_nullifiers(
@@ -111,6 +129,7 @@ pub fn assemble_bft_block(
         signer_indices,
         base_nullifiers,
         base_state_root,
+        supply_digest,
     } = params;
     let new_nullifiers = apply_nullifiers(base_nullifiers, &transactions)?;
     let nullifier_root = new_nullifiers.commitment();
@@ -131,6 +150,7 @@ pub fn assemble_bft_block(
         version_commitment,
         tx_count: transactions.len() as u32,
         fee_commitment,
+        supply_digest,
         validator_set_commitment: validator_set.validator_set_commitment(),
         signature_aggregate: Vec::new(),
         signature_bitmap: Some(vec![0u8; validators.len().div_ceil(8)]),
@@ -151,6 +171,7 @@ pub fn assemble_bft_block(
         ConsensusBlock {
             header,
             transactions,
+            coinbase: None,
         },
         new_nullifiers,
         state_root,
@@ -169,7 +190,10 @@ pub fn assemble_pow_block(
         miner,
         base_nullifiers,
         base_state_root,
-        target,
+        pow_bits,
+        nonce,
+        parent_supply,
+        coinbase,
     } = params;
     let new_nullifiers = apply_nullifiers(base_nullifiers, &transactions)?;
     let nullifier_root = new_nullifiers.commitment();
@@ -189,13 +213,12 @@ pub fn assemble_pow_block(
         version_commitment,
         tx_count: transactions.len() as u32,
         fee_commitment,
+        supply_digest: update_supply_digest(parent_supply, coinbase.net_native_delta())
+            .expect("supply digest"),
         validator_set_commitment: sha256(&miner.validator.public_key().to_bytes()),
         signature_aggregate: Vec::new(),
         signature_bitmap: None,
-        pow: Some(PowSeal {
-            nonce: [0u8; 32],
-            target,
-        }),
+        pow: Some(PowSeal { nonce, pow_bits }),
     };
     let signing_hash = header.signing_hash()?;
     let signature = miner.secret.sign(&signing_hash);
@@ -204,6 +227,7 @@ pub fn assemble_pow_block(
         ConsensusBlock {
             header,
             transactions,
+            coinbase: Some(coinbase),
         },
         new_nullifiers,
         state_root,

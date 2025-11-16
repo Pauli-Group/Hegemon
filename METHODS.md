@@ -162,6 +162,14 @@ This gives MASP semantics without any ECC:
 
 If you want to be more aggressive, you can avoid exposing per‑asset details publicly: the proof enforces the equalities, but `balance_tag` is simply a commitment to the whole vector `(Δ_k)`. Nodes don’t need to inspect it; they only check that the proof verifies.
 
+Consensus stitches this MASP output into PoW validation by requiring a coinbase commitment on every block. The `ConsensusBlock`
+type now carries `CoinbaseData` that either references a concrete transaction (by index) or supplies an explicit `balance_tag`.
+Miners populate `CoinbaseData` with the minted amount, collected fees, and any explicit burns, and full nodes recompute the
+running `supply_digest = parent_digest + minted + fees − burns`. If the coinbase is missing, points at an invalid transaction,
+or mints more than the scheduled subsidy `R(height)` (50 · 10⁸ base units halving every 840k blocks), the block is rejected
+before the fork-choice comparison runs. This keeps the STARK circuit, MASP accounting, and the PoW header’s supply digest in
+lockstep.
+
 ---
 
 ## 3. The STARK arithmetization

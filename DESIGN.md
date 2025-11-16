@@ -227,6 +227,20 @@ Consensus checks:
 * STARK proofs verify.
 * Block value balance is respected (including fees and issuance).
 
+The PoW fork mirrors Bitcoin/Zcash mechanics so operators can reason about liveness intuitively:
+
+* Block headers expose an explicit `pow_bits` compact target, a 256-bit nonce, and a 128-bit `supply_digest`. Miners sign the
+  full header (including the supply digest) with ML-DSA and then search over the nonce until `sha256(header) ≤ target(pow_bits)`.
+* Difficulty retargeting is deterministic: every `RETARGET_WINDOW = 120` blocks the chain recomputes the target from the window’s
+  timestamps, clamping swings to ×¼…×4 and aiming for a `TARGET_BLOCK_INTERVAL = 20 s`. Honest nodes reject any block whose
+  `pow_bits` diverges from this schedule, which makes retarget spoofing impossible even across deep reorgs.
+* Each PoW block carries a coinbase commitment—either a dedicated transaction referenced by index or a standalone `balance_tag`
+  —that spells out how many native units were minted, how many fees were aggregated, and how many were burned. Consensus enforces
+  `minted ≤ R(height)` where `R()` starts at `50 · 10⁸` base units and halves every `840_000` blocks. Nodes update the running
+  `supply_digest = parent_digest + minted + fees − burns` and compare it against the header before accepting the block.
+* Block template helpers in `consensus/tests/common.rs` show how miners wire these fields together: compute the note/fee/nullifier
+  commitments, attach the coinbase metadata, recompute `supply_digest`, and only then sign + grind the header.
+
 No transparent outputs; everything is in this one PQ pool from day 1.
 
 ---
