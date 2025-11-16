@@ -63,8 +63,9 @@ install_rust_toolchain() {
         # shellcheck disable=SC1090
         source "$HOME/.cargo/env"
     fi
-    rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy rustfmt
+    rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
     rustup default "$RUST_TOOLCHAIN"
+    rustup component add --toolchain "$RUST_TOOLCHAIN" clippy rustfmt
 }
 
 ensure_go() {
