@@ -1,17 +1,20 @@
 # Consensus Formal Models
 
-These artifacts encode a simplified HotStuff-like protocol so we can run TLC/Apalache against the invariants described in `consensus/spec/consensus_protocol.md`.
+The HotStuff TLC/Apalache artifacts have been replaced with PoW-oriented models that mirror the parameters defined in
+`consensus/spec/consensus_protocol.md`. The goal is to mechanically check that the longest-chain rule always points to the
+highest-work branch and that probabilistic finality holds under the assumed hash-rate bound (≤30%).
 
 ## Files
 
-- `hotstuff_safety.tla` – TLA+ model for proposer, vote, and commit transitions.
-- `hotstuff_safety.cfg` – TLC configuration constraining the number of views/nodes (defaults: 4 validators, ≤5 views).
+- `pow_longest_chain.tla` – captures PoW retarget windows, timestamp bounds, and honest/adversarial mining actions.
+- `pow_longest_chain.cfg` – sets the canonical constants (120-block retarget window, 20 s target interval, 90 s skew bound,
+  3/10 adversary ratio, and 120-block finality depth) and lists the invariants to check.
 
 ## Running TLC
 
 ```bash
 cd consensus/spec/formal
-/path/to/tlc -deadlock -workers 4 hotstuff_safety.tla -config hotstuff_safety.cfg
+/path/to/tlc -deadlock -workers 4 pow_longest_chain.tla -config pow_longest_chain.cfg
 ```
 
 Expected snippet:
@@ -19,18 +22,26 @@ Expected snippet:
 ```
 Model checking completed. No error has been found.
   Invariant TypeOK is satisfied.
-  Invariant NoDoubleCommit is satisfied.
-  Invariant EventualCommit is satisfied.
+  Invariant ForkChoiceInvariant is satisfied.
+  Invariant FinalityInvariant is satisfied.
 ```
+
+Because the canonical constants are large, you may temporarily override them in the `.cfg` file (e.g., shrink the retarget
+window) for exploratory runs, but always restore the published values before committing changes.
 
 ## Running Apalache
 
 ```bash
-apalache-mc check --max-steps=12 --inv=NoDoubleCommit hotstuff_safety.tla
+cd consensus/spec/formal
+apalache-mc check --max-steps=20 --inv=ForkChoiceInvariant pow_longest_chain.tla
 ```
+
+Increase `--max-steps` (or add `--inv=FinalityInvariant`) if you need to reason about deeper confirmations.
 
 ## Updating the model
 
-1. Keep the record fields aligned with `consensus/spec/consensus_protocol.md` (view numbers, parent links, QC view numbers).
-2. When adding new consensus states (e.g., PoW fallback), extend the `State` record and invariants accordingly.
-3. Record any TLC/Apalache output in the PR description so auditors can verify the model was executed.
+1. Keep the constants synchronized with the canonical parameters in `consensus/spec/consensus_protocol.md` (difficulty window,
+   target interval, timestamp skew, and finality depth).
+2. When modifying fork-choice logic (e.g., new tie-breakers or timestamp filters), update the `ForkChoiceInvariant` definition.
+3. When changing economic-finality policies, adjust `FINALITY_DEPTH` and the `FinalityInvariant` accordingly.
+4. Include TLC/Apalache logs in PR descriptions when the model changes so auditors can reproduce the checks.
