@@ -63,7 +63,7 @@ If TLC/Apalache is unavailable on the build host, note that in the PR and paste 
 ## 5. Escalation
 
 - Cryptographic bugs → ping the cryptography lead and open a private issue. Reference the relevant finding in `docs/SECURITY_REVIEWS.md` once disclosed.
-- Consensus/network bugs → notify the on-call validator operator list; pause releases until the adversarial run passes.
+- Consensus/network bugs → notify the on-call mining node operator list or pool maintainers; pause releases until the adversarial run passes.
 - Wallet/address bugs → notify the wallet maintainer channel and consider disabling affected address derivations until patched.
 
 Document every incident in the PR or issue timeline so auditors can reconstruct the response.

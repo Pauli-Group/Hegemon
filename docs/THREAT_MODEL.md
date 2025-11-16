@@ -6,7 +6,8 @@ This document explains the attacker capabilities and design assumptions for each
 
 - **Post-quantum only**: Attackers may possess Shor/Grover-class quantum computers. We therefore forbid ECC/RSA and rely on ML-DSA/SLH-DSA signatures, ML-KEM encryption, and 256-bit symmetric primitives. Grover effectively halves hash security, so all hashes must be ≥256 bits to retain 128-bit security.
 - **Transparent proving**: There is no trusted setup; proving soundness relies solely on collision resistance of the STARK-friendly hashes described in `DESIGN.md §2`. Compromise of a setup ceremony is out-of-scope because none exists.
-- **Adaptive adversaries**: Attackers can corrupt validators/wallets after observing traffic. Key rotation and nullifier privacy must hold even with partial compromise.
+- **Adaptive adversaries**: Attackers can corrupt miners, mining pools, or wallets after observing traffic. Key rotation, nullifier privacy, and block template integrity must hold even with partial compromise.
+- **Proof-of-work fairness**: Hash-rate swings and rented rigs are assumed. Difficulty targeting plus share accounting must resist sudden 51% bursts for at least 10 minutes while alerts propagate to pool maintainers.
 
 ## Component-specific threats
 
@@ -22,8 +23,9 @@ This document explains the attacker capabilities and design assumptions for each
 
 ### `consensus/`
 
-- **Network DoS**: Attackers flood PQ-sized signatures and large STARK proofs. The Go net benchmark evaluates throughput budgets with inflated payloads, and `METHODS.md` documents required admission-control thresholds.
-- **Forking via outdated PQ params**: Consensus nodes pin ML-DSA and ML-KEM parameter sets and reject blocks signed with unknown variants.
+- **Network DoS**: Attackers flood PQ-sized signatures and large STARK proofs. The Go net benchmark evaluates miner and pool throughput budgets with inflated payloads, and `METHODS.md` documents required admission-control thresholds for share telemetry.
+- **Forking via outdated PQ params**: Consensus nodes pin ML-DSA and ML-KEM parameter sets and reject blocks signed with unknown variants so malicious pools cannot replay stale templates.
+- **Miner impersonation**: Share submissions must be signed with approved miner identities; consensus rejects unbound identities even if the PoW difficulty is valid.
 
 ### `wallet/`
 
