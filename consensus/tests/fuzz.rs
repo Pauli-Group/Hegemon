@@ -38,6 +38,7 @@ proptest! {
             signer_indices: &[0, 1, 2],
             base_nullifiers: &NullifierSet::new(),
             base_state_root: [0u8; 32],
+            supply_digest: 0,
         });
         if duplicates {
             prop_assert!(result.is_err());
