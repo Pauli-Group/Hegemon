@@ -65,17 +65,12 @@ async fn node_wallet_daemons_execute_transfer() {
     let bob_client = new_wallet_client(base_url_b.clone(), "itest-token").await;
 
     post_funding_transaction(&handle_a, &alice_address_primary, &alice_change_address).await;
-    let funding_block = handle_a
+    handle_a
         .service
         .seal_pending_block()
         .await
         .expect("seal funding block")
         .expect("funding block missing");
-    handle_b
-        .service
-        .apply_block_for_test(funding_block)
-        .await
-        .expect("apply funding on node b");
 
     wait_for_height(&handle_a, 1).await;
     wait_for_height(&handle_b, 1).await;
@@ -115,17 +110,12 @@ async fn node_wallet_daemons_execute_transfer() {
         )
         .expect("record pending");
 
-    let transfer_block = handle_a
+    handle_a
         .service
         .seal_pending_block()
         .await
         .expect("seal transfer block")
         .expect("transfer block missing");
-    handle_b
-        .service
-        .apply_block_for_test(transfer_block)
-        .await
-        .expect("apply transfer on node b");
 
     wait_for_height(&handle_a, 2).await;
     wait_for_height(&handle_b, 2).await;

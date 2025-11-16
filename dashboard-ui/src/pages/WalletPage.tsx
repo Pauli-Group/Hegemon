@@ -89,7 +89,7 @@ export function WalletPage() {
       title="Wallet operations"
       intro="Monitor balances, notes, and confirmations while sending or receiving shielded transfers through the node RPC."
     >
-      <div className={`grid-12 ${styles.grid}`}>
+      <div className={styles.metricsGrid}>
         <MetricTile label="Shielded balance" value={`${estimatedBalance.toFixed(2)} SHC`} helper="Estimated from note depth" />
         <MetricTile label="Notes committed" value={coverage} helper={`Tree depth ${notes?.depth ?? '—'}`} />
         <MetricTile
