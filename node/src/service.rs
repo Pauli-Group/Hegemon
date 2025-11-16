@@ -26,7 +26,7 @@ use crate::error::{NodeError, NodeResult};
 use crate::mempool::Mempool;
 use crate::miner::{self, BlockTemplate};
 use crate::storage::{ChainMeta, Storage};
-use crate::telemetry::{Telemetry, TelemetrySnapshot};
+use crate::telemetry::{Telemetry, TelemetryPosture, TelemetrySnapshot};
 use crate::transaction::{ValidatedTransaction, felt_to_bytes, proof_to_transaction};
 use wallet::TransactionBundle;
 
@@ -202,6 +202,10 @@ impl NodeService {
 
     pub fn telemetry_snapshot(&self) -> TelemetrySnapshot {
         self.telemetry.snapshot()
+    }
+
+    pub fn update_privacy_posture(&self, posture: TelemetryPosture) {
+        self.telemetry.set_privacy_posture(posture);
     }
 
     pub fn note_status(&self) -> NoteStatus {

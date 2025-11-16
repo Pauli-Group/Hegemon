@@ -27,6 +27,12 @@
   line-height: 1.5;
 }
 
+.warningText {
+  color: #ffc24b;
+  font-size: 0.9rem;
+  margin: 6px 0 0 0;
+}
+
 .grid {
   margin-top: 20px;
   gap: 18px;
