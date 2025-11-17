@@ -113,8 +113,8 @@ purely state-based: duplicate detection results in block rejection and the offen
 
 ## Supply and Reward Schedule
 
-- Each block mints `R(height)` native units. `R()` starts at 50 · 10⁸ base units and halves every 840,000 blocks, mirroring
-  the Bitcoin/Zcash cadence. After 64 halvings the subsidy floor remains at zero.
+- Each block mints `R(height)` native units. `R()` starts at 50 · 10⁸ base units and halves every 210,000 blocks, matching the
+  Bitcoin subsidy cadence that caps total issuance at 21 million coins. After 64 halvings the subsidy floor remains at zero.
 - The coinbase commitment tracks `(minted, fees, burns)` so the MASP proof can enforce balance. The consensus layer only
   accepts coinbase commitments whose `minted` component is ≤ `R(height)`.
 - The `supply_digest` accumulates the net delta deterministically: `parent_digest + minted + fees − burns`. Because it is a

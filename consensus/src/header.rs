@@ -58,9 +58,6 @@ impl BlockHeader {
     }
 
     pub fn ensure_structure(&self) -> Result<(), ConsensusError> {
-        if self.tx_count == 0 {
-            return Err(ConsensusError::InvalidHeader("tx_count must be non-zero"));
-        }
         match self.mode() {
             ConsensusMode::Bft => {
                 if self
