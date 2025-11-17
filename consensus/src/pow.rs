@@ -19,7 +19,7 @@ use num_bigint::BigUint;
 use num_traits::{One, Zero};
 
 const GENESIS_HASH: [u8; 32] = [0u8; 32];
-const DEFAULT_GENESIS_POW_BITS: u32 = 0x3f00ffff;
+pub const DEFAULT_GENESIS_POW_BITS: u32 = 0x3f00ffff;
 
 #[derive(Clone)]
 struct PowNode {
@@ -262,6 +262,14 @@ impl<V: ProofVerifier> PowConsensus<V> {
 
     pub fn best_hash(&self) -> [u8; 32] {
         self.best
+    }
+
+    pub fn expected_bits_for_block(
+        &self,
+        parent_hash: [u8; 32],
+        new_height: u64,
+    ) -> Result<u32, ConsensusError> {
+        self.expected_pow_bits(parent_hash, new_height)
     }
 
     fn median_time_past(&self, mut hash: [u8; 32]) -> u64 {
