@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Literal
@@ -80,6 +80,13 @@ def _build_ws_url(base_url: str) -> str:
 
 
 NODE_WS_URL = _build_ws_url(NODE_RPC_URL) if NODE_RPC_URL else None
+
+
+def _set_node_rpc(url: Optional[str], token: str) -> None:
+    global NODE_RPC_URL, NODE_RPC_TOKEN, NODE_WS_URL
+    NODE_RPC_URL = url.rstrip("/") if url else None
+    NODE_RPC_TOKEN = token
+    NODE_WS_URL = _build_ws_url(NODE_RPC_URL) if NODE_RPC_URL else None
 
 
 def _now_iso() -> str:
@@ -194,6 +201,12 @@ class NodeLifecyclePayload(BaseModel):
     routing: NodeRoutingPayload
 
 
+class NodeLaunchPayload(NodeLifecyclePayload):
+    db_path: Optional[str] = None
+    api_addr: Optional[str] = None
+    api_token: Optional[str] = None
+
+
 MINER_STATE = MinerControlState()
 NODE_LIFECYCLE_STATE: Dict[str, Any] = {
     "mode": "genesis",
@@ -203,6 +216,150 @@ NODE_LIFECYCLE_STATE: Dict[str, Any] = {
     "routing": NodeRoutingPayload().model_dump(),
     "applied_at": _now_iso(),
 }
+NODE_LOG_PATH = REPO_ROOT / "state" / "node-process.log"
+NODE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+@dataclass
+class NodeProcessState:
+    status: Literal["idle", "starting", "running", "exited", "error"] = "idle"
+    pid: Optional[int] = None
+    started_at: Optional[str] = None
+    exited_at: Optional[str] = None
+    return_code: Optional[int] = None
+    stderr_tail: List[str] = field(default_factory=list)
+    node_url: Optional[str] = None
+    api_addr: Optional[str] = None
+    api_token: Optional[str] = None
+    db_path: Optional[str] = None
+    last_error: Optional[str] = None
+    command: Optional[List[str]] = None
+    log_path: str = str(NODE_LOG_PATH)
+
+
+class NodeProcessSupervisor:
+    def __init__(self) -> None:
+        self.process: Optional[asyncio.subprocess.Process] = None
+        self.state = NodeProcessState()
+        self._lock = asyncio.Lock()
+
+    def snapshot(self) -> Dict[str, Any]:
+        return asdict(self.state)
+
+    def _append_log(self, line: str) -> None:
+        timestamped = f"[{_now_iso()}] {line.rstrip()}"
+        tail = self.state.stderr_tail + [timestamped]
+        self.state.stderr_tail = tail[-100:]
+        try:
+            with NODE_LOG_PATH.open("a", encoding="utf-8") as log_file:
+                log_file.write(timestamped + "\n")
+        except OSError:
+            pass
+
+    async def _capture_output(self, process: asyncio.subprocess.Process) -> None:
+        async def drain(stream: Optional[asyncio.StreamReader]) -> None:
+            if not stream:
+                return
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                self._append_log(line.decode(errors="replace"))
+
+        await asyncio.gather(drain(process.stderr), drain(process.stdout))
+
+    async def _wait_for_exit(self, process: asyncio.subprocess.Process) -> None:
+        return_code = await process.wait()
+        async with self._lock:
+            if process is not self.process:
+                return
+            self.state.return_code = return_code
+            self.state.exited_at = _now_iso()
+            if self.state.status != "error":
+                self.state.status = "exited" if return_code == 0 else "error"
+            self.process = None
+
+    async def start(self, payload: NodeLaunchPayload) -> Dict[str, Any]:
+        async with self._lock:
+            if self.process and self.process.returncode is None:
+                raise HTTPException(status_code=409, detail={"error": "Node process already running."})
+
+            api_host = "127.0.0.1" if payload.routing.local_only else payload.host
+            api_addr = payload.api_addr or f"{api_host}:{payload.port}"
+            api_token = payload.api_token or f"node-{uuid.uuid4().hex[:8]}"
+            db_path = payload.db_path or "node.db"
+            node_url = _build_node_url(api_host, payload.port, payload.routing.tls)
+            command = [
+                "cargo",
+                "run",
+                "-p",
+                "node",
+                "--bin",
+                "node",
+                "--",
+                "--db-path",
+                db_path,
+                "--api-addr",
+                api_addr,
+                "--api-token",
+                api_token,
+            ]
+
+            _record_lifecycle(payload)
+            self.state = NodeProcessState(
+                status="starting",
+                pid=None,
+                started_at=_now_iso(),
+                stderr_tail=[],
+                node_url=node_url,
+                api_addr=api_addr,
+                api_token=api_token,
+                db_path=db_path,
+                last_error=None,
+                command=command,
+            )
+
+            try:
+                self.process = await asyncio.create_subprocess_exec(
+                    *command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(REPO_ROOT),
+                )
+            except FileNotFoundError as exc:
+                self.state.status = "error"
+                self.state.last_error = str(exc)
+                raise HTTPException(status_code=500, detail={"error": str(exc)}) from exc
+
+            self.state.pid = self.process.pid
+            _set_node_rpc(node_url, api_token)
+
+            asyncio.create_task(self._capture_output(self.process))
+            asyncio.create_task(self._wait_for_exit(self.process))
+
+        await asyncio.sleep(0.4)
+        if self.process and self.process.returncode is not None:
+            async with self._lock:
+                self.state.status = "error"
+                self.state.last_error = "Node process exited during startup."
+                self.state.exited_at = _now_iso()
+                self.state.return_code = self.process.returncode
+                self.process = None
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "Node failed to start; see stderr tail for details.",
+                    "stderr": self.state.stderr_tail,
+                },
+            )
+
+        async with self._lock:
+            if self.state.status == "starting":
+                self.state.status = "running"
+        return self.snapshot()
+
+
+NODE_PROCESS = NodeProcessSupervisor()
 
 
 def _node_headers() -> Dict[str, str]:
@@ -477,6 +634,17 @@ async def node_lifecycle(payload: NodeLifecyclePayload) -> Dict[str, Any]:
     return response
 
 
+@app.post("/node/process/start")
+async def node_process_start(payload: NodeLaunchPayload) -> Dict[str, Any]:
+    _validate_lifecycle_payload(payload)
+    return await NODE_PROCESS.start(payload)
+
+
+@app.get("/node/process")
+async def node_process_status() -> Dict[str, Any]:
+    return NODE_PROCESS.snapshot()
+
+
 @app.get("/node/metrics")
 async def node_metrics() -> Dict[str, Any]:
     return await _proxy_metrics()
@@ -597,6 +765,8 @@ def main() -> None:
 
 if __name__ == "__main__":  # pragma: no cover - manual entrypoint
     main()
+
+
 def _with_mock_flag(payload: Dict[str, Any]) -> Dict[str, Any]:
     body = dict(payload)
     body["__mock_source"] = True
