@@ -44,6 +44,13 @@ The FastAPI service (`scripts/dashboard_service.py`) simply wraps `_actions()` a
 - **Symptom:** Starting the service fails with `ModuleNotFoundError: fastapi` or `uvicorn`.
 - **Fix:** Re-run `pip install -r scripts/dashboard_requirements.txt`. The requirements file lives next to the scripts so contributors do not have to guess versions.
 
+### Missing Rust or cargo when launching the node
+- **Symptom:** The Node page shows a Guard Rail red error such as `Required command 'cargo' not found on PATH` and the process stays in the `error` state with no PID.
+- **Fix:**
+  1. Run `make quickstart` (or `./scripts/dev-setup.sh`) from the repo root to install Rustup and the cargo toolchain that the node launcher shells out to.
+  2. Verify the install with `cargo --version` in a fresh shell so the PATH is updated.
+  3. Retry launching the node from the dashboard; the status badge should advance to `starting` once cargo is available.
+
 ### CLI action failure surfaced in UI
 - **Symptom:** Toast turns Guard Rail red, status badge shows “Error”, logs end with `✖ Action <slug> failed…`.
 - **Fix:** The UI is reflecting the same exit code you would see via `./scripts/dashboard.py --run <slug>`. Re-run the failing slug directly (e.g., `./scripts/dashboard.py --run check`) or via `make` (`make bench`, `make check`, etc.) to reproduce locally and debug.
