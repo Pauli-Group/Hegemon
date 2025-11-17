@@ -1,0 +1,12 @@
+<svg width="320" height="320" viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Synthetic Hegemonic Currency interlocking triad emblem</title>
+  <desc id="desc">Three interlocking rhombi forming a hexagonal lattice inside a hexagonal frame.</desc>
+  <rect width="240" height="240" fill="none"/>
+  <g stroke="#020617" stroke-width="6" stroke-linejoin="round" stroke-linecap="round" fill-opacity="0.9">
+    <polygon points="120,28 196,120 120,212 44,120" fill="#38BDF8"/>
+    <polygon points="120,28 196,120 120,212 44,120" fill="#818CF8" transform="rotate(60 120 120)"/>
+    <polygon points="120,28 196,120 120,212 44,120" fill="#22D3EE" transform="rotate(120 120 120)"/>
+  </g>
+  <polygon points="120,12 214,67 214,177 120,232 26,177 26,67" fill="none" stroke="#0F172A" stroke-width="10" stroke-linejoin="round"/>
+  <polygon points="120,68 166,94 166,146 120,172 74,146 74,94" fill="#020617" stroke="#38BDF8" stroke-width="4" stroke-linejoin="round"/>
+</svg>
