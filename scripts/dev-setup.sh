@@ -7,7 +7,7 @@ set -euo pipefail
 
 RUST_TOOLCHAIN="stable"
 GO_VERSION="1.21.6"
-NODE_VERSION="20.18.0"
+NODE_VERSION="20.19.0"
 NODE_INSTALL_DIR=${NODE_INSTALL_DIR:-"$HOME/.local/node"}
 APT_PACKAGES=(build-essential pkg-config libssl-dev clang-format jq)
 
