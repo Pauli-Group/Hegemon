@@ -44,6 +44,7 @@
   border-radius: 20px;
   padding: 20px;
   box-shadow: 0 20px 40px rgba(2, 11, 26, 0.35);
+  grid-column: span 6;
 }
 
 .cardHeader {
@@ -338,4 +339,10 @@
 .optionList,
 .launchGrid {
   margin-top: 6px;
+}
+
+@media (max-width: 1024px) {
+  .card {
+    grid-column: span 12;
+  }
 }
