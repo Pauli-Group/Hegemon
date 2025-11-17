@@ -236,14 +236,14 @@ The PoW fork mirrors Bitcoin/Zcash mechanics so operators can reason about liven
   `pow_bits` diverges from this schedule, which makes retarget spoofing impossible even across deep reorgs.
 * Each PoW block carries a coinbase commitment—either a dedicated transaction referenced by index or a standalone `balance_tag`
   —that spells out how many native units were minted, how many fees were aggregated, and how many were burned. Consensus enforces
-  `minted ≤ R(height)` where `R()` starts at `50 · 10⁸` base units and halves every `840_000` blocks. Nodes update the running
+  `minted ≤ R(height)` where `R()` starts at `50 · 10⁸` base units and halves every `210_000` blocks. Nodes update the running
   `supply_digest = parent_digest + minted + fees − burns` and compare it against the header before accepting the block.
 * Block template helpers in `consensus/tests/common.rs` show how miners wire these fields together: compute the note/fee/nullifier
   commitments, attach the coinbase metadata, recompute `supply_digest`, and only then sign + grind the header.
 
 No transparent outputs; everything is in this one PQ pool from day 1.
 
-`node/src/api.rs` exposes that state machine over HTTP so operators can monitor the same fields remotely. `/blocks/latest` and `/metrics` stream hash rate, mempool depth, stale share rate, best height, and compact difficulty values that miners compare against the reward policy in `consensus/src/reward.rs` (`INITIAL_SUBSIDY = 50 · 10⁸`, `HALVING_INTERVAL = 840_000`). Every mined block updates the header’s `supply_digest`, and the quickstart playbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through querying those endpoints before wiring wallets to the node API.
+`node/src/api.rs` exposes that state machine over HTTP so operators can monitor the same fields remotely. `/blocks/latest` and `/metrics` stream hash rate, mempool depth, stale share rate, best height, and compact difficulty values that miners compare against the reward policy in `consensus/src/reward.rs` (`INITIAL_SUBSIDY = 50 · 10⁸`, `HALVING_INTERVAL = 210_000`). Every mined block updates the header’s `supply_digest`, and the quickstart playbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through querying those endpoints before wiring wallets to the node API.
 
 The workspace-level test `tests/node_wallet_daemon.rs` keeps the HTTP API, miner loop, and wallet RPC client in sync by spinning two nodes, verifying the minted supply, and forcing a user-facing transfer. Its telemetry expectations match the `/wallet` and `/network` dashboard views, so the Playwright smoke tests (`dashboard-ui/tests/smoke.spec.ts`) double-check the same metrics with brand-compliant snapshots.
 

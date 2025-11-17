@@ -123,3 +123,32 @@ async fn nodes_share_blocks_over_gossip() {
     handle_a.shutdown().await;
     handle_b.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn miner_mines_coinbase_without_transactions() {
+    let dir = tempdir().unwrap();
+    let router = GossipRouter::new(16);
+
+    let mut config = NodeConfig::with_db_path(dir.path().join("solo.db"));
+    config.api_addr = "127.0.0.1:0".parse().unwrap();
+    config.note_tree_depth = 8;
+    config.pow_bits = 0x3f00ffff;
+    config.miner_workers = 4;
+
+    let handle = NodeService::start(config, router).expect("start node");
+
+    let wait_height = async {
+        loop {
+            if handle.service.latest_meta().height >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    };
+
+    timeout(Duration::from_secs(30), wait_height)
+        .await
+        .expect("coinbase block mined");
+
+    handle.shutdown().await;
+}
