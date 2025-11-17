@@ -1,7 +1,7 @@
 .navbar {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   padding: 24px 32px;
   max-width: var(--page-max-width);
   margin: 0 auto;
@@ -9,11 +9,11 @@
   gap: 16px;
 }
 
-.brand {
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(244, 247, 251, 0.8);
+.brandColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
 }
 
 .brandRow {
@@ -21,6 +21,33 @@
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.logo {
+  width: 44px;
+  height: 44px;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(244, 247, 251, 0.05);
+  box-shadow: inset 0 0 0 1px rgba(244, 247, 251, 0.08);
+}
+
+.brandText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.projectName {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.consoleLabel {
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(244, 247, 251, 0.7);
 }
 
 .navLinks {
