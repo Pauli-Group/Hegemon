@@ -5,7 +5,8 @@ use crate::types::SupplyDigest;
 
 pub const COIN: u64 = 100_000_000;
 pub const INITIAL_SUBSIDY: u64 = 50 * COIN;
-pub const HALVING_INTERVAL: u64 = 840_000;
+pub const HALVING_INTERVAL: u64 = 210_000;
+pub const MAX_SUPPLY: u64 = 21_000_000 * COIN;
 pub const RETARGET_WINDOW: u64 = 120;
 pub const TARGET_BLOCK_INTERVAL_MS: u64 = 20_000;
 pub const RETARGET_TIMESPAN_MS: u64 = RETARGET_WINDOW * TARGET_BLOCK_INTERVAL_MS;
@@ -81,5 +82,19 @@ mod tests {
         assert_eq!(update_supply_digest(parent, 25), Some(125));
         assert_eq!(update_supply_digest(parent, -50), Some(50));
         assert_eq!(update_supply_digest(parent, -150), None);
+    }
+
+    #[test]
+    fn total_minted_is_bounded_by_max_supply() {
+        let mut subsidy = INITIAL_SUBSIDY as u128;
+        let mut total: u128 = 0;
+
+        while subsidy > 0 {
+            total += subsidy * HALVING_INTERVAL as u128;
+            subsidy >>= 1;
+        }
+
+        assert!(total <= MAX_SUPPLY as u128);
+        assert!(total >= (MAX_SUPPLY as u128) - (COIN as u128));
     }
 }
