@@ -1,3 +1,7 @@
+# Always Be Shipping
+
+The product must be made real, not a mock up.
+
 # ExecPlans
 
 When writing complex features or significant refactors, use an ExecPlan (as described in .agent/PLANS.md) from design to implementation.
