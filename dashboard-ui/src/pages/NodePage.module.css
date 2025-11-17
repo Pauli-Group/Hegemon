@@ -27,12 +27,6 @@
   line-height: 1.5;
 }
 
-.warningText {
-  color: #ffc24b;
-  font-size: 0.9rem;
-  margin: 6px 0 0 0;
-}
-
 .grid {
   margin-top: 20px;
   gap: 18px;
@@ -196,147 +190,12 @@
   margin: 0 0 6px 0;
 }
 
-.activeRoutes {
-  align-self: center;
-}
-
-.routeChips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.routeChip {
-  background: rgba(27, 231, 255, 0.15);
-  color: var(--color-accent-primary);
-  border-radius: 999px;
-  padding: 6px 12px;
-  font-weight: 600;
-  border: 1px solid rgba(27, 231, 255, 0.35);
-}
-
-.emptyChip {
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 999px;
-  padding: 6px 12px;
-  border: 1px dashed rgba(255, 255, 255, 0.18);
-}
-
-.optionList {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.optionRow {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 10px;
-  padding: 12px 14px;
-  border: 1px solid rgba(244, 247, 251, 0.12);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.optionRow input {
-  width: 18px;
-  height: 18px;
-  margin-top: 3px;
-  accent-color: var(--color-accent-primary);
-}
-
-.optionTitle {
-  font-weight: 700;
-  color: var(--color-foreground);
-}
-
-.optionDescription {
-  margin: 2px 0 0 0;
-  color: rgba(244, 247, 251, 0.7);
-}
-
-.scoreRow {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 10px;
-}
-
-.scoreBar {
-  flex: 1;
-  height: 12px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  overflow: hidden;
-  border: 1px solid rgba(244, 247, 251, 0.12);
-}
-
-.scoreFill {
-  height: 100%;
-  background: linear-gradient(90deg, #61e8f7, #6a7bff);
-}
-
-.scoreValue {
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.scoreBadge {
-  background: rgba(27, 231, 255, 0.12);
-  color: var(--color-accent-primary);
-  border-radius: 999px;
-  padding: 6px 12px;
-  border: 1px solid rgba(27, 231, 255, 0.28);
-  font-weight: 700;
-}
-
-.guidance {
-  margin-top: 0;
-  color: rgba(244, 247, 251, 0.82);
-}
-
-.checklist {
-  list-style: none;
-  padding: 0;
-  margin: 12px 0 0 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.checklist li {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(244, 247, 251, 0.1);
-}
-
-.checkOn {
-  background: rgba(33, 189, 128, 0.1);
-  border-color: rgba(33, 189, 128, 0.35);
-}
-
-.checkOff {
-  background: rgba(255, 255, 255, 0.02);
-  border-style: dashed;
-}
-
-.bullet {
-  font-size: 1.2rem;
-  color: var(--color-accent-primary);
-}
-
 .launchGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 14px 18px;
 }
 
-.routeChips,
-.optionList,
 .launchGrid {
   margin-top: 6px;
 }
