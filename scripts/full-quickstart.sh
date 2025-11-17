@@ -90,6 +90,8 @@ DASHBOARD_SERVICE_PID=$!
 
 pushd dashboard-ui >/dev/null
 echo "Installing dashboard UI dependencies (npm ci)"
+npm run clean --if-present >/dev/null 2>&1 || true
+rm -rf node_modules
 npm ci --no-progress
 
 echo "Starting dashboard UI with Vite (bound to http://localhost:5173)"
