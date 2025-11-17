@@ -151,7 +151,8 @@ export function useTransferLedger() {
   const queryClient = useQueryClient();
   const query = useQuery<FallbackResult<{ transfers: TransferRecord[] }>>({
     queryKey: ['wallet-transfers', serviceUrl],
-    queryFn: () => getOrFallback(serviceUrl, '/node/wallet/transfers', { transfers: mockTransfers }, { detectMockData: true }, authToken),
+    queryFn: () =>
+      getOrFallback(serviceUrl, '/node/wallet/transfers', { transfers: mockTransfers }, { detectMockData: false }, authToken),
     refetchInterval: 8000,
     placeholderData: { data: { transfers: mockTransfers }, source: 'mock' },
   });
