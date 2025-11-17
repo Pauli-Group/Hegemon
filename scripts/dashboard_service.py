@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import shutil
 import json
 import os
 import subprocess
@@ -319,9 +320,20 @@ class NodeProcessSupervisor:
                 command=command,
             )
 
+            cargo_path = shutil.which(command[0])
+            if not cargo_path:
+                message = (
+                    "Required command 'cargo' not found on PATH. Run `make quickstart` "
+                    "to install the Rust toolchain, then retry."
+                )
+                self.state.status = "error"
+                self.state.last_error = message
+                raise HTTPException(status_code=500, detail={"error": message})
+
             try:
                 self.process = await asyncio.create_subprocess_exec(
-                    *command,
+                    cargo_path,
+                    *command[1:],
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=str(REPO_ROOT),
@@ -329,7 +341,15 @@ class NodeProcessSupervisor:
             except FileNotFoundError as exc:
                 self.state.status = "error"
                 self.state.last_error = str(exc)
-                raise HTTPException(status_code=500, detail={"error": str(exc)}) from exc
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "error": (
+                            "Failed to start node process. Ensure the Rust toolchain is installed "
+                            "and retry `make quickstart` to download dependencies."
+                        )
+                    },
+                ) from exc
 
             self.state.pid = self.process.pid
             _set_node_rpc(node_url, api_token)
