@@ -9,6 +9,7 @@ import { NetworkPage } from './pages/NetworkPage';
 import { NodePage } from './pages/NodePage';
 import { useNodeMetrics } from './hooks/useNodeData';
 import { ConnectionBadge } from './components/ConnectionBadge';
+import logo from './assets/shc-interlocking-triad.svg';
 import styles from './App.module.css';
 
 function App() {
@@ -17,8 +18,14 @@ function App() {
     <BrowserRouter>
       <div className="app-shell">
         <header className={styles.navbar}>
-          <div className={styles.brandRow}>
-            <span className={styles.brand}>Ops dashboard</span>
+          <div className={styles.brandColumn}>
+            <div className={styles.brandRow}>
+              <img className={styles.logo} src={logo} alt="Synthetic Hegemonic Currency logo" />
+              <div className={styles.brandText}>
+                <span className={styles.projectName}>Synthetic Hegemonic Currency</span>
+                <span className={styles.consoleLabel}>Operations Console</span>
+              </div>
+            </div>
             <ConnectionBadge
               source={nodeMetrics.data?.source ?? 'mock'}
               error={nodeMetrics.data?.error}
