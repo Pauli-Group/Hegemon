@@ -15,7 +15,7 @@ use tokio::net::TcpListener;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::error::NodeError;
-use crate::service::{NodeService, NoteStatus};
+use crate::service::{MinerAction, MinerStatus, NodeService, NoteStatus};
 use crate::telemetry::TelemetrySnapshot;
 use wallet::TransactionBundle;
 
@@ -42,7 +42,20 @@ pub async fn serve(node: Arc<NodeService>) -> Result<()> {
         .route("/wallet/ciphertexts", get(ciphertexts))
         .route("/wallet/nullifiers", get(nullifiers))
         .route("/metrics", get(metrics))
+        .route("/miner/status", get(miner_status))
+        .route("/miner/control", post(miner_control))
         .route("/ws", get(ws_handler))
+        // UI-compatible aliases
+        .route("/node/transactions", post(submit_transaction))
+        .route("/node/blocks/latest", get(latest_block))
+        .route("/node/wallet/notes", get(note_status))
+        .route("/node/wallet/commitments", get(commitments))
+        .route("/node/wallet/ciphertexts", get(ciphertexts))
+        .route("/node/wallet/nullifiers", get(nullifiers))
+        .route("/node/metrics", get(metrics))
+        .route("/node/miner/status", get(miner_status))
+        .route("/node/miner/control", post(miner_control))
+        .route("/node/ws", get(ws_handler))
         .with_state(state);
     let listener = TcpListener::bind(node.api_addr()).await?;
     axum::serve(listener, app).await?;
@@ -145,6 +158,38 @@ async fn metrics(
     Ok(Json(state.node.telemetry_snapshot()))
 }
 
+async fn miner_status(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<MinerStatus>, StatusCode> {
+    require_auth(&headers, &state.token)?;
+    Ok(Json(state.node.miner_status()))
+}
+
+#[derive(Debug, Deserialize)]
+struct MinerControlRequest {
+    action: MinerAction,
+    target_hash_rate: Option<u64>,
+    thread_count: Option<usize>,
+}
+
+async fn miner_control(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(request): Json<MinerControlRequest>,
+) -> Result<Json<MinerStatus>, StatusCode> {
+    require_auth(&headers, &state.token)?;
+    state
+        .node
+        .control_miner(
+            request.action,
+            request.target_hash_rate,
+            request.thread_count,
+        )
+        .map(Json)
+        .map_err(map_error)
+}
+
 async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<ApiState>,
@@ -173,10 +218,16 @@ async fn handle_ws(stream: WebSocket, node: Arc<NodeService>) {
 }
 
 fn require_auth(headers: &HeaderMap, token: &str) -> Result<(), StatusCode> {
-    match headers.get(AUTH_HEADER) {
-        Some(value) if value == token => Ok(()),
-        _ => Err(StatusCode::UNAUTHORIZED),
+    let direct = headers.get(AUTH_HEADER).is_some_and(|value| value == token);
+    let bearer = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|as_str| as_str.strip_prefix("Bearer "))
+        .is_some_and(|auth_token| auth_token == token);
+    if direct || bearer {
+        return Ok(());
     }
+    Err(StatusCode::UNAUTHORIZED)
 }
 
 fn map_error(err: NodeError) -> StatusCode {

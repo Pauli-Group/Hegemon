@@ -6,6 +6,7 @@ use node::{NodeService, api, config::NodeConfig};
 use tokio::signal;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+use wallet::address::ShieldedAddress;
 
 #[derive(Parser, Debug)]
 #[command(name = "node", about = "Synthetic hegemonic currency node service")]
@@ -20,6 +21,8 @@ struct Cli {
     miner_workers: usize,
     #[arg(long, default_value_t = 32)]
     note_tree_depth: usize,
+    #[arg(long)]
+    miner_payout_address: Option<String>,
     #[arg(long)]
     miner_seed: Option<String>,
 }
@@ -37,6 +40,11 @@ async fn main() -> Result<()> {
     config.note_tree_depth = cli.note_tree_depth;
     if let Some(seed) = cli.miner_seed {
         config.miner_seed = parse_seed(&seed)?;
+        config.miner_payout_address = node::config::default_payout_address(config.miner_seed);
+    }
+    if let Some(address) = cli.miner_payout_address {
+        config.miner_payout_address =
+            ShieldedAddress::decode(&address).context("invalid miner payout address")?;
     }
     let router = config.gossip_router();
     let handle = NodeService::start(config, router).context("failed to start node")?;

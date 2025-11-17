@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use consensus::PowConsensus;
+use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use consensus::proof::HashVerifier;
 use consensus::types::{
     BalanceTag, CoinbaseData, CoinbaseSource, ConsensusBlock, Transaction, compute_fee_commitment,
@@ -15,7 +17,9 @@ use crypto::traits::{SigningKey, VerifyKey};
 use network::{GossipHandle, GossipMessage, GossipRouter};
 use parking_lot::Mutex;
 use protocol_versioning::{DEFAULT_VERSION_BINDING, VersionBinding};
+use rand::rngs::OsRng;
 use tokio::sync::{broadcast, mpsc, watch};
+use transaction_circuit::constants::NATIVE_ASSET_ID;
 use transaction_circuit::hashing::Felt;
 use transaction_circuit::keys::{VerifyingKey, generate_keys};
 use transaction_circuit::proof::verify;
@@ -29,6 +33,8 @@ use crate::storage::{ChainMeta, Storage};
 use crate::telemetry::{Telemetry, TelemetryPosture, TelemetrySnapshot};
 use crate::transaction::{ValidatedTransaction, felt_to_bytes, proof_to_transaction};
 use wallet::TransactionBundle;
+use wallet::address::ShieldedAddress;
+use wallet::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 
 const EVENT_CHANNEL_SIZE: usize = 256;
 const BLOCK_BROADCAST_CAPACITY: usize = 8;
@@ -54,6 +60,22 @@ pub enum NodeEvent {
     Telemetry(TelemetrySnapshot),
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MinerAction {
+    Start,
+    Stop,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct MinerStatus {
+    pub metrics: TelemetrySnapshot,
+    pub is_running: bool,
+    pub target_hash_rate: u64,
+    pub thread_count: usize,
+    pub last_updated: u64,
+}
+
 pub struct NodeService {
     config: NodeConfig,
     storage: Storage,
@@ -63,6 +85,10 @@ pub struct NodeService {
     verifying_keys: HashMap<VersionBinding, VerifyingKey>,
     miner_secret: MlDsaSecretKey,
     miner_id: [u8; 32],
+    miner_payout_address: ShieldedAddress,
+    miner_running: AtomicBool,
+    target_hash_rate: AtomicU64,
+    thread_count: AtomicUsize,
     gossip: GossipHandle,
     telemetry: Telemetry,
     event_tx: broadcast::Sender<NodeEvent>,
@@ -86,6 +112,7 @@ impl NodeService {
         let gossip = router.handle();
         let miner_secret = config.miner_secret();
         let miner_id = sha256(&miner_secret.verify_key().to_bytes());
+        let miner_payout_address = config.miner_payout_address.clone();
         let verifying_keys = build_verifying_keys(&config.supported_versions);
         let mut tree = state_merkle::CommitmentTree::new(config.note_tree_depth)
             .map_err(|_| NodeError::Invalid("invalid tree depth"))?;
@@ -103,8 +130,13 @@ impl NodeService {
             state_root: [0u8; 32],
             nullifier_root: [0u8; 32],
             supply_digest: 0,
-            pow_bits: config.pow_bits,
+            pow_bits: DEFAULT_GENESIS_POW_BITS,
         });
+        let pow_bits = if meta.height == 0 {
+            DEFAULT_GENESIS_POW_BITS
+        } else {
+            meta.pow_bits
+        };
         let ledger = LedgerState {
             tree,
             nullifiers,
@@ -113,7 +145,7 @@ impl NodeService {
             supply_digest: meta.supply_digest,
             best_hash: meta.best_hash,
             height: meta.height,
-            pow_bits: meta.pow_bits,
+            pow_bits,
         };
         let miner_pubkeys = vec![miner_secret.verify_key()];
         let mut consensus = PowConsensus::new(miner_pubkeys, meta.state_root, HashVerifier);
@@ -136,6 +168,10 @@ impl NodeService {
             verifying_keys,
             miner_secret,
             miner_id,
+            miner_payout_address,
+            miner_running: AtomicBool::new(true),
+            target_hash_rate: AtomicU64::new(0),
+            thread_count: AtomicUsize::new(config.miner_workers),
             gossip,
             telemetry: telemetry.clone(),
             event_tx,
@@ -208,6 +244,42 @@ impl NodeService {
 
     pub fn update_privacy_posture(&self, posture: TelemetryPosture) {
         self.telemetry.set_privacy_posture(posture);
+    }
+
+    pub fn miner_status(&self) -> MinerStatus {
+        MinerStatus {
+            metrics: self.telemetry.snapshot(),
+            is_running: self.miner_running.load(Ordering::Relaxed),
+            target_hash_rate: self.target_hash_rate.load(Ordering::Relaxed),
+            thread_count: self.thread_count.load(Ordering::Relaxed),
+            last_updated: current_time_ms(),
+        }
+    }
+
+    pub fn control_miner(
+        &self,
+        action: MinerAction,
+        target_hash_rate: Option<u64>,
+        thread_count: Option<usize>,
+    ) -> NodeResult<MinerStatus> {
+        if let Some(target) = target_hash_rate {
+            self.target_hash_rate.store(target, Ordering::Relaxed);
+        }
+        if let Some(count) = thread_count {
+            self.thread_count.store(count, Ordering::Relaxed);
+        }
+        match action {
+            MinerAction::Start => {
+                self.miner_running.store(true, Ordering::Relaxed);
+                self.publish_template().ok();
+            }
+            MinerAction::Stop => {
+                self.miner_running.store(false, Ordering::Relaxed);
+                let _ = self.template_tx.send(None);
+                self.telemetry.set_difficulty(0);
+            }
+        }
+        Ok(self.miner_status())
     }
 
     pub fn note_status(&self) -> NoteStatus {
@@ -330,6 +402,11 @@ impl NodeService {
     }
 
     fn publish_template(&self) -> NodeResult<()> {
+        if !self.miner_running.load(Ordering::Relaxed) {
+            let _ = self.template_tx.send(None);
+            self.telemetry.set_difficulty(0);
+            return Ok(());
+        }
         match self.assemble_pending_block()? {
             Some(block) => {
                 let bits = block.header.pow.as_ref().map(|s| s.pow_bits).unwrap_or(0);
@@ -344,6 +421,28 @@ impl NodeService {
         Ok(())
     }
 
+    fn build_coinbase_transaction(&self, amount: u64) -> NodeResult<Option<Transaction>> {
+        if amount == 0 {
+            return Ok(None);
+        }
+        let mut rng = OsRng;
+        let memo = MemoPlaintext::new(b"coinbase".to_vec());
+        let note = NotePlaintext::random(amount, NATIVE_ASSET_ID, memo, &mut rng);
+        let ciphertext = NoteCiphertext::encrypt(&self.miner_payout_address, &note, &mut rng)?;
+        let note_data = note.to_note_data(self.miner_payout_address.pk_recipient);
+        let commitment_felt = note_data.commitment();
+        let commitment = felt_to_bytes(commitment_felt);
+        let ciphertext_bytes = bincode::serialize(&ciphertext)?;
+        let tx = Transaction::new(
+            Vec::new(),
+            vec![commitment],
+            [0u8; 32],
+            DEFAULT_VERSION_BINDING,
+            vec![ciphertext_bytes],
+        );
+        Ok(Some(tx))
+    }
+
     fn assemble_pending_block(&self) -> NodeResult<Option<ConsensusBlock>> {
         let entries = self
             .mempool
@@ -356,25 +455,35 @@ impl NodeService {
         let base_state_root = ledger.state_root;
         let base_supply = ledger.supply_digest;
         let mut nullifier_set = ledger.nullifiers.clone();
-        let pow_bits = ledger.pow_bits;
+        let pow_bits = {
+            let consensus = self.consensus.lock();
+            consensus.expected_bits_for_block(parent_hash, parent_height + 1)?
+        };
         drop(ledger);
 
-        let mut transactions = Vec::new();
+        let mut user_transactions = Vec::new();
         let mut total_fees = 0u64;
         for entry in &entries {
             for nf in &entry.transaction.nullifiers {
                 nullifier_set.insert(*nf)?;
             }
-            transactions.push(entry.transaction.clone());
+            user_transactions.push(entry.transaction.clone());
             total_fees = total_fees.saturating_add(entry.fee);
         }
+        let minted = consensus::reward::block_subsidy(parent_height + 1);
+        let payout_amount = minted.saturating_add(total_fees);
+        let mut transactions = Vec::new();
+        if let Some(cb_tx) = self.build_coinbase_transaction(payout_amount)? {
+            transactions.push(cb_tx);
+        }
+        transactions.extend(user_transactions);
         let coinbase_source = if transactions.is_empty() {
             CoinbaseSource::BalanceTag(BalanceTag::default())
         } else {
             CoinbaseSource::TransactionIndex(0)
         };
         let coinbase = CoinbaseData {
-            minted: consensus::reward::block_subsidy(parent_height + 1),
+            minted,
             fees: total_fees as i64,
             burns: 0,
             source: coinbase_source,

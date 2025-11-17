@@ -30,7 +30,7 @@ import websockets
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 try:
     import uvicorn
@@ -72,6 +72,33 @@ if WALLET_API_URL:
     WALLET_API_URL = WALLET_API_URL.rstrip("/")
 WALLET_API_TOKEN = os.environ.get("WALLET_API_TOKEN", "")
 STREAM_RECONNECT_SECONDS = 3.0
+AUTOSTART_NODE = os.environ.get("DASHBOARD_AUTOSTART_NODE", "").lower() in ("1", "true", "yes", "on")
+AUTOSTART_NODE_HOST = os.environ.get("DASHBOARD_NODE_HOST", "127.0.0.1")
+AUTOSTART_NODE_API_ADDR = os.environ.get("DASHBOARD_NODE_API_ADDR")
+AUTOSTART_NODE_DB_PATH = os.environ.get(
+    "DASHBOARD_NODE_DB_PATH", str(REPO_ROOT / "state" / "dashboard-node.db")
+)
+AUTOSTART_NODE_TOKEN = os.environ.get("DASHBOARD_NODE_TOKEN", "devnet-token")
+
+
+def _parse_optional_int(value: Optional[str]) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_port(value: Optional[str], default: int) -> int:
+    parsed = _parse_optional_int(value)
+    return parsed if parsed and parsed > 0 else default
+
+
+AUTOSTART_NODE_PORT = _parse_port(os.environ.get("DASHBOARD_NODE_PORT", "8080"), 8080)
+AUTOSTART_NODE_WORKERS = _parse_optional_int(os.environ.get("DASHBOARD_NODE_MINER_WORKERS"))
+AUTOSTART_NODE_TREE_DEPTH = _parse_optional_int(os.environ.get("DASHBOARD_NODE_NOTE_TREE_DEPTH"))
+AUTOSTART_NODE_SEED = os.environ.get("DASHBOARD_NODE_MINER_SEED")
 
 
 def _build_ws_url(base_url: str) -> str:
@@ -206,6 +233,9 @@ class NodeLaunchPayload(NodeLifecyclePayload):
     db_path: Optional[str] = None
     api_addr: Optional[str] = None
     api_token: Optional[str] = None
+    miner_workers: Optional[int] = Field(default=None, ge=1)
+    note_tree_depth: Optional[int] = Field(default=None, ge=1)
+    miner_seed: Optional[str] = Field(default=None, min_length=64, max_length=64)
 
 
 MINER_STATE = MinerControlState()
@@ -289,6 +319,9 @@ class NodeProcessSupervisor:
             api_addr = payload.api_addr or f"{api_host}:{payload.port}"
             api_token = payload.api_token or f"node-{uuid.uuid4().hex[:8]}"
             db_path = payload.db_path or "node.db"
+            db_path_path = Path(db_path)
+            db_path_path.parent.mkdir(parents=True, exist_ok=True)
+            db_path = str(db_path_path)
             node_url = _build_node_url(api_host, payload.port, payload.routing.tls)
             command = [
                 "cargo",
@@ -305,6 +338,12 @@ class NodeProcessSupervisor:
                 "--api-token",
                 api_token,
             ]
+            if payload.miner_workers is not None:
+                command.extend(["--miner-workers", str(payload.miner_workers)])
+            if payload.note_tree_depth is not None:
+                command.extend(["--note-tree-depth", str(payload.note_tree_depth)])
+            if payload.miner_seed is not None:
+                command.extend(["--miner-seed", payload.miner_seed])
 
             _record_lifecycle(payload)
             self.state = NodeProcessState(
@@ -392,8 +431,72 @@ class NodeProcessSupervisor:
                 self.state.status = "running"
         return self.snapshot()
 
+    async def stop(self) -> None:
+        async with self._lock:
+            process = self.process
+        if not process or process.returncode is not None:
+            return
+        process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=10.0)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+        async with self._lock:
+            self.state.status = "exited"
+            self.state.exited_at = _now_iso()
+            self.state.return_code = process.returncode
+            self.process = None
+
 
 NODE_PROCESS = NodeProcessSupervisor()
+
+
+def _build_autostart_payload() -> Optional[NodeLaunchPayload]:
+    try:
+        return NodeLaunchPayload(
+            mode="genesis",
+            host=AUTOSTART_NODE_HOST,
+            port=AUTOSTART_NODE_PORT,
+            peer_url=None,
+            routing=NodeRoutingPayload(local_only=True),
+            db_path=AUTOSTART_NODE_DB_PATH,
+            api_addr=AUTOSTART_NODE_API_ADDR,
+            api_token=AUTOSTART_NODE_TOKEN,
+            miner_workers=AUTOSTART_NODE_WORKERS,
+            note_tree_depth=AUTOSTART_NODE_TREE_DEPTH,
+            miner_seed=AUTOSTART_NODE_SEED.strip() if AUTOSTART_NODE_SEED else None,
+        )
+    except ValidationError as exc:
+        print(f"[dashboard] Autostart node config invalid: {exc}", file=sys.stderr)
+        return None
+
+
+async def _maybe_autostart_node() -> None:
+    if not AUTOSTART_NODE:
+        return
+    payload = _build_autostart_payload()
+    if not payload:
+        return
+    try:
+        await NODE_PROCESS.start(payload)
+        node_url = _build_node_url(payload.host, payload.port, payload.routing.tls)
+        print(f"[dashboard] Autostarted local node at {node_url}", file=sys.stderr)
+    except HTTPException as exc:
+        detail = exc.detail.get("error") if isinstance(exc.detail, dict) else exc.detail
+        print(f"[dashboard] Autostart failed: {detail}", file=sys.stderr)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[dashboard] Autostart crashed: {exc}", file=sys.stderr)
+
+
+@app.on_event("startup")
+async def _startup_autostart() -> None:
+    asyncio.create_task(_maybe_autostart_node())
+
+
+@app.on_event("shutdown")
+async def _shutdown_cleanup() -> None:
+    await NODE_PROCESS.stop()
 
 
 def _node_headers() -> Dict[str, str]:
@@ -805,4 +908,3 @@ def _with_mock_flag(payload: Dict[str, Any]) -> Dict[str, Any]:
     body = dict(payload)
     body["__mock_source"] = True
     return body
-

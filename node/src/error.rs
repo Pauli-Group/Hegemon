@@ -1,6 +1,7 @@
 use thiserror::Error;
 
 use consensus::{ConsensusError, ProofError};
+use wallet::error::WalletError;
 
 #[derive(Debug, Error)]
 pub enum NodeError {
@@ -18,6 +19,8 @@ pub enum NodeError {
     Network(#[from] network::NetworkError),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("wallet error: {0}")]
+    Wallet(#[from] WalletError),
     #[error("invalid transaction: {0}")]
     Invalid(&'static str),
 }

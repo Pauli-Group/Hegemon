@@ -1,11 +1,14 @@
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
+use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use crypto::ml_dsa::MlDsaSecretKey;
 use crypto::traits::SigningKey;
 use network::GossipRouter;
 use protocol_versioning::{DEFAULT_VERSION_BINDING, VersionBinding};
 use serde::{Deserialize, Serialize};
+use wallet::address::ShieldedAddress;
+use wallet::keys::RootSecret;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeConfig {
@@ -17,6 +20,7 @@ pub struct NodeConfig {
     pub template_tx_limit: usize,
     pub miner_workers: usize,
     pub miner_seed: [u8; 32],
+    pub miner_payout_address: ShieldedAddress,
     pub pow_bits: u32,
     pub gossip_buffer: usize,
     pub supported_versions: Vec<VersionBinding>,
@@ -51,9 +55,17 @@ impl Default for NodeConfig {
             template_tx_limit: 512,
             miner_workers: 2,
             miner_seed: [7u8; 32],
-            pow_bits: 0x2100ffff,
+            miner_payout_address: default_payout_address([7u8; 32]),
+            pow_bits: DEFAULT_GENESIS_POW_BITS,
             gossip_buffer: 1024,
             supported_versions: vec![DEFAULT_VERSION_BINDING],
         }
     }
+}
+
+pub fn default_payout_address(seed: [u8; 32]) -> ShieldedAddress {
+    let keys = RootSecret::from_bytes(seed).derive();
+    keys.address(0)
+        .expect("address derivation should succeed")
+        .shielded_address()
 }

@@ -104,6 +104,7 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 5. Read `docs/CONTRIBUTING.md` and keep `DESIGN.md`/`METHODS.md` synchronized with any implementation updates.
 
 Want everything above bundled together? Run `make quickstart` (or `./scripts/dashboard.py --run quickstart`) to execute the setup script, CI-equivalent `make check`, the full benchmark suite, and the wallet demo sequentially via the dashboard.
+The same command now launches the FastAPI proxy and Vite UI on available ports and autostarts a local PoW node; watch the printed URLs to open the UI and see live mining telemetry without extra terminals.
 
 ### Manual install/run steps
 
