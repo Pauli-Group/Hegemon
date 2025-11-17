@@ -23,8 +23,8 @@ export function NodePage() {
   const { pushToast } = useToasts();
   const { markActiveEndpoint, endpoint: activeEndpoint } = useNodeConnection();
   const [mode, setMode] = useState<NodeMode>('genesis');
-  const [host, setHost] = useState('10.0.0.18');
-  const [port, setPort] = useState('8545');
+  const [host, setHost] = useState('127.0.0.1');
+  const [port, setPort] = useState('8080');
   const [peerUrl, setPeerUrl] = useState('https://node.operator.shc:8545');
   const [dbPath, setDbPath] = useState('node.db');
   const [apiAddrOverride, setApiAddrOverride] = useState('');
@@ -32,12 +32,12 @@ export function NodePage() {
   const [serverError, setServerError] = useState<string | null>(null);
 
   const defaultRouting: NodeLaunchPayload['routing'] = {
-    tls: true,
+    tls: false,
     doh: true,
     vpn: false,
     tor: false,
-    mtls: true,
-    local_only: false,
+    mtls: false,
+    local_only: true,
   };
 
   const protocol = defaultRouting.tls ? 'https' : 'http';
@@ -131,6 +131,8 @@ export function NodePage() {
   const isSubmitting = launcher.isPending;
   const processState = processStatus.data;
   const stderrTail = processState?.stderr_tail ?? [];
+  const missingCargo =
+    processState?.last_error?.toLowerCase().includes("command 'cargo' not found") ?? false;
 
   const handleCopyNodeUrl = async () => {
     try {
@@ -349,6 +351,12 @@ export function NodePage() {
                 <p className={styles.errorText} role="alert">
                   {processState.last_error}
                 </p>
+              )}
+              {missingCargo && (
+                <ul className={styles.helperList}>
+                  <li>Run `make quickstart` or `./scripts/dev-setup.sh` to install Rustup and cargo.</li>
+                  <li>Verify the toolchain with `cargo --version`, then retry launching the node.</li>
+                </ul>
               )}
               {stderrTail.length > 0 && (
                 <div className={styles.logTail}>

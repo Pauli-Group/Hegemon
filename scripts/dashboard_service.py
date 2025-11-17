@@ -186,12 +186,12 @@ class MinerControlPayload(BaseModel):
 
 
 class NodeRoutingPayload(BaseModel):
-    tls: bool = True
+    tls: bool = False
     mtls: bool = False
     doh: bool = False
     vpn: bool = False
     tor: bool = False
-    local_only: bool = False
+    local_only: bool = True
 
 
 class NodeLifecyclePayload(BaseModel):
@@ -212,7 +212,7 @@ MINER_STATE = MinerControlState()
 NODE_LIFECYCLE_STATE: Dict[str, Any] = {
     "mode": "genesis",
     "host": "127.0.0.1",
-    "port": 8545,
+    "port": 8080,
     "peer_url": None,
     "routing": NodeRoutingPayload().model_dump(),
     "applied_at": _now_iso(),
@@ -322,9 +322,15 @@ class NodeProcessSupervisor:
 
             cargo_path = shutil.which(command[0])
             if not cargo_path:
+                default_cargo = Path.home() / ".cargo" / "bin" / "cargo"
+                if default_cargo.exists():
+                    cargo_path = str(default_cargo)
+
+            if not cargo_path:
                 message = (
-                    "Required command 'cargo' not found on PATH. Run `make quickstart` "
-                    "to install the Rust toolchain, then retry."
+                    "Required command 'cargo' not found. If Rust is already installed via rustup, "
+                    'add "$HOME/.cargo/bin" to your PATH (e.g., export PATH="$HOME/.cargo/bin:$PATH") '
+                    "and retry. Otherwise install the toolchain with `./scripts/dev-setup.sh`."
                 )
                 self.state.status = "error"
                 self.state.last_error = message
@@ -359,17 +365,25 @@ class NodeProcessSupervisor:
 
         await asyncio.sleep(0.4)
         if self.process and self.process.returncode is not None:
+            last_line = self.state.stderr_tail[-1] if self.state.stderr_tail else None
+            last_hint = f" Last stderr: {last_line}" if last_line else ""
+            message = (
+                "Node process exited during startup." f"{last_hint}"
+                f" See {self.state.log_path} for the full log."
+            )
             async with self._lock:
                 self.state.status = "error"
-                self.state.last_error = "Node process exited during startup."
+                self.state.last_error = message
                 self.state.exited_at = _now_iso()
                 self.state.return_code = self.process.returncode
                 self.process = None
             raise HTTPException(
                 status_code=500,
                 detail={
-                    "error": "Node failed to start; see stderr tail for details.",
+                    "error": message,
                     "stderr": self.state.stderr_tail,
+                    "log_path": self.state.log_path,
+                    "return_code": self.state.return_code,
                 },
             )
 
