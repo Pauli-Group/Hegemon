@@ -200,6 +200,21 @@
   margin-top: 6px;
 }
 
+.logTail {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(244, 247, 251, 0.12);
+}
+
+.logTail pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  color: rgba(244, 247, 251, 0.82);
+}
+
 @media (max-width: 1024px) {
   .card {
     grid-column: span 12;

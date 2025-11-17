@@ -4,7 +4,13 @@ import { PageShell } from '../components/PageShell';
 import { ConnectionBadge } from '../components/ConnectionBadge';
 import { DataStatusBanner } from '../components/DataStatusBanner';
 import { useToasts } from '../components/ToastProvider';
-import { HttpError, type NodeLifecyclePayload, useNodeLifecycle, useNodeMetrics } from '../hooks/useNodeData';
+import {
+  HttpError,
+  type NodeLaunchPayload,
+  useNodeLauncher,
+  useNodeMetrics,
+  useNodeProcessStatus,
+} from '../hooks/useNodeData';
 import { useNodeConnection } from '../providers/NodeConnectionProvider';
 import styles from './NodePage.module.css';
 
@@ -12,16 +18,20 @@ type NodeMode = 'genesis' | 'join';
 
 export function NodePage() {
   const metricsQuery = useNodeMetrics();
-  const lifecycle = useNodeLifecycle();
+  const processStatus = useNodeProcessStatus();
+  const launcher = useNodeLauncher();
   const { pushToast } = useToasts();
   const { markActiveEndpoint, endpoint: activeEndpoint } = useNodeConnection();
   const [mode, setMode] = useState<NodeMode>('genesis');
   const [host, setHost] = useState('10.0.0.18');
   const [port, setPort] = useState('8545');
   const [peerUrl, setPeerUrl] = useState('https://node.operator.shc:8545');
+  const [dbPath, setDbPath] = useState('node.db');
+  const [apiAddrOverride, setApiAddrOverride] = useState('');
+  const [apiToken, setApiToken] = useState('local-dev-token');
   const [serverError, setServerError] = useState<string | null>(null);
 
-  const defaultRouting: NodeLifecyclePayload['routing'] = {
+  const defaultRouting: NodeLaunchPayload['routing'] = {
     tls: true,
     doh: true,
     vpn: false,
@@ -52,7 +62,7 @@ export function NodePage() {
 
   useEffect(() => {
     setServerError(null);
-  }, [host, mode, peerUrl, port]);
+  }, [apiAddrOverride, apiToken, dbPath, host, mode, peerUrl, port]);
 
   const formatError = (error: unknown) => {
     if (error instanceof HttpError) {
@@ -70,36 +80,41 @@ export function NodePage() {
     return 'Unexpected error while contacting the dashboard service.';
   };
 
-  const handleLifecycle = () => {
+  const handleLaunch = () => {
     if (validationMessage) {
       setServerError(validationMessage);
       return;
     }
     setServerError(null);
-    const payload: NodeLifecyclePayload = {
+    const payload: NodeLaunchPayload = {
       mode,
       host,
       port: Number(port),
       peer_url: mode === 'join' ? peerUrl : undefined,
       routing: defaultRouting,
+      db_path: dbPath || undefined,
+      api_addr: apiAddrOverride.trim() || undefined,
+      api_token: apiToken.trim() || undefined,
     };
 
-    lifecycle.mutate(payload, {
-        onMutate: () => {
-          pushToast({
-            kind: 'success',
-            title: mode === 'genesis' ? 'Dispatching genesis start' : 'Dispatching join request',
-            description: 'Sending lifecycle request to the node process...',
-          });
-        },
-        onSuccess: (response) => {
-          metricsQuery.refetch();
-          pushToast({
-            kind: 'success',
-            title: mode === 'genesis' ? 'Genesis node started' : 'Join request applied',
-            description: `Configuration saved for ${response.node_url}`,
-          });
-        },
+    launcher.mutate(payload, {
+      onMutate: () => {
+        pushToast({
+          kind: 'success',
+          title: mode === 'genesis' ? 'Dispatching genesis start' : 'Dispatching join request',
+          description: 'Spawning a local node process via the dashboard proxy...',
+        });
+      },
+      onSuccess: (response) => {
+        metricsQuery.refetch();
+        pushToast({
+          kind: 'success',
+          title: mode === 'genesis' ? 'Genesis node launched' : 'Join request applied',
+          description: response.node_url
+            ? `Node booting at ${response.node_url}`
+            : 'Spawn request accepted by dashboard service.',
+        });
+      },
       onError: (error) => {
         const message = formatError(error);
         setServerError(message);
@@ -113,7 +128,9 @@ export function NodePage() {
   };
 
   const errorMessage = serverError ?? validationMessage;
-  const isSubmitting = lifecycle.isPending;
+  const isSubmitting = launcher.isPending;
+  const processState = processStatus.data;
+  const stderrTail = processState?.stderr_tail ?? [];
 
   const handleCopyNodeUrl = async () => {
     try {
@@ -223,6 +240,42 @@ export function NodePage() {
                 onChange={(event) => setPort(event.target.value)}
               />
             </div>
+            <div>
+              <label className={styles.label} htmlFor="dbPath">
+                Database path (optional)
+              </label>
+              <input
+                id="dbPath"
+                className={styles.input}
+                value={dbPath}
+                onChange={(event) => setDbPath(event.target.value)}
+                placeholder="node.db"
+              />
+            </div>
+            <div>
+              <label className={styles.label} htmlFor="apiAddr">
+                API address override
+              </label>
+              <input
+                id="apiAddr"
+                className={styles.input}
+                value={apiAddrOverride}
+                onChange={(event) => setApiAddrOverride(event.target.value)}
+                placeholder="host:port (defaults to host + port above)"
+              />
+            </div>
+            <div>
+              <label className={styles.label} htmlFor="apiToken">
+                API auth token
+              </label>
+              <input
+                id="apiToken"
+                className={styles.input}
+                value={apiToken}
+                onChange={(event) => setApiToken(event.target.value)}
+                placeholder="local-dev-token"
+              />
+            </div>
             {mode === 'join' && (
               <div className={styles.peerField}>
                 <label className={styles.label} htmlFor="peerUrl">
@@ -239,11 +292,11 @@ export function NodePage() {
               </div>
             )}
           </div>
-            <div className={styles.shareableBox}>
-              <div>
-                <p className={styles.label}>Shareable node_url</p>
-                <p className={styles.nodeUrl} aria-live="polite">
-                  {shareableUrl}
+          <div className={styles.shareableBox}>
+            <div>
+              <p className={styles.label}>Shareable node_url</p>
+              <p className={styles.nodeUrl} aria-live="polite">
+                {shareableUrl}
               </p>
               <p className={styles.helperText}>
                 {mode === 'genesis'
@@ -275,13 +328,14 @@ export function NodePage() {
             <button
               type="button"
               className={styles.actionButton}
-              onClick={handleLifecycle}
+              onClick={handleLaunch}
               disabled={isSubmitting}
             >
               {isSubmitting ? 'Applying node settings…' : mode === 'genesis' ? 'Start genesis node' : 'Join network'}
             </button>
             <div className={styles.controlMeta}>
               <p className={styles.helperText}>
+                {`Node process status: ${processState?.status ?? 'idle'}. `}
                 {isSubmitting
                   ? 'Dispatching configuration to the node process.'
                   : 'Push these lifecycle choices into the active node runtime.'}
@@ -290,6 +344,17 @@ export function NodePage() {
                 <p className={styles.errorText} role="alert">
                   {errorMessage}
                 </p>
+              )}
+              {processState?.status === 'error' && processState.last_error && (
+                <p className={styles.errorText} role="alert">
+                  {processState.last_error}
+                </p>
+              )}
+              {stderrTail.length > 0 && (
+                <div className={styles.logTail}>
+                  <p className={styles.kicker}>stderr tail</p>
+                  <pre>{stderrTail.slice(-6).join('\n')}</pre>
+                </div>
               )}
             </div>
           </div>

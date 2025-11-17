@@ -230,6 +230,28 @@ export interface NodeLifecycleResponse {
   applied_at?: string;
 }
 
+export interface NodeLaunchPayload extends NodeLifecyclePayload {
+  db_path?: string;
+  api_addr?: string;
+  api_token?: string;
+}
+
+export interface NodeProcessState {
+  status: 'idle' | 'starting' | 'running' | 'exited' | 'error';
+  pid?: number | null;
+  started_at?: string | null;
+  exited_at?: string | null;
+  return_code?: number | null;
+  stderr_tail?: string[];
+  node_url?: string | null;
+  api_addr?: string | null;
+  api_token?: string | null;
+  db_path?: string | null;
+  last_error?: string | null;
+  command?: string[];
+  log_path?: string;
+}
+
 export function useNodeLifecycle() {
   const { serviceUrl, authToken } = useNodeConnection();
   const queryClient = useQueryClient();
@@ -240,6 +262,33 @@ export function useNodeLifecycle() {
         body: JSON.stringify(payload),
       }),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['node-metrics'] });
+      queryClient.invalidateQueries({ queryKey: ['miner-status'] });
+    },
+  });
+}
+
+export function useNodeProcessStatus() {
+  const { serviceUrl, authToken } = useNodeConnection();
+  return useQuery<NodeProcessState>({
+    queryKey: ['node-process', serviceUrl],
+    queryFn: () => fetchJson<NodeProcessState>(serviceUrl, '/node/process', authToken),
+    refetchInterval: 2000,
+    placeholderData: { status: 'idle', stderr_tail: [] },
+  });
+}
+
+export function useNodeLauncher() {
+  const { serviceUrl, authToken } = useNodeConnection();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: NodeLaunchPayload) =>
+      fetchJson<NodeProcessState>(serviceUrl, '/node/process/start', authToken, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['node-process'] });
       queryClient.invalidateQueries({ queryKey: ['node-metrics'] });
       queryClient.invalidateQueries({ queryKey: ['miner-status'] });
     },
