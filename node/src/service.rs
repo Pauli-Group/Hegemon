@@ -6,7 +6,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use consensus::PowConsensus;
 use consensus::proof::HashVerifier;
 use consensus::types::{
-    CoinbaseData, CoinbaseSource, ConsensusBlock, Transaction, compute_fee_commitment,
+    BalanceTag, CoinbaseData, CoinbaseSource, ConsensusBlock, Transaction, compute_fee_commitment,
     compute_version_commitment,
 };
 use crypto::hashes::sha256;
@@ -155,7 +155,9 @@ impl NodeService {
         let miner_service = service.clone();
         let miner_task = tokio::spawn(async move {
             while let Some(block) = solution_rx.recv().await {
-                let _ = miner_service.accept_block(block, true).await;
+                if let Err(err) = miner_service.accept_block(block, true).await {
+                    eprintln!("miner produced invalid block: {err}");
+                }
             }
         });
         let telemetry_service = service.clone();
@@ -348,9 +350,6 @@ impl NodeService {
             .collect(self.config.template_tx_limit)
             .into_iter()
             .collect::<Vec<_>>();
-        if entries.is_empty() {
-            return Ok(None);
-        }
         let ledger = self.ledger.lock();
         let parent_hash = ledger.best_hash;
         let parent_height = ledger.height;
@@ -369,11 +368,16 @@ impl NodeService {
             transactions.push(entry.transaction.clone());
             total_fees = total_fees.saturating_add(entry.fee);
         }
+        let coinbase_source = if transactions.is_empty() {
+            CoinbaseSource::BalanceTag(BalanceTag::default())
+        } else {
+            CoinbaseSource::TransactionIndex(0)
+        };
         let coinbase = CoinbaseData {
             minted: consensus::reward::block_subsidy(parent_height + 1),
             fees: total_fees as i64,
             burns: 0,
-            source: CoinbaseSource::TransactionIndex(0),
+            source: coinbase_source,
         };
         let supply =
             consensus::reward::update_supply_digest(base_supply, coinbase.net_native_delta())

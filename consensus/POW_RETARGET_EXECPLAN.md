@@ -117,7 +117,7 @@ _Pending implementation._
 
     pub const RETARGET_WINDOW: u64 = 120;
     pub const TARGET_BLOCK_INTERVAL_MS: u64 = 20_000;
-    pub const HALVING_INTERVAL: u64 = 840_000; // Example; confirm actual spec requirement.
+    pub const HALVING_INTERVAL: u64 = 210_000; // Matches Bitcoin’s halving cadence.
     pub const MAX_FUTURE_SKEW_MS: u64 = 90_000;
 
     pub fn block_subsidy(height: u64) -> u64 { /* halving logic */ }
