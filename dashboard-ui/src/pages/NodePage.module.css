@@ -27,6 +27,13 @@
   line-height: 1.5;
 }
 
+.helperList {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: rgba(244, 247, 251, 0.72);
+  line-height: 1.4;
+}
+
 .grid {
   margin-top: 20px;
   gap: 18px;
