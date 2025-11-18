@@ -11,6 +11,7 @@ import type {
   WalletStatus,
 } from '../types/node';
 import { mockMinerStatus, mockNotes, mockTelemetry, mockTransfers, mockWalletStatus } from '../mocks/nodeSamples';
+import { coinsToAtomicUnits } from '../utils/amounts';
 
 const SERVICE_HEADERS: HeadersInit = { 'Content-Type': 'application/json' };
 
@@ -130,10 +131,16 @@ export function useTransferLedger() {
 
   const mutation = useMutation({
     mutationFn: async (payload: { address: string; amount: number; fee: number; memo?: string }) => {
+      const requestBody = {
+        address: payload.address,
+        amount: coinsToAtomicUnits(payload.amount),
+        fee: coinsToAtomicUnits(payload.fee),
+        memo: payload.memo,
+      };
       try {
         return await fetchJson<{ transfer: TransferRecord }>(serviceUrl, `/node/wallet/transfers`, authToken, {
           method: 'POST',
-          body: JSON.stringify(payload),
+          body: JSON.stringify(requestBody),
         });
       } catch (error) {
         if (error instanceof HttpError) {
@@ -146,10 +153,10 @@ export function useTransferLedger() {
             id: txId,
             tx_id: txId,
             direction: 'outgoing',
-            address: payload.address,
-            memo: payload.memo ?? null,
-            amount: payload.amount,
-            fee: payload.fee,
+            address: requestBody.address,
+            memo: requestBody.memo ?? null,
+            amount: requestBody.amount,
+            fee: requestBody.fee,
             status: 'pending',
             confirmations: 0,
             created_at: new Date().toISOString(),

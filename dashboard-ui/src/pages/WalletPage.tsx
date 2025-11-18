@@ -8,6 +8,7 @@ import { useNodeMetrics, useTransferLedger, useWalletNotes, useWalletStatus } fr
 import { useToasts } from '../components/ToastProvider';
 import { ConnectionBadge } from '../components/ConnectionBadge';
 import { DataStatusBanner } from '../components/DataStatusBanner';
+import { formatCoinsFromAtomic } from '../utils/amounts';
 import styles from './WalletPage.module.css';
 
 const VIEW_KEY = import.meta.env.VITE_DEMO_VIEW_KEY || 'view_sapling_demo_1qv9k8';
@@ -48,9 +49,10 @@ export function WalletPage() {
   const coverage = notes ? `${notes.leaf_count.toLocaleString()} notes` : '—';
   const shieldedBalanceLabel =
     walletSource === 'live'
-      ? `Spendable balance (native asset) at height ${wallet?.last_synced_height ?? 0}`
+      ? `Spendable balance (native asset) at height ${wallet?.last_synced_height ?? 0} · 1 HGN = 100,000,000 atomic units`
       : 'Showing placeholder until live wallet data is available';
-  const shieldedBalanceValue = walletSource === 'live' ? `${nativeBalance.toLocaleString()} HGN` : '—';
+  const shieldedBalanceValue =
+    walletSource === 'live' ? `${formatCoinsFromAtomic(nativeBalance)} HGN` : '—';
 
   const transfers = useMemo(() => {
     const items = transfersQuery.data?.data?.transfers ?? [];

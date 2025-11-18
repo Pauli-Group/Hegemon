@@ -38,7 +38,7 @@ export const mockTransfers: TransferRecord[] = [
     direction: 'incoming',
     address: 'shield1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
     memo: 'Genesis allocation',
-    amount: 42,
+    amount: 4_200_000_000,
     fee: 0,
     status: 'confirmed',
     confirmations: 64,
@@ -50,7 +50,7 @@ export const mockWalletStatus: WalletStatus = {
   mode: 'Full',
   primary_address: 'shield1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
   incoming_viewing_key: 'demo-wallet-ivk',
-  balances: { '1': 42 },
+  balances: { '1': 4_200_000_000 },
   last_synced_height: 0,
   pending: mockTransfers,
 };
