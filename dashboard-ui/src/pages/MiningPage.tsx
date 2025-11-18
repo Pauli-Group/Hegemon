@@ -16,6 +16,8 @@ export function MiningPage() {
   const { events, hashRateSeries, mempoolSeries, difficultySeries, latestTelemetry } = useNodeEventStream(48);
   const { pushToast } = useToasts();
   const minerData = miner.data?.data;
+  const source = miner.data?.source ?? 'mock';
+  const isLive = source === 'live';
   const [targetRate, setTargetRate] = useState(minerData?.target_hash_rate ?? 0);
   const [threads, setThreads] = useState(minerData?.thread_count ?? 2);
 
@@ -27,7 +29,7 @@ export function MiningPage() {
     setThreads(minerData.thread_count);
   }, [minerData]);
 
-  const hashRateValue = minerData?.metrics.hash_rate ?? latestTelemetry?.hash_rate ?? 0;
+  const hashRateValue = isLive ? minerData?.metrics.hash_rate ?? latestTelemetry?.hash_rate ?? 0 : null;
 
   const sendControl = async (action: 'start' | 'stop') => {
     try {
@@ -86,7 +88,7 @@ export function MiningPage() {
       actions={
         <div className={styles.actionRow}>
           <ConnectionBadge
-            source={miner.data?.source ?? 'mock'}
+            source={source}
             error={miner.data?.error}
             label="Miner status feed"
           />
@@ -109,14 +111,30 @@ export function MiningPage() {
       />
 
       <div className={styles.metricGrid}>
-        <MetricTile label="Hash rate" value={`${hashRateValue.toFixed(2)} H/s`} helper={`Threads ${minerData?.thread_count ?? 0}`}>
-          <Sparkline data={hashRateSeries} label="24 samples" />
+        <MetricTile
+          label="Hash rate"
+          value={hashRateValue !== null ? `${hashRateValue.toFixed(2)} H/s` : '—'}
+          helper={
+            isLive ? `Threads ${minerData?.thread_count ?? 0}` : 'Node proxy unavailable – showing placeholders'
+          }
+        >
+          {isLive ? <Sparkline data={hashRateSeries} label="24 samples" /> : null}
         </MetricTile>
-        <MetricTile label="Mempool" value={`${minerData?.metrics.mempool_depth ?? 0} tx`} helper="Live backlog">
-          <Sparkline data={mempoolSeries} color="var(--color-accent-secondary)" label="Txn depth" />
+        <MetricTile
+          label="Mempool"
+          value={isLive ? `${minerData?.metrics.mempool_depth ?? 0} tx` : '—'}
+          helper={isLive ? 'Live backlog' : 'Node proxy unavailable – showing placeholders'}
+        >
+          {isLive ? (
+            <Sparkline data={mempoolSeries} color="var(--color-accent-secondary)" label="Txn depth" />
+          ) : null}
         </MetricTile>
-        <MetricTile label="Difficulty" value={`${minerData?.metrics.difficulty_bits ?? 0}`} helper={staleHelper}>
-          <Sparkline data={difficultySeries} color="var(--color-success)" label="Bits" />
+        <MetricTile
+          label="Difficulty"
+          value={isLive ? `${minerData?.metrics.difficulty_bits ?? 0}` : '—'}
+          helper={isLive ? staleHelper : 'Node proxy unavailable – showing placeholders'}
+        >
+          {isLive ? <Sparkline data={difficultySeries} color="var(--color-success)" label="Bits" /> : null}
         </MetricTile>
       </div>
 

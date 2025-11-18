@@ -28,9 +28,15 @@ export function WalletPage() {
 
   const notes = walletNotes.data?.data;
   const metrics = nodeMetrics.data?.data;
+  const notesSource = walletNotes.data?.source ?? 'mock';
+  const metricsSource = nodeMetrics.data?.source ?? 'mock';
 
-  const estimatedBalance = notes ? notes.leaf_count * 0.0005 : 0;
   const coverage = notes ? `${notes.leaf_count.toLocaleString()} notes` : '—';
+  const shieldedBalanceLabel =
+    notesSource === 'live'
+      ? 'Connect a synced wallet daemon to display spendable balance'
+      : 'Showing placeholder until live wallet data is available';
+  const shieldedBalanceValue = notesSource === 'live' ? '—' : '—';
 
   const transfers = useMemo(() => {
     const items = transfersQuery.data?.data?.transfers ?? [];
@@ -102,12 +108,16 @@ export function WalletPage() {
       />
 
       <div className={styles.metricsGrid}>
-        <MetricTile label="Shielded balance" value={`${estimatedBalance.toFixed(2)} SHC`} helper="Estimated from note depth" />
+        <MetricTile label="Shielded balance" value={shieldedBalanceValue} helper={shieldedBalanceLabel} />
         <MetricTile label="Notes committed" value={coverage} helper={`Tree depth ${notes?.depth ?? '—'}`} />
         <MetricTile
           label="Mempool depth"
           value={`${metrics?.mempool_depth ?? 0}`}
-          helper={`Difficulty ${metrics?.difficulty_bits ?? 0}`}
+          helper={
+            metricsSource === 'live'
+              ? `Difficulty ${metrics?.difficulty_bits ?? 0}`
+              : 'Node metrics unavailable – using placeholders'
+          }
         />
       </div>
 
