@@ -1,28 +1,27 @@
-# HEGEMON Atlas Emblem
+# HEGEMON Sovereignty Mark
 
-![HEGEMON atlas emblem](assets/hegemon-atlas-emblem.svg)
+![HEGEMON sovereignty emblem](assets/hegemon-atlas-emblem.svg)
 
 ## Essence
-- **Layered hex shield** – dual hexagonal frames use the brand primary base to communicate settlement-grade stability, while contrasting strokes reinforce the HGN ticker’s precision.
-- **Triad of planes** – three interlocking lozenges express the fusion of privacy (shielded pool), programmable governance, and consensus telemetry. Rotations preserve symmetry so the mark remains legible at dashboard favicon sizes.
-- **Central vault** – the inner hexagon keeps the privacy vault visible even when the emblem is rendered monochrome, echoing the post-quantum protections described in the README.
+- **Golden throne triangle** – the open gilded wedge signals the hegemonic seat of authority while preserving negative space for readability on dark dashboards.
+- **Shielded privacy core** – concentric rings echo Zcash-style zero-knowledge bubbles and STARK proofs, reinforcing the repo’s PQ privacy posture.
+- **Lattice accent** – cross-hatched diagonals nod to lattice cryptography (ML-DSA/Kyber) without cluttering the mark at small sizes.
+- **Serif wordmark** – the HEGEMON lockup uses a Georgia-style serif to convey institutional permanence beneath the emblem.
 
 ## Geometry & construction
-- All coordinates sit on a 240 × 240 grid for predictable scaling across CLI badges, dashboards, and PDFs.
-- The outer frame uses points `(120,12)`, `(214,67)`, `(214,173)`, `(120,228)`, `(26,173)`, `(26,67)` with a 10 px stroke to keep 120° turns crisp.
-- The secondary frame at `(120,44) … (52,84)` adds depth and a highlight edge for motion and hover states.
-- The triad shares the base polygon `[(120,36), (186,112), (120,188), (54,112)]` rotated `0°`, `60°`, and `120°` around `(120,112)` to create the woven knot without bezier distortion.
-- Stroke widths: 10 px (outer frame), 6 px (secondary frame), 5 px (triad outlines), 4 px (core), aligned with the branding system’s legibility guidance.
+- Built on a 200 × 200 grid; the throne triangle sits on `(100,40)`, `(45,160)`, `(155,160)` with 12 px strokes and a 15% interior fill.
+- Shield rings center on `(100,100)` with radii `48` and `38`, using 8 px strokes to keep line contrast crisp in low-light control rooms.
+- The lattice lines connect `(70,70) → (130,130)` and `(70,130) → (130,70)` at 2 px weight for subtle texture.
+- Wordmark baseline sits at `y=185` with 24 px type and 2 px letter spacing to preserve legibility when scaled down for favicons.
 
 ## Palette
 | Layer | Color | Hex | Usage |
 | --- | --- | --- | --- |
-| Outer frame & accents | Ionosphere | `#1BE7FF` | HGN action accents, nav focus, outline glow |
-| Secondary frame | Molten Amber | `#F5A623` | Governance highlights and state transitions |
-| Triad planes | Proof Green / Ionosphere / Molten Amber | `#19B37E`, `#1BE7FF`, `#F5A623` | Privacy, consensus, and governance planes |
-| Core fill | Deep Midnight | `#0E1C36` | Settlement vault, dark UI base |
+| Background | Sovereign Night | `#0C0C0C` | Dark chassis for dashboards and document headers |
+| Throne + rings | Gilded Authority | `#FFD700` | Primary accent for the emblem, UI highlights, and active nav states |
+| Wordmark | Ivory Signal | `#FFFFFF` | High-contrast type over the night base |
 
 ## Usage notes
-1. Keep padding equal to the inner frame height (~112 px at 1×) around the mark.
-2. Reference `docs/assets/hegemon-atlas-emblem.svg` directly to preserve crisp strokes on high-DPI displays.
-3. For single-color lockups, set all strokes and fills to `currentColor` while maintaining the dual-hex silhouette for recognizability.
+1. Keep at least 16 px padding around the triangle when used as a favicon or navbar glyph.
+2. Prefer the full emblem (triangle + shield + wordmark) in documentation callouts; for micro-icons, drop the wordmark but retain the throne outline.
+3. On hover or focus states in the dashboard, use `box-shadow: 0 0 0 1px rgba(255, 215, 0, 0.35)` to mirror the gilded stroke without exceeding the 8 px spacing grid.
