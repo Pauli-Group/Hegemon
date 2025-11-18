@@ -1,6 +1,6 @@
 # HEGEMON
 
-Quantum-resistant private payments for the HGN unit
+Quantum-resistant private payments
 
 ![HEGEMON atlas emblem showing a layered hexagonal shield](docs/assets/hegemon-atlas-emblem.svg)
 
