@@ -18,7 +18,11 @@ function App() {
         <header className={styles.navbar}>
           <div className={styles.brandColumn}>
             <div className={styles.brandRow}>
-              <img className={styles.logo} src={logo} alt="HEGEMON HGN emblem" />
+              <img
+                className={styles.logo}
+                src={logo}
+                alt="HEGEMON sovereignty emblem with golden throne triangle and shielded lattice"
+              />
               <div className={styles.brandText}>
                 <span className={styles.projectName}>HEGEMON</span>
                 <span className={styles.consoleLabel}>Operations Console</span>
