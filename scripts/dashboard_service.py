@@ -72,7 +72,10 @@ if WALLET_API_URL:
     WALLET_API_URL = WALLET_API_URL.rstrip("/")
 WALLET_API_TOKEN = os.environ.get("WALLET_API_TOKEN", "")
 STREAM_RECONNECT_SECONDS = 3.0
-AUTOSTART_NODE = os.environ.get("DASHBOARD_AUTOSTART_NODE", "").lower() in ("1", "true", "yes", "on")
+# Default to autostarting a local devnet node so the dashboard shows live mining
+# immediately after `make quickstart`. Users can disable by setting
+# DASHBOARD_AUTOSTART_NODE=0.
+AUTOSTART_NODE = os.environ.get("DASHBOARD_AUTOSTART_NODE", "1").lower() in ("1", "true", "yes", "on")
 AUTOSTART_NODE_HOST = os.environ.get("DASHBOARD_NODE_HOST", "127.0.0.1")
 AUTOSTART_NODE_API_ADDR = os.environ.get("DASHBOARD_NODE_API_ADDR")
 AUTOSTART_NODE_DB_PATH = os.environ.get(
