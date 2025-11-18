@@ -36,9 +36,11 @@ export function WalletPage() {
 
   const balanceMap = wallet?.balances ?? {};
   const nativeBalance = (() => {
+    if (typeof balanceMap['0'] === 'number') return balanceMap['0'];
+    if (typeof balanceMap[0] === 'number') return balanceMap[0];
     if (typeof balanceMap['1'] === 'number') return balanceMap['1'];
-    const numericKey = (balanceMap as Record<string | number, number>)[1];
-    return typeof numericKey === 'number' ? numericKey : 0;
+    if (typeof balanceMap[1] === 'number') return balanceMap[1];
+    return 0;
   })();
 
   const primaryAddress = wallet?.primary_address ?? 'shield1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq';
@@ -46,7 +48,7 @@ export function WalletPage() {
   const coverage = notes ? `${notes.leaf_count.toLocaleString()} notes` : '—';
   const shieldedBalanceLabel =
     walletSource === 'live'
-      ? `Spendable balance (asset 1) at height ${wallet?.last_synced_height ?? 0}`
+      ? `Spendable balance (native asset) at height ${wallet?.last_synced_height ?? 0}`
       : 'Showing placeholder until live wallet data is available';
   const shieldedBalanceValue = walletSource === 'live' ? `${nativeBalance.toLocaleString()} HGN` : '—';
 
