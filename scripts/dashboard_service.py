@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import shutil
+import secrets
 import json
 import os
 import subprocess
@@ -102,6 +103,17 @@ AUTOSTART_NODE_PORT = _parse_port(os.environ.get("DASHBOARD_NODE_PORT", "8080"),
 AUTOSTART_NODE_WORKERS = _parse_optional_int(os.environ.get("DASHBOARD_NODE_MINER_WORKERS"))
 AUTOSTART_NODE_TREE_DEPTH = _parse_optional_int(os.environ.get("DASHBOARD_NODE_NOTE_TREE_DEPTH"))
 AUTOSTART_NODE_SEED = os.environ.get("DASHBOARD_NODE_MINER_SEED")
+AUTOSTART_WALLET = os.environ.get("DASHBOARD_AUTOSTART_WALLET", "1").lower() in ("1", "true", "yes", "on")
+AUTOSTART_WALLET_HOST = os.environ.get("DASHBOARD_WALLET_HOST", "127.0.0.1")
+AUTOSTART_WALLET_PORT = _parse_port(os.environ.get("DASHBOARD_WALLET_PORT", "61005"), 61005)
+AUTOSTART_WALLET_STORE = os.environ.get(
+    "DASHBOARD_WALLET_STORE", str(REPO_ROOT / "state" / "dashboard-wallet.store")
+)
+AUTOSTART_WALLET_META = os.environ.get(
+    "DASHBOARD_WALLET_META", str(REPO_ROOT / "state" / "dashboard-wallet.meta.json")
+)
+AUTOSTART_WALLET_PASSPHRASE = os.environ.get("DASHBOARD_WALLET_PASSPHRASE")
+AUTOSTART_WALLET_SEED = os.environ.get("DASHBOARD_WALLET_SEED")
 
 
 def _build_ws_url(base_url: str) -> str:
@@ -118,6 +130,13 @@ def _set_node_rpc(url: Optional[str], token: str) -> None:
     NODE_RPC_URL = url.rstrip("/") if url else None
     NODE_RPC_TOKEN = token
     NODE_WS_URL = _build_ws_url(NODE_RPC_URL) if NODE_RPC_URL else None
+
+
+def _set_wallet_api(url: Optional[str], token: Optional[str] = None) -> None:
+    global WALLET_API_URL, WALLET_API_TOKEN
+    WALLET_API_URL = url.rstrip("/") if url else None
+    if token is not None:
+        WALLET_API_TOKEN = token
 
 
 def _now_iso() -> str:
@@ -184,6 +203,19 @@ MOCK_TRANSFERS: List[Dict[str, Any]] = [
         "created_at": GENESIS_TRANSFER_TIMESTAMP,
     }
 ]
+MOCK_WALLET_STATUS: Dict[str, Any] = {
+    "mode": "Full",
+    "primary_address": "shield1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    "incoming_viewing_key": None,
+    "balances": {"1": 0},
+    "last_synced_height": 0,
+    "pending": [],
+}
+
+WALLET_META_PATH = Path(AUTOSTART_WALLET_META)
+WALLET_STORE_PATH = Path(AUTOSTART_WALLET_STORE)
+WALLET_LOG_PATH = REPO_ROOT / "state" / "wallet-process.log"
+WALLET_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
@@ -252,6 +284,17 @@ NODE_LIFECYCLE_STATE: Dict[str, Any] = {
 }
 NODE_LOG_PATH = REPO_ROOT / "state" / "node-process.log"
 NODE_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+@dataclass
+class WalletMaterial:
+    seed_hex: str
+    passphrase: str
+    store_path: str
+    meta_path: str
+    api_host: str
+    api_port: int
+    created_at: str
 
 
 @dataclass
@@ -455,6 +498,271 @@ class NodeProcessSupervisor:
 NODE_PROCESS = NodeProcessSupervisor()
 
 
+def _persist_wallet_metadata(payload: Dict[str, Any]) -> None:
+    WALLET_META_PATH.parent.mkdir(parents=True, exist_ok=True)
+    WALLET_META_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    try:
+        os.chmod(WALLET_META_PATH, 0o600)
+    except OSError:
+        pass
+
+
+def _load_wallet_material() -> WalletMaterial:
+    if WALLET_META_PATH.exists():
+        try:
+            data = json.loads(WALLET_META_PATH.read_text(encoding="utf-8"))
+            return WalletMaterial(
+                seed_hex=str(data.get("seed_hex") or "").strip() or (AUTOSTART_WALLET_SEED or secrets.token_hex(32)),
+                passphrase=str(data.get("passphrase") or AUTOSTART_WALLET_PASSPHRASE or secrets.token_urlsafe(16)),
+                store_path=str(data.get("store_path") or WALLET_STORE_PATH),
+                meta_path=str(WALLET_META_PATH),
+                api_host=str(data.get("api_host") or AUTOSTART_WALLET_HOST),
+                api_port=int(data.get("api_port") or AUTOSTART_WALLET_PORT),
+                created_at=str(data.get("created_at") or data.get("createdAt") or _now_iso()),
+            )
+        except (ValueError, OSError, TypeError):
+            # fall through to regenerate metadata
+            pass
+    seed_hex = (AUTOSTART_WALLET_SEED or secrets.token_hex(32)).lower()
+    passphrase = AUTOSTART_WALLET_PASSPHRASE or secrets.token_urlsafe(16)
+    material = WalletMaterial(
+        seed_hex=seed_hex,
+        passphrase=passphrase,
+        store_path=str(WALLET_STORE_PATH),
+        meta_path=str(WALLET_META_PATH),
+        api_host=AUTOSTART_WALLET_HOST,
+        api_port=AUTOSTART_WALLET_PORT,
+        created_at=_now_iso(),
+    )
+    _persist_wallet_metadata(
+        {
+            "seed_hex": material.seed_hex,
+            "passphrase": material.passphrase,
+            "store_path": material.store_path,
+            "api_host": material.api_host,
+            "api_port": material.api_port,
+            "created_at": material.created_at,
+        }
+    )
+    return material
+
+
+def _init_wallet_store(material: WalletMaterial) -> None:
+    store_path = Path(material.store_path)
+    if store_path.exists():
+        return
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    cargo_path = shutil.which("cargo")
+    if not cargo_path:
+        default_cargo = Path.home() / ".cargo" / "bin" / "cargo"
+        if default_cargo.exists():
+            cargo_path = str(default_cargo)
+    if not cargo_path:
+        raise RuntimeError(
+            "Required command 'cargo' not found. Install the Rust toolchain or add $HOME/.cargo/bin to PATH."
+        )
+    command = [
+        cargo_path,
+        "run",
+        "-p",
+        "wallet",
+        "--bin",
+        "wallet",
+        "--",
+        "init",
+        "--store",
+        str(store_path),
+        "--passphrase",
+        material.passphrase,
+        "--root-hex",
+        material.seed_hex,
+    ]
+    result = subprocess.run(command, cwd=str(REPO_ROOT), capture_output=True, text=True)
+    if result.returncode != 0:
+        stderr = result.stderr or ""
+        stdout = result.stdout or ""
+        raise RuntimeError(f"wallet init failed ({result.returncode}): {stderr or stdout}")
+
+
+@dataclass
+class WalletProcessState:
+    status: Literal["idle", "starting", "running", "exited", "error"] = "idle"
+    pid: Optional[int] = None
+    started_at: Optional[str] = None
+    exited_at: Optional[str] = None
+    return_code: Optional[int] = None
+    stderr_tail: List[str] = field(default_factory=list)
+    api_url: Optional[str] = None
+    last_error: Optional[str] = None
+    command: Optional[List[str]] = None
+    log_path: str = str(WALLET_LOG_PATH)
+
+
+class WalletProcessSupervisor:
+    def __init__(self) -> None:
+        self.process: Optional[asyncio.subprocess.Process] = None
+        self.state = WalletProcessState()
+        self._lock = asyncio.Lock()
+
+    def snapshot(self) -> Dict[str, Any]:
+        return asdict(self.state)
+
+    def _append_log(self, line: str) -> None:
+        timestamped = f"[{_now_iso()}] {line.rstrip()}"
+        tail = self.state.stderr_tail + [timestamped]
+        self.state.stderr_tail = tail[-100:]
+        try:
+            with WALLET_LOG_PATH.open("a", encoding="utf-8") as log_file:
+                log_file.write(timestamped + "\n")
+        except OSError:
+            pass
+
+    async def _capture_output(self, process: asyncio.subprocess.Process) -> None:
+        async def drain(stream: Optional[asyncio.StreamReader]) -> None:
+            if not stream:
+                return
+            while True:
+                line = await stream.readline()
+                if not line:
+                    break
+                self._append_log(line.decode(errors="replace"))
+
+        await asyncio.gather(drain(process.stderr), drain(process.stdout))
+
+    async def _wait_for_exit(self, process: asyncio.subprocess.Process) -> None:
+        return_code = await process.wait()
+        async with self._lock:
+            if process is not self.process:
+                return
+            self.state.return_code = return_code
+            self.state.exited_at = _now_iso()
+            if self.state.status != "error":
+                self.state.status = "exited" if return_code == 0 else "error"
+            self.process = None
+
+    async def start(self, material: WalletMaterial, node_url: str, node_token: str) -> Dict[str, Any]:
+        async with self._lock:
+            if self.process and self.process.returncode is None:
+                raise HTTPException(status_code=409, detail={"error": "Wallet process already running."})
+
+            api_url = f"http://{material.api_host}:{material.api_port}"
+            command = [
+                "cargo",
+                "run",
+                "-p",
+                "wallet",
+                "--bin",
+                "wallet",
+                "--",
+                "daemon",
+                "--store",
+                material.store_path,
+                "--passphrase",
+                material.passphrase,
+                "--rpc_url",
+                node_url,
+                "--auth_token",
+                node_token,
+                "--http_listen",
+                f"{material.api_host}:{material.api_port}",
+            ]
+            cargo_path = shutil.which(command[0])
+            if not cargo_path:
+                fallback = Path.home() / ".cargo" / "bin" / "cargo"
+                if fallback.exists():
+                    cargo_path = str(fallback)
+            if not cargo_path:
+                message = (
+                    "Required command 'cargo' not found. Install the Rust toolchain and retry "
+                    "or add $HOME/.cargo/bin to PATH."
+                )
+                self.state.status = "error"
+                self.state.last_error = message
+                raise HTTPException(status_code=500, detail={"error": message})
+
+            try:
+                self.process = await asyncio.create_subprocess_exec(
+                    cargo_path,
+                    *command[1:],
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=str(REPO_ROOT),
+                )
+            except FileNotFoundError as exc:
+                self.state.status = "error"
+                self.state.last_error = str(exc)
+                raise HTTPException(status_code=500, detail={"error": str(exc)}) from exc
+
+            self.state = WalletProcessState(
+                status="starting",
+                pid=self.process.pid,
+                started_at=_now_iso(),
+                stderr_tail=[],
+                api_url=api_url,
+                command=command,
+            )
+
+            asyncio.create_task(self._capture_output(self.process))
+            asyncio.create_task(self._wait_for_exit(self.process))
+
+        await asyncio.sleep(0.4)
+        if self.process and self.process.returncode is not None:
+            last_line = self.state.stderr_tail[-1] if self.state.stderr_tail else None
+            last_hint = f" Last stderr: {last_line}" if last_line else ""
+            message = f"Wallet process exited during startup.{last_hint} See {self.state.log_path} for details."
+            async with self._lock:
+                self.state.status = "error"
+                self.state.last_error = message
+                self.state.exited_at = _now_iso()
+                self.state.return_code = self.process.returncode
+                self.process = None
+            raise HTTPException(
+                status_code=500,
+                detail={"error": message, "stderr": self.state.stderr_tail, "log_path": self.state.log_path},
+            )
+
+        async with self._lock:
+            if self.state.status == "starting":
+                self.state.status = "running"
+        return self.snapshot()
+
+    async def stop(self) -> None:
+        async with self._lock:
+            process = self.process
+        if not process or process.returncode is not None:
+            return
+        process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=10.0)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+        async with self._lock:
+            self.state.status = "exited"
+            self.state.exited_at = _now_iso()
+            self.state.return_code = process.returncode
+            self.process = None
+
+
+WALLET_PROCESS = WalletProcessSupervisor()
+
+
+def _prepare_dashboard_wallet() -> Optional[WalletMaterial]:
+    if not AUTOSTART_WALLET:
+        return None
+    try:
+        material = _load_wallet_material()
+        if not AUTOSTART_NODE_SEED:
+            # Ensure miner payout tracks the same seed as the wallet store.
+            globals()["AUTOSTART_NODE_SEED"] = material.seed_hex
+        if not WALLET_API_URL:
+            _set_wallet_api(f"http://{material.api_host}:{material.api_port}", WALLET_API_TOKEN)
+        return material
+    except Exception as exc:
+        print(f"[dashboard] Wallet bootstrap failed: {exc}", file=sys.stderr)
+        return None
+
+
 def _build_autostart_payload() -> Optional[NodeLaunchPayload]:
     try:
         return NodeLaunchPayload(
@@ -492,14 +800,46 @@ async def _maybe_autostart_node() -> None:
         print(f"[dashboard] Autostart crashed: {exc}", file=sys.stderr)
 
 
+async def _maybe_autostart_wallet(material: Optional[WalletMaterial]) -> None:
+    if not AUTOSTART_WALLET or not material:
+        return
+    if not NODE_RPC_URL:
+        print("[dashboard] Skipping wallet autostart: NODE_RPC_URL is not configured.", file=sys.stderr)
+        return
+    try:
+        await WALLET_PROCESS.start(material, NODE_RPC_URL, NODE_RPC_TOKEN)
+        if not WALLET_API_URL:
+            _set_wallet_api(f"http://{material.api_host}:{material.api_port}", WALLET_API_TOKEN)
+        print(f"[dashboard] Autostarted wallet daemon at http://{material.api_host}:{material.api_port}", file=sys.stderr)
+    except HTTPException as exc:
+        detail = exc.detail.get("error") if isinstance(exc.detail, dict) else exc.detail
+        print(f"[dashboard] Wallet autostart failed: {detail}", file=sys.stderr)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        print(f"[dashboard] Wallet autostart crashed: {exc}", file=sys.stderr)
+
+
+async def _autostart_stack() -> None:
+    wallet_material = _prepare_dashboard_wallet()
+    if wallet_material:
+        try:
+            await asyncio.to_thread(_init_wallet_store, wallet_material)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            print(f"[dashboard] Wallet store init failed: {exc}", file=sys.stderr)
+            wallet_material = None
+    await _maybe_autostart_node()
+    if wallet_material:
+        await _maybe_autostart_wallet(wallet_material)
+
+
 @app.on_event("startup")
 async def _startup_autostart() -> None:
-    asyncio.create_task(_maybe_autostart_node())
+    asyncio.create_task(_autostart_stack())
 
 
 @app.on_event("shutdown")
 async def _shutdown_cleanup() -> None:
     await NODE_PROCESS.stop()
+    await WALLET_PROCESS.stop()
 
 
 def _node_headers() -> Dict[str, str]:
@@ -815,6 +1155,23 @@ async def node_miner_control(payload: MinerControlPayload) -> Dict[str, Any]:
     if payload.thread_count is not None:
         MINER_STATE.thread_count = int(payload.thread_count)
     return {"status": "ok", "state": MINER_STATE.as_dict()}
+
+
+@app.get("/node/wallet/status")
+async def node_wallet_status() -> Dict[str, Any]:
+    if not WALLET_API_URL:
+        return _with_mock_flag(dict(MOCK_WALLET_STATUS))
+    try:
+        return await _wallet_request("GET", "/status")
+    except httpx.HTTPStatusError as exc:  # pragma: no cover - bubble status
+        detail = (
+            exc.response.json()
+            if exc.response.headers.get("content-type", "").startswith("application/json")
+            else {"error": exc.response.text}
+        )
+        raise HTTPException(status_code=exc.response.status_code, detail=detail)
+    except httpx.HTTPError:
+        return _with_mock_flag(dict(MOCK_WALLET_STATUS))
 
 
 @app.get("/node/wallet/transfers")

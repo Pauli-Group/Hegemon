@@ -1,2 +1,11 @@
 target/
 wallet-demo-artifacts/
+state/
+node.db/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+scripts/__pycache__/
+*.pyc
+.dashboard-service-venv/

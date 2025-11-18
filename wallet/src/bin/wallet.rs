@@ -526,6 +526,7 @@ fn spawn_wallet_api(
             };
             let state = ApiState { store, client };
             let app = Router::new()
+                .route("/status", get(wallet_status))
                 .route("/transfers", get(list_transfers).post(submit_transfer))
                 .with_state(state);
             runtime.block_on(async move {
@@ -564,6 +565,16 @@ struct TransferRequest {
 #[derive(Serialize)]
 struct TransfersResponse {
     transfers: Vec<TransferRecord>,
+}
+
+#[derive(Serialize)]
+struct WalletStatusResponse {
+    mode: WalletMode,
+    primary_address: String,
+    incoming_viewing_key: Option<String>,
+    balances: BTreeMap<u64, u64>,
+    last_synced_height: u64,
+    pending: Vec<TransferRecord>,
 }
 
 #[derive(Serialize)]
@@ -638,6 +649,16 @@ impl IntoResponse for ApiError {
     }
 }
 
+async fn wallet_status(
+    State(state): State<ApiState>,
+) -> Result<Json<WalletStatusResponse>, ApiError> {
+    let store = state.store.clone();
+    let response = task::spawn_blocking(move || snapshot_status(&store))
+        .await
+        .map_err(|err| ApiError::internal(err.to_string()))??;
+    Ok(Json(response))
+}
+
 async fn list_transfers(
     State(state): State<ApiState>,
 ) -> Result<Json<TransfersResponse>, ApiError> {
@@ -669,6 +690,42 @@ fn snapshot_transfers(store: &Arc<WalletStore>) -> Result<TransfersResponse, Wal
         .map(|tx| render_transfer(tx, latest))
         .collect();
     Ok(TransfersResponse { transfers })
+}
+
+fn snapshot_status(store: &Arc<WalletStore>) -> Result<WalletStatusResponse, WalletError> {
+    let mode = store.mode()?;
+    let balances = store.balances()?;
+    let latest = store.last_synced_height()?;
+    let pending = store.pending_transactions()?;
+    let primary_address = if mode == WalletMode::Full {
+        store
+            .derived_keys()?
+            .and_then(|keys| keys.address(0).ok())
+            .and_then(|mat| mat.shielded_address().encode().ok())
+    } else {
+        store
+            .incoming_key()
+            .ok()
+            .and_then(|ivk| ivk.shielded_address(0).ok())
+            .and_then(|addr| addr.encode().ok())
+    }
+    .unwrap_or_else(|| "—".to_string());
+    let incoming_viewing_key = store
+        .incoming_key()
+        .ok()
+        .and_then(|ivk| serde_json::to_string(&ivk).ok());
+    let pending_records: Vec<TransferRecord> = pending
+        .iter()
+        .map(|tx| render_transfer(tx, latest))
+        .collect();
+    Ok(WalletStatusResponse {
+        mode,
+        primary_address,
+        incoming_viewing_key,
+        balances,
+        last_synced_height: latest,
+        pending: pending_records,
+    })
 }
 
 fn render_transfer(tx: &PendingTransaction, latest_height: u64) -> TransferRecord {

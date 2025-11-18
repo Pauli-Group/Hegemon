@@ -1,4 +1,4 @@
-import type { MinerStatus, NoteStatus, TelemetrySnapshot, TransferRecord } from '../types/node';
+import type { MinerStatus, NoteStatus, TelemetrySnapshot, TransferRecord, WalletStatus } from '../types/node';
 
 const STATIC_TIMESTAMP = '2025-01-01T00:00:00.000Z';
 
@@ -45,3 +45,12 @@ export const mockTransfers: TransferRecord[] = [
     created_at: STATIC_TIMESTAMP,
   },
 ];
+
+export const mockWalletStatus: WalletStatus = {
+  mode: 'Full',
+  primary_address: 'shield1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
+  incoming_viewing_key: 'demo-wallet-ivk',
+  balances: { '1': 42 },
+  last_synced_height: 0,
+  pending: mockTransfers,
+};
