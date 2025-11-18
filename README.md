@@ -2,7 +2,7 @@
 
 Quantum-resistant private payments
 
-![HEGEMON atlas emblem showing a layered hexagonal shield](docs/assets/hegemon-atlas-emblem.svg)
+![HEGEMON atlas logotype showing a layered shield and wordmark](docs/assets/hegemon-wordmark.svg)
 
 ## Whitepaper
 
