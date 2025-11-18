@@ -28,8 +28,9 @@ export function NodePage() {
   const [peerUrl, setPeerUrl] = useState('https://node.operator.shc:8545');
   const [dbPath, setDbPath] = useState('node.db');
   const [apiAddrOverride, setApiAddrOverride] = useState('');
-  const [apiToken, setApiToken] = useState('local-dev-token');
+  const [apiToken, setApiToken] = useState('devnet-token');
   const [serverError, setServerError] = useState<string | null>(null);
+  const [adoptedNode, setAdoptedNode] = useState(false);
 
   const defaultRouting: NodeLaunchPayload['routing'] = {
     tls: false,
@@ -64,6 +65,27 @@ export function NodePage() {
     setServerError(null);
   }, [apiAddrOverride, apiToken, dbPath, host, mode, peerUrl, port]);
 
+  // Auto-adopt a running node from the dashboard service (port/token) so quickstart is one-click.
+  useEffect(() => {
+    if (adoptedNode) return;
+    const process = processStatus.data;
+    if (process?.status === 'running' && process.api_addr) {
+      const [apiHost, apiPort] = process.api_addr.split(':');
+      if (apiHost) setHost(apiHost);
+      if (apiPort) setPort(apiPort);
+      if (process.api_token) {
+        setApiToken(process.api_token);
+        markActiveEndpoint({
+          protocol: activeEndpoint.protocol,
+          host: activeEndpoint.host,
+          port: activeEndpoint.port,
+          authToken: process.api_token,
+        });
+      }
+      setAdoptedNode(true);
+    }
+  }, [activeEndpoint.host, activeEndpoint.port, activeEndpoint.protocol, adoptedNode, markActiveEndpoint, processStatus.data]);
+
   const formatError = (error: unknown) => {
     if (error instanceof HttpError) {
       if (error.detail && typeof error.detail === 'object' && 'error' in (error.detail as Record<string, unknown>)) {
@@ -97,14 +119,12 @@ export function NodePage() {
       api_token: apiToken.trim() || undefined,
     };
 
+    pushToast({
+      kind: 'success',
+      title: mode === 'genesis' ? 'Dispatching genesis start' : 'Dispatching join request',
+      description: 'Spawning a local node process via the dashboard proxy...',
+    });
     launcher.mutate(payload, {
-      onMutate: () => {
-        pushToast({
-          kind: 'success',
-          title: mode === 'genesis' ? 'Dispatching genesis start' : 'Dispatching join request',
-          description: 'Spawning a local node process via the dashboard proxy...',
-        });
-      },
       onSuccess: (response) => {
         metricsQuery.refetch();
         pushToast({

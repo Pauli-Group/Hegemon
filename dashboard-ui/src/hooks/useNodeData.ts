@@ -59,45 +59,20 @@ export interface FallbackResult<T> {
   error?: Error;
 }
 
-interface GetOrFallbackOptions {
-  detectMockData?: boolean;
-}
-
-function normalizeForComparison(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => normalizeForComparison(item));
-  }
-  if (value && typeof value === 'object') {
-    return Object.keys(value as Record<string, unknown>)
-      .sort()
-      .reduce<Record<string, unknown>>((acc, key) => {
-        acc[key] = normalizeForComparison((value as Record<string, unknown>)[key]);
-        return acc;
-      }, {});
-  }
-  return value;
-}
-
-function isDeepEqual(a: unknown, b: unknown): boolean {
-  return JSON.stringify(normalizeForComparison(a)) === JSON.stringify(normalizeForComparison(b));
-}
-
 async function getOrFallback<T>(
   serviceUrl: string,
   path: string,
   fallback: T,
-  options: GetOrFallbackOptions = { detectMockData: true },
   authToken?: string,
 ): Promise<FallbackResult<T>> {
   try {
     const raw = await fetchJson<T & { __mock_source?: boolean }>(serviceUrl, path, authToken);
     const { __mock_source, ...rest } = raw;
     const data = rest as T;
-    const shouldMarkMock = FORCE_MOCK_INDICATOR || (options.detectMockData && ((__mock_source ?? false) || isDeepEqual(data, fallback)));
+    const shouldMarkMock = FORCE_MOCK_INDICATOR || (__mock_source ?? false);
     return { data, source: shouldMarkMock ? 'mock' : 'live' } satisfies FallbackResult<T>;
   } catch (error) {
     const normalizedError = error instanceof Error ? error : new Error('Unknown error');
-    console.warn(`Falling back to mock payload for ${path}`, error);
     return { data: fallback, source: 'mock', error: normalizedError } satisfies FallbackResult<T>;
   }
 }
@@ -106,9 +81,8 @@ export function useNodeMetrics() {
   const { serviceUrl, authToken } = useNodeConnection();
   return useQuery<FallbackResult<TelemetrySnapshot>>({
     queryKey: ['node-metrics', serviceUrl],
-    queryFn: () => getOrFallback(serviceUrl, '/node/metrics', mockTelemetry, { detectMockData: true }, authToken),
+    queryFn: () => getOrFallback(serviceUrl, '/node/metrics', mockTelemetry, authToken),
     refetchInterval: 5000,
-    placeholderData: { data: mockTelemetry, source: 'mock' },
   });
 }
 
@@ -116,9 +90,8 @@ export function useWalletNotes() {
   const { serviceUrl, authToken } = useNodeConnection();
   return useQuery<FallbackResult<NoteStatus>>({
     queryKey: ['wallet-notes', serviceUrl],
-    queryFn: () => getOrFallback(serviceUrl, '/node/wallet/notes', mockNotes, { detectMockData: true }, authToken),
+    queryFn: () => getOrFallback(serviceUrl, '/node/wallet/notes', mockNotes, authToken),
     refetchInterval: 7000,
-    placeholderData: { data: mockNotes, source: 'mock' },
   });
 }
 
@@ -127,9 +100,8 @@ export function useMinerStatus() {
   const queryClient = useQueryClient();
   const query = useQuery<FallbackResult<MinerStatus>>({
     queryKey: ['miner-status', serviceUrl],
-    queryFn: () => getOrFallback(serviceUrl, '/node/miner/status', mockMinerStatus, { detectMockData: true }, authToken),
+    queryFn: () => getOrFallback(serviceUrl, '/node/miner/status', mockMinerStatus, authToken),
     refetchInterval: 4000,
-    placeholderData: { data: mockMinerStatus, source: 'mock' },
   });
 
   const mutation = useMutation({
@@ -151,10 +123,8 @@ export function useTransferLedger() {
   const queryClient = useQueryClient();
   const query = useQuery<FallbackResult<{ transfers: TransferRecord[] }>>({
     queryKey: ['wallet-transfers', serviceUrl],
-    queryFn: () =>
-      getOrFallback(serviceUrl, '/node/wallet/transfers', { transfers: mockTransfers }, { detectMockData: false }, authToken),
+    queryFn: () => getOrFallback(serviceUrl, '/node/wallet/transfers', { transfers: mockTransfers }, authToken),
     refetchInterval: 8000,
-    placeholderData: { data: { transfers: mockTransfers }, source: 'mock' },
   });
 
   const mutation = useMutation({
@@ -354,4 +324,3 @@ export function useNodeEventStream(maxSamples = 32) {
   return { events, hashRateSeries, mempoolSeries, difficultySeries, latestTelemetry };
 }
 const FORCE_MOCK_INDICATOR = import.meta.env.VITE_FORCE_MOCK_DATA_INDICATOR === 'true';
-

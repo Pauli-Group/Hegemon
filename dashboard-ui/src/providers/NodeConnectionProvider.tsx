@@ -19,8 +19,6 @@ interface NodeConnectionContextValue {
   authToken?: string;
 }
 
-const STORAGE_KEY = 'shc.dashboard.endpoint';
-
 const DEFAULT_ENDPOINT: NodeEndpoint = (() => {
   try {
     const parsed = new URL(defaultDashboardServiceUrl);
@@ -38,42 +36,15 @@ function endpointToUrl(endpoint: NodeEndpoint): string {
   return sanitizeBaseUrl(`${endpoint.protocol}://${endpoint.host}:${endpoint.port}`);
 }
 
-function readStoredEndpoint(): NodeEndpoint | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<NodeEndpoint>;
-    if (!parsed.host || !parsed.port || !parsed.protocol) return null;
-    return {
-      protocol: parsed.protocol === 'https' ? 'https' : 'http',
-      host: parsed.host,
-      port: Number(parsed.port),
-      authToken: parsed.authToken,
-    } satisfies NodeEndpoint;
-  } catch (error) {
-    console.warn('Failed to parse stored endpoint', error);
-    return null;
-  }
-}
-
 const NodeConnectionContext = createContext<NodeConnectionContextValue | undefined>(undefined);
 
 export function NodeConnectionProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const [endpoint, setEndpointState] = useState<NodeEndpoint>(() => readStoredEndpoint() ?? DEFAULT_ENDPOINT);
+  // Always pin to the service endpoint derived from VITE_DASHBOARD_SERVICE_URL/DEFAULT.
+  const [endpoint, setEndpointState] = useState<NodeEndpoint>(DEFAULT_ENDPOINT);
 
   const setEndpoint = (value: NodeEndpoint) => {
-    setEndpointState(value);
-    if (typeof window !== 'undefined') {
-      try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
-      } catch (error) {
-        console.warn('Failed to persist endpoint selection', error);
-      }
-    }
+    setEndpointState({ ...DEFAULT_ENDPOINT, authToken: value.authToken });
   };
 
   const serviceUrl = useMemo(() => endpointToUrl(endpoint), [endpoint]);
@@ -83,7 +54,18 @@ export function NodeConnectionProvider({ children }: { children: ReactNode }) {
   }, [queryClient, serviceUrl]);
 
   const value = useMemo(
-    () => ({ endpoint, serviceUrl, setEndpoint, markActiveEndpoint: setEndpoint, authToken: endpoint.authToken }),
+    () => ({
+      endpoint,
+      serviceUrl,
+      setEndpoint,
+      // Only update auth token; keep host/port pinned to the service URL.
+      markActiveEndpoint: (value: NodeEndpoint) =>
+        setEndpointState((prev) => ({
+          ...prev,
+          authToken: value.authToken ?? prev.authToken,
+        })),
+      authToken: endpoint.authToken,
+    }),
     [endpoint, serviceUrl],
   );
 

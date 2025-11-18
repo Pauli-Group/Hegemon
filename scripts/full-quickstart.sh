@@ -13,7 +13,7 @@ DEFAULT_UI_PORT=${DASHBOARD_UI_PORT:-5173}
 DASHBOARD_AUTOSTART_NODE=${DASHBOARD_AUTOSTART_NODE:-1}
 DASHBOARD_NODE_HOST=${DASHBOARD_NODE_HOST:-127.0.0.1}
 DEFAULT_NODE_PORT=${DASHBOARD_NODE_PORT:-8080}
-DASHBOARD_NODE_DB_PATH=${DASHBOARD_NODE_DB_PATH:-"$REPO_ROOT/state/dashboard-node.db"}
+DASHBOARD_NODE_DB_PATH=${DASHBOARD_NODE_DB_PATH:-"$REPO_ROOT/state/dashboard-node.$(date +%s).db"}
 DASHBOARD_NODE_TOKEN=${DASHBOARD_NODE_TOKEN:-devnet-token}
 WALLET_STORE_PATH=${WALLET_STORE_PATH:-}
 WALLET_PASSPHRASE_FILE=${WALLET_PASSPHRASE_FILE:-}
@@ -144,7 +144,23 @@ DASHBOARD_SERVICE_PID=$!
 pushd dashboard-ui >/dev/null
 echo "Installing dashboard UI dependencies (npm ci)"
 npm run clean --if-present >/dev/null 2>&1 || true
-rm -rf node_modules
+if [[ -d node_modules ]]; then
+    if ! rm -rf node_modules 2>/dev/null; then
+        echo "rm -rf node_modules failed; retrying with safe Python fallback"
+        "$PYTHON_BIN" - <<'PY'
+import shutil
+import sys
+from pathlib import Path
+path = Path("node_modules")
+try:
+    shutil.rmtree(path, ignore_errors=False)
+except Exception as exc:  # noqa: BLE001
+    print(f"Warning: could not fully remove {path}: {exc}", file=sys.stderr)
+    # best-effort cleanup so npm ci can proceed
+    shutil.rmtree(path, ignore_errors=True)
+PY
+    fi
+fi
 npm ci --no-progress
 
 echo "Starting dashboard UI with Vite (bound to http://${DASHBOARD_UI_HOST}:${DASHBOARD_UI_PORT})"
