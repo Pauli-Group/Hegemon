@@ -20,7 +20,7 @@ pub struct TelemetryPosture {
 }
 
 #[derive(Debug)]
-pub struct Telemetry {
+struct TelemetryInner {
     start: Instant,
     hashes: AtomicU64,
     stale_shares: AtomicU64,
@@ -28,7 +28,12 @@ pub struct Telemetry {
     best_height: AtomicU64,
     mempool_depth: AtomicU64,
     difficulty: AtomicU64,
-    posture: Arc<RwLock<TelemetryPosture>>,
+    posture: RwLock<TelemetryPosture>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Telemetry {
+    inner: Arc<TelemetryInner>,
 }
 
 impl Default for Telemetry {
@@ -37,86 +42,73 @@ impl Default for Telemetry {
     }
 }
 
-impl Clone for Telemetry {
-    fn clone(&self) -> Self {
-        Self {
-            start: self.start,
-            hashes: AtomicU64::new(self.hashes.load(Ordering::Relaxed)),
-            stale_shares: AtomicU64::new(self.stale_shares.load(Ordering::Relaxed)),
-            accepted_shares: AtomicU64::new(self.accepted_shares.load(Ordering::Relaxed)),
-            best_height: AtomicU64::new(self.best_height.load(Ordering::Relaxed)),
-            mempool_depth: AtomicU64::new(self.mempool_depth.load(Ordering::Relaxed)),
-            difficulty: AtomicU64::new(self.difficulty.load(Ordering::Relaxed)),
-            posture: Arc::new(RwLock::new(self.posture.read().clone())),
-        }
-    }
-}
-
 impl Telemetry {
     pub fn new() -> Self {
         Self {
-            start: Instant::now(),
-            hashes: AtomicU64::new(0),
-            stale_shares: AtomicU64::new(0),
-            accepted_shares: AtomicU64::new(0),
-            best_height: AtomicU64::new(0),
-            mempool_depth: AtomicU64::new(0),
-            difficulty: AtomicU64::new(0),
-            posture: Arc::new(RwLock::new(TelemetryPosture::default())),
+            inner: Arc::new(TelemetryInner {
+                start: Instant::now(),
+                hashes: AtomicU64::new(0),
+                stale_shares: AtomicU64::new(0),
+                accepted_shares: AtomicU64::new(0),
+                best_height: AtomicU64::new(0),
+                mempool_depth: AtomicU64::new(0),
+                difficulty: AtomicU64::new(0),
+                posture: RwLock::new(TelemetryPosture::default()),
+            }),
         }
     }
 
     pub fn record_hashes(&self, count: u64) {
-        self.hashes.fetch_add(count, Ordering::Relaxed);
+        self.inner.hashes.fetch_add(count, Ordering::Relaxed);
     }
 
     pub fn record_share(&self, accepted: bool) {
         if accepted {
-            self.accepted_shares.fetch_add(1, Ordering::Relaxed);
+            self.inner.accepted_shares.fetch_add(1, Ordering::Relaxed);
         } else {
-            self.stale_shares.fetch_add(1, Ordering::Relaxed);
+            self.inner.stale_shares.fetch_add(1, Ordering::Relaxed);
         }
     }
 
     pub fn set_height(&self, height: u64) {
-        self.best_height.store(height, Ordering::Relaxed);
+        self.inner.best_height.store(height, Ordering::Relaxed);
     }
 
     pub fn set_mempool_depth(&self, depth: usize) {
-        self.mempool_depth.store(depth as u64, Ordering::Relaxed);
+        self.inner.mempool_depth.store(depth as u64, Ordering::Relaxed);
     }
 
     pub fn set_difficulty(&self, bits: u32) {
-        self.difficulty.store(bits as u64, Ordering::Relaxed);
+        self.inner.difficulty.store(bits as u64, Ordering::Relaxed);
     }
 
     pub fn set_privacy_posture(&self, posture: TelemetryPosture) {
-        *self.posture.write() = posture;
+        *self.inner.posture.write() = posture;
     }
 
     pub fn snapshot(&self) -> TelemetrySnapshot {
-        let elapsed = self.start.elapsed();
-        let hashes = self.hashes.load(Ordering::Relaxed);
+        let elapsed = self.inner.start.elapsed();
+        let hashes = self.inner.hashes.load(Ordering::Relaxed);
         let hash_rate = if elapsed > Duration::from_secs(0) {
             hashes as f64 / elapsed.as_secs_f64()
         } else {
             0.0
         };
-        let accepted = self.accepted_shares.load(Ordering::Relaxed) as f64;
-        let stale = self.stale_shares.load(Ordering::Relaxed) as f64;
+        let accepted = self.inner.accepted_shares.load(Ordering::Relaxed) as f64;
+        let stale = self.inner.stale_shares.load(Ordering::Relaxed) as f64;
         let total_shares = accepted + stale;
         let stale_rate = if total_shares > 0.0 {
             stale / total_shares
         } else {
             0.0
         };
-        let posture = self.posture.read().clone();
+        let posture = self.inner.posture.read().clone();
         TelemetrySnapshot {
             hash_rate,
             total_hashes: hashes,
-            best_height: self.best_height.load(Ordering::Relaxed),
-            mempool_depth: self.mempool_depth.load(Ordering::Relaxed),
-            difficulty_bits: self.difficulty.load(Ordering::Relaxed) as u32,
+            best_height: self.inner.best_height.load(Ordering::Relaxed),
+            mempool_depth: self.inner.mempool_depth.load(Ordering::Relaxed),
+            difficulty_bits: self.inner.difficulty.load(Ordering::Relaxed) as u32,
             stale_share_rate: stale_rate,
             tls_enabled: posture.tls_enabled,
             mtls_enabled: posture.mtls_enabled,

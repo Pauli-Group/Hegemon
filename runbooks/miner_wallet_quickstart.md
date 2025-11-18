@@ -48,6 +48,8 @@ The FastAPI proxy streams CLI actions and mocks node telemetry. Run it from the 
 uvicorn scripts.dashboard_service:app --host 127.0.0.1 --port 8001
 ```
 
+By default the service now autostarts a local node (bound to `http://127.0.0.1:8080` with token `devnet-token`) so the mining dashboard shows live hash rate immediately after `make quickstart`. To disable that behavior—for example if you're pointing to a remote node—export `DASHBOARD_AUTOSTART_NODE=0` before launching `uvicorn`.
+
 In another terminal start the dashboard UI against that proxy:
 
 ```bash
