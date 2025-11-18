@@ -1,4 +1,5 @@
 import type { TransferRecord } from '../types/node';
+import { formatCoinsFromAtomic } from '../utils/amounts';
 import styles from './TransactionTable.module.css';
 
 interface TransactionTableProps {
@@ -34,7 +35,7 @@ export function TransactionTable({ records }: TransactionTableProps) {
               </span>
             </td>
             <td className={styles.address}>{record.address}</td>
-            <td>{record.amount.toFixed(2)}</td>
+            <td>{formatCoinsFromAtomic(record.amount)} HGN</td>
             <td>{record.status}</td>
             <td>{record.confirmations}</td>
             <td>{new Date(record.created_at).toLocaleTimeString()}</td>
