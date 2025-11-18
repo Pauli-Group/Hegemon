@@ -1,25 +1,13 @@
-<svg width="960" height="320" viewBox="0 0 960 320" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">HEGEMON atlas logotype</title>
-  <desc id="desc">Geometric shield with layered lines and HEGEMON wordmark in Space Grotesk inspired typography.</desc>
-  <defs>
-    <linearGradient id="shieldGradient" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#1BE7FF" stop-opacity="0.95" />
-      <stop offset="100%" stop-color="#0E1C36" stop-opacity="0.95" />
-    </linearGradient>
-  </defs>
-  <rect width="960" height="320" rx="28" fill="#0E1C36" />
-  <g transform="translate(60 50)">
-    <path d="M128 0L248 64V192L128 256L8 192V64L128 0Z" fill="url(#shieldGradient)" opacity="0.95" />
-    <path d="M128 20L228 74V182L128 236L28 182V74L128 20Z" stroke="#F4F7FB" stroke-width="6" stroke-linejoin="round" fill="none" opacity="0.95" />
-    <path d="M128 60L188 92V164L128 196L68 164V92L128 60Z" stroke="#1BE7FF" stroke-width="6" stroke-linejoin="round" fill="none" />
-    <path d="M128 102L158 118V152L128 168L98 152V118L128 102Z" fill="#19B37E" opacity="0.9" />
-    <line x1="128" y1="58" x2="128" y2="16" stroke="#F5A623" stroke-width="6" stroke-linecap="round" opacity="0.85" />
-    <line x1="128" y1="262" x2="128" y2="218" stroke="#F5A623" stroke-width="6" stroke-linecap="round" opacity="0.85" />
-  </g>
-  <g transform="translate(340 135)">
-    <text x="0" y="0" fill="#F4F7FB" font-family="'Space Grotesk', 'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="60" font-weight="600" letter-spacing="2">HEGEMON</text>
-    <text x="0" y="46" fill="#1BE7FF" font-family="'Space Grotesk', 'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="22" font-weight="500" letter-spacing="4">ATLAS SETTLEMENT LAYER</text>
-    <rect x="0" y="62" width="380" height="6" rx="3" fill="#1BE7FF" opacity="0.7" />
-    <rect x="0" y="74" width="220" height="6" rx="3" fill="#19B37E" opacity="0.8" />
-  </g>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">HEGEMON sovereign shield logotype</title>
+  <desc id="desc">Golden throne triangle encircling a privacy shield lattice with the HEGEMON wordmark beneath.</desc>
+  <rect width="200" height="200" fill="#0C0C0C"/>
+  <path d="M100 40 L45 160 L155 160 Z" fill="none" stroke="#FFD700" stroke-width="12"/>
+  <path d="M100 40 L45 160 L155 160 Z" fill="#FFD700" opacity="0.15"/>
+  <circle cx="100" cy="100" r="48" fill="none" stroke="#FFD700" stroke-width="8"/>
+  <circle cx="100" cy="100" r="38" fill="#FFD700" opacity="0.08"/>
+  <line x1="70" y1="70" x2="130" y2="130" stroke="#FFD700" stroke-width="2" opacity="0.4"/>
+  <line x1="70" y1="130" x2="130" y2="70" stroke="#FFD700" stroke-width="2" opacity="0.4"/>
+  <text x="100" y="185" font-family="Georgia, 'Times New Roman', serif" font-size="24" font-weight="bold" fill="#FFFFFF" text-anchor="middle" letter-spacing="2">HEGEMON</text>
 </svg>

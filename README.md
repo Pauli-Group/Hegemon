@@ -2,7 +2,7 @@
 
 Quantum-resistant private payments
 
-![HEGEMON atlas logotype showing a layered shield and wordmark](docs/assets/hegemon-wordmark.svg)
+![HEGEMON sovereignty emblem with a golden throne triangle, shielded rings, lattice accent, and HEGEMON wordmark](docs/assets/hegemon-wordmark.svg)
 
 ## Whitepaper
 

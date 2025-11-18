@@ -1,15 +1,13 @@
-<svg width="320" height="320" viewBox="0 0 240 240" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">HEGEMON HGN atlas emblem</title>
-  <desc id="desc">Interlocking hexagonal planes wrapped around a central shield to represent HEGEMON consensus, privacy, and governance.</desc>
-  <rect width="240" height="240" fill="none" rx="24" />
-  <g stroke-linejoin="round" stroke-linecap="round">
-    <polygon points="120,12 214,67 214,173 120,228 26,173 26,67" fill="#0E1C36" stroke="#1BE7FF" stroke-width="10" />
-    <polygon points="120,44 188,84 188,156 120,196 52,156 52,84" fill="#0E1C36" stroke="#F5A623" stroke-width="6" opacity="0.9" />
-    <g fill-opacity="0.85" stroke="#0E1C36" stroke-width="5">
-      <polygon points="120,36 186,112 120,188 54,112" fill="#1BE7FF" />
-      <polygon points="120,36 186,112 120,188 54,112" fill="#19B37E" transform="rotate(60 120 112)" />
-      <polygon points="120,36 186,112 120,188 54,112" fill="#F5A623" transform="rotate(120 120 112)" />
-    </g>
-    <polygon points="120,88 152,106 152,140 120,158 88,140 88,106" fill="#0E1C36" stroke="#1BE7FF" stroke-width="4" />
-  </g>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">HEGEMON golden sovereignty mark</title>
+  <desc id="desc">Triangular throne outline around a shielded privacy circle with a lattice accent and HEGEMON wordmark.</desc>
+  <rect width="200" height="200" fill="#0C0C0C"/>
+  <path d="M100 40 L45 160 L155 160 Z" fill="none" stroke="#FFD700" stroke-width="12"/>
+  <path d="M100 40 L45 160 L155 160 Z" fill="#FFD700" opacity="0.15"/>
+  <circle cx="100" cy="100" r="48" fill="none" stroke="#FFD700" stroke-width="8"/>
+  <circle cx="100" cy="100" r="38" fill="#FFD700" opacity="0.08"/>
+  <line x1="70" y1="70" x2="130" y2="130" stroke="#FFD700" stroke-width="2" opacity="0.4"/>
+  <line x1="70" y1="130" x2="130" y2="70" stroke="#FFD700" stroke-width="2" opacity="0.4"/>
+  <text x="100" y="185" font-family="Georgia, 'Times New Roman', serif" font-size="24" font-weight="bold" fill="#FFFFFF" text-anchor="middle" letter-spacing="2">HEGEMON</text>
 </svg>
