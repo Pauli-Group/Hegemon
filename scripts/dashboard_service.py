@@ -166,29 +166,6 @@ SAMPLE_NOTE_STATUS = {
     "next_index": 2050,
 }
 
-SAMPLE_EVENTS: List[Dict[str, Any]] = [
-    {
-        "type": "telemetry",
-        "hash_rate": 1_200_000.0,
-        "best_height": 127,
-        "mempool_depth": 28,
-        "difficulty_bits": 50331670,
-        "stale_share_rate": 0.01,
-        "timestamp": _now_iso(),
-    },
-    {
-        "type": "block",
-        "height": 128,
-        "hash": "mock-block-0128",
-        "timestamp": _now_iso(),
-    },
-    {
-        "type": "transaction",
-        "tx_id": "mock-tx-9c7a",
-        "timestamp": _now_iso(),
-    },
-]
-
 MOCK_TRANSFERS: List[Dict[str, Any]] = [
     {
         "id": "bootstrap-transfer",
@@ -659,11 +636,11 @@ class WalletProcessSupervisor:
                 material.store_path,
                 "--passphrase",
                 material.passphrase,
-                "--rpc_url",
+                "--rpc-url",
                 node_url,
-                "--auth_token",
+                "--auth-token",
                 node_token,
-                "--http_listen",
+                "--http-listen",
                 f"{material.api_host}:{material.api_port}",
             ]
             cargo_path = shutil.which(command[0])
@@ -945,29 +922,37 @@ async def _proxy_note_status() -> Dict[str, Any]:
 
 
 async def _node_event_messages() -> AsyncIterator[str]:
-    if NODE_WS_URL:
-        while True:
-            try:
-                async with websockets.connect(
-                    NODE_WS_URL,
-                    extra_headers=_node_headers(),
-                    ping_interval=20,
-                    ping_timeout=20,
-                ) as ws:
-                    async for message in ws:
-                        yield message
-            except Exception as exc:  # pragma: no cover - runtime resilience
-                warning = json.dumps({"type": "warning", "message": str(exc)})
-                yield warning
-                await asyncio.sleep(STREAM_RECONNECT_SECONDS)
-    else:
-        index = 0
-        while True:
-            payload = dict(SAMPLE_EVENTS[index % len(SAMPLE_EVENTS)])
-            payload["timestamp"] = _now_iso()
-            yield json.dumps(payload)
-            index += 1
-            await asyncio.sleep(5)
+    while True:
+        if not NODE_WS_URL:
+            warning = json.dumps(
+                {
+                    "type": "warning",
+                    "message": "Node RPC URL is not configured; start a node to stream live events.",
+                    "timestamp": _now_iso(),
+                }
+            )
+            yield warning
+            await asyncio.sleep(STREAM_RECONNECT_SECONDS)
+            continue
+        try:
+            async with websockets.connect(
+                NODE_WS_URL,
+                extra_headers=_node_headers(),
+                ping_interval=20,
+                ping_timeout=20,
+            ) as ws:
+                async for message in ws:
+                    yield message
+        except Exception as exc:  # pragma: no cover - runtime resilience
+            warning = json.dumps(
+                {
+                    "type": "warning",
+                    "message": f"Event stream disconnected: {exc}",
+                    "timestamp": _now_iso(),
+                }
+            )
+            yield warning
+            await asyncio.sleep(STREAM_RECONNECT_SECONDS)
 
 
 class CommandFailure(RuntimeError):
