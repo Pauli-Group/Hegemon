@@ -4,7 +4,7 @@ import QRCode from 'react-qr-code';
 import { PageShell } from '../components/PageShell';
 import { MetricTile } from '../components/MetricTile';
 import { TransactionTable } from '../components/TransactionTable';
-import { useNodeMetrics, useTransferLedger, useWalletNotes } from '../hooks/useNodeData';
+import { useNodeMetrics, useTransferLedger, useWalletNotes, useWalletStatus } from '../hooks/useNodeData';
 import { useToasts } from '../components/ToastProvider';
 import { ConnectionBadge } from '../components/ConnectionBadge';
 import { DataStatusBanner } from '../components/DataStatusBanner';
@@ -22,21 +22,33 @@ interface TransferFormState {
 export function WalletPage() {
   const walletNotes = useWalletNotes();
   const nodeMetrics = useNodeMetrics();
+  const walletStatus = useWalletStatus();
   const transfersQuery = useTransferLedger();
   const { pushToast } = useToasts();
   const [form, setForm] = useState<TransferFormState>({ address: '', amount: 0.5, memo: '', fee: 0.001 });
 
+  const wallet = walletStatus.data?.data;
+  const walletSource = walletStatus.data?.source ?? 'mock';
   const notes = walletNotes.data?.data;
   const metrics = nodeMetrics.data?.data;
   const notesSource = walletNotes.data?.source ?? 'mock';
   const metricsSource = nodeMetrics.data?.source ?? 'mock';
 
+  const balanceMap = wallet?.balances ?? {};
+  const nativeBalance = (() => {
+    if (typeof balanceMap['1'] === 'number') return balanceMap['1'];
+    const numericKey = (balanceMap as Record<string | number, number>)[1];
+    return typeof numericKey === 'number' ? numericKey : 0;
+  })();
+
+  const primaryAddress = wallet?.primary_address ?? 'shield1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq';
+  const viewKey = wallet?.incoming_viewing_key || VIEW_KEY;
   const coverage = notes ? `${notes.leaf_count.toLocaleString()} notes` : '—';
   const shieldedBalanceLabel =
-    notesSource === 'live'
-      ? 'Connect a synced wallet daemon to display spendable balance'
+    walletSource === 'live'
+      ? `Spendable balance (asset 1) at height ${wallet?.last_synced_height ?? 0}`
       : 'Showing placeholder until live wallet data is available';
-  const shieldedBalanceValue = notesSource === 'live' ? '—' : '—';
+  const shieldedBalanceValue = walletSource === 'live' ? `${nativeBalance.toLocaleString()} HGN` : '—';
 
   const transfers = useMemo(() => {
     const items = transfersQuery.data?.data?.transfers ?? [];
@@ -64,7 +76,7 @@ export function WalletPage() {
 
   const copyViewKey = async () => {
     try {
-      await navigator.clipboard.writeText(VIEW_KEY);
+      await navigator.clipboard.writeText(viewKey);
       pushToast({ kind: 'success', title: 'View key copied' });
     } catch (error) {
       pushToast({ kind: 'error', title: 'Copy failed', description: (error as Error).message });
@@ -82,6 +94,11 @@ export function WalletPage() {
         </div>
         <div className={styles.badgeRow}>
           <ConnectionBadge
+            source={walletStatus.data?.source ?? 'mock'}
+            error={walletStatus.data?.error}
+            label="Wallet status"
+          />
+          <ConnectionBadge
             source={walletNotes.data?.source ?? 'mock'}
             error={walletNotes.data?.error}
             label="Wallet notes feed"
@@ -95,9 +112,9 @@ export function WalletPage() {
       </div>
 
       <DataStatusBanner
-        label="Wallet notes feed"
-        result={walletNotes.data}
-        isPlaceholder={walletNotes.isPlaceholderData}
+        label="Wallet status"
+        result={walletStatus.data}
+        isPlaceholder={walletStatus.isPlaceholderData}
         cta={<Link to="/node">Configure a node</Link>}
       />
       <DataStatusBanner
@@ -174,26 +191,29 @@ export function WalletPage() {
         </article>
         <article className={styles.receiveCard}>
           <header>
-            <h3>Accept incoming payments</h3>
-            <p>Share the QR or export your view key to monitor confirmations without revealing spend authority.</p>
-          </header>
-          <div className={styles.qrRow}>
-            <QRCode value={VIEW_KEY} size={132} bgColor="transparent" fgColor="var(--color-surface-mid)" />
-            <div>
-              <p className={styles.viewKey}>{VIEW_KEY}</p>
-              <div className={styles.receiveActions}>
-                <button type="button" onClick={copyViewKey} className={styles.ghostButton}>
-                  Copy view key
-                </button>
-                <a
-                  className={styles.linkButton}
-                  download="view-key.txt"
-                  href={`data:text/plain,${encodeURIComponent(VIEW_KEY)}`}
-                >
-                  Export
-                </a>
-              </div>
+          <h3>Accept incoming payments</h3>
+          <p>Share the QR or export your view key to monitor confirmations without revealing spend authority.</p>
+        </header>
+        <div className={styles.qrRow}>
+          <QRCode value={viewKey} size={132} bgColor="transparent" fgColor="var(--color-surface-mid)" />
+          <div>
+            <p className={styles.kicker}>Primary address</p>
+            <p className={styles.viewKey}>{primaryAddress}</p>
+            <p className={styles.kicker}>Incoming view key</p>
+            <p className={styles.viewKey}>{viewKey}</p>
+            <div className={styles.receiveActions}>
+              <button type="button" onClick={copyViewKey} className={styles.ghostButton}>
+                Copy view key
+              </button>
+              <a
+                className={styles.linkButton}
+                download="view-key.txt"
+                href={`data:text/plain,${encodeURIComponent(viewKey)}`}
+              >
+                Export
+              </a>
             </div>
+          </div>
           </div>
         </article>
       </section>

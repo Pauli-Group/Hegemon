@@ -40,6 +40,17 @@ export interface TransferRecord {
   created_at: string;
 }
 
+export type WalletMode = 'Full' | 'WatchOnly';
+
+export interface WalletStatus {
+  mode: WalletMode;
+  primary_address: string;
+  incoming_viewing_key?: string | null;
+  balances: Record<string, number>;
+  last_synced_height: number;
+  pending: TransferRecord[];
+}
+
 export type NodeEvent =
   | ({ type: 'telemetry' } & Pick<
       TelemetrySnapshot,

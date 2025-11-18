@@ -8,8 +8,9 @@ import type {
   TelemetryPoint,
   TelemetrySnapshot,
   TransferRecord,
+  WalletStatus,
 } from '../types/node';
-import { mockMinerStatus, mockNotes, mockTelemetry, mockTransfers } from '../mocks/nodeSamples';
+import { mockMinerStatus, mockNotes, mockTelemetry, mockTransfers, mockWalletStatus } from '../mocks/nodeSamples';
 
 const SERVICE_HEADERS: HeadersInit = { 'Content-Type': 'application/json' };
 
@@ -162,6 +163,15 @@ export function useTransferLedger() {
   });
 
   return { ...query, submitTransfer: mutation };
+}
+
+export function useWalletStatus() {
+  const { serviceUrl, authToken } = useNodeConnection();
+  return useQuery<FallbackResult<WalletStatus>>({
+    queryKey: ['wallet-status', serviceUrl],
+    queryFn: () => getOrFallback(serviceUrl, '/node/wallet/status', mockWalletStatus, authToken),
+    refetchInterval: 8000,
+  });
 }
 
 export type NodeLifecycleMode = 'genesis' | 'join';
