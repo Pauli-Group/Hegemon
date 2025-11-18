@@ -13,7 +13,7 @@ export function PageShell({ title, intro, actions, children }: PageShellProps) {
     <section className={styles.shell}>
       <div className={styles.headerRow}>
         <div>
-          <p className={styles.kicker}>Synthetic Hegemonic Currency</p>
+          <p className={styles.kicker}>HEGEMON · HGN</p>
           <h1>{title}</h1>
           {intro && <p className={styles.intro}>{intro}</p>}
         </div>

@@ -54,7 +54,7 @@ from scripts.dashboard import (  # type: ignore[import]
 ACTIONS = _actions()
 STARTED_AT = datetime.now(tz=timezone.utc).isoformat()
 
-app = FastAPI(title="Synthetic Hegemonic Currency Ops Dashboard Service")
+app = FastAPI(title="HEGEMON Ops Dashboard Service")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

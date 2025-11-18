@@ -1,28 +1,28 @@
-# Interlocking Triad Emblem
+# HEGEMON Atlas Emblem
 
-![SHC interlocking triad emblem](assets/shc-interlocking-triad.svg)
+![HEGEMON atlas emblem](assets/hegemon-atlas-emblem.svg)
 
 ## Essence
-- **Hexagonal lattice** – the perimeter hexagon anchors the mark in the language of settlement layers and Byzantine fault-tolerant topologies that rely on six-way symmetry for stability.
-- **Three interlocking rhombi** – each rhombus is a rotated diamond (four equilateral triangles) that represents one of the braided subsystems: shielded pool, deterministic consensus, and programmable governance. Their overlap forms a central hexapod node that communicates unified liquidity.
-- **Inner dark core** – the charcoal hexagon references the privacy-preserving pool and the PQ-safe vaulting mentioned in the README, highlighting the protected value store that everything else defends.
+- **Layered hex shield** – dual hexagonal frames use the brand primary base to communicate settlement-grade stability, while contrasting strokes reinforce the HGN ticker’s precision.
+- **Triad of planes** – three interlocking lozenges express the fusion of privacy (shielded pool), programmable governance, and consensus telemetry. Rotations preserve symmetry so the mark remains legible at dashboard favicon sizes.
+- **Central vault** – the inner hexagon keeps the privacy vault visible even when the emblem is rendered monochrome, echoing the post-quantum protections described in the README.
 
 ## Geometry & construction
-- All coordinates sit on a 240 × 240 grid so the emblem scales predictably from favicons to slide headers.
-- The outer frame uses radius-aligned points `(120,12)`, `(214,67)`, `(214,177)`, `(120,232)`, `(26,177)`, `(26,67)` to maintain exact 120° turns.
-- The rhombi share the base polygon `[(120,28), (196,120), (120,212), (44,120)]` and are rotated by `0°`, `60°`, and `120°` around the center to create a woven impression without bezier distortion.
-- Stroke widths (10 px for the frame, 6 px for the rhombi, 4 px for the core) were tuned so that overlaps produce a visible knot while remaining legible at 24 px.
+- All coordinates sit on a 240 × 240 grid for predictable scaling across CLI badges, dashboards, and PDFs.
+- The outer frame uses points `(120,12)`, `(214,67)`, `(214,173)`, `(120,228)`, `(26,173)`, `(26,67)` with a 10 px stroke to keep 120° turns crisp.
+- The secondary frame at `(120,44) … (52,84)` adds depth and a highlight edge for motion and hover states.
+- The triad shares the base polygon `[(120,36), (186,112), (120,188), (54,112)]` rotated `0°`, `60°`, and `120°` around `(120,112)` to create the woven knot without bezier distortion.
+- Stroke widths: 10 px (outer frame), 6 px (secondary frame), 5 px (triad outlines), 4 px (core), aligned with the branding system’s legibility guidance.
 
 ## Palette
 | Layer | Color | Hex | Usage |
 | --- | --- | --- | --- |
-| Frame | Midnight slate | `#0F172A` | Exterior anchor and typography pairings |
-| Rhombus A | Signal cyan | `#38BDF8` | Shielded pool / liquidity planes |
-| Rhombus B | Noctilucent indigo | `#818CF8` | Consensus and networking |
-| Rhombus C | Aurora teal | `#22D3EE` | Governance + programmability |
-| Core | Obsidian | `#020617` | Privacy-preserving settlement core |
+| Outer frame & accents | Ionosphere | `#1BE7FF` | HGN action accents, nav focus, outline glow |
+| Secondary frame | Molten Amber | `#F5A623` | Governance highlights and state transitions |
+| Triad planes | Proof Green / Ionosphere / Molten Amber | `#19B37E`, `#1BE7FF`, `#F5A623` | Privacy, consensus, and governance planes |
+| Core fill | Deep Midnight | `#0E1C36` | Settlement vault, dark UI base |
 
 ## Usage notes
-1. Keep a minimum padding equal to the inner hexagon height (~104 px at 1×) around the mark.
-2. The SVG is resolution-independent; prefer referencing `docs/assets/shc-interlocking-triad.svg` directly instead of exporting rasters when possible.
-3. When a single-color lockup is required, fill the rhombi and frame with `currentColor` and retain the core hexagon to preserve the knot silhouette.
+1. Keep padding equal to the inner frame height (~112 px at 1×) around the mark.
+2. Reference `docs/assets/hegemon-atlas-emblem.svg` directly to preserve crisp strokes on high-DPI displays.
+3. For single-color lockups, set all strokes and fills to `currentColor` while maintaining the dual-hex silhouette for recognizability.
