@@ -7,7 +7,7 @@ import { NetworkPage } from './pages/NetworkPage';
 import { NodePage } from './pages/NodePage';
 import { useNodeMetrics } from './hooks/useNodeData';
 import { ConnectionBadge } from './components/ConnectionBadge';
-import logo from './assets/shc-interlocking-triad.svg';
+import logo from './assets/hegemon-atlas-emblem.svg';
 import styles from './App.module.css';
 
 function App() {
@@ -18,9 +18,9 @@ function App() {
         <header className={styles.navbar}>
           <div className={styles.brandColumn}>
             <div className={styles.brandRow}>
-              <img className={styles.logo} src={logo} alt="Synthetic Hegemonic Currency logo" />
+              <img className={styles.logo} src={logo} alt="HEGEMON HGN emblem" />
               <div className={styles.brandText}>
-                <span className={styles.projectName}>Synthetic Hegemonic Currency</span>
+                <span className={styles.projectName}>HEGEMON</span>
                 <span className={styles.consoleLabel}>Operations Console</span>
               </div>
             </div>

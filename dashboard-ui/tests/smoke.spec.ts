@@ -27,8 +27,8 @@ test('wallet dashboard renders metrics and transfer flow', async ({ page }) => {
   await captureSnapshot(page, 'wallet-dashboard.svg');
 
   await page.getByLabel('Recipient address').fill('shield1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');
-  await page.getByLabel('Amount (SHC)').fill('1.25');
-  await page.getByLabel('Fee (SHC)').fill('0.01');
+  await page.getByLabel('Amount (HGN)').fill('1.25');
+  await page.getByLabel('Fee (HGN)').fill('0.01');
   await page.getByLabel('Memo').fill('Playwright transfer smoke test');
   await page.getByRole('button', { name: 'Send transfer' }).click();
 
