@@ -15,7 +15,7 @@ use tokio::net::TcpListener;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::error::NodeError;
-use crate::service::{MinerAction, MinerStatus, NodeService, NoteStatus};
+use crate::service::{MinerAction, MinerStatus, NodeService, NoteStatus, StorageFootprint};
 use crate::telemetry::TelemetrySnapshot;
 use wallet::TransactionBundle;
 
@@ -42,6 +42,7 @@ pub async fn serve(node: Arc<NodeService>) -> Result<()> {
         .route("/wallet/ciphertexts", get(ciphertexts))
         .route("/wallet/nullifiers", get(nullifiers))
         .route("/metrics", get(metrics))
+        .route("/storage/footprint", get(storage_footprint))
         .route("/miner/status", get(miner_status))
         .route("/miner/control", post(miner_control))
         .route("/ws", get(ws_handler))
@@ -53,6 +54,7 @@ pub async fn serve(node: Arc<NodeService>) -> Result<()> {
         .route("/node/wallet/ciphertexts", get(ciphertexts))
         .route("/node/wallet/nullifiers", get(nullifiers))
         .route("/node/metrics", get(metrics))
+        .route("/node/storage/footprint", get(storage_footprint))
         .route("/node/miner/status", get(miner_status))
         .route("/node/miner/control", post(miner_control))
         .route("/node/ws", get(ws_handler))
@@ -156,6 +158,14 @@ async fn metrics(
 ) -> Result<Json<TelemetrySnapshot>, StatusCode> {
     require_auth(&headers, &state.token)?;
     Ok(Json(state.node.telemetry_snapshot()))
+}
+
+async fn storage_footprint(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<StorageFootprint>, StatusCode> {
+    require_auth(&headers, &state.token)?;
+    state.node.storage_footprint().map(Json).map_err(map_error)
 }
 
 async fn miner_status(

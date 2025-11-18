@@ -30,6 +30,14 @@ pub struct Storage {
     ciphertexts: sled::Tree,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct StorageStats {
+    pub blocks: usize,
+    pub notes: usize,
+    pub nullifiers: usize,
+    pub ciphertexts: usize,
+}
+
 impl Storage {
     pub fn open(path: impl AsRef<Path>) -> NodeResult<Self> {
         let db = sled::open(path)?;
@@ -46,6 +54,15 @@ impl Storage {
             nullifiers,
             ciphertexts,
         })
+    }
+
+    pub fn stats(&self) -> StorageStats {
+        StorageStats {
+            blocks: self.blocks.len(),
+            notes: self.notes.len(),
+            nullifiers: self.nullifiers.len(),
+            ciphertexts: self.ciphertexts.len(),
+        }
     }
 
     pub fn flush(&self) -> NodeResult<()> {
