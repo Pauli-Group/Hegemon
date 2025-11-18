@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::fs;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -74,6 +76,16 @@ pub struct MinerStatus {
     pub target_hash_rate: u64,
     pub thread_count: usize,
     pub last_updated: u64,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct StorageFootprint {
+    pub height: u64,
+    pub blocks: u64,
+    pub notes: u64,
+    pub nullifiers: u64,
+    pub ciphertexts: u64,
+    pub db_bytes: u64,
 }
 
 pub struct NodeService {
@@ -318,6 +330,20 @@ impl NodeService {
             supply_digest: ledger.supply_digest,
             pow_bits: ledger.pow_bits,
         }
+    }
+
+    pub fn storage_footprint(&self) -> NodeResult<StorageFootprint> {
+        let ledger = self.ledger.lock();
+        let stats = self.storage.stats();
+        let db_bytes = dir_size(&self.config.db_path)?;
+        Ok(StorageFootprint {
+            height: ledger.height,
+            blocks: stats.blocks as u64,
+            notes: stats.notes as u64,
+            nullifiers: stats.nullifiers as u64,
+            ciphertexts: stats.ciphertexts as u64,
+            db_bytes,
+        })
     }
 
     pub async fn submit_transaction(&self, bundle: TransactionBundle) -> NodeResult<[u8; 32]> {
@@ -678,6 +704,19 @@ fn commitment_to_felt(bytes: &[u8; 32]) -> Option<Felt> {
     let mut buf = [0u8; 8];
     buf.copy_from_slice(&bytes[24..]);
     Some(Felt::new(u64::from_be_bytes(buf)))
+}
+
+fn dir_size(path: &Path) -> NodeResult<u64> {
+    let metadata = fs::metadata(path)?;
+    if metadata.is_file() {
+        return Ok(metadata.len());
+    }
+    let mut total = 0u64;
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        total += dir_size(&entry.path())?;
+    }
+    Ok(total)
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
