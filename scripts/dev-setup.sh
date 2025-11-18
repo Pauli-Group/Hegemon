@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Installs the toolchains and CLI dependencies needed to build the SHC workspace.
+# Installs the toolchains and CLI dependencies needed to build the HEGEMON (HGN) workspace.
 # The script is idempotent and can be re-run safely. On Debian/Ubuntu systems
 # it will also ensure jq/clang-format/build-essential exist for benchmark demos.
 

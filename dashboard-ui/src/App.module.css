@@ -28,8 +28,10 @@
   height: 44px;
   padding: 6px;
   border-radius: 12px;
-  background: rgba(244, 247, 251, 0.05);
-  box-shadow: inset 0 0 0 1px rgba(244, 247, 251, 0.08);
+  background: rgba(27, 231, 255, 0.08);
+  box-shadow:
+    inset 0 0 0 1px rgba(27, 231, 255, 0.3),
+    0 10px 24px rgba(14, 28, 54, 0.35);
 }
 
 .brandText {

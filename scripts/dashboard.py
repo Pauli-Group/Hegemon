@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Project operations dashboard for Synthetic Hegemonic Currency.
+"""Project operations dashboard for HEGEMON.
 
 This CLI surfaces common development workflows (setup, tests, demos,
 and benchmarks) through a single interface so contributors can quickly
@@ -298,7 +298,7 @@ def print_action_table(actions: Dict[str, DashboardAction]) -> None:
 
 def interactive_loop(actions: Dict[str, DashboardAction]) -> None:
     while True:
-        print("\nSynthetic Hegemonic Currency dashboard")
+        print("\nHEGEMON dashboard")
         print("Select an action to run:")
         choices: list[str] = []
         index = 1

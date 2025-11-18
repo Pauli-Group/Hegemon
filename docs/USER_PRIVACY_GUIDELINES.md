@@ -1,9 +1,9 @@
 # User Privacy Guidelines
 
-These guidelines explain how to use Synthetic Hegemonic Currency (SHC) software in a way that preserves the post-quantum privacy guarantees described in `README.md`, `DESIGN.md`, `METHODS.md`, and `docs/THREAT_MODEL.md`. Treat this document as the living owner’s manual for privacy hygiene: every new wallet feature, networking mode, or governance control must be reflected here so that end users can make informed operational decisions.
+These guidelines explain how to use HEGEMON (HGN) software in a way that preserves the post-quantum privacy guarantees described in `README.md`, `DESIGN.md`, `METHODS.md`, and `docs/THREAT_MODEL.md`. Treat this document as the living owner’s manual for privacy hygiene: every new wallet feature, networking mode, or governance control must be reflected here so that end users can make informed operational decisions.
 
 ## 1. Purpose and scope
-- **Audience** – Wallet operators, PoW miners, governance participants, and auditors who interact with SHC infrastructure or artifacts derived from it.
+- **Audience** – Wallet operators, PoW miners, governance participants, and auditors who interact with HGN infrastructure or artifacts derived from it.
 - **Goals** – Minimize metadata leakage, protect secret material, and keep shielded transactions unlinkable even when an adversary controls networks or compromised devices as described in the threat model.
 - **Maintenance rule** – Any change to shielded-pool semantics, wallet key handling, networking transports, or disclosure tooling must update these guidelines before the feature is considered shippable.
 
@@ -42,7 +42,7 @@ Additional wallet-specific recommendations:
 
 ## 6. Device, supply-chain, and physical security
 - Use hardware with verified boot and keep firmware hashes recorded in an operator log.
-- Dedicate machines (or VMs) to SHC operations so browsing, messaging, and wallet activity do not share memory space.
+- Dedicate machines (or VMs) to HGN operations so browsing, messaging, and wallet activity do not share memory space.
 - Keep air-gapped builders for proving key generation or for running `circuits/formal` verification jobs; never copy proving keys through untrusted cloud storage.
 - Store mnemonic backups in tamper-evident bags and implement dual-control (two people present) before any recovery attempt.
 
@@ -59,4 +59,4 @@ Additional wallet-specific recommendations:
 - **Quarterly privacy drills** – Operators should rehearse the checklist in Sections 3–7, capture deviations, and open issues if tooling cannot enforce a recommendation.
 - **Document stewardship** – The wallet team owns Sections 3 & 5, the consensus/networking team owns Section 4, and the governance team owns Sections 6–8. Ownership must be reassigned explicitly whenever team composition changes.
 
-Keeping this guide synchronized with implementation details ensures SHC’s privacy guarantees remain actionable rather than aspirational. Treat every guideline as a testable requirement, and open a pull request whenever you find a gap.
+Keeping this guide synchronized with implementation details ensures HGN’s privacy guarantees remain actionable rather than aspirational. Treat every guideline as a testable requirement, and open a pull request whenever you find a gap.
