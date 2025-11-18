@@ -1,7 +1,5 @@
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom';
-import { ActionCatalogPage } from './pages/ActionCatalogPage';
 import { ActionRunPage } from './pages/ActionRunPage';
-import { QuickstartPage } from './pages/QuickstartPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { WalletPage } from './pages/WalletPage';
 import { MiningPage } from './pages/MiningPage';
@@ -33,10 +31,6 @@ function App() {
             />
           </div>
           <nav className={styles.navLinks}>
-            <NavLink to="/" end>
-              Catalog
-            </NavLink>
-            <NavLink to="/quickstart">Quickstart</NavLink>
             <NavLink to="/wallet">Wallet</NavLink>
             <NavLink to="/mining">Mining</NavLink>
             <NavLink to="/node">Node</NavLink>
@@ -44,8 +38,7 @@ function App() {
           </nav>
         </header>
         <Routes>
-          <Route path="/" element={<ActionCatalogPage />} />
-          <Route path="/quickstart" element={<QuickstartPage />} />
+          <Route path="/" element={<NodePage />} />
           <Route path="/wallet" element={<WalletPage />} />
           <Route path="/mining" element={<MiningPage />} />
           <Route path="/node" element={<NodePage />} />
