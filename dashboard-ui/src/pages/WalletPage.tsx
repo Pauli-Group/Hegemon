@@ -139,7 +139,7 @@ export function WalletPage() {
             </label>
             <div className={styles.inlineFields}>
               <label>
-                <span>Amount (SHC)</span>
+                <span>Amount (HGN)</span>
                 <input
                   type="number"
                   step="0.01"
@@ -149,7 +149,7 @@ export function WalletPage() {
                 />
               </label>
               <label>
-                <span>Fee (SHC)</span>
+                <span>Fee (HGN)</span>
                 <input
                   type="number"
                   step="0.0001"
