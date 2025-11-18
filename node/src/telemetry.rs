@@ -75,7 +75,9 @@ impl Telemetry {
     }
 
     pub fn set_mempool_depth(&self, depth: usize) {
-        self.inner.mempool_depth.store(depth as u64, Ordering::Relaxed);
+        self.inner
+            .mempool_depth
+            .store(depth as u64, Ordering::Relaxed);
     }
 
     pub fn set_difficulty(&self, bits: u32) {
