@@ -1,6 +1,6 @@
 # Documentation Hub
 
-![HEGEMON atlas logotype showing a layered shield and wordmark](assets/hegemon-wordmark.svg)
+![HEGEMON sovereignty emblem with a golden throne triangle, shielded rings, lattice accent, and HEGEMON wordmark](assets/hegemon-wordmark.svg)
 
 This `docs/` tree centralizes contributor-facing material for the synthetic hegemonic currency monorepo. Everything here is considered normative alongside `DESIGN.md` and `METHODS.md`; when you change implementation code, update the relevant design/method sections *and* the docs entry that describes the behavior. The most useful entry points are:
 

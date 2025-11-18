@@ -2,10 +2,12 @@
 
 :root {
   --color-midnight: #0e1c36;
+  --color-night-obsidian: #0c0c0c;
   --color-surface-high: #f4f7fb;
   --color-surface-mid: #e1e6ee;
   --color-accent-primary: #1be7ff;
   --color-accent-secondary: #f5a623;
+  --color-brand-gold: #ffd700;
   --color-success: #19b37e;
   --color-danger: #ff4e4e;
   --font-primary: 'Space Grotesk', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -46,8 +48,9 @@ textarea {
 
 .app-shell {
   min-height: 100vh;
-  background: radial-gradient(circle at top, rgba(27, 231, 255, 0.18), transparent 50%),
-    radial-gradient(circle at top right, rgba(245, 166, 35, 0.25), transparent 60%),
+  background: radial-gradient(circle at 15% 0%, rgba(255, 215, 0, 0.16), transparent 44%),
+    radial-gradient(circle at 82% 6%, rgba(27, 231, 255, 0.12), transparent 52%),
+    radial-gradient(circle at 50% 12%, rgba(12, 12, 12, 0.46), transparent 60%),
     var(--color-midnight);
 }
 
