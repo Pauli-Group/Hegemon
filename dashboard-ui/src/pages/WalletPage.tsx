@@ -32,7 +32,6 @@ export function WalletPage() {
   const walletSource = walletStatus.data?.source ?? 'mock';
   const notes = walletNotes.data?.data;
   const metrics = nodeMetrics.data?.data;
-  const notesSource = walletNotes.data?.source ?? 'mock';
   const metricsSource = nodeMetrics.data?.source ?? 'mock';
 
   const balanceMap = wallet?.balances ?? {};
