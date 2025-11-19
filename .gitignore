@@ -9,3 +9,13 @@ node.db/
 scripts/__pycache__/
 *.pyc
 .dashboard-service-venv/
+
+# Wallet artifacts and keys
+export.json
+ivk.json
+witness.json
+ledger.json
+recipients.json
+inputs.json
+balances.json
+report.json
