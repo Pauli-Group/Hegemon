@@ -19,7 +19,8 @@ use num_bigint::BigUint;
 use num_traits::{One, Zero};
 
 const GENESIS_HASH: [u8; 32] = [0u8; 32];
-pub const DEFAULT_GENESIS_POW_BITS: u32 = 0x3f00ffff;
+// Target ≈ 2^(244) which yields ~10s blocks at ~300 H/s on localhost.
+pub const DEFAULT_GENESIS_POW_BITS: u32 = 0x1f0fffff;
 
 #[derive(Clone)]
 struct PowNode {

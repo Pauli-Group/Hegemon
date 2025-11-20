@@ -6,7 +6,10 @@ use axum::extract::{
     ws::{Message, WebSocket, WebSocketUpgrade},
 };
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
+use axum::response::{
+    IntoResponse,
+    sse::{Event, KeepAlive, Sse},
+};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::{SinkExt, StreamExt};
@@ -15,6 +18,7 @@ use tokio::net::TcpListener;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::warn;
 use std::sync::OnceLock;
+use std::convert::Infallible;
 
 use crate::error::NodeError;
 use crate::service::{MinerAction, MinerStatus, NodeService, NoteStatus, StorageFootprint};
@@ -80,6 +84,7 @@ pub fn node_router(node: Arc<NodeService>, wallet: Option<wallet::api::ApiState>
         .route("/node/process/start", post(process_start))
         .route("/node/lifecycle", post(node_lifecycle))
         .route("/node/ws", get(ws_handler))
+        .route("/node/events/stream", get(events_stream))
         .with_state(state);
 
     if let Some(wallet_state) = wallet {
@@ -295,7 +300,7 @@ async fn handle_ws(stream: WebSocket, node: Arc<NodeService>) {
     let mut broadcast = BroadcastStream::new(node.subscribe_events());
     let (mut sender, mut receiver) = stream.split();
     tokio::spawn(async move {
-        while let Some(Ok(event)) = broadcast.next().await {
+        while let Some(Ok(event)) = tokio_stream::StreamExt::next(&mut broadcast).await {
             if sender
                 .send(Message::Text(serde_json::to_string(&event).unwrap()))
                 .await
@@ -306,7 +311,24 @@ async fn handle_ws(stream: WebSocket, node: Arc<NodeService>) {
         }
     });
     // Drain incoming messages to keep websocket alive.
-    tokio::spawn(async move { while let Some(Ok(_)) = receiver.next().await {} });
+    tokio::spawn(async move {
+        while let Some(Ok(_)) = tokio_stream::StreamExt::next(&mut receiver).await {}
+    });
+}
+
+async fn events_stream(
+    State(state): State<ApiState>,
+) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
+    let rx = state.node.subscribe_events();
+    let stream = BroadcastStream::new(rx).filter_map(|msg| async move {
+        match msg {
+            Ok(event) => serde_json::to_string(&event)
+                .ok()
+                .map(|data| Ok(Event::default().data(data))),
+            Err(_) => None,
+        }
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 fn require_auth(headers: &HeaderMap, token: &str) -> Result<(), StatusCode> {
