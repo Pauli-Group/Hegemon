@@ -45,6 +45,43 @@ cargo run -p node --bin node -- \
 
 Each node embeds its own mining workers. When both processes print `node online`, the PoW loop immediately begins solving blocks with the simplified difficulty target configured above (`pow_bits = 0x3f00ffff`). The first block at height `1` mints `50 × 10^8` base units per `consensus/src/reward.rs` and records the subsidy inside the header’s `supply_digest`.
 
+### Internet P2P pairing across home networks
+
+To connect miners running in different homes (or cloud VMs) over the public internet, expose the P2P socket while keeping the administrative API scoped to a private interface:
+
+- Pick the host’s LAN IP for the API and the public IP/port for P2P. Example for node A behind a router: `--api-addr 192.168.1.50:8080 --p2p-addr 0.0.0.0:9000 --seeds <node-b-public-ip>:9000`. Node B mirrors it with its own LAN IP and seed back to node A: `--api-addr 192.168.1.77:8080 --p2p-addr 0.0.0.0:9000 --seeds <node-a-public-ip>:9000`. The private API remains reachable only from the local network, while the P2P listener binds on all interfaces so the router can forward traffic.
+- On each home router, forward the chosen P2P port (e.g., TCP/UDP 9000) to the node’s LAN IP and allow the same port in the host firewall. If you also want to share your API externally, forward TCP 8080 and use a strong `--api-token`; otherwise keep the API forwarding disabled so only your wallet daemon can reach it.
+- If your ISP hands out dynamic IPs, share a DNS name or refresh the `--seeds` values whenever the public addresses change so the gossip overlay can reconnect.
+
+With ports forwarded, start the daemons using the same command structure as above but swap the listen flags for your addresses. You can bind the API to localhost if the wallet daemon runs on the same machine while still peering publicly:
+
+```bash
+cargo run -p node --bin node -- \
+  --db-path /tmp/node-a.db \
+  --api-addr 127.0.0.1:8080 \
+  --api-token devnet-token \
+  --p2p-addr 0.0.0.0:9000 \
+  --seeds <node-b-public-ip>:9000 \
+  --miner-workers 2 \
+  --note-tree-depth 12 \
+  --wallet-store /tmp/node-a.wallet \
+  --wallet-passphrase devnet-node-a
+```
+
+Your partner can mirror that layout, swapping the seed target to `<node-a-public-ip>:9000`. If either party needs to access the other’s API remotely (for example, to point a wallet daemon at the peer’s node), forward 8080 and run the wallet daemon against the exposed endpoint with the agreed token:
+
+```bash
+cargo run -p wallet --bin wallet -- daemon \
+  --store /tmp/alice.wallet \
+  --passphrase hunter2 \
+  --rpc-url http://<node-b-public-ip>:8080 \
+  --auth-token devnet-token \
+  --http-listen 127.0.0.1:9090 \
+  --interval-secs 5
+```
+
+Both parties should keep their own daemons pointed at the remote peer’s API while mining so each side continuously ingests blocks and proofs from the other network segment without exposing their wallet HTTP listener beyond localhost.
+
 You can query the live metadata (height, supply, difficulty) via:
 
 ```bash
