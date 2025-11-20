@@ -19,3 +19,8 @@ recipients.json
 inputs.json
 balances.json
 report.json
+cert.pem
+api.token
+hegemon
+wallet.store
+key.pem
