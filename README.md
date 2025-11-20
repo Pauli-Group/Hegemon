@@ -110,6 +110,8 @@ The easiest way to run the system is using the unified `hegemon` binary, which b
 
 The dashboard assets are already vendored under `node/src/dashboard/assets`, so a clean `cargo build -p node --release` works without running the frontend toolchain. If you edit `dashboard-ui/`, refresh the embedded assets with `./scripts/build_dashboard.sh`.
 
+The embedded dashboard and node API both default to the dev token `devnet-token`. If you override it with `--api-token` or an `api.token` file, update the dashboard’s “API auth token” field and click “Use for dashboard session” so requests carry the right credential.
+
 1. **Build the binary**:
    ```bash
    cargo build -p node --release

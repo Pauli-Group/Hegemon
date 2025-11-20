@@ -24,3 +24,4 @@ api.token
 hegemon
 wallet.store
 key.pem
+.DS_Store

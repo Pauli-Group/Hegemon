@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { defaultDashboardServiceUrl, sanitizeBaseUrl } from '../config';
 
 export type NodeProtocol = 'http' | 'https';
+const EMBEDDED_DEFAULT_TOKEN = import.meta.env.VITE_NODE_AUTH_TOKEN || 'devnet-token';
 
 export interface NodeEndpoint {
   protocol: NodeProtocol;
@@ -29,6 +30,7 @@ const DEFAULT_ENDPOINT: NodeEndpoint = (() => {
         protocol: protocol.replace(':', '') as NodeProtocol,
         host: hostname,
         port: port ? Number(port) : protocol === 'https:' ? 443 : 80,
+        authToken: EMBEDDED_DEFAULT_TOKEN,
       } satisfies NodeEndpoint;
     }
     const parsed = new URL(defaultDashboardServiceUrl);
@@ -38,7 +40,7 @@ const DEFAULT_ENDPOINT: NodeEndpoint = (() => {
       port: parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80,
     } satisfies NodeEndpoint;
   } catch {
-    return { protocol: 'http', host: 'localhost', port: 8080 } satisfies NodeEndpoint;
+    return { protocol: 'http', host: 'localhost', port: 8080, authToken: EMBEDDED_DEFAULT_TOKEN } satisfies NodeEndpoint;
   }
 })();
 

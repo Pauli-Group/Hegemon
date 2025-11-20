@@ -170,17 +170,12 @@ async fn run_node(cli: Cli) -> Result<()> {
         }
         t
     } else {
-        warn!("No API token provided and 'api.token' not found. Generating ephemeral token.");
-        let t: String = rand::thread_rng()
-            .sample_iter(&rand::distributions::Alphanumeric)
-            .take(32)
-            .map(char::from)
-            .collect();
-        println!("---------------------------------------------------");
-        println!("  WARNING: Using ephemeral API token: {}", t);
-        println!("  Run 'hegemon setup' to generate a persistent token.");
-        println!("---------------------------------------------------");
-        t
+        let default_token = NodeConfig::default().api_token;
+        warn!(
+            "No API token provided and 'api.token' not found. Falling back to default dev token: {}",
+            default_token
+        );
+        default_token
     };
     config.api_token = api_token.clone();
 
