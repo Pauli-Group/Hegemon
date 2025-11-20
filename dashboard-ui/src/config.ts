@@ -1,4 +1,4 @@
-const DEFAULT_SERVICE_URL = 'http://localhost:8001';
+const DEFAULT_SERVICE_URL = '';
 
 export function sanitizeBaseUrl(url: string) {
   return url.endsWith('/') ? url.slice(0, -1) : url;

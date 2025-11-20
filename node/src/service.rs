@@ -359,6 +359,10 @@ impl NodeService {
         &self.config.api_token
     }
 
+    pub fn config(&self) -> &NodeConfig {
+        &self.config
+    }
+
     async fn validate_and_add_transaction(
         &self,
         bundle: TransactionBundle,

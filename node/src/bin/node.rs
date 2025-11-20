@@ -256,10 +256,19 @@ async fn run_node(cli: Cli) -> Result<()> {
     let sync_store = wallet_store.clone();
     let sync_client = wallet_client.clone();
     tokio::spawn(async move {
-        let engine = WalletSyncEngine::new(sync_client.as_ref(), sync_store.as_ref());
         loop {
-            if let Err(e) = engine.sync_once() {
-                error!("wallet sync failed: {}", e);
+            let client = sync_client.clone();
+            let store = sync_store.clone();
+            // Run synchronous sync logic in a blocking task to avoid starving the runtime
+            let res = tokio::task::spawn_blocking(move || {
+                let engine = WalletSyncEngine::new(client.as_ref(), store.as_ref());
+                engine.sync_once()
+            }).await;
+
+            match res {
+                Ok(Ok(_)) => {},
+                Ok(Err(e)) => error!("wallet sync failed: {}", e),
+                Err(e) => error!("sync task join error: {}", e),
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
@@ -295,6 +304,7 @@ async fn run_node(cli: Cli) -> Result<()> {
                 PathBuf::from("key.pem"),
             ).await {
                 Ok(config) => {
+                    info!("binding secure api server to {}", addr);
                     if let Err(e) = axum_server::bind_rustls(addr, config)
                         .serve(app.into_make_service())
                         .await 
@@ -309,6 +319,7 @@ async fn run_node(cli: Cli) -> Result<()> {
         } else {
             match tokio::net::TcpListener::bind(addr).await {
                 Ok(listener) => {
+                    info!("binding api server to {}", addr);
                     if let Err(e) = axum::serve(listener, app).await {
                         error!("api server error: {}", e);
                     }

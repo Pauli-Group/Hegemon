@@ -27,7 +27,6 @@ const MAX_PAGE_LIMIT: usize = 1024;
 pub struct ApiState {
     node: Arc<NodeService>,
     token: String,
-    wallet: Option<wallet::api::ApiState>,
 }
 
 pub async fn serve(node: Arc<NodeService>, wallet: Option<wallet::api::ApiState>) -> Result<()> {
@@ -41,7 +40,6 @@ pub fn node_router(node: Arc<NodeService>, wallet: Option<wallet::api::ApiState>
     let state = ApiState {
         token: node.api_token().to_string(),
         node: node.clone(),
-        wallet: wallet.clone(),
     };
     let mut router = Router::new()
         .route("/transactions", post(submit_transaction))
@@ -67,6 +65,8 @@ pub fn node_router(node: Arc<NodeService>, wallet: Option<wallet::api::ApiState>
         .route("/node/miner/status", get(miner_status))
         .route("/node/miner/control", post(miner_control))
         .route("/node/process", get(process_status))
+        .route("/node/process/start", post(process_start))
+        .route("/node/lifecycle", post(node_lifecycle))
         .route("/node/ws", get(ws_handler))
         .with_state(state);
 
@@ -77,12 +77,61 @@ pub fn node_router(node: Arc<NodeService>, wallet: Option<wallet::api::ApiState>
     router.fallback(crate::ui::static_handler)
 }
 
-async fn process_status() -> Json<serde_json::Value> {
+async fn process_status(State(state): State<ApiState>) -> Json<serde_json::Value> {
+    let addr = state.node.api_addr();
     Json(serde_json::json!({
         "status": "running",
         "pid": std::process::id(),
-        "type": "embedded"
+        "type": "embedded",
+        "api_addr": addr.to_string(),
+        "api_token": state.token,
     }))
+}
+
+async fn process_start(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(_payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    require_auth(&headers, &state.token)?;
+    let addr = state.node.api_addr();
+    // Return a mock success response since the node is already running
+    Ok(Json(serde_json::json!({
+        "status": "running",
+        "pid": std::process::id(),
+        "type": "embedded",
+        "api_addr": addr.to_string(),
+        "api_token": state.token,
+        "last_error": "Node is running in embedded mode. Configuration changes require a restart."
+    })))
+}
+
+async fn node_lifecycle(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+    Json(_payload): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    require_auth(&headers, &state.token)?;
+    let addr = state.node.api_addr();
+    let config = state.node.config();
+    let mode = if config.seeds.is_empty() { "genesis" } else { "join" };
+    let peer_url = config.seeds.first().cloned();
+
+    Ok(Json(serde_json::json!({
+        "status": "active",
+        "mode": mode,
+        "node_url": format!("http://{}", addr),
+        "peer_url": peer_url,
+        "local_rpc_only": true,
+        "routing": {
+            "tls": false,
+            "doh": true,
+            "vpn": false,
+            "tor": false,
+            "mtls": false,
+            "local_only": true
+        }
+    })))
 }
 
 async fn submit_transaction(

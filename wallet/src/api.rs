@@ -320,12 +320,22 @@ pub struct RecipientSpec {
 
 fn require_auth(headers: &HeaderMap, token: &Option<String>) -> Result<(), ApiError> {
     if let Some(expected) = token {
-        match headers.get("x-auth-token") {
-            Some(value) if value == expected => Ok(()),
-            _ => Err(ApiError::new(
+        let direct = headers
+            .get("x-auth-token")
+            .is_some_and(|value| value == expected);
+        let bearer = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|as_str| as_str.strip_prefix("Bearer "))
+            .is_some_and(|auth_token| auth_token == expected);
+
+        if direct || bearer {
+            Ok(())
+        } else {
+            Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,
                 "missing or invalid wallet auth token",
-            )),
+            ))
         }
     } else {
         Ok(())
