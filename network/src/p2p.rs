@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum WireMessage {
     Ping,
     Pong,
@@ -42,12 +42,8 @@ impl Connection {
         let acceptance: HandshakeAcceptance = bincode::deserialize(&acceptance_bytes)?;
 
         // 3. Finalize handshake
-        let (channel, _confirmation, confirmation_bytes) = identity.finalize_handshake(
-            &offer,
-            &acceptance,
-            &offer_bytes,
-            &acceptance_bytes,
-        )?;
+        let (channel, _confirmation, confirmation_bytes) =
+            identity.finalize_handshake(&offer, &acceptance, &offer_bytes, &acceptance_bytes)?;
 
         // 4. Send confirmation
         self.send_raw(&confirmation_bytes).await?;
@@ -95,9 +91,7 @@ impl Connection {
         let bytes = bincode::serialize(&msg)?;
         if let Some(channel) = &mut self.channel {
             let encrypted = channel.encrypt(&bytes)?;
-            self.stream
-                .send(Bytes::copy_from_slice(&encrypted))
-                .await?;
+            self.stream.send(Bytes::copy_from_slice(&encrypted)).await?;
         } else {
             return Err(NetworkError::Handshake("connection not encrypted"));
         }
@@ -130,6 +124,54 @@ impl Connection {
             Some(Ok(bytes)) => Ok(bytes.to_vec()),
             Some(Err(e)) => Err(e.into()),
             None => Err(NetworkError::Handshake("connection closed")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+    use tokio::task;
+
+    #[tokio::test]
+    async fn connection_handshake_round_trip() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("local addr");
+        let initiator = PeerIdentity::generate(b"handshake-initiator");
+        let responder = PeerIdentity::generate(b"handshake-responder");
+
+        let responder_task = task::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("accept");
+            let mut connection = Connection::new(socket);
+            connection
+                .handshake_responder(&responder)
+                .await
+                .expect("handshake responder");
+            connection
+        });
+
+        let mut initiator_conn = {
+            let socket = TcpStream::connect(addr).await.expect("connect");
+            let mut connection = Connection::new(socket);
+            connection
+                .handshake_initiator(&initiator)
+                .await
+                .expect("handshake initiator");
+            connection
+        };
+
+        let mut responder_conn = responder_task.await.expect("responder task");
+
+        initiator_conn
+            .send(WireMessage::Ping)
+            .await
+            .expect("send ping");
+        match responder_conn.recv().await.expect("receive message") {
+            Some(WireMessage::Ping) => {}
+            other => panic!("unexpected message: {:?}", other),
         }
     }
 }

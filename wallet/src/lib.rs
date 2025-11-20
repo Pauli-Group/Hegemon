@@ -1,10 +1,10 @@
 pub mod address;
+pub mod api;
 pub mod error;
 pub mod keys;
 pub mod notes;
 pub mod rpc;
 pub mod store;
-pub mod api;
 pub mod sync;
 pub mod tx_builder;
 pub mod viewing;

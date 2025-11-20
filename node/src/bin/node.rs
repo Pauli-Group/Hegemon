@@ -9,10 +9,7 @@ use tokio::signal;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 use wallet::{
-    address::ShieldedAddress,
-    rpc::WalletRpcClient,
-    store::{WalletMode, WalletStore},
-    sync::WalletSyncEngine,
+    address::ShieldedAddress, rpc::WalletRpcClient, store::WalletStore, sync::WalletSyncEngine,
 };
 
 #[derive(Parser, Debug)]
@@ -36,10 +33,12 @@ struct Cli {
     p2p_addr: String,
     #[arg(long)]
     seeds: Vec<String>,
-    #[arg(long, default_value = "wallet.db")]
+    #[arg(long, env = "NODE_WALLET_STORE", value_name = "PATH")]
     wallet_store: PathBuf,
-    #[arg(long, default_value = "default-passphrase")]
+    #[arg(long, env = "NODE_WALLET_PASSPHRASE")]
     wallet_passphrase: String,
+    #[arg(long, default_value_t = false)]
+    wallet_auto_create: bool,
 }
 
 #[tokio::main]
@@ -67,8 +66,13 @@ async fn main() -> Result<()> {
     // Initialize Wallet
     let wallet_store = if cli.wallet_store.exists() {
         WalletStore::open(&cli.wallet_store, &cli.wallet_passphrase)?
-    } else {
+    } else if cli.wallet_auto_create {
         WalletStore::create_full(&cli.wallet_store, &cli.wallet_passphrase)?
+    } else {
+        anyhow::bail!(
+            "wallet store {} missing: initialize it first with `wallet init` or pass --wallet-auto-create",
+            cli.wallet_store.display()
+        );
     };
     let wallet_store = Arc::new(wallet_store);
     info!(mode = ?wallet_store.mode()?, "wallet initialized");
@@ -87,11 +91,11 @@ async fn main() -> Result<()> {
     tokio::spawn(p2p_service.run());
 
     let handle = NodeService::start(config, router).context("failed to start node")?;
-    
+
     // Initialize Wallet Client & Sync
     let rpc_url = format!("http://{}", cli.api_addr).parse()?;
     let wallet_client = Arc::new(WalletRpcClient::new(rpc_url, cli.api_token.clone())?);
-    
+
     let sync_store = wallet_store.clone();
     let sync_client = wallet_client.clone();
     tokio::spawn(async move {
@@ -106,10 +110,8 @@ async fn main() -> Result<()> {
 
     // Build API Router
     let node_router = api::node_router(handle.service.clone());
-    let wallet_api_state = wallet::api::ApiState {
-        store: wallet_store,
-        client: wallet_client,
-    };
+    let wallet_api_state =
+        wallet::api::ApiState::new(wallet_store, wallet_client, Some(cli.api_token.clone()));
     let wallet_router = wallet::api::wallet_router(wallet_api_state);
     let dashboard_router = dashboard::dashboard_router();
 
@@ -119,7 +121,7 @@ async fn main() -> Result<()> {
 
     let listener = tokio::net::TcpListener::bind(handle.service.api_addr()).await?;
     info!(api = ?handle.service.api_addr(), "node api online");
-    
+
     let api_task = tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
             error!("api server error: {}", e);

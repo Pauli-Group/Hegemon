@@ -183,7 +183,6 @@ MOCK_TRANSFERS: List[Dict[str, Any]] = [
 MOCK_WALLET_STATUS: Dict[str, Any] = {
     "mode": "Full",
     "primary_address": "shield1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
-    "incoming_viewing_key": None,
     "balances": {"1": 4_200_000_000},
     "last_synced_height": 0,
     "pending": [],

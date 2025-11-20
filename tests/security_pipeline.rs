@@ -2,6 +2,7 @@ use network::{establish_secure_channel, PeerIdentity};
 use transaction_circuit::hashing::Felt;
 use transaction_circuit::note::{InputNoteWitness, NoteData, OutputNoteWitness};
 use transaction_circuit::TransactionWitness;
+use wallet::address::ShieldedAddress;
 use wallet::RootSecret;
 
 fn sample_witness() -> TransactionWitness {
@@ -64,7 +65,7 @@ fn end_to_end_adversarial_flow() {
     let keys = root.derive();
     let address = keys.address(0).expect("address").shielded_address();
     let encoded = address.encode().expect("encode");
-    let decoded = wallet::ShieldedAddress::decode(&encoded).expect("decode");
+    let decoded = ShieldedAddress::decode(&encoded).expect("decode");
     assert_eq!(decoded, address);
 
     // Network: establish secure channel and ensure tampering detection via ciphertext mismatch.

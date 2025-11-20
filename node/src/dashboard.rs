@@ -1,10 +1,10 @@
 use axum::{
+    Router,
     body::Body,
     extract::Path,
-    http::{header, StatusCode, Uri},
+    http::{StatusCode, Uri, header},
     response::{IntoResponse, Response},
     routing::get,
-    Router,
 };
 use rust_embed::RustEmbed;
 
@@ -26,13 +26,9 @@ async fn index_handler() -> impl IntoResponse {
 
 async fn static_handler(uri: Uri) -> impl IntoResponse {
     let path = uri.path().trim_start_matches('/');
-    
+
     // Handle empty path as index.html
-    let path = if path.is_empty() {
-        "index.html"
-    } else {
-        path
-    };
+    let path = if path.is_empty() { "index.html" } else { path };
 
     match Assets::get(path) {
         Some(content) => {
@@ -46,7 +42,7 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
         None => {
             // If file not found, and it's not an asset (e.g. a route like /wallet), serve index.html
             if !path.starts_with("assets/") {
-                 match Assets::get("index.html") {
+                match Assets::get("index.html") {
                     Some(content) => {
                         let mime = mime_guess::from_path("index.html").first_or_octet_stream();
                         (
