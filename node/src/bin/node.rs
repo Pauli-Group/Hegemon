@@ -124,8 +124,8 @@ async fn run_setup() -> Result<()> {
     // Generate self-signed certificate
     if !PathBuf::from("cert.pem").exists() || !PathBuf::from("key.pem").exists() {
         let subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string(), "0.0.0.0".to_string()];
-        let cert = generate_simple_self_signed(subject_alt_names).unwrap();
-        fs::write("cert.pem", cert.serialize_pem().unwrap()).context("failed to write cert.pem")?;
+        let certified_key = generate_simple_self_signed(subject_alt_names).unwrap();
+        fs::write("cert.pem", certified_key.cert.pem().as_bytes()).context("failed to write cert.pem")?;
         
         let mut key_opts = OpenOptions::new();
         key_opts.write(true).create(true).truncate(true);
@@ -133,7 +133,7 @@ async fn run_setup() -> Result<()> {
         key_opts.mode(0o600);
         key_opts.open("key.pem")
             .context("failed to open key.pem")?
-            .write_all(cert.serialize_private_key_pem().as_bytes())
+            .write_all(certified_key.key_pair.serialize_pem().as_bytes())
             .context("failed to write key.pem")?;
         println!("Generated self-signed TLS certificate (cert.pem) and key (key.pem).");
     } else {
