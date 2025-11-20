@@ -98,9 +98,9 @@ pub struct NodeService {
     miner_secret: MlDsaSecretKey,
     miner_id: [u8; 32],
     miner_payout_address: ShieldedAddress,
-    miner_running: AtomicBool,
-    target_hash_rate: AtomicU64,
-    thread_count: AtomicUsize,
+    miner_running: Arc<AtomicBool>,
+    target_hash_rate: Arc<AtomicU64>,
+    thread_count: Arc<AtomicUsize>,
     gossip: GossipHandle,
     telemetry: Telemetry,
     event_tx: broadcast::Sender<NodeEvent>,
@@ -171,6 +171,11 @@ impl NodeService {
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_SIZE);
         let (template_tx, template_rx) = watch::channel(None);
         let (solution_tx, mut solution_rx) = mpsc::channel(BLOCK_BROADCAST_CAPACITY);
+        
+        let miner_running = Arc::new(AtomicBool::new(true));
+        let target_hash_rate = Arc::new(AtomicU64::new(0));
+        let thread_count = Arc::new(AtomicUsize::new(config.miner_workers));
+
         let service = Arc::new(NodeService {
             config: config.clone(),
             storage,
@@ -181,9 +186,9 @@ impl NodeService {
             miner_secret,
             miner_id,
             miner_payout_address,
-            miner_running: AtomicBool::new(true),
-            target_hash_rate: AtomicU64::new(0),
-            thread_count: AtomicUsize::new(config.miner_workers),
+            miner_running: miner_running.clone(),
+            target_hash_rate: target_hash_rate.clone(),
+            thread_count: thread_count.clone(),
             gossip,
             telemetry: telemetry.clone(),
             event_tx,
@@ -194,6 +199,7 @@ impl NodeService {
             template_rx,
             solution_tx,
             telemetry.clone(),
+            target_hash_rate,
         );
         let gossip_service = service.clone();
         let gossip_router = router.handle();
