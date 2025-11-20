@@ -9,5 +9,5 @@
   <circle cx="100" cy="100" r="38" fill="#FFD700" opacity="0.08"/>
   <line x1="70" y1="70" x2="130" y2="130" stroke="#FFD700" stroke-width="2" opacity="0.4"/>
   <line x1="70" y1="130" x2="130" y2="70" stroke="#FFD700" stroke-width="2" opacity="0.4"/>
-  <text x="100" y="185" font-family="Georgia, 'Times New Roman', serif" font-size="24" font-weight="bold" fill="#FFFFFF" text-anchor="middle" letter-spacing="2">HEGEMON</text>
+  <!-- <text x="100" y="185" font-family="Georgia, 'Times New Roman', serif" font-size="24" font-weight="bold" fill="#FFFFFF" text-anchor="middle" letter-spacing="2">HEGEMON</text> -->
 </svg>
