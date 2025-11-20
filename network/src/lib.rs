@@ -10,6 +10,12 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::sync::broadcast;
 
+pub mod p2p;
+pub mod peer_manager;
+pub mod service;
+
+pub use service::P2PService;
+
 #[derive(Debug, Error)]
 pub enum NetworkError {
     #[error("crypto error: {0}")]
@@ -22,6 +28,8 @@ pub enum NetworkError {
     Encryption,
     #[error("serialization error: {0}")]
     Serialization(#[from] bincode::Error),
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

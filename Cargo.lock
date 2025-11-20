@@ -1228,6 +1228,7 @@ dependencies = [
  "aead",
  "aes-gcm",
  "bincode",
+ "futures",
  "proptest",
  "rand 0.8.5",
  "serde",
@@ -1235,6 +1236,8 @@ dependencies = [
  "synthetic-crypto",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -2266,6 +2269,7 @@ checksum = "2efa149fe76073d6e8fd97ef4f4eca7b67f599660115591483572e406e165594"
 dependencies = [
  "bytes",
  "futures-core",
+ "futures-io",
  "futures-sink",
  "pin-project-lite",
  "tokio",
