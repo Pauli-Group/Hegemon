@@ -21,6 +21,16 @@ interface NodeConnectionContextValue {
 
 const DEFAULT_ENDPOINT: NodeEndpoint = (() => {
   try {
+    if (!defaultDashboardServiceUrl) {
+      // If no service URL is configured, assume we are being served by the node itself
+      // and use the current window location as the API endpoint.
+      const { protocol, hostname, port } = window.location;
+      return {
+        protocol: protocol.replace(':', '') as NodeProtocol,
+        host: hostname,
+        port: port ? Number(port) : protocol === 'https:' ? 443 : 80,
+      } satisfies NodeEndpoint;
+    }
     const parsed = new URL(defaultDashboardServiceUrl);
     return {
       protocol: parsed.protocol === 'https:' ? 'https' : 'http',
@@ -28,7 +38,7 @@ const DEFAULT_ENDPOINT: NodeEndpoint = (() => {
       port: parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80,
     } satisfies NodeEndpoint;
   } catch {
-    return { protocol: 'http', host: 'localhost', port: 8001 } satisfies NodeEndpoint;
+    return { protocol: 'http', host: 'localhost', port: 8080 } satisfies NodeEndpoint;
   }
 })();
 
