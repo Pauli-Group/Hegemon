@@ -1,7 +1,10 @@
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use std::fs;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -38,6 +41,8 @@ struct Cli {
     p2p_addr: String,
     #[arg(long)]
     seeds: Vec<String>,
+    #[arg(long, default_value_t = false)]
+    allow_remote: bool,
     #[arg(long, env = "NODE_WALLET_STORE", value_name = "PATH")]
     wallet_store: Option<PathBuf>,
     #[arg(long, env = "NODE_WALLET_PASSPHRASE")]
@@ -101,7 +106,15 @@ async fn run_setup() -> Result<()> {
         .map(char::from)
         .collect();
     
-    fs::write("api.token", &token).context("failed to write api.token")?;
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+
+    options.open("api.token")
+        .context("failed to open api.token")?
+        .write_all(token.as_bytes())
+        .context("failed to write api.token")?;
     println!("\nGenerated secure API token and saved to 'api.token'.");
     
     println!("\nSetup complete! You can now run the node with:");
@@ -114,12 +127,20 @@ async fn run_setup() -> Result<()> {
 async fn run_node(cli: Cli) -> Result<()> {
     let mut config = NodeConfig::with_db_path(&cli.db_path);
     config.api_addr = cli.api_addr.parse().context("invalid api address")?;
+
+    if !cli.api_addr.starts_with("127.0.0.1") && !cli.api_addr.starts_with("localhost") && !cli.allow_remote {
+        anyhow::bail!("Binding to non-loopback address {} is insecure without --allow-remote. Traffic is unencrypted.", cli.api_addr);
+    }
     
     // API Token Logic
     let api_token = if let Some(t) = cli.api_token {
         t
     } else if let Ok(t) = fs::read_to_string("api.token") {
-        t.trim().to_string()
+        let t = t.trim().to_string();
+        if t.is_empty() || t.len() < 8 {
+            anyhow::bail!("api.token is invalid (empty or too short). Please run 'hegemon setup' to regenerate it.");
+        }
+        t
     } else {
         warn!("No API token provided and 'api.token' not found. Generating ephemeral token.");
         let t: String = rand::thread_rng()
