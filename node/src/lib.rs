@@ -1,5 +1,6 @@
 pub mod api;
 pub mod config;
+pub mod dashboard;
 pub mod error;
 pub mod mempool;
 pub mod miner;

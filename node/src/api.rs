@@ -30,11 +30,18 @@ pub struct ApiState {
 }
 
 pub async fn serve(node: Arc<NodeService>) -> Result<()> {
+    let app = node_router(node.clone());
+    let listener = TcpListener::bind(node.api_addr()).await?;
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+pub fn node_router(node: Arc<NodeService>) -> Router {
     let state = ApiState {
         token: node.api_token().to_string(),
         node: node.clone(),
     };
-    let app = Router::new()
+    Router::new()
         .route("/transactions", post(submit_transaction))
         .route("/blocks/latest", get(latest_block))
         .route("/wallet/notes", get(note_status))
@@ -57,11 +64,17 @@ pub async fn serve(node: Arc<NodeService>) -> Result<()> {
         .route("/node/storage/footprint", get(storage_footprint))
         .route("/node/miner/status", get(miner_status))
         .route("/node/miner/control", post(miner_control))
+        .route("/node/process", get(process_status))
         .route("/node/ws", get(ws_handler))
-        .with_state(state);
-    let listener = TcpListener::bind(node.api_addr()).await?;
-    axum::serve(listener, app).await?;
-    Ok(())
+        .with_state(state)
+}
+
+async fn process_status() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "running",
+        "pid": std::process::id(),
+        "type": "embedded"
+    }))
 }
 
 async fn submit_transaction(
