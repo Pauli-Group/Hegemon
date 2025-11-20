@@ -17,6 +17,7 @@ import shutil
 import secrets
 import json
 import os
+import ssl
 import subprocess
 import sys
 import time
@@ -344,7 +345,13 @@ class NodeProcessSupervisor:
             db_path_path = Path(db_path)
             db_path_path.parent.mkdir(parents=True, exist_ok=True)
             db_path = str(db_path_path)
-            node_url = _build_node_url(api_host, payload.port, payload.routing.tls)
+
+            # Auto-detect TLS if certs exist
+            tls_enabled = payload.routing.tls
+            if not tls_enabled and (REPO_ROOT / "cert.pem").exists() and (REPO_ROOT / "key.pem").exists():
+                tls_enabled = True
+
+            node_url = _build_node_url(api_host, payload.port, tls_enabled)
             command = [
                 "cargo",
                 "run",
@@ -360,6 +367,9 @@ class NodeProcessSupervisor:
                 "--api-token",
                 api_token,
             ]
+            if tls_enabled:
+                command.append("--tls")
+
             if payload.miner_workers is not None:
                 command.extend(["--miner-workers", str(payload.miner_workers)])
             if payload.note_tree_depth is not None:
@@ -829,7 +839,13 @@ async def _fetch_node_json(path: str) -> Dict[str, Any]:
     if not NODE_RPC_URL:
         raise RuntimeError("NODE_RPC_URL is not configured")
     url = f"{NODE_RPC_URL}{path}"
-    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0)) as client:
+    
+    verify_ssl: bool | str = True
+    cert_path = REPO_ROOT / "cert.pem"
+    if cert_path.exists():
+        verify_ssl = str(cert_path)
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(5.0), verify=verify_ssl) as client:
         response = await client.get(url, headers=_node_headers())
     response.raise_for_status()
     return response.json()
@@ -934,11 +950,19 @@ async def _node_event_messages() -> AsyncIterator[str]:
             await asyncio.sleep(STREAM_RECONNECT_SECONDS)
             continue
         try:
+            ssl_context = None
+            if NODE_WS_URL.startswith("wss://"):
+                ssl_context = ssl.create_default_context()
+                cert_path = REPO_ROOT / "cert.pem"
+                if cert_path.exists():
+                    ssl_context.load_verify_locations(str(cert_path))
+
             async with websockets.connect(
                 NODE_WS_URL,
                 extra_headers=_node_headers(),
                 ping_interval=20,
                 ping_timeout=20,
+                ssl=ssl_context,
             ) as ws:
                 async for message in ws:
                     yield message
