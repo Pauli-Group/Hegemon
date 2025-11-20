@@ -6,7 +6,7 @@
 - **Golden throne triangle** – the open gilded wedge signals the hegemonic seat of authority while preserving negative space for readability on dark dashboards.
 - **Shielded privacy core** – concentric rings echo Zcash-style zero-knowledge bubbles and STARK proofs, reinforcing the repo’s PQ privacy posture.
 - **Lattice accent** – cross-hatched diagonals nod to lattice cryptography (ML-DSA/Kyber) without cluttering the mark at small sizes.
-- **Serif wordmark** – the HEGEMON lockup uses a Georgia-style serif to convey institutional permanence beneath the emblem.
+- **Sans-serif wordmark** – the HEGEMON lockup uses "Space Grotesk" to convey modern technical precision beneath the emblem.
 
 ## Geometry & construction
 - Built on a 200 × 200 grid; the throne triangle sits on `(100,40)`, `(45,160)`, `(155,160)` with 12 px strokes and a 15% interior fill.
@@ -17,8 +17,8 @@
 ## Palette
 | Layer | Color | Hex | Usage |
 | --- | --- | --- | --- |
-| Background | Sovereign Night | `#0C0C0C` | Dark chassis for dashboards and document headers |
-| Throne + rings | Gilded Authority | `#FFD700` | Primary accent for the emblem, UI highlights, and active nav states |
+| Background | Deep Midnight | `#0E1C36` | Dark chassis for dashboards and document headers |
+| Throne + rings | Molten Amber | `#F5A623` | Primary accent for the emblem, UI highlights, and active nav states |
 | Wordmark | Ivory Signal | `#FFFFFF` | High-contrast type over the night base |
 
 ## Usage notes
