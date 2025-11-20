@@ -1,16 +1,18 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::fs;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use node::{NodeService, api, config::NodeConfig};
 use tokio::signal;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use wallet::{
     address::ShieldedAddress, rpc::WalletRpcClient, store::WalletStore, sync::WalletSyncEngine,
 };
+use rand::Rng;
 
 #[derive(Parser, Debug)]
 #[command(name = "hegemon", about = "Synthetic hegemonic currency node service")]
@@ -22,8 +24,8 @@ struct Cli {
     db_path: PathBuf,
     #[arg(long, default_value = "127.0.0.1:8080")]
     api_addr: String,
-    #[arg(long, default_value = "local-dev-token")]
-    api_token: String,
+    #[arg(long)]
+    api_token: Option<String>,
     #[arg(long, default_value_t = 2)]
     miner_workers: usize,
     #[arg(long, default_value_t = 32)]
@@ -65,28 +67,46 @@ async fn main() -> Result<()> {
 
 async fn run_setup() -> Result<()> {
     println!("Welcome to Hegemon Setup");
-    println!("This wizard will help you create a new wallet.");
+    println!("This wizard will help you create a new wallet and secure your node.");
     
-    println!("Enter a path for your wallet store (default: wallet.store):");
+    println!("\nEnter a path for your wallet store (default: wallet.store):");
     let mut store_path = String::new();
     std::io::stdin().read_line(&mut store_path)?;
     let store_path = store_path.trim();
     let store_path = if store_path.is_empty() { "wallet.store" } else { store_path };
     
     println!("Enter a passphrase for your wallet:");
-    let mut passphrase = String::new();
-    std::io::stdin().read_line(&mut passphrase)?;
-    let passphrase = passphrase.trim();
+    let passphrase = rpassword::read_password()?;
+    if passphrase.is_empty() {
+        anyhow::bail!("Passphrase cannot be empty");
+    }
+    
+    println!("Confirm passphrase:");
+    let confirm = rpassword::read_password()?;
+    if passphrase != confirm {
+        anyhow::bail!("Passphrases do not match");
+    }
     
     if PathBuf::from(store_path).exists() {
         println!("Wallet store already exists at {}. Skipping creation.", store_path);
     } else {
-        WalletStore::create_full(PathBuf::from(store_path), passphrase)?;
+        WalletStore::create_full(PathBuf::from(store_path), &passphrase)?;
         println!("Wallet created successfully at {}!", store_path);
     }
+
+    // Generate and save API token
+    let token: String = rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(32)
+        .map(char::from)
+        .collect();
     
-    println!("You can now run the node with:");
-    println!("  ./hegemon start --wallet-store {} --wallet-passphrase {}", store_path, passphrase);
+    fs::write("api.token", &token).context("failed to write api.token")?;
+    println!("\nGenerated secure API token and saved to 'api.token'.");
+    
+    println!("\nSetup complete! You can now run the node with:");
+    println!("  ./hegemon start");
+    println!("\n(The node will automatically read 'api.token' and prompt for your wallet passphrase)");
     
     Ok(())
 }
@@ -94,7 +114,27 @@ async fn run_setup() -> Result<()> {
 async fn run_node(cli: Cli) -> Result<()> {
     let mut config = NodeConfig::with_db_path(&cli.db_path);
     config.api_addr = cli.api_addr.parse().context("invalid api address")?;
-    config.api_token = cli.api_token.clone();
+    
+    // API Token Logic
+    let api_token = if let Some(t) = cli.api_token {
+        t
+    } else if let Ok(t) = fs::read_to_string("api.token") {
+        t.trim().to_string()
+    } else {
+        warn!("No API token provided and 'api.token' not found. Generating ephemeral token.");
+        let t: String = rand::thread_rng()
+            .sample_iter(&rand::distributions::Alphanumeric)
+            .take(32)
+            .map(char::from)
+            .collect();
+        println!("---------------------------------------------------");
+        println!("  WARNING: Using ephemeral API token: {}", t);
+        println!("  Run 'hegemon setup' to generate a persistent token.");
+        println!("---------------------------------------------------");
+        t
+    };
+    config.api_token = api_token.clone();
+
     config.miner_workers = cli.miner_workers;
     config.note_tree_depth = cli.note_tree_depth;
     if let Some(seed) = cli.miner_seed {
@@ -110,16 +150,27 @@ async fn run_node(cli: Cli) -> Result<()> {
 
     // Initialize Wallet
     let wallet_store_path = cli.wallet_store.unwrap_or_else(|| PathBuf::from("wallet.store"));
-    let wallet_passphrase = cli.wallet_passphrase.unwrap_or_else(|| "default".to_string());
+    
+    let wallet_passphrase = if let Some(p) = cli.wallet_passphrase {
+        p
+    } else {
+        // Interactive prompt
+        if !atty::is(atty::Stream::Stdin) {
+             anyhow::bail!("Wallet passphrase required (use --wallet-passphrase or env var in non-interactive mode)");
+        }
+        println!("Enter wallet passphrase for {}:", wallet_store_path.display());
+        rpassword::read_password()?
+    };
 
     let wallet_store = if wallet_store_path.exists() {
         WalletStore::open(&wallet_store_path, &wallet_passphrase)?
     } else if cli.wallet_auto_create {
         WalletStore::create_full(&wallet_store_path, &wallet_passphrase)?
     } else {
-        // Fallback for dev mode or if user forgot to init
-        info!("Wallet store not found at {}. Creating default...", wallet_store_path.display());
-        WalletStore::create_full(&wallet_store_path, &wallet_passphrase)?
+        anyhow::bail!(
+            "wallet store {} missing: initialize it first with `hegemon setup`",
+            wallet_store_path.display()
+        );
     };
     let wallet_store = Arc::new(wallet_store);
     info!(mode = ?wallet_store.mode()?, "wallet initialized");
@@ -141,7 +192,7 @@ async fn run_node(cli: Cli) -> Result<()> {
 
     // Initialize Wallet Client & Sync
     let rpc_url = format!("http://{}", cli.api_addr).parse()?;
-    let wallet_client = Arc::new(WalletRpcClient::new(rpc_url, cli.api_token.clone())?);
+    let wallet_client = Arc::new(WalletRpcClient::new(rpc_url, api_token.clone())?);
 
     let sync_store = wallet_store.clone();
     let sync_client = wallet_client.clone();
@@ -157,7 +208,7 @@ async fn run_node(cli: Cli) -> Result<()> {
 
     // Build API Router
     let wallet_api_state =
-        wallet::api::ApiState::new(wallet_store, wallet_client, Some(cli.api_token.clone()));
+        wallet::api::ApiState::new(wallet_store, wallet_client, Some(api_token.clone()));
     
     let app = api::node_router(handle.service.clone(), Some(wallet_api_state));
 
@@ -170,6 +221,10 @@ async fn run_node(cli: Cli) -> Result<()> {
     println!("  HEGEMON IS RUNNING");
     println!("  Open your browser to: http://localhost:{}", port);
     println!("---------------------------------------------------");
+
+    if !cli.api_addr.starts_with("127.0.0.1") && !cli.api_addr.starts_with("localhost") {
+         warn!("API is bound to non-localhost address {}. Ensure your API token is secure!", cli.api_addr);
+    }
 
     let api_task = tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {

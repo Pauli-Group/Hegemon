@@ -32,6 +32,8 @@ wallet = { path = "../wallet" }
 rand = "0.8"
 rust-embed = "8.0"
 mime_guess = "2.0"
+rpassword = "7.4.0"
+atty = "0.2.14"
 
 [features]
 default = []
