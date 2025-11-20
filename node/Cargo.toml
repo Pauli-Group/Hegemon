@@ -30,6 +30,8 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 transaction_circuit = { path = "../circuits/transaction", package = "transaction-circuit" }
 wallet = { path = "../wallet" }
 rand = "0.8"
+rust-embed = "8.0"
+mime_guess = "2.0"
 
 [features]
 default = []

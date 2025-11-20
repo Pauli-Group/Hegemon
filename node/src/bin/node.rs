@@ -1,12 +1,19 @@
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use node::{NodeService, api, config::NodeConfig};
+use node::{NodeService, api, config::NodeConfig, dashboard};
 use tokio::signal;
-use tracing::info;
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
-use wallet::address::ShieldedAddress;
+use wallet::{
+    address::ShieldedAddress,
+    rpc::WalletRpcClient,
+    store::{WalletMode, WalletStore},
+    sync::WalletSyncEngine,
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "node", about = "Synthetic hegemonic currency node service")]
@@ -29,6 +36,10 @@ struct Cli {
     p2p_addr: String,
     #[arg(long)]
     seeds: Vec<String>,
+    #[arg(long, default_value = "wallet.db")]
+    wallet_store: PathBuf,
+    #[arg(long, default_value = "default-passphrase")]
+    wallet_passphrase: String,
 }
 
 #[tokio::main]
@@ -39,7 +50,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut config = NodeConfig::with_db_path(&cli.db_path);
     config.api_addr = cli.api_addr.parse().context("invalid api address")?;
-    config.api_token = cli.api_token;
+    config.api_token = cli.api_token.clone();
     config.miner_workers = cli.miner_workers;
     config.note_tree_depth = cli.note_tree_depth;
     if let Some(seed) = cli.miner_seed {
@@ -53,6 +64,16 @@ async fn main() -> Result<()> {
     config.p2p_addr = cli.p2p_addr.parse().context("invalid p2p address")?;
     config.seeds = cli.seeds;
 
+    // Initialize Wallet
+    let wallet_store = if cli.wallet_store.exists() {
+        WalletStore::open(&cli.wallet_store, &cli.wallet_passphrase)?
+    } else {
+        WalletStore::create_full(&cli.wallet_store, &cli.wallet_passphrase)?
+    };
+    let wallet_store = Arc::new(wallet_store);
+    info!(mode = ?wallet_store.mode()?, "wallet initialized");
+
+    // Initialize Node
     let router = config.gossip_router();
     let gossip_handle = router.handle();
 
@@ -66,8 +87,45 @@ async fn main() -> Result<()> {
     tokio::spawn(p2p_service.run());
 
     let handle = NodeService::start(config, router).context("failed to start node")?;
-    let api_task = tokio::spawn(api::serve(handle.service.clone()));
-    info!(api = ?handle.service.api_addr(), "node online");
+    
+    // Initialize Wallet Client & Sync
+    let rpc_url = format!("http://{}", cli.api_addr).parse()?;
+    let wallet_client = Arc::new(WalletRpcClient::new(rpc_url, cli.api_token.clone())?);
+    
+    let sync_store = wallet_store.clone();
+    let sync_client = wallet_client.clone();
+    tokio::spawn(async move {
+        let engine = WalletSyncEngine::new(sync_client.as_ref(), sync_store.as_ref());
+        loop {
+            if let Err(e) = engine.sync_once() {
+                error!("wallet sync failed: {}", e);
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    });
+
+    // Build API Router
+    let node_router = api::node_router(handle.service.clone());
+    let wallet_api_state = wallet::api::ApiState {
+        store: wallet_store,
+        client: wallet_client,
+    };
+    let wallet_router = wallet::api::wallet_router(wallet_api_state);
+    let dashboard_router = dashboard::dashboard_router();
+
+    let app = node_router
+        .nest("/node/wallet", wallet_router)
+        .merge(dashboard_router);
+
+    let listener = tokio::net::TcpListener::bind(handle.service.api_addr()).await?;
+    info!(api = ?handle.service.api_addr(), "node api online");
+    
+    let api_task = tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, app).await {
+            error!("api server error: {}", e);
+        }
+    });
+
     signal::ctrl_c()
         .await
         .context("failed to install signal handler")?;

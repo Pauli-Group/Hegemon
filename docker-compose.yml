@@ -1,0 +1,23 @@
+services:
+  node:
+    build: .
+    image: shc-node:latest
+    ports:
+      - "8080:8080" # Dashboard & API
+      - "9000:9000" # P2P
+    volumes:
+      - ./data:/data
+    environment:
+      - RUST_LOG=info
+    command:
+      - "--db-path"
+      - "/data/node.db"
+      - "--wallet-store"
+      - "/data/wallet.db"
+      - "--api-addr"
+      - "0.0.0.0:8080"
+      - "--p2p-addr"
+      - "0.0.0.0:9000"
+      # Uncomment to connect to a seed node
+      # - "--seeds"
+      # - "seed.testnet.shc.org:9000"

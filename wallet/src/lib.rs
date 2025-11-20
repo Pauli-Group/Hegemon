@@ -4,11 +4,11 @@ pub mod keys;
 pub mod notes;
 pub mod rpc;
 pub mod store;
+pub mod api;
 pub mod sync;
 pub mod tx_builder;
 pub mod viewing;
 
-pub use address::ShieldedAddress;
 pub use error::WalletError;
 pub use keys::{AddressKeyMaterial, DerivedKeys, RootSecret, SpendKey, ViewKey};
 pub use notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
