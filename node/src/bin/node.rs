@@ -13,6 +13,7 @@ use node::{NodeService, api, config::NodeConfig};
 use tokio::signal;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
+use url::Url;
 use wallet::{
     address::ShieldedAddress, rpc::WalletRpcClient, store::WalletStore, sync::WalletSyncEngine,
 };
@@ -240,7 +241,7 @@ async fn run_node(cli: Cli) -> Result<()> {
 
     // Initialize Wallet Client & Sync
     let scheme = if cli.tls { "https" } else { "http" };
-    let rpc_url = format!("{}://{}", scheme, cli.api_addr).parse()?;
+    let rpc_url: Url = format!("{}://{}", scheme, cli.api_addr).parse()?;
     
     let cert_pem = if cli.tls {
         match fs::read("cert.pem") {
@@ -251,7 +252,18 @@ async fn run_node(cli: Cli) -> Result<()> {
         None
     };
 
-    let wallet_client = Arc::new(WalletRpcClient::new_with_cert(rpc_url, api_token.clone(), cert_pem.as_deref())?);
+    // Build the blocking wallet RPC client on a dedicated thread so reqwest's
+    // internal runtime does not collide with the running Tokio executor.
+    let client_url = rpc_url.clone();
+    let client_token = api_token.clone();
+    let client_cert = cert_pem.clone();
+    let wallet_client = tokio::task::spawn_blocking(move || {
+        WalletRpcClient::new_with_cert(client_url, client_token, client_cert.as_deref())
+    })
+    .await
+    .map_err(|err| anyhow::anyhow!("wallet rpc init join error: {err}"))?
+    .context("failed to build wallet rpc client")?;
+    let wallet_client = Arc::new(wallet_client);
 
     let sync_store = wallet_store.clone();
     let sync_client = wallet_client.clone();
@@ -347,4 +359,3 @@ fn parse_seed(seed: &str) -> Result<[u8; 32]> {
     out.copy_from_slice(&bytes);
     Ok(out)
 }
-

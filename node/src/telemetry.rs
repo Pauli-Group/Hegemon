@@ -22,7 +22,6 @@ pub struct TelemetryPosture {
 
 #[derive(Debug)]
 struct TelemetryInner {
-    start: Instant,
     hashes: AtomicU64,
     stale_shares: AtomicU64,
     accepted_shares: AtomicU64,
@@ -48,7 +47,6 @@ impl Telemetry {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(TelemetryInner {
-                start: Instant::now(),
                 hashes: AtomicU64::new(0),
                 stale_shares: AtomicU64::new(0),
                 accepted_shares: AtomicU64::new(0),
