@@ -1,6 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use consensus::types::ConsensusBlock;
 use num_bigint::BigUint;
@@ -19,7 +18,6 @@ pub fn spawn_miners(
     template_rx: watch::Receiver<Option<BlockTemplate>>,
     result_tx: mpsc::Sender<ConsensusBlock>,
     telemetry: Telemetry,
-    target_hash_rate: Arc<AtomicU64>,
 ) -> Vec<tokio::task::JoinHandle<()>> {
     let result_tx = Arc::new(result_tx);
     (0..workers)
@@ -27,9 +25,8 @@ pub fn spawn_miners(
             let rx = template_rx.clone();
             let tx = result_tx.clone();
             let telemetry = telemetry.clone();
-            let target = target_hash_rate.clone();
             tokio::spawn(async move {
-                run_worker(rx, tx, telemetry, target).await;
+                run_worker(rx, tx, telemetry).await;
             })
         })
         .collect()
@@ -39,7 +36,6 @@ async fn run_worker(
     mut rx: watch::Receiver<Option<BlockTemplate>>,
     tx: Arc<mpsc::Sender<ConsensusBlock>>,
     telemetry: Telemetry,
-    target_hash_rate: Arc<AtomicU64>,
 ) {
     const BATCH_SIZE: u64 = 128;
     loop {
@@ -71,7 +67,7 @@ async fn run_worker(
                 break;
             }
             
-            let start = Instant::now();
+            let _start = Instant::now();
             for _ in 0..BATCH_SIZE {
                 let mut candidate = template.block.clone();
                 if let Some(seal) = candidate.header.pow.as_mut() {
@@ -94,19 +90,8 @@ async fn run_worker(
                 counter = counter.wrapping_add(1);
             }
 
-            let elapsed = start.elapsed();
-            let target_rate = target_hash_rate.load(Ordering::Relaxed);
-            
-            if target_rate > 0 {
-                let expected_duration = Duration::from_secs_f64(BATCH_SIZE as f64 / target_rate as f64);
-                if let Some(sleep_time) = expected_duration.checked_sub(elapsed) {
-                    tokio::time::sleep(sleep_time).await;
-                } else {
-                    tokio::task::yield_now().await;
-                }
-            } else {
-                tokio::task::yield_now().await;
-            }
+            // No throttling — run as fast as possible while yielding to the runtime.
+            tokio::task::yield_now().await;
         }
     }
 }

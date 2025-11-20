@@ -23,5 +23,7 @@ cert.pem
 api.token
 hegemon
 wallet.store
+wallet.pass
 key.pem
+.DS_Store
 .DS_Store

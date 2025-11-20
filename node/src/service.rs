@@ -126,17 +126,13 @@ impl NodeService {
         let miner_id = sha256(&miner_secret.verify_key().to_bytes());
         let miner_payout_address = config.miner_payout_address.clone();
         let verifying_keys = build_verifying_keys(&config.supported_versions);
+
+        // Load persisted state and detect corruption/mismatch.
         let mut tree = state_merkle::CommitmentTree::new(config.note_tree_depth)
             .map_err(|_| NodeError::Invalid("invalid tree depth"))?;
-        let commitments = storage.load_commitments()?;
-        for value in commitments {
-            let _ = tree.append(value);
-        }
         let mut nullifiers = consensus::nullifier::NullifierSet::new();
-        for nf in storage.load_nullifiers()? {
-            let _ = nullifiers.insert(nf);
-        }
-        let meta = storage.load_meta()?.unwrap_or(ChainMeta {
+
+        let mut meta = storage.load_meta()?.unwrap_or(ChainMeta {
             best_hash: [0u8; 32],
             height: 0,
             state_root: [0u8; 32],
@@ -144,6 +140,34 @@ impl NodeService {
             supply_digest: 0,
             pow_bits: DEFAULT_GENESIS_POW_BITS,
         });
+
+        let mut persisted_blocks = storage.load_blocks()?;
+        persisted_blocks.sort_by_key(|block| block.header.height);
+        let persisted_height = persisted_blocks.last().map(|b| b.header.height).unwrap_or(0);
+        if meta.height != persisted_height {
+            tracing::warn!(
+                meta_height = meta.height,
+                persisted_height,
+                "ledger metadata height mismatch; resetting chain state to genesis"
+            );
+            storage.reset()?;
+            meta.height = 0;
+            meta.best_hash = [0u8; 32];
+            meta.state_root = [0u8; 32];
+            meta.nullifier_root = [0u8; 32];
+            meta.supply_digest = 0;
+            meta.pow_bits = DEFAULT_GENESIS_POW_BITS;
+            persisted_blocks.clear();
+        }
+
+        let commitments = storage.load_commitments()?;
+        for value in commitments {
+            let _ = tree.append(value);
+        }
+        for nf in storage.load_nullifiers()? {
+            let _ = nullifiers.insert(nf);
+        }
+
         let pow_bits = if meta.height == 0 {
             DEFAULT_GENESIS_POW_BITS
         } else {
@@ -159,10 +183,9 @@ impl NodeService {
             height: meta.height,
             pow_bits,
         };
+
         let miner_pubkeys = vec![miner_secret.verify_key()];
         let mut consensus = PowConsensus::new(miner_pubkeys, meta.state_root, HashVerifier);
-        let mut persisted_blocks = storage.load_blocks()?;
-        persisted_blocks.sort_by_key(|block| block.header.height);
         for block in persisted_blocks {
             let _ = consensus.apply_block(block);
         }
@@ -194,13 +217,8 @@ impl NodeService {
             event_tx,
             template_tx,
         });
-        let miner_tasks = miner::spawn_miners(
-            config.miner_workers,
-            template_rx,
-            solution_tx,
-            telemetry.clone(),
-            target_hash_rate,
-        );
+        let miner_tasks =
+            miner::spawn_miners(config.miner_workers, template_rx, solution_tx, telemetry.clone());
         let gossip_service = service.clone();
         let gossip_router = router.handle();
         let gossip_task = tokio::spawn(async move {
@@ -443,15 +461,27 @@ impl NodeService {
             self.telemetry.set_difficulty(0);
             return Ok(());
         }
-        match self.assemble_pending_block()? {
-            Some(block) => {
+        match self.assemble_pending_block() {
+            Ok(Some(block)) => {
                 let bits = block.header.pow.as_ref().map(|s| s.pow_bits).unwrap_or(0);
                 self.telemetry.set_difficulty(bits);
                 let _ = self.template_tx.send(Some(BlockTemplate { block }));
             }
-            None => {
+            Ok(None) => {
                 let _ = self.template_tx.send(None);
                 self.telemetry.set_difficulty(0);
+            }
+            Err(err) => {
+                // Don't stall miners on template errors; fall back to a best-effort template.
+                tracing::warn!("assemble_pending_block failed, falling back to default template: {}", err);
+                if let Ok(block) = self.force_template() {
+                    let bits = block.header.pow.as_ref().map(|s| s.pow_bits).unwrap_or(0);
+                    self.telemetry.set_difficulty(bits);
+                    let _ = self.template_tx.send(Some(BlockTemplate { block }));
+                } else {
+                    let _ = self.template_tx.send(None);
+                    self.telemetry.set_difficulty(0);
+                }
             }
         }
         Ok(())
@@ -544,6 +574,55 @@ impl NodeService {
             transactions,
             coinbase: Some(coinbase),
         }))
+    }
+
+    /// Build a template even if normal assembly fails (e.g., during dev bring-up).
+    fn force_template(&self) -> NodeResult<ConsensusBlock> {
+        let ledger = self.ledger.lock();
+        let parent_hash = ledger.best_hash;
+        let parent_height = ledger.height;
+        let state_root = ledger.state_root;
+        let nullifier_root = ledger.nullifier_root;
+        let base_supply = ledger.supply_digest;
+        let pow_bits = ledger.pow_bits.max(DEFAULT_GENESIS_POW_BITS);
+        drop(ledger);
+
+        let minted = consensus::reward::block_subsidy(parent_height + 1);
+        let coinbase = CoinbaseData {
+            minted,
+            fees: 0,
+            burns: 0,
+            source: if minted > 0 {
+                CoinbaseSource::TransactionIndex(0)
+            } else {
+                CoinbaseSource::BalanceTag(BalanceTag::default())
+            },
+        };
+
+        let mut transactions = Vec::new();
+        if let Some(tx) = self.build_coinbase_transaction(minted)? {
+            transactions.push(tx);
+        }
+
+        let supply =
+            consensus::reward::update_supply_digest(base_supply, coinbase.net_native_delta())
+                .ok_or(NodeError::Invalid("supply overflow"))?;
+
+        let header_context = HeaderContext {
+            parent_hash,
+            parent_height,
+            state_root,
+            nullifier_root,
+            supply_digest: supply,
+            pow_bits,
+            miner_id: self.miner_id,
+        };
+        let header = build_header(&header_context, &transactions, &self.miner_secret)?;
+        Ok(ConsensusBlock {
+            header,
+            transactions,
+            coinbase: Some(coinbase),
+        })
     }
 
     #[cfg(feature = "test-utils")]
