@@ -93,9 +93,9 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 | `dashboard-ui/` | React/Vite frontend for the operations dashboard. |
 | `docs/` | Contributor docs (`CONTRIBUTING.md`), threat model, and API references that stay in sync with `DESIGN.md`/`METHODS.md`. |
 | `governance/` | Governance documentation and versioning policies. |
-| `network/` | P2P networking stack and connectivity logic. |
-| `node/` | Main node binary entry point and service orchestration. |
-| `protocol/` | Protocol definitions, transaction formats, and versioning logic. |
+| network/ | P2P networking stack and connectivity logic. |
+| node/ | Unified `hegemon` binary (Node + Wallet + UI). |
+| protocol/ | Protocol definitions, transaction formats, and versioning logic. |
 | `runbooks/` | Operational guides for miners, emergency procedures, and security testing. |
 | `scripts/` | Python and shell scripts for dev setup, dashboard, and automation. |
 | `state/` | Merkle tree storage and state management. |
@@ -104,36 +104,49 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 ## Getting started
 
-### Fast path
+### Quickstart (Unified Binary)
 
-1. `./scripts/dev-setup.sh` installs Rust, Go, clang-format, jq, and the other CLI dependencies on Debian/Ubuntu hosts. The script is idempotent, so re-running it will simply ensure the required toolchains stay patched.
-2. `make check` formats, lints, and tests the entire workspace with the same flags that CI enforces.
-3. `make bench` executes the smoke benchmarks for the prover, wallet, and networking stacks so you can capture baseline performance before touching hot paths.
-4. `make wallet-demo` runs `scripts/wallet-demo.sh` which walks through generating a throwaway wallet, crafting a sample transaction, and scanning the resulting ciphertexts. The artifacts land in `wallet-demo-artifacts/` for easy inspection or debugging.
-5. Read `docs/CONTRIBUTING.md` and keep `DESIGN.md`/`METHODS.md` synchronized with any implementation updates.
+The easiest way to run the system is using the unified `hegemon` binary, which bundles the Node, Wallet, and Dashboard UI into a single executable.
 
-Want everything above bundled together? Run `make quickstart` (or `./scripts/dashboard.py --run quickstart`) to execute the setup script, CI-equivalent `make check`, the full benchmark suite, and the wallet demo sequentially via the dashboard.
-The same command now launches the FastAPI proxy and Vite UI on available ports and autostarts a local PoW node; watch the printed URLs to open the UI and see live mining telemetry without extra terminals.
-
-### Manual install/run steps
-
-If you prefer to provision dependencies yourself:
-
-1. Install Rust 1.75+, Go 1.21, and (optionally) clang-format for C++ style checks.
-2. Run the full Rust workspace tests:
+1. **Build the binary**:
    ```bash
-   cargo fmt --all
-   cargo clippy --workspace --all-targets --all-features
-   cargo test --workspace
-   ```
-3. Run the smoke benchmarks to capture prover/network/wallet baselines:
-   ```bash
-   cargo run -p circuits-bench -- --smoke --prove --json
-   cargo run -p wallet-bench -- --smoke --json
-   (cd consensus/bench && go run ./cmd/netbench --smoke --json)
+   cargo build -p node --release
+   cp target/release/hegemon .
    ```
 
-CI (`.github/workflows/ci.yml`) runs these commands automatically plus targeted crypto, consensus, and wallet jobs. See `docs/CONTRIBUTING.md` for the exact job breakdown.
+2. **Run the Setup Wizard**:
+   Initialize your wallet and configuration interactively.
+   ```bash
+   ./hegemon setup
+   ```
+
+3. **Start the System**:
+   Launch the node, wallet, and UI server.
+   ```bash
+   ./hegemon start
+   ```
+
+4. **Open the Dashboard**:
+   Visit **http://localhost:8080** to view the dashboard, manage your wallet, and monitor mining status.
+
+### Developer Setup
+
+If you are contributing to the codebase:
+
+1. **Install Dependencies**:
+   ```bash
+   ./scripts/dev-setup.sh
+   ```
+
+2. **Run Tests**:
+   ```bash
+   make check
+   ```
+
+3. **Run Benchmarks**:
+   ```bash
+   make bench
+   ```
 
 ### Helpful `make` targets
 
@@ -143,56 +156,4 @@ CI (`.github/workflows/ci.yml`) runs these commands automatically plus targeted 
 | `make check` | Formats, lints, and tests the entire Rust workspace. |
 | `make bench` | Executes the prover, wallet, and network smoke benchmarks. |
 | `make wallet-demo` | Generates example wallet artifacts plus a balance report inside `wallet-demo-artifacts/`. |
-| `make dashboard` | Launches the interactive dashboard that wraps setup, test, demo, and benchmark workflows. |
-| `make quickstart` | Calls the dashboard's quickstart action (dev setup → `make check` → `make bench` → wallet demo). |
 
-### Operations dashboard
-
-The `scripts/dashboard.py` CLI exposes the most common repo workflows through a
-single menu:
-
-```bash
-./scripts/dashboard.py          # interactive menu
-./scripts/dashboard.py --list   # print the catalog of actions
-./scripts/dashboard.py --run check   # run a specific action by slug
-./scripts/dashboard.py --run quickstart   # run the full workstation bootstrap sequence
-```
-
-Each action simply shells out to the documented commands (`make check`,
-`cargo run -p circuits-bench …`, etc.), so the dashboard doubles as living
-documentation for the official workflows. Use it when you need to install
-toolchains, run the wallet demo, or capture benchmark baselines without
-memorizing the exact commands.
-
-Need a graphical experience? Start the FastAPI wrapper and the Vite UI, which
-drive the same `_actions()` catalog via streaming NDJSON events:
-
-```bash
-pip install -r scripts/dashboard_requirements.txt
-uvicorn scripts.dashboard_service:app --host 0.0.0.0 --port 8001
-
-cd dashboard-ui
-npm install
-VITE_DASHBOARD_SERVICE_URL=http://127.0.0.1:8001 npm run dev
-```
-
-Open `http://localhost:5173` and click any action to watch live JetBrains Mono
-logs, Guard Rail red error highlights, Proof Green confirmation toasts, and
-progress shimmers that mirror the CLI execution order. See
-`runbooks/dashboard_troubleshooting.md` for tips that map UI actions back to
-`make dashboard` and `./scripts/dashboard.py --run <slug>` commands.
-
-The wallet route now speaks to the unlocked wallet daemon over HTTP. Launch the
-daemon with `--http-listen <addr>` and export three environment variables before
-starting the dashboard service so the proxy can authenticate against the right
-store:
-
-```bash
-export WALLET_STORE_PATH=$HOME/.synthetic/miner.wallet        # encrypted store
-export WALLET_PASSPHRASE_FILE=$HOME/.synthetic/miner.pass     # file containing the passphrase
-export WALLET_API_URL=http://127.0.0.1:9090                   # wallet daemon HTTP listener
-```
-
-`scripts/full-quickstart.sh` reads those variables, unlocks the wallet using the
-passphrase file, and starts `wallet daemon --http-listen` after the CLI
-bootstrapping steps so the React dashboard can list/submit real transfers.
