@@ -87,11 +87,20 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 | Path | Purpose |
 | --- | --- |
-| `crypto/` | Rust crate (`synthetic-crypto`) with ML-DSA/SLH-DSA signatures, ML-KEM, and hash/commitment utilities. |
 | `circuits/` | Transaction/block STARK circuits plus the `circuits-bench` prover benchmark. |
 | `consensus/` | Ledger/miner logic and the Go `netbench` throughput simulator under `consensus/bench`. |
-| `wallet/` | CLI wallet plus the `wallet-bench` binary for note/key performance measurements. |
+| `crypto/` | Rust crate (`synthetic-crypto`) with ML-DSA/SLH-DSA signatures, ML-KEM, and hash/commitment utilities. |
+| `dashboard-ui/` | React/Vite frontend for the operations dashboard. |
 | `docs/` | Contributor docs (`CONTRIBUTING.md`), threat model, and API references that stay in sync with `DESIGN.md`/`METHODS.md`. |
+| `governance/` | Governance documentation and versioning policies. |
+| `network/` | P2P networking stack and connectivity logic. |
+| `node/` | Main node binary entry point and service orchestration. |
+| `protocol/` | Protocol definitions, transaction formats, and versioning logic. |
+| `runbooks/` | Operational guides for miners, emergency procedures, and security testing. |
+| `scripts/` | Python and shell scripts for dev setup, dashboard, and automation. |
+| `state/` | Merkle tree storage and state management. |
+| `tests/` | Integration tests and the security pipeline suite. |
+| `wallet/` | CLI wallet plus the `wallet-bench` binary for note/key performance measurements. |
 
 ## Getting started
 
