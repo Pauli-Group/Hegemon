@@ -1,4 +1,3 @@
-use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::fs;
 use std::net::SocketAddr;
@@ -8,18 +7,11 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
-use axum::routing::get;
-use axum::{Json, Router};
-use chrono::{TimeZone, Utc};
 use clap::{Parser, Subcommand};
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio::runtime::Builder as RuntimeBuilder;
-use tokio::task;
 use transaction_circuit::{
     hashing::Felt,
     note::{InputNoteWitness, OutputNoteWitness},
@@ -34,7 +26,7 @@ use wallet::{
     keys::{DerivedKeys, RootSecret},
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
     rpc::WalletRpcClient,
-    store::{PendingStatus, PendingTransaction, TransferRecipient, WalletMode, WalletStore},
+    store::{TransferRecipient, WalletMode, WalletStore},
     sync::WalletSyncEngine,
     tx_builder::Recipient,
     viewing::{IncomingViewingKey, OutgoingViewingKey},
