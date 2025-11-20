@@ -13,6 +13,12 @@ pub struct PeerManager {
     peers: HashMap<SocketAddr, PeerEntry>,
 }
 
+impl Default for PeerManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PeerManager {
     pub fn new() -> Self {
         Self {
