@@ -25,6 +25,10 @@ struct Cli {
     miner_payout_address: Option<String>,
     #[arg(long)]
     miner_seed: Option<String>,
+    #[arg(long, default_value = "0.0.0.0:9000")]
+    p2p_addr: String,
+    #[arg(long)]
+    seeds: Vec<String>,
 }
 
 #[tokio::main]
@@ -46,7 +50,21 @@ async fn main() -> Result<()> {
         config.miner_payout_address =
             ShieldedAddress::decode(&address).context("invalid miner payout address")?;
     }
+    config.p2p_addr = cli.p2p_addr.parse().context("invalid p2p address")?;
+    config.seeds = cli.seeds;
+
     let router = config.gossip_router();
+    let gossip_handle = router.handle();
+
+    let p2p_identity = network::PeerIdentity::generate(&config.miner_seed);
+    let p2p_service = network::P2PService::new(
+        p2p_identity,
+        config.p2p_addr,
+        config.seeds.clone(),
+        gossip_handle,
+    );
+    tokio::spawn(p2p_service.run());
+
     let handle = NodeService::start(config, router).context("failed to start node")?;
     let api_task = tokio::spawn(api::serve(handle.service.clone()));
     info!(api = ?handle.service.api_addr(), "node online");

@@ -24,6 +24,8 @@ pub struct NodeConfig {
     pub pow_bits: u32,
     pub gossip_buffer: usize,
     pub supported_versions: Vec<VersionBinding>,
+    pub p2p_addr: SocketAddr,
+    pub seeds: Vec<String>,
 }
 
 impl NodeConfig {
@@ -59,6 +61,8 @@ impl Default for NodeConfig {
             pow_bits: DEFAULT_GENESIS_POW_BITS,
             gossip_buffer: 1024,
             supported_versions: vec![DEFAULT_VERSION_BINDING],
+            p2p_addr: "0.0.0.0:9000".parse().expect("p2p socket"),
+            seeds: vec![],
         }
     }
 }
