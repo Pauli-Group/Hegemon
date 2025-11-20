@@ -134,6 +134,10 @@ async fn run_node(cli: Cli) -> Result<()> {
     
     // API Token Logic
     let api_token = if let Some(t) = cli.api_token {
+        let t = t.trim().to_string();
+        if t.is_empty() || t.len() < 8 {
+            anyhow::bail!("Provided --api-token is invalid (empty or too short).");
+        }
         t
     } else if let Ok(t) = fs::read_to_string("api.token") {
         let t = t.trim().to_string();
