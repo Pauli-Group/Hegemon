@@ -185,9 +185,26 @@ impl NodeService {
         };
 
         let miner_pubkeys = vec![miner_secret.verify_key()];
-        let mut consensus = PowConsensus::new(miner_pubkeys, meta.state_root, HashVerifier);
+        let mut consensus = PowConsensus::new(miner_pubkeys.clone(), meta.state_root, HashVerifier);
         for block in persisted_blocks {
             let _ = consensus.apply_block(block);
+        }
+        // If the recorded best hash/height isn't known to consensus, reset to genesis.
+        let fork_check = consensus.expected_bits_for_block(meta.best_hash, meta.height + 1);
+        if fork_check.is_err() {
+            tracing::warn!(
+                best_hash = ?meta.best_hash,
+                height = meta.height,
+                "consensus state missing recorded parent; resetting chain state to genesis"
+            );
+            storage.reset()?;
+            meta.height = 0;
+            meta.best_hash = [0u8; 32];
+            meta.state_root = [0u8; 32];
+            meta.nullifier_root = [0u8; 32];
+            meta.supply_digest = 0;
+            meta.pow_bits = DEFAULT_GENESIS_POW_BITS;
+            consensus = PowConsensus::new(miner_pubkeys.clone(), meta.state_root, HashVerifier);
         }
         let mempool = Mempool::new(config.mempool_max_txs);
         let telemetry = Telemetry::new();
@@ -270,10 +287,6 @@ impl NodeService {
         }
     }
 
-    pub fn subscribe_events(&self) -> broadcast::Receiver<NodeEvent> {
-        self.event_tx.subscribe()
-    }
-
     pub fn telemetry_snapshot(&self) -> TelemetrySnapshot {
         self.telemetry.snapshot()
     }
@@ -290,6 +303,10 @@ impl NodeService {
             thread_count: self.thread_count.load(Ordering::Relaxed),
             last_updated: current_time_ms(),
         }
+    }
+
+    pub fn subscribe_events(&self) -> broadcast::Receiver<NodeEvent> {
+        self.event_tx.subscribe()
     }
 
     pub fn control_miner(
