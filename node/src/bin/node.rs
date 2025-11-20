@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use axum_server::tls_rustls::RustlsConfig;
 use clap::{Parser, Subcommand};
 use node::{NodeService, api, config::NodeConfig};
 use tokio::signal;
@@ -16,6 +17,7 @@ use wallet::{
     address::ShieldedAddress, rpc::WalletRpcClient, store::WalletStore, sync::WalletSyncEngine,
 };
 use rand::Rng;
+use rcgen::generate_simple_self_signed;
 
 #[derive(Parser, Debug)]
 #[command(name = "hegemon", about = "Synthetic hegemonic currency node service")]
@@ -43,6 +45,8 @@ struct Cli {
     seeds: Vec<String>,
     #[arg(long, default_value_t = false)]
     allow_remote: bool,
+    #[arg(long, default_value_t = false)]
+    tls: bool,
     #[arg(long, env = "NODE_WALLET_STORE", value_name = "PATH")]
     wallet_store: Option<PathBuf>,
     #[arg(long, env = "NODE_WALLET_PASSPHRASE")]
@@ -116,6 +120,25 @@ async fn run_setup() -> Result<()> {
         .write_all(token.as_bytes())
         .context("failed to write api.token")?;
     println!("\nGenerated secure API token and saved to 'api.token'.");
+
+    // Generate self-signed certificate
+    if !PathBuf::from("cert.pem").exists() || !PathBuf::from("key.pem").exists() {
+        let subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string(), "0.0.0.0".to_string()];
+        let cert = generate_simple_self_signed(subject_alt_names).unwrap();
+        fs::write("cert.pem", cert.serialize_pem().unwrap()).context("failed to write cert.pem")?;
+        
+        let mut key_opts = OpenOptions::new();
+        key_opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        key_opts.mode(0o600);
+        key_opts.open("key.pem")
+            .context("failed to open key.pem")?
+            .write_all(cert.serialize_private_key_pem().as_bytes())
+            .context("failed to write key.pem")?;
+        println!("Generated self-signed TLS certificate (cert.pem) and key (key.pem).");
+    } else {
+        println!("TLS certificate already exists. Skipping generation.");
+    }
     
     println!("\nSetup complete! You can now run the node with:");
     println!("  ./hegemon start");
@@ -216,8 +239,19 @@ async fn run_node(cli: Cli) -> Result<()> {
     let handle = NodeService::start(config, router).context("failed to start node")?;
 
     // Initialize Wallet Client & Sync
-    let rpc_url = format!("http://{}", cli.api_addr).parse()?;
-    let wallet_client = Arc::new(WalletRpcClient::new(rpc_url, api_token.clone())?);
+    let scheme = if cli.tls { "https" } else { "http" };
+    let rpc_url = format!("{}://{}", scheme, cli.api_addr).parse()?;
+    
+    let cert_pem = if cli.tls {
+        match fs::read("cert.pem") {
+            Ok(pem) => Some(pem),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+
+    let wallet_client = Arc::new(WalletRpcClient::new_with_cert(rpc_url, api_token.clone(), cert_pem.as_deref())?);
 
     let sync_store = wallet_store.clone();
     let sync_client = wallet_client.clone();
@@ -237,23 +271,50 @@ async fn run_node(cli: Cli) -> Result<()> {
     
     let app = api::node_router(handle.service.clone(), Some(wallet_api_state));
 
-    let listener = tokio::net::TcpListener::bind(handle.service.api_addr()).await?;
-    info!(api = ?handle.service.api_addr(), "node api online");
+    let addr = handle.service.api_addr();
+    info!(api = ?addr, "node api online");
     
     // Print the UI URL
-    let port = handle.service.api_addr().port();
+    let port = addr.port();
+    let scheme = if cli.tls { "https" } else { "http" };
     println!("---------------------------------------------------");
     println!("  HEGEMON IS RUNNING");
-    println!("  Open your browser to: http://localhost:{}", port);
+    println!("  Open your browser to: {}://localhost:{}", scheme, port);
     println!("---------------------------------------------------");
 
     if !cli.api_addr.starts_with("127.0.0.1") && !cli.api_addr.starts_with("localhost") {
          warn!("API is bound to non-localhost address {}. Ensure your API token is secure!", cli.api_addr);
     }
 
+    let tls_enabled = cli.tls;
+    // TODO(pqc): Upgrade to a TLS stack with hybrid PQ cipher suites when rustls exposes them.
     let api_task = tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
-            error!("api server error: {}", e);
+        if tls_enabled {
+            match RustlsConfig::from_pem_file(
+                PathBuf::from("cert.pem"),
+                PathBuf::from("key.pem"),
+            ).await {
+                Ok(config) => {
+                    if let Err(e) = axum_server::bind_rustls(addr, config)
+                        .serve(app.into_make_service())
+                        .await 
+                    {
+                        error!("api server error: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("failed to load TLS keys: {}", e);
+                }
+            }
+        } else {
+            match tokio::net::TcpListener::bind(addr).await {
+                Ok(listener) => {
+                    if let Err(e) = axum::serve(listener, app).await {
+                        error!("api server error: {}", e);
+                    }
+                }
+                Err(e) => error!("failed to bind listener: {}", e),
+            }
         }
     });
 
@@ -275,5 +336,4 @@ fn parse_seed(seed: &str) -> Result<[u8; 32]> {
     out.copy_from_slice(&bytes);
     Ok(out)
 }
-
 

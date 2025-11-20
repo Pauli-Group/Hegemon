@@ -48,7 +48,21 @@ pub struct WalletRpcClient {
 
 impl WalletRpcClient {
     pub fn new(base: Url, token: impl Into<String>) -> Result<Self, WalletError> {
-        let client = Client::builder()
+        Self::new_with_cert(base, token, None)
+    }
+
+    pub fn new_with_cert(
+        base: Url,
+        token: impl Into<String>,
+        cert_pem: Option<&[u8]>,
+    ) -> Result<Self, WalletError> {
+        let mut builder = Client::builder();
+        if let Some(pem) = cert_pem {
+            let cert = reqwest::Certificate::from_pem(pem)
+                .map_err(|err| WalletError::Http(err.to_string()))?;
+            builder = builder.add_root_certificate(cert);
+        }
+        let client = builder
             .build()
             .map_err(|err| WalletError::Http(err.to_string()))?;
         Ok(Self {
