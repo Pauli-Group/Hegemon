@@ -6,7 +6,8 @@ use tempfile::tempdir;
 #[path = "../src/bin/wallet.rs"]
 mod wallet_bin;
 
-use wallet_bin::{randomize_recipient_specs, RecipientSpec};
+use wallet::api::RecipientSpec;
+use wallet_bin::randomize_recipient_specs;
 
 #[test]
 fn randomize_memo_order_shuffles_specs_loaded_from_json() {
