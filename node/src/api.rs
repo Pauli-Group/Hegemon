@@ -27,21 +27,23 @@ const MAX_PAGE_LIMIT: usize = 1024;
 pub struct ApiState {
     node: Arc<NodeService>,
     token: String,
+    wallet: Option<wallet::api::ApiState>,
 }
 
-pub async fn serve(node: Arc<NodeService>) -> Result<()> {
-    let app = node_router(node.clone());
+pub async fn serve(node: Arc<NodeService>, wallet: Option<wallet::api::ApiState>) -> Result<()> {
+    let app = node_router(node.clone(), wallet);
     let listener = TcpListener::bind(node.api_addr()).await?;
     axum::serve(listener, app).await?;
     Ok(())
 }
 
-pub fn node_router(node: Arc<NodeService>) -> Router {
+pub fn node_router(node: Arc<NodeService>, wallet: Option<wallet::api::ApiState>) -> Router {
     let state = ApiState {
         token: node.api_token().to_string(),
         node: node.clone(),
+        wallet: wallet.clone(),
     };
-    Router::new()
+    let mut router = Router::new()
         .route("/transactions", post(submit_transaction))
         .route("/blocks/latest", get(latest_block))
         .route("/wallet/notes", get(note_status))
@@ -66,7 +68,13 @@ pub fn node_router(node: Arc<NodeService>) -> Router {
         .route("/node/miner/control", post(miner_control))
         .route("/node/process", get(process_status))
         .route("/node/ws", get(ws_handler))
-        .with_state(state)
+        .with_state(state);
+
+    if let Some(wallet_state) = wallet {
+        router = router.nest("/node/wallet", wallet::api::wallet_router(wallet_state));
+    }
+
+    router.fallback(crate::ui::static_handler)
 }
 
 async fn process_status() -> Json<serde_json::Value> {

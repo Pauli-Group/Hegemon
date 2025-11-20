@@ -41,3 +41,7 @@ test-utils = []
 rand = "0.8"
 tempfile = "3.8"
 block-circuit = { path = "../circuits/block" }
+
+[[bin]]
+name = "hegemon"
+path = "src/bin/node.rs"

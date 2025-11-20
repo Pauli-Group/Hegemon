@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use clap::Parser;
-use node::{NodeService, api, config::NodeConfig, dashboard};
+use clap::{Parser, Subcommand};
+use node::{NodeService, api, config::NodeConfig};
 use tokio::signal;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
@@ -13,8 +13,11 @@ use wallet::{
 };
 
 #[derive(Parser, Debug)]
-#[command(name = "node", about = "Synthetic hegemonic currency node service")]
+#[command(name = "hegemon", about = "Synthetic hegemonic currency node service")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     #[arg(long, default_value = "node.db")]
     db_path: PathBuf,
     #[arg(long, default_value = "127.0.0.1:8080")]
@@ -34,11 +37,17 @@ struct Cli {
     #[arg(long)]
     seeds: Vec<String>,
     #[arg(long, env = "NODE_WALLET_STORE", value_name = "PATH")]
-    wallet_store: PathBuf,
+    wallet_store: Option<PathBuf>,
     #[arg(long, env = "NODE_WALLET_PASSPHRASE")]
-    wallet_passphrase: String,
+    wallet_passphrase: Option<String>,
     #[arg(long, default_value_t = false)]
     wallet_auto_create: bool,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    Start,
+    Setup,
 }
 
 #[tokio::main]
@@ -47,6 +56,42 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
     let cli = Cli::parse();
+
+    match cli.command {
+        Some(Commands::Setup) => run_setup().await,
+        Some(Commands::Start) | None => run_node(cli).await,
+    }
+}
+
+async fn run_setup() -> Result<()> {
+    println!("Welcome to Hegemon Setup");
+    println!("This wizard will help you create a new wallet.");
+    
+    println!("Enter a path for your wallet store (default: wallet.store):");
+    let mut store_path = String::new();
+    std::io::stdin().read_line(&mut store_path)?;
+    let store_path = store_path.trim();
+    let store_path = if store_path.is_empty() { "wallet.store" } else { store_path };
+    
+    println!("Enter a passphrase for your wallet:");
+    let mut passphrase = String::new();
+    std::io::stdin().read_line(&mut passphrase)?;
+    let passphrase = passphrase.trim();
+    
+    if PathBuf::from(store_path).exists() {
+        println!("Wallet store already exists at {}. Skipping creation.", store_path);
+    } else {
+        WalletStore::create_full(PathBuf::from(store_path), passphrase)?;
+        println!("Wallet created successfully at {}!", store_path);
+    }
+    
+    println!("You can now run the node with:");
+    println!("  ./hegemon start --wallet-store {} --wallet-passphrase {}", store_path, passphrase);
+    
+    Ok(())
+}
+
+async fn run_node(cli: Cli) -> Result<()> {
     let mut config = NodeConfig::with_db_path(&cli.db_path);
     config.api_addr = cli.api_addr.parse().context("invalid api address")?;
     config.api_token = cli.api_token.clone();
@@ -64,15 +109,17 @@ async fn main() -> Result<()> {
     config.seeds = cli.seeds;
 
     // Initialize Wallet
-    let wallet_store = if cli.wallet_store.exists() {
-        WalletStore::open(&cli.wallet_store, &cli.wallet_passphrase)?
+    let wallet_store_path = cli.wallet_store.unwrap_or_else(|| PathBuf::from("wallet.store"));
+    let wallet_passphrase = cli.wallet_passphrase.unwrap_or_else(|| "default".to_string());
+
+    let wallet_store = if wallet_store_path.exists() {
+        WalletStore::open(&wallet_store_path, &wallet_passphrase)?
     } else if cli.wallet_auto_create {
-        WalletStore::create_full(&cli.wallet_store, &cli.wallet_passphrase)?
+        WalletStore::create_full(&wallet_store_path, &wallet_passphrase)?
     } else {
-        anyhow::bail!(
-            "wallet store {} missing: initialize it first with `wallet init` or pass --wallet-auto-create",
-            cli.wallet_store.display()
-        );
+        // Fallback for dev mode or if user forgot to init
+        info!("Wallet store not found at {}. Creating default...", wallet_store_path.display());
+        WalletStore::create_full(&wallet_store_path, &wallet_passphrase)?
     };
     let wallet_store = Arc::new(wallet_store);
     info!(mode = ?wallet_store.mode()?, "wallet initialized");
@@ -109,18 +156,20 @@ async fn main() -> Result<()> {
     });
 
     // Build API Router
-    let node_router = api::node_router(handle.service.clone());
     let wallet_api_state =
         wallet::api::ApiState::new(wallet_store, wallet_client, Some(cli.api_token.clone()));
-    let wallet_router = wallet::api::wallet_router(wallet_api_state);
-    let dashboard_router = dashboard::dashboard_router();
-
-    let app = node_router
-        .nest("/node/wallet", wallet_router)
-        .merge(dashboard_router);
+    
+    let app = api::node_router(handle.service.clone(), Some(wallet_api_state));
 
     let listener = tokio::net::TcpListener::bind(handle.service.api_addr()).await?;
     info!(api = ?handle.service.api_addr(), "node api online");
+    
+    // Print the UI URL
+    let port = handle.service.api_addr().port();
+    println!("---------------------------------------------------");
+    println!("  HEGEMON IS RUNNING");
+    println!("  Open your browser to: http://localhost:{}", port);
+    println!("---------------------------------------------------");
 
     let api_task = tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
@@ -146,3 +195,5 @@ fn parse_seed(seed: &str) -> Result<[u8; 32]> {
     out.copy_from_slice(&bytes);
     Ok(out)
 }
+
+
