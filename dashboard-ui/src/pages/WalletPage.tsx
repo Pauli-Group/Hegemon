@@ -11,8 +11,6 @@ import { DataStatusBanner } from '../components/DataStatusBanner';
 import { formatCoinsFromAtomic } from '../utils/amounts';
 import styles from './WalletPage.module.css';
 
-const VIEW_KEY = import.meta.env.VITE_DEMO_VIEW_KEY || 'view_sapling_demo_1qv9k8';
-
 interface TransferFormState {
   address: string;
   amount: number;
@@ -44,7 +42,6 @@ export function WalletPage() {
   })();
 
   const primaryAddress = wallet?.primary_address ?? 'shield1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq';
-  const viewKey = wallet?.incoming_viewing_key || VIEW_KEY;
   const coverage = notes ? `${notes.leaf_count.toLocaleString()} notes` : '—';
   const shieldedBalanceLabel =
     walletSource === 'live'
@@ -77,10 +74,10 @@ export function WalletPage() {
     }
   };
 
-  const copyViewKey = async () => {
+  const copyAddress = async () => {
     try {
-      await navigator.clipboard.writeText(viewKey);
-      pushToast({ kind: 'success', title: 'View key copied' });
+      await navigator.clipboard.writeText(primaryAddress);
+      pushToast({ kind: 'success', title: 'Address copied' });
     } catch (error) {
       pushToast({ kind: 'error', title: 'Copy failed', description: (error as Error).message });
     }
@@ -194,29 +191,27 @@ export function WalletPage() {
         </article>
         <article className={styles.receiveCard}>
           <header>
-          <h3>Accept incoming payments</h3>
-          <p>Share the QR or export your view key to monitor confirmations without revealing spend authority.</p>
-        </header>
-        <div className={styles.qrRow}>
-          <QRCode value={viewKey} size={132} bgColor="transparent" fgColor="var(--color-surface-mid)" />
-          <div>
-            <p className={styles.kicker}>Primary address</p>
-            <p className={styles.viewKey}>{primaryAddress}</p>
-            <p className={styles.kicker}>Incoming view key</p>
-            <p className={styles.viewKey}>{viewKey}</p>
-            <div className={styles.receiveActions}>
-              <button type="button" onClick={copyViewKey} className={styles.ghostButton}>
-                Copy view key
-              </button>
-              <a
-                className={styles.linkButton}
-                download="view-key.txt"
-                href={`data:text/plain,${encodeURIComponent(viewKey)}`}
-              >
-                Export
-              </a>
+            <h3>Accept incoming payments</h3>
+            <p>Share the QR to receive funds. Export incoming viewing keys with the wallet CLI when you need watch-only access.</p>
+          </header>
+          <div className={styles.qrRow}>
+            <QRCode value={primaryAddress} size={132} bgColor="transparent" fgColor="var(--color-surface-mid)" />
+            <div>
+              <p className={styles.kicker}>Primary address</p>
+              <p className={styles.viewKey}>{primaryAddress}</p>
+              <div className={styles.receiveActions}>
+                <button type="button" onClick={copyAddress} className={styles.ghostButton}>
+                  Copy address
+                </button>
+                <a
+                  className={styles.linkButton}
+                  download="address.txt"
+                  href={`data:text/plain,${encodeURIComponent(primaryAddress)}`}
+                >
+                  Export
+                </a>
+              </div>
             </div>
-          </div>
           </div>
         </article>
       </section>

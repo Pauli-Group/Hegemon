@@ -49,7 +49,6 @@ export const mockTransfers: TransferRecord[] = [
 export const mockWalletStatus: WalletStatus = {
   mode: 'Full',
   primary_address: 'shield1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
-  incoming_viewing_key: 'demo-wallet-ivk',
   balances: { '1': 4_200_000_000 },
   last_synced_height: 0,
   pending: mockTransfers,

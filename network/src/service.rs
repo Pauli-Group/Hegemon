@@ -2,8 +2,10 @@ use crate::p2p::{Connection, WireMessage};
 use crate::peer_manager::PeerManager;
 use crate::{GossipHandle, GossipMessage, NetworkError, PeerIdentity};
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
+use tokio::time::{MissedTickBehavior, interval, sleep};
 use tracing::{error, info, warn};
 
 enum P2PCommand {
@@ -11,6 +13,11 @@ enum P2PCommand {
     Message(SocketAddr, WireMessage),
     PeerDisconnected(SocketAddr),
 }
+
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(90);
+const RECONNECT_BASE: Duration = Duration::from_secs(2);
+const RECONNECT_MAX: Duration = Duration::from_secs(30);
 
 pub struct P2PService {
     identity: PeerIdentity,
@@ -53,6 +60,8 @@ impl P2PService {
         }
 
         let mut gossip_rx = self.gossip.subscribe();
+        let mut heartbeat = interval(HEARTBEAT_INTERVAL);
+        heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
@@ -73,7 +82,8 @@ impl P2PService {
                             info!("peer disconnected: {}", addr);
                             self.peer_manager.remove_peer(&addr);
                         }
-                        P2PCommand::Message(_addr, msg) => {
+                        P2PCommand::Message(addr, msg) => {
+                            self.peer_manager.mark_heartbeat(&addr);
                             match msg {
                                 WireMessage::Gossip(gossip_msg) => {
                                     // Forward to local node
@@ -85,10 +95,7 @@ impl P2PService {
                                     }
                                 }
                                 WireMessage::Ping => {
-                                    // Send Pong
-                                    // We need to find the sender
-                                    // For now, we don't have a direct way to send back from here easily without looking up PeerManager
-                                    // But we can just ignore Ping for MVP or implement it later
+                                    self.peer_manager.send_to(&addr, WireMessage::Pong).await;
                                 }
                                 WireMessage::Pong => {}
                             }
@@ -99,6 +106,13 @@ impl P2PService {
                 // Handle messages from local node (GossipRouter)
                 Ok(msg) = gossip_rx.recv() => {
                     self.peer_manager.broadcast(WireMessage::Gossip(msg)).await;
+                }
+
+                _ = heartbeat.tick() => {
+                    self.peer_manager.ping_all().await;
+                    for addr in self.peer_manager.prune_stale(HEARTBEAT_TIMEOUT) {
+                        warn!("peer timed out: {}", addr);
+                    }
                 }
             }
         }
@@ -111,21 +125,27 @@ impl P2PService {
         cmd_tx: mpsc::Sender<P2PCommand>,
     ) {
         tokio::spawn(async move {
-            match TcpStream::connect(addr).await {
-                Ok(socket) => {
-                    let mut connection = Connection::new(socket);
-                    match connection.handshake_initiator(&identity).await {
-                        Ok(_) => {
-                            Self::spawn_peer_loop(connection, addr, cmd_tx);
-                        }
-                        Err(e) => {
-                            warn!("handshake failed with {}: {}", addr, e);
+            let mut backoff = RECONNECT_BASE;
+            loop {
+                match TcpStream::connect(addr).await {
+                    Ok(socket) => {
+                        let mut connection = Connection::new(socket);
+                        match connection.handshake_initiator(&identity).await {
+                            Ok(_) => {
+                                Self::run_peer_loop(connection, addr, cmd_tx.clone()).await;
+                                backoff = RECONNECT_BASE;
+                            }
+                            Err(e) => {
+                                warn!("handshake failed with {}: {}", addr, e);
+                            }
                         }
                     }
+                    Err(e) => {
+                        warn!("failed to connect to seed {}: {}", addr, e);
+                    }
                 }
-                Err(e) => {
-                    warn!("failed to connect to seed {}: {}", addr, e);
-                }
+                sleep(backoff).await;
+                backoff = (backoff * 2).min(RECONNECT_MAX);
             }
         });
     }
@@ -141,7 +161,7 @@ impl P2PService {
             let mut connection = Connection::new(socket);
             match connection.handshake_responder(&identity).await {
                 Ok(_) => {
-                    Self::spawn_peer_loop(connection, addr, cmd_tx);
+                    Self::run_peer_loop(connection, addr, cmd_tx).await;
                 }
                 Err(e) => {
                     warn!("handshake failed with {}: {}", addr, e);
@@ -150,46 +170,41 @@ impl P2PService {
         });
     }
 
-    fn spawn_peer_loop(
+    async fn run_peer_loop(
         mut connection: Connection,
         addr: SocketAddr,
         cmd_tx: mpsc::Sender<P2PCommand>,
     ) {
         let (tx, mut rx) = mpsc::channel::<WireMessage>(100);
-        
-        // Notify main loop about new peer
-        let _ = cmd_tx.try_send(P2PCommand::NewPeer(addr, tx));
+        if cmd_tx.send(P2PCommand::NewPeer(addr, tx)).await.is_err() {
+            return;
+        }
 
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    // Outbound messages (from main loop to peer)
-                    Some(msg) = rx.recv() => {
-                        if let Err(e) = connection.send(msg).await {
-                            error!("failed to send to {}: {}", addr, e);
-                            break;
-                        }
+        loop {
+            tokio::select! {
+                Some(msg) = rx.recv() => {
+                    if let Err(e) = connection.send(msg).await {
+                        error!("failed to send to {}: {}", addr, e);
+                        break;
                     }
-
-                    // Inbound messages (from peer to main loop)
-                    result = connection.recv() => {
-                        match result {
-                            Ok(Some(msg)) => {
-                                if let Err(_) = cmd_tx.send(P2PCommand::Message(addr, msg)).await {
-                                    break;
-                                }
-                            }
-                            Ok(None) => break, // Connection closed
-                            Err(e) => {
-                                error!("error receiving from {}: {}", addr, e);
+                }
+                result = connection.recv() => {
+                    match result {
+                        Ok(Some(msg)) => {
+                            if cmd_tx.send(P2PCommand::Message(addr, msg)).await.is_err() {
                                 break;
                             }
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            error!("error receiving from {}: {}", addr, e);
+                            break;
                         }
                     }
                 }
             }
-            // Notify disconnect
-            let _ = cmd_tx.send(P2PCommand::PeerDisconnected(addr)).await;
-        });
+        }
+
+        let _ = cmd_tx.send(P2PCommand::PeerDisconnected(addr)).await;
     }
 }

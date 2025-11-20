@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0"
 axum = { version = "0.7", features = ["json", "ws"] }
 bincode = "1.3"
-clap = { version = "4.5", features = ["derive"] }
+clap = { version = "4.5", features = ["derive", "env"] }
 consensus = { path = "../consensus" }
 crypto = { path = "../crypto", package = "synthetic-crypto" }
 futures = "0.3"

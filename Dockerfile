@@ -32,4 +32,11 @@ EXPOSE 8080 9000
 
 # Entrypoint
 ENTRYPOINT ["node"]
-CMD ["--db-path", "/data/node.db", "--wallet-store", "/data/wallet.db", "--api-addr", "0.0.0.0:8080", "--p2p-addr", "0.0.0.0:9000"]
+ENV NODE_WALLET_PASSPHRASE=changeme
+CMD [
+  "--db-path", "/data/node.db",
+  "--wallet-store", "/data/wallet.db",
+  "--wallet-auto-create",
+  "--api-addr", "0.0.0.0:8080",
+  "--p2p-addr", "0.0.0.0:9000"
+]

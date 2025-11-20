@@ -10,6 +10,13 @@ Use this runbook to spin up a pair of PoW nodes, keep two wallet daemons synced,
 
 ## 2. Launch two interconnected nodes
 
+Initialize encrypted stores for each embedded node wallet before starting the daemons. These stores hold miner payouts and must be created explicitly now that the defaults are disabled:
+
+```bash
+cargo run -p wallet --bin wallet -- init --store /tmp/node-a.wallet --passphrase devnet-node-a
+cargo run -p wallet --bin wallet -- init --store /tmp/node-b.wallet --passphrase devnet-node-b
+```
+
 Start the first node, pointing its database and API port at dedicated temp paths:
 
 ```bash
@@ -18,7 +25,9 @@ cargo run -p node --bin node -- \
   --api-addr 127.0.0.1:8080 \
   --api-token devnet-token \
   --miner-workers 2 \
-  --note-tree-depth 12
+  --note-tree-depth 12 \
+  --wallet-store /tmp/node-a.wallet \
+  --wallet-passphrase devnet-node-a
 ```
 
 In a second terminal, launch the peer node with a different port/seed so the gossip router treats it as a distinct miner:
@@ -29,7 +38,9 @@ cargo run -p node --bin node -- \
   --api-addr 127.0.0.1:8081 \
   --api-token devnet-token \
   --miner-workers 2 \
-  --miner-seed 0202020202020202020202020202020202020202020202020202020202020202
+  --miner-seed 0202020202020202020202020202020202020202020202020202020202020202 \
+  --wallet-store /tmp/node-b.wallet \
+  --wallet-passphrase devnet-node-b
 ```
 
 Each node embeds its own mining workers. When both processes print `node online`, the PoW loop immediately begins solving blocks with the simplified difficulty target configured above (`pow_bits = 0x3f00ffff`). The first block at height `1` mints `50 × 10^8` base units per `consensus/src/reward.rs` and records the subsidy inside the header’s `supply_digest`.

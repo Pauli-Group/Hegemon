@@ -1,10 +1,10 @@
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::cmp::Reverse;
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
@@ -28,7 +28,7 @@ pub async fn serve_wallet_api(
     store: Arc<WalletStore>,
     client: Arc<WalletRpcClient>,
 ) -> anyhow::Result<()> {
-    let state = ApiState { store, client };
+    let state = ApiState::new(store, client, None);
     let app = wallet_router(state);
     let listener = TcpListener::bind(addr).await?;
     println!("wallet http api listening on http://{addr}");
@@ -47,6 +47,21 @@ pub fn wallet_router(state: ApiState) -> Router {
 pub struct ApiState {
     pub store: Arc<WalletStore>,
     pub client: Arc<WalletRpcClient>,
+    pub auth_token: Option<String>,
+}
+
+impl ApiState {
+    pub fn new(
+        store: Arc<WalletStore>,
+        client: Arc<WalletRpcClient>,
+        auth_token: Option<String>,
+    ) -> Self {
+        Self {
+            store,
+            client,
+            auth_token,
+        }
+    }
 }
 
 #[derive(Deserialize, Clone)]
@@ -64,7 +79,6 @@ pub struct TransfersResponse {
 pub struct WalletStatusResponse {
     pub mode: WalletMode,
     pub primary_address: String,
-    pub incoming_viewing_key: Option<String>,
     pub balances: BTreeMap<u64, u64>,
     pub last_synced_height: u64,
     pub pending: Vec<TransferRecord>,
@@ -144,7 +158,9 @@ impl IntoResponse for ApiError {
 
 async fn wallet_status(
     State(state): State<ApiState>,
+    headers: HeaderMap,
 ) -> Result<Json<WalletStatusResponse>, ApiError> {
+    require_auth(&headers, &state.auth_token)?;
     let store = state.store.clone();
     let response = task::spawn_blocking(move || snapshot_status(&store))
         .await
@@ -154,7 +170,9 @@ async fn wallet_status(
 
 async fn list_transfers(
     State(state): State<ApiState>,
+    headers: HeaderMap,
 ) -> Result<Json<TransfersResponse>, ApiError> {
+    require_auth(&headers, &state.auth_token)?;
     let store = state.store.clone();
     let response = task::spawn_blocking(move || snapshot_transfers(&store))
         .await
@@ -164,8 +182,10 @@ async fn list_transfers(
 
 async fn submit_transfer(
     State(state): State<ApiState>,
+    headers: HeaderMap,
     Json(payload): Json<TransferRequest>,
 ) -> Result<Json<SubmitTransferResponse>, ApiError> {
+    require_auth(&headers, &state.auth_token)?;
     let store = state.store.clone();
     let client = state.client.clone();
     let record = task::spawn_blocking(move || process_transfer_submission(store, client, payload))
@@ -203,10 +223,6 @@ fn snapshot_status(store: &Arc<WalletStore>) -> Result<WalletStatusResponse, Wal
             .and_then(|addr| addr.encode().ok())
     }
     .unwrap_or_else(|| "—".to_string());
-    let incoming_viewing_key = store
-        .incoming_key()
-        .ok()
-        .and_then(|ivk| serde_json::to_string(&ivk).ok());
     let pending_records: Vec<TransferRecord> = pending
         .iter()
         .map(|tx| render_transfer(tx, latest))
@@ -214,7 +230,6 @@ fn snapshot_status(store: &Arc<WalletStore>) -> Result<WalletStatusResponse, Wal
     Ok(WalletStatusResponse {
         mode,
         primary_address,
-        incoming_viewing_key,
         balances,
         last_synced_height: latest,
         pending: pending_records,
@@ -303,7 +318,19 @@ pub struct RecipientSpec {
     pub memo: Option<String>,
 }
 
-
+fn require_auth(headers: &HeaderMap, token: &Option<String>) -> Result<(), ApiError> {
+    if let Some(expected) = token {
+        match headers.get("x-auth-token") {
+            Some(value) if value == expected => Ok(()),
+            _ => Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                "missing or invalid wallet auth token",
+            )),
+        }
+    } else {
+        Ok(())
+    }
+}
 
 pub fn parse_recipients(specs: &[RecipientSpec]) -> Result<Vec<Recipient>, WalletError> {
     specs

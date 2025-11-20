@@ -525,7 +525,7 @@ fn spawn_wallet_api(
                     return;
                 }
             };
-            let state = api::ApiState { store, client };
+            let state = api::ApiState::new(store, client, None);
             let app = api::wallet_router(state);
             runtime.block_on(async move {
                 match TcpListener::bind(addr).await {
@@ -547,10 +547,6 @@ fn spawn_wallet_api(
     println!("wallet http api listening on http://{addr}");
     Ok(())
 }
-
-
-
-
 
 struct TxCraftParams<'a> {
     root_hex: &'a str,
@@ -613,5 +609,3 @@ struct BalanceReport {
     totals: BTreeMap<u64, u64>,
     recovered: Vec<NoteSummary>,
 }
-
-
