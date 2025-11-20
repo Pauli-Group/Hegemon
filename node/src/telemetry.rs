@@ -1,7 +1,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use std::collections::VecDeque;
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -29,6 +30,7 @@ struct TelemetryInner {
     mempool_depth: AtomicU64,
     difficulty: AtomicU64,
     posture: RwLock<TelemetryPosture>,
+    rate_history: Mutex<VecDeque<(Instant, u64)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +56,7 @@ impl Telemetry {
                 mempool_depth: AtomicU64::new(0),
                 difficulty: AtomicU64::new(0),
                 posture: RwLock::new(TelemetryPosture::default()),
+                rate_history: Mutex::new(VecDeque::new()),
             }),
         }
     }
@@ -89,13 +92,33 @@ impl Telemetry {
     }
 
     pub fn snapshot(&self) -> TelemetrySnapshot {
-        let elapsed = self.inner.start.elapsed();
+        let now = Instant::now();
         let hashes = self.inner.hashes.load(Ordering::Relaxed);
-        let hash_rate = if elapsed > Duration::from_secs(0) {
-            hashes as f64 / elapsed.as_secs_f64()
+
+        let mut history = self.inner.rate_history.lock();
+        history.push_back((now, hashes));
+
+        // Keep last 15 seconds of history for a smooth moving average
+        while let Some(front) = history.front() {
+            if now.duration_since(front.0) > Duration::from_secs(15) {
+                history.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        let hash_rate = if let Some(front) = history.front() {
+            let delta_hashes = hashes.saturating_sub(front.1);
+            let delta_time = now.duration_since(front.0).as_secs_f64();
+            if delta_time > 0.5 {
+                delta_hashes as f64 / delta_time
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
+
         let accepted = self.inner.accepted_shares.load(Ordering::Relaxed) as f64;
         let stale = self.inner.stale_shares.load(Ordering::Relaxed) as f64;
         let total_shares = accepted + stale;
