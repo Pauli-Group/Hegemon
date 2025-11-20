@@ -51,7 +51,7 @@ impl Default for NodeConfig {
         Self {
             db_path: PathBuf::from("node.db"),
             api_addr: "127.0.0.1:8080".parse().expect("loopback socket"),
-            api_token: "local-dev-token".to_string(),
+            api_token: "devnet-token".to_string(),
             note_tree_depth: 32,
             mempool_max_txs: 1024,
             template_tx_limit: 512,

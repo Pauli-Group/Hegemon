@@ -127,6 +127,7 @@ export function NodePage() {
     launcher.mutate(payload, {
       onSuccess: (response) => {
         metricsQuery.refetch();
+        markActiveEndpoint({ protocol, host, port: Number(port), authToken: apiToken.trim() || undefined });
         pushToast({
           kind: 'success',
           title: mode === 'genesis' ? 'Genesis node launched' : 'Join request applied',
@@ -177,7 +178,7 @@ export function NodePage() {
       return;
     }
     const parsedPort = Number(port);
-    markActiveEndpoint({ protocol, host, port: parsedPort });
+    markActiveEndpoint({ protocol, host, port: parsedPort, authToken: apiToken.trim() || undefined });
     pushToast({
       kind: 'success',
       title: 'Endpoint marked active',
