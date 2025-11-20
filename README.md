@@ -108,6 +108,8 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 The easiest way to run the system is using the unified `hegemon` binary, which bundles the Node, Wallet, and Dashboard UI into a single executable.
 
+The dashboard assets are already vendored under `node/src/dashboard/assets`, so a clean `cargo build -p node --release` works without running the frontend toolchain. If you edit `dashboard-ui/`, refresh the embedded assets with `./scripts/build_dashboard.sh`.
+
 1. **Build the binary**:
    ```bash
    cargo build -p node --release
@@ -156,4 +158,3 @@ If you are contributing to the codebase:
 | `make check` | Formats, lints, and tests the entire Rust workspace. |
 | `make bench` | Executes the prover, wallet, and network smoke benchmarks. |
 | `make wallet-demo` | Generates example wallet artifacts plus a balance report inside `wallet-demo-artifacts/`. |
-
