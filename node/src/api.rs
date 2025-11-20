@@ -13,6 +13,8 @@ use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::BroadcastStream;
+use tracing::warn;
+use std::sync::OnceLock;
 
 use crate::error::NodeError;
 use crate::service::{MinerAction, MinerStatus, NodeService, NoteStatus, StorageFootprint};
@@ -20,8 +22,18 @@ use crate::telemetry::TelemetrySnapshot;
 use wallet::TransactionBundle;
 
 const AUTH_HEADER: &str = "x-auth-token";
+const DEFAULT_DEV_TOKEN: &str = "devnet-token";
 const DEFAULT_PAGE_LIMIT: usize = 128;
 const MAX_PAGE_LIMIT: usize = 1024;
+
+fn dev_fallback_allowed() -> bool {
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("NODE_ALLOW_DEV_TOKEN_FALLBACK")
+            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false)
+    })
+}
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -298,15 +310,27 @@ async fn handle_ws(stream: WebSocket, node: Arc<NodeService>) {
 }
 
 fn require_auth(headers: &HeaderMap, token: &str) -> Result<(), StatusCode> {
-    let direct = headers.get(AUTH_HEADER).is_some_and(|value| value == token);
-    let bearer = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|as_str| as_str.strip_prefix("Bearer "))
-        .is_some_and(|auth_token| auth_token == token);
-    if direct || bearer {
+    let matches_token = |expected: &str| {
+        let direct = headers
+            .get(AUTH_HEADER)
+            .is_some_and(|value| value == expected);
+        let bearer = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|as_str| as_str.strip_prefix("Bearer "))
+            .is_some_and(|auth_token| auth_token == expected);
+        direct || bearer
+    };
+
+    if matches_token(token) {
         return Ok(());
     }
+
+    if dev_fallback_allowed() && matches_token(DEFAULT_DEV_TOKEN) {
+        warn!("request authorized via default dev token because NODE_ALLOW_DEV_TOKEN_FALLBACK is set; use api.token/--api-token and unset the flag for full enforcement");
+        return Ok(());
+    }
+
     Err(StatusCode::UNAUTHORIZED)
 }
 

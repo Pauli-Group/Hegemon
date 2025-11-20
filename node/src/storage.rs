@@ -150,6 +150,16 @@ impl Storage {
         Ok(blocks)
     }
 
+    pub fn reset(&self) -> NodeResult<()> {
+        self.blocks.clear()?;
+        self.meta.clear()?;
+        self.notes.clear()?;
+        self.nullifiers.clear()?;
+        self.ciphertexts.clear()?;
+        self.flush()?;
+        Ok(())
+    }
+
     pub fn record_nullifiers(&self, nullifiers: &[[u8; 32]]) -> NodeResult<()> {
         for nf in nullifiers {
             self.nullifiers.insert(nf, IVec::from(&[1u8]))?;

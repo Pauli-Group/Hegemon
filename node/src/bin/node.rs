@@ -65,7 +65,9 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
     let cli = Cli::parse();
 
@@ -84,24 +86,33 @@ async fn run_setup() -> Result<()> {
     std::io::stdin().read_line(&mut store_path)?;
     let store_path = store_path.trim();
     let store_path = if store_path.is_empty() { "wallet.store" } else { store_path };
-    
-    println!("Enter a passphrase for your wallet:");
-    let passphrase = rpassword::read_password()?;
-    if passphrase.is_empty() {
-        anyhow::bail!("Passphrase cannot be empty");
-    }
-    
-    println!("Confirm passphrase:");
-    let confirm = rpassword::read_password()?;
-    if passphrase != confirm {
-        anyhow::bail!("Passphrases do not match");
-    }
-    
-    if PathBuf::from(store_path).exists() {
-        println!("Wallet store already exists at {}. Skipping creation.", store_path);
+
+    // Keep prompting until a non-empty matching passphrase is entered.
+    let passphrase = loop {
+        println!("Enter a passphrase for your wallet:");
+        let pass = rpassword::read_password()?;
+        if pass.is_empty() {
+            println!("Passphrase cannot be empty. Try again.");
+            continue;
+        }
+        println!("Confirm passphrase:");
+        let confirm = rpassword::read_password()?;
+        if pass != confirm {
+            println!("Passphrases do not match. Please re-enter.");
+            continue;
+        }
+        break pass;
+    };
+
+    let store_path = PathBuf::from(store_path);
+    if store_path.exists() {
+        println!(
+            "Wallet store already exists at {}. Skipping creation.",
+            store_path.display()
+        );
     } else {
-        WalletStore::create_full(PathBuf::from(store_path), &passphrase)?;
-        println!("Wallet created successfully at {}!", store_path);
+        WalletStore::create_full(&store_path, &passphrase)?;
+        println!("Wallet created successfully at {}!", store_path.display());
     }
 
     // Generate and save API token
@@ -121,6 +132,25 @@ async fn run_setup() -> Result<()> {
         .write_all(token.as_bytes())
         .context("failed to write api.token")?;
     println!("\nGenerated secure API token and saved to 'api.token'.");
+
+    // Optionally persist wallet passphrase if explicitly enabled
+    let persist_pass = std::env::var("HEGEMON_WRITE_WALLET_PASS")
+        .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    if persist_pass {
+        let mut pass_opts = OpenOptions::new();
+        pass_opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        pass_opts.mode(0o600);
+        pass_opts
+            .open("wallet.pass")
+            .context("failed to open wallet.pass")?
+            .write_all(passphrase.as_bytes())
+            .context("failed to write wallet.pass")?;
+        println!("Stored wallet passphrase in 'wallet.pass' (chmod 600). Remove this file if you no longer want auto-unlock.");
+    } else {
+        println!("Skipped writing wallet.pass (HEGEMON_WRITE_WALLET_PASS not set).");
+    }
 
     // Generate self-signed certificate
     if !PathBuf::from("cert.pem").exists() || !PathBuf::from("key.pem").exists() {
@@ -185,7 +215,7 @@ async fn run_node(cli: Cli) -> Result<()> {
         config.miner_seed = parse_seed(&seed)?;
         config.miner_payout_address = node::config::default_payout_address(config.miner_seed);
     }
-    if let Some(address) = cli.miner_payout_address {
+    if let Some(ref address) = cli.miner_payout_address {
         config.miner_payout_address =
             ShieldedAddress::decode(&address).context("invalid miner payout address")?;
     }
@@ -197,27 +227,51 @@ async fn run_node(cli: Cli) -> Result<()> {
     
     let wallet_passphrase = if let Some(p) = cli.wallet_passphrase {
         p
+    } else if let Ok(env_pass) = std::env::var("NODE_WALLET_PASSPHRASE") {
+        env_pass
+    } else if let Ok(pass) = fs::read_to_string("wallet.pass") {
+        println!("Using wallet passphrase from wallet.pass (delete this file for stricter security).");
+        pass.trim().to_string()
     } else {
         // Interactive prompt
         if !atty::is(atty::Stream::Stdin) {
-             anyhow::bail!("Wallet passphrase required (use --wallet-passphrase or env var in non-interactive mode)");
+             anyhow::bail!("Wallet passphrase required (use --wallet-passphrase, NODE_WALLET_PASSPHRASE env, or opt-in wallet.pass for non-interactive mode)");
         }
         println!("Enter wallet passphrase for {}:", wallet_store_path.display());
         rpassword::read_password()?
     };
 
     let wallet_store = if wallet_store_path.exists() {
-        WalletStore::open(&wallet_store_path, &wallet_passphrase)?
-    } else if cli.wallet_auto_create {
-        WalletStore::create_full(&wallet_store_path, &wallet_passphrase)?
-    } else {
-        anyhow::bail!(
-            "wallet store {} missing: initialize it first with `hegemon setup`",
-            wallet_store_path.display()
+        info!(
+            path = %wallet_store_path.display(),
+            "opening existing wallet store"
         );
+        WalletStore::open(&wallet_store_path, &wallet_passphrase)?
+    } else {
+        info!(
+            path = %wallet_store_path.display(),
+            "wallet store missing; creating a new one"
+        );
+        WalletStore::create_full(&wallet_store_path, &wallet_passphrase)?
     };
     let wallet_store = Arc::new(wallet_store);
-    info!(mode = ?wallet_store.mode()?, "wallet initialized");
+    let mode = wallet_store.mode()?;
+    info!(mode = ?mode, "wallet initialized");
+
+    // If the user didn't specify a payout address, align miner rewards with the wallet's primary address.
+    if cli.miner_payout_address.is_none() {
+        if let Some(keys) = wallet_store
+            .derived_keys()
+            .context("failed to load wallet keys for payout address")?
+        {
+            let addr = keys
+                .address(0)
+                .context("failed to derive primary wallet address")?
+                .shielded_address();
+            config.miner_payout_address = addr;
+            info!("miner payouts set to wallet primary address");
+        }
+    }
 
     // Initialize Node
     let router = config.gossip_router();
@@ -232,6 +286,7 @@ async fn run_node(cli: Cli) -> Result<()> {
     );
     tokio::spawn(p2p_service.run());
 
+    info!("starting node service (miners + gossip + api)...");
     let handle = NodeService::start(config, router).context("failed to start node")?;
 
     // Initialize Wallet Client & Sync
@@ -263,6 +318,8 @@ async fn run_node(cli: Cli) -> Result<()> {
     let sync_store = wallet_store.clone();
     let sync_client = wallet_client.clone();
     tokio::spawn(async move {
+        // Give the API listener a moment to bind before the first sync attempt.
+        tokio::time::sleep(Duration::from_secs(1)).await;
         loop {
             let client = sync_client.clone();
             let store = sync_store.clone();
@@ -274,8 +331,8 @@ async fn run_node(cli: Cli) -> Result<()> {
 
             match res {
                 Ok(Ok(_)) => {},
-                Ok(Err(e)) => error!("wallet sync failed: {}", e),
-                Err(e) => error!("sync task join error: {}", e),
+                Ok(Err(e)) => warn!("wallet sync failed, will retry: {}", e),
+                Err(e) => warn!("sync task join error, will retry: {}", e),
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
         }

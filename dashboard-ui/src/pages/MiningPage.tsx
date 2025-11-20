@@ -18,14 +18,12 @@ export function MiningPage() {
   const minerData = miner.data?.data;
   const source = miner.data?.source ?? 'mock';
   const isLive = source === 'live';
-  const [targetRate, setTargetRate] = useState(minerData?.target_hash_rate ?? 0);
   const [threads, setThreads] = useState(minerData?.thread_count ?? 2);
 
   useEffect(() => {
     if (!minerData) {
       return;
     }
-    setTargetRate(minerData.target_hash_rate);
     setThreads(minerData.thread_count);
   }, [minerData]);
 
@@ -33,7 +31,7 @@ export function MiningPage() {
 
   const sendControl = async (action: 'start' | 'stop') => {
     try {
-      await miner.controlMiner.mutateAsync({ action, target_hash_rate: targetRate, thread_count: threads });
+      await miner.controlMiner.mutateAsync({ action, thread_count: threads });
       pushToast({ kind: 'success', title: action === 'start' ? 'Mining resumed' : 'Mining paused' });
     } catch (error) {
       pushToast({ kind: 'error', title: 'Control failed', description: (error as Error).message });
@@ -139,21 +137,6 @@ export function MiningPage() {
       </div>
 
       <section className={styles.controlGrid}>
-        <article className={styles.controlCard}>
-          <h3>Target hash rate</h3>
-          <p>Guide worker intensity to align with your energy budget.</p>
-          <div className={styles.sliderRow}>
-            <input
-              type="range"
-              min={100000}
-              max={4000000}
-              step={10000}
-              value={targetRate}
-              onChange={(event) => setTargetRate(Number(event.target.value))}
-            />
-            <span className={styles.sliderValue}>{targetRate.toLocaleString()} H/s</span>
-          </div>
-        </article>
         <article className={styles.controlCard}>
           <h3>Worker threads</h3>
           <p>Scale miners up or down without restarting the node service.</p>

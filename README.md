@@ -110,7 +110,7 @@ The easiest way to run the system is using the unified `hegemon` binary, which b
 
 The dashboard assets are already vendored under `node/src/dashboard/assets`, so a clean `cargo build -p node --release` works without running the frontend toolchain. If you edit `dashboard-ui/`, refresh the embedded assets with `./scripts/build_dashboard.sh`.
 
-The embedded dashboard and node API both default to the dev token `devnet-token`. If you override it with `--api-token` or an `api.token` file, update the dashboard’s “API auth token” field and click “Use for dashboard session” so requests carry the right credential.
+The embedded dashboard and node API both default to the dev token `devnet-token`. `hegemon setup` writes your API token to `api.token`. If you want unattended starts, set `HEGEMON_WRITE_WALLET_PASS=1` before running setup to drop your passphrase into `wallet.pass` (chmod 600), or export `NODE_WALLET_PASSPHRASE` before `./hegemon start`. Otherwise you’ll be prompted interactively. If you override the token with `--api-token` or a different `api.token`, update the dashboard’s “API auth token” field and click “Use for dashboard session” so requests carry the right credential. For stricter auth, leave `NODE_ALLOW_DEV_TOKEN_FALLBACK` unset (default).
 
 1. **Build the binary**:
    ```bash
@@ -125,7 +125,7 @@ The embedded dashboard and node API both default to the dev token `devnet-token`
    ```
 
 3. **Start the System**:
-   Launch the node, wallet, and UI server.
+   Launch the node, wallet, and UI server. Miner rewards are paid to the wallet’s primary address by default; pass `--miner-payout-address` if you want a different recipient.
    ```bash
    ./hegemon start
    ```
