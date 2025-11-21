@@ -22,19 +22,20 @@ async fn gossip_crosses_tcp_boundary() {
     let identity_a = PeerIdentity::generate(b"p2p-integration-a");
     let identity_b = PeerIdentity::generate(b"p2p-integration-b");
 
-    let service_a = P2PService::new(identity_a, addr_a, vec![], router_a.handle());
+    let service_a = P2PService::new(identity_a, addr_a, vec![], router_a.handle(), 64);
     let service_b = P2PService::new(
         identity_b,
         addr_b,
         vec![addr_a.to_string()],
         router_b.handle(),
+        64,
     );
 
     let task_a = tokio::spawn(service_a.run());
     let task_b = tokio::spawn(service_b.run());
 
     // Wait for the dialer to connect before broadcasting.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     let payload = b"integration-payload".to_vec();
     let tx_handle = router_a.handle();
