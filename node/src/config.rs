@@ -26,6 +26,7 @@ pub struct NodeConfig {
     pub supported_versions: Vec<VersionBinding>,
     pub p2p_addr: SocketAddr,
     pub seeds: Vec<String>,
+    pub max_peers: usize,
 }
 
 impl NodeConfig {
@@ -63,6 +64,7 @@ impl Default for NodeConfig {
             supported_versions: vec![DEFAULT_VERSION_BINDING],
             p2p_addr: "0.0.0.0:9000".parse().expect("p2p socket"),
             seeds: vec![],
+            max_peers: 64,
         }
     }
 }
