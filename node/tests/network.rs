@@ -167,12 +167,14 @@ async fn p2p_nodes_propagate_mined_block() {
         config_a.p2p_addr,
         vec![],
         gossip_handle_a.clone(),
+        config_a.max_peers,
     );
     let p2p_b = P2PService::new(
         PeerIdentity::generate(b"p2p-node-b"),
         config_b.p2p_addr,
         config_b.seeds.clone(),
         gossip_handle_b.clone(),
+        config_b.max_peers,
     );
 
     let p2p_task_a = tokio::spawn(p2p_a.run());
