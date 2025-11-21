@@ -47,6 +47,12 @@ struct Cli {
         help = "Seed peer as IP:port or hostname; repeat for multiple seeds"
     )]
     seeds: Vec<String>,
+    #[arg(long, default_value_t = true)]
+    nat_traversal: bool,
+    #[arg(long, default_value_t = false)]
+    relay_enabled: bool,
+    #[arg(long, value_name = "ADDR", help = "Relay node addresses", num_args = 0..)]
+    relays: Vec<String>,
     #[arg(long, default_value_t = 64)]
     max_peers: usize,
     #[arg(long, default_value_t = false)]
@@ -250,6 +256,9 @@ async fn run_node(cli: Cli) -> Result<()> {
     config.p2p_addr = cli.p2p_addr.parse().context("invalid p2p address")?;
     config.seeds = cli.seeds;
     config.max_peers = cli.max_peers;
+    config.nat_traversal = cli.nat_traversal;
+    config.relay.allow_relay = cli.relay_enabled;
+    config.relay.relays = cli.relays.clone();
 
     // Initialize Wallet
     let wallet_store_path = cli
@@ -321,6 +330,8 @@ async fn run_node(cli: Cli) -> Result<()> {
         config.seeds.clone(),
         gossip_handle,
         config.max_peers,
+        config.relay.clone(),
+        config.nat_config(),
     );
     tokio::spawn(p2p_service.run());
 

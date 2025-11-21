@@ -11,10 +11,13 @@ use std::net::SocketAddr;
 use thiserror::Error;
 use tokio::sync::broadcast;
 
+pub mod nat;
 pub mod p2p;
 pub mod peer_manager;
 pub mod service;
 
+pub use nat::{NatProtocol, NatTraversal, NatTraversalConfig, NatTraversalResult};
+pub use service::RelayConfig;
 pub use service::{P2PService, ProtocolHandle};
 
 pub type PeerId = [u8; 32];
