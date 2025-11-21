@@ -1,6 +1,6 @@
 use crate::p2p::{Connection, WireMessage};
 use crate::peer_manager::PeerManager;
-use crate::{GossipHandle, GossipMessage, NetworkError, PeerIdentity};
+use crate::{GossipHandle, GossipMessage, NetworkError, PeerId, PeerIdentity};
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
@@ -9,9 +9,19 @@ use tokio::time::{MissedTickBehavior, interval, sleep};
 use tracing::{error, info, warn};
 
 enum P2PCommand {
-    NewPeer(SocketAddr, mpsc::Sender<WireMessage>),
-    Message(SocketAddr, WireMessage),
-    PeerDisconnected(SocketAddr),
+    NewPeer {
+        peer_id: PeerId,
+        addr: SocketAddr,
+        tx: mpsc::Sender<WireMessage>,
+    },
+    Message {
+        peer_id: PeerId,
+        msg: WireMessage,
+    },
+    PeerDisconnected {
+        peer_id: PeerId,
+        addr: SocketAddr,
+    },
 }
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -74,16 +84,16 @@ impl P2PService {
                 // Handle commands (NewPeer, Message, Disconnect)
                 Some(cmd) = cmd_rx.recv() => {
                     match cmd {
-                        P2PCommand::NewPeer(addr, tx) => {
-                            info!("peer connected: {}", addr);
-                            self.peer_manager.add_peer(addr, tx);
+                        P2PCommand::NewPeer { peer_id, addr, tx } => {
+                            info!("peer connected: {} ({:?})", addr, peer_id);
+                            self.peer_manager.add_peer(peer_id, addr, tx);
                         }
-                        P2PCommand::PeerDisconnected(addr) => {
-                            info!("peer disconnected: {}", addr);
-                            self.peer_manager.remove_peer(&addr);
+                        P2PCommand::PeerDisconnected { peer_id, addr } => {
+                            info!("peer disconnected: {} ({:?})", addr, peer_id);
+                            self.peer_manager.remove_peer(&peer_id);
                         }
-                        P2PCommand::Message(addr, msg) => {
-                            self.peer_manager.mark_heartbeat(&addr);
+                        P2PCommand::Message { peer_id, msg } => {
+                            self.peer_manager.mark_heartbeat(&peer_id);
                             match msg {
                                 WireMessage::Gossip(gossip_msg) => {
                                     // Forward to local node
@@ -95,7 +105,7 @@ impl P2PService {
                                     }
                                 }
                                 WireMessage::Ping => {
-                                    self.peer_manager.send_to(&addr, WireMessage::Pong).await;
+                                    self.peer_manager.send_to(&peer_id, WireMessage::Pong).await;
                                 }
                                 WireMessage::Pong => {}
                             }
@@ -110,8 +120,8 @@ impl P2PService {
 
                 _ = heartbeat.tick() => {
                     self.peer_manager.ping_all().await;
-                    for addr in self.peer_manager.prune_stale(HEARTBEAT_TIMEOUT) {
-                        warn!("peer timed out: {}", addr);
+                    for (peer_id, addr) in self.peer_manager.prune_stale(HEARTBEAT_TIMEOUT) {
+                        warn!("peer timed out: {} ({:?})", addr, peer_id);
                     }
                 }
             }
@@ -131,8 +141,9 @@ impl P2PService {
                     Ok(socket) => {
                         let mut connection = Connection::new(socket);
                         match connection.handshake_initiator(&identity).await {
-                            Ok(_) => {
-                                Self::run_peer_loop(connection, addr, cmd_tx.clone()).await;
+                            Ok(peer_id) => {
+                                Self::run_peer_loop(connection, addr, peer_id, cmd_tx.clone())
+                                    .await;
                                 backoff = RECONNECT_BASE;
                             }
                             Err(e) => {
@@ -160,8 +171,8 @@ impl P2PService {
         tokio::spawn(async move {
             let mut connection = Connection::new(socket);
             match connection.handshake_responder(&identity).await {
-                Ok(_) => {
-                    Self::run_peer_loop(connection, addr, cmd_tx).await;
+                Ok(peer_id) => {
+                    Self::run_peer_loop(connection, addr, peer_id, cmd_tx).await;
                 }
                 Err(e) => {
                     warn!("handshake failed with {}: {}", addr, e);
@@ -173,10 +184,15 @@ impl P2PService {
     async fn run_peer_loop(
         mut connection: Connection,
         addr: SocketAddr,
+        peer_id: PeerId,
         cmd_tx: mpsc::Sender<P2PCommand>,
     ) {
         let (tx, mut rx) = mpsc::channel::<WireMessage>(100);
-        if cmd_tx.send(P2PCommand::NewPeer(addr, tx)).await.is_err() {
+        if cmd_tx
+            .send(P2PCommand::NewPeer { peer_id, addr, tx })
+            .await
+            .is_err()
+        {
             return;
         }
 
@@ -191,7 +207,11 @@ impl P2PService {
                 result = connection.recv() => {
                     match result {
                         Ok(Some(msg)) => {
-                            if cmd_tx.send(P2PCommand::Message(addr, msg)).await.is_err() {
+                            if cmd_tx
+                                .send(P2PCommand::Message { peer_id, msg })
+                                .await
+                                .is_err()
+                            {
                                 break;
                             }
                         }
@@ -205,6 +225,8 @@ impl P2PService {
             }
         }
 
-        let _ = cmd_tx.send(P2PCommand::PeerDisconnected(addr)).await;
+        let _ = cmd_tx
+            .send(P2PCommand::PeerDisconnected { peer_id, addr })
+            .await;
     }
 }

@@ -1,3 +1,4 @@
+use crate::PeerId;
 use crate::p2p::WireMessage;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -5,12 +6,13 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 struct PeerEntry {
+    addr: SocketAddr,
     tx: mpsc::Sender<WireMessage>,
     last_seen: Instant,
 }
 
 pub struct PeerManager {
-    peers: HashMap<SocketAddr, PeerEntry>,
+    peers: HashMap<PeerId, PeerEntry>,
 }
 
 impl Default for PeerManager {
@@ -26,22 +28,23 @@ impl PeerManager {
         }
     }
 
-    pub fn add_peer(&mut self, addr: SocketAddr, tx: mpsc::Sender<WireMessage>) {
+    pub fn add_peer(&mut self, peer_id: PeerId, addr: SocketAddr, tx: mpsc::Sender<WireMessage>) {
         self.peers.insert(
-            addr,
+            peer_id,
             PeerEntry {
                 tx,
+                addr,
                 last_seen: Instant::now(),
             },
         );
     }
 
-    pub fn remove_peer(&mut self, addr: &SocketAddr) {
-        self.peers.remove(addr);
+    pub fn remove_peer(&mut self, peer_id: &PeerId) {
+        self.peers.remove(peer_id);
     }
 
-    pub fn mark_heartbeat(&mut self, addr: &SocketAddr) {
-        if let Some(entry) = self.peers.get_mut(addr) {
+    pub fn mark_heartbeat(&mut self, peer_id: &PeerId) {
+        if let Some(entry) = self.peers.get_mut(peer_id) {
             entry.last_seen = Instant::now();
         }
     }
@@ -52,8 +55,8 @@ impl PeerManager {
         }
     }
 
-    pub async fn send_to(&self, addr: &SocketAddr, msg: WireMessage) {
-        if let Some(entry) = self.peers.get(addr) {
+    pub async fn send_to(&self, peer_id: &PeerId, msg: WireMessage) {
+        if let Some(entry) = self.peers.get(peer_id) {
             let _ = entry.tx.send(msg).await;
         }
     }
@@ -64,21 +67,21 @@ impl PeerManager {
         }
     }
 
-    pub fn prune_stale(&mut self, timeout: Duration) -> Vec<SocketAddr> {
+    pub fn prune_stale(&mut self, timeout: Duration) -> Vec<(PeerId, SocketAddr)> {
         let now = Instant::now();
         let stale: Vec<_> = self
             .peers
             .iter()
-            .filter_map(|(addr, entry)| {
+            .filter_map(|(peer_id, entry)| {
                 if now.duration_since(entry.last_seen) > timeout {
-                    Some(*addr)
+                    Some((*peer_id, entry.addr))
                 } else {
                     None
                 }
             })
             .collect();
-        for addr in &stale {
-            self.peers.remove(addr);
+        for (peer_id, _) in &stale {
+            self.peers.remove(peer_id);
         }
         stale
     }
