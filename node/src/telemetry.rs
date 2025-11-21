@@ -1,6 +1,6 @@
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use std::collections::VecDeque;
 
 use parking_lot::{Mutex, RwLock};
 use serde::Serialize;

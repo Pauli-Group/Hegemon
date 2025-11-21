@@ -48,8 +48,8 @@ async fn node_wallet_daemons_execute_transfer() {
     let handle_a = NodeService::start(config_a.clone(), router.clone()).expect("start node a");
     let handle_b = NodeService::start(config_b.clone(), router).expect("start node b");
 
-    let api_task_a = tokio::spawn(api::serve(handle_a.service.clone()));
-    let api_task_b = tokio::spawn(api::serve(handle_b.service.clone()));
+    let api_task_a = tokio::spawn(api::serve(handle_a.service.clone(), None));
+    let api_task_b = tokio::spawn(api::serve(handle_b.service.clone(), None));
 
     let base_url_a = Url::parse(&format!("http://{}", handle_a.service.api_addr())).unwrap();
     let base_url_b = Url::parse(&format!("http://{}", handle_b.service.api_addr())).unwrap();
