@@ -1,12 +1,106 @@
 use crate::p2p::{Connection, WireMessage};
 use crate::peer_manager::PeerManager;
-use crate::{GossipHandle, GossipMessage, NetworkError, PeerId, PeerIdentity};
+use crate::{
+    GossipHandle, GossipMessage, NetworkError, PeerId, PeerIdentity, ProtocolId, ProtocolMessage,
+};
+use futures::stream::{BoxStream, SelectAll, StreamExt as FuturesStreamExt};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval, sleep};
+use tokio_stream::{StreamExt as TokioStreamExt, wrappers::ReceiverStream};
 use tracing::{error, info, warn};
+
+pub struct ProtocolHandle {
+    protocol_id: ProtocolId,
+    outbound: mpsc::Sender<ProtocolMessage>,
+    inbound: mpsc::Receiver<ProtocolMessage>,
+}
+
+impl ProtocolHandle {
+    pub fn protocol_id(&self) -> ProtocolId {
+        self.protocol_id
+    }
+
+    pub fn sender(&self) -> mpsc::Sender<ProtocolMessage> {
+        self.outbound.clone()
+    }
+
+    pub fn receiver(&mut self) -> &mut mpsc::Receiver<ProtocolMessage> {
+        &mut self.inbound
+    }
+
+    pub async fn send(
+        &self,
+        payload: Vec<u8>,
+    ) -> Result<(), mpsc::error::SendError<ProtocolMessage>> {
+        self.outbound
+            .send(ProtocolMessage {
+                protocol: self.protocol_id,
+                payload,
+            })
+            .await
+    }
+
+    pub async fn recv(&mut self) -> Option<ProtocolMessage> {
+        self.inbound.recv().await
+    }
+}
+
+#[derive(Default)]
+struct ProtocolMultiplexer {
+    handlers: HashMap<ProtocolId, mpsc::Sender<ProtocolMessage>>,
+    outbound: SelectAll<BoxStream<'static, (ProtocolId, ProtocolMessage)>>,
+}
+
+impl ProtocolMultiplexer {
+    fn new() -> Self {
+        Self {
+            handlers: HashMap::new(),
+            outbound: SelectAll::new(),
+        }
+    }
+
+    fn register(&mut self, protocol_id: ProtocolId) -> ProtocolHandle {
+        let (outbound_tx, outbound_rx) = mpsc::channel(100);
+        let (inbound_tx, inbound_rx) = mpsc::channel(100);
+
+        let stream = TokioStreamExt::map(ReceiverStream::new(outbound_rx), move |msg| {
+            (protocol_id, msg)
+        })
+        .boxed();
+
+        self.handlers.insert(protocol_id, inbound_tx);
+        self.outbound.push(stream);
+
+        ProtocolHandle {
+            protocol_id,
+            outbound: outbound_tx,
+            inbound: inbound_rx,
+        }
+    }
+
+    fn has_protocols(&self) -> bool {
+        !self.handlers.is_empty()
+    }
+
+    async fn next_outbound(&mut self) -> Option<(ProtocolId, ProtocolMessage)> {
+        FuturesStreamExt::next(&mut self.outbound).await
+    }
+
+    async fn dispatch_inbound(&mut self, msg: ProtocolMessage) {
+        if let Some(handler) = self.handlers.get(&msg.protocol) {
+            let _ = handler.send(msg).await;
+        } else {
+            warn!(
+                protocol = msg.protocol,
+                "no handler registered for protocol"
+            );
+        }
+    }
+}
 
 enum P2PCommand {
     NewPeer {
@@ -35,6 +129,7 @@ pub struct P2PService {
     seeds: Vec<String>,
     gossip: GossipHandle,
     peer_manager: PeerManager,
+    protocol_mux: ProtocolMultiplexer,
 }
 
 impl P2PService {
@@ -51,7 +146,12 @@ impl P2PService {
             seeds,
             gossip,
             peer_manager: PeerManager::new(max_peers),
+            protocol_mux: ProtocolMultiplexer::new(),
         }
+    }
+
+    pub fn register_protocol(&mut self, protocol_id: ProtocolId) -> ProtocolHandle {
+        self.protocol_mux.register(protocol_id)
     }
 
     pub async fn run(mut self) -> Result<(), NetworkError> {
@@ -113,6 +213,9 @@ impl P2PService {
                                     self.peer_manager.send_to(&peer_id, WireMessage::Pong).await;
                                 }
                                 WireMessage::Pong => {}
+                                WireMessage::Proto(proto_msg) => {
+                                    self.protocol_mux.dispatch_inbound(proto_msg).await;
+                                }
                             }
                         }
                     }
@@ -125,6 +228,11 @@ impl P2PService {
                             .record_addresses(self.identity.peer_id(), addrs.clone());
                     }
                     self.peer_manager.broadcast(WireMessage::Gossip(msg)).await;
+                }
+
+                // Handle protocol messages from registered components
+                Some((_, protocol_msg)) = self.protocol_mux.next_outbound(), if self.protocol_mux.has_protocols() => {
+                    self.peer_manager.broadcast(WireMessage::Proto(protocol_msg)).await;
                 }
 
                 _ = heartbeat.tick() => {
