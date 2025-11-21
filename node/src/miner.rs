@@ -66,7 +66,7 @@ async fn run_worker(
                 let _ = rx.borrow_and_update();
                 break;
             }
-            
+
             let _start = Instant::now();
             for _ in 0..BATCH_SIZE {
                 let mut candidate = template.block.clone();

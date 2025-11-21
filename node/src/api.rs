@@ -14,11 +14,11 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::convert::Infallible;
+use std::sync::OnceLock;
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::warn;
-use std::sync::OnceLock;
-use std::convert::Infallible;
 
 use crate::error::NodeError;
 use crate::service::{MinerAction, MinerStatus, NodeService, NoteStatus, StorageFootprint};
@@ -131,7 +131,11 @@ async fn node_lifecycle(
     require_auth(&headers, &state.token)?;
     let addr = state.node.api_addr();
     let config = state.node.config();
-    let mode = if config.seeds.is_empty() { "genesis" } else { "join" };
+    let mode = if config.seeds.is_empty() {
+        "genesis"
+    } else {
+        "join"
+    };
     let peer_url = config.seeds.first().cloned();
 
     Ok(Json(serde_json::json!({
@@ -349,7 +353,9 @@ fn require_auth(headers: &HeaderMap, token: &str) -> Result<(), StatusCode> {
     }
 
     if dev_fallback_allowed() && matches_token(DEFAULT_DEV_TOKEN) {
-        warn!("request authorized via default dev token because NODE_ALLOW_DEV_TOKEN_FALLBACK is set; use api.token/--api-token and unset the flag for full enforcement");
+        warn!(
+            "request authorized via default dev token because NODE_ALLOW_DEV_TOKEN_FALLBACK is set; use api.token/--api-token and unset the flag for full enforcement"
+        );
         return Ok(());
     }
 

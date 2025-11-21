@@ -10,6 +10,8 @@ use anyhow::{Context, Result};
 use axum_server::tls_rustls::RustlsConfig;
 use clap::{Parser, Subcommand};
 use node::{NodeService, api, config::NodeConfig};
+use rand::Rng;
+use rcgen::generate_simple_self_signed;
 use tokio::signal;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
@@ -17,8 +19,6 @@ use url::Url;
 use wallet::{
     address::ShieldedAddress, rpc::WalletRpcClient, store::WalletStore, sync::WalletSyncEngine,
 };
-use rand::Rng;
-use rcgen::generate_simple_self_signed;
 
 #[derive(Parser, Debug)]
 #[command(name = "hegemon", about = "Synthetic hegemonic currency node service")]
@@ -80,12 +80,16 @@ async fn main() -> Result<()> {
 async fn run_setup() -> Result<()> {
     println!("Welcome to Hegemon Setup");
     println!("This wizard will help you create a new wallet and secure your node.");
-    
+
     println!("\nEnter a path for your wallet store (default: wallet.store):");
     let mut store_path = String::new();
     std::io::stdin().read_line(&mut store_path)?;
     let store_path = store_path.trim();
-    let store_path = if store_path.is_empty() { "wallet.store" } else { store_path };
+    let store_path = if store_path.is_empty() {
+        "wallet.store"
+    } else {
+        store_path
+    };
 
     // Keep prompting until a non-empty matching passphrase is entered.
     let passphrase = loop {
@@ -121,13 +125,14 @@ async fn run_setup() -> Result<()> {
         .take(32)
         .map(char::from)
         .collect();
-    
+
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     options.mode(0o600);
 
-    options.open("api.token")
+    options
+        .open("api.token")
         .context("failed to open api.token")?
         .write_all(token.as_bytes())
         .context("failed to write api.token")?;
@@ -147,22 +152,30 @@ async fn run_setup() -> Result<()> {
             .context("failed to open wallet.pass")?
             .write_all(passphrase.as_bytes())
             .context("failed to write wallet.pass")?;
-        println!("Stored wallet passphrase in 'wallet.pass' (chmod 600). Remove this file if you no longer want auto-unlock.");
+        println!(
+            "Stored wallet passphrase in 'wallet.pass' (chmod 600). Remove this file if you no longer want auto-unlock."
+        );
     } else {
         println!("Skipped writing wallet.pass (HEGEMON_WRITE_WALLET_PASS not set).");
     }
 
     // Generate self-signed certificate
     if !PathBuf::from("cert.pem").exists() || !PathBuf::from("key.pem").exists() {
-        let subject_alt_names = vec!["localhost".to_string(), "127.0.0.1".to_string(), "0.0.0.0".to_string()];
+        let subject_alt_names = vec![
+            "localhost".to_string(),
+            "127.0.0.1".to_string(),
+            "0.0.0.0".to_string(),
+        ];
         let certified_key = generate_simple_self_signed(subject_alt_names).unwrap();
-        fs::write("cert.pem", certified_key.cert.pem().as_bytes()).context("failed to write cert.pem")?;
-        
+        fs::write("cert.pem", certified_key.cert.pem().as_bytes())
+            .context("failed to write cert.pem")?;
+
         let mut key_opts = OpenOptions::new();
         key_opts.write(true).create(true).truncate(true);
         #[cfg(unix)]
         key_opts.mode(0o600);
-        key_opts.open("key.pem")
+        key_opts
+            .open("key.pem")
             .context("failed to open key.pem")?
             .write_all(certified_key.key_pair.serialize_pem().as_bytes())
             .context("failed to write key.pem")?;
@@ -170,11 +183,13 @@ async fn run_setup() -> Result<()> {
     } else {
         println!("TLS certificate already exists. Skipping generation.");
     }
-    
+
     println!("\nSetup complete! You can now run the node with:");
     println!("  ./hegemon start");
-    println!("\n(The node will automatically read 'api.token' and prompt for your wallet passphrase)");
-    
+    println!(
+        "\n(The node will automatically read 'api.token' and prompt for your wallet passphrase)"
+    );
+
     Ok(())
 }
 
@@ -182,10 +197,16 @@ async fn run_node(cli: Cli) -> Result<()> {
     let mut config = NodeConfig::with_db_path(&cli.db_path);
     config.api_addr = cli.api_addr.parse().context("invalid api address")?;
 
-    if !cli.api_addr.starts_with("127.0.0.1") && !cli.api_addr.starts_with("localhost") && !cli.allow_remote {
-        anyhow::bail!("Binding to non-loopback address {} is insecure without --allow-remote. Traffic is unencrypted.", cli.api_addr);
+    if !cli.api_addr.starts_with("127.0.0.1")
+        && !cli.api_addr.starts_with("localhost")
+        && !cli.allow_remote
+    {
+        anyhow::bail!(
+            "Binding to non-loopback address {} is insecure without --allow-remote. Traffic is unencrypted.",
+            cli.api_addr
+        );
     }
-    
+
     // API Token Logic
     let api_token = if let Some(t) = cli.api_token {
         let t = t.trim().to_string();
@@ -196,7 +217,9 @@ async fn run_node(cli: Cli) -> Result<()> {
     } else if let Ok(t) = fs::read_to_string("api.token") {
         let t = t.trim().to_string();
         if t.is_empty() || t.len() < 8 {
-            anyhow::bail!("api.token is invalid (empty or too short). Please run 'hegemon setup' to regenerate it.");
+            anyhow::bail!(
+                "api.token is invalid (empty or too short). Please run 'hegemon setup' to regenerate it."
+            );
         }
         t
     } else {
@@ -217,27 +240,36 @@ async fn run_node(cli: Cli) -> Result<()> {
     }
     if let Some(ref address) = cli.miner_payout_address {
         config.miner_payout_address =
-            ShieldedAddress::decode(&address).context("invalid miner payout address")?;
+            ShieldedAddress::decode(address).context("invalid miner payout address")?;
     }
     config.p2p_addr = cli.p2p_addr.parse().context("invalid p2p address")?;
     config.seeds = cli.seeds;
 
     // Initialize Wallet
-    let wallet_store_path = cli.wallet_store.unwrap_or_else(|| PathBuf::from("wallet.store"));
-    
+    let wallet_store_path = cli
+        .wallet_store
+        .unwrap_or_else(|| PathBuf::from("wallet.store"));
+
     let wallet_passphrase = if let Some(p) = cli.wallet_passphrase {
         p
     } else if let Ok(env_pass) = std::env::var("NODE_WALLET_PASSPHRASE") {
         env_pass
     } else if let Ok(pass) = fs::read_to_string("wallet.pass") {
-        println!("Using wallet passphrase from wallet.pass (delete this file for stricter security).");
+        println!(
+            "Using wallet passphrase from wallet.pass (delete this file for stricter security)."
+        );
         pass.trim().to_string()
     } else {
         // Interactive prompt
         if !atty::is(atty::Stream::Stdin) {
-             anyhow::bail!("Wallet passphrase required (use --wallet-passphrase, NODE_WALLET_PASSPHRASE env, or opt-in wallet.pass for non-interactive mode)");
+            anyhow::bail!(
+                "Wallet passphrase required (use --wallet-passphrase, NODE_WALLET_PASSPHRASE env, or opt-in wallet.pass for non-interactive mode)"
+            );
         }
-        println!("Enter wallet passphrase for {}:", wallet_store_path.display());
+        println!(
+            "Enter wallet passphrase for {}:",
+            wallet_store_path.display()
+        );
         rpassword::read_password()?
     };
 
@@ -259,18 +291,17 @@ async fn run_node(cli: Cli) -> Result<()> {
     info!(mode = ?mode, "wallet initialized");
 
     // If the user didn't specify a payout address, align miner rewards with the wallet's primary address.
-    if cli.miner_payout_address.is_none() {
-        if let Some(keys) = wallet_store
+    if cli.miner_payout_address.is_none()
+        && let Some(keys) = wallet_store
             .derived_keys()
             .context("failed to load wallet keys for payout address")?
-        {
-            let addr = keys
-                .address(0)
-                .context("failed to derive primary wallet address")?
-                .shielded_address();
-            config.miner_payout_address = addr;
-            info!("miner payouts set to wallet primary address");
-        }
+    {
+        let addr = keys
+            .address(0)
+            .context("failed to derive primary wallet address")?
+            .shielded_address();
+        config.miner_payout_address = addr;
+        info!("miner payouts set to wallet primary address");
     }
 
     // Initialize Node
@@ -292,12 +323,9 @@ async fn run_node(cli: Cli) -> Result<()> {
     // Initialize Wallet Client & Sync
     let scheme = if cli.tls { "https" } else { "http" };
     let rpc_url: Url = format!("{}://{}", scheme, cli.api_addr).parse()?;
-    
+
     let cert_pem = if cli.tls {
-        match fs::read("cert.pem") {
-            Ok(pem) => Some(pem),
-            Err(_) => None,
-        }
+        fs::read("cert.pem").ok()
     } else {
         None
     };
@@ -327,10 +355,11 @@ async fn run_node(cli: Cli) -> Result<()> {
             let res = tokio::task::spawn_blocking(move || {
                 let engine = WalletSyncEngine::new(client.as_ref(), store.as_ref());
                 engine.sync_once()
-            }).await;
+            })
+            .await;
 
             match res {
-                Ok(Ok(_)) => {},
+                Ok(Ok(_)) => {}
                 Ok(Err(e)) => warn!("wallet sync failed, will retry: {}", e),
                 Err(e) => warn!("sync task join error, will retry: {}", e),
             }
@@ -341,12 +370,12 @@ async fn run_node(cli: Cli) -> Result<()> {
     // Build API Router
     let wallet_api_state =
         wallet::api::ApiState::new(wallet_store, wallet_client, Some(api_token.clone()));
-    
+
     let app = api::node_router(handle.service.clone(), Some(wallet_api_state));
 
     let addr = handle.service.api_addr();
     info!(api = ?addr, "node api online");
-    
+
     // Print the UI URL
     let port = addr.port();
     let scheme = if cli.tls { "https" } else { "http" };
@@ -356,22 +385,24 @@ async fn run_node(cli: Cli) -> Result<()> {
     println!("---------------------------------------------------");
 
     if !cli.api_addr.starts_with("127.0.0.1") && !cli.api_addr.starts_with("localhost") {
-         warn!("API is bound to non-localhost address {}. Ensure your API token is secure!", cli.api_addr);
+        warn!(
+            "API is bound to non-localhost address {}. Ensure your API token is secure!",
+            cli.api_addr
+        );
     }
 
     let tls_enabled = cli.tls;
     // TODO(pqc): Upgrade to a TLS stack with hybrid PQ cipher suites when rustls exposes them.
     let api_task = tokio::spawn(async move {
         if tls_enabled {
-            match RustlsConfig::from_pem_file(
-                PathBuf::from("cert.pem"),
-                PathBuf::from("key.pem"),
-            ).await {
+            match RustlsConfig::from_pem_file(PathBuf::from("cert.pem"), PathBuf::from("key.pem"))
+                .await
+            {
                 Ok(config) => {
                     info!("binding secure api server to {}", addr);
                     if let Err(e) = axum_server::bind_rustls(addr, config)
                         .serve(app.into_make_service())
-                        .await 
+                        .await
                     {
                         error!("api server error: {}", e);
                     }

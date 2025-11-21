@@ -143,7 +143,10 @@ impl NodeService {
 
         let mut persisted_blocks = storage.load_blocks()?;
         persisted_blocks.sort_by_key(|block| block.header.height);
-        let persisted_height = persisted_blocks.last().map(|b| b.header.height).unwrap_or(0);
+        let persisted_height = persisted_blocks
+            .last()
+            .map(|b| b.header.height)
+            .unwrap_or(0);
         if meta.height != persisted_height {
             tracing::warn!(
                 meta_height = meta.height,
@@ -211,7 +214,7 @@ impl NodeService {
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_SIZE);
         let (template_tx, template_rx) = watch::channel(None);
         let (solution_tx, mut solution_rx) = mpsc::channel(BLOCK_BROADCAST_CAPACITY);
-        
+
         let miner_running = Arc::new(AtomicBool::new(true));
         let target_hash_rate = Arc::new(AtomicU64::new(0));
         let thread_count = Arc::new(AtomicUsize::new(config.miner_workers));
@@ -234,8 +237,12 @@ impl NodeService {
             event_tx,
             template_tx,
         });
-        let miner_tasks =
-            miner::spawn_miners(config.miner_workers, template_rx, solution_tx, telemetry.clone());
+        let miner_tasks = miner::spawn_miners(
+            config.miner_workers,
+            template_rx,
+            solution_tx,
+            telemetry.clone(),
+        );
         let gossip_service = service.clone();
         let gossip_router = router.handle();
         let gossip_task = tokio::spawn(async move {
@@ -490,7 +497,10 @@ impl NodeService {
             }
             Err(err) => {
                 // Don't stall miners on template errors; fall back to a best-effort template.
-                tracing::warn!("assemble_pending_block failed, falling back to default template: {}", err);
+                tracing::warn!(
+                    "assemble_pending_block failed, falling back to default template: {}",
+                    err
+                );
                 if let Ok(block) = self.force_template() {
                     let bits = block.header.pow.as_ref().map(|s| s.pow_bits).unwrap_or(0);
                     self.telemetry.set_difficulty(bits);

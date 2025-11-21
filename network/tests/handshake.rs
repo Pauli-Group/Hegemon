@@ -158,10 +158,7 @@ async fn duplex_stream_handshake_succeeds_and_rejects_tampering() {
         &tampered_confirmation_bytes,
         responder_secret,
     );
-    match &err {
-        Ok(_) => panic!("confirmation tamper unexpectedly succeeded"),
-        Err(_) => {}
-    }
+    assert!(err.is_err(), "confirmation tamper unexpectedly succeeded");
     drop(channel);
     assert!(matches!(
         err,
