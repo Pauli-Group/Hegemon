@@ -1,8 +1,9 @@
 use std::net::{SocketAddr, TcpListener};
 use std::time::Duration;
 
-use network::{GossipMessage, GossipRouter};
-use network::{P2PService, PeerIdentity};
+use network::{
+    GossipMessage, GossipRouter, NatTraversalConfig, P2PService, PeerIdentity, RelayConfig,
+};
 use node::NodeService;
 use node::config::NodeConfig;
 use protocol_versioning::DEFAULT_VERSION_BINDING;
@@ -168,6 +169,8 @@ async fn p2p_nodes_propagate_mined_block() {
         vec![],
         gossip_handle_a.clone(),
         config_a.max_peers,
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(config_a.p2p_addr),
     );
     let p2p_b = P2PService::new(
         PeerIdentity::generate(b"p2p-node-b"),
@@ -175,6 +178,8 @@ async fn p2p_nodes_propagate_mined_block() {
         config_b.seeds.clone(),
         gossip_handle_b.clone(),
         config_b.max_peers,
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(config_b.p2p_addr),
     );
 
     let p2p_task_a = tokio::spawn(p2p_a.run());

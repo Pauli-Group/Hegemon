@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use crypto::ml_dsa::MlDsaSecretKey;
 use crypto::traits::SigningKey;
-use network::GossipRouter;
+use network::{GossipRouter, NatTraversalConfig, RelayConfig};
 use protocol_versioning::{DEFAULT_VERSION_BINDING, VersionBinding};
 use serde::{Deserialize, Serialize};
 use wallet::address::ShieldedAddress;
@@ -27,6 +27,8 @@ pub struct NodeConfig {
     pub p2p_addr: SocketAddr,
     pub seeds: Vec<String>,
     pub max_peers: usize,
+    pub nat_traversal: bool,
+    pub relay: RelayConfig,
 }
 
 impl NodeConfig {
@@ -44,6 +46,14 @@ impl NodeConfig {
 
     pub fn gossip_router(&self) -> GossipRouter {
         GossipRouter::new(self.gossip_buffer)
+    }
+
+    pub fn nat_config(&self) -> NatTraversalConfig {
+        if self.nat_traversal {
+            NatTraversalConfig::for_listener(self.p2p_addr)
+        } else {
+            NatTraversalConfig::disabled(self.p2p_addr)
+        }
     }
 }
 
@@ -65,6 +75,8 @@ impl Default for NodeConfig {
             p2p_addr: "0.0.0.0:9000".parse().expect("p2p socket"),
             seeds: vec![],
             max_peers: 64,
+            nat_traversal: true,
+            relay: RelayConfig::default(),
         }
     }
 }

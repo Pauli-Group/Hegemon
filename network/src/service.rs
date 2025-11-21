@@ -1,9 +1,11 @@
-use crate::p2p::{CompactAddress, Connection, WireMessage};
+use crate::nat::{NatTraversal, NatTraversalConfig, NatTraversalResult};
+use crate::p2p::{CompactAddress, Connection, CoordinationMessage, WireMessage};
 use crate::peer_manager::PeerManager;
 use crate::{
     GossipHandle, GossipMessage, NetworkError, PeerId, PeerIdentity, ProtocolId, ProtocolMessage,
 };
 use futures::stream::{BoxStream, SelectAll, StreamExt as FuturesStreamExt};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -47,6 +49,12 @@ impl ProtocolHandle {
     pub async fn recv(&mut self) -> Option<ProtocolMessage> {
         self.inbound.recv().await
     }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RelayConfig {
+    pub allow_relay: bool,
+    pub relays: Vec<String>,
 }
 
 #[derive(Default)]
@@ -132,6 +140,10 @@ pub struct P2PService {
     gossip: GossipHandle,
     peer_manager: PeerManager,
     protocol_mux: ProtocolMultiplexer,
+    nat_config: NatTraversalConfig,
+    nat_result: Option<NatTraversalResult>,
+    relay_config: RelayConfig,
+    advertised_addrs: Vec<SocketAddr>,
 }
 
 impl P2PService {
@@ -141,6 +153,8 @@ impl P2PService {
         seeds: Vec<String>,
         gossip: GossipHandle,
         max_peers: usize,
+        relay_config: RelayConfig,
+        nat_config: NatTraversalConfig,
     ) -> Self {
         Self {
             identity,
@@ -149,6 +163,10 @@ impl P2PService {
             gossip,
             peer_manager: PeerManager::new(max_peers),
             protocol_mux: ProtocolMultiplexer::new(),
+            nat_config,
+            nat_result: None,
+            relay_config,
+            advertised_addrs: Vec::new(),
         }
     }
 
@@ -165,10 +183,22 @@ impl P2PService {
 
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<P2PCommand>(100);
 
-        self.peer_manager.record_static_addresses([self.addr]);
+        let nat_result = NatTraversal::attempt_mapping(&self.nat_config).await;
+        self.advertised_addrs = nat_result.external_addresses.clone();
+        if !self.advertised_addrs.contains(&self.addr) {
+            self.advertised_addrs.push(self.addr);
+        }
+        self.peer_manager
+            .record_static_addresses(self.advertised_addrs.iter().copied());
+        let _ = self
+            .gossip
+            .broadcast_addresses(self.advertised_addrs.clone());
+        self.nat_result = Some(nat_result);
 
         // Connect to seeds
-        let resolved_seeds = Self::resolve_seeds(self.seeds.clone(), self.addr.port()).await;
+        let mut configured = self.seeds.clone();
+        configured.extend(self.relay_config.relays.clone());
+        let resolved_seeds = Self::resolve_seeds(configured, self.addr.port()).await;
         if resolved_seeds.is_empty() {
             info!("no seeds resolved; waiting for inbound peers or address exchange");
         }
@@ -197,8 +227,8 @@ impl P2PService {
                             info!("peer connected: {} ({:?})", addr, peer_id);
                             self.peer_manager.add_peer(peer_id, addr, tx);
                             let connected = self.peer_manager.connected_addresses();
-                            let mut advertise = HashSet::new();
-                            advertise.insert(self.addr);
+                            let mut advertise: HashSet<_> =
+                                self.advertised_addrs.iter().copied().collect();
                             for addr in self
                                 .peer_manager
                                 .sample_addresses(ADDRESS_EXCHANGE_LIMIT - 1, &connected)
@@ -213,6 +243,19 @@ impl P2PService {
                             let _ = self
                                 .peer_manager
                                 .send_to(&peer_id, WireMessage::AddrExchange(compact))
+                                .await;
+
+                            let registration = CoordinationMessage::RelayRegistration {
+                                reachable: self
+                                    .advertised_addrs
+                                    .iter()
+                                    .copied()
+                                    .map(CompactAddress::from)
+                                    .collect(),
+                            };
+                            let _ = self
+                                .peer_manager
+                                .send_to(&peer_id, WireMessage::Coordinate(registration))
                                 .await;
                         }
                         P2PCommand::PeerDisconnected { peer_id, addr } => {
@@ -245,6 +288,10 @@ impl P2PService {
                                         .map(|addr| addr.to_socket_addr())
                                         .collect();
                                     self.peer_manager.record_addresses(peer_id, addrs);
+                                }
+                                WireMessage::Coordinate(msg) => {
+                                    self.handle_coordination(peer_id, msg, cmd_tx.clone())
+                                        .await;
                                 }
                                 WireMessage::Proto(proto_msg) => {
                                     self.protocol_mux.dispatch_inbound(proto_msg).await;
@@ -390,6 +437,67 @@ impl P2PService {
         let _ = cmd_tx
             .send(P2PCommand::PeerDisconnected { peer_id, addr })
             .await;
+    }
+
+    async fn handle_coordination(
+        &mut self,
+        sender: PeerId,
+        msg: CoordinationMessage,
+        cmd_tx: mpsc::Sender<P2PCommand>,
+    ) {
+        match msg {
+            CoordinationMessage::RelayRegistration { reachable } => {
+                let addrs = reachable.into_iter().map(|addr| addr.to_socket_addr());
+                self.peer_manager.record_addresses(sender, addrs);
+            }
+            CoordinationMessage::PunchRequest {
+                target,
+                requester_addr,
+            } => {
+                if target == self.identity.peer_id() {
+                    let addr = requester_addr.to_socket_addr();
+                    self.peer_manager.record_addresses(sender, [addr]);
+                    self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx.clone());
+                    let response = CoordinationMessage::PunchResponse {
+                        target: sender,
+                        responder_addr: CompactAddress::from(self.addr),
+                    };
+                    self.peer_manager
+                        .send_to(&sender, WireMessage::Coordinate(response))
+                        .await;
+                } else if self.relay_config.allow_relay {
+                    self.peer_manager
+                        .send_to(
+                            &target,
+                            WireMessage::Coordinate(CoordinationMessage::PunchRequest {
+                                target,
+                                requester_addr,
+                            }),
+                        )
+                        .await;
+                }
+            }
+            CoordinationMessage::PunchResponse {
+                target,
+                responder_addr,
+            } => {
+                if target == self.identity.peer_id() {
+                    let addr = responder_addr.to_socket_addr();
+                    self.peer_manager.record_addresses(sender, [addr]);
+                    self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx);
+                } else if self.relay_config.allow_relay {
+                    self.peer_manager
+                        .send_to(
+                            &target,
+                            WireMessage::Coordinate(CoordinationMessage::PunchResponse {
+                                target,
+                                responder_addr,
+                            }),
+                        )
+                        .await;
+                }
+            }
+        }
     }
 
     async fn resolve_seeds(seeds: Vec<String>, default_port: u16) -> Vec<SocketAddr> {
