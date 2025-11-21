@@ -18,6 +18,7 @@ struct PeerEntry {
 pub struct PeerManager {
     peers: HashMap<PeerId, PeerEntry>,
     address_book: HashMap<PeerId, HashSet<SocketAddr>>,
+    static_addresses: HashSet<SocketAddr>,
     max_peers: usize,
 }
 
@@ -32,8 +33,13 @@ impl PeerManager {
         Self {
             peers: HashMap::new(),
             address_book: HashMap::new(),
+            static_addresses: HashSet::new(),
             max_peers,
         }
+    }
+
+    pub fn peer_count(&self) -> usize {
+        self.peers.len()
     }
 
     pub fn add_peer(&mut self, peer_id: PeerId, addr: SocketAddr, tx: mpsc::Sender<WireMessage>) {
@@ -73,6 +79,14 @@ impl PeerManager {
 
     pub fn remove_peer(&mut self, peer_id: &PeerId) {
         self.peers.remove(peer_id);
+    }
+
+    pub fn max_peers(&self) -> usize {
+        self.max_peers
+    }
+
+    pub fn remaining_capacity(&self) -> usize {
+        self.max_peers.saturating_sub(self.peers.len())
     }
 
     pub fn mark_heartbeat(&mut self, peer_id: &PeerId) {
@@ -130,10 +144,102 @@ impl PeerManager {
         }
     }
 
+    pub fn record_static_addresses(&mut self, addrs: impl IntoIterator<Item = SocketAddr>) {
+        for addr in addrs {
+            self.static_addresses.insert(addr);
+        }
+    }
+
+    pub fn connected_addresses(&self) -> HashSet<SocketAddr> {
+        self.peers.values().map(|entry| entry.addr).collect()
+    }
+
+    pub fn sample_addresses(&self, limit: usize, exclude: &HashSet<SocketAddr>) -> Vec<SocketAddr> {
+        let mut collected = HashSet::new();
+        for addrs in self.address_book.values() {
+            for addr in addrs {
+                if exclude.contains(addr) {
+                    continue;
+                }
+                if collected.len() >= limit {
+                    return collected.into_iter().collect();
+                }
+                collected.insert(*addr);
+            }
+        }
+
+        for addr in &self.static_addresses {
+            if collected.len() >= limit {
+                break;
+            }
+            if !exclude.contains(addr) {
+                collected.insert(*addr);
+            }
+        }
+
+        collected.into_iter().collect()
+    }
+
+    pub fn address_candidates(
+        &self,
+        local_addr: SocketAddr,
+        connected: &HashSet<SocketAddr>,
+        limit: usize,
+    ) -> Vec<SocketAddr> {
+        let mut exclude = connected.clone();
+        exclude.insert(local_addr);
+        self.sample_addresses(limit, &exclude)
+    }
+
     fn lowest_score_peer(&self) -> Option<PeerId> {
         self.peers
             .values()
             .min_by_key(|entry| entry.score)
             .map(|entry| entry.peer_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn samples_addresses_with_exclusions() {
+        let mut manager = PeerManager::new(8);
+        let peer_a: PeerId = [1u8; 32];
+        let peer_b: PeerId = [2u8; 32];
+        let addr_a: SocketAddr = "127.0.0.1:9001".parse().unwrap();
+        let addr_b: SocketAddr = "127.0.0.1:9002".parse().unwrap();
+        let addr_static: SocketAddr = "127.0.0.1:9100".parse().unwrap();
+
+        manager.record_addresses(peer_a, [addr_a]);
+        manager.record_addresses(peer_b, [addr_b]);
+        manager.record_static_addresses([addr_static]);
+
+        let mut exclude = HashSet::new();
+        exclude.insert(addr_a);
+
+        let sample = manager.sample_addresses(3, &exclude);
+
+        assert!(sample.contains(&addr_b));
+        assert!(sample.contains(&addr_static));
+        assert!(!sample.contains(&addr_a));
+    }
+
+    #[test]
+    fn address_candidates_drop_local_and_connected() {
+        let mut manager = PeerManager::new(4);
+        let peer_a: PeerId = [3u8; 32];
+        let addr_peer: SocketAddr = "127.0.0.1:9201".parse().unwrap();
+        let addr_known: SocketAddr = "127.0.0.1:9202".parse().unwrap();
+        let local: SocketAddr = "0.0.0.0:9000".parse().unwrap();
+
+        manager.record_addresses(peer_a, [addr_peer]);
+        manager.record_static_addresses([addr_known]);
+
+        let connected: HashSet<_> = [addr_peer].into_iter().collect();
+        let candidates = manager.address_candidates(local, &connected, 4);
+
+        assert_eq!(candidates, vec![addr_known]);
     }
 }
