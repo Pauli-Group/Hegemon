@@ -16,6 +16,8 @@ pub mod service;
 
 pub use service::P2PService;
 
+pub type PeerId = [u8; 32];
+
 #[derive(Debug, Error)]
 pub enum NetworkError {
     #[error("crypto error: {0}")]
@@ -80,8 +82,12 @@ impl PeerIdentity {
         &self.verify
     }
 
-    pub fn identity_fingerprint(&self) -> [u8; 32] {
+    pub fn peer_id(&self) -> PeerId {
         sha256(&self.verify.to_bytes())
+    }
+
+    pub fn identity_fingerprint(&self) -> PeerId {
+        self.peer_id()
     }
 
     pub fn create_offer(&self) -> Result<HandshakeOffer, NetworkError> {
