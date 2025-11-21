@@ -41,12 +41,28 @@ impl CompactAddress {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum CoordinationMessage {
+    PunchRequest {
+        target: PeerId,
+        requester_addr: CompactAddress,
+    },
+    PunchResponse {
+        target: PeerId,
+        responder_addr: CompactAddress,
+    },
+    RelayRegistration {
+        reachable: Vec<CompactAddress>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum WireMessage {
     Ping,
     Pong,
     Gossip(GossipMessage),
     Proto(ProtocolMessage),
     AddrExchange(Vec<CompactAddress>),
+    Coordinate(CoordinationMessage),
 }
 
 pub struct Connection {
