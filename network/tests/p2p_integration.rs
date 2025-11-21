@@ -1,7 +1,9 @@
 use std::net::{SocketAddr, TcpListener};
 use std::time::Duration;
 
-use network::{GossipMessage, GossipRouter, P2PService, PeerIdentity};
+use network::{
+    GossipMessage, GossipRouter, NatTraversalConfig, P2PService, PeerIdentity, RelayConfig,
+};
 use tokio::time::timeout;
 
 fn local_addr() -> SocketAddr {
@@ -22,13 +24,23 @@ async fn gossip_crosses_tcp_boundary() {
     let identity_a = PeerIdentity::generate(b"p2p-integration-a");
     let identity_b = PeerIdentity::generate(b"p2p-integration-b");
 
-    let service_a = P2PService::new(identity_a, addr_a, vec![], router_a.handle(), 64);
+    let service_a = P2PService::new(
+        identity_a,
+        addr_a,
+        vec![],
+        router_a.handle(),
+        64,
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(addr_a),
+    );
     let service_b = P2PService::new(
         identity_b,
         addr_b,
         vec![addr_a.to_string()],
         router_b.handle(),
         64,
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(addr_b),
     );
 
     let task_a = tokio::spawn(service_a.run());
