@@ -44,6 +44,8 @@ struct Cli {
     p2p_addr: String,
     #[arg(long)]
     seeds: Vec<String>,
+    #[arg(long, default_value_t = 64)]
+    max_peers: usize,
     #[arg(long, default_value_t = false)]
     allow_remote: bool,
     #[arg(long, default_value_t = false)]
@@ -244,6 +246,7 @@ async fn run_node(cli: Cli) -> Result<()> {
     }
     config.p2p_addr = cli.p2p_addr.parse().context("invalid p2p address")?;
     config.seeds = cli.seeds;
+    config.max_peers = cli.max_peers;
 
     // Initialize Wallet
     let wallet_store_path = cli
@@ -314,6 +317,7 @@ async fn run_node(cli: Cli) -> Result<()> {
         config.p2p_addr,
         config.seeds.clone(),
         gossip_handle,
+        config.max_peers,
     );
     tokio::spawn(p2p_service.run());
 

@@ -290,6 +290,7 @@ impl NodeService {
                     }
                 }
                 GossipMessage::Evidence(_) => {}
+                GossipMessage::Addresses(_) => {}
             }
         }
     }

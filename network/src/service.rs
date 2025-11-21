@@ -43,13 +43,14 @@ impl P2PService {
         addr: SocketAddr,
         seeds: Vec<String>,
         gossip: GossipHandle,
+        max_peers: usize,
     ) -> Self {
         Self {
             identity,
             addr,
             seeds,
             gossip,
-            peer_manager: PeerManager::new(),
+            peer_manager: PeerManager::new(max_peers),
         }
     }
 
@@ -102,6 +103,10 @@ impl P2PService {
                                         GossipMessage::Transaction(tx) => { let _ = self.gossip.broadcast_transaction(tx); }
                                         GossipMessage::Block(block) => { let _ = self.gossip.broadcast_block(block); }
                                         GossipMessage::Evidence(ev) => { let _ = self.gossip.broadcast_evidence(ev); }
+                                        GossipMessage::Addresses(addrs) => {
+                                            self.peer_manager.record_addresses(peer_id, addrs.clone());
+                                            let _ = self.gossip.broadcast_addresses(addrs);
+                                        }
                                     }
                                 }
                                 WireMessage::Ping => {
@@ -115,6 +120,10 @@ impl P2PService {
 
                 // Handle messages from local node (GossipRouter)
                 Ok(msg) = gossip_rx.recv() => {
+                    if let GossipMessage::Addresses(addrs) = &msg {
+                        self.peer_manager
+                            .record_addresses(self.identity.peer_id(), addrs.clone());
+                    }
                     self.peer_manager.broadcast(WireMessage::Gossip(msg)).await;
                 }
 

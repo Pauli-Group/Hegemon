@@ -7,6 +7,7 @@ use crypto::ml_kem::{MlKemCiphertext, MlKemKeyPair, MlKemPublicKey, MlKemSharedS
 use crypto::traits::{KemKeyPair, KemPublicKey, SigningKey, VerifyKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::net::SocketAddr;
 use thiserror::Error;
 use tokio::sync::broadcast;
 
@@ -238,6 +239,7 @@ pub enum GossipMessage {
     Transaction(Vec<u8>),
     Block(Vec<u8>),
     Evidence(Vec<u8>),
+    Addresses(Vec<SocketAddr>),
 }
 
 #[derive(Clone)]
@@ -281,6 +283,13 @@ impl GossipHandle {
     pub fn broadcast_evidence(&self, payload: Vec<u8>) -> Result<(), NetworkError> {
         self.sender
             .send(GossipMessage::Evidence(payload))
+            .map(|_| ())
+            .map_err(|_| NetworkError::Handshake("gossip send failed"))
+    }
+
+    pub fn broadcast_addresses(&self, addrs: Vec<SocketAddr>) -> Result<(), NetworkError> {
+        self.sender
+            .send(GossipMessage::Addresses(addrs))
             .map(|_| ())
             .map_err(|_| NetworkError::Handshake("gossip send failed"))
     }
