@@ -5,9 +5,40 @@ use crate::{
 use crypto::hashes::sha256;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use tokio::net::TcpStream;
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub enum CompactAddress {
+    V4 { ip: [u8; 4], port: u16 },
+    V6 { ip: [u8; 16], port: u16 },
+}
+
+impl From<SocketAddr> for CompactAddress {
+    fn from(addr: SocketAddr) -> Self {
+        match addr {
+            SocketAddr::V4(v4) => Self::V4 {
+                ip: v4.ip().octets(),
+                port: v4.port(),
+            },
+            SocketAddr::V6(v6) => Self::V6 {
+                ip: v6.ip().octets(),
+                port: v6.port(),
+            },
+        }
+    }
+}
+
+impl CompactAddress {
+    pub fn to_socket_addr(&self) -> SocketAddr {
+        match self {
+            CompactAddress::V4 { ip, port } => SocketAddr::from((Ipv4Addr::from(*ip), *port)),
+            CompactAddress::V6 { ip, port } => SocketAddr::from((Ipv6Addr::from(*ip), *port)),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum WireMessage {
@@ -15,6 +46,7 @@ pub enum WireMessage {
     Pong,
     Gossip(GossipMessage),
     Proto(ProtocolMessage),
+    AddrExchange(Vec<CompactAddress>),
 }
 
 pub struct Connection {
@@ -139,6 +171,15 @@ mod tests {
     use super::*;
     use tokio::net::TcpListener;
     use tokio::task;
+
+    #[test]
+    fn compact_address_roundtrip() {
+        let ipv4: SocketAddr = "127.0.0.1:9000".parse().unwrap();
+        let ipv6: SocketAddr = "[::1]:9001".parse().unwrap();
+
+        assert_eq!(CompactAddress::from(ipv4).to_socket_addr(), ipv4);
+        assert_eq!(CompactAddress::from(ipv6).to_socket_addr(), ipv6);
+    }
 
     #[tokio::test]
     async fn connection_handshake_round_trip() {
