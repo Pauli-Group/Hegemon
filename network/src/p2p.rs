@@ -1,6 +1,6 @@
 use crate::{
     GossipMessage, HandshakeAcceptance, HandshakeConfirmation, HandshakeOffer, NetworkError,
-    PeerId, PeerIdentity, SecureChannel,
+    PeerId, PeerIdentity, ProtocolMessage, SecureChannel,
 };
 use crypto::hashes::sha256;
 use futures::{SinkExt, StreamExt};
@@ -14,6 +14,7 @@ pub enum WireMessage {
     Ping,
     Pong,
     Gossip(GossipMessage),
+    Proto(ProtocolMessage),
 }
 
 pub struct Connection {

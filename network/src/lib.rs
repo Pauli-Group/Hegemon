@@ -15,9 +15,16 @@ pub mod p2p;
 pub mod peer_manager;
 pub mod service;
 
-pub use service::P2PService;
+pub use service::{P2PService, ProtocolHandle};
 
 pub type PeerId = [u8; 32];
+pub type ProtocolId = u32;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProtocolMessage {
+    pub protocol: ProtocolId,
+    pub payload: Vec<u8>,
+}
 
 #[derive(Debug, Error)]
 pub enum NetworkError {
