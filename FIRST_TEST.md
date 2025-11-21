@@ -116,3 +116,68 @@ cargo run -p wallet --bin wallet -- send \
 | **Public IP** | `curl ifconfig.me` | In your **friend's** `--seeds` flag |
 | **Friend's Public IP** | Ask your friend | In **your** `--seeds` flag |
 | **Wallet Address** | `wallet address` command | In the `recipient.json` file |
+
+---
+
+## Local Network Test (Mac & Windows)
+
+If you are testing between a MacBook and a Windows PC on the **same Wi-Fi network**, you do **not** need to configure port forwarding on your router. You only need your **Local IPs**.
+
+### 1. Find Local IPs
+
+**On MacBook:**
+Run in Terminal:
+```bash
+ipconfig getifaddr en0
+```
+*   *Example:* `192.168.1.15` (This is your **Mac IP**)
+
+**On Windows:**
+Run in Command Prompt (cmd) or PowerShell:
+```powershell
+ipconfig
+```
+*   Look for "Wireless LAN adapter Wi-Fi" -> "IPv4 Address".
+*   *Example:* `192.168.1.20` (This is your **Windows IP**)
+
+### 2. Firewall Settings
+
+*   **Windows:** When you run the node for the first time, Windows Firewall may pop up. Ensure you check the boxes to **Allow** access on Private networks.
+*   **Mac:** Usually allows outbound connections by default. If prompted, allow incoming connections.
+
+### 3. Start the Nodes (Local Network)
+
+**On MacBook (connecting to Windows):**
+Replace `<WINDOWS_IP>` with the IP you found on the PC (e.g., `192.168.1.20`).
+```bash
+cargo run -p node --bin node -- \
+  --db-path /tmp/mac-node.db \
+  --api-addr 127.0.0.1:8080 \
+  --api-token mac-secret \
+  --p2p-addr 0.0.0.0:9000 \
+  --seeds <WINDOWS_IP>:9000 \
+  --miner-workers 2 \
+  --wallet-store /tmp/mac-wallet.store \
+  --wallet-passphrase mac-pass
+```
+
+**On Windows (connecting to Mac):**
+Replace `<MAC_IP>` with the IP you found on the Mac (e.g., `192.168.1.15`).
+*Note: Windows paths use backslashes or you can use forward slashes in PowerShell. The `^` is the line continuation character in Command Prompt. In PowerShell, use backtick `` ` ``.*
+
+**PowerShell Example:**
+```powershell
+cargo run -p node --bin node -- `
+  --db-path C:\Temp\win-node.db `
+  --api-addr 127.0.0.1:8080 `
+  --api-token win-secret `
+  --p2p-addr 0.0.0.0:9000 `
+  --seeds <MAC_IP>:9000 `
+  --miner-workers 2 `
+  --wallet-store C:\Temp\win-wallet.store `
+  --wallet-passphrase win-pass
+```
+
+### 4. Test Transaction
+
+Follow the same "Create the Transaction" steps as above, but use the addresses generated on these local nodes.
