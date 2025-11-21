@@ -1,7 +1,8 @@
 use crate::{
     GossipMessage, HandshakeAcceptance, HandshakeConfirmation, HandshakeOffer, NetworkError,
-    PeerIdentity, SecureChannel,
+    PeerId, PeerIdentity, SecureChannel,
 };
+use crypto::hashes::sha256;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
@@ -31,7 +32,7 @@ impl Connection {
     pub async fn handshake_initiator(
         &mut self,
         identity: &PeerIdentity,
-    ) -> Result<PeerIdentity, NetworkError> {
+    ) -> Result<PeerId, NetworkError> {
         // 1. Create and send offer
         let offer = identity.create_offer()?;
         let offer_bytes = bincode::serialize(&offer)?;
@@ -45,19 +46,21 @@ impl Connection {
         let (channel, _confirmation, confirmation_bytes) =
             identity.finalize_handshake(&offer, &acceptance, &offer_bytes, &acceptance_bytes)?;
 
+        let peer_id = sha256(&acceptance.identity_key);
+
         // 4. Send confirmation
         self.send_raw(&confirmation_bytes).await?;
 
         // 5. Set channel
         self.channel = Some(channel);
 
-        Ok(identity.clone())
+        Ok(peer_id)
     }
 
     pub async fn handshake_responder(
         &mut self,
         identity: &PeerIdentity,
-    ) -> Result<PeerIdentity, NetworkError> {
+    ) -> Result<PeerId, NetworkError> {
         // 1. Receive offer
         let offer_bytes = self.recv_raw().await?;
         let offer: HandshakeOffer = bincode::deserialize(&offer_bytes)?;
@@ -81,10 +84,12 @@ impl Connection {
             responder_secret,
         )?;
 
+        let peer_id = sha256(&offer.identity_key);
+
         // 5. Set channel
         self.channel = Some(channel);
 
-        Ok(identity.clone())
+        Ok(peer_id)
     }
 
     pub async fn send(&mut self, msg: WireMessage) -> Result<(), NetworkError> {
