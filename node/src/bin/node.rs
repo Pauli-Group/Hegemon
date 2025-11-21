@@ -42,7 +42,10 @@ struct Cli {
     miner_seed: Option<String>,
     #[arg(long, default_value = "0.0.0.0:9000")]
     p2p_addr: String,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Seed peer as IP:port or hostname; repeat for multiple seeds"
+    )]
     seeds: Vec<String>,
     #[arg(long, default_value_t = 64)]
     max_peers: usize,

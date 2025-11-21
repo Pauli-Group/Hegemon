@@ -1,13 +1,13 @@
-use crate::p2p::{Connection, WireMessage};
+use crate::p2p::{CompactAddress, Connection, WireMessage};
 use crate::peer_manager::PeerManager;
 use crate::{
     GossipHandle, GossipMessage, NetworkError, PeerId, PeerIdentity, ProtocolId, ProtocolMessage,
 };
 use futures::stream::{BoxStream, SelectAll, StreamExt as FuturesStreamExt};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::Duration;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpStream, lookup_host};
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval, sleep};
 use tokio_stream::{StreamExt as TokioStreamExt, wrappers::ReceiverStream};
@@ -122,6 +122,8 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(90);
 const RECONNECT_BASE: Duration = Duration::from_secs(2);
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
+const ADDRESS_EXCHANGE_LIMIT: usize = 16;
+const OPPORTUNISTIC_BATCH: usize = 4;
 
 pub struct P2PService {
     identity: PeerIdentity,
@@ -163,11 +165,17 @@ impl P2PService {
 
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<P2PCommand>(100);
 
+        self.peer_manager.record_static_addresses([self.addr]);
+
         // Connect to seeds
-        for seed in &self.seeds {
-            if let Ok(addr) = seed.parse::<SocketAddr>() {
-                self.spawn_connect(addr, self.identity.clone(), cmd_tx.clone());
-            }
+        let resolved_seeds = Self::resolve_seeds(self.seeds.clone(), self.addr.port()).await;
+        if resolved_seeds.is_empty() {
+            info!("no seeds resolved; waiting for inbound peers or address exchange");
+        }
+        self.peer_manager
+            .record_static_addresses(resolved_seeds.iter().copied());
+        for addr in resolved_seeds {
+            self.spawn_connect(addr, self.identity.clone(), cmd_tx.clone());
         }
 
         let mut gossip_rx = self.gossip.subscribe();
@@ -188,6 +196,24 @@ impl P2PService {
                         P2PCommand::NewPeer { peer_id, addr, tx } => {
                             info!("peer connected: {} ({:?})", addr, peer_id);
                             self.peer_manager.add_peer(peer_id, addr, tx);
+                            let connected = self.peer_manager.connected_addresses();
+                            let mut advertise = HashSet::new();
+                            advertise.insert(self.addr);
+                            for addr in self
+                                .peer_manager
+                                .sample_addresses(ADDRESS_EXCHANGE_LIMIT - 1, &connected)
+                            {
+                                advertise.insert(addr);
+                            }
+
+                            let compact: Vec<_> = advertise
+                                .into_iter()
+                                .map(CompactAddress::from)
+                                .collect();
+                            let _ = self
+                                .peer_manager
+                                .send_to(&peer_id, WireMessage::AddrExchange(compact))
+                                .await;
                         }
                         P2PCommand::PeerDisconnected { peer_id, addr } => {
                             info!("peer disconnected: {} ({:?})", addr, peer_id);
@@ -213,6 +239,13 @@ impl P2PService {
                                     self.peer_manager.send_to(&peer_id, WireMessage::Pong).await;
                                 }
                                 WireMessage::Pong => {}
+                                WireMessage::AddrExchange(addrs) => {
+                                    let addrs: Vec<_> = addrs
+                                        .into_iter()
+                                        .map(|addr| addr.to_socket_addr())
+                                        .collect();
+                                    self.peer_manager.record_addresses(peer_id, addrs);
+                                }
                                 WireMessage::Proto(proto_msg) => {
                                     self.protocol_mux.dispatch_inbound(proto_msg).await;
                                 }
@@ -239,6 +272,18 @@ impl P2PService {
                     self.peer_manager.ping_all().await;
                     for (peer_id, addr) in self.peer_manager.prune_stale(HEARTBEAT_TIMEOUT) {
                         warn!("peer timed out: {} ({:?})", addr, peer_id);
+                    }
+                    let connected = self.peer_manager.connected_addresses();
+                    if self.peer_manager.peer_count() < self.peer_manager.max_peers() {
+                        let candidates = self.peer_manager.address_candidates(
+                            self.addr,
+                            &connected,
+                            OPPORTUNISTIC_BATCH,
+                        );
+                        for addr in candidates {
+                            info!("opportunistic dial to {}", addr);
+                            self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx.clone());
+                        }
                     }
                 }
             }
@@ -345,5 +390,51 @@ impl P2PService {
         let _ = cmd_tx
             .send(P2PCommand::PeerDisconnected { peer_id, addr })
             .await;
+    }
+
+    async fn resolve_seeds(seeds: Vec<String>, default_port: u16) -> Vec<SocketAddr> {
+        let mut resolved = Vec::new();
+
+        for seed in seeds {
+            if let Ok(addr) = seed.parse::<SocketAddr>() {
+                resolved.push(addr);
+                continue;
+            }
+
+            match lookup_host((seed.as_str(), default_port)).await {
+                Ok(addrs) => {
+                    for addr in addrs {
+                        resolved.push(addr);
+                    }
+                }
+                Err(e) => {
+                    warn!(seed, error = %e, "failed to resolve seed hostname");
+                }
+            }
+        }
+
+        resolved
+    }
+
+    fn spawn_oneoff_connect(
+        &self,
+        addr: SocketAddr,
+        identity: PeerIdentity,
+        cmd_tx: mpsc::Sender<P2PCommand>,
+    ) {
+        tokio::spawn(async move {
+            match TcpStream::connect(addr).await {
+                Ok(socket) => {
+                    let mut connection = Connection::new(socket);
+                    match connection.handshake_initiator(&identity).await {
+                        Ok(peer_id) => {
+                            Self::run_peer_loop(connection, addr, peer_id, cmd_tx).await;
+                        }
+                        Err(e) => warn!("handshake failed with {}: {}", addr, e),
+                    }
+                }
+                Err(e) => warn!("opportunistic dial to {} failed: {}", addr, e),
+            }
+        });
     }
 }
