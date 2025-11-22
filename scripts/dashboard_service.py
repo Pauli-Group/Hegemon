@@ -113,7 +113,7 @@ AUTOSTART_WALLET_STORE = os.environ.get(
 AUTOSTART_WALLET_META = os.environ.get(
     "DASHBOARD_WALLET_META", str(REPO_ROOT / "state" / "dashboard-wallet.meta.json")
 )
-AUTOSTART_WALLET_PASSPHRASE = os.environ.get("DASHBOARD_WALLET_PASSPHRASE")
+AUTOSTART_WALLET_PASSPHRASE = os.environ.get("DASHBOARD_WALLET_PASSPHRASE", "test passphrase")
 AUTOSTART_WALLET_SEED = os.environ.get("DASHBOARD_WALLET_SEED")
 
 
@@ -248,6 +248,8 @@ class NodeLaunchPayload(NodeLifecyclePayload):
     miner_workers: Optional[int] = Field(default=None, ge=1)
     note_tree_depth: Optional[int] = Field(default=None, ge=1)
     miner_seed: Optional[str] = Field(default=None, min_length=64, max_length=64)
+    wallet_store: Optional[str] = None
+    wallet_passphrase: Optional[str] = None
 
 
 MINER_STATE = MinerControlState()
@@ -371,8 +373,17 @@ class NodeProcessSupervisor:
                 command.extend(["--note-tree-depth", str(payload.note_tree_depth)])
             if payload.miner_seed is not None:
                 command.extend(["--miner-seed", payload.miner_seed])
+            if payload.wallet_store is not None:
+                command.extend(["--wallet-store", payload.wallet_store])
+            if payload.wallet_passphrase is not None:
+                command.extend(["--wallet-passphrase", payload.wallet_passphrase])
 
             _record_lifecycle(payload)
+            sanitized_command = list(command)
+            if payload.wallet_passphrase:
+                sanitized_command = [
+                    "<redacted>" if arg == payload.wallet_passphrase else arg for arg in sanitized_command
+                ]
             self.state = NodeProcessState(
                 status="starting",
                 pid=None,
@@ -383,7 +394,7 @@ class NodeProcessSupervisor:
                 api_token=api_token,
                 db_path=db_path,
                 last_error=None,
-                command=command,
+                command=sanitized_command,
             )
 
             cargo_path = shutil.which(command[0])
@@ -494,8 +505,12 @@ def _load_wallet_material() -> WalletMaterial:
             data = json.loads(WALLET_META_PATH.read_text(encoding="utf-8"))
             return WalletMaterial(
                 seed_hex=str(data.get("seed_hex") or "").strip() or (AUTOSTART_WALLET_SEED or secrets.token_hex(32)),
-                passphrase=str(data.get("passphrase") or AUTOSTART_WALLET_PASSPHRASE or secrets.token_urlsafe(16)),
-                store_path=str(data.get("store_path") or WALLET_STORE_PATH),
+                passphrase=str(
+                    (AUTOSTART_WALLET_PASSPHRASE or "").strip()
+                    or data.get("passphrase")
+                    or secrets.token_urlsafe(16)
+                ),
+                store_path=str(WALLET_STORE_PATH),
                 meta_path=str(WALLET_META_PATH),
                 api_host=str(data.get("api_host") or AUTOSTART_WALLET_HOST),
                 api_port=int(data.get("api_port") or AUTOSTART_WALLET_PORT),
@@ -758,6 +773,8 @@ def _build_autostart_payload() -> Optional[NodeLaunchPayload]:
             miner_workers=AUTOSTART_NODE_WORKERS,
             note_tree_depth=AUTOSTART_NODE_TREE_DEPTH,
             miner_seed=AUTOSTART_NODE_SEED.strip() if AUTOSTART_NODE_SEED else None,
+            wallet_store=str(WALLET_STORE_PATH),
+            wallet_passphrase=AUTOSTART_WALLET_PASSPHRASE,
         )
     except ValidationError as exc:
         print(f"[dashboard] Autostart node config invalid: {exc}", file=sys.stderr)

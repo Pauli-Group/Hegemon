@@ -3,15 +3,18 @@
 pub use pallet::*;
 
 use codec::MaxEncodedLen;
-use frame_support::dispatch::{DispatchClass, Pays};
+use frame_support::dispatch::{
+    DispatchClass, DispatchInfo, GetDispatchInfo, Pays, PostDispatchInfo,
+};
+use frame_support::sp_runtime::traits::Dispatchable;
 use frame_support::pallet_prelude::*;
 use frame_support::traits::{
     Currency, ExistenceRequirement, Imbalance, OnUnbalanced, WithdrawReasons,
 };
+use frame_support::pallet_prelude::InvalidTransaction;
 use frame_support::unsigned::TransactionValidityError;
-use sp_runtime::traits::{DispatchInfoOf, PostDispatchInfoOf, Saturating, Zero};
-use sp_runtime::transaction_validity::InvalidTransaction;
-use sp_runtime::{FixedU128, RuntimeDebug, FixedPointNumber};
+use sp_runtime::traits::{Saturating, Zero};
+use sp_runtime::{FixedPointNumber, FixedU128, RuntimeDebug};
 use sp_std::marker::PhantomData;
 use sp_std::vec::Vec;
 
@@ -97,6 +100,7 @@ pub mod pallet {
     impl<T, OU> OnChargeTransaction<T> for FeeModelOnCharge<T, OU>
     where
         T: Config,
+        T::RuntimeCall: Dispatchable<Info = DispatchInfo, PostInfo = PostDispatchInfo> + GetDispatchInfo,
         T::Currency: Currency<T::AccountId>,
         <T::Currency as Currency<T::AccountId>>::PositiveImbalance: Imbalance<
             BalanceOf<T>,
@@ -114,10 +118,20 @@ pub mod pallet {
             FeeAdjustmentInfo<BalanceOf<T>>,
         );
 
+        fn can_withdraw_fee(
+            _who: &T::AccountId,
+            _call: &T::RuntimeCall,
+            _dispatch_info: &DispatchInfo,
+            _fee: Self::Balance,
+            _tip: Self::Balance,
+        ) -> Result<(), TransactionValidityError> {
+            Ok(())
+        }
+
         fn withdraw_fee(
             who: &T::AccountId,
             call: &T::RuntimeCall,
-            dispatch_info: &DispatchInfoOf<T::RuntimeCall>,
+            dispatch_info: &DispatchInfo,
             fee: Self::Balance,
             tip: Self::Balance,
         ) -> Result<Self::LiquidityInfo, TransactionValidityError> {
@@ -155,14 +169,14 @@ pub mod pallet {
                         },
                     ))
                 }
-                Err(_) => Err(InvalidTransaction::Payment.into()),
+                Err(_) => Err(TransactionValidityError::Invalid(InvalidTransaction::Payment)),
             }
         }
 
         fn correct_and_deposit_fee(
             who: &T::AccountId,
-            dispatch_info: &DispatchInfoOf<T::RuntimeCall>,
-            post_info: &PostDispatchInfoOf<T::RuntimeCall>,
+            _dispatch_info: &DispatchInfo,
+            post_info: &PostDispatchInfo,
             corrected_fee: Self::Balance,
             tip: Self::Balance,
             already_withdrawn: Self::LiquidityInfo,

@@ -7,8 +7,7 @@ benchmarks! {
         let actor: T::AccountId = whitelisted_caller();
         let max_usage: u128 = 1_000;
         let rate_hint: u64 = 10;
-        let origin: T::RuntimeOrigin = RawOrigin::Root.into();
-    }: _(origin, actor.clone(), max_usage, rate_hint)
+    }: _(RawOrigin::Root, actor.clone(), max_usage, rate_hint)
     verify {
         assert!(Quotas::<T>::contains_key(&actor));
     }
@@ -16,8 +15,7 @@ benchmarks! {
     record_self_usage {
         let actor: T::AccountId = whitelisted_caller();
         let amount: u64 = 5;
-        let origin: T::RuntimeOrigin = RawOrigin::Signed(actor.clone()).into();
-    }: _(origin, amount)
+    }: _(RawOrigin::Signed(actor.clone()), amount)
     verify {
         let usage = UsageCounters::<T>::get(&actor).expect("usage stored");
         assert!(usage.total_usage >= amount as u128);
@@ -27,8 +25,7 @@ benchmarks! {
         let actor: T::AccountId = whitelisted_caller();
         Quotas::<T>::insert(&actor, Quota { max_usage: 50, rate_limit_per_block: 5 });
         UsageCounters::<T>::insert(&actor, UsageCounter::new(20, 20, Default::default()));
-        let origin: T::RuntimeOrigin = RawOrigin::Signed(actor.clone()).into();
-    }: _(origin)
+    }: _(RawOrigin::Signed(actor.clone()))
     verify {
         assert!(UsageCounters::<T>::contains_key(&actor));
     }

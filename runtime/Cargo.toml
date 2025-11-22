@@ -11,7 +11,7 @@ scale-info = { version = "2", features = ["derive"], default-features = false }
 sp-core = { version = "34.0.0", default-features = false }
 sp-runtime = { version = "44.0.0", default-features = false }
 sp-std = { version = "14.0.0", default-features = false }
-sp-io = { version = "34.0.0", default-features = false }
+sp-io = { version = "42.0.0", default-features = false }
 sp-version = { version = "35.0.0", default-features = false }
 sp-api = { version = "39.0.0", default-features = false }
 sp-offchain = { version = "32.0.0", default-features = false }
@@ -23,7 +23,7 @@ serde = { version = "1", default-features = false, features = ["derive"], option
 frame-support = { version = "42.0.0", default-features = false }
 frame-system = { version = "42.0.0", default-features = false }
 frame-executive = { version = "42.0.0", default-features = false }
-frame-benchmarking = { version = "25.0.0", default-features = false, optional = true }
+frame-benchmarking = { version = "42.0.0", default-features = false, optional = true }
 pallet-timestamp = { workspace = true, default-features = false }
 pallet-session = { version = "42.0.0", default-features = false, features = ["historical"] }
 pallet-balances = { version = "42.0.0", default-features = false }
@@ -46,7 +46,7 @@ pallet-observability = { path = "../pallets/observability", default-features = f
 sp-runtime = { version = "44.0.0", default-features = false, features = ["std"] }
 frame-support = { version = "42.0.0", default-features = false, features = ["std"] }
 frame-system = { version = "42.0.0", default-features = false, features = ["std"] }
-sp-io = { version = "34.0.0", default-features = false, features = ["std"] }
+sp-io = { version = "42.0.0", default-features = false, features = ["std"] }
 
 [features]
 default = ["std"]
@@ -87,6 +87,7 @@ std = [
 
 runtime-benchmarks = [
     "frame-benchmarking",
+    "pallet-collective/runtime-benchmarks",
     "pallet-attestations/runtime-benchmarks",
     "pallet-settlement/runtime-benchmarks",
     "pallet-oracles/runtime-benchmarks",

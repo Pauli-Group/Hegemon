@@ -3,10 +3,11 @@
 pub use pallet::*;
 
 use frame_support::pallet_prelude::*;
-use log;
 use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
+use log::warn;
+use parity_scale_codec::Encode;
 
 #[derive(Clone, Encode, Decode, PartialEq, Eq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 pub struct Quota {
@@ -129,8 +130,8 @@ pub mod pallet {
             tracked_actors: u32,
         },
         StorageMigrated {
-            from: StorageVersion,
-            to: StorageVersion,
+            from: u16,
+            to: u16,
         },
     }
 
@@ -290,7 +291,7 @@ pub mod pallet {
         pub fn migrate() -> Weight {
             let on_chain = StorageVersion::get::<Pallet<T>>();
             if on_chain > STORAGE_VERSION {
-                log::warn!(
+                warn!(
                     target: "observability",
                     "Skipping migration: on-chain storage version {:?} is newer than code {:?}",
                     on_chain,
@@ -300,14 +301,25 @@ pub mod pallet {
             }
 
             if on_chain < STORAGE_VERSION {
+                let from = Self::storage_version_u16(on_chain);
+                let to = Self::storage_version_u16(STORAGE_VERSION);
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain,
-                    to: STORAGE_VERSION,
+                    from,
+                    to,
                 });
                 T::WeightInfo::migrate()
             } else {
                 Weight::zero()
+            }
+        }
+
+        fn storage_version_u16(version: StorageVersion) -> u16 {
+            let encoded = version.encode();
+            if encoded.len() >= 2 {
+                u16::from_le_bytes([encoded[0], encoded[1]])
+            } else {
+                0
             }
         }
     }

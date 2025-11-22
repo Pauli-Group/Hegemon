@@ -3,21 +3,16 @@
 pub use pallet::*;
 
 use blake3::Hasher as Blake3Hasher;
-use frame_support::log;
 use codec::{Decode, DecodeWithMemTracking, Encode};
-use log;
 use frame_support::pallet_prelude::*;
-use frame_support::traits::{tokens::currency::Currency};
+use frame_support::traits::tokens::currency::Currency;
 use frame_support::traits::{EnsureOrigin, StorageVersion};
-use frame_system::offchain::{
-    AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer,
-};
+use frame_system::offchain::{AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer};
 use frame_system::pallet_prelude::*;
+use log::warn;
 use scale_info::TypeInfo;
-use sp_runtime::traits::{AtLeast32BitUnsigned, Hash};
-use sp_runtime::transaction_validity::{
-    InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity, ValidTransaction,
-};
+use sp_runtime::traits::AtLeast32BitUnsigned;
+use frame_support::pallet_prelude::{InvalidTransaction, TransactionPriority, TransactionValidity, ValidTransaction};
 use sp_runtime::RuntimeDebug;
 use sp_std::vec::Vec;
 
@@ -143,6 +138,7 @@ impl<Hash> ProofVerifier<Hash> for AcceptAllProofs {
 pub mod pallet {
     use super::*;
     use crate::weights::WeightInfo;
+    use frame_support::sp_runtime::traits::Hash;
 
     #[pallet::pallet]
     #[pallet::without_storage_info]
@@ -153,7 +149,7 @@ pub mod pallet {
     pub trait Config: frame_system::Config + CreateSignedTransaction<Call<Self>> {
         #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-        type AssetId: Parameter + Member + Copy + MaxEncodedLen;
+        type AssetId: Parameter + Member + Copy + MaxEncodedLen + Default;
         type Balance: Parameter + Member + AtLeast32BitUnsigned + Default + MaxEncodedLen + Copy;
         type VerificationKeyId: Parameter + Member + MaxEncodedLen + Copy + Default;
         type CouncilOrigin: EnsureOrigin<Self::RuntimeOrigin>;
@@ -295,8 +291,8 @@ pub mod pallet {
             reason: PayoutReason,
         },
         StorageMigrated {
-            from: StorageVersion,
-            to: StorageVersion,
+            from: u16,
+            to: u16,
         },
     }
 
@@ -349,7 +345,7 @@ pub mod pallet {
         fn on_runtime_upgrade() -> Weight {
             let on_chain = Pallet::<T>::on_chain_storage_version();
             if on_chain > STORAGE_VERSION {
-                log::warn!(
+                warn!(
                     target: "settlement",
                     "Skipping migration: on-chain storage version {:?} is newer than code {:?}",
                     on_chain,
@@ -359,11 +355,13 @@ pub mod pallet {
             }
 
             if on_chain < STORAGE_VERSION {
+                let from = storage_version_u16(on_chain);
+                let to = storage_version_u16(STORAGE_VERSION);
                 VerifierParameters::<T>::put(T::DefaultVerifierParams::get());
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain,
-                    to: STORAGE_VERSION,
+                    from,
+                    to,
                 });
                 T::WeightInfo::migrate()
             } else {
@@ -375,7 +373,7 @@ pub mod pallet {
             let mut payouts = PendingPayouts::<T>::take();
             let mut weight = Weight::zero();
             for (account, amount, reason) in payouts.drain(..) {
-                T::Currency::deposit_creating(&account, amount);
+                let _imbalance = T::Currency::deposit_creating(&account, amount);
                 weight = weight.saturating_add(Weight::from_parts(10_000, 0));
                 Pallet::<T>::deposit_event(Event::RewardPaid {
                     account,
@@ -386,6 +384,15 @@ pub mod pallet {
 
             PendingPayouts::<T>::put(payouts);
             weight
+        }
+    }
+
+    fn storage_version_u16(version: StorageVersion) -> u16 {
+        let encoded = version.encode();
+        if encoded.len() >= 2 {
+            u16::from_le_bytes([encoded[0], encoded[1]])
+        } else {
+            0
         }
     }
 
@@ -708,21 +715,23 @@ pub mod pallet {
             Ok(())
         }
 
-            fn blake3_hash(data: &[u8]) -> T::Hash {
-                let mut hasher = Blake3Hasher::new();
-                hasher.update(data);
-                let mut out = [0u8; 32];
-                hasher.finalize_xof().fill(&mut out);
-                T::Hashing::hash(&out)
-            }
+        fn blake3_hash(data: &[u8]) -> T::Hash {
+            let mut hasher = Blake3Hasher::new();
+            hasher.update(data);
+            let mut out = [0u8; 32];
+            hasher.finalize_xof().fill(&mut out);
+            T::Hashing::hash_of(&out)
         }
     }
+}
 
-#[frame_support::pallet_macros::validate_unsigned]
 impl<T: Config> ValidateUnsigned for Pallet<T> {
     type Call = Call<T>;
 
-    fn validate_unsigned(source: TransactionSource, call: &Self::Call) -> TransactionValidity {
+    fn validate_unsigned(
+        source: frame_support::pallet_prelude::TransactionSource,
+        call: &Self::Call,
+    ) -> TransactionValidity {
         if let Call::submit_batch {
             instructions,
             commitment: _,
@@ -733,7 +742,8 @@ impl<T: Config> ValidateUnsigned for Pallet<T> {
         {
             if matches!(
                 source,
-                TransactionSource::Local | TransactionSource::InBlock
+                frame_support::pallet_prelude::TransactionSource::Local
+                    | frame_support::pallet_prelude::TransactionSource::InBlock
             ) {
                 let pending = PendingQueue::<T>::get();
                 if !pending.is_empty() && pending.as_slice() == instructions.as_slice() {
@@ -750,11 +760,11 @@ impl<T: Config> ValidateUnsigned for Pallet<T> {
     }
 }
 
-    #[cfg(feature = "runtime-benchmarks")]
-    mod benchmarking {
-        use super::*;
-        use frame_benchmarking::v2::*;
-        use frame_system::RawOrigin;
+#[cfg(feature = "runtime-benchmarks")]
+mod benchmarking {
+    use super::*;
+    use frame_benchmarking::v2::*;
+    use frame_system::RawOrigin;
 
     #[benchmarks]
     mod benches {

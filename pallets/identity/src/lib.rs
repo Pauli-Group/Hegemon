@@ -561,16 +561,20 @@ pub mod pallet {
             subject: T::AccountId,
         ) -> DispatchResult {
             let issuer = ensure_signed(origin)?;
-            Credentials::<T>::try_mutate_exists(schema, &subject, |maybe_record| -> DispatchResult {
-                let record = maybe_record.as_mut().ok_or(Error::<T>::CredentialUnknown)?;
-                ensure!(!record.revoked, Error::<T>::CredentialRevoked);
-                record.revoked = true;
-                Revocations::<T>::insert(schema, &subject, true);
+            Credentials::<T>::try_mutate_exists(
+                schema,
+                &subject,
+                |maybe_record| -> DispatchResult {
+                    let record = maybe_record.as_mut().ok_or(Error::<T>::CredentialUnknown)?;
+                    ensure!(!record.revoked, Error::<T>::CredentialRevoked);
+                    record.revoked = true;
+                    Revocations::<T>::insert(schema, &subject, true);
 
-                T::ExternalAttestation::on_credential_revoked(&issuer, &subject, &schema);
+                    T::ExternalAttestation::on_credential_revoked(&issuer, &subject, &schema);
 
-                Ok(())
-            })?;
+                    Ok(())
+                },
+            )?;
 
             Self::deposit_event(Event::CredentialRevoked {
                 schema,
