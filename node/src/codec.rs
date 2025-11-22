@@ -87,6 +87,7 @@ pub fn serialize_transaction(tx: &Transaction) -> NodeResult<Vec<u8>> {
     Ok(bincode::serialize(&stored)?)
 }
 
+#[allow(dead_code)]
 pub fn deserialize_transaction(bytes: &[u8]) -> NodeResult<Transaction> {
     let stored: StoredTransaction = bincode::deserialize(bytes)?;
     Ok(stored.into_transaction())
@@ -279,6 +280,7 @@ impl From<&Transaction> for StoredTransaction {
 }
 
 impl StoredTransaction {
+    #[allow(dead_code)]
     fn into_transaction(self) -> Transaction {
         let version = VersionBinding::new(self.version_circuit, self.version_crypto);
         Transaction::new(

@@ -204,10 +204,10 @@ impl PeerStore {
     }
 
     fn persist(&self) -> Result<(), NetworkError> {
-        if let Some(parent) = self.config.path.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = self.config.path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent)?;
         }
         let tmp_path = self.config.path.with_extension("tmp");
         let data = bincode::serialize(&self.entries.values().cloned().collect::<Vec<_>>())?;

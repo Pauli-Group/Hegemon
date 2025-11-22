@@ -151,11 +151,11 @@ impl Storage {
     }
 
     pub fn load_block(&self, hash: [u8; 32]) -> NodeResult<Option<ConsensusBlock>> {
-        Ok(self
+        self
             .blocks
             .get(hash)?
             .map(|bytes| deserialize_block(&bytes))
-            .transpose()?)
+            .transpose()
     }
 
     pub fn reset(&self) -> NodeResult<()> {
