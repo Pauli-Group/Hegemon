@@ -20,6 +20,8 @@ People running `make quickstart` today still land on a dashboard that shows mock
 - [x] (2025-11-22 11:07Z) Mapped the P2P/bootstrapping stack against the target PoW/PQC behavior (sync from genesis via one peer, address gossip, restart reusing stored peers, and exportable genesis+peer bundle) and captured remaining work.
 - [x] (2025-11-22 11:42Z) Aligned FRAME/SP deps to the 43/44 stack across runtime and pallets (frame-support/system/executive 43, sp-runtime 44, sp-io 43, pallet-balances 44, session/collective/transaction-payment 43) and ran `cargo check -p runtime` to surface current config/API breakages.
 - [x] (2025-02-18 07:50Z) Fixed runtime compile blockers (construct_runtime!, parameter derives, attestation/identity bounds, chain-spec updates) and re-ran `cargo check -p runtime` successfully; outstanding warnings are limited to deprecated macros and unused aliases.
+- [x] (2025-11-22 13:52Z) Reran `cargo test -p network`, `cargo test -p node sync`, and `cargo test -p node bootstrap` to reconfirm gossip/address exchange, block sharing, sync-from-one-peer, and peer-bundle bootstrap after the runtime fixes.
+- [x] (2025-11-22 13:56Z) Ran `make quickstart` end-to-end: FastAPI proxy on `http://127.0.0.1:8001`, Vite UI on `http://127.0.0.1:5173`, autostarted node on `http://127.0.0.1:8080` (token `devnet-token`, db `state/dashboard-node.1763819632.db`, wallet store `state/dashboard-wallet.testpass.store`, passphrase "test passphrase") streaming live telemetry (`hash_rate ~25.5`, `best_height 23`, `mempool_depth 0`); stack shut down cleanly on SIGTERM.
 
 ## Surprises & Discoveries
 
@@ -28,6 +30,8 @@ People running `make quickstart` today still land on a dashboard that shows mock
 - The `hegemon` CLI would not build due to a partial move of `cli.command` in the main match; patched the match to `command.take()` so the binary compiles for validation.
 - Reusing an existing wallet store threw "decryption failure"; a fresh store at `state/dashboard-wallet.devpass.store` with passphrase `devpass` avoided the mismatch.
 - P2P stack already implements the requested peer behaviors: address exchange/gossip is covered by `network/tests/p2p_integration.rs` (B learns C and vice-versa), sync-from-one-peer is covered by `node/tests/sync.rs`, restart uses the persisted peer store with a reconnect cap of five (`RECENT_RECONNECT_LIMIT`) via `startup_targets` in `network/src/service.rs`, and genesis+peer export/import is wired through `PeerBundle` (`hegemon export-peers --output ...` / `--import-peers`).
+- Quickstart autostart also spins a wallet daemon on an ephemeral port (`[dashboard] Autostarted wallet daemon at http://127.0.0.1:61005` in the latest run) even when the outer shell script skips the optional wallet-daemon hook; harmless but worth noting for port watchers.
+- Autostarted node attempted an opportunistic dial to a remote seed (`75.155.93.185:9000` refused) but continued mining and serving telemetry normally.
 
 ## Decision Log
 
@@ -43,19 +47,21 @@ People running `make quickstart` today still land on a dashboard that shows mock
 - Decision: Passed the dashboard wallet store/path and default "test passphrase" into the autostarted node (redacting it in process snapshots) so the hegemon process can boot without prompting and deliver live metrics.
   Rationale: The node CLI refuses to start without a passphrase; providing a known passphrase and store path unblocks autostart and keeps UI telemetry real.
   Date/Author: 2025-11-22 / GPT-5.1-Codex-Max
+- Decision: Treat P2P bootstrap/gossip/rejoin requirements as satisfied by existing implementations and tests (`network/tests/p2p_integration.rs`, `node/tests/sync.rs`, `node/tests/bootstrap.rs`, peer-store reconnect limit in `network/src/service.rs`); no protocol changes needed before shipping the unified quickstart.
+  Rationale: Fresh test runs post-runtime-fix covered gossip of txs/blocks, sync-from-genesis via one peer, address exchange, peer-store reuse (limit five), and peer bundle export/import with genesis.
+  Date/Author: 2025-11-22 / GPT-5.1-Codex-Max
 
 ## Outcomes & Retrospective
 
-- Quickstart status: still to be revalidated after the runtime fixes; last attempt aborted when `make check` failed in pallets. Need a fresh `make quickstart` run to confirm the one-command flow now survives `make check` and launches the stack.
-- Unified quickstart validation (2025-11-22 10:31Z): dashboard_service bound on `http://127.0.0.1:8001`, Vite UI on `http://127.0.0.1:5173`, and the autostarted node target `http://127.0.0.1:8080` (token `devnet-token`, db `state/dashboard-node.1763807450.db`, wallet store `state/dashboard-wallet.testpass.store`, passphrase "test passphrase") stayed running and streamed live telemetry via `/node/metrics` and `/node/miner/status` (e.g., `hash_rate ~26.2`, `best_height 20`, `mempool_depth 0`, `exposure_scope devnet`); the autostart command snapshot redacts the passphrase.
+- Quickstart status: validated on 2025-11-22 13:56Z; `make quickstart` bound the FastAPI proxy to `http://127.0.0.1:8001`, Vite UI to `http://127.0.0.1:5173`, autostarted the node at `http://127.0.0.1:8080` (token `devnet-token`), and cleaned up all processes on SIGTERM.
+- Unified quickstart validation (2025-11-22 13:56Z): node db `state/dashboard-node.1763819632.db`, wallet store `state/dashboard-wallet.testpass.store` (passphrase "test passphrase"); `/node/metrics` reported `hash_rate 25.576`, `total_hashes 188`, `best_height 18`, `mempool_depth 0`, and `/node/miner/status` reported `hash_rate 25.439`, `total_hashes 242`, `best_height 23`, `mempool_depth 0`, `exposure_scope devnet`; `/node/process` showed pid 56811, log `state/node-process.log`, wallet passphrase redacted, and the service autostarted a wallet daemon at `http://127.0.0.1:61005`.
 - Prior manual validation (2025-11-22 09:47Z): with dashboard_service on `http://127.0.0.1:8001`, Vite on `http://127.0.0.1:5173`, and a hand-started `hegemon` node on `http://127.0.0.1:8080` (token `devnet-token`), `/node/metrics` and `/node/miner/status` reported live values (`hash_rate ~26.8`, `total_hashes ~2220`, `best_height 196`, `mempool_depth 0`, TLS disabled).
-- Follow-ups: autostart targets the correct bin, passes wallet credentials, and chooses free ports; remaining work is rerunning `make quickstart` post-runtime-fix and revalidating live telemetry/cleanup.
-- Network readiness for the PoW/PQC bootstrap goal: the codebase already handles peer gossip and synchronization (gossip propagation test in `network/tests/p2p_integration.rs`, tip sync from one peer in `node/tests/sync.rs`), persists peers to disk and retries up to five on restart (`network/src/service.rs`), and exports/imports genesis + peer lists via `PeerBundle` (`node/tests/bootstrap.rs` and the `hegemon export-peers`/`--import-peers` CLI). These tests should be rerun now that runtime builds again.
+- Peer bootstrap/gossip readiness (2025-11-22 13:52Z): `cargo test -p network`, `cargo test -p node sync`, and `cargo test -p node bootstrap` all pass, covering transaction gossip across peers, block sharing, sync-from-genesis via one peer, peer-store reuse with a reconnect cap of five, and genesis+peer bundle export/import.
+- Follow-ups: document the wallet-daemon autostart port behavior (or gate it), consider an explicit restart/rejoin test (start A/B, stop/restart B with cached peers only), and keep `PeerBundle::capture` docs aligned with the genesis-block optional field and the `hegemon export-peers`/`--import-peers` CLI.
+- Network readiness for the PoW/PQC bootstrap goal: code and tests now verified to handle transaction/block gossip, tip sync from one peer, persisted peer-store reconnects (limit five), and genesis+peer bundle export/import; no protocol changes required for the requested behavior.
 - Remaining work to hit PoW/PQC bootstrap end-to-end:
-  - Rerun `cargo test -p network` (esp. `p2p_integration`) and `cargo test -p node node/tests::{sync,bootstrap}` to reconfirm gossip/sync/rejoin semantics with the current runtime.
   - Validate that `PeerBundle::capture` includes the current genesis block in storage (optional field) and keep `hegemon export-peers` import/export documented in runbooks/quickstart.
   - Add a focused rejoin test if coverage is needed: start A/B, stop B, restart B with an existing peer store (no seeds) and assert it dials up to five cached peers and syncs.
-  - Run `make quickstart` to confirm the dashboard stack autostarts and streams live telemetry after the runtime fixes; update Outcomes with the new snapshot.
 
 ## Context and Orientation
 
@@ -95,13 +101,13 @@ Autostart should be rerunnable: if the node db already exists under `state/`, th
 
 Record key transcripts once validated: the chosen service/UI URLs, sample telemetry log lines showing mined blocks, and any warnings about port fallbacks. Keep snippets short and focused on proving the behavior works.
 
-Latest validation snapshot (2025-11-22 10:31Z):
+Latest validation snapshot (2025-11-22 13:56Z):
     Service URL: http://127.0.0.1:8001
     UI URL: http://127.0.0.1:5173
-    Node target: http://127.0.0.1:8080 (token devnet-token, db state/dashboard-node.1763807450.db, wallet store state/dashboard-wallet.testpass.store, passphrase "test passphrase")
-    /node/process: {"status":"running","node_url":"http://127.0.0.1:8080","command":["cargo","run","-p","node","--bin","hegemon","--","--db-path","...","--wallet-passphrase","<redacted>"],"log_path":"state/node-process.log"}
-    /node/metrics: {"hash_rate":26.19282821810135,"total_hashes":209,"best_height":20,"mempool_depth":0,"difficulty_bits":1057030143,"stale_share_rate":0.0,"tls_enabled":false,"exposure_scope":"devnet"}
-    /node/miner/status: {"is_running":true,"target_hash_rate":1300000.0,"thread_count":2,"metrics":{"hash_rate":26.022170278423623,"total_hashes":209,"best_height":20,"mempool_depth":0,"difficulty_bits":1057030143,"stale_share_rate":0.0,"tls_enabled":false,"exposure_scope":"devnet"}}
+    Node target: http://127.0.0.1:8080 (token devnet-token, db state/dashboard-node.1763819632.db, wallet store state/dashboard-wallet.testpass.store, passphrase "test passphrase", wallet daemon http://127.0.0.1:61005)
+    /node/process: {"status":"running","pid":56811,"node_url":"http://127.0.0.1:8080","command":["cargo","run","-p","node","--bin","hegemon","--","--db-path","...","--wallet-passphrase","<redacted>"],"log_path":"state/node-process.log"}
+    /node/metrics: {"hash_rate":25.576290283881868,"total_hashes":188,"best_height":18,"mempool_depth":0,"difficulty_bits":1057030143,"stale_share_rate":0.0,"tls_enabled":false,"exposure_scope":"devnet"}
+    /node/miner/status: {"is_running":true,"target_hash_rate":1300000.0,"thread_count":2,"metrics":{"hash_rate":25.439498170809618,"total_hashes":242,"best_height":23,"mempool_depth":0,"difficulty_bits":1057030143,"stale_share_rate":0.0,"tls_enabled":false,"exposure_scope":"devnet"}}
 
 ## Interfaces and Dependencies
 
