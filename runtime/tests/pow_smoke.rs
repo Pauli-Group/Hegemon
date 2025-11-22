@@ -1,7 +1,8 @@
+use frame_support::sp_runtime::BuildStorage;
 use frame_support::{assert_ok, BoundedVec};
 use runtime::{
-    chain_spec, pow::PowDifficulty, Attestations, Identity, Pow, Runtime, RuntimeOrigin,
-    Settlement, System, Timestamp,
+    chain_spec, Attestations, Identity, Pow, PowDifficulty, Runtime, RuntimeOrigin, Settlement,
+    System, Timestamp,
 };
 use sp_core::H256;
 use sp_io::TestExternalities;
@@ -26,7 +27,7 @@ fn compact_to_target(bits: u32) -> Option<sp_core::U256> {
     }
     let mut target = sp_core::U256::from(mantissa);
     if exponent > 3 {
-        target = target.checked_shl(8 * (exponent - 3) as u32)?;
+        target <<= 8 * (exponent - 3);
     } else {
         target >>= 8 * (3 - exponent);
     }

@@ -381,7 +381,7 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
             T::Identity::ensure_role(&who, &T::FeedRegistrarRole::get())?;
 
-            ensure!(Feeds::<T>::get(&feed_id).is_none(), Error::<T>::FeedExists);
+            ensure!(Feeds::<T>::get(feed_id).is_none(), Error::<T>::FeedExists);
 
             let mut feeds = ActiveFeeds::<T>::get();
             feeds
@@ -396,7 +396,7 @@ pub mod pallet {
                 <frame_system::Pallet<T>>::block_number(),
             );
 
-            Feeds::<T>::insert(&feed_id, details);
+            Feeds::<T>::insert(feed_id, details);
             ActiveFeeds::<T>::put(feeds);
 
             Self::deposit_event(Event::FeedRegistered { feed_id, who });
@@ -413,7 +413,7 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            Feeds::<T>::try_mutate(&feed_id, |maybe_details| -> DispatchResult {
+            Feeds::<T>::try_mutate(feed_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::FeedMissing)?;
 
                 ensure!(
@@ -450,7 +450,7 @@ pub mod pallet {
 
             let now = <frame_system::Pallet<T>>::block_number();
 
-            Feeds::<T>::try_mutate(&feed_id, |maybe_details| -> DispatchResult {
+            Feeds::<T>::try_mutate(feed_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::FeedMissing)?;
 
                 ensure!(
@@ -507,7 +507,7 @@ pub mod pallet {
 
             let mut verifier_account = signed_verifier.clone();
 
-            Feeds::<T>::try_mutate_exists(&feed_id, |maybe_details| -> DispatchResult {
+            Feeds::<T>::try_mutate_exists(feed_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::FeedMissing)?;
                 let stored = details
                     .latest_commitment
@@ -528,7 +528,7 @@ pub mod pallet {
                 }
 
                 PendingIngestions::<T>::mutate(|queue| {
-                    queue.retain(|id| id != &feed_id);
+                    queue.retain(|id| *id != feed_id);
                 });
                 Ok(())
             })?;
@@ -578,6 +578,7 @@ impl<T: Config> ValidateUnsigned for Pallet<T> {
             expected_commitment,
         } = call
         {
+            let feed_id = *feed_id;
             if matches!(
                 source,
                 TransactionSource::Local | TransactionSource::InBlock
@@ -585,11 +586,11 @@ impl<T: Config> ValidateUnsigned for Pallet<T> {
                 if let Some(details) = Feeds::<T>::get(feed_id) {
                     if let Some(latest) = details.latest_commitment.as_ref() {
                         if &latest.commitment == expected_commitment
-                            && PendingIngestions::<T>::get().contains(feed_id)
+                            && PendingIngestions::<T>::get().contains(&feed_id)
                         {
                             return ValidTransaction::with_tag_prefix("OraclesUnsignedVerify")
-                                .priority(TransactionPriority::max_value())
-                                .and_provides((*feed_id, latest.submitted_at))
+                                .priority(TransactionPriority::MAX)
+                                .and_provides((feed_id, latest.submitted_at))
                                 .longevity(64_u64)
                                 .propagate(true)
                                 .build();

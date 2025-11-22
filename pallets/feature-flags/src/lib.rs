@@ -336,6 +336,7 @@ mod tests {
         type RuntimeEvent = RuntimeEvent;
         type GovernanceOrigin = frame_system::EnsureRoot<u64>;
         type MaxFeatureNameLength = ConstU32<32>;
+        type MaxFeatureCount = ConstU32<16>;
         type MaxCohortSize = ConstU32<8>;
         type WeightInfo = ();
     }

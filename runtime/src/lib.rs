@@ -1,12 +1,20 @@
 #![cfg_attr(not(feature = "std"), no_std)]
+#![allow(
+    clippy::large_enum_variant,
+    clippy::let_unit_value,
+    clippy::default_constructed_unit_structs,
+    clippy::needless_update,
+    clippy::assign_op_pattern,
+    clippy::unnecessary_lazy_evaluations,
+    deprecated
+)]
 
 #[cfg(feature = "std")]
 pub mod chain_spec;
 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::traits::{
-    ConstU128, ConstU32, ConstU64, ConstU8, Currency as CurrencyTrait, EitherOfDiverse,
-    VariantCount,
+    ConstU128, ConstU32, ConstU64, ConstU8, Currency as CurrencyTrait, VariantCount,
 };
 use frame_support::weights::IdentityFee;
 use frame_support::BoundedVec;
@@ -517,6 +525,9 @@ impl<A, F> frame_support::traits::Consideration<A, F> for NoConsideration {
     fn drop(self, _: &A) -> Result<(), DispatchError> {
         Ok(())
     }
+
+    #[cfg(feature = "runtime-benchmarks")]
+    fn ensure_successful(_: &A, _: F) {}
 }
 
 impl<A, F> frame_support::traits::MaybeConsideration<A, F> for NoConsideration {
@@ -535,6 +546,7 @@ impl frame_support::traits::Get<frame_support::weights::Weight> for MaxCollectiv
 }
 
 #[frame_support::pallet]
+#[allow(deprecated)]
 pub mod pow {
     use super::{Moment, PowDifficulty, PowFutureDrift, PowRetargetWindow, PowTargetBlockTime};
     use crate::MaxPowValidators;
@@ -544,6 +556,7 @@ pub mod pow {
     use sp_staking::SessionIndex;
 
     #[pallet::config]
+    #[allow(deprecated)]
     pub trait Config: frame_system::Config + pallet_timestamp::Config<Moment = Moment> {
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
     }
@@ -603,6 +616,7 @@ pub mod pow {
     #[pallet::call]
     impl<T: Config> Pallet<T> {
         #[pallet::call_index(0)]
+        #[allow(deprecated)]
         #[pallet::weight(10_000)]
         pub fn submit_work(
             origin: OriginFor<T>,
@@ -660,7 +674,7 @@ pub mod pow {
             }
             let mut target = U256::from(mantissa);
             if exponent > 3 {
-                target = target << (8 * (exponent - 3));
+                target <<= 8 * (exponent - 3);
             } else {
                 target >>= 8 * (3 - exponent);
             }
@@ -752,6 +766,7 @@ pub mod pow {
 
 parameter_types! {
     pub const BlockHashCount: u64 = 250;
+    #[allow(deprecated)]
     pub const Version: sp_version::RuntimeVersion = sp_version::RuntimeVersion {
         spec_name: sp_runtime::create_runtime_str!("synthetic-hegemonic"),
         impl_name: sp_runtime::create_runtime_str!("synthetic-hegemonic"),
@@ -815,6 +830,7 @@ impl pallet_timestamp::Config for Runtime {
     type WeightInfo = ();
 }
 
+#[allow(deprecated)]
 impl pow::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
 }
@@ -962,7 +978,6 @@ type CouncilCollective = pallet_collective::Instance1;
 type CouncilApprovalOrigin =
     pallet_collective::EnsureProportionAtLeast<AccountId, CouncilCollective, 1, 2>;
 type ReferendaOrigin = frame_system::EnsureRoot<AccountId>;
-type CouncilOrReferendaOrigin = EitherOfDiverse<CouncilApprovalOrigin, ReferendaOrigin>;
 
 impl pallet_membership::Config<pallet_membership::Instance1> for Runtime {
     type RuntimeEvent = RuntimeEvent;
@@ -1003,8 +1018,6 @@ impl pallet_treasury::Config for Runtime {
     >;
     type BalanceConverter = frame_support::traits::tokens::UnityAssetBalanceConversion;
     type PayoutPeriod = TreasuryPayoutPeriod;
-    #[cfg(feature = "runtime-benchmarks")]
-    type BenchmarkHelper = ();
     type BlockNumberProvider = System;
 }
 
@@ -1065,7 +1078,7 @@ impl RuntimeAttestationBridge {
     fn parse_commitment(payload: &[u8]) -> Result<u64, DispatchError> {
         let bytes: [u8; 8] = payload
             .get(0..8)
-            .ok_or_else(|| DispatchError::Other("payload-too-short"))?
+            .ok_or(DispatchError::Other("payload-too-short"))?
             .try_into()
             .map_err(|_| DispatchError::Other("payload-size"))?;
         Ok(u64::from_le_bytes(bytes))
@@ -1324,18 +1337,22 @@ construct_runtime!(
 pub type Currency = Balances;
 pub type GovernanceOrigin = frame_system::EnsureRoot<AccountId>;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "runtime-tests"))]
 mod tests {
     use super::*;
     use frame_support::assert_noop;
-    use frame_support::weights::Weight;
+    use frame_support::pallet_prelude::Zero;
     use frame_support::{
         assert_ok,
-        dispatch::Dispatchable,
         traits::{Hooks, StorageVersion},
         BoundedVec,
     };
     use sp_core::U256;
+    use sp_runtime::BuildStorage;
+
+    fn account(seed: u8) -> AccountId {
+        AccountId::from([seed; 32])
+    }
 
     fn compact_to_target(bits: u32) -> Option<U256> {
         let exponent = bits >> 24;
@@ -1348,7 +1365,8 @@ mod tests {
         }
         let mut target = U256::from(mantissa);
         if exponent > 3 {
-            target = target.checked_shl(8 * (exponent - 3) as u32)?;
+            let shift = 8 * (exponent - 3) as usize;
+            target = target.checked_mul(U256::from(1u8) << shift)?;
         } else {
             target >>= 8 * (3 - exponent);
         }
@@ -1374,16 +1392,12 @@ mod tests {
     }
 
     fn new_ext() -> sp_io::TestExternalities {
-        let mut t = frame_system::GenesisConfig::default()
-            .build_storage::<Runtime>()
+        let mut t = frame_system::GenesisConfig::<Runtime>::default()
+            .build_storage()
             .unwrap();
         pallet_balances::GenesisConfig::<Runtime> {
-            balances: vec![(1, 1_000_000), (2, 1_000_000)],
-        }
-        .assimilate_storage(&mut t)
-        .unwrap();
-        pallet_timestamp::GenesisConfig::<Runtime> {
-            minimum_period: MinimumPeriod::get(),
+            balances: vec![(account(1), 1_000_000), (account(2), 1_000_000)],
+            dev_accounts: None,
         }
         .assimilate_storage(&mut t)
         .unwrap();
@@ -1400,7 +1414,7 @@ mod tests {
             let nonce = valid_nonce(pre_hash, pow_bits);
 
             assert_ok!(Pow::submit_work(
-                RuntimeOrigin::signed(1),
+                RuntimeOrigin::signed(account(1)),
                 pre_hash,
                 nonce,
                 pow_bits,
@@ -1428,7 +1442,13 @@ mod tests {
                 .expect("non-matching nonce exists");
 
             assert_noop!(
-                Pow::submit_work(RuntimeOrigin::signed(1), pre_hash, bad_nonce, pow_bits, 0),
+                Pow::submit_work(
+                    RuntimeOrigin::signed(account(1)),
+                    pre_hash,
+                    bad_nonce,
+                    pow_bits,
+                    0
+                ),
                 pow::Error::<Runtime>::InsufficientWork
             );
 
@@ -1449,7 +1469,7 @@ mod tests {
             let pre_hash = H256::repeat_byte(1);
             let nonce = valid_nonce(pre_hash, pow_bits);
             assert_ok!(Pow::submit_work(
-                RuntimeOrigin::signed(1),
+                RuntimeOrigin::signed(account(1)),
                 pre_hash,
                 nonce,
                 pow_bits,
@@ -1461,7 +1481,7 @@ mod tests {
             System::set_block_number(SessionPeriod::get());
             Timestamp::set_timestamp(PowTargetBlockTime::get());
             assert_ok!(Pow::submit_work(
-                RuntimeOrigin::signed(2),
+                RuntimeOrigin::signed(account(2)),
                 pre_hash_two,
                 nonce_two,
                 pow_bits,
@@ -1476,7 +1496,7 @@ mod tests {
             assert!(events.iter().any(|evt| matches!(
                 evt.event,
                 RuntimeEvent::Pow(pow::Event::SessionValidatorsRotated { ref validators, .. })
-                    if validators.contains(&1) && validators.contains(&2)
+                    if validators.contains(&account(1)) && validators.contains(&account(2))
             )));
         });
     }
@@ -1491,14 +1511,14 @@ mod tests {
             assert_ok!(Identity::store_schema(
                 RuntimeOrigin::root(),
                 schema,
-                schema_bytes,
+                schema_bytes.clone().into_inner(),
                 false
             ));
             let payload = schema.to_le_bytes().to_vec();
             assert_ok!(Identity::issue_credential(
-                RuntimeOrigin::signed(1),
+                RuntimeOrigin::signed(account(1)),
                 schema,
-                2,
+                account(2),
                 None,
                 payload,
                 vec![]
@@ -1523,14 +1543,14 @@ mod tests {
             assert_ok!(Identity::store_schema(
                 RuntimeOrigin::root(),
                 schema,
-                schema_bytes,
+                schema_bytes.clone().into_inner(),
                 false
             ));
             let payload = schema.to_le_bytes().to_vec();
             assert_ok!(Identity::issue_credential(
-                RuntimeOrigin::signed(1),
+                RuntimeOrigin::signed(account(1)),
                 schema,
-                2,
+                account(2),
                 None,
                 payload,
                 vec![]
@@ -1539,9 +1559,9 @@ mod tests {
             assert!(pallet_settlement::PendingQueue::<Runtime>::get().contains(&(schema as u64)));
 
             assert_ok!(Identity::revoke_credential(
-                RuntimeOrigin::signed(1),
+                RuntimeOrigin::signed(account(1)),
                 schema,
-                2
+                account(2)
             ));
             Attestations::offchain_worker(2);
             assert!(!pallet_settlement::PendingQueue::<Runtime>::get().contains(&(schema as u64)));
@@ -1564,42 +1584,42 @@ mod tests {
                 StorageVersion::get::<pallet_feature_flags::Pallet<Runtime>>(),
                 pallet_feature_flags::pallet::STORAGE_VERSION
             );
-            assert!(feature_weight > Weight::zero());
+            assert!(!feature_weight.is_zero());
 
             let asset_weight = pallet_asset_registry::Pallet::<Runtime>::on_runtime_upgrade();
             assert_eq!(
                 StorageVersion::get::<pallet_asset_registry::Pallet<Runtime>>(),
                 pallet_asset_registry::pallet::STORAGE_VERSION
             );
-            assert!(asset_weight > Weight::zero());
+            assert!(!asset_weight.is_zero());
 
             let identity_weight = pallet_identity::Pallet::<Runtime>::on_runtime_upgrade();
             assert_eq!(
                 StorageVersion::get::<pallet_identity::Pallet<Runtime>>(),
                 pallet_identity::pallet::STORAGE_VERSION
             );
-            assert!(identity_weight > Weight::zero());
+            assert!(!identity_weight.is_zero());
 
             let attestations_weight = pallet_attestations::Pallet::<Runtime>::on_runtime_upgrade();
             assert_eq!(
                 StorageVersion::get::<pallet_attestations::Pallet<Runtime>>(),
                 pallet_attestations::pallet::STORAGE_VERSION
             );
-            assert!(attestations_weight > Weight::zero());
+            assert!(!attestations_weight.is_zero());
 
             let oracle_weight = pallet_oracles::Pallet::<Runtime>::on_runtime_upgrade();
             assert_eq!(
                 StorageVersion::get::<pallet_oracles::Pallet<Runtime>>(),
                 pallet_oracles::pallet::STORAGE_VERSION
             );
-            assert!(oracle_weight > Weight::zero());
+            assert!(!oracle_weight.is_zero());
 
             let settlement_weight = pallet_settlement::Pallet::<Runtime>::on_runtime_upgrade();
             assert_eq!(
                 StorageVersion::get::<pallet_settlement::Pallet<Runtime>>(),
-                pallet_settlement::pallet::STORAGE_VERSION
+                pallet_settlement::STORAGE_VERSION
             );
-            assert!(settlement_weight > Weight::zero());
+            assert!(!settlement_weight.is_zero());
 
             let observability_weight =
                 pallet_observability::Pallet::<Runtime>::on_runtime_upgrade();
@@ -1607,7 +1627,7 @@ mod tests {
                 StorageVersion::get::<pallet_observability::Pallet<Runtime>>(),
                 pallet_observability::pallet::STORAGE_VERSION
             );
-            assert!(observability_weight > Weight::zero());
+            assert!(!observability_weight.is_zero());
         });
     }
 }

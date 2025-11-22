@@ -87,12 +87,14 @@ async fn nodes_share_blocks_over_gossip() {
     config_a.note_tree_depth = 8;
     config_a.pow_bits = 0x1f00ffff;
     config_a.miner_seed = [1u8; 32];
+    config_a.min_tx_fee_per_weight = 0;
 
     let mut config_b = NodeConfig::with_db_path(dir_b.path().join("b.db"));
     config_b.api_addr = "127.0.0.1:0".parse().unwrap();
     config_b.note_tree_depth = 8;
     config_b.pow_bits = 0x1f00ffff;
     config_b.miner_seed = [2u8; 32];
+    config_b.min_tx_fee_per_weight = 0;
 
     let handle_a = NodeService::start(config_a, router.clone()).expect("start node a");
     let handle_b = NodeService::start(config_b, router).expect("start node b");
