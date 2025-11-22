@@ -1,6 +1,6 @@
-use crate::p2p::WireMessage;
 use crate::PeerId;
-use std::collections::{hash_map::Entry, HashMap, HashSet};
+use crate::p2p::WireMessage;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -47,33 +47,36 @@ impl PeerManager {
     pub fn add_peer(&mut self, peer_id: PeerId, addr: SocketAddr, tx: mpsc::Sender<WireMessage>) {
         self.record_addresses(peer_id, [addr]);
 
-        if self.max_peers > 0
-            && self.peers.len() >= self.max_peers
-            && let Some(evicted) = self.lowest_score_peer()
-        {
-            self.peers.remove(&evicted);
+        if self.peers.contains_key(&peer_id) {
+            self.peers.insert(
+                peer_id,
+                PeerEntry {
+                    peer_id,
+                    tx,
+                    addr,
+                    last_seen: Instant::now(),
+                    score: 0,
+                },
+            );
+            return;
         }
 
-        match self.peers.entry(peer_id) {
-            Entry::Occupied(mut occupied) => {
-                occupied.insert(PeerEntry {
-                    peer_id,
-                    tx,
-                    addr,
-                    last_seen: Instant::now(),
-                    score: 0,
-                });
-            }
-            Entry::Vacant(vacant) => {
-                vacant.insert(PeerEntry {
-                    peer_id,
-                    tx,
-                    addr,
-                    last_seen: Instant::now(),
-                    score: 0,
-                });
+        if self.max_peers > 0 && self.peers.len() >= self.max_peers {
+            if let Some(evicted) = self.lowest_score_peer() {
+                self.peers.remove(&evicted);
             }
         }
+
+        self.peers.insert(
+            peer_id,
+            PeerEntry {
+                peer_id,
+                tx,
+                addr,
+                last_seen: Instant::now(),
+                score: 0,
+            },
+        );
     }
 
     pub fn remove_peer(&mut self, peer_id: &PeerId) {

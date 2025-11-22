@@ -16,7 +16,6 @@ sp-io = { version = "43.0.0", default-features = false }
 codec = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
 scale-info = { version = "2", default-features = false, features = ["derive"] }
 blake3 = { version = "1", default-features = false, features = ["digest"] }
-log = { version = "0.4", default-features = false }
 
 [features]
 default = ["std"]
@@ -30,6 +29,5 @@ std = [
     "codec/std",
     "scale-info/std",
     "blake3/std",
-    "log/std",
 ]
 runtime-benchmarks = ["frame-benchmarking/runtime-benchmarks"]
