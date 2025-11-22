@@ -1,6 +1,6 @@
-use thiserror::Error;
-
 use consensus::{ConsensusError, ProofError};
+use network::service::DirectedProtocolMessage;
+use thiserror::Error;
 use wallet::error::WalletError;
 
 #[derive(Debug, Error)]
@@ -23,6 +23,11 @@ pub enum NodeError {
     Json(#[from] serde_json::Error),
     #[error("wallet error: {0}")]
     Wallet(#[from] WalletError),
+    #[error("protocol channel error: {0}")]
+    Channel(
+        #[from]
+        tokio::sync::mpsc::error::SendError<DirectedProtocolMessage>,
+    ),
     #[error("invalid transaction: {0}")]
     Invalid(&'static str),
     #[error("invalid input: {0}")]

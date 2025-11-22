@@ -3,10 +3,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::{Mutex, RwLock};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TelemetryPosture {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_enabled: Option<bool>,

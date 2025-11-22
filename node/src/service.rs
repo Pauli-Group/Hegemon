@@ -89,7 +89,7 @@ pub struct ConsensusStatus {
     pub best_hash: [u8; 32],
     pub pow_bits: u32,
     pub version_commitment: [u8; 32],
-    pub proof_commitment: [u8; 48],
+    pub proof_commitment: Vec<u8>,
     pub telemetry: TelemetrySnapshot,
 }
 
@@ -195,7 +195,6 @@ impl NodeService {
         } else {
             meta.pow_bits
         };
-        telemetry.set_privacy_posture(config.telemetry.clone());
         let ledger = LedgerState {
             tree,
             nullifiers,
@@ -238,6 +237,7 @@ impl NodeService {
         }
         let mempool = Mempool::new(config.mempool_max_txs, config.mempool_max_weight);
         let telemetry = Telemetry::new();
+        telemetry.set_privacy_posture(config.telemetry.clone());
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_SIZE);
         let (template_tx, template_rx) = watch::channel(None);
         let (solution_tx, mut solution_rx) = mpsc::channel(BLOCK_BROADCAST_CAPACITY);
@@ -340,6 +340,10 @@ impl NodeService {
         self.telemetry.set_privacy_posture(posture);
     }
 
+    pub(crate) fn storage(&self) -> &Storage {
+        &self.storage
+    }
+
     pub fn consensus_status(&self) -> ConsensusStatus {
         let ledger = self.ledger.lock();
         ConsensusStatus {
@@ -347,7 +351,7 @@ impl NodeService {
             best_hash: ledger.best_hash,
             pow_bits: ledger.pow_bits,
             version_commitment: ledger.version_commitment,
-            proof_commitment: ledger.proof_commitment,
+            proof_commitment: ledger.proof_commitment.to_vec(),
             telemetry: self.telemetry.snapshot(),
         }
     }

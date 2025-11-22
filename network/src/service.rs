@@ -461,7 +461,7 @@ impl P2PService {
     }
 
     async fn run_peer_loop(
-        mut connection: Connection,
+        mut connection: Connection<TcpStream>,
         addr: SocketAddr,
         peer_id: PeerId,
         cmd_tx: mpsc::Sender<P2PCommand>,

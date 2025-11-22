@@ -29,3 +29,7 @@ path = "security_pipeline.rs"
 [[test]]
 name = "node_wallet_daemon"
 path = "node_wallet_daemon.rs"
+
+[[test]]
+name = "node_gossip"
+path = "node_gossip.rs"
