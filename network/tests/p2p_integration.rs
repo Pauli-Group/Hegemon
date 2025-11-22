@@ -6,6 +6,7 @@ use network::{
     PeerStoreConfig, RelayConfig,
 };
 use rand::Rng;
+use std::path::PathBuf;
 use tokio::time::timeout;
 
 fn local_addr() -> SocketAddr {
@@ -19,6 +20,10 @@ fn peer_store(tag: &str) -> PeerStore {
     let mut path = std::env::temp_dir();
     let mut rng = rand::thread_rng();
     path.push(format!("p2p_integration_{}_{}.bin", tag, rng.gen::<u64>()));
+    PeerStore::new(PeerStoreConfig::with_path(path))
+}
+
+fn peer_store_at(path: PathBuf) -> PeerStore {
     PeerStore::new(PeerStoreConfig::with_path(path))
 }
 
@@ -83,4 +88,77 @@ async fn gossip_crosses_tcp_boundary() {
 
     task_a.abort();
     task_b.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn address_exchange_teaches_new_peers() {
+    let addr_a = local_addr();
+    let addr_b = local_addr();
+    let addr_c = local_addr();
+
+    let identity_a = PeerIdentity::generate(b"addr-exchange-a");
+    let identity_b = PeerIdentity::generate(b"addr-exchange-b");
+    let identity_c = PeerIdentity::generate(b"addr-exchange-c");
+
+    let path_a = std::env::temp_dir().join("p2p_integration_addr_a.bin");
+    let path_b = std::env::temp_dir().join("p2p_integration_addr_b.bin");
+    let path_c = std::env::temp_dir().join("p2p_integration_addr_c.bin");
+
+    let service_a = P2PService::new(
+        identity_a,
+        addr_a,
+        vec![addr_b.to_string()],
+        GossipRouter::new(8).handle(),
+        8,
+        peer_store_at(path_a.clone()),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(addr_a),
+    );
+    let service_b = P2PService::new(
+        identity_b,
+        addr_b,
+        vec![addr_a.to_string()],
+        GossipRouter::new(8).handle(),
+        8,
+        peer_store_at(path_b.clone()),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(addr_b),
+    );
+    let service_c = P2PService::new(
+        identity_c,
+        addr_c,
+        vec![addr_a.to_string()],
+        GossipRouter::new(8).handle(),
+        8,
+        peer_store_at(path_c.clone()),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(addr_c),
+    );
+
+    let task_a = tokio::spawn(service_a.run());
+    let task_b = tokio::spawn(service_b.run());
+    let task_c = tokio::spawn(service_c.run());
+
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    task_a.abort();
+    task_b.abort();
+    task_c.abort();
+
+    let mut store_b = peer_store_at(path_b);
+    store_b.load().expect("load peer store b");
+    let addrs_b = store_b.addresses();
+
+    let mut store_c = peer_store_at(path_c);
+    store_c.load().expect("load peer store c");
+    let addrs_c = store_c.addresses();
+
+    assert!(
+        addrs_b.contains(&addr_c),
+        "node B should learn about node C via address exchange"
+    );
+    assert!(
+        addrs_c.contains(&addr_b),
+        "node C should learn about node B via address exchange"
+    );
 }
