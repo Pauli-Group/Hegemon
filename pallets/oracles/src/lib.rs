@@ -7,10 +7,13 @@ use frame_support::dispatch::DispatchResult;
 use frame_support::pallet_prelude::*;
 use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
+use frame_system::offchain::SubmitTransaction;
 use frame_system::pallet_prelude::BlockNumberFor;
 use pallet_identity::IdentityProvider;
 use sp_runtime::traits::Saturating;
+use sp_runtime::transaction_validity::{InvalidTransaction, TransactionPriority};
 use sp_runtime::RuntimeDebug;
+use sp_runtime::{TransactionSource, TransactionValidity, ValidTransaction};
 
 /// Hook to dispatch off-chain ingestion for scheduled feeds.
 pub trait OffchainIngestion<FeedId> {
@@ -266,8 +269,20 @@ pub mod pallet {
         }
 
         fn offchain_worker(_: BlockNumberFor<T>) {
-            let scheduled = PendingIngestions::<T>::take();
+            let scheduled = PendingIngestions::<T>::get();
             for feed_id in scheduled.iter() {
+                if let Some(details) = Feeds::<T>::get(feed_id) {
+                    if let Some(latest) = details.latest_commitment.as_ref() {
+                        let _ = SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(
+                            Call::verify_submission {
+                                feed_id: *feed_id,
+                                expected_commitment: latest.commitment.clone(),
+                            }
+                            .into(),
+                        );
+                    }
+                }
+
                 T::OffchainIngestion::ingest(feed_id);
                 <Pallet<T>>::deposit_event(Event::IngestionDispatched { feed_id: *feed_id });
             }
@@ -401,8 +416,17 @@ pub mod pallet {
             feed_id: T::FeedId,
             expected_commitment: BoundedVec<u8, T::MaxCommitmentSize>,
         ) -> DispatchResult {
-            let who = ensure_signed(origin)?;
-            T::Identity::ensure_role(&who, &T::FeedVerifierRole::get())?;
+            let signed_verifier = ensure_signed(origin.clone()).ok();
+            if signed_verifier.is_none() {
+                ensure_none(origin)?;
+            }
+
+            let verifier_role = T::FeedVerifierRole::get();
+            if let Some(who) = signed_verifier.as_ref() {
+                T::Identity::ensure_role(who, &verifier_role)?;
+            }
+
+            let mut verifier_account = signed_verifier.clone();
 
             Feeds::<T>::try_mutate_exists(&feed_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::FeedMissing)?;
@@ -416,14 +440,58 @@ pub mod pallet {
                     Error::<T>::MissingCommitment
                 );
 
+                if verifier_account.is_none() {
+                    ensure!(
+                        PendingIngestions::<T>::get().contains(&feed_id),
+                        Error::<T>::Unauthorized
+                    );
+                    verifier_account = Some(details.owner.clone());
+                }
+
+                PendingIngestions::<T>::mutate(|queue| {
+                    queue.retain(|id| id != &feed_id);
+                });
                 Ok(())
             })?;
 
-            Self::deposit_event(Event::SubmissionVerified {
-                feed_id,
-                verifier: who,
-            });
+            let verifier = verifier_account.expect("verifier must be set; qed");
+            Self::deposit_event(Event::SubmissionVerified { feed_id, verifier });
             Ok(())
         }
+    }
+}
+
+#[pallet::validate_unsigned]
+impl<T: Config> ValidateUnsigned for Pallet<T> {
+    type Call = Call<T>;
+
+    fn validate_unsigned(source: TransactionSource, call: &Self::Call) -> TransactionValidity {
+        if let Call::verify_submission {
+            feed_id,
+            expected_commitment,
+        } = call
+        {
+            if matches!(
+                source,
+                TransactionSource::Local | TransactionSource::InBlock
+            ) {
+                if let Some(details) = Feeds::<T>::get(feed_id) {
+                    if let Some(latest) = details.latest_commitment.as_ref() {
+                        if &latest.commitment == expected_commitment
+                            && PendingIngestions::<T>::get().contains(feed_id)
+                        {
+                            return ValidTransaction::with_tag_prefix("OraclesUnsignedVerify")
+                                .priority(TransactionPriority::max_value())
+                                .and_provides((*feed_id, latest.submitted_at))
+                                .longevity(64_u64)
+                                .propagate(true)
+                                .build();
+                        }
+                    }
+                }
+            }
+        }
+
+        InvalidTransaction::Call.into()
     }
 }
