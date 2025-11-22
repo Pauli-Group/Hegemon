@@ -3,6 +3,7 @@
 pub use pallet::*;
 
 use frame_support::pallet_prelude::*;
+use log;
 use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
@@ -128,8 +129,8 @@ pub mod pallet {
             tracked_actors: u32,
         },
         StorageMigrated {
-            from: u16,
-            to: u16,
+            from: StorageVersion,
+            to: StorageVersion,
         },
     }
 
@@ -301,8 +302,8 @@ pub mod pallet {
             if on_chain < STORAGE_VERSION {
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain.into(),
-                    to: STORAGE_VERSION.into(),
+                    from: on_chain,
+                    to: STORAGE_VERSION,
                 });
                 T::WeightInfo::migrate()
             } else {

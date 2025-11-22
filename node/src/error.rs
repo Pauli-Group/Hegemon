@@ -24,10 +24,7 @@ pub enum NodeError {
     #[error("wallet error: {0}")]
     Wallet(#[from] WalletError),
     #[error("protocol channel error: {0}")]
-    Channel(
-        #[from]
-        tokio::sync::mpsc::error::SendError<DirectedProtocolMessage>,
-    ),
+    Channel(#[from] tokio::sync::mpsc::error::SendError<DirectedProtocolMessage>),
     #[error("invalid transaction: {0}")]
     Invalid(&'static str),
     #[error("invalid input: {0}")]

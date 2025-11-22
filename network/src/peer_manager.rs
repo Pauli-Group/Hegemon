@@ -47,24 +47,22 @@ impl PeerManager {
     pub fn add_peer(&mut self, peer_id: PeerId, addr: SocketAddr, tx: mpsc::Sender<WireMessage>) {
         self.record_addresses(peer_id, [addr]);
 
-        if self.peers.contains_key(&peer_id) {
-            self.peers.insert(
+        if let std::collections::hash_map::Entry::Occupied(mut entry) = self.peers.entry(peer_id) {
+            entry.insert(PeerEntry {
                 peer_id,
-                PeerEntry {
-                    peer_id,
-                    tx,
-                    addr,
-                    last_seen: Instant::now(),
-                    score: 0,
-                },
-            );
+                tx,
+                addr,
+                last_seen: Instant::now(),
+                score: 0,
+            });
             return;
         }
 
-        if self.max_peers > 0 && self.peers.len() >= self.max_peers {
-            if let Some(evicted) = self.lowest_score_peer() {
-                self.peers.remove(&evicted);
-            }
+        if self.max_peers > 0
+            && self.peers.len() >= self.max_peers
+            && let Some(evicted) = self.lowest_score_peer()
+        {
+            self.peers.remove(&evicted);
         }
 
         self.peers.insert(

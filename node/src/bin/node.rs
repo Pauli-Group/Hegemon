@@ -99,9 +99,10 @@ async fn main() -> Result<()> {
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    let command = cli.command.take();
 
-    match cli.command {
+    match command {
         Some(Commands::Setup) => run_setup().await,
         Some(Commands::ExportPeers { output }) => run_export_peers(cli, output).await,
         Some(Commands::Start) | None => run_node(cli).await,

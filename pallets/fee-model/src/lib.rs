@@ -2,7 +2,7 @@
 
 pub use pallet::*;
 
-use codec::{Decode, Encode, MaxEncodedLen};
+use codec::MaxEncodedLen;
 use frame_support::dispatch::{DispatchClass, Pays};
 use frame_support::pallet_prelude::*;
 use frame_support::traits::{
@@ -11,7 +11,7 @@ use frame_support::traits::{
 use frame_support::unsigned::TransactionValidityError;
 use sp_runtime::traits::{DispatchInfoOf, PostDispatchInfoOf, Saturating, Zero};
 use sp_runtime::transaction_validity::InvalidTransaction;
-use sp_runtime::{FixedU128, RuntimeDebug};
+use sp_runtime::{FixedU128, RuntimeDebug, FixedPointNumber};
 use sp_std::marker::PhantomData;
 use sp_std::vec::Vec;
 
@@ -55,7 +55,9 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::config]
-    pub trait Config: frame_system::Config {
+    pub trait Config: frame_system::Config + pallet_transaction_payment::Config {
+        #[allow(deprecated)]
+        #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type Currency: Currency<Self::AccountId>;
         type IdentityTag: FeeTag + Parameter + Member + MaxEncodedLen;
@@ -166,7 +168,7 @@ pub mod pallet {
             already_withdrawn: Self::LiquidityInfo,
         ) -> Result<(), TransactionValidityError> {
             let (withdrawn, adjustment) = already_withdrawn;
-            let pays_fee = post_info.pays_fee(dispatch_info);
+            let pays_fee = post_info.pays_fee;
             let actual_multiplier = if matches!(pays_fee, Pays::Yes) {
                 adjustment.multiplier
             } else {

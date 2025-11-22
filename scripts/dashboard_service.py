@@ -346,19 +346,14 @@ class NodeProcessSupervisor:
             db_path_path.parent.mkdir(parents=True, exist_ok=True)
             db_path = str(db_path_path)
 
-            # Auto-detect TLS if certs exist
-            tls_enabled = payload.routing.tls
-            if not tls_enabled and (REPO_ROOT / "cert.pem").exists() and (REPO_ROOT / "key.pem").exists():
-                tls_enabled = True
-
-            node_url = _build_node_url(api_host, payload.port, tls_enabled)
+            node_url = _build_node_url(api_host, payload.port, payload.routing.tls)
             command = [
                 "cargo",
                 "run",
                 "-p",
                 "node",
                 "--bin",
-                "node",
+                "hegemon",
                 "--",
                 "--db-path",
                 db_path,
@@ -367,7 +362,7 @@ class NodeProcessSupervisor:
                 "--api-token",
                 api_token,
             ]
-            if tls_enabled:
+            if payload.routing.tls:
                 command.append("--tls")
 
             if payload.miner_workers is not None:

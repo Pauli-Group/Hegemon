@@ -1,7 +1,5 @@
-#![cfg(feature = "runtime-benchmarks")]
-
 use super::*;
-use frame_benchmarking::{benchmarks, whitelisted_caller};
+use frame_benchmarking::{benchmarks, impl_benchmark_test_suite, whitelisted_caller};
 use frame_system::RawOrigin;
 
 benchmarks! {
@@ -34,3 +32,9 @@ benchmarks! {
         Pallet::<T>::start_dispute(RawOrigin::Signed(caller.clone()).into(), commitment_id)?;
     }: _(RawOrigin::Signed(caller), commitment_id)
 }
+
+impl_benchmark_test_suite!(
+    Pallet,
+    crate::tests::new_test_ext(),
+    crate::tests::TestRuntime
+);
