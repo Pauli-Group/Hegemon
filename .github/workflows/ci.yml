@@ -34,6 +34,17 @@ jobs:
       - name: Cargo test (workspace)
         run: cargo test --workspace
 
+  network-tests:
+    runs-on: ubuntu-latest
+    needs: rust-lints
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Cargo test (network)
+        run: cargo test -p network
+
   runtime-lints:
     runs-on: ubuntu-latest
     needs: rust-lints
