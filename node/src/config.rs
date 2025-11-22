@@ -11,6 +11,7 @@ use wallet::address::ShieldedAddress;
 use wallet::keys::RootSecret;
 
 use crate::chain_spec::ChainProfile;
+use crate::telemetry::TelemetryPosture;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeConfig {
@@ -35,6 +36,7 @@ pub struct NodeConfig {
     pub max_peers: usize,
     pub nat_traversal: bool,
     pub relay: RelayConfig,
+    pub telemetry: TelemetryPosture,
 }
 
 impl NodeConfig {
@@ -87,6 +89,7 @@ impl Default for NodeConfig {
             max_peers: 64,
             nat_traversal: true,
             relay: RelayConfig::default(),
+            telemetry: TelemetryPosture::default(),
         }
     }
 }

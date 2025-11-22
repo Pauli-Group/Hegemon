@@ -190,6 +190,7 @@ impl NodeService {
         } else {
             meta.pow_bits
         };
+        telemetry.set_privacy_posture(config.telemetry.clone());
         let ledger = LedgerState {
             tree,
             nullifiers,
