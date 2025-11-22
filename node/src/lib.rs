@@ -1,4 +1,5 @@
 pub mod api;
+pub mod bootstrap;
 pub mod chain_spec;
 pub mod config;
 pub mod error;
