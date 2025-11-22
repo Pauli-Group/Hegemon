@@ -3,22 +3,28 @@
 #[cfg(feature = "std")]
 pub mod chain_spec;
 
-use codec::{Decode, Encode, MaxEncodedLen};
+use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::traits::{
-    ConstU128, ConstU32, ConstU64, Currency as CurrencyTrait, EitherOfDiverse,
+    ConstU128, ConstU32, ConstU64, ConstU8, Currency as CurrencyTrait, EitherOfDiverse, TypedGet,
+    VariantCount,
 };
 use frame_support::BoundedVec;
+use frame_support::weights::IdentityFee;
 pub use frame_support::{construct_runtime, parameter_types};
 use frame_system as system;
 use pallet_attestations::AttestationSettlementEvent;
 use scale_info::TypeInfo;
 use sp_application_crypto::RuntimeAppPublic;
+use sp_core::offchain::StorageKind;
 use sp_core::{blake2_256, H256, U256};
 use sp_runtime::generic::Era;
 use sp_runtime::traits::{
-    BlakeTwo256, IdentifyAccount, IdentityLookup, Lazy, SaturatedConversion, Verify,
+    BlakeTwo256, Convert, Hash, IdentifyAccount, IdentityLookup, Lazy, SaturatedConversion,
+    StaticLookup, Verify,
 };
-use sp_runtime::{generic, AccountId32, MultiAddress};
+use sp_runtime::{
+    generic, AccountId32, DispatchError, FixedU128, MultiAddress, Permill, RuntimeDebug,
+};
 use sp_std::vec::Vec;
 
 mod pq_crypto {
@@ -33,46 +39,50 @@ mod pq_crypto {
     };
     use crypto::traits::{SigningKey, VerifyKey};
     use sp_core::crypto::KeyTypeId;
-    use sp_io::offchain::{self, StorageKind};
+    use sp_io::offchain;
     use sp_runtime::RuntimeDebug;
 
     const KEY_LIST: &[u8] = b"pq:keys";
     pub const PQ_KEY_TYPE: KeyTypeId = KeyTypeId(*b"pq00");
 
-    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
     #[derive(Clone, PartialEq, Eq, Encode, Decode, RuntimeDebug, TypeInfo, MaxEncodedLen)]
     pub enum Signature {
-        MlDsa([u8; ML_DSA_SIGNATURE_LEN]),
-        SlhDsa([u8; SLH_DSA_SIGNATURE_LEN]),
+        MlDsa {
+            signature: [u8; ML_DSA_SIGNATURE_LEN],
+            public: Public,
+        },
+        SlhDsa {
+            signature: [u8; SLH_DSA_SIGNATURE_LEN],
+            public: Public,
+        },
     }
 
     impl Signature {
-        pub fn as_bytes(&self) -> &[u8] {
+        pub fn signature_bytes(&self) -> &[u8] {
             match self {
-                Signature::MlDsa(bytes) => bytes,
-                Signature::SlhDsa(bytes) => bytes,
+                Signature::MlDsa { signature, .. } => signature,
+                Signature::SlhDsa { signature, .. } => signature,
+            }
+        }
+
+        pub fn public(&self) -> &Public {
+            match self {
+                Signature::MlDsa { public, .. } | Signature::SlhDsa { public, .. } => public,
             }
         }
     }
 
-    impl From<MlDsaSignature> for Signature {
-        fn from(sig: MlDsaSignature) -> Self {
-            Signature::MlDsa(sig.to_bytes())
-        }
-    }
+    impl DecodeWithMemTracking for Signature {}
 
-    impl From<SlhDsaSignature> for Signature {
-        fn from(sig: SlhDsaSignature) -> Self {
-            Signature::SlhDsa(sig.to_bytes())
-        }
-    }
-
-    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
-    #[derive(Clone, PartialEq, Eq, Encode, Decode, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+    #[derive(
+        Clone, PartialEq, Eq, PartialOrd, Ord, Encode, Decode, RuntimeDebug, TypeInfo, MaxEncodedLen,
+    )]
     pub enum Public {
         MlDsa([u8; ML_DSA_PUBLIC_KEY_LEN]),
         SlhDsa([u8; SLH_DSA_PUBLIC_KEY_LEN]),
     }
+
+    impl DecodeWithMemTracking for Public {}
 
     impl Default for Public {
         fn default() -> Self {
@@ -104,8 +114,8 @@ mod pq_crypto {
     impl IdentifyAccount for Public {
         type AccountId = AccountId32;
 
-        fn into_account(&self) -> Self::AccountId {
-            let hash = BlakeTwo256::hash(self.as_bytes());
+        fn into_account(self) -> Self::AccountId {
+            let hash = BlakeTwo256::hash_of(self.as_bytes());
             AccountId32::new(hash.into())
         }
     }
@@ -113,27 +123,31 @@ mod pq_crypto {
     impl Verify for Signature {
         type Signer = Public;
 
-        fn verify<L: Lazy<[u8]> + AsRef<[u8]>>(&self, msg: L, signer: &Self::Signer) -> bool {
-            match (self, signer) {
-                (Signature::MlDsa(sig), Public::MlDsa(pk)) => {
-                    let Ok(signature) = MlDsaSignature::from_bytes(sig) else {
+        fn verify<L: Lazy<[u8]>>(&self, mut msg: L, signer: &AccountId32) -> bool {
+            let public = self.public();
+            if public.clone().into_account() != *signer {
+                return false;
+            }
+
+            match self {
+                Signature::MlDsa { signature, public } => {
+                    let Ok(public) = MlDsaPublicKey::from_bytes(public.as_bytes()) else {
                         return false;
                     };
-                    let Ok(public) = MlDsaPublicKey::from_bytes(pk) else {
+                    let Ok(signature) = MlDsaSignature::from_bytes(signature) else {
                         return false;
                     };
-                    public.verify(msg.as_ref(), &signature).is_ok()
+                    public.verify(msg.get(), &signature).is_ok()
                 }
-                (Signature::SlhDsa(sig), Public::SlhDsa(pk)) => {
-                    let Ok(signature) = SlhDsaSignature::from_bytes(sig) else {
+                Signature::SlhDsa { signature, public } => {
+                    let Ok(public) = SlhDsaPublicKey::from_bytes(public.as_bytes()) else {
                         return false;
                     };
-                    let Ok(public) = SlhDsaPublicKey::from_bytes(pk) else {
+                    let Ok(signature) = SlhDsaSignature::from_bytes(signature) else {
                         return false;
                     };
-                    public.verify(msg.as_ref(), &signature).is_ok()
+                    public.verify(msg.get(), &signature).is_ok()
                 }
-                _ => false,
             }
         }
     }
@@ -161,16 +175,14 @@ mod pq_crypto {
         }
 
         fn store_secrets(keys: &[Public]) {
-            if let Ok(encoded) = keys.encode() {
-                offchain::local_storage_set(StorageKind::PERSISTENT, KEY_LIST, &encoded);
-            }
+            let encoded = keys.encode();
+            offchain::local_storage_set(StorageKind::PERSISTENT, KEY_LIST, &encoded);
         }
 
         fn store_secret(public: &Public, secret: StoredSecret) {
             let key = Self::secret_key(public);
-            if let Ok(encoded) = secret.encode() {
-                offchain::local_storage_set(StorageKind::PERSISTENT, &key, &encoded);
-            }
+            let encoded = secret.encode();
+            offchain::local_storage_set(StorageKind::PERSISTENT, &key, &encoded);
         }
 
         fn load_secret(public: &Public) -> Option<StoredSecret> {
@@ -206,21 +218,35 @@ mod pq_crypto {
         }
 
         fn sign<M: AsRef<[u8]>>(&self, msg: &M) -> Option<Self::Signature> {
-            let secret = Self::load_secret(&self.0)?;
+            let public = self.0.clone();
+            let secret = Self::load_secret(&public)?;
             match secret {
                 StoredSecret::MlDsa(bytes) => {
                     let secret = MlDsaSecretKey::from_bytes(&bytes).ok()?;
-                    Some(secret.sign(msg.as_ref()).into())
+                    let signature = secret.sign(msg.as_ref()).to_bytes();
+                    Some(Signature::MlDsa { signature, public })
                 }
                 StoredSecret::SlhDsa(bytes) => {
                     let secret = SlhDsaSecretKey::from_bytes(&bytes).ok()?;
-                    Some(secret.sign(msg.as_ref()).into())
+                    let signature_vec = secret.sign(msg.as_ref()).to_bytes();
+                    let signature: [u8; SLH_DSA_SIGNATURE_LEN] =
+                        signature_vec.try_into().ok()?;
+                    Some(Signature::SlhDsa { signature, public })
                 }
             }
         }
 
         fn verify<M: AsRef<[u8]>>(&self, msg: &M, signature: &Self::Signature) -> bool {
-            signature.verify(msg.as_ref(), &self.0)
+            let account = self.0.clone().into_account();
+            signature.verify(msg.as_ref(), &account)
+        }
+
+        fn generate_proof_of_possession(&mut self) -> Option<Self::Signature> {
+            self.sign(&self.0.as_bytes().to_vec())
+        }
+
+        fn verify_proof_of_possession(&self, signature: &Self::Signature) -> bool {
+            self.verify(&self.0.as_bytes().to_vec(), signature)
         }
 
         fn to_raw_vec(&self) -> Vec<u8> {
@@ -237,22 +263,6 @@ mod pq_crypto {
     impl From<PqAppPublic> for Public {
         fn from(value: PqAppPublic) -> Self {
             value.0
-        }
-    }
-
-    impl TryFrom<Public> for Public {
-        type Error = ();
-
-        fn try_from(value: Public) -> Result<Self, Self::Error> {
-            Ok(value)
-        }
-    }
-
-    impl TryFrom<Signature> for Signature {
-        type Error = ();
-
-        fn try_from(value: Signature) -> Result<Self, Self::Error> {
-            Ok(value)
         }
     }
 
@@ -297,12 +307,160 @@ type SignedExtra = (
 
 type SignedPayload = sp_runtime::generic::SignedPayload<RuntimeCall, SignedExtra>;
 
+#[derive(
+    Clone, Copy, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo,
+)]
+pub enum HoldReason {
+    FeeModel,
+    Session,
+}
+
+impl VariantCount for HoldReason {
+    const VARIANT_COUNT: u32 = 2;
+}
+
+impl DecodeWithMemTracking for HoldReason {}
+
+impl From<pallet_session::HoldReason> for HoldReason {
+    fn from(_: pallet_session::HoldReason) -> Self {
+        HoldReason::Session
+    }
+}
+
+pub type MaxDidDocLength = ConstU32<128>;
+pub type MaxSchemaLength = ConstU32<128>;
+pub type MaxProofSize = ConstU32<64>;
+pub type MaxIdentityTags = ConstU32<8>;
+pub type MaxTagLength = ConstU32<32>;
+pub type MaxEd25519KeyBytes = ConstU32<32>;
+pub type MaxPqKeyBytes = ConstU32<4000>;
+pub type MaxMetadataLength = ConstU32<128>;
+pub type MaxTagsPerAsset = ConstU32<8>;
+pub type MaxProvenanceRefs = ConstU32<4>;
+pub type MaxFeeds = ConstU32<16>;
+pub type MaxFeedName = ConstU32<64>;
+pub type MaxEndpoint = ConstU32<128>;
+pub type MaxCommitmentSize = ConstU32<256>;
+pub type MaxPendingIngestions = ConstU32<8>;
+pub type MaxPendingRewards = ConstU32<32>;
+pub type MaxPowValidators = ConstU32<256>;
+
+pub struct AccountIdAsValidatorId;
+impl Convert<AccountId, Option<AccountId>> for AccountIdAsValidatorId {
+    fn convert(account: AccountId) -> Option<AccountId> {
+        Some(account)
+    }
+}
+
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+#[derive(
+    Clone,
+    Default,
+    Encode,
+    Decode,
+    PartialEq,
+    Eq,
+    RuntimeDebug,
+    MaxEncodedLen,
+    TypeInfo,
+)]
+pub struct DummySessionKeys;
+
+impl sp_runtime::traits::OpaqueKeys for DummySessionKeys {
+    type KeyTypeIdProviders = ();
+
+    fn key_ids() -> &'static [sp_core::crypto::KeyTypeId] {
+        &[]
+    }
+
+    fn get_raw(&self, _i: sp_core::crypto::KeyTypeId) -> &[u8] {
+        &[]
+    }
+}
+
+impl DecodeWithMemTracking for DummySessionKeys {}
+
+pub struct NullSessionHandler;
+
+impl pallet_session::SessionHandler<AccountId> for NullSessionHandler {
+    const KEY_TYPE_IDS: &'static [sp_core::crypto::KeyTypeId] = &[];
+
+    fn on_genesis_session<Ks: sp_runtime::traits::OpaqueKeys>(_validators: &[(AccountId, Ks)]) {}
+
+    fn on_new_session<Ks: sp_runtime::traits::OpaqueKeys>(
+        _changed: bool,
+        _validators: &[(AccountId, Ks)],
+        _queued_validators: &[(AccountId, Ks)],
+    ) {
+    }
+
+    fn on_before_session_ending() {}
+
+    fn on_disabled(_validator_index: u32) {}
+}
+
+pub struct TreasurySpendLimit;
+impl frame_support::traits::TypedGet for TreasurySpendLimit {
+    type Type = Balance;
+
+    fn get() -> Self::Type {
+        Balance::MAX
+    }
+}
+
+pub struct RuntimeTreasurySpendFunds;
+impl pallet_treasury::SpendFunds<Runtime> for RuntimeTreasurySpendFunds {
+    fn spend_funds(
+        _budget_remaining: &mut pallet_treasury::BalanceOf<Runtime>,
+        _imbalance: &mut pallet_treasury::PositiveImbalanceOf<Runtime>,
+        _total_weight: &mut frame_support::weights::Weight,
+        _missed_any: &mut bool,
+    ) {
+    }
+}
+
+#[derive(
+    Clone, Default, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo,
+)]
+pub struct NoConsideration;
+
+impl<A, F> frame_support::traits::Consideration<A, F> for NoConsideration {
+    fn new(_: &A, _: F) -> Result<Self, DispatchError> {
+        Ok(NoConsideration)
+    }
+
+    fn update(self, _: &A, _: F) -> Result<Self, DispatchError> {
+        Ok(self)
+    }
+
+    fn drop(self, _: &A) -> Result<(), DispatchError> {
+        Ok(())
+    }
+}
+
+impl<A, F> frame_support::traits::MaybeConsideration<A, F> for NoConsideration {
+    fn is_none(&self) -> bool {
+        true
+    }
+}
+
+impl DecodeWithMemTracking for NoConsideration {}
+
+pub struct MaxCollectiveProposalWeight;
+impl frame_support::traits::Get<frame_support::weights::Weight> for MaxCollectiveProposalWeight {
+    fn get() -> frame_support::weights::Weight {
+        frame_support::weights::Weight::MAX
+    }
+}
+
 #[frame_support::pallet]
 pub mod pow {
     use super::{Moment, PowDifficulty, PowFutureDrift, PowRetargetWindow, PowTargetBlockTime};
+    use crate::MaxPowValidators;
     use frame_support::{pallet_prelude::*, traits::Get, BoundedVec};
     use frame_system::pallet_prelude::*;
     use sp_core::{H256, U256};
+    use sp_staking::SessionIndex;
 
     #[pallet::config]
     pub trait Config: frame_system::Config + pallet_timestamp::Config<Moment = Moment> {
@@ -333,7 +491,8 @@ pub mod pow {
 
     #[pallet::storage]
     #[pallet::getter(fn validators)]
-    pub type Validators<T: Config> = StorageValue<_, Vec<T::AccountId>, ValueQuery>;
+    pub type Validators<T: Config> =
+        StorageValue<_, BoundedVec<T::AccountId, MaxPowValidators>, ValueQuery>;
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -348,7 +507,7 @@ pub mod pow {
             nonce: u64,
         },
         SessionValidatorsRotated {
-            session: pallet_session::SessionIndex,
+            session: SessionIndex,
             validators: Vec<T::AccountId>,
         },
     }
@@ -412,27 +571,26 @@ pub mod pow {
         fn compact_to_target(bits: u32) -> Option<U256> {
             let exponent = bits >> 24;
             let mantissa = bits & 0x00ff_ffff;
-            if mantissa == 0 {
-                return None;
-            }
-            if exponent > 32 {
-                return Some(U256::MAX);
-            }
-            let mut target = U256::from(mantissa);
-            if exponent > 3 {
-                target = target.checked_shl(8 * (exponent - 3) as u32)?;
-            } else {
-                target >>= 8 * (3 - exponent);
-            }
-            Some(target)
+        if mantissa == 0 {
+            return None;
         }
+        if exponent > 32 {
+            return Some(U256::MAX);
+        }
+        let mut target = U256::from(mantissa);
+        if exponent > 3 {
+            target = target << (8 * (exponent - 3));
+        } else {
+            target >>= 8 * (3 - exponent);
+        }
+        Some(target)
+    }
 
-        fn target_to_compact(target: U256) -> u32 {
-            if target.is_zero() {
-                return 0;
-            }
-            let mut bytes = [0u8; 32];
-            target.to_big_endian(&mut bytes);
+    fn target_to_compact(target: U256) -> u32 {
+        if target.is_zero() {
+            return 0;
+        }
+        let bytes = target.to_big_endian();
             let mut exponent = 32u32;
             while exponent > 0 && bytes[32 - exponent as usize] == 0 {
                 exponent -= 1;
@@ -481,31 +639,33 @@ pub mod pow {
         }
 
         fn note_validator(account: T::AccountId) {
-            Validators::<T>::mutate(|vals| {
+            let _ = Validators::<T>::try_mutate(|vals| {
                 if !vals.contains(&account) {
-                    vals.push(account);
+                    vals.try_push(account)?;
                 }
+                Ok::<(), ()>(())
             });
         }
     }
 
     impl<T: Config> pallet_session::SessionManager<T::AccountId> for Pallet<T> {
-        fn new_session(index: pallet_session::SessionIndex) -> Option<Vec<T::AccountId>> {
+        fn new_session(index: SessionIndex) -> Option<Vec<T::AccountId>> {
             let validators = Validators::<T>::get();
             if validators.is_empty() {
                 None
             } else {
+                let set = validators.to_vec();
                 Pallet::<T>::deposit_event(Event::SessionValidatorsRotated {
                     session: index,
-                    validators: validators.clone(),
+                    validators: set.clone(),
                 });
-                Some(validators)
+                Some(set)
             }
         }
 
-        fn end_session(_index: pallet_session::SessionIndex) {}
+        fn end_session(_index: SessionIndex) {}
 
-        fn start_session(_index: pallet_session::SessionIndex) {}
+        fn start_session(_index: SessionIndex) {}
     }
 }
 
@@ -517,9 +677,9 @@ parameter_types! {
         authoring_version: 1,
         spec_version: 1,
         impl_version: 1,
-        apis: sp_version::create_apis_vec!([(sp_api::Core::ID, sp_api::Core::VERSION)]),
+        apis: sp_version::create_apis_vec!([]),
         transaction_version: 1,
-        state_version: 0,
+        system_version: 0,
     };
     pub const SS58Prefix: u16 = 42;
     pub const MinimumPeriod: u64 = 5;
@@ -527,7 +687,7 @@ parameter_types! {
     pub const MaxLocks: u32 = 50;
     pub const SessionPeriod: u64 = 10;
     pub const SessionOffset: u64 = 0;
-    pub const TreasuryPayoutPeriod: u32 = 10;
+    pub const TreasuryPayoutPeriod: u64 = 10;
     pub const PowDifficulty: u32 = 0x3f00_ffff;
     pub const PowRetargetWindow: u32 = 120;
     pub const PowTargetBlockTime: Moment = 20_000;
@@ -538,17 +698,16 @@ impl system::Config for Runtime {
     type BaseCallFilter = frame_support::traits::Everything;
     type BlockWeights = ();
     type BlockLength = ();
-    type DbWeight = ();
+    type DbWeight = frame_support::weights::constants::RocksDbWeight;
     type RuntimeOrigin = RuntimeOrigin;
     type RuntimeCall = RuntimeCall;
     type RuntimeTask = ();
-    type Index = Index;
-    type BlockNumber = BlockNumber;
+    type Nonce = Index;
     type Hash = Hash;
     type Hashing = BlakeTwo256;
     type AccountId = AccountId;
     type Lookup = IdentityLookup<AccountId>;
-    type Header = Header;
+    type Block = Block;
     type RuntimeEvent = RuntimeEvent;
     type BlockHashCount = BlockHashCount;
     type Version = Version;
@@ -557,9 +716,15 @@ impl system::Config for Runtime {
     type OnNewAccount = ();
     type OnKilledAccount = ();
     type SystemWeightInfo = ();
+    type ExtensionsWeightInfo = ();
     type SS58Prefix = SS58Prefix;
     type OnSetCode = ();
     type MaxConsumers = ConstU32<16>;
+    type SingleBlockMigrations = ();
+    type MultiBlockMigrator = ();
+    type PreInherents = ();
+    type PostInherents = ();
+    type PostTransactions = ();
 }
 
 impl pallet_timestamp::Config for Runtime {
@@ -578,27 +743,26 @@ impl frame_system::offchain::SigningTypes for Runtime {
     type Signature = Signature;
 }
 
-impl<LocalCall> frame_system::offchain::SendTransactionTypes<LocalCall> for Runtime
+impl<LocalCall> frame_system::offchain::CreateTransactionBase<LocalCall> for Runtime
 where
     RuntimeCall: From<LocalCall>,
 {
-    type OverarchingCall = RuntimeCall;
     type Extrinsic = UncheckedExtrinsic;
+    type RuntimeCall = RuntimeCall;
 }
 
 impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Runtime
 where
     RuntimeCall: From<LocalCall>,
 {
-    fn create_transaction<C: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>>(
+    fn create_signed_transaction<
+        C: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>,
+    >(
         call: RuntimeCall,
-        public: <Signature as Verify>::Signer,
+        public: <Self as frame_system::offchain::SigningTypes>::Public,
         account: AccountId,
         nonce: Index,
-    ) -> Option<(
-        RuntimeCall,
-        <UncheckedExtrinsic as sp_runtime::traits::Extrinsic>::SignaturePayload,
-    )> {
+    ) -> Option<UncheckedExtrinsic> {
         let tip = 0;
         let period = 64;
         let current_block = System::block_number()
@@ -618,21 +782,26 @@ where
 
         let raw_payload = SignedPayload::new(call, extra).ok()?;
         let signature = raw_payload.using_encoded(|payload| C::sign(payload, public.clone()))?;
-        let address = <Runtime as system::Config>::Lookup::unlookup(account);
+        let address = MultiAddress::Id(account);
         let (call, extra, _) = raw_payload.deconstruct();
-        Some((call, (address, signature, extra)))
+        Some(UncheckedExtrinsic::new_signed(
+            call, address, signature, extra,
+        ))
     }
 }
 
 impl pallet_session::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type ValidatorId = AccountId;
-    type ValidatorIdOf = pallet_session::historical::Identity;
+    type ValidatorIdOf = AccountIdAsValidatorId;
     type ShouldEndSession = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
     type NextSessionRotation = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
     type SessionManager = pow::Pallet<Runtime>;
-    type SessionHandler = ();
-    type Keys = ();
+    type SessionHandler = NullSessionHandler;
+    type Keys = DummySessionKeys;
+    type DisablingStrategy = ();
+    type Currency = Balances;
+    type KeyDeposit = ConstU128<0>;
     type WeightInfo = ();
 }
 
@@ -643,13 +812,14 @@ impl pallet_balances::Config for Runtime {
     type ExistentialDeposit = ExistentialDeposit;
     type AccountStore = System;
     type WeightInfo = ();
+    type RuntimeHoldReason = HoldReason;
+    type RuntimeFreezeReason = ();
     type MaxReserves = ConstU32<16>;
     type ReserveIdentifier = [u8; 8];
     type MaxLocks = MaxLocks;
-    type HoldIdentifier = [u8; 8];
     type FreezeIdentifier = [u8; 8];
-    type MaxHolds = ConstU32<0>;
     type MaxFreezes = ConstU32<0>;
+    type DoneSlashHandler = ();
 }
 
 type NegativeImbalance = <Balances as CurrencyTrait<AccountId>>::NegativeImbalance;
@@ -662,7 +832,7 @@ impl frame_support::traits::OnUnbalanced<NegativeImbalance> for RuntimeFeeCollec
 pub struct RuntimeCallClassifier;
 impl pallet_fee_model::CallClassifier<RuntimeCall> for RuntimeCallClassifier {
     fn classify(_call: &RuntimeCall) -> pallet_fee_model::CallCategory {
-        pallet_fee_model::CallCategory::Regular
+        pallet_fee_model::CallCategory::Attestation
     }
 }
 
@@ -678,15 +848,17 @@ impl pallet_fee_model::FeeTagProvider<AccountId, pallet_identity::pallet::Identi
 impl pallet_transaction_payment::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type OnChargeTransaction = pallet_fee_model::FeeModelOnCharge<Runtime, RuntimeFeeCollector>;
-    type OperationalFeeMultiplier = ConstU32<1>;
-    type WeightToFee = (); // not used in tests
-    type LengthToFee = (); // not used in tests
-    type FeeMultiplierUpdate = (); // not used in tests
+    type OperationalFeeMultiplier = ConstU8<1>;
+    type WeightToFee = IdentityFee<Balance>;
+    type LengthToFee = IdentityFee<Balance>;
+    type FeeMultiplierUpdate = ();
+    type WeightInfo = ();
 }
 
 impl pallet_sudo::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type RuntimeCall = RuntimeCall;
+    type WeightInfo = ();
 }
 
 impl pallet_collective::Config<pallet_collective::Instance1> for Runtime {
@@ -699,6 +871,10 @@ impl pallet_collective::Config<pallet_collective::Instance1> for Runtime {
     type DefaultVote = pallet_collective::PrimeDefaultVote;
     type WeightInfo = ();
     type SetMembersOrigin = frame_system::EnsureRoot<AccountId>;
+    type MaxProposalWeight = MaxCollectiveProposalWeight;
+    type DisapproveOrigin = frame_system::EnsureRoot<AccountId>;
+    type KillOrigin = frame_system::EnsureRoot<AccountId>;
+    type Consideration = NoConsideration;
 }
 
 type CouncilCollective = pallet_collective::Instance1;
@@ -722,42 +898,39 @@ impl pallet_membership::Config<pallet_membership::Instance1> for Runtime {
 
 parameter_types! {
     pub const TreasuryPalletId: frame_support::PalletId = frame_support::PalletId(*b"py/trsry");
+    pub const TreasuryBurn: Permill = Permill::zero();
 }
 
 impl pallet_treasury::Config for Runtime {
     type PalletId = TreasuryPalletId;
     type Currency = Balances;
-    type ApproveOrigin = frame_system::EnsureRoot<AccountId>;
     type RejectOrigin = frame_system::EnsureRoot<AccountId>;
     type RuntimeEvent = RuntimeEvent;
-    type OnSlash = ();
-    type ProposalBond = ConstU64<1>;
-    type ProposalBondMinimum = ConstU128<1>;
-    type ProposalBondMaximum = ConstU128<{ u128::MAX }>;
     type SpendPeriod = TreasuryPayoutPeriod;
-    type Burn = ConstU32<0>;
+    type Burn = TreasuryBurn;
     type BurnDestination = (); // burn
-    type SpendFunds = ();
+    type SpendFunds = RuntimeTreasurySpendFunds;
     type MaxApprovals = ConstU32<100>;
     type WeightInfo = ();
-    type SpendOrigin = frame_system::EnsureRoot<AccountId>;
+    type SpendOrigin = frame_system::EnsureRootWithSuccess<AccountId, TreasurySpendLimit>;
     type AssetKind = (); // unused
     type Beneficiary = AccountId;
-    type Asset = (); // unused
+    type BeneficiaryLookup = IdentityLookup<AccountId>;
+    type Paymaster =
+        frame_support::traits::tokens::PayFromAccount<Balances, pallet_treasury::TreasuryAccountId<Runtime>>;
+    type BalanceConverter = frame_support::traits::tokens::UnityAssetBalanceConversion;
+    type PayoutPeriod = TreasuryPayoutPeriod;
+    #[cfg(feature = "runtime-benchmarks")]
+    type BenchmarkHelper = ();
+    type BlockNumberProvider = System;
 }
 
 parameter_types! {
-    pub const MaxFeeds: u32 = 16;
-    pub const MaxFeedName: u32 = 64;
-    pub const MaxEndpoint: u32 = 128;
-    pub const MaxCommitmentSize: u32 = 256;
-    pub const MaxPendingIngestions: u32 = 8;
     pub const FeedRegistrarRole: u32 = 7;
     pub const FeedSubmitterCredential: u32 = 77;
     pub const FeedVerifierRole: u32 = 8;
     pub const OracleReward: Balance = 10;
     pub const ValidatorReward: Balance = 5;
-    pub const MaxPendingRewards: u32 = 32;
 }
 
 impl pallet_oracles::Config for Runtime {
@@ -786,13 +959,6 @@ impl pallet_oracles::Config for Runtime {
 }
 
 parameter_types! {
-    pub const MaxDidDocLength: u32 = 128;
-    pub const MaxSchemaLength: u32 = 128;
-    pub const MaxProofSize: u32 = 64;
-    pub const MaxIdentityTags: u32 = 8;
-    pub const MaxTagLength: u32 = 32;
-    pub const MaxEd25519KeyBytes: u32 = 32;
-    pub const MaxPqKeyBytes: u32 = 4000;
     pub const DefaultAttestationVerifierParams: pallet_attestations::StarkVerifierParams =
         pallet_attestations::StarkVerifierParams {
             hash: pallet_attestations::StarkHashFunction::Blake3,
@@ -813,12 +979,12 @@ parameter_types! {
 pub struct RuntimeAttestationBridge;
 
 impl RuntimeAttestationBridge {
-    fn parse_commitment(payload: &[u8]) -> Result<u64, frame_support::dispatch::DispatchError> {
+    fn parse_commitment(payload: &[u8]) -> Result<u64, DispatchError> {
         let bytes: [u8; 8] = payload
             .get(0..8)
-            .ok_or_else(|| frame_support::dispatch::DispatchError::Other("payload-too-short"))?
+            .ok_or_else(|| DispatchError::Other("payload-too-short"))?
             .try_into()
-            .map_err(|_| frame_support::dispatch::DispatchError::Other("payload-size"))?;
+            .map_err(|_| DispatchError::Other("payload-size"))?;
         Ok(u64::from_le_bytes(bytes))
     }
 }
@@ -857,7 +1023,7 @@ impl pallet_identity::ExternalAttestation<AccountId, u32, u32> for RuntimeAttest
                 let event = AttestationSettlementEvent {
                     commitment_id: commitment,
                     stage: pallet_attestations::SettlementStage::Submitted,
-                    issuer: Some(*issuer),
+                    issuer: Some(issuer.clone()),
                     dispute: pallet_attestations::DisputeStatus::None,
                     block_number: system::Pallet::<Runtime>::block_number(),
                 };
@@ -910,11 +1076,9 @@ impl pallet_identity::Config for Runtime {
     type WeightInfo = ();
 }
 
-parameter_types! {
-    pub const MaxRootSize: u32 = 64;
-    pub const MaxVerificationKeySize: u32 = 64;
-    pub const MaxPendingEvents: u32 = 8;
-}
+pub type MaxRootSize = ConstU32<64>;
+pub type MaxVerificationKeySize = ConstU32<64>;
+pub type MaxPendingEvents = ConstU32<8>;
 
 #[derive(Clone, Copy, Default)]
 pub struct RuntimeSettlementHook;
@@ -952,12 +1116,6 @@ impl pallet_attestations::Config for Runtime {
 parameter_types! {
     pub const MaxPendingPayouts: u32 = 32;
     pub const SettlementValidatorReward: Balance = 10;
-}
-
-parameter_types! {
-    pub const MaxMetadataLength: u32 = 128;
-    pub const MaxTagsPerAsset: u32 = 8;
-    pub const MaxProvenanceRefs: u32 = 4;
 }
 
 pub type DefaultRegulatoryTag = pallet_asset_registry::DefaultRegulatoryTag<Runtime>;
@@ -1023,7 +1181,7 @@ parameter_types! {
 impl pallet_feature_flags::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type GovernanceOrigin = frame_system::EnsureRoot<AccountId>;
-    type MaxNameLength = ConstU32<16>;
+    type MaxFeatureNameLength = ConstU32<16>;
     type MaxFeatureCount = ConstU32<16>;
     type MaxCohortSize = ConstU32<32>;
     type WeightInfo = ();
@@ -1038,6 +1196,12 @@ impl pallet_observability::Config for Runtime {
 }
 
 parameter_types! {
+    pub AttestationWeightCoeff: FixedU128 = FixedU128::from_u32(1);
+    pub CredentialWeightCoeff: FixedU128 = FixedU128::from_u32(1);
+    pub SettlementWeightCoeff: FixedU128 = FixedU128::from_u32(1);
+}
+
+parameter_types! {
     pub const MaxFeeDiscount: u8 = 50;
 }
 
@@ -1047,19 +1211,18 @@ impl pallet_fee_model::Config for Runtime {
     type IdentityTag = pallet_identity::pallet::IdentityTag<Runtime>;
     type IdentityProvider = RuntimeIdentityProvider;
     type CallClassifier = RuntimeCallClassifier;
+    type AttestationWeightCoeff = AttestationWeightCoeff;
+    type CredentialWeightCoeff = CredentialWeightCoeff;
+    type SettlementWeightCoeff = SettlementWeightCoeff;
     type WeightInfo = ();
 }
 
 construct_runtime!(
-    pub enum Runtime where
-        Block = Block,
-        NodeBlock = Block,
-        UncheckedExtrinsic = UncheckedExtrinsic
-    {
+    pub enum Runtime {
         System: frame_system::{Pallet, Call, Config, Storage, Event<T>},
         Timestamp: pallet_timestamp::{Pallet, Call, Storage, Inherent},
         Pow: pow::{Pallet, Call, Storage, Event<T>},
-        Session: pallet_session::{Pallet, Call, Storage, Event, Config<T>},
+        Session: pallet_session::{Pallet, Call, Storage, Event<T>, Config<T>},
         Balances: pallet_balances::{Pallet, Call, Storage, Config<T>, Event<T>},
         TransactionPayment: pallet_transaction_payment::{Pallet, Storage, Event<T>},
         Sudo: pallet_sudo::{Pallet, Call, Storage, Event<T>},

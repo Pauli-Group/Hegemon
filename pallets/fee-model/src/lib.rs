@@ -48,6 +48,19 @@ pub trait FeeTagProvider<AccountId, Tag: FeeTag> {
     fn tags(account: &AccountId) -> Vec<Tag>;
 }
 
+impl<T: pallet_identity::Config> FeeTag for pallet_identity::pallet::IdentityTag<T> {
+    fn discount_percent(&self) -> Option<u8> {
+        match self {
+            pallet_identity::pallet::IdentityTag::FeeDiscount(pct) => Some(*pct),
+            _ => None,
+        }
+    }
+
+    fn is_frozen(&self) -> bool {
+        matches!(self, pallet_identity::pallet::IdentityTag::FreezeFlag)
+    }
+}
+
 #[frame_support::pallet]
 pub mod pallet {
     use super::*;
