@@ -341,12 +341,15 @@ async fn run_node(cli: Cli) -> Result<()> {
     let gossip_handle = router.handle();
 
     let p2p_identity = network::PeerIdentity::generate(&config.miner_seed);
+    let peer_store_path = config.db_path.with_extension("peers");
+    let peer_store = network::PeerStore::new(network::PeerStoreConfig::with_path(peer_store_path));
     let p2p_service = network::P2PService::new(
         p2p_identity,
         config.p2p_addr,
         config.seeds.clone(),
         gossip_handle,
         config.max_peers,
+        peer_store,
         config.relay.clone(),
         config.nat_config(),
     );
