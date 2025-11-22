@@ -3,12 +3,11 @@
 use sp_core::H256;
 
 use crate::{
-    AccountId, Balance, BalancesConfig, PowDifficulty, RuntimeGenesisConfig, SessionConfig,
-    SudoConfig, SystemConfig,
+    AccountId, Balance, BalancesConfig, DummySessionKeys, PowDifficulty, RuntimeGenesisConfig,
+    SessionConfig, SudoConfig, SystemConfig,
 };
 
 /// Structured chain spec describing PoW parameters, telemetry defaults, and genesis state.
-#[derive(Clone, Debug)]
 pub struct ChainSpec {
     pub name: &'static str,
     pub id: &'static str,
@@ -28,12 +27,20 @@ fn base_genesis(endowed: &[(AccountId, Balance)], sudo: AccountId) -> RuntimeGen
         system: SystemConfig::default(),
         balances: BalancesConfig {
             balances: endowed.to_vec(),
+            dev_accounts: None,
         },
         sudo: SudoConfig { key: Some(sudo) },
         session: SessionConfig {
+            non_authority_keys: Vec::new(),
             keys: validators
                 .iter()
-                .map(|validator| (validator.clone(), validator.clone(), ()))
+                .map(|validator| {
+                    (
+                        validator.clone(),
+                        validator.clone(),
+                        DummySessionKeys::default(),
+                    )
+                })
                 .collect(),
         },
         ..Default::default()
