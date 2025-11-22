@@ -3834,6 +3834,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pallet-observability"
+version = "0.1.0"
+dependencies = [
+ "frame-benchmarking 42.0.0",
+ "frame-support 42.0.0",
+ "frame-system 42.0.0",
+ "parity-scale-codec",
+ "scale-info",
+ "serde",
+ "sp-io 42.0.0",
+ "sp-io 43.0.0",
+ "sp-runtime 43.0.0",
+ "sp-runtime 44.0.0",
+ "sp-std 14.0.0",
+]
+
+[[package]]
 name = "pallet-oracles"
 version = "0.1.0"
 dependencies = [

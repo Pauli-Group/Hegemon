@@ -17,6 +17,7 @@ members = [
     "pallets/settlement",
     "pallets/oracles",
     "pallets/feature-flags",
+    "pallets/observability",
     "tests", "node",
 ]
 resolver = "2"
