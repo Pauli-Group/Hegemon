@@ -15,18 +15,23 @@ People running `make quickstart` today still land on a dashboard that shows mock
 - [x] (2025-02-18 07:00Z) Hardened `scripts/full-quickstart.sh` to choose free ports, export the chosen service URL to the UI, and pass autostart env so the proxy and UI stay aligned.
 - [x] (2025-02-18 07:03Z) Documented the single-command devnet/dashboard workflow in README without touching the whitepaper section.
 - [ ] Run sanity checks (lint/tests if touched), verify quickstart launches UI + live telemetry, and update this plan with outcomes/any surprises.
+- [ ] (2025-11-22 07:50Z) Attempted `make quickstart`, but `cargo clippy` failed in multiple crates (`network`, `node`, `pallet-fee-model`, `pallet-observability`, `pallet-identity`), preventing the stack from launching. Quickstart validation remains blocked pending lint fixes.
+- [ ] (2025-02-18 08:25Z) Cleared clippy errors in `pallet-settlement` and `pallet-attestations`, but workspace `cargo clippy --all-features` still fails in upstream `pallet-collective` due to missing `try_successful_origin` implementations across mixed `sp_core` versions.
+- [ ] (2025-02-18 09:30Z) Began binary-searching the remaining `cargo clippy -p runtime --all-features` failures; a dependency graph rebuild is still in-flight, so runtime lint errors are not yet surfaced. Need a faster isolation pass (feature-split clippy or `-Z timings`) before reattempting `make quickstart`.
 
 ## Surprises & Discoveries
 
-- None yet; will log if port selection or autostart interacts badly with existing dashboard actions or PATH assumptions.
+- Clippy surfaced a backlog of warnings/errors across `network`, `node`, `pallet-identity`, `pallet-fee-model`, and `pallet-observability`, which stops `make check` and therefore aborts `make quickstart` before the FastAPI/Vite stack can start. The errors include deprecated `RuntimeEvent` wiring, missing trait imports, and outdated `OnChargeTransaction` implementations.
+- Linting with `--all-features` now trips upstream `pallet-collective` because the version pulled in lacks the newer `try_successful_origin` methods while two `sp_core` versions are in the graph. Targeted pallet clippy runs succeed, but full-workspace linting still blocks quickstart validation.
+- A full-runtime clippy pass is dominated by dependency rebuild time; without a scoped feature set, simply surfacing the runtime error messages can take several minutes. We need a narrower command sequence to reveal the failing `pallet-collective` bounds and `sp_core` version skew quickly.
 
 ## Decision Log
 
-- None yet; will record choices about defaults (ports, miner threads, db paths) once implementation begins.
+- Adopt a divide-and-conquer lint strategy for the runtime: first run `cargo clippy -p runtime --no-default-features --features std` and then incrementally layer the remaining feature sets (`runtime-benchmarks`, `try-runtime`, `fast-runtime`) to pinpoint the `pallet-collective` regression before attempting another full `--all-features` pass.
 
 ## Outcomes & Retrospective
 
-Pending execution.
+- Quickstart validation is still pending because `make check` fails on clippy lint errors across several crates. Stack launch and telemetry checks could not be observed in this run; fixing the lint regressions is now a prerequisite for confirming the autostarted node and UI bindings.
 
 ## Context and Orientation
 

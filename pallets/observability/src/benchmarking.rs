@@ -1,7 +1,5 @@
-#![cfg(feature = "runtime-benchmarks")]
-
 use super::*;
-use frame_benchmarking::{benchmarks, whitelisted_caller};
+use frame_benchmarking::{benchmarks, impl_benchmark_test_suite, whitelisted_caller};
 use frame_system::RawOrigin;
 
 benchmarks! {
@@ -9,8 +7,7 @@ benchmarks! {
         let actor: T::AccountId = whitelisted_caller();
         let max_usage: u128 = 1_000;
         let rate_hint: u64 = 10;
-        let origin: OriginFor<T> = RawOrigin::Root.into();
-    }: _(origin, actor.clone(), max_usage, rate_hint)
+    }: _(RawOrigin::Root, actor.clone(), max_usage, rate_hint)
     verify {
         assert!(Quotas::<T>::contains_key(&actor));
     }
@@ -36,6 +33,6 @@ benchmarks! {
 
 impl_benchmark_test_suite!(
     Pallet,
-    crate::tests::new_test_ext(),
+    crate::tests::benchmarking_ext(),
     crate::tests::TestRuntime
 );
