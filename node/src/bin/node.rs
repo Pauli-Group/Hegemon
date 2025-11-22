@@ -227,8 +227,10 @@ async fn run_setup() -> Result<()> {
 
 async fn run_node(cli: Cli) -> Result<()> {
     let chain_spec = chain_spec::chain_spec(cli.chain);
-    let mut config = NodeConfig::default();
-    config.chain_profile = cli.chain;
+    let mut config = NodeConfig {
+        chain_profile: cli.chain,
+        ..Default::default()
+    };
     config.apply_db_path(cli.db_path.clone());
     chain_spec.apply_to_config(&mut config);
     config.api_addr = cli.api_addr.parse().context("invalid api address")?;
@@ -501,8 +503,10 @@ async fn run_node(cli: Cli) -> Result<()> {
 
 async fn run_export_peers(cli: Cli, output: PathBuf) -> Result<()> {
     let chain_spec = chain_spec::chain_spec(cli.chain);
-    let mut config = NodeConfig::default();
-    config.chain_profile = cli.chain;
+    let mut config = NodeConfig {
+        chain_profile: cli.chain,
+        ..Default::default()
+    };
     config.apply_db_path(cli.db_path.clone());
     chain_spec.apply_to_config(&mut config);
 

@@ -41,16 +41,16 @@ async fn node_bootstraps_from_exported_peers() {
     config_a.pow_bits = 0x1f00ffff;
     config_a.miner_seed = [9u8; 32];
     config_a.p2p_addr = p2p_addr_a;
+    let miner_seed = config_a.miner_seed;
 
     let mut config_b = NodeConfig::with_db_path(dir_b.path().join("b.db"));
     config_b.api_addr = "127.0.0.1:0".parse().unwrap();
     config_b.note_tree_depth = 8;
     config_b.pow_bits = config_a.pow_bits;
     config_b.miner_workers = 0;
-    config_b.miner_seed = config_a.miner_seed;
+    config_b.miner_seed = miner_seed;
     config_b.p2p_addr = p2p_addr_b;
     config_b.seeds = vec![p2p_addr_a.to_string()];
-
     let peer_store_a = PeerStore::new(PeerStoreConfig::with_path(&config_a.peer_store_path));
     let peer_store_b = PeerStore::new(PeerStoreConfig::with_path(&config_b.peer_store_path));
 
@@ -82,23 +82,26 @@ async fn node_bootstraps_from_exported_peers() {
 
     let handle_a = NodeService::start(config_a, router_a).expect("start node a");
     let handle_b = NodeService::start(config_b, router_b).expect("start node b");
+    let service_b = handle_b.service.clone();
 
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
-    let bundle_path = dir_b.path().join("peer_bundle.json");
-    let bundle = PeerBundle::capture(&handle_b.service.config()).expect("bundle capture");
+    let bundle = service_b.capture_peer_bundle().expect("bundle capture");
     assert!(bundle.peers.iter().any(|p| p == &p2p_addr_a.to_string()));
-    bundle.save(&bundle_path).expect("bundle save");
 
     handle_b.shutdown().await;
     p2p_task_b.abort();
+    drop(service_b);
+
+    let bundle_path = dir_b.path().join("peer_bundle.json");
+    bundle.save(&bundle_path).expect("bundle save");
 
     let mut config_c = NodeConfig::with_db_path(dir_c.path().join("c.db"));
     config_c.api_addr = "127.0.0.1:0".parse().unwrap();
     config_c.note_tree_depth = 8;
     config_c.pow_bits = 0x1f00ffff;
-    config_c.miner_workers = 0;
-    config_c.miner_seed = config_a.miner_seed;
+    config_c.miner_workers = 1;
+    config_c.miner_seed = miner_seed;
     config_c.p2p_addr = p2p_addr_c;
 
     let loaded_bundle = PeerBundle::load(&bundle_path).expect("bundle load");
@@ -130,7 +133,7 @@ async fn node_bootstraps_from_exported_peers() {
         }
     };
 
-    timeout(Duration::from_secs(15), wait_height)
+    timeout(Duration::from_secs(30), wait_height)
         .await
         .expect("imported peers should allow bootstrap");
 

@@ -100,9 +100,9 @@ pub enum SettlementStage {
     IssuerLinked,
     DisputeStarted,
     DisputeEscalated,
-        DisputeResolved,
-        RolledBack,
-    }
+    DisputeResolved,
+    RolledBack,
+}
 
 pub trait WeightInfo {
     fn submit_commitment() -> Weight;
@@ -110,8 +110,8 @@ pub trait WeightInfo {
     fn set_verifier_params() -> Weight;
     fn start_dispute() -> Weight;
     fn rollback() -> Weight;
-        fn migrate() -> Weight;
-    }
+    fn migrate() -> Weight;
+}
 
 pub struct DefaultWeightInfo;
 
@@ -270,10 +270,7 @@ pub mod pallet {
                 let to = storage_version_u16(STORAGE_VERSION);
                 VerifierParameters::<T>::put(T::DefaultVerifierParams::get());
                 STORAGE_VERSION.put::<Pallet<T>>();
-                Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from,
-                    to,
-                });
+                Pallet::<T>::deposit_event(Event::StorageMigrated { from, to });
                 T::WeightInfo::migrate()
             } else {
                 Weight::zero()
@@ -303,7 +300,7 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
 
             ensure!(
-                Commitments::<T>::get(&commitment_id).is_none(),
+                Commitments::<T>::get(commitment_id).is_none(),
                 Error::<T>::CommitmentExists
             );
 
@@ -312,7 +309,7 @@ pub mod pallet {
                 root,
                 <frame_system::Pallet<T>>::block_number(),
             );
-            Commitments::<T>::insert(&commitment_id, record.clone());
+            Commitments::<T>::insert(commitment_id, record.clone());
             Self::enqueue_event(
                 &commitment_id,
                 SettlementStage::Submitted,
@@ -338,7 +335,7 @@ pub mod pallet {
         ) -> DispatchResult {
             let _ = ensure_signed(origin)?;
 
-            Commitments::<T>::try_mutate(&commitment_id, |maybe_record| -> Result<(), Error<T>> {
+            Commitments::<T>::try_mutate(commitment_id, |maybe_record| -> Result<(), Error<T>> {
                 let record = maybe_record.as_mut().ok_or(Error::<T>::CommitmentMissing)?;
                 record.issuer = Some(issuer.clone());
                 record.verification_key = verification_key;
@@ -378,7 +375,7 @@ pub mod pallet {
         ) -> DispatchResult {
             let _ = ensure_signed(origin)?;
 
-            Commitments::<T>::try_mutate(&commitment_id, |maybe_record| -> Result<(), Error<T>> {
+            Commitments::<T>::try_mutate(commitment_id, |maybe_record| -> Result<(), Error<T>> {
                 let record = maybe_record.as_mut().ok_or(Error::<T>::CommitmentMissing)?;
                 ensure!(
                     record.dispute == DisputeStatus::None,
@@ -409,7 +406,7 @@ pub mod pallet {
         ) -> DispatchResult {
             Self::ensure_governance_origin(origin)?;
 
-            Commitments::<T>::try_mutate(&commitment_id, |maybe_record| -> Result<(), Error<T>> {
+            Commitments::<T>::try_mutate(commitment_id, |maybe_record| -> Result<(), Error<T>> {
                 let record = maybe_record.as_mut().ok_or(Error::<T>::CommitmentMissing)?;
                 ensure!(
                     record.dispute == DisputeStatus::Pending,
@@ -438,7 +435,7 @@ pub mod pallet {
         ) -> DispatchResult {
             Self::ensure_governance_origin(origin)?;
 
-            Commitments::<T>::try_mutate(&commitment_id, |maybe_record| -> Result<(), Error<T>> {
+            Commitments::<T>::try_mutate(commitment_id, |maybe_record| -> Result<(), Error<T>> {
                 let record = maybe_record.as_mut().ok_or(Error::<T>::CommitmentMissing)?;
                 ensure!(
                     record.dispute != DisputeStatus::None,
@@ -482,7 +479,7 @@ pub mod pallet {
         pub fn rollback(origin: OriginFor<T>, commitment_id: T::CommitmentId) -> DispatchResult {
             let _ = ensure_signed(origin)?;
 
-            Commitments::<T>::try_mutate(&commitment_id, |maybe_record| -> Result<(), Error<T>> {
+            Commitments::<T>::try_mutate(commitment_id, |maybe_record| -> Result<(), Error<T>> {
                 let record = maybe_record.as_mut().ok_or(Error::<T>::CommitmentMissing)?;
                 ensure!(
                     record.dispute != DisputeStatus::None,

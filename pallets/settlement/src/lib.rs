@@ -5,6 +5,9 @@ pub use pallet::*;
 use blake3::Hasher as Blake3Hasher;
 use codec::{Decode, DecodeWithMemTracking, Encode};
 use frame_support::pallet_prelude::*;
+use frame_support::pallet_prelude::{
+    InvalidTransaction, TransactionPriority, TransactionValidity, ValidTransaction,
+};
 use frame_support::traits::tokens::currency::Currency;
 use frame_support::traits::{EnsureOrigin, StorageVersion};
 use frame_system::offchain::{AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer};
@@ -12,11 +15,15 @@ use frame_system::pallet_prelude::*;
 use log::warn;
 use scale_info::TypeInfo;
 use sp_runtime::traits::AtLeast32BitUnsigned;
-use frame_support::pallet_prelude::{InvalidTransaction, TransactionPriority, TransactionValidity, ValidTransaction};
 use sp_runtime::RuntimeDebug;
 use sp_std::vec::Vec;
 
 pub mod weights;
+
+type InstructionLegs<T> = BoundedVec<
+    Leg<<T as frame_system::Config>::AccountId, <T as Config>::AssetId, <T as Config>::Balance>,
+    <T as Config>::MaxLegs,
+>;
 
 #[derive(
     Encode, Decode, DecodeWithMemTracking, Clone, Copy, Eq, PartialEq, RuntimeDebug, TypeInfo,
@@ -359,10 +366,7 @@ pub mod pallet {
                 let to = storage_version_u16(STORAGE_VERSION);
                 VerifierParameters::<T>::put(T::DefaultVerifierParams::get());
                 STORAGE_VERSION.put::<Pallet<T>>();
-                Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from,
-                    to,
-                });
+                Pallet::<T>::deposit_event(Event::StorageMigrated { from, to });
                 T::WeightInfo::migrate()
             } else {
                 Weight::zero()
@@ -402,7 +406,7 @@ pub mod pallet {
         #[pallet::weight(T::WeightInfo::submit_instruction())]
         pub fn submit_instruction(
             origin: OriginFor<T>,
-            legs: BoundedVec<Leg<T::AccountId, T::AssetId, T::Balance>, T::MaxLegs>,
+            legs: InstructionLegs<T>,
             netting: NettingKind,
             memo: BoundedVec<u8, T::MaxMemo>,
         ) -> DispatchResult {
@@ -448,7 +452,7 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
 
             let verification_key =
-                VerificationKeys::<T>::get(&key).ok_or(Error::<T>::VerificationKeyMissing)?;
+                VerificationKeys::<T>::get(key).ok_or(Error::<T>::VerificationKeyMissing)?;
             let verifier_params = VerifierParameters::<T>::get();
 
             ensure!(
@@ -516,7 +520,7 @@ pub mod pallet {
             bytes: BoundedVec<u8, T::MaxVerificationKeySize>,
         ) -> DispatchResult {
             let _ = ensure_signed(origin)?;
-            VerificationKeys::<T>::insert(&key, bytes);
+            VerificationKeys::<T>::insert(key, bytes);
             Self::deposit_event(Event::VerificationKeyRegistered { id: key });
             Ok(())
         }
@@ -748,7 +752,7 @@ impl<T: Config> ValidateUnsigned for Pallet<T> {
                 let pending = PendingQueue::<T>::get();
                 if !pending.is_empty() && pending.as_slice() == instructions.as_slice() {
                     return ValidTransaction::with_tag_prefix("SettlementUnsignedBatch")
-                        .priority(TransactionPriority::max_value())
+                        .priority(TransactionPriority::MAX)
                         .longevity(64_u64)
                         .propagate(true)
                         .build();

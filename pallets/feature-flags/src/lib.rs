@@ -257,10 +257,7 @@ pub mod pallet {
                 let from = storage_version_u16(on_chain);
                 let to = storage_version_u16(STORAGE_VERSION);
                 STORAGE_VERSION.put::<Pallet<T>>();
-                Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from,
-                    to,
-                });
+                Pallet::<T>::deposit_event(Event::StorageMigrated { from, to });
                 T::WeightInfo::migrate()
             } else {
                 Weight::zero()

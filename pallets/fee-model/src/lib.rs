@@ -6,12 +6,12 @@ use codec::MaxEncodedLen;
 use frame_support::dispatch::{
     DispatchClass, DispatchInfo, GetDispatchInfo, Pays, PostDispatchInfo,
 };
-use frame_support::sp_runtime::traits::Dispatchable;
+use frame_support::pallet_prelude::InvalidTransaction;
 use frame_support::pallet_prelude::*;
+use frame_support::sp_runtime::traits::Dispatchable;
 use frame_support::traits::{
     Currency, ExistenceRequirement, Imbalance, OnUnbalanced, WithdrawReasons,
 };
-use frame_support::pallet_prelude::InvalidTransaction;
 use frame_support::unsigned::TransactionValidityError;
 use sp_runtime::traits::{Saturating, Zero};
 use sp_runtime::{FixedPointNumber, FixedU128, RuntimeDebug};
@@ -113,7 +113,8 @@ pub mod pallet {
     impl<T, OU> OnChargeTransaction<T> for FeeModelOnCharge<T, OU>
     where
         T: Config,
-        T::RuntimeCall: Dispatchable<Info = DispatchInfo, PostInfo = PostDispatchInfo> + GetDispatchInfo,
+        T::RuntimeCall:
+            Dispatchable<Info = DispatchInfo, PostInfo = PostDispatchInfo> + GetDispatchInfo,
         T::Currency: Currency<T::AccountId>,
         <T::Currency as Currency<T::AccountId>>::PositiveImbalance: Imbalance<
             BalanceOf<T>,
@@ -182,7 +183,9 @@ pub mod pallet {
                         },
                     ))
                 }
-                Err(_) => Err(TransactionValidityError::Invalid(InvalidTransaction::Payment)),
+                Err(_) => Err(TransactionValidityError::Invalid(
+                    InvalidTransaction::Payment,
+                )),
             }
         }
 
