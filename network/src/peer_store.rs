@@ -53,6 +53,10 @@ impl PeerStore {
         }
     }
 
+    pub fn addresses(&self) -> Vec<SocketAddr> {
+        self.entries.keys().copied().collect()
+    }
+
     pub fn load(&mut self) -> Result<(), NetworkError> {
         if let Ok(bytes) = fs::read(&self.config.path) {
             let records: Vec<PeerRecord> = bincode::deserialize(&bytes)?;

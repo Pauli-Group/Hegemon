@@ -42,6 +42,12 @@ impl CompactAddress {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum CoordinationMessage {
+    GetAddr {
+        limit: u16,
+    },
+    Addr {
+        addrs: Vec<CompactAddress>,
+    },
     PunchRequest {
         target: PeerId,
         requester_addr: CompactAddress,
