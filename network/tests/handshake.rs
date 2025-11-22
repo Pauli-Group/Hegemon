@@ -1,6 +1,7 @@
 use bincode::deserialize;
 use futures::{SinkExt, StreamExt};
 use network::{
+    p2p::{Connection, WireMessage},
     HandshakeAcceptance, HandshakeConfirmation, HandshakeOffer, NetworkError, PeerIdentity,
 };
 use sha2::{Digest, Sha256};
@@ -164,4 +165,80 @@ async fn duplex_stream_handshake_succeeds_and_rejects_tampering() {
         err,
         Err(NetworkError::InvalidSignature | NetworkError::Crypto(_))
     ));
+}
+
+#[tokio::test]
+async fn connection_round_trip_and_encryption_over_duplex() {
+    let initiator_identity = PeerIdentity::generate(b"conn-initiator");
+    let responder_identity = PeerIdentity::generate(b"conn-responder");
+
+    let (initiator_stream, responder_stream) = duplex(1 << 12);
+    let (mut initiator_conn, mut responder_conn) = (
+        Connection::new(initiator_stream),
+        Connection::new(responder_stream),
+    );
+
+    tokio::try_join!(
+        initiator_conn.handshake_initiator(&initiator_identity),
+        responder_conn.handshake_responder(&responder_identity)
+    )
+    .expect("handshakes should succeed");
+
+    initiator_conn
+        .send(WireMessage::Ping)
+        .await
+        .expect("encrypted ping send");
+    responder_conn
+        .send(WireMessage::Pong)
+        .await
+        .expect("encrypted pong send");
+
+    match responder_conn.recv().await.expect("responder decrypt") {
+        Some(WireMessage::Ping) => {}
+        other => panic!("expected ping, got {:?}", other),
+    }
+
+    match initiator_conn.recv().await.expect("initiator decrypt") {
+        Some(WireMessage::Pong) => {}
+        other => panic!("expected pong, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn initiator_rejects_tampered_acceptance() {
+    let initiator_identity = PeerIdentity::generate(b"tamper-initiator");
+    let responder_identity = PeerIdentity::generate(b"tamper-responder");
+
+    let (initiator_stream, responder_stream) = duplex(1 << 12);
+
+    let tamper_task = tokio::spawn(async move {
+        let mut framed = Framed::new(responder_stream, LengthDelimitedCodec::new());
+        let offer_bytes = framed
+            .next()
+            .await
+            .expect("offer frame")
+            .expect("offer bytes")
+            .to_vec();
+        let offer: HandshakeOffer = deserialize(&offer_bytes).expect("deserialize offer");
+        let (acceptance, _secret, _acceptance_bytes) =
+            responder_identity.accept_offer(&offer).expect("accept offer");
+        let mut tampered = acceptance.clone();
+        if let Some(first) = tampered.signature.first_mut() {
+            *first ^= 0xAA;
+        }
+        let tampered_bytes = bincode::serialize(&tampered).expect("serialize tampered");
+        framed
+            .send(Bytes::copy_from_slice(&tampered_bytes))
+            .await
+            .expect("send tampered acceptance");
+    });
+
+    let mut initiator_conn = Connection::new(initiator_stream);
+    let result = initiator_conn.handshake_initiator(&initiator_identity).await;
+    assert!(matches!(
+        result,
+        Err(NetworkError::InvalidSignature | NetworkError::Crypto(_))
+    ));
+
+    tamper_task.await.expect("tamper task completes");
 }
