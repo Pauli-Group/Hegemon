@@ -7,24 +7,24 @@ description = "Custom fee model integrating identity tags for discounts and free
 license = "Apache-2.0"
 
 [dependencies]
-frame-support = { version = "42.0.0", default-features = false }
-frame-system = { version = "42.0.0", default-features = false }
-pallet-balances = { version = "42.0.0", default-features = false }
-pallet-transaction-payment = { version = "42.0.0", default-features = false }
+frame-support = { version = "43.0.0", default-features = false }
+frame-system = { version = "43.0.0", default-features = false }
+pallet-balances = { version = "44.0.0", default-features = false }
+pallet-transaction-payment = { version = "43.0.0", default-features = false }
 sp-runtime = { version = "44.0.0", default-features = false }
 sp-std = { version = "14.0.0", default-features = false }
-sp-io = { version = "42.0.0", default-features = false }
+sp-io = { version = "43.0.0", default-features = false }
 codec = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
 scale-info = { version = "2", default-features = false, features = ["derive"] }
 pallet-identity = { path = "../identity", default-features = false }
 
 [dev-dependencies]
 sp-runtime = { version = "44.0.0", default-features = false, features = ["std"] }
-sp-io = { version = "42.0.0", default-features = false, features = ["std"] }
-frame-support = { version = "42.0.0", default-features = false, features = ["std"] }
-frame-system = { version = "42.0.0", default-features = false, features = ["std"] }
-pallet-balances = { version = "42.0.0", default-features = false, features = ["std"] }
-pallet-transaction-payment = { version = "42.0.0", default-features = false, features = ["std"] }
+sp-io = { version = "43.0.0", default-features = false, features = ["std"] }
+frame-support = { version = "43.0.0", default-features = false, features = ["std"] }
+frame-system = { version = "43.0.0", default-features = false, features = ["std"] }
+pallet-balances = { version = "44.0.0", default-features = false, features = ["std"] }
+pallet-transaction-payment = { version = "43.0.0", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"], default-features = false }
 
 [features]
