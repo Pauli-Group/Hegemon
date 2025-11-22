@@ -166,3 +166,89 @@ async fn address_exchange_teaches_new_peers() {
         "node C should learn about node B via address exchange"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn block_gossip_is_imported_and_regossiped() {
+    let router_a = GossipRouter::new(32);
+    let router_b = GossipRouter::new(32);
+
+    let addr_a = local_addr();
+    let addr_b = local_addr();
+
+    let identity_a = PeerIdentity::generate(b"block-gossip-a");
+    let identity_b = PeerIdentity::generate(b"block-gossip-b");
+
+    let service_a = P2PService::new(
+        identity_a,
+        addr_a,
+        vec![],
+        Vec::new(),
+        router_a.handle(),
+        64,
+        peer_store("block-a"),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(addr_a),
+    );
+    let service_b = P2PService::new(
+        identity_b,
+        addr_b,
+        vec![addr_a.to_string()],
+        Vec::new(),
+        router_b.handle(),
+        64,
+        peer_store("block-b"),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(addr_b),
+    );
+
+    let task_a = tokio::spawn(service_a.run());
+    let task_b = tokio::spawn(service_b.run());
+
+    // Wait for the dialer to connect before broadcasting.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let payload = b"block-gossip-regossip".to_vec();
+    let handle_a = router_a.handle();
+    let mut rx_a = handle_a.subscribe();
+    let mut rx_b = router_b.handle().subscribe();
+
+    handle_a
+        .broadcast_block(payload.clone())
+        .expect("broadcast block");
+
+    // Node B should import the block into its gossip router.
+    timeout(Duration::from_secs(5), async {
+        loop {
+            match rx_b.recv().await {
+                Ok(GossipMessage::Block(block)) if block == payload => break,
+                Ok(_) => continue,
+                Err(_) => continue,
+            }
+        }
+    })
+    .await
+    .expect("node B to receive block");
+
+    // After importing, node B should re-gossip the block back to peers (including A).
+    timeout(Duration::from_secs(5), async move {
+        let mut saw_local = false;
+        loop {
+            match rx_a.recv().await {
+                Ok(GossipMessage::Block(block)) if block == payload => {
+                    if !saw_local {
+                        saw_local = true;
+                        continue;
+                    }
+                    break;
+                }
+                Ok(_) => continue,
+                Err(_) => continue,
+            }
+        }
+    })
+    .await
+    .expect("node A to observe re-gossip");
+
+    task_a.abort();
+    task_b.abort();
+}
