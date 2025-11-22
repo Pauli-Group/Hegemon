@@ -6,12 +6,18 @@ use blake3::Hasher as Blake3Hasher;
 use codec::{Decode, DecodeWithMemTracking, Encode};
 use frame_support::pallet_prelude::*;
 use frame_support::traits::{EnsureOrigin, StorageVersion};
-use frame_system::offchain::{AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer};
+use frame_system::offchain::{
+    AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer, SubmitTransaction,
+};
 use frame_system::pallet_prelude::*;
 use scale_info::TypeInfo;
 use sp_runtime::traits::{AtLeast32BitUnsigned, Hash};
+use sp_runtime::transaction_validity::{InvalidTransaction, TransactionPriority};
 use sp_runtime::KeyTypeId;
 use sp_runtime::RuntimeDebug;
+use sp_runtime::TransactionSource;
+use sp_runtime::TransactionValidity;
+use sp_runtime::ValidTransaction;
 use sp_std::vec::Vec;
 
 pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"sett");
@@ -286,14 +292,22 @@ pub mod pallet {
             let nullifiers: BoundedVec<T::Hash, T::MaxNullifiers> =
                 BoundedVec::truncate_from(vec![nullifier]);
 
-            let signer = Signer::<T, T::AuthorityId>::any_account();
-            let _ = signer.send_signed_transaction(|_account| Call::submit_batch {
+            let call = Call::submit_batch {
                 instructions: queue.clone(),
                 commitment: commitment_hash,
                 proof: proof.clone(),
                 nullifiers: nullifiers.clone(),
                 key: T::DefaultVerificationKey::get(),
-            });
+            };
+
+            let signer = Signer::<T, T::AuthorityId>::any_account();
+            let signed_result = signer
+                .send_signed_transaction(|_account| call.clone())
+                .map(|(_, res)| res);
+
+            if !matches!(signed_result, Some(Ok(()))) {
+                let _ = SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(call.into());
+            }
         }
 
         fn on_runtime_upgrade() -> Weight {
@@ -570,6 +584,39 @@ pub mod pallet {
             hasher.finalize_xof().fill(&mut out);
             T::Hash::from(out)
         }
+    }
+}
+
+#[pallet::validate_unsigned]
+impl<T: Config> ValidateUnsigned for Pallet<T> {
+    type Call = Call<T>;
+
+    fn validate_unsigned(source: TransactionSource, call: &Self::Call) -> TransactionValidity {
+        if let Call::submit_batch {
+            instructions,
+            commitment: _,
+            proof: _,
+            nullifiers: _,
+            key: _,
+        } = call
+        {
+            if matches!(
+                source,
+                TransactionSource::Local | TransactionSource::InBlock
+            ) {
+                let pending = PendingQueue::<T>::get();
+                if !pending.is_empty() && pending.as_slice() == instructions.as_slice() {
+                    return ValidTransaction::with_tag_prefix("SettlementUnsignedBatch")
+                        .priority(TransactionPriority::max_value())
+                        .and_provides((instructions.clone(), pending.len()))
+                        .longevity(64_u64)
+                        .propagate(true)
+                        .build();
+                }
+            }
+        }
+
+        InvalidTransaction::Call.into()
     }
 }
 
