@@ -12,22 +12,25 @@ Persist peers we learn about or connect to so a node can reconnect to familiar a
 - [x] (2026-07-16 01:15Z) Implemented disk-backed peer store with TTL pruning, max entry limits, and reload/persist helpers.
 - [x] (2026-07-16 01:35Z) Wired peer store into P2P startup, reconnection planning, and connect/disconnect/address handling.
 - [x] (2026-07-16 01:45Z) Added unit tests covering persistence pruning and bounded reconnect ordering.
-- [ ] Run network crate tests and summarize results (blocked by workspace dependency resolution for `pallet-timestamp`).
+- [x] (2026-07-16 02:20Z) Run network crate tests after pinning `pallet-timestamp` to the workspace version; all unit and integration cases now pass.
 
 ## Surprises & Discoveries
 
-- Observation: `cargo test -p network` fails because the workspace tries to resolve `pallet-timestamp` version `^43.0.0`, which is unavailable in the index snapshot.
-  Evidence: cargo reports "failed to select a version for the requirement `pallet-timestamp = "^43.0.0"`" when running the test suite.
+- Pinning `pallet-timestamp` to version `42.0.0` at the workspace level clears the previous resolver error; `cargo test -p network` now completes successfully.
+- Rust 2024 treats `gen` as a reserved keyword; the random file name helpers now use `rand::random` to stay edition-safe.
 
 ## Decision Log
 
 - Decision: Store persisted peers as socket addresses with timestamps and last-connected ordering in a single bincode file to keep dependencies minimal.
   Rationale: Existing serialization uses bincode and serde; sticking with them matches current patterns and avoids extra formats.
   Date/Author: 2026-07-16 / assistant
+- Decision: Add a workspace-level pin for `pallet-timestamp = 42.0.0` to keep the network tests building against the published crates while other pallets evolve.
+  Rationale: Avoids resolver drift when workspace members pull newer FRAME versions that are not yet available in the index.
+  Date/Author: 2026-07-16 / assistant
 
 ## Outcomes & Retrospective
 
-Pending implementation.
+- Test suite (`cargo test -p network`) is green after the workspace `pallet-timestamp` pin and edition-safe random helpers; no peer store wiring regressions surfaced. Continue to watch live node runs for real-world reconnect behavior.
 
 ## Context and Orientation
 

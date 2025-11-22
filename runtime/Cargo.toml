@@ -24,7 +24,7 @@ frame-support = { version = "42.0.0", default-features = false }
 frame-system = { version = "42.0.0", default-features = false }
 frame-executive = { version = "42.0.0", default-features = false }
 frame-benchmarking = { version = "25.0.0", default-features = false, optional = true }
-pallet-timestamp = { version = "42.0.0", default-features = false }
+pallet-timestamp = { workspace = true, default-features = false }
 pallet-session = { version = "42.0.0", default-features = false, features = ["historical"] }
 pallet-balances = { version = "42.0.0", default-features = false }
 pallet-transaction-payment = { version = "42.0.0", default-features = false }

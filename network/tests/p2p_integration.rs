@@ -5,7 +5,7 @@ use network::{
     GossipMessage, GossipRouter, NatTraversalConfig, P2PService, PeerIdentity, PeerStore,
     PeerStoreConfig, RelayConfig,
 };
-use rand::Rng;
+use rand::random;
 use std::path::PathBuf;
 use tokio::time::timeout;
 
@@ -18,8 +18,7 @@ fn local_addr() -> SocketAddr {
 
 fn peer_store(tag: &str) -> PeerStore {
     let mut path = std::env::temp_dir();
-    let mut rng = rand::thread_rng();
-    path.push(format!("p2p_integration_{}_{}.bin", tag, rng.gen::<u64>()));
+    path.push(format!("p2p_integration_{}_{}.bin", tag, random::<u64>()));
     PeerStore::new(PeerStoreConfig::with_path(path))
 }
 
