@@ -31,6 +31,20 @@ pub enum RootKind {
 impl DecodeWithMemTracking for RootKind {}
 
 #[derive(Clone, Copy, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+pub enum StarkHashFunction {
+    Blake3,
+    Sha3,
+}
+
+#[derive(Clone, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+pub struct StarkVerifierParams {
+    pub hash: StarkHashFunction,
+    pub fri_queries: u16,
+    pub blowup_factor: u8,
+    pub security_bits: u16,
+}
+
+#[derive(Clone, Copy, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
 pub enum DisputeStatus {
     None,
     Pending,
@@ -87,6 +101,7 @@ pub enum SettlementStage {
 pub trait WeightInfo {
     fn submit_commitment() -> Weight;
     fn link_issuer() -> Weight;
+    fn set_verifier_params() -> Weight;
     fn start_dispute() -> Weight;
     fn rollback() -> Weight;
     fn migrate() -> Weight;
@@ -100,6 +115,10 @@ impl WeightInfo for DefaultWeightInfo {
     }
 
     fn link_issuer() -> Weight {
+        Weight::from_parts(10_000, 0)
+    }
+
+    fn set_verifier_params() -> Weight {
         Weight::from_parts(10_000, 0)
     }
 
@@ -121,7 +140,7 @@ pub mod pallet {
     use super::*;
     use frame_system::pallet_prelude::*;
 
-    pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+    pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(2);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
@@ -135,11 +154,13 @@ pub mod pallet {
         type MaxRootSize: Get<u32> + Clone + TypeInfo;
         type MaxVerificationKeySize: Get<u32> + Clone + TypeInfo;
         type MaxPendingEvents: Get<u32> + Clone + TypeInfo;
+        type AdminOrigin: EnsureOrigin<Self::RuntimeOrigin>;
         type SettlementBatchHook: SettlementBatchHook<
             Self::CommitmentId,
             Self::IssuerId,
             BlockNumberFor<Self>,
         >;
+        type DefaultVerifierParams: Get<StarkVerifierParams>;
         type WeightInfo: WeightInfo;
     }
 
@@ -159,6 +180,16 @@ pub mod pallet {
     pub type PendingSettlementEvents<T: Config> =
         StorageValue<_, BoundedVec<SettlementEventFor<T>, T::MaxPendingEvents>, ValueQuery>;
 
+    #[pallet::type_value]
+    pub fn DefaultVerifierParams<T: Config>() -> StarkVerifierParams {
+        T::DefaultVerifierParams::get()
+    }
+
+    #[pallet::storage]
+    #[pallet::getter(fn verifier_parameters)]
+    pub type VerifierParameters<T: Config> =
+        StorageValue<_, StarkVerifierParams, ValueQuery, DefaultVerifierParams<T>>;
+
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
@@ -170,6 +201,9 @@ pub mod pallet {
         IssuerLinked {
             commitment_id: T::CommitmentId,
             issuer: T::IssuerId,
+        },
+        VerifierParametersUpdated {
+            params: StarkVerifierParams,
         },
         DisputeStarted {
             commitment_id: T::CommitmentId,
@@ -201,6 +235,7 @@ pub mod pallet {
         fn on_runtime_upgrade() -> Weight {
             let on_chain = Pallet::<T>::on_chain_storage_version();
             if on_chain < STORAGE_VERSION {
+                VerifierParameters::<T>::put(T::DefaultVerifierParams::get());
                 STORAGE_VERSION.put::<Pallet<T>>();
                 T::WeightInfo::migrate()
             } else {
@@ -272,6 +307,17 @@ pub mod pallet {
                 commitment_id,
                 issuer,
             });
+            Ok(())
+        }
+
+        #[pallet::weight(T::WeightInfo::set_verifier_params())]
+        pub fn set_verifier_params(
+            origin: OriginFor<T>,
+            params: StarkVerifierParams,
+        ) -> DispatchResult {
+            T::AdminOrigin::ensure_origin(origin)?;
+            VerifierParameters::<T>::put(params.clone());
+            Self::deposit_event(Event::VerifierParametersUpdated { params });
             Ok(())
         }
 

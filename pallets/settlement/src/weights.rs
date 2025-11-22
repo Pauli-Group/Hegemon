@@ -5,11 +5,13 @@ pub trait WeightInfo {
     fn submit_instruction() -> Weight;
     fn submit_batch() -> Weight;
     fn register_key() -> Weight;
+    fn set_verifier_params() -> Weight;
     fn commit_state_channel() -> Weight;
     fn dispute_state_channel() -> Weight;
     fn escalate_dispute() -> Weight;
     fn resolve_dispute() -> Weight;
     fn rollback_batch() -> Weight;
+    fn migrate() -> Weight;
 }
 
 pub struct DefaultWeightInfo<T>(PhantomData<T>);
@@ -25,6 +27,10 @@ impl<T> WeightInfo for DefaultWeightInfo<T> {
 
     fn register_key() -> Weight {
         Weight::from_parts(30_000, 0)
+    }
+
+    fn set_verifier_params() -> Weight {
+        Weight::from_parts(20_000, 0)
     }
 
     fn commit_state_channel() -> Weight {
@@ -46,6 +52,10 @@ impl<T> WeightInfo for DefaultWeightInfo<T> {
     fn rollback_batch() -> Weight {
         Weight::from_parts(55_000, 0)
     }
+
+    fn migrate() -> Weight {
+        Weight::from_parts(10_000, 0)
+    }
 }
 
 impl WeightInfo for () {
@@ -59,6 +69,10 @@ impl WeightInfo for () {
 
     fn register_key() -> Weight {
         DefaultWeightInfo::<()>::register_key()
+    }
+
+    fn set_verifier_params() -> Weight {
+        DefaultWeightInfo::<()>::set_verifier_params()
     }
 
     fn commit_state_channel() -> Weight {
@@ -79,5 +93,9 @@ impl WeightInfo for () {
 
     fn rollback_batch() -> Weight {
         DefaultWeightInfo::<()>::rollback_batch()
+    }
+
+    fn migrate() -> Weight {
+        DefaultWeightInfo::<()>::migrate()
     }
 }

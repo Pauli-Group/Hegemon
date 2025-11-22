@@ -63,6 +63,7 @@ Where they’re used:
 
   * Block producers sign block headers with ML-DSA.
   * Mining node identity keys = ML-DSA.
+  * Identity/session records keep a **hybrid bundle** (Dilithium/Falcon + Ed25519) so legacy tooling can ride alongside PQ keys until upgrades retire classical crypto entirely.
 * **User layer**:
 
   * Surprisingly little: within the shielded protocol, we can get rid of *per-input signatures* entirely and instead authorize spends by proving knowledge of a secret key in ZK (like Zcash already does with spend authorizing keys; here we do it with hash/lattice PRFs rather than ECC).
@@ -99,7 +100,7 @@ To avoid any discrete-log assumptions:
 
 * **Global hash**:
 
-  * Use something boring and well-analyzed like **SHA-256** or **BLAKE3** as the global hash for block headers, Merkle trees, etc.
+  * Use something boring and well-analyzed like **BLAKE3** (preferred) or **SHA3-256** as the global hash for block headers, Merkle trees, etc.
   * 256-bit outputs ⇒ ~128-bit security under Grover. ([ISACA][4])
 * **Field-friendly hash for ZK**:
 
@@ -108,22 +109,23 @@ To avoid any discrete-log assumptions:
 
 Commitments:
 
-* **Hash-based commitments** everywhere. A minimal design:
+* **Hash-based commitments** everywhere with PQ-friendly digests. A minimal design:
 
-  * `Com(m, r) = H("c" || m || r)`
-    is the commitment to `m` with randomness `r`.
+  * `Com(m, r) = H("c" || m || r)` with `H = BLAKE3-256` by default (or SHA3-256 when aligning with STARK hash parameters) is the commitment to `m` with randomness `r`.
 * **Note commitment tree**:
 
   * Same conceptual tree as Zcash, but using the global hash or the STARK hash consistently; no Pedersen, no Sinsemilla, no EC cofactor dance.
 
 PRFs:
 
-* All “note identifiers”, nullifiers, etc. are derived with keyed hashes:
+* All “note identifiers”, nullifiers, etc. are derived with keyed hashes (BLAKE3-256 or SHA3-256, matching the commitment domain separation):
 
   * `nk = H("nk" || sk_spend)`
   * `nullifier = H("nf" || nk || note_position || rho)`
 
 No group operations anywhere in user-visible cryptography.
+
+STARK verifier parameters (hash function choice, query counts, blowup factors) are persisted on-chain in the attestations and settlement pallets with governance-controlled upgrade hooks so proof verification stays aligned with PQ-friendly hashes.
 
 ### 1.4 Reference module layout
 
@@ -132,7 +134,7 @@ The repository now includes a standalone Rust crate at `crypto/` that collects t
 * `ml_dsa` – deterministic key generation, signing, verification, and serialization helpers sized to ML-DSA-65 (Dilithium3) keys (pk = 1952 B, sk = 4000 B, sig = 3293 B).
 * `slh_dsa` – the analogous interface for SLH-DSA (SPHINCS+-SHA2-128f) with pk = 32 B, sk = 64 B, signature = 17088 B.
 * `ml_kem` – Kyber-768-style encapsulation/decapsulation with pk = 1184 B, sk = 2400 B, ciphertext = 1088 B, shared secret = 32 B.
-* `hashes` – SHA-256, BLAKE3-256, and a Poseidon-inspired permutation over the Goldilocks prime, plus helpers for commitments (`b"c"` tag), PRF key derivation (`b"nk"`), and nullifiers (`b"nf"`).
+* `hashes` – SHA-256, SHA3-256, BLAKE3-256, and a Poseidon-inspired permutation over the Goldilocks prime, plus helpers for commitments (`b"c"` tag), PRF key derivation (`b"nk"`), and nullifiers (`b"nf"`) that default to BLAKE3 with SHA3 fallbacks for STARK-friendly domains.
 
 Everything derives deterministic test vectors using a ChaCha20-based RNG seeded via SHA-256 so that serialization and domain separation match the simple hash-based definitions above. Integration tests under `crypto/tests/` lock in the byte-level expectations for key generation, signing, verification, KEM encapsulation/decapsulation, and commitment/nullifier derivation.
 
