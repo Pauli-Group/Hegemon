@@ -7,6 +7,7 @@ use frame_support::pallet_prelude::*;
 use frame_support::traits::EnsureOrigin;
 use frame_support::weights::Weight;
 use frame_system::ensure_signed;
+use parity_scale_codec::Decode;
 use sp_runtime::traits::MaybeSerializeDeserialize;
 use sp_runtime::RuntimeDebug;
 use sp_std::convert::TryInto;
@@ -113,8 +114,8 @@ pub mod pallet {
         type MaxProofSize: Get<u32> + Clone + Debug + TypeInfo;
         type MaxIdentityTags: Get<u32> + Clone + Debug + TypeInfo;
         type MaxTagLength: Get<u32> + Clone + PartialEq + Eq + Debug + TypeInfo;
-        type MaxEd25519KeyBytes: Get<u32> + Clone + Debug + TypeInfo;
-        type MaxPqKeyBytes: Get<u32> + Clone + Debug + TypeInfo;
+        type MaxEd25519KeyBytes: Get<u32> + Clone + PartialEq + Eq + Debug + TypeInfo;
+        type MaxPqKeyBytes: Get<u32> + Clone + PartialEq + Eq + Debug + TypeInfo;
         type WeightInfo: WeightInfo;
     }
 
@@ -145,7 +146,7 @@ pub mod pallet {
         Falcon,
     }
 
-    #[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen, RuntimeDebug)]
+    #[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
     #[scale_info(skip_type_params(T))]
     pub enum SessionKey<T: Config> {
         Legacy(T::AuthorityId),
@@ -159,6 +160,30 @@ pub mod pallet {
             pq_key: BoundedVec<u8, T::MaxPqKeyBytes>,
             ed25519_key: BoundedVec<u8, T::MaxEd25519KeyBytes>,
         },
+    }
+
+    impl<T: Config> Debug for SessionKey<T> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+            match self {
+                SessionKey::Legacy(_) => f.write_str("Legacy"),
+                SessionKey::Ed25519(pk) => f.debug_tuple("Ed25519").field(pk).finish(),
+                SessionKey::PostQuantum { algorithm, key } => f
+                    .debug_struct("PostQuantum")
+                    .field("algorithm", algorithm)
+                    .field("key", key)
+                    .finish(),
+                SessionKey::Hybrid {
+                    algorithm,
+                    pq_key,
+                    ed25519_key,
+                } => f
+                    .debug_struct("Hybrid")
+                    .field("algorithm", algorithm)
+                    .field("pq_key", pq_key)
+                    .field("ed25519_key", ed25519_key)
+                    .finish(),
+            }
+        }
     }
 
     /// DID document with tags and optional session key.
@@ -357,9 +382,15 @@ pub mod pallet {
                 SessionKeys::<T>::translate(|_, key: T::AuthorityId| Some(SessionKey::Legacy(key)));
 
                 STORAGE_VERSION.put::<Pallet<T>>();
+                let mut from_encoded = on_chain.encode();
+                let mut to_encoded = STORAGE_VERSION.encode();
+
+                let from_version = u16::decode(&mut from_encoded.as_slice()).unwrap_or_default();
+                let to_version = u16::decode(&mut to_encoded.as_slice()).unwrap_or_default();
+
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain.into(),
-                    to: STORAGE_VERSION.into(),
+                    from: from_version,
+                    to: to_version,
                 });
                 T::WeightInfo::migrate()
             } else {

@@ -11,11 +11,13 @@ Currently, running the full stack requires a developer environment (Rust, Python
 - [x] (2025-11-19 09:00Z) Drafted the single-binary convergence scope and captured high-level targets for UI embedding, Python migration, wallet integration, and CLI unification.
 - [x] (2025-11-22 05:45Z) Reviewed current `node/`, `wallet/`, `dashboard-ui/`, and `scripts/` implementations to align the architecture narrative with the existing Axum router, embedded UI assets, wallet API nesting, and CLI surface.
 - [x] (2025-11-22 06:15Z) Sequenced the embedding, routing, and packaging steps across `node/`, `wallet/`, `dashboard-ui/`, and `scripts/`, filled validation and recovery notes, and circulated this revision for maintainer review.
+- [x] (2025-11-22 06:30Z) Documented the enforced `pow_bits`/`supply_digest` behavior (retarget clamps, timestamp bounds, subsidy checks) and ran `cargo test -p consensus` after trimming dev-dependency drift and network address handling.
 
 ## Surprises & Discoveries
 
 - The Rust side already embeds the dashboard UI under `node/src/dashboard/assets/` via `rust-embed` in both `node/src/dashboard.rs` and `node/src/ui.rs`, so the remaining migration effort is mostly about endpoint parity and build wiring rather than rewriting the UI pipeline.
 - Axum’s router already exposes `/node/process`, `/node/process/start`, and `/node/lifecycle` alongside SSE/websocket streams (`/node/events/stream`, `/node/ws`), reducing the number of FastAPI-only orchestration endpoints that need Rust replacements.
+- Consensus tests depended on the Substrate runtime and pallet stack; decoupling the PoW fixture from the runtime types (plus taming network address persistence errors) was necessary to get `cargo test -p consensus` green without chasing version mismatches.
 
 ## Decision Log
 
@@ -32,6 +34,7 @@ Currently, running the full stack requires a developer environment (Rust, Python
 ## Outcomes & Retrospective
 
 - Feasibility check complete: the current Axum router, embedded assets, and CLI afford the single-binary direction without new languages. This plan now names the concrete files, functions, and endpoints to adjust before wider review. Circulate this revision for maintainer feedback prior to implementation and revisit after the first embedded wallet test run.
+- Consensus doc updates and the `cargo test -p consensus` run confirm the PoW subsidy/timestamp/retarget enforcement is aligned with the published spec after removing the runtime dev-dependency and normalizing the network-side address helpers.
 
 ## Context and Orientation
 
