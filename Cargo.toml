@@ -12,6 +12,7 @@ members = [
     "wallet/bench",
     "pallets/fee-model",
     "pallets/identity",
+    "pallets/attestations",
     "tests", "node",
 ]
 resolver = "2"
