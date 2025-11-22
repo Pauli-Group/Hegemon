@@ -2,6 +2,8 @@
 
 pub use pallet::*;
 
+use parity_scale_codec::Decode;
+use frame_support::dispatch::DispatchResult;
 use frame_support::pallet_prelude::*;
 use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
@@ -301,8 +303,8 @@ pub mod pallet {
             if on_chain < STORAGE_VERSION {
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain.into(),
-                    to: STORAGE_VERSION.into(),
+                    from: u16::decode(&mut &on_chain.encode()[..]).unwrap_or_default(),
+                    to: u16::decode(&mut &STORAGE_VERSION.encode()[..]).unwrap_or_default(),
                 });
                 T::WeightInfo::migrate()
             } else {
@@ -386,6 +388,11 @@ mod tests {
                 .into();
         ext.execute_with(|| frame_system::Pallet::<TestRuntime>::set_block_number(1));
         ext
+    }
+
+    #[cfg(feature = "runtime-benchmarks")]
+    pub fn benchmarking_ext() -> sp_io::TestExternalities {
+        new_test_ext()
     }
 
     #[test]

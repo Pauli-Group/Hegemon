@@ -7,6 +7,7 @@ use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
 use pallet_identity::IdentityProvider;
+use parity_scale_codec::Decode;
 use sp_runtime::RuntimeDebug;
 
 pub type DefaultRegulatoryTag<T> = BoundedVec<u8, <T as pallet::Config>::MaxTagLength>;
@@ -85,6 +86,7 @@ pub mod pallet {
 
     #[pallet::config]
     pub trait Config: frame_system::Config {
+        #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type AssetId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Default + Ord;
         type AttestationId: Parameter + Member + MaxEncodedLen + TypeInfo + Clone + Ord;
@@ -162,8 +164,8 @@ pub mod pallet {
             if on_chain < STORAGE_VERSION {
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain.into(),
-                    to: STORAGE_VERSION.into(),
+                    from: u16::decode(&mut &on_chain.encode()[..]).unwrap_or_default(),
+                    to: u16::decode(&mut &STORAGE_VERSION.encode()[..]).unwrap_or_default(),
                 });
                 T::WeightInfo::migrate()
             } else {
@@ -186,10 +188,7 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
             Self::ensure_role_and_credential(&who, T::AssetCreatorRole::get())?;
 
-            ensure!(
-                Assets::<T>::get(&asset_id).is_none(),
-                Error::<T>::AssetExists
-            );
+            ensure!(Assets::<T>::get(asset_id).is_none(), Error::<T>::AssetExists);
 
             let details = AssetDetails::new(
                 who.clone(),
@@ -199,7 +198,7 @@ pub mod pallet {
                 <frame_system::Pallet<T>>::block_number(),
             );
 
-            Assets::<T>::insert(&asset_id, details);
+            Assets::<T>::insert(asset_id, details);
             Self::deposit_event(Event::AssetRegistered { asset_id, who });
             Ok(())
         }
@@ -215,7 +214,7 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
             Self::ensure_role_and_credential(&who, T::AssetUpdaterRole::get())?;
 
-            Assets::<T>::try_mutate(&asset_id, |maybe_details| -> DispatchResult {
+            Assets::<T>::try_mutate(asset_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::AssetMissing)?;
                 details.metadata = metadata;
                 details.provenance = provenance;
@@ -237,7 +236,7 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
             Self::ensure_role_and_credential(&who, T::TagManagerRole::get())?;
 
-            Assets::<T>::try_mutate(&asset_id, |maybe_details| -> DispatchResult {
+            Assets::<T>::try_mutate(asset_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::AssetMissing)?;
                 ensure!(
                     !details.regulatory_tags.contains(&tag),
@@ -265,7 +264,7 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
             Self::ensure_role_and_credential(&who, T::TagManagerRole::get())?;
 
-            Assets::<T>::try_mutate(&asset_id, |maybe_details| -> DispatchResult {
+            Assets::<T>::try_mutate(asset_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::AssetMissing)?;
                 let position = details
                     .regulatory_tags
