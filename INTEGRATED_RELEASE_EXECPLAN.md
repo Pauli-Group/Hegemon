@@ -12,6 +12,7 @@ Currently, running the full stack requires a developer environment (Rust, Python
 - [x] (2025-11-22 05:45Z) Reviewed current `node/`, `wallet/`, `dashboard-ui/`, and `scripts/` implementations to align the architecture narrative with the existing Axum router, embedded UI assets, wallet API nesting, and CLI surface.
 - [x] (2025-11-22 06:15Z) Sequenced the embedding, routing, and packaging steps across `node/`, `wallet/`, `dashboard-ui/`, and `scripts/`, filled validation and recovery notes, and circulated this revision for maintainer review.
 - [x] (2025-11-22 06:30Z) Documented the enforced `pow_bits`/`supply_digest` behavior (retarget clamps, timestamp bounds, subsidy checks) and ran `cargo test -p consensus` after trimming dev-dependency drift and network address handling.
+- [x] (2025-11-24 10:05Z) Added mocked PQ handshake unit coverage plus a two-node gossip integration flow to prove encrypted framing and cross-node block propagation, running `cargo test -p network --tests` and `cargo test -p tests --test node_gossip` to validate the paths.
 
 ## Surprises & Discoveries
 
@@ -35,6 +36,7 @@ Currently, running the full stack requires a developer environment (Rust, Python
 
 - Feasibility check complete: the current Axum router, embedded assets, and CLI afford the single-binary direction without new languages. This plan now names the concrete files, functions, and endpoints to adjust before wider review. Circulate this revision for maintainer feedback prior to implementation and revisit after the first embedded wallet test run.
 - Consensus doc updates and the `cargo test -p consensus` run confirm the PoW subsidy/timestamp/retarget enforcement is aligned with the published spec after removing the runtime dev-dependency and normalizing the network-side address helpers.
+- Handshake mocks and node gossip regression tests now guard the PQ three-way exchange, encrypted framing, and block gossip plumbing, reducing risk as networking glue evolves.
 
 ## Context and Orientation
 

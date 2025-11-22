@@ -281,15 +281,19 @@ impl SyncService {
             session.next_height = block.header.height + 1;
         }
 
-        if session.next_height <= session.target_height {
-            self.request_headers(peer, session.next_height).await?;
+        let next_height = session.next_height;
+        let target_height = session.target_height;
+        let _ = session;
+
+        if next_height <= target_height {
+            self.request_headers(peer, next_height).await?;
         }
 
         Ok(())
     }
 
     fn headers_from(&self, start: u64, limit: usize) -> NodeResult<Vec<Vec<u8>>> {
-        let mut blocks = self.node.storage.load_blocks()?;
+        let mut blocks = self.node.storage().load_blocks()?;
         blocks.sort_by_key(|b| b.header.height);
         let headers: Vec<Vec<u8>> = blocks
             .into_iter()
@@ -303,7 +307,7 @@ impl SyncService {
     fn blocks_by_hash(&self, hashes: Vec<[u8; 32]>) -> NodeResult<Vec<Vec<u8>>> {
         let mut out = Vec::new();
         for hash in hashes {
-            if let Some(block) = self.node.storage.load_block(hash)? {
+            if let Some(block) = self.node.storage().load_block(hash)? {
                 out.push(serialize_block(&block)?);
             }
         }
@@ -311,7 +315,7 @@ impl SyncService {
     }
 
     fn transactions_for_block(&self, hash: [u8; 32]) -> NodeResult<Vec<Vec<u8>>> {
-        if let Some(block) = self.node.storage.load_block(hash)? {
+        if let Some(block) = self.node.storage().load_block(hash)? {
             let txs = block
                 .transactions
                 .iter()
