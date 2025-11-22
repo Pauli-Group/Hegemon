@@ -109,65 +109,51 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 ## Getting started
 
-### Quickstart (Unified Binary)
+### Quickstart (unified `hegemon` binary)
 
-The easiest way to run the system is using the unified `hegemon` binary, which bundles the Node, Wallet, and Dashboard UI into a single executable.
+Start every fresh clone with `make quickstart` to install toolchains and run the baseline guard rails. From there the unified `hegemon` binary drives the full node + wallet + dashboard flow—no external FastAPI proxy or separate UI server is required.
 
-The dashboard assets are already vendored under `node/src/dashboard/assets`, so a clean `cargo build -p node --release` works without running the frontend toolchain. If you edit `dashboard-ui/`, refresh the embedded assets with `./scripts/build_dashboard.sh`.
-
-The embedded dashboard and node API both default to the dev token `devnet-token`. `hegemon setup` writes your API token to `api.token`. If you want unattended starts, set `HEGEMON_WRITE_WALLET_PASS=1` before running setup to drop your passphrase into `wallet.pass` (chmod 600), or export `NODE_WALLET_PASSPHRASE` before `./hegemon start`. Otherwise you’ll be prompted interactively. If you override the token with `--api-token` or a different `api.token`, update the dashboard’s “API auth token” field and click “Use for dashboard session” so requests carry the right credential. For stricter auth, leave `NODE_ALLOW_DEV_TOKEN_FALLBACK` unset (default).
-
-1. **Build the binary**:
+1. **Build the binary and embed the dashboard**:
    ```bash
    cargo build -p node --release
    cp target/release/hegemon .
    ```
+   The dashboard assets are already vendored under `node/src/dashboard/assets`; only run `./scripts/build_dashboard.sh` if you modify `dashboard-ui/` and need to refresh the embedded bundle to match the brand palette in `BRAND.md`.
 
-2. **Run the Setup Wizard**:
-   Initialize your wallet and configuration interactively.
+2. **Run the setup wizard**:
    ```bash
    ./hegemon setup
    ```
+   This writes `api.token`, initializes the local wallet store, and honors `HEGEMON_WRITE_WALLET_PASS=1` if you want a passphrase dropped into `wallet.pass` for unattended starts.
 
-3. **Start the System**:
-   Launch the node, wallet, and UI server. Miner rewards are paid to the wallet’s primary address by default; pass `--miner-payout-address` if you want a different recipient.
+3. **Start the system**:
    ```bash
-   ./hegemon start
+   ./hegemon start --miner-payout-address <wallet-address>
    ```
+   The command boots the node, wallet, and embedded dashboard on port 8080. Override defaults with the global flags shown in `./hegemon --help` (e.g., `--p2p-addr`, `--seeds`, `--api-token`).
 
-4. **Open the Dashboard**:
-   Visit **http://localhost:8080** to view the dashboard, manage your wallet, and monitor mining status.
+4. **Open the dashboard**:
+   Visit **http://localhost:8080**. If you change the API token, update the dashboard “API auth token” field and click “Use for dashboard session” so subsequent requests stay authorized.
 
-#### Exporting and importing peer bundles
+For multi-node lab setups, see [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md). For VPS or public seed duties, follow the hardening guidance in [runbooks/p2p_node_vps.md](runbooks/p2p_node_vps.md).
 
-- To share a bootstrap bundle that includes the current genesis block metadata and your learned peers, run:
+#### Bootstrapping peers with export/import bundles
+
+- Capture your current peers and genesis metadata into a portable bundle:
   ```bash
-  ./hegemon export-peers --db-path node.db --output peer_bundle.json
+  ./hegemon export-peers peer_bundle.json
   ```
-- A new node can start from that bundle before contacting DNS or static seeds:
+- Start a new node from that bundle before hitting DNS/static seeds:
   ```bash
-  ./hegemon start --db-path node.db --import-peers peer_bundle.json
+  ./hegemon start --import-peers peer_bundle.json
   ```
-  The importer persists the supplied peers into its local peer store and dials them before falling back to the configured `--seeds` list.
+  Imported peers persist to the local store and are dialed before the configured `--seeds` list. The VPS runbook above walks through promoting an exported bundle into a systemd unit.
 
 ### Developer Setup
 
-If you are contributing to the codebase:
-
-1. **Install Dependencies**:
-   ```bash
-   ./scripts/dev-setup.sh
-   ```
-
-2. **Run Tests**:
-   ```bash
-   make check
-   ```
-
-3. **Run Benchmarks**:
-   ```bash
-   make bench
-   ```
+- **Toolchains** – Run `./scripts/dev-setup.sh` (or `make setup`) after `make quickstart` to install Rust/Go/jq/clang-format. The legacy Python FastAPI + Vite orchestration is deprecated; the embedded dashboard is the canonical path for UI validation.
+- **Tests** – `make check` mirrors the fmt/lint/test CI combo.
+- **Benchmarks** – `make bench` exercises prover, wallet, and network smoke benches.
 
 ### Helpful `make` targets
 
