@@ -170,6 +170,12 @@ or mints more than the scheduled subsidy `R(height)` (50 · 10⁸ base units hal
 before the fork-choice comparison runs. This keeps the STARK circuit, MASP accounting, and the PoW header’s supply digest in
 lockstep.
 
+Substrate nodes wire the same enforcement path into block import. `consensus::substrate::import_pow_block` wraps the `PowConsensus`
+state machine with a Substrate-friendly `BlockOrigin` tag and returns an `ImportReceipt` that records the validated proof
+commitment, version commitment, and fork-choice result. Node services call this helper inside their block intake path so the
+version-commitment and STARK commitment checks run during import (not after the fact), and `/consensus/status` mirrors the latest
+receipt alongside miner telemetry to keep the Go benchmarking harness under `consensus/bench` in sync with runtime behavior.
+
 ---
 
 ## 3. The STARK arithmetization
