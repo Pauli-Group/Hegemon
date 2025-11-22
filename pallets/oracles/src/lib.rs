@@ -2,19 +2,19 @@
 
 pub use pallet::*;
 
-use codec::{Decode, Encode, MaxEncodedLen};
+use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::dispatch::DispatchResult;
 use frame_support::pallet_prelude::*;
 use frame_support::traits::tokens::currency::Currency;
-use frame_support::traits::{ExistenceRequirement, StorageVersion};
+use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
-use frame_system::offchain::SubmitTransaction;
 use frame_system::pallet_prelude::BlockNumberFor;
 use pallet_identity::IdentityProvider;
 use sp_runtime::traits::Saturating;
-use sp_runtime::transaction_validity::{InvalidTransaction, TransactionPriority};
+use sp_runtime::transaction_validity::{
+    InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity, ValidTransaction,
+};
 use sp_runtime::RuntimeDebug;
-use sp_runtime::{TransactionSource, TransactionValidity, ValidTransaction};
 
 /// Hook to dispatch off-chain ingestion for scheduled feeds.
 pub trait OffchainIngestion<FeedId> {
@@ -104,6 +104,8 @@ pub enum RewardReason {
     SubmissionVerification,
 }
 
+impl DecodeWithMemTracking for RewardReason {}
+
 pub type BalanceOf<T> =
     <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
@@ -150,7 +152,9 @@ pub mod pallet {
 
     #[pallet::config]
     pub trait Config: frame_system::Config {
+        #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+        type RuntimeCall: From<Call<Self>> + IsType<<Self as frame_system::Config>::RuntimeCall>;
         type FeedId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Ord + Default;
         type RoleId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Ord;
         type CredentialSchemaId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Ord;
@@ -284,8 +288,8 @@ pub mod pallet {
             if on_chain < STORAGE_VERSION {
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain.into(),
-                    to: STORAGE_VERSION.into(),
+                    from: u16::decode(&mut &on_chain.encode()[..]).unwrap_or_default(),
+                    to: u16::decode(&mut &STORAGE_VERSION.encode()[..]).unwrap_or_default(),
                 });
                 T::WeightInfo::migrate()
             } else {
@@ -321,12 +325,7 @@ pub mod pallet {
             PendingIngestions::<T>::put(scheduled);
             let mut rewards = PendingRewards::<T>::take();
             for (account, amount, reason) in rewards.drain(..) {
-                let _ = T::Currency::transfer(
-                    &pallet_treasury::Pallet::<T>::account_id(),
-                    &account,
-                    amount,
-                    ExistenceRequirement::AllowDeath,
-                );
+                let _ = T::Currency::deposit_creating(&account, amount);
                 weight = weight.saturating_add(Weight::from_parts(10_000, 0));
                 <Pallet<T>>::deposit_event(Event::RewardPaid {
                     account,
@@ -342,18 +341,6 @@ pub mod pallet {
         fn offchain_worker(_: BlockNumberFor<T>) {
             let scheduled = PendingIngestions::<T>::get();
             for feed_id in scheduled.iter() {
-                if let Some(details) = Feeds::<T>::get(feed_id) {
-                    if let Some(latest) = details.latest_commitment.as_ref() {
-                        let _ = SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(
-                            Call::verify_submission {
-                                feed_id: *feed_id,
-                                expected_commitment: latest.commitment.clone(),
-                            }
-                            .into(),
-                        );
-                    }
-                }
-
                 T::OffchainIngestion::ingest(feed_id);
                 <Pallet<T>>::deposit_event(Event::IngestionDispatched { feed_id: *feed_id });
             }
@@ -374,7 +361,7 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
             T::Identity::ensure_role(&who, &T::FeedRegistrarRole::get())?;
 
-            ensure!(Feeds::<T>::get(&feed_id).is_none(), Error::<T>::FeedExists);
+            ensure!(Feeds::<T>::get(feed_id).is_none(), Error::<T>::FeedExists);
 
             let mut feeds = ActiveFeeds::<T>::get();
             feeds
@@ -389,7 +376,7 @@ pub mod pallet {
                 <frame_system::Pallet<T>>::block_number(),
             );
 
-            Feeds::<T>::insert(&feed_id, details);
+            Feeds::<T>::insert(feed_id, details);
             ActiveFeeds::<T>::put(feeds);
 
             Self::deposit_event(Event::FeedRegistered { feed_id, who });
@@ -406,7 +393,7 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
-            Feeds::<T>::try_mutate(&feed_id, |maybe_details| -> DispatchResult {
+            Feeds::<T>::try_mutate(feed_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::FeedMissing)?;
 
                 ensure!(
@@ -443,7 +430,7 @@ pub mod pallet {
 
             let now = <frame_system::Pallet<T>>::block_number();
 
-            Feeds::<T>::try_mutate(&feed_id, |maybe_details| -> DispatchResult {
+            Feeds::<T>::try_mutate(feed_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::FeedMissing)?;
 
                 ensure!(
@@ -500,7 +487,7 @@ pub mod pallet {
 
             let mut verifier_account = signed_verifier.clone();
 
-            Feeds::<T>::try_mutate_exists(&feed_id, |maybe_details| -> DispatchResult {
+            Feeds::<T>::try_mutate_exists(feed_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::FeedMissing)?;
                 let stored = details
                     .latest_commitment
@@ -557,39 +544,39 @@ pub mod pallet {
             Ok(())
         }
     }
-}
 
-#[pallet::validate_unsigned]
-impl<T: Config> ValidateUnsigned for Pallet<T> {
-    type Call = Call<T>;
+    #[pallet::validate_unsigned]
+    impl<T: Config> ValidateUnsigned for Pallet<T> {
+        type Call = Call<T>;
 
-    fn validate_unsigned(source: TransactionSource, call: &Self::Call) -> TransactionValidity {
-        if let Call::verify_submission {
-            feed_id,
-            expected_commitment,
-        } = call
-        {
-            if matches!(
-                source,
-                TransactionSource::Local | TransactionSource::InBlock
-            ) {
-                if let Some(details) = Feeds::<T>::get(feed_id) {
-                    if let Some(latest) = details.latest_commitment.as_ref() {
-                        if &latest.commitment == expected_commitment
-                            && PendingIngestions::<T>::get().contains(feed_id)
-                        {
-                            return ValidTransaction::with_tag_prefix("OraclesUnsignedVerify")
-                                .priority(TransactionPriority::max_value())
-                                .and_provides((*feed_id, latest.submitted_at))
-                                .longevity(64_u64)
-                                .propagate(true)
-                                .build();
+        fn validate_unsigned(source: TransactionSource, call: &Self::Call) -> TransactionValidity {
+            if let Call::verify_submission {
+                feed_id,
+                expected_commitment,
+            } = call
+            {
+                if matches!(
+                    source,
+                    TransactionSource::Local | TransactionSource::InBlock
+                ) {
+                    if let Some(details) = Feeds::<T>::get(feed_id) {
+                        if let Some(latest) = details.latest_commitment.as_ref() {
+                            if &latest.commitment == expected_commitment
+                                && PendingIngestions::<T>::get().contains(feed_id)
+                            {
+                                return ValidTransaction::with_tag_prefix("OraclesUnsignedVerify")
+                                    .priority(TransactionPriority::MAX)
+                                    .and_provides((*feed_id, latest.submitted_at))
+                                    .longevity(64_u64)
+                                    .propagate(true)
+                                    .build();
+                            }
                         }
                     }
                 }
             }
-        }
 
-        InvalidTransaction::Call.into()
+            InvalidTransaction::Call.into()
+        }
     }
 }

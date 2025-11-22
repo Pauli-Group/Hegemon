@@ -1,4 +1,5 @@
 #![cfg_attr(not(feature = "std"), no_std)]
+#![allow(deprecated, clippy::let_unit_value)]
 
 pub use pallet::*;
 
@@ -7,7 +8,7 @@ use frame_support::pallet_prelude::*;
 use frame_support::traits::EnsureOrigin;
 use frame_support::weights::Weight;
 use frame_system::ensure_signed;
-use parity_scale_codec::Decode;
+use parity_scale_codec::{Decode, DecodeWithMemTracking};
 use sp_runtime::traits::MaybeSerializeDeserialize;
 use sp_runtime::RuntimeDebug;
 use sp_std::convert::TryInto;
@@ -80,6 +81,7 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::config]
+    #[allow(deprecated, clippy::let_unit_value)]
     pub trait Config: frame_system::Config {
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type AuthorityId: Parameter
@@ -128,6 +130,8 @@ pub mod pallet {
         Custom(BoundedVec<u8, T::MaxTagLength>),
     }
 
+    impl<T: Config> DecodeWithMemTracking for IdentityTag<T> {}
+
     impl<T: Config> Debug for IdentityTag<T> {
         fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
             match self {
@@ -161,6 +165,8 @@ pub mod pallet {
             ed25519_key: BoundedVec<u8, T::MaxEd25519KeyBytes>,
         },
     }
+
+    impl<T: Config> DecodeWithMemTracking for SessionKey<T> {}
 
     impl<T: Config> Debug for SessionKey<T> {
         fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
@@ -382,8 +388,8 @@ pub mod pallet {
                 SessionKeys::<T>::translate(|_, key: T::AuthorityId| Some(SessionKey::Legacy(key)));
 
                 STORAGE_VERSION.put::<Pallet<T>>();
-                let mut from_encoded = on_chain.encode();
-                let mut to_encoded = STORAGE_VERSION.encode();
+                let from_encoded = on_chain.encode();
+                let to_encoded = STORAGE_VERSION.encode();
 
                 let from_version = u16::decode(&mut from_encoded.as_slice()).unwrap_or_default();
                 let to_version = u16::decode(&mut to_encoded.as_slice()).unwrap_or_default();
@@ -509,11 +515,11 @@ pub mod pallet {
         ) -> DispatchResult {
             let issuer = ensure_signed(origin)?;
             ensure!(
-                CredentialSchemas::<T>::contains_key(&schema),
+                CredentialSchemas::<T>::contains_key(schema),
                 Error::<T>::UnknownSchema
             );
             ensure!(
-                !Credentials::<T>::contains_key(&schema, &subject),
+                !Credentials::<T>::contains_key(schema, &subject),
                 Error::<T>::CredentialAlreadyIssued
             );
 
@@ -534,8 +540,8 @@ pub mod pallet {
                 issued_at: <frame_system::Pallet<T>>::block_number(),
             };
 
-            Credentials::<T>::insert(&schema, &subject, record);
-            Revocations::<T>::insert(&schema, &subject, false);
+            Credentials::<T>::insert(schema, &subject, record);
+            Revocations::<T>::insert(schema, &subject, false);
 
             for role in roles.iter() {
                 RoleAssignments::<T>::insert(role, &subject, ());
@@ -560,13 +566,13 @@ pub mod pallet {
         ) -> DispatchResult {
             let issuer = ensure_signed(origin)?;
             Credentials::<T>::try_mutate_exists(
-                &schema,
+                schema,
                 &subject,
                 |maybe_record| -> DispatchResult {
                     let record = maybe_record.as_mut().ok_or(Error::<T>::CredentialUnknown)?;
                     ensure!(!record.revoked, Error::<T>::CredentialRevoked);
                     record.revoked = true;
-                    Revocations::<T>::insert(&schema, &subject, true);
+                    Revocations::<T>::insert(schema, &subject, true);
 
                     T::ExternalAttestation::on_credential_revoked(&issuer, &subject, &schema);
 
@@ -592,10 +598,10 @@ pub mod pallet {
         ) -> DispatchResult {
             let _ = T::AdminOrigin::ensure_origin(origin)?;
             if active {
-                RoleAssignments::<T>::insert(&role, &account, ());
+                RoleAssignments::<T>::insert(role, &account, ());
                 Self::deposit_event(Event::RoleAssigned { role, account });
             } else {
-                RoleAssignments::<T>::remove(&role, &account);
+                RoleAssignments::<T>::remove(role, &account);
                 Self::deposit_event(Event::RoleRevoked { role, account });
             }
             Ok(())

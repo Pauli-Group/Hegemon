@@ -9,6 +9,7 @@ use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::BlockNumberFor;
 use sp_runtime::RuntimeDebug;
+use sp_std::convert::TryInto;
 use sp_std::vec::Vec;
 
 /// Hook to surface attestation lifecycle events to off-chain settlement batchers.
@@ -43,6 +44,8 @@ pub struct StarkVerifierParams {
     pub blowup_factor: u8,
     pub security_bits: u16,
 }
+
+impl DecodeWithMemTracking for StarkVerifierParams {}
 
 #[derive(Clone, Copy, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
 pub enum DisputeStatus {
@@ -151,9 +154,10 @@ pub mod pallet {
 
     #[pallet::config]
     pub trait Config: frame_system::Config {
+        #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type CommitmentId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Default + Ord;
-        type IssuerId: Parameter + Member + MaxEncodedLen + TypeInfo + Clone + Ord;
+        type IssuerId: Parameter + Member + MaxEncodedLen + TypeInfo + Clone + Ord + Default;
         type MaxRootSize: Get<u32> + Clone + TypeInfo;
         type MaxVerificationKeySize: Get<u32> + Clone + TypeInfo;
         type MaxPendingEvents: Get<u32> + Clone + TypeInfo;
@@ -265,8 +269,8 @@ pub mod pallet {
                 VerifierParameters::<T>::put(T::DefaultVerifierParams::get());
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain.into(),
-                    to: STORAGE_VERSION.into(),
+                    from: Self::storage_version_number(on_chain),
+                    to: Self::storage_version_number(STORAGE_VERSION),
                 });
                 T::WeightInfo::migrate()
             } else {
@@ -277,6 +281,7 @@ pub mod pallet {
 
     #[pallet::call]
     impl<T: Config> Pallet<T> {
+        #[pallet::call_index(0)]
         #[pallet::weight(T::WeightInfo::submit_commitment())]
         pub fn submit_commitment(
             origin: OriginFor<T>,
@@ -287,7 +292,7 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
 
             ensure!(
-                Commitments::<T>::get(&commitment_id).is_none(),
+                Commitments::<T>::get(commitment_id).is_none(),
                 Error::<T>::CommitmentExists
             );
 
@@ -296,7 +301,7 @@ pub mod pallet {
                 root,
                 <frame_system::Pallet<T>>::block_number(),
             );
-            Commitments::<T>::insert(&commitment_id, record.clone());
+            Commitments::<T>::insert(commitment_id, record.clone());
             Self::enqueue_event(
                 &commitment_id,
                 SettlementStage::Submitted,
@@ -312,6 +317,7 @@ pub mod pallet {
             Ok(())
         }
 
+        #[pallet::call_index(1)]
         #[pallet::weight(T::WeightInfo::link_issuer())]
         pub fn link_issuer(
             origin: OriginFor<T>,
@@ -321,7 +327,7 @@ pub mod pallet {
         ) -> DispatchResult {
             let _ = ensure_signed(origin)?;
 
-            Commitments::<T>::try_mutate(&commitment_id, |maybe_record| -> Result<(), Error<T>> {
+            Commitments::<T>::try_mutate(commitment_id, |maybe_record| -> Result<(), Error<T>> {
                 let record = maybe_record.as_mut().ok_or(Error::<T>::CommitmentMissing)?;
                 record.issuer = Some(issuer.clone());
                 record.verification_key = verification_key;
@@ -341,6 +347,7 @@ pub mod pallet {
             Ok(())
         }
 
+        #[pallet::call_index(2)]
         #[pallet::weight(T::WeightInfo::set_verifier_params())]
         pub fn set_verifier_params(
             origin: OriginFor<T>,
@@ -352,6 +359,7 @@ pub mod pallet {
             Ok(())
         }
 
+        #[pallet::call_index(3)]
         #[pallet::weight(T::WeightInfo::start_dispute())]
         pub fn start_dispute(
             origin: OriginFor<T>,
@@ -359,7 +367,7 @@ pub mod pallet {
         ) -> DispatchResult {
             let _ = ensure_signed(origin)?;
 
-            Commitments::<T>::try_mutate(&commitment_id, |maybe_record| -> Result<(), Error<T>> {
+            Commitments::<T>::try_mutate(commitment_id, |maybe_record| -> Result<(), Error<T>> {
                 let record = maybe_record.as_mut().ok_or(Error::<T>::CommitmentMissing)?;
                 ensure!(
                     record.dispute == DisputeStatus::None,
@@ -382,6 +390,7 @@ pub mod pallet {
             Ok(())
         }
 
+        #[pallet::call_index(4)]
         #[pallet::weight(T::WeightInfo::start_dispute())]
         pub fn escalate_dispute(
             origin: OriginFor<T>,
@@ -389,7 +398,7 @@ pub mod pallet {
         ) -> DispatchResult {
             Self::ensure_governance_origin(origin)?;
 
-            Commitments::<T>::try_mutate(&commitment_id, |maybe_record| -> Result<(), Error<T>> {
+            Commitments::<T>::try_mutate(commitment_id, |maybe_record| -> Result<(), Error<T>> {
                 let record = maybe_record.as_mut().ok_or(Error::<T>::CommitmentMissing)?;
                 ensure!(
                     record.dispute == DisputeStatus::Pending,
@@ -409,6 +418,7 @@ pub mod pallet {
             Ok(())
         }
 
+        #[pallet::call_index(5)]
         #[pallet::weight(T::WeightInfo::rollback())]
         pub fn resolve_dispute(
             origin: OriginFor<T>,
@@ -417,7 +427,7 @@ pub mod pallet {
         ) -> DispatchResult {
             Self::ensure_governance_origin(origin)?;
 
-            Commitments::<T>::try_mutate(&commitment_id, |maybe_record| -> Result<(), Error<T>> {
+            Commitments::<T>::try_mutate(commitment_id, |maybe_record| -> Result<(), Error<T>> {
                 let record = maybe_record.as_mut().ok_or(Error::<T>::CommitmentMissing)?;
                 ensure!(
                     record.dispute != DisputeStatus::None,
@@ -456,11 +466,12 @@ pub mod pallet {
             Ok(())
         }
 
+        #[pallet::call_index(6)]
         #[pallet::weight(T::WeightInfo::rollback())]
         pub fn rollback(origin: OriginFor<T>, commitment_id: T::CommitmentId) -> DispatchResult {
             let _ = ensure_signed(origin)?;
 
-            Commitments::<T>::try_mutate(&commitment_id, |maybe_record| -> Result<(), Error<T>> {
+            Commitments::<T>::try_mutate(commitment_id, |maybe_record| -> Result<(), Error<T>> {
                 let record = maybe_record.as_mut().ok_or(Error::<T>::CommitmentMissing)?;
                 ensure!(
                     record.dispute != DisputeStatus::None,
@@ -515,6 +526,16 @@ pub mod pallet {
                     .try_push(event)
                     .map_err(|_| Error::<T>::PendingQueueFull)
             })
+        }
+
+        fn storage_version_number(version: StorageVersion) -> u16 {
+            let encoded = version.encode();
+            encoded
+                .as_slice()
+                .get(..2)
+                .and_then(|bytes| bytes.try_into().ok())
+                .map(u16::from_le_bytes)
+                .unwrap_or_default()
         }
     }
 }
