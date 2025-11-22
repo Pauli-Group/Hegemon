@@ -8,7 +8,7 @@ use crate::types::{
 };
 
 /// Describes the source of a block as it travels through a Substrate-style import pipeline.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BlockOrigin {
     /// A block pulled from peers during initial sync.
     NetworkInitialSync,
@@ -21,7 +21,7 @@ pub enum BlockOrigin {
 }
 
 /// Receipt produced once the consensus rules admit a block into the local ledger.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug)]
 pub struct ImportReceipt {
     pub origin: BlockOrigin,
     pub update: ConsensusUpdate,

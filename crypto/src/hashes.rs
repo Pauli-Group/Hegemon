@@ -1,6 +1,6 @@
 use blake3::Hasher as Blake3Hasher;
-use digest::Digest;
 use sha2::Sha256;
+use sha3::digest::Digest;
 use sha3::Sha3_256;
 
 use crate::deterministic::expand_to_length;
@@ -163,7 +163,7 @@ pub fn derive_nullifier(prf_key: &[u8], note_position: u64, rho: &[u8]) -> [u8; 
     let mut hasher = Blake3Hasher::new();
     hasher.update(b"nf");
     hasher.update(prf_key);
-    hasher.update(note_position.to_be_bytes());
+    hasher.update(&note_position.to_be_bytes());
     hasher.update(rho);
     let mut out = [0u8; 32];
     hasher.finalize_xof().fill(&mut out);
