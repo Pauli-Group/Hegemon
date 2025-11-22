@@ -14,19 +14,37 @@ People running `make quickstart` today still land on a dashboard that shows mock
 - [x] (2025-02-18 06:55Z) Wired dashboard_service to autostart a local node with env-driven defaults, create its db path, and stop the managed process on shutdown while keeping proxy fallbacks intact.
 - [x] (2025-02-18 07:00Z) Hardened `scripts/full-quickstart.sh` to choose free ports, export the chosen service URL to the UI, and pass autostart env so the proxy and UI stay aligned.
 - [x] (2025-02-18 07:03Z) Documented the single-command devnet/dashboard workflow in README without touching the whitepaper section.
-- [ ] Run sanity checks (lint/tests if touched), verify quickstart launches UI + live telemetry, and update this plan with outcomes/any surprises.
+- [x] (2025-11-22 09:47Z) Ran `make quickstart` (stopped at `make check` because of Clippy errors in `network/`), then launched dashboard_service + Vite manually against a hand-started `hegemon` node to confirm live telemetry and port binding; captured URLs and metrics below.
 
 ## Surprises & Discoveries
 
-- None yet; will log if port selection or autostart interacts badly with existing dashboard actions or PATH assumptions.
+- `make quickstart` fails on the Clippy gate: `network/src/nat.rs` collapsible_if warnings, `peer_manager.rs` map_entry/collapsible_if, `peer_store.rs` collapsible_if, and `service.rs` too_many_arguments halt the run.
+- Workspace linting also fails in several pallets (`observability`, `feature-flags`, `attestations`, `settlement`, `oracles`, plus `asset-registry`, `fee-model`) with missing imports/bench harness wiring, `StorageVersion` codec/type bounds, deprecated `RuntimeEvent`, implicit call indices, and unsigned tx helpers. These block `make check` after the network fixes and need targeted pallet cleanups before quickstart can be fully green.
+- dashboard_service autostart tries `cargo run -p node --bin node -- …` even though the crate only ships the `hegemon` bin; the process exits immediately and sets `NODE_RPC_URL` to `https://127.0.0.1:8080`, which forces the proxy to fall back to mock metrics until restarted with the correct target.
+- The `hegemon` CLI would not build due to a partial move of `cli.command` in the main match; patched the match to `command.take()` so the binary compiles for validation.
+- Reusing an existing wallet store threw “decryption failure”; a fresh store at `state/dashboard-wallet.devpass.store` with passphrase `devpass` avoided the mismatch.
 
 ## Decision Log
 
-- None yet; will record choices about defaults (ports, miner threads, db paths) once implementation begins.
+- Decision: Patched the CLI dispatch to pull `cli.command` via `take()` before matching, unblocking the `hegemon` binary build needed for validation without touching runtime behavior.
+  Rationale: The partial move error prevented any node start, so fixing the match was the smallest change to restore the binary.
+  Date/Author: 2025-11-22 / GPT-5.1-Codex-Max
+- Decision: Ran the node manually (`cargo run -p node --bin hegemon -- …`) with a fresh wallet store and restarted dashboard_service with `DASHBOARD_AUTOSTART_NODE=0` and `NODE_RPC_URL=http://127.0.0.1:8080` to avoid the broken autostart bin/HTTPS fallback.
+  Rationale: Autostart currently points at a non-existent bin and rewrites the RPC URL to HTTPS, so manual alignment was needed to observe live telemetry.
+  Date/Author: 2025-11-22 / GPT-5.1-Codex-Max
 
 ## Outcomes & Retrospective
 
-Pending execution.
+- Quickstart status: `make quickstart` is red because `make check` stops on Clippy errors in the `network` crate; autostarted node flow also fails (wrong bin name) and forces mock telemetry until the proxy is restarted with a correct RPC URL.
+- Manual validation: dashboard_service bound on `http://127.0.0.1:8001`, Vite UI on `http://127.0.0.1:5173`, and a manually started `hegemon` node on `http://127.0.0.1:8080` (token `devnet-token`) reported live metrics via `/node/metrics` and `/node/miner/status` (e.g., `hash_rate ~26.8`, `total_hashes ~2220`, `best_height 196`, `mempool_depth 0`, TLS disabled).
+- Follow-ups: autostart command now targets the `hegemon` bin and honors the TLS flag without forcing HTTPS, and the `network` clippy issues are fixed. Remaining blockers live in pallets (`observability`, `feature-flags`, `attestations`, `settlement`, `oracles`) where clippy/compile errors still halt `make check`; resolve those and rerun `make quickstart` to confirm the dashboard loads real mining data without manual intervention.
+- New blocking work (pallets):
+  - Replace `StorageMigrated` event fields back to primitives to avoid `DecodeWithMemTracking`/`TypeInfo` errors (`asset-registry`, `observability`, `feature-flags`, `attestations`, `settlement`, `oracles`).
+  - Fix log imports by adding `log` dependency or using `frame_support::log` (current single-component imports fail).
+  - Remove or correctly place `validate_unsigned` attributes; unsigned submissions were dropped, so the attribute can be removed (`oracles`, `settlement`).
+  - `fee-model`: implement `can_withdraw_fee`, adjust uses of `dispatch_info.class`/`post_info.pays_fee`, and import `FixedPointNumber`.
+  - Add `#[pallet::call_index]` where still implicit (`settlement` verified after re-run) and add `Default` bound or remove `Default::default()` on `AssetId` in settlement.
+  - Attestations benchmarking: `IssuerId` needs `Default`, bench origins need correct types; observability benchmarking origins also need `RuntimeOrigin`.
 
 ## Context and Orientation
 

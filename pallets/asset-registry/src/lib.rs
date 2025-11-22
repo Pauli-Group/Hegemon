@@ -8,6 +8,7 @@ use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
 use pallet_identity::IdentityProvider;
 use sp_runtime::RuntimeDebug;
+use log;
 
 pub type DefaultRegulatoryTag<T> = BoundedVec<u8, <T as pallet::Config>::MaxTagLength>;
 pub type DefaultTagSet<T> =
@@ -85,6 +86,7 @@ pub mod pallet {
 
     #[pallet::config]
     pub trait Config: frame_system::Config {
+        #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type AssetId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Default + Ord;
         type AttestationId: Parameter + Member + MaxEncodedLen + TypeInfo + Clone + Ord;
@@ -129,8 +131,8 @@ pub mod pallet {
             who: T::AccountId,
         },
         StorageMigrated {
-            from: u16,
-            to: u16,
+            from: StorageVersion,
+            to: StorageVersion,
         },
     }
 
@@ -162,8 +164,8 @@ pub mod pallet {
             if on_chain < STORAGE_VERSION {
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain.into(),
-                    to: STORAGE_VERSION.into(),
+                    from: on_chain,
+                    to: STORAGE_VERSION,
                 });
                 T::WeightInfo::migrate()
             } else {

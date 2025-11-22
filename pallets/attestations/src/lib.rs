@@ -4,6 +4,7 @@ pub use pallet::*;
 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::dispatch::DispatchResult;
+use log;
 use frame_support::pallet_prelude::*;
 use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
@@ -43,6 +44,8 @@ pub struct StarkVerifierParams {
     pub blowup_factor: u8,
     pub security_bits: u16,
 }
+
+impl DecodeWithMemTracking for StarkVerifierParams {}
 
 #[derive(Clone, Copy, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
 pub enum DisputeStatus {
@@ -151,9 +154,10 @@ pub mod pallet {
 
     #[pallet::config]
     pub trait Config: frame_system::Config {
+        #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type CommitmentId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Default + Ord;
-        type IssuerId: Parameter + Member + MaxEncodedLen + TypeInfo + Clone + Ord;
+        type IssuerId: Parameter + Member + MaxEncodedLen + TypeInfo + Clone + Ord + Default;
         type MaxRootSize: Get<u32> + Clone + TypeInfo;
         type MaxVerificationKeySize: Get<u32> + Clone + TypeInfo;
         type MaxPendingEvents: Get<u32> + Clone + TypeInfo;
@@ -225,8 +229,8 @@ pub mod pallet {
             commitment_id: T::CommitmentId,
         },
         StorageMigrated {
-            from: u16,
-            to: u16,
+            from: StorageVersion,
+            to: StorageVersion,
         },
     }
 
@@ -265,8 +269,8 @@ pub mod pallet {
                 VerifierParameters::<T>::put(T::DefaultVerifierParams::get());
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain.into(),
-                    to: STORAGE_VERSION.into(),
+                    from: on_chain,
+                    to: STORAGE_VERSION,
                 });
                 T::WeightInfo::migrate()
             } else {
@@ -277,6 +281,7 @@ pub mod pallet {
 
     #[pallet::call]
     impl<T: Config> Pallet<T> {
+        #[pallet::call_index(0)]
         #[pallet::weight(T::WeightInfo::submit_commitment())]
         pub fn submit_commitment(
             origin: OriginFor<T>,
@@ -312,6 +317,7 @@ pub mod pallet {
             Ok(())
         }
 
+        #[pallet::call_index(1)]
         #[pallet::weight(T::WeightInfo::link_issuer())]
         pub fn link_issuer(
             origin: OriginFor<T>,
@@ -341,6 +347,7 @@ pub mod pallet {
             Ok(())
         }
 
+        #[pallet::call_index(2)]
         #[pallet::weight(T::WeightInfo::set_verifier_params())]
         pub fn set_verifier_params(
             origin: OriginFor<T>,
@@ -352,6 +359,7 @@ pub mod pallet {
             Ok(())
         }
 
+        #[pallet::call_index(3)]
         #[pallet::weight(T::WeightInfo::start_dispute())]
         pub fn start_dispute(
             origin: OriginFor<T>,
@@ -382,6 +390,7 @@ pub mod pallet {
             Ok(())
         }
 
+        #[pallet::call_index(4)]
         #[pallet::weight(T::WeightInfo::start_dispute())]
         pub fn escalate_dispute(
             origin: OriginFor<T>,
@@ -409,6 +418,7 @@ pub mod pallet {
             Ok(())
         }
 
+        #[pallet::call_index(5)]
         #[pallet::weight(T::WeightInfo::rollback())]
         pub fn resolve_dispute(
             origin: OriginFor<T>,
@@ -456,6 +466,7 @@ pub mod pallet {
             Ok(())
         }
 
+        #[pallet::call_index(6)]
         #[pallet::weight(T::WeightInfo::rollback())]
         pub fn rollback(origin: OriginFor<T>, commitment_id: T::CommitmentId) -> DispatchResult {
             let _ = ensure_signed(origin)?;

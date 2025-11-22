@@ -1,7 +1,5 @@
-#![cfg(feature = "runtime-benchmarks")]
-
 use super::*;
-use frame_benchmarking::{benchmarks, whitelisted_caller};
+use frame_benchmarking::{benchmarks, impl_benchmark_test_suite, whitelisted_caller};
 use frame_system::RawOrigin;
 
 benchmarks! {
@@ -9,7 +7,7 @@ benchmarks! {
         let actor: T::AccountId = whitelisted_caller();
         let max_usage: u128 = 1_000;
         let rate_hint: u64 = 10;
-        let origin: OriginFor<T> = RawOrigin::Root.into();
+        let origin: T::RuntimeOrigin = RawOrigin::Root.into();
     }: _(origin, actor.clone(), max_usage, rate_hint)
     verify {
         assert!(Quotas::<T>::contains_key(&actor));
@@ -18,7 +16,8 @@ benchmarks! {
     record_self_usage {
         let actor: T::AccountId = whitelisted_caller();
         let amount: u64 = 5;
-    }: _(RawOrigin::Signed(actor.clone()), amount)
+        let origin: T::RuntimeOrigin = RawOrigin::Signed(actor.clone()).into();
+    }: _(origin, amount)
     verify {
         let usage = UsageCounters::<T>::get(&actor).expect("usage stored");
         assert!(usage.total_usage >= amount as u128);
@@ -28,7 +27,8 @@ benchmarks! {
         let actor: T::AccountId = whitelisted_caller();
         Quotas::<T>::insert(&actor, Quota { max_usage: 50, rate_limit_per_block: 5 });
         UsageCounters::<T>::insert(&actor, UsageCounter::new(20, 20, Default::default()));
-    }: _(RawOrigin::Signed(actor.clone()))
+        let origin: T::RuntimeOrigin = RawOrigin::Signed(actor.clone()).into();
+    }: _(origin)
     verify {
         assert!(UsageCounters::<T>::contains_key(&actor));
     }

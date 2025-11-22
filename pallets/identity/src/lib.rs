@@ -1,4 +1,5 @@
 #![cfg_attr(not(feature = "std"), no_std)]
+#![allow(deprecated, clippy::let_unit_value)]
 
 pub use pallet::*;
 
@@ -81,6 +82,7 @@ pub mod pallet {
 
     #[pallet::config]
     pub trait Config: frame_system::Config {
+        #[allow(deprecated, clippy::let_unit_value)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type AuthorityId: Parameter
             + Member
@@ -382,8 +384,8 @@ pub mod pallet {
                 SessionKeys::<T>::translate(|_, key: T::AuthorityId| Some(SessionKey::Legacy(key)));
 
                 STORAGE_VERSION.put::<Pallet<T>>();
-                let mut from_encoded = on_chain.encode();
-                let mut to_encoded = STORAGE_VERSION.encode();
+                let from_encoded = on_chain.encode();
+                let to_encoded = STORAGE_VERSION.encode();
 
                 let from_version = u16::decode(&mut from_encoded.as_slice()).unwrap_or_default();
                 let to_version = u16::decode(&mut to_encoded.as_slice()).unwrap_or_default();
@@ -509,11 +511,11 @@ pub mod pallet {
         ) -> DispatchResult {
             let issuer = ensure_signed(origin)?;
             ensure!(
-                CredentialSchemas::<T>::contains_key(&schema),
+                CredentialSchemas::<T>::contains_key(schema),
                 Error::<T>::UnknownSchema
             );
             ensure!(
-                !Credentials::<T>::contains_key(&schema, &subject),
+                !Credentials::<T>::contains_key(schema, &subject),
                 Error::<T>::CredentialAlreadyIssued
             );
 
@@ -534,8 +536,8 @@ pub mod pallet {
                 issued_at: <frame_system::Pallet<T>>::block_number(),
             };
 
-            Credentials::<T>::insert(&schema, &subject, record);
-            Revocations::<T>::insert(&schema, &subject, false);
+            Credentials::<T>::insert(schema, &subject, record);
+            Revocations::<T>::insert(schema, &subject, false);
 
             for role in roles.iter() {
                 RoleAssignments::<T>::insert(role, &subject, ());
@@ -559,20 +561,16 @@ pub mod pallet {
             subject: T::AccountId,
         ) -> DispatchResult {
             let issuer = ensure_signed(origin)?;
-            Credentials::<T>::try_mutate_exists(
-                &schema,
-                &subject,
-                |maybe_record| -> DispatchResult {
-                    let record = maybe_record.as_mut().ok_or(Error::<T>::CredentialUnknown)?;
-                    ensure!(!record.revoked, Error::<T>::CredentialRevoked);
-                    record.revoked = true;
-                    Revocations::<T>::insert(&schema, &subject, true);
+            Credentials::<T>::try_mutate_exists(schema, &subject, |maybe_record| -> DispatchResult {
+                let record = maybe_record.as_mut().ok_or(Error::<T>::CredentialUnknown)?;
+                ensure!(!record.revoked, Error::<T>::CredentialRevoked);
+                record.revoked = true;
+                Revocations::<T>::insert(schema, &subject, true);
 
-                    T::ExternalAttestation::on_credential_revoked(&issuer, &subject, &schema);
+                T::ExternalAttestation::on_credential_revoked(&issuer, &subject, &schema);
 
-                    Ok(())
-                },
-            )?;
+                Ok(())
+            })?;
 
             Self::deposit_event(Event::CredentialRevoked {
                 schema,
@@ -592,10 +590,10 @@ pub mod pallet {
         ) -> DispatchResult {
             let _ = T::AdminOrigin::ensure_origin(origin)?;
             if active {
-                RoleAssignments::<T>::insert(&role, &account, ());
+                RoleAssignments::<T>::insert(role, &account, ());
                 Self::deposit_event(Event::RoleAssigned { role, account });
             } else {
-                RoleAssignments::<T>::remove(&role, &account);
+                RoleAssignments::<T>::remove(role, &account);
                 Self::deposit_event(Event::RoleRevoked { role, account });
             }
             Ok(())

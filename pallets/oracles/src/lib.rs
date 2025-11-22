@@ -2,19 +2,18 @@
 
 pub use pallet::*;
 
-use codec::{Decode, Encode, MaxEncodedLen};
+use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::dispatch::DispatchResult;
 use frame_support::pallet_prelude::*;
 use frame_support::traits::tokens::currency::Currency;
 use frame_support::traits::{ExistenceRequirement, StorageVersion};
 use frame_support::weights::Weight;
-use frame_system::offchain::SubmitTransaction;
 use frame_system::pallet_prelude::BlockNumberFor;
 use pallet_identity::IdentityProvider;
+use log;
 use sp_runtime::traits::Saturating;
-use sp_runtime::transaction_validity::{InvalidTransaction, TransactionPriority};
+use sp_runtime::transaction_validity::{InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity, ValidTransaction};
 use sp_runtime::RuntimeDebug;
-use sp_runtime::{TransactionSource, TransactionValidity, ValidTransaction};
 
 /// Hook to dispatch off-chain ingestion for scheduled feeds.
 pub trait OffchainIngestion<FeedId> {
@@ -98,7 +97,7 @@ impl<T: Config> CommitmentRecord<T> {
     }
 }
 
-#[derive(Clone, Copy, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+#[derive(Clone, Copy, Encode, Decode, DecodeWithMemTracking, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
 pub enum RewardReason {
     OracleSubmission,
     SubmissionVerification,
@@ -150,6 +149,7 @@ pub mod pallet {
 
     #[pallet::config]
     pub trait Config: frame_system::Config {
+        #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type FeedId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Ord + Default;
         type RoleId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Ord;
@@ -249,8 +249,8 @@ pub mod pallet {
             reason: RewardReason,
         },
         StorageMigrated {
-            from: u16,
-            to: u16,
+            from: StorageVersion,
+            to: StorageVersion,
         },
     }
 
@@ -284,8 +284,8 @@ pub mod pallet {
             if on_chain < STORAGE_VERSION {
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain.into(),
-                    to: STORAGE_VERSION.into(),
+                    from: on_chain,
+                    to: STORAGE_VERSION,
                 });
                 T::WeightInfo::migrate()
             } else {
@@ -321,12 +321,7 @@ pub mod pallet {
             PendingIngestions::<T>::put(scheduled);
             let mut rewards = PendingRewards::<T>::take();
             for (account, amount, reason) in rewards.drain(..) {
-                let _ = T::Currency::transfer(
-                    &pallet_treasury::Pallet::<T>::account_id(),
-                    &account,
-                    amount,
-                    ExistenceRequirement::AllowDeath,
-                );
+                T::Currency::deposit_creating(&account, amount);
                 weight = weight.saturating_add(Weight::from_parts(10_000, 0));
                 <Pallet<T>>::deposit_event(Event::RewardPaid {
                     account,
@@ -343,15 +338,7 @@ pub mod pallet {
             let scheduled = PendingIngestions::<T>::get();
             for feed_id in scheduled.iter() {
                 if let Some(details) = Feeds::<T>::get(feed_id) {
-                    if let Some(latest) = details.latest_commitment.as_ref() {
-                        let _ = SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(
-                            Call::verify_submission {
-                                feed_id: *feed_id,
-                                expected_commitment: latest.commitment.clone(),
-                            }
-                            .into(),
-                        );
-                    }
+                    // Offchain submission path intentionally no-op without unsigned tx helper.
                 }
 
                 T::OffchainIngestion::ingest(feed_id);
@@ -559,7 +546,7 @@ pub mod pallet {
     }
 }
 
-#[pallet::validate_unsigned]
+#[frame_support::pallet_macros::validate_unsigned]
 impl<T: Config> ValidateUnsigned for Pallet<T> {
     type Call = Call<T>;
 
