@@ -18,6 +18,7 @@ People running `make quickstart` today still land on a dashboard that shows mock
 - [x] (2025-11-22 10:19Z) Reran `make quickstart` (still stops at `make check` on pallet errors) then manually launched dashboard_service + Vite with autostart: service http://127.0.0.1:8001, UI http://127.0.0.1:5173, node target http://127.0.0.1:8080 exited with "Wallet passphrase required", so metrics/miner endpoints stayed on mock data.
 - [x] (2025-11-22 10:31Z) Wired autostart to pass a wallet store + "test passphrase" into the node, reran dashboard_service + Vite: service http://127.0.0.1:8001, UI http://127.0.0.1:5173, node http://127.0.0.1:8080 stayed running and streamed live metrics (hash_rate ~26.2, best_height 20) from the autostarted hegemon process.
 - [x] (2025-11-22 11:07Z) Mapped the P2P/bootstrapping stack against the target PoW/PQC behavior (sync from genesis via one peer, address gossip, restart reusing stored peers, and exportable genesis+peer bundle) and captured remaining work.
+- [x] (2025-11-22 11:42Z) Aligned FRAME/SP deps to the 43/44 stack across runtime and pallets (frame-support/system/executive 43, sp-runtime 44, sp-io 43, pallet-balances 44, session/collective/transaction-payment 43) and ran `cargo check -p runtime` to surface current config/API breakages.
 
 ## Surprises & Discoveries
 
@@ -26,6 +27,7 @@ People running `make quickstart` today still land on a dashboard that shows mock
 - The `hegemon` CLI would not build due to a partial move of `cli.command` in the main match; patched the match to `command.take()` so the binary compiles for validation.
 - Reusing an existing wallet store threw "decryption failure"; a fresh store at `state/dashboard-wallet.devpass.store` with passphrase `devpass` avoided the mismatch.
 - P2P stack already implements the requested peer behaviors: address exchange/gossip is covered by `network/tests/p2p_integration.rs` (B learns C and vice-versa), sync-from-one-peer is covered by `node/tests/sync.rs`, restart uses the persisted peer store with a reconnect cap of five (`RECENT_RECONNECT_LIMIT`) via `startup_targets` in `network/src/service.rs`, and genesis+peer export/import is wired through `PeerBundle` (`hegemon export-peers --output ...` / `--import-peers`).
+- Cargo check after the version bump fails in `runtime/src/lib.rs`: system types (Index/BlockNumber/Header) no longer in Config, offchain `SendTransactionTypes` removed and `create_transaction` signature changed, balances HoldIdentifier/MaxHolds gone, treasury ApproveOrigin/OnSlash/ProposalBond* removed, session needs `sp_staking::SessionIndex` and `pallet_session::historical::Identity` replacement, feature-flags missing MaxFeatureNameLength/MaxFeatureCount, fee-model missing weight coeff constants and `IdentityTag` bounds, asset-registry parameter_types need Clone+TypeInfo derivations, and DispatchError imports need updating; `chain_spec.rs` needs SudoConfig import once construct_runtime compiles.
 
 ## Decision Log
 
@@ -61,6 +63,7 @@ People running `make quickstart` today still land on a dashboard that shows mock
   - Align FRAME/SP versions so `runtime/` builds, then rerun `cargo test -p network` (especially `p2p_integration`) and `cargo test -p node node/tests::{sync,bootstrap}` to reconfirm gossip, sync-from-one-peer, restart-from-peer-store (5 peers), and bundle import/export.
   - Validate that `PeerBundle::capture` includes the current genesis block in storage (optional field) and that `hegemon export-peers --output bundle.json` + `--import-peers bundle.json` stays documented in runbooks/quickstart for new joiners.
   - Add a focused rejoin test if coverage is needed: start A/B, stop B, restart B with an existing peer store (no seeds) and assert it dials up to five cached peers and syncs.
+  - Fix runtime config/API breakages called out above (system types, offchain CreateSignedTransaction, balances/treasury type removals, session index types, feature-flag limits, fee-model coeffs + IdentityTag bounds, asset-registry parameter_types derives, DispatchError imports) and rerun `cargo check -p runtime` until clean.
 
 ## Context and Orientation
 
