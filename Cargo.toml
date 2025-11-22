@@ -15,6 +15,7 @@ members = [
     "pallets/attestations",
     "pallets/asset-registry",
     "pallets/settlement",
+    "pallets/oracles",
     "tests", "node",
 ]
 resolver = "2"

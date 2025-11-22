@@ -1,0 +1,31 @@
+[package]
+name = "pallet-oracles"
+version = "0.1.0"
+edition = "2021"
+authors = ["Synthetic Hegemonic Currency Contributors"]
+description = "Oracle management pallet with feed registry, submission rules, and off-chain ingestion hooks."
+license = "Apache-2.0"
+
+[dependencies]
+frame-support = { version = "43.0.0", default-features = false }
+frame-system = { version = "43.0.0", default-features = false }
+frame-benchmarking = { version = "43.0.0", default-features = false, optional = true }
+pallet-identity = { version = "0.1.0", path = "../identity", default-features = false }
+sp-runtime = { version = "44.0.0", default-features = false }
+sp-std = { version = "14.0.0", default-features = false }
+codec = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
+scale-info = { version = "2", default-features = false, features = ["derive"] }
+
+[features]
+default = ["std"]
+std = [
+    "frame-support/std",
+    "frame-system/std",
+    "frame-benchmarking/std",
+    "pallet-identity/std",
+    "sp-runtime/std",
+    "sp-std/std",
+    "codec/std",
+    "scale-info/std",
+]
+runtime-benchmarks = ["frame-benchmarking"]
