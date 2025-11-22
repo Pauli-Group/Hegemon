@@ -1,6 +1,7 @@
 use crate::nat::{NatTraversal, NatTraversalConfig, NatTraversalResult};
 use crate::p2p::{CompactAddress, Connection, CoordinationMessage, WireMessage};
 use crate::peer_manager::PeerManager;
+use crate::peer_store::PeerStore;
 use crate::{
     GossipHandle, GossipMessage, NetworkError, PeerId, PeerIdentity, ProtocolId, ProtocolMessage,
 };
@@ -132,6 +133,7 @@ const RECONNECT_BASE: Duration = Duration::from_secs(2);
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
 const ADDRESS_EXCHANGE_LIMIT: usize = 16;
 const OPPORTUNISTIC_BATCH: usize = 4;
+const RECENT_RECONNECT_LIMIT: usize = 5;
 
 pub struct P2PService {
     identity: PeerIdentity,
@@ -139,6 +141,7 @@ pub struct P2PService {
     seeds: Vec<String>,
     gossip: GossipHandle,
     peer_manager: PeerManager,
+    peer_store: PeerStore,
     protocol_mux: ProtocolMultiplexer,
     nat_config: NatTraversalConfig,
     nat_result: Option<NatTraversalResult>,
@@ -153,6 +156,7 @@ impl P2PService {
         seeds: Vec<String>,
         gossip: GossipHandle,
         max_peers: usize,
+        peer_store: PeerStore,
         relay_config: RelayConfig,
         nat_config: NatTraversalConfig,
     ) -> Self {
@@ -162,6 +166,7 @@ impl P2PService {
             seeds,
             gossip,
             peer_manager: PeerManager::new(max_peers),
+            peer_store,
             protocol_mux: ProtocolMultiplexer::new(),
             nat_config,
             nat_result: None,
@@ -195,6 +200,11 @@ impl P2PService {
             .broadcast_addresses(self.advertised_addrs.clone());
         self.nat_result = Some(nat_result);
 
+        self.peer_store.load()?;
+        let local_addrs: HashSet<_> = self.advertised_addrs.iter().copied().collect();
+        self.peer_store
+            .remove_addresses(local_addrs.iter().copied())?;
+
         // Connect to seeds
         let mut configured = self.seeds.clone();
         configured.extend(self.relay_config.relays.clone());
@@ -204,7 +214,9 @@ impl P2PService {
         }
         self.peer_manager
             .record_static_addresses(resolved_seeds.iter().copied());
-        for addr in resolved_seeds {
+        let connected = self.peer_manager.connected_addresses();
+        let initial_targets = self.startup_targets(resolved_seeds, &connected)?;
+        for addr in initial_targets {
             self.spawn_connect(addr, self.identity.clone(), cmd_tx.clone());
         }
 
@@ -226,6 +238,7 @@ impl P2PService {
                         P2PCommand::NewPeer { peer_id, addr, tx } => {
                             info!("peer connected: {} ({:?})", addr, peer_id);
                             self.peer_manager.add_peer(peer_id, addr, tx);
+                            self.peer_store.record_connected(addr)?;
                             let connected = self.peer_manager.connected_addresses();
                             let mut advertise: HashSet<_> =
                                 self.advertised_addrs.iter().copied().collect();
@@ -261,6 +274,7 @@ impl P2PService {
                         P2PCommand::PeerDisconnected { peer_id, addr } => {
                             info!("peer disconnected: {} ({:?})", addr, peer_id);
                             self.peer_manager.remove_peer(&peer_id);
+                            self.peer_store.record_disconnected(addr)?;
                         }
                         P2PCommand::Message { peer_id, msg } => {
                             self.peer_manager.mark_heartbeat(&peer_id);
@@ -274,6 +288,7 @@ impl P2PService {
                                         GossipMessage::Evidence(ev) => { let _ = self.gossip.broadcast_evidence(ev); }
                                         GossipMessage::Addresses(addrs) => {
                                             self.peer_manager.record_addresses(peer_id, addrs.clone());
+                                            self.persist_learned_addresses(addrs.clone())?;
                                             let _ = self.gossip.broadcast_addresses(addrs);
                                         }
                                     }
@@ -288,6 +303,7 @@ impl P2PService {
                                         .map(|addr| addr.to_socket_addr())
                                         .collect();
                                     self.peer_manager.record_addresses(peer_id, addrs);
+                                    self.persist_learned_addresses(addrs)?;
                                 }
                                 WireMessage::Coordinate(msg) => {
                                     self.handle_coordination(peer_id, msg, cmd_tx.clone())
@@ -306,6 +322,7 @@ impl P2PService {
                     if let GossipMessage::Addresses(addrs) = &msg {
                         self.peer_manager
                             .record_addresses(self.identity.peer_id(), addrs.clone());
+                        self.persist_learned_addresses(addrs.clone())?;
                     }
                     self.peer_manager.broadcast(WireMessage::Gossip(msg)).await;
                 }
@@ -319,6 +336,7 @@ impl P2PService {
                     self.peer_manager.ping_all().await;
                     for (peer_id, addr) in self.peer_manager.prune_stale(HEARTBEAT_TIMEOUT) {
                         warn!("peer timed out: {} ({:?})", addr, peer_id);
+                        self.peer_store.record_disconnected(addr)?;
                     }
                     let connected = self.peer_manager.connected_addresses();
                     if self.peer_manager.peer_count() < self.peer_manager.max_peers() {
@@ -361,7 +379,7 @@ impl P2PService {
                         }
                     }
                     Err(e) => {
-                        warn!("failed to connect to seed {}: {}", addr, e);
+                        warn!("failed to connect to peer {}: {}", addr, e);
                     }
                 }
                 sleep(backoff).await;
@@ -447,8 +465,12 @@ impl P2PService {
     ) {
         match msg {
             CoordinationMessage::RelayRegistration { reachable } => {
-                let addrs = reachable.into_iter().map(|addr| addr.to_socket_addr());
-                self.peer_manager.record_addresses(sender, addrs);
+                let addrs: Vec<_> = reachable
+                    .into_iter()
+                    .map(|addr| addr.to_socket_addr())
+                    .collect();
+                self.peer_manager.record_addresses(sender, addrs.clone());
+                self.persist_learned_addresses(addrs)?;
             }
             CoordinationMessage::PunchRequest {
                 target,
@@ -457,6 +479,7 @@ impl P2PService {
                 if target == self.identity.peer_id() {
                     let addr = requester_addr.to_socket_addr();
                     self.peer_manager.record_addresses(sender, [addr]);
+                    self.persist_learned_addresses([addr])?;
                     self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx.clone());
                     let response = CoordinationMessage::PunchResponse {
                         target: sender,
@@ -484,6 +507,7 @@ impl P2PService {
                 if target == self.identity.peer_id() {
                     let addr = responder_addr.to_socket_addr();
                     self.peer_manager.record_addresses(sender, [addr]);
+                    self.persist_learned_addresses([addr])?;
                     self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx);
                 } else if self.relay_config.allow_relay {
                     self.peer_manager
@@ -498,6 +522,46 @@ impl P2PService {
                 }
             }
         }
+    }
+
+    fn startup_targets(
+        &mut self,
+        resolved_seeds: Vec<SocketAddr>,
+        connected: &HashSet<SocketAddr>,
+    ) -> Result<Vec<SocketAddr>, NetworkError> {
+        let mut exclude = connected.clone();
+        exclude.extend(self.advertised_addrs.iter().copied());
+
+        let mut targets = self
+            .peer_store
+            .recent_peers(RECENT_RECONNECT_LIMIT, &exclude)?;
+        exclude.extend(targets.iter().copied());
+
+        for addr in resolved_seeds {
+            if !exclude.contains(&addr) {
+                targets.push(addr);
+                exclude.insert(addr);
+            }
+        }
+
+        Ok(targets)
+    }
+
+    fn persist_learned_addresses(
+        &mut self,
+        addrs: impl IntoIterator<Item = SocketAddr>,
+    ) -> Result<(), NetworkError> {
+        let local: HashSet<_> = self.advertised_addrs.iter().copied().collect();
+        let filtered: Vec<_> = addrs
+            .into_iter()
+            .filter(|addr| !local.contains(addr))
+            .collect();
+
+        if filtered.is_empty() {
+            return Ok(());
+        }
+
+        self.peer_store.record_learned(filtered)
     }
 
     async fn resolve_seeds(seeds: Vec<String>, default_port: u16) -> Vec<SocketAddr> {
@@ -544,5 +608,70 @@ impl P2PService {
                 Err(e) => warn!("opportunistic dial to {} failed: {}", addr, e),
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::GossipRouter;
+    use crate::peer_store::PeerStoreConfig;
+    use rand::Rng;
+    use std::thread::sleep;
+    use std::time::Duration as StdDuration;
+
+    fn temp_store(tag: &str) -> PeerStore {
+        let mut path = std::env::temp_dir();
+        let mut rng = rand::thread_rng();
+        path.push(format!("p2p_service_store_{}_{}.bin", tag, rng.gen::<u64>()));
+        PeerStore::new(PeerStoreConfig::with_path(path))
+    }
+
+    #[test]
+    fn startup_targets_prioritize_recent_peers_before_seeds() {
+        let identity = PeerIdentity::generate(b"startup-targets");
+        let addr: SocketAddr = "127.0.0.1:9500".parse().unwrap();
+        let gossip = GossipRouter::new(16);
+        let mut service = P2PService::new(
+            identity,
+            addr,
+            vec![],
+            gossip.handle(),
+            8,
+            temp_store("recent"),
+            RelayConfig::default(),
+            NatTraversalConfig::disabled(addr),
+        );
+
+        service.advertised_addrs = vec![addr];
+
+        let peers: Vec<SocketAddr> = (0..6)
+            .map(|i| format!("127.0.0.1:96{:02}", i).parse().unwrap())
+            .collect();
+        for peer in &peers {
+            service.peer_store.record_connected(*peer).unwrap();
+            sleep(StdDuration::from_millis(2));
+        }
+
+        let seeds: Vec<SocketAddr> = ["127.0.0.1:9800", "127.0.0.1:9801"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
+
+        let targets = service
+            .startup_targets(seeds.clone(), &HashSet::new())
+            .unwrap();
+
+        let expected_peers: Vec<_> = peers
+            .iter()
+            .rev()
+            .take(RECENT_RECONNECT_LIMIT)
+            .copied()
+            .collect();
+
+        assert_eq!(targets.len(), expected_peers.len() + seeds.len());
+        assert_eq!(&targets[..expected_peers.len()], expected_peers.as_slice());
+        assert_eq!(targets[expected_peers.len()], seeds[0]);
+        assert_eq!(targets[expected_peers.len() + 1], seeds[1]);
     }
 }

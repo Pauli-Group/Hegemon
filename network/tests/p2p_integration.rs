@@ -2,8 +2,10 @@ use std::net::{SocketAddr, TcpListener};
 use std::time::Duration;
 
 use network::{
-    GossipMessage, GossipRouter, NatTraversalConfig, P2PService, PeerIdentity, RelayConfig,
+    GossipMessage, GossipRouter, NatTraversalConfig, P2PService, PeerIdentity, PeerStore,
+    PeerStoreConfig, RelayConfig,
 };
+use rand::Rng;
 use tokio::time::timeout;
 
 fn local_addr() -> SocketAddr {
@@ -11,6 +13,13 @@ fn local_addr() -> SocketAddr {
         .expect("bind temp socket")
         .local_addr()
         .expect("local addr")
+}
+
+fn peer_store(tag: &str) -> PeerStore {
+    let mut path = std::env::temp_dir();
+    let mut rng = rand::thread_rng();
+    path.push(format!("p2p_integration_{}_{}.bin", tag, rng.gen::<u64>()));
+    PeerStore::new(PeerStoreConfig::with_path(path))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -30,6 +39,7 @@ async fn gossip_crosses_tcp_boundary() {
         vec![],
         router_a.handle(),
         64,
+        peer_store("a"),
         RelayConfig::default(),
         NatTraversalConfig::disabled(addr_a),
     );
@@ -39,6 +49,7 @@ async fn gossip_crosses_tcp_boundary() {
         vec![addr_a.to_string()],
         router_b.handle(),
         64,
+        peer_store("b"),
         RelayConfig::default(),
         NatTraversalConfig::disabled(addr_b),
     );
