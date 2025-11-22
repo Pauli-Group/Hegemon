@@ -19,15 +19,15 @@ People running `make quickstart` today still land on a dashboard that shows mock
 - [x] (2025-11-22 10:31Z) Wired autostart to pass a wallet store + "test passphrase" into the node, reran dashboard_service + Vite: service http://127.0.0.1:8001, UI http://127.0.0.1:5173, node http://127.0.0.1:8080 stayed running and streamed live metrics (hash_rate ~26.2, best_height 20) from the autostarted hegemon process.
 - [x] (2025-11-22 11:07Z) Mapped the P2P/bootstrapping stack against the target PoW/PQC behavior (sync from genesis via one peer, address gossip, restart reusing stored peers, and exportable genesis+peer bundle) and captured remaining work.
 - [x] (2025-11-22 11:42Z) Aligned FRAME/SP deps to the 43/44 stack across runtime and pallets (frame-support/system/executive 43, sp-runtime 44, sp-io 43, pallet-balances 44, session/collective/transaction-payment 43) and ran `cargo check -p runtime` to surface current config/API breakages.
+- [x] (2025-02-18 07:50Z) Fixed runtime compile blockers (construct_runtime!, parameter derives, attestation/identity bounds, chain-spec updates) and re-ran `cargo check -p runtime` successfully; outstanding warnings are limited to deprecated macros and unused aliases.
 
 ## Surprises & Discoveries
 
-- `make quickstart` still halts in `make check`; current failures include missing `log` imports in `pallets/feature-flags`, `pallets/observability`, `pallets/attestations`, and `pallets/settlement`, `StorageVersion` `TypeInfo`/`DecodeWithMemTracking` bounds on migrations, misplaced `validate_unsigned` on settlement, missing `Default` for `AssetId`, and new `pallet-collective` `try_successful_origin` trait items from upstream 42.0.0.
+- Runtime now compiles after fixing construct_runtime! bounds, constant derives, IssuerId Default/bounds, and chain-spec fields; only deprecated macro warnings remain.
 - Autostarted node now targets the `hegemon` bin and, after supplying a wallet store and "test passphrase," runs to completion and yields live telemetry; prior runs without the passphrase failed with "Wallet passphrase required."
 - The `hegemon` CLI would not build due to a partial move of `cli.command` in the main match; patched the match to `command.take()` so the binary compiles for validation.
 - Reusing an existing wallet store threw "decryption failure"; a fresh store at `state/dashboard-wallet.devpass.store` with passphrase `devpass` avoided the mismatch.
 - P2P stack already implements the requested peer behaviors: address exchange/gossip is covered by `network/tests/p2p_integration.rs` (B learns C and vice-versa), sync-from-one-peer is covered by `node/tests/sync.rs`, restart uses the persisted peer store with a reconnect cap of five (`RECENT_RECONNECT_LIMIT`) via `startup_targets` in `network/src/service.rs`, and genesis+peer export/import is wired through `PeerBundle` (`hegemon export-peers --output ...` / `--import-peers`).
-- Cargo check after the version bump fails in `runtime/src/lib.rs`: system types (Index/BlockNumber/Header) no longer in Config, offchain `SendTransactionTypes` removed and `create_transaction` signature changed, balances HoldIdentifier/MaxHolds gone, treasury ApproveOrigin/OnSlash/ProposalBond* removed, session needs `sp_staking::SessionIndex` and `pallet_session::historical::Identity` replacement, feature-flags missing MaxFeatureNameLength/MaxFeatureCount, fee-model missing weight coeff constants and `IdentityTag` bounds, asset-registry parameter_types need Clone+TypeInfo derivations, and DispatchError imports need updating; `chain_spec.rs` needs SudoConfig import once construct_runtime compiles.
 
 ## Decision Log
 
@@ -46,24 +46,16 @@ People running `make quickstart` today still land on a dashboard that shows mock
 
 ## Outcomes & Retrospective
 
-- Quickstart status: `make quickstart` remains red because `make check` fails in pallets (`feature-flags`, `observability`, `attestations`, `settlement`, `collective`), so the script aborts before the dashboard stack launches.
+- Quickstart status: still to be revalidated after the runtime fixes; last attempt aborted when `make check` failed in pallets. Need a fresh `make quickstart` run to confirm the one-command flow now survives `make check` and launches the stack.
 - Unified quickstart validation (2025-11-22 10:31Z): dashboard_service bound on `http://127.0.0.1:8001`, Vite UI on `http://127.0.0.1:5173`, and the autostarted node target `http://127.0.0.1:8080` (token `devnet-token`, db `state/dashboard-node.1763807450.db`, wallet store `state/dashboard-wallet.testpass.store`, passphrase "test passphrase") stayed running and streamed live telemetry via `/node/metrics` and `/node/miner/status` (e.g., `hash_rate ~26.2`, `best_height 20`, `mempool_depth 0`, `exposure_scope devnet`); the autostart command snapshot redacts the passphrase.
 - Prior manual validation (2025-11-22 09:47Z): with dashboard_service on `http://127.0.0.1:8001`, Vite on `http://127.0.0.1:5173`, and a hand-started `hegemon` node on `http://127.0.0.1:8080` (token `devnet-token`), `/node/metrics` and `/node/miner/status` reported live values (`hash_rate ~26.8`, `total_hashes ~2220`, `best_height 196`, `mempool_depth 0`, TLS disabled).
-- Follow-ups: autostart now targets the correct bin, passes wallet credentials, and chooses free ports; remaining work is clearing the pallet errors that stop `make quickstart` so the one-command flow runs the dashboard stack automatically.
-- Network readiness for the PoW/PQC bootstrap goal: the current codebase already handles peer gossip and synchronization (gossip propagation test in `network/tests/p2p_integration.rs`, tip sync from one peer in `node/tests/sync.rs`), persists peers to disk and retries up to five on restart (`network/src/service.rs`), and exports/imports genesis + peer lists via `PeerBundle` (`node/tests/bootstrap.rs` and the `hegemon export-peers`/`--import-peers` CLI). Runtime does not compile right now, so these tests need to be rerun after the FRAME/SP version alignment.
-- New blocking work (pallets):
-  - Replace `StorageMigrated` event fields back to primitives to avoid `DecodeWithMemTracking`/`TypeInfo` errors (`asset-registry`, `observability`, `feature-flags`, `attestations`, `settlement`, `oracles`).
-  - Fix log imports by adding `log` dependency or using `frame_support::log` (current single-component imports fail).
-  - Remove or correctly place `validate_unsigned` attributes; unsigned submissions were dropped, so the attribute can be removed (`oracles`, `settlement`).
-  - `fee-model`: implement `can_withdraw_fee`, adjust uses of `dispatch_info.class`/`post_info.pays_fee`, and import `FixedPointNumber`.
-  - Add `#[pallet::call_index]` where still implicit (`settlement` verified after re-run) and add `Default` bound or remove `Default::default()` on `AssetId` in settlement.
-  - Attestations benchmarking: `IssuerId` needs `Default`, bench origins need correct types; observability benchmarking origins also need `RuntimeOrigin`.
-  - Pallet-collective: implement the new `try_successful_origin` trait item required by `EnsureOrigin`/`EnsureOriginWithArg` impls in 42.0.0 to clear the E0046 errors.
-- Open work to hit the PoW/PQC bootstrap behavior end-to-end:
-  - Align FRAME/SP versions so `runtime/` builds, then rerun `cargo test -p network` (especially `p2p_integration`) and `cargo test -p node node/tests::{sync,bootstrap}` to reconfirm gossip, sync-from-one-peer, restart-from-peer-store (5 peers), and bundle import/export.
-  - Validate that `PeerBundle::capture` includes the current genesis block in storage (optional field) and that `hegemon export-peers --output bundle.json` + `--import-peers bundle.json` stays documented in runbooks/quickstart for new joiners.
+- Follow-ups: autostart targets the correct bin, passes wallet credentials, and chooses free ports; remaining work is rerunning `make quickstart` post-runtime-fix and revalidating live telemetry/cleanup.
+- Network readiness for the PoW/PQC bootstrap goal: the codebase already handles peer gossip and synchronization (gossip propagation test in `network/tests/p2p_integration.rs`, tip sync from one peer in `node/tests/sync.rs`), persists peers to disk and retries up to five on restart (`network/src/service.rs`), and exports/imports genesis + peer lists via `PeerBundle` (`node/tests/bootstrap.rs` and the `hegemon export-peers`/`--import-peers` CLI). These tests should be rerun now that runtime builds again.
+- Remaining work to hit PoW/PQC bootstrap end-to-end:
+  - Rerun `cargo test -p network` (esp. `p2p_integration`) and `cargo test -p node node/tests::{sync,bootstrap}` to reconfirm gossip/sync/rejoin semantics with the current runtime.
+  - Validate that `PeerBundle::capture` includes the current genesis block in storage (optional field) and keep `hegemon export-peers` import/export documented in runbooks/quickstart.
   - Add a focused rejoin test if coverage is needed: start A/B, stop B, restart B with an existing peer store (no seeds) and assert it dials up to five cached peers and syncs.
-  - Fix runtime config/API breakages called out above (system types, offchain CreateSignedTransaction, balances/treasury type removals, session index types, feature-flag limits, fee-model coeffs + IdentityTag bounds, asset-registry parameter_types derives, DispatchError imports) and rerun `cargo check -p runtime` until clean.
+  - Run `make quickstart` to confirm the dashboard stack autostarts and streams live telemetry after the runtime fixes; update Outcomes with the new snapshot.
 
 ## Context and Orientation
 

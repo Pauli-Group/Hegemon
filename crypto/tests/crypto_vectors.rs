@@ -29,6 +29,7 @@ struct CryptoVectors {
     prf: String,
     nullifier: String,
     sha: String,
+    sha3: String,
     blake: String,
     poseidon: String,
 }

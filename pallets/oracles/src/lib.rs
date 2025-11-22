@@ -5,16 +5,17 @@ pub use pallet::*;
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::dispatch::DispatchResult;
 use frame_support::pallet_prelude::*;
+use frame_support::pallet_prelude::{
+    InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity,
+    ValidTransaction,
+};
 use frame_support::traits::tokens::currency::Currency;
 use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::BlockNumberFor;
-use pallet_identity::IdentityProvider;
 use log::warn;
+use pallet_identity::IdentityProvider;
 use sp_runtime::traits::Saturating;
-use frame_support::pallet_prelude::{
-    InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity, ValidTransaction,
-};
 use sp_runtime::RuntimeDebug;
 
 /// Hook to dispatch off-chain ingestion for scheduled feeds.
@@ -300,10 +301,7 @@ pub mod pallet {
                 let from = storage_version_u16(on_chain);
                 let to = storage_version_u16(STORAGE_VERSION);
                 STORAGE_VERSION.put::<Pallet<T>>();
-                Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from,
-                    to,
-                });
+                Pallet::<T>::deposit_event(Event::StorageMigrated { from, to });
                 T::WeightInfo::migrate()
             } else {
                 Weight::zero()

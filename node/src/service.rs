@@ -16,7 +16,7 @@ use consensus::{BlockOrigin, PowConsensus, import_pow_block};
 use crypto::hashes::sha256;
 use crypto::ml_dsa::MlDsaSecretKey;
 use crypto::traits::{SigningKey, VerifyKey};
-use network::{GossipHandle, GossipMessage, GossipRouter};
+use network::{GossipHandle, GossipMessage, GossipRouter, PeerStore, PeerStoreConfig};
 use parking_lot::Mutex;
 use protocol_versioning::{DEFAULT_VERSION_BINDING, VersionBinding};
 use rand::rngs::OsRng;
@@ -26,6 +26,7 @@ use transaction_circuit::hashing::Felt;
 use transaction_circuit::keys::{VerifyingKey, generate_keys};
 use transaction_circuit::proof::verify;
 
+use crate::bootstrap::PeerBundle;
 use crate::codec::{deserialize_block, serialize_block};
 use crate::config::NodeConfig;
 use crate::error::{NodeError, NodeResult};
@@ -35,6 +36,7 @@ use crate::storage::{ChainMeta, Storage};
 use crate::sync::SyncService;
 use crate::telemetry::{Telemetry, TelemetryPosture, TelemetrySnapshot};
 use crate::transaction::{ValidatedTransaction, felt_to_bytes, proof_to_transaction};
+use serde_bytes::ByteBuf;
 use wallet::TransactionBundle;
 use wallet::address::ShieldedAddress;
 use wallet::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
@@ -303,6 +305,40 @@ impl NodeService {
         tasks.push(miner_task);
         tasks.push(telemetry_task);
         Ok(NodeHandle { service, tasks })
+    }
+
+    pub fn spawn_sync(
+        self: &Arc<Self>,
+        protocol: network::ProtocolHandle,
+    ) -> tokio::task::JoinHandle<()> {
+        SyncService::new(self.clone(), protocol).spawn()
+    }
+
+    pub fn capture_peer_bundle(&self) -> NodeResult<PeerBundle> {
+        let mut blocks = self.storage.load_blocks()?;
+        blocks.sort_by_key(|block| block.header.height);
+        let genesis_block = blocks
+            .into_iter()
+            .find(|block| block.header.height == 0)
+            .map(|block| serialize_block(&block))
+            .transpose()?
+            .map(ByteBuf::from);
+
+        let mut peer_store =
+            PeerStore::new(PeerStoreConfig::with_path(&self.config.peer_store_path));
+        peer_store.load()?;
+        let peers = peer_store
+            .addresses()
+            .into_iter()
+            .map(|addr| addr.to_string())
+            .collect();
+
+        Ok(PeerBundle {
+            chain: self.config.chain_profile,
+            pow_bits: self.config.pow_bits,
+            genesis_block,
+            peers,
+        })
     }
 
     pub async fn import_sync_block(&self, block: ConsensusBlock) -> NodeResult<()> {

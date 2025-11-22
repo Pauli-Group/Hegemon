@@ -5,10 +5,11 @@ pub mod chain_spec;
 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::traits::{
-    ConstU128, ConstU32, ConstU64, ConstU8, Currency as CurrencyTrait, EitherOfDiverse, VariantCount,
+    ConstU128, ConstU32, ConstU64, ConstU8, Currency as CurrencyTrait, EitherOfDiverse,
+    VariantCount,
 };
-use frame_support::BoundedVec;
 use frame_support::weights::IdentityFee;
+use frame_support::BoundedVec;
 pub use frame_support::{construct_runtime, parameter_types};
 use frame_system as system;
 use pallet_attestations::AttestationSettlementEvent;
@@ -18,10 +19,12 @@ use sp_core::offchain::StorageKind;
 use sp_core::{blake2_256, H256};
 use sp_runtime::generic::Era;
 use sp_runtime::traits::{
-    BlakeTwo256, Convert, Hash as HashT, IdentifyAccount, IdentityLookup, Lazy, SaturatedConversion,
-    Verify,
+    BlakeTwo256, Convert, Hash as HashT, IdentifyAccount, IdentityLookup, Lazy,
+    SaturatedConversion, Verify,
 };
-use sp_runtime::{generic, AccountId32, DispatchError, FixedU128, MultiAddress, Permill, RuntimeDebug};
+use sp_runtime::{
+    generic, AccountId32, DispatchError, FixedU128, MultiAddress, Permill, RuntimeDebug,
+};
 use sp_std::vec::Vec;
 
 mod pq_crypto {
@@ -255,8 +258,7 @@ mod pq_crypto {
                 StoredSecret::SlhDsa(bytes) => {
                     let secret = SlhDsaSecretKey::from_bytes(&bytes).ok()?;
                     let signature_vec = secret.sign(msg.as_ref()).to_bytes();
-                    let signature: [u8; SLH_DSA_SIGNATURE_LEN] =
-                        signature_vec.try_into().ok()?;
+                    let signature: [u8; SLH_DSA_SIGNATURE_LEN] = signature_vec.try_into().ok()?;
                     Some(Signature::SlhDsa { signature, public })
                 }
             }
@@ -333,9 +335,7 @@ type SignedExtra = (
 
 type SignedPayload = sp_runtime::generic::SignedPayload<RuntimeCall, SignedExtra>;
 
-#[derive(
-    Clone, Copy, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo,
-)]
+#[derive(Clone, Copy, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
 pub enum HoldReason {
     FeeModel,
     Session,
@@ -437,17 +437,7 @@ impl Convert<AccountId, Option<AccountId>> for AccountIdAsValidatorId {
 }
 
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
-#[derive(
-    Clone,
-    Default,
-    Encode,
-    Decode,
-    PartialEq,
-    Eq,
-    RuntimeDebug,
-    MaxEncodedLen,
-    TypeInfo,
-)]
+#[derive(Clone, Default, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
 pub struct DummySessionKeys;
 
 impl sp_runtime::traits::OpaqueKeys for DummySessionKeys {
@@ -512,9 +502,7 @@ impl pallet_treasury::SpendFunds<Runtime> for RuntimeTreasurySpendFunds {
     }
 }
 
-#[derive(
-    Clone, Default, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo,
-)]
+#[derive(Clone, Default, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
 pub struct NoConsideration;
 
 impl<A, F> frame_support::traits::Consideration<A, F> for NoConsideration {
@@ -561,7 +549,7 @@ pub mod pow {
     }
 
     #[pallet::pallet]
-    pub struct Pallet<T>(_); 
+    pub struct Pallet<T>(_);
 
     #[pallet::type_value]
     pub fn DefaultDifficulty<T: Config>() -> u32 {
@@ -664,26 +652,26 @@ pub mod pow {
         fn compact_to_target(bits: u32) -> Option<U256> {
             let exponent = bits >> 24;
             let mantissa = bits & 0x00ff_ffff;
-        if mantissa == 0 {
-            return None;
+            if mantissa == 0 {
+                return None;
+            }
+            if exponent > 32 {
+                return Some(U256::MAX);
+            }
+            let mut target = U256::from(mantissa);
+            if exponent > 3 {
+                target = target << (8 * (exponent - 3));
+            } else {
+                target >>= 8 * (3 - exponent);
+            }
+            Some(target)
         }
-        if exponent > 32 {
-            return Some(U256::MAX);
-        }
-        let mut target = U256::from(mantissa);
-        if exponent > 3 {
-            target = target << (8 * (exponent - 3));
-        } else {
-            target >>= 8 * (3 - exponent);
-        }
-        Some(target)
-    }
 
-    fn target_to_compact(target: U256) -> u32 {
-        if target.is_zero() {
-            return 0;
-        }
-        let bytes = target.to_big_endian();
+        fn target_to_compact(target: U256) -> u32 {
+            if target.is_zero() {
+                return 0;
+            }
+            let bytes = target.to_big_endian();
             let mut exponent = 32u32;
             while exponent > 0 && bytes[32 - exponent as usize] == 0 {
                 exponent -= 1;
@@ -1009,8 +997,10 @@ impl pallet_treasury::Config for Runtime {
     type AssetKind = (); // unused
     type Beneficiary = AccountId;
     type BeneficiaryLookup = IdentityLookup<AccountId>;
-    type Paymaster =
-        frame_support::traits::tokens::PayFromAccount<Balances, pallet_treasury::TreasuryAccountId<Runtime>>;
+    type Paymaster = frame_support::traits::tokens::PayFromAccount<
+        Balances,
+        pallet_treasury::TreasuryAccountId<Runtime>,
+    >;
     type BalanceConverter = frame_support::traits::tokens::UnityAssetBalanceConversion;
     type PayoutPeriod = TreasuryPayoutPeriod;
     #[cfg(feature = "runtime-benchmarks")]
@@ -1171,7 +1161,9 @@ impl pallet_identity::Config for Runtime {
 
 #[derive(Clone, Copy, Default)]
 pub struct RuntimeSettlementHook;
-impl pallet_attestations::SettlementBatchHook<u64, IssuerId, BlockNumber> for RuntimeSettlementHook {
+impl pallet_attestations::SettlementBatchHook<u64, IssuerId, BlockNumber>
+    for RuntimeSettlementHook
+{
     fn process(events: Vec<AttestationSettlementEvent<u64, IssuerId, BlockNumber>>) {
         for ev in events.into_iter() {
             if ev.stage == pallet_attestations::SettlementStage::RolledBack {
