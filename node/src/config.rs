@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use wallet::address::ShieldedAddress;
 use wallet::keys::RootSecret;
 
+use crate::chain_spec::ChainProfile;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeConfig {
     pub db_path: PathBuf,
@@ -22,7 +24,11 @@ pub struct NodeConfig {
     pub miner_seed: [u8; 32],
     pub miner_payout_address: ShieldedAddress,
     pub pow_bits: u32,
+    pub chain_profile: ChainProfile,
     pub gossip_buffer: usize,
+    pub min_tx_fee_per_weight: u64,
+    pub max_block_weight: u64,
+    pub mempool_max_weight: u64,
     pub supported_versions: Vec<VersionBinding>,
     pub p2p_addr: SocketAddr,
     pub seeds: Vec<String>,
@@ -70,7 +76,11 @@ impl Default for NodeConfig {
             miner_seed: [7u8; 32],
             miner_payout_address: default_payout_address([7u8; 32]),
             pow_bits: DEFAULT_GENESIS_POW_BITS,
+            chain_profile: ChainProfile::Dev,
             gossip_buffer: 1024,
+            min_tx_fee_per_weight: 25,
+            max_block_weight: 1_000_000,
+            mempool_max_weight: 4_000_000,
             supported_versions: vec![DEFAULT_VERSION_BINDING],
             p2p_addr: "0.0.0.0:9000".parse().expect("p2p socket"),
             seeds: vec![],
