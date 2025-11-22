@@ -2,7 +2,8 @@ use std::net::{SocketAddr, TcpListener};
 use std::time::Duration;
 
 use network::{
-    GossipMessage, GossipRouter, NatTraversalConfig, P2PService, PeerIdentity, RelayConfig,
+    GossipMessage, GossipRouter, NatTraversalConfig, P2PService, PeerIdentity, PeerStore,
+    PeerStoreConfig, RelayConfig,
 };
 use node::NodeService;
 use node::config::NodeConfig;
@@ -163,12 +164,16 @@ async fn p2p_nodes_propagate_mined_block() {
     config_b.p2p_addr = p2p_addr_b;
     config_b.seeds = vec![p2p_addr_a.to_string()];
 
+    let peer_store_a = PeerStore::new(PeerStoreConfig::with_path(dir_a.path().join("peers.bin")));
+    let peer_store_b = PeerStore::new(PeerStoreConfig::with_path(dir_b.path().join("peers.bin")));
+
     let p2p_a = P2PService::new(
         PeerIdentity::generate(b"p2p-node-a"),
         config_a.p2p_addr,
         vec![],
         gossip_handle_a.clone(),
         config_a.max_peers,
+        peer_store_a,
         RelayConfig::default(),
         NatTraversalConfig::disabled(config_a.p2p_addr),
     );
@@ -178,6 +183,7 @@ async fn p2p_nodes_propagate_mined_block() {
         config_b.seeds.clone(),
         gossip_handle_b.clone(),
         config_b.max_peers,
+        peer_store_b,
         RelayConfig::default(),
         NatTraversalConfig::disabled(config_b.p2p_addr),
     );
