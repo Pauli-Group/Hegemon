@@ -5,6 +5,7 @@ pub mod nullifier;
 pub mod pow;
 pub mod proof;
 pub mod reward;
+pub mod substrate;
 pub mod types;
 pub mod validator;
 pub mod version_policy;
@@ -19,6 +20,7 @@ pub use protocol_versioning::{
     CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CircuitVersion, CryptoSuiteId,
     DEFAULT_VERSION_BINDING, VersionBinding, VersionMatrix,
 };
+pub use substrate::{BlockOrigin, ImportReceipt, import_pow_block};
 pub use types::{
     BalanceTag, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, FeeCommitment, Nullifier,
     StarkCommitment, SupplyDigest, Transaction, VersionCommitment,
