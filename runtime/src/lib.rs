@@ -6,7 +6,8 @@ pub use frame_support::{construct_runtime, parameter_types};
 use frame_system as system;
 use pallet_attestations::AttestationSettlementEvent;
 use sp_core::H256;
-use sp_runtime::traits::{BlakeTwo256, IdentityLookup};
+use sp_runtime::generic::Era;
+use sp_runtime::traits::{BlakeTwo256, IdentityLookup, SaturatedConversion, Verify};
 use sp_runtime::{testing::Header, MultiSignature};
 use sp_std::vec::Vec;
 
@@ -17,6 +18,19 @@ pub type Balance = u128;
 pub type Index = u64;
 pub type Hash = H256;
 pub type Moment = u64;
+
+type SignedExtra = (
+    frame_system::CheckNonZeroSender<Runtime>,
+    frame_system::CheckSpecVersion<Runtime>,
+    frame_system::CheckTxVersion<Runtime>,
+    frame_system::CheckGenesis<Runtime>,
+    frame_system::CheckEra<Runtime>,
+    frame_system::CheckNonce<Runtime>,
+    frame_system::CheckWeight<Runtime>,
+    pallet_transaction_payment::ChargeTransactionPayment<Runtime>,
+);
+
+type SignedPayload = sp_runtime::generic::SignedPayload<RuntimeCall, SignedExtra>;
 
 pub type Block = frame_system::mocking::MockBlock<Runtime>;
 
@@ -74,6 +88,59 @@ impl pallet_timestamp::Config for Runtime {
     type OnTimestampSet = ();
     type MinimumPeriod = MinimumPeriod;
     type WeightInfo = ();
+}
+
+impl frame_system::offchain::SigningTypes for Runtime {
+    type Public = <Signature as Verify>::Signer;
+    type Signature = Signature;
+}
+
+impl<LocalCall> frame_system::offchain::SendTransactionTypes<LocalCall> for Runtime
+where
+    RuntimeCall: From<LocalCall>,
+{
+    type OverarchingCall = RuntimeCall;
+    type Extrinsic = system::mocking::MockUncheckedExtrinsic<Runtime>;
+}
+
+impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Runtime
+where
+    RuntimeCall: From<LocalCall>,
+{
+    fn create_transaction<
+        C: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>,
+    >(
+        call: RuntimeCall,
+        public: <Signature as Verify>::Signer,
+        account: AccountId,
+        nonce: Index,
+    ) -> Option<(
+        RuntimeCall,
+        <system::mocking::MockUncheckedExtrinsic<Runtime> as sp_runtime::traits::Extrinsic>::SignaturePayload,
+    )>{
+        let tip = 0;
+        let period = 64;
+        let current_block = System::block_number()
+            .saturated_into::<u64>()
+            .saturating_sub(1);
+        let era = Era::mortal(period, current_block);
+        let extra: SignedExtra = (
+            frame_system::CheckNonZeroSender::<Runtime>::new(),
+            frame_system::CheckSpecVersion::<Runtime>::new(),
+            frame_system::CheckTxVersion::<Runtime>::new(),
+            frame_system::CheckGenesis::<Runtime>::new(),
+            frame_system::CheckEra::<Runtime>::from(era),
+            frame_system::CheckNonce::<Runtime>::from(nonce),
+            frame_system::CheckWeight::<Runtime>::new(),
+            pallet_transaction_payment::ChargeTransactionPayment::<Runtime>::from(tip),
+        );
+
+        let raw_payload = SignedPayload::new(call, extra).ok()?;
+        let signature = raw_payload.using_encoded(|payload| C::sign(payload, public.clone()))?;
+        let address = <Runtime as system::Config>::Lookup::unlookup(account);
+        let (call, extra, _) = raw_payload.deconstruct();
+        Some((call, (address, signature, extra)))
+    }
 }
 
 impl pallet_session::Config for Runtime {
@@ -194,13 +261,35 @@ impl pallet_treasury::Config for Runtime {
     type Asset = (); // unused
 }
 
+parameter_types! {
+    pub const MaxFeeds: u32 = 16;
+    pub const MaxFeedName: u32 = 64;
+    pub const MaxEndpoint: u32 = 128;
+    pub const MaxCommitmentSize: u32 = 256;
+    pub const MaxPendingIngestions: u32 = 8;
+    pub const FeedRegistrarRole: u32 = 7;
+    pub const FeedSubmitterCredential: u32 = 77;
+    pub const FeedVerifierRole: u32 = 8;
+}
+
 impl pallet_oracles::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
-    type AuthorityId = u64;
-    type MaxKeyLength = ConstU32<64>;
-    type MaxValueLength = ConstU32<128>;
-    type MaxKeysPerOracle = ConstU32<16>;
-    type GovernanceOrigin = frame_system::EnsureRoot<AccountId>;
+    type FeedId = u32;
+    type RoleId = u32;
+    type CredentialSchemaId = u32;
+    type IdentityTag = pallet_identity::pallet::IdentityTag<Runtime>;
+    type Identity = pallet_identity::Pallet<Runtime>;
+    type AttestationId = u32;
+    type OffchainIngestion = ();
+    type AttestationAuditor = ();
+    type FeedRegistrarRole = FeedRegistrarRole;
+    type FeedSubmitterCredential = FeedSubmitterCredential;
+    type FeedVerifierRole = FeedVerifierRole;
+    type MaxFeeds = MaxFeeds;
+    type MaxFeedName = MaxFeedName;
+    type MaxEndpoint = MaxEndpoint;
+    type MaxCommitmentSize = MaxCommitmentSize;
+    type MaxPendingIngestions = MaxPendingIngestions;
     type WeightInfo = ();
 }
 
