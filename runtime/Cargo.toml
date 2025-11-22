@@ -15,6 +15,10 @@ sp-io = { version = "34.0.0", default-features = false }
 sp-version = { version = "35.0.0", default-features = false }
 sp-api = { version = "39.0.0", default-features = false }
 sp-offchain = { version = "32.0.0", default-features = false }
+sp-application-crypto = { version = "34.0.0", default-features = false }
+
+crypto = { package = "synthetic-crypto", path = "../crypto", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive"], optional = true }
 
 frame-support = { version = "43.0.0", default-features = false }
 frame-system = { version = "43.0.0", default-features = false }
@@ -56,6 +60,7 @@ std = [
     "sp-version/std",
     "sp-api/std",
     "sp-offchain/std",
+    "sp-application-crypto/std",
     "frame-support/std",
     "frame-system/std",
     "frame-executive/std",
@@ -76,6 +81,8 @@ std = [
     "pallet-fee-model/std",
     "pallet-feature-flags/std",
     "pallet-observability/std",
+    "crypto/std",
+    "serde/std",
 ]
 
 runtime-benchmarks = [

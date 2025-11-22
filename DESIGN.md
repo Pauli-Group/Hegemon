@@ -34,7 +34,9 @@ are:
   ECIES ciphertexts Zcash uses today. Even though the spend circuit keeps Sapling’s “prove key knowledge inside the ZK proof”
   model (so there are no per-input signatures), block headers, miner identities, and the note encryption layer all absorb PQ
   size bloat: ML-DSA-65 pk = 1,952 B vs ~32 B Ed25519, signatures = 3,293 B vs ~64 B, ML-KEM ciphertexts = 1,088 B vs
-  ~80–100 B for Jubjub-based ECIES. Network/consensus plumbing must therefore expect materially larger payloads.
+  ~80–100 B for Jubjub-based ECIES. Runtime AccountIds hash PQ public keys with BLAKE2 into SS58-compatible 32-byte identifiers
+  so extrinsic signing and PoW seal verification share the same PQ scheme without changing address encoding. Network/consensus
+  plumbing must therefore expect materially larger payloads.
 * **Proof sizes and verification latency** – Trading Groth16/Halo2 for a transparent STARK stack removes the trusted setup but
   makes proofs much chunkier: tens of kilobytes with verifier runtimes in the tens of milliseconds, versus sub-kilobyte Groth16
   proofs with millisecond verification. The spend circuit, memo ciphertexts, and block propagation logic all need to budget for
