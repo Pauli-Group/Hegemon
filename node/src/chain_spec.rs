@@ -3,6 +3,7 @@ use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use serde::{Deserialize, Serialize};
 
 use crate::config::NodeConfig;
+use crate::telemetry::TelemetryPosture;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -23,6 +24,7 @@ pub struct ChainSpec {
     pub max_block_weight: u64,
     pub mempool_max_weight: u64,
     pub template_tx_limit: usize,
+    pub telemetry: TelemetryPosture,
 }
 
 pub fn chain_spec(profile: ChainProfile) -> ChainSpec {
@@ -36,6 +38,11 @@ pub fn chain_spec(profile: ChainProfile) -> ChainSpec {
             max_block_weight: 750_000,
             mempool_max_weight: 3_000_000,
             template_tx_limit: 256,
+            telemetry: TelemetryPosture {
+                tls_enabled: Some(false),
+                exposure_scope: Some("devnet".into()),
+                ..Default::default()
+            },
         },
         ChainProfile::Testnet => ChainSpec {
             name: "hegemon-testnet",
@@ -49,6 +56,11 @@ pub fn chain_spec(profile: ChainProfile) -> ChainSpec {
             max_block_weight: 1_000_000,
             mempool_max_weight: 4_000_000,
             template_tx_limit: 512,
+            telemetry: TelemetryPosture {
+                tls_enabled: Some(true),
+                exposure_scope: Some("testnet".into()),
+                ..Default::default()
+            },
         },
     }
 }
@@ -63,5 +75,6 @@ impl ChainSpec {
         config.max_block_weight = self.max_block_weight;
         config.mempool_max_weight = self.mempool_max_weight;
         config.template_tx_limit = self.template_tx_limit;
+        config.telemetry = self.telemetry.clone();
     }
 }
