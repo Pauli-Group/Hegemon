@@ -5,6 +5,7 @@ pub use pallet::*;
 use blake3::Hasher as Blake3Hasher;
 use codec::{Decode, DecodeWithMemTracking, Encode};
 use frame_support::pallet_prelude::*;
+use frame_support::traits::{tokens::currency::Currency, ExistenceRequirement};
 use frame_support::traits::{EnsureOrigin, StorageVersion};
 use frame_system::offchain::{
     AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer, SubmitTransaction,
@@ -95,6 +96,18 @@ pub struct StateChannelCommitment<AccountId, Hash, BlockNumber> {
     pub escalated: bool,
 }
 
+#[derive(
+    Encode, Decode, DecodeWithMemTracking, Clone, Copy, Eq, PartialEq, RuntimeDebug, TypeInfo,
+)]
+pub enum PayoutReason {
+    BatchSubmitted,
+    ChannelCommitted,
+    DisputeResolved,
+}
+
+pub type BalanceOf<T> =
+    <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+
 pub type InstructionRecord<T> = Instruction<
     <T as frame_system::Config>::AccountId,
     <T as Config>::AssetId,
@@ -111,7 +124,7 @@ pub type StateChannelRecord<T> = StateChannelCommitment<
     BlockNumberFor<T>,
 >;
 
-pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(2);
+pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(3);
 
 pub trait ProofVerifier<Hash> {
     fn verify(
@@ -151,7 +164,9 @@ pub mod pallet {
         type AssetId: Parameter + Member + Copy + MaxEncodedLen;
         type Balance: Parameter + Member + AtLeast32BitUnsigned + Default + MaxEncodedLen + Copy;
         type VerificationKeyId: Parameter + Member + MaxEncodedLen + Copy + Default;
-        type GovernanceOrigin: EnsureOrigin<Self::RuntimeOrigin>;
+        type CouncilOrigin: EnsureOrigin<Self::RuntimeOrigin>;
+        type ReferendaOrigin: EnsureOrigin<Self::RuntimeOrigin>;
+        type Currency: Currency<Self::AccountId>;
         type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
         type ProofVerifier: ProofVerifier<Self::Hash>;
         type WeightInfo: WeightInfo;
@@ -172,6 +187,10 @@ pub mod pallet {
         type MaxVerificationKeySize: Get<u32>;
         #[pallet::constant]
         type DefaultVerificationKey: Get<Self::VerificationKeyId>;
+        #[pallet::constant]
+        type MaxPendingPayouts: Get<u32>;
+        #[pallet::constant]
+        type ValidatorReward: Get<BalanceOf<Self>>;
     }
 
     #[pallet::storage]
@@ -223,6 +242,14 @@ pub mod pallet {
     pub type StateChannels<T: Config> =
         StorageMap<_, Blake2_128Concat, T::Hash, StateChannelRecord<T>>;
 
+    #[pallet::storage]
+    #[pallet::getter(fn pending_payouts)]
+    pub type PendingPayouts<T: Config> = StorageValue<
+        _,
+        BoundedVec<(T::AccountId, BalanceOf<T>, PayoutReason), T::MaxPendingPayouts>,
+        ValueQuery,
+    >;
+
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
@@ -261,6 +288,24 @@ pub mod pallet {
         BatchRolledBack {
             id: u64,
         },
+        BatchDisputeStarted {
+            id: u64,
+            who: T::AccountId,
+        },
+        RewardQueued {
+            account: T::AccountId,
+            amount: BalanceOf<T>,
+            reason: PayoutReason,
+        },
+        RewardPaid {
+            account: T::AccountId,
+            amount: BalanceOf<T>,
+            reason: PayoutReason,
+        },
+        StorageMigrated {
+            from: u16,
+            to: u16,
+        },
     }
 
     #[pallet::error]
@@ -276,6 +321,7 @@ pub mod pallet {
         DisputeInactive,
         DisputeActive,
         Escalated,
+        PayoutQueueFull,
     }
 
     #[pallet::hooks]
@@ -312,13 +358,49 @@ pub mod pallet {
 
         fn on_runtime_upgrade() -> Weight {
             let on_chain = Pallet::<T>::on_chain_storage_version();
+            if on_chain > STORAGE_VERSION {
+                log::warn!(
+                    target: "settlement",
+                    "Skipping migration: on-chain storage version {:?} is newer than code {:?}",
+                    on_chain,
+                    STORAGE_VERSION
+                );
+                return Weight::zero();
+            }
+
             if on_chain < STORAGE_VERSION {
                 VerifierParameters::<T>::put(T::DefaultVerifierParams::get());
                 STORAGE_VERSION.put::<Pallet<T>>();
+                Pallet::<T>::deposit_event(Event::StorageMigrated {
+                    from: on_chain.into(),
+                    to: STORAGE_VERSION.into(),
+                });
                 T::WeightInfo::migrate()
             } else {
                 Weight::zero()
             }
+        }
+
+        fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
+            let mut payouts = PendingPayouts::<T>::take();
+            let mut weight = Weight::zero();
+            for (account, amount, reason) in payouts.drain(..) {
+                let _ = T::Currency::transfer(
+                    &pallet_treasury::Pallet::<T>::account_id(),
+                    &account,
+                    amount,
+                    ExistenceRequirement::AllowDeath,
+                );
+                weight = weight.saturating_add(Weight::from_parts(10_000, 0));
+                Pallet::<T>::deposit_event(Event::RewardPaid {
+                    account,
+                    amount,
+                    reason,
+                });
+            }
+
+            PendingPayouts::<T>::put(payouts);
+            weight
         }
     }
 
@@ -422,6 +504,12 @@ pub mod pallet {
                 queue.retain(|instr_id| !instructions.contains(instr_id));
             });
 
+            Self::queue_reward(
+                &who,
+                T::ValidatorReward::get(),
+                PayoutReason::BatchSubmitted,
+            )?;
+
             Self::deposit_event(Event::BatchSubmitted { id, who });
             Ok(())
         }
@@ -443,7 +531,7 @@ pub mod pallet {
             origin: OriginFor<T>,
             params: StarkVerifierParams,
         ) -> DispatchResult {
-            T::GovernanceOrigin::ensure_origin(origin)?;
+            Self::ensure_governance_origin(origin)?;
             VerifierParameters::<T>::put(params.clone());
             Self::deposit_event(Event::VerifierParamsUpdated { params });
             Ok(())
@@ -471,6 +559,11 @@ pub mod pallet {
                 escalated: false,
             };
             StateChannels::<T>::insert(channel_id, record);
+            Self::queue_reward(
+                &who,
+                T::ValidatorReward::get(),
+                PayoutReason::ChannelCommitted,
+            )?;
             Self::deposit_event(Event::StateChannelCommitted {
                 channel: channel_id,
                 version,
@@ -493,9 +586,23 @@ pub mod pallet {
             Ok(())
         }
 
+        #[pallet::weight(T::WeightInfo::dispute_state_channel())]
+        pub fn flag_batch_dispute(origin: OriginFor<T>, id: u64) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+            BatchCommitments::<T>::try_mutate(id, |maybe_batch| -> Result<(), Error<T>> {
+                let batch = maybe_batch.as_mut().ok_or(Error::<T>::BatchMissing)?;
+                ensure!(!batch.disputed, Error::<T>::DisputeActive);
+                batch.disputed = true;
+                Ok(())
+            })?;
+
+            Self::deposit_event(Event::BatchDisputeStarted { id, who });
+            Ok(())
+        }
+
         #[pallet::weight(T::WeightInfo::escalate_dispute())]
         pub fn escalate_dispute(origin: OriginFor<T>, channel_id: T::Hash) -> DispatchResult {
-            T::GovernanceOrigin::ensure_origin(origin)?;
+            Self::ensure_governance_origin(origin)?;
             StateChannels::<T>::try_mutate(channel_id, |maybe_channel| -> Result<(), Error<T>> {
                 let channel = maybe_channel.as_mut().ok_or(Error::<T>::UnknownChannel)?;
                 ensure!(channel.disputed, Error::<T>::DisputeInactive);
@@ -516,7 +623,7 @@ pub mod pallet {
             channel_id: Option<T::Hash>,
             rollback: bool,
         ) -> DispatchResult {
-            T::GovernanceOrigin::ensure_origin(origin)?;
+            Self::ensure_governance_origin(origin)?;
 
             if let Some(id) = batch_id {
                 BatchCommitments::<T>::try_mutate(id, |maybe_batch| -> Result<(), Error<T>> {
@@ -549,7 +656,7 @@ pub mod pallet {
 
         #[pallet::weight(T::WeightInfo::rollback_batch())]
         pub fn rollback_batch(origin: OriginFor<T>, id: u64) -> DispatchResult {
-            T::GovernanceOrigin::ensure_origin(origin)?;
+            Self::ensure_governance_origin(origin)?;
             BatchCommitments::<T>::try_mutate_exists(id, |maybe_batch| -> Result<(), Error<T>> {
                 let batch = maybe_batch.as_mut().ok_or(Error::<T>::BatchMissing)?;
                 Self::rollback_batch_internal(id, batch)?;
@@ -562,6 +669,35 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
+        fn ensure_governance_origin(origin: OriginFor<T>) -> DispatchResult {
+            if T::CouncilOrigin::try_origin(origin.clone()).is_ok()
+                || T::ReferendaOrigin::try_origin(origin).is_ok()
+            {
+                Ok(())
+            } else {
+                Err(DispatchError::BadOrigin)
+            }
+        }
+
+        fn queue_reward(
+            account: &T::AccountId,
+            amount: BalanceOf<T>,
+            reason: PayoutReason,
+        ) -> Result<(), Error<T>> {
+            PendingPayouts::<T>::try_mutate(|payouts| {
+                payouts
+                    .try_push((account.clone(), amount, reason))
+                    .map_err(|_| Error::<T>::PayoutQueueFull)
+            })?;
+
+            Self::deposit_event(Event::RewardQueued {
+                account: account.clone(),
+                amount,
+                reason,
+            });
+            Ok(())
+        }
+
         fn rollback_batch_internal(id: u64, batch: &BatchRecord<T>) -> Result<(), Error<T>> {
             PendingQueue::<T>::mutate(|queue| {
                 for instr in batch.instructions.iter() {
