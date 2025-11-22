@@ -6,7 +6,7 @@ use crypto::hashes::sha256;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
@@ -71,13 +71,16 @@ pub enum WireMessage {
     Coordinate(CoordinationMessage),
 }
 
-pub struct Connection {
-    stream: Framed<TcpStream, LengthDelimitedCodec>,
+pub struct Connection<S> {
+    stream: Framed<S, LengthDelimitedCodec>,
     channel: Option<SecureChannel>,
 }
 
-impl Connection {
-    pub fn new(socket: TcpStream) -> Self {
+impl<S> Connection<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    pub fn new(socket: S) -> Self {
         Self {
             stream: Framed::new(socket, LengthDelimitedCodec::new()),
             channel: None,
@@ -191,7 +194,9 @@ impl Connection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::duplex;
     use tokio::net::TcpListener;
+    use tokio::net::TcpStream;
     use tokio::task;
 
     #[test]
@@ -241,6 +246,63 @@ mod tests {
         match responder_conn.recv().await.expect("receive message") {
             Some(WireMessage::Ping) => {}
             other => panic!("unexpected message: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn pq_handshake_works_over_mock_streams() {
+        let initiator_identity = PeerIdentity::generate(b"mock-initiator");
+        let responder_identity = PeerIdentity::generate(b"mock-responder");
+        let (initiator_stream, responder_stream) = duplex(2048);
+
+        let (initiator_peer, responder_peer) = tokio::try_join!(
+            async {
+                let mut conn = Connection::new(initiator_stream);
+                conn.handshake_initiator(&initiator_identity).await
+            },
+            async {
+                let mut conn = Connection::new(responder_stream);
+                conn.handshake_responder(&responder_identity).await
+            }
+        )
+        .expect("handshakes should succeed");
+
+        assert_eq!(initiator_peer, responder_identity.peer_id());
+        assert_eq!(responder_peer, initiator_identity.peer_id());
+    }
+
+    #[tokio::test]
+    async fn encrypted_frames_round_trip_after_handshake() {
+        let initiator_identity = PeerIdentity::generate(b"encrypted-initiator");
+        let responder_identity = PeerIdentity::generate(b"encrypted-responder");
+        let (initiator_stream, responder_stream) = duplex(4096);
+
+        let mut initiator_conn = Connection::new(initiator_stream);
+        let mut responder_conn = Connection::new(responder_stream);
+
+        tokio::try_join!(
+            initiator_conn.handshake_initiator(&initiator_identity),
+            responder_conn.handshake_responder(&responder_identity)
+        )
+        .expect("handshakes should succeed");
+
+        initiator_conn
+            .send(WireMessage::Ping)
+            .await
+            .expect("encrypted ping send");
+        responder_conn
+            .send(WireMessage::Pong)
+            .await
+            .expect("encrypted pong send");
+
+        match responder_conn.recv().await.expect("responder decrypt") {
+            Some(WireMessage::Ping) => {}
+            other => panic!("expected ping, got {:?}", other),
+        }
+
+        match initiator_conn.recv().await.expect("initiator decrypt") {
+            Some(WireMessage::Pong) => {}
+            other => panic!("expected pong, got {:?}", other),
         }
     }
 }
