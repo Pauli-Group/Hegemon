@@ -825,14 +825,13 @@ mod tests {
     use super::*;
     use crate::GossipRouter;
     use crate::peer_store::PeerStoreConfig;
-    use rand::Rng;
+    use rand::random;
     use std::thread::sleep;
     use std::time::Duration as StdDuration;
 
     fn temp_store(tag: &str) -> PeerStore {
         let mut path = std::env::temp_dir();
-        let mut rng = rand::thread_rng();
-        path.push(format!("p2p_service_store_{}_{}.bin", tag, rng.gen::<u64>()));
+        path.push(format!("p2p_service_store_{}_{}.bin", tag, random::<u64>()));
         PeerStore::new(PeerStoreConfig::with_path(path))
     }
 

@@ -23,3 +23,6 @@ members = [
 ]
 resolver = "2"
 
+[workspace.dependencies]
+pallet-timestamp = { version = "42.0.0", default-features = false }
+
