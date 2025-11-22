@@ -5,7 +5,8 @@ pub use pallet::*;
 use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::dispatch::DispatchResult;
 use frame_support::pallet_prelude::*;
-use frame_support::traits::StorageVersion;
+use frame_support::traits::tokens::currency::Currency;
+use frame_support::traits::{ExistenceRequirement, StorageVersion};
 use frame_support::weights::Weight;
 use frame_system::offchain::SubmitTransaction;
 use frame_system::pallet_prelude::BlockNumberFor;
@@ -97,6 +98,15 @@ impl<T: Config> CommitmentRecord<T> {
     }
 }
 
+#[derive(Clone, Copy, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+pub enum RewardReason {
+    OracleSubmission,
+    SubmissionVerification,
+}
+
+pub type BalanceOf<T> =
+    <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+
 #[derive(Clone, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
 #[scale_info(skip_type_params(T))]
 pub struct FeedDetails<T: Config> {
@@ -132,7 +142,7 @@ pub mod pallet {
     use super::*;
     use frame_system::pallet_prelude::*;
 
-    pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+    pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(2);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
@@ -169,6 +179,13 @@ pub mod pallet {
         type MaxEndpoint: Get<u32> + Clone + TypeInfo + PartialEq + Eq;
         type MaxCommitmentSize: Get<u32> + Clone + TypeInfo + PartialEq + Eq;
         type MaxPendingIngestions: Get<u32> + Clone + TypeInfo + PartialEq + Eq;
+        type Currency: Currency<Self::AccountId>;
+        #[pallet::constant]
+        type MaxPendingRewards: Get<u32>;
+        #[pallet::constant]
+        type OracleReward: Get<BalanceOf<Self>>;
+        #[pallet::constant]
+        type ValidatorReward: Get<BalanceOf<Self>>;
         type WeightInfo: WeightInfo;
     }
 
@@ -189,6 +206,14 @@ pub mod pallet {
     #[pallet::getter(fn pending_ingestions)]
     pub type PendingIngestions<T: Config> =
         StorageValue<_, BoundedVec<T::FeedId, T::MaxPendingIngestions>, ValueQuery>;
+
+    #[pallet::storage]
+    #[pallet::getter(fn pending_rewards)]
+    pub type PendingRewards<T: Config> = StorageValue<
+        _,
+        BoundedVec<(T::AccountId, BalanceOf<T>, RewardReason), T::MaxPendingRewards>,
+        ValueQuery,
+    >;
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -213,6 +238,20 @@ pub mod pallet {
         IngestionDispatched {
             feed_id: T::FeedId,
         },
+        RewardQueued {
+            account: T::AccountId,
+            amount: BalanceOf<T>,
+            reason: RewardReason,
+        },
+        RewardPaid {
+            account: T::AccountId,
+            amount: BalanceOf<T>,
+            reason: RewardReason,
+        },
+        StorageMigrated {
+            from: u16,
+            to: u16,
+        },
     }
 
     #[pallet::error]
@@ -225,14 +264,29 @@ pub mod pallet {
         SubmissionTooSoon,
         MissingCommitment,
         PendingQueueFull,
+        RewardQueueFull,
     }
 
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
         fn on_runtime_upgrade() -> Weight {
             let on_chain = Pallet::<T>::on_chain_storage_version();
+            if on_chain > STORAGE_VERSION {
+                log::warn!(
+                    target: "oracles",
+                    "Skipping migration: on-chain storage version {:?} is newer than code {:?}",
+                    on_chain,
+                    STORAGE_VERSION
+                );
+                return Weight::zero();
+            }
+
             if on_chain < STORAGE_VERSION {
                 STORAGE_VERSION.put::<Pallet<T>>();
+                Pallet::<T>::deposit_event(Event::StorageMigrated {
+                    from: on_chain.into(),
+                    to: STORAGE_VERSION.into(),
+                });
                 T::WeightInfo::migrate()
             } else {
                 Weight::zero()
@@ -265,6 +319,23 @@ pub mod pallet {
             }
 
             PendingIngestions::<T>::put(scheduled);
+            let mut rewards = PendingRewards::<T>::take();
+            for (account, amount, reason) in rewards.drain(..) {
+                let _ = T::Currency::transfer(
+                    &pallet_treasury::Pallet::<T>::account_id(),
+                    &account,
+                    amount,
+                    ExistenceRequirement::AllowDeath,
+                );
+                weight = weight.saturating_add(Weight::from_parts(10_000, 0));
+                <Pallet<T>>::deposit_event(Event::RewardPaid {
+                    account,
+                    amount,
+                    reason,
+                });
+            }
+
+            PendingRewards::<T>::put(rewards);
             weight
         }
 
@@ -401,6 +472,7 @@ pub mod pallet {
                 T::AttestationAuditor::record(&feed_id, attestation, &who);
             }
 
+            Self::queue_reward(&who, T::OracleReward::get(), RewardReason::OracleSubmission)?;
             Self::deposit_event(Event::CommitmentSubmitted {
                 feed_id,
                 submitter: who,
@@ -455,7 +527,33 @@ pub mod pallet {
             })?;
 
             let verifier = verifier_account.expect("verifier must be set; qed");
+            Self::queue_reward(
+                &verifier,
+                T::ValidatorReward::get(),
+                RewardReason::SubmissionVerification,
+            )?;
             Self::deposit_event(Event::SubmissionVerified { feed_id, verifier });
+            Ok(())
+        }
+    }
+
+    impl<T: Config> Pallet<T> {
+        fn queue_reward(
+            account: &T::AccountId,
+            amount: BalanceOf<T>,
+            reason: RewardReason,
+        ) -> Result<(), Error<T>> {
+            PendingRewards::<T>::try_mutate(|rewards| {
+                rewards
+                    .try_push((account.clone(), amount, reason))
+                    .map_err(|_| Error::<T>::RewardQueueFull)
+            })?;
+
+            <Pallet<T>>::deposit_event(Event::RewardQueued {
+                account: account.clone(),
+                amount,
+                reason,
+            });
             Ok(())
         }
     }

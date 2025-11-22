@@ -1,6 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use frame_support::traits::{ConstU128, ConstU32, ConstU64, Currency};
+use frame_support::traits::{ConstU128, ConstU32, ConstU64, Currency, EitherOfDiverse};
 use frame_support::BoundedVec;
 pub use frame_support::{construct_runtime, parameter_types};
 use frame_system as system;
@@ -221,6 +221,10 @@ impl pallet_collective::Config<pallet_collective::Instance1> for Runtime {
 }
 
 type CouncilCollective = pallet_collective::Instance1;
+type CouncilApprovalOrigin =
+    pallet_collective::EnsureProportionAtLeast<AccountId, CouncilCollective, 1, 2>;
+type ReferendaOrigin = frame_system::EnsureRoot<AccountId>;
+type CouncilOrReferendaOrigin = EitherOfDiverse<CouncilApprovalOrigin, ReferendaOrigin>;
 
 impl pallet_membership::Config<pallet_membership::Instance1> for Runtime {
     type RuntimeEvent = RuntimeEvent;
@@ -270,6 +274,9 @@ parameter_types! {
     pub const FeedRegistrarRole: u32 = 7;
     pub const FeedSubmitterCredential: u32 = 77;
     pub const FeedVerifierRole: u32 = 8;
+    pub const OracleReward: Balance = 10;
+    pub const ValidatorReward: Balance = 5;
+    pub const MaxPendingRewards: u32 = 32;
 }
 
 impl pallet_oracles::Config for Runtime {
@@ -290,6 +297,10 @@ impl pallet_oracles::Config for Runtime {
     type MaxEndpoint = MaxEndpoint;
     type MaxCommitmentSize = MaxCommitmentSize;
     type MaxPendingIngestions = MaxPendingIngestions;
+    type Currency = Balances;
+    type MaxPendingRewards = MaxPendingRewards;
+    type OracleReward = OracleReward;
+    type ValidatorReward = ValidatorReward;
     type WeightInfo = ();
 }
 
@@ -450,9 +461,16 @@ impl pallet_attestations::Config for Runtime {
     type MaxPendingEvents = MaxPendingEvents;
     type MaxVerificationKeySize = MaxVerificationKeySize;
     type AdminOrigin = frame_system::EnsureRoot<AccountId>;
+    type CouncilOrigin = CouncilApprovalOrigin;
+    type ReferendaOrigin = ReferendaOrigin;
     type SettlementBatchHook = RuntimeSettlementHook;
     type DefaultVerifierParams = DefaultAttestationVerifierParams;
     type WeightInfo = pallet_attestations::DefaultWeightInfo;
+}
+
+parameter_types! {
+    pub const MaxPendingPayouts: u32 = 32;
+    pub const SettlementValidatorReward: Balance = 10;
 }
 
 parameter_types! {
@@ -498,7 +516,9 @@ impl pallet_settlement::Config for Runtime {
     type AssetId = u32;
     type Balance = Balance;
     type VerificationKeyId = u32;
-    type GovernanceOrigin = frame_system::EnsureRoot<AccountId>;
+    type CouncilOrigin = CouncilApprovalOrigin;
+    type ReferendaOrigin = ReferendaOrigin;
+    type Currency = Balances;
     type AuthorityId = pallet_settlement::crypto::Public;
     type ProofVerifier = pallet_settlement::AcceptAllProofs;
     type DefaultVerifierParams = DefaultSettlementVerifierParams;
@@ -511,6 +531,8 @@ impl pallet_settlement::Config for Runtime {
     type MaxProofSize = MaxSettlementProof;
     type MaxVerificationKeySize = MaxVerificationKeySize;
     type DefaultVerificationKey = DefaultVerificationKey;
+    type MaxPendingPayouts = MaxPendingPayouts;
+    type ValidatorReward = SettlementValidatorReward;
 }
 
 parameter_types! {
