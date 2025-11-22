@@ -1,0 +1,26 @@
+[package]
+name = "pallet-identity"
+version = "0.1.0"
+edition = "2021"
+authors = ["Synthetic Hegemonic Currency Contributors"]
+description = "Identity and credential management pallet with role checks and external attestation hooks."
+license = "Apache-2.0"
+
+[dependencies]
+frame-support = { version = "43.0.0", default-features = false }
+frame-system = { version = "43.0.0", default-features = false }
+sp-runtime = { version = "44.0.0", default-features = false }
+sp-std = { version = "14.0.0", default-features = false }
+parity-scale-codec = { version = "3", default-features = false, features = ["derive"] }
+scale-info = { version = "2", default-features = false, features = ["derive"] }
+
+[features]
+default = ["std"]
+std = [
+    "frame-support/std",
+    "frame-system/std",
+    "sp-runtime/std",
+    "sp-std/std",
+    "parity-scale-codec/std",
+    "scale-info/std",
+]
