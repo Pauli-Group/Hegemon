@@ -5,8 +5,7 @@ pub mod chain_spec;
 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::traits::{
-    ConstU128, ConstU32, ConstU64, ConstU8, Currency as CurrencyTrait, EitherOfDiverse, TypedGet,
-    VariantCount,
+    ConstU128, ConstU32, ConstU64, ConstU8, Currency as CurrencyTrait, EitherOfDiverse, VariantCount,
 };
 use frame_support::BoundedVec;
 use frame_support::weights::IdentityFee;
@@ -16,15 +15,13 @@ use pallet_attestations::AttestationSettlementEvent;
 use scale_info::TypeInfo;
 use sp_application_crypto::RuntimeAppPublic;
 use sp_core::offchain::StorageKind;
-use sp_core::{blake2_256, H256, U256};
+use sp_core::{blake2_256, H256};
 use sp_runtime::generic::Era;
 use sp_runtime::traits::{
-    BlakeTwo256, Convert, Hash, IdentifyAccount, IdentityLookup, Lazy, SaturatedConversion,
-    StaticLookup, Verify,
+    BlakeTwo256, Convert, Hash as HashT, IdentifyAccount, IdentityLookup, Lazy, SaturatedConversion,
+    Verify,
 };
-use sp_runtime::{
-    generic, AccountId32, DispatchError, FixedU128, MultiAddress, Permill, RuntimeDebug,
-};
+use sp_runtime::{generic, AccountId32, DispatchError, FixedU128, MultiAddress, Permill, RuntimeDebug};
 use sp_std::vec::Vec;
 
 mod pq_crypto {
@@ -90,6 +87,35 @@ mod pq_crypto {
         }
     }
 
+    #[cfg(feature = "std")]
+    impl serde::Serialize for Public {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.serialize_bytes(self.as_bytes())
+        }
+    }
+
+    #[cfg(feature = "std")]
+    impl<'de> serde::Deserialize<'de> for Public {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            let bytes: Vec<u8> = serde::Deserialize::deserialize(deserializer)?;
+            match bytes.len() {
+                ML_DSA_PUBLIC_KEY_LEN => {
+                    let arr: [u8; ML_DSA_PUBLIC_KEY_LEN] = bytes
+                        .try_into()
+                        .map_err(|_| serde::de::Error::custom("ml-dsa length"))?;
+                    Ok(Public::MlDsa(arr))
+                }
+                SLH_DSA_PUBLIC_KEY_LEN => {
+                    let arr: [u8; SLH_DSA_PUBLIC_KEY_LEN] = bytes
+                        .try_into()
+                        .map_err(|_| serde::de::Error::custom("slh-dsa length"))?;
+                    Ok(Public::SlhDsa(arr))
+                }
+                _ => Err(serde::de::Error::custom("unexpected key length")),
+            }
+        }
+    }
+
     impl Public {
         pub fn as_bytes(&self) -> &[u8] {
             match self {
@@ -115,7 +141,7 @@ mod pq_crypto {
         type AccountId = AccountId32;
 
         fn into_account(self) -> Self::AccountId {
-            let hash = BlakeTwo256::hash_of(self.as_bytes());
+            let hash = BlakeTwo256::hash_of(&self);
             AccountId32::new(hash.into())
         }
     }
@@ -327,23 +353,81 @@ impl From<pallet_session::HoldReason> for HoldReason {
     }
 }
 
-pub type MaxDidDocLength = ConstU32<128>;
-pub type MaxSchemaLength = ConstU32<128>;
-pub type MaxProofSize = ConstU32<64>;
-pub type MaxIdentityTags = ConstU32<8>;
-pub type MaxTagLength = ConstU32<32>;
-pub type MaxEd25519KeyBytes = ConstU32<32>;
-pub type MaxPqKeyBytes = ConstU32<4000>;
-pub type MaxMetadataLength = ConstU32<128>;
-pub type MaxTagsPerAsset = ConstU32<8>;
-pub type MaxProvenanceRefs = ConstU32<4>;
-pub type MaxFeeds = ConstU32<16>;
-pub type MaxFeedName = ConstU32<64>;
-pub type MaxEndpoint = ConstU32<128>;
-pub type MaxCommitmentSize = ConstU32<256>;
-pub type MaxPendingIngestions = ConstU32<8>;
-pub type MaxPendingRewards = ConstU32<32>;
-pub type MaxPowValidators = ConstU32<256>;
+parameter_types! {
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxDidDocLength: u32 = 128;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxSchemaLength: u32 = 128;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxProofSize: u32 = 64;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxIdentityTags: u32 = 8;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxTagLength: u32 = 32;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxEd25519KeyBytes: u32 = 32;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxPqKeyBytes: u32 = 4000;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxMetadataLength: u32 = 128;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxTagsPerAsset: u32 = 8;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxProvenanceRefs: u32 = 4;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxFeeds: u32 = 16;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxFeedName: u32 = 64;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxEndpoint: u32 = 128;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxCommitmentSize: u32 = 256;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxPendingIngestions: u32 = 8;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxPendingRewards: u32 = 32;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxPowValidators: u32 = 256;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxRootSize: u32 = 64;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxVerificationKeySize: u32 = 64;
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
+    pub const MaxPendingEvents: u32 = 8;
+}
+
+#[derive(
+    Clone,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    RuntimeDebug,
+    MaxEncodedLen,
+    TypeInfo,
+)]
+pub struct IssuerId(pub AccountId);
+
+impl Default for IssuerId {
+    fn default() -> Self {
+        IssuerId(AccountId::new([0u8; 32]))
+    }
+}
+
+impl From<AccountId> for IssuerId {
+    fn from(account: AccountId) -> Self {
+        IssuerId(account)
+    }
+}
+
+impl From<IssuerId> for AccountId {
+    fn from(value: IssuerId) -> Self {
+        value.0
+    }
+}
 
 pub struct AccountIdAsValidatorId;
 impl Convert<AccountId, Option<AccountId>> for AccountIdAsValidatorId {
@@ -408,6 +492,15 @@ impl frame_support::traits::TypedGet for TreasurySpendLimit {
     }
 }
 
+pub struct RootAccount;
+impl frame_support::traits::TypedGet for RootAccount {
+    type Type = AccountId;
+
+    fn get() -> Self::Type {
+        AccountId::new([0u8; 32])
+    }
+}
+
 pub struct RuntimeTreasurySpendFunds;
 impl pallet_treasury::SpendFunds<Runtime> for RuntimeTreasurySpendFunds {
     fn spend_funds(
@@ -457,7 +550,7 @@ impl frame_support::traits::Get<frame_support::weights::Weight> for MaxCollectiv
 pub mod pow {
     use super::{Moment, PowDifficulty, PowFutureDrift, PowRetargetWindow, PowTargetBlockTime};
     use crate::MaxPowValidators;
-    use frame_support::{pallet_prelude::*, traits::Get, BoundedVec};
+    use frame_support::{pallet_prelude::*, BoundedVec};
     use frame_system::pallet_prelude::*;
     use sp_core::{H256, U256};
     use sp_staking::SessionIndex;
@@ -641,7 +734,7 @@ pub mod pow {
         fn note_validator(account: T::AccountId) {
             let _ = Validators::<T>::try_mutate(|vals| {
                 if !vals.contains(&account) {
-                    vals.try_push(account)?;
+                    let _ = vals.try_push(account);
                 }
                 Ok::<(), ()>(())
             });
@@ -955,7 +1048,7 @@ impl pallet_oracles::Config for Runtime {
     type MaxPendingRewards = MaxPendingRewards;
     type OracleReward = OracleReward;
     type ValidatorReward = ValidatorReward;
-    type WeightInfo = ();
+    type WeightInfo = pallet_oracles::DefaultWeightInfo;
 }
 
 parameter_types! {
@@ -1023,7 +1116,7 @@ impl pallet_identity::ExternalAttestation<AccountId, u32, u32> for RuntimeAttest
                 let event = AttestationSettlementEvent {
                     commitment_id: commitment,
                     stage: pallet_attestations::SettlementStage::Submitted,
-                    issuer: Some(issuer.clone()),
+                    issuer: Some(issuer.clone().into()),
                     dispute: pallet_attestations::DisputeStatus::None,
                     block_number: system::Pallet::<Runtime>::block_number(),
                 };
@@ -1063,7 +1156,7 @@ impl pallet_identity::Config for Runtime {
     type AuthorityId = Public;
     type CredentialSchemaId = u32;
     type RoleId = u32;
-    type AdminOrigin = frame_system::EnsureRoot<AccountId>;
+    type AdminOrigin = frame_system::EnsureRootWithSuccess<AccountId, RootAccount>;
     type ExternalAttestation = RuntimeAttestationBridge;
     type CredentialProofVerifier = RuntimeAttestationBridge;
     type MaxDidDocLength = MaxDidDocLength;
@@ -1076,14 +1169,10 @@ impl pallet_identity::Config for Runtime {
     type WeightInfo = ();
 }
 
-pub type MaxRootSize = ConstU32<64>;
-pub type MaxVerificationKeySize = ConstU32<64>;
-pub type MaxPendingEvents = ConstU32<8>;
-
 #[derive(Clone, Copy, Default)]
 pub struct RuntimeSettlementHook;
-impl pallet_attestations::SettlementBatchHook<u64, u64, BlockNumber> for RuntimeSettlementHook {
-    fn process(events: Vec<AttestationSettlementEvent<u64, u64, BlockNumber>>) {
+impl pallet_attestations::SettlementBatchHook<u64, IssuerId, BlockNumber> for RuntimeSettlementHook {
+    fn process(events: Vec<AttestationSettlementEvent<u64, IssuerId, BlockNumber>>) {
         for ev in events.into_iter() {
             if ev.stage == pallet_attestations::SettlementStage::RolledBack {
                 pallet_settlement::PendingQueue::<Runtime>::mutate(|queue| {
@@ -1101,7 +1190,7 @@ impl pallet_attestations::SettlementBatchHook<u64, u64, BlockNumber> for Runtime
 impl pallet_attestations::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type CommitmentId = u64;
-    type IssuerId = AccountId;
+    type IssuerId = IssuerId;
     type MaxRootSize = MaxRootSize;
     type MaxPendingEvents = MaxPendingEvents;
     type MaxVerificationKeySize = MaxVerificationKeySize;
@@ -1219,13 +1308,13 @@ impl pallet_fee_model::Config for Runtime {
 
 construct_runtime!(
     pub enum Runtime {
-        System: frame_system::{Pallet, Call, Config, Storage, Event<T>},
+        System: frame_system::{Pallet, Call, Config<T>, Storage, Event<T>},
         Timestamp: pallet_timestamp::{Pallet, Call, Storage, Inherent},
         Pow: pow::{Pallet, Call, Storage, Event<T>},
         Session: pallet_session::{Pallet, Call, Storage, Event<T>, Config<T>},
         Balances: pallet_balances::{Pallet, Call, Storage, Config<T>, Event<T>},
         TransactionPayment: pallet_transaction_payment::{Pallet, Storage, Event<T>},
-        Sudo: pallet_sudo::{Pallet, Call, Storage, Event<T>},
+        Sudo: pallet_sudo::{Pallet, Call, Storage, Event<T>, Config<T>},
         Council: pallet_collective::<Instance1>::{Pallet, Call, Storage, Origin<T>, Event<T>},
         CouncilMembership: pallet_membership::<Instance1>::{Pallet, Call, Storage, Event<T>},
         Treasury: pallet_treasury::{Pallet, Call, Storage, Event<T>},
@@ -1254,6 +1343,7 @@ mod tests {
         traits::{Hooks, StorageVersion},
         BoundedVec,
     };
+    use sp_core::U256;
 
     fn compact_to_target(bits: u32) -> Option<U256> {
         let exponent = bits >> 24;
