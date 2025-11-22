@@ -11,6 +11,8 @@ pub enum ChainProfile {
     Testnet,
 }
 
+/// Network profile tuned for PQ signing defaults (ML-DSA pk = 1,952 B, sig = 3,293 B)
+/// and the SS58 prefix used by the runtime's AccountId32 derivation from PQ public keys.
 #[derive(Clone, Debug)]
 pub struct ChainSpec {
     pub name: &'static str,

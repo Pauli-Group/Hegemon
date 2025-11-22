@@ -1,19 +1,273 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
+use codec::{Decode, Encode, MaxEncodedLen};
 use frame_support::traits::{ConstU128, ConstU32, ConstU64, Currency, EitherOfDiverse};
 use frame_support::BoundedVec;
 pub use frame_support::{construct_runtime, parameter_types};
 use frame_system as system;
 use pallet_attestations::AttestationSettlementEvent;
-use sp_core::{H256, U256};
+use scale_info::TypeInfo;
+use sp_application_crypto::RuntimeAppPublic;
+use sp_core::{blake2_256, H256, U256};
 use sp_runtime::generic::Era;
-use sp_runtime::traits::{BlakeTwo256, IdentityLookup, SaturatedConversion, Verify};
-use sp_runtime::{generic, MultiAddress, MultiSignature};
+use sp_runtime::traits::{
+    BlakeTwo256, IdentifyAccount, IdentityLookup, Lazy, SaturatedConversion, Verify,
+};
+use sp_runtime::{generic, AccountId32, MultiAddress};
 use sp_std::vec::Vec;
 
+mod pq_crypto {
+    use super::*;
+    use crypto::ml_dsa::{
+        MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature, ML_DSA_PUBLIC_KEY_LEN,
+        ML_DSA_SECRET_KEY_LEN, ML_DSA_SIGNATURE_LEN,
+    };
+    use crypto::slh_dsa::{
+        SlhDsaPublicKey, SlhDsaSecretKey, SlhDsaSignature, SLH_DSA_PUBLIC_KEY_LEN,
+        SLH_DSA_SECRET_KEY_LEN, SLH_DSA_SIGNATURE_LEN,
+    };
+    use crypto::traits::{SigningKey, VerifyKey};
+    use sp_core::crypto::KeyTypeId;
+    use sp_io::offchain::{self, StorageKind};
+    use sp_runtime::RuntimeDebug;
+
+    const KEY_LIST: &[u8] = b"pq:keys";
+    pub const PQ_KEY_TYPE: KeyTypeId = KeyTypeId(*b"pq00");
+
+    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+    #[derive(Clone, PartialEq, Eq, Encode, Decode, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+    pub enum Signature {
+        MlDsa([u8; ML_DSA_SIGNATURE_LEN]),
+        SlhDsa([u8; SLH_DSA_SIGNATURE_LEN]),
+    }
+
+    impl Signature {
+        pub fn as_bytes(&self) -> &[u8] {
+            match self {
+                Signature::MlDsa(bytes) => bytes,
+                Signature::SlhDsa(bytes) => bytes,
+            }
+        }
+    }
+
+    impl From<MlDsaSignature> for Signature {
+        fn from(sig: MlDsaSignature) -> Self {
+            Signature::MlDsa(sig.to_bytes())
+        }
+    }
+
+    impl From<SlhDsaSignature> for Signature {
+        fn from(sig: SlhDsaSignature) -> Self {
+            Signature::SlhDsa(sig.to_bytes())
+        }
+    }
+
+    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+    #[derive(Clone, PartialEq, Eq, Encode, Decode, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+    pub enum Public {
+        MlDsa([u8; ML_DSA_PUBLIC_KEY_LEN]),
+        SlhDsa([u8; SLH_DSA_PUBLIC_KEY_LEN]),
+    }
+
+    impl Default for Public {
+        fn default() -> Self {
+            Public::MlDsa([0u8; ML_DSA_PUBLIC_KEY_LEN])
+        }
+    }
+
+    impl Public {
+        pub fn as_bytes(&self) -> &[u8] {
+            match self {
+                Public::MlDsa(bytes) => bytes,
+                Public::SlhDsa(bytes) => bytes,
+            }
+        }
+    }
+
+    impl From<MlDsaPublicKey> for Public {
+        fn from(key: MlDsaPublicKey) -> Self {
+            Public::MlDsa(key.to_bytes().try_into().expect("ml-dsa pk length"))
+        }
+    }
+
+    impl From<SlhDsaPublicKey> for Public {
+        fn from(key: SlhDsaPublicKey) -> Self {
+            Public::SlhDsa(key.to_bytes().try_into().expect("slh-dsa pk length"))
+        }
+    }
+
+    impl IdentifyAccount for Public {
+        type AccountId = AccountId32;
+
+        fn into_account(&self) -> Self::AccountId {
+            let hash = BlakeTwo256::hash(self.as_bytes());
+            AccountId32::new(hash.into())
+        }
+    }
+
+    impl Verify for Signature {
+        type Signer = Public;
+
+        fn verify<L: Lazy<[u8]> + AsRef<[u8]>>(&self, msg: L, signer: &Self::Signer) -> bool {
+            match (self, signer) {
+                (Signature::MlDsa(sig), Public::MlDsa(pk)) => {
+                    let Ok(signature) = MlDsaSignature::from_bytes(sig) else {
+                        return false;
+                    };
+                    let Ok(public) = MlDsaPublicKey::from_bytes(pk) else {
+                        return false;
+                    };
+                    public.verify(msg.as_ref(), &signature).is_ok()
+                }
+                (Signature::SlhDsa(sig), Public::SlhDsa(pk)) => {
+                    let Ok(signature) = SlhDsaSignature::from_bytes(sig) else {
+                        return false;
+                    };
+                    let Ok(public) = SlhDsaPublicKey::from_bytes(pk) else {
+                        return false;
+                    };
+                    public.verify(msg.as_ref(), &signature).is_ok()
+                }
+                _ => false,
+            }
+        }
+    }
+
+    #[derive(Clone, PartialEq, Eq, Encode, Decode, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+    pub struct PqAppPublic(pub Public);
+
+    #[derive(Clone, PartialEq, Eq, Encode, Decode, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+    enum StoredSecret {
+        MlDsa([u8; ML_DSA_SECRET_KEY_LEN]),
+        SlhDsa([u8; SLH_DSA_SECRET_KEY_LEN]),
+    }
+
+    impl PqAppPublic {
+        fn secret_key(public: &Public) -> Vec<u8> {
+            let mut key = b"pq:sk".to_vec();
+            key.extend_from_slice(&blake2_256(public.as_bytes()));
+            key
+        }
+
+        fn load_secrets() -> Vec<Public> {
+            offchain::local_storage_get(StorageKind::PERSISTENT, KEY_LIST)
+                .and_then(|raw| Vec::<Public>::decode(&mut raw.as_slice()).ok())
+                .unwrap_or_default()
+        }
+
+        fn store_secrets(keys: &[Public]) {
+            if let Ok(encoded) = keys.encode() {
+                offchain::local_storage_set(StorageKind::PERSISTENT, KEY_LIST, &encoded);
+            }
+        }
+
+        fn store_secret(public: &Public, secret: StoredSecret) {
+            let key = Self::secret_key(public);
+            if let Ok(encoded) = secret.encode() {
+                offchain::local_storage_set(StorageKind::PERSISTENT, &key, &encoded);
+            }
+        }
+
+        fn load_secret(public: &Public) -> Option<StoredSecret> {
+            let key = Self::secret_key(public);
+            offchain::local_storage_get(StorageKind::PERSISTENT, &key)
+                .and_then(|raw| StoredSecret::decode(&mut raw.as_slice()).ok())
+        }
+    }
+
+    impl RuntimeAppPublic for PqAppPublic {
+        const ID: KeyTypeId = PQ_KEY_TYPE;
+
+        type Signature = Signature;
+
+        fn all() -> Vec<Self> {
+            Self::load_secrets().into_iter().map(PqAppPublic).collect()
+        }
+
+        fn generate_pair(seed: Option<Vec<u8>>) -> Self {
+            let seed_material = seed.unwrap_or_else(|| offchain::random_seed().to_vec());
+            let secret = MlDsaSecretKey::generate_deterministic(&seed_material);
+            let public = secret.verify_key();
+            let public: Public = public.into();
+            let stored = StoredSecret::MlDsa(secret.to_bytes().try_into().expect("ml-dsa sk len"));
+
+            let mut keys = Self::load_secrets();
+            if !keys.contains(&public) {
+                keys.push(public.clone());
+                Self::store_secrets(&keys);
+            }
+            Self::store_secret(&public, stored);
+            PqAppPublic(public)
+        }
+
+        fn sign<M: AsRef<[u8]>>(&self, msg: &M) -> Option<Self::Signature> {
+            let secret = Self::load_secret(&self.0)?;
+            match secret {
+                StoredSecret::MlDsa(bytes) => {
+                    let secret = MlDsaSecretKey::from_bytes(&bytes).ok()?;
+                    Some(secret.sign(msg.as_ref()).into())
+                }
+                StoredSecret::SlhDsa(bytes) => {
+                    let secret = SlhDsaSecretKey::from_bytes(&bytes).ok()?;
+                    Some(secret.sign(msg.as_ref()).into())
+                }
+            }
+        }
+
+        fn verify<M: AsRef<[u8]>>(&self, msg: &M, signature: &Self::Signature) -> bool {
+            signature.verify(msg.as_ref(), &self.0)
+        }
+
+        fn to_raw_vec(&self) -> Vec<u8> {
+            self.0.as_bytes().to_vec()
+        }
+    }
+
+    impl From<Public> for PqAppPublic {
+        fn from(value: Public) -> Self {
+            PqAppPublic(value)
+        }
+    }
+
+    impl From<PqAppPublic> for Public {
+        fn from(value: PqAppPublic) -> Self {
+            value.0
+        }
+    }
+
+    impl TryFrom<Public> for Public {
+        type Error = ();
+
+        fn try_from(value: Public) -> Result<Self, Self::Error> {
+            Ok(value)
+        }
+    }
+
+    impl TryFrom<Signature> for Signature {
+        type Error = ();
+
+        fn try_from(value: Signature) -> Result<Self, Self::Error> {
+            Ok(value)
+        }
+    }
+
+    pub struct PqAppCrypto;
+
+    impl frame_system::offchain::AppCrypto<Public, Signature> for PqAppCrypto {
+        type RuntimeAppPublic = PqAppPublic;
+        type GenericPublic = Public;
+        type GenericSignature = Signature;
+    }
+}
+
+pub use pq_crypto::{
+    PqAppCrypto, PqAppPublic, Public as PqPublic, Signature as PqSignature, PQ_KEY_TYPE,
+};
+
 pub type BlockNumber = u64;
-pub type Signature = MultiSignature;
-pub type AccountId = u64;
+pub type Signature = pq_crypto::Signature;
+pub type Public = pq_crypto::Public;
+pub type AccountId = <Public as IdentifyAccount>::AccountId;
 pub type Balance = u128;
 pub type Index = u64;
 pub type Hash = H256;
@@ -632,7 +886,7 @@ impl pallet_identity::CredentialProofVerifier<AccountId, u32> for RuntimeAttesta
 
 impl pallet_identity::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
-    type AuthorityId = u64;
+    type AuthorityId = Public;
     type CredentialSchemaId = u32;
     type RoleId = u32;
     type AdminOrigin = frame_system::EnsureRoot<AccountId>;
@@ -738,7 +992,7 @@ impl pallet_settlement::Config for Runtime {
     type CouncilOrigin = CouncilApprovalOrigin;
     type ReferendaOrigin = ReferendaOrigin;
     type Currency = Balances;
-    type AuthorityId = pallet_settlement::crypto::Public;
+    type AuthorityId = PqAppCrypto;
     type ProofVerifier = pallet_settlement::AcceptAllProofs;
     type DefaultVerifierParams = DefaultSettlementVerifierParams;
     type WeightInfo = pallet_settlement::weights::DefaultWeightInfo<Self>;
