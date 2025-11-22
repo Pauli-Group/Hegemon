@@ -100,6 +100,10 @@ pub mod pallet {
         FeatureDeactivated {
             feature: FeatureName<T>,
         },
+        StorageMigrated {
+            from: u16,
+            to: u16,
+        },
     }
 
     #[pallet::error]
@@ -230,8 +234,22 @@ pub mod pallet {
 
         pub fn migrate() -> Weight {
             let on_chain = StorageVersion::get::<Pallet<T>>();
+            if on_chain > STORAGE_VERSION {
+                log::warn!(
+                    target: "feature-flags",
+                    "Skipping migration: on-chain storage version {:?} is newer than code {:?}",
+                    on_chain,
+                    STORAGE_VERSION
+                );
+                return Weight::zero();
+            }
+
             if on_chain < STORAGE_VERSION {
                 STORAGE_VERSION.put::<Pallet<T>>();
+                Pallet::<T>::deposit_event(Event::StorageMigrated {
+                    from: on_chain.into(),
+                    to: STORAGE_VERSION.into(),
+                });
                 T::WeightInfo::migrate()
             } else {
                 Weight::zero()

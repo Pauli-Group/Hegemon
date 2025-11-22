@@ -128,6 +128,10 @@ pub mod pallet {
             asset_id: T::AssetId,
             who: T::AccountId,
         },
+        StorageMigrated {
+            from: u16,
+            to: u16,
+        },
     }
 
     #[pallet::error]
@@ -145,8 +149,22 @@ pub mod pallet {
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
         fn on_runtime_upgrade() -> Weight {
             let on_chain = Pallet::<T>::on_chain_storage_version();
+            if on_chain > STORAGE_VERSION {
+                log::warn!(
+                    target: "asset-registry",
+                    "Skipping migration: on-chain storage version {:?} is newer than code {:?}",
+                    on_chain,
+                    STORAGE_VERSION
+                );
+                return Weight::zero();
+            }
+
             if on_chain < STORAGE_VERSION {
                 STORAGE_VERSION.put::<Pallet<T>>();
+                Pallet::<T>::deposit_event(Event::StorageMigrated {
+                    from: on_chain.into(),
+                    to: STORAGE_VERSION.into(),
+                });
                 T::WeightInfo::migrate()
             } else {
                 Weight::zero()

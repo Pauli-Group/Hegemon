@@ -48,6 +48,7 @@ pub struct StarkVerifierParams {
 pub enum DisputeStatus {
     None,
     Pending,
+    Escalated,
     RolledBack,
 }
 
@@ -95,6 +96,8 @@ pub enum SettlementStage {
     Submitted,
     IssuerLinked,
     DisputeStarted,
+    DisputeEscalated,
+    DisputeResolved,
     RolledBack,
 }
 
@@ -155,6 +158,8 @@ pub mod pallet {
         type MaxVerificationKeySize: Get<u32> + Clone + TypeInfo;
         type MaxPendingEvents: Get<u32> + Clone + TypeInfo;
         type AdminOrigin: EnsureOrigin<Self::RuntimeOrigin>;
+        type CouncilOrigin: EnsureOrigin<Self::RuntimeOrigin>;
+        type ReferendaOrigin: EnsureOrigin<Self::RuntimeOrigin>;
         type SettlementBatchHook: SettlementBatchHook<
             Self::CommitmentId,
             Self::IssuerId,
@@ -209,8 +214,19 @@ pub mod pallet {
             commitment_id: T::CommitmentId,
             dispute_status: DisputeStatus,
         },
+        DisputeEscalated {
+            commitment_id: T::CommitmentId,
+        },
+        DisputeResolved {
+            commitment_id: T::CommitmentId,
+            rolled_back: bool,
+        },
         CommitmentRolledBack {
             commitment_id: T::CommitmentId,
+        },
+        StorageMigrated {
+            from: u16,
+            to: u16,
         },
     }
 
@@ -220,6 +236,7 @@ pub mod pallet {
         CommitmentMissing,
         PendingQueueFull,
         DisputeInactive,
+        DisputeActive,
         AlreadyRolledBack,
     }
 
@@ -234,9 +251,23 @@ pub mod pallet {
 
         fn on_runtime_upgrade() -> Weight {
             let on_chain = Pallet::<T>::on_chain_storage_version();
+            if on_chain > STORAGE_VERSION {
+                log::warn!(
+                    target: "attestations",
+                    "Skipping migration: on-chain storage version {:?} is newer than code {:?}",
+                    on_chain,
+                    STORAGE_VERSION
+                );
+                return Weight::zero();
+            }
+
             if on_chain < STORAGE_VERSION {
                 VerifierParameters::<T>::put(T::DefaultVerifierParams::get());
                 STORAGE_VERSION.put::<Pallet<T>>();
+                Pallet::<T>::deposit_event(Event::StorageMigrated {
+                    from: on_chain.into(),
+                    to: STORAGE_VERSION.into(),
+                });
                 T::WeightInfo::migrate()
             } else {
                 Weight::zero()
@@ -330,6 +361,10 @@ pub mod pallet {
 
             Commitments::<T>::try_mutate(&commitment_id, |maybe_record| -> Result<(), Error<T>> {
                 let record = maybe_record.as_mut().ok_or(Error::<T>::CommitmentMissing)?;
+                ensure!(
+                    record.dispute == DisputeStatus::None,
+                    Error::<T>::DisputeActive
+                );
                 record.dispute = DisputeStatus::Pending;
                 Self::enqueue_event(
                     &commitment_id,
@@ -343,6 +378,80 @@ pub mod pallet {
             Self::deposit_event(Event::DisputeStarted {
                 commitment_id,
                 dispute_status: DisputeStatus::Pending,
+            });
+            Ok(())
+        }
+
+        #[pallet::weight(T::WeightInfo::start_dispute())]
+        pub fn escalate_dispute(
+            origin: OriginFor<T>,
+            commitment_id: T::CommitmentId,
+        ) -> DispatchResult {
+            Self::ensure_governance_origin(origin)?;
+
+            Commitments::<T>::try_mutate(&commitment_id, |maybe_record| -> Result<(), Error<T>> {
+                let record = maybe_record.as_mut().ok_or(Error::<T>::CommitmentMissing)?;
+                ensure!(
+                    record.dispute == DisputeStatus::Pending,
+                    Error::<T>::DisputeInactive
+                );
+                record.dispute = DisputeStatus::Escalated;
+                Self::enqueue_event(
+                    &commitment_id,
+                    SettlementStage::DisputeEscalated,
+                    record.issuer.clone(),
+                    record.dispute,
+                )?;
+                Ok(())
+            })?;
+
+            Self::deposit_event(Event::DisputeEscalated { commitment_id });
+            Ok(())
+        }
+
+        #[pallet::weight(T::WeightInfo::rollback())]
+        pub fn resolve_dispute(
+            origin: OriginFor<T>,
+            commitment_id: T::CommitmentId,
+            rollback: bool,
+        ) -> DispatchResult {
+            Self::ensure_governance_origin(origin)?;
+
+            Commitments::<T>::try_mutate(&commitment_id, |maybe_record| -> Result<(), Error<T>> {
+                let record = maybe_record.as_mut().ok_or(Error::<T>::CommitmentMissing)?;
+                ensure!(
+                    record.dispute != DisputeStatus::None,
+                    Error::<T>::DisputeInactive
+                );
+
+                if rollback {
+                    ensure!(
+                        record.dispute != DisputeStatus::RolledBack,
+                        Error::<T>::AlreadyRolledBack
+                    );
+                    record.dispute = DisputeStatus::RolledBack;
+                    Self::enqueue_event(
+                        &commitment_id,
+                        SettlementStage::RolledBack,
+                        record.issuer.clone(),
+                        record.dispute,
+                    )?;
+                } else {
+                    record.dispute = DisputeStatus::None;
+                    Self::enqueue_event(
+                        &commitment_id,
+                        SettlementStage::DisputeResolved,
+                        record.issuer.clone(),
+                        record.dispute,
+                    )?;
+                }
+
+                Ok(())
+            })?;
+
+            Self::deposit_event(Event::DisputeResolved {
+                commitment_id,
+                rolled_back: rollback,
             });
             Ok(())
         }
@@ -377,6 +486,16 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
+        fn ensure_governance_origin(origin: OriginFor<T>) -> DispatchResult {
+            if T::CouncilOrigin::try_origin(origin.clone()).is_ok()
+                || T::ReferendaOrigin::try_origin(origin).is_ok()
+            {
+                Ok(())
+            } else {
+                Err(DispatchError::BadOrigin)
+            }
+        }
+
         fn enqueue_event(
             commitment_id: &T::CommitmentId,
             stage: SettlementStage,
