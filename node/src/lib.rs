@@ -5,6 +5,7 @@ pub mod error;
 pub mod mempool;
 pub mod miner;
 pub mod storage;
+pub mod sync;
 pub mod telemetry;
 pub mod transaction;
 pub mod ui;
