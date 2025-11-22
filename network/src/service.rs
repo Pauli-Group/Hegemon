@@ -9,7 +9,7 @@ use futures::stream::{BoxStream, SelectAll, StreamExt as FuturesStreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream, lookup_host};
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval, sleep};
@@ -154,6 +154,7 @@ const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(90);
 const RECONNECT_BASE: Duration = Duration::from_secs(2);
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
 const ADDRESS_EXCHANGE_LIMIT: usize = 16;
+const ADDRESS_RATE_LIMIT: Duration = Duration::from_secs(5);
 const OPPORTUNISTIC_BATCH: usize = 4;
 const RECENT_RECONNECT_LIMIT: usize = 5;
 
@@ -169,6 +170,8 @@ pub struct P2PService {
     nat_result: Option<NatTraversalResult>,
     relay_config: RelayConfig,
     advertised_addrs: Vec<SocketAddr>,
+    learned_addresses: HashSet<SocketAddr>,
+    last_addr_request: HashMap<PeerId, Instant>,
 }
 
 impl P2PService {
@@ -194,6 +197,8 @@ impl P2PService {
             nat_result: None,
             relay_config,
             advertised_addrs: Vec::new(),
+            learned_addresses: HashSet::new(),
+            last_addr_request: HashMap::new(),
         }
     }
 
@@ -223,6 +228,8 @@ impl P2PService {
         self.nat_result = Some(nat_result);
 
         self.peer_store.load()?;
+        self.learned_addresses
+            .extend(self.peer_store.addresses().into_iter());
         let local_addrs: HashSet<_> = self.advertised_addrs.iter().copied().collect();
         self.peer_store
             .remove_addresses(local_addrs.iter().copied())?;
@@ -261,23 +268,11 @@ impl P2PService {
                             info!("peer connected: {} ({:?})", addr, peer_id);
                             self.peer_manager.add_peer(peer_id, addr, tx);
                             self.peer_store.record_connected(addr)?;
-                            let connected = self.peer_manager.connected_addresses();
-                            let mut advertise: HashSet<_> =
-                                self.advertised_addrs.iter().copied().collect();
-                            for addr in self
-                                .peer_manager
-                                .sample_addresses(ADDRESS_EXCHANGE_LIMIT - 1, &connected)
-                            {
-                                advertise.insert(addr);
-                            }
-
-                            let compact: Vec<_> = advertise
-                                .into_iter()
-                                .map(CompactAddress::from)
-                                .collect();
-                            let _ = self
-                                .peer_manager
-                                .send_to(&peer_id, WireMessage::AddrExchange(compact))
+                            self.learned_addresses.insert(addr);
+                            self.request_addresses(peer_id).await;
+                            self.share_addresses_with_peer(peer_id, addr, ADDRESS_EXCHANGE_LIMIT)
+                                .await;
+                            self.advertise_new_peer_to_others(peer_id, addr)
                                 .await;
 
                             let registration = CoordinationMessage::RelayRegistration {
@@ -324,7 +319,7 @@ impl P2PService {
                                         .into_iter()
                                         .map(|addr| addr.to_socket_addr())
                                         .collect();
-                                    self.peer_manager.record_addresses(peer_id, addrs);
+                                    self.peer_manager.record_addresses(peer_id, addrs.clone());
                                     self.persist_learned_addresses(addrs)?;
                                 }
                                 WireMessage::Coordinate(msg) => {
@@ -387,6 +382,15 @@ impl P2PService {
                 }
             }
         }
+    }
+
+    async fn request_addresses(&mut self, peer_id: PeerId) {
+        let get_addr = CoordinationMessage::GetAddr {
+            limit: ADDRESS_EXCHANGE_LIMIT as u16,
+        };
+        self.peer_manager
+            .send_to(&peer_id, WireMessage::Coordinate(get_addr))
+            .await;
     }
 
     fn spawn_connect(
@@ -498,6 +502,32 @@ impl P2PService {
         cmd_tx: mpsc::Sender<P2PCommand>,
     ) {
         match msg {
+            CoordinationMessage::GetAddr { limit } => {
+                if self.rate_limited(&sender) {
+                    return;
+                }
+                let limit = limit as usize;
+                if let Some(addr) = self.peer_manager.peer_address(&sender) {
+                    self.share_addresses_with_peer(sender, addr, limit).await;
+                }
+            }
+            CoordinationMessage::Addr { addrs } => {
+                if addrs.len() > ADDRESS_EXCHANGE_LIMIT {
+                    warn!(
+                        count = addrs.len(),
+                        "received address list beyond allowed limit"
+                    );
+                    return;
+                }
+                let addrs: Vec<_> = addrs
+                    .into_iter()
+                    .map(|addr| addr.to_socket_addr())
+                    .collect();
+                self.peer_manager.record_addresses(sender, addrs.clone());
+                if self.persist_learned_addresses(addrs.clone()).is_ok() {
+                    self.broadcast_addresses(sender, addrs).await;
+                }
+            }
             CoordinationMessage::RelayRegistration { reachable } => {
                 let addrs: Vec<_> = reachable
                     .into_iter()
@@ -558,6 +588,119 @@ impl P2PService {
         }
     }
 
+    fn rate_limited(&mut self, peer_id: &PeerId) -> bool {
+        let now = Instant::now();
+        if let Some(last) = self.last_addr_request.get(peer_id) {
+            if now.duration_since(*last) < ADDRESS_RATE_LIMIT {
+                return true;
+            }
+        }
+        self.last_addr_request.insert(*peer_id, now);
+        false
+    }
+
+    async fn broadcast_addresses(&self, origin: PeerId, addrs: Vec<SocketAddr>) {
+        let compact: Vec<_> = addrs.iter().copied().map(CompactAddress::from).collect();
+        for (peer_id, _) in self
+            .peer_manager
+            .connected_peers()
+            .into_iter()
+            .filter(|(peer, _)| peer != &origin)
+        {
+            let already = self.peer_manager.advertised_to(&peer_id);
+            let mut to_send = Vec::new();
+            for addr in &compact {
+                if !already.contains(&addr.to_socket_addr()) {
+                    to_send.push(addr.clone());
+                }
+            }
+            if !to_send.is_empty() {
+                self.peer_manager
+                    .record_advertised(peer_id, to_send.iter().map(|addr| addr.to_socket_addr()));
+                self.peer_manager
+                    .send_to(
+                        &peer_id,
+                        WireMessage::Coordinate(CoordinationMessage::Addr { addrs: to_send }),
+                    )
+                    .await;
+            }
+        }
+    }
+
+    async fn share_addresses_with_peer(
+        &mut self,
+        peer_id: PeerId,
+        peer_addr: SocketAddr,
+        limit: usize,
+    ) {
+        let advertised = self.peer_manager.advertised_to(&peer_id);
+        let mut set = HashSet::new();
+        let mut push_candidate = |addr: SocketAddr| {
+            if addr != peer_addr && !advertised.contains(&addr) {
+                set.insert(addr);
+            }
+        };
+
+        for addr in &self.advertised_addrs {
+            push_candidate(*addr);
+        }
+
+        for addr in self.peer_manager.connected_addresses() {
+            push_candidate(addr);
+        }
+
+        for addr in &self.learned_addresses {
+            push_candidate(*addr);
+        }
+
+        for addr in self
+            .peer_manager
+            .sample_addresses(limit * 2, &HashSet::from([peer_addr]))
+        {
+            push_candidate(addr);
+        }
+
+        let mut addrs: Vec<_> = set.into_iter().collect();
+        addrs.truncate(limit);
+        if addrs.is_empty() {
+            return;
+        }
+
+        let compact: Vec<_> = addrs.iter().copied().map(CompactAddress::from).collect();
+        self.peer_manager
+            .record_advertised(peer_id, addrs.iter().copied());
+        self.peer_manager
+            .send_to(
+                &peer_id,
+                WireMessage::Coordinate(CoordinationMessage::Addr { addrs: compact }),
+            )
+            .await;
+    }
+
+    async fn advertise_new_peer_to_others(&mut self, peer_id: PeerId, addr: SocketAddr) {
+        for (other_id, _) in self
+            .peer_manager
+            .connected_peers()
+            .into_iter()
+            .filter(|(other, _)| *other != peer_id)
+        {
+            let already = self.peer_manager.advertised_to(&other_id);
+            if already.contains(&addr) {
+                continue;
+            }
+            let compact = CompactAddress::from(addr);
+            self.peer_manager.record_advertised(other_id, [addr]);
+            self.peer_manager
+                .send_to(
+                    &other_id,
+                    WireMessage::Coordinate(CoordinationMessage::Addr {
+                        addrs: vec![compact.clone()],
+                    }),
+                )
+                .await;
+        }
+    }
+
     fn startup_targets(
         &mut self,
         resolved_seeds: Vec<SocketAddr>,
@@ -595,6 +738,7 @@ impl P2PService {
             return Ok(());
         }
 
+        self.learned_addresses.extend(filtered.iter().copied());
         self.peer_store.record_learned(filtered)
     }
 
