@@ -5,10 +5,10 @@ use frame_support::BoundedVec;
 pub use frame_support::{construct_runtime, parameter_types};
 use frame_system as system;
 use pallet_attestations::AttestationSettlementEvent;
-use sp_core::H256;
+use sp_core::{H256, U256};
 use sp_runtime::generic::Era;
 use sp_runtime::traits::{BlakeTwo256, IdentityLookup, SaturatedConversion, Verify};
-use sp_runtime::{testing::Header, MultiSignature};
+use sp_runtime::{generic, MultiAddress, MultiSignature};
 use sp_std::vec::Vec;
 
 pub type BlockNumber = u64;
@@ -18,6 +18,12 @@ pub type Balance = u128;
 pub type Index = u64;
 pub type Hash = H256;
 pub type Moment = u64;
+
+pub type Address = MultiAddress<AccountId, ()>;
+pub type Header = generic::Header<BlockNumber, BlakeTwo256>;
+pub type UncheckedExtrinsic =
+    generic::UncheckedExtrinsic<Address, RuntimeCall, Signature, SignedExtra>;
+pub type Block = generic::Block<Header, UncheckedExtrinsic>;
 
 type SignedExtra = (
     frame_system::CheckNonZeroSender<Runtime>,
@@ -32,7 +38,214 @@ type SignedExtra = (
 
 type SignedPayload = sp_runtime::generic::SignedPayload<RuntimeCall, SignedExtra>;
 
-pub type Block = frame_system::mocking::MockBlock<Runtime>;
+#[frame_support::pallet]
+pub mod pow {
+    use super::{Moment, PowDifficulty, PowFutureDrift, PowRetargetWindow, PowTargetBlockTime};
+    use frame_support::{pallet_prelude::*, traits::Get, BoundedVec};
+    use frame_system::pallet_prelude::*;
+    use sp_core::{H256, U256};
+
+    #[pallet::config]
+    pub trait Config: frame_system::Config + pallet_timestamp::Config<Moment = Moment> {
+        type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+    }
+
+    #[pallet::type_value]
+    pub fn DefaultDifficulty<T: Config>() -> u32 {
+        PowDifficulty::get()
+    }
+
+    #[pallet::type_value]
+    pub fn DefaultTimestampQueue() -> BoundedVec<Moment, PowRetargetWindow> {
+        BoundedVec::default()
+    }
+
+    #[pallet::storage]
+    #[pallet::getter(fn difficulty)]
+    pub type Difficulty<T: Config> = StorageValue<_, u32, ValueQuery, DefaultDifficulty<T>>;
+
+    #[pallet::storage]
+    #[pallet::getter(fn recent_timestamps)]
+    pub type RecentTimestamps<T: Config> =
+        StorageValue<_, BoundedVec<Moment, PowRetargetWindow>, ValueQuery, DefaultTimestampQueue>;
+
+    #[pallet::storage]
+    #[pallet::getter(fn validators)]
+    pub type Validators<T: Config> = StorageValue<_, Vec<T::AccountId>, ValueQuery>;
+
+    #[pallet::event]
+    #[pallet::generate_deposit(pub(super) fn deposit_event)]
+    pub enum Event<T: Config> {
+        PowBlockImported {
+            author: T::AccountId,
+            pow_bits: u32,
+            nonce: u64,
+        },
+        PowInvalidSeal {
+            pow_bits: u32,
+            nonce: u64,
+        },
+        SessionValidatorsRotated {
+            session: pallet_session::SessionIndex,
+            validators: Vec<T::AccountId>,
+        },
+    }
+
+    #[pallet::error]
+    pub enum Error<T> {
+        InsufficientWork,
+        UnexpectedDifficulty,
+        FutureTimestamp,
+    }
+
+    #[pallet::call]
+    impl<T: Config> Pallet<T> {
+        #[pallet::call_index(0)]
+        #[pallet::weight(10_000)]
+        pub fn submit_work(
+            origin: OriginFor<T>,
+            pre_hash: H256,
+            nonce: u64,
+            pow_bits: u32,
+            timestamp: Moment,
+        ) -> DispatchResult {
+            let who = ensure_signed(origin)?;
+            let expected_bits = Difficulty::<T>::get();
+            ensure!(pow_bits == expected_bits, Error::<T>::UnexpectedDifficulty);
+            let now = pallet_timestamp::Pallet::<T>::get();
+            ensure!(
+                timestamp <= now + PowFutureDrift::get(),
+                Error::<T>::FutureTimestamp
+            );
+            let valid = Self::seal_meets_target(pre_hash, nonce, pow_bits);
+            if !valid {
+                Self::deposit_event(Event::PowInvalidSeal { pow_bits, nonce });
+                return Err(Error::<T>::InsufficientWork.into());
+            }
+
+            Self::note_timestamp(timestamp)?;
+            Self::note_validator(who.clone());
+            Self::deposit_event(Event::PowBlockImported {
+                author: who,
+                pow_bits,
+                nonce,
+            });
+            Ok(())
+        }
+    }
+
+    impl<T: Config> Pallet<T> {
+        fn seal_meets_target(pre_hash: H256, nonce: u64, pow_bits: u32) -> bool {
+            let mut data = pre_hash.as_bytes().to_vec();
+            data.extend_from_slice(&nonce.to_le_bytes());
+            let hash = sp_io::hashing::blake2_256(&data);
+            let hash_u256 = U256::from_big_endian(&hash);
+            if let Some(target) = Self::compact_to_target(pow_bits) {
+                hash_u256 <= target
+            } else {
+                false
+            }
+        }
+
+        fn compact_to_target(bits: u32) -> Option<U256> {
+            let exponent = bits >> 24;
+            let mantissa = bits & 0x00ff_ffff;
+            if mantissa == 0 {
+                return None;
+            }
+            if exponent > 32 {
+                return Some(U256::MAX);
+            }
+            let mut target = U256::from(mantissa);
+            if exponent > 3 {
+                target = target.checked_shl(8 * (exponent - 3) as u32)?;
+            } else {
+                target >>= 8 * (3 - exponent);
+            }
+            Some(target)
+        }
+
+        fn target_to_compact(target: U256) -> u32 {
+            if target.is_zero() {
+                return 0;
+            }
+            let mut bytes = [0u8; 32];
+            target.to_big_endian(&mut bytes);
+            let mut exponent = 32u32;
+            while exponent > 0 && bytes[32 - exponent as usize] == 0 {
+                exponent -= 1;
+            }
+            let start = 32 - exponent as usize;
+            let mantissa = ((bytes[start] as u32) << 16)
+                | ((bytes.get(start + 1).copied().unwrap_or(0) as u32) << 8)
+                | (bytes.get(start + 2).copied().unwrap_or(0) as u32);
+            (exponent << 24) | (mantissa & 0x00ff_ffff)
+        }
+
+        fn retarget(prev_bits: u32, timestamps: &BoundedVec<Moment, PowRetargetWindow>) -> u32 {
+            if timestamps.len() < 2 {
+                return prev_bits;
+            }
+            let expected_span = PowTargetBlockTime::get()
+                .saturating_mul((timestamps.len() as u64).saturating_sub(1));
+            let actual = timestamps
+                .last()
+                .copied()
+                .unwrap_or_default()
+                .saturating_sub(timestamps.first().copied().unwrap_or_default());
+            let clamped = actual.clamp(expected_span / 4, expected_span * 4);
+            let prev_target = Self::compact_to_target(prev_bits).unwrap_or_default();
+            if prev_target.is_zero() || expected_span == 0 {
+                return prev_bits;
+            }
+            let mut target = prev_target.saturating_mul(U256::from(clamped));
+            target /= U256::from(expected_span);
+            Self::target_to_compact(target)
+        }
+
+        fn note_timestamp(timestamp: Moment) -> DispatchResult {
+            RecentTimestamps::<T>::try_mutate(|queue| {
+                queue
+                    .try_push(timestamp)
+                    .map_err(|_| Error::<T>::FutureTimestamp)?;
+                if queue.len() as u32 == PowRetargetWindow::get() {
+                    let current = Difficulty::<T>::get();
+                    let new_bits = Self::retarget(current, queue);
+                    Difficulty::<T>::put(new_bits);
+                    queue.clear();
+                }
+                Ok(())
+            })
+        }
+
+        fn note_validator(account: T::AccountId) {
+            Validators::<T>::mutate(|vals| {
+                if !vals.contains(&account) {
+                    vals.push(account);
+                }
+            });
+        }
+    }
+
+    impl<T: Config> pallet_session::SessionManager<T::AccountId> for Pallet<T> {
+        fn new_session(index: pallet_session::SessionIndex) -> Option<Vec<T::AccountId>> {
+            let validators = Validators::<T>::get();
+            if validators.is_empty() {
+                None
+            } else {
+                Pallet::<T>::deposit_event(Event::SessionValidatorsRotated {
+                    session: index,
+                    validators: validators.clone(),
+                });
+                Some(validators)
+            }
+        }
+
+        fn end_session(_index: pallet_session::SessionIndex) {}
+
+        fn start_session(_index: pallet_session::SessionIndex) {}
+    }
+}
 
 parameter_types! {
     pub const BlockHashCount: u64 = 250;
@@ -53,6 +266,10 @@ parameter_types! {
     pub const SessionPeriod: u64 = 10;
     pub const SessionOffset: u64 = 0;
     pub const TreasuryPayoutPeriod: u32 = 10;
+    pub const PowDifficulty: u32 = 0x3f00_ffff;
+    pub const PowRetargetWindow: u32 = 120;
+    pub const PowTargetBlockTime: Moment = 20_000;
+    pub const PowFutureDrift: Moment = 90_000;
 }
 
 impl system::Config for Runtime {
@@ -90,6 +307,10 @@ impl pallet_timestamp::Config for Runtime {
     type WeightInfo = ();
 }
 
+impl pow::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+}
+
 impl frame_system::offchain::SigningTypes for Runtime {
     type Public = <Signature as Verify>::Signer;
     type Signature = Signature;
@@ -100,24 +321,22 @@ where
     RuntimeCall: From<LocalCall>,
 {
     type OverarchingCall = RuntimeCall;
-    type Extrinsic = system::mocking::MockUncheckedExtrinsic<Runtime>;
+    type Extrinsic = UncheckedExtrinsic;
 }
 
 impl<LocalCall> frame_system::offchain::CreateSignedTransaction<LocalCall> for Runtime
 where
     RuntimeCall: From<LocalCall>,
 {
-    fn create_transaction<
-        C: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>,
-    >(
+    fn create_transaction<C: frame_system::offchain::AppCrypto<Self::Public, Self::Signature>>(
         call: RuntimeCall,
         public: <Signature as Verify>::Signer,
         account: AccountId,
         nonce: Index,
     ) -> Option<(
         RuntimeCall,
-        <system::mocking::MockUncheckedExtrinsic<Runtime> as sp_runtime::traits::Extrinsic>::SignaturePayload,
-    )>{
+        <UncheckedExtrinsic as sp_runtime::traits::Extrinsic>::SignaturePayload,
+    )> {
         let tip = 0;
         let period = 64;
         let current_block = System::block_number()
@@ -149,7 +368,7 @@ impl pallet_session::Config for Runtime {
     type ValidatorIdOf = pallet_session::historical::Identity;
     type ShouldEndSession = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
     type NextSessionRotation = pallet_session::PeriodicSessions<SessionPeriod, SessionOffset>;
-    type SessionManager = ();
+    type SessionManager = pow::Pallet<Runtime>;
     type SessionHandler = ();
     type Keys = ();
     type WeightInfo = ();
@@ -573,10 +792,11 @@ construct_runtime!(
     pub enum Runtime where
         Block = Block,
         NodeBlock = Block,
-        UncheckedExtrinsic = system::mocking::MockUncheckedExtrinsic<Runtime>
+        UncheckedExtrinsic = UncheckedExtrinsic
     {
         System: frame_system::{Pallet, Call, Config, Storage, Event<T>},
         Timestamp: pallet_timestamp::{Pallet, Call, Storage, Inherent},
+        Pow: pow::{Pallet, Call, Storage, Event<T>},
         Session: pallet_session::{Pallet, Call, Storage, Event, Config<T>},
         Balances: pallet_balances::{Pallet, Call, Storage, Config<T>, Event<T>},
         TransactionPayment: pallet_transaction_payment::{Pallet, Storage, Event<T>},
@@ -601,6 +821,7 @@ pub type GovernanceOrigin = frame_system::EnsureRoot<AccountId>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use frame_support::assert_noop;
     use frame_support::weights::Weight;
     use frame_support::{
         assert_ok,
@@ -608,6 +829,42 @@ mod tests {
         traits::{Hooks, StorageVersion},
         BoundedVec,
     };
+
+    fn compact_to_target(bits: u32) -> Option<U256> {
+        let exponent = bits >> 24;
+        let mantissa = bits & 0x00ff_ffff;
+        if mantissa == 0 {
+            return None;
+        }
+        if exponent > 32 {
+            return Some(U256::MAX);
+        }
+        let mut target = U256::from(mantissa);
+        if exponent > 3 {
+            target = target.checked_shl(8 * (exponent - 3) as u32)?;
+        } else {
+            target >>= 8 * (3 - exponent);
+        }
+        Some(target)
+    }
+
+    fn seal_meets_target(pre_hash: H256, nonce: u64, pow_bits: u32) -> bool {
+        let mut data = pre_hash.as_bytes().to_vec();
+        data.extend_from_slice(&nonce.to_le_bytes());
+        let hash = sp_io::hashing::blake2_256(&data);
+        let hash_u256 = U256::from_big_endian(&hash);
+        if let Some(target) = compact_to_target(pow_bits) {
+            hash_u256 <= target
+        } else {
+            false
+        }
+    }
+
+    fn valid_nonce(pre_hash: H256, pow_bits: u32) -> u64 {
+        (0u64..)
+            .find(|candidate| seal_meets_target(pre_hash, *candidate, pow_bits))
+            .expect("nonce available for easy difficulty")
+    }
 
     fn new_ext() -> sp_io::TestExternalities {
         let mut t = frame_system::GenesisConfig::default()
@@ -618,7 +875,103 @@ mod tests {
         }
         .assimilate_storage(&mut t)
         .unwrap();
+        pallet_timestamp::GenesisConfig::<Runtime> {
+            minimum_period: MinimumPeriod::get(),
+        }
+        .assimilate_storage(&mut t)
+        .unwrap();
         t.into()
+    }
+
+    #[test]
+    fn pow_block_imports_with_valid_seal() {
+        new_ext().execute_with(|| {
+            System::set_block_number(1);
+            Timestamp::set_timestamp(0);
+            let pow_bits = PowDifficulty::get();
+            let pre_hash = H256::repeat_byte(7);
+            let nonce = valid_nonce(pre_hash, pow_bits);
+
+            assert_ok!(Pow::submit_work(
+                RuntimeOrigin::signed(1),
+                pre_hash,
+                nonce,
+                pow_bits,
+                0,
+            ));
+
+            let events = System::events();
+            assert!(events.iter().any(|evt| matches!(
+                evt.event,
+                RuntimeEvent::Pow(pow::Event::PowBlockImported { pow_bits: b, nonce: n, .. }) if b == pow_bits && n == nonce
+            )));
+            assert_eq!(pow::Difficulty::<Runtime>::get(), pow_bits);
+        });
+    }
+
+    #[test]
+    fn pow_rejects_invalid_seal() {
+        new_ext().execute_with(|| {
+            System::set_block_number(1);
+            Timestamp::set_timestamp(0);
+            let pow_bits = PowDifficulty::get();
+            let pre_hash = H256::repeat_byte(9);
+            let bad_nonce = (0u64..)
+                .find(|candidate| !seal_meets_target(pre_hash, *candidate, pow_bits))
+                .expect("non-matching nonce exists");
+
+            assert_noop!(
+                Pow::submit_work(RuntimeOrigin::signed(1), pre_hash, bad_nonce, pow_bits, 0),
+                pow::Error::<Runtime>::InsufficientWork
+            );
+
+            let events = System::events();
+            assert!(events.iter().any(|evt| matches!(
+                evt.event,
+                RuntimeEvent::Pow(pow::Event::PowInvalidSeal { nonce, .. }) if nonce == bad_nonce
+            )));
+        });
+    }
+
+    #[test]
+    fn session_rotation_emits_pow_validator_set() {
+        new_ext().execute_with(|| {
+            System::set_block_number(1);
+            Timestamp::set_timestamp(0);
+            let pow_bits = PowDifficulty::get();
+            let pre_hash = H256::repeat_byte(1);
+            let nonce = valid_nonce(pre_hash, pow_bits);
+            assert_ok!(Pow::submit_work(
+                RuntimeOrigin::signed(1),
+                pre_hash,
+                nonce,
+                pow_bits,
+                0,
+            ));
+
+            let pre_hash_two = H256::repeat_byte(2);
+            let nonce_two = valid_nonce(pre_hash_two, pow_bits);
+            System::set_block_number(SessionPeriod::get());
+            Timestamp::set_timestamp(PowTargetBlockTime::get());
+            assert_ok!(Pow::submit_work(
+                RuntimeOrigin::signed(2),
+                pre_hash_two,
+                nonce_two,
+                pow_bits,
+                PowTargetBlockTime::get(),
+            ));
+
+            for n in 1..=SessionPeriod::get() + 1 {
+                Session::on_initialize(n);
+            }
+
+            let events = System::events();
+            assert!(events.iter().any(|evt| matches!(
+                evt.event,
+                RuntimeEvent::Pow(pow::Event::SessionValidatorsRotated { ref validators, .. })
+                    if validators.contains(&1) && validators.contains(&2)
+            )));
+        });
     }
 
     #[test]
