@@ -209,7 +209,7 @@ impl NodeService {
             meta.pow_bits = DEFAULT_GENESIS_POW_BITS;
             consensus = PowConsensus::new(miner_pubkeys.clone(), meta.state_root, HashVerifier);
         }
-        let mempool = Mempool::new(config.mempool_max_txs);
+        let mempool = Mempool::new(config.mempool_max_txs, config.mempool_max_weight);
         let telemetry = Telemetry::new();
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_SIZE);
         let (template_tx, template_rx) = watch::channel(None);
@@ -464,7 +464,12 @@ impl NodeService {
             nullifiers,
             ciphertexts,
         };
-        self.mempool.insert(validated.clone())?;
+        let weight = validated.weight();
+        let min_fee = (self.config.min_tx_fee_per_weight as u128).saturating_mul(weight as u128);
+        if (validated.fee as u128) < min_fee {
+            return Err(NodeError::Invalid("fee below minimum rate"));
+        }
+        self.mempool.insert(validated.clone(), weight)?;
         self.telemetry.set_mempool_depth(self.mempool.len());
         self.publish_template()?;
         let _ = self.event_tx.send(NodeEvent::Transaction {
@@ -540,7 +545,7 @@ impl NodeService {
     fn assemble_pending_block(&self) -> NodeResult<Option<ConsensusBlock>> {
         let entries = self
             .mempool
-            .collect(self.config.template_tx_limit)
+            .collect(self.config.template_tx_limit, self.config.max_block_weight)
             .into_iter()
             .collect::<Vec<_>>();
         let ledger = self.ledger.lock();
@@ -558,11 +563,11 @@ impl NodeService {
         let mut user_transactions = Vec::new();
         let mut total_fees = 0u64;
         for entry in &entries {
-            for nf in &entry.transaction.nullifiers {
+            for nf in &entry.transaction.transaction.nullifiers {
                 nullifier_set.insert(*nf)?;
             }
-            user_transactions.push(entry.transaction.clone());
-            total_fees = total_fees.saturating_add(entry.fee);
+            user_transactions.push(entry.transaction.transaction.clone());
+            total_fees = total_fees.saturating_add(entry.transaction.fee);
         }
         let minted = consensus::reward::block_subsidy(parent_height + 1);
         let payout_amount = minted.saturating_add(total_fees);

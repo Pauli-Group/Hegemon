@@ -9,7 +9,11 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use axum_server::tls_rustls::RustlsConfig;
 use clap::{Parser, Subcommand};
-use node::{NodeService, api, config::NodeConfig};
+use node::{
+    NodeService, api,
+    chain_spec::{self, ChainProfile},
+    config::NodeConfig,
+};
 use rand::Rng;
 use rcgen::generate_simple_self_signed;
 use tokio::signal;
@@ -32,6 +36,13 @@ struct Cli {
     api_addr: String,
     #[arg(long)]
     api_token: Option<String>,
+    #[arg(
+        long,
+        value_enum,
+        default_value = "dev",
+        help = "Chain profile (dev or testnet)"
+    )]
+    chain: ChainProfile,
     #[arg(long, default_value_t = 2)]
     miner_workers: usize,
     #[arg(long, default_value_t = 32)]
@@ -205,7 +216,11 @@ async fn run_setup() -> Result<()> {
 }
 
 async fn run_node(cli: Cli) -> Result<()> {
-    let mut config = NodeConfig::with_db_path(&cli.db_path);
+    let chain_spec = chain_spec::chain_spec(cli.chain);
+    let mut config = NodeConfig::default();
+    config.chain_profile = cli.chain;
+    config.db_path = cli.db_path.clone();
+    chain_spec.apply_to_config(&mut config);
     config.api_addr = cli.api_addr.parse().context("invalid api address")?;
 
     if !cli.api_addr.starts_with("127.0.0.1")
@@ -254,7 +269,9 @@ async fn run_node(cli: Cli) -> Result<()> {
             ShieldedAddress::decode(address).context("invalid miner payout address")?;
     }
     config.p2p_addr = cli.p2p_addr.parse().context("invalid p2p address")?;
-    config.seeds = cli.seeds;
+    if !cli.seeds.is_empty() {
+        config.seeds = cli.seeds;
+    }
     config.max_peers = cli.max_peers;
     config.nat_traversal = cli.nat_traversal;
     config.relay.allow_relay = cli.relay_enabled;
