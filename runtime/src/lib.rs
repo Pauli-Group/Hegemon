@@ -4,7 +4,7 @@
 pub mod chain_spec;
 
 use codec::{Decode, Encode, MaxEncodedLen};
-use frame_support::traits::{ConstU128, ConstU32, ConstU64, Currency, EitherOfDiverse, Get};
+use frame_support::traits::{ConstU128, ConstU32, ConstU64, Currency, EitherOfDiverse};
 use frame_support::BoundedVec;
 pub use frame_support::{construct_runtime, parameter_types};
 use frame_system as system;
@@ -987,14 +987,6 @@ parameter_types! {
     pub const DefaultVerificationKey: u32 = 0;
 }
 
-pub struct SettlementTreasuryAccount;
-
-impl Get<AccountId> for SettlementTreasuryAccount {
-    fn get() -> AccountId {
-        pallet_treasury::Pallet::<Runtime>::account_id()
-    }
-}
-
 impl pallet_settlement::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type AssetId = u32;
@@ -1017,7 +1009,6 @@ impl pallet_settlement::Config for Runtime {
     type DefaultVerificationKey = DefaultVerificationKey;
     type MaxPendingPayouts = MaxPendingPayouts;
     type ValidatorReward = SettlementValidatorReward;
-    type TreasuryAccount = SettlementTreasuryAccount;
 }
 
 parameter_types! {
