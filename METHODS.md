@@ -773,7 +773,9 @@ Module layout:
 * `crypto::ml_dsa` – exposes `MlDsaSecretKey`, `MlDsaPublicKey`, and `MlDsaSignature` with `SigningKey`/`VerifyKey` trait implementations. Secret keys derive public keys by hashing with domain tag `ml-dsa-pk`, and signatures deterministically expand `ml-dsa-signature || pk || message` to 3293 bytes.
 * `crypto::slh_dsa` – mirrors the ML-DSA interface but with SLH-DSA key lengths (32 B public, 64 B secret, 17088 B signatures).
 * `crypto::ml_kem` – wraps Kyber-like encapsulation with `MlKemKeyPair`, `MlKemPublicKey`, and `MlKemCiphertext`. Encapsulation uses a seed to deterministically derive ciphertexts and shared secrets, while decapsulation recomputes the shared secret from stored public bytes.
-* `crypto::hashes` – contains `sha256`, `blake3_256`, a Poseidon-style permutation over the Goldilocks prime, and helpers `commit_note`, `derive_prf_key`, and `derive_nullifier` that apply the design’s domain tags (`"c"`, `"nk"`, `"nf"`).
+* `crypto::hashes` – contains `sha256`, `sha3_256`, `blake3_256`, a Poseidon-style permutation over the Goldilocks prime, and helpers `commit_note`, `derive_prf_key`, and `derive_nullifier` (defaulting to BLAKE3 with SHA3 fallbacks) that apply the design’s domain tags (`"c"`, `"nk"`, `"nf"`).
+* `pallet_identity` – stores session keys as a `SessionKey` enum (legacy AuthorityId, Ed25519-only, PQ-only Dilithium/Falcon, or hybrid) with a runtime migration that wraps existing keys into the new enum and a `rotate_session_key` extrinsic that accepts hybrid bundles.
+* `pallet_attestations` / `pallet_settlement` – persist `StarkVerifierParams` in storage with governance-controlled setters and runtime-upgrade initialization so on-chain STARK verification remains aligned with PQ hash choices.
 
 The crate’s `tests/crypto_vectors.rs` fixture loads `tests/vectors.json` to assert byte-for-byte deterministic vectors covering:
 

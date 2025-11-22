@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 sha2 = "0.10"
 blake3 = "1"
+sha3 = { version = "0.10", default-features = false, features = ["alloc"] }
 rand = { version = "0.8", features = ["std"] }
 rand_chacha = "0.3"
 thiserror = "1"

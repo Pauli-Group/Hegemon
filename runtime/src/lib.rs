@@ -210,6 +210,22 @@ parameter_types! {
     pub const MaxProofSize: u32 = 64;
     pub const MaxIdentityTags: u32 = 8;
     pub const MaxTagLength: u32 = 32;
+    pub const MaxEd25519KeyBytes: u32 = 32;
+    pub const MaxPqKeyBytes: u32 = 4000;
+    pub const DefaultAttestationVerifierParams: pallet_attestations::StarkVerifierParams =
+        pallet_attestations::StarkVerifierParams {
+            hash: pallet_attestations::StarkHashFunction::Blake3,
+            fri_queries: 28,
+            blowup_factor: 4,
+            security_bits: 128,
+        };
+    pub const DefaultSettlementVerifierParams: pallet_settlement::StarkVerifierParams =
+        pallet_settlement::StarkVerifierParams {
+            hash: pallet_settlement::StarkHashFunction::Blake3,
+            fri_queries: 28,
+            blowup_factor: 4,
+            security_bits: 128,
+        };
 }
 
 #[derive(Clone, Copy, Default)]
@@ -308,6 +324,8 @@ impl pallet_identity::Config for Runtime {
     type MaxProofSize = MaxProofSize;
     type MaxIdentityTags = MaxIdentityTags;
     type MaxTagLength = MaxTagLength;
+    type MaxEd25519KeyBytes = MaxEd25519KeyBytes;
+    type MaxPqKeyBytes = MaxPqKeyBytes;
     type WeightInfo = ();
 }
 
@@ -342,7 +360,9 @@ impl pallet_attestations::Config for Runtime {
     type MaxRootSize = MaxRootSize;
     type MaxPendingEvents = MaxPendingEvents;
     type MaxVerificationKeySize = MaxVerificationKeySize;
+    type AdminOrigin = frame_system::EnsureRoot<AccountId>;
     type SettlementBatchHook = RuntimeSettlementHook;
+    type DefaultVerifierParams = DefaultAttestationVerifierParams;
     type WeightInfo = pallet_attestations::DefaultWeightInfo;
 }
 
@@ -392,6 +412,7 @@ impl pallet_settlement::Config for Runtime {
     type GovernanceOrigin = frame_system::EnsureRoot<AccountId>;
     type AuthorityId = pallet_settlement::crypto::Public;
     type ProofVerifier = pallet_settlement::AcceptAllProofs;
+    type DefaultVerifierParams = DefaultSettlementVerifierParams;
     type WeightInfo = pallet_settlement::weights::DefaultWeightInfo<Self>;
     type MaxLegs = MaxLegs;
     type MaxMemo = MaxMemo;
