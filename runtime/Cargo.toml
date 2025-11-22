@@ -89,7 +89,6 @@ runtime-benchmarks = [
     "frame-benchmarking",
     "pallet-attestations/runtime-benchmarks",
     "pallet-settlement/runtime-benchmarks",
-    "pallet-collective/runtime-benchmarks",
     "pallet-oracles/runtime-benchmarks",
     "pallet-feature-flags/runtime-benchmarks",
     "pallet-observability/runtime-benchmarks",

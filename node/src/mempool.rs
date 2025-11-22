@@ -27,7 +27,7 @@ impl PoolKey {
         } else {
             (tx.transaction.fee as u128 * 1_000_000u128) / tx.weight as u128
         };
-        let timestamp_ms = tx.transaction.timestamp.elapsed().as_millis();
+        let timestamp_ms = tx.transaction.timestamp.elapsed().as_millis() as u128;
         Self {
             fee_per_weight,
             timestamp_ms,
@@ -121,12 +121,12 @@ impl Mempool {
     pub fn prune(&self, ids: &[[u8; 32]]) {
         let mut guard = self.inner.lock();
         for id in ids {
-            if let Some(key) = guard.index.remove(id)
-                && let Some(entry) = guard.entries.remove(&key)
-            {
-                guard.total_weight = guard.total_weight.saturating_sub(entry.weight);
-                for nf in entry.transaction.nullifiers {
-                    guard.nullifiers.remove(&nf);
+            if let Some(key) = guard.index.remove(id) {
+                if let Some(entry) = guard.entries.remove(&key) {
+                    guard.total_weight = guard.total_weight.saturating_sub(entry.weight);
+                    for nf in entry.transaction.nullifiers {
+                        guard.nullifiers.remove(&nf);
+                    }
                 }
             }
         }

@@ -6,7 +6,6 @@ use frame_support::pallet_prelude::*;
 use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
-use parity_scale_codec::Decode;
 
 pub type FeatureName<T> = BoundedVec<u8, <T as Config>::MaxFeatureNameLength>;
 pub type CohortMembers<T> =
@@ -248,8 +247,8 @@ pub mod pallet {
             if on_chain < STORAGE_VERSION {
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: u16::decode(&mut &on_chain.encode()[..]).unwrap_or_default(),
-                    to: u16::decode(&mut &STORAGE_VERSION.encode()[..]).unwrap_or_default(),
+                    from: on_chain.into(),
+                    to: STORAGE_VERSION.into(),
                 });
                 T::WeightInfo::migrate()
             } else {

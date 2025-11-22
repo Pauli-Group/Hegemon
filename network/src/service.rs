@@ -176,7 +176,6 @@ pub struct P2PService {
 }
 
 impl P2PService {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         identity: PeerIdentity,
         addr: SocketAddr,
@@ -611,10 +610,10 @@ impl P2PService {
 
     fn rate_limited(&mut self, peer_id: &PeerId) -> bool {
         let now = Instant::now();
-        if let Some(last) = self.last_addr_request.get(peer_id)
-            && now.duration_since(*last) < ADDRESS_RATE_LIMIT
-        {
-            return true;
+        if let Some(last) = self.last_addr_request.get(peer_id) {
+            if now.duration_since(*last) < ADDRESS_RATE_LIMIT {
+                return true;
+            }
         }
         self.last_addr_request.insert(*peer_id, now);
         false
