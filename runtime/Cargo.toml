@@ -14,8 +14,9 @@ sp-std = { version = "14.0.0", default-features = false }
 sp-io = { version = "43.0.0", default-features = false }
 sp-version = { version = "42.0.0", default-features = false }
 sp-api = { version = "39.0.0", default-features = false }
-sp-offchain = { version = "32.0.0", default-features = false }
+sp-offchain = { version = "39.0.0", default-features = false }
 sp-application-crypto = { version = "43.0.0", default-features = false }
+sp-staking = { version = "41.0.0", default-features = false }
 
 crypto = { package = "synthetic-crypto", path = "../crypto", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive"], optional = true }
@@ -61,6 +62,7 @@ std = [
     "sp-api/std",
     "sp-offchain/std",
     "sp-application-crypto/std",
+    "sp-staking/std",
     "frame-support/std",
     "frame-system/std",
     "frame-executive/std",

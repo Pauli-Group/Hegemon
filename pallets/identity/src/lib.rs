@@ -8,7 +8,7 @@ use frame_support::pallet_prelude::*;
 use frame_support::traits::EnsureOrigin;
 use frame_support::weights::Weight;
 use frame_system::ensure_signed;
-use parity_scale_codec::Decode;
+use parity_scale_codec::{Decode, DecodeWithMemTracking};
 use sp_runtime::traits::MaybeSerializeDeserialize;
 use sp_runtime::RuntimeDebug;
 use sp_std::convert::TryInto;
@@ -130,6 +130,8 @@ pub mod pallet {
         Custom(BoundedVec<u8, T::MaxTagLength>),
     }
 
+    impl<T: Config> DecodeWithMemTracking for IdentityTag<T> {}
+
     impl<T: Config> Debug for IdentityTag<T> {
         fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
             match self {
@@ -163,6 +165,8 @@ pub mod pallet {
             ed25519_key: BoundedVec<u8, T::MaxEd25519KeyBytes>,
         },
     }
+
+    impl<T: Config> DecodeWithMemTracking for SessionKey<T> {}
 
     impl<T: Config> Debug for SessionKey<T> {
         fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {

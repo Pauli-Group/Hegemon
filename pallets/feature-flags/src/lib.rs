@@ -81,6 +81,7 @@ pub mod pallet {
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type GovernanceOrigin: EnsureOrigin<Self::RuntimeOrigin>;
         type MaxFeatureNameLength: Get<u32> + Clone;
+        type MaxFeatureCount: Get<u32> + Clone;
         type MaxCohortSize: Get<u32> + Clone;
         type WeightInfo: WeightInfo;
     }
@@ -117,6 +118,7 @@ pub mod pallet {
         FeatureAlreadyInactive,
         FeatureNotActive,
         NotInCohort,
+        FeatureLimitReached,
     }
 
     #[pallet::hooks]
@@ -140,6 +142,10 @@ pub mod pallet {
             ensure!(
                 !Features::<T>::contains_key(&feature),
                 Error::<T>::FeatureAlreadyExists
+            );
+            ensure!(
+                Features::<T>::iter().count() < T::MaxFeatureCount::get() as usize,
+                Error::<T>::FeatureLimitReached
             );
 
             let details = FeatureDetails::new(FeatureStatus::Proposed, cohort.clone());

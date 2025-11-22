@@ -74,6 +74,8 @@ pub struct SubmissionRules<BlockNumber> {
     pub max_size: u32,
 }
 
+impl<BlockNumber: Decode> DecodeWithMemTracking for SubmissionRules<BlockNumber> {}
+
 #[derive(Clone, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
 #[scale_info(skip_type_params(T))]
 pub struct CommitmentRecord<T: Config> {
