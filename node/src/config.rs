@@ -16,6 +16,7 @@ use crate::telemetry::TelemetryPosture;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeConfig {
     pub db_path: PathBuf,
+    pub peer_store_path: PathBuf,
     pub api_addr: SocketAddr,
     pub api_token: String,
     pub note_tree_depth: usize,
@@ -33,6 +34,7 @@ pub struct NodeConfig {
     pub supported_versions: Vec<VersionBinding>,
     pub p2p_addr: SocketAddr,
     pub seeds: Vec<String>,
+    pub imported_peers: Vec<String>,
     pub max_peers: usize,
     pub nat_traversal: bool,
     pub relay: RelayConfig,
@@ -41,11 +43,15 @@ pub struct NodeConfig {
 
 impl NodeConfig {
     pub fn with_db_path(path: impl AsRef<Path>) -> Self {
+        let mut config = Self::default();
+        config.apply_db_path(path);
+        config
+    }
+
+    pub fn apply_db_path(&mut self, path: impl AsRef<Path>) {
         let db_path = path.as_ref().to_path_buf();
-        Self {
-            db_path,
-            ..Self::default()
-        }
+        self.db_path = db_path.clone();
+        self.peer_store_path = db_path.with_extension("peers");
     }
 
     pub fn miner_secret(&self) -> MlDsaSecretKey {
@@ -69,6 +75,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             db_path: PathBuf::from("node.db"),
+            peer_store_path: PathBuf::from("node.db.peers"),
             api_addr: "127.0.0.1:8080".parse().expect("loopback socket"),
             api_token: "devnet-token".to_string(),
             note_tree_depth: 32,
@@ -86,6 +93,7 @@ impl Default for NodeConfig {
             supported_versions: vec![DEFAULT_VERSION_BINDING],
             p2p_addr: "0.0.0.0:9000".parse().expect("p2p socket"),
             seeds: vec![],
+            imported_peers: vec![],
             max_peers: 64,
             nat_traversal: true,
             relay: RelayConfig::default(),

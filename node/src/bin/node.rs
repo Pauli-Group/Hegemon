@@ -11,6 +11,7 @@ use axum_server::tls_rustls::RustlsConfig;
 use clap::{Parser, Subcommand};
 use node::{
     NodeService, api,
+    bootstrap::{PeerBundle, persist_imported_peers},
     chain_spec::{self, ChainProfile},
     config::NodeConfig,
 };
@@ -70,6 +71,12 @@ struct Cli {
     allow_remote: bool,
     #[arg(long, default_value_t = false)]
     tls: bool,
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Load peers from a bundle exported by another node"
+    )]
+    import_peers: Option<PathBuf>,
     #[arg(long, env = "NODE_WALLET_STORE", value_name = "PATH")]
     wallet_store: Option<PathBuf>,
     #[arg(long, env = "NODE_WALLET_PASSPHRASE")]
@@ -82,6 +89,7 @@ struct Cli {
 enum Commands {
     Start,
     Setup,
+    ExportPeers { output: PathBuf },
 }
 
 #[tokio::main]
@@ -95,6 +103,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Some(Commands::Setup) => run_setup().await,
+        Some(Commands::ExportPeers { output }) => run_export_peers(cli, output).await,
         Some(Commands::Start) | None => run_node(cli).await,
     }
 }
@@ -219,7 +228,7 @@ async fn run_node(cli: Cli) -> Result<()> {
     let chain_spec = chain_spec::chain_spec(cli.chain);
     let mut config = NodeConfig::default();
     config.chain_profile = cli.chain;
-    config.db_path = cli.db_path.clone();
+    config.apply_db_path(cli.db_path.clone());
     chain_spec.apply_to_config(&mut config);
     config.api_addr = cli.api_addr.parse().context("invalid api address")?;
 
@@ -271,6 +280,23 @@ async fn run_node(cli: Cli) -> Result<()> {
     config.p2p_addr = cli.p2p_addr.parse().context("invalid p2p address")?;
     if !cli.seeds.is_empty() {
         config.seeds = cli.seeds;
+    }
+    if let Some(import_path) = cli.import_peers {
+        let bundle = PeerBundle::load(&import_path).context("failed to load peer bundle")?;
+        let imported =
+            persist_imported_peers(&bundle, &config).context("failed to apply imported peers")?;
+        config.imported_peers = imported.iter().map(|addr| addr.to_string()).collect();
+
+        if let Some(genesis) = bundle
+            .genesis_block()
+            .context("failed to deserialize bundle genesis block")?
+        {
+            info!(
+                height = genesis.header.height,
+                parent = ?genesis.header.parent_hash,
+                "loaded genesis block metadata from peer bundle"
+            );
+        }
     }
     config.max_peers = cli.max_peers;
     config.nat_traversal = cli.nat_traversal;
@@ -341,12 +367,13 @@ async fn run_node(cli: Cli) -> Result<()> {
     let gossip_handle = router.handle();
 
     let p2p_identity = network::PeerIdentity::generate(&config.miner_seed);
-    let peer_store_path = config.db_path.with_extension("peers");
-    let peer_store = network::PeerStore::new(network::PeerStoreConfig::with_path(peer_store_path));
+    let peer_store =
+        network::PeerStore::new(network::PeerStoreConfig::with_path(&config.peer_store_path));
     let p2p_service = network::P2PService::new(
         p2p_identity,
         config.p2p_addr,
         config.seeds.clone(),
+        config.imported_peers.clone(),
         gossip_handle,
         config.max_peers,
         peer_store,
@@ -468,6 +495,27 @@ async fn run_node(cli: Cli) -> Result<()> {
     info!("shutting down");
     handle.shutdown().await;
     api_task.abort();
+    Ok(())
+}
+
+async fn run_export_peers(cli: Cli, output: PathBuf) -> Result<()> {
+    let chain_spec = chain_spec::chain_spec(cli.chain);
+    let mut config = NodeConfig::default();
+    config.chain_profile = cli.chain;
+    config.apply_db_path(cli.db_path.clone());
+    chain_spec.apply_to_config(&mut config);
+
+    let bundle = PeerBundle::capture(&config).context("failed to capture peer bundle")?;
+    bundle
+        .save(&output)
+        .with_context(|| format!("failed to write bundle to {}", output.display()))?;
+    println!(
+        "Exported {} peers for {:?} to {}",
+        bundle.peers.len(),
+        bundle.chain,
+        output.display()
+    );
+
     Ok(())
 }
 
