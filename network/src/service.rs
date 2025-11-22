@@ -18,8 +18,8 @@ use tracing::{error, info, warn};
 
 pub struct ProtocolHandle {
     protocol_id: ProtocolId,
-    outbound: mpsc::Sender<ProtocolMessage>,
-    inbound: mpsc::Receiver<ProtocolMessage>,
+    outbound: mpsc::Sender<DirectedProtocolMessage>,
+    inbound: mpsc::Receiver<(PeerId, ProtocolMessage)>,
 }
 
 impl ProtocolHandle {
@@ -27,29 +27,54 @@ impl ProtocolHandle {
         self.protocol_id
     }
 
-    pub fn sender(&self) -> mpsc::Sender<ProtocolMessage> {
+    pub fn sender(&self) -> mpsc::Sender<DirectedProtocolMessage> {
         self.outbound.clone()
     }
 
-    pub fn receiver(&mut self) -> &mut mpsc::Receiver<ProtocolMessage> {
+    pub fn receiver(&mut self) -> &mut mpsc::Receiver<(PeerId, ProtocolMessage)> {
         &mut self.inbound
     }
 
     pub async fn send(
         &self,
         payload: Vec<u8>,
-    ) -> Result<(), mpsc::error::SendError<ProtocolMessage>> {
+    ) -> Result<(), mpsc::error::SendError<DirectedProtocolMessage>> {
         self.outbound
-            .send(ProtocolMessage {
-                protocol: self.protocol_id,
-                payload,
+            .send(DirectedProtocolMessage {
+                target: None,
+                message: ProtocolMessage {
+                    protocol: self.protocol_id,
+                    payload,
+                },
             })
             .await
     }
 
-    pub async fn recv(&mut self) -> Option<ProtocolMessage> {
+    pub async fn send_to(
+        &self,
+        peer_id: PeerId,
+        payload: Vec<u8>,
+    ) -> Result<(), mpsc::error::SendError<DirectedProtocolMessage>> {
+        self.outbound
+            .send(DirectedProtocolMessage {
+                target: Some(peer_id),
+                message: ProtocolMessage {
+                    protocol: self.protocol_id,
+                    payload,
+                },
+            })
+            .await
+    }
+
+    pub async fn recv(&mut self) -> Option<(PeerId, ProtocolMessage)> {
         self.inbound.recv().await
     }
+}
+
+#[derive(Clone)]
+pub struct DirectedProtocolMessage {
+    pub target: Option<PeerId>,
+    pub message: ProtocolMessage,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -60,8 +85,8 @@ pub struct RelayConfig {
 
 #[derive(Default)]
 struct ProtocolMultiplexer {
-    handlers: HashMap<ProtocolId, mpsc::Sender<ProtocolMessage>>,
-    outbound: SelectAll<BoxStream<'static, (ProtocolId, ProtocolMessage)>>,
+    handlers: HashMap<ProtocolId, mpsc::Sender<(PeerId, ProtocolMessage)>>,
+    outbound: SelectAll<BoxStream<'static, DirectedProtocolMessage>>,
 }
 
 impl ProtocolMultiplexer {
@@ -76,10 +101,7 @@ impl ProtocolMultiplexer {
         let (outbound_tx, outbound_rx) = mpsc::channel(100);
         let (inbound_tx, inbound_rx) = mpsc::channel(100);
 
-        let stream = TokioStreamExt::map(ReceiverStream::new(outbound_rx), move |msg| {
-            (protocol_id, msg)
-        })
-        .boxed();
+        let stream = ReceiverStream::new(outbound_rx).boxed();
 
         self.handlers.insert(protocol_id, inbound_tx);
         self.outbound.push(stream);
@@ -95,13 +117,13 @@ impl ProtocolMultiplexer {
         !self.handlers.is_empty()
     }
 
-    async fn next_outbound(&mut self) -> Option<(ProtocolId, ProtocolMessage)> {
+    async fn next_outbound(&mut self) -> Option<DirectedProtocolMessage> {
         FuturesStreamExt::next(&mut self.outbound).await
     }
 
-    async fn dispatch_inbound(&mut self, msg: ProtocolMessage) {
+    async fn dispatch_inbound(&mut self, peer_id: PeerId, msg: ProtocolMessage) {
         if let Some(handler) = self.handlers.get(&msg.protocol) {
-            let _ = handler.send(msg).await;
+            let _ = handler.send((peer_id, msg)).await;
         } else {
             warn!(
                 protocol = msg.protocol,
@@ -309,8 +331,10 @@ impl P2PService {
                                     self.handle_coordination(peer_id, msg, cmd_tx.clone())
                                         .await;
                                 }
-                                WireMessage::Proto(proto_msg) => {
-                                    self.protocol_mux.dispatch_inbound(proto_msg).await;
+                WireMessage::Proto(proto_msg) => {
+                                    self.protocol_mux
+                                        .dispatch_inbound(peer_id, proto_msg)
+                                        .await;
                                 }
                             }
                         }
@@ -328,8 +352,18 @@ impl P2PService {
                 }
 
                 // Handle protocol messages from registered components
-                Some((_, protocol_msg)) = self.protocol_mux.next_outbound(), if self.protocol_mux.has_protocols() => {
-                    self.peer_manager.broadcast(WireMessage::Proto(protocol_msg)).await;
+                Some(outbound) = self.protocol_mux.next_outbound(), if self.protocol_mux.has_protocols() => {
+                    match outbound.target {
+                        Some(peer_id) => {
+                            self
+                                .peer_manager
+                                .send_to(&peer_id, WireMessage::Proto(outbound.message))
+                                .await;
+                        }
+                        None => {
+                            self.peer_manager.broadcast(WireMessage::Proto(outbound.message)).await;
+                        }
+                    }
                 }
 
                 _ = heartbeat.tick() => {
