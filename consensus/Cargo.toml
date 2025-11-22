@@ -18,3 +18,4 @@ serde = { version = "1", features = ["derive"] }
 network = { path = "../network" }
 proptest = "1"
 tokio = { version = "1", features = ["macros", "rt", "time", "sync"] }
+runtime = { path = "../runtime" }
