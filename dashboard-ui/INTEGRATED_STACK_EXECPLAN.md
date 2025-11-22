@@ -17,6 +17,7 @@ People running `make quickstart` today still land on a dashboard that shows mock
 - [x] (2025-11-22 09:47Z) Ran `make quickstart` (stopped at `make check` because of Clippy errors in `network/`), then launched dashboard_service + Vite manually against a hand-started `hegemon` node to confirm live telemetry and port binding; captured URLs and metrics below.
 - [x] (2025-11-22 10:19Z) Reran `make quickstart` (still stops at `make check` on pallet errors) then manually launched dashboard_service + Vite with autostart: service http://127.0.0.1:8001, UI http://127.0.0.1:5173, node target http://127.0.0.1:8080 exited with "Wallet passphrase required", so metrics/miner endpoints stayed on mock data.
 - [x] (2025-11-22 10:31Z) Wired autostart to pass a wallet store + "test passphrase" into the node, reran dashboard_service + Vite: service http://127.0.0.1:8001, UI http://127.0.0.1:5173, node http://127.0.0.1:8080 stayed running and streamed live metrics (hash_rate ~26.2, best_height 20) from the autostarted hegemon process.
+- [x] (2025-11-22 11:07Z) Mapped the P2P/bootstrapping stack against the target PoW/PQC behavior (sync from genesis via one peer, address gossip, restart reusing stored peers, and exportable genesis+peer bundle) and captured remaining work.
 
 ## Surprises & Discoveries
 
@@ -24,6 +25,7 @@ People running `make quickstart` today still land on a dashboard that shows mock
 - Autostarted node now targets the `hegemon` bin and, after supplying a wallet store and "test passphrase," runs to completion and yields live telemetry; prior runs without the passphrase failed with "Wallet passphrase required."
 - The `hegemon` CLI would not build due to a partial move of `cli.command` in the main match; patched the match to `command.take()` so the binary compiles for validation.
 - Reusing an existing wallet store threw "decryption failure"; a fresh store at `state/dashboard-wallet.devpass.store` with passphrase `devpass` avoided the mismatch.
+- P2P stack already implements the requested peer behaviors: address exchange/gossip is covered by `network/tests/p2p_integration.rs` (B learns C and vice-versa), sync-from-one-peer is covered by `node/tests/sync.rs`, restart uses the persisted peer store with a reconnect cap of five (`RECENT_RECONNECT_LIMIT`) via `startup_targets` in `network/src/service.rs`, and genesis+peer export/import is wired through `PeerBundle` (`hegemon export-peers --output ...` / `--import-peers`).
 
 ## Decision Log
 
@@ -46,6 +48,7 @@ People running `make quickstart` today still land on a dashboard that shows mock
 - Unified quickstart validation (2025-11-22 10:31Z): dashboard_service bound on `http://127.0.0.1:8001`, Vite UI on `http://127.0.0.1:5173`, and the autostarted node target `http://127.0.0.1:8080` (token `devnet-token`, db `state/dashboard-node.1763807450.db`, wallet store `state/dashboard-wallet.testpass.store`, passphrase "test passphrase") stayed running and streamed live telemetry via `/node/metrics` and `/node/miner/status` (e.g., `hash_rate ~26.2`, `best_height 20`, `mempool_depth 0`, `exposure_scope devnet`); the autostart command snapshot redacts the passphrase.
 - Prior manual validation (2025-11-22 09:47Z): with dashboard_service on `http://127.0.0.1:8001`, Vite on `http://127.0.0.1:5173`, and a hand-started `hegemon` node on `http://127.0.0.1:8080` (token `devnet-token`), `/node/metrics` and `/node/miner/status` reported live values (`hash_rate ~26.8`, `total_hashes ~2220`, `best_height 196`, `mempool_depth 0`, TLS disabled).
 - Follow-ups: autostart now targets the correct bin, passes wallet credentials, and chooses free ports; remaining work is clearing the pallet errors that stop `make quickstart` so the one-command flow runs the dashboard stack automatically.
+- Network readiness for the PoW/PQC bootstrap goal: the current codebase already handles peer gossip and synchronization (gossip propagation test in `network/tests/p2p_integration.rs`, tip sync from one peer in `node/tests/sync.rs`), persists peers to disk and retries up to five on restart (`network/src/service.rs`), and exports/imports genesis + peer lists via `PeerBundle` (`node/tests/bootstrap.rs` and the `hegemon export-peers`/`--import-peers` CLI). Runtime does not compile right now, so these tests need to be rerun after the FRAME/SP version alignment.
 - New blocking work (pallets):
   - Replace `StorageMigrated` event fields back to primitives to avoid `DecodeWithMemTracking`/`TypeInfo` errors (`asset-registry`, `observability`, `feature-flags`, `attestations`, `settlement`, `oracles`).
   - Fix log imports by adding `log` dependency or using `frame_support::log` (current single-component imports fail).
@@ -54,6 +57,10 @@ People running `make quickstart` today still land on a dashboard that shows mock
   - Add `#[pallet::call_index]` where still implicit (`settlement` verified after re-run) and add `Default` bound or remove `Default::default()` on `AssetId` in settlement.
   - Attestations benchmarking: `IssuerId` needs `Default`, bench origins need correct types; observability benchmarking origins also need `RuntimeOrigin`.
   - Pallet-collective: implement the new `try_successful_origin` trait item required by `EnsureOrigin`/`EnsureOriginWithArg` impls in 42.0.0 to clear the E0046 errors.
+- Open work to hit the PoW/PQC bootstrap behavior end-to-end:
+  - Align FRAME/SP versions so `runtime/` builds, then rerun `cargo test -p network` (especially `p2p_integration`) and `cargo test -p node node/tests::{sync,bootstrap}` to reconfirm gossip, sync-from-one-peer, restart-from-peer-store (5 peers), and bundle import/export.
+  - Validate that `PeerBundle::capture` includes the current genesis block in storage (optional field) and that `hegemon export-peers --output bundle.json` + `--import-peers bundle.json` stays documented in runbooks/quickstart for new joiners.
+  - Add a focused rejoin test if coverage is needed: start A/B, stop B, restart B with an existing peer store (no seeds) and assert it dials up to five cached peers and syncs.
 
 ## Context and Orientation
 
