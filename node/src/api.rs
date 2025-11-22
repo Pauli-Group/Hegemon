@@ -21,7 +21,9 @@ use tokio_stream::wrappers::BroadcastStream;
 use tracing::warn;
 
 use crate::error::NodeError;
-use crate::service::{MinerAction, MinerStatus, NodeService, NoteStatus, StorageFootprint};
+use crate::service::{
+    ConsensusStatus, MinerAction, MinerStatus, NodeService, NoteStatus, StorageFootprint,
+};
 use crate::telemetry::TelemetrySnapshot;
 use wallet::TransactionBundle;
 
@@ -65,6 +67,7 @@ pub fn node_router(node: Arc<NodeService>, wallet: Option<wallet::api::ApiState>
         .route("/wallet/ciphertexts", get(ciphertexts))
         .route("/wallet/nullifiers", get(nullifiers))
         .route("/metrics", get(metrics))
+        .route("/consensus/status", get(consensus_status))
         .route("/storage/footprint", get(storage_footprint))
         .route("/miner/status", get(miner_status))
         .route("/miner/control", post(miner_control))
@@ -77,6 +80,7 @@ pub fn node_router(node: Arc<NodeService>, wallet: Option<wallet::api::ApiState>
         .route("/node/wallet/ciphertexts", get(ciphertexts))
         .route("/node/wallet/nullifiers", get(nullifiers))
         .route("/node/metrics", get(metrics))
+        .route("/node/consensus/status", get(consensus_status))
         .route("/node/storage/footprint", get(storage_footprint))
         .route("/node/miner/status", get(miner_status))
         .route("/node/miner/control", post(miner_control))
@@ -249,6 +253,14 @@ async fn metrics(
 ) -> Result<Json<TelemetrySnapshot>, StatusCode> {
     require_auth(&headers, &state.token)?;
     Ok(Json(state.node.telemetry_snapshot()))
+}
+
+async fn consensus_status(
+    State(state): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Json<ConsensusStatus>, StatusCode> {
+    require_auth(&headers, &state.token)?;
+    Ok(Json(state.node.consensus_status()))
 }
 
 async fn storage_footprint(

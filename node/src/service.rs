@@ -6,13 +6,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use consensus::PowConsensus;
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use consensus::proof::HashVerifier;
 use consensus::types::{
     BalanceTag, CoinbaseData, CoinbaseSource, ConsensusBlock, Transaction, compute_fee_commitment,
-    compute_version_commitment,
+    compute_proof_commitment, compute_version_commitment,
 };
+use consensus::{BlockOrigin, PowConsensus, import_pow_block};
 use crypto::hashes::sha256;
 use crypto::ml_dsa::MlDsaSecretKey;
 use crypto::traits::{SigningKey, VerifyKey};
@@ -79,6 +79,16 @@ pub struct MinerStatus {
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
+pub struct ConsensusStatus {
+    pub height: u64,
+    pub best_hash: [u8; 32],
+    pub pow_bits: u32,
+    pub version_commitment: [u8; 32],
+    pub proof_commitment: [u8; 48],
+    pub telemetry: TelemetrySnapshot,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct StorageFootprint {
     pub height: u64,
     pub blocks: u64,
@@ -113,6 +123,8 @@ struct LedgerState {
     state_root: [u8; 32],
     nullifier_root: [u8; 32],
     supply_digest: u128,
+    version_commitment: [u8; 32],
+    proof_commitment: [u8; 48],
     best_hash: [u8; 32],
     height: u64,
     pow_bits: u32,
@@ -171,6 +183,8 @@ impl NodeService {
             let _ = nullifiers.insert(nf);
         }
 
+        let mut last_version_commitment = [0u8; 32];
+        let mut last_proof_commitment = [0u8; 48];
         let pow_bits = if meta.height == 0 {
             DEFAULT_GENESIS_POW_BITS
         } else {
@@ -182,6 +196,8 @@ impl NodeService {
             state_root: meta.state_root,
             nullifier_root: meta.nullifier_root,
             supply_digest: meta.supply_digest,
+            version_commitment: last_version_commitment,
+            proof_commitment: last_proof_commitment,
             best_hash: meta.best_hash,
             height: meta.height,
             pow_bits,
@@ -190,8 +206,13 @@ impl NodeService {
         let miner_pubkeys = vec![miner_secret.verify_key()];
         let mut consensus = PowConsensus::new(miner_pubkeys.clone(), meta.state_root, HashVerifier);
         for block in persisted_blocks {
+            last_version_commitment = compute_version_commitment(&block.transactions);
+            last_proof_commitment = compute_proof_commitment(&block.transactions);
             let _ = consensus.apply_block(block);
         }
+        let mut ledger = ledger;
+        ledger.version_commitment = last_version_commitment;
+        ledger.proof_commitment = last_proof_commitment;
         // If the recorded best hash/height isn't known to consensus, reset to genesis.
         let fork_check = consensus.expected_bits_for_block(meta.best_hash, meta.height + 1);
         if fork_check.is_err() {
@@ -251,7 +272,10 @@ impl NodeService {
         let miner_service = service.clone();
         let miner_task = tokio::spawn(async move {
             while let Some(block) = solution_rx.recv().await {
-                if let Err(err) = miner_service.accept_block(block, true).await {
+                if let Err(err) = miner_service
+                    .accept_block(block, BlockOrigin::Own, true)
+                    .await
+                {
                     eprintln!("miner produced invalid block: {err}");
                 }
             }
@@ -286,7 +310,9 @@ impl NodeService {
                 }
                 GossipMessage::Block(data) => {
                     if let Ok(block) = deserialize_block(&data) {
-                        let _ = self.accept_block(block, false).await;
+                        let _ = self
+                            .accept_block(block, BlockOrigin::NetworkBroadcast, false)
+                            .await;
                     }
                 }
                 GossipMessage::Evidence(_) => {}
@@ -301,6 +327,18 @@ impl NodeService {
 
     pub fn update_privacy_posture(&self, posture: TelemetryPosture) {
         self.telemetry.set_privacy_posture(posture);
+    }
+
+    pub fn consensus_status(&self) -> ConsensusStatus {
+        let ledger = self.ledger.lock();
+        ConsensusStatus {
+            height: ledger.height,
+            best_hash: ledger.best_hash,
+            pow_bits: ledger.pow_bits,
+            version_commitment: ledger.version_commitment,
+            proof_commitment: ledger.proof_commitment,
+            telemetry: self.telemetry.snapshot(),
+        }
     }
 
     pub fn miner_status(&self) -> MinerStatus {
@@ -662,7 +700,7 @@ impl NodeService {
     pub async fn seal_pending_block(&self) -> NodeResult<Option<ConsensusBlock>> {
         if let Some(block) = self.assemble_pending_block()? {
             let cloned = block.clone();
-            self.accept_block(block, true).await?;
+            self.accept_block(block, BlockOrigin::Own, true).await?;
             Ok(Some(cloned))
         } else {
             Ok(None)
@@ -671,13 +709,18 @@ impl NodeService {
 
     #[cfg(feature = "test-utils")]
     pub async fn apply_block_for_test(&self, block: ConsensusBlock) -> NodeResult<()> {
-        self.accept_block(block, false).await
+        self.accept_block(block, BlockOrigin::File, false).await
     }
 
-    async fn accept_block(&self, block: ConsensusBlock, propagate: bool) -> NodeResult<()> {
-        let hash = block.header.hash()?;
+    async fn accept_block(
+        &self,
+        block: ConsensusBlock,
+        origin: BlockOrigin,
+        propagate: bool,
+    ) -> NodeResult<()> {
         let mut consensus = self.consensus.lock();
-        consensus.apply_block(block.clone())?;
+        let receipt = import_pow_block(&mut consensus, origin, block.clone())?;
+        let hash = receipt.update.block_hash;
         drop(consensus);
         let mut ledger = self.ledger.lock();
         ledger.best_hash = hash;
@@ -685,6 +728,8 @@ impl NodeService {
         ledger.state_root = block.header.state_root;
         ledger.nullifier_root = block.header.nullifier_root;
         ledger.supply_digest = block.header.supply_digest;
+        ledger.version_commitment = receipt.version_commitment;
+        ledger.proof_commitment = receipt.proof_commitment;
         ledger.pow_bits = block
             .header
             .pow
