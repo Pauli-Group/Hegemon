@@ -6,13 +6,15 @@ use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::dispatch::DispatchResult;
 use frame_support::pallet_prelude::*;
 use frame_support::traits::tokens::currency::Currency;
-use frame_support::traits::{ExistenceRequirement, StorageVersion};
+use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::BlockNumberFor;
 use pallet_identity::IdentityProvider;
-use log;
+use log::warn;
 use sp_runtime::traits::Saturating;
-use sp_runtime::transaction_validity::{InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity, ValidTransaction};
+use frame_support::pallet_prelude::{
+    InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity, ValidTransaction,
+};
 use sp_runtime::RuntimeDebug;
 
 /// Hook to dispatch off-chain ingestion for scheduled feeds.
@@ -97,7 +99,18 @@ impl<T: Config> CommitmentRecord<T> {
     }
 }
 
-#[derive(Clone, Copy, Encode, Decode, DecodeWithMemTracking, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+#[derive(
+    Clone,
+    Copy,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    PartialEq,
+    Eq,
+    RuntimeDebug,
+    MaxEncodedLen,
+    TypeInfo,
+)]
 pub enum RewardReason {
     OracleSubmission,
     SubmissionVerification,
@@ -249,8 +262,8 @@ pub mod pallet {
             reason: RewardReason,
         },
         StorageMigrated {
-            from: StorageVersion,
-            to: StorageVersion,
+            from: u16,
+            to: u16,
         },
     }
 
@@ -272,7 +285,7 @@ pub mod pallet {
         fn on_runtime_upgrade() -> Weight {
             let on_chain = Pallet::<T>::on_chain_storage_version();
             if on_chain > STORAGE_VERSION {
-                log::warn!(
+                warn!(
                     target: "oracles",
                     "Skipping migration: on-chain storage version {:?} is newer than code {:?}",
                     on_chain,
@@ -282,10 +295,12 @@ pub mod pallet {
             }
 
             if on_chain < STORAGE_VERSION {
+                let from = storage_version_u16(on_chain);
+                let to = storage_version_u16(STORAGE_VERSION);
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain,
-                    to: STORAGE_VERSION,
+                    from,
+                    to,
                 });
                 T::WeightInfo::migrate()
             } else {
@@ -321,7 +336,7 @@ pub mod pallet {
             PendingIngestions::<T>::put(scheduled);
             let mut rewards = PendingRewards::<T>::take();
             for (account, amount, reason) in rewards.drain(..) {
-                T::Currency::deposit_creating(&account, amount);
+                let _imbalance = T::Currency::deposit_creating(&account, amount);
                 weight = weight.saturating_add(Weight::from_parts(10_000, 0));
                 <Pallet<T>>::deposit_event(Event::RewardPaid {
                     account,
@@ -337,13 +352,18 @@ pub mod pallet {
         fn offchain_worker(_: BlockNumberFor<T>) {
             let scheduled = PendingIngestions::<T>::get();
             for feed_id in scheduled.iter() {
-                if let Some(details) = Feeds::<T>::get(feed_id) {
-                    // Offchain submission path intentionally no-op without unsigned tx helper.
-                }
-
                 T::OffchainIngestion::ingest(feed_id);
                 <Pallet<T>>::deposit_event(Event::IngestionDispatched { feed_id: *feed_id });
             }
+        }
+    }
+
+    fn storage_version_u16(version: StorageVersion) -> u16 {
+        let encoded = version.encode();
+        if encoded.len() >= 2 {
+            u16::from_le_bytes([encoded[0], encoded[1]])
+        } else {
+            0
         }
     }
 
@@ -546,11 +566,13 @@ pub mod pallet {
     }
 }
 
-#[frame_support::pallet_macros::validate_unsigned]
 impl<T: Config> ValidateUnsigned for Pallet<T> {
     type Call = Call<T>;
 
-    fn validate_unsigned(source: TransactionSource, call: &Self::Call) -> TransactionValidity {
+    fn validate_unsigned(
+        source: frame_support::pallet_prelude::TransactionSource,
+        call: &Self::Call,
+    ) -> TransactionValidity {
         if let Call::verify_submission {
             feed_id,
             expected_commitment,

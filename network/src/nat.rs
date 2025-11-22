@@ -75,21 +75,27 @@ impl NatTraversal {
             };
         }
 
-        if config.enable_upnp && let Some(addr) = Self::try_upnp(config).await {
+        if config.enable_upnp
+            && let Some(addr) = Self::try_upnp(config).await
+        {
             return NatTraversalResult {
                 external_addresses: vec![addr],
                 protocol: Some(NatProtocol::Upnp),
             };
         }
 
-        if config.enable_nat_pmp && let Some(addr) = Self::try_nat_pmp(config).await {
+        if config.enable_nat_pmp
+            && let Some(addr) = Self::try_nat_pmp(config).await
+        {
             return NatTraversalResult {
                 external_addresses: vec![addr],
                 protocol: Some(NatProtocol::NatPmp),
             };
         }
 
-        if config.enable_pcp && let Some(addr) = Self::try_pcp(config).await {
+        if config.enable_pcp
+            && let Some(addr) = Self::try_pcp(config).await
+        {
             return NatTraversalResult {
                 external_addresses: vec![addr],
                 protocol: Some(NatProtocol::Pcp),

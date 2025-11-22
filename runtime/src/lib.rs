@@ -4,7 +4,9 @@
 pub mod chain_spec;
 
 use codec::{Decode, Encode, MaxEncodedLen};
-use frame_support::traits::{ConstU128, ConstU32, ConstU64, Currency, EitherOfDiverse};
+use frame_support::traits::{
+    ConstU128, ConstU32, ConstU64, Currency as CurrencyTrait, EitherOfDiverse,
+};
 use frame_support::BoundedVec;
 pub use frame_support::{construct_runtime, parameter_types};
 use frame_system as system;
@@ -307,6 +309,9 @@ pub mod pow {
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
     }
 
+    #[pallet::pallet]
+    pub struct Pallet<T>(_); 
+
     #[pallet::type_value]
     pub fn DefaultDifficulty<T: Config>() -> u32 {
         PowDifficulty::get()
@@ -512,7 +517,7 @@ parameter_types! {
         authoring_version: 1,
         spec_version: 1,
         impl_version: 1,
-        apis: sp_version::create_apis_vec![],
+        apis: sp_version::create_apis_vec!([(sp_api::Core::ID, sp_api::Core::VERSION)]),
         transaction_version: 1,
         state_version: 0,
     };
@@ -647,7 +652,7 @@ impl pallet_balances::Config for Runtime {
     type MaxFreezes = ConstU32<0>;
 }
 
-type NegativeImbalance = <Balances as Currency<AccountId>>::NegativeImbalance;
+type NegativeImbalance = <Balances as CurrencyTrait<AccountId>>::NegativeImbalance;
 
 pub struct RuntimeFeeCollector;
 impl frame_support::traits::OnUnbalanced<NegativeImbalance> for RuntimeFeeCollector {

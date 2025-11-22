@@ -4,11 +4,11 @@ pub use pallet::*;
 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::dispatch::DispatchResult;
-use log;
 use frame_support::pallet_prelude::*;
 use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::BlockNumberFor;
+use log::warn;
 use sp_runtime::RuntimeDebug;
 use sp_std::vec::Vec;
 
@@ -100,9 +100,9 @@ pub enum SettlementStage {
     IssuerLinked,
     DisputeStarted,
     DisputeEscalated,
-    DisputeResolved,
-    RolledBack,
-}
+        DisputeResolved,
+        RolledBack,
+    }
 
 pub trait WeightInfo {
     fn submit_commitment() -> Weight;
@@ -110,8 +110,8 @@ pub trait WeightInfo {
     fn set_verifier_params() -> Weight;
     fn start_dispute() -> Weight;
     fn rollback() -> Weight;
-    fn migrate() -> Weight;
-}
+        fn migrate() -> Weight;
+    }
 
 pub struct DefaultWeightInfo;
 
@@ -229,8 +229,8 @@ pub mod pallet {
             commitment_id: T::CommitmentId,
         },
         StorageMigrated {
-            from: StorageVersion,
-            to: StorageVersion,
+            from: u16,
+            to: u16,
         },
     }
 
@@ -256,7 +256,7 @@ pub mod pallet {
         fn on_runtime_upgrade() -> Weight {
             let on_chain = Pallet::<T>::on_chain_storage_version();
             if on_chain > STORAGE_VERSION {
-                log::warn!(
+                warn!(
                     target: "attestations",
                     "Skipping migration: on-chain storage version {:?} is newer than code {:?}",
                     on_chain,
@@ -266,16 +266,27 @@ pub mod pallet {
             }
 
             if on_chain < STORAGE_VERSION {
+                let from = storage_version_u16(on_chain);
+                let to = storage_version_u16(STORAGE_VERSION);
                 VerifierParameters::<T>::put(T::DefaultVerifierParams::get());
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain,
-                    to: STORAGE_VERSION,
+                    from,
+                    to,
                 });
                 T::WeightInfo::migrate()
             } else {
                 Weight::zero()
             }
+        }
+    }
+
+    fn storage_version_u16(version: StorageVersion) -> u16 {
+        let encoded = version.encode();
+        if encoded.len() >= 2 {
+            u16::from_le_bytes([encoded[0], encoded[1]])
+        } else {
+            0
         }
     }
 

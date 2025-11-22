@@ -6,9 +6,10 @@ use frame_support::pallet_prelude::*;
 use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
+use log::warn;
+use parity_scale_codec::Encode;
 use pallet_identity::IdentityProvider;
 use sp_runtime::RuntimeDebug;
-use log;
 
 pub type DefaultRegulatoryTag<T> = BoundedVec<u8, <T as pallet::Config>::MaxTagLength>;
 pub type DefaultTagSet<T> =
@@ -131,8 +132,8 @@ pub mod pallet {
             who: T::AccountId,
         },
         StorageMigrated {
-            from: StorageVersion,
-            to: StorageVersion,
+            from: u16,
+            to: u16,
         },
     }
 
@@ -152,7 +153,7 @@ pub mod pallet {
         fn on_runtime_upgrade() -> Weight {
             let on_chain = Pallet::<T>::on_chain_storage_version();
             if on_chain > STORAGE_VERSION {
-                log::warn!(
+                warn!(
                     target: "asset-registry",
                     "Skipping migration: on-chain storage version {:?} is newer than code {:?}",
                     on_chain,
@@ -162,15 +163,26 @@ pub mod pallet {
             }
 
             if on_chain < STORAGE_VERSION {
+                let from = storage_version_u16(on_chain);
+                let to = storage_version_u16(STORAGE_VERSION);
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: on_chain,
-                    to: STORAGE_VERSION,
+                    from,
+                    to,
                 });
                 T::WeightInfo::migrate()
             } else {
                 Weight::zero()
             }
+        }
+    }
+
+    fn storage_version_u16(version: StorageVersion) -> u16 {
+        let encoded = version.encode();
+        if encoded.len() >= 2 {
+            u16::from_le_bytes([encoded[0], encoded[1]])
+        } else {
+            0
         }
     }
 

@@ -15,29 +15,37 @@ People running `make quickstart` today still land on a dashboard that shows mock
 - [x] (2025-02-18 07:00Z) Hardened `scripts/full-quickstart.sh` to choose free ports, export the chosen service URL to the UI, and pass autostart env so the proxy and UI stay aligned.
 - [x] (2025-02-18 07:03Z) Documented the single-command devnet/dashboard workflow in README without touching the whitepaper section.
 - [x] (2025-11-22 09:47Z) Ran `make quickstart` (stopped at `make check` because of Clippy errors in `network/`), then launched dashboard_service + Vite manually against a hand-started `hegemon` node to confirm live telemetry and port binding; captured URLs and metrics below.
+- [x] (2025-11-22 10:19Z) Reran `make quickstart` (still stops at `make check` on pallet errors) then manually launched dashboard_service + Vite with autostart: service http://127.0.0.1:8001, UI http://127.0.0.1:5173, node target http://127.0.0.1:8080 exited with "Wallet passphrase required", so metrics/miner endpoints stayed on mock data.
+- [x] (2025-11-22 10:31Z) Wired autostart to pass a wallet store + "test passphrase" into the node, reran dashboard_service + Vite: service http://127.0.0.1:8001, UI http://127.0.0.1:5173, node http://127.0.0.1:8080 stayed running and streamed live metrics (hash_rate ~26.2, best_height 20) from the autostarted hegemon process.
 
 ## Surprises & Discoveries
 
-- `make quickstart` fails on the Clippy gate: `network/src/nat.rs` collapsible_if warnings, `peer_manager.rs` map_entry/collapsible_if, `peer_store.rs` collapsible_if, and `service.rs` too_many_arguments halt the run.
-- Workspace linting also fails in several pallets (`observability`, `feature-flags`, `attestations`, `settlement`, `oracles`, plus `asset-registry`, `fee-model`) with missing imports/bench harness wiring, `StorageVersion` codec/type bounds, deprecated `RuntimeEvent`, implicit call indices, and unsigned tx helpers. These block `make check` after the network fixes and need targeted pallet cleanups before quickstart can be fully green.
-- dashboard_service autostart tries `cargo run -p node --bin node -- …` even though the crate only ships the `hegemon` bin; the process exits immediately and sets `NODE_RPC_URL` to `https://127.0.0.1:8080`, which forces the proxy to fall back to mock metrics until restarted with the correct target.
+- `make quickstart` still halts in `make check`; current failures include missing `log` imports in `pallets/feature-flags`, `pallets/observability`, `pallets/attestations`, and `pallets/settlement`, `StorageVersion` `TypeInfo`/`DecodeWithMemTracking` bounds on migrations, misplaced `validate_unsigned` on settlement, missing `Default` for `AssetId`, and new `pallet-collective` `try_successful_origin` trait items from upstream 42.0.0.
+- Autostarted node now targets the `hegemon` bin and, after supplying a wallet store and "test passphrase," runs to completion and yields live telemetry; prior runs without the passphrase failed with "Wallet passphrase required."
 - The `hegemon` CLI would not build due to a partial move of `cli.command` in the main match; patched the match to `command.take()` so the binary compiles for validation.
-- Reusing an existing wallet store threw “decryption failure”; a fresh store at `state/dashboard-wallet.devpass.store` with passphrase `devpass` avoided the mismatch.
+- Reusing an existing wallet store threw "decryption failure"; a fresh store at `state/dashboard-wallet.devpass.store` with passphrase `devpass` avoided the mismatch.
 
 ## Decision Log
 
 - Decision: Patched the CLI dispatch to pull `cli.command` via `take()` before matching, unblocking the `hegemon` binary build needed for validation without touching runtime behavior.
   Rationale: The partial move error prevented any node start, so fixing the match was the smallest change to restore the binary.
   Date/Author: 2025-11-22 / GPT-5.1-Codex-Max
-- Decision: Ran the node manually (`cargo run -p node --bin hegemon -- …`) with a fresh wallet store and restarted dashboard_service with `DASHBOARD_AUTOSTART_NODE=0` and `NODE_RPC_URL=http://127.0.0.1:8080` to avoid the broken autostart bin/HTTPS fallback.
+- Decision: Ran the node manually (`cargo run -p node --bin hegemon -- ...`) with a fresh wallet store and restarted dashboard_service with `DASHBOARD_AUTOSTART_NODE=0` and `NODE_RPC_URL=http://127.0.0.1:8080` to avoid the broken autostart bin/HTTPS fallback.
   Rationale: Autostart currently points at a non-existent bin and rewrites the RPC URL to HTTPS, so manual alignment was needed to observe live telemetry.
+  Date/Author: 2025-11-22 / GPT-5.1-Codex-Max
+- Decision: After `make quickstart` stopped on pallet compile errors, ran the dashboard service + Vite manually with autostart env to validate port binding and capture telemetry; discovered the autostarted `hegemon` exits without a wallet passphrase and needs that flag wired in.
+  Rationale: Needed quick evidence of the current user experience and to isolate the autostart failure mode so the next change can unblock live telemetry without waiting for pallet fixes.
+  Date/Author: 2025-11-22 / GPT-5.1-Codex-Max
+- Decision: Passed the dashboard wallet store/path and default "test passphrase" into the autostarted node (redacting it in process snapshots) so the hegemon process can boot without prompting and deliver live metrics.
+  Rationale: The node CLI refuses to start without a passphrase; providing a known passphrase and store path unblocks autostart and keeps UI telemetry real.
   Date/Author: 2025-11-22 / GPT-5.1-Codex-Max
 
 ## Outcomes & Retrospective
 
-- Quickstart status: `make quickstart` is red because `make check` stops on Clippy errors in the `network` crate; autostarted node flow also fails (wrong bin name) and forces mock telemetry until the proxy is restarted with a correct RPC URL.
-- Manual validation: dashboard_service bound on `http://127.0.0.1:8001`, Vite UI on `http://127.0.0.1:5173`, and a manually started `hegemon` node on `http://127.0.0.1:8080` (token `devnet-token`) reported live metrics via `/node/metrics` and `/node/miner/status` (e.g., `hash_rate ~26.8`, `total_hashes ~2220`, `best_height 196`, `mempool_depth 0`, TLS disabled).
-- Follow-ups: autostart command now targets the `hegemon` bin and honors the TLS flag without forcing HTTPS, and the `network` clippy issues are fixed. Remaining blockers live in pallets (`observability`, `feature-flags`, `attestations`, `settlement`, `oracles`) where clippy/compile errors still halt `make check`; resolve those and rerun `make quickstart` to confirm the dashboard loads real mining data without manual intervention.
+- Quickstart status: `make quickstart` remains red because `make check` fails in pallets (`feature-flags`, `observability`, `attestations`, `settlement`, `collective`), so the script aborts before the dashboard stack launches.
+- Unified quickstart validation (2025-11-22 10:31Z): dashboard_service bound on `http://127.0.0.1:8001`, Vite UI on `http://127.0.0.1:5173`, and the autostarted node target `http://127.0.0.1:8080` (token `devnet-token`, db `state/dashboard-node.1763807450.db`, wallet store `state/dashboard-wallet.testpass.store`, passphrase "test passphrase") stayed running and streamed live telemetry via `/node/metrics` and `/node/miner/status` (e.g., `hash_rate ~26.2`, `best_height 20`, `mempool_depth 0`, `exposure_scope devnet`); the autostart command snapshot redacts the passphrase.
+- Prior manual validation (2025-11-22 09:47Z): with dashboard_service on `http://127.0.0.1:8001`, Vite on `http://127.0.0.1:5173`, and a hand-started `hegemon` node on `http://127.0.0.1:8080` (token `devnet-token`), `/node/metrics` and `/node/miner/status` reported live values (`hash_rate ~26.8`, `total_hashes ~2220`, `best_height 196`, `mempool_depth 0`, TLS disabled).
+- Follow-ups: autostart now targets the correct bin, passes wallet credentials, and chooses free ports; remaining work is clearing the pallet errors that stop `make quickstart` so the one-command flow runs the dashboard stack automatically.
 - New blocking work (pallets):
   - Replace `StorageMigrated` event fields back to primitives to avoid `DecodeWithMemTracking`/`TypeInfo` errors (`asset-registry`, `observability`, `feature-flags`, `attestations`, `settlement`, `oracles`).
   - Fix log imports by adding `log` dependency or using `frame_support::log` (current single-component imports fail).
@@ -45,6 +53,7 @@ People running `make quickstart` today still land on a dashboard that shows mock
   - `fee-model`: implement `can_withdraw_fee`, adjust uses of `dispatch_info.class`/`post_info.pays_fee`, and import `FixedPointNumber`.
   - Add `#[pallet::call_index]` where still implicit (`settlement` verified after re-run) and add `Default` bound or remove `Default::default()` on `AssetId` in settlement.
   - Attestations benchmarking: `IssuerId` needs `Default`, bench origins need correct types; observability benchmarking origins also need `RuntimeOrigin`.
+  - Pallet-collective: implement the new `try_successful_origin` trait item required by `EnsureOrigin`/`EnsureOriginWithArg` impls in 42.0.0 to clear the E0046 errors.
 
 ## Context and Orientation
 
@@ -74,7 +83,7 @@ Describe edits and commands in the order to perform them.
 
 ## Validation and Acceptance
 
-Acceptance means a fresh run of `make quickstart` on a clean shell results in: the FastAPI proxy binding to an available host:port without “address already in use” errors; the UI starting on the printed port and loading with `VITE_DASHBOARD_SERVICE_URL` pointing at the live proxy; the mining page showing non-zero hash rate and block events within seconds (confirm by watching the charts or reading the telemetry log panel); and pressing Ctrl+C tears down the UI/proxy while the autostarted node exits cleanly. If tests are run, they must pass (e.g., `make check` stays green).
+Acceptance means a fresh run of `make quickstart` on a clean shell results in: the FastAPI proxy binding to an available host:port without "address already in use" errors; the UI starting on the printed port and loading with `VITE_DASHBOARD_SERVICE_URL` pointing at the live proxy; the mining page showing non-zero hash rate and block events within seconds (confirm by watching the charts or reading the telemetry log panel); and pressing Ctrl+C tears down the UI/proxy while the autostarted node exits cleanly. If tests are run, they must pass (e.g., `make check` stays green).
 
 ## Idempotence and Recovery
 
@@ -83,6 +92,14 @@ Autostart should be rerunnable: if the node db already exists under `state/`, th
 ## Artifacts and Notes
 
 Record key transcripts once validated: the chosen service/UI URLs, sample telemetry log lines showing mined blocks, and any warnings about port fallbacks. Keep snippets short and focused on proving the behavior works.
+
+Latest validation snapshot (2025-11-22 10:31Z):
+    Service URL: http://127.0.0.1:8001
+    UI URL: http://127.0.0.1:5173
+    Node target: http://127.0.0.1:8080 (token devnet-token, db state/dashboard-node.1763807450.db, wallet store state/dashboard-wallet.testpass.store, passphrase "test passphrase")
+    /node/process: {"status":"running","node_url":"http://127.0.0.1:8080","command":["cargo","run","-p","node","--bin","hegemon","--","--db-path","...","--wallet-passphrase","<redacted>"],"log_path":"state/node-process.log"}
+    /node/metrics: {"hash_rate":26.19282821810135,"total_hashes":209,"best_height":20,"mempool_depth":0,"difficulty_bits":1057030143,"stale_share_rate":0.0,"tls_enabled":false,"exposure_scope":"devnet"}
+    /node/miner/status: {"is_running":true,"target_hash_rate":1300000.0,"thread_count":2,"metrics":{"hash_rate":26.022170278423623,"total_hashes":209,"best_height":20,"mempool_depth":0,"difficulty_bits":1057030143,"stale_share_rate":0.0,"tls_enabled":false,"exposure_scope":"devnet"}}
 
 ## Interfaces and Dependencies
 
@@ -95,3 +112,5 @@ Record key transcripts once validated: the chosen service/UI URLs, sample teleme
     - Export `DASHBOARD_AUTOSTART_NODE=1`, `DASHBOARD_NODE_HOST`, `DASHBOARD_NODE_PORT`, `DASHBOARD_NODE_DB_PATH`, and `DASHBOARD_NODE_TOKEN` to uvicorn so the service boots a live node.
 - README getting-started/dashboard section
     - Add prose describing the single-command path and port fallback expectations without altering the whitepaper heading or ordering.
+
+Update note (2025-11-22 10:19Z): Recorded the latest quickstart run (pallet errors stopping `make check`), manual dashboard_service + Vite autostart attempt, the wallet passphrase startup failure, and the resulting mock telemetry plus port assignments.
