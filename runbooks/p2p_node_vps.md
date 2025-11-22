@@ -101,6 +101,14 @@ journalctl -u synthetic-node.service -f
 - When onboarding new testers, ask them to return their reachable public P2P endpoints. Update your `/etc/default/synthetic-node` `NODE_SEEDS` to include them, separated by commas, and run `sudo systemctl restart synthetic-node` to apply.
 - If you provide DNS (e.g., `seed1.testnet.example.com`), keep A/AAAA records updated to avoid stale seeds when IPs rotate.
 
+## 6b. Export/import peer bundles for fresh nodes
+
+- After your VPS has a stable peer list, capture it into a portable bundle that also records the current genesis metadata:
+  ```bash
+  sudo -u node /usr/local/bin/node --db-path ${NODE_DB_PATH} export-peers --output /var/lib/synthetic-node/peer_bundle.json
+  ```
+- You can seed additional nodes (or rescue a wiped peer store) by copying that JSON and adding `--import-peers /var/lib/synthetic-node/peer_bundle.json` to the `ExecStart` line in the systemd unit. Imported peers are written into the local store and dialed before the DNS/static seeds in `NODE_SEEDS`.
+
 ## 7. Rotating or removing compromised/offline seeds
 
 - If a peer is compromised or repeatedly offline, edit `/etc/default/synthetic-node` to remove its entry from `NODE_SEEDS` and restart the service.

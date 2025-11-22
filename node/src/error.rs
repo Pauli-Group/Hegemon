@@ -19,10 +19,14 @@ pub enum NodeError {
     Network(#[from] network::NetworkError),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("json error: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("wallet error: {0}")]
     Wallet(#[from] WalletError),
     #[error("invalid transaction: {0}")]
     Invalid(&'static str),
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
 }
 
 pub type NodeResult<T> = Result<T, NodeError>;

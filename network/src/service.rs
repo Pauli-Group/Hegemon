@@ -162,6 +162,7 @@ pub struct P2PService {
     identity: PeerIdentity,
     addr: SocketAddr,
     seeds: Vec<String>,
+    imported_peers: Vec<String>,
     gossip: GossipHandle,
     peer_manager: PeerManager,
     peer_store: PeerStore,
@@ -179,6 +180,7 @@ impl P2PService {
         identity: PeerIdentity,
         addr: SocketAddr,
         seeds: Vec<String>,
+        imported_peers: Vec<String>,
         gossip: GossipHandle,
         max_peers: usize,
         peer_store: PeerStore,
@@ -189,6 +191,7 @@ impl P2PService {
             identity,
             addr,
             seeds,
+            imported_peers,
             gossip,
             peer_manager: PeerManager::new(max_peers),
             peer_store,
@@ -234,6 +237,17 @@ impl P2PService {
         self.peer_store
             .remove_addresses(local_addrs.iter().copied())?;
 
+        let imported_peers =
+            Self::resolve_seeds(self.imported_peers.clone(), self.addr.port()).await;
+        if !imported_peers.is_empty() {
+            self.peer_store
+                .record_learned(imported_peers.iter().copied())?;
+            self.learned_addresses
+                .extend(imported_peers.iter().copied());
+            self.peer_manager
+                .record_static_addresses(imported_peers.iter().copied());
+        }
+
         // Connect to seeds
         let mut configured = self.seeds.clone();
         configured.extend(self.relay_config.relays.clone());
@@ -244,7 +258,7 @@ impl P2PService {
         self.peer_manager
             .record_static_addresses(resolved_seeds.iter().copied());
         let connected = self.peer_manager.connected_addresses();
-        let initial_targets = self.startup_targets(resolved_seeds, &connected)?;
+        let initial_targets = self.startup_targets(imported_peers, resolved_seeds, &connected)?;
         for addr in initial_targets {
             self.spawn_connect(addr, self.identity.clone(), cmd_tx.clone());
         }
@@ -703,16 +717,27 @@ impl P2PService {
 
     fn startup_targets(
         &mut self,
+        imported_peers: Vec<SocketAddr>,
         resolved_seeds: Vec<SocketAddr>,
         connected: &HashSet<SocketAddr>,
     ) -> Result<Vec<SocketAddr>, NetworkError> {
         let mut exclude = connected.clone();
         exclude.extend(self.advertised_addrs.iter().copied());
 
-        let mut targets = self
+        let mut targets = Vec::new();
+
+        for addr in imported_peers {
+            if !exclude.contains(&addr) {
+                exclude.insert(addr);
+                targets.push(addr);
+            }
+        }
+
+        let mut recent = self
             .peer_store
             .recent_peers(RECENT_RECONNECT_LIMIT, &exclude)?;
-        exclude.extend(targets.iter().copied());
+        exclude.extend(recent.iter().copied());
+        targets.append(&mut recent);
 
         for addr in resolved_seeds {
             if !exclude.contains(&addr) {
@@ -814,6 +839,7 @@ mod tests {
             identity,
             addr,
             vec![],
+            Vec::new(),
             gossip.handle(),
             8,
             temp_store("recent"),
@@ -837,7 +863,7 @@ mod tests {
             .collect();
 
         let targets = service
-            .startup_targets(seeds.clone(), &HashSet::new())
+            .startup_targets(Vec::new(), seeds.clone(), &HashSet::new())
             .unwrap();
 
         let expected_peers: Vec<_> = peers
@@ -851,5 +877,56 @@ mod tests {
         assert_eq!(&targets[..expected_peers.len()], expected_peers.as_slice());
         assert_eq!(targets[expected_peers.len()], seeds[0]);
         assert_eq!(targets[expected_peers.len() + 1], seeds[1]);
+    }
+
+    #[test]
+    fn startup_targets_prefers_imports_over_cached_and_seeds() {
+        let identity = PeerIdentity::generate(b"imported-targets");
+        let addr: SocketAddr = "127.0.0.1:9550".parse().unwrap();
+        let gossip = GossipRouter::new(8);
+        let mut service = P2PService::new(
+            identity,
+            addr,
+            vec!["127.0.0.1:9805".into()],
+            Vec::new(),
+            gossip.handle(),
+            8,
+            temp_store("imported"),
+            RelayConfig::default(),
+            NatTraversalConfig::disabled(addr),
+        );
+
+        service.advertised_addrs = vec![addr];
+
+        let cached: Vec<SocketAddr> = (0..3)
+            .map(|i| format!("127.0.0.1:97{:02}", i).parse().unwrap())
+            .collect();
+        for peer in &cached {
+            service.peer_store.record_connected(*peer).unwrap();
+            sleep(StdDuration::from_millis(2));
+        }
+
+        let imported: Vec<SocketAddr> = ["127.0.0.1:9900", "127.0.0.1:9901"]
+            .iter()
+            .map(|addr| addr.parse().unwrap())
+            .collect();
+
+        let targets = service
+            .startup_targets(
+                imported.clone(),
+                vec!["127.0.0.1:9810".parse().unwrap()],
+                &HashSet::new(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            targets
+                .iter()
+                .take(imported.len())
+                .cloned()
+                .collect::<Vec<_>>(),
+            imported
+        );
+        assert!(cached.iter().all(|peer| targets.contains(peer)));
     }
 }
