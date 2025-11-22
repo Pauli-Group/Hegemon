@@ -19,6 +19,7 @@ members = [
     "pallets/feature-flags",
     "pallets/observability",
     "tests", "node",
+    "runtime",
 ]
 resolver = "2"
 
