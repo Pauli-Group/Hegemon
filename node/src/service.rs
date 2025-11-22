@@ -32,6 +32,7 @@ use crate::error::{NodeError, NodeResult};
 use crate::mempool::Mempool;
 use crate::miner::{self, BlockTemplate};
 use crate::storage::{ChainMeta, Storage};
+use crate::sync::SyncService;
 use crate::telemetry::{Telemetry, TelemetryPosture, TelemetrySnapshot};
 use crate::transaction::{ValidatedTransaction, felt_to_bytes, proof_to_transaction};
 use wallet::TransactionBundle;
@@ -51,6 +52,10 @@ impl NodeHandle {
         for handle in self.tasks {
             handle.abort();
         }
+    }
+
+    pub fn spawn_sync(&self, protocol: network::ProtocolHandle) -> tokio::task::JoinHandle<()> {
+        SyncService::new(self.service.clone(), protocol).spawn()
     }
 }
 
@@ -298,6 +303,11 @@ impl NodeService {
         tasks.push(miner_task);
         tasks.push(telemetry_task);
         Ok(NodeHandle { service, tasks })
+    }
+
+    pub async fn import_sync_block(&self, block: ConsensusBlock) -> NodeResult<()> {
+        self.accept_block(block, BlockOrigin::NetworkInitialSync, false)
+            .await
     }
 
     async fn run_gossip(&self, router: GossipHandle) {
