@@ -579,7 +579,13 @@ pub type GovernanceOrigin = frame_system::EnsureRoot<AccountId>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use frame_support::{assert_ok, dispatch::Dispatchable, traits::Hooks, BoundedVec};
+    use frame_support::weights::Weight;
+    use frame_support::{
+        assert_ok,
+        dispatch::Dispatchable,
+        traits::{Hooks, StorageVersion},
+        BoundedVec,
+    };
 
     fn new_ext() -> sp_io::TestExternalities {
         let mut t = frame_system::GenesisConfig::default()
@@ -657,6 +663,69 @@ mod tests {
             ));
             Attestations::offchain_worker(2);
             assert!(!pallet_settlement::PendingQueue::<Runtime>::get().contains(&(schema as u64)));
+        });
+    }
+
+    #[test]
+    fn pallet_migrations_bump_storage_versions() {
+        new_ext().execute_with(|| {
+            StorageVersion::new(0).put::<pallet_feature_flags::Pallet<Runtime>>();
+            StorageVersion::new(0).put::<pallet_asset_registry::Pallet<Runtime>>();
+            StorageVersion::new(0).put::<pallet_identity::Pallet<Runtime>>();
+            StorageVersion::new(0).put::<pallet_attestations::Pallet<Runtime>>();
+            StorageVersion::new(0).put::<pallet_oracles::Pallet<Runtime>>();
+            StorageVersion::new(0).put::<pallet_settlement::Pallet<Runtime>>();
+            StorageVersion::new(0).put::<pallet_observability::Pallet<Runtime>>();
+
+            let feature_weight = pallet_feature_flags::Pallet::<Runtime>::on_runtime_upgrade();
+            assert_eq!(
+                StorageVersion::get::<pallet_feature_flags::Pallet<Runtime>>(),
+                pallet_feature_flags::pallet::STORAGE_VERSION
+            );
+            assert!(feature_weight > Weight::zero());
+
+            let asset_weight = pallet_asset_registry::Pallet::<Runtime>::on_runtime_upgrade();
+            assert_eq!(
+                StorageVersion::get::<pallet_asset_registry::Pallet<Runtime>>(),
+                pallet_asset_registry::pallet::STORAGE_VERSION
+            );
+            assert!(asset_weight > Weight::zero());
+
+            let identity_weight = pallet_identity::Pallet::<Runtime>::on_runtime_upgrade();
+            assert_eq!(
+                StorageVersion::get::<pallet_identity::Pallet<Runtime>>(),
+                pallet_identity::pallet::STORAGE_VERSION
+            );
+            assert!(identity_weight > Weight::zero());
+
+            let attestations_weight = pallet_attestations::Pallet::<Runtime>::on_runtime_upgrade();
+            assert_eq!(
+                StorageVersion::get::<pallet_attestations::Pallet<Runtime>>(),
+                pallet_attestations::pallet::STORAGE_VERSION
+            );
+            assert!(attestations_weight > Weight::zero());
+
+            let oracle_weight = pallet_oracles::Pallet::<Runtime>::on_runtime_upgrade();
+            assert_eq!(
+                StorageVersion::get::<pallet_oracles::Pallet<Runtime>>(),
+                pallet_oracles::pallet::STORAGE_VERSION
+            );
+            assert!(oracle_weight > Weight::zero());
+
+            let settlement_weight = pallet_settlement::Pallet::<Runtime>::on_runtime_upgrade();
+            assert_eq!(
+                StorageVersion::get::<pallet_settlement::Pallet<Runtime>>(),
+                pallet_settlement::pallet::STORAGE_VERSION
+            );
+            assert!(settlement_weight > Weight::zero());
+
+            let observability_weight =
+                pallet_observability::Pallet::<Runtime>::on_runtime_upgrade();
+            assert_eq!(
+                StorageVersion::get::<pallet_observability::Pallet<Runtime>>(),
+                pallet_observability::pallet::STORAGE_VERSION
+            );
+            assert!(observability_weight > Weight::zero());
         });
     }
 }
