@@ -14,21 +14,11 @@ use frame_system::pallet_prelude::*;
 use scale_info::TypeInfo;
 use sp_runtime::traits::{AtLeast32BitUnsigned, Hash};
 use sp_runtime::transaction_validity::{InvalidTransaction, TransactionPriority};
-use sp_runtime::KeyTypeId;
 use sp_runtime::RuntimeDebug;
 use sp_runtime::TransactionSource;
 use sp_runtime::TransactionValidity;
 use sp_runtime::ValidTransaction;
 use sp_std::vec::Vec;
-
-pub const KEY_TYPE: KeyTypeId = KeyTypeId(*b"sett");
-
-pub mod crypto {
-    use super::KEY_TYPE;
-    use sp_runtime::app_crypto::{app_crypto, sr25519};
-
-    app_crypto!(sr25519, KEY_TYPE);
-}
 
 pub mod weights;
 

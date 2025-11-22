@@ -488,7 +488,7 @@ where \(\text{domain}_{\text{merkle}}\) is a fixed field element.
 To have something specific in mind:
 
 * KEM: ML-KEM-768 (Kyber-768 equivalent) with \(|pk| \approx 1184\) bytes, \(|ct| \approx 1088\) bytes, 192-bit classical and roughly 96-bit post-quantum security.
-* Signature: ML-DSA-65xx (Dilithium-level) or category-3 equivalent with approximately 2–3 KB signatures and 1–2 KB public keys.
+* Signature: ML-DSA-65xx (Dilithium-level) or category-3 equivalent with approximately 2–3 KB signatures and 1–2 KB public keys. Runtime extrinsics and PoW seals reuse this scheme through `runtime::PqSignature`/`PqPublic`, hashing PQ public keys with BLAKE2 into SS58-prefix-42 AccountId32 values so address encoding stays stable while signatures grow.
 
 We do not need signatures inside the shielded circuit, only for block authentication and possibly transaction-level authentication.
 
