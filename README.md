@@ -138,6 +138,18 @@ The embedded dashboard and node API both default to the dev token `devnet-token`
 4. **Open the Dashboard**:
    Visit **http://localhost:8080** to view the dashboard, manage your wallet, and monitor mining status.
 
+#### Exporting and importing peer bundles
+
+- To share a bootstrap bundle that includes the current genesis block metadata and your learned peers, run:
+  ```bash
+  ./hegemon export-peers --db-path node.db --output peer_bundle.json
+  ```
+- A new node can start from that bundle before contacting DNS or static seeds:
+  ```bash
+  ./hegemon start --db-path node.db --import-peers peer_bundle.json
+  ```
+  The importer persists the supplied peers into its local peer store and dials them before falling back to the configured `--seeds` list.
+
 ### Developer Setup
 
 If you are contributing to the codebase:
