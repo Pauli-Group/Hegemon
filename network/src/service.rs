@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream, lookup_host};
 use tokio::sync::mpsc;
 use tokio::time::{MissedTickBehavior, interval, sleep};
-use tokio_stream::{StreamExt as TokioStreamExt, wrappers::ReceiverStream};
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info, warn};
 
 pub struct ProtocolHandle {
@@ -548,7 +548,9 @@ impl P2PService {
                     .map(|addr| addr.to_socket_addr())
                     .collect();
                 self.peer_manager.record_addresses(sender, addrs.clone());
-                self.persist_learned_addresses(addrs)?;
+                if let Err(err) = self.persist_learned_addresses(addrs) {
+                    warn!(?err, "failed to persist relay registration addresses");
+                }
             }
             CoordinationMessage::PunchRequest {
                 target,
@@ -557,7 +559,9 @@ impl P2PService {
                 if target == self.identity.peer_id() {
                     let addr = requester_addr.to_socket_addr();
                     self.peer_manager.record_addresses(sender, [addr]);
-                    self.persist_learned_addresses([addr])?;
+                    if let Err(err) = self.persist_learned_addresses([addr]) {
+                        warn!(?err, "failed to persist punch-request address");
+                    }
                     self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx.clone());
                     let response = CoordinationMessage::PunchResponse {
                         target: sender,
@@ -585,7 +589,9 @@ impl P2PService {
                 if target == self.identity.peer_id() {
                     let addr = responder_addr.to_socket_addr();
                     self.peer_manager.record_addresses(sender, [addr]);
-                    self.persist_learned_addresses([addr])?;
+                    if let Err(err) = self.persist_learned_addresses([addr]) {
+                        warn!(?err, "failed to persist punch-response address");
+                    }
                     self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx);
                 } else if self.relay_config.allow_relay {
                     self.peer_manager
@@ -613,7 +619,7 @@ impl P2PService {
         false
     }
 
-    async fn broadcast_addresses(&self, origin: PeerId, addrs: Vec<SocketAddr>) {
+    async fn broadcast_addresses(&mut self, origin: PeerId, addrs: Vec<SocketAddr>) {
         let compact: Vec<_> = addrs.iter().copied().map(CompactAddress::from).collect();
         for (peer_id, _) in self
             .peer_manager

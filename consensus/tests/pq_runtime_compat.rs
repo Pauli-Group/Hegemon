@@ -7,9 +7,8 @@ use common::{
 use consensus::nullifier::NullifierSet;
 use consensus::pow::{DEFAULT_GENESIS_POW_BITS, PowConsensus};
 use consensus::proof::HashVerifier;
-use crypto::ml_dsa::ML_DSA_SIGNATURE_LEN;
-use runtime::{PqPublic, PqSignature};
-use sp_runtime::traits::Verify;
+use crypto::ml_dsa::{ML_DSA_SIGNATURE_LEN, MlDsaPublicKey, MlDsaSignature};
+use crypto::traits::{SigningKey, VerifyKey};
 
 #[test]
 fn runtime_signatures_verify_pow_blocks() {
@@ -37,17 +36,13 @@ fn runtime_signatures_verify_pow_blocks() {
     .expect("block assembly");
 
     let signing_hash = block.header.signing_hash().expect("signing hash");
-    let runtime_public: PqPublic = miner.secret.verify_key().into();
-    let runtime_signature = PqSignature::MlDsa(
-        block
-            .header
-            .signature_aggregate
-            .as_slice()
-            .try_into()
-            .expect("ml-dsa signature length"),
-    );
+    let runtime_public: MlDsaPublicKey = miner.secret.verify_key();
+    let runtime_signature = MlDsaSignature::from_bytes(&block.header.signature_aggregate)
+        .expect("valid ml-dsa signature bytes");
 
-    assert!(runtime_signature.verify(signing_hash, &runtime_public));
+    runtime_public
+        .verify(&signing_hash, &runtime_signature)
+        .expect("runtime-compatible signature");
     assert_eq!(block.header.signature_aggregate.len(), ML_DSA_SIGNATURE_LEN);
 
     let mut pow = PowConsensus::new(

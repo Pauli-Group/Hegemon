@@ -235,13 +235,21 @@ The PoW fork mirrors Bitcoin/Zcash mechanics so operators can reason about liven
 
 * Block headers expose an explicit `pow_bits` compact target, a 256-bit nonce, and a 128-bit `supply_digest`. Miners sign the
   full header (including the supply digest) with ML-DSA and then search over the nonce until `sha256(header) ≤ target(pow_bits)`.
+  A zero mantissa is invalid, and every PoW header must carry the seal (there is no “missing” difficulty case between retargets).
 * Difficulty retargeting is deterministic: every `RETARGET_WINDOW = 120` blocks the chain recomputes the target from the window’s
   timestamps, clamping swings to ×¼…×4 and aiming for a `TARGET_BLOCK_INTERVAL = 20 s`. Honest nodes reject any block whose
-  `pow_bits` diverges from this schedule, which makes retarget spoofing impossible even across deep reorgs.
+  `pow_bits` diverges from this schedule, which makes retarget spoofing impossible even across deep reorgs. Blocks between
+  retarget boundaries MUST inherit the parent’s `pow_bits` verbatim and the retarget math uses the clamped timespan so outlier
+  timestamps cannot skew difficulty even after a reorg.
 * Each PoW block carries a coinbase commitment—either a dedicated transaction referenced by index or a standalone `balance_tag`
   —that spells out how many native units were minted, how many fees were aggregated, and how many were burned. Consensus enforces
-  `minted ≤ R(height)` where `R()` starts at `50 · 10⁸` base units and halves every `210_000` blocks. Nodes update the running
-  `supply_digest = parent_digest + minted + fees − burns` and compare it against the header before accepting the block.
+  `minted ≤ R(height)` where `R()` starts at `50 · 10⁸` base units and halves every `210_000` blocks (height 0 mints nothing).
+  Nodes update the running `supply_digest = parent_digest + minted + fees − burns` inside a 128-bit little-endian counter that
+  rejects underflows/overflows and compare it against the header before accepting the block. Coinbase metadata that omits the
+  balance tag or references an out-of-bounds transaction index fails validation.
+* Timestamp guards match the implementation: the header time must exceed the median of the prior 11 blocks and be no more than
+  90 seconds into the future relative to the local clock; nodes may re-evaluate future-dated candidates as time advances but
+  still reject any header that remains beyond the skew bound or fails median-time-past.
 * Block template helpers in `consensus/tests/common.rs` show how miners wire these fields together: compute the note/fee/nullifier
   commitments, attach the coinbase metadata, recompute `supply_digest`, and only then sign + grind the header.
 
