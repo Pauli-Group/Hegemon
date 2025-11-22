@@ -86,6 +86,7 @@ std = [
     "crypto/std",
     "serde/std",
 ]
+runtime-tests = []
 
 runtime-benchmarks = [
     "frame-benchmarking",

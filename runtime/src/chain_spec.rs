@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 use sp_core::H256;
 
 use crate::{
@@ -34,16 +32,9 @@ fn base_genesis(endowed: &[(AccountId, Balance)], sudo: AccountId) -> RuntimeGen
             non_authority_keys: Vec::new(),
             keys: validators
                 .iter()
-                .map(|validator| {
-                    (
-                        validator.clone(),
-                        validator.clone(),
-                        DummySessionKeys::default(),
-                    )
-                })
+                .map(|validator| (validator.clone(), validator.clone(), DummySessionKeys))
                 .collect(),
         },
-        ..Default::default()
     }
 }
 

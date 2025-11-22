@@ -16,6 +16,9 @@ codec = { package = "parity-scale-codec", version = "3", default-features = fals
 scale-info = { version = "2", default-features = false, features = ["derive"] }
 log = { version = "0.4", default-features = false }
 
+[dev-dependencies]
+sp-io = { version = "43.0.0", default-features = false, features = ["std"] }
+
 [features]
 default = ["std"]
 std = [
@@ -24,6 +27,7 @@ std = [
     "frame-benchmarking/std",
     "sp-runtime/std",
     "sp-std/std",
+    "sp-io/std",
     "codec/std",
     "scale-info/std",
 ]

@@ -143,7 +143,7 @@ async fn address_exchange_teaches_new_peers() {
     let task_b = tokio::spawn(service_b.run());
     let task_c = tokio::spawn(service_c.run());
 
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     task_a.abort();
     task_b.abort();

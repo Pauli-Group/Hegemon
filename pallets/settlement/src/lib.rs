@@ -18,6 +18,8 @@ use sp_runtime::traits::AtLeast32BitUnsigned;
 use sp_runtime::RuntimeDebug;
 use sp_std::vec::Vec;
 
+#[cfg(test)]
+mod mock;
 pub mod weights;
 
 type InstructionLegs<T> = BoundedVec<

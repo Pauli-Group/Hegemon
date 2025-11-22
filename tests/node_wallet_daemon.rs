@@ -36,6 +36,7 @@ async fn node_wallet_daemons_execute_transfer() {
     config_a.pow_bits = 0x3f00ffff;
     config_a.miner_workers = 0;
     config_a.miner_seed = [1u8; 32];
+    config_a.min_tx_fee_per_weight = 0;
 
     let mut config_b = NodeConfig::with_db_path(dir_b.path().join("b.db"));
     config_b.api_addr = socket_addr(free_port());
@@ -44,6 +45,7 @@ async fn node_wallet_daemons_execute_transfer() {
     config_b.pow_bits = 0x3f00ffff;
     config_b.miner_workers = 0;
     config_b.miner_seed = [1u8; 32];
+    config_b.min_tx_fee_per_weight = 0;
 
     let handle_a = NodeService::start(config_a.clone(), router.clone()).expect("start node a");
     let handle_b = NodeService::start(config_b.clone(), router).expect("start node b");

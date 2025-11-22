@@ -276,25 +276,20 @@ impl WeightInfo for () {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use frame_support::dispatch::DispatchResult;
+    use crate as pallet_fee_model;
+    use codec::DecodeWithMemTracking;
     use frame_support::parameter_types;
-    use frame_support::traits::{ConstU32, ConstU64};
+    use frame_support::traits::{ConstU16, ConstU32, Everything, LockableCurrency};
     use frame_system as system;
     use pallet_balances::Call as BalancesCall;
     use pallet_identity::pallet::Call as IdentityCall;
-    use pallet_transaction_payment::Call as TxPaymentCall;
-    use sp_runtime::traits::{BlakeTwo256, Hash as HashT, IdentityLookup};
-    use sp_runtime::FixedU128;
-
-    type UncheckedExtrinsic = system::mocking::MockUncheckedExtrinsic<TestRuntime>;
-    type Block = system::mocking::MockBlock<TestRuntime>;
+    use pallet_transaction_payment::OnChargeTransaction;
+    use sp_runtime::testing::H256;
+    use sp_runtime::traits::{BlakeTwo256, IdentityLookup};
+    use sp_runtime::{BuildStorage, FixedU128};
 
     frame_support::construct_runtime!(
-        pub enum TestRuntime where
-            Block = Block,
-            NodeBlock = Block,
-            UncheckedExtrinsic = UncheckedExtrinsic,
-        {
+        pub enum TestRuntime {
             System: frame_system,
             Balances: pallet_balances,
             Identity: pallet_identity,
@@ -303,50 +298,129 @@ mod tests {
         }
     );
 
-    #[derive(Clone, Encode, Decode, Eq, PartialEq, TypeInfo, MaxEncodedLen, RuntimeDebug)]
+    #[derive(
+        Clone,
+        Copy,
+        Default,
+        Encode,
+        Decode,
+        Eq,
+        PartialEq,
+        TypeInfo,
+        MaxEncodedLen,
+        RuntimeDebug,
+        Ord,
+        PartialOrd,
+    )]
     pub enum TestRole {
+        #[default]
         Member,
     }
 
     #[derive(
-        Clone, Encode, Decode, Eq, PartialEq, TypeInfo, MaxEncodedLen, RuntimeDebug, Ord, PartialOrd,
+        Clone,
+        Copy,
+        Default,
+        Encode,
+        Decode,
+        Eq,
+        PartialEq,
+        TypeInfo,
+        MaxEncodedLen,
+        RuntimeDebug,
+        Ord,
+        PartialOrd,
     )]
     pub enum TestSchema {
+        #[default]
         Credential,
     }
+
+    impl DecodeWithMemTracking for TestRole {}
+    impl DecodeWithMemTracking for TestSchema {}
 
     parameter_types! {
         pub const BlockHashCount: u64 = 250;
         pub const ExistentialDeposit: u128 = 1;
         pub const MaxLocks: u32 = 50;
         pub const MaxReserves: u32 = 50;
-        pub const MaxHolds: u32 = 10;
         pub const MaxFreezes: u32 = 10;
-        pub const MaxDidDocLength: u32 = 128;
-        pub const MaxSchemaLength: u32 = 128;
-        pub const MaxProofSize: u32 = 128;
-        pub const MaxIdentityTags: u32 = 8;
-        pub const MaxTagLength: u32 = 64;
         pub const AttestationCoeff: FixedU128 = FixedU128::from_rational(3u128, 2u128); // 1.5x
         pub const CredentialCoeff: FixedU128 = FixedU128::from_rational(6u128, 5u128); // 1.2x
         pub const SettlementCoeff: FixedU128 = FixedU128::from_rational(1u128, 1u128);
         pub const OperationalFeeMultiplier: u8 = 5;
     }
 
+    #[derive(Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Debug, TypeInfo)]
+    pub struct MaxDidDocLength;
+    impl frame_support::traits::Get<u32> for MaxDidDocLength {
+        fn get() -> u32 {
+            128
+        }
+    }
+
+    #[derive(Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Debug, TypeInfo)]
+    pub struct MaxSchemaLength;
+    impl frame_support::traits::Get<u32> for MaxSchemaLength {
+        fn get() -> u32 {
+            128
+        }
+    }
+
+    #[derive(Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Debug, TypeInfo)]
+    pub struct MaxProofSize;
+    impl frame_support::traits::Get<u32> for MaxProofSize {
+        fn get() -> u32 {
+            128
+        }
+    }
+
+    #[derive(Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Debug, TypeInfo)]
+    pub struct MaxIdentityTags;
+    impl frame_support::traits::Get<u32> for MaxIdentityTags {
+        fn get() -> u32 {
+            8
+        }
+    }
+
+    #[derive(Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Debug, TypeInfo)]
+    pub struct MaxTagLength;
+    impl frame_support::traits::Get<u32> for MaxTagLength {
+        fn get() -> u32 {
+            64
+        }
+    }
+
+    #[derive(Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Debug, TypeInfo)]
+    pub struct MaxEd25519KeyBytes;
+    impl frame_support::traits::Get<u32> for MaxEd25519KeyBytes {
+        fn get() -> u32 {
+            64
+        }
+    }
+
+    #[derive(Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Debug, TypeInfo)]
+    pub struct MaxPqKeyBytes;
+    impl frame_support::traits::Get<u32> for MaxPqKeyBytes {
+        fn get() -> u32 {
+            64
+        }
+    }
+
     impl system::Config for TestRuntime {
-        type BaseCallFilter = frame_support::traits::Everything;
+        type BaseCallFilter = Everything;
         type BlockWeights = ();
         type BlockLength = ();
         type DbWeight = ();
         type RuntimeOrigin = RuntimeOrigin;
         type RuntimeCall = RuntimeCall;
-        type Index = u64;
-        type BlockNumber = u64;
-        type Hash = <BlakeTwo256 as HashT>::Output;
+        type RuntimeTask = ();
+        type Nonce = u64;
+        type Block = frame_system::mocking::MockBlock<Self>;
+        type Hash = H256;
         type Hashing = BlakeTwo256;
         type AccountId = u64;
         type Lookup = IdentityLookup<Self::AccountId>;
-        type Header = sp_runtime::generic::Header<u64, BlakeTwo256>;
         type RuntimeEvent = RuntimeEvent;
         type BlockHashCount = BlockHashCount;
         type Version = ();
@@ -355,9 +429,15 @@ mod tests {
         type OnNewAccount = ();
         type OnKilledAccount = ();
         type SystemWeightInfo = ();
-        type SS58Prefix = ConstU64<42>;
+        type ExtensionsWeightInfo = ();
+        type SS58Prefix = ConstU16<42>;
         type OnSetCode = ();
         type MaxConsumers = ConstU32<16>;
+        type SingleBlockMigrations = ();
+        type MultiBlockMigrator = ();
+        type PreInherents = ();
+        type PostInherents = ();
+        type PostTransactions = ();
     }
 
     impl pallet_balances::Config for TestRuntime {
@@ -369,11 +449,12 @@ mod tests {
         type WeightInfo = ();
         type MaxLocks = MaxLocks;
         type MaxReserves = MaxReserves;
-        type ReserveIdentifier = u32;
-        type MaxHolds = MaxHolds;
+        type ReserveIdentifier = ();
         type MaxFreezes = MaxFreezes;
-        type HoldIdentifier = u32;
-        type FreezeIdentifier = u32;
+        type FreezeIdentifier = RuntimeFreezeReason;
+        type RuntimeHoldReason = RuntimeHoldReason;
+        type RuntimeFreezeReason = RuntimeFreezeReason;
+        type DoneSlashHandler = ();
     }
 
     impl pallet_identity::Config for TestRuntime {
@@ -381,7 +462,7 @@ mod tests {
         type AuthorityId = u64;
         type CredentialSchemaId = TestSchema;
         type RoleId = TestRole;
-        type AdminOrigin = frame_system::EnsureRoot<u64>;
+        type AdminOrigin = frame_system::EnsureSigned<u64>;
         type ExternalAttestation = ();
         type CredentialProofVerifier = ();
         type MaxDidDocLength = MaxDidDocLength;
@@ -389,6 +470,8 @@ mod tests {
         type MaxProofSize = MaxProofSize;
         type MaxIdentityTags = MaxIdentityTags;
         type MaxTagLength = MaxTagLength;
+        type MaxEd25519KeyBytes = MaxEd25519KeyBytes;
+        type MaxPqKeyBytes = MaxPqKeyBytes;
         type WeightInfo = ();
     }
 
@@ -396,20 +479,7 @@ mod tests {
 
     impl FeeTagProvider<u64, pallet_identity::pallet::IdentityTag<TestRuntime>> for RuntimeTagProvider {
         fn tags(account: &u64) -> Vec<pallet_identity::pallet::IdentityTag<TestRuntime>> {
-            pallet_identity::Pallet::<TestRuntime>::identity_tags(account)
-        }
-    }
-
-    impl FeeTag for pallet_identity::pallet::IdentityTag<TestRuntime> {
-        fn discount_percent(&self) -> Option<u8> {
-            match self {
-                pallet_identity::pallet::IdentityTag::FeeDiscount(v) => Some(*v),
-                _ => None,
-            }
-        }
-
-        fn is_frozen(&self) -> bool {
-            matches!(self, pallet_identity::pallet::IdentityTag::FreezeFlag)
+            pallet_identity::Pallet::<TestRuntime>::identity_tags_for(account)
         }
     }
 
@@ -434,10 +504,9 @@ mod tests {
     pub struct DummyFeeCollector;
 
     impl OnUnbalanced<NegativeImbalanceOf<TestRuntime>> for DummyFeeCollector {
-        fn on_unbalanceds<B>(mut fees_then_tips: B)
-        where
-            B: Iterator<Item = NegativeImbalanceOf<TestRuntime>>,
-        {
+        fn on_unbalanceds(
+            mut fees_then_tips: impl Iterator<Item = NegativeImbalanceOf<TestRuntime>>,
+        ) {
             if let Some(fee) = fees_then_tips.next() {
                 drop(fee);
             }
@@ -454,6 +523,7 @@ mod tests {
         type WeightToFee = frame_support::weights::IdentityFee<u128>;
         type LengthToFee = frame_support::weights::IdentityFee<u128>;
         type FeeMultiplierUpdate = (); // keep multiplier fixed for tests
+        type WeightInfo = ();
     }
 
     impl Config for TestRuntime {
@@ -469,16 +539,17 @@ mod tests {
     }
 
     fn new_ext() -> sp_io::TestExternalities {
-        let mut t = frame_system::GenesisConfig::default()
-            .build_storage::<TestRuntime>()
-            .unwrap();
+        let mut storage = frame_system::GenesisConfig::<TestRuntime>::default()
+            .build_storage()
+            .expect("frame system storage");
         pallet_balances::GenesisConfig::<TestRuntime> {
             balances: vec![(1, 1_000), (2, 1_000), (3, 1_000)],
+            dev_accounts: None,
         }
-        .assimilate_storage(&mut t)
-        .unwrap();
+        .assimilate_storage(&mut storage)
+        .expect("balances storage");
 
-        t.into()
+        storage.into()
     }
 
     fn register_discounted_identity(who: u64, discount: u8) {
@@ -537,7 +608,8 @@ mod tests {
     fn frozen_accounts_cannot_transfer() {
         new_ext().execute_with(|| {
             register_frozen_identity(3);
-            let transfer = RuntimeCall::Balances(BalancesCall::transfer { dest: 1, value: 10 });
+            let transfer =
+                RuntimeCall::Balances(BalancesCall::transfer_allow_death { dest: 1, value: 10 });
             // Lock should prevent withdrawal
             assert!(transfer.dispatch(RuntimeOrigin::signed(3)).is_err());
         });

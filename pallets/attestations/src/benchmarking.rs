@@ -33,8 +33,4 @@ benchmarks! {
     }: _(RawOrigin::Signed(caller), commitment_id)
 }
 
-impl_benchmark_test_suite!(
-    Pallet,
-    crate::tests::new_test_ext(),
-    crate::tests::TestRuntime
-);
+impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);
