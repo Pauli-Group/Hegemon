@@ -229,9 +229,7 @@ mod tests {
     }
 
     fn uuid() -> String {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-        format!("{:x}", rng.gen::<u64>())
+        format!("{:x}", rand::random::<u64>())
     }
 
     #[test]
