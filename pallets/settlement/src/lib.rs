@@ -2,6 +2,7 @@
 
 pub use pallet::*;
 
+use blake3::Hasher as Blake3Hasher;
 use codec::{Decode, DecodeWithMemTracking, Encode};
 use frame_support::pallet_prelude::*;
 use frame_support::traits::{EnsureOrigin, StorageVersion};
@@ -23,6 +24,22 @@ pub mod crypto {
 }
 
 pub mod weights;
+
+#[derive(
+    Encode, Decode, DecodeWithMemTracking, Clone, Copy, Eq, PartialEq, RuntimeDebug, TypeInfo,
+)]
+pub enum StarkHashFunction {
+    Blake3,
+    Sha3,
+}
+
+#[derive(Encode, Decode, DecodeWithMemTracking, Clone, Eq, PartialEq, RuntimeDebug, TypeInfo)]
+pub struct StarkVerifierParams {
+    pub hash: StarkHashFunction,
+    pub fri_queries: u16,
+    pub blowup_factor: u8,
+    pub security_bits: u16,
+}
 
 #[derive(
     Encode, Decode, DecodeWithMemTracking, Clone, Copy, Eq, PartialEq, RuntimeDebug, TypeInfo,
@@ -88,16 +105,26 @@ pub type StateChannelRecord<T> = StateChannelCommitment<
     BlockNumberFor<T>,
 >;
 
-pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(2);
 
 pub trait ProofVerifier<Hash> {
-    fn verify(commitment: &Hash, proof: &[u8], verification_key: &[u8]) -> bool;
+    fn verify(
+        commitment: &Hash,
+        proof: &[u8],
+        verification_key: &[u8],
+        params: &StarkVerifierParams,
+    ) -> bool;
 }
 
 pub struct AcceptAllProofs;
 
 impl<Hash> ProofVerifier<Hash> for AcceptAllProofs {
-    fn verify(_commitment: &Hash, _proof: &[u8], _verification_key: &[u8]) -> bool {
+    fn verify(
+        _commitment: &Hash,
+        _proof: &[u8],
+        _verification_key: &[u8],
+        _params: &StarkVerifierParams,
+    ) -> bool {
         true
     }
 }
@@ -122,6 +149,7 @@ pub mod pallet {
         type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
         type ProofVerifier: ProofVerifier<Self::Hash>;
         type WeightInfo: WeightInfo;
+        type DefaultVerifierParams: Get<StarkVerifierParams>;
         #[pallet::constant]
         type MaxLegs: Get<u32>;
         #[pallet::constant]
@@ -170,6 +198,16 @@ pub mod pallet {
         BoundedVec<u8, <T as Config>::MaxVerificationKeySize>,
     >;
 
+    #[pallet::type_value]
+    pub fn DefaultVerifierParams<T: Config>() -> StarkVerifierParams {
+        T::DefaultVerifierParams::get()
+    }
+
+    #[pallet::storage]
+    #[pallet::getter(fn verifier_parameters)]
+    pub type VerifierParameters<T: Config> =
+        StorageValue<_, StarkVerifierParams, ValueQuery, DefaultVerifierParams<T>>;
+
     #[pallet::storage]
     #[pallet::getter(fn nullifier_used)]
     pub type Nullifiers<T: Config> = StorageMap<_, Blake2_128Concat, T::Hash, bool, ValueQuery>;
@@ -193,6 +231,9 @@ pub mod pallet {
         },
         VerificationKeyRegistered {
             id: T::VerificationKeyId,
+        },
+        VerifierParamsUpdated {
+            params: StarkVerifierParams,
         },
         NullifierConsumed {
             nullifier: T::Hash,
@@ -239,8 +280,8 @@ pub mod pallet {
                 return;
             }
 
-            let commitment_hash = T::Hashing::hash_of(&queue);
-            let nullifier = T::Hashing::hash_of(&(commitment_hash, n));
+            let commitment_hash = Self::blake3_hash(&queue.encode());
+            let nullifier = Self::blake3_hash(&(commitment_hash, n).encode());
             let proof: BoundedVec<u8, T::MaxProofSize> = BoundedVec::truncate_from(Vec::new());
             let nullifiers: BoundedVec<T::Hash, T::MaxNullifiers> =
                 BoundedVec::truncate_from(vec![nullifier]);
@@ -253,6 +294,17 @@ pub mod pallet {
                 nullifiers: nullifiers.clone(),
                 key: T::DefaultVerificationKey::get(),
             });
+        }
+
+        fn on_runtime_upgrade() -> Weight {
+            let on_chain = Pallet::<T>::on_chain_storage_version();
+            if on_chain < STORAGE_VERSION {
+                VerifierParameters::<T>::put(T::DefaultVerifierParams::get());
+                STORAGE_VERSION.put::<Pallet<T>>();
+                T::WeightInfo::migrate()
+            } else {
+                Weight::zero()
+            }
         }
     }
 
@@ -307,9 +359,10 @@ pub mod pallet {
 
             let verification_key =
                 VerificationKeys::<T>::get(&key).ok_or(Error::<T>::VerificationKeyMissing)?;
+            let verifier_params = VerifierParameters::<T>::get();
 
             ensure!(
-                T::ProofVerifier::verify(&commitment, &proof, &verification_key),
+                T::ProofVerifier::verify(&commitment, &proof, &verification_key, &verifier_params),
                 Error::<T>::ProofInvalid
             );
 
@@ -368,6 +421,17 @@ pub mod pallet {
             let _ = ensure_signed(origin)?;
             VerificationKeys::<T>::insert(&key, bytes);
             Self::deposit_event(Event::VerificationKeyRegistered { id: key });
+            Ok(())
+        }
+
+        #[pallet::weight(T::WeightInfo::set_verifier_params())]
+        pub fn set_verifier_params(
+            origin: OriginFor<T>,
+            params: StarkVerifierParams,
+        ) -> DispatchResult {
+            T::GovernanceOrigin::ensure_origin(origin)?;
+            VerifierParameters::<T>::put(params.clone());
+            Self::deposit_event(Event::VerifierParamsUpdated { params });
             Ok(())
         }
 
@@ -497,6 +561,14 @@ pub mod pallet {
 
             let _ = id; // placeholder for potential auditing hooks
             Ok(())
+        }
+
+        fn blake3_hash(data: &[u8]) -> T::Hash {
+            let mut hasher = Blake3Hasher::new();
+            hasher.update(data);
+            let mut out = [0u8; 32];
+            hasher.finalize_xof().fill(&mut out);
+            T::Hash::from(out)
         }
     }
 }

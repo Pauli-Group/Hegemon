@@ -14,8 +14,9 @@ This reference summarizes the public APIs of the monorepo components and points 
   - `SecretKey::decapsulate(&self, ct: &Ciphertext) -> SharedSecret`
   - Security margin: ML-KEM-768; shared secrets truncated to 32 bytes.
 - `hashes` module
-  - `commit_note(payload: &[u8]) -> [u8; 32]`
-  - `derive_nullifier(nk: &[u8; 32], position: u64, rho: &[u8; 32]) -> [u8; 32]`
+  - `commit_note(payload: &[u8]) -> [u8; 32]` (BLAKE3-256 by default) and `commit_note_with(.., CommitmentHash::Sha3)` for SHA3-256 commitments.
+  - `sha3_256`, `blake3_256`, and Poseidon-style field hashing helpers.
+  - `derive_nullifier(nk: &[u8; 32], position: u64, rho: &[u8; 32]) -> [u8; 32]` and `derive_prf_key` use the same domain tags.
   - Domain separation constants `b"c"`, `b"nk"`, `b"nf"` are enforced to avoid cross-protocol collisions.
 
 ## `circuits/`

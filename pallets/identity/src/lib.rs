@@ -8,6 +8,7 @@ use frame_support::traits::EnsureOrigin;
 use frame_support::weights::Weight;
 use frame_system::ensure_signed;
 use sp_runtime::traits::MaybeSerializeDeserialize;
+use sp_runtime::RuntimeDebug;
 use sp_std::convert::TryInto;
 use sp_std::fmt::{Debug, Formatter};
 use sp_std::vec::Vec;
@@ -71,7 +72,10 @@ pub mod pallet {
     use frame_system::ensure_signed;
     use frame_system::pallet_prelude::{BlockNumberFor, OriginFor};
 
+    pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+
     #[pallet::pallet]
+    #[pallet::storage_version(STORAGE_VERSION)]
     pub struct Pallet<T>(_);
 
     #[pallet::config]
@@ -109,6 +113,8 @@ pub mod pallet {
         type MaxProofSize: Get<u32> + Clone + Debug + TypeInfo;
         type MaxIdentityTags: Get<u32> + Clone + Debug + TypeInfo;
         type MaxTagLength: Get<u32> + Clone + PartialEq + Eq + Debug + TypeInfo;
+        type MaxEd25519KeyBytes: Get<u32> + Clone + Debug + TypeInfo;
+        type MaxPqKeyBytes: Get<u32> + Clone + Debug + TypeInfo;
         type WeightInfo: WeightInfo;
     }
 
@@ -133,20 +139,42 @@ pub mod pallet {
         }
     }
 
+    #[derive(Clone, Copy, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen, RuntimeDebug)]
+    pub enum PqSignatureAlgorithm {
+        Dilithium,
+        Falcon,
+    }
+
+    #[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen, RuntimeDebug)]
+    #[scale_info(skip_type_params(T))]
+    pub enum SessionKey<T: Config> {
+        Legacy(T::AuthorityId),
+        Ed25519(BoundedVec<u8, T::MaxEd25519KeyBytes>),
+        PostQuantum {
+            algorithm: PqSignatureAlgorithm,
+            key: BoundedVec<u8, T::MaxPqKeyBytes>,
+        },
+        Hybrid {
+            algorithm: PqSignatureAlgorithm,
+            pq_key: BoundedVec<u8, T::MaxPqKeyBytes>,
+            ed25519_key: BoundedVec<u8, T::MaxEd25519KeyBytes>,
+        },
+    }
+
     /// DID document with tags and optional session key.
     #[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
     #[scale_info(skip_type_params(T))]
     pub struct DidDetails<T: Config> {
         pub document: BoundedVec<u8, T::MaxDidDocLength>,
         pub tags: BoundedVec<IdentityTag<T>, T::MaxIdentityTags>,
-        pub session_key: Option<T::AuthorityId>,
+        pub session_key: Option<SessionKey<T>>,
     }
 
     impl<T: Config> DidDetails<T> {
         pub fn new(
             document: BoundedVec<u8, T::MaxDidDocLength>,
             tags: BoundedVec<IdentityTag<T>, T::MaxIdentityTags>,
-            session_key: Option<T::AuthorityId>,
+            session_key: Option<SessionKey<T>>,
         ) -> Self {
             Self {
                 document,
@@ -154,6 +182,14 @@ pub mod pallet {
                 session_key,
             }
         }
+    }
+
+    #[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
+    #[scale_info(skip_type_params(T))]
+    pub struct LegacyDidDetails<T: Config> {
+        pub document: BoundedVec<u8, T::MaxDidDocLength>,
+        pub tags: BoundedVec<IdentityTag<T>, T::MaxIdentityTags>,
+        pub session_key: Option<T::AuthorityId>,
     }
 
     /// Credential schema metadata.
@@ -227,7 +263,7 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::getter(fn session_keys)]
     pub type SessionKeys<T: Config> =
-        StorageMap<_, Blake2_128Concat, T::AccountId, T::AuthorityId, OptionQuery>;
+        StorageMap<_, Blake2_128Concat, T::AccountId, SessionKey<T>, OptionQuery>;
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -235,7 +271,7 @@ pub mod pallet {
         DidRegistered {
             account: T::AccountId,
             tags: Vec<IdentityTag<T>>,
-            session_key: Option<T::AuthorityId>,
+            session_key: Option<SessionKey<T>>,
         },
         DidUpdated {
             account: T::AccountId,
@@ -265,7 +301,7 @@ pub mod pallet {
         },
         SessionKeyRotated {
             account: T::AccountId,
-            new_key: T::AuthorityId,
+            new_key: SessionKey<T>,
         },
         CredentialProofVerified {
             account: T::AccountId,
@@ -292,6 +328,28 @@ pub mod pallet {
         ProofTooLarge,
     }
 
+    #[pallet::hooks]
+    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+        fn on_runtime_upgrade() -> Weight {
+            let on_chain = Pallet::<T>::on_chain_storage_version();
+            if on_chain < STORAGE_VERSION {
+                Dids::<T>::translate(|_, legacy: LegacyDidDetails<T>| {
+                    Some(DidDetails::new(
+                        legacy.document,
+                        legacy.tags,
+                        legacy.session_key.map(SessionKey::Legacy),
+                    ))
+                });
+                SessionKeys::<T>::translate(|_, key: T::AuthorityId| Some(SessionKey::Legacy(key)));
+
+                STORAGE_VERSION.put::<Pallet<T>>();
+                T::WeightInfo::migrate()
+            } else {
+                Weight::zero()
+            }
+        }
+    }
+
     #[pallet::call]
     impl<T: Config> Pallet<T> {
         #[pallet::call_index(0)]
@@ -300,7 +358,7 @@ pub mod pallet {
             origin: OriginFor<T>,
             document: Vec<u8>,
             tags: Vec<IdentityTag<T>>,
-            session_key: Option<T::AuthorityId>,
+            session_key: Option<SessionKey<T>>,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
             ensure!(!Dids::<T>::contains_key(&who), Error::<T>::DidAlreadyExists);
@@ -496,7 +554,7 @@ pub mod pallet {
 
         #[pallet::call_index(6)]
         #[pallet::weight(T::WeightInfo::rotate_session_key())]
-        pub fn rotate_session_key(origin: OriginFor<T>, new_key: T::AuthorityId) -> DispatchResult {
+        pub fn rotate_session_key(origin: OriginFor<T>, new_key: SessionKey<T>) -> DispatchResult {
             let who = ensure_signed(origin)?;
             SessionKeys::<T>::insert(&who, new_key.clone());
             Dids::<T>::try_mutate(&who, |maybe_details| -> DispatchResult {
@@ -622,6 +680,7 @@ pub trait WeightInfo {
     fn set_role() -> Weight;
     fn rotate_session_key() -> Weight;
     fn verify_credential_proof() -> Weight;
+    fn migrate() -> Weight;
 }
 
 impl WeightInfo for () {
@@ -654,6 +713,10 @@ impl WeightInfo for () {
     }
 
     fn verify_credential_proof() -> Weight {
+        Weight::zero()
+    }
+
+    fn migrate() -> Weight {
         Weight::zero()
     }
 }
