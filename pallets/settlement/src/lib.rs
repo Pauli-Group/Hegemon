@@ -2,16 +2,22 @@
 
 pub use pallet::*;
 
+use blake3::Hasher as Blake3Hasher;
 use codec::{Decode, DecodeWithMemTracking, Encode};
 use frame_support::pallet_prelude::*;
 use frame_support::traits::{tokens::currency::Currency, ExistenceRequirement};
 use frame_support::traits::{EnsureOrigin, StorageVersion};
-use frame_system::offchain::{AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer};
+use frame_system::offchain::{
+    AppCrypto, CreateSignedTransaction, SendSignedTransaction, Signer, SubmitTransaction,
+};
 use frame_system::pallet_prelude::*;
 use scale_info::TypeInfo;
-use sp_runtime::traits::{AtLeast32BitUnsigned, Hash as Hashing};
+use sp_runtime::traits::{AtLeast32BitUnsigned, Hash};
+use sp_runtime::transaction_validity::{InvalidTransaction, TransactionPriority};
 use sp_runtime::RuntimeDebug;
-use sp_std::convert::TryInto;
+use sp_runtime::TransactionSource;
+use sp_runtime::TransactionValidity;
+use sp_runtime::ValidTransaction;
 use sp_std::vec::Vec;
 
 pub mod weights;
@@ -108,9 +114,6 @@ pub type StateChannelRecord<T> = StateChannelCommitment<
     BlockNumberFor<T>,
 >;
 
-type LegsBounded<T> =
-    BoundedVec<Leg<<T as frame_system::Config>::AccountId, <T as Config>::AssetId, <T as Config>::Balance>, <T as Config>::MaxLegs>;
-
 pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(3);
 
 pub trait ProofVerifier<Hash> {
@@ -147,9 +150,8 @@ pub mod pallet {
 
     #[pallet::config]
     pub trait Config: frame_system::Config + CreateSignedTransaction<Call<Self>> {
-        #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-        type AssetId: Parameter + Member + Copy + MaxEncodedLen + Default;
+        type AssetId: Parameter + Member + Copy + MaxEncodedLen;
         type Balance: Parameter + Member + AtLeast32BitUnsigned + Default + MaxEncodedLen + Copy;
         type VerificationKeyId: Parameter + Member + MaxEncodedLen + Copy + Default;
         type CouncilOrigin: EnsureOrigin<Self::RuntimeOrigin>;
@@ -179,7 +181,6 @@ pub mod pallet {
         type MaxPendingPayouts: Get<u32>;
         #[pallet::constant]
         type ValidatorReward: Get<BalanceOf<Self>>;
-        type TreasuryAccount: Get<Self::AccountId>;
     }
 
     #[pallet::storage]
@@ -336,9 +337,13 @@ pub mod pallet {
             };
 
             let signer = Signer::<T, T::AuthorityId>::any_account();
-            let _ = signer
+            let signed_result = signer
                 .send_signed_transaction(|_account| call.clone())
                 .map(|(_, res)| res);
+
+            if !matches!(signed_result, Some(Ok(()))) {
+                let _ = SubmitTransaction::<T, Call<T>>::submit_unsigned_transaction(call.into());
+            }
         }
 
         fn on_runtime_upgrade() -> Weight {
@@ -357,8 +362,8 @@ pub mod pallet {
                 VerifierParameters::<T>::put(T::DefaultVerifierParams::get());
                 STORAGE_VERSION.put::<Pallet<T>>();
                 Pallet::<T>::deposit_event(Event::StorageMigrated {
-                    from: Self::storage_version_number(on_chain),
-                    to: Self::storage_version_number(STORAGE_VERSION),
+                    from: on_chain.into(),
+                    to: STORAGE_VERSION.into(),
                 });
                 T::WeightInfo::migrate()
             } else {
@@ -371,7 +376,7 @@ pub mod pallet {
             let mut weight = Weight::zero();
             for (account, amount, reason) in payouts.drain(..) {
                 let _ = T::Currency::transfer(
-                    &T::TreasuryAccount::get(),
+                    &pallet_treasury::Pallet::<T>::account_id(),
                     &account,
                     amount,
                     ExistenceRequirement::AllowDeath,
@@ -391,11 +396,10 @@ pub mod pallet {
 
     #[pallet::call]
     impl<T: Config> Pallet<T> {
-        #[pallet::call_index(0)]
         #[pallet::weight(T::WeightInfo::submit_instruction())]
         pub fn submit_instruction(
             origin: OriginFor<T>,
-            legs: LegsBounded<T>,
+            legs: BoundedVec<Leg<T::AccountId, T::AssetId, T::Balance>, T::MaxLegs>,
             netting: NettingKind,
             memo: BoundedVec<u8, T::MaxMemo>,
         ) -> DispatchResult {
@@ -428,7 +432,6 @@ pub mod pallet {
             Ok(())
         }
 
-        #[pallet::call_index(1)]
         #[pallet::weight(T::WeightInfo::submit_batch())]
         pub fn submit_batch(
             origin: OriginFor<T>,
@@ -441,7 +444,7 @@ pub mod pallet {
             let who = ensure_signed(origin)?;
 
             let verification_key =
-                VerificationKeys::<T>::get(key).ok_or(Error::<T>::VerificationKeyMissing)?;
+                VerificationKeys::<T>::get(&key).ok_or(Error::<T>::VerificationKeyMissing)?;
             let verifier_params = VerifierParameters::<T>::get();
 
             ensure!(
@@ -501,7 +504,6 @@ pub mod pallet {
             Ok(())
         }
 
-        #[pallet::call_index(2)]
         #[pallet::weight(T::WeightInfo::register_key())]
         pub fn register_key(
             origin: OriginFor<T>,
@@ -509,12 +511,11 @@ pub mod pallet {
             bytes: BoundedVec<u8, T::MaxVerificationKeySize>,
         ) -> DispatchResult {
             let _ = ensure_signed(origin)?;
-            VerificationKeys::<T>::insert(key, bytes);
+            VerificationKeys::<T>::insert(&key, bytes);
             Self::deposit_event(Event::VerificationKeyRegistered { id: key });
             Ok(())
         }
 
-        #[pallet::call_index(3)]
         #[pallet::weight(T::WeightInfo::set_verifier_params())]
         pub fn set_verifier_params(
             origin: OriginFor<T>,
@@ -526,7 +527,6 @@ pub mod pallet {
             Ok(())
         }
 
-        #[pallet::call_index(4)]
         #[pallet::weight(T::WeightInfo::commit_state_channel())]
         pub fn commit_state_channel(
             origin: OriginFor<T>,
@@ -537,7 +537,7 @@ pub mod pallet {
             closing_height: BlockNumberFor<T>,
             signature: BoundedVec<u8, T::MaxProofSize>,
         ) -> DispatchResult {
-            let who = ensure_signed(origin)?;
+            let _ = ensure_signed(origin)?;
             let record = StateChannelRecord::<T> {
                 channel_id,
                 participants: participants.into_inner(),
@@ -561,7 +561,6 @@ pub mod pallet {
             Ok(())
         }
 
-        #[pallet::call_index(5)]
         #[pallet::weight(T::WeightInfo::dispute_state_channel())]
         pub fn dispute_state_channel(origin: OriginFor<T>, channel_id: T::Hash) -> DispatchResult {
             let _ = ensure_signed(origin)?;
@@ -577,7 +576,6 @@ pub mod pallet {
             Ok(())
         }
 
-        #[pallet::call_index(6)]
         #[pallet::weight(T::WeightInfo::dispute_state_channel())]
         pub fn flag_batch_dispute(origin: OriginFor<T>, id: u64) -> DispatchResult {
             let who = ensure_signed(origin)?;
@@ -592,7 +590,6 @@ pub mod pallet {
             Ok(())
         }
 
-        #[pallet::call_index(7)]
         #[pallet::weight(T::WeightInfo::escalate_dispute())]
         pub fn escalate_dispute(origin: OriginFor<T>, channel_id: T::Hash) -> DispatchResult {
             Self::ensure_governance_origin(origin)?;
@@ -609,7 +606,6 @@ pub mod pallet {
             Ok(())
         }
 
-        #[pallet::call_index(8)]
         #[pallet::weight(T::WeightInfo::resolve_dispute())]
         pub fn resolve_dispute(
             origin: OriginFor<T>,
@@ -648,7 +644,6 @@ pub mod pallet {
             Ok(())
         }
 
-        #[pallet::call_index(9)]
         #[pallet::weight(T::WeightInfo::rollback_batch())]
         pub fn rollback_batch(origin: OriginFor<T>, id: u64) -> DispatchResult {
             Self::ensure_governance_origin(origin)?;
@@ -709,24 +704,52 @@ pub mod pallet {
         }
 
         fn blake3_hash(data: &[u8]) -> T::Hash {
-            T::Hashing::hash(data)
+            let mut hasher = Blake3Hasher::new();
+            hasher.update(data);
+            let mut out = [0u8; 32];
+            hasher.finalize_xof().fill(&mut out);
+            T::Hash::from(out)
+        }
+    }
+}
+
+#[pallet::validate_unsigned]
+impl<T: Config> ValidateUnsigned for Pallet<T> {
+    type Call = Call<T>;
+
+    fn validate_unsigned(source: TransactionSource, call: &Self::Call) -> TransactionValidity {
+        if let Call::submit_batch {
+            instructions,
+            commitment: _,
+            proof: _,
+            nullifiers: _,
+            key: _,
+        } = call
+        {
+            if matches!(
+                source,
+                TransactionSource::Local | TransactionSource::InBlock
+            ) {
+                let pending = PendingQueue::<T>::get();
+                if !pending.is_empty() && pending.as_slice() == instructions.as_slice() {
+                    return ValidTransaction::with_tag_prefix("SettlementUnsignedBatch")
+                        .priority(TransactionPriority::max_value())
+                        .and_provides((instructions.clone(), pending.len()))
+                        .longevity(64_u64)
+                        .propagate(true)
+                        .build();
+                }
+            }
         }
 
-        fn storage_version_number(version: StorageVersion) -> u16 {
-            let encoded = version.encode();
-            encoded
-                .as_slice()
-                .get(..2)
-                .and_then(|bytes| bytes.try_into().ok())
-                .map(u16::from_le_bytes)
-                .unwrap_or_default()
-        }
+        InvalidTransaction::Call.into()
     }
 }
 
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking {
     use super::*;
+    use crate::weights::WeightInfo;
     use frame_benchmarking::v2::*;
     use frame_system::RawOrigin;
 

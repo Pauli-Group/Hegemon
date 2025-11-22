@@ -8,8 +8,8 @@ license = "Apache-2.0"
 
 [dependencies]
 frame-support = { version = "43.0.0", default-features = false }
-frame-system = { version = "43.0.1", default-features = false }
-pallet-balances = { version = "44.0.0", default-features = false }
+frame-system = { version = "43.0.0", default-features = false }
+pallet-balances = { version = "43.0.0", default-features = false }
 pallet-transaction-payment = { version = "43.0.0", default-features = false }
 sp-runtime = { version = "44.0.0", default-features = false }
 sp-std = { version = "14.0.0", default-features = false }
@@ -22,8 +22,8 @@ pallet-identity = { path = "../identity", default-features = false }
 sp-runtime = { version = "44.0.0", default-features = false, features = ["std"] }
 sp-io = { version = "34.0.0", default-features = false, features = ["std"] }
 frame-support = { version = "43.0.0", default-features = false, features = ["std"] }
-frame-system = { version = "43.0.1", default-features = false, features = ["std"] }
-pallet-balances = { version = "44.0.0", default-features = false, features = ["std"] }
+frame-system = { version = "43.0.0", default-features = false, features = ["std"] }
+pallet-balances = { version = "43.0.0", default-features = false, features = ["std"] }
 pallet-transaction-payment = { version = "43.0.0", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"], default-features = false }
 
@@ -41,4 +41,3 @@ std = [
     "scale-info/std",
     "pallet-identity/std",
 ]
-fee-model-mock-runtime = []
