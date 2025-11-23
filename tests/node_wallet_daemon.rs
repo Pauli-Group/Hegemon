@@ -23,8 +23,10 @@ use wallet::TransferRecipient;
 use wallet::WalletStore;
 use wallet::WalletSyncEngine;
 
+type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-async fn node_wallet_daemons_execute_transfer() {
+async fn node_wallet_daemons_execute_transfer() -> TestResult<()> {
     let router = GossipRouter::new(1024);
     let dir_a = tempdir().expect("node a dir");
     let dir_b = tempdir().expect("node b dir");
@@ -147,6 +149,8 @@ async fn node_wallet_daemons_execute_transfer() {
     api_task_b.abort();
     drop_rpc_client(alice_client).await;
     drop_rpc_client(bob_client).await;
+
+    Ok(())
 }
 
 fn free_port() -> u16 {
