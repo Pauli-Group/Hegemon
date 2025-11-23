@@ -82,6 +82,8 @@ async fn run_worker(
                             if tx.send(candidate).await.is_err() {
                                 return;
                             }
+                            // Stop mining this template to avoid producing sibling blocks
+                            let _ = rx.changed().await;
                             break;
                         }
                     }
