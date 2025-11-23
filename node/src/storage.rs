@@ -74,6 +74,11 @@ impl Storage {
         Ok(())
     }
 
+    pub fn close(&self) -> NodeResult<()> {
+        self.flush()?;
+        Ok(())
+    }
+
     pub fn store_meta(&self, meta: &ChainMeta) -> NodeResult<()> {
         let bytes = bincode::serialize(meta)?;
         self.meta.insert(META_KEY, bytes)?;
