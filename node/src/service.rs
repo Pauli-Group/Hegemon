@@ -301,6 +301,8 @@ impl NodeService {
             event_tx,
             template_tx,
         });
+
+        service.rehydrate_mempool()?;
         let miner_tasks = miner::spawn_miners(
             config.miner_workers,
             template_rx,
@@ -417,6 +419,30 @@ impl NodeService {
         &self.storage
     }
 
+    fn rehydrate_mempool(&self) -> NodeResult<()> {
+        let mut failures = Vec::new();
+        for (id, bundle) in self.storage.load_mempool()? {
+            match self.validate_bundle(&bundle) {
+                Ok(validated) => {
+                    if let Err(err) = self.insert_validated_transaction(validated, false, false) {
+                        tracing::warn!(?err, tx_id = %hex::encode(id), "failed to reinsert persisted mempool tx");
+                        failures.push(id);
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(?err, tx_id = %hex::encode(id), "dropping invalid persisted mempool tx");
+                    failures.push(id);
+                }
+            }
+        }
+        if !failures.is_empty() {
+            self.storage.remove_mempool_bundles(&failures)?;
+        }
+        self.telemetry.set_mempool_depth(self.mempool.len());
+        self.publish_template()?;
+        Ok(())
+    }
+
     pub fn consensus_status(&self) -> ConsensusStatus {
         let ledger = self.ledger.lock();
         ConsensusStatus {
@@ -427,6 +453,16 @@ impl NodeService {
             proof_commitment: ledger.proof_commitment.to_vec(),
             telemetry: self.telemetry.snapshot(),
         }
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub fn mempool_len(&self) -> usize {
+        self.mempool.len()
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub fn mempool_ids(&self) -> Vec<[u8; 32]> {
+        self.mempool.ids()
     }
 
     pub fn miner_status(&self) -> MinerStatus {
@@ -543,8 +579,13 @@ impl NodeService {
         bundle: TransactionBundle,
         broadcast: bool,
     ) -> NodeResult<[u8; 32]> {
-        let proof = bundle.proof;
-        let ciphertexts = bundle.ciphertexts;
+        let validated = self.validate_bundle(&bundle)?;
+        self.insert_validated_transaction(validated, broadcast, true)
+    }
+
+    fn validate_bundle(&self, bundle: &TransactionBundle) -> NodeResult<ValidatedTransaction> {
+        let proof = bundle.proof.clone();
+        let ciphertexts = bundle.ciphertexts.clone();
         let version = proof.version_binding();
         let verifying_key = self
             .verifying_keys
@@ -595,7 +636,24 @@ impl NodeService {
         if (validated.fee as u128) < min_fee {
             return Err(NodeError::Invalid("fee below minimum rate"));
         }
+        Ok(validated)
+    }
+
+    fn insert_validated_transaction(
+        &self,
+        validated: ValidatedTransaction,
+        broadcast: bool,
+        persist: bool,
+    ) -> NodeResult<[u8; 32]> {
+        let weight = validated.weight();
         self.mempool.insert(validated.clone(), weight)?;
+        if persist {
+            let bundle = TransactionBundle {
+                proof: validated.proof.clone(),
+                ciphertexts: validated.ciphertexts.clone(),
+            };
+            self.storage.record_mempool_bundle(validated.id, &bundle)?;
+        }
         self.telemetry.set_mempool_depth(self.mempool.len());
         self.publish_template()?;
         let _ = self.event_tx.send(NodeEvent::Transaction {
@@ -848,6 +906,7 @@ impl NodeService {
             );
             drop(ledger);
             self.mempool.clear();
+            self.storage.clear_mempool()?;
             self.telemetry.set_mempool_depth(0);
             self.rebuild_ledger_to_tip(best_tip)?;
             self.publish_template()?;
@@ -903,6 +962,7 @@ impl NodeService {
         }
         let pruned: Vec<[u8; 32]> = block.transactions.iter().map(|tx| tx.hash()).collect();
         self.mempool.prune(&pruned);
+        self.storage.remove_mempool_bundles(&pruned)?;
         self.telemetry.set_height(block.header.height);
         self.telemetry.set_mempool_depth(self.mempool.len());
         self.publish_template()?;
