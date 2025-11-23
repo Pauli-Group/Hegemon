@@ -111,10 +111,15 @@ async fn fresh_node_syncs_from_peer_tip() {
         .await
         .expect("node b synced to tip");
 
-    handle_a.shutdown().await.expect("shutdown producer node");
-    handle_b.shutdown().await.expect("shutdown follower node");
     sync_task_a.abort();
     sync_task_b.abort();
+    let _ = sync_task_a.await;
+    let _ = sync_task_b.await;
+
+    handle_a.shutdown().await.expect("shutdown producer node");
+    handle_b.shutdown().await.expect("shutdown follower node");
     p2p_task_a.abort();
     p2p_task_b.abort();
+    let _ = p2p_task_a.await;
+    let _ = p2p_task_b.await;
 }

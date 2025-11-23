@@ -143,12 +143,16 @@ async fn node_wallet_daemons_execute_transfer() -> TestResult<()> {
     assert_ne!(alice_after, alice_before);
     assert!(bob_after >= 25);
 
-    handle_a.shutdown().await?;
-    handle_b.shutdown().await?;
-    api_task_a.abort();
-    api_task_b.abort();
     drop_rpc_client(alice_client).await;
     drop_rpc_client(bob_client).await;
+    api_task_a.abort();
+    api_task_b.abort();
+    let _ = api_task_a.await;
+    let _ = api_task_b.await;
+    sleep(Duration::from_millis(100)).await;
+
+    handle_a.shutdown().await?;
+    handle_b.shutdown().await?;
 
     Ok(())
 }
