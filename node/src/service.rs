@@ -166,10 +166,16 @@ impl NodeService {
             .last()
             .map(|b| b.header.height)
             .unwrap_or(0);
-        if meta.height != persisted_height {
+        let recorded_height = persisted_blocks.iter().find_map(|block| match block.header.hash() {
+            Ok(hash) if hash == meta.best_hash => Some(block.header.height),
+            _ => None,
+        });
+        let expected_height = recorded_height.unwrap_or(persisted_height);
+        if meta.height != expected_height {
             tracing::warn!(
                 meta_height = meta.height,
                 persisted_height,
+                recorded_height,
                 "ledger metadata height mismatch; resetting chain state to genesis"
             );
             storage.reset()?;
