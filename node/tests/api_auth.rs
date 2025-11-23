@@ -61,7 +61,10 @@ impl ApiHarness {
     }
 
     async fn shutdown(self) {
-        self.handle.shutdown().await;
+        self.handle
+            .shutdown()
+            .await
+            .expect("shutdown api harness node");
         self.server.abort();
     }
 }

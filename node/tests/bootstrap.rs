@@ -92,7 +92,7 @@ async fn node_bootstraps_from_exported_peers() {
     let bundle = service_b.capture_peer_bundle().expect("bundle capture");
     assert!(bundle.peers.iter().any(|p| p == &p2p_addr_a.to_string()));
 
-    handle_b.shutdown().await;
+    handle_b.shutdown().await.expect("shutdown node b");
     p2p_task_b.abort();
     drop(service_b);
 
@@ -140,8 +140,8 @@ async fn node_bootstraps_from_exported_peers() {
         .await
         .expect("imported peers should allow bootstrap");
 
-    handle_a.shutdown().await;
-    handle_c.shutdown().await;
+    handle_a.shutdown().await.expect("shutdown initial node a");
+    handle_c.shutdown().await.expect("shutdown node c");
     p2p_task_a.abort();
     p2p_task_c.abort();
 }
@@ -245,7 +245,10 @@ async fn imported_peers_survive_restart() {
     let bundle_path = dir_b.path().join("restart_bundle.json");
     bundle.save(&bundle_path).expect("bundle save");
 
-    handle_b.shutdown().await;
+    handle_b
+        .shutdown()
+        .await
+        .expect("shutdown node b after restart");
     p2p_task_b.abort();
     sync_task_b.abort();
 
@@ -326,8 +329,14 @@ async fn imported_peers_survive_restart() {
     .await
     .expect("transaction gossip after restart");
 
-    handle_a.shutdown().await;
-    handle_b_restart.shutdown().await;
+    handle_a
+        .shutdown()
+        .await
+        .expect("shutdown node a after restart");
+    handle_b_restart
+        .shutdown()
+        .await
+        .expect("shutdown restarted node b");
     p2p_task_a.abort();
     p2p_task_b_restart.abort();
     sync_task_a.abort();

@@ -141,8 +141,8 @@ async fn node_wallet_daemons_execute_transfer() {
     assert_ne!(alice_after, alice_before);
     assert!(bob_after >= 25);
 
-    handle_a.shutdown().await;
-    handle_b.shutdown().await;
+    handle_a.shutdown().await?;
+    handle_b.shutdown().await?;
     api_task_a.abort();
     api_task_b.abort();
     drop_rpc_client(alice_client).await;

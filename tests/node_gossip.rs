@@ -98,8 +98,8 @@ async fn mined_block_gossips_between_nodes() -> TestResult<()> {
 
     assert_eq!(observed, 1, "node B should import the gossiped block");
 
-    node_a.shutdown().await;
-    node_b.shutdown().await;
+    node_a.shutdown().await?;
+    node_b.shutdown().await?;
     task_a.abort();
     task_b.abort();
 
