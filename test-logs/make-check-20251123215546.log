@@ -17,10 +17,10 @@ test reward::tests::supply_digest_handles_signed_delta ... ok
 test reward::tests::halving_schedule_matches_expectations ... ok
 test reward::tests::timespan_is_clamped ... ok
 test reward::tests::total_minted_is_bounded_by_max_supply ... ok
-test types::tests::proof_commitment_depends_on_transaction_order ... ok
 test types::tests::fee_commitment_sorted ... ok
-test types::tests::transaction_version_changes_hash ... ok
+test types::tests::proof_commitment_depends_on_transaction_order ... ok
 test types::tests::transaction_id_is_deterministic ... ok
+test types::tests::transaction_version_changes_hash ... ok
 test types::tests::version_commitment_tracks_counts ... ok
 test validator::tests::bitmap_parsing_skips_out_of_range_bits ... ok
 
@@ -35,12 +35,12 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 running 1 test
 test duplicate_nullifiers_cause_rejection ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 15.33s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.77s
 
 
 running 3 tests
-test median_time_past_violation_rejected ... ok
 test pow_bits_must_match_expected_target ... ok
+test median_time_past_violation_rejected ... ok
 test subsidy_overshoot_is_enforced ... ok
 
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
@@ -49,7 +49,7 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 running 1 test
 test runtime_signatures_verify_pow_blocks ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
 
 
 running 2 tests
@@ -83,7 +83,7 @@ test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 running 1 test
 test ciphertext_tampering_is_detected ... ok
 
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
 
 
 running 3 tests
@@ -97,25 +97,19 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 running 3 tests
 test block_gossip_is_imported_and_regossiped ... ok
 test gossip_crosses_tcp_boundary ... ok
-test address_exchange_teaches_new_peers ... ok
-
-test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.03s
-
-
-running 1 test
-test service::tests::reorg_rebuilds_ledger_and_storage ... FAILED
+test address_exchange_teaches_new_peers ... FAILED
 
 failures:
 
----- service::tests::reorg_rebuilds_ledger_and_storage stdout ----
+---- address_exchange_teaches_new_peers stdout ----
 
-thread 'service::tests::reorg_rebuilds_ledger_and_storage' panicked at node/src/service.rs:1420:33:
-shutdown node: Invalid("node service still referenced during shutdown")
+thread 'address_exchange_teaches_new_peers' panicked at network/tests/p2p_integration.rs:161:5:
+node B should learn about node C via address exchange
 note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
 
 
 failures:
-    service::tests::reorg_rebuilds_ledger_and_storage
+    address_exchange_teaches_new_peers
 
-test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.04s
 
