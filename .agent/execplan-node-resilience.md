@@ -10,6 +10,7 @@ Recent integration and adversarial runs fail in the restart/reorg scenarios: `te
 
 - [x] (2025-11-23 09:02Z) Drafted initial ExecPlan capturing current failing scenarios and intended fixes.
 - [x] (2025-11-23 12:18Z) Reproduced baseline failures with `PROPTEST_MAX_CASES=64`; collected command tails, commit hash (`c59379dcb769d8bc4daea5d3666733c2c9fd9e83`), and noted the absence of emitted failure seeds.
+- [ ] (2025-11-23 13:05Z) Assessment: objectives remain incomplete. Storage shutdown, validator alignment, and imported peer restart fixes have not been implemented; only baseline reproduction and plan drafting are done.
 - [ ] Implement storage shutdown/cleanup to eliminate sled lock contention on restart.
 - [ ] Fix validator selection during short reorgs to avoid `ValidatorSetMismatch`.
 - [ ] Ensure imported peers resume mining and reach height ≥1 after restart without timeouts.
@@ -153,3 +154,7 @@ Cross-check against `test-logs/2025-11-23.md`: the repeated lock contention (`co
 - P2P bootstrap: ensure `network::P2PService` and `PeerStore` lifecycles in `node/tests/bootstrap.rs` drop cleanly before restart and that miners are started deterministically after import.
 
 Document revisions at the bottom of this plan whenever updates are made, explaining what changed and why.
+
+### Revision History
+
+- (2025-11-23 13:05Z) Recorded assessment noting that core remediation steps are still outstanding; plan remains in early stages with only baseline evidence gathered.
