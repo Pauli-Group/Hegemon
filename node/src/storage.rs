@@ -74,8 +74,12 @@ impl Storage {
         Ok(())
     }
 
-    pub fn close(&self) -> NodeResult<()> {
-        self.flush()?;
+    /// Flush all pending writes and drop sled handles to terminate background workers.
+    pub fn close(self) -> NodeResult<()> {
+        let Storage { db, .. } = self;
+        let flush_result = db.flush();
+        drop(db);
+        flush_result?;
         Ok(())
     }
 
