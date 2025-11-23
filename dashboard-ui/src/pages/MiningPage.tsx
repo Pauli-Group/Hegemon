@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { PageShell } from '../components/PageShell';
 import { MetricTile } from '../components/MetricTile';
 import { Sparkline } from '../components/Sparkline';
@@ -105,7 +104,6 @@ export function MiningPage() {
         label="Miner status feed"
         result={miner.data}
         isPlaceholder={miner.isPlaceholderData}
-        cta={<Link to="/node">Configure a node</Link>}
       />
 
       <div className={styles.metricGrid}>

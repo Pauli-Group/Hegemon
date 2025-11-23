@@ -43,7 +43,6 @@ function App() {
           <Route path="/" element={<Navigate to="/wallet" replace />} />
           <Route path="/wallet" element={<WalletPage />} />
           <Route path="/mining" element={<MiningPage />} />
-          <Route path="/node" element={<Navigate to="/wallet" replace />} />
           <Route path="/network" element={<NetworkPage />} />
           <Route path="/actions/:slug" element={<ActionRunPage />} />
           <Route path="*" element={<NotFoundPage />} />

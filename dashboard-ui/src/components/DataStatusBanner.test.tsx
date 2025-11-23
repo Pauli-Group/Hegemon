@@ -43,7 +43,7 @@ describe('DataStatusBanner', () => {
   it('is dismissible for accessibility and repeated visits', () => {
     render(
       <MemoryRouter>
-        <DataStatusBanner label="Miner status feed" result={mockResult} cta={<Link to="/node">Configure a node</Link>} />
+        <DataStatusBanner label="Miner status feed" result={mockResult} cta={<Link to="/wallet">Open wallet</Link>} />
       </MemoryRouter>,
     );
 
