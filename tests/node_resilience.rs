@@ -1,9 +1,9 @@
 use std::net::{SocketAddr, TcpListener};
 
 use network::GossipRouter;
-use node::{config::NodeConfig, NodeService};
+use node::{config::NodeConfig, storage::Storage, NodeService};
 use state_merkle::CommitmentTree;
-use tempfile::tempdir;
+use tempfile::Builder;
 use tokio::time::sleep;
 use tokio::time::Duration;
 use transaction_circuit::constants::NATIVE_ASSET_ID;
@@ -22,6 +22,10 @@ fn random_addr() -> SocketAddr {
         .expect("bind temp socket")
         .local_addr()
         .expect("local addr")
+}
+
+fn tempdir_with_prefix(prefix: &str) -> TestResult<tempfile::TempDir> {
+    Ok(Builder::new().prefix(prefix).tempdir()?)
 }
 
 fn base_config(path: &std::path::Path) -> NodeConfig {
@@ -78,11 +82,11 @@ fn sample_bundle(root: Felt) -> TransactionBundle {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn crash_replay_restores_state() -> TestResult<()> {
-    let dir = tempdir()?;
+    let dir = tempdir_with_prefix("crash-replay")?;
     let config = base_config(&dir.path().join("node.db"));
     let (best_hash, pow_bits, version_commitment, proof_commitment) = {
         let router = GossipRouter::new(8);
-        let handle = NodeService::start(config.clone(), router)?;
+        let handle = NodeService::start(config.clone(), router.clone())?;
         let block = handle
             .service
             .seal_pending_block()
@@ -97,12 +101,36 @@ async fn crash_replay_restores_state() -> TestResult<()> {
             .unwrap_or(0);
         let version_commitment = block.header.version_commitment;
         let proof_commitment = block.header.proof_commitment.to_vec();
-        handle.shutdown().await;
+        let status = handle.service.consensus_status();
+        assert_eq!(status.height, 1);
+        assert_eq!(status.best_hash, best_hash);
+        handle.service.flush_storage()?;
+        handle.shutdown().await?;
+        drop(router);
+        sleep(Duration::from_millis(25)).await;
+        let reopened = Storage::open(&config.db_path)?;
+        let stored_blocks = reopened.load_blocks()?;
+        assert_eq!(stored_blocks.len(), 1);
+        assert!(stored_blocks[0].header.pow.is_some());
+        assert_eq!(
+            stored_blocks[0].header.pow.as_ref().unwrap().pow_bits,
+            pow_bits
+        );
+        let stored_hash = stored_blocks[0].header.hash()?;
+        let stored_meta = reopened.load_meta()?.unwrap();
+        assert_eq!(stored_meta.height, 1);
+        assert_eq!(stored_meta.best_hash, stored_hash);
+        reopened.close()?;
+        sleep(Duration::from_millis(25)).await;
         (best_hash, pow_bits, version_commitment, proof_commitment)
     };
 
     let router = GossipRouter::new(8);
-    let restarted = NodeService::start(config.clone(), router)?;
+    let restarted =
+        NodeService::start(config.clone(), router.clone()).expect("restart without database lock");
+    assert!(config.db_path.exists());
+    assert_eq!(restarted.service.block_count()?, 1);
+    assert_eq!(restarted.service.storage_meta()?.height, 1);
     let status = restarted.service.consensus_status();
     assert_eq!(status.height, 1);
     assert_eq!(status.best_hash, best_hash);
@@ -110,17 +138,20 @@ async fn crash_replay_restores_state() -> TestResult<()> {
     assert_eq!(status.version_commitment, version_commitment);
     assert_eq!(status.proof_commitment, proof_commitment);
 
-    restarted.shutdown().await;
+    restarted.shutdown().await?;
+    drop(router);
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn short_reorg_prefers_longer_chain() -> TestResult<()> {
-    let dir_main = tempdir()?;
-    let dir_alt = tempdir()?;
+    let dir_main = tempdir_with_prefix("reorg-main")?;
+    let dir_alt = tempdir_with_prefix("reorg-alt")?;
+    assert_ne!(dir_main.path(), dir_alt.path());
     let mut config_main = base_config(&dir_main.path().join("main.db"));
-    let config_alt = base_config(&dir_alt.path().join("alt.db"));
+    let mut config_alt = base_config(&dir_alt.path().join("alt.db"));
     config_main.miner_seed = [2u8; 32];
+    config_alt.miner_seed = config_main.miner_seed;
 
     let router_main = config_main.gossip_router();
     let router_alt = GossipRouter::new(8);
@@ -156,18 +187,18 @@ async fn short_reorg_prefers_longer_chain() -> TestResult<()> {
     assert_eq!(status.height, alt_block_two.header.height);
     assert_eq!(status.best_hash, alt_tip);
 
-    main.shutdown().await;
-    alt.shutdown().await;
+    main.shutdown().await?;
+    alt.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn mempool_survives_restart() -> TestResult<()> {
-    let dir = tempdir()?;
+    let dir = tempdir_with_prefix("mempool")?;
     let config = base_config(&dir.path().join("mempool.db"));
     let tx_id = {
         let router = GossipRouter::new(8);
-        let handle = NodeService::start(config.clone(), router)?;
+        let handle = NodeService::start(config.clone(), router.clone())?;
         let merkle_root = CommitmentTree::new(handle.service.config().note_tree_depth)
             .expect("tree depth")
             .root();
@@ -175,16 +206,21 @@ async fn mempool_survives_restart() -> TestResult<()> {
         let tx_id = handle.service.submit_transaction(bundle.clone()).await?;
         assert_eq!(handle.service.mempool_len(), 1);
         assert!(handle.service.mempool_ids().contains(&tx_id));
+        handle.service.flush_storage()?;
 
-        handle.shutdown().await;
+        handle.shutdown().await?;
+        drop(router);
+        sleep(Duration::from_millis(25)).await;
         tx_id
     };
 
     let router = GossipRouter::new(8);
-    let restarted = NodeService::start(config.clone(), router)?;
+    let restarted =
+        NodeService::start(config.clone(), router.clone()).expect("restart without database lock");
     assert_eq!(restarted.service.mempool_len(), 1);
     assert!(restarted.service.mempool_ids().contains(&tx_id));
 
-    restarted.shutdown().await;
+    restarted.shutdown().await?;
+    drop(router);
     Ok(())
 }

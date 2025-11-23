@@ -135,8 +135,14 @@ async fn nodes_share_blocks_over_gossip() {
         .await
         .expect("block commitment");
 
-    handle_a.shutdown().await;
-    handle_b.shutdown().await;
+    handle_a
+        .shutdown()
+        .await
+        .expect("shutdown node a after propagation");
+    handle_b
+        .shutdown()
+        .await
+        .expect("shutdown node b after propagation");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -261,8 +267,14 @@ async fn p2p_nodes_propagate_mined_block() {
         .await
         .expect("node b applied block via p2p gossip");
 
-    handle_a.shutdown().await;
-    handle_b.shutdown().await;
+    handle_a
+        .shutdown()
+        .await
+        .expect("shutdown node a after gossip");
+    handle_b
+        .shutdown()
+        .await
+        .expect("shutdown node b after gossip");
     p2p_task_a.abort();
     p2p_task_b.abort();
 }
@@ -293,5 +305,5 @@ async fn miner_mines_coinbase_without_transactions() {
         .await
         .expect("coinbase block mined");
 
-    handle.shutdown().await;
+    handle.shutdown().await.expect("shutdown miner-only node");
 }
