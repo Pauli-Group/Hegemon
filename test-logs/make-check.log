@@ -1,0 +1,267 @@
+cargo fmt --all
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test reward::tests::halving_schedule_matches_expectations ... ok
+test reward::tests::supply_digest_handles_signed_delta ... ok
+test reward::tests::timespan_is_clamped ... ok
+test reward::tests::total_minted_is_bounded_by_max_supply ... ok
+test types::tests::fee_commitment_sorted ... ok
+test types::tests::proof_commitment_depends_on_transaction_order ... ok
+test types::tests::transaction_id_is_deterministic ... ok
+test types::tests::transaction_version_changes_hash ... ok
+test types::tests::version_commitment_tracks_counts ... ok
+test validator::tests::bitmap_parsing_skips_out_of_range_bits ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test duplicate_nullifiers_cause_rejection ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 45.84s
+
+
+running 3 tests
+test pow_bits_must_match_expected_target ... ok
+test median_time_past_violation_rejected ... ok
+test subsidy_overshoot_is_enforced ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+
+running 1 test
+test runtime_signatures_verify_pow_blocks ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+
+running 2 tests
+test pow_chain_accepts_valid_work ... ok
+test bft_consensus_liveness_and_slashing ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s
+
+
+running 1 test
+test version_schedule_controls_activation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 10 tests
+test p2p::tests::compact_address_roundtrip ... ok
+test p2p::tests::connection_handshake_round_trip ... ok
+test p2p::tests::encrypted_frames_round_trip_after_handshake ... ok
+test peer_manager::tests::address_candidates_drop_local_and_connected ... ok
+test peer_manager::tests::samples_addresses_with_exclusions ... ok
+test peer_store::tests::persists_and_prunes_by_ttl ... ok
+test peer_store::tests::returns_recent_peers_in_order_with_limit ... ok
+test service::tests::startup_targets_prefers_imports_over_cached_and_seeds ... ok
+test service::tests::startup_targets_prioritize_recent_peers_before_seeds ... ok
+test p2p::tests::pq_handshake_works_over_mock_streams ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+running 1 test
+test ciphertext_tampering_is_detected ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+
+running 3 tests
+test connection_round_trip_and_encryption_over_duplex ... ok
+test initiator_rejects_tampered_acceptance ... ok
+test duplex_stream_handshake_succeeds_and_rejects_tampering ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+
+running 3 tests
+test block_gossip_is_imported_and_regossiped ... ok
+test gossip_crosses_tcp_boundary ... ok
+test address_exchange_teaches_new_peers ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.08s
+
+
+running 1 test
+test service::tests::reorg_rebuilds_ledger_and_storage ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 3 tests
+test authorized_endpoints_return_data ... ok
+test unauthorized_requests_are_rejected ... ok
+test websocket_requires_token_and_streams_events ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.40s
+
+
+running 2 tests
+test node_bootstraps_from_exported_peers ... ok
+test imported_peers_survive_restart ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 43.48s
+
+
+running 3 tests
+test miner_mines_coinbase_without_transactions ... ok
+test nodes_share_blocks_over_gossip ... ok
+test p2p_nodes_propagate_mined_block ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.39s
+
+
+running 1 test
+test fresh_node_syncs_from_peer_tip ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 33.30s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test mock::test_genesis_config_builds ... ok
+test mock::__construct_runtime_integrity_test::runtime_integrity_tests ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 5 tests
+test tests::__construct_runtime_integrity_test::runtime_integrity_tests ... ok
+test tests::deactivate_feature_blocks_access ... ok
+test tests::guard_on_runtime_upgrade_runs_only_when_active ... ok
+test tests::propose_and_activate_feature ... ok
+test tests::test_genesis_config_builds ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 4 tests
+test tests::__construct_runtime_integrity_test::runtime_integrity_tests ... ok
+test tests::discounted_fee_applies_to_attestations ... ok
+test tests::test_genesis_config_builds ... ok
+test tests::frozen_accounts_cannot_transfer ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test tests::__construct_runtime_integrity_test::runtime_integrity_tests ... ok
+test tests::governance_sets_and_clears_quota ... ok
+test tests::identity_origin_can_set_quota ... ok
+test tests::offchain_worker_exports_metrics ... ok
+test tests::record_usage_tracks_totals_and_events ... ok
+test tests::snapshot_emits_current_state ... ok
+test tests::test_genesis_config_builds ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test mock::test_genesis_config_builds ... ok
+test mock::__construct_runtime_integrity_test::runtime_integrity_tests ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test test_genesis_config_builds ... ok
+test __construct_runtime_integrity_test::runtime_integrity_tests ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 2 tests
+test chain_specs_cover_pow_and_telemetry_defaults ... ok
+test pow_identity_attestation_settlement_flow ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test duplicate_nullifiers_trigger_error ... ok
+test block_proof_updates_state_and_verifies ... ok
+test root_ordering_is_enforced ... ok
+test mixed_versions_require_declared_keys ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 1 test
+test mined_block_gossips_between_nodes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.72s
+
+
+running 3 tests
+test mempool_survives_restart ... FAILED
+test crash_replay_restores_state ... FAILED
+test short_reorg_prefers_longer_chain ... FAILED
+
+failures:
+
+---- mempool_survives_restart stdout ----
+Error: Storage(Io(Custom { kind: Other, error: "could not acquire lock on \"/tmp/.tmpXBPv48/mempool.db/db\": Os { code: 11, kind: WouldBlock, message: \"Resource temporarily unavailable\" }" }))
+
+---- crash_replay_restores_state stdout ----
+Error: Storage(Io(Custom { kind: Other, error: "could not acquire lock on \"/tmp/.tmpJ7vmQo/node.db/db\": Os { code: 11, kind: WouldBlock, message: \"Resource temporarily unavailable\" }" }))
+
+---- short_reorg_prefers_longer_chain stdout ----
+Error: Consensus(ValidatorSetMismatch)
+
+
+failures:
+    crash_replay_restores_state
+    mempool_survives_restart
+    short_reorg_prefers_longer_chain
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+
