@@ -784,7 +784,23 @@ impl NodeService {
         let receipt = import_pow_block(&mut consensus, origin, block.clone())?;
         let hash = receipt.update.block_hash;
         drop(consensus);
+
+        if !receipt.update.committed {
+            self.storage.insert_block(hash, &block)?;
+            return Ok(());
+        }
+
         let mut ledger = self.ledger.lock();
+        if block.header.parent_hash != ledger.best_hash {
+            tracing::warn!(
+                "reorg detected (parent {} != best {}); skipping ledger update",
+                hex::encode(block.header.parent_hash),
+                hex::encode(ledger.best_hash)
+            );
+            self.storage.insert_block(hash, &block)?;
+            return Ok(());
+        }
+
         ledger.best_hash = hash;
         ledger.height = block.header.height;
         ledger.state_root = block.header.state_root;
