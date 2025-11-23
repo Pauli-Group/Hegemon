@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { PageShell } from '../components/PageShell';
 import { ConnectionBadge } from '../components/ConnectionBadge';
 import { DataStatusBanner } from '../components/DataStatusBanner';
@@ -207,9 +206,7 @@ export function NodePage() {
         label="Node metrics feed"
         result={metricsQuery.data}
         isPlaceholder={metricsQuery.isPlaceholderData}
-        cta={<Link to="/node">Configure a node</Link>}
       />
-
       <section className={`grid-12 ${styles.grid}`}>
         <article className={styles.card}>
           <header className={styles.cardHeader}>
