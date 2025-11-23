@@ -4,7 +4,6 @@ import { NotFoundPage } from './pages/NotFoundPage';
 import { WalletPage } from './pages/WalletPage';
 import { MiningPage } from './pages/MiningPage';
 import { NetworkPage } from './pages/NetworkPage';
-import { NodePage } from './pages/NodePage';
 import { useNodeMetrics } from './hooks/useNodeData';
 import { ConnectionBadge } from './components/ConnectionBadge';
 import logo from './assets/hegemon-atlas-emblem.svg';
@@ -44,7 +43,7 @@ function App() {
           <Route path="/" element={<Navigate to="/wallet" replace />} />
           <Route path="/wallet" element={<WalletPage />} />
           <Route path="/mining" element={<MiningPage />} />
-          <Route path="/node" element={<NodePage />} />
+          <Route path="/node" element={<Navigate to="/wallet" replace />} />
           <Route path="/network" element={<NetworkPage />} />
           <Route path="/actions/:slug" element={<ActionRunPage />} />
           <Route path="*" element={<NotFoundPage />} />
