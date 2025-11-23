@@ -94,9 +94,9 @@ async fn node_bootstraps_from_exported_peers() {
     let bundle = service_b.capture_peer_bundle().expect("bundle capture");
     assert!(bundle.peers.iter().any(|p| p == &p2p_addr_a.to_string()));
 
+    drop(service_b);
     handle_b.shutdown().await.expect("shutdown node b");
     p2p_task_b.abort();
-    drop(service_b);
 
     let bundle_path = dir_b.path().join("peer_bundle.json");
     bundle.save(&bundle_path).expect("bundle save");
