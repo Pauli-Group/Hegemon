@@ -21,12 +21,12 @@ pub fn spawn_miners(
 ) -> Vec<tokio::task::JoinHandle<()>> {
     let result_tx = Arc::new(result_tx);
     (0..workers)
-        .map(|id| {
+        .map(|_| {
             let rx = template_rx.clone();
             let tx = result_tx.clone();
             let telemetry = telemetry.clone();
             tokio::spawn(async move {
-                run_worker(rx, tx, telemetry, id, workers).await;
+                run_worker(rx, tx, telemetry).await;
             })
         })
         .collect()
@@ -36,8 +36,6 @@ async fn run_worker(
     mut rx: watch::Receiver<Option<BlockTemplate>>,
     tx: Arc<mpsc::Sender<ConsensusBlock>>,
     telemetry: Telemetry,
-    worker_id: usize,
-    total_workers: usize,
 ) {
     const BATCH_SIZE: u64 = 128;
     loop {
@@ -62,11 +60,7 @@ async fn run_worker(
             }
             continue;
         }
-        
-        // Partition the nonce space to prevent workers from doing duplicate work
-        let partition_size = u64::MAX / (total_workers as u64);
-        let mut counter = partition_size.saturating_mul(worker_id as u64);
-        
+        let mut counter: u64 = 0;
         loop {
             if let Ok(true) = rx.has_changed() {
                 let _ = rx.borrow_and_update();
@@ -88,6 +82,8 @@ async fn run_worker(
                             if tx.send(candidate).await.is_err() {
                                 return;
                             }
+                            // Stop mining this template to avoid producing sibling blocks
+                            let _ = rx.changed().await;
                             break;
                         }
                     }

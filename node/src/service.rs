@@ -792,19 +792,11 @@ impl NodeService {
 
         let mut ledger = self.ledger.lock();
         if block.header.parent_hash != ledger.best_hash {
-            if block.header.height <= ledger.height {
-                tracing::info!(
-                    "stale block detected (height {} <= current {}); ignoring",
-                    block.header.height,
-                    ledger.height
-                );
-            } else {
-                tracing::warn!(
-                    "reorg detected (parent {} != best {}); skipping ledger update",
-                    hex::encode(block.header.parent_hash),
-                    hex::encode(ledger.best_hash)
-                );
-            }
+            tracing::warn!(
+                "reorg detected (parent {} != best {}); skipping ledger update",
+                hex::encode(block.header.parent_hash),
+                hex::encode(ledger.best_hash)
+            );
             self.storage.insert_block(hash, &block)?;
             return Ok(());
         }
