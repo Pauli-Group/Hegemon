@@ -251,7 +251,7 @@ async fn imported_peers_survive_restart() {
 
     let wait_new_height = async {
         loop {
-            if handle_a.service.latest_meta().height >= target_height + 1 {
+            if handle_a.service.latest_meta().height > target_height {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -278,8 +278,9 @@ async fn imported_peers_survive_restart() {
         persist_imported_peers(&loaded_bundle, &config_b_restart).expect("persist imported peers");
     config_b_restart.imported_peers = imported.iter().map(|addr| addr.to_string()).collect();
 
-    let peer_store_b_restart =
-        PeerStore::new(PeerStoreConfig::with_path(&config_b_restart.peer_store_path));
+    let peer_store_b_restart = PeerStore::new(PeerStoreConfig::with_path(
+        &config_b_restart.peer_store_path,
+    ));
     let mut p2p_b_restart = P2PService::new(
         PeerIdentity::generate(b"restart-node-b"),
         config_b_restart.p2p_addr,
