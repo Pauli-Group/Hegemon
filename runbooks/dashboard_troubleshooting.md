@@ -1,11 +1,11 @@
 # Dashboard troubleshooting guide (embedded UI)
 
-Use this runbook when the dashboard served by `hegemon start` looks stale, fails to authenticate, or does not reflect node activity. The legacy FastAPI proxy and standalone Vite UI remain in the repo only for reference; new issues should be debugged against the embedded bundle.
+Use this runbook when the dashboard served by `hegemon start` looks stale, fails to authenticate, or does not reflect node activity. The Python FastAPI proxy and standalone Vite UI have been removed; new issues should be debugged against the embedded bundle.
 
 ## What to expect
 
 - `hegemon start` serves the dashboard on the configured `--api-addr` (default `127.0.0.1:8080`).
-- All UI actions map directly to the underlying node RPCs; there is no separate `scripts/dashboard.py` bridge.
+- All UI actions map directly to the underlying node RPCs; there is no separate shim or proxy.
 - Branding and asset changes must go through `./scripts/build_dashboard.sh` so the embedded bundle stays aligned with `BRAND.md`.
 
 ## Common fixes
@@ -42,4 +42,4 @@ Use this runbook when the dashboard served by `hegemon start` looks stale, fails
   These commands exercise the same endpoints the UI uses, so you can continue operations while debugging the embedded dashboard.
 
 ## Legacy proxy/UI
-If you need to compare behavior with the old FastAPI + Vite stack, see the archived scripts under `scripts/dashboard.py` and `scripts/dashboard_service.py`. New environments should prefer the embedded UI and only reference the legacy stack for historical parity checks.
+The historical FastAPI + Vite stack has been removed. If you uncover discrepancies, file an issue against the embedded dashboard instead of reviving the old scripts.
