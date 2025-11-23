@@ -184,10 +184,12 @@ async fn imported_peers_survive_restart() {
     let sync_proto_a = p2p_a.register_protocol(SYNC_PROTOCOL_ID);
     let p2p_task_a = tokio::spawn(p2p_a.run());
     let handle_a = NodeService::start(config_a.clone(), router_a).expect("start node a");
-    handle_a
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let miner_status_a = handle_a
         .service
         .control_miner(MinerAction::Start, None, Some(config_a.miner_workers))
         .expect("start miner for node a");
+    assert_eq!(miner_status_a.thread_count, config_a.miner_workers);
     let sync_task_a = handle_a.service.spawn_sync(sync_proto_a);
 
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -256,13 +258,13 @@ async fn imported_peers_survive_restart() {
             .expect("bundle capture");
         bundle.save(&bundle_path).expect("bundle save");
 
+        sync_task_b.abort();
+        let _ = sync_task_b.await;
         handle_b
             .shutdown()
             .await
             .expect("shutdown node b after restart");
-        sync_task_b.abort();
         p2p_task_b.abort();
-        let _ = sync_task_b.await;
         let _ = p2p_task_b.await;
     }
 
@@ -285,6 +287,7 @@ async fn imported_peers_survive_restart() {
         .service
         .control_miner(MinerAction::Stop, None, None)
         .expect("pause node a mining before restart sync");
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     let router_b_restart = GossipRouter::new(128);
     let gossip_handle_b_restart = router_b_restart.handle();
@@ -329,6 +332,7 @@ async fn imported_peers_survive_restart() {
     let p2p_task_b_restart = tokio::spawn(p2p_b_restart.run());
     let handle_b_restart =
         NodeService::start(config_b_restart, router_b_restart).expect("restart node b");
+    tokio::time::sleep(Duration::from_millis(100)).await;
     let miner_status_restart = handle_b_restart
         .service
         .control_miner(MinerAction::Start, None, Some(expected_miner_workers))
@@ -343,12 +347,21 @@ async fn imported_peers_survive_restart() {
     let sync_task_b_restart = handle_b_restart.service.spawn_sync(sync_proto_b_restart);
 
     let target_restart_height = handle_a.service.latest_meta().height;
+    let mut restart_peer_store =
+        PeerStore::new(PeerStoreConfig::with_path(&peer_store_path_restart));
     let wait_restart_height = async {
         loop {
             let height = handle_b_restart.service.latest_meta().height;
+            restart_peer_store
+                .load()
+                .expect("load peer store during restart catch-up");
+            let peers = restart_peer_store.addresses();
             info!(
                 height,
-                target_restart_height, "waiting for restarted node b to catch up"
+                target_restart_height,
+                peer_count = peers.len(),
+                ?peers,
+                "waiting for restarted node b to catch up",
             );
             if height >= target_restart_height {
                 break;
@@ -393,6 +406,10 @@ async fn imported_peers_survive_restart() {
     .await
     .expect("transaction gossip after restart");
 
+    sync_task_a.abort();
+    sync_task_b_restart.abort();
+    let _ = sync_task_a.await;
+    let _ = sync_task_b_restart.await;
     handle_a
         .shutdown()
         .await
@@ -403,10 +420,6 @@ async fn imported_peers_survive_restart() {
         .expect("shutdown restarted node b");
     p2p_task_a.abort();
     p2p_task_b_restart.abort();
-    sync_task_a.abort();
-    sync_task_b_restart.abort();
     let _ = p2p_task_a.await;
     let _ = p2p_task_b_restart.await;
-    let _ = sync_task_a.await;
-    let _ = sync_task_b_restart.await;
 }
