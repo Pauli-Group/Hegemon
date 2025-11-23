@@ -236,6 +236,20 @@ impl NodeService {
             meta.supply_digest = 0;
             meta.pow_bits = DEFAULT_GENESIS_POW_BITS;
             consensus = PowConsensus::new(miner_pubkeys.clone(), meta.state_root, HashVerifier);
+            // Wipe in-memory ledger state to match the reset storage/consensus view.
+            ledger = LedgerState {
+                tree: state_merkle::CommitmentTree::new(config.note_tree_depth)
+                    .map_err(|_| NodeError::Invalid("invalid tree depth"))?,
+                nullifiers: consensus::nullifier::NullifierSet::new(),
+                state_root: meta.state_root,
+                nullifier_root: meta.nullifier_root,
+                supply_digest: meta.supply_digest,
+                version_commitment: [0u8; 32],
+                proof_commitment: [0u8; 48],
+                best_hash: meta.best_hash,
+                height: meta.height,
+                pow_bits: meta.pow_bits,
+            };
         }
         let mempool = Mempool::new(config.mempool_max_txs, config.mempool_max_weight);
         let telemetry = Telemetry::new();
