@@ -33,3 +33,7 @@ path = "node_wallet_daemon.rs"
 [[test]]
 name = "node_gossip"
 path = "node_gossip.rs"
+
+[[test]]
+name = "node_resilience"
+path = "node_resilience.rs"

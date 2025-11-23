@@ -155,4 +155,10 @@ impl Mempool {
         let mut guard = self.inner.lock();
         *guard = MempoolState::default();
     }
+
+    #[cfg(feature = "test-utils")]
+    pub fn ids(&self) -> Vec<[u8; 32]> {
+        let guard = self.inner.lock();
+        guard.index.keys().copied().collect()
+    }
 }
