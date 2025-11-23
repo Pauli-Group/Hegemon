@@ -56,11 +56,34 @@ impl NodeHandle {
         }
 
         for handle in self.tasks {
-            let _ = handle.await;
+            if let Err(err) = handle.await {
+                if err.is_cancelled() {
+                    tracing::info!("node task cancelled during shutdown");
+                } else {
+                    tracing::warn!(?err, "node task did not shut down cleanly");
+                }
+            }
         }
 
-        self.service.storage.close()?;
-        Ok(())
+        let service = Arc::try_unwrap(self.service).map_err(|service| {
+            let strong_count = Arc::strong_count(&service);
+            tracing::warn!(
+                strong_count = strong_count,
+                "node service still referenced during shutdown"
+            );
+            NodeError::Invalid("node service still referenced during shutdown")
+        })?;
+
+        match service.into_storage().close() {
+            Ok(()) => {
+                tracing::info!("node storage closed successfully");
+                Ok(())
+            }
+            Err(err) => {
+                tracing::warn!(?err, "failed to close node storage");
+                Err(err)
+            }
+        }
     }
 
     pub fn spawn_sync(&self, protocol: network::ProtocolHandle) -> tokio::task::JoinHandle<()> {
@@ -355,6 +378,10 @@ impl NodeService {
         tasks.push(miner_task);
         tasks.push(telemetry_task);
         Ok(NodeHandle { service, tasks })
+    }
+
+    fn into_storage(self) -> Storage {
+        self.storage
     }
 
     pub fn spawn_sync(
