@@ -14,4 +14,4 @@ pub mod ui;
 mod codec;
 mod service;
 
-pub use service::{NodeHandle, NodeService};
+pub use service::{MinerAction, NodeHandle, NodeService};
