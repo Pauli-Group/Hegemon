@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use consensus::proof::HashVerifier;
@@ -65,7 +65,23 @@ impl NodeHandle {
             }
         }
 
-        let service = Arc::try_unwrap(self.service).map_err(|service| {
+        let service = self.service;
+
+        for attempt in 0..20 {
+            let strong_count = Arc::strong_count(&service);
+            if strong_count == 1 {
+                break;
+            }
+
+            tracing::warn!(
+                strong_count,
+                attempt,
+                "waiting for node service references to drop during shutdown"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        let service = Arc::try_unwrap(service).map_err(|service| {
             let strong_count = Arc::strong_count(&service);
             tracing::warn!(
                 strong_count = strong_count,
@@ -1416,7 +1432,9 @@ mod tests {
         assert_eq!(service.note_status().leaf_count, 2);
         assert_eq!(service.mempool.len(), 0);
 
-        // Clean up background tasks.
+        // Clean up background tasks. Drop the extra service handle so the
+        // shutdown path can fully release sled locks before reuse.
+        drop(service);
         handle.shutdown().await.expect("shutdown node");
     }
 }

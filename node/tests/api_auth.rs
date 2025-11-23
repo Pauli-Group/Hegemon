@@ -61,11 +61,16 @@ impl ApiHarness {
     }
 
     async fn shutdown(self) {
+        // Stop the API server first so its router drops the cloned NodeService
+        // before we attempt to unwrap the Arc during shutdown.
+        self.server.abort();
+        let _ = self.server.await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
         self.handle
             .shutdown()
             .await
             .expect("shutdown api harness node");
-        self.server.abort();
     }
 }
 
