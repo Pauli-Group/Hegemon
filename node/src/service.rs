@@ -596,6 +596,15 @@ impl NodeService {
                     "assemble_pending_block failed, falling back to default template: {}",
                     err
                 );
+
+                // If the error is a ForkChoice violation (unknown parent), force_template will also fail validation.
+                // In this case, we should not produce a template to avoid spamming invalid blocks.
+                if let NodeError::Consensus(consensus::ConsensusError::ForkChoice(_)) = &err {
+                    let _ = self.template_tx.send(None);
+                    self.telemetry.set_difficulty(0);
+                    return Ok(());
+                }
+
                 if let Ok(block) = self.force_template() {
                     let bits = block.header.pow.as_ref().map(|s| s.pow_bits).unwrap_or(0);
                     self.telemetry.set_difficulty(bits);
@@ -639,6 +648,8 @@ impl NodeService {
             .collect::<Vec<_>>();
         let ledger = self.ledger.lock();
         let parent_hash = ledger.best_hash;
+        // Force an unknown parent to reproduce the error
+        // let parent_hash = [1u8; 32]; 
         let parent_height = ledger.height;
         let base_state_root = ledger.state_root;
         let base_supply = ledger.supply_digest;
