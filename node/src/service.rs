@@ -937,6 +937,15 @@ impl NodeService {
     ) -> NodeResult<()> {
         let block_miner = block.header.validator_set_commitment;
         let mut consensus = self.consensus.lock();
+        if !consensus.has_miner(&block_miner) && block_miner == self.miner_id {
+            let recovered = consensus.ensure_miner(&self.miner_secret.verify_key());
+            tracing::info!(
+                origin = ?origin,
+                block_miner = %hex::encode(block_miner),
+                recovered = %hex::encode(recovered),
+                "re-registered local validator for imported block",
+            );
+        }
         if !consensus.has_miner(&block_miner) {
             let known_miners: Vec<String> =
                 consensus.miner_ids().into_iter().map(hex::encode).collect();
