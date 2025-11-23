@@ -787,6 +787,10 @@ impl NodeService {
 
         if !receipt.update.committed {
             self.storage.insert_block(hash, &block)?;
+            // Release miners to a fresh template even if this block is not on the best chain.
+            // Without this, workers wait on the watch channel after submitting a block and never
+            // receive a new template, effectively pausing mining.
+            self.publish_template()?;
             return Ok(());
         }
 
@@ -798,6 +802,8 @@ impl NodeService {
                 hex::encode(ledger.best_hash)
             );
             self.storage.insert_block(hash, &block)?;
+            // Refresh templates so miners don't stall after building on a stale parent.
+            self.publish_template()?;
             return Ok(());
         }
 
