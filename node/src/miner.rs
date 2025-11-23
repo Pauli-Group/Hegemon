@@ -42,7 +42,7 @@ async fn run_worker(
     const BATCH_SIZE: u64 = 128;
     loop {
         let template = loop {
-            if let Some(tpl) = rx.borrow_and_update().clone() {
+            if let Some(tpl) = rx.borrow().clone() {
                 break tpl;
             }
             if rx.changed().await.is_err() {
@@ -88,8 +88,6 @@ async fn run_worker(
                             if tx.send(candidate).await.is_err() {
                                 return;
                             }
-                            // Stop mining this template to avoid producing sibling blocks
-                            let _ = rx.changed().await;
                             break;
                         }
                     }
