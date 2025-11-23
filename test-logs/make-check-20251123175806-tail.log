@@ -1,0 +1,50 @@
+test duplex_stream_handshake_succeeds_and_rejects_tampering ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+
+running 3 tests
+test block_gossip_is_imported_and_regossiped ... ok
+test gossip_crosses_tcp_boundary ... ok
+test address_exchange_teaches_new_peers ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.03s
+
+
+running 1 test
+test service::tests::reorg_rebuilds_ledger_and_storage ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.19s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 3 tests
+test authorized_endpoints_return_data ... ok
+test unauthorized_requests_are_rejected ... ok
+test websocket_requires_token_and_streams_events ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.21s
+
+
+running 2 tests
+test node_bootstraps_from_exported_peers ... ok
+test imported_peers_survive_restart ... FAILED
+
+failures:
+
+---- imported_peers_survive_restart stdout ----
+
+thread 'imported_peers_survive_restart' panicked at node/tests/bootstrap.rs:356:10:
+node b resynced after restart: Elapsed(())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    imported_peers_survive_restart
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 52.00s
+

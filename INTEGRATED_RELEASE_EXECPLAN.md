@@ -13,12 +13,14 @@ Currently, running the full stack requires a developer environment (Rust, Python
 - [x] (2025-11-22 06:15Z) Sequenced the embedding, routing, and packaging steps across `node/`, `wallet/`, `dashboard-ui/`, and `scripts/`, filled validation and recovery notes, and circulated this revision for maintainer review.
 - [x] (2025-11-22 06:30Z) Documented the enforced `pow_bits`/`supply_digest` behavior (retarget clamps, timestamp bounds, subsidy checks) and ran `cargo test -p consensus` after trimming dev-dependency drift and network address handling.
 - [x] (2025-11-24 10:05Z) Added mocked PQ handshake unit coverage plus a two-node gossip integration flow to prove encrypted framing and cross-node block propagation, running `cargo test -p network --tests` and `cargo test -p tests --test node_gossip` to validate the paths.
+- [x] (2025-11-23 18:20Z) Executed `PROPTEST_MAX_CASES=64 make check` (bootstrap restart test initially timed out), then reran targeted suites: `node_resilience` (pass), `node::bootstrap` (pass on rerun), `network` crate suite (pass), and `security_pipeline` (pass), archiving the final 50-line tails under `test-logs/` for traceability.
 
 ## Surprises & Discoveries
 
 - The Rust side already embeds the dashboard UI under `node/src/dashboard/assets/` via `rust-embed` in both `node/src/dashboard.rs` and `node/src/ui.rs`, so the remaining migration effort is mostly about endpoint parity and build wiring rather than rewriting the UI pipeline.
 - Axum’s router already exposes `/node/process`, `/node/process/start`, and `/node/lifecycle` alongside SSE/websocket streams (`/node/events/stream`, `/node/ws`), and the legacy FastAPI proxy has been removed in favor of these native endpoints.
 - Consensus tests depended on the Substrate runtime and pallet stack; decoupling the PoW fixture from the runtime types (plus taming network address persistence errors) was necessary to get `cargo test -p consensus` green without chasing version mismatches.
+- `PROPTEST_MAX_CASES=64 make check` surfaced a one-off timeout in `imported_peers_survive_restart` while waiting for node B to resync; an immediate rerun of `cargo test -p node --test bootstrap -- --nocapture` passed, suggesting a flaky restart/resync path rather than deterministic failure.
 
 ## Decision Log
 
@@ -31,12 +33,16 @@ Currently, running the full stack requires a developer environment (Rust, Python
 - Decision: Favor embedded wallet startup wired through `node/src/bin/node.rs::run_node` over spawning the standalone wallet binary unless explicitly requested by operators.
   Rationale: Consolidates auth token handling and `/node/wallet/*` routing while keeping `wallet/src/bin/wallet.rs` available for advanced use.
   Date/Author: 2025-11-22 / GPT-5.1-Codex-Max
+- Decision: Track the bootstrap restart/resync timeout as a flake and continue running `PROPTEST_MAX_CASES=64` suites to confirm stability before altering restart logic.
+  Rationale: Targeted rerun of the `node::bootstrap` tests passed immediately after the single timeout, indicating no deterministic regression while still flagging restart timing risk.
+  Date/Author: 2025-11-23 / GPT-5.1-Codex-Max
 
 ## Outcomes & Retrospective
 
 - Feasibility check complete: the current Axum router, embedded assets, and CLI afford the single-binary direction without new languages. This plan now names the concrete files, functions, and endpoints to adjust before wider review. Circulate this revision for maintainer feedback prior to implementation and revisit after the first embedded wallet test run.
 - Consensus doc updates and the `cargo test -p consensus` run confirm the PoW subsidy/timestamp/retarget enforcement is aligned with the published spec after removing the runtime dev-dependency and normalizing the network-side address helpers.
 - Handshake mocks and node gossip regression tests now guard the PQ three-way exchange, encrypted framing, and block gossip plumbing, reducing risk as networking glue evolves.
+- `make check` at `PROPTEST_MAX_CASES=64` currently fails on the first pass due to `imported_peers_survive_restart` timing out, but targeted reruns of `node_resilience`, `node::bootstrap`, the `network` crate, and `security_pipeline` suites all pass, leaving restart timing as the sole tracked flake.
 
 ## Context and Orientation
 

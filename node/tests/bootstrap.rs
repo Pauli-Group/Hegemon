@@ -281,6 +281,11 @@ async fn imported_peers_survive_restart() {
         .await
         .expect("node a produced follow-up block");
 
+    handle_a
+        .service
+        .control_miner(MinerAction::Stop, None, None)
+        .expect("pause node a mining before restart sync");
+
     let router_b_restart = GossipRouter::new(128);
     let gossip_handle_b_restart = router_b_restart.handle();
 
