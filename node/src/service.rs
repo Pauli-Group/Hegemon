@@ -285,6 +285,8 @@ impl NodeService {
                     .await
                 {
                     eprintln!("miner produced invalid block: {err}");
+                    // Unblock miners: refresh the template after a rejected block.
+                    let _ = miner_service.publish_template();
                 }
             }
         });
