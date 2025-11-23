@@ -102,7 +102,7 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 | node/ | Unified `hegemon` binary (Node + Wallet + UI). |
 | protocol/ | Protocol definitions, transaction formats, and versioning logic. |
 | `runbooks/` | Operational guides for miners, emergency procedures, and security testing. |
-| `scripts/` | Python and shell scripts for dev setup, dashboard, and automation. |
+| `scripts/` | Shell scripts for dev setup, dashboard asset refresh, and automation. |
 | `state/` | Merkle tree storage and state management. |
 | `tests/` | Integration tests and the security pipeline suite. |
 | `wallet/` | CLI wallet plus the `wallet-bench` binary for note/key performance measurements. |
@@ -111,11 +111,12 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 ### Quickstart (unified `hegemon` binary)
 
-Start every fresh clone with `make quickstart` to install toolchains and run the baseline guard rails. From there the unified `hegemon` binary drives the full node + wallet + dashboard flow—no external FastAPI proxy or separate UI server is required.
+Start every fresh clone with `make quickstart` to install toolchains and run the baseline guard rails. The quickstart pipeline runs `scripts/dev-setup.sh`, `make check`, `make bench`, the wallet demo, then performs `cargo build -p node --release` and launches the `hegemon start` command against the local state directory. It is meant as a one-button “trust but verify” path for new contributors; for day-to-day development, call `cargo build -p node --release`, `make check`, or `make bench` directly without waiting on the full demo chain.
 
 1. **Build the binary and embed the dashboard**:
    ```bash
    cargo build -p node --release
+   # Optional: copy the binary to the repo root for convenience
    cp target/release/hegemon .
    ```
    The dashboard assets are already vendored under `node/src/dashboard/assets`; only run `./scripts/build_dashboard.sh` if you modify `dashboard-ui/` and need to refresh the embedded bundle to match the brand palette in `BRAND.md`.
@@ -151,7 +152,7 @@ For multi-node lab setups, see [runbooks/miner_wallet_quickstart.md](runbooks/mi
 
 ### Developer Setup
 
-- **Toolchains** – Run `./scripts/dev-setup.sh` (or `make setup`) after `make quickstart` to install Rust/Go/jq/clang-format. The legacy Python FastAPI + Vite orchestration is deprecated; the embedded dashboard is the canonical path for UI validation.
+- **Toolchains** – Run `./scripts/dev-setup.sh` (or `make setup`) after `make quickstart` to install Rust/Go/jq/clang-format. The unified `hegemon` binary serves the dashboard directly; no external Python proxy is required.
 - **Tests** – `make check` mirrors the fmt/lint/test CI combo.
 - **Benchmarks** – `make bench` exercises prover, wallet, and network smoke benches.
 
