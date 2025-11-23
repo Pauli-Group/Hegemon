@@ -203,7 +203,7 @@ async fn websocket_requires_token_and_streams_events() {
 
 async fn connect_without_token(url: &str) -> Result<(), WsError> {
     let request = url.into_client_request().unwrap();
-    connect_async(request).await.map(|_| ()).map_err(|err| err)
+    connect_async(request).await.map(|_| ())
 }
 
 async fn connect_with_token(
