@@ -80,33 +80,35 @@ fn sample_bundle(root: Felt) -> TransactionBundle {
 async fn crash_replay_restores_state() -> TestResult<()> {
     let dir = tempdir()?;
     let config = base_config(&dir.path().join("node.db"));
+    let (best_hash, pow_bits, version_commitment, proof_commitment) = {
+        let router = GossipRouter::new(8);
+        let handle = NodeService::start(config.clone(), router)?;
+        let block = handle
+            .service
+            .seal_pending_block()
+            .await?
+            .expect("coinbase block");
+        let best_hash = block.header.hash()?;
+        let pow_bits = block
+            .header
+            .pow
+            .as_ref()
+            .map(|seal| seal.pow_bits)
+            .unwrap_or(0);
+        let version_commitment = block.header.version_commitment;
+        let proof_commitment = block.header.proof_commitment.to_vec();
+        handle.shutdown().await;
+        (best_hash, pow_bits, version_commitment, proof_commitment)
+    };
+
     let router = GossipRouter::new(8);
-
-    let handle = NodeService::start(config.clone(), router.clone())?;
-    let block = handle
-        .service
-        .seal_pending_block()
-        .await?
-        .expect("coinbase block");
-    let best_hash = block.header.hash()?;
-    handle.shutdown().await;
-
     let restarted = NodeService::start(config.clone(), router)?;
     let status = restarted.service.consensus_status();
     assert_eq!(status.height, 1);
     assert_eq!(status.best_hash, best_hash);
-    let pow_bits = block
-        .header
-        .pow
-        .as_ref()
-        .map(|seal| seal.pow_bits)
-        .unwrap_or(0);
     assert_eq!(status.pow_bits, pow_bits);
-    assert_eq!(status.version_commitment, block.header.version_commitment);
-    assert_eq!(
-        status.proof_commitment,
-        block.header.proof_commitment.to_vec()
-    );
+    assert_eq!(status.version_commitment, version_commitment);
+    assert_eq!(status.proof_commitment, proof_commitment);
 
     restarted.shutdown().await;
     Ok(())
@@ -163,19 +165,22 @@ async fn short_reorg_prefers_longer_chain() -> TestResult<()> {
 async fn mempool_survives_restart() -> TestResult<()> {
     let dir = tempdir()?;
     let config = base_config(&dir.path().join("mempool.db"));
+    let tx_id = {
+        let router = GossipRouter::new(8);
+        let handle = NodeService::start(config.clone(), router)?;
+        let merkle_root = CommitmentTree::new(handle.service.config().note_tree_depth)
+            .expect("tree depth")
+            .root();
+        let bundle = sample_bundle(merkle_root);
+        let tx_id = handle.service.submit_transaction(bundle.clone()).await?;
+        assert_eq!(handle.service.mempool_len(), 1);
+        assert!(handle.service.mempool_ids().contains(&tx_id));
+
+        handle.shutdown().await;
+        tx_id
+    };
+
     let router = GossipRouter::new(8);
-
-    let handle = NodeService::start(config.clone(), router.clone())?;
-    let merkle_root = CommitmentTree::new(handle.service.config().note_tree_depth)
-        .expect("tree depth")
-        .root();
-    let bundle = sample_bundle(merkle_root);
-    let tx_id = handle.service.submit_transaction(bundle.clone()).await?;
-    assert_eq!(handle.service.mempool_len(), 1);
-    assert!(handle.service.mempool_ids().contains(&tx_id));
-
-    handle.shutdown().await;
-
     let restarted = NodeService::start(config.clone(), router)?;
     assert_eq!(restarted.service.mempool_len(), 1);
     assert!(restarted.service.mempool_ids().contains(&tx_id));
