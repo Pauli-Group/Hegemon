@@ -1,4 +1,4 @@
-import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { ActionRunPage } from './pages/ActionRunPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { WalletPage } from './pages/WalletPage';
@@ -37,12 +37,11 @@ function App() {
           <nav className={styles.navLinks}>
             <NavLink to="/wallet">Wallet</NavLink>
             <NavLink to="/mining">Mining</NavLink>
-            <NavLink to="/node">Node</NavLink>
             <NavLink to="/network">Network</NavLink>
           </nav>
         </header>
         <Routes>
-          <Route path="/" element={<NodePage />} />
+          <Route path="/" element={<Navigate to="/wallet" replace />} />
           <Route path="/wallet" element={<WalletPage />} />
           <Route path="/mining" element={<MiningPage />} />
           <Route path="/node" element={<NodePage />} />
