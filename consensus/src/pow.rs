@@ -20,7 +20,8 @@ use num_traits::{One, Zero};
 
 const GENESIS_HASH: [u8; 32] = [0u8; 32];
 // Simplified demo target used across tests and quickstarts.
-pub const DEFAULT_GENESIS_POW_BITS: u32 = 0x3f00ffff;
+// 0x1d400000 corresponds to roughly 1 MH/s for 60s block time.
+pub const DEFAULT_GENESIS_POW_BITS: u32 = 0x1d400000;
 
 #[derive(Clone)]
 struct PowNode {
@@ -149,11 +150,7 @@ impl<V: ProofVerifier> PowConsensus<V> {
         let parent_node = self
             .nodes
             .get(&parent_hash)
-            .ok_or_else(|| {
-                // Use println! for immediate output to stdout/stderr
-                println!("DEBUG: apply_block failed: unknown parent {:?}. Ledger best might be different.", parent_hash);
-                ConsensusError::ForkChoice("unknown parent")
-            })?;
+            .ok_or(ConsensusError::ForkChoice("unknown parent"))?;
         if block.header.height != parent_node.height + 1 {
             return Err(ConsensusError::ForkChoice("height mismatch"));
         }
