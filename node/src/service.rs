@@ -50,7 +50,7 @@ pub struct NodeHandle {
 }
 
 impl NodeHandle {
-    pub async fn shutdown(self) {
+    pub async fn shutdown(self) -> NodeResult<()> {
         for handle in &self.tasks {
             handle.abort();
         }
@@ -59,9 +59,8 @@ impl NodeHandle {
             let _ = handle.await;
         }
 
-        if let Err(err) = self.service.storage.close() {
-            tracing::warn!(?err, "failed to flush storage during shutdown");
-        }
+        self.service.storage.close()?;
+        Ok(())
     }
 
     pub fn spawn_sync(&self, protocol: network::ProtocolHandle) -> tokio::task::JoinHandle<()> {
@@ -246,39 +245,43 @@ impl NodeService {
         ledger.proof_commitment = last_proof_commitment;
         // If the recorded best hash/height isn't known to consensus, reset to genesis.
         let fork_check = consensus.expected_bits_for_block(meta.best_hash, meta.height + 1);
-        if fork_check.is_err() {
+        if let Err(err) = fork_check {
             tracing::warn!(
+                ?err,
                 best_hash = ?meta.best_hash,
                 height = meta.height,
-                "consensus state missing recorded parent; resetting chain state to genesis"
+                "consensus state missing recorded parent"
             );
-            storage.reset()?;
-            meta.height = 0;
-            meta.best_hash = [0u8; 32];
-            meta.state_root = [0u8; 32];
-            meta.nullifier_root = [0u8; 32];
-            meta.supply_digest = 0;
-            meta.pow_bits = genesis_pow_bits;
-            consensus = PowConsensus::with_genesis_pow_bits(
-                miner_pubkeys.clone(),
-                meta.state_root,
-                HashVerifier,
-                genesis_pow_bits,
-            );
-            // Wipe in-memory ledger state to match the reset storage/consensus view.
-            ledger = LedgerState {
-                tree: state_merkle::CommitmentTree::new(config.note_tree_depth)
-                    .map_err(|_| NodeError::Invalid("invalid tree depth"))?,
-                nullifiers: consensus::nullifier::NullifierSet::new(),
-                state_root: meta.state_root,
-                nullifier_root: meta.nullifier_root,
-                supply_digest: meta.supply_digest,
-                version_commitment: [0u8; 32],
-                proof_commitment: [0u8; 48],
-                best_hash: meta.best_hash,
-                height: meta.height,
-                pow_bits: meta.pow_bits,
-            };
+            #[cfg(not(feature = "test-utils"))]
+            {
+                storage.reset()?;
+                meta.height = 0;
+                meta.best_hash = [0u8; 32];
+                meta.state_root = [0u8; 32];
+                meta.nullifier_root = [0u8; 32];
+                meta.supply_digest = 0;
+                meta.pow_bits = genesis_pow_bits;
+                consensus = PowConsensus::with_genesis_pow_bits(
+                    miner_pubkeys.clone(),
+                    meta.state_root,
+                    HashVerifier,
+                    genesis_pow_bits,
+                );
+                // Wipe in-memory ledger state to match the reset storage/consensus view.
+                ledger = LedgerState {
+                    tree: state_merkle::CommitmentTree::new(config.note_tree_depth)
+                        .map_err(|_| NodeError::Invalid("invalid tree depth"))?,
+                    nullifiers: consensus::nullifier::NullifierSet::new(),
+                    state_root: meta.state_root,
+                    nullifier_root: meta.nullifier_root,
+                    supply_digest: meta.supply_digest,
+                    version_commitment: [0u8; 32],
+                    proof_commitment: [0u8; 48],
+                    best_hash: meta.best_hash,
+                    height: meta.height,
+                    pow_bits: meta.pow_bits,
+                };
+            }
         }
         let mempool = Mempool::new(config.mempool_max_txs, config.mempool_max_weight);
         let telemetry = Telemetry::new();
@@ -471,6 +474,23 @@ impl NodeService {
     #[cfg(feature = "test-utils")]
     pub fn mempool_ids(&self) -> Vec<[u8; 32]> {
         self.mempool.ids()
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub fn flush_storage(&self) -> NodeResult<()> {
+        self.storage.flush()
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub fn storage_meta(&self) -> NodeResult<ChainMeta> {
+        self.storage
+            .load_meta()?
+            .ok_or(NodeError::Invalid("missing chain metadata"))
+    }
+
+    #[cfg(feature = "test-utils")]
+    pub fn block_count(&self) -> NodeResult<usize> {
+        Ok(self.storage.load_blocks()?.len())
     }
 
     pub fn miner_status(&self) -> MinerStatus {
@@ -1345,6 +1365,6 @@ mod tests {
         assert_eq!(service.mempool.len(), 0);
 
         // Clean up background tasks.
-        handle.shutdown().await;
+        handle.shutdown().await.expect("shutdown node");
     }
 }

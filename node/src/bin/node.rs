@@ -496,7 +496,7 @@ async fn run_node(cli: Cli) -> Result<()> {
         .await
         .context("failed to install signal handler")?;
     info!("shutting down");
-    handle.shutdown().await;
+    handle.shutdown().await?;
     api_task.abort();
     Ok(())
 }
