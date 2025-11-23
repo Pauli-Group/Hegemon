@@ -151,17 +151,20 @@ impl NodeService {
             .map_err(|_| NodeError::Invalid("invalid tree depth"))?;
         let mut nullifiers = consensus::nullifier::NullifierSet::new();
 
+        let mut persisted_blocks = storage.load_blocks()?;
+        persisted_blocks.sort_by_key(|block| block.header.height);
+        let genesis_pow_bits = persisted_blocks
+            .first()
+            .and_then(|block| block.header.pow.as_ref().map(|seal| seal.pow_bits))
+            .unwrap_or(config.pow_bits);
         let mut meta = storage.load_meta()?.unwrap_or(ChainMeta {
             best_hash: [0u8; 32],
             height: 0,
             state_root: [0u8; 32],
             nullifier_root: [0u8; 32],
             supply_digest: 0,
-            pow_bits: DEFAULT_GENESIS_POW_BITS,
+            pow_bits: genesis_pow_bits,
         });
-
-        let mut persisted_blocks = storage.load_blocks()?;
-        persisted_blocks.sort_by_key(|block| block.header.height);
         let persisted_height = persisted_blocks
             .last()
             .map(|b| b.header.height)
@@ -184,7 +187,7 @@ impl NodeService {
             meta.state_root = [0u8; 32];
             meta.nullifier_root = [0u8; 32];
             meta.supply_digest = 0;
-            meta.pow_bits = DEFAULT_GENESIS_POW_BITS;
+            meta.pow_bits = genesis_pow_bits;
             persisted_blocks.clear();
         }
 
@@ -199,7 +202,7 @@ impl NodeService {
         let mut last_version_commitment = [0u8; 32];
         let mut last_proof_commitment = [0u8; 48];
         let pow_bits = if meta.height == 0 {
-            DEFAULT_GENESIS_POW_BITS
+            genesis_pow_bits
         } else {
             meta.pow_bits
         };
@@ -217,7 +220,12 @@ impl NodeService {
         };
 
         let miner_pubkeys = vec![miner_secret.verify_key()];
-        let mut consensus = PowConsensus::new(miner_pubkeys.clone(), meta.state_root, HashVerifier);
+        let mut consensus = PowConsensus::with_genesis_pow_bits(
+            miner_pubkeys.clone(),
+            meta.state_root,
+            HashVerifier,
+            genesis_pow_bits,
+        );
         for block in persisted_blocks {
             last_version_commitment = compute_version_commitment(&block.transactions);
             last_proof_commitment = compute_proof_commitment(&block.transactions);
@@ -240,8 +248,13 @@ impl NodeService {
             meta.state_root = [0u8; 32];
             meta.nullifier_root = [0u8; 32];
             meta.supply_digest = 0;
-            meta.pow_bits = DEFAULT_GENESIS_POW_BITS;
-            consensus = PowConsensus::new(miner_pubkeys.clone(), meta.state_root, HashVerifier);
+            meta.pow_bits = genesis_pow_bits;
+            consensus = PowConsensus::with_genesis_pow_bits(
+                miner_pubkeys.clone(),
+                meta.state_root,
+                HashVerifier,
+                genesis_pow_bits,
+            );
             // Wipe in-memory ledger state to match the reset storage/consensus view.
             ledger = LedgerState {
                 tree: state_merkle::CommitmentTree::new(config.note_tree_depth)

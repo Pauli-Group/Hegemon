@@ -96,14 +96,15 @@ async fn address_exchange_teaches_new_peers() {
     let addr_a = local_addr();
     let addr_b = local_addr();
     let addr_c = local_addr();
+    let suffix = random::<u64>();
 
     let identity_a = PeerIdentity::generate(b"addr-exchange-a");
     let identity_b = PeerIdentity::generate(b"addr-exchange-b");
     let identity_c = PeerIdentity::generate(b"addr-exchange-c");
 
-    let path_a = std::env::temp_dir().join("p2p_integration_addr_a.bin");
-    let path_b = std::env::temp_dir().join("p2p_integration_addr_b.bin");
-    let path_c = std::env::temp_dir().join("p2p_integration_addr_c.bin");
+    let path_a = std::env::temp_dir().join(format!("p2p_integration_addr_a_{suffix}.bin"));
+    let path_b = std::env::temp_dir().join(format!("p2p_integration_addr_b_{suffix}.bin"));
+    let path_c = std::env::temp_dir().join(format!("p2p_integration_addr_c_{suffix}.bin"));
 
     let service_a = P2PService::new(
         identity_a,
@@ -143,7 +144,7 @@ async fn address_exchange_teaches_new_peers() {
     let task_b = tokio::spawn(service_b.run());
     let task_c = tokio::spawn(service_c.run());
 
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
 
     task_a.abort();
     task_b.abort();

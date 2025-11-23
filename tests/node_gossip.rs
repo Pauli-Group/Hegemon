@@ -8,6 +8,7 @@ use node::{config::NodeConfig, NodeService};
 use tokio::time::{sleep, timeout};
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+const EASY_POW_BITS: u32 = 0x3f00ffff;
 
 fn random_addr() -> SocketAddr {
     TcpListener::bind("127.0.0.1:0")
@@ -22,6 +23,7 @@ fn node_config(base_path: &std::path::Path, addr: SocketAddr) -> NodeConfig {
     config.p2p_addr = addr;
     config.miner_workers = 0;
     config.nat_traversal = false;
+    config.pow_bits = EASY_POW_BITS;
     config
 }
 
