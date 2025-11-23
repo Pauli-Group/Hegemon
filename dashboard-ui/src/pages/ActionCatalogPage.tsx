@@ -25,7 +25,7 @@ export function ActionCatalogPage() {
   return (
     <PageShell
       title="Operational action catalog"
-      intro="Runbook actions mirrored from scripts/dashboard.py so every workflow feels identical in the CLI and UI. Use the filter to locate install, CI, and benchmark rituals."
+      intro="Runbook actions mirrored from the quickstart guard rails so every workflow feels identical in the CLI and UI. Use the filter to locate install, CI, and benchmark rituals."
       actions={
         <label className={styles.searchField}>
           <span className="visually-hidden">Filter actions</span>

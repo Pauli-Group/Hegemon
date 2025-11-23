@@ -6,7 +6,7 @@ This repository is a single monorepo that houses the cryptography primitives (`c
 2. Update the relevant section in `DESIGN.md` (architecture/intent) and `METHODS.md` (operational procedures/testing strategy).
 3. Update the affected doc(s) inside `docs/` so downstream contributors can find the new behavior quickly.
 
-The unified `hegemon` binary is the canonical way to exercise the node, wallet, and dashboard. The legacy Python FastAPI proxy and standalone Vite dashboard remain for historical context only; new work should focus on the embedded UI and CLI surfaces.
+The unified `hegemon` binary is the canonical way to exercise the node, wallet, and dashboard. Legacy Python proxies and standalone dashboards have been removed; new work should focus on the embedded UI and CLI surfaces.
 
 ## Toolchains and workflows
 
@@ -20,7 +20,7 @@ The unified `hegemon` binary is the canonical way to exercise the node, wallet, 
 
 All commands above are invoked by CI (see below). Run them locally before opening a pull request.
 
-> Tip: Run `make quickstart` once on a fresh clone to install guard-rail dependencies, then use `make setup`/`scripts/dev-setup.sh` to refresh Rust, Go, jq, and clang-format on Debian/Ubuntu hosts. `make check` mirrors the fmt/lint/test combo locally.
+> Tip: Run `make quickstart` once on a fresh clone to install guard-rail dependencies, execute the smoke benches, and launch the unified node. For daily work, skip the quickstart chain and call `make setup`, `make check`, or `cargo build -p node --release` directly so you do not wait on the wallet demo or benchmark stages.
 
 ## Continuous integration
 

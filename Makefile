@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: setup fmt lint test check bench wallet-demo dashboard quickstart
+.PHONY: setup fmt lint test check bench wallet-demo quickstart
 
 setup:
 	./scripts/dev-setup.sh
@@ -21,10 +21,7 @@ bench:
 	( cd consensus/bench && go run ./cmd/netbench --smoke --json )
 
 wallet-demo:
-	./scripts/wallet-demo.sh --out wallet-demo-artifacts
-
-dashboard:
-	./scripts/dashboard.py
+./scripts/wallet-demo.sh --out wallet-demo-artifacts
 
 quickstart:
-	./scripts/full-quickstart.sh
+./scripts/full-quickstart.sh
