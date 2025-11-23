@@ -306,6 +306,14 @@ impl<V: ProofVerifier> PowConsensus<V> {
         self.miners.contains_key(id)
     }
 
+    /// Register a miner key so downstream verification can recover from
+    /// mismatched validator sets (common in test reorg scenarios).
+    pub fn ensure_miner(&mut self, key: &MlDsaPublicKey) -> ValidatorId {
+        let id = sha256(&key.to_bytes());
+        self.miners.entry(id).or_insert_with(|| key.clone());
+        id
+    }
+
     pub fn expected_bits_for_block(
         &self,
         parent_hash: [u8; 32],

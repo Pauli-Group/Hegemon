@@ -162,16 +162,16 @@ async fn short_reorg_prefers_longer_chain() -> TestResult<()> {
     let alt = NodeService::start(config_alt.clone(), router_alt)?;
 
     let expected_validator = sha256(&config_main.miner_secret().verify_key().to_bytes());
-    let known_miners: Vec<String> = main
-        .service
-        .miner_ids()
-        .into_iter()
-        .map(hex::encode)
-        .collect();
+    let known_miners_raw = main.service.miner_ids();
+    let known_miners: Vec<String> = known_miners_raw.iter().copied().map(hex::encode).collect();
     eprintln!(
         "expected validator: {}, configured miners: {:?}",
         hex::encode(expected_validator),
         known_miners
+    );
+    assert!(
+        known_miners_raw.contains(&expected_validator),
+        "main node consensus missing expected validator id"
     );
 
     let block_main = main
@@ -190,6 +190,10 @@ async fn short_reorg_prefers_longer_chain() -> TestResult<()> {
         .seal_pending_block()
         .await?
         .expect("alt block 1");
+    eprintln!(
+        "alt block 1 validator: {}",
+        hex::encode(alt_block_one.header.validator_set_commitment)
+    );
     assert_eq!(
         alt_block_one.header.validator_set_commitment, expected_validator,
         "alt chain block 1 sealed by unexpected validator"
@@ -200,9 +204,20 @@ async fn short_reorg_prefers_longer_chain() -> TestResult<()> {
         .seal_pending_block()
         .await?
         .expect("alt block 2");
+    eprintln!(
+        "alt block 2 validator: {}",
+        hex::encode(alt_block_two.header.validator_set_commitment)
+    );
     assert_eq!(
         alt_block_two.header.validator_set_commitment, expected_validator,
         "alt chain block 2 sealed by unexpected validator"
+    );
+    assert!(
+        main.service
+            .miner_ids()
+            .into_iter()
+            .any(|id| id == alt_block_two.header.validator_set_commitment),
+        "main node miner set diverged from alt block validator"
     );
 
     main.service.apply_block_for_test(alt_block_one).await?;
