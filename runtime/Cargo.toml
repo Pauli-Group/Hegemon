@@ -96,4 +96,5 @@ runtime-benchmarks = [
     "pallet-oracles/runtime-benchmarks",
     "pallet-feature-flags/runtime-benchmarks",
     "pallet-observability/runtime-benchmarks",
+    "pallet-fee-model/runtime-benchmarks",
 ]

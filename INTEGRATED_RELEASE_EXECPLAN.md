@@ -14,6 +14,7 @@ Currently, running the full stack requires a developer environment (Rust, Python
 - [x] (2025-11-22 06:30Z) Documented the enforced `pow_bits`/`supply_digest` behavior (retarget clamps, timestamp bounds, subsidy checks) and ran `cargo test -p consensus` after trimming dev-dependency drift and network address handling.
 - [x] (2025-11-24 10:05Z) Added mocked PQ handshake unit coverage plus a two-node gossip integration flow to prove encrypted framing and cross-node block propagation, running `cargo test -p network --tests` and `cargo test -p tests --test node_gossip` to validate the paths.
 - [x] (2025-11-23 18:20Z) Executed `PROPTEST_MAX_CASES=64 make check` (bootstrap restart test initially timed out), then reran targeted suites: `node_resilience` (pass), `node::bootstrap` (pass on rerun), `network` crate suite (pass), and `security_pipeline` (pass), archiving the final 50-line tails under `test-logs/` for traceability.
+- [x] (2025-11-23 23:25Z) Added fee-model WeightInfo and benchmarking scaffolding, aligned Substrate dependencies to keep the pallet-timestamp/schnorrkel stack consistent, and reran `cargo test -p pallet-fee-model --locked` plus `cargo test -p runtime --locked` to validate the discount/freeze identity tag flows.
 
 ## Surprises & Discoveries
 
@@ -43,6 +44,7 @@ Currently, running the full stack requires a developer environment (Rust, Python
 - Consensus doc updates and the `cargo test -p consensus` run confirm the PoW subsidy/timestamp/retarget enforcement is aligned with the published spec after removing the runtime dev-dependency and normalizing the network-side address helpers.
 - Handshake mocks and node gossip regression tests now guard the PQ three-way exchange, encrypted framing, and block gossip plumbing, reducing risk as networking glue evolves.
 - `make check` at `PROPTEST_MAX_CASES=64` currently fails on the first pass due to `imported_peers_survive_restart` timing out, but targeted reruns of `node_resilience`, `node::bootstrap`, the `network` crate, and `security_pipeline` suites all pass, leaving restart timing as the sole tracked flake.
+- Fee-model discount and freeze-tag fee paths remain green after the WeightInfo scaffolding and dependency alignment; `cargo test -p pallet-fee-model --locked` exercises the discounted attestation and frozen balance flows, and `cargo test -p runtime --locked` confirms the mock runtime stays in sync.
 
 ## Context and Orientation
 

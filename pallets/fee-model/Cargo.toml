@@ -17,6 +17,7 @@ sp-io = { version = "43.0.0", default-features = false }
 codec = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
 scale-info = { version = "2", default-features = false, features = ["derive"] }
 pallet-identity = { path = "../identity", default-features = false }
+frame-benchmarking = { version = "43.0.0", default-features = false, optional = true }
 
 [dev-dependencies]
 sp-runtime = { version = "44.0.0", default-features = false, features = ["std"] }
@@ -40,4 +41,12 @@ std = [
     "codec/std",
     "scale-info/std",
     "pallet-identity/std",
+    "frame-benchmarking?/std",
+]
+runtime-benchmarks = [
+    "frame-benchmarking",
+    "frame-support/runtime-benchmarks",
+    "frame-system/runtime-benchmarks",
+    "pallet-balances/runtime-benchmarks",
+    "pallet-transaction-payment/runtime-benchmarks",
 ]

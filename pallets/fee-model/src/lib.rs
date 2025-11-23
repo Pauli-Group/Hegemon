@@ -1,6 +1,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub use pallet::*;
+pub use weights::WeightInfo;
 
 use codec::MaxEncodedLen;
 use frame_support::dispatch::{
@@ -23,6 +24,11 @@ pub type BalanceOf<T> =
 pub type NegativeImbalanceOf<T> = <<T as Config>::Currency as Currency<
     <T as frame_system::Config>::AccountId,
 >>::NegativeImbalance;
+
+pub mod weights;
+
+#[cfg(feature = "runtime-benchmarks")]
+mod benchmarking;
 
 /// Categories used to apply fee multipliers per call.
 #[derive(Clone, Copy, Eq, PartialEq, RuntimeDebug)]
@@ -259,17 +265,6 @@ pub mod pallet {
             .max()
             .unwrap_or(0)
             .min(100)
-    }
-}
-
-/// Weight trait placeholder for benchmarking compatibility.
-pub trait WeightInfo {
-    fn on_charge_transaction() -> Weight;
-}
-
-impl WeightInfo for () {
-    fn on_charge_transaction() -> Weight {
-        Weight::zero()
     }
 }
 
@@ -532,7 +527,7 @@ mod tests {
         type IdentityTag = pallet_identity::pallet::IdentityTag<TestRuntime>;
         type IdentityProvider = RuntimeTagProvider;
         type CallClassifier = RuntimeClassifier;
-        type WeightInfo = ();
+        type WeightInfo = crate::weights::SubstrateWeight<Self>;
         type AttestationWeightCoeff = AttestationCoeff;
         type CredentialWeightCoeff = CredentialCoeff;
         type SettlementWeightCoeff = SettlementCoeff;
