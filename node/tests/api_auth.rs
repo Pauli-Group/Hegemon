@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
@@ -8,6 +9,7 @@ use node::{NodeHandle, NodeService};
 use serde_json::Value;
 use tempfile::tempdir;
 use tokio::net::TcpListener as TokioTcpListener;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_tungstenite::WebSocketStream;
@@ -25,6 +27,7 @@ const EASY_POW_BITS: u32 = 0x3f00ffff;
 struct ApiHarness {
     handle: NodeHandle,
     server: JoinHandle<()>,
+    shutdown_tx: Option<oneshot::Sender<()>>,
     base_url: String,
     token: String,
 }
@@ -43,18 +46,25 @@ impl ApiHarness {
         let router = GossipRouter::new(8);
         let handle = NodeService::start(config, router).expect("start node");
 
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let app = api::node_router(handle.service.clone(), None);
         let listener = TokioTcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind api listener");
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.expect("api server");
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .expect("api server");
         });
 
         ApiHarness {
             handle,
             server,
+            shutdown_tx: Some(shutdown_tx),
             base_url: format!("http://{}", addr),
             token: token.to_string(),
         }
@@ -63,14 +73,28 @@ impl ApiHarness {
     async fn shutdown(self) {
         // Stop the API server first so its router drops the cloned NodeService
         // before we attempt to unwrap the Arc during shutdown.
-        self.server.abort();
-        let _ = self.server.await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        let ApiHarness {
+            handle,
+            server,
+            shutdown_tx,
+            ..
+        } = self;
 
-        self.handle
-            .shutdown()
-            .await
-            .expect("shutdown api harness node");
+        if let Some(tx) = shutdown_tx {
+            let _ = tx.send(());
+        }
+
+        let _ = tokio::time::timeout(Duration::from_secs(2), server).await;
+
+        // Allow any in-flight handlers to drop their Arc<NodeService> clones.
+        for _ in 0..10 {
+            if Arc::strong_count(&handle.service) == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        handle.shutdown().await.expect("shutdown api harness node");
     }
 }
 
@@ -109,7 +133,10 @@ fn dummy_bundle() -> TransactionBundle {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unauthorized_requests_are_rejected() {
     let harness = ApiHarness::start("super-secret-token").await;
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .pool_max_idle_per_host(0)
+        .build()
+        .unwrap();
 
     let latest = client
         .get(format!("{}/blocks/latest", harness.base_url))
@@ -137,13 +164,17 @@ async fn unauthorized_requests_are_rejected() {
     let ws_result = connect_without_token(&url).await;
     assert!(matches!(ws_result, Err(WsError::Http(_))));
 
+    drop(client);
     harness.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn authorized_endpoints_return_data() {
     let harness = ApiHarness::start("super-secret-token").await;
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .pool_max_idle_per_host(0)
+        .build()
+        .unwrap();
 
     let latest = client
         .get(format!("{}/blocks/latest", harness.base_url))
@@ -179,6 +210,7 @@ async fn authorized_endpoints_return_data() {
         .unwrap();
     assert_ne!(tx.status(), reqwest::StatusCode::UNAUTHORIZED);
 
+    drop(client);
     harness.shutdown().await;
 }
 
@@ -206,6 +238,7 @@ async fn websocket_requires_token_and_streams_events() {
     assert_eq!(json.get("type"), Some(&Value::String("telemetry".into())));
     assert!(json.get("best_height").is_some());
 
+    ws_stream.close(None).await.unwrap();
     harness.shutdown().await;
 }
 

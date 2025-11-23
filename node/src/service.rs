@@ -519,12 +519,12 @@ impl NodeService {
         self.mempool.ids()
     }
 
-    #[cfg(feature = "test-utils")]
+    #[cfg(any(feature = "test-utils", debug_assertions))]
     pub fn flush_storage(&self) -> NodeResult<()> {
         self.storage.flush()
     }
 
-    #[cfg(feature = "test-utils")]
+    #[cfg(any(feature = "test-utils", debug_assertions))]
     pub fn storage_meta(&self) -> NodeResult<ChainMeta> {
         self.storage
             .load_meta()?
@@ -929,7 +929,7 @@ impl NodeService {
         })
     }
 
-    #[cfg(feature = "test-utils")]
+    #[cfg(any(feature = "test-utils", debug_assertions))]
     pub async fn seal_pending_block(&self) -> NodeResult<Option<ConsensusBlock>> {
         if let Some(block) = self.assemble_pending_block()? {
             let cloned = block.clone();
@@ -940,7 +940,7 @@ impl NodeService {
         }
     }
 
-    #[cfg(feature = "test-utils")]
+    #[cfg(any(feature = "test-utils", debug_assertions))]
     pub async fn apply_block_for_test(&self, block: ConsensusBlock) -> NodeResult<()> {
         self.accept_block(block, BlockOrigin::File, false).await
     }
