@@ -142,6 +142,7 @@ async fn crash_replay_restores_state() -> TestResult<()> {
 
     restarted.shutdown().await?;
     drop(router);
+    sleep(Duration::from_millis(25)).await;
     Ok(())
 }
 
@@ -253,5 +254,6 @@ async fn mempool_survives_restart() -> TestResult<()> {
 
     restarted.shutdown().await?;
     drop(router);
+    sleep(Duration::from_millis(25)).await;
     Ok(())
 }
