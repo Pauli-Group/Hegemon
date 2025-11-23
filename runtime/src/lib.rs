@@ -1308,7 +1308,7 @@ impl pallet_fee_model::Config for Runtime {
     type AttestationWeightCoeff = AttestationWeightCoeff;
     type CredentialWeightCoeff = CredentialWeightCoeff;
     type SettlementWeightCoeff = SettlementWeightCoeff;
-    type WeightInfo = ();
+    type WeightInfo = pallet_fee_model::weights::SubstrateWeight<Self>;
 }
 
 construct_runtime!(
