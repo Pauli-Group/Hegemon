@@ -51,8 +51,16 @@ pub struct NodeHandle {
 
 impl NodeHandle {
     pub async fn shutdown(self) {
-        for handle in self.tasks {
+        for handle in &self.tasks {
             handle.abort();
+        }
+
+        for handle in self.tasks {
+            let _ = handle.await;
+        }
+
+        if let Err(err) = self.service.storage.close() {
+            tracing::warn!(?err, "failed to flush storage during shutdown");
         }
     }
 
