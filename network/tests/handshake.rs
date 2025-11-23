@@ -1,8 +1,8 @@
 use bincode::deserialize;
 use futures::{SinkExt, StreamExt};
 use network::{
-    p2p::{Connection, WireMessage},
     HandshakeAcceptance, HandshakeConfirmation, HandshakeOffer, NetworkError, PeerIdentity,
+    p2p::{Connection, WireMessage},
 };
 use sha2::{Digest, Sha256};
 use tokio::io::duplex;
@@ -220,8 +220,9 @@ async fn initiator_rejects_tampered_acceptance() {
             .expect("offer bytes")
             .to_vec();
         let offer: HandshakeOffer = deserialize(&offer_bytes).expect("deserialize offer");
-        let (acceptance, _secret, _acceptance_bytes) =
-            responder_identity.accept_offer(&offer).expect("accept offer");
+        let (acceptance, _secret, _acceptance_bytes) = responder_identity
+            .accept_offer(&offer)
+            .expect("accept offer");
         let mut tampered = acceptance.clone();
         if let Some(first) = tampered.signature.first_mut() {
             *first ^= 0xAA;
@@ -234,7 +235,9 @@ async fn initiator_rejects_tampered_acceptance() {
     });
 
     let mut initiator_conn = Connection::new(initiator_stream);
-    let result = initiator_conn.handshake_initiator(&initiator_identity).await;
+    let result = initiator_conn
+        .handshake_initiator(&initiator_identity)
+        .await;
     assert!(matches!(
         result,
         Err(NetworkError::InvalidSignature | NetworkError::Crypto(_))
