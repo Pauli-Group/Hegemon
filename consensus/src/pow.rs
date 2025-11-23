@@ -298,6 +298,14 @@ impl<V: ProofVerifier> PowConsensus<V> {
         self.best
     }
 
+    pub fn miner_ids(&self) -> Vec<ValidatorId> {
+        self.miners.keys().copied().collect()
+    }
+
+    pub fn has_miner(&self, id: &ValidatorId) -> bool {
+        self.miners.contains_key(id)
+    }
+
     pub fn expected_bits_for_block(
         &self,
         parent_hash: [u8; 32],

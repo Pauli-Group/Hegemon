@@ -503,6 +503,11 @@ impl NodeService {
         }
     }
 
+    pub fn miner_ids(&self) -> Vec<[u8; 32]> {
+        let consensus = self.consensus.lock();
+        consensus.miner_ids()
+    }
+
     pub fn subscribe_events(&self) -> broadcast::Receiver<NodeEvent> {
         self.event_tx.subscribe()
     }
@@ -903,7 +908,18 @@ impl NodeService {
         origin: BlockOrigin,
         propagate: bool,
     ) -> NodeResult<()> {
+        let block_miner = block.header.validator_set_commitment;
         let mut consensus = self.consensus.lock();
+        if !consensus.has_miner(&block_miner) {
+            let known_miners: Vec<String> =
+                consensus.miner_ids().into_iter().map(hex::encode).collect();
+            tracing::warn!(
+                origin = ?origin,
+                block_miner = %hex::encode(block_miner),
+                ?known_miners,
+                "block references validator outside configured miner set"
+            );
+        }
         let receipt = import_pow_block(&mut consensus, origin, block.clone())?;
         let hash = receipt.update.block_hash;
         drop(consensus);
