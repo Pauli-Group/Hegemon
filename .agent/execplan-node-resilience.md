@@ -9,7 +9,7 @@ Recent integration and adversarial runs fail in the restart/reorg scenarios: `te
 ## Progress
 
 - [x] (2025-11-23 09:02Z) Drafted initial ExecPlan capturing current failing scenarios and intended fixes.
-- [ ] Reproduce current failures with `PROPTEST_MAX_CASES=64` to confirm baseline symptoms and seeds.
+- [x] (2025-11-23 12:18Z) Reproduced baseline failures with `PROPTEST_MAX_CASES=64`; collected command tails, commit hash (`c59379dcb769d8bc4daea5d3666733c2c9fd9e83`), and noted the absence of emitted failure seeds.
 - [ ] Implement storage shutdown/cleanup to eliminate sled lock contention on restart.
 - [ ] Fix validator selection during short reorgs to avoid `ValidatorSetMismatch`.
 - [ ] Ensure imported peers resume mining and reach height ≥1 after restart without timeouts.
@@ -73,6 +73,77 @@ All steps rely on per-test temporary directories and deterministic seeds; rerunn
 ## Artifacts and Notes
 
 As work proceeds, attach concise log snippets (ideally last ~50 lines per command) and any diffs that illustrate critical fixes (e.g., shutdown ordering, consensus adjustments). Keep artifacts small and focused on evidence of success.
+
+### Progress / Artifacts (2025-11-23)
+
+- `PROPTEST_MAX_CASES=64 make check` (commit `c59379dcb769d8bc4daea5d3666733c2c9fd9e83`; seeds not emitted). Tail (~50 lines):
+
+```
+     Running tests/p2p_integration.rs (target/debug/deps/p2p_integration-5c4ac47ae131b167)
+
+running 3 tests
+test block_gossip_is_imported_and_regossiped ... ok
+test gossip_crosses_tcp_boundary ... ok
+test address_exchange_teaches_new_peers ... FAILED
+
+failures:
+
+---- address_exchange_teaches_new_peers stdout ----
+
+thread 'address_exchange_teaches_new_peers' panicked at network/tests/p2p_integration.rs:161:5:
+node B should learn about node C via address exchange
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    address_exchange_teaches_new_peers
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.03s
+
+error: test failed, to rerun pass `-p network --test p2p_integration`
+make: *** [Makefile:14: test] Error 101
+```
+
+- `cargo test -p node --test bootstrap -- --nocapture` (same commit; seeds not emitted). Tail (~50 lines):
+
+```
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 32s
+     Running tests/bootstrap.rs (target/debug/deps/bootstrap-d6296e1c1bdca15f)
+
+running 2 tests
+test imported_peers_survive_restart ... ok
+test node_bootstraps_from_exported_peers ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.65s
+```
+
+- `cargo test -p security-tests --test node_resilience -- --nocapture` (same commit; seeds not emitted). Tail (~50 lines):
+
+```
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 25.27s
+     Running node_resilience.rs (target/debug/deps/node_resilience-490e80f25ae9e31e)
+
+running 3 tests
+Error: Storage(Io(Custom { kind: Other, error: "could not acquire lock on \"/tmp/.tmppOO3M2/mempool.db/db\": Os { code: 11, kind: WouldBlock, message: \"Resource temporarily unavailable\" }" }))
+test mempool_survives_restart ... FAILED
+Error: Storage(Io(Custom { kind: Other, error: "could not acquire lock on \"/tmp/.tmpg5Bqy9/node.db/db\": Os { code: 11, kind: WouldBlock, message: \"Resource temporarily unavailable\" }" }))
+test crash_replay_restores_state ... FAILED
+Error: Consensus(ValidatorSetMismatch)
+test short_reorg_prefers_longer_chain ... FAILED
+
+failures:
+
+failures:
+    crash_replay_restores_state
+    mempool_survives_restart
+    short_reorg_prefers_longer_chain
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+error: test failed, to rerun pass `-p security-tests --test node_resilience`
+```
+
+Cross-check against `test-logs/2025-11-23.md`: the repeated lock contention (`could not acquire lock`) and `ValidatorSetMismatch` in `node_resilience` match the prior baseline, confirming the same failure modes are still present while `bootstrap` now passes.
 
 ## Interfaces and Dependencies
 
