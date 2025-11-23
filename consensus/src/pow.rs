@@ -149,7 +149,11 @@ impl<V: ProofVerifier> PowConsensus<V> {
         let parent_node = self
             .nodes
             .get(&parent_hash)
-            .ok_or(ConsensusError::ForkChoice("unknown parent"))?;
+            .ok_or_else(|| {
+                // Use println! for immediate output to stdout/stderr
+                println!("DEBUG: apply_block failed: unknown parent {:?}. Ledger best might be different.", parent_hash);
+                ConsensusError::ForkChoice("unknown parent")
+            })?;
         if block.header.height != parent_node.height + 1 {
             return Err(ConsensusError::ForkChoice("height mismatch"));
         }
