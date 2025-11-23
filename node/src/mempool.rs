@@ -150,4 +150,9 @@ impl Mempool {
             .cloned()
             .collect()
     }
+
+    pub fn clear(&self) {
+        let mut guard = self.inner.lock();
+        *guard = MempoolState::default();
+    }
 }
