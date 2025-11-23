@@ -46,6 +46,8 @@ test-utils = []
 rand = "0.8"
 tempfile = "3.8"
 block-circuit = { path = "../circuits/block" }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+tokio-tungstenite = "0.21"
 
 [[bin]]
 name = "hegemon"
