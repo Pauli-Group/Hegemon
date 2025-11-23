@@ -1,5 +1,7 @@
 use std::net::{SocketAddr, TcpListener};
 
+use crypto::hashes::sha256;
+use crypto::traits::{SigningKey, VerifyKey};
 use network::GossipRouter;
 use node::{config::NodeConfig, storage::Storage, NodeService};
 use state_merkle::CommitmentTree;
@@ -158,11 +160,28 @@ async fn short_reorg_prefers_longer_chain() -> TestResult<()> {
     let main = NodeService::start(config_main.clone(), router_main.clone())?;
     let alt = NodeService::start(config_alt.clone(), router_alt)?;
 
+    let expected_validator = sha256(&config_main.miner_secret().verify_key().to_bytes());
+    let known_miners: Vec<String> = main
+        .service
+        .miner_ids()
+        .into_iter()
+        .map(hex::encode)
+        .collect();
+    eprintln!(
+        "expected validator: {}, configured miners: {:?}",
+        hex::encode(expected_validator),
+        known_miners
+    );
+
     let block_main = main
         .service
         .seal_pending_block()
         .await?
         .expect("main block");
+    assert_eq!(
+        block_main.header.validator_set_commitment, expected_validator,
+        "main chain block sealed by unexpected validator"
+    );
     let _ = block_main; // ensure chain height advances
 
     let alt_block_one = alt
@@ -170,12 +189,20 @@ async fn short_reorg_prefers_longer_chain() -> TestResult<()> {
         .seal_pending_block()
         .await?
         .expect("alt block 1");
+    assert_eq!(
+        alt_block_one.header.validator_set_commitment, expected_validator,
+        "alt chain block 1 sealed by unexpected validator"
+    );
     sleep(Duration::from_millis(5)).await;
     let alt_block_two = alt
         .service
         .seal_pending_block()
         .await?
         .expect("alt block 2");
+    assert_eq!(
+        alt_block_two.header.validator_set_commitment, expected_validator,
+        "alt chain block 2 sealed by unexpected validator"
+    );
 
     main.service.apply_block_for_test(alt_block_one).await?;
     main.service
@@ -186,6 +213,10 @@ async fn short_reorg_prefers_longer_chain() -> TestResult<()> {
     let alt_tip = alt_block_two.header.hash()?;
     assert_eq!(status.height, alt_block_two.header.height);
     assert_eq!(status.best_hash, alt_tip);
+
+    let meta = main.service.latest_meta();
+    assert_eq!(meta.height, alt_block_two.header.height);
+    assert_eq!(meta.best_hash, alt_tip);
 
     main.shutdown().await?;
     alt.shutdown().await?;
