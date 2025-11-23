@@ -5,10 +5,12 @@ use common::{
     make_validators,
 };
 use consensus::nullifier::NullifierSet;
-use consensus::pow::{DEFAULT_GENESIS_POW_BITS, PowConsensus};
+use consensus::pow::PowConsensus;
 use consensus::proof::HashVerifier;
 use crypto::ml_dsa::{ML_DSA_SIGNATURE_LEN, MlDsaPublicKey, MlDsaSignature};
 use crypto::traits::{SigningKey, VerifyKey};
+
+const EASY_POW_BITS: u32 = 0x3f00ffff;
 
 #[test]
 fn runtime_signatures_verify_pow_blocks() {
@@ -28,7 +30,7 @@ fn runtime_signatures_verify_pow_blocks() {
         miner: &miner,
         base_nullifiers: &base_nullifiers,
         base_state_root: empty_nullifier_root(),
-        pow_bits: DEFAULT_GENESIS_POW_BITS,
+        pow_bits: EASY_POW_BITS,
         nonce,
         parent_supply,
         coinbase: dummy_coinbase(height),
@@ -45,10 +47,11 @@ fn runtime_signatures_verify_pow_blocks() {
         .expect("runtime-compatible signature");
     assert_eq!(block.header.signature_aggregate.len(), ML_DSA_SIGNATURE_LEN);
 
-    let mut pow = PowConsensus::new(
+    let mut pow = PowConsensus::with_genesis_pow_bits(
         vec![miner.secret.verify_key()],
         empty_nullifier_root(),
         HashVerifier,
+        EASY_POW_BITS,
     );
     assert!(pow.apply_block(block).is_ok());
 }

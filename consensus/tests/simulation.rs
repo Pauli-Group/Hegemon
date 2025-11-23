@@ -89,15 +89,16 @@ async fn bft_consensus_liveness_and_slashing() {
 fn pow_chain_accepts_valid_work() {
     let mut miners = make_validators(1, 0);
     let miner = miners.remove(0);
-    let mut consensus = PowConsensus::new(
+    let pow_bits = 0x3f00ffff; // extremely easy target
+    let mut consensus = PowConsensus::with_genesis_pow_bits(
         vec![miner.validator.public_key().clone()],
         [0u8; 32],
         HashVerifier,
+        pow_bits,
     );
     let base_nullifiers = NullifierSet::new();
     let base_state_root = [0u8; 32];
     let transactions = vec![dummy_transaction(11)];
-    let pow_bits = 0x3f00ffff; // extremely easy target
     let (block, _, _) = assemble_pow_block(PowBlockParams {
         height: 1,
         parent_hash: [0u8; 32],

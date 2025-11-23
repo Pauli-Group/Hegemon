@@ -4,9 +4,8 @@ use common::{
     PowBlockParams, TestValidator, assemble_pow_block, dummy_coinbase, dummy_transaction,
     make_validators,
 };
+use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use consensus::{ConsensusError, HashVerifier, NullifierSet, PowConsensus, Transaction};
-
-const EASY_POW_BITS: u32 = 0x3f00ffff;
 
 fn base_pow_params<'a>(
     miner: &'a TestValidator,
@@ -21,7 +20,7 @@ fn base_pow_params<'a>(
         miner,
         base_nullifiers,
         base_state_root: [0u8; 32],
-        pow_bits: EASY_POW_BITS,
+        pow_bits: DEFAULT_GENESIS_POW_BITS,
         nonce: [0u8; 32],
         parent_supply: 0,
         coinbase: dummy_coinbase(1),

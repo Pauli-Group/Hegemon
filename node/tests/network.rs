@@ -18,6 +18,8 @@ use transaction_circuit::proof::prove;
 use transaction_circuit::witness::TransactionWitness;
 use wallet::TransactionBundle;
 
+const EASY_POW_BITS: u32 = 0x3f00ffff;
+
 fn p2p_addr() -> SocketAddr {
     TcpListener::bind("127.0.0.1:0")
         .expect("bind temp p2p socket")
@@ -85,14 +87,14 @@ async fn nodes_share_blocks_over_gossip() {
     let mut config_a = NodeConfig::with_db_path(dir_a.path().join("a.db"));
     config_a.api_addr = "127.0.0.1:0".parse().unwrap();
     config_a.note_tree_depth = 8;
-    config_a.pow_bits = 0x1f00ffff;
+    config_a.pow_bits = EASY_POW_BITS;
     config_a.miner_seed = [1u8; 32];
     config_a.min_tx_fee_per_weight = 0;
 
     let mut config_b = NodeConfig::with_db_path(dir_b.path().join("b.db"));
     config_b.api_addr = "127.0.0.1:0".parse().unwrap();
     config_b.note_tree_depth = 8;
-    config_b.pow_bits = 0x1f00ffff;
+    config_b.pow_bits = EASY_POW_BITS;
     config_b.miner_seed = [2u8; 32];
     config_b.min_tx_fee_per_weight = 0;
 
@@ -153,14 +155,14 @@ async fn p2p_nodes_propagate_mined_block() {
     let mut config_a = NodeConfig::with_db_path(dir_a.path().join("p2p-a.db"));
     config_a.api_addr = "127.0.0.1:0".parse().unwrap();
     config_a.note_tree_depth = 8;
-    config_a.pow_bits = 0x3f00ffff;
+    config_a.pow_bits = EASY_POW_BITS;
     config_a.miner_seed = [3u8; 32];
     config_a.p2p_addr = p2p_addr_a;
 
     let mut config_b = NodeConfig::with_db_path(dir_b.path().join("p2p-b.db"));
     config_b.api_addr = "127.0.0.1:0".parse().unwrap();
     config_b.note_tree_depth = 8;
-    config_b.pow_bits = 0x3f00ffff;
+    config_b.pow_bits = EASY_POW_BITS;
     config_b.miner_workers = 0;
     config_b.miner_seed = config_a.miner_seed;
     config_b.p2p_addr = p2p_addr_b;
