@@ -42,7 +42,7 @@ async fn run_worker(
     const BATCH_SIZE: u64 = 128;
     loop {
         let template = loop {
-            if let Some(tpl) = rx.borrow().clone() {
+            if let Some(tpl) = rx.borrow_and_update().clone() {
                 break tpl;
             }
             if rx.changed().await.is_err() {
