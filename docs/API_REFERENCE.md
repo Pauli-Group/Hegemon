@@ -15,7 +15,7 @@ This reference summarizes the public APIs of the monorepo components and points 
   - Security margin: ML-KEM-768; shared secrets truncated to 32 bytes.
 - `hashes` module
   - `commit_note(payload: &[u8]) -> [u8; 32]` (BLAKE3-256 by default) and `commit_note_with(.., CommitmentHash::Sha3)` for SHA3-256 commitments.
-  - `sha3_256`, `blake3_256`, and Poseidon-style field hashing helpers.
+  - `sha3_256`, `blake3_256`, and Poseidon-style field hashing helpers. BLAKE3-256 is the new default digest for PQ addresses, note commitments, and STARK parameter domains; SHA3-256 remains available for compatibility with older circuits.
   - `derive_nullifier(nk: &[u8; 32], position: u64, rho: &[u8; 32]) -> [u8; 32]` and `derive_prf_key` use the same domain tags.
   - Domain separation constants `b"c"`, `b"nk"`, `b"nf"` are enforced to avoid cross-protocol collisions.
 
@@ -38,6 +38,14 @@ p budgets.
 
 - Rust crate `wallet` exposes CLI subcommands `keygen`, `address`, `send`, `scan` via `clap` definitions in `wallet/src/bin.rs`.
 - `wallet/bench` binary crate (`wallet-bench`) accepts `--iterations` and reports note construction/sec, nullifier derivations/sec, and encryption throughput.
+
+## Runtime pallets (identity, attestations, settlement)
+
+- `pallet-identity`
+  - `register_did(document: Vec<u8>, tags: Vec<IdentityTag>, session_key: Option<SessionKey>)` stores the DID document, identity tags, and an optional session key variant (legacy AuthorityId, Ed25519, PQ-only Dilithium/Falcon, or hybrid). The `on_runtime_upgrade` hook maps any pre-upgrade `AuthorityId` into `SessionKey::Legacy` so operators inherit existing keys before rotating into PQ or hybrid bundles.
+- `pallet-attestations` / `pallet-settlement`
+  - `set_verifier_params(params: StarkVerifierParams)` (admin origin) updates the on-chain STARK verifier parameters.
+  - Default runtime constants seed `StarkVerifierParams` with Blake3 hashing, 28 FRI queries, a 4× blowup factor, and 128-bit security; calling `set_verifier_params` is the documented migration path for tightening soundness or swapping hashes without redeploying the pallets.
 
 ## Documentation hooks
 

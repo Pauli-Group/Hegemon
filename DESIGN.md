@@ -65,7 +65,7 @@ Where they’re used:
 
   * Block producers sign block headers with ML-DSA.
   * Mining node identity keys = ML-DSA.
-  * Identity/session records keep a **hybrid bundle** (Dilithium/Falcon + Ed25519) so legacy tooling can ride alongside PQ keys until upgrades retire classical crypto entirely.
+  * Identity/session records keep a **hybrid bundle** (Dilithium/Falcon + Ed25519) so legacy tooling can ride alongside PQ keys until upgrades retire classical crypto entirely. The runtime migration in `pallet_identity` wraps any stored `AuthorityId` into `SessionKey::Legacy` on upgrade so operators inherit their previous keys before rotating into PQ-only or hybrid bundles.
 * **User layer**:
 
   * Surprisingly little: within the shielded protocol, we can get rid of *per-input signatures* entirely and instead authorize spends by proving knowledge of a secret key in ZK (like Zcash already does with spend authorizing keys; here we do it with hash/lattice PRFs rather than ECC).
@@ -127,7 +127,7 @@ PRFs:
 
 No group operations anywhere in user-visible cryptography.
 
-STARK verifier parameters (hash function choice, query counts, blowup factors) are persisted on-chain in the attestations and settlement pallets with governance-controlled upgrade hooks so proof verification stays aligned with PQ-friendly hashes.
+STARK verifier parameters (hash function choice, query counts, blowup factors) are persisted on-chain in the attestations and settlement pallets with governance-controlled upgrade hooks so proof verification stays aligned with PQ-friendly hashes. The runtime seeds both pallets with Blake3 hashing, 28 FRI queries, a 4× blowup factor, and 128-bit security; governance can override those `StarkVerifierParams` via `set_verifier_params` when migrating to a new hash or tighter soundness budget.
 
 ### 1.4 Reference module layout
 
