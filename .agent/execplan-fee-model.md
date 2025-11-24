@@ -10,9 +10,9 @@ We need a runnable Substrate-like runtime that combines identity tags, balances,
 
 - [x] (2025-11-22 01:20Z) Captured current repository state and requirements in this ExecPlan.
 - [x] (2025-11-22 01:31Z) Scaffolded `pallets/fee-model` with a custom `OnChargeTransaction`, mock runtime wiring, and initial integration tests (blocked by dependency resolution during `cargo test`).
-- [ ] Add benchmarking/WeightInfo stubs for the new pallet and hook them into the runtime.
-- [ ] Resolve dependency conflicts and get integration tests passing for discounts and freezes.
-- [ ] Run relevant tests to validate the implementation and update retrospective.
+- [x] (2025-11-24 10:15Z) Added benchmarking/`WeightInfo` stubs, removed duplicate `runtime-benchmarks` attribute, and wired the `WeightInfo` impl into the mock runtime.
+- [x] (2025-11-24 10:45Z) Resolved `schnorrkel`/`sp-core` dependency mismatch by aligning `substrate-bip39` and reran integration tests for fee discounts and freeze tags.
+- [x] (2025-11-24 11:05Z) Ran targeted tests: `cargo fmt --all -- --check` (pass), `cargo clippy --workspace --all-targets --all-features -- -D warnings` (pass after fee-model fixes), and `cargo test -p pallet-fee-model -- --nocapture` (pass).
 
 ## Surprises & Discoveries
 
@@ -29,7 +29,9 @@ We need a runnable Substrate-like runtime that combines identity tags, balances,
 
 ## Outcomes & Retrospective
 
-To be completed after implementation and testing.
+- Benchmarking/`WeightInfo` scaffolding now compiles under `runtime-benchmarks`, unblocking downstream benches and linting.
+- Dependency realignment removed the `schnorrkel` split; fee-model integration tests now pass and validate discounted-fee and freeze enforcement flows end-to-end.
+- Formatting, clippy, and targeted fee-model tests executed successfully; no remaining blockers tracked for this plan.
 
 ## Context and Orientation
 

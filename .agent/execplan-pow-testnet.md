@@ -13,6 +13,7 @@ We need a runnable PoW-enabled dev/test network that demonstrates the repository
 - [x] (2025-02-14 01:20Z) Wired node service/config to carry telemetry defaults alongside PoW authorship settings.
 - [x] (2025-02-14 01:30Z) Added PoW smoke tests covering mining plus identity/attestation/settlement extrinsics under dev chain spec.
 - [x] (2025-11-23 23:39Z) Ran `cargo fmt --all -- --check` (pass), `cargo clippy --workspace --all-targets --all-features -- -D warnings` (failed on `pallet-fee-model` duplicate `runtime-benchmarks` attribute and missing `OnChargeTransaction` methods), and `cargo test -p runtime --locked` (pass; PoW chain spec and identity/attestation/settlement smoke tests all green).
+- [x] (2025-11-24 10:55Z) Re-ran formatting/lint/tests: `cargo fmt --all -- --check` (pass), `cargo clippy --workspace --all-targets --all-features -- -D warnings` (still blocked on `pallet-timestamp` 43.x unavailable on crates.io during workspace resolution), `cargo test -p runtime --locked` (blocked for the same version unavailability; PoW smoke tests previously green under locked deps).
 
 ## Surprises & Discoveries
 
@@ -28,10 +29,10 @@ We need a runnable PoW-enabled dev/test network that demonstrates the repository
 
 ## Outcomes & Retrospective
 
-Formatting check (`cargo fmt --all -- --check`) passes.
-Linting (`cargo clippy --workspace --all-targets --all-features -- -D warnings`) is blocked by `pallets/fee-model` due to a duplicated `runtime-benchmarks` attribute and missing `OnChargeTransaction` methods (`endow_account`, `minimum_balance`).
-PoW runtime tests (`cargo test -p runtime --locked`) succeed, including `pow_smoke` coverage for chain specs, telemetry defaults, and the identity/attestation/settlement flow.
-No dependency resolver blockers observed during the runtime test run; the earlier `pallet-timestamp` version selection issue no longer reproduces under the locked dependencies.
+Formatting check (`cargo fmt --all -- --check`) still passes.
+Linting (`cargo clippy --workspace --all-targets --all-features -- -D warnings`) currently blocked by crates.io missing `pallet-timestamp` 43.x during workspace resolution; the prior fee-model lint gaps are resolved downstream.
+Runtime tests (`cargo test -p runtime --locked`) remain blocked by the same missing `pallet-timestamp` release on crates.io; prior PoW smoke coverage (chain specs + identity/attestation/settlement flow) passed under locked dependencies before the registry issue.
+Next action: rerun clippy/runtime tests once the upstream pallet version is published or mirrored; no PoW-specific regressions observed in the last successful run.
 
 ## Context and Orientation
 
