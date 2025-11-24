@@ -19,7 +19,7 @@ We want wallet and node developers to have a runnable, testable STARK constraint
 - [x] (2025-01-09 02:00Z) Implemented prover/verifier wrapper plus key material generation helpers.
 - [x] (2025-01-09 02:20Z) Added fixtures and tests for valid/invalid spends.
 - [x] (2025-01-09 02:30Z) Integrated cargo-based CI workflow running the new circuit tests.
-- [ ] Update Outcomes & Retrospective once work completes.
+- [x] (2025-11-24 11:50Z) Finalized outcomes after rerunning `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, and `cargo test -p transaction-circuit --locked -- --nocapture` (all pass with fixtures regenerating deterministically).
 
 ## Surprises & Discoveries
 
@@ -34,7 +34,9 @@ We want wallet and node developers to have a runnable, testable STARK constraint
 
 ## Outcomes & Retrospective
 
-- Completed the initial transaction circuit crate with witness encoding, balance enforcement, fixtures, and CI coverage. Future work can focus on embedding the constraints into a full STARK prover once integration requirements are defined.
+- Completed the transaction circuit crate with witness encoding, balance enforcement, fixtures, and CI coverage; formatting/lint/tests all pass under the current toolchain.
+- Regenerated fixtures remain deterministic; valid/invalid spend tests and balance padding checks guard regressions discovered earlier.
+- Future work: integrate the circuit into higher-level proving services and monitor proptest budgets in CI for long-running cases.
 
 ## Context and Orientation
 

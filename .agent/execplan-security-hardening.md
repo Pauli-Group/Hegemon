@@ -23,7 +23,7 @@ Someone reading this plan should be able to reproduce those outcomes from scratc
 - [x] Third-party audit scope doc + DESIGN/METHODS updates.
 - [x] Formal verification artifacts for circuits + consensus (new files, instructions, METHOD references).
 - [x] Continuous security testing harnesses for transaction validation, networking, wallet + CI job wiring + docs.
-- [ ] Outcomes & retrospective update once changes validated.
+- [x] (2025-11-24 11:20Z) Validated docs/tests: `cargo fmt --all -- --check` (pass), `cargo clippy --workspace --all-targets --all-features -- -D warnings` (pass), `cargo test --workspace` (pass including security fuzz/adversarial harnesses). Updated Outcomes/Retrospective accordingly.
 
 ## Surprises & Discoveries
 
@@ -38,7 +38,9 @@ Someone reading this plan should be able to reproduce those outcomes from scratc
 
 ## Outcomes & Retrospective
 
-_To be populated after implementation._
+- Security commissioning docs, audit scopes, and formal verification artifacts are in place with runnable instructions and cross-links in DESIGN/METHODS.
+- Continuous security/adversarial harnesses (transaction witness fuzzing, network handshake tampering, wallet address fuzzing) are green in `cargo test --workspace`; CI job wiring documented and validated locally.
+- Formatting and clippy succeeded; no outstanding blockers. Future work: monitor proptest budgets in CI and keep TLC/Apalache instructions current.
 
 ## Context and Orientation
 

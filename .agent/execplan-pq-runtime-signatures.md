@@ -12,7 +12,7 @@ Upgrade the runtime and PoW engine to use post-quantum-friendly public keys, sig
 - [x] (2025-03-27 01:20Z) Defined PQ-backed `Signature`, `Public`, and `AccountId` plus AppCrypto wiring in `runtime/src/lib.rs`.
 - [x] (2025-03-27 01:35Z) Added PoW/runtime compatibility test exercising shared ML-DSA signing.
 - [x] (2025-03-27 01:40Z) Updated docs and chain spec comments with PQ key sizes and SS58 address guidance.
-- [ ] Run formatting/tests and finalize retrospective.
+- [x] (2025-11-24 11:40Z) Ran formatting/tests: `cargo fmt --all -- --check` (pass), `cargo clippy --workspace --all-targets --all-features -- -D warnings` (blocked by crates.io missing `pallet-timestamp` 43.x), `cargo test -p consensus runtime_signatures_verify_pow_blocks -- --nocapture` (blocked by same resolver issue). Retrospective updated; rerun once upstream publishes the pallet release.
 
 ## Surprises & Discoveries
 
@@ -30,7 +30,9 @@ Upgrade the runtime and PoW engine to use post-quantum-friendly public keys, sig
 
 ## Outcomes & Retrospective
 
-Pending implementation.
+- Runtime uses PQ-backed `Signature`/`Public`/`AccountId` wired through AppCrypto and PoW validation; docs and chain spec comments describe key sizes and SS58 compatibility.
+- Formatting succeeded; linting and targeted consensus tests remain blocked by crates.io missing `pallet-timestamp` 43.x. Pending action: rerun clippy/tests when the dependency is available.
+- No additional code changes required for PQ alignment; focus shifts to dependency availability and CI reruns.
 
 ## Context and Orientation
 
