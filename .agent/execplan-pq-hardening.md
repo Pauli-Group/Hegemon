@@ -12,7 +12,7 @@ Enable post-quantum hardening across commitments, identity/session key handling,
 - [x] (2025-03-27 01:10Z) Implemented PQ commitment hashing selection and pallet hashing utility updates.
 - [x] (2025-03-27 01:20Z) Added hybrid signature (Dilithium/Falcon + Ed25519) support for identity/session keys with migration paths.
 - [x] (2025-03-27 01:30Z) Persisted STARK/PQ-friendly verifier parameters in attestations/settlement pallets with upgrade hooks.
-- [ ] Validate via tests/checks and update documentation reflecting the new defaults and migrations.
+- [x] (2025-11-24 11:30Z) Validated new defaults/migrations: `cargo fmt --all -- --check` (pass), `cargo clippy --workspace --all-targets --all-features -- -D warnings` (pass), `cargo test -p synthetic-crypto --locked hash_commitment_and_prf_vectors` (pass after switching to registry mirror), and pallet migration tests (identity/attestations/settlement) now green. Documentation updated for hash defaults, hybrid keys, and verifier parameter storage.
 
 ## Surprises & Discoveries
 
@@ -33,7 +33,7 @@ Enable post-quantum hardening across commitments, identity/session key handling,
 
 ## Outcomes & Retrospective
 
-Implemented BLAKE3/SHA3 commitment utilities, hybrid session key storage with migrations, and on-chain STARK verifier parameter controls. Test execution is partially blocked by upstream crate availability, so manual vectors were recomputed and documentation updated; further automated validation should re-run once the dependency mirror is reachable.
+Implemented BLAKE3/SHA3 commitment utilities, hybrid session key storage with migrations, and on-chain STARK verifier parameter controls. Formatting/linting/tests are now passing against the updated registry mirror, including recomputed commitment/PRF vectors and migration paths across identity/attestations/settlement. Documentation captures the new defaults, migration steps, and verifier parameter governance.
 
 ## Context and Orientation
 
