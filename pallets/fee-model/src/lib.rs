@@ -232,6 +232,16 @@ pub mod pallet {
             });
             Ok(())
         }
+
+        #[cfg(feature = "runtime-benchmarks")]
+        fn endow_account(who: &T::AccountId, amount: Self::Balance) {
+            let _ = T::Currency::deposit_creating(who, amount);
+        }
+
+        #[cfg(feature = "runtime-benchmarks")]
+        fn minimum_balance() -> Self::Balance {
+            T::Currency::minimum_balance()
+        }
     }
 
     fn multiplier_for<T: Config>(
