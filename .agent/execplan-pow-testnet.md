@@ -12,12 +12,13 @@ We need a runnable PoW-enabled dev/test network that demonstrates the repository
 - [x] (2025-02-14 01:10Z) Implemented runtime chain specs for dev/testnet with PoW difficulty, bootnodes, and telemetry defaults.
 - [x] (2025-02-14 01:20Z) Wired node service/config to carry telemetry defaults alongside PoW authorship settings.
 - [x] (2025-02-14 01:30Z) Added PoW smoke tests covering mining plus identity/attestation/settlement extrinsics under dev chain spec.
-- [ ] (2025-02-14 01:35Z) Run formatting/tests and update plan with outcomes (runtime tests blocked by unavailable pallet version on crates.io).
+- [x] (2025-11-23 23:39Z) Ran `cargo fmt --all -- --check` (pass), `cargo clippy --workspace --all-targets --all-features -- -D warnings` (failed on `pallet-fee-model` duplicate `runtime-benchmarks` attribute and missing `OnChargeTransaction` methods), and `cargo test -p runtime --locked` (pass; PoW chain spec and identity/attestation/settlement smoke tests all green).
 
 ## Surprises & Discoveries
 
-- Observation: `cargo test -p runtime` fails to resolve Substrate `pallet-timestamp` version `43.0.0` from crates.io.
-  Evidence: Cargo resolver error `failed to select a version for the requirement pallet-timestamp = "^43.0.0"` during test run.
+- Observation: `cargo clippy` currently fails in `pallets/fee-model` because the benchmarking module duplicates the `runtime-benchmarks` crate attribute and the `FeeModelOnCharge` implementation lacks the `endow_account` and `minimum_balance` trait methods.
+  Evidence: `cargo clippy --workspace --all-targets --all-features -- -D warnings` reports a duplicated attribute at `pallets/fee-model/src/benchmarking.rs:1:8` and missing `OnChargeTransaction` items in `pallets/fee-model/src/lib.rs:119`.
+  Fix: drop the duplicate `#![cfg(feature = "runtime-benchmarks")]` attribute from `pallets/fee-model/src/benchmarking.rs` and implement `OnChargeTransaction::endow_account` and `OnChargeTransaction::minimum_balance` in `pallets/fee-model/src/lib.rs` to satisfy the trait used elsewhere in the workspace.
 
 ## Decision Log
 
@@ -27,7 +28,10 @@ We need a runnable PoW-enabled dev/test network that demonstrates the repository
 
 ## Outcomes & Retrospective
 
-(To be filled once work completes.)
+Formatting check (`cargo fmt --all -- --check`) passes.
+Linting (`cargo clippy --workspace --all-targets --all-features -- -D warnings`) is blocked by `pallets/fee-model` due to a duplicated `runtime-benchmarks` attribute and missing `OnChargeTransaction` methods (`endow_account`, `minimum_balance`).
+PoW runtime tests (`cargo test -p runtime --locked`) succeed, including `pow_smoke` coverage for chain specs, telemetry defaults, and the identity/attestation/settlement flow.
+No dependency resolver blockers observed during the runtime test run; the earlier `pallet-timestamp` version selection issue no longer reproduces under the locked dependencies.
 
 ## Context and Orientation
 
@@ -74,3 +78,5 @@ Chain spec generation and node configuration changes are additive; rerunning bui
 - Node chain spec builder and service modules in `node/src/chain_spec.rs` and `node/src/service.rs`, plus any RPC module wiring.
 - Test harness utilities under `tests/` or `node/tests/` for spinning up nodes and submitting extrinsics; mining helpers may rely on `consensus::header::{BlockHeader, PowSeal}` and transaction pool APIs.
 - External crates: Substrate client/service libraries already in workspace, plus any PoW-specific helpers (may need to extend consensus crate if missing utilities for mining/seal generation).
+
+Updated 2025-11-23 to capture fmt/clippy/runtime test runs, the fee-model lint blockers, the remediation for the clippy errors, and the absence of the prior pallet-timestamp resolver failure under locked dependencies.
