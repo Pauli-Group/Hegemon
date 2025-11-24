@@ -150,6 +150,51 @@ For multi-node lab setups, see [runbooks/miner_wallet_quickstart.md](runbooks/mi
   ```
   Imported peers persist to the local store and are dialed before the configured `--seeds` list. The VPS runbook above walks through promoting an exported bundle into a systemd unit.
 
+### Two-node testnet pairing (miner + peer)
+
+Use this when you and a friend want to mine and transact against each other on the same testnet profile.
+
+1. **Prepare binaries and wallets**:
+   ```bash
+   cargo build -p node --release
+   cp target/release/hegemon .
+   ./hegemon setup   # run once to create wallet.store and api.token; set HEGEMON_WRITE_WALLET_PASS=1 if you want wallet.pass
+   ```
+2. **Start your miner** (public listener, mining on):
+   ```bash
+   ./hegemon start \
+     --chain testnet \
+     --db-path /tmp/miner.db \
+     --wallet-store /tmp/miner.wallet \
+     --wallet-passphrase "your-pass" \
+     --api-addr 0.0.0.0:8080 \
+     --p2p-addr 0.0.0.0:9000 \
+     --seeds <friend-ip>:9001 \
+     --miner-seed <YOUR_32B_HEX> \
+     --miner-workers 2
+   ```
+   If you omit `--miner-payout-address`, rewards default to your wallet’s primary shielded address (or a deterministic address from `--miner-seed` if you have no wallet keys yet).
+3. **Friend starts a peer** (non-mining unless workers > 0):
+   ```bash
+   ./hegemon start \
+     --chain testnet \
+     --db-path /tmp/friend.db \
+     --wallet-store /tmp/friend.wallet \
+     --wallet-passphrase "friend-pass" \
+     --api-addr 127.0.0.1:8081 \
+     --p2p-addr 0.0.0.0:9001 \
+     --seeds <your-ip>:9000 \
+     --miner-workers 0  # set to 2 if they also want to mine
+   ```
+4. **Verify connectivity**:
+   - Open `http://<api-host>:<port>` for each node, paste the token from `api.token` if prompted.
+   - Check the dashboard peers list to confirm both see each other and heights advance.
+5. **Optional peer sharing**:
+   - Export peers from the healthier node: `./hegemon export-peers peer_bundle.json --db-path /tmp/miner.db`
+   - Start new nodes with `--import-peers peer_bundle.json` so they dial known peers before static `--seeds`.
+
+This supersedes the legacy “separate dashboard process” flow: `hegemon start` now boots the node, wallet sync, miners, and embedded dashboard in one process.
+
 ### Developer Setup
 
 - **Toolchains** – Run `./scripts/dev-setup.sh` (or `make setup`) after `make quickstart` to install Rust/Go/jq/clang-format. The unified `hegemon` binary serves the dashboard directly; no external Python proxy is required.
