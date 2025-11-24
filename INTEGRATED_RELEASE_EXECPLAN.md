@@ -15,6 +15,7 @@ Currently, running the full stack requires a developer environment (Rust, Python
 - [x] (2025-11-24 10:05Z) Added mocked PQ handshake unit coverage plus a two-node gossip integration flow to prove encrypted framing and cross-node block propagation, running `cargo test -p network --tests` and `cargo test -p tests --test node_gossip` to validate the paths.
 - [x] (2025-11-23 18:20Z) Executed `PROPTEST_MAX_CASES=64 make check` (bootstrap restart test initially timed out), then reran targeted suites: `node_resilience` (pass), `node::bootstrap` (pass on rerun), `network` crate suite (pass), and `security_pipeline` (pass), archiving the final 50-line tails under `test-logs/` for traceability.
 - [x] (2025-11-23 23:25Z) Added fee-model WeightInfo and benchmarking scaffolding, aligned Substrate dependencies to keep the pallet-timestamp/schnorrkel stack consistent, and reran `cargo test -p pallet-fee-model --locked` plus `cargo test -p runtime --locked` to validate the discount/freeze identity tag flows.
+- [x] (2025-11-27 04:10Z) Ran the targeted PQ hashing, hybrid session-key, and STARK verifier parameter suites: `cargo test -p synthetic-crypto`, `cargo test -p pallet-identity`, `cargo test -p pallet-attestations`, and `cargo test -p pallet-settlement`. All passed without dependency blockers, confirming the default Blake3 hashing and on-chain verifier parameter storage are wired correctly.
 
 ## Surprises & Discoveries
 
