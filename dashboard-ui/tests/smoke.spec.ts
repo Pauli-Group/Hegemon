@@ -21,7 +21,7 @@ async function captureSnapshot(page: import('@playwright/test').Page, name: stri
 test('wallet dashboard renders metrics and transfer flow', async ({ page }) => {
   await page.goto('/wallet');
   const navBadge = page.getByLabel(/Node metrics feed connection status/i).first();
-  await expect(navBadge).toHaveText(/Mock data/i);
+  await expect(navBadge).toHaveText(/Offline/i);
   await expect(page.getByRole('heading', { name: 'Wallet operations' })).toBeVisible();
   await expect(page.getByText('Shielded balance')).toBeVisible();
   await captureSnapshot(page, 'wallet-dashboard.svg');
@@ -51,7 +51,7 @@ test('wallet dashboard renders metrics and transfer flow', async ({ page }) => {
 test('network dashboard shows analytics tiles and feed', async ({ page }) => {
   await page.goto('/network');
   const navBadge = page.getByLabel(/Node metrics feed connection status/i).first();
-  await expect(navBadge).toHaveText(/Mock data/i);
+  await expect(navBadge).toHaveText(/Offline/i);
   await expect(page.getByRole('heading', { name: 'Network analytics' })).toBeVisible();
   await expect(page.getByText('Best height')).toBeVisible();
   await expect(page.getByText('Stale rate')).toBeVisible();

@@ -8,6 +8,7 @@ publish = false
 block-circuit = { path = "../circuits/block" }
 transaction-circuit = { path = "../circuits/transaction" }
 state-merkle = { path = "../state/merkle" }
+crypto = { path = "../crypto", package = "synthetic-crypto" }
 network = { path = "../network" }
 wallet = { path = "../wallet" }
 protocol-versioning = { path = "../protocol/versioning" }
@@ -16,6 +17,7 @@ consensus = { path = "../consensus" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 tempfile = "3"
 rand = "0.8"
+hex = "0.4"
 url = "2"
 
 [[test]]
@@ -29,3 +31,11 @@ path = "security_pipeline.rs"
 [[test]]
 name = "node_wallet_daemon"
 path = "node_wallet_daemon.rs"
+
+[[test]]
+name = "node_gossip"
+path = "node_gossip.rs"
+
+[[test]]
+name = "node_resilience"
+path = "node_resilience.rs"

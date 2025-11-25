@@ -34,6 +34,75 @@ jobs:
       - name: Cargo test (workspace)
         run: cargo test --workspace
 
+  network-tests:
+    runs-on: ubuntu-latest
+    needs: rust-lints
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Cargo test (network)
+        run: cargo test -p network
+
+  runtime-lints:
+    runs-on: ubuntu-latest
+    needs: rust-lints
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: clippy
+      - name: Runtime clippy
+        run: cargo clippy -p runtime --all-targets --all-features -- -D warnings
+
+  runtime-build:
+    runs-on: ubuntu-latest
+    needs: runtime-lints
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Cargo build (runtime)
+        run: cargo build -p runtime
+
+  runtime-wasm:
+    runs-on: ubuntu-latest
+    needs: runtime-build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Build runtime wasm
+        run: cargo build -p runtime --release --target wasm32-unknown-unknown
+
+  runtime-benchmarks:
+    runs-on: ubuntu-latest
+    needs: runtime-build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Runtime benchmarks (smoke)
+        run: cargo test -p runtime --features runtime-benchmarks -- --nocapture
+
+  pallet-migrations:
+    runs-on: ubuntu-latest
+    needs: runtime-build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Pallet migration tests
+        run: cargo test -p runtime migration
+
   crypto-tests:
     runs-on: ubuntu-latest
     needs: rust-lints

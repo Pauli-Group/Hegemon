@@ -19,6 +19,7 @@ pub struct PeerManager {
     peers: HashMap<PeerId, PeerEntry>,
     address_book: HashMap<PeerId, HashSet<SocketAddr>>,
     static_addresses: HashSet<SocketAddr>,
+    advertised: HashMap<PeerId, HashSet<SocketAddr>>,
     max_peers: usize,
 }
 
@@ -34,6 +35,7 @@ impl PeerManager {
             peers: HashMap::new(),
             address_book: HashMap::new(),
             static_addresses: HashSet::new(),
+            advertised: HashMap::new(),
             max_peers,
         }
     }
@@ -45,24 +47,22 @@ impl PeerManager {
     pub fn add_peer(&mut self, peer_id: PeerId, addr: SocketAddr, tx: mpsc::Sender<WireMessage>) {
         self.record_addresses(peer_id, [addr]);
 
-        if self.peers.contains_key(&peer_id) {
-            self.peers.insert(
+        if let std::collections::hash_map::Entry::Occupied(mut entry) = self.peers.entry(peer_id) {
+            entry.insert(PeerEntry {
                 peer_id,
-                PeerEntry {
-                    peer_id,
-                    tx,
-                    addr,
-                    last_seen: Instant::now(),
-                    score: 0,
-                },
-            );
+                tx,
+                addr,
+                last_seen: Instant::now(),
+                score: 0,
+            });
             return;
         }
 
-        if self.max_peers > 0 && self.peers.len() >= self.max_peers {
-            if let Some(evicted) = self.lowest_score_peer() {
-                self.peers.remove(&evicted);
-            }
+        if self.max_peers > 0
+            && self.peers.len() >= self.max_peers
+            && let Some(evicted) = self.lowest_score_peer()
+        {
+            self.peers.remove(&evicted);
         }
 
         self.peers.insert(
@@ -79,6 +79,7 @@ impl PeerManager {
 
     pub fn remove_peer(&mut self, peer_id: &PeerId) {
         self.peers.remove(peer_id);
+        self.advertised.remove(peer_id);
     }
 
     pub fn max_peers(&self) -> usize {
@@ -87,6 +88,17 @@ impl PeerManager {
 
     pub fn remaining_capacity(&self) -> usize {
         self.max_peers.saturating_sub(self.peers.len())
+    }
+
+    pub fn peer_address(&self, peer_id: &PeerId) -> Option<SocketAddr> {
+        self.peers.get(peer_id).map(|entry| entry.addr)
+    }
+
+    pub fn connected_peers(&self) -> Vec<(PeerId, SocketAddr)> {
+        self.peers
+            .values()
+            .map(|entry| (entry.peer_id, entry.addr))
+            .collect()
     }
 
     pub fn mark_heartbeat(&mut self, peer_id: &PeerId) {
@@ -152,6 +164,24 @@ impl PeerManager {
 
     pub fn connected_addresses(&self) -> HashSet<SocketAddr> {
         self.peers.values().map(|entry| entry.addr).collect()
+    }
+
+    pub fn record_advertised(
+        &mut self,
+        peer_id: PeerId,
+        addrs: impl IntoIterator<Item = SocketAddr>,
+    ) {
+        let entry = self.advertised.entry(peer_id).or_default();
+        for addr in addrs {
+            entry.insert(addr);
+        }
+    }
+
+    pub fn advertised_to(&self, peer_id: &PeerId) -> HashSet<SocketAddr> {
+        self.advertised
+            .get(peer_id)
+            .cloned()
+            .unwrap_or_else(HashSet::new)
     }
 
     pub fn sample_addresses(&self, limit: usize, exclude: &HashSet<SocketAddr>) -> Vec<SocketAddr> {

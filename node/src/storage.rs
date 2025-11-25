@@ -4,6 +4,7 @@ use consensus::types::ConsensusBlock;
 use serde::{Deserialize, Serialize};
 use sled::IVec;
 use transaction_circuit::hashing::Felt;
+use wallet::rpc::TransactionBundle;
 
 use crate::codec::{deserialize_block, serialize_block};
 use crate::error::NodeResult;
@@ -28,6 +29,7 @@ pub struct Storage {
     notes: sled::Tree,
     nullifiers: sled::Tree,
     ciphertexts: sled::Tree,
+    mempool: sled::Tree,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -46,6 +48,7 @@ impl Storage {
         let notes = db.open_tree("notes")?;
         let nullifiers = db.open_tree("nullifiers")?;
         let ciphertexts = db.open_tree("ciphertexts")?;
+        let mempool = db.open_tree("mempool")?;
         Ok(Self {
             db,
             blocks,
@@ -53,6 +56,7 @@ impl Storage {
             notes,
             nullifiers,
             ciphertexts,
+            mempool,
         })
     }
 
@@ -67,6 +71,15 @@ impl Storage {
 
     pub fn flush(&self) -> NodeResult<()> {
         self.db.flush()?;
+        Ok(())
+    }
+
+    /// Flush all pending writes and drop sled handles to terminate background workers.
+    pub fn close(self) -> NodeResult<()> {
+        let Storage { db, .. } = self;
+        let flush_result = db.flush();
+        drop(db);
+        flush_result?;
         Ok(())
     }
 
@@ -150,12 +163,31 @@ impl Storage {
         Ok(blocks)
     }
 
+    pub fn load_block(&self, hash: [u8; 32]) -> NodeResult<Option<ConsensusBlock>> {
+        self.blocks
+            .get(hash)?
+            .map(|bytes| deserialize_block(&bytes))
+            .transpose()
+    }
+
     pub fn reset(&self) -> NodeResult<()> {
         self.blocks.clear()?;
         self.meta.clear()?;
         self.notes.clear()?;
         self.nullifiers.clear()?;
         self.ciphertexts.clear()?;
+        self.mempool.clear()?;
+        self.flush()?;
+        Ok(())
+    }
+
+    /// Clear chain-derived state (meta, commitments, ciphertexts, nullifiers) without deleting blocks.
+    pub fn reset_state(&self) -> NodeResult<()> {
+        self.meta.clear()?;
+        self.notes.clear()?;
+        self.nullifiers.clear()?;
+        self.ciphertexts.clear()?;
+        self.mempool.clear()?;
         self.flush()?;
         Ok(())
     }
@@ -174,6 +206,40 @@ impl Storage {
             let mut buf = [0u8; 32];
             buf.copy_from_slice(&key);
             out.push(buf);
+        }
+        Ok(out)
+    }
+
+    pub fn record_mempool_bundle(
+        &self,
+        id: [u8; 32],
+        bundle: &TransactionBundle,
+    ) -> NodeResult<()> {
+        let bytes = bincode::serialize(bundle)?;
+        self.mempool.insert(id, bytes)?;
+        Ok(())
+    }
+
+    pub fn remove_mempool_bundles(&self, ids: &[[u8; 32]]) -> NodeResult<()> {
+        for id in ids {
+            let _ = self.mempool.remove(id)?;
+        }
+        Ok(())
+    }
+
+    pub fn clear_mempool(&self) -> NodeResult<()> {
+        self.mempool.clear()?;
+        Ok(())
+    }
+
+    pub fn load_mempool(&self) -> NodeResult<Vec<([u8; 32], TransactionBundle)>> {
+        let mut out = Vec::new();
+        for entry in self.mempool.iter() {
+            let (key, value) = entry?;
+            let mut buf = [0u8; 32];
+            buf.copy_from_slice(&key);
+            let bundle = bincode::deserialize(&value)?;
+            out.push((buf, bundle));
         }
         Ok(out)
     }

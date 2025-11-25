@@ -1,0 +1,29 @@
+[package]
+name = "pallet-asset-registry"
+version = "0.1.0"
+edition = "2021"
+authors = ["Synthetic Hegemonic Currency Contributors"]
+description = "Asset registry pallet for instrument metadata, regulatory tags, and provenance links."
+license = "Apache-2.0"
+
+[dependencies]
+frame-support = { version = "43.0.0", default-features = false }
+frame-system = { version = "43.0.0", default-features = false }
+sp-runtime = { version = "44.0.0", default-features = false }
+sp-std = { version = "14.0.0", default-features = false }
+parity-scale-codec = { version = "3", default-features = false, features = ["derive"] }
+scale-info = { version = "2", default-features = false, features = ["derive"] }
+pallet-identity = { path = "../identity", default-features = false }
+log = { version = "0.4", default-features = false }
+
+[features]
+default = ["std"]
+std = [
+    "frame-support/std",
+    "frame-system/std",
+    "sp-runtime/std",
+    "sp-std/std",
+    "parity-scale-codec/std",
+    "scale-info/std",
+    "pallet-identity/std",
+]

@@ -40,10 +40,12 @@ Multi-asset conservation is implemented exactly as `METHODS.md §2` prescribes: 
 
 Post-quantum security hinges on the primitives cataloged in `DESIGN.md §1`: ML-DSA handles miner and governance signatures, SLH-DSA anchors long-lived roots of trust, and ML-KEM drives note/viewing key encryption, all exposed via the unified `crypto/` crate. Because the STARK proving stack in `circuits/transaction` and the note authorization flow rely only on hash-based commitments and lattice primitives, the pool stays quantum-safe—no elliptic curves or pairing-based assumptions remain for Shor’s algorithm to break, and Grover merely halves the effective hash security margin already accounted for with 256-bit digests.
 
+Runtime extrinsics and PoW seals now share the same PQ signing surface: `runtime/src/lib.rs` defines `PqSignature`/`PqPublic` backed by ML-DSA (3,293-byte signatures, 1,952-byte public keys) and SLH-DSA, derives `AccountId32` via BLAKE2 over the PQ public key for SS58-prefix-42 compatibility, and wires the off-chain AppCrypto path through the same primitives the PoW engine validates. This keeps address encoding stable while aligning transaction signing with the miner verification path.
+
 These guarantees are not just prose: `circuits/formal` captures the nullifier uniqueness and MASP balance invariants in TLA+, and `circuits-bench` plus the `wallet-bench` suite publish the prover and client performance envelopes so reviewers can correlate the whitepaper claims with reproducible benchmarking and formal artifacts.
 
 #### Assessing resistance to Shor’s algorithm
-HGN deliberately removes every discrete-log or factoring dependency that Shor’s algorithm could exploit. The `crypto/` crate standardizes on lattice- and hash-based primitives—ML-DSA (Dilithium-like) for miner/governance signatures, SLH-DSA (SPHINCS+) for long-lived trust roots, and ML-KEM (Kyber-like) for encrypting note/viewing keys—so there are no RSA or elliptic-curve targets to collapse. Hash commitments rely on SHA-256, BLAKE3-256, and Poseidon-style permutations with ≥256-bit outputs, meaning Grover’s quadratic speedup is already absorbed into the security margin. The STARK proving system is fully transparent and anchored in hash collision resistance, so its soundness does not rely on pairings or number-theoretic assumptions either. Finally, the threat model assumes adversaries already possess Shor/Grover-class hardware, which is why consensus governance bans downgrades to classical primitives and enforces PQ-safe key sizes. Together, these design choices provide a high degree of resistance to Shor’s algorithm across the entire stack—from note commitments and proofs to networking, governance, and operational guardrails.
+HGN deliberately removes every discrete-log or factoring dependency that Shor’s algorithm could exploit. The `crypto/` crate standardizes on lattice- and hash-based primitives—ML-DSA (Dilithium-like) for miner/governance signatures, SLH-DSA (SPHINCS+) for long-lived trust roots, and ML-KEM (Kyber-like) for encrypting note/viewing keys—so there are no RSA or elliptic-curve targets to collapse. Hash commitments rely on BLAKE3-256 by default (with SHA3-256 and Poseidon-style permutations for STARK domains), meaning Grover’s quadratic speedup is already absorbed into the security margin. The STARK proving system is fully transparent and anchored in hash collision resistance, so its soundness does not rely on pairings or number-theoretic assumptions either. Finally, the threat model assumes adversaries already possess Shor/Grover-class hardware, which is why consensus governance bans downgrades to classical primitives and enforces PQ-safe key sizes. Together, these design choices provide a high degree of resistance to Shor’s algorithm across the entire stack—from note commitments and proofs to networking, governance, and operational guardrails.
 
 #### Privacy architecture and comparison to Zcash
 The privacy layer is engineered as a single, MASP-style shielded pool from genesis with no transparent escape hatches: commitments, nullifiers, balance conservation, and diversified address derivation all stay inside transparent STARK proofs built on hash- and lattice-only primitives (ML-DSA/SLH-DSA signatures, ML-KEM note encryption, and hash-based commitments). Selective disclosure relies on incoming/outgoing/full viewing keys rather than transparent outputs, preserving address privacy while enabling audits. In contrast to Zcash’s elliptic-curve commitments and trusted-setup SNARKs (Sapling/Orchard), HGN eliminates discrete-log assumptions and trusted setups entirely, accepting larger proof payloads to gain post-quantum resilience. Zcash’s history of launching new pools (Sprout → Sapling → Orchard) is replaced here by versioned circuits and recursive proofs that keep the shielded pool intact during upgrades, ensuring quantum-era safety without fragmenting privacy sets.
@@ -100,60 +102,104 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 | node/ | Unified `hegemon` binary (Node + Wallet + UI). |
 | protocol/ | Protocol definitions, transaction formats, and versioning logic. |
 | `runbooks/` | Operational guides for miners, emergency procedures, and security testing. |
-| `scripts/` | Python and shell scripts for dev setup, dashboard, and automation. |
+| `scripts/` | Shell scripts for dev setup, dashboard asset refresh, and automation. |
 | `state/` | Merkle tree storage and state management. |
 | `tests/` | Integration tests and the security pipeline suite. |
 | `wallet/` | CLI wallet plus the `wallet-bench` binary for note/key performance measurements. |
 
 ## Getting started
 
-### Quickstart (Unified Binary)
+### Quickstart (unified `hegemon` binary)
 
-The easiest way to run the system is using the unified `hegemon` binary, which bundles the Node, Wallet, and Dashboard UI into a single executable.
+Start every fresh clone with `make quickstart` to install toolchains and run the baseline guard rails. The quickstart pipeline runs `scripts/dev-setup.sh`, `make check`, `make bench`, the wallet demo, then performs `cargo build -p node --release` and launches the `hegemon start` command against the local state directory. It is meant as a one-button “trust but verify” path for new contributors; for day-to-day development, call `cargo build -p node --release`, `make check`, or `make bench` directly without waiting on the full demo chain.
 
-The dashboard assets are already vendored under `node/src/dashboard/assets`, so a clean `cargo build -p node --release` works without running the frontend toolchain. If you edit `dashboard-ui/`, refresh the embedded assets with `./scripts/build_dashboard.sh`.
-
-The embedded dashboard and node API both default to the dev token `devnet-token`. `hegemon setup` writes your API token to `api.token`. If you want unattended starts, set `HEGEMON_WRITE_WALLET_PASS=1` before running setup to drop your passphrase into `wallet.pass` (chmod 600), or export `NODE_WALLET_PASSPHRASE` before `./hegemon start`. Otherwise you’ll be prompted interactively. If you override the token with `--api-token` or a different `api.token`, update the dashboard’s “API auth token” field and click “Use for dashboard session” so requests carry the right credential. For stricter auth, leave `NODE_ALLOW_DEV_TOKEN_FALLBACK` unset (default).
-
-1. **Build the binary**:
+1. **Build the binary and embed the dashboard**:
    ```bash
    cargo build -p node --release
+   # Optional: copy the binary to the repo root for convenience
    cp target/release/hegemon .
    ```
+   The dashboard assets are already vendored under `node/src/dashboard/assets`; only run `./scripts/build_dashboard.sh` if you modify `dashboard-ui/` and need to refresh the embedded bundle to match the brand palette in `BRAND.md`.
 
-2. **Run the Setup Wizard**:
-   Initialize your wallet and configuration interactively.
+2. **Run the setup wizard**:
    ```bash
    ./hegemon setup
    ```
+   This writes `api.token`, initializes the local wallet store, and honors `HEGEMON_WRITE_WALLET_PASS=1` if you want a passphrase dropped into `wallet.pass` for unattended starts.
 
-3. **Start the System**:
-   Launch the node, wallet, and UI server. Miner rewards are paid to the wallet’s primary address by default; pass `--miner-payout-address` if you want a different recipient.
+3. **Start the system**:
    ```bash
-   ./hegemon start
+   ./hegemon start --miner-payout-address <wallet-address>
    ```
+   The command boots the node, wallet, and embedded dashboard on port 8080. Override defaults with the global flags shown in `./hegemon --help` (e.g., `--p2p-addr`, `--seeds`, `--api-token`).
 
-4. **Open the Dashboard**:
-   Visit **http://localhost:8080** to view the dashboard, manage your wallet, and monitor mining status.
+4. **Open the dashboard**:
+   Visit **http://localhost:8080**. If you change the API token, update the dashboard “API auth token” field and click “Use for dashboard session” so subsequent requests stay authorized.
+
+For multi-node lab setups, see [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md). For VPS or public seed duties, follow the hardening guidance in [runbooks/p2p_node_vps.md](runbooks/p2p_node_vps.md).
+
+#### Bootstrapping peers with export/import bundles
+
+- Capture your current peers and genesis metadata into a portable bundle:
+  ```bash
+  ./hegemon export-peers peer_bundle.json
+  ```
+- Start a new node from that bundle before hitting DNS/static seeds:
+  ```bash
+  ./hegemon start --import-peers peer_bundle.json
+  ```
+  Imported peers persist to the local store and are dialed before the configured `--seeds` list. The VPS runbook above walks through promoting an exported bundle into a systemd unit.
+
+### Two-node testnet pairing (miner + peer)
+
+Use this when you and a friend want to mine and transact against each other on the same testnet profile.
+
+1. **Prepare binaries and wallets**:
+   ```bash
+   cargo build -p node --release
+   cp target/release/hegemon .
+   ./hegemon setup   # run once to create wallet.store and api.token; set HEGEMON_WRITE_WALLET_PASS=1 if you want wallet.pass
+   ```
+2. **Start your miner** (public listener, mining on):
+   ```bash
+   ./hegemon start \
+     --chain testnet \
+     --db-path /tmp/miner.db \
+     --wallet-store /tmp/miner.wallet \
+     --wallet-passphrase "your-pass" \
+     --api-addr 0.0.0.0:8080 \
+     --p2p-addr 0.0.0.0:9000 \
+     --seeds <friend-ip>:9001 \
+     --miner-seed <YOUR_32B_HEX> \
+     --miner-workers 2
+   ```
+   If you omit `--miner-payout-address`, rewards default to your wallet’s primary shielded address (or a deterministic address from `--miner-seed` if you have no wallet keys yet).
+3. **Friend starts a peer** (non-mining unless workers > 0):
+   ```bash
+   ./hegemon start \
+     --chain testnet \
+     --db-path /tmp/friend.db \
+     --wallet-store /tmp/friend.wallet \
+     --wallet-passphrase "friend-pass" \
+     --api-addr 127.0.0.1:8081 \
+     --p2p-addr 0.0.0.0:9001 \
+     --seeds <your-ip>:9000 \
+     --miner-workers 0  # set to 2 if they also want to mine
+   ```
+4. **Verify connectivity**:
+   - Open `http://<api-host>:<port>` for each node, paste the token from `api.token` if prompted.
+   - Check the dashboard peers list to confirm both see each other and heights advance.
+5. **Optional peer sharing**:
+   - Export peers from the healthier node: `./hegemon export-peers peer_bundle.json --db-path /tmp/miner.db`
+   - Start new nodes with `--import-peers peer_bundle.json` so they dial known peers before static `--seeds`.
+
+This supersedes the legacy “separate dashboard process” flow: `hegemon start` now boots the node, wallet sync, miners, and embedded dashboard in one process.
 
 ### Developer Setup
 
-If you are contributing to the codebase:
-
-1. **Install Dependencies**:
-   ```bash
-   ./scripts/dev-setup.sh
-   ```
-
-2. **Run Tests**:
-   ```bash
-   make check
-   ```
-
-3. **Run Benchmarks**:
-   ```bash
-   make bench
-   ```
+- **Toolchains** – Run `./scripts/dev-setup.sh` (or `make setup`) after `make quickstart` to install Rust/Go/jq/clang-format. The unified `hegemon` binary serves the dashboard directly; no external Python proxy is required.
+- **Tests** – `make check` mirrors the fmt/lint/test CI combo.
+- **Benchmarks** – `make bench` exercises prover, wallet, and network smoke benches.
 
 ### Helpful `make` targets
 

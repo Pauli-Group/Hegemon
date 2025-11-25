@@ -72,6 +72,27 @@ pub fn deserialize_block(bytes: &[u8]) -> NodeResult<ConsensusBlock> {
     stored.into_block()
 }
 
+pub fn serialize_header(header: &BlockHeader) -> NodeResult<Vec<u8>> {
+    let stored = StoredHeader::from(header);
+    Ok(bincode::serialize(&stored)?)
+}
+
+pub fn deserialize_header(bytes: &[u8]) -> NodeResult<BlockHeader> {
+    let stored: StoredHeader = bincode::deserialize(bytes)?;
+    stored.into_header()
+}
+
+pub fn serialize_transaction(tx: &Transaction) -> NodeResult<Vec<u8>> {
+    let stored = StoredTransaction::from(tx);
+    Ok(bincode::serialize(&stored)?)
+}
+
+#[allow(dead_code)]
+pub fn deserialize_transaction(bytes: &[u8]) -> NodeResult<Transaction> {
+    let stored: StoredTransaction = bincode::deserialize(bytes)?;
+    Ok(stored.into_transaction())
+}
+
 impl From<&ConsensusBlock> for StoredBlock {
     fn from(block: &ConsensusBlock) -> Self {
         let header = StoredHeader {
@@ -185,5 +206,89 @@ impl StoredBlock {
             transactions,
             coinbase,
         })
+    }
+}
+
+impl From<&BlockHeader> for StoredHeader {
+    fn from(header: &BlockHeader) -> Self {
+        Self {
+            version: header.version,
+            height: header.height,
+            view: header.view,
+            timestamp_ms: header.timestamp_ms,
+            parent_hash: header.parent_hash,
+            state_root: header.state_root,
+            nullifier_root: header.nullifier_root,
+            proof_commitment: header.proof_commitment.to_vec(),
+            version_commitment: header.version_commitment,
+            tx_count: header.tx_count,
+            fee_commitment: header.fee_commitment,
+            supply_digest: header.supply_digest,
+            validator_set_commitment: header.validator_set_commitment,
+            signature_aggregate: header.signature_aggregate.clone(),
+            signature_bitmap: header.signature_bitmap.clone(),
+            pow: header.pow.as_ref().map(|seal| StoredPowSeal {
+                nonce: seal.nonce,
+                pow_bits: seal.pow_bits,
+            }),
+        }
+    }
+}
+
+impl StoredHeader {
+    fn into_header(self) -> NodeResult<BlockHeader> {
+        let proof_commitment: [u8; 48] = self
+            .proof_commitment
+            .clone()
+            .try_into()
+            .map_err(|_| NodeError::Invalid("invalid proof commitment"))?;
+        Ok(BlockHeader {
+            version: self.version,
+            height: self.height,
+            view: self.view,
+            timestamp_ms: self.timestamp_ms,
+            parent_hash: self.parent_hash,
+            state_root: self.state_root,
+            nullifier_root: self.nullifier_root,
+            proof_commitment,
+            version_commitment: self.version_commitment,
+            tx_count: self.tx_count,
+            fee_commitment: self.fee_commitment,
+            supply_digest: self.supply_digest,
+            validator_set_commitment: self.validator_set_commitment,
+            signature_aggregate: self.signature_aggregate,
+            signature_bitmap: self.signature_bitmap,
+            pow: self.pow.map(|seal| PowSeal {
+                nonce: seal.nonce,
+                pow_bits: seal.pow_bits,
+            }),
+        })
+    }
+}
+
+impl From<&Transaction> for StoredTransaction {
+    fn from(tx: &Transaction) -> Self {
+        Self {
+            nullifiers: tx.nullifiers.clone(),
+            commitments: tx.commitments.clone(),
+            balance_tag: tx.balance_tag,
+            version_circuit: tx.version.circuit,
+            version_crypto: tx.version.crypto,
+            ciphertexts: tx.ciphertexts.clone(),
+        }
+    }
+}
+
+impl StoredTransaction {
+    #[allow(dead_code)]
+    fn into_transaction(self) -> Transaction {
+        let version = VersionBinding::new(self.version_circuit, self.version_crypto);
+        Transaction::new(
+            self.nullifiers,
+            self.commitments,
+            self.balance_tag,
+            version,
+            self.ciphertexts,
+        )
     }
 }

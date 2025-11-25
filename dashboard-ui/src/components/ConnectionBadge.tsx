@@ -13,13 +13,13 @@ export function ConnectionBadge({ source, error, label, className }: ConnectionB
   const tooltip = label ? `${label}: ${reason}` : reason;
   const badgeClass = [styles.badge, isLive ? styles.live : styles.mock, className].filter(Boolean).join(' ');
   const ariaLabel = label
-    ? `${label} connection status: ${isLive ? 'live data' : 'mock data'}`
-    : `Connection status: ${isLive ? 'live data' : 'mock data'}`;
+    ? `${label} connection status: ${isLive ? 'live' : 'offline'}`
+    : `Connection status: ${isLive ? 'live' : 'offline'}`;
 
   return (
     <span className={badgeClass} title={tooltip} aria-label={ariaLabel} role="status">
       <span className={styles.dot} aria-hidden="true" />
-      {isLive ? 'Live data' : 'Mock data'}
+      {isLive ? 'Live' : 'Offline'}
     </span>
   );
 }

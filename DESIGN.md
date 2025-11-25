@@ -34,7 +34,9 @@ are:
   ECIES ciphertexts Zcash uses today. Even though the spend circuit keeps Sapling’s “prove key knowledge inside the ZK proof”
   model (so there are no per-input signatures), block headers, miner identities, and the note encryption layer all absorb PQ
   size bloat: ML-DSA-65 pk = 1,952 B vs ~32 B Ed25519, signatures = 3,293 B vs ~64 B, ML-KEM ciphertexts = 1,088 B vs
-  ~80–100 B for Jubjub-based ECIES. Network/consensus plumbing must therefore expect materially larger payloads.
+  ~80–100 B for Jubjub-based ECIES. Runtime AccountIds hash PQ public keys with BLAKE2 into SS58-compatible 32-byte identifiers
+  so extrinsic signing and PoW seal verification share the same PQ scheme without changing address encoding. Network/consensus
+  plumbing must therefore expect materially larger payloads.
 * **Proof sizes and verification latency** – Trading Groth16/Halo2 for a transparent STARK stack removes the trusted setup but
   makes proofs much chunkier: tens of kilobytes with verifier runtimes in the tens of milliseconds, versus sub-kilobyte Groth16
   proofs with millisecond verification. The spend circuit, memo ciphertexts, and block propagation logic all need to budget for
@@ -63,6 +65,7 @@ Where they’re used:
 
   * Block producers sign block headers with ML-DSA.
   * Mining node identity keys = ML-DSA.
+  * Identity/session records keep a **hybrid bundle** (Dilithium/Falcon + Ed25519) so legacy tooling can ride alongside PQ keys until upgrades retire classical crypto entirely. The runtime migration in `pallet_identity` wraps any stored `AuthorityId` into `SessionKey::Legacy` on upgrade so operators inherit their previous keys before rotating into PQ-only or hybrid bundles.
 * **User layer**:
 
   * Surprisingly little: within the shielded protocol, we can get rid of *per-input signatures* entirely and instead authorize spends by proving knowledge of a secret key in ZK (like Zcash already does with spend authorizing keys; here we do it with hash/lattice PRFs rather than ECC).
@@ -99,7 +102,7 @@ To avoid any discrete-log assumptions:
 
 * **Global hash**:
 
-  * Use something boring and well-analyzed like **SHA-256** or **BLAKE3** as the global hash for block headers, Merkle trees, etc.
+  * Use something boring and well-analyzed like **BLAKE3** (preferred) or **SHA3-256** as the global hash for block headers, Merkle trees, etc.
   * 256-bit outputs ⇒ ~128-bit security under Grover. ([ISACA][4])
 * **Field-friendly hash for ZK**:
 
@@ -108,22 +111,23 @@ To avoid any discrete-log assumptions:
 
 Commitments:
 
-* **Hash-based commitments** everywhere. A minimal design:
+* **Hash-based commitments** everywhere with PQ-friendly digests. A minimal design:
 
-  * `Com(m, r) = H("c" || m || r)`
-    is the commitment to `m` with randomness `r`.
+  * `Com(m, r) = H("c" || m || r)` with `H = BLAKE3-256` by default (or SHA3-256 when aligning with STARK hash parameters) is the commitment to `m` with randomness `r`.
 * **Note commitment tree**:
 
   * Same conceptual tree as Zcash, but using the global hash or the STARK hash consistently; no Pedersen, no Sinsemilla, no EC cofactor dance.
 
 PRFs:
 
-* All “note identifiers”, nullifiers, etc. are derived with keyed hashes:
+* All “note identifiers”, nullifiers, etc. are derived with keyed hashes (BLAKE3-256 or SHA3-256, matching the commitment domain separation):
 
   * `nk = H("nk" || sk_spend)`
   * `nullifier = H("nf" || nk || note_position || rho)`
 
 No group operations anywhere in user-visible cryptography.
+
+STARK verifier parameters (hash function choice, query counts, blowup factors) are persisted on-chain in the attestations and settlement pallets with governance-controlled upgrade hooks so proof verification stays aligned with PQ-friendly hashes. The runtime seeds both pallets with Blake3 hashing, 28 FRI queries, a 4× blowup factor, and 128-bit security; governance can override those `StarkVerifierParams` via `set_verifier_params` when migrating to a new hash or tighter soundness budget.
 
 ### 1.4 Reference module layout
 
@@ -132,7 +136,7 @@ The repository now includes a standalone Rust crate at `crypto/` that collects t
 * `ml_dsa` – deterministic key generation, signing, verification, and serialization helpers sized to ML-DSA-65 (Dilithium3) keys (pk = 1952 B, sk = 4000 B, sig = 3293 B).
 * `slh_dsa` – the analogous interface for SLH-DSA (SPHINCS+-SHA2-128f) with pk = 32 B, sk = 64 B, signature = 17088 B.
 * `ml_kem` – Kyber-768-style encapsulation/decapsulation with pk = 1184 B, sk = 2400 B, ciphertext = 1088 B, shared secret = 32 B.
-* `hashes` – SHA-256, BLAKE3-256, and a Poseidon-inspired permutation over the Goldilocks prime, plus helpers for commitments (`b"c"` tag), PRF key derivation (`b"nk"`), and nullifiers (`b"nf"`).
+* `hashes` – SHA-256, SHA3-256, BLAKE3-256, and a Poseidon-inspired permutation over the Goldilocks prime, plus helpers for commitments (`b"c"` tag), PRF key derivation (`b"nk"`), and nullifiers (`b"nf"`) that default to BLAKE3 with SHA3 fallbacks for STARK-friendly domains.
 
 Everything derives deterministic test vectors using a ChaCha20-based RNG seeded via SHA-256 so that serialization and domain separation match the simple hash-based definitions above. Integration tests under `crypto/tests/` lock in the byte-level expectations for key generation, signing, verification, KEM encapsulation/decapsulation, and commitment/nullifier derivation.
 
@@ -231,19 +235,27 @@ The PoW fork mirrors Bitcoin/Zcash mechanics so operators can reason about liven
 
 * Block headers expose an explicit `pow_bits` compact target, a 256-bit nonce, and a 128-bit `supply_digest`. Miners sign the
   full header (including the supply digest) with ML-DSA and then search over the nonce until `sha256(header) ≤ target(pow_bits)`.
+  A zero mantissa is invalid, and every PoW header must carry the seal (there is no “missing” difficulty case between retargets).
 * Difficulty retargeting is deterministic: every `RETARGET_WINDOW = 120` blocks the chain recomputes the target from the window’s
   timestamps, clamping swings to ×¼…×4 and aiming for a `TARGET_BLOCK_INTERVAL = 20 s`. Honest nodes reject any block whose
-  `pow_bits` diverges from this schedule, which makes retarget spoofing impossible even across deep reorgs.
+  `pow_bits` diverges from this schedule, which makes retarget spoofing impossible even across deep reorgs. Blocks between
+  retarget boundaries MUST inherit the parent’s `pow_bits` verbatim and the retarget math uses the clamped timespan so outlier
+  timestamps cannot skew difficulty even after a reorg.
 * Each PoW block carries a coinbase commitment—either a dedicated transaction referenced by index or a standalone `balance_tag`
   —that spells out how many native units were minted, how many fees were aggregated, and how many were burned. Consensus enforces
-  `minted ≤ R(height)` where `R()` starts at `50 · 10⁸` base units and halves every `210_000` blocks. Nodes update the running
-  `supply_digest = parent_digest + minted + fees − burns` and compare it against the header before accepting the block.
+  `minted ≤ R(height)` where `R()` starts at `50 · 10⁸` base units and halves every `210_000` blocks (height 0 mints nothing).
+  Nodes update the running `supply_digest = parent_digest + minted + fees − burns` inside a 128-bit little-endian counter that
+  rejects underflows/overflows and compare it against the header before accepting the block. Coinbase metadata that omits the
+  balance tag or references an out-of-bounds transaction index fails validation.
+* Timestamp guards match the implementation: the header time must exceed the median of the prior 11 blocks and be no more than
+  90 seconds into the future relative to the local clock; nodes may re-evaluate future-dated candidates as time advances but
+  still reject any header that remains beyond the skew bound or fails median-time-past.
 * Block template helpers in `consensus/tests/common.rs` show how miners wire these fields together: compute the note/fee/nullifier
   commitments, attach the coinbase metadata, recompute `supply_digest`, and only then sign + grind the header.
 
 No transparent outputs; everything is in this one PQ pool from day 1.
 
-`node/src/api.rs` exposes that state machine over HTTP so operators can monitor the same fields remotely. `/blocks/latest` and `/metrics` stream hash rate, mempool depth, stale share rate, best height, and compact difficulty values that miners compare against the reward policy in `consensus/src/reward.rs` (`INITIAL_SUBSIDY = 50 · 10⁸`, `HALVING_INTERVAL = 210_000`). Every mined block updates the header’s `supply_digest`, and the quickstart playbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through querying those endpoints before wiring wallets to the node API.
+`node/src/api.rs` exposes that state machine over HTTP so operators can monitor the same fields remotely. `/blocks/latest` and `/metrics` stream hash rate, mempool depth, stale share rate, best height, and compact difficulty values that miners compare against the reward policy in `consensus/src/reward.rs` (`INITIAL_SUBSIDY = 50 · 10⁸`, `HALVING_INTERVAL = 210_000`). Every mined block updates the header’s `supply_digest`, and the quickstart playbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through querying those endpoints before wiring wallets to the node API. Substrate integrations reuse the same machinery: the `consensus::substrate::import_pow_block` helper executes the PoW ledger checks (version-commitment + STARK commitments + reward checks) as blocks flow through a Substrate import queue, and the node exposes `/consensus/status` to mirror the latest `ImportReceipt` alongside miner telemetry so the benchmarking tools under `consensus/bench` see consistent values.
 
 The workspace-level test `tests/node_wallet_daemon.rs` keeps the HTTP API, miner loop, and wallet RPC client in sync by spinning two nodes, verifying the minted supply, and forcing a user-facing transfer. Its telemetry expectations match the `/wallet` and `/network` dashboard views, so the Playwright smoke tests (`dashboard-ui/tests/smoke.spec.ts`) double-check the same metrics with brand-compliant snapshots.
 
@@ -309,7 +321,7 @@ Integration tests in `wallet/tests/cli.rs` exercise those CLI flows, so anyone c
 
 Long-lived wallets rely on the RPC client (`wallet/src/rpc.rs`) and sync engine (`wallet/src/sync.rs`) rather than ad-hoc scripts. `WalletSyncEngine` pages through `/wallet/notes`, `/wallet/commitments`, `/wallet/ciphertexts`, `/wallet/nullifiers`, and `/blocks/latest`, storing commitments inside the encrypted `WalletStore` so daemons can resume after crashes. The runbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through starting those daemons against two nodes, and the `tests/node_wallet_daemon.rs` integration test codifies the same flow so CI fails if either the RPC contract or the local merkle bookkeeping drifts.
 
-`dashboard-ui/` consumes that same RPC catalog through the FastAPI proxy (`scripts/dashboard_service.py`). `/wallet` summarizes balances, note coverage, and transaction history while `/network` charts hash rate, mempool churn, stale share rate, and the live block/transaction feeds. The Playwright suite (`dashboard-ui/tests/screenshot.spec.ts` and `dashboard-ui/tests/smoke.spec.ts`) captures SVG snapshots of the mining, wallet, and network routes using the typography and color palette from `BRAND.md`, so any analytics regression surfaces as a visual diff in CI.
+`dashboard-ui/` consumes that same RPC catalog directly from the `hegemon` API (served alongside the embedded dashboard). `/wallet` summarizes balances, note coverage, and transaction history while `/network` charts hash rate, mempool churn, stale share rate, and the live block/transaction feeds. The Playwright suite (`dashboard-ui/tests/screenshot.spec.ts` and `dashboard-ui/tests/smoke.spec.ts`) captures SVG snapshots of the mining, wallet, and network routes using the typography and color palette from `BRAND.md`, so any analytics regression surfaces as a visual diff in CI.
 
 ---
 

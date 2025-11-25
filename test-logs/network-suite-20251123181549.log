@@ -1,0 +1,42 @@
+
+running 10 tests
+test p2p::tests::compact_address_roundtrip ... ok
+test p2p::tests::encrypted_frames_round_trip_after_handshake ... ok
+test p2p::tests::connection_handshake_round_trip ... ok
+test peer_manager::tests::address_candidates_drop_local_and_connected ... ok
+test peer_manager::tests::samples_addresses_with_exclusions ... ok
+test peer_store::tests::persists_and_prunes_by_ttl ... ok
+test peer_store::tests::returns_recent_peers_in_order_with_limit ... ok
+test service::tests::startup_targets_prefers_imports_over_cached_and_seeds ... ok
+test p2p::tests::pq_handshake_works_over_mock_streams ... ok
+test service::tests::startup_targets_prioritize_recent_peers_before_seeds ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 1 test
+test ciphertext_tampering_is_detected ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 3 tests
+test connection_round_trip_and_encryption_over_duplex ... ok
+test initiator_rejects_tampered_acceptance ... ok
+test duplex_stream_handshake_succeeds_and_rejects_tampering ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 3 tests
+test block_gossip_is_imported_and_regossiped ... ok
+test gossip_crosses_tcp_boundary ... ok
+test address_exchange_teaches_new_peers ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
