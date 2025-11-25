@@ -15,10 +15,15 @@ pub mod nat;
 pub mod p2p;
 pub mod peer_manager;
 pub mod peer_store;
+pub mod pq_transport;
 pub mod service;
 
 pub use nat::{NatProtocol, NatTraversal, NatTraversalConfig, NatTraversalResult};
 pub use peer_store::{PeerStore, PeerStoreConfig};
+pub use pq_transport::{
+    ConnectionMode, PqPeerIdentity, PqSecureConnection, PqTransportConfig,
+    upgrade_inbound, upgrade_outbound,
+};
 pub use service::RelayConfig;
 pub use service::{P2PService, ProtocolHandle};
 

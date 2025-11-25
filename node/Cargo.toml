@@ -19,6 +19,7 @@ network = { path = "../network" }
 num-bigint = "0.4"
 num-traits = "0.2"
 parking_lot = "0.12"
+pq-noise = { path = "../pq-noise" }
 protocol_versioning = { path = "../protocol/versioning", package = "protocol-versioning" }
 rcgen = "0.13"
 serde = { version = "1.0", features = ["derive"] }
@@ -36,6 +37,7 @@ transaction_circuit = { path = "../circuits/transaction", package = "transaction
 wallet = { path = "../wallet" }
 rand = "0.8"
 rust-embed = "8.0"
+sha2 = "0.10"
 mime_guess = "2.0"
 rpassword = "7.4.0"
 atty = "0.2.14"

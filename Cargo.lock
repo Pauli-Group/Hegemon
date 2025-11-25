@@ -3195,6 +3195,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "parking_lot 0.12.5",
+ "pq-noise",
  "protocol-versioning",
  "rand 0.8.5",
  "rcgen 0.13.2",
@@ -3208,6 +3209,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_json",
+ "sha2 0.10.9",
  "sled",
  "sp-consensus-pow 0.42.0",
  "sp-core 38.1.0",
@@ -5418,8 +5420,10 @@ dependencies = [
  "aes-gcm",
  "bincode",
  "futures",
+ "hex",
  "igd",
  "natpmp",
+ "pq-noise",
  "proptest",
  "rand 0.8.5",
  "serde",
@@ -6442,6 +6446,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
+]
+
+[[package]]
+name = "pq-noise"
+version = "0.1.0"
+dependencies = [
+ "aead",
+ "aes-gcm",
+ "bincode",
+ "bytes",
+ "futures",
+ "hex",
+ "hkdf",
+ "proptest",
+ "rand 0.8.5",
+ "serde",
+ "sha2 0.10.9",
+ "synthetic-crypto",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "x25519-dalek",
 ]
 
 [[package]]

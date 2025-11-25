@@ -6,6 +6,7 @@
 //! - Full node service initialization
 //! - Block import pipeline configuration with Blake3 PoW
 //! - Mining coordination
+//! - PQ-secure network transport (Phase 3)
 //!
 //! # Architecture
 //!
@@ -15,8 +16,8 @@
 //! ├─────────────────────────────────────────────────────────────────────────┤
 //! │  ┌──────────────┐   ┌──────────────┐   ┌──────────────────────────────┐ │
 //! │  │ Task Manager │   │   Network    │   │       RPC Server             │ │
-//! │  │  - spawner   │   │  - libp2p    │   │  - chain_*    - hegemon_*   │ │
-//! │  │  - shutdown  │   │  - gossip    │   │  - author_*   - mining_*    │ │
+//! │  │  - spawner   │   │  - PQ-libp2p │   │  - chain_*    - hegemon_*   │ │
+//! │  │  - shutdown  │   │  - ML-KEM    │   │  - author_*   - mining_*    │ │
 //! │  └──────────────┘   └──────────────┘   └──────────────────────────────┘ │
 //! │         │                  │                        │                   │
 //! │         └──────────────────┼────────────────────────┘                   │
@@ -38,14 +39,41 @@
 //! └─────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
+//! # PQ Network Layer (Phase 3)
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────────────┐
+//! │                     PQ-Secure Transport Layer                           │
+//! ├─────────────────────────────────────────────────────────────────────────┤
+//! │  ┌─────────────────────────────────────────────────────────────────────┐│
+//! │  │                   Hybrid Handshake Protocol                         ││
+//! │  │  ┌─────────────────┐   ┌──────────────────────────────────────────┐││
+//! │  │  │ X25519 ECDH     │ + │ ML-KEM-768 Encapsulation                 │││
+//! │  │  │ (classical)     │   │ (post-quantum)                           │││
+//! │  │  └─────────────────┘   └──────────────────────────────────────────┘││
+//! │  │                                    │                                ││
+//! │  │                                    ▼                                ││
+//! │  │  ┌─────────────────────────────────────────────────────────────────┐││
+//! │  │  │        Combined Key = HKDF(X25519_SS || ML-KEM_SS)              │││
+//! │  │  └─────────────────────────────────────────────────────────────────┘││
+//! │  │                                    │                                ││
+//! │  │                                    ▼                                ││
+//! │  │  ┌─────────────────────────────────────────────────────────────────┐││
+//! │  │  │        ML-DSA-65 Signature Authentication                       │││
+//! │  │  └─────────────────────────────────────────────────────────────────┘││
+//! │  └─────────────────────────────────────────────────────────────────────┘│
+//! └─────────────────────────────────────────────────────────────────────────┘
+//! ```
+//!
 //! # Note on Dependency Versions
 //!
-//! This is Phase 2 of the Substrate migration. Full implementation requires
+//! This is Phase 2+3 of the Substrate migration. Full implementation requires
 //! aligned Polkadot SDK dependencies. Due to version fragmentation on crates.io,
 //! production use should switch to git dependencies from the official
 //! polkadot-sdk repository.
 
 use crate::pow::{PowConfig, PowHandle};
+use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
 
 /// Node service components after partial initialization
@@ -56,11 +84,16 @@ use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
 /// - BasicPool for transaction pool
 /// - LongestChain for select chain
 /// - PowBlockImport for PoW consensus
+/// - PQ-secure network keypair
 pub struct PartialComponents {
     /// Task manager for spawning async tasks
     pub task_manager: TaskManager,
     /// PoW mining handle
     pub pow_handle: PowHandle,
+    /// PQ network keypair for secure connections
+    pub network_keypair: Option<PqNetworkKeypair>,
+    /// PQ network configuration
+    pub network_config: PqNetworkConfig,
 }
 
 /// Full node service components
@@ -105,13 +138,40 @@ pub fn new_partial(config: &Configuration) -> Result<PartialComponents, ServiceE
     
     let (pow_handle, _pow_events) = PowHandle::new(pow_config);
 
+    // Initialize PQ network configuration (Phase 3)
+    let pq_network_config = PqNetworkConfig {
+        listen_addresses: vec!["/ip4/0.0.0.0/tcp/30333".to_string()],
+        bootstrap_nodes: Vec::new(),
+        enable_pq_transport: true,
+        hybrid_mode: true, // Use both X25519 and ML-KEM-768
+        max_peers: 50,
+        connection_timeout_secs: 30,
+    };
+
+    // Generate PQ network keypair for this node
+    let network_keypair = match PqNetworkKeypair::generate() {
+        Ok(keypair) => {
+            tracing::info!(
+                peer_id = %keypair.peer_id(),
+                "Generated PQ network keypair"
+            );
+            Some(keypair)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to generate PQ network keypair: {}", e);
+            None
+        }
+    };
+
     tracing::info!(
-        "Hegemon node partial components initialized (Phase 2 - PoW ready)"
+        "Hegemon node partial components initialized (Phase 2+3 - PoW + PQ ready)"
     );
 
     Ok(PartialComponents {
         task_manager,
         pow_handle,
+        network_keypair,
+        network_config: pq_network_config,
     })
 }
 
@@ -156,6 +216,8 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     let PartialComponents {
         task_manager,
         pow_handle,
+        network_keypair,
+        network_config,
     } = new_partial(&config)?;
 
     let chain_name = config.chain_spec.name().to_string();
@@ -164,8 +226,18 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     tracing::info!(
         chain = %chain_name,
         role = %role,
-        "Hegemon node started (Phase 2 - Blake3 PoW)"
+        pq_enabled = %network_config.enable_pq_transport,
+        "Hegemon node started (Phase 2+3 - Blake3 PoW + PQ Transport)"
     );
+
+    // Log PQ network configuration
+    if let Some(ref keypair) = network_keypair {
+        tracing::info!(
+            peer_id = %keypair.peer_id(),
+            hybrid_mode = %network_config.hybrid_mode,
+            "PQ-secure network transport configured"
+        );
+    }
 
     // Log PoW configuration
     if pow_handle.is_mining() {
@@ -237,11 +309,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     //    );
 
     tracing::info!(
-        "Phase 2 scaffold complete. Full implementation requires:"
+        "Phase 2+3 scaffold complete. Full implementation requires:"
     );
     tracing::info!("  - Aligned polkadot-sdk git dependencies");
     tracing::info!("  - Runtime WASM binary with DifficultyApi");
     tracing::info!("  - sc-consensus-pow block import pipeline");
+    tracing::info!("  - PQ transport integration with sc-network");
 
     Ok(task_manager)
 }
