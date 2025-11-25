@@ -49,7 +49,7 @@ export function DataStatusBanner({ label, result, isPlaceholder, className, cta 
     >
       <div className={styles.messageRow}>
         <div className={styles.message}>
-          <strong>{label}:</strong> {isMock ? 'Mock data in use.' : 'Encountered an error.'} {reason}
+          <strong>{label}:</strong> {isMock ? 'Offline data in use.' : 'Encountered an error.'} {reason}
           {cta && isMock ? <span className={styles.cta}>{cta}</span> : null}
         </div>
         <button

@@ -27,8 +27,8 @@ During development you can pass `--host 0.0.0.0 --port 4173` to `npm run dev` to
 
 ## Connection badge & fallbacks
 
-- The nav renders a `ConnectionBadge` sourced from `useNodeMetrics()`. When the `hegemon` API answers requests it glows Proof Green and reads “Live data.”
-- If the API is unreachable or errors, the badge flips to Guard Rail red with “Mock data,” every panel surfaces a tooltip explaining why mocks are in use, and a `DataStatusBanner` appears above the affected grids.
+- The nav renders a `ConnectionBadge` sourced from `useNodeMetrics()`. When the `hegemon` API answers requests it glows Proof Green and reads “Live.”
+- If the API is unreachable or errors, the badge flips to Guard Rail red with “Offline,” every panel surfaces a tooltip explaining why mocks are in use, and a `DataStatusBanner` appears above the affected grids.
 - Restoring connectivity (restart `hegemon start` with the correct `--api-token` or update the UI token input) clears the banner on the next poll and flips the badge back to Proof Green.
 
 ## Log severity & export workflow
