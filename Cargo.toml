@@ -8,6 +8,7 @@ members = [
     "consensus",
     "protocol/versioning",
     "network",
+    "pq-noise",
     "wallet",
     "wallet/bench",
     "pallets/fee-model",
