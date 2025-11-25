@@ -4,6 +4,17 @@
   gap: 4px;
 }
 
+.track {
+  overflow-x: auto;
+  overflow-y: hidden;
+  max-width: 100%;
+}
+
+.graph {
+  display: block;
+  min-width: 100%;
+}
+
 .label {
   margin: 0;
   font-size: 0.8rem;
