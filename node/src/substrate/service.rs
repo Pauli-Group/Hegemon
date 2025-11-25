@@ -146,6 +146,8 @@ pub fn new_partial(config: &Configuration) -> Result<PartialComponents, ServiceE
         hybrid_mode: true, // Use both X25519 and ML-KEM-768
         max_peers: 50,
         connection_timeout_secs: 30,
+        require_pq: true, // Require PQ handshake for all connections
+        verbose_logging: false,
     };
 
     // Generate PQ network keypair for this node

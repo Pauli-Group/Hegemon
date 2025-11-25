@@ -49,7 +49,7 @@
 use std::time::Duration;
 use crypto::ml_kem::MlKemKeyPair;
 use crypto::ml_dsa::MlDsaSecretKey;
-use crypto::traits::{KemKeyPair, SigningKey};
+use crypto::traits::{KemKeyPair, KemPublicKey, SigningKey, VerifyKey, Signature};
 
 /// Network protocol identifiers for Hegemon
 pub mod protocols {
@@ -253,7 +253,7 @@ impl PqNetworkKeypair {
 
     /// Sign a message with ML-DSA-65
     pub fn sign(&self, message: &[u8]) -> Vec<u8> {
-        self.dsa_signing_key.sign(message).as_bytes().to_vec()
+        self.dsa_signing_key.sign(message).to_vec()
     }
 
     /// Decapsulate a ciphertext to recover the shared secret
