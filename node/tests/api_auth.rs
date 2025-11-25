@@ -3,9 +3,9 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use network::GossipRouter;
-use node::api;
-use node::config::NodeConfig;
-use node::{NodeHandle, NodeService};
+use hegemon_node::api;
+use hegemon_node::config::NodeConfig;
+use hegemon_node::{NodeHandle, NodeService};
 use serde_json::Value;
 use tempfile::tempdir;
 use tokio::net::TcpListener as TokioTcpListener;

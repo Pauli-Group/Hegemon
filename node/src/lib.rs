@@ -14,4 +14,11 @@ pub mod ui;
 mod codec;
 mod service;
 
+/// Substrate integration module.
+///
+/// This module contains the Substrate-based node implementation
+/// that will replace the custom Axum-based implementation.
+#[cfg(feature = "substrate")]
+pub mod substrate;
+
 pub use service::{MinerAction, NodeHandle, NodeService};

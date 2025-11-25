@@ -24,9 +24,9 @@
 - [x] Pallets compiled (identity, attestations, asset-registry, settlement, oracles, fee-model, feature-flags, observability)
 - [x] PQ crypto integrated into runtime (pq_crypto module with ML-DSA-65, SLH-DSA)
 - [x] PoW pallet designed (pow pallet in runtime)
+- [x] Substrate node binary scaffolded (Phase 1 complete - CLI works, builds with `--features substrate`)
 - [ ] sc-consensus-pow integration complete
 - [ ] Custom libp2p-noise with ML-KEM-768
-- [ ] Substrate node binary scaffolded
 - [ ] Wallet migrated to sc-rpc
 - [ ] Dashboard migrated to Substrate WS
 - [ ] E2E test suite passing

@@ -1337,6 +1337,19 @@ construct_runtime!(
 pub type Currency = Balances;
 pub type GovernanceOrigin = frame_system::EnsureRoot<AccountId>;
 
+/// Executive: handles dispatch to the various modules.
+pub type Executive = frame_executive::Executive<
+    Runtime,
+    Block,
+    frame_system::ChainContext<Runtime>,
+    Runtime,
+    AllPalletsWithSystem,
+>;
+
+// NOTE: Runtime APIs will be added in a later phase when Substrate SDK versions
+// are aligned on crates.io. For now, the runtime works with the existing
+// construct_runtime! macro and Executive type.
+
 #[cfg(all(test, feature = "runtime-tests"))]
 mod tests {
     use super::*;
