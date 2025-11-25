@@ -25,6 +25,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_bytes = "0.11"
 sled = "0.34"
+sp-core = { version = "38.1.0", default-features = false, features = ["std"] }
 state-merkle = { path = "../state/merkle", package = "state-merkle" }
 thiserror = "1.0"
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "sync", "time", "signal", "fs"] }
@@ -46,6 +47,8 @@ url = "2"
 sc-cli = { version = "0.47.0", optional = true }
 sc-service = { version = "0.46.0", optional = true }
 sc-chain-spec = { version = "38.0.0", optional = true }
+sc-consensus-pow = { version = "0.44.0", optional = true }
+sp-consensus-pow = { version = "0.42.0", optional = true }
 
 jsonrpsee = { version = "0.24", features = ["server", "macros"], optional = true }
 
@@ -53,16 +56,23 @@ jsonrpsee = { version = "0.24", features = ["server", "macros"], optional = true
 default = []
 test-utils = []
 
-# Enable Substrate-based node implementation (Phase 1 scaffold)
+# Enable Substrate-based node implementation (Phase 2 with PoW)
 # 
-# This provides basic CLI scaffolding. Full implementation requires:
+# This provides:
+# - CLI scaffolding (sc-cli)
+# - Node service framework (sc-service)
+# - Blake3 PoW consensus (sc-consensus-pow)
+# - Mining coordination
+#
+# Full implementation requires:
 # - Aligned polkadot-sdk dependencies (use git deps)
-# - Runtime with WASM binary and runtime APIs
-# - sc-consensus-pow for PoW consensus
+# - Runtime with WASM binary and DifficultyApi
 substrate = [
     "dep:sc-cli",
     "dep:sc-service",
     "dep:sc-chain-spec",
+    "dep:sc-consensus-pow",
+    "dep:sp-consensus-pow",
     "dep:jsonrpsee",
 ]
 
