@@ -31,6 +31,7 @@
 - [ ] Dashboard migrated to Substrate WS
 - [ ] E2E test suite passing
 - [ ] Testnet deployed
+- [ ] Electron desktop app packaged [OPTIONAL]
 
 ---
 
@@ -1261,13 +1262,587 @@ pqcrypto-traits = "0.3"
 
 | Week | Phase | Deliverable |
 |------|-------|-------------|
-| 1-2 | Node Scaffold | Booting Substrate node |
-| 2-3 | PoW Integration | Blake3 PoW mining |
-| 3-5 | PQ libp2p | ML-KEM peer connections |
-| 4-5 | RPC Extensions | Custom hegemon_* endpoints |
-| 5-6 | Wallet Migration | jsonrpsee wallet client |
-| 6-7 | Dashboard Migration | Polkadot.js dashboard |
-| 7-8 | Testing | Full test suite |
-| 8-9 | Testnet | Live testnet deployment |
+| 1-2 | Phase 1: Node Scaffold | Booting Substrate node |
+| 2-3 | Phase 2: PoW Integration | Blake3 PoW mining |
+| 3-5 | Phase 3: PQ libp2p | ML-KEM peer connections |
+| 4-5 | Phase 4: RPC Extensions | Custom hegemon_* endpoints |
+| 5-6 | Phase 5: Wallet Migration | jsonrpsee wallet client |
+| 6-7 | Phase 6: Dashboard Migration | Polkadot.js dashboard |
+| 7-8 | Phase 7: Testing | Full test suite |
+| 8-9 | Phase 8: Testnet | Live testnet deployment |
+| 9-11 | Phase 9: Electron [OPTIONAL] | Desktop app bundle |
 
-**Total Duration**: 9 weeks
+**Total Duration**: 9 weeks (+ 2 weeks optional for Electron)
+
+---
+
+### Phase 9: Electron Desktop App (Week 9-11) [OPTIONAL]
+
+**Goal**: Bundle node + wallet + dashboard into a single desktop application for easy distribution.
+
+**Architecture**:
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Hegemon Desktop App                          │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │                   Electron Main Process                     ││
+│  │  ┌─────────────────┐  ┌──────────────────────────────────┐ ││
+│  │  │ Node Manager    │  │ IPC Bridge                       │ ││
+│  │  │ - spawn binary  │  │ - renderer ↔ node RPC            │ ││
+│  │  │ - health checks │  │ - native file dialogs            │ ││
+│  │  │ - log capture   │  │ - system tray integration        │ ││
+│  │  └─────────────────┘  └──────────────────────────────────┘ ││
+│  └─────────────────────────────────────────────────────────────┘│
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │                  Electron Renderer Process                  ││
+│  │  ┌─────────────────────────────────────────────────────────┐││
+│  │  │              dashboard-ui (React/TypeScript)            │││
+│  │  │  - Block Explorer    - Wallet UI    - Mining Controls  │││
+│  │  └─────────────────────────────────────────────────────────┘││
+│  └─────────────────────────────────────────────────────────────┘│
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │                  Bundled Resources                          ││
+│  │  hegemon-node (platform binary)  │  chain-spec.json        ││
+│  └─────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Files to Create**:
+```
+electron/
+├── package.json
+├── electron-builder.yml
+├── src/
+│   ├── main.ts              # Electron main process
+│   ├── preload.ts           # Secure bridge to renderer
+│   ├── node-manager.ts      # Spawns/manages hegemon-node
+│   ├── ipc-handlers.ts      # IPC channel definitions
+│   └── tray.ts              # System tray integration
+├── resources/
+│   ├── icon.icns            # macOS icon
+│   ├── icon.ico             # Windows icon
+│   └── icon.png             # Linux icon
+└── scripts/
+    ├── fetch-binaries.sh    # Download platform binaries
+    └── notarize.js          # macOS notarization
+```
+
+**Step-by-Step Commands**:
+```bash
+# Step 9.1: Create Electron scaffold
+mkdir -p electron/src electron/resources electron/scripts
+cd electron
+npm init -y
+npm install electron electron-builder --save-dev
+npm install @electron/remote electron-store --save
+
+# Step 9.2: Configure build
+cat > electron-builder.yml << 'EOF'
+appId: network.hegemon.desktop
+productName: Hegemon
+directories:
+  output: dist
+  buildResources: resources
+files:
+  - "dist/**/*"
+  - "resources/**/*"
+extraResources:
+  - from: "../target/release/hegemon-node"
+    to: "bin/hegemon-node"
+    filter: ["**/*"]
+mac:
+  category: public.app-category.finance
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  hardenedRuntime: true
+  entitlements: resources/entitlements.mac.plist
+  notarize: false  # Set true for release
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  category: Finance
+EOF
+
+# Step 9.3: Build dashboard for Electron
+cd ../dashboard-ui
+npm run build
+cp -r dist ../electron/renderer
+
+# Step 9.4: Build Electron app
+cd ../electron
+npm run build
+npm run package
+```
+
+**File Template: `electron/src/main.ts`**:
+```typescript
+import { app, BrowserWindow, ipcMain, Tray, Menu } from 'electron';
+import path from 'path';
+import { NodeManager } from './node-manager';
+import { setupIpcHandlers } from './ipc-handlers';
+
+let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let nodeManager: NodeManager | null = null;
+
+const isDev = process.env.NODE_ENV === 'development';
+
+async function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 800,
+    minHeight: 600,
+    titleBarStyle: 'hiddenInset',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  if (isDev) {
+    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.webContents.openDevTools();
+  } else {
+    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+  }
+
+  mainWindow.on('close', (event) => {
+    // Minimize to tray instead of closing
+    if (process.platform === 'darwin') {
+      event.preventDefault();
+      mainWindow?.hide();
+    }
+  });
+}
+
+async function startNode() {
+  const nodePath = isDev
+    ? path.join(__dirname, '../../target/release/hegemon-node')
+    : path.join(process.resourcesPath, 'bin/hegemon-node');
+
+  const dataDir = path.join(app.getPath('userData'), 'chain-data');
+  
+  nodeManager = new NodeManager({
+    binaryPath: nodePath,
+    dataDir,
+    rpcPort: 9944,
+    p2pPort: 30333,
+    chain: 'mainnet', // or 'testnet'
+  });
+
+  await nodeManager.start();
+  
+  // Forward node logs to renderer
+  nodeManager.on('log', (line) => {
+    mainWindow?.webContents.send('node:log', line);
+  });
+
+  nodeManager.on('block', (blockNum) => {
+    mainWindow?.webContents.send('node:block', blockNum);
+  });
+}
+
+app.whenReady().then(async () => {
+  await startNode();
+  await createWindow();
+  setupIpcHandlers(ipcMain, nodeManager!);
+  setupTray();
+});
+
+app.on('before-quit', async () => {
+  if (nodeManager) {
+    await nodeManager.stop();
+  }
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+function setupTray() {
+  const iconPath = path.join(__dirname, '../resources/tray-icon.png');
+  tray = new Tray(iconPath);
+  
+  const contextMenu = Menu.buildFromTemplate([
+    { label: 'Open Hegemon', click: () => mainWindow?.show() },
+    { type: 'separator' },
+    { label: 'Start Mining', click: () => nodeManager?.startMining() },
+    { label: 'Stop Mining', click: () => nodeManager?.stopMining() },
+    { type: 'separator' },
+    { label: 'Quit', click: () => app.quit() },
+  ]);
+  
+  tray.setContextMenu(contextMenu);
+  tray.setToolTip('Hegemon Node Running');
+}
+```
+
+**File Template: `electron/src/node-manager.ts`**:
+```typescript
+import { spawn, ChildProcess } from 'child_process';
+import { EventEmitter } from 'events';
+import WebSocket from 'ws';
+
+interface NodeConfig {
+  binaryPath: string;
+  dataDir: string;
+  rpcPort: number;
+  p2pPort: number;
+  chain: 'mainnet' | 'testnet' | 'dev';
+  bootnodes?: string[];
+  miningThreads?: number;
+}
+
+export class NodeManager extends EventEmitter {
+  private process: ChildProcess | null = null;
+  private ws: WebSocket | null = null;
+  private config: NodeConfig;
+  private isRunning = false;
+
+  constructor(config: NodeConfig) {
+    super();
+    this.config = config;
+  }
+
+  async start(): Promise<void> {
+    if (this.isRunning) return;
+
+    const args = [
+      `--chain=${this.config.chain}`,
+      `--base-path=${this.config.dataDir}`,
+      `--rpc-port=${this.config.rpcPort}`,
+      `--port=${this.config.p2pPort}`,
+      '--rpc-cors=all',
+      '--rpc-methods=unsafe', // For local use only
+    ];
+
+    if (this.config.bootnodes?.length) {
+      args.push(`--bootnodes=${this.config.bootnodes.join(',')}`);
+    }
+
+    this.process = spawn(this.config.binaryPath, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    this.process.stdout?.on('data', (data) => {
+      const lines = data.toString().split('\n');
+      lines.forEach((line: string) => {
+        if (line.trim()) {
+          this.emit('log', line);
+          this.parseLogLine(line);
+        }
+      });
+    });
+
+    this.process.stderr?.on('data', (data) => {
+      this.emit('log', `[ERR] ${data.toString()}`);
+    });
+
+    this.process.on('exit', (code) => {
+      this.isRunning = false;
+      this.emit('exit', code);
+    });
+
+    // Wait for RPC to be ready
+    await this.waitForRpc();
+    this.isRunning = true;
+
+    // Connect WebSocket for subscriptions
+    await this.connectWebSocket();
+  }
+
+  async stop(): Promise<void> {
+    if (!this.process) return;
+
+    this.ws?.close();
+    
+    return new Promise((resolve) => {
+      this.process!.once('exit', () => {
+        this.process = null;
+        this.isRunning = false;
+        resolve();
+      });
+      
+      this.process!.kill('SIGTERM');
+      
+      // Force kill after 10s
+      setTimeout(() => {
+        if (this.process) {
+          this.process.kill('SIGKILL');
+        }
+      }, 10000);
+    });
+  }
+
+  async startMining(threads = 1): Promise<void> {
+    await this.rpcCall('hegemon_startMining', { threads });
+  }
+
+  async stopMining(): Promise<void> {
+    await this.rpcCall('hegemon_stopMining', {});
+  }
+
+  async rpcCall(method: string, params: unknown): Promise<unknown> {
+    const response = await fetch(`http://127.0.0.1:${this.config.rpcPort}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method,
+        params,
+      }),
+    });
+    const json = await response.json();
+    if (json.error) throw new Error(json.error.message);
+    return json.result;
+  }
+
+  private async waitForRpc(maxAttempts = 30): Promise<void> {
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        await this.rpcCall('system_health', []);
+        return;
+      } catch {
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+    throw new Error('Node RPC did not become available');
+  }
+
+  private async connectWebSocket(): Promise<void> {
+    this.ws = new WebSocket(`ws://127.0.0.1:${this.config.rpcPort}`);
+    
+    this.ws.on('open', () => {
+      // Subscribe to new blocks
+      this.ws!.send(JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'chain_subscribeNewHeads',
+        params: [],
+      }));
+    });
+
+    this.ws.on('message', (data) => {
+      const msg = JSON.parse(data.toString());
+      if (msg.params?.result?.number) {
+        const blockNum = parseInt(msg.params.result.number, 16);
+        this.emit('block', blockNum);
+      }
+    });
+  }
+
+  private parseLogLine(line: string): void {
+    // Parse Substrate log format for key events
+    if (line.includes('Imported #')) {
+      const match = line.match(/Imported #(\d+)/);
+      if (match) {
+        this.emit('block', parseInt(match[1], 10));
+      }
+    }
+  }
+}
+```
+
+**File Template: `electron/src/preload.ts`**:
+```typescript
+import { contextBridge, ipcRenderer } from 'electron';
+
+// Expose safe APIs to renderer
+contextBridge.exposeInMainWorld('hegemon', {
+  // Node control
+  node: {
+    startMining: (threads: number) => ipcRenderer.invoke('node:startMining', threads),
+    stopMining: () => ipcRenderer.invoke('node:stopMining'),
+    getStatus: () => ipcRenderer.invoke('node:getStatus'),
+    onLog: (callback: (log: string) => void) => {
+      ipcRenderer.on('node:log', (_, log) => callback(log));
+    },
+    onBlock: (callback: (blockNum: number) => void) => {
+      ipcRenderer.on('node:block', (_, blockNum) => callback(blockNum));
+    },
+  },
+  
+  // Wallet operations  
+  wallet: {
+    create: (password: string) => ipcRenderer.invoke('wallet:create', password),
+    unlock: (password: string) => ipcRenderer.invoke('wallet:unlock', password),
+    getBalance: () => ipcRenderer.invoke('wallet:getBalance'),
+    send: (to: string, amount: string) => ipcRenderer.invoke('wallet:send', to, amount),
+    getAddress: () => ipcRenderer.invoke('wallet:getAddress'),
+  },
+  
+  // App info
+  app: {
+    getVersion: () => ipcRenderer.invoke('app:getVersion'),
+    getDataDir: () => ipcRenderer.invoke('app:getDataDir'),
+    openDataDir: () => ipcRenderer.invoke('app:openDataDir'),
+  },
+});
+```
+
+**File Template: `electron/src/ipc-handlers.ts`**:
+```typescript
+import { IpcMain, app, shell } from 'electron';
+import { NodeManager } from './node-manager';
+import path from 'path';
+
+export function setupIpcHandlers(ipcMain: IpcMain, nodeManager: NodeManager): void {
+  // Node control
+  ipcMain.handle('node:startMining', async (_, threads: number) => {
+    await nodeManager.startMining(threads);
+    return { success: true };
+  });
+
+  ipcMain.handle('node:stopMining', async () => {
+    await nodeManager.stopMining();
+    return { success: true };
+  });
+
+  ipcMain.handle('node:getStatus', async () => {
+    const health = await nodeManager.rpcCall('system_health', []);
+    const peers = await nodeManager.rpcCall('system_peers', []);
+    return { health, peerCount: (peers as unknown[]).length };
+  });
+
+  // Wallet (delegates to node RPC)
+  ipcMain.handle('wallet:getBalance', async () => {
+    return nodeManager.rpcCall('hegemon_walletBalance', []);
+  });
+
+  ipcMain.handle('wallet:send', async (_, to: string, amount: string) => {
+    return nodeManager.rpcCall('hegemon_sendTransaction', { to, amount });
+  });
+
+  ipcMain.handle('wallet:getAddress', async () => {
+    return nodeManager.rpcCall('hegemon_walletAddress', []);
+  });
+
+  // App info
+  ipcMain.handle('app:getVersion', () => app.getVersion());
+  
+  ipcMain.handle('app:getDataDir', () => {
+    return path.join(app.getPath('userData'), 'chain-data');
+  });
+
+  ipcMain.handle('app:openDataDir', () => {
+    const dataDir = path.join(app.getPath('userData'), 'chain-data');
+    shell.openPath(dataDir);
+  });
+}
+```
+
+**Dashboard Integration** (update `dashboard-ui/src/stores/useNodeStore.ts`):
+```typescript
+// Detect Electron environment
+const isElectron = typeof window !== 'undefined' && window.hegemon !== undefined;
+
+export const useNodeStore = create<NodeState>((set, get) => ({
+  blockNumber: 0,
+  syncing: true,
+  peerCount: 0,
+  mining: false,
+
+  initialize: async () => {
+    if (isElectron) {
+      // Use Electron IPC
+      window.hegemon.node.onBlock((blockNum) => {
+        set({ blockNumber: blockNum });
+      });
+      
+      const status = await window.hegemon.node.getStatus();
+      set({ syncing: status.health.isSyncing, peerCount: status.peerCount });
+    } else {
+      // Use WebSocket (existing code)
+      const api = await createApi(import.meta.env.VITE_WS_ENDPOINT);
+      // ...
+    }
+  },
+
+  startMining: async (threads = 1) => {
+    if (isElectron) {
+      await window.hegemon.node.startMining(threads);
+      set({ mining: true });
+    }
+  },
+
+  stopMining: async () => {
+    if (isElectron) {
+      await window.hegemon.node.stopMining();
+      set({ mining: false });
+    }
+  },
+}));
+```
+
+**TypeScript Types** (`dashboard-ui/src/types/electron.d.ts`):
+```typescript
+interface HegemonElectronAPI {
+  node: {
+    startMining: (threads: number) => Promise<{ success: boolean }>;
+    stopMining: () => Promise<{ success: boolean }>;
+    getStatus: () => Promise<{ health: SystemHealth; peerCount: number }>;
+    onLog: (callback: (log: string) => void) => void;
+    onBlock: (callback: (blockNum: number) => void) => void;
+  };
+  wallet: {
+    create: (password: string) => Promise<{ address: string }>;
+    unlock: (password: string) => Promise<{ success: boolean }>;
+    getBalance: () => Promise<string>;
+    send: (to: string, amount: string) => Promise<{ txHash: string }>;
+    getAddress: () => Promise<string>;
+  };
+  app: {
+    getVersion: () => Promise<string>;
+    getDataDir: () => Promise<string>;
+    openDataDir: () => Promise<void>;
+  };
+}
+
+declare global {
+  interface Window {
+    hegemon?: HegemonElectronAPI;
+  }
+}
+```
+
+**Verification Checklist**:
+- [ ] Run: `cd electron && npm run dev` → app opens with dashboard
+- [ ] Verify: Node starts automatically in background
+- [ ] Verify: Block number updates in real-time
+- [ ] Run: Start mining from UI → blocks mined
+- [ ] Run: `npm run package` → creates .dmg/.exe/.AppImage
+- [ ] Test: Install on fresh machine → works without dependencies
+- [ ] Test: Close app → node stops gracefully
+- [ ] Test: Tray icon → quick mining toggle works
+
+**Distribution Sizes (Estimated)**:
+| Platform | Size |
+|----------|------|
+| macOS (universal) | ~120 MB |
+| Windows | ~90 MB |
+| Linux AppImage | ~100 MB |
+
+**Implications for Earlier Phases**:
+
+| Phase | Electron-Informed Change |
+|-------|--------------------------|
+| Phase 4 (RPC) | Add `hegemon_startMining`, `hegemon_stopMining` RPC methods |
+| Phase 4 (RPC) | Add `hegemon_walletBalance`, `hegemon_sendTransaction` for embedded wallet |
+| Phase 5 (Wallet) | Wallet must work headlessly when controlled via RPC |
+| Phase 6 (Dashboard) | Build with `isElectron` detection; dual API support |
+| Phase 7 (Testing) | Add Electron-specific E2E tests with Playwright |
+| Phase 8 (Testnet) | Provide testnet chain-spec bundled in Electron resources |
