@@ -9,7 +9,7 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
     "test": "vitest run",
-    "sync-actions": "python ../scripts/dashboard_actions_export.py --out src/data/actions.json --pretty && node ./scripts/sync-brand-tokens.mjs",
+    "sync-actions": "node ./scripts/sync-brand-tokens.mjs",
     "screenshot": "playwright test"
   },
   "dependencies": {

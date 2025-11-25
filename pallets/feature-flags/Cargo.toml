@@ -1,0 +1,45 @@
+[package]
+name = "pallet-feature-flags"
+version = "0.1.0"
+edition = "2021"
+authors = ["Synthetic Hegemonic Currency Contributors"]
+license = "Apache-2.0"
+description = "Feature flag pallet for staged runtime rollouts"
+
+[dependencies]
+frame-support = { version = "43.0.0", default-features = false }
+frame-system = { version = "43.0.0", default-features = false }
+frame-benchmarking = { version = "43.0.0", default-features = false, optional = true }
+sp-runtime = { version = "44.0.0", default-features = false }
+sp-std = { version = "14.0.0", default-features = false }
+sp-io = { version = "43.0.0", default-features = false }
+parity-scale-codec = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
+scale-info = { version = "2", default-features = false, features = ["derive"] }
+log = { version = "0.4", default-features = false }
+
+[dev-dependencies]
+sp-runtime = { version = "44.0.0", default-features = false, features = ["std"] }
+sp-io = { version = "43.0.0", default-features = false, features = ["std"] }
+frame-support = { version = "43.0.0", default-features = false, features = ["std"] }
+frame-system = { version = "43.0.0", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"], default-features = false }
+
+[features]
+default = ["std"]
+std = [
+    "frame-support/std",
+    "frame-system/std",
+    "frame-benchmarking/std",
+    "sp-runtime/std",
+    "sp-std/std",
+    "sp-io/std",
+    "parity-scale-codec/std",
+    "scale-info/std",
+    "serde/std",
+]
+runtime-benchmarks = [
+    "frame-benchmarking/runtime-benchmarks",
+    "frame-support/runtime-benchmarks",
+    "frame-system/runtime-benchmarks",
+]
+try-runtime = ["frame-support/try-runtime"]

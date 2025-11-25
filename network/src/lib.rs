@@ -14,9 +14,11 @@ use tokio::sync::broadcast;
 pub mod nat;
 pub mod p2p;
 pub mod peer_manager;
+pub mod peer_store;
 pub mod service;
 
 pub use nat::{NatProtocol, NatTraversal, NatTraversalConfig, NatTraversalResult};
+pub use peer_store::{PeerStore, PeerStoreConfig};
 pub use service::RelayConfig;
 pub use service::{P2PService, ProtocolHandle};
 

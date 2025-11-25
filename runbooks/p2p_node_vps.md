@@ -1,6 +1,6 @@
 # VPS node operations runbook
 
-Use this playbook to provision a small virtual private server (VPS), expose the public peer-to-peer socket and administrative API, start the node with explicit `--p2p-addr` and `--seeds`, and supervise it under `systemd`. These steps assume a fresh Ubuntu 22.04 host with a static or long-lived public IP.
+Use this playbook to provision a small virtual private server (VPS), expose the public peer-to-peer socket and administrative API, start the unified `hegemon` binary with explicit `--p2p-addr` and `--seeds`, and supervise it under `systemd`. These steps assume a fresh Ubuntu 22.04 host with a static or long-lived public IP.
 
 ## 1. Provision a lightweight host
 
@@ -20,7 +20,7 @@ sudo mkdir -p /var/lib/synthetic-node
 sudo chown node:node /var/lib/synthetic-node
 ```
 
-If you copy a prebuilt binary instead of compiling, place it in `/usr/local/bin/node` and ensure it is executable.
+If you copy a prebuilt binary instead of compiling, place it in `/usr/local/bin/hegemon` and ensure it is executable. For source installs, run `make quickstart` once, then `cargo build -p node --release` and copy `target/release/hegemon` into `/usr/local/bin/`.
 
 ## 3. Open the P2P and API ports
 
@@ -58,7 +58,7 @@ sudo chown node:node /etc/default/synthetic-node
 
 ## 5. Systemd unit
 
-Create a unit that reads the environment file and restarts on failure.
+Create a unit that reads the environment file and restarts on failure. The service exposes the embedded dashboard on `NODE_API_ADDR` so operators can watch mining progress without deploying the deprecated FastAPI/Vite stack.
 
 ```bash
 sudo tee /etc/systemd/system/synthetic-node.service <<'UNIT'
@@ -70,7 +70,7 @@ Wants=network-online.target
 [Service]
 User=node
 EnvironmentFile=/etc/default/synthetic-node
-ExecStart=/usr/local/bin/node \
+ExecStart=/usr/local/bin/hegemon \
   --db-path ${NODE_DB_PATH} \
   --api-addr ${NODE_API_ADDR} \
   --api-token ${NODE_API_TOKEN} \
@@ -101,6 +101,14 @@ journalctl -u synthetic-node.service -f
 - When onboarding new testers, ask them to return their reachable public P2P endpoints. Update your `/etc/default/synthetic-node` `NODE_SEEDS` to include them, separated by commas, and run `sudo systemctl restart synthetic-node` to apply.
 - If you provide DNS (e.g., `seed1.testnet.example.com`), keep A/AAAA records updated to avoid stale seeds when IPs rotate.
 
+## 6b. Export/import peer bundles for fresh nodes
+
+- After your VPS has a stable peer list, capture it into a portable bundle that also records the current genesis metadata:
+  ```bash
+  sudo -u node /usr/local/bin/hegemon --db-path ${NODE_DB_PATH} export-peers --output /var/lib/synthetic-node/peer_bundle.json
+  ```
+- You can seed additional nodes (or rescue a wiped peer store) by copying that JSON and adding `--import-peers /var/lib/synthetic-node/peer_bundle.json` to the `ExecStart` line in the systemd unit. Imported peers are written into the local store and dialed before the DNS/static seeds in `NODE_SEEDS`.
+
 ## 7. Rotating or removing compromised/offline seeds
 
 - If a peer is compromised or repeatedly offline, edit `/etc/default/synthetic-node` to remove its entry from `NODE_SEEDS` and restart the service.
@@ -112,11 +120,11 @@ journalctl -u synthetic-node.service -f
 
 - Confirm the listener is reachable from outside with `nc -vz <public-ip> 9000` (TCP) and a simple UDP probe if your tooling supports it.
 - Verify the API is protected: unauthenticated requests should be rejected; keep `NODE_API_TOKEN` strong and rotate it alongside seeds if you suspect leakage.
-- For upgrades, stop the service, replace `/usr/local/bin/node` or update the release artifact, then start the unit:
+- For upgrades, stop the service, replace `/usr/local/bin/hegemon` or update the release artifact, then start the unit:
 
 ```bash
 sudo systemctl stop synthetic-node.service
-sudo install -m 0755 /tmp/node-release/node /usr/local/bin/node
+sudo install -m 0755 /tmp/node-release/hegemon /usr/local/bin/hegemon
 sudo systemctl start synthetic-node.service
 ```
 

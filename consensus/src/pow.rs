@@ -20,7 +20,8 @@ use num_traits::{One, Zero};
 
 const GENESIS_HASH: [u8; 32] = [0u8; 32];
 // Simplified demo target used across tests and quickstarts.
-pub const DEFAULT_GENESIS_POW_BITS: u32 = 0x3f00ffff;
+// 0x1dc00000 is 3x easier than the old 1 MH/s baseline (about 330 kH/s for ~60s blocks).
+pub const DEFAULT_GENESIS_POW_BITS: u32 = 0x1dc00000;
 
 #[derive(Clone)]
 struct PowNode {
@@ -57,11 +58,12 @@ pub struct PowConsensus<V: ProofVerifier> {
 
 impl<V: ProofVerifier> PowConsensus<V> {
     pub fn new(miner_keys: Vec<MlDsaPublicKey>, genesis_state_root: [u8; 32], verifier: V) -> Self {
-        Self::with_schedule(
+        Self::with_schedule_and_pow_bits(
             miner_keys,
             genesis_state_root,
             verifier,
             VersionSchedule::default(),
+            DEFAULT_GENESIS_POW_BITS,
         )
     }
 
@@ -70,6 +72,37 @@ impl<V: ProofVerifier> PowConsensus<V> {
         genesis_state_root: [u8; 32],
         verifier: V,
         version_schedule: VersionSchedule,
+    ) -> Self {
+        Self::with_schedule_and_pow_bits(
+            miner_keys,
+            genesis_state_root,
+            verifier,
+            version_schedule,
+            DEFAULT_GENESIS_POW_BITS,
+        )
+    }
+
+    pub fn with_genesis_pow_bits(
+        miner_keys: Vec<MlDsaPublicKey>,
+        genesis_state_root: [u8; 32],
+        verifier: V,
+        genesis_pow_bits: u32,
+    ) -> Self {
+        Self::with_schedule_and_pow_bits(
+            miner_keys,
+            genesis_state_root,
+            verifier,
+            VersionSchedule::default(),
+            genesis_pow_bits,
+        )
+    }
+
+    pub fn with_schedule_and_pow_bits(
+        miner_keys: Vec<MlDsaPublicKey>,
+        genesis_state_root: [u8; 32],
+        verifier: V,
+        version_schedule: VersionSchedule,
+        genesis_pow_bits: u32,
     ) -> Self {
         let miners = miner_keys
             .into_iter()
@@ -85,7 +118,7 @@ impl<V: ProofVerifier> PowConsensus<V> {
                 nullifiers: NullifierSet::new(),
                 timestamp_ms: 0,
                 parent: GENESIS_HASH,
-                pow_bits: DEFAULT_GENESIS_POW_BITS,
+                pow_bits: genesis_pow_bits,
                 supply_digest: 0,
             },
         );
@@ -95,7 +128,7 @@ impl<V: ProofVerifier> PowConsensus<V> {
             nodes,
             best: GENESIS_HASH,
             version_schedule,
-            genesis_pow_bits: DEFAULT_GENESIS_POW_BITS,
+            genesis_pow_bits,
         }
     }
 
@@ -263,6 +296,22 @@ impl<V: ProofVerifier> PowConsensus<V> {
 
     pub fn best_hash(&self) -> [u8; 32] {
         self.best
+    }
+
+    pub fn miner_ids(&self) -> Vec<ValidatorId> {
+        self.miners.keys().copied().collect()
+    }
+
+    pub fn has_miner(&self, id: &ValidatorId) -> bool {
+        self.miners.contains_key(id)
+    }
+
+    /// Register a miner key so downstream verification can recover from
+    /// mismatched validator sets (common in test reorg scenarios).
+    pub fn ensure_miner(&mut self, key: &MlDsaPublicKey) -> ValidatorId {
+        let id = sha256(&key.to_bytes());
+        self.miners.entry(id).or_insert_with(|| key.clone());
+        id
     }
 
     pub fn expected_bits_for_block(

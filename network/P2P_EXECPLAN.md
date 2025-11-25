@@ -94,8 +94,8 @@ Update the node binary to start the P2P service.
 - [x] **Update `NodeConfig`**: Add P2P settings.
 - [x] **Update `main`**: Launch P2P service.
 - [ ] **Test**:
-    - [ ] Unit test handshake flow with mock streams.
-    - [ ] Integration test: Spin up Node A and Node B, connect them, ensure a block mined on A reaches B.
+    - [x] Unit test handshake flow with mock streams.
+    - [x] Integration test: Spin up Node A and Node B, connect them, ensure a block mined on A reaches B.
 
 ## 4. Future Improvements (Post-Testnet)
 

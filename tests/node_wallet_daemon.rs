@@ -23,8 +23,10 @@ use wallet::TransferRecipient;
 use wallet::WalletStore;
 use wallet::WalletSyncEngine;
 
+type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-async fn node_wallet_daemons_execute_transfer() {
+async fn node_wallet_daemons_execute_transfer() -> TestResult<()> {
     let router = GossipRouter::new(1024);
     let dir_a = tempdir().expect("node a dir");
     let dir_b = tempdir().expect("node b dir");
@@ -36,6 +38,7 @@ async fn node_wallet_daemons_execute_transfer() {
     config_a.pow_bits = 0x3f00ffff;
     config_a.miner_workers = 0;
     config_a.miner_seed = [1u8; 32];
+    config_a.min_tx_fee_per_weight = 0;
 
     let mut config_b = NodeConfig::with_db_path(dir_b.path().join("b.db"));
     config_b.api_addr = socket_addr(free_port());
@@ -44,6 +47,7 @@ async fn node_wallet_daemons_execute_transfer() {
     config_b.pow_bits = 0x3f00ffff;
     config_b.miner_workers = 0;
     config_b.miner_seed = [1u8; 32];
+    config_b.min_tx_fee_per_weight = 0;
 
     let handle_a = NodeService::start(config_a.clone(), router.clone()).expect("start node a");
     let handle_b = NodeService::start(config_b.clone(), router).expect("start node b");
@@ -139,12 +143,18 @@ async fn node_wallet_daemons_execute_transfer() {
     assert_ne!(alice_after, alice_before);
     assert!(bob_after >= 25);
 
-    handle_a.shutdown().await;
-    handle_b.shutdown().await;
-    api_task_a.abort();
-    api_task_b.abort();
     drop_rpc_client(alice_client).await;
     drop_rpc_client(bob_client).await;
+    api_task_a.abort();
+    api_task_b.abort();
+    let _ = api_task_a.await;
+    let _ = api_task_b.await;
+    sleep(Duration::from_millis(100)).await;
+
+    handle_a.shutdown().await?;
+    handle_b.shutdown().await?;
+
+    Ok(())
 }
 
 fn free_port() -> u16 {

@@ -1,10 +1,9 @@
-import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { ActionRunPage } from './pages/ActionRunPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { WalletPage } from './pages/WalletPage';
 import { MiningPage } from './pages/MiningPage';
 import { NetworkPage } from './pages/NetworkPage';
-import { NodePage } from './pages/NodePage';
 import { useNodeMetrics } from './hooks/useNodeData';
 import { ConnectionBadge } from './components/ConnectionBadge';
 import logo from './assets/hegemon-atlas-emblem.svg';
@@ -37,15 +36,13 @@ function App() {
           <nav className={styles.navLinks}>
             <NavLink to="/wallet">Wallet</NavLink>
             <NavLink to="/mining">Mining</NavLink>
-            <NavLink to="/node">Node</NavLink>
             <NavLink to="/network">Network</NavLink>
           </nav>
         </header>
         <Routes>
-          <Route path="/" element={<NodePage />} />
+          <Route path="/" element={<Navigate to="/wallet" replace />} />
           <Route path="/wallet" element={<WalletPage />} />
           <Route path="/mining" element={<MiningPage />} />
-          <Route path="/node" element={<NodePage />} />
           <Route path="/network" element={<NetworkPage />} />
           <Route path="/actions/:slug" element={<ActionRunPage />} />
           <Route path="*" element={<NotFoundPage />} />

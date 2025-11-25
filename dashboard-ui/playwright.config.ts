@@ -15,19 +15,12 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'python scripts/dashboard_service.py --host 127.0.0.1 --port 8001',
-      port: 8001,
-      reuseExistingServer: !process.env.CI,
-      cwd: '..',
-    },
-    {
-      command: 'VITE_DASHBOARD_SERVICE_URL=http://127.0.0.1:8001 vite --host 127.0.0.1 --port 4173',
+      command: 'VITE_FORCE_MOCK_DATA_INDICATOR=true vite --host 127.0.0.1 --port 4173',
       port: 4173,
       reuseExistingServer: !process.env.CI,
       cwd: './',
       env: {
         ...process.env,
-        VITE_DASHBOARD_SERVICE_URL: 'http://127.0.0.1:8001',
         VITE_FORCE_MOCK_DATA_INDICATOR: 'true',
       },
     },

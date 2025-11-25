@@ -10,9 +10,13 @@ use serde::{Deserialize, Serialize};
 use wallet::address::ShieldedAddress;
 use wallet::keys::RootSecret;
 
+use crate::chain_spec::ChainProfile;
+use crate::telemetry::TelemetryPosture;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeConfig {
     pub db_path: PathBuf,
+    pub peer_store_path: PathBuf,
     pub api_addr: SocketAddr,
     pub api_token: String,
     pub note_tree_depth: usize,
@@ -22,22 +26,32 @@ pub struct NodeConfig {
     pub miner_seed: [u8; 32],
     pub miner_payout_address: ShieldedAddress,
     pub pow_bits: u32,
+    pub chain_profile: ChainProfile,
     pub gossip_buffer: usize,
+    pub min_tx_fee_per_weight: u64,
+    pub max_block_weight: u64,
+    pub mempool_max_weight: u64,
     pub supported_versions: Vec<VersionBinding>,
     pub p2p_addr: SocketAddr,
     pub seeds: Vec<String>,
+    pub imported_peers: Vec<String>,
     pub max_peers: usize,
     pub nat_traversal: bool,
     pub relay: RelayConfig,
+    pub telemetry: TelemetryPosture,
 }
 
 impl NodeConfig {
     pub fn with_db_path(path: impl AsRef<Path>) -> Self {
+        let mut config = Self::default();
+        config.apply_db_path(path);
+        config
+    }
+
+    pub fn apply_db_path(&mut self, path: impl AsRef<Path>) {
         let db_path = path.as_ref().to_path_buf();
-        Self {
-            db_path,
-            ..Self::default()
-        }
+        self.db_path = db_path.clone();
+        self.peer_store_path = db_path.with_extension("peers");
     }
 
     pub fn miner_secret(&self) -> MlDsaSecretKey {
@@ -61,6 +75,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             db_path: PathBuf::from("node.db"),
+            peer_store_path: PathBuf::from("node.db.peers"),
             api_addr: "127.0.0.1:8080".parse().expect("loopback socket"),
             api_token: "devnet-token".to_string(),
             note_tree_depth: 32,
@@ -70,13 +85,19 @@ impl Default for NodeConfig {
             miner_seed: [7u8; 32],
             miner_payout_address: default_payout_address([7u8; 32]),
             pow_bits: DEFAULT_GENESIS_POW_BITS,
+            chain_profile: ChainProfile::Dev,
             gossip_buffer: 1024,
+            min_tx_fee_per_weight: 25,
+            max_block_weight: 1_000_000,
+            mempool_max_weight: 4_000_000,
             supported_versions: vec![DEFAULT_VERSION_BINDING],
             p2p_addr: "0.0.0.0:9000".parse().expect("p2p socket"),
             seeds: vec![],
+            imported_peers: vec![],
             max_peers: 64,
             nat_traversal: true,
             relay: RelayConfig::default(),
+            telemetry: TelemetryPosture::default(),
         }
     }
 }

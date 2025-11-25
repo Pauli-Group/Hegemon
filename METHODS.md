@@ -170,6 +170,12 @@ or mints more than the scheduled subsidy `R(height)` (50 · 10⁸ base units hal
 before the fork-choice comparison runs. This keeps the STARK circuit, MASP accounting, and the PoW header’s supply digest in
 lockstep.
 
+Substrate nodes wire the same enforcement path into block import. `consensus::substrate::import_pow_block` wraps the `PowConsensus`
+state machine with a Substrate-friendly `BlockOrigin` tag and returns an `ImportReceipt` that records the validated proof
+commitment, version commitment, and fork-choice result. Node services call this helper inside their block intake path so the
+version-commitment and STARK commitment checks run during import (not after the fact), and `/consensus/status` mirrors the latest
+receipt alongside miner telemetry to keep the Go benchmarking harness under `consensus/bench` in sync with runtime behavior.
+
 ---
 
 ## 3. The STARK arithmetization
@@ -482,7 +488,7 @@ where \(\text{domain}_{\text{merkle}}\) is a fixed field element.
 To have something specific in mind:
 
 * KEM: ML-KEM-768 (Kyber-768 equivalent) with \(|pk| \approx 1184\) bytes, \(|ct| \approx 1088\) bytes, 192-bit classical and roughly 96-bit post-quantum security.
-* Signature: ML-DSA-65xx (Dilithium-level) or category-3 equivalent with approximately 2–3 KB signatures and 1–2 KB public keys.
+* Signature: ML-DSA-65xx (Dilithium-level) or category-3 equivalent with approximately 2–3 KB signatures and 1–2 KB public keys. Runtime extrinsics and PoW seals reuse this scheme through `runtime::PqSignature`/`PqPublic`, hashing PQ public keys with BLAKE2 into SS58-prefix-42 AccountId32 values so address encoding stays stable while signatures grow.
 
 We do not need signatures inside the shielded circuit, only for block authentication and possibly transaction-level authentication.
 
@@ -773,7 +779,9 @@ Module layout:
 * `crypto::ml_dsa` – exposes `MlDsaSecretKey`, `MlDsaPublicKey`, and `MlDsaSignature` with `SigningKey`/`VerifyKey` trait implementations. Secret keys derive public keys by hashing with domain tag `ml-dsa-pk`, and signatures deterministically expand `ml-dsa-signature || pk || message` to 3293 bytes.
 * `crypto::slh_dsa` – mirrors the ML-DSA interface but with SLH-DSA key lengths (32 B public, 64 B secret, 17088 B signatures).
 * `crypto::ml_kem` – wraps Kyber-like encapsulation with `MlKemKeyPair`, `MlKemPublicKey`, and `MlKemCiphertext`. Encapsulation uses a seed to deterministically derive ciphertexts and shared secrets, while decapsulation recomputes the shared secret from stored public bytes.
-* `crypto::hashes` – contains `sha256`, `blake3_256`, a Poseidon-style permutation over the Goldilocks prime, and helpers `commit_note`, `derive_prf_key`, and `derive_nullifier` that apply the design’s domain tags (`"c"`, `"nk"`, `"nf"`).
+* `crypto::hashes` – contains `sha256`, `sha3_256`, `blake3_256`, a Poseidon-style permutation over the Goldilocks prime, and helpers `commit_note`, `derive_prf_key`, and `derive_nullifier` (defaulting to BLAKE3 with SHA3 fallbacks) that apply the design’s domain tags (`"c"`, `"nk"`, `"nf"`). PQ address and note hashes now normalize on BLAKE3-256 by default while keeping SHA3-256 as an opt-in override for circuits that still expect it.
+* `pallet_identity` – stores session keys as a `SessionKey` enum (legacy AuthorityId, Ed25519-only, PQ-only Dilithium/Falcon, or hybrid). The runtime migration wraps any pre-upgrade `AuthorityId` into `SessionKey::Legacy` so existing operators inherit their keys; new registrations can supply PQ-only or hybrid bundles through the same `register_did` call without a one-off rotate extrinsic.
+* `pallet_attestations` / `pallet_settlement` – persist `StarkVerifierParams` in storage with governance-controlled setters and runtime-upgrade initialization so on-chain STARK verification remains aligned with PQ hash choices. The runtime seeds both pallets with Blake3 hashing, 28 FRI queries, a 4× blowup factor, and 128-bit security, and governance can migrate to new parameters via the `set_verifier_params` call without redeploying code.
 
 The crate’s `tests/crypto_vectors.rs` fixture loads `tests/vectors.json` to assert byte-for-byte deterministic vectors covering:
 
@@ -828,8 +836,8 @@ All jobs operate on Ubuntu runners with Rust stable, Go 1.21, and clang-format i
 
 Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) whenever you need a reproducible two-party demo:
 
-1. Launch two `node` binaries with dedicated API ports and `pow_bits = 0x3f00ffff` so the embedded miners immediately grind blocks. The reward schedule in `consensus/src/reward.rs` (`INITIAL_SUBSIDY = 50 · 10⁸`, halving every `840,000` blocks) and the header’s `supply_digest` give you the guard rails to check `/blocks/latest` against.
-2. Start the FastAPI proxy (`scripts/dashboard_service.py`) and the dashboard UI (`dashboard-ui/`). `/wallet` exposes shielded balances, committed notes, and transaction history; `/network` charts hash rate, mempool depth, stale share rate, and the recent block/transaction feed.
+1. Launch two `hegemon` binaries with dedicated API ports and `pow_bits = 0x3f00ffff` so the embedded miners immediately grind blocks. Every PoW header must carry the seal (no “empty” difficulty), and timestamps must pass both the 11-block median-time-past check and the `+90s` future-skew clamp before a candidate is accepted. The reward schedule in `consensus/src/reward.rs` (`INITIAL_SUBSIDY = 50 · 10⁸`, halving every `210_000` blocks; block 0 mints 0) plus the 128-bit `supply_digest = parent + minted + fees − burns` accumulator give you the guard rails to check `/blocks/latest` against. Difficulty retargets every 120 blocks using the clamped timespan (×¼…×4) so reorgs cannot skew `pow_bits` away from the deterministic schedule.
+2. Serve the embedded dashboard directly from the node (`hegemon start` already mounts the assets at the API address). `/wallet` exposes shielded balances, committed notes, and transaction history; `/network` charts hash rate, mempool depth, stale share rate, and the recent block/transaction feed.
 3. Initialize stores with `wallet init`, then run `wallet daemon` against each node so `WalletSyncEngine` can page through `/wallet/{notes,commitments,ciphertexts,nullifiers}` plus `/blocks/latest`, persisting commitments locally before every poll.
 4. Fund Alice (using the deterministic faucet in `tests/node_wallet_daemon.rs` or a bespoke devnet faucet), run `wallet send` with Bob’s Bech32 address, and wait for both daemons to mark the nullifiers as mined.
 

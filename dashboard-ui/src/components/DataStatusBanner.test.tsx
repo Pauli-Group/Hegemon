@@ -10,7 +10,7 @@ afterEach(() => {
 });
 
 describe('DataStatusBanner', () => {
-  it('renders a CTA when mock data is in use', () => {
+  it('renders a CTA when offline data is in use', () => {
     render(
       <MemoryRouter>
         <DataStatusBanner
@@ -22,11 +22,11 @@ describe('DataStatusBanner', () => {
     );
 
     expect(screen.getByRole('status', { name: /network telemetry feed/i })).toBeInTheDocument();
-    expect(screen.getByText(/mock data in use/i)).toBeVisible();
+    expect(screen.getByText(/offline data in use/i)).toBeVisible();
     expect(screen.getByRole('link', { name: /join a network/i })).toHaveAttribute('href', '/network');
   });
 
-  it('shows the error variant without a CTA when live data errors', () => {
+  it('shows the error variant without a CTA when live responses error', () => {
     render(
       <MemoryRouter>
         <DataStatusBanner
@@ -43,7 +43,7 @@ describe('DataStatusBanner', () => {
   it('is dismissible for accessibility and repeated visits', () => {
     render(
       <MemoryRouter>
-        <DataStatusBanner label="Miner status feed" result={mockResult} cta={<Link to="/node">Configure a node</Link>} />
+        <DataStatusBanner label="Miner status feed" result={mockResult} cta={<Link to="/wallet">Open wallet</Link>} />
       </MemoryRouter>,
     );
 

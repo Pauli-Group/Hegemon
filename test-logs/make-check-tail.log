@@ -1,0 +1,50 @@
+test chain_specs_cover_pow_and_telemetry_defaults ... ok
+test pow_identity_attestation_settlement_flow ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test duplicate_nullifiers_trigger_error ... ok
+test block_proof_updates_state_and_verifies ... ok
+test root_ordering_is_enforced ... ok
+test mixed_versions_require_declared_keys ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 1 test
+test mined_block_gossips_between_nodes ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.72s
+
+
+running 3 tests
+test mempool_survives_restart ... FAILED
+test crash_replay_restores_state ... FAILED
+test short_reorg_prefers_longer_chain ... FAILED
+
+failures:
+
+---- mempool_survives_restart stdout ----
+Error: Storage(Io(Custom { kind: Other, error: "could not acquire lock on \"/tmp/.tmpXBPv48/mempool.db/db\": Os { code: 11, kind: WouldBlock, message: \"Resource temporarily unavailable\" }" }))
+
+---- crash_replay_restores_state stdout ----
+Error: Storage(Io(Custom { kind: Other, error: "could not acquire lock on \"/tmp/.tmpJ7vmQo/node.db/db\": Os { code: 11, kind: WouldBlock, message: \"Resource temporarily unavailable\" }" }))
+
+---- short_reorg_prefers_longer_chain stdout ----
+Error: Consensus(ValidatorSetMismatch)
+
+
+failures:
+    crash_replay_restores_state
+    mempool_survives_restart
+    short_reorg_prefers_longer_chain
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+

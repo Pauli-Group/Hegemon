@@ -2,7 +2,8 @@ use std::net::{SocketAddr, TcpListener};
 use std::time::Duration;
 
 use network::{
-    GossipMessage, GossipRouter, NatTraversalConfig, P2PService, PeerIdentity, RelayConfig,
+    GossipMessage, GossipRouter, NatTraversalConfig, P2PService, PeerIdentity, PeerStore,
+    PeerStoreConfig, RelayConfig,
 };
 use node::NodeService;
 use node::config::NodeConfig;
@@ -16,6 +17,8 @@ use transaction_circuit::note::{InputNoteWitness, NoteData, OutputNoteWitness};
 use transaction_circuit::proof::prove;
 use transaction_circuit::witness::TransactionWitness;
 use wallet::TransactionBundle;
+
+const EASY_POW_BITS: u32 = 0x3f00ffff;
 
 fn p2p_addr() -> SocketAddr {
     TcpListener::bind("127.0.0.1:0")
@@ -84,14 +87,16 @@ async fn nodes_share_blocks_over_gossip() {
     let mut config_a = NodeConfig::with_db_path(dir_a.path().join("a.db"));
     config_a.api_addr = "127.0.0.1:0".parse().unwrap();
     config_a.note_tree_depth = 8;
-    config_a.pow_bits = 0x1f00ffff;
+    config_a.pow_bits = EASY_POW_BITS;
     config_a.miner_seed = [1u8; 32];
+    config_a.min_tx_fee_per_weight = 0;
 
     let mut config_b = NodeConfig::with_db_path(dir_b.path().join("b.db"));
     config_b.api_addr = "127.0.0.1:0".parse().unwrap();
     config_b.note_tree_depth = 8;
-    config_b.pow_bits = 0x1f00ffff;
+    config_b.pow_bits = EASY_POW_BITS;
     config_b.miner_seed = [2u8; 32];
+    config_b.min_tx_fee_per_weight = 0;
 
     let handle_a = NodeService::start(config_a, router.clone()).expect("start node a");
     let handle_b = NodeService::start(config_b, router).expect("start node b");
@@ -130,8 +135,14 @@ async fn nodes_share_blocks_over_gossip() {
         .await
         .expect("block commitment");
 
-    handle_a.shutdown().await;
-    handle_b.shutdown().await;
+    handle_a
+        .shutdown()
+        .await
+        .expect("shutdown node a after propagation");
+    handle_b
+        .shutdown()
+        .await
+        .expect("shutdown node b after propagation");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -150,25 +161,30 @@ async fn p2p_nodes_propagate_mined_block() {
     let mut config_a = NodeConfig::with_db_path(dir_a.path().join("p2p-a.db"));
     config_a.api_addr = "127.0.0.1:0".parse().unwrap();
     config_a.note_tree_depth = 8;
-    config_a.pow_bits = 0x3f00ffff;
+    config_a.pow_bits = EASY_POW_BITS;
     config_a.miner_seed = [3u8; 32];
     config_a.p2p_addr = p2p_addr_a;
 
     let mut config_b = NodeConfig::with_db_path(dir_b.path().join("p2p-b.db"));
     config_b.api_addr = "127.0.0.1:0".parse().unwrap();
     config_b.note_tree_depth = 8;
-    config_b.pow_bits = 0x3f00ffff;
+    config_b.pow_bits = EASY_POW_BITS;
     config_b.miner_workers = 0;
     config_b.miner_seed = config_a.miner_seed;
     config_b.p2p_addr = p2p_addr_b;
     config_b.seeds = vec![p2p_addr_a.to_string()];
 
+    let peer_store_a = PeerStore::new(PeerStoreConfig::with_path(dir_a.path().join("peers.bin")));
+    let peer_store_b = PeerStore::new(PeerStoreConfig::with_path(dir_b.path().join("peers.bin")));
+
     let p2p_a = P2PService::new(
         PeerIdentity::generate(b"p2p-node-a"),
         config_a.p2p_addr,
         vec![],
+        Vec::new(),
         gossip_handle_a.clone(),
         config_a.max_peers,
+        peer_store_a,
         RelayConfig::default(),
         NatTraversalConfig::disabled(config_a.p2p_addr),
     );
@@ -176,8 +192,10 @@ async fn p2p_nodes_propagate_mined_block() {
         PeerIdentity::generate(b"p2p-node-b"),
         config_b.p2p_addr,
         config_b.seeds.clone(),
+        Vec::new(),
         gossip_handle_b.clone(),
         config_b.max_peers,
+        peer_store_b,
         RelayConfig::default(),
         NatTraversalConfig::disabled(config_b.p2p_addr),
     );
@@ -249,8 +267,14 @@ async fn p2p_nodes_propagate_mined_block() {
         .await
         .expect("node b applied block via p2p gossip");
 
-    handle_a.shutdown().await;
-    handle_b.shutdown().await;
+    handle_a
+        .shutdown()
+        .await
+        .expect("shutdown node a after gossip");
+    handle_b
+        .shutdown()
+        .await
+        .expect("shutdown node b after gossip");
     p2p_task_a.abort();
     p2p_task_b.abort();
 }
@@ -281,5 +305,5 @@ async fn miner_mines_coinbase_without_transactions() {
         .await
         .expect("coinbase block mined");
 
-    handle.shutdown().await;
+    handle.shutdown().await.expect("shutdown miner-only node");
 }

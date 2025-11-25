@@ -12,7 +12,7 @@ while preserving the project’s STARK-based execution model and nullifier accou
 | Difficulty window (`RETARGET_WINDOW`) | 120 blocks | Canonical window for recalculating the PoW target. |
 | Max timestamp skew | +90 seconds | Reject blocks whose timestamp exceeds local time + 90 s. |
 | Median-time-past window | 11 blocks | Block timestamp must be strictly greater than the median of the past 11 headers. |
-| Target encoding | Compact `pow_bits` (Bitcoin-style) | 1-byte exponent + 3-byte mantissa; `target = mantissa × 256^(exponent−3)`. |
+| Target encoding | Compact `pow_bits` (Bitcoin-style) | 1-byte exponent + 3-byte mantissa; `target = mantissa × 256^(exponent−3)`. Mantissa MUST be non-zero and must fit within 3 bytes. |
 | Work metric | `work = floor((2^256 − 1) / (target + 1))` | Used for cumulative-work comparison. |
 | Finality guidance | ≥ 120 confirmations for economic finality under ≤30% adversarial hash power. |
 
@@ -32,7 +32,7 @@ Each block header contains:
 7. `version_commitment`
 8. `fee_commitment`
 9. `supply_digest` (little-endian 128-bit running total of net issuance)
-10. Optional PoW seal containing `pow_bits` (compact target) and a 256-bit `nonce`
+10. Mandatory PoW seal containing `pow_bits` (compact target) and a 256-bit `nonce`
 
 A block is valid if `sha256d(header_without_proof) ≤ target(pow_bits)` where `target()` expands the compact encoding above.
 
@@ -42,11 +42,11 @@ Before propagating or extending a block, miners and full nodes MUST execute the 
 
 1. **Header integrity**
    - Confirm `height = parent.height + 1` and `parent_hash` matches the canonical parent.
-   - Check that `timestamp` > median time past (11-window) and `timestamp ≤ local_clock + 90s`.
-   - Verify `pow_bits` encodes a target within the permitted global min/max and that `sha256d(header) ≤ target`.
+   - Check that `timestamp` > median time past (11-window) and `timestamp ≤ local_clock + 90s`. The future-skew bound is enforced against wall-clock milliseconds and invalid blocks are rechecked when the clock advances.
+   - Verify `pow_bits` encodes a target within the permitted global min/max and that `sha256d(header) ≤ target`. A zero mantissa is invalid and the seal MUST exist on every PoW header (including reorg candidates).
 2. **Difficulty retarget consistency**
    - For blocks where `height mod RETARGET_WINDOW = 0`, recompute the expected target from the prior 120 blocks (see
-     [Difficulty Adjustment](#difficulty-adjustment)). Reject mismatches.
+     [Difficulty Adjustment](#difficulty-adjustment)). Reject mismatches. For intermediate heights, the parent’s `pow_bits` must be reused verbatim; drift is not allowed.
 3. **STARK proof commitments**
    - Feed the block’s execution trace into the STARK verifier. Confirm that the commitment matches the supplied
      `proof_commitment` and that the proof enforces the state transition for every transaction in the block.
@@ -57,8 +57,9 @@ Before propagating or extending a block, miners and full nodes MUST execute the 
    - Every PoW block must include a coinbase commitment describing how many native units were minted, how many fees were
      aggregated, and any explicit burns. This commitment can be a dedicated transaction referenced by index or a standalone
      `balance_tag`, but it must exist so the MASP circuit sees the same data. Nodes recompute the running `supply_digest`
-     as `parent_digest + minted + fees − burns` and reject blocks that exceed the scheduled subsidy or whose digest fails to
-     match the header field.
+     as `parent_digest + minted + fees − burns`, enforcing a 128-bit, little-endian accumulator that rejects underflow. Blocks
+     are invalid if the coinbase is missing, the transaction index is out of bounds, the commitment omits the balance tag, or
+     the mint exceeds the scheduled subsidy limit at that height.
 6. **State commitment**
    - Recompute the post-state Merkle root (notes, commitments, nullifiers). The resulting `state_root` and `nullifier_root`
      must match the header values.
@@ -79,7 +80,9 @@ Let:
 - `t_actual = timestamp_last − timestamp_window_start`
 
 The provisional new target is `target_prov = target_prev × (t_actual / (W × T_target))`. Clamp this value to within `¼ × target_prev`
-and `4 × target_prev` to avoid extreme swings. The final `pow_bits` equals `encode_compact(clamp(target_prov))`.
+and `4 × target_prev` to avoid extreme swings; implementations MUST treat the clamped span `adjusted_timespan = clamp(t_actual, ¼ × W × T_target, 4 × W × T_target)` as the only input to the retarget equation so reorgs cannot replay outlier timestamps. The final `pow_bits` equals `encode_compact(clamp(target_prov))`.
+
+Nodes reuse the parent target for all intermediate heights so that headers between retarget boundaries share the exact same difficulty encoding.
 
 Implementations MUST track the window start timestamp so `t_actual` is deterministic even during reorgs. Because the target is
 a header field, honest nodes will reject any block whose encoded difficulty disagrees with the deterministic computation.

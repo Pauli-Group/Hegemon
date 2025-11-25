@@ -1,0 +1,100 @@
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2021"
+authors = ["Synthetic Hegemonic Currency Contributors"]
+
+[dependencies]
+codec = { package = "parity-scale-codec", version = "3", features = ["derive"], default-features = false }
+scale-info = { version = "2", features = ["derive"], default-features = false }
+
+sp-core = { version = "38.1.0", default-features = false }
+sp-runtime = { version = "44.0.0", default-features = false }
+sp-std = { version = "14.0.0", default-features = false }
+sp-io = { version = "43.0.0", default-features = false }
+sp-version = { version = "42.0.0", default-features = false }
+sp-api = { version = "39.0.0", default-features = false }
+sp-offchain = { version = "39.0.0", default-features = false }
+sp-application-crypto = { version = "43.0.0", default-features = false }
+sp-staking = { version = "41.0.0", default-features = false }
+
+crypto = { package = "synthetic-crypto", path = "../crypto", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive"], optional = true }
+
+frame-support = { version = "43.0.0", default-features = false }
+frame-system = { version = "43.0.0", default-features = false }
+frame-executive = { version = "43.0.0", default-features = false }
+frame-benchmarking = { version = "43.0.0", default-features = false, optional = true }
+pallet-timestamp = { workspace = true, default-features = false }
+pallet-session = { version = "43.0.0", default-features = false, features = ["historical"] }
+pallet-balances = { version = "44.0.0", default-features = false }
+pallet-transaction-payment = { version = "43.0.0", default-features = false }
+pallet-collective = { version = "43.0.0", default-features = false }
+pallet-membership = { version = "43.0.0", default-features = false }
+pallet-treasury = { version = "42.0.0", default-features = false }
+pallet-sudo = { version = "43.0.0", default-features = false }
+
+pallet-identity = { path = "../pallets/identity", default-features = false }
+pallet-attestations = { path = "../pallets/attestations", default-features = false }
+pallet-asset-registry = { path = "../pallets/asset-registry", default-features = false }
+pallet-settlement = { path = "../pallets/settlement", default-features = false }
+pallet-oracles = { path = "../pallets/oracles", default-features = false }
+pallet-fee-model = { path = "../pallets/fee-model", default-features = false }
+pallet-feature-flags = { path = "../pallets/feature-flags", default-features = false }
+pallet-observability = { path = "../pallets/observability", default-features = false }
+
+[dev-dependencies]
+sp-runtime = { version = "44.0.0", default-features = false, features = ["std"] }
+frame-support = { version = "43.0.0", default-features = false, features = ["std"] }
+frame-system = { version = "43.0.0", default-features = false, features = ["std"] }
+sp-io = { version = "43.0.0", default-features = false, features = ["std"] }
+
+[features]
+default = ["std"]
+std = [
+    "codec/std",
+    "scale-info/std",
+    "sp-core/std",
+    "sp-runtime/std",
+    "sp-std/std",
+    "sp-io/std",
+    "sp-version/std",
+    "sp-api/std",
+    "sp-offchain/std",
+    "sp-application-crypto/std",
+    "sp-staking/std",
+    "frame-support/std",
+    "frame-system/std",
+    "frame-executive/std",
+    "frame-benchmarking?/std",
+    "pallet-timestamp/std",
+    "pallet-session/std",
+    "pallet-balances/std",
+    "pallet-transaction-payment/std",
+    "pallet-collective/std",
+    "pallet-membership/std",
+    "pallet-treasury/std",
+    "pallet-sudo/std",
+    "pallet-identity/std",
+    "pallet-attestations/std",
+    "pallet-asset-registry/std",
+    "pallet-settlement/std",
+    "pallet-oracles/std",
+    "pallet-fee-model/std",
+    "pallet-feature-flags/std",
+    "pallet-observability/std",
+    "crypto/std",
+    "serde/std",
+]
+runtime-tests = []
+
+runtime-benchmarks = [
+    "frame-benchmarking",
+    "pallet-collective/runtime-benchmarks",
+    "pallet-attestations/runtime-benchmarks",
+    "pallet-settlement/runtime-benchmarks",
+    "pallet-oracles/runtime-benchmarks",
+    "pallet-feature-flags/runtime-benchmarks",
+    "pallet-observability/runtime-benchmarks",
+    "pallet-fee-model/runtime-benchmarks",
+]
