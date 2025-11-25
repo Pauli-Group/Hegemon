@@ -4,7 +4,7 @@ use std::time::Duration;
 use network::{
     NatTraversalConfig, P2PService, PeerIdentity, PeerStore, PeerStoreConfig, RelayConfig,
 };
-use node::{config::NodeConfig, NodeService};
+use hegemon_node::{config::NodeConfig, NodeService};
 use tokio::time::{sleep, timeout};
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error>>;

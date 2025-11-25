@@ -1,7 +1,9 @@
 [package]
-name = "node"
+name = "hegemon-node"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+authors = ["Hegemon Team"]
+description = "Hegemon PQ-secure blockchain node"
 
 [dependencies]
 anyhow = "1.0"
@@ -38,9 +40,31 @@ rpassword = "7.4.0"
 atty = "0.2.14"
 url = "2"
 
+# Substrate SDK dependencies (optional, enabled with "substrate" feature)
+# Note: These use crates.io versions. For production, consider switching to
+# git dependencies from polkadot-sdk for better version alignment.
+sc-cli = { version = "0.47.0", optional = true }
+sc-service = { version = "0.46.0", optional = true }
+sc-chain-spec = { version = "38.0.0", optional = true }
+
+jsonrpsee = { version = "0.24", features = ["server", "macros"], optional = true }
+
 [features]
 default = []
 test-utils = []
+
+# Enable Substrate-based node implementation (Phase 1 scaffold)
+# 
+# This provides basic CLI scaffolding. Full implementation requires:
+# - Aligned polkadot-sdk dependencies (use git deps)
+# - Runtime with WASM binary and runtime APIs
+# - sc-consensus-pow for PoW consensus
+substrate = [
+    "dep:sc-cli",
+    "dep:sc-service",
+    "dep:sc-chain-spec",
+    "dep:jsonrpsee",
+]
 
 [dev-dependencies]
 rand = "0.8"
@@ -49,6 +73,13 @@ block-circuit = { path = "../circuits/block" }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 tokio-tungstenite = "0.21"
 
+# Original custom node binary
 [[bin]]
 name = "hegemon"
 path = "src/bin/node.rs"
+
+# Substrate-based node binary
+[[bin]]
+name = "hegemon-node"
+path = "src/bin/substrate_node.rs"
+required-features = ["substrate"]

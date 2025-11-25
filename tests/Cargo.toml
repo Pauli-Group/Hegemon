@@ -12,7 +12,7 @@ crypto = { path = "../crypto", package = "synthetic-crypto" }
 network = { path = "../network" }
 wallet = { path = "../wallet" }
 protocol-versioning = { path = "../protocol/versioning" }
-node = { path = "../node", features = ["test-utils"] }
+hegemon-node = { path = "../node", features = ["test-utils"] }
 consensus = { path = "../consensus" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 tempfile = "3"
