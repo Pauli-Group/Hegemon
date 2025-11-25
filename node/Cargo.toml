@@ -42,6 +42,7 @@ mime_guess = "2.0"
 rpassword = "7.4.0"
 atty = "0.2.14"
 url = "2"
+base64 = "0.22"
 
 # Substrate SDK dependencies (optional, enabled with "substrate" feature)
 # Note: These use crates.io versions. For production, consider switching to

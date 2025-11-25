@@ -23,6 +23,14 @@
 //! - ML-DSA-65 peer authentication
 //! - Integration with sc-network (pending aligned polkadot-sdk)
 //!
+//! # Phase 4 Status
+//!
+//! This phase implements custom RPC extensions:
+//! - hegemon_miningStatus, hegemon_startMining, hegemon_stopMining
+//! - hegemon_walletNotes, hegemon_walletCommitments, hegemon_walletCiphertexts
+//! - hegemon_generateProof, hegemon_submitTransaction
+//! - hegemon_consensusStatus, hegemon_telemetry, hegemon_storageFootprint
+//!
 //! Full completion requires aligned polkadot-sdk git dependencies.
 
 pub mod chain_spec;
@@ -34,4 +42,5 @@ pub mod service;
 // Re-export common types
 pub use chain_spec::ChainSpec;
 pub use network::{PqNetworkConfig, PqNetworkKeypair};
+pub use rpc::{HegemonApiServer, WalletApiServer, HegemonService, MiningHandle, WalletService};
 pub use service::{new_full, new_partial, FullComponents, MiningConfig, PartialComponents};

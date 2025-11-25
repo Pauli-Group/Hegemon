@@ -3183,6 +3183,7 @@ dependencies = [
  "atty",
  "axum",
  "axum-server",
+ "base64 0.22.1",
  "bincode",
  "block-circuit",
  "clap",
