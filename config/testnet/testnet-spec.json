@@ -1,0 +1,26 @@
+{
+  "name": "Hegemon Testnet",
+  "id": "hegemon_testnet",
+  "chainType": "Live",
+  "bootNodes": [],
+  "telemetryEndpoints": [],
+  "protocolId": "hegemon",
+  "properties": {
+    "tokenSymbol": "HGM",
+    "tokenDecimals": 12,
+    "ss58Format": 42
+  },
+  "consensusEngine": "blake3pow",
+  "genesis": {
+    "raw": {
+      "top": {},
+      "childrenDefault": {}
+    }
+  },
+  "extensions": {
+    "powBits": 24,
+    "requirePq": true,
+    "targetBlockTimeMs": 10000
+  },
+  "_comment": "This is a placeholder chain spec. Run 'hegemon-node build-spec --chain=testnet' to generate the actual spec."
+}

@@ -31,7 +31,8 @@
 - [x] Wallet migrated to sc-rpc (Phase 5 complete - SubstrateRpcClient, AsyncWalletSyncEngine, CLI commands)
 - [x] Dashboard migrated to Substrate WS (Phase 6 complete - Polkadot.js API, SubstrateApiProvider, useSubstrateData hooks)
 - [x] E2E test suite passing (Phase 7 complete - mining_integration.rs, p2p_pq.rs, wallet_e2e.rs, substrate.spec.ts)
-- [ ] Testnet deployed
+- [x] Testnet deployment configured (Phase 8 in progress - docker-compose.testnet.yml, Prometheus/Grafana, soak-test.sh)
+- [ ] Testnet deployed and validated
 - [ ] Electron desktop app packaged [OPTIONAL]
 
 ---
@@ -1090,6 +1091,21 @@ test.describe('Dashboard with Substrate backend', () => {
 
 **Goal**: Deploy Substrate-based testnet and validate.
 
+**Status**: ✅ **CONFIGURATION COMPLETE** (2025-11-25)
+
+**Files Created**:
+- `docker-compose.testnet.yml` - 3-node testnet with mining, dashboard, Prometheus, Grafana
+- `Dockerfile.substrate` - Substrate-based node container image
+- `dashboard-ui/Dockerfile` - Dashboard production container
+- `config/testnet/testnet-spec.json` - Placeholder chain specification
+- `config/testnet/README.md` - Deployment documentation
+- `config/monitoring/prometheus.yml` - Prometheus scrape configuration
+- `config/monitoring/grafana/provisioning/datasources/prometheus.yml` - Grafana datasource
+- `config/monitoring/grafana/provisioning/dashboards/default.yml` - Dashboard provisioning
+- `config/monitoring/grafana/dashboards/hegemon-overview.json` - Grafana dashboard
+- `scripts/generate-testnet-keys.sh` - Boot node key generation
+- `scripts/soak-test.sh` - Long-duration stability test
+
 **Step-by-Step Commands**:
 ```bash
 # Step 8.1: Build release binary
@@ -1263,6 +1279,15 @@ echo "Fork count: $fork_count"
 ```
 
 **Validation Checklist**:
+- [x] Create: `docker-compose.testnet.yml` with 3 boot nodes, dashboard, monitoring
+- [x] Create: `Dockerfile.substrate` for Substrate-based node
+- [x] Create: `dashboard-ui/Dockerfile` for production dashboard
+- [x] Create: Prometheus and Grafana monitoring configuration
+- [x] Create: `scripts/generate-testnet-keys.sh` for key generation
+- [x] Create: `scripts/soak-test.sh` for stability testing
+- [x] Create: `config/testnet/README.md` deployment documentation
+- [ ] Build: `docker build -f Dockerfile.substrate -t hegemon/node:latest .`
+- [ ] Generate: Chain spec with `hegemon-node build-spec --chain=testnet`
 - [ ] Run: `docker-compose -f docker-compose.testnet.yml up -d` → all containers healthy
 - [ ] Verify: `curl localhost:9944 -d '{"jsonrpc":"2.0","method":"system_health","id":1}'` → syncing: false
 - [ ] Verify: All 3 boot nodes show 2 peers each
