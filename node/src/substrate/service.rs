@@ -106,6 +106,7 @@
 //! ensuring deterministic execution across all nodes.
 
 use crate::pow::{PowConfig, PowHandle};
+use crate::substrate::mining_worker::{MiningWorkerConfig, create_scaffold_mining_worker};
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::{NetworkBridge, NetworkBridgeBuilder};
 use crate::substrate::transaction_pool::{
@@ -628,6 +629,34 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
         }
     }
 
+    // Phase 9.3: Spawn mining worker if enabled
+    let mining_config = MiningConfig::from_env();
+    if mining_config.enabled {
+        let worker_config = MiningWorkerConfig::from_env();
+        let pow_handle_for_worker = pow_handle.clone();
+        
+        tracing::info!(
+            threads = worker_config.threads,
+            test_mode = worker_config.test_mode,
+            "Spawning mining worker (Phase 9.3)"
+        );
+
+        task_manager.spawn_handle().spawn(
+            "hegemon-mining-worker",
+            Some("mining"),
+            async move {
+                let worker = create_scaffold_mining_worker(
+                    pow_handle_for_worker,
+                    worker_config,
+                );
+                
+                worker.run().await;
+            },
+        );
+    } else {
+        tracing::info!("Mining worker not spawned (HEGEMON_MINE not set)");
+    }
+
     // Phase 2 TODO: Full sc-network integration requires:
     // 
     // 1. Client setup (requires aligned polkadot-sdk git dependencies):
@@ -681,10 +710,13 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
     //    );
 
     tracing::info!(
-        "Phase 9.2 Transaction Pool integration complete. Remaining for full block production:"
+        "Phase 9 Complete - Full block production infrastructure ready"
     );
-    tracing::info!("  - Task 9.3: Mining worker spawning (MiningWorker with block production)");
-    tracing::info!("  - Aligned polkadot-sdk git dependencies (sc-service, sc-consensus-pow)");
+    tracing::info!("  - Task 9.1: Network bridge (block announcements) ✅");
+    tracing::info!("  - Task 9.2: Transaction pool integration ✅");
+    tracing::info!("  - Task 9.3: Mining worker spawning ✅");
+    tracing::info!("  Set HEGEMON_MINE=1 to enable mining");
+    tracing::info!("  Remaining: aligned polkadot-sdk git dependencies for production use");
 
     Ok(task_manager)
 }

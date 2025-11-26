@@ -7,6 +7,7 @@
 //! - CLI commands
 //! - PQ-secure network transport (Phase 3)
 //! - Network bridge for block/tx propagation (Phase 9)
+//! - Mining worker for block production (Phase 9.3)
 //!
 //! # Phase 2 Status
 //!
@@ -35,14 +36,15 @@
 //! # Phase 9 Status
 //!
 //! This phase implements full block production:
-//! - NetworkBridge for routing PQ network events to block import
-//! - Transaction pool integration for tx propagation
-//! - Mining worker spawning for block production
+//! - Task 9.1: NetworkBridge for routing PQ network events to block import ✅
+//! - Task 9.2: Transaction pool integration for tx propagation ✅
+//! - Task 9.3: Mining worker spawning for block production ✅
 //!
 //! Full completion requires aligned polkadot-sdk git dependencies.
 
 pub mod chain_spec;
 pub mod command;
+pub mod mining_worker;
 pub mod network;
 pub mod network_bridge;
 pub mod rpc;
@@ -51,6 +53,11 @@ pub mod transaction_pool;
 
 // Re-export common types
 pub use chain_spec::ChainSpec;
+pub use mining_worker::{
+    BlockBroadcaster, BlockTemplate, ChainStateProvider, MiningWorker, MiningWorkerConfig,
+    MiningWorkerStats, MockBlockBroadcaster, MockChainStateProvider, NetworkBridgeBroadcaster,
+    create_network_mining_worker, create_scaffold_mining_worker,
+};
 pub use network::{PqNetworkConfig, PqNetworkKeypair};
 pub use network_bridge::{
     BlockAnnounce, BlockState, IncomingMessage, NetworkBridge, NetworkBridgeBuilder,

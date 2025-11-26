@@ -3400,6 +3400,7 @@ dependencies = [
  "axum-server",
  "base64 0.22.1",
  "bincode",
+ "blake3",
  "block-circuit",
  "clap",
  "consensus",
