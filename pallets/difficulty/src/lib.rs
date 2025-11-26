@@ -53,6 +53,7 @@ pub use pallet::*;
 #[frame_support::pallet]
 pub mod pallet {
     use frame_support::pallet_prelude::*;
+    use frame_support::weights::Weight;
     use frame_system::pallet_prelude::*;
     use sp_core::U256;
     use sp_runtime::traits::Saturating;
@@ -83,9 +84,8 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::config]
-    pub trait Config: frame_system::Config + pallet_timestamp::Config<Moment = Moment> {
-        /// The overarching event type.
-        type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+    pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> + pallet_timestamp::Config<Moment = Moment> {
+        // No additional config required - RuntimeEvent bound is in the frame_system::Config bound above
     }
 
     /// Current difficulty value as U256
@@ -189,7 +189,7 @@ pub mod pallet {
         /// This bypasses the normal retarget schedule and sets difficulty directly.
         /// Only callable by root origin.
         #[pallet::call_index(0)]
-        #[pallet::weight(10_000)]
+        #[pallet::weight(Weight::from_parts(10_000, 0))]
         pub fn force_set_difficulty(
             origin: OriginFor<T>,
             new_difficulty: U256,

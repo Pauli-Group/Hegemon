@@ -59,6 +59,12 @@
   - [x] Task 9.1: sc-network bridge integration (block announcements)
   - [x] Task 9.2: Transaction pool integration (tx propagation)
   - [x] Task 9.3: Mining worker spawning (block production)
+- [ ] **Production Readiness (Phase 10)** - Full Substrate integration for production use
+  - [ ] Task 10.1: Polkadot-SDK dependency alignment
+  - [ ] Task 10.2: Full client integration (TFullClient, WasmExecutor, TFullBackend)
+  - [ ] Task 10.3: Block import pipeline (PowBlockImport, import_queue, WASM execution)
+  - [ ] Task 10.4: Live network integration (PqNetworkBackend → NotificationService)
+  - [ ] Task 10.5: Production mining worker (real chain state provider)
 
 ---
 
@@ -2491,10 +2497,13 @@ pqcrypto-traits = "0.3"
 | 7-8 | Phase 7: Testing | Full test suite | ✅ Complete |
 | 8-9 | Phase 8: Testnet | Live testnet deployment | ✅ Scaffold Mode |
 | 9-10 | **Phase 9: Full Block Production** | sc-network bridge, mining | ✅ Complete (2025-11-25) |
+| 10+ | **Phase 10: Production Readiness** | Full client, live broadcast | 🔲 Blocked |
 
 **Critical Path**: ✅ All scaffold mode infrastructure complete
 
-**Total Duration**: 10 weeks
+**Blocking Item**: polkadot-sdk git dependency alignment for production use
+
+**Total Duration**: 10 weeks (scaffold) + 2-3 weeks (production)
 
 **Note**: Electron Desktop App has been moved to separate execution plan: `.agent/execplan-electron-desktop.md`
 
@@ -3067,3 +3076,335 @@ Phase 2.5 (Runtime WASM)      Phase 3.5 (PQ Network)
          Full Block Production ✅
 ```
 
+---
+
+### Phase 10: Production Readiness (Week 10+)
+
+**Goal**: Transition from scaffold mode to production-ready implementation with full Substrate client integration.
+
+**Status**: 🔲 **NOT STARTED**
+
+**Prerequisites**:
+- [x] Phase 9: Full Block Production (scaffold mode complete)
+- [ ] polkadot-sdk version alignment (blocking)
+
+---
+
+#### Task 10.1: Polkadot SDK Dependency Alignment
+
+**Goal**: Switch from crates.io versions to aligned polkadot-sdk git dependencies.
+
+**Problem**: Current crates.io versions have incompatibilities:
+- sp-runtime, sp-api, sp-core version mismatches
+- sc-service expects specific runtime trait bounds
+- sc-consensus-pow requires aligned PowAlgorithm trait
+
+**Files to Modify**:
+- `Cargo.toml` (workspace) - Add polkadot-sdk git dependency
+- `node/Cargo.toml` - Switch to polkadot-sdk for sc-* crates
+- `runtime/Cargo.toml` - Switch to polkadot-sdk for sp-* crates
+- `pallets/*/Cargo.toml` - Align frame-* dependencies
+
+**Implementation**:
+```toml
+# Workspace Cargo.toml - add polkadot-sdk as git dependency
+[workspace.dependencies]
+# Use a specific polkadot-sdk release tag
+polkadot-sdk = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2409" }
+
+# Re-export individual crates from polkadot-sdk
+sc-cli = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2409" }
+sc-service = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2409" }
+sc-consensus-pow = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2409" }
+sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2409" }
+# ... etc
+```
+
+**Verification**:
+- [ ] `cargo check -p runtime` compiles with git deps
+- [ ] `cargo check -p hegemon-node --features substrate` compiles
+- [ ] No sp-* version conflict errors
+- [ ] WASM binary builds successfully
+
+---
+
+#### Task 10.2: Full Substrate Client Integration
+
+**Goal**: Replace MockChainStateProvider with real TFullClient.
+
+**Files to Modify**:
+- `node/src/substrate/service.rs` - Full client setup
+- `node/src/substrate/mining_worker.rs` - Real ChainStateProvider impl
+
+**Implementation**:
+```rust
+// Real ChainStateProvider using TFullClient
+pub struct SubstrateChainStateProvider<Block, Client> {
+    client: Arc<Client>,
+    transaction_pool: Arc<dyn TransactionPool<Block>>,
+}
+
+impl<Block, Client> ChainStateProvider for SubstrateChainStateProvider<Block, Client>
+where
+    Block: BlockT,
+    Client: ProvideRuntimeApi<Block> + HeaderBackend<Block>,
+    Client::Api: DifficultyApi<Block, U256>,
+{
+    fn best_hash(&self) -> H256 {
+        self.client.info().best_hash
+    }
+
+    fn difficulty_bits(&self) -> u32 {
+        let best = self.client.info().best_hash;
+        // Query from runtime via DifficultyApi
+        self.client.runtime_api()
+            .difficulty_bits(best)
+            .unwrap_or(DEFAULT_DIFFICULTY_BITS)
+    }
+
+    fn pending_transactions(&self) -> Vec<Vec<u8>> {
+        self.transaction_pool.ready()
+            .map(|tx| tx.data().encode())
+            .collect()
+    }
+}
+```
+
+**Verification**:
+- [ ] Client queries difficulty from runtime
+- [ ] Transaction pool drains pending txs for block
+- [ ] Block import uses real backend
+
+---
+
+#### Task 10.3: PowBlockImport Pipeline
+
+**Goal**: Integrate sc-consensus-pow block import with verification.
+
+**Files to Modify**:
+- `node/src/substrate/service.rs` - Block import setup
+- `consensus/src/substrate_pow.rs` - Blake3Algorithm trait impl
+
+**Implementation**:
+```rust
+// In new_partial():
+let pow_algorithm = Blake3Algorithm::new(client.clone());
+
+let pow_block_import = sc_consensus_pow::PowBlockImport::new(
+    client.clone(),
+    client.clone(),
+    pow_algorithm.clone(),
+    0, // check_inherents_after
+    select_chain.clone(),
+);
+
+let import_queue = sc_consensus_pow::import_queue(
+    Box::new(pow_block_import.clone()),
+    None, // justification_import
+    pow_algorithm.clone(),
+    &task_manager.spawn_essential_handle(),
+    config.prometheus_registry(),
+)?;
+```
+
+**Verification**:
+- [ ] Blocks from network are verified with Blake3
+- [ ] Invalid PoW seals are rejected
+- [ ] Import queue handles concurrent imports
+
+---
+
+#### Task 10.4: Live Network Broadcast
+
+**Goal**: Replace MockBlockBroadcaster with real PQ network broadcast.
+
+**Files to Modify**:
+- `node/src/substrate/mining_worker.rs` - NetworkBridgeBroadcaster impl
+- `network/src/network_backend.rs` - Add broadcast_to_all method
+
+**Implementation**:
+```rust
+impl BlockBroadcaster for NetworkBridgeBroadcaster {
+    fn broadcast_block(&self, announce: BlockAnnounce) {
+        let data = announce.encode();
+        let protocol = BLOCK_ANNOUNCE_PROTOCOL;
+        
+        // Get handle to network backend
+        let handle = self.pq_handle.clone();
+        
+        tokio::spawn(async move {
+            if let Err(e) = handle.broadcast_to_all(protocol, data).await {
+                tracing::warn!(error = %e, "Failed to broadcast block");
+            }
+        });
+    }
+}
+
+// In PqNetworkHandle:
+impl PqNetworkHandle {
+    pub async fn broadcast_to_all(&self, protocol: &str, data: Vec<u8>) -> Result<(), String> {
+        let peers = self.peers.read().await;
+        for (peer_id, conn) in peers.iter() {
+            conn.send_message(protocol, &data).await?;
+        }
+        Ok(())
+    }
+}
+```
+
+**Verification**:
+- [ ] Mined blocks reach all connected peers
+- [ ] Block announcements use PQ-secure channel
+- [ ] Broadcast errors don't crash node
+
+---
+
+#### Task 10.5: Multi-Node Integration Test
+
+**Goal**: Validate full block production across multiple nodes.
+
+**Files to Create**:
+- `tests/multi_node_mining.rs` - E2E mining test
+
+**Test Scenario**:
+```rust
+#[tokio::test]
+async fn test_multi_node_mining_sync() {
+    // 1. Start 3 nodes with PQ networking
+    let node1 = TestNode::new(30333, true).await;
+    let node2 = TestNode::new(30334, true).await;
+    let node3 = TestNode::new(30335, true).await;
+
+    // 2. Connect nodes
+    node2.connect_to(&node1).await;
+    node3.connect_to(&node1).await;
+
+    // 3. Enable mining on node1
+    node1.start_mining(1).await;
+
+    // 4. Wait for 10 blocks
+    wait_for_block(&node1, 10, Duration::from_secs(120)).await;
+
+    // 5. Verify all nodes have same chain
+    let hash1 = node1.best_hash().await;
+    let hash2 = node2.best_hash().await;
+    let hash3 = node3.best_hash().await;
+    assert_eq!(hash1, hash2);
+    assert_eq!(hash2, hash3);
+
+    // 6. Verify blocks have valid PoW
+    for height in 1..=10 {
+        let block = node1.get_block(height).await;
+        assert!(verify_pow_seal(&block));
+    }
+}
+```
+
+**Verification**:
+- [ ] 3 nodes form connected network
+- [ ] Mining node produces blocks
+- [ ] Other nodes sync and verify blocks
+- [ ] All nodes agree on chain state
+
+---
+
+#### Task 10.6: Soak Test (Extended Duration)
+
+**Goal**: Validate stability over extended operation (24h+).
+
+**Files to Create**:
+- `scripts/production-soak-test.sh` - Extended stability test
+
+**Metrics to Monitor**:
+- Block production rate (target: 6 blocks/minute)
+- Memory usage (no leaks)
+- Peer connectivity stability
+- Fork/reorg frequency
+- RPC response times
+
+**Test Script**:
+```bash
+#!/bin/bash
+# production-soak-test.sh
+DURATION_HOURS=${1:-24}
+LOG_FILE="soak-test-$(date +%Y%m%d-%H%M%S).log"
+
+# Start 3-node testnet
+docker-compose -f docker-compose.testnet.yml up -d
+
+# Monitor for duration
+start_time=$(date +%s)
+end_time=$((start_time + DURATION_HOURS * 3600))
+
+while [ $(date +%s) -lt $end_time ]; do
+    # Check block production
+    block_height=$(curl -s localhost:9944 -d '{"jsonrpc":"2.0","method":"chain_getHeader","id":1}' | jq -r '.result.number')
+    
+    # Check peer count
+    peers=$(curl -s localhost:9944 -d '{"jsonrpc":"2.0","method":"system_peers","id":1}' | jq '.result | length')
+    
+    # Check memory
+    mem=$(docker stats --no-stream --format "{{.MemUsage}}" hegemon-boot1)
+    
+    echo "$(date): block=$block_height peers=$peers mem=$mem" >> $LOG_FILE
+    sleep 60
+done
+
+# Analyze results
+echo "Soak test complete. See $LOG_FILE for details."
+```
+
+**Verification**:
+- [ ] No crashes during 24h test
+- [ ] Block production maintains target rate
+- [ ] Memory usage stable (< 1GB)
+- [ ] No extended stalls (> 5 missed blocks)
+
+---
+
+#### Phase 10 Completion Criteria
+
+- [ ] polkadot-sdk git dependencies aligned and compiling
+- [ ] Full Substrate client replaces mock providers
+- [ ] PowBlockImport pipeline functional
+- [ ] Live network broadcast working
+- [ ] Multi-node mining test passing
+- [ ] 24h soak test passing
+
+**Phase 10 Status**: 🔲 **BLOCKED** on polkadot-sdk version alignment
+
+**Estimated Duration**: 2-3 weeks
+
+---
+
+## Appendix: Build Verification Commands
+
+### Clean Build (Scaffold Mode)
+```bash
+# Full workspace check
+cargo check --workspace
+
+# Substrate node with features
+cargo check -p hegemon-node --features substrate
+
+# Run all tests
+cargo test --workspace
+
+# Substrate module tests
+cargo test -p hegemon-node --features substrate
+```
+
+### Production Build (Phase 10+)
+```bash
+# Release build
+cargo build --release -p hegemon-node --features substrate
+
+# Generate chain spec
+./target/release/hegemon-node build-spec --chain=dev > dev-spec.json
+
+# Start development node
+./target/release/hegemon-node --dev --tmp --mine
+
+# Multi-node testnet
+docker-compose -f docker-compose.testnet.yml up -d
+```

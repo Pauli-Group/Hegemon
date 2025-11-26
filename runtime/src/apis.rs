@@ -18,7 +18,7 @@
 //! let target = U256::MAX / difficulty;
 //! ```
 
-#![cfg_attr(not(feature = "std"), no_std)]
+// Note: no_std is handled by the parent crate (runtime/src/lib.rs)
 
 use sp_api::decl_runtime_apis;
 use sp_core::U256;

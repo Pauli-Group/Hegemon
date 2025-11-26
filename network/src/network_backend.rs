@@ -159,7 +159,8 @@ struct PeerConnection {
     connection: SubstratePqConnection,
     /// Connection info
     info: PqConnectionInfo,
-    /// Message sender for this peer
+    /// Message sender for this peer (reserved for message routing)
+    #[allow(dead_code)]
     msg_tx: mpsc::Sender<Vec<u8>>,
 }
 
@@ -176,6 +177,8 @@ pub struct PqNetworkBackend {
     /// Event sender
     event_tx: mpsc::Sender<PqNetworkEvent>,
     /// Event receiver (for external consumers)
+    /// Note: Consumed by start() which returns a new receiver for the caller
+    #[allow(dead_code)]
     event_rx: mpsc::Receiver<PqNetworkEvent>,
     /// Shutdown signal
     shutdown_tx: Option<mpsc::Sender<()>>,
@@ -347,7 +350,9 @@ impl PqNetworkBackend {
         let (new_event_tx, new_event_rx) = mpsc::channel(1024);
         
         // Forward events to new receiver
-        let old_event_tx = self.event_tx.clone();
+        // Note: new_event_tx and old_event_tx reserved for production event forwarding
+        let _new_event_tx = new_event_tx;
+        let _old_event_tx = self.event_tx.clone();
         tokio::spawn(async move {
             // This is a simplification - in production you'd want proper event forwarding
             loop {
@@ -480,7 +485,8 @@ pub struct PqNetworkHandle {
     local_peer_id: [u8; 32],
     /// Peers reference
     peers: Arc<RwLock<HashMap<[u8; 32], PeerConnection>>>,
-    /// Event sender
+    /// Event sender (reserved for sending custom events)
+    #[allow(dead_code)]
     event_tx: mpsc::Sender<PqNetworkEvent>,
 }
 
