@@ -28,7 +28,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_bytes = "0.11"
 sled = "0.34"
-sp-core = { version = "38.1.0", default-features = false, features = ["std"] }
+sp-core = { workspace = true, features = ["std"] }
 state-merkle = { path = "../state/merkle", package = "state-merkle" }
 thiserror = "1.0"
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "sync", "time", "signal", "fs"] }
@@ -47,14 +47,13 @@ url = "2"
 base64 = "0.22"
 
 # Substrate SDK dependencies (optional, enabled with "substrate" feature)
-# Note: These use crates.io versions. For production, consider switching to
-# git dependencies from polkadot-sdk for better version alignment.
-sc-cli = { version = "0.47.0", optional = true }
-sc-service = { version = "0.46.0", optional = true }
-sc-chain-spec = { version = "38.0.0", optional = true }
-sc-consensus-pow = { version = "0.44.0", optional = true }
-sp-consensus-pow = { version = "0.42.0", optional = true }
-codec = { package = "parity-scale-codec", version = "3", features = ["derive"], optional = true }
+# Using polkadot-sdk git dependencies for version alignment
+sc-cli = { workspace = true, optional = true }
+sc-service = { workspace = true, optional = true }
+sc-chain-spec = { workspace = true, optional = true }
+sc-consensus-pow = { workspace = true, optional = true }
+sp-consensus-pow = { workspace = true, optional = true }
+codec = { workspace = true, optional = true }
 
 jsonrpsee = { version = "0.24", features = ["server", "macros"], optional = true }
 

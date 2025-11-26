@@ -5,30 +5,30 @@ edition = "2021"
 authors = ["Synthetic Hegemonic Currency Contributors"]
 
 [build-dependencies]
-substrate-wasm-builder = { version = "24.0.0", optional = true }
+substrate-wasm-builder = { workspace = true, optional = true }
 
 # Required for WASM builds - configure getrandom to use custom randomness
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["custom"] }
 
 [dependencies]
-codec = { package = "parity-scale-codec", version = "3", features = ["derive"], default-features = false }
-scale-info = { version = "2", features = ["derive"], default-features = false }
+codec = { workspace = true }
+scale-info = { workspace = true }
 
-sp-core = { version = "38.1.0", default-features = false }
-sp-runtime = { version = "44.0.0", default-features = false }
-sp-std = { version = "14.0.0", default-features = false }
-sp-io = { version = "43.0.0", default-features = false }
-sp-version = { version = "42.0.0", default-features = false }
-sp-api = { version = "39.0.0", default-features = false }
-sp-offchain = { version = "39.0.0", default-features = false }
-sp-application-crypto = { version = "43.0.0", default-features = false }
-sp-staking = { version = "41.0.0", default-features = false }
-sp-block-builder = { version = "39.0.0", default-features = false }
-sp-transaction-pool = { version = "39.0.0", default-features = false }
-sp-inherents = { version = "39.0.0", default-features = false }
-sp-session = { version = "41.0.0", default-features = false }
-sp-genesis-builder = { version = "0.20.0", default-features = false }
+sp-core = { workspace = true }
+sp-runtime = { workspace = true }
+sp-std = { workspace = true }
+sp-io = { workspace = true }
+sp-version = { workspace = true }
+sp-api = { workspace = true }
+sp-offchain = { workspace = true }
+sp-application-crypto = { workspace = true }
+sp-staking = { workspace = true }
+sp-block-builder = { workspace = true }
+sp-transaction-pool = { workspace = true }
+sp-inherents = { workspace = true }
+sp-session = { workspace = true }
+sp-genesis-builder = { workspace = true }
 
 crypto = { package = "synthetic-crypto", path = "../crypto", default-features = false }
 # serde is required unconditionally because polkadot-sdk crates (sp-staking, bounded-collections)
@@ -36,18 +36,18 @@ crypto = { package = "synthetic-crypto", path = "../crypto", default-features = 
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"], optional = true }
 
-frame-support = { version = "43.0.0", default-features = false }
-frame-system = { version = "43.0.0", default-features = false }
-frame-executive = { version = "43.0.0", default-features = false }
-frame-benchmarking = { version = "43.0.0", default-features = false, optional = true }
-pallet-timestamp = { workspace = true, default-features = false }
-pallet-session = { version = "43.0.0", default-features = false, features = ["historical"] }
-pallet-balances = { version = "44.0.0", default-features = false }
-pallet-transaction-payment = { version = "43.0.0", default-features = false }
-pallet-collective = { version = "43.0.0", default-features = false }
-pallet-membership = { version = "43.0.0", default-features = false }
-pallet-treasury = { version = "42.0.0", default-features = false }
-pallet-sudo = { version = "43.0.0", default-features = false }
+frame-support = { workspace = true }
+frame-system = { workspace = true }
+frame-executive = { workspace = true }
+frame-benchmarking = { workspace = true, optional = true }
+pallet-timestamp = { workspace = true }
+pallet-session = { workspace = true, features = ["historical"] }
+pallet-balances = { workspace = true }
+pallet-transaction-payment = { workspace = true }
+pallet-collective = { workspace = true }
+pallet-membership = { workspace = true }
+pallet-treasury = { workspace = true }
+pallet-sudo = { workspace = true }
 
 pallet-identity = { path = "../pallets/identity", default-features = false }
 pallet-attestations = { path = "../pallets/attestations", default-features = false }
@@ -60,10 +60,10 @@ pallet-observability = { path = "../pallets/observability", default-features = f
 pallet-difficulty = { path = "../pallets/difficulty", default-features = false }
 
 [dev-dependencies]
-sp-runtime = { version = "44.0.0", default-features = false, features = ["std"] }
-frame-support = { version = "43.0.0", default-features = false, features = ["std"] }
-frame-system = { version = "43.0.0", default-features = false, features = ["std"] }
-sp-io = { version = "43.0.0", default-features = false, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
+frame-support = { workspace = true, features = ["std"] }
+frame-system = { workspace = true, features = ["std"] }
+sp-io = { workspace = true, features = ["std"] }
 
 [features]
 default = ["std"]

@@ -2,18 +2,20 @@
 
 pub use pallet::*;
 
+use codec::{DecodeWithMemTracking, Encode};
 use frame_support::pallet_prelude::*;
 use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
 use log::warn;
-use parity_scale_codec::Encode;
 
 #[derive(Clone, Encode, Decode, PartialEq, Eq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 pub struct Quota {
     pub max_usage: u128,
     pub rate_limit_per_block: u64,
 }
+
+impl DecodeWithMemTracking for Quota {}
 
 #[derive(Clone, Encode, Decode, PartialEq, Eq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 #[scale_info(skip_type_params(T))]
@@ -22,6 +24,8 @@ pub struct UsageCounter<T: Config> {
     pub last_amount: u64,
     pub last_block: BlockNumberFor<T>,
 }
+
+impl<T: Config> DecodeWithMemTracking for UsageCounter<T> {}
 
 impl<T: Config> UsageCounter<T> {
     pub fn new(total_usage: u128, last_amount: u64, last_block: BlockNumberFor<T>) -> Self {

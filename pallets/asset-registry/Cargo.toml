@@ -7,12 +7,12 @@ description = "Asset registry pallet for instrument metadata, regulatory tags, a
 license = "Apache-2.0"
 
 [dependencies]
-frame-support = { version = "43.0.0", default-features = false }
-frame-system = { version = "43.0.0", default-features = false }
-sp-runtime = { version = "44.0.0", default-features = false }
-sp-std = { version = "14.0.0", default-features = false }
-parity-scale-codec = { version = "3", default-features = false, features = ["derive"] }
-scale-info = { version = "2", default-features = false, features = ["derive"] }
+frame-support = { workspace = true }
+frame-system = { workspace = true }
+sp-runtime = { workspace = true }
+sp-std = { workspace = true }
+codec = { workspace = true }
+scale-info = { workspace = true }
 pallet-identity = { path = "../identity", default-features = false }
 log = { version = "0.4", default-features = false }
 
@@ -23,7 +23,7 @@ std = [
     "frame-system/std",
     "sp-runtime/std",
     "sp-std/std",
-    "parity-scale-codec/std",
+    "codec/std",
     "scale-info/std",
     "pallet-identity/std",
 ]
