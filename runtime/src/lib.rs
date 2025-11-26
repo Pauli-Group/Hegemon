@@ -9,6 +9,8 @@
     deprecated
 )]
 
+extern crate alloc;
+
 #[cfg(feature = "std")]
 pub mod chain_spec;
 
@@ -60,23 +62,71 @@ mod pq_crypto {
     const KEY_LIST: &[u8] = b"pq:keys";
     pub const PQ_KEY_TYPE: KeyTypeId = KeyTypeId(*b"pq00");
 
-    #[derive(Clone, PartialEq, Eq, Encode, Decode, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+    // Note: SLH-DSA signatures are ~17KB which exceeds parity-scale-codec's
+    // INITIAL_PREALLOCATION of 16KB. We use Box to avoid the inline size issue
+    // in Vec<UncheckedExtrinsic> decoding.
+    #[derive(Clone, PartialEq, Eq, RuntimeDebug, TypeInfo)]
     pub enum Signature {
         MlDsa {
             signature: [u8; ML_DSA_SIGNATURE_LEN],
             public: Public,
         },
         SlhDsa {
-            signature: [u8; SLH_DSA_SIGNATURE_LEN],
+            signature: alloc::boxed::Box<[u8; SLH_DSA_SIGNATURE_LEN]>,
             public: Public,
         },
+    }
+
+    // Manual Encode impl to handle Box
+    impl codec::Encode for Signature {
+        fn encode_to<T: codec::Output + ?Sized>(&self, dest: &mut T) {
+            match self {
+                Signature::MlDsa { signature, public } => {
+                    0u8.encode_to(dest);
+                    signature.encode_to(dest);
+                    public.encode_to(dest);
+                }
+                Signature::SlhDsa { signature, public } => {
+                    1u8.encode_to(dest);
+                    signature.as_ref().encode_to(dest);
+                    public.encode_to(dest);
+                }
+            }
+        }
+    }
+
+    // Manual Decode impl to handle Box
+    impl codec::Decode for Signature {
+        fn decode<I: codec::Input>(input: &mut I) -> Result<Self, codec::Error> {
+            let variant = u8::decode(input)?;
+            match variant {
+                0 => {
+                    let signature = <[u8; ML_DSA_SIGNATURE_LEN]>::decode(input)?;
+                    let public = Public::decode(input)?;
+                    Ok(Signature::MlDsa { signature, public })
+                }
+                1 => {
+                    let signature = <[u8; SLH_DSA_SIGNATURE_LEN]>::decode(input)?;
+                    let public = Public::decode(input)?;
+                    Ok(Signature::SlhDsa { signature: alloc::boxed::Box::new(signature), public })
+                }
+                _ => Err(codec::Error::from("Invalid Signature variant")),
+            }
+        }
+    }
+
+    // Manual MaxEncodedLen - use the larger variant
+    impl codec::MaxEncodedLen for Signature {
+        fn max_encoded_len() -> usize {
+            1 + SLH_DSA_SIGNATURE_LEN + <Public as codec::MaxEncodedLen>::max_encoded_len()
+        }
     }
 
     impl Signature {
         pub fn signature_bytes(&self) -> &[u8] {
             match self {
-                Signature::MlDsa { signature, .. } => signature,
-                Signature::SlhDsa { signature, .. } => signature,
+                Signature::MlDsa { signature, .. } => signature.as_slice(),
+                Signature::SlhDsa { signature, .. } => signature.as_slice(),
             }
         }
 
@@ -105,17 +155,17 @@ mod pq_crypto {
         }
     }
 
-    #[cfg(feature = "std")]
+    // serde impls are unconditional because polkadot-sdk crates (sp-staking, bounded-collections)
+    // include serde as a non-optional dependency, activating MaybeSerializeDeserialize bounds
     impl serde::Serialize for Public {
         fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
             serializer.serialize_bytes(self.as_bytes())
         }
     }
 
-    #[cfg(feature = "std")]
     impl<'de> serde::Deserialize<'de> for Public {
         fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            let bytes: Vec<u8> = serde::Deserialize::deserialize(deserializer)?;
+            let bytes: alloc::vec::Vec<u8> = serde::Deserialize::deserialize(deserializer)?;
             match bytes.len() {
                 ML_DSA_PUBLIC_KEY_LEN => {
                     let arr: [u8; ML_DSA_PUBLIC_KEY_LEN] = bytes
@@ -187,7 +237,7 @@ mod pq_crypto {
                     let Ok(public) = SlhDsaPublicKey::from_bytes(public.as_bytes()) else {
                         return false;
                     };
-                    let Ok(signature) = SlhDsaSignature::from_bytes(signature) else {
+                    let Ok(signature) = SlhDsaSignature::from_bytes(signature.as_ref()) else {
                         return false;
                     };
                     public.verify(msg.get(), &signature).is_ok()
@@ -274,7 +324,7 @@ mod pq_crypto {
                     let secret = SlhDsaSecretKey::from_bytes(&bytes).ok()?;
                     let signature_vec = secret.sign(msg.as_ref()).to_bytes();
                     let signature: [u8; SLH_DSA_SIGNATURE_LEN] = signature_vec.try_into().ok()?;
-                    Some(Signature::SlhDsa { signature, public })
+                    Some(Signature::SlhDsa { signature: alloc::boxed::Box::new(signature), public })
                 }
             }
         }
@@ -451,8 +501,8 @@ impl Convert<AccountId, Option<AccountId>> for AccountIdAsValidatorId {
     }
 }
 
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Default, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo)]
+// serde impls are unconditional because polkadot-sdk crates require it
+#[derive(Clone, Default, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo, serde::Serialize, serde::Deserialize)]
 pub struct DummySessionKeys;
 
 impl sp_runtime::traits::OpaqueKeys for DummySessionKeys {
@@ -464,6 +514,21 @@ impl sp_runtime::traits::OpaqueKeys for DummySessionKeys {
 
     fn get_raw(&self, _i: sp_core::crypto::KeyTypeId) -> &[u8] {
         &[]
+    }
+}
+
+impl DummySessionKeys {
+    /// Generate session keys - no-op for dummy implementation
+    pub fn generate(_seed: Option<Vec<u8>>) -> Vec<u8> {
+        Self::default().encode()
+    }
+
+    /// Decode session keys into raw public keys - no-op for dummy implementation
+    pub fn decode_into_raw_public_keys(
+        encoded: &[u8],
+    ) -> Option<Vec<(Vec<u8>, sp_core::crypto::KeyTypeId)>> {
+        let _ = Self::decode(&mut &encoded[..]).ok()?;
+        Some(Vec::new())
     }
 }
 
@@ -557,6 +622,7 @@ impl frame_support::traits::Get<frame_support::weights::Weight> for MaxCollectiv
 pub mod pow {
     use super::{Moment, PowDifficulty, PowFutureDrift, PowRetargetWindow, PowTargetBlockTime};
     use crate::MaxPowValidators;
+    use alloc::vec::Vec;
     use frame_support::{pallet_prelude::*, BoundedVec};
     use frame_system::pallet_prelude::*;
     use sp_core::{H256, U256};
@@ -812,7 +878,7 @@ impl system::Config for Runtime {
     type Hash = Hash;
     type Hashing = BlakeTwo256;
     type AccountId = AccountId;
-    type Lookup = IdentityLookup<AccountId>;
+    type Lookup = sp_runtime::traits::AccountIdLookup<AccountId, ()>;
     type Block = Block;
     type RuntimeEvent = RuntimeEvent;
     type BlockHashCount = BlockHashCount;

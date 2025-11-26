@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+use core::cmp::min;
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use sha2::{Digest, Sha256};
@@ -37,7 +39,7 @@ pub fn expand_to_length(domain: &[u8], input: &[u8], length: usize) -> Vec<u8> {
         hasher.update(counter.to_be_bytes());
         hasher.update(input);
         let digest = hasher.finalize();
-        let take = std::cmp::min(length - output.len(), digest.len());
+        let take = min(length - output.len(), digest.len());
         output.extend_from_slice(&digest[..take]);
         counter = counter.checked_add(1).expect("counter overflow");
     }
