@@ -1,7 +1,7 @@
 # Hegemon Substrate Migration Execution Plan
 
 **Status**: Active  
-**Last Updated**: 2025-01-26  
+**Last Updated**: 2025-11-25  
 **Owner**: Core Team
 
 ---
@@ -15,6 +15,9 @@
 | D3 | Fresh chain start acceptable | No mainnet data exists; testnets can begin from genesis | 2025-01-15 |
 | D4 | Use Substrate RPC infrastructure | Leverage built-in author/chain/state RPCs; extend via jsonrpsee for PQ-specific endpoints | 2025-01-15 |
 | D5 | Custom libp2p fork for PQ | Extend libp2p-noise with ML-KEM-768 handshakes; maintain alongside upstream | 2025-01-15 |
+| D6 | Unconditional serde in runtime | polkadot-sdk crates (sp-staking, bounded-collections) require serde unconditionally; removed std feature guards | 2025-11-25 |
+| D7 | Box large PQ signatures | SLH-DSA signatures (~17KB) exceed parity-scale-codec's 16KB preallocation; use Box<> to avoid inline size issues | 2025-11-25 |
+| D8 | AccountIdLookup for MultiAddress | TransactionExtension trait requires AccountIdLookup<AccountId, ()> instead of IdentityLookup for MultiAddress compatibility | 2025-11-25 |
 
 ---
 
@@ -26,14 +29,14 @@
 - [x] PoW pallet designed (pow pallet in runtime)
 - [x] Substrate node binary scaffolded (Phase 1 complete - CLI works, builds with `--features substrate`)
 - [x] sc-consensus-pow integration complete (Phase 2 complete - Blake3Algorithm, MiningCoordinator, PowHandle)
-- [~] **Runtime WASM with DifficultyApi (Phase 2.5 structurally complete)** - Blocked by sp-* version conflicts
+- [x] **Runtime WASM with DifficultyApi (Phase 2.5 COMPLETE)** - All version conflicts resolved
   - [x] Task 2.5.1: Add substrate-wasm-builder
   - [x] Task 2.5.2: Create DifficultyApi trait
   - [x] Task 2.5.3: Create Difficulty pallet (compiles standalone)
   - [x] Task 2.5.4: Integrate into runtime (construct_runtime!)
-  - [x] Task 2.5.5: Implement runtime APIs (impl_runtime_apis! added, blocked by version mismatches)
+  - [x] Task 2.5.5: Implement runtime APIs (impl_runtime_apis!)
   - [x] Task 2.5.6: Export WASM binary in node
-  - [ ] **BLOCKED**: Fix sp-runtime/sp-api version conflicts to enable full compilation
+  - [x] Task 2.5.7: Fix sp-runtime/sp-api version conflicts (2025-11-25)
 - [x] Custom libp2p-noise with ML-KEM-768 (Phase 3 complete - pq-noise crate, PqTransport, network integration)
 - [x] **sc-network PQ Transport (Phase 3.5 COMPLETE)** - Substrate transport layer integrated
   - [x] Task 3.5.1: Create PQ transport wrapper (SubstratePqTransport)
@@ -48,7 +51,7 @@
 - [x] E2E test suite passing (Phase 7 complete - mining_integration.rs, p2p_pq.rs, wallet_e2e.rs, substrate.spec.ts)
 - [x] Testnet deployment configured (Phase 8 complete - docker-compose.testnet.yml, Prometheus/Grafana, soak-test.sh)
 - [x] Testnet deployed and validated (3 nodes + dashboard + monitoring running in scaffold mode)
-- [ ] **Full block production enabled** - Requires Phase 2.5 sp-* version alignment
+- [~] **Full block production enabled** - Phase 2.5 complete; pending service integration
 - [ ] Electron desktop app packaged [OPTIONAL]
 
 ---
@@ -422,33 +425,35 @@ let import_queue = sc_consensus_pow::import_queue(
 
 **Goal**: Create runtime WASM binary with DifficultyApi for PoW consensus integration.
 
-**Status**: ⚠️ **STRUCTURALLY COMPLETE** - Blocked by crate version conflicts
+**Status**: ✅ **COMPLETE** (2025-11-25)
 
 **Files Created**:
 - `runtime/build.rs` - WASM build script using substrate-wasm-builder
 - `runtime/src/apis.rs` - DifficultyApi and ConsensusApi trait definitions
 - `pallets/difficulty/Cargo.toml` - Difficulty pallet package manifest
-- `pallets/difficulty/src/lib.rs` - Full difficulty adjustment pallet implementation (✅ COMPILES)
+- `pallets/difficulty/src/lib.rs` - Full difficulty adjustment pallet implementation
 
 **Files Modified**:
 - `Cargo.toml` - Added `pallets/difficulty` to workspace members
-- `runtime/Cargo.toml` - Added build deps, pallet-difficulty, sp-* runtime API deps
-- `runtime/src/lib.rs` - Added apis module, WASM binary include, Difficulty pallet config, impl_runtime_apis!
+- `runtime/Cargo.toml` - Added build deps, pallet-difficulty, sp-* runtime API deps, unconditional serde
+- `runtime/src/lib.rs` - Added apis module, WASM binary include, Difficulty pallet config, impl_runtime_apis!, Box<> for large signatures
 - `node/Cargo.toml` - Added runtime dependency for WASM binary access
 - `node/src/substrate/service.rs` - Added WASM binary check function
 - `consensus/src/substrate_pow.rs` - Updated to use U256 difficulty type
+- `crypto/src/*.rs` - Made fully no_std compatible with alloc imports
 
-**BLOCKING ISSUE**: Multiple sp-runtime/sp-api versions in dependency tree
-- sp-runtime v38.0.1, v43.0.0, v44.0.0 all present
-- sp-api v33.0.0, v38.0.0, v39.0.0 all present
-- Causes `Block` trait mismatches in `impl_runtime_apis!` macro
-- Pre-existing technical debt noted in original code comment:
-  "Runtime APIs will be added in a later phase when Substrate SDK versions are aligned"
+**RESOLVED ISSUES** (2025-11-25):
+1. **sp-* version conflicts**: Upgraded sp-genesis-builder v0.14.0→v0.20.0, sp-session v40.0.0→v41.0.0
+2. **TransactionExtension trait bounds**: Changed `type Lookup = IdentityLookup<AccountId>` to `AccountIdLookup<AccountId, ()>` for MultiAddress compatibility
+3. **Crypto crate no_std**: Added `#![cfg_attr(not(feature = "std"), no_std)]`, `extern crate alloc;`, replaced std imports with alloc/core
+4. **Serde feature passthrough**: Used `dep:serde` syntax in Cargo.toml to prevent WASM feature pollution
+5. **Unconditional serde**: Made serde non-optional since polkadot-sdk crates (sp-staking, bounded-collections) require it
+6. **Large signature codec**: Changed `Signature::SlhDsa` to use `Box<[u8; SLH_DSA_SIGNATURE_LEN]>` to avoid parity-scale-codec's 16KB INITIAL_PREALLOCATION limit (SLH-DSA signatures are ~17KB)
 
-**Next Steps to Unblock**:
-1. Audit all workspace Cargo.toml files for sp-* version pins
-2. Force unified versions across workspace using `[patch.crates-io]`
-3. Or wait for crates.io to publish aligned SDK versions
+**Build Verification**:
+- Native build: `cargo check -p runtime` ✅ PASSING
+- WASM build: `runtime.wasm` (2.06 MB) generated ✅
+- Node build: `cargo check -p hegemon-node --features substrate` ✅ PASSING
 
 **Implementation Summary**:
 
@@ -2469,9 +2474,9 @@ pqcrypto-traits = "0.3"
 |------|-------|-------------|--------|
 | 1-2 | Phase 1: Node Scaffold | Booting Substrate node | ✅ Complete |
 | 2-3 | Phase 2: PoW Integration | Blake3 PoW templates | ✅ Complete |
-| 2-3 | **Phase 2.5: Runtime WASM** | DifficultyApi, WASM binary | ✅ Complete |
+| 2-3 | **Phase 2.5: Runtime WASM** | DifficultyApi, WASM binary | ✅ Complete (2025-11-25) |
 | 3-5 | Phase 3: PQ libp2p | ML-KEM peer connections | ✅ Complete |
-| 4-5 | **Phase 3.5: sc-network PQ** | Substrate network integration | 🔲 **BLOCKING** |
+| 4-5 | **Phase 3.5: sc-network PQ** | Substrate network integration | ✅ Complete |
 | 4-5 | Phase 4: RPC Extensions | Custom hegemon_* endpoints | ✅ Complete |
 | 5-6 | Phase 5: Wallet Migration | jsonrpsee wallet client | ✅ Complete |
 | 6-7 | Phase 6: Dashboard Migration | Polkadot.js dashboard | ✅ Complete |
@@ -2479,7 +2484,7 @@ pqcrypto-traits = "0.3"
 | 8-9 | Phase 8: Testnet | Live testnet deployment | ✅ Scaffold Mode |
 | 9-11 | Phase 9: Electron [OPTIONAL] | Desktop app bundle | 🔲 Optional |
 
-**Critical Path**: Phase 3.5 → Full block production
+**Critical Path**: Service integration → Full block production
 
 **Total Duration**: 9 weeks (+ 2 weeks optional for Electron)
 
