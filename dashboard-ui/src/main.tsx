@@ -5,6 +5,7 @@ import App from './App.tsx';
 import './design/global.css';
 import { ToastProvider } from './components/ToastProvider.tsx';
 import { NodeConnectionProvider } from './providers/NodeConnectionProvider.tsx';
+import { SubstrateApiProvider } from './providers/SubstrateApiProvider.tsx';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -15,14 +16,27 @@ const queryClient = new QueryClient({
   },
 });
 
+// Check if we should use Substrate WebSocket or legacy HTTP
+const useSubstrate = import.meta.env.VITE_USE_SUBSTRATE !== 'false';
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <NodeConnectionProvider>
-        <ToastProvider>
-          <App />
-        </ToastProvider>
-      </NodeConnectionProvider>
+      {useSubstrate ? (
+        <SubstrateApiProvider>
+          <NodeConnectionProvider>
+            <ToastProvider>
+              <App />
+            </ToastProvider>
+          </NodeConnectionProvider>
+        </SubstrateApiProvider>
+      ) : (
+        <NodeConnectionProvider>
+          <ToastProvider>
+            <App />
+          </ToastProvider>
+        </NodeConnectionProvider>
+      )}
     </QueryClientProvider>
   </React.StrictMode>
 );

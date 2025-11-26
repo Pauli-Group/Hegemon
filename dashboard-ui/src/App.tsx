@@ -6,8 +6,12 @@ import { MiningPage } from './pages/MiningPage';
 import { NetworkPage } from './pages/NetworkPage';
 import { useNodeMetrics } from './hooks/useNodeData';
 import { ConnectionBadge } from './components/ConnectionBadge';
+import { SubstrateConnectionBadge } from './components/SubstrateConnectionBadge';
 import logo from './assets/hegemon-atlas-emblem.svg';
 import styles from './App.module.css';
+
+// Check if Substrate mode is enabled
+const useSubstrate = import.meta.env.VITE_USE_SUBSTRATE !== 'false';
 
 function App() {
   const nodeMetrics = useNodeMetrics();
@@ -27,11 +31,15 @@ function App() {
                 <span className={styles.consoleLabel}>Operations Console</span>
               </div>
             </div>
-            <ConnectionBadge
-              source={nodeMetrics.data?.source ?? 'mock'}
-              error={nodeMetrics.data?.error}
-              label="Node metrics feed"
-            />
+            {useSubstrate ? (
+              <SubstrateConnectionBadge label="Substrate node" />
+            ) : (
+              <ConnectionBadge
+                source={nodeMetrics.data?.source ?? 'mock'}
+                error={nodeMetrics.data?.error}
+                label="Node metrics feed"
+              />
+            )}
           </div>
           <nav className={styles.navLinks}>
             <NavLink to="/wallet">Wallet</NavLink>
