@@ -8,6 +8,7 @@
 //! - PQ-secure network transport (Phase 3)
 //! - Network bridge for block/tx propagation (Phase 9)
 //! - Mining worker for block production (Phase 9.3)
+//! - Full client integration (Phase 10.2)
 //!
 //! # Phase 2 Status
 //!
@@ -40,9 +41,17 @@
 //! - Task 9.2: Transaction pool integration for tx propagation ✅
 //! - Task 9.3: Mining worker spawning for block production ✅
 //!
-//! Full completion requires aligned polkadot-sdk git dependencies.
+//! # Phase 10 Status
+//!
+//! This phase implements production readiness:
+//! - Task 10.1: Polkadot SDK dependency alignment ✅
+//! - Task 10.2: Full client integration (TFullClient, WasmExecutor) 🔄
+//! - Task 10.3: Block import pipeline (PowBlockImport) 🔲
+//! - Task 10.4: Live network integration 🔲
+//! - Task 10.5: Production mining worker 🔲
 
 pub mod chain_spec;
+pub mod client;
 pub mod command;
 pub mod mining_worker;
 pub mod network;
@@ -53,6 +62,11 @@ pub mod transaction_pool;
 
 // Re-export common types
 pub use chain_spec::ChainSpec;
+pub use client::{
+    FullBackend, FullClient, FullClientConfig, FullTransactionPool, SubstrateChainStateProvider,
+    WasmExecutor, create_chain_state_provider, create_chain_state_provider_with_state,
+    DEFAULT_DIFFICULTY_BITS,
+};
 pub use mining_worker::{
     BlockBroadcaster, BlockTemplate, ChainStateProvider, MiningWorker, MiningWorkerConfig,
     MiningWorkerStats, MockBlockBroadcaster, MockChainStateProvider, NetworkBridgeBroadcaster,
@@ -67,6 +81,7 @@ pub use network_bridge::{
 pub use rpc::{HegemonApiServer, WalletApiServer, HegemonService, MiningHandle, WalletService};
 pub use service::{new_full, new_partial, FullComponents, MiningConfig, PartialComponents};
 pub use transaction_pool::{
-    MockTransactionPool, PoolBridgeStats, PoolError, SubmissionResult, TransactionPool,
-    TransactionPoolBridge, TransactionPoolConfig, TransactionSource,
+    MockTransactionPool, PoolBridgeStats, PoolError, SubmissionResult,
+    TransactionPool as TransactionPoolTrait, TransactionPoolBridge, TransactionPoolConfig,
+    TransactionSource,
 };

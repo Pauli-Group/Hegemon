@@ -52,7 +52,20 @@ sc-cli = { workspace = true, optional = true }
 sc-service = { workspace = true, optional = true }
 sc-chain-spec = { workspace = true, optional = true }
 sc-consensus-pow = { workspace = true, optional = true }
+sc-client-api = { workspace = true, optional = true }
+sc-executor = { workspace = true, optional = true }
+sc-consensus = { workspace = true, optional = true }
+sc-transaction-pool = { workspace = true, optional = true }
+sc-transaction-pool-api = { workspace = true, optional = true }
+sc-basic-authorship = { workspace = true, optional = true }
 sp-consensus-pow = { workspace = true, optional = true }
+sp-blockchain = { workspace = true, optional = true }
+sp-consensus = { workspace = true, optional = true }
+sp-keystore = { workspace = true, optional = true }
+sp-timestamp = { workspace = true, optional = true }
+sp-runtime = { workspace = true, features = ["std"], optional = true }
+sp-api = { workspace = true, features = ["std"], optional = true }
+sp-io = { workspace = true, features = ["std"], optional = true }
 codec = { workspace = true, optional = true }
 
 jsonrpsee = { version = "0.24", features = ["server", "macros"], optional = true }
@@ -77,12 +90,30 @@ test-utils = []
 # - WASM binary for runtime execution
 # - DifficultyApi for PoW difficulty queries
 # - ConsensusApi for consensus parameters
+#
+# Phase 10.2 adds:
+# - Full client integration (TFullClient, WasmExecutor)
+# - Transaction pool (BasicPool)
+# - Block import pipeline
 substrate = [
     "dep:sc-cli",
     "dep:sc-service",
     "dep:sc-chain-spec",
     "dep:sc-consensus-pow",
+    "dep:sc-client-api",
+    "dep:sc-executor",
+    "dep:sc-consensus",
+    "dep:sc-transaction-pool",
+    "dep:sc-transaction-pool-api",
+    "dep:sc-basic-authorship",
     "dep:sp-consensus-pow",
+    "dep:sp-blockchain",
+    "dep:sp-consensus",
+    "dep:sp-keystore",
+    "dep:sp-timestamp",
+    "dep:sp-runtime",
+    "dep:sp-api",
+    "dep:sp-io",
     "dep:jsonrpsee",
     "dep:runtime",
     "dep:codec",

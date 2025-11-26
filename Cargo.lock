@@ -3358,17 +3358,30 @@ dependencies = [
  "rpassword",
  "runtime",
  "rust-embed",
+ "sc-basic-authorship",
  "sc-chain-spec",
  "sc-cli",
+ "sc-client-api",
+ "sc-consensus",
  "sc-consensus-pow",
+ "sc-executor",
  "sc-service",
+ "sc-transaction-pool",
+ "sc-transaction-pool-api",
  "serde",
  "serde_bytes",
  "serde_json",
  "sha2 0.10.9",
  "sled",
+ "sp-api",
+ "sp-blockchain",
+ "sp-consensus",
  "sp-consensus-pow",
  "sp-core",
+ "sp-io",
+ "sp-keystore",
+ "sp-runtime",
+ "sp-timestamp",
  "state-merkle",
  "synthetic-crypto",
  "tempfile",
@@ -6806,8 +6819,8 @@ version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be769465445e8c1474e9c5dac2018218498557af32d9ed057325ec9a41ae81bf"
 dependencies = [
- "heck 0.4.1",
- "itertools 0.10.5",
+ "heck 0.5.0",
+ "itertools 0.14.0",
  "log",
  "multimap",
  "once_cell",
@@ -6840,7 +6853,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.110",
@@ -7702,6 +7715,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-basic-authorship"
+version = "0.52.0"
+source = "git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2509-2#7304752b47858f2cd601b35d0eb734ad4ccbbc48"
+dependencies = [
+ "futures",
+ "log",
+ "parity-scale-codec",
+ "sc-block-builder",
+ "sc-proposer-metrics",
+ "sc-telemetry",
+ "sc-transaction-pool-api",
+ "sp-api",
+ "sp-blockchain",
+ "sp-consensus",
+ "sp-core",
+ "sp-inherents",
+ "sp-runtime",
+ "sp-trie",
+ "substrate-prometheus-endpoint",
+]
+
+[[package]]
 name = "sc-block-builder"
 version = "0.47.0"
 source = "git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2509-2#7304752b47858f2cd601b35d0eb734ad4ccbbc48"
@@ -8172,6 +8207,15 @@ dependencies = [
  "serde_with",
  "thiserror 1.0.69",
  "zeroize",
+]
+
+[[package]]
+name = "sc-proposer-metrics"
+version = "0.20.0"
+source = "git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2509-2#7304752b47858f2cd601b35d0eb734ad4ccbbc48"
+dependencies = [
+ "log",
+ "substrate-prometheus-endpoint",
 ]
 
 [[package]]
