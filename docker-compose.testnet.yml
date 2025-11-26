@@ -30,24 +30,23 @@ services:
       dockerfile: Dockerfile.substrate
     container_name: hegemon-boot1
     command:
-      - --chain=/config/testnet-raw.json
+      - --dev
       - --base-path=/data
       - --port=30333
       - --rpc-port=9944
       - --rpc-cors=all
       - --rpc-external
-      - --rpc-methods=safe
+      - --rpc-methods=unsafe
       - --prometheus-external
       - --prometheus-port=9615
       - --node-key-file=/keys/boot1.key
       - --name=boot1
-      - --validator
+      - --force-authoring
     environment:
       - RUST_LOG=info,hegemon=debug
       - HEGEMON_MINE=1
       - HEGEMON_MINE_THREADS=2
     volumes:
-      - ./config/testnet:/config:ro
       - ./keys:/keys:ro
       - boot1-data:/data
     ports:
@@ -57,37 +56,29 @@ services:
     networks:
       - hegemon-testnet
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9944/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
   # Boot Node 2 - Secondary mining node
   boot2:
     image: hegemon/node:latest
     container_name: hegemon-boot2
     command:
-      - --chain=/config/testnet-raw.json
+      - --dev
       - --base-path=/data
       - --port=30333
       - --rpc-port=9944
       - --rpc-cors=all
       - --rpc-external
-      - --rpc-methods=safe
+      - --rpc-methods=unsafe
       - --prometheus-external
       - --prometheus-port=9615
       - --node-key-file=/keys/boot2.key
       - --name=boot2
-      - --bootnodes=/dns4/boot1/tcp/30333/p2p/${BOOT1_PEER_ID}
-      - --validator
+      - --force-authoring
     environment:
       - RUST_LOG=info,hegemon=debug
       - HEGEMON_MINE=1
       - HEGEMON_MINE_THREADS=1
     volumes:
-      - ./config/testnet:/config:ro
       - ./keys:/keys:ro
       - boot2-data:/data
     ports:
@@ -97,38 +88,28 @@ services:
     networks:
       - hegemon-testnet
     depends_on:
-      boot1:
-        condition: service_healthy
+      - boot1
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9944/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
   # Boot Node 3 - Full node (non-mining)
   boot3:
     image: hegemon/node:latest
     container_name: hegemon-boot3
     command:
-      - --chain=/config/testnet-raw.json
+      - --dev
       - --base-path=/data
       - --port=30333
       - --rpc-port=9944
       - --rpc-cors=all
       - --rpc-external
-      - --rpc-methods=safe
+      - --rpc-methods=unsafe
       - --prometheus-external
       - --prometheus-port=9615
       - --node-key-file=/keys/boot3.key
       - --name=boot3
-      - --bootnodes=/dns4/boot1/tcp/30333/p2p/${BOOT1_PEER_ID}
-      - --bootnodes=/dns4/boot2/tcp/30333/p2p/${BOOT2_PEER_ID}
     environment:
       - RUST_LOG=info,hegemon=debug
     volumes:
-      - ./config/testnet:/config:ro
       - ./keys:/keys:ro
       - boot3-data:/data
     ports:
@@ -138,15 +119,8 @@ services:
     networks:
       - hegemon-testnet
     depends_on:
-      boot1:
-        condition: service_healthy
+      - boot1
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9944/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
   # Dashboard UI
   dashboard:
@@ -163,8 +137,7 @@ services:
     networks:
       - hegemon-testnet
     depends_on:
-      boot1:
-        condition: service_healthy
+      - boot1
     restart: unless-stopped
 
   # Prometheus Monitoring

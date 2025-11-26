@@ -32,7 +32,7 @@
 - [x] Dashboard migrated to Substrate WS (Phase 6 complete - Polkadot.js API, SubstrateApiProvider, useSubstrateData hooks)
 - [x] E2E test suite passing (Phase 7 complete - mining_integration.rs, p2p_pq.rs, wallet_e2e.rs, substrate.spec.ts)
 - [x] Testnet deployment configured (Phase 8 in progress - docker-compose.testnet.yml, Prometheus/Grafana, soak-test.sh)
-- [ ] Testnet deployed and validated
+- [x] Testnet deployed and validated (3 nodes + dashboard + monitoring running)
 - [ ] Electron desktop app packaged [OPTIONAL]
 
 ---
@@ -1091,7 +1091,16 @@ test.describe('Dashboard with Substrate backend', () => {
 
 **Goal**: Deploy Substrate-based testnet and validate.
 
-**Status**: ✅ **CONFIGURATION COMPLETE** (2025-11-25)
+**Status**: ✅ **DEPLOYED** (2025-11-26)
+
+**Deployment Summary**:
+- Docker images built: `hegemon/node:latest` (203MB), `hegemon/dashboard:latest` (82.7MB)
+- 3-node testnet running via `docker-compose -f docker-compose.testnet.yml up -d`
+- All services operational: boot1, boot2, boot3, dashboard, prometheus, grafana
+- Dashboard accessible at http://localhost:80
+- Grafana at http://localhost:3000 (admin/admin)
+- Prometheus at http://localhost:9090
+- Node RPC endpoints: 9944, 9945, 9946
 
 **Files Created**:
 - `docker-compose.testnet.yml` - 3-node testnet with mining, dashboard, Prometheus, Grafana
