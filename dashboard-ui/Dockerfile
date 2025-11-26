@@ -3,15 +3,15 @@
 # Builds the Hegemon dashboard React application and serves via nginx
 
 # Build Stage
-FROM node:20-slim as builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
 # Copy package files
 COPY package.json package-lock.json* ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies (use install instead of ci for flexibility)
+RUN npm install
 
 # Copy source code
 COPY . .

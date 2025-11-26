@@ -1,6 +1,6 @@
 # Build Stage - Substrate Node
-# Using latest Rust stable and upgrading to nightly if needed
-FROM rust:bookworm AS builder
+# Using Rust nightly for Edition 2024 and latest crate compatibility
+FROM rust:nightly-slim-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -13,9 +13,6 @@ RUN apt-get update && apt-get install -y \
     protobuf-compiler \
     curl \
     && rm -rf /var/lib/apt/lists/*
-
-# Install nightly toolchain for Edition 2024 support
-RUN rustup default nightly && rustup update nightly
 
 WORKDIR /app
 
