@@ -60,13 +60,12 @@
 //! 4. Broadcast block announcement via PQ network
 
 use crate::pow::PowHandle;
-use crate::substrate::network_bridge::{BlockAnnounce, BlockState, NetworkBridge};
+use crate::substrate::network_bridge::{BlockAnnounce, BlockState};
 use codec::Encode;
 use consensus::{Blake3Seal, MiningWork};
 use sp_core::H256;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
 
 /// Mining worker configuration
 #[derive(Clone, Debug)]
@@ -474,34 +473,54 @@ impl BlockBroadcaster for MockBlockBroadcaster {
 
 /// Network bridge broadcaster that uses the actual PQ network
 pub struct NetworkBridgeBroadcaster {
-    /// Reference to the network bridge (reserved for future PQ broadcast implementation)
-    #[allow(dead_code)]
-    bridge: Arc<Mutex<NetworkBridge>>,
+    /// Handle to the PQ network backend for broadcasting
+    pq_handle: network::PqNetworkHandle,
+    /// Protocol ID for block announcements
+    protocol: String,
 }
 
 impl NetworkBridgeBroadcaster {
-    /// Create a new broadcaster with a network bridge
-    pub fn new(bridge: Arc<Mutex<NetworkBridge>>) -> Self {
-        Self { bridge }
+    /// Create a new broadcaster with a PQ network handle
+    pub fn new(pq_handle: network::PqNetworkHandle) -> Self {
+        Self {
+            pq_handle,
+            protocol: network::BLOCK_ANNOUNCES_PQ.to_string(),
+        }
+    }
+
+    /// Create with a custom protocol
+    pub fn with_protocol(pq_handle: network::PqNetworkHandle, protocol: String) -> Self {
+        Self { pq_handle, protocol }
     }
 }
 
 impl BlockBroadcaster for NetworkBridgeBroadcaster {
     fn broadcast_block(&self, announce: BlockAnnounce) {
-        // In a full implementation, this would encode and send via PQ network
-        // For now, we log the intent
+        let data = announce.encode();
+        let protocol = self.protocol.clone();
+        let handle = self.pq_handle.clone();
+        
         tracing::info!(
             block_number = announce.number,
             block_hash = %hex::encode(announce.hash),
             has_body = announce.body.is_some(),
+            data_len = data.len(),
             "Broadcasting mined block via PQ network"
         );
-        
-        // TODO: Implement actual broadcast via PqNetworkBackend
-        // This requires:
-        // 1. Access to PqNetworkBackend handle
-        // 2. Encoding BlockAnnounce for the protocol
-        // 3. Sending to all connected peers
+
+        // Spawn async broadcast task
+        tokio::spawn(async move {
+            let failed = handle.broadcast_to_all(&protocol, data).await;
+            
+            if failed.is_empty() {
+                tracing::debug!("Block broadcast completed successfully to all peers");
+            } else {
+                tracing::warn!(
+                    failed_count = failed.len(),
+                    "Block broadcast failed for some peers"
+                );
+            }
+        });
     }
 }
 
@@ -698,13 +717,14 @@ pub fn create_scaffold_mining_worker(
 /// Create a mining worker with network broadcasting
 ///
 /// This uses mock chain state but broadcasts via the PQ network.
+/// The PQ network handle is used to broadcast mined blocks to all connected peers.
 pub fn create_network_mining_worker(
     pow_handle: PowHandle,
-    network_bridge: Arc<Mutex<NetworkBridge>>,
+    pq_handle: network::PqNetworkHandle,
     config: MiningWorkerConfig,
 ) -> MiningWorker<MockChainStateProvider, NetworkBridgeBroadcaster> {
     let chain_state = Arc::new(MockChainStateProvider::new(config.test_mode));
-    let broadcaster = Arc::new(NetworkBridgeBroadcaster::new(network_bridge));
+    let broadcaster = Arc::new(NetworkBridgeBroadcaster::new(pq_handle));
     
     MiningWorker::new(pow_handle, chain_state, broadcaster, config)
 }

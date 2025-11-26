@@ -476,6 +476,18 @@ impl PqNetworkBackend {
         
         let _ = self.event_tx.send(PqNetworkEvent::Stopped).await;
     }
+
+    /// Create a handle to the network backend
+    ///
+    /// The handle can be shared across tasks and used to broadcast messages
+    /// and query peer state without access to the full backend.
+    pub fn handle(&self) -> PqNetworkHandle {
+        PqNetworkHandle {
+            local_peer_id: self.local_peer_id,
+            peers: self.peers.clone(),
+            event_tx: self.event_tx.clone(),
+        }
+    }
 }
 
 /// Handle to the PQ network backend for use in service contexts
@@ -485,8 +497,7 @@ pub struct PqNetworkHandle {
     local_peer_id: [u8; 32],
     /// Peers reference
     peers: Arc<RwLock<HashMap<[u8; 32], PeerConnection>>>,
-    /// Event sender (reserved for sending custom events)
-    #[allow(dead_code)]
+    /// Event sender for sending custom events
     event_tx: mpsc::Sender<PqNetworkEvent>,
 }
 
@@ -504,6 +515,67 @@ impl PqNetworkHandle {
     /// Get connected peer IDs
     pub async fn connected_peers(&self) -> Vec<[u8; 32]> {
         self.peers.read().await.keys().copied().collect()
+    }
+
+    /// Broadcast data to all connected peers
+    ///
+    /// This is used by the mining worker to broadcast newly mined blocks
+    /// and by the transaction pool to propagate transactions.
+    ///
+    /// Returns a list of peer IDs that failed to receive the message.
+    pub async fn broadcast_to_all(&self, protocol: &str, data: Vec<u8>) -> Vec<[u8; 32]> {
+        let mut failed = Vec::new();
+        let mut peers = self.peers.write().await;
+        
+        for (peer_id, peer) in peers.iter_mut() {
+            if let Err(e) = peer.connection.send(&data).await {
+                tracing::debug!(
+                    peer_id = %hex::encode(peer_id),
+                    protocol = %protocol,
+                    error = %e,
+                    "Failed to send message to peer"
+                );
+                failed.push(*peer_id);
+            }
+        }
+        
+        // Remove failed peers
+        for peer_id in &failed {
+            if let Some(_) = peers.remove(peer_id) {
+                // Send disconnect event
+                let _ = self.event_tx.send(PqNetworkEvent::PeerDisconnected {
+                    peer_id: *peer_id,
+                    reason: "Send failed during broadcast".to_string(),
+                }).await;
+            }
+        }
+        
+        if !failed.is_empty() {
+            tracing::warn!(
+                failed_count = failed.len(),
+                protocol = %protocol,
+                "Some peers failed during broadcast"
+            );
+        }
+        
+        failed
+    }
+
+    /// Send data to a specific peer
+    ///
+    /// Returns Ok(()) on success, or an error message on failure.
+    pub async fn send_to_peer(&self, peer_id: [u8; 32], data: Vec<u8>) -> Result<(), String> {
+        let mut peers = self.peers.write().await;
+        
+        if let Some(peer) = peers.get_mut(&peer_id) {
+            peer.connection
+                .send(&data)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        } else {
+            Err("Peer not found".to_string())
+        }
     }
 }
 
@@ -564,5 +636,47 @@ mod tests {
         assert_eq!(backend_b.peer_count().await, 0);
 
         backend_a.stop().await;
+    }
+
+    #[tokio::test]
+    async fn test_network_backend_handle() {
+        let identity = PqPeerIdentity::new(b"test-handle", PqTransportConfig::development());
+        let config = PqNetworkBackendConfig::development();
+        let backend = PqNetworkBackend::new(&identity, config);
+
+        // Get handle
+        let handle = backend.handle();
+        
+        // Handle should have same peer ID
+        assert_eq!(handle.local_peer_id(), backend.local_peer_id());
+        
+        // Both should report 0 peers
+        assert_eq!(handle.peer_count().await, 0);
+        assert_eq!(backend.peer_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_network_handle_broadcast_empty() {
+        let identity = PqPeerIdentity::new(b"test-broadcast", PqTransportConfig::development());
+        let config = PqNetworkBackendConfig::development();
+        let backend = PqNetworkBackend::new(&identity, config);
+        let handle = backend.handle();
+
+        // Broadcast to empty peer set should succeed with no failures
+        let failed = handle.broadcast_to_all("/test/protocol", vec![1, 2, 3]).await;
+        assert!(failed.is_empty(), "Broadcast to empty set should have no failures");
+    }
+
+    #[tokio::test]
+    async fn test_network_handle_send_to_nonexistent_peer() {
+        let identity = PqPeerIdentity::new(b"test-send", PqTransportConfig::development());
+        let config = PqNetworkBackendConfig::development();
+        let backend = PqNetworkBackend::new(&identity, config);
+        let handle = backend.handle();
+
+        // Send to non-existent peer should fail
+        let result = handle.send_to_peer([99u8; 32], vec![1, 2, 3]).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Peer not found");
     }
 }
