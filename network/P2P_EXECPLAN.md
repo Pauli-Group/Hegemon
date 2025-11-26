@@ -103,3 +103,53 @@ Update the node binary to start the P2P service.
 *   **Peer Discovery**: Implement a simple address book exchange (GetAddr/Addr).
 *   **Block Aggregation**: Implement the "Block + Proof" gossip optimization to reduce bandwidth.
 *   **NAT Traversal**: UPnP or hole punching.
+
+## 5. Phase 3: Post-Quantum Transport (COMPLETE)
+
+**Status:** ✅ Implemented 2025-02-17
+
+### 5.1 Overview
+
+Upgraded the P2P transport layer to use hybrid post-quantum cryptography:
+- **Classical:** X25519 ECDH (immediate security)
+- **Post-Quantum:** ML-KEM-768 encapsulation (future-proof)
+- **Authentication:** ML-DSA-65 signatures
+
+### 5.2 Components
+
+*   **`pq-noise` crate**: Standalone hybrid noise protocol implementation
+    - `handshake.rs`: X25519 + ML-KEM-768 hybrid key exchange
+    - `session.rs`: AES-256-GCM encrypted sessions with rekeying
+    - `transport.rs`: Async transport layer over TCP
+    - `noise.rs`: Cipher states and transcript management
+
+*   **`network/src/pq_transport.rs`**: Network layer integration
+    - `PqTransportConfig`: Configuration for PQ transport
+    - `PqPeerIdentity`: Extended peer identity with PQ keys
+    - `PqConnectionManager`: Connection lifecycle with PQ handshakes
+
+*   **`node/src/substrate/network.rs`**: Substrate integration
+    - `PqNetworkConfig`: Substrate network configuration
+    - `PqNetworkKeypair`: ML-KEM + ML-DSA keypair management
+
+### 5.3 Security Properties
+
+The hybrid approach provides defense-in-depth:
+1. If X25519 is broken but ML-KEM is secure → connection remains secure
+2. If ML-KEM is broken but X25519 is secure → connection remains secure  
+3. Both must be broken simultaneously to compromise security
+
+Key derivation uses domain-separated HKDF:
+```
+combined_secret = HKDF-SHA256(
+    salt = transcript_hash,
+    ikm = x25519_shared || mlkem_shared,
+    info = "hegemon-pq-noise-combined-key"
+)
+```
+
+### 5.4 Test Coverage
+
+*   13 unit tests in `pq-noise` crate
+*   7 integration tests in `network/tests/pq_handshake.rs`
+*   Coverage: handshake flow, timeout handling, concurrent connections, bidirectional communication

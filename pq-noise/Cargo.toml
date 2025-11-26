@@ -1,0 +1,49 @@
+[package]
+name = "pq-noise"
+version = "0.1.0"
+edition = "2021"
+description = "Post-Quantum Noise Protocol Extension with ML-KEM-768 hybrid handshake"
+authors = ["Hegemon Team"]
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# Core crypto
+crypto = { path = "../crypto", package = "synthetic-crypto" }
+sha2 = "0.10"
+hkdf = "0.12"
+rand = { version = "0.8", features = ["std"] }
+
+# X25519 for classical fallback
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+
+# AES-GCM for encryption
+aead = "0.5"
+aes-gcm = "0.10"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+hex = "0.4"
+
+# Async I/O
+tokio = { version = "1", features = ["io-util", "sync", "time"] }
+futures = "0.3"
+
+# Framing
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1"
+
+# Error handling
+thiserror = "1"
+
+# Logging
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util", "net"] }
+proptest = "1"
+hex = "0.4"
+
+[features]
+default = ["std"]
+std = ["rand/std", "sha2/std"]

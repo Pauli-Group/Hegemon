@@ -1,0 +1,658 @@
+//! Substrate RPC Client for Wallet
+//!
+//! This module provides a WebSocket-based RPC client that connects to Substrate
+//! nodes using the jsonrpsee library. It implements the wallet-specific RPC methods
+//! defined in the `hegemon_*` namespace.
+//!
+//! # Migration from HTTP
+//!
+//! This replaces the previous HTTP-based `WalletRpcClient` with a WebSocket client
+//! that supports:
+//! - Persistent connections with automatic reconnection
+//! - Block subscriptions for real-time sync
+//! - Full async/await support
+//!
+//! # Example
+//!
+//! ```no_run
+//! use wallet::substrate_rpc::SubstrateRpcClient;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = SubstrateRpcClient::connect("ws://127.0.0.1:9944").await?;
+//! let status = client.note_status().await?;
+//! println!("Tree has {} leaves", status.leaf_count);
+//! # Ok(())
+//! # }
+//! ```
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use jsonrpsee::core::client::{ClientT, SubscriptionClientT};
+use jsonrpsee::rpc_params;
+use jsonrpsee::ws_client::{WsClient, WsClientBuilder};
+use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
+
+use crate::error::WalletError;
+use crate::notes::NoteCiphertext;
+use crate::rpc::TransactionBundle;
+
+/// Configuration for the Substrate RPC client
+#[derive(Clone, Debug)]
+pub struct SubstrateRpcConfig {
+    /// WebSocket endpoint URL (e.g., "ws://127.0.0.1:9944")
+    pub endpoint: String,
+    /// Connection timeout
+    pub connection_timeout: Duration,
+    /// Request timeout
+    pub request_timeout: Duration,
+    /// Maximum number of reconnection attempts
+    pub max_reconnect_attempts: u32,
+    /// Delay between reconnection attempts
+    pub reconnect_delay: Duration,
+}
+
+impl Default for SubstrateRpcConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "ws://127.0.0.1:9944".to_string(),
+            connection_timeout: Duration::from_secs(30),
+            request_timeout: Duration::from_secs(60),
+            max_reconnect_attempts: 5,
+            reconnect_delay: Duration::from_secs(2),
+        }
+    }
+}
+
+impl SubstrateRpcConfig {
+    /// Create config with custom endpoint
+    pub fn with_endpoint(endpoint: impl Into<String>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+            ..Default::default()
+        }
+    }
+}
+
+/// Note status response from the node
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NoteStatus {
+    /// Total number of commitment leaves
+    pub leaf_count: u64,
+    /// Merkle tree depth
+    pub depth: u64,
+    /// Current Merkle root (hex encoded)
+    pub root: String,
+    /// Next available index
+    pub next_index: u64,
+}
+
+/// Commitment entry from the commitment tree
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommitmentEntry {
+    /// Index in the commitment tree
+    pub index: u64,
+    /// Commitment value (field element)
+    pub value: u64,
+}
+
+/// Paginated commitment response
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommitmentResponse {
+    /// Commitment entries
+    pub entries: Vec<CommitmentEntry>,
+    /// Total count
+    pub total: u64,
+    /// Whether there are more entries
+    pub has_more: bool,
+}
+
+/// Ciphertext entry from the node
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CiphertextEntryWire {
+    /// Index in the ciphertext list
+    pub index: u64,
+    /// Encrypted note ciphertext (base64 encoded)
+    pub ciphertext: String,
+}
+
+/// Paginated ciphertext response
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CiphertextResponse {
+    /// Ciphertext entries
+    pub entries: Vec<CiphertextEntryWire>,
+    /// Total count
+    pub total: u64,
+    /// Whether there are more entries
+    pub has_more: bool,
+}
+
+/// Nullifier response from the node
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NullifierResponse {
+    /// List of nullifiers (hex encoded)
+    pub nullifiers: Vec<String>,
+    /// Total count
+    pub count: u64,
+}
+
+/// Latest block information
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LatestBlock {
+    /// Block height
+    pub height: u64,
+    /// Block hash (hex encoded)
+    pub hash: String,
+    /// State root (hex encoded)
+    pub state_root: String,
+    /// Nullifier root (hex encoded)
+    pub nullifier_root: String,
+    /// Total supply digest
+    pub supply_digest: u128,
+    /// Block timestamp (unix seconds)
+    #[serde(default)]
+    pub timestamp: u64,
+}
+
+/// Pagination parameters for RPC calls
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PaginationParams {
+    /// Starting index
+    #[serde(default)]
+    pub start: u64,
+    /// Maximum number of entries to return
+    #[serde(default = "default_limit")]
+    pub limit: u64,
+}
+
+impl Default for PaginationParams {
+    fn default() -> Self {
+        Self {
+            start: 0,
+            limit: default_limit(),
+        }
+    }
+}
+
+fn default_limit() -> u64 {
+    128
+}
+
+/// Transaction submission response
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TransactionResponse {
+    /// Whether submission succeeded
+    pub success: bool,
+    /// Transaction ID (hex encoded) if successful
+    pub tx_id: Option<String>,
+    /// Error message if failed
+    pub error: Option<String>,
+}
+
+/// Ciphertext entry with decoded content
+#[derive(Clone, Debug)]
+pub struct CiphertextEntry {
+    /// Index in the ciphertext list
+    pub index: u64,
+    /// Decoded note ciphertext
+    pub ciphertext: NoteCiphertext,
+}
+
+/// Substrate WebSocket RPC client for wallet operations
+///
+/// This client connects to a Substrate node via WebSocket and provides
+/// methods to interact with the wallet-specific RPC endpoints.
+pub struct SubstrateRpcClient {
+    /// The underlying WebSocket client
+    client: Arc<RwLock<WsClient>>,
+    /// Client configuration
+    config: SubstrateRpcConfig,
+}
+
+impl SubstrateRpcClient {
+    /// Connect to a Substrate node
+    ///
+    /// # Arguments
+    ///
+    /// * `endpoint` - WebSocket endpoint URL (e.g., "ws://127.0.0.1:9944")
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use wallet::substrate_rpc::SubstrateRpcClient;
+    /// let client = SubstrateRpcClient::connect("ws://127.0.0.1:9944").await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn connect(endpoint: &str) -> Result<Self, WalletError> {
+        let config = SubstrateRpcConfig::with_endpoint(endpoint);
+        Self::connect_with_config(config).await
+    }
+
+    /// Connect with custom configuration
+    pub async fn connect_with_config(config: SubstrateRpcConfig) -> Result<Self, WalletError> {
+        let client = Self::build_client(&config).await?;
+        Ok(Self {
+            client: Arc::new(RwLock::new(client)),
+            config,
+        })
+    }
+
+    async fn build_client(config: &SubstrateRpcConfig) -> Result<WsClient, WalletError> {
+        WsClientBuilder::default()
+            .connection_timeout(config.connection_timeout)
+            .request_timeout(config.request_timeout)
+            .build(&config.endpoint)
+            .await
+            .map_err(|e| WalletError::Rpc(format!("Failed to connect to {}: {}", config.endpoint, e)))
+    }
+
+    /// Ensure connection is alive, reconnect if needed
+    async fn ensure_connected(&self) -> Result<(), WalletError> {
+        let client = self.client.read().await;
+        if client.is_connected() {
+            return Ok(());
+        }
+        drop(client);
+
+        // Attempt reconnection
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            match Self::build_client(&self.config).await {
+                Ok(new_client) => {
+                    let mut client = self.client.write().await;
+                    *client = new_client;
+                    return Ok(());
+                }
+                Err(e) => {
+                    if attempts >= self.config.max_reconnect_attempts {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(self.config.reconnect_delay).await;
+                }
+            }
+        }
+    }
+
+    /// Get wallet note status (commitment tree info)
+    ///
+    /// Returns information about the note commitment tree including
+    /// leaf count, depth, current root, and next available index.
+    pub async fn note_status(&self) -> Result<NoteStatus, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        client
+            .request("hegemon_walletNotes", rpc_params![])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("hegemon_walletNotes failed: {}", e)))
+    }
+
+    /// Get commitment entries from the tree
+    ///
+    /// Returns a paginated list of commitment tree entries.
+    ///
+    /// # Arguments
+    ///
+    /// * `start` - Starting index
+    /// * `limit` - Maximum number of entries to return
+    pub async fn commitments(
+        &self,
+        start: u64,
+        limit: usize,
+    ) -> Result<Vec<CommitmentEntry>, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        
+        let params = PaginationParams {
+            start,
+            limit: limit as u64,
+        };
+        
+        let response: CommitmentResponse = client
+            .request("hegemon_walletCommitments", rpc_params![params])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("hegemon_walletCommitments failed: {}", e)))?;
+        
+        Ok(response.entries)
+    }
+
+    /// Get ciphertext entries
+    ///
+    /// Returns a paginated list of encrypted note ciphertexts.
+    ///
+    /// # Arguments
+    ///
+    /// * `start` - Starting index
+    /// * `limit` - Maximum number of entries to return
+    pub async fn ciphertexts(
+        &self,
+        start: u64,
+        limit: usize,
+    ) -> Result<Vec<CiphertextEntry>, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        
+        let params = PaginationParams {
+            start,
+            limit: limit as u64,
+        };
+        
+        let response: CiphertextResponse = client
+            .request("hegemon_walletCiphertexts", rpc_params![params])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("hegemon_walletCiphertexts failed: {}", e)))?;
+        
+        // Decode base64 ciphertexts
+        let mut entries = Vec::with_capacity(response.entries.len());
+        for entry in response.entries {
+            let bytes = base64::Engine::decode(
+                &base64::engine::general_purpose::STANDARD,
+                &entry.ciphertext,
+            )
+            .map_err(|e| WalletError::Serialization(format!("Invalid base64 ciphertext: {}", e)))?;
+            
+            let ciphertext: NoteCiphertext = bincode::deserialize(&bytes)?;
+            entries.push(CiphertextEntry {
+                index: entry.index,
+                ciphertext,
+            });
+        }
+        
+        Ok(entries)
+    }
+
+    /// Get all spent nullifiers
+    ///
+    /// Returns the list of spent nullifiers from the node.
+    pub async fn nullifiers(&self) -> Result<Vec<[u8; 32]>, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        
+        let response: NullifierResponse = client
+            .request("hegemon_walletNullifiers", rpc_params![])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("hegemon_walletNullifiers failed: {}", e)))?;
+        
+        response
+            .nullifiers
+            .iter()
+            .map(|hex| {
+                let bytes = hex::decode(hex)
+                    .map_err(|e| WalletError::Serialization(format!("Invalid hex nullifier: {}", e)))?;
+                if bytes.len() != 32 {
+                    return Err(WalletError::Serialization(
+                        "invalid nullifier length".into(),
+                    ));
+                }
+                let mut out = [0u8; 32];
+                out.copy_from_slice(&bytes);
+                Ok(out)
+            })
+            .collect()
+    }
+
+    /// Get latest block information
+    ///
+    /// Returns information about the most recent block.
+    pub async fn latest_block(&self) -> Result<LatestBlock, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        client
+            .request("hegemon_latestBlock", rpc_params![])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("hegemon_latestBlock failed: {}", e)))
+    }
+
+    /// Submit a transaction to the network
+    ///
+    /// Submits a signed transaction bundle containing the proof
+    /// and encrypted note ciphertexts.
+    ///
+    /// # Arguments
+    ///
+    /// * `bundle` - Transaction bundle with proof and ciphertexts
+    ///
+    /// # Returns
+    ///
+    /// The transaction ID (32 bytes) if successful.
+    pub async fn submit_transaction(
+        &self,
+        bundle: &TransactionBundle,
+    ) -> Result<[u8; 32], WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        
+        // Convert to wire format (base64 encoded)
+        let wire_bundle = WireTransactionBundle::from_bundle(bundle)?;
+        
+        let response: TransactionResponse = client
+            .request("hegemon_submitTransaction", rpc_params![wire_bundle])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("hegemon_submitTransaction failed: {}", e)))?;
+        
+        if !response.success {
+            return Err(WalletError::Http(format!(
+                "Transaction submission failed: {}",
+                response.error.unwrap_or_else(|| "unknown error".to_string())
+            )));
+        }
+        
+        let tx_id = response
+            .tx_id
+            .ok_or_else(|| WalletError::Rpc("Missing tx_id in response".to_string()))?;
+        
+        hex_to_array(&tx_id)
+    }
+
+    /// Check if connected to the node
+    pub async fn is_connected(&self) -> bool {
+        let client = self.client.read().await;
+        client.is_connected()
+    }
+
+    /// Get the endpoint URL
+    pub fn endpoint(&self) -> &str {
+        &self.config.endpoint
+    }
+
+    /// Subscribe to new block headers
+    ///
+    /// Returns a subscription that yields new block headers as they are produced.
+    /// This is useful for real-time wallet synchronization.
+    pub async fn subscribe_new_heads(
+        &self,
+    ) -> Result<jsonrpsee::core::client::Subscription<serde_json::Value>, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        client
+            .subscribe(
+                "chain_subscribeNewHeads",
+                rpc_params![],
+                "chain_unsubscribeNewHeads",
+            )
+            .await
+            .map_err(|e| WalletError::Rpc(format!("Failed to subscribe to new heads: {}", e)))
+    }
+
+    /// Subscribe to finalized block headers
+    ///
+    /// Returns a subscription that yields finalized block headers.
+    pub async fn subscribe_finalized_heads(
+        &self,
+    ) -> Result<jsonrpsee::core::client::Subscription<serde_json::Value>, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        client
+            .subscribe(
+                "chain_subscribeFinalizedHeads",
+                rpc_params![],
+                "chain_unsubscribeFinalizedHeads",
+            )
+            .await
+            .map_err(|e| WalletError::Rpc(format!("Failed to subscribe to finalized heads: {}", e)))
+    }
+}
+
+/// Wire format for transaction bundle (base64 encoded)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WireTransactionBundle {
+    proof: String,
+    ciphertexts: Vec<String>,
+}
+
+impl WireTransactionBundle {
+    fn from_bundle(bundle: &TransactionBundle) -> Result<Self, WalletError> {
+        use base64::Engine;
+        
+        // Serialize proof to bytes then base64
+        let proof_bytes = bincode::serialize(&bundle.proof)?;
+        let proof = base64::engine::general_purpose::STANDARD.encode(&proof_bytes);
+        
+        // Encode each ciphertext as base64
+        let ciphertexts = bundle
+            .ciphertexts
+            .iter()
+            .map(|ct| base64::engine::general_purpose::STANDARD.encode(ct))
+            .collect();
+        
+        Ok(Self { proof, ciphertexts })
+    }
+}
+
+fn hex_to_array(hex_str: &str) -> Result<[u8; 32], WalletError> {
+    let bytes = hex::decode(hex_str)
+        .map_err(|e| WalletError::Serialization(format!("Invalid hex: {}", e)))?;
+    if bytes.len() != 32 {
+        return Err(WalletError::Serialization("expected 32-byte hash".into()));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+/// Blocking wrapper for SubstrateRpcClient
+///
+/// Provides a blocking API for use in synchronous contexts,
+/// compatible with the existing WalletRpcClient interface.
+#[derive(Clone)]
+pub struct BlockingSubstrateRpcClient {
+    inner: Arc<SubstrateRpcClient>,
+    runtime: Arc<tokio::runtime::Runtime>,
+}
+
+impl BlockingSubstrateRpcClient {
+    /// Connect to a Substrate node (blocking)
+    pub fn connect(endpoint: &str) -> Result<Self, WalletError> {
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| WalletError::Rpc(format!("Failed to create runtime: {}", e)))?;
+        
+        let inner = runtime.block_on(SubstrateRpcClient::connect(endpoint))?;
+        
+        Ok(Self {
+            inner: Arc::new(inner),
+            runtime: Arc::new(runtime),
+        })
+    }
+
+    /// Connect with custom configuration (blocking)
+    pub fn connect_with_config(config: SubstrateRpcConfig) -> Result<Self, WalletError> {
+        let runtime = tokio::runtime::Runtime::new()
+            .map_err(|e| WalletError::Rpc(format!("Failed to create runtime: {}", e)))?;
+        
+        let inner = runtime.block_on(SubstrateRpcClient::connect_with_config(config))?;
+        
+        Ok(Self {
+            inner: Arc::new(inner),
+            runtime: Arc::new(runtime),
+        })
+    }
+
+    /// Get latest block information
+    pub fn latest_block(&self) -> Result<LatestBlock, WalletError> {
+        self.runtime.block_on(self.inner.latest_block())
+    }
+
+    /// Get note status
+    pub fn note_status(&self) -> Result<NoteStatus, WalletError> {
+        self.runtime.block_on(self.inner.note_status())
+    }
+
+    /// Get commitment entries
+    pub fn commitments(&self, start: u64, limit: usize) -> Result<Vec<CommitmentEntry>, WalletError> {
+        self.runtime.block_on(self.inner.commitments(start, limit))
+    }
+
+    /// Get ciphertext entries
+    pub fn ciphertexts(&self, start: u64, limit: usize) -> Result<Vec<CiphertextEntry>, WalletError> {
+        self.runtime.block_on(self.inner.ciphertexts(start, limit))
+    }
+
+    /// Get nullifiers
+    pub fn nullifiers(&self) -> Result<Vec<[u8; 32]>, WalletError> {
+        self.runtime.block_on(self.inner.nullifiers())
+    }
+
+    /// Submit transaction
+    pub fn submit_transaction(&self, bundle: &TransactionBundle) -> Result<[u8; 32], WalletError> {
+        self.runtime.block_on(self.inner.submit_transaction(bundle))
+    }
+
+    /// Check if connected
+    pub fn is_connected(&self) -> bool {
+        self.runtime.block_on(self.inner.is_connected())
+    }
+
+    /// Get endpoint URL
+    pub fn endpoint(&self) -> &str {
+        self.inner.endpoint()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_defaults() {
+        let config = SubstrateRpcConfig::default();
+        assert_eq!(config.endpoint, "ws://127.0.0.1:9944");
+        assert_eq!(config.max_reconnect_attempts, 5);
+    }
+
+    #[test]
+    fn test_config_with_endpoint() {
+        let config = SubstrateRpcConfig::with_endpoint("ws://localhost:9955");
+        assert_eq!(config.endpoint, "ws://localhost:9955");
+    }
+
+    #[test]
+    fn test_pagination_defaults() {
+        let params = PaginationParams::default();
+        assert_eq!(params.start, 0);
+        assert_eq!(params.limit, 128);
+    }
+
+    #[test]
+    fn test_hex_to_array_valid() {
+        let hex = "0000000000000000000000000000000000000000000000000000000000000001";
+        let result = hex_to_array(hex).unwrap();
+        assert_eq!(result[31], 1);
+    }
+
+    #[test]
+    fn test_hex_to_array_invalid_length() {
+        let hex = "0001";
+        let result = hex_to_array(hex);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hex_to_array_invalid_hex() {
+        let hex = "gg00";
+        let result = hex_to_array(hex);
+        assert!(result.is_err());
+    }
+}

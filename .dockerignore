@@ -1,0 +1,43 @@
+# Build artifacts
+target/
+**/target/
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+test-logs/
+*.log
+
+# Docker volumes
+data/
+
+# Keys (don't include in image)
+keys/
+*.key
+
+# Environment files
+.env*
+!.env.example
+
+# Documentation build
+docs/_build/
+
+# Temporary files
+*.tmp
+*.bak

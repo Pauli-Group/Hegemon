@@ -3,7 +3,7 @@ use std::net::{SocketAddr, TcpListener};
 use crypto::hashes::sha256;
 use crypto::traits::{SigningKey, VerifyKey};
 use network::GossipRouter;
-use node::{config::NodeConfig, storage::Storage, NodeService};
+use hegemon_node::{config::NodeConfig, storage::Storage, NodeService};
 use state_merkle::CommitmentTree;
 use tempfile::Builder;
 use tokio::time::sleep;

@@ -1,0 +1,271 @@
+//! Async Wallet Sync Engine for Substrate RPC
+//!
+//! This module provides an async synchronization engine that syncs wallet state
+//! using the Substrate WebSocket RPC client. It replaces the blocking sync engine
+//! for use with async runtimes.
+//!
+//! # Features
+//!
+//! - Real-time sync via block subscriptions
+//! - Efficient paginated fetching
+//! - Automatic note decryption and tracking
+//!
+//! # Example
+//!
+//! ```no_run
+//! use std::sync::Arc;
+//! use wallet::{SubstrateRpcClient, WalletStore};
+//! use wallet::async_sync::AsyncWalletSyncEngine;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = Arc::new(SubstrateRpcClient::connect("ws://127.0.0.1:9944").await?);
+//! let store = Arc::new(WalletStore::open("wallet.dat", "password")?);
+//! let engine = AsyncWalletSyncEngine::new(client, store);
+//! let outcome = engine.sync_once().await?;
+//! println!("Synced {} notes", outcome.recovered);
+//! # Ok(())
+//! # }
+//! ```
+
+use std::collections::HashSet;
+use std::sync::Arc;
+
+// StreamExt is required for Subscription::next()
+#[allow(unused_imports)]
+use futures::StreamExt;
+use tokio::sync::RwLock;
+
+use crate::error::WalletError;
+use crate::store::WalletStore;
+use crate::substrate_rpc::{CiphertextEntry, SubstrateRpcClient};
+use crate::sync::SyncOutcome;
+
+/// Async wallet synchronization engine
+///
+/// This engine syncs wallet state with a Substrate node using WebSocket RPC.
+/// It supports both one-shot synchronization and continuous sync via subscriptions.
+pub struct AsyncWalletSyncEngine {
+    /// RPC client for node communication
+    client: Arc<SubstrateRpcClient>,
+    /// Wallet store (wrapped for interior mutability)
+    store: Arc<WalletStore>,
+    /// Page size for fetching commitments/ciphertexts
+    page_limit: usize,
+}
+
+impl AsyncWalletSyncEngine {
+    /// Create a new async sync engine
+    ///
+    /// # Arguments
+    ///
+    /// * `client` - Substrate RPC client
+    /// * `store` - Wallet store
+    pub fn new(client: Arc<SubstrateRpcClient>, store: Arc<WalletStore>) -> Self {
+        Self {
+            client,
+            store,
+            page_limit: 256,
+        }
+    }
+
+    /// Create with custom page limit
+    pub fn with_page_limit(mut self, limit: usize) -> Self {
+        self.page_limit = limit;
+        self
+    }
+
+    /// Perform a single synchronization pass
+    ///
+    /// Fetches all new commitments, ciphertexts, and nullifiers from the node
+    /// and updates the wallet store.
+    pub async fn sync_once(&self) -> Result<SyncOutcome, WalletError> {
+        let mut outcome = SyncOutcome::default();
+
+        // Get current note status from node
+        let note_status = self.client.note_status().await?;
+        self.store.set_tree_depth(note_status.depth as u32)?;
+
+        // Sync commitments
+        let mut commitment_cursor = self.store.next_commitment_index()?;
+        while commitment_cursor < note_status.leaf_count {
+            let entries = self
+                .client
+                .commitments(commitment_cursor, self.page_limit)
+                .await?;
+            if entries.is_empty() {
+                break;
+            }
+            let pairs: Vec<(u64, u64)> = entries
+                .iter()
+                .map(|entry| (entry.index, entry.value))
+                .collect();
+            self.store.append_commitments(&pairs)?;
+            commitment_cursor = self.store.next_commitment_index()?;
+            outcome.commitments += entries.len();
+        }
+
+        // Sync ciphertexts and attempt decryption
+        let mut ciphertext_cursor = self.store.next_ciphertext_index()?;
+        while ciphertext_cursor < note_status.next_index {
+            let entries = self
+                .client
+                .ciphertexts(ciphertext_cursor, self.page_limit)
+                .await?;
+            if entries.is_empty() {
+                break;
+            }
+            for entry in entries {
+                outcome.ciphertexts += 1;
+                self.process_ciphertext(entry, &mut outcome)?;
+            }
+            ciphertext_cursor = self.store.next_ciphertext_index()?;
+        }
+
+        // Sync nullifiers
+        let nullifiers = self.client.nullifiers().await?;
+        let nullifier_set: HashSet<[u8; 32]> = nullifiers.into_iter().collect();
+        outcome.spent += self.store.mark_nullifiers(&nullifier_set)?;
+
+        // Update pending transactions
+        let latest = self.client.latest_block().await?;
+        self.store.refresh_pending(latest.height, &nullifier_set)?;
+        self.store.set_last_synced_height(latest.height)?;
+
+        Ok(outcome)
+    }
+
+    /// Process a single ciphertext entry
+    fn process_ciphertext(
+        &self,
+        entry: CiphertextEntry,
+        outcome: &mut SyncOutcome,
+    ) -> Result<(), WalletError> {
+        let CiphertextEntry { index, ciphertext } = entry;
+        let ivk = self.store.incoming_key()?;
+        
+        match ivk.decrypt_note(&ciphertext) {
+            Ok(recovered) => {
+                if self.store.record_recovered_note(recovered, index, index)? {
+                    outcome.recovered += 1;
+                }
+            }
+            Err(WalletError::NoteMismatch(_)) => {
+                // Note not for this wallet, skip
+            }
+            Err(err) => return Err(err),
+        }
+        
+        self.store.register_ciphertext_index(index)?;
+        Ok(())
+    }
+
+    /// Run continuous synchronization with block subscriptions
+    ///
+    /// Subscribes to new block headers and syncs after each new block.
+    /// This runs indefinitely until the subscription fails or is cancelled.
+    ///
+    /// # Arguments
+    ///
+    /// * `on_sync` - Callback invoked after each sync with the outcome
+    pub async fn run_continuous<F>(&self, mut on_sync: F) -> Result<(), WalletError>
+    where
+        F: FnMut(SyncOutcome),
+    {
+        // Initial sync
+        let outcome = self.sync_once().await?;
+        on_sync(outcome);
+
+        // Subscribe to new blocks
+        let mut subscription = self.client.subscribe_new_heads().await?;
+
+        // Sync on each new block
+        while let Some(result) = subscription.next().await {
+            match result {
+                Ok(_header) => {
+                    match self.sync_once().await {
+                        Ok(outcome) => on_sync(outcome),
+                        Err(e) => {
+                            // Log error but continue
+                            eprintln!("Sync error: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(WalletError::Rpc(format!("Subscription error: {}", e)));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Run continuous sync with finalized blocks only
+    ///
+    /// Only syncs when blocks are finalized, providing stronger consistency.
+    pub async fn run_continuous_finalized<F>(&self, mut on_sync: F) -> Result<(), WalletError>
+    where
+        F: FnMut(SyncOutcome),
+    {
+        // Initial sync
+        let outcome = self.sync_once().await?;
+        on_sync(outcome);
+
+        // Subscribe to finalized blocks
+        let mut subscription = self.client.subscribe_finalized_heads().await?;
+
+        while let Some(result) = subscription.next().await {
+            match result {
+                Ok(_header) => {
+                    match self.sync_once().await {
+                        Ok(outcome) => on_sync(outcome),
+                        Err(e) => {
+                            eprintln!("Sync error: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(WalletError::Rpc(format!("Subscription error: {}", e)));
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Sync engine with shared state for concurrent access
+///
+/// Wraps AsyncWalletSyncEngine with RwLock protection for use
+/// in multi-threaded contexts (e.g., with a web server).
+pub struct SharedSyncEngine {
+    inner: RwLock<AsyncWalletSyncEngine>,
+}
+
+impl SharedSyncEngine {
+    /// Create a new shared sync engine
+    pub fn new(client: Arc<SubstrateRpcClient>, store: Arc<WalletStore>) -> Self {
+        Self {
+            inner: RwLock::new(AsyncWalletSyncEngine::new(client, store)),
+        }
+    }
+
+    /// Perform a single synchronization pass
+    pub async fn sync_once(&self) -> Result<SyncOutcome, WalletError> {
+        let engine = self.inner.read().await;
+        engine.sync_once().await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sync_outcome_default() {
+        let outcome = SyncOutcome::default();
+        assert_eq!(outcome.commitments, 0);
+        assert_eq!(outcome.ciphertexts, 0);
+        assert_eq!(outcome.recovered, 0);
+        assert_eq!(outcome.spent, 0);
+    }
+}

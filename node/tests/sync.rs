@@ -5,9 +5,9 @@ use network::{
     GossipRouter, NatTraversalConfig, P2PService, PeerIdentity, PeerStore, PeerStoreConfig,
     RelayConfig,
 };
-use node::NodeService;
-use node::config::NodeConfig;
-use node::sync::SYNC_PROTOCOL_ID;
+use hegemon_node::NodeService;
+use hegemon_node::config::NodeConfig;
+use hegemon_node::sync::SYNC_PROTOCOL_ID;
 use tempfile::tempdir;
 use tokio::time::timeout;
 

@@ -1,13 +1,17 @@
 [package]
-name = "node"
+name = "hegemon-node"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+authors = ["Hegemon Team"]
+description = "Hegemon PQ-secure blockchain node"
 
 [dependencies]
 anyhow = "1.0"
+async-trait = "0.1"
 axum = { version = "0.7", features = ["json", "ws"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 bincode = "1.3"
+blake3 = "1.5"
 clap = { version = "4.5", features = ["derive", "env"] }
 consensus = { path = "../consensus" }
 crypto = { path = "../crypto", package = "synthetic-crypto" }
@@ -17,12 +21,14 @@ network = { path = "../network" }
 num-bigint = "0.4"
 num-traits = "0.2"
 parking_lot = "0.12"
+pq-noise = { path = "../pq-noise" }
 protocol_versioning = { path = "../protocol/versioning", package = "protocol-versioning" }
 rcgen = "0.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_bytes = "0.11"
 sled = "0.34"
+sp-core = { workspace = true, features = ["std"] }
 state-merkle = { path = "../state/merkle", package = "state-merkle" }
 thiserror = "1.0"
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "sync", "time", "signal", "fs"] }
@@ -33,14 +39,85 @@ transaction_circuit = { path = "../circuits/transaction", package = "transaction
 wallet = { path = "../wallet" }
 rand = "0.8"
 rust-embed = "8.0"
+sha2 = "0.10"
 mime_guess = "2.0"
 rpassword = "7.4.0"
 atty = "0.2.14"
 url = "2"
+base64 = "0.22"
+
+# Substrate SDK dependencies (optional, enabled with "substrate" feature)
+# Using polkadot-sdk git dependencies for version alignment
+sc-cli = { workspace = true, optional = true }
+sc-service = { workspace = true, optional = true }
+sc-chain-spec = { workspace = true, optional = true }
+sc-consensus-pow = { workspace = true, optional = true }
+sc-client-api = { workspace = true, optional = true }
+sc-executor = { workspace = true, optional = true }
+sc-consensus = { workspace = true, optional = true }
+sc-transaction-pool = { workspace = true, optional = true }
+sc-transaction-pool-api = { workspace = true, optional = true }
+sc-basic-authorship = { workspace = true, optional = true }
+sp-consensus-pow = { workspace = true, optional = true }
+sp-blockchain = { workspace = true, optional = true }
+sp-consensus = { workspace = true, optional = true }
+sp-keystore = { workspace = true, optional = true }
+sp-timestamp = { workspace = true, optional = true }
+sp-runtime = { workspace = true, features = ["std"], optional = true }
+sp-api = { workspace = true, features = ["std"], optional = true }
+sp-io = { workspace = true, features = ["std"], optional = true }
+codec = { workspace = true, optional = true }
+
+jsonrpsee = { version = "0.24", features = ["server", "macros"], optional = true }
+
+# Runtime dependency (for WASM binary and APIs)
+runtime = { path = "../runtime", optional = true }
 
 [features]
 default = []
 test-utils = []
+
+# Enable Substrate-based node implementation (Phase 2.5 with PoW + DifficultyApi)
+# 
+# This provides:
+# - CLI scaffolding (sc-cli)
+# - Node service framework (sc-service)
+# - Blake3 PoW consensus (sc-consensus-pow)
+# - Mining coordination
+# - Runtime with WASM binary and DifficultyApi
+#
+# Phase 2.5 adds:
+# - WASM binary for runtime execution
+# - DifficultyApi for PoW difficulty queries
+# - ConsensusApi for consensus parameters
+#
+# Phase 10.2 adds:
+# - Full client integration (TFullClient, WasmExecutor)
+# - Transaction pool (BasicPool)
+# - Block import pipeline
+substrate = [
+    "dep:sc-cli",
+    "dep:sc-service",
+    "dep:sc-chain-spec",
+    "dep:sc-consensus-pow",
+    "dep:sc-client-api",
+    "dep:sc-executor",
+    "dep:sc-consensus",
+    "dep:sc-transaction-pool",
+    "dep:sc-transaction-pool-api",
+    "dep:sc-basic-authorship",
+    "dep:sp-consensus-pow",
+    "dep:sp-blockchain",
+    "dep:sp-consensus",
+    "dep:sp-keystore",
+    "dep:sp-timestamp",
+    "dep:sp-runtime",
+    "dep:sp-api",
+    "dep:sp-io",
+    "dep:jsonrpsee",
+    "dep:runtime",
+    "dep:codec",
+]
 
 [dev-dependencies]
 rand = "0.8"
@@ -49,6 +126,13 @@ block-circuit = { path = "../circuits/block" }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 tokio-tungstenite = "0.21"
 
+# Original custom node binary
 [[bin]]
 name = "hegemon"
 path = "src/bin/node.rs"
+
+# Substrate-based node binary
+[[bin]]
+name = "hegemon-node"
+path = "src/bin/substrate_node.rs"
+required-features = ["substrate"]
