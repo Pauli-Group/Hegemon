@@ -8,7 +8,7 @@ use frame_support::pallet_prelude::*;
 use frame_support::traits::EnsureOrigin;
 use frame_support::weights::Weight;
 use frame_system::ensure_signed;
-use parity_scale_codec::{Decode, DecodeWithMemTracking};
+use codec::{Decode, DecodeWithMemTracking};
 use sp_runtime::traits::MaybeSerializeDeserialize;
 use sp_runtime::RuntimeDebug;
 use sp_std::convert::TryInto;
@@ -201,6 +201,8 @@ pub mod pallet {
         pub session_key: Option<SessionKey<T>>,
     }
 
+    impl<T: Config> DecodeWithMemTracking for DidDetails<T> {}
+
     impl<T: Config> DidDetails<T> {
         pub fn new(
             document: BoundedVec<u8, T::MaxDidDocLength>,
@@ -223,6 +225,8 @@ pub mod pallet {
         pub session_key: Option<T::AuthorityId>,
     }
 
+    impl<T: Config> DecodeWithMemTracking for LegacyDidDetails<T> {}
+
     /// Credential schema metadata.
     #[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
     #[scale_info(skip_type_params(T))]
@@ -232,6 +236,8 @@ pub mod pallet {
         pub definition: BoundedVec<u8, T::MaxSchemaLength>,
         pub attestation_required: bool,
     }
+
+    impl<T: Config> DecodeWithMemTracking for CredentialSchema<T> {}
 
     /// Credential issuance record.
     #[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
@@ -244,6 +250,8 @@ pub mod pallet {
         pub revoked: bool,
         pub issued_at: BlockNumberFor<T>,
     }
+
+    impl<T: Config> DecodeWithMemTracking for CredentialRecord<T> {}
 
     #[pallet::storage]
     #[pallet::getter(fn dids)]

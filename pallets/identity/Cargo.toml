@@ -7,13 +7,13 @@ description = "Identity and credential management pallet with role checks and ex
 license = "Apache-2.0"
 
 [dependencies]
-frame-support = { version = "43.0.0", default-features = false }
-frame-system = { version = "43.0.0", default-features = false }
-sp-runtime = { version = "44.0.0", default-features = false }
-sp-std = { version = "14.0.0", default-features = false }
+frame-support = { workspace = true }
+frame-system = { workspace = true }
+sp-runtime = { workspace = true }
+sp-std = { workspace = true }
 log = { version = "0.4", default-features = false }
-parity-scale-codec = { version = "3", default-features = false, features = ["derive"] }
-scale-info = { version = "2", default-features = false, features = ["derive"] }
+codec = { workspace = true }
+scale-info = { workspace = true }
 
 [features]
 default = ["std"]
@@ -23,6 +23,6 @@ std = [
     "sp-runtime/std",
     "sp-std/std",
     "log/std",
-    "parity-scale-codec/std",
+    "codec/std",
     "scale-info/std",
 ]

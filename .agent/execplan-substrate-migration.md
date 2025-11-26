@@ -20,6 +20,7 @@
 | D8 | AccountIdLookup for MultiAddress | TransactionExtension trait requires AccountIdLookup<AccountId, ()> instead of IdentityLookup for MultiAddress compatibility | 2025-11-25 |
 | D9 | Async service initialization | PqNetworkBackend start requires async; made new_full() async to spawn event handler task | 2025-11-25 |
 | D10 | NetworkBridge for message routing | Created separate network_bridge.rs module to decode/queue block announcements and transactions from PQ network events | 2025-11-25 |
+| D11 | Polkadot-SDK git dependencies | Migrated all Substrate crates from crates.io versions to polkadot-sdk git repo (polkadot-stable2509-2) for version coherence; added DecodeWithMemTracking impls for all pallet storage types | 2025-11-25 |
 
 ---
 
@@ -60,7 +61,7 @@
   - [x] Task 9.2: Transaction pool integration (tx propagation)
   - [x] Task 9.3: Mining worker spawning (block production)
 - [ ] **Production Readiness (Phase 10)** - Full Substrate integration for production use
-  - [ ] Task 10.1: Polkadot-SDK dependency alignment
+  - [x] Task 10.1: Polkadot-SDK dependency alignment (2025-11-25) - polkadot-stable2509-2
   - [ ] Task 10.2: Full client integration (TFullClient, WasmExecutor, TFullBackend)
   - [ ] Task 10.3: Block import pipeline (PowBlockImport, import_queue, WASM execution)
   - [ ] Task 10.4: Live network integration (PqNetworkBackend → NotificationService)
@@ -2497,11 +2498,11 @@ pqcrypto-traits = "0.3"
 | 7-8 | Phase 7: Testing | Full test suite | ✅ Complete |
 | 8-9 | Phase 8: Testnet | Live testnet deployment | ✅ Scaffold Mode |
 | 9-10 | **Phase 9: Full Block Production** | sc-network bridge, mining | ✅ Complete (2025-11-25) |
-| 10+ | **Phase 10: Production Readiness** | Full client, live broadcast | 🔲 Blocked |
+| 10+ | **Phase 10: Production Readiness** | Full client, live broadcast | 🔄 In Progress |
 
 **Critical Path**: ✅ All scaffold mode infrastructure complete
 
-**Blocking Item**: polkadot-sdk git dependency alignment for production use
+**Phase 10 Progress**: Task 10.1 complete - polkadot-sdk dependency alignment (polkadot-stable2509-2)
 
 **Total Duration**: 10 weeks (scaffold) + 2-3 weeks (production)
 
@@ -3082,11 +3083,11 @@ Phase 2.5 (Runtime WASM)      Phase 3.5 (PQ Network)
 
 **Goal**: Transition from scaffold mode to production-ready implementation with full Substrate client integration.
 
-**Status**: 🔲 **NOT STARTED**
+**Status**: 🔄 **IN PROGRESS** - Task 10.1 complete (2025-11-25)
 
 **Prerequisites**:
 - [x] Phase 9: Full Block Production (scaffold mode complete)
-- [ ] polkadot-sdk version alignment (blocking)
+- [x] polkadot-sdk version alignment (Task 10.1 - COMPLETE)
 
 ---
 
@@ -3094,37 +3095,42 @@ Phase 2.5 (Runtime WASM)      Phase 3.5 (PQ Network)
 
 **Goal**: Switch from crates.io versions to aligned polkadot-sdk git dependencies.
 
+**Status**: ✅ **COMPLETE** (2025-11-25)
+
 **Problem**: Current crates.io versions have incompatibilities:
 - sp-runtime, sp-api, sp-core version mismatches
 - sc-service expects specific runtime trait bounds
 - sc-consensus-pow requires aligned PowAlgorithm trait
 
-**Files to Modify**:
-- `Cargo.toml` (workspace) - Add polkadot-sdk git dependency
-- `node/Cargo.toml` - Switch to polkadot-sdk for sc-* crates
-- `runtime/Cargo.toml` - Switch to polkadot-sdk for sp-* crates
-- `pallets/*/Cargo.toml` - Align frame-* dependencies
+**Files Modified**:
+- `Cargo.toml` (workspace) - Added 30+ workspace dependencies pointing to polkadot-sdk git repo
+- `node/Cargo.toml` - Switched to workspace deps for sc-* crates
+- `runtime/Cargo.toml` - Switched to workspace deps for sp-* and frame-* crates
+- `consensus/Cargo.toml` - Switched to workspace deps for sp-* and sc-* crates
+- `pallets/*/Cargo.toml` - All 9 pallets switched to workspace deps
+- `pallets/*/src/lib.rs` - Added DecodeWithMemTracking implementations
 
 **Implementation**:
 ```toml
-# Workspace Cargo.toml - add polkadot-sdk as git dependency
+# Workspace Cargo.toml - polkadot-sdk git dependencies (polkadot-stable2509-2)
 [workspace.dependencies]
-# Use a specific polkadot-sdk release tag
-polkadot-sdk = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2409" }
-
-# Re-export individual crates from polkadot-sdk
-sc-cli = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2409" }
-sc-service = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2409" }
-sc-consensus-pow = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2409" }
-sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2409" }
-# ... etc
+sc-cli = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2509-2" }
+sc-service = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2509-2" }
+sc-consensus-pow = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2509-2" }
+sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2509-2" }
+# ... etc (30+ crates total)
 ```
 
-**Verification**:
-- [ ] `cargo check -p runtime` compiles with git deps
-- [ ] `cargo check -p hegemon-node --features substrate` compiles
-- [ ] No sp-* version conflict errors
-- [ ] WASM binary builds successfully
+**Key Changes**:
+1. All Substrate crates now use `{ workspace = true }` in individual Cargo.toml files
+2. Added `impl DecodeWithMemTracking` for all pallet storage types (required by polkadot-sdk 2509)
+3. Fixed feature sections: `parity-scale-codec/std` → `codec/std`
+
+**Verification**: ✅ **PASSED**
+- [x] `cargo check -p runtime` compiles with git deps
+- [x] `cargo check -p hegemon-node --features substrate` compiles
+- [x] No sp-* version conflict errors
+- [x] WASM binary builds successfully
 
 ---
 
