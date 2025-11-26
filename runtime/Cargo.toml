@@ -4,6 +4,13 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Synthetic Hegemonic Currency Contributors"]
 
+[build-dependencies]
+substrate-wasm-builder = { version = "24.0.0", optional = true }
+
+# Required for WASM builds - configure getrandom to use custom randomness
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["custom"] }
+
 [dependencies]
 codec = { package = "parity-scale-codec", version = "3", features = ["derive"], default-features = false }
 scale-info = { version = "2", features = ["derive"], default-features = false }
@@ -17,9 +24,15 @@ sp-api = { version = "39.0.0", default-features = false }
 sp-offchain = { version = "39.0.0", default-features = false }
 sp-application-crypto = { version = "43.0.0", default-features = false }
 sp-staking = { version = "41.0.0", default-features = false }
+sp-block-builder = { version = "39.0.0", default-features = false }
+sp-transaction-pool = { version = "39.0.0", default-features = false }
+sp-inherents = { version = "39.0.0", default-features = false }
+sp-session = { version = "40.0.0", default-features = false }
+sp-genesis-builder = { version = "0.14.0", default-features = false }
 
 crypto = { package = "synthetic-crypto", path = "../crypto", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive"], optional = true }
+serde_json = { version = "1", default-features = false, features = ["alloc"], optional = true }
 
 frame-support = { version = "43.0.0", default-features = false }
 frame-system = { version = "43.0.0", default-features = false }
@@ -42,6 +55,7 @@ pallet-oracles = { path = "../pallets/oracles", default-features = false }
 pallet-fee-model = { path = "../pallets/fee-model", default-features = false }
 pallet-feature-flags = { path = "../pallets/feature-flags", default-features = false }
 pallet-observability = { path = "../pallets/observability", default-features = false }
+pallet-difficulty = { path = "../pallets/difficulty", default-features = false }
 
 [dev-dependencies]
 sp-runtime = { version = "44.0.0", default-features = false, features = ["std"] }
@@ -63,6 +77,11 @@ std = [
     "sp-offchain/std",
     "sp-application-crypto/std",
     "sp-staking/std",
+    "sp-block-builder/std",
+    "sp-transaction-pool/std",
+    "sp-inherents/std",
+    "sp-session/std",
+    "sp-genesis-builder/std",
     "frame-support/std",
     "frame-system/std",
     "frame-executive/std",
@@ -83,8 +102,11 @@ std = [
     "pallet-fee-model/std",
     "pallet-feature-flags/std",
     "pallet-observability/std",
+    "pallet-difficulty/std",
     "crypto/std",
     "serde/std",
+    "serde_json/std",
+    "substrate-wasm-builder",
 ]
 runtime-tests = []
 
@@ -97,4 +119,5 @@ runtime-benchmarks = [
     "pallet-feature-flags/runtime-benchmarks",
     "pallet-observability/runtime-benchmarks",
     "pallet-fee-model/runtime-benchmarks",
+    "pallet-difficulty/runtime-benchmarks",
 ]

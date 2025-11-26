@@ -65,16 +65,38 @@
 //! └─────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! # Note on Dependency Versions
+//! # Runtime WASM Integration (Phase 2.5)
 //!
-//! This is Phase 2+3 of the Substrate migration. Full implementation requires
-//! aligned Polkadot SDK dependencies. Due to version fragmentation on crates.io,
-//! production use should switch to git dependencies from the official
-//! polkadot-sdk repository.
+//! The runtime provides:
+//! - `WASM_BINARY`: Compiled WebAssembly runtime for execution
+//! - `DifficultyApi`: Runtime API for querying PoW difficulty
+//! - `ConsensusApi`: Runtime API for consensus parameters
+//!
+//! The node uses the WASM executor to run the runtime in a sandboxed environment,
+//! ensuring deterministic execution across all nodes.
 
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
+
+/// Re-export the runtime WASM binary for node use
+#[cfg(feature = "substrate")]
+pub use runtime::WASM_BINARY;
+
+/// Check that the WASM binary is available
+#[cfg(feature = "substrate")]
+pub fn check_wasm() -> Result<(), String> {
+    #[cfg(feature = "substrate")]
+    {
+        if WASM_BINARY.is_none() {
+            return Err(
+                "WASM binary not available. Build with `cargo build -p runtime --features std`."
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
 
 /// Node service components after partial initialization
 ///

@@ -211,10 +211,12 @@ mod substrate_impl {
     ///
     /// The runtime must implement this API to provide difficulty values
     /// to the consensus engine.
+    ///
+    /// Note: This API declaration must match the one in runtime/src/apis.rs
     sp_api::decl_runtime_apis! {
         pub trait DifficultyApi {
-            /// Get the current PoW difficulty in compact bits format
-            fn difficulty() -> u32;
+            /// Get the current PoW difficulty as U256
+            fn difficulty() -> U256;
         }
     }
 
@@ -224,7 +226,7 @@ mod substrate_impl {
         C: ProvideRuntimeApi<B> + Send + Sync,
         C::Api: DifficultyApi<B>,
     {
-        type Difficulty = u32;
+        type Difficulty = U256;
 
         fn difficulty(&self, parent: B::Hash) -> Result<Self::Difficulty, PowError<B>> {
             self.client
@@ -244,12 +246,28 @@ mod substrate_impl {
             let blake3_seal = Blake3Seal::decode(&mut &seal[..])
                 .map_err(|_| PowError::FailedToDecode)?;
             
-            // Verify the difficulty matches
-            if blake3_seal.difficulty != difficulty {
-                return Ok(false);
+            // Convert difficulty to compact bits for comparison
+            let expected_bits = target_to_compact(U256::MAX / difficulty);
+            
+            // Verify the difficulty matches (with some tolerance for rounding)
+            if blake3_seal.difficulty != expected_bits {
+                // Allow small differences due to compact representation precision
+                let seal_target = compact_to_target(blake3_seal.difficulty).unwrap_or(U256::zero());
+                let expected_target = U256::MAX / difficulty;
+                
+                // If the targets differ by more than 0.1%, reject
+                let diff = if seal_target > expected_target {
+                    seal_target - expected_target
+                } else {
+                    expected_target - seal_target
+                };
+                
+                if diff > expected_target / U256::from(1000u32) {
+                    return Ok(false);
+                }
             }
             
-            // Verify the seal
+            // Verify the seal work meets the target
             Ok(verify_seal(pre_hash, &blake3_seal))
         }
 
@@ -262,7 +280,10 @@ mod substrate_impl {
         ) -> Result<Option<Seal>, PowError<B>> {
             const NONCES_PER_ROUND: u64 = 10_000;
             
-            match mine_round(pre_hash, difficulty, round, NONCES_PER_ROUND) {
+            // Convert U256 difficulty to compact bits
+            let pow_bits = target_to_compact(U256::MAX / difficulty);
+            
+            match mine_round(pre_hash, pow_bits, round, NONCES_PER_ROUND) {
                 Some(seal) => Ok(Some(seal.encode())),
                 None => Ok(None),
             }
