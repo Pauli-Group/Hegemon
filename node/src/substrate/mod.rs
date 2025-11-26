@@ -45,11 +45,12 @@
 //!
 //! This phase implements production readiness:
 //! - Task 10.1: Polkadot SDK dependency alignment ✅
-//! - Task 10.2: Full client integration (TFullClient, WasmExecutor) 🔄
-//! - Task 10.3: Block import pipeline (PowBlockImport) 🔲
+//! - Task 10.2: Full client integration (TFullClient, WasmExecutor) ✅
+//! - Task 10.3: Block import pipeline (PowBlockImport) ✅
 //! - Task 10.4: Live network integration 🔲
 //! - Task 10.5: Production mining worker 🔲
 
+pub mod block_import;
 pub mod chain_spec;
 pub mod client;
 pub mod command;
@@ -61,6 +62,11 @@ pub mod service;
 pub mod transaction_pool;
 
 // Re-export common types
+pub use block_import::{
+    BlockImportConfig, ExtractedSeal, HegemonBlockImport, ImportError, ImportResult, ImportStats,
+    MockBlockImport, create_mock_block_import, create_mock_block_import_from_env,
+    extract_seal_from_header, verify_pow_seal,
+};
 pub use chain_spec::ChainSpec;
 pub use client::{
     FullBackend, FullClient, FullClientConfig, FullTransactionPool, SubstrateChainStateProvider,

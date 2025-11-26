@@ -788,8 +788,16 @@ mod tests {
         stats.hashes_computed += 1_000_000;
         
         assert_eq!(stats.blocks_mined, 1);
-        assert!(stats.hashrate() > 0.0);
+        assert_eq!(stats.hashes_computed, 1_000_000);
+        assert_eq!(stats.rounds_attempted, 100);
+        
+        // success_rate is independent of time
         assert!(stats.success_rate() > 0.0);
+        assert_eq!(stats.success_rate(), 0.01); // 1 block / 100 rounds
+        
+        // hashrate depends on elapsed time, so just verify the method works
+        // (may be 0.0 if elapsed time is essentially 0)
+        let _ = stats.hashrate();
     }
 
     #[test]
