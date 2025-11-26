@@ -106,14 +106,14 @@
 //! ensuring deterministic execution across all nodes.
 
 use crate::pow::{PowConfig, PowHandle};
-use crate::substrate::mining_worker::{MiningWorkerConfig, create_scaffold_mining_worker};
+use crate::substrate::mining_worker::{MiningWorkerConfig, create_scaffold_mining_worker, create_network_mining_worker};
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::{NetworkBridge, NetworkBridgeBuilder};
 use crate::substrate::transaction_pool::{
     MockTransactionPool, TransactionPoolBridge, TransactionPoolConfig,
 };
 use network::{
-    PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqPeerIdentity, PqTransportConfig,
+    PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity, PqTransportConfig,
     SubstratePqTransport, SubstratePqTransportConfig,
 };
 use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
@@ -407,6 +407,9 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
     let chain_name = config.chain_spec.name().to_string();
     let role = format!("{:?}", config.role);
 
+    // Track PQ network handle for mining worker (Phase 10.4)
+    let mut pq_network_handle: Option<PqNetworkHandle> = None;
+
     tracing::info!(
         chain = %chain_name,
         role = %role,
@@ -464,8 +467,12 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
                     listen_addr = %pq_service_config.listen_addr,
                     max_peers = pq_service_config.max_peers,
                     peer_id = %hex::encode(local_peer_id),
-                    "PqNetworkBackend started (Phase 3.5 + Phase 9.2 - Full Integration with TxPool)"
+                    "PqNetworkBackend started (Phase 3.5 + Phase 9.2 + Phase 10.4 - Full Integration)"
                 );
+
+                // Phase 10.4: Get PQ network handle for mining worker broadcasting
+                pq_network_handle = Some(pq_backend.handle());
+                tracing::info!("PQ network handle captured for mining worker (Phase 10.4)");
 
                 // Phase 9: Create the network bridge for block/tx routing
                 let network_bridge = Arc::new(Mutex::new(
@@ -629,30 +636,54 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
         }
     }
 
-    // Phase 9.3: Spawn mining worker if enabled
+    // Phase 9.3 + 10.4: Spawn mining worker if enabled
     let mining_config = MiningConfig::from_env();
     if mining_config.enabled {
         let worker_config = MiningWorkerConfig::from_env();
         let pow_handle_for_worker = pow_handle.clone();
         
-        tracing::info!(
-            threads = worker_config.threads,
-            test_mode = worker_config.test_mode,
-            "Spawning mining worker (Phase 9.3)"
-        );
+        // Check if we have a PQ network handle for live broadcasting (Phase 10.4)
+        if let Some(pq_handle) = pq_network_handle.clone() {
+            tracing::info!(
+                threads = worker_config.threads,
+                test_mode = worker_config.test_mode,
+                "Spawning mining worker with PQ network broadcasting (Phase 10.4)"
+            );
 
-        task_manager.spawn_handle().spawn(
-            "hegemon-mining-worker",
-            Some("mining"),
-            async move {
-                let worker = create_scaffold_mining_worker(
-                    pow_handle_for_worker,
-                    worker_config,
-                );
-                
-                worker.run().await;
-            },
-        );
+            task_manager.spawn_handle().spawn(
+                "hegemon-mining-worker",
+                Some("mining"),
+                async move {
+                    let worker = create_network_mining_worker(
+                        pow_handle_for_worker,
+                        pq_handle,
+                        worker_config,
+                    );
+                    
+                    worker.run().await;
+                },
+            );
+        } else {
+            // Fall back to scaffold mode without network broadcasting
+            tracing::info!(
+                threads = worker_config.threads,
+                test_mode = worker_config.test_mode,
+                "Spawning mining worker in scaffold mode (no PQ network)"
+            );
+
+            task_manager.spawn_handle().spawn(
+                "hegemon-mining-worker",
+                Some("mining"),
+                async move {
+                    let worker = create_scaffold_mining_worker(
+                        pow_handle_for_worker,
+                        worker_config,
+                    );
+                    
+                    worker.run().await;
+                },
+            );
+        }
     } else {
         tracing::info!("Mining worker not spawned (HEGEMON_MINE not set)");
     }
@@ -709,14 +740,16 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
     //        pow_handle.clone(),
     //    );
 
+    let has_pq_broadcast = pq_network_handle.is_some();
     tracing::info!(
-        "Phase 9 Complete - Full block production infrastructure ready"
+        "Phase 10.4 Complete - Live network integration ready"
     );
     tracing::info!("  - Task 9.1: Network bridge (block announcements) ✅");
     tracing::info!("  - Task 9.2: Transaction pool integration ✅");
     tracing::info!("  - Task 9.3: Mining worker spawning ✅");
+    tracing::info!("  - Task 10.4: Live PQ network broadcasting ✅ (enabled: {})", has_pq_broadcast);
     tracing::info!("  Set HEGEMON_MINE=1 to enable mining");
-    tracing::info!("  Remaining: aligned polkadot-sdk git dependencies for production use");
+    tracing::info!("  Remaining: Task 10.5 - Production mining worker with real chain state");
 
     Ok(task_manager)
 }
