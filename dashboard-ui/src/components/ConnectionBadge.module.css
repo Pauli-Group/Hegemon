@@ -30,3 +30,30 @@
   border-color: rgba(255, 78, 78, 0.5);
   background: rgba(255, 78, 78, 0.15);
 }
+
+.connecting {
+  color: var(--color-warning, #f0ad4e);
+  border-color: rgba(240, 173, 78, 0.5);
+  background: rgba(240, 173, 78, 0.15);
+}
+
+.connecting .dot {
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.5;
+    transform: scale(0.8);
+  }
+}
+
+.blockInfo {
+  font-weight: 400;
+  opacity: 0.8;
+  font-size: 0.8rem;
+}
