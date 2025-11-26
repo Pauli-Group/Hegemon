@@ -2,13 +2,13 @@
 
 pub use pallet::*;
 
+use codec::{DecodeWithMemTracking, Encode};
 use frame_support::pallet_prelude::*;
 use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
 use log::warn;
 use pallet_identity::IdentityProvider;
-use parity_scale_codec::Encode;
 use sp_runtime::RuntimeDebug;
 
 pub type DefaultRegulatoryTag<T> = BoundedVec<u8, <T as pallet::Config>::MaxTagLength>;
@@ -26,6 +26,8 @@ pub struct AssetDetails<T: pallet::Config> {
     pub provenance: DefaultProvenanceRefs<T>,
     pub updated: BlockNumberFor<T>,
 }
+
+impl<T: pallet::Config> DecodeWithMemTracking for AssetDetails<T> {}
 
 impl<T: pallet::Config> AssetDetails<T> {
     pub fn new(

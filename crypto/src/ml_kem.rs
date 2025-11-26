@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use crate::deterministic::{expand_to_length, DeterministicRng};
 use crate::error::CryptoError;
 use crate::traits::{KemKeyPair, KemPublicKey};

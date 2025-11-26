@@ -10,6 +10,11 @@ scripts/__pycache__/
 *.pyc
 .dashboard-service-venv/
 
+# Testnet deployment artifacts (regenerate with scripts)
+.env.testnet
+keys/
+config/testnet-*.json
+
 # Wallet artifacts and keys
 export.json
 ivk.json

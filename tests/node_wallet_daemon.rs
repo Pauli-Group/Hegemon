@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use consensus::reward::INITIAL_SUBSIDY;
 use network::GossipRouter;
-use node::{api, config::NodeConfig, NodeHandle, NodeService};
+use hegemon_node::{api, config::NodeConfig, NodeHandle, NodeService};
 use rand::{rngs::StdRng, SeedableRng};
 use tempfile::tempdir;
 use tokio::task::spawn_blocking;

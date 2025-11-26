@@ -87,12 +87,12 @@ impl SyncService {
         self.broadcast(SyncMessage::TipRequest).await?;
 
         loop {
-            if let Some(session) = &self.active
-                && session.next_height > session.target_height
-            {
-                info!(peer = ?session.peer, "sync reached target height");
-                self.active = None;
-                self.broadcast(SyncMessage::TipRequest).await?;
+            if let Some(session) = &self.active {
+                if session.next_height > session.target_height {
+                    info!(peer = ?session.peer, "sync reached target height");
+                    self.active = None;
+                    self.broadcast(SyncMessage::TipRequest).await?;
+                }
             }
 
             tokio::select! {

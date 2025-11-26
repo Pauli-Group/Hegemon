@@ -16,6 +16,7 @@ use log::warn;
 use scale_info::TypeInfo;
 use sp_runtime::traits::AtLeast32BitUnsigned;
 use sp_runtime::RuntimeDebug;
+use sp_std::vec;
 use sp_std::vec::Vec;
 
 #[cfg(test)]

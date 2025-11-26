@@ -4,13 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-sha2 = "0.10"
-blake3 = "1"
-sha3 = { version = "0.10", default-features = false, features = ["std"] }
-rand = { version = "0.8", features = ["std"] }
-rand_chacha = "0.3"
-thiserror = "1"
-hex = "0.4"
+sha2 = { version = "0.10", default-features = false }
+blake3 = { version = "1", default-features = false }
+sha3 = { version = "0.10", default-features = false }
+rand = { version = "0.8", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
+thiserror = { version = "1", optional = true }
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -23,5 +23,8 @@ std = [
     "rand/std_rng",
     "rand_chacha/std",
     "sha2/std",
+    "sha3/std",
     "blake3/std",
+    "hex/std",
+    "thiserror",
 ]

@@ -8,6 +8,8 @@ aead = "0.5"
 aes-gcm = { version = "0.10" }
 bincode = "1"
 crypto = { package = "synthetic-crypto", path = "../crypto" }
+hex = "0.4"
+pq-noise = { path = "../pq-noise" }
 rand = { version = "0.8", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
@@ -23,3 +25,4 @@ natpmp = { version = "0.5", default-features = true }
 [dev-dependencies]
 proptest = "1"
 bincode = "1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }

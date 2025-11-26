@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use axum_server::tls_rustls::RustlsConfig;
 use clap::{Parser, Subcommand};
-use node::{
+use hegemon_node::{
     NodeService, api,
     bootstrap::{PeerBundle, persist_imported_peers},
     chain_spec::{self, ChainProfile},
@@ -274,7 +274,7 @@ async fn run_node(cli: Cli) -> Result<()> {
     config.note_tree_depth = cli.note_tree_depth;
     if let Some(seed) = cli.miner_seed {
         config.miner_seed = parse_seed(&seed)?;
-        config.miner_payout_address = node::config::default_payout_address(config.miner_seed);
+        config.miner_payout_address = hegemon_node::config::default_payout_address(config.miner_seed);
     }
     if let Some(ref address) = cli.miner_payout_address {
         config.miner_payout_address =
@@ -352,17 +352,18 @@ async fn run_node(cli: Cli) -> Result<()> {
     info!(mode = ?mode, "wallet initialized");
 
     // If the user didn't specify a payout address, align miner rewards with the wallet's primary address.
-    if cli.miner_payout_address.is_none()
-        && let Some(keys) = wallet_store
+    if cli.miner_payout_address.is_none() {
+        if let Some(keys) = wallet_store
             .derived_keys()
             .context("failed to load wallet keys for payout address")?
-    {
-        let addr = keys
-            .address(0)
-            .context("failed to derive primary wallet address")?
-            .shielded_address();
-        config.miner_payout_address = addr;
-        info!("miner payouts set to wallet primary address");
+        {
+            let addr = keys
+                .address(0)
+                .context("failed to derive primary wallet address")?
+                .shielded_address();
+            config.miner_payout_address = addr;
+            info!("miner payouts set to wallet primary address");
+        }
     }
 
     // Initialize Node

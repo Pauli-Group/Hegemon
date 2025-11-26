@@ -6,15 +6,32 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 bincode = "1"
+blake3 = "1.5"
+codec = { workspace = true }
+crossbeam-channel = "0.5"
 crypto = { package = "synthetic-crypto", path = "../crypto" }
 num-bigint = "0.4"
 num-traits = "0.2"
+parking_lot = "0.12"
 sha2 = "0.10"
+sp-core = { workspace = true, features = ["std"] }
+sp-runtime = { workspace = true, features = ["std"] }
 thiserror = "1"
+tracing = "0.1"
 protocol-versioning = { path = "../protocol/versioning" }
 serde = { version = "1", features = ["derive"] }
+
+# Substrate PoW consensus (optional, for full Substrate integration)
+sc-consensus-pow = { workspace = true, optional = true }
+sp-consensus-pow = { workspace = true, optional = true }
+sp-api = { workspace = true, optional = true }
 
 [dev-dependencies]
 network = { path = "../network" }
 proptest = "1"
 tokio = { version = "1", features = ["macros", "rt", "time", "sync"] }
+
+[features]
+default = []
+# Enable full Substrate PowAlgorithm implementation
+substrate = ["sc-consensus-pow", "sp-consensus-pow", "sp-api"]

@@ -2,12 +2,12 @@
 
 pub use pallet::*;
 
+use codec::{DecodeWithMemTracking, Encode};
 use frame_support::pallet_prelude::*;
 use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
 use log::warn;
-use parity_scale_codec::Encode;
 
 pub type FeatureName<T> = BoundedVec<u8, <T as Config>::MaxFeatureNameLength>;
 pub type CohortMembers<T> =
@@ -20,6 +20,8 @@ pub enum FeatureStatus {
     Inactive,
 }
 
+impl DecodeWithMemTracking for FeatureStatus {}
+
 #[derive(Clone, Encode, Decode, PartialEq, Eq, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 #[scale_info(skip_type_params(T))]
 pub struct FeatureDetails<T: Config> {
@@ -27,6 +29,8 @@ pub struct FeatureDetails<T: Config> {
     pub cohort: CohortMembers<T>,
     pub activated_at: Option<BlockNumberFor<T>>,
 }
+
+impl<T: Config> DecodeWithMemTracking for FeatureDetails<T> {}
 
 impl<T: Config> FeatureDetails<T> {
     pub fn new(status: FeatureStatus, cohort: CohortMembers<T>) -> Self {
