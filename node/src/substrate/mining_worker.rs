@@ -474,7 +474,8 @@ impl BlockBroadcaster for MockBlockBroadcaster {
 
 /// Network bridge broadcaster that uses the actual PQ network
 pub struct NetworkBridgeBroadcaster {
-    /// Reference to the network bridge
+    /// Reference to the network bridge (reserved for future PQ broadcast implementation)
+    #[allow(dead_code)]
     bridge: Arc<Mutex<NetworkBridge>>,
 }
 

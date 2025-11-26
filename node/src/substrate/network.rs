@@ -184,7 +184,6 @@ pub struct PqNetworkKeypair {
 impl PqNetworkKeypair {
     /// Generate a new keypair using the given seed
     pub fn generate() -> Result<Self, String> {
-        use sha2::{Sha256, Digest};
         use rand::RngCore;
         
         // Generate random seed

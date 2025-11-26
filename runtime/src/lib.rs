@@ -1387,9 +1387,7 @@ impl pallet_fee_model::Config for Runtime {
     type WeightInfo = pallet_fee_model::weights::SubstrateWeight<Self>;
 }
 
-impl pallet_difficulty::Config for Runtime {
-    type RuntimeEvent = RuntimeEvent;
-}
+impl pallet_difficulty::Config for Runtime {}
 
 construct_runtime!(
     pub enum Runtime {
