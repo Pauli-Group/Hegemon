@@ -1,8 +1,8 @@
 use sp_core::H256;
 
 use crate::{
-    AccountId, Balance, BalancesConfig, DummySessionKeys, PowDifficulty, RuntimeGenesisConfig,
-    SessionConfig, SudoConfig, SystemConfig,
+    AccountId, Balance, BalancesConfig, DifficultyConfig, DummySessionKeys, PowDifficulty,
+    RuntimeGenesisConfig, SessionConfig, SudoConfig, SystemConfig,
 };
 
 /// Structured chain spec describing PoW parameters, telemetry defaults, and genesis state.
@@ -35,6 +35,7 @@ fn base_genesis(endowed: &[(AccountId, Balance)], sudo: AccountId) -> RuntimeGen
                 .map(|validator| (validator.clone(), validator.clone(), DummySessionKeys))
                 .collect(),
         },
+        difficulty: DifficultyConfig::default(),
     }
 }
 
