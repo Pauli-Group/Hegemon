@@ -26,13 +26,28 @@
 - [x] PoW pallet designed (pow pallet in runtime)
 - [x] Substrate node binary scaffolded (Phase 1 complete - CLI works, builds with `--features substrate`)
 - [x] sc-consensus-pow integration complete (Phase 2 complete - Blake3Algorithm, MiningCoordinator, PowHandle)
+- [ ] **Runtime WASM with DifficultyApi (Phase 2.5 - BLOCKING)** - Required for actual block production
+  - [ ] Task 2.5.1: Add substrate-wasm-builder
+  - [ ] Task 2.5.2: Create DifficultyApi trait
+  - [ ] Task 2.5.3: Create Difficulty pallet
+  - [ ] Task 2.5.4: Integrate into runtime
+  - [ ] Task 2.5.5: Implement runtime APIs (impl_runtime_apis!)
+  - [ ] Task 2.5.6: Export WASM binary in node
 - [x] Custom libp2p-noise with ML-KEM-768 (Phase 3 complete - pq-noise crate, PqTransport, network integration)
+- [ ] **sc-network PQ Transport (Phase 3.5 - BLOCKING)** - Required for networked block production
+  - [ ] Task 3.5.1: Create PQ transport wrapper
+  - [ ] Task 3.5.2: Create custom NetworkBackend
+  - [ ] Task 3.5.3: Integrate into service builder
+  - [ ] Task 3.5.4: Add PQ protocol negotiation
+  - [ ] Task 3.5.5: Add CLI flags
+  - [ ] Task 3.5.6: Multi-node integration test
 - [x] Custom RPC extensions complete (Phase 4 complete - hegemon_* endpoints, wallet_* endpoints, jsonrpsee integration)
 - [x] Wallet migrated to sc-rpc (Phase 5 complete - SubstrateRpcClient, AsyncWalletSyncEngine, CLI commands)
 - [x] Dashboard migrated to Substrate WS (Phase 6 complete - Polkadot.js API, SubstrateApiProvider, useSubstrateData hooks)
 - [x] E2E test suite passing (Phase 7 complete - mining_integration.rs, p2p_pq.rs, wallet_e2e.rs, substrate.spec.ts)
-- [x] Testnet deployment configured (Phase 8 in progress - docker-compose.testnet.yml, Prometheus/Grafana, soak-test.sh)
-- [x] Testnet deployed and validated (3 nodes + dashboard + monitoring running)
+- [x] Testnet deployment configured (Phase 8 complete - docker-compose.testnet.yml, Prometheus/Grafana, soak-test.sh)
+- [x] Testnet deployed and validated (3 nodes + dashboard + monitoring running in scaffold mode)
+- [ ] **Full block production enabled** - Requires Phase 2.5 + Phase 3.5
 - [ ] Electron desktop app packaged [OPTIONAL]
 
 ---
@@ -402,6 +417,533 @@ let import_queue = sc_consensus_pow::import_queue(
 
 ---
 
+### Phase 2.5: Runtime WASM & DifficultyApi (Week 2-3)
+
+**Goal**: Create runtime WASM binary with DifficultyApi for PoW consensus integration.
+
+**Status**: 🔲 **NOT STARTED**
+
+**Prerequisites**: Phase 2 templates exist but cannot function without this phase.
+
+**Why This Is Required**:
+The `Blake3Pow` algorithm calls `runtime_api.difficulty(parent)` to fetch the current PoW difficulty target. This requires:
+1. A compiled WASM runtime binary (`WASM_BINARY`)
+2. A `DifficultyApi` runtime API trait implemented in the runtime
+3. Difficulty storage in a pallet (either new or existing)
+
+---
+
+#### Task 2.5.1: Add substrate-wasm-builder
+
+**Files to Create**:
+- `runtime/build.rs` - WASM build script
+
+**Step-by-Step Commands**:
+```bash
+# Step 2.5.1.1: Add wasm-builder dependency
+cd /path/to/synthetic-hegemonic-currency
+cargo add -p runtime --build substrate-wasm-builder
+
+# Step 2.5.1.2: Create build.rs
+cat > runtime/build.rs << 'EOF'
+fn main() {
+    substrate_wasm_builder::WasmBuilder::init_with_defaults()
+        .enable_feature("std")
+        .build();
+}
+EOF
+
+# Step 2.5.1.3: Update Cargo.toml with build-dependencies section
+```
+
+**File Template: `runtime/build.rs`**:
+```rust
+//! WASM build script for Hegemon runtime
+//! 
+//! This generates the WASM binary that the node executor runs.
+
+fn main() {
+    #[cfg(feature = "std")]
+    {
+        substrate_wasm_builder::WasmBuilder::init_with_defaults()
+            .enable_feature("std")
+            .build();
+    }
+}
+```
+
+**Cargo.toml Addition** (`runtime/Cargo.toml`):
+```toml
+[build-dependencies]
+substrate-wasm-builder = { version = "24.0.0", optional = true }
+
+[features]
+default = ["std"]
+std = [
+    # ... existing features ...
+    "substrate-wasm-builder",
+]
+```
+
+**Verification**:
+- [ ] Run: `cargo build -p runtime` → generates `target/*/wbuild/runtime/runtime.wasm`
+- [ ] Check: file size > 1MB indicates valid WASM
+
+---
+
+#### Task 2.5.2: Create DifficultyApi Trait
+
+**Files to Create**:
+- `runtime/src/apis.rs` - Runtime API trait definitions
+
+**Step-by-Step Commands**:
+```bash
+# Step 2.5.2.1: Create API definitions file
+touch runtime/src/apis.rs
+
+# Step 2.5.2.2: Add module to lib.rs
+echo 'pub mod apis;' >> runtime/src/lib.rs
+```
+
+**File Template: `runtime/src/apis.rs`**:
+```rust
+//! Runtime API trait definitions for Hegemon
+//!
+//! These traits define the interface between the node and runtime
+//! for PoW difficulty queries and other consensus operations.
+
+use sp_api::decl_runtime_apis;
+use sp_core::U256;
+
+decl_runtime_apis! {
+    /// API for PoW difficulty queries
+    /// 
+    /// The node's Blake3Pow algorithm calls this to get the current
+    /// difficulty target for block validation and mining.
+    pub trait DifficultyApi {
+        /// Get the current PoW difficulty.
+        /// 
+        /// Returns the difficulty as U256 where:
+        /// - Higher value = harder to mine
+        /// - Target = U256::MAX / difficulty
+        fn difficulty() -> U256;
+    }
+
+    /// API for consensus-related queries
+    pub trait ConsensusApi {
+        /// Get the target block time in milliseconds.
+        fn target_block_time() -> u64;
+        
+        /// Get blocks until next difficulty adjustment.
+        fn blocks_until_retarget() -> u32;
+    }
+}
+```
+
+**Verification**:
+- [ ] Run: `cargo check -p runtime` → compiles without errors
+- [ ] Check: `DifficultyApi` trait is exported
+
+---
+
+#### Task 2.5.3: Create Difficulty Pallet
+
+**Files to Create**:
+- `pallets/difficulty/Cargo.toml`
+- `pallets/difficulty/src/lib.rs`
+
+**Step-by-Step Commands**:
+```bash
+# Step 2.5.3.1: Create pallet directory
+mkdir -p pallets/difficulty/src
+
+# Step 2.5.3.2: Initialize Cargo.toml
+cat > pallets/difficulty/Cargo.toml << 'EOF'
+[package]
+name = "pallet-difficulty"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+codec = { package = "parity-scale-codec", version = "3", features = ["derive"], default-features = false }
+scale-info = { version = "2", features = ["derive"], default-features = false }
+frame-support = { version = "43.0.0", default-features = false }
+frame-system = { version = "43.0.0", default-features = false }
+sp-core = { version = "38.1.0", default-features = false }
+sp-runtime = { version = "44.0.0", default-features = false }
+sp-std = { version = "14.0.0", default-features = false }
+
+[features]
+default = ["std"]
+std = [
+    "codec/std",
+    "scale-info/std",
+    "frame-support/std",
+    "frame-system/std",
+    "sp-core/std",
+    "sp-runtime/std",
+    "sp-std/std",
+]
+runtime-benchmarks = []
+EOF
+
+# Step 2.5.3.3: Add to workspace
+echo '    "pallets/difficulty",' >> Cargo.toml  # Add to workspace members
+```
+
+**File Template: `pallets/difficulty/src/lib.rs`**:
+```rust
+//! Difficulty Pallet
+//!
+//! Manages PoW difficulty with automatic adjustment based on block times.
+//! Implements the retargeting algorithm from consensus/src/pow.rs.
+
+#![cfg_attr(not(feature = "std"), no_std)]
+
+pub use pallet::*;
+
+#[frame_support::pallet]
+pub mod pallet {
+    use frame_support::pallet_prelude::*;
+    use frame_system::pallet_prelude::*;
+    use sp_core::U256;
+
+    /// Difficulty adjustment parameters
+    pub const TARGET_BLOCK_TIME_MS: u64 = 10_000;  // 10 seconds
+    pub const RETARGET_INTERVAL: u32 = 2016;       // ~2 weeks at 10s blocks
+    pub const MAX_ADJUSTMENT_FACTOR: u64 = 4;      // Max 4x change per period
+    pub const GENESIS_DIFFICULTY: u128 = 1_000_000; // Starting difficulty
+
+    #[pallet::pallet]
+    pub struct Pallet<T>(_);
+
+    #[pallet::config]
+    pub trait Config: frame_system::Config {
+        /// The overarching event type.
+        type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+    }
+
+    /// Current difficulty value
+    #[pallet::storage]
+    #[pallet::getter(fn difficulty)]
+    pub type Difficulty<T> = StorageValue<_, U256, ValueQuery, GenesisDefault>;
+
+    /// Block number of last retarget
+    #[pallet::storage]
+    #[pallet::getter(fn last_retarget_block)]
+    pub type LastRetargetBlock<T: Config> = StorageValue<_, BlockNumberFor<T>, ValueQuery>;
+
+    /// Timestamp of last retarget (milliseconds)
+    #[pallet::storage]
+    #[pallet::getter(fn last_retarget_time)]
+    pub type LastRetargetTime<T> = StorageValue<_, u64, ValueQuery>;
+
+    /// Default difficulty value
+    pub struct GenesisDefault;
+    impl Get<U256> for GenesisDefault {
+        fn get() -> U256 {
+            U256::from(GENESIS_DIFFICULTY)
+        }
+    }
+
+    #[pallet::event]
+    #[pallet::generate_deposit(pub(super) fn deposit_event)]
+    pub enum Event<T: Config> {
+        /// Difficulty was adjusted
+        DifficultyAdjusted {
+            old_difficulty: U256,
+            new_difficulty: U256,
+            block_number: BlockNumberFor<T>,
+        },
+    }
+
+    #[pallet::hooks]
+    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+        fn on_finalize(block_number: BlockNumberFor<T>) {
+            Self::maybe_adjust_difficulty(block_number);
+        }
+    }
+
+    impl<T: Config> Pallet<T> {
+        /// Check if difficulty adjustment is needed and perform it
+        pub fn maybe_adjust_difficulty(current_block: BlockNumberFor<T>) {
+            let last_retarget = Self::last_retarget_block();
+            let blocks_since = current_block.saturating_sub(last_retarget);
+            
+            // Convert to u32 for comparison
+            let blocks_since_u32: u32 = blocks_since.try_into().unwrap_or(0);
+            
+            if blocks_since_u32 >= RETARGET_INTERVAL {
+                Self::adjust_difficulty(current_block);
+            }
+        }
+
+        /// Perform difficulty adjustment
+        fn adjust_difficulty(current_block: BlockNumberFor<T>) {
+            let old_difficulty = Self::difficulty();
+            let last_time = Self::last_retarget_time();
+            
+            // Get current timestamp from pallet_timestamp
+            let current_time = pallet_timestamp::Pallet::<T>::now()
+                .try_into()
+                .unwrap_or(0u64);
+            
+            if last_time == 0 {
+                // First retarget - just record the time
+                LastRetargetBlock::<T>::put(current_block);
+                LastRetargetTime::<T>::put(current_time);
+                return;
+            }
+
+            let actual_time = current_time.saturating_sub(last_time);
+            let expected_time = (RETARGET_INTERVAL as u64) * TARGET_BLOCK_TIME_MS;
+
+            // Calculate adjustment ratio with bounds
+            let new_difficulty = if actual_time == 0 {
+                old_difficulty * U256::from(MAX_ADJUSTMENT_FACTOR)
+            } else if actual_time < expected_time / MAX_ADJUSTMENT_FACTOR {
+                // Blocks too fast - increase difficulty (max 4x)
+                old_difficulty * U256::from(MAX_ADJUSTMENT_FACTOR)
+            } else if actual_time > expected_time * MAX_ADJUSTMENT_FACTOR {
+                // Blocks too slow - decrease difficulty (max 1/4)
+                old_difficulty / U256::from(MAX_ADJUSTMENT_FACTOR)
+            } else {
+                // Proportional adjustment
+                (old_difficulty * U256::from(expected_time)) / U256::from(actual_time)
+            };
+
+            // Apply adjustment
+            Difficulty::<T>::put(new_difficulty);
+            LastRetargetBlock::<T>::put(current_block);
+            LastRetargetTime::<T>::put(current_time);
+
+            Self::deposit_event(Event::DifficultyAdjusted {
+                old_difficulty,
+                new_difficulty,
+                block_number: current_block,
+            });
+        }
+
+        /// Get blocks until next retarget
+        pub fn blocks_until_retarget(current_block: BlockNumberFor<T>) -> u32 {
+            let last_retarget = Self::last_retarget_block();
+            let blocks_since: u32 = current_block
+                .saturating_sub(last_retarget)
+                .try_into()
+                .unwrap_or(0);
+            RETARGET_INTERVAL.saturating_sub(blocks_since)
+        }
+    }
+}
+```
+
+**Verification**:
+- [ ] Run: `cargo check -p pallet-difficulty` → compiles
+- [ ] Run: `cargo test -p pallet-difficulty` → unit tests pass
+
+---
+
+#### Task 2.5.4: Integrate Difficulty Pallet into Runtime
+
+**Files to Modify**:
+- `runtime/src/lib.rs` - Add pallet to construct_runtime!
+- `runtime/Cargo.toml` - Add dependency
+
+**Step-by-Step Commands**:
+```bash
+# Step 2.5.4.1: Add dependency to runtime
+cargo add -p runtime pallet-difficulty --path ../pallets/difficulty
+```
+
+**Code Changes in `runtime/src/lib.rs`**:
+```rust
+// Add import at top
+pub use pallet_difficulty;
+
+// Add to construct_runtime! macro
+construct_runtime!(
+    pub struct Runtime {
+        System: frame_system,
+        Timestamp: pallet_timestamp,
+        // ... existing pallets ...
+        Difficulty: pallet_difficulty,  // ADD THIS
+    }
+);
+
+// Add pallet config
+impl pallet_difficulty::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+}
+```
+
+**Verification**:
+- [ ] Run: `cargo check -p runtime` → compiles with Difficulty pallet
+
+---
+
+#### Task 2.5.5: Implement Runtime APIs
+
+**Files to Modify**:
+- `runtime/src/lib.rs` - Add impl_runtime_apis! block
+
+**Code to Add at End of `runtime/src/lib.rs`**:
+```rust
+use sp_api::impl_runtime_apis;
+use crate::apis::{DifficultyApi, ConsensusApi};
+
+impl_runtime_apis! {
+    impl sp_api::Core<Block> for Runtime {
+        fn version() -> sp_version::RuntimeVersion {
+            VERSION
+        }
+
+        fn execute_block(block: Block) {
+            Executive::execute_block(block);
+        }
+
+        fn initialize_block(header: &<Block as sp_runtime::traits::Block>::Header) -> sp_runtime::ExtrinsicInclusionMode {
+            Executive::initialize_block(header)
+        }
+    }
+
+    impl sp_api::Metadata<Block> for Runtime {
+        fn metadata() -> sp_core::OpaqueMetadata {
+            sp_core::OpaqueMetadata::new(Runtime::metadata().into())
+        }
+
+        fn metadata_at_version(version: u32) -> Option<sp_core::OpaqueMetadata> {
+            Runtime::metadata_at_version(version)
+        }
+
+        fn metadata_versions() -> sp_std::vec::Vec<u32> {
+            Runtime::metadata_versions()
+        }
+    }
+
+    impl sp_block_builder::BlockBuilder<Block> for Runtime {
+        fn apply_extrinsic(extrinsic: <Block as sp_runtime::traits::Block>::Extrinsic) -> sp_runtime::ApplyExtrinsicResult {
+            Executive::apply_extrinsic(extrinsic)
+        }
+
+        fn finalize_block() -> <Block as sp_runtime::traits::Block>::Header {
+            Executive::finalize_block()
+        }
+
+        fn inherent_extrinsics(data: sp_inherents::InherentData) -> Vec<<Block as sp_runtime::traits::Block>::Extrinsic> {
+            data.create_extrinsics()
+        }
+
+        fn check_inherents(
+            block: Block,
+            data: sp_inherents::InherentData,
+        ) -> sp_inherents::CheckInherentsResult {
+            data.check_extrinsics(&block)
+        }
+    }
+
+    impl sp_transaction_pool::runtime_api::TaggedTransactionQueue<Block> for Runtime {
+        fn validate_transaction(
+            source: sp_runtime::transaction_validity::TransactionSource,
+            tx: <Block as sp_runtime::traits::Block>::Extrinsic,
+            block_hash: <Block as sp_runtime::traits::Block>::Hash,
+        ) -> sp_runtime::transaction_validity::TransactionValidity {
+            Executive::validate_transaction(source, tx, block_hash)
+        }
+    }
+
+    impl sp_offchain::OffchainWorkerApi<Block> for Runtime {
+        fn offchain_worker(header: &<Block as sp_runtime::traits::Block>::Header) {
+            Executive::offchain_worker(header)
+        }
+    }
+
+    impl sp_session::SessionKeys<Block> for Runtime {
+        fn generate_session_keys(seed: Option<Vec<u8>>) -> Vec<u8> {
+            SessionKeys::generate(seed)
+        }
+
+        fn decode_session_keys(encoded: Vec<u8>) -> Option<Vec<(Vec<u8>, sp_core::crypto::KeyTypeId)>> {
+            SessionKeys::decode_into_raw_public_keys(&encoded)
+        }
+    }
+
+    // ============ HEGEMON CUSTOM APIs ============
+
+    impl crate::apis::DifficultyApi<Block> for Runtime {
+        fn difficulty() -> sp_core::U256 {
+            Difficulty::difficulty()
+        }
+    }
+
+    impl crate::apis::ConsensusApi<Block> for Runtime {
+        fn target_block_time() -> u64 {
+            pallet_difficulty::TARGET_BLOCK_TIME_MS
+        }
+
+        fn blocks_until_retarget() -> u32 {
+            let current = System::block_number();
+            Difficulty::blocks_until_retarget(current)
+        }
+    }
+}
+```
+
+**Verification**:
+- [ ] Run: `cargo build -p runtime` → WASM binary generated
+- [ ] Check: `target/release/wbuild/runtime/runtime.wasm` exists
+- [ ] Run: `cargo test -p runtime` → all tests pass
+
+---
+
+#### Task 2.5.6: Export WASM Binary in Node
+
+**Files to Modify**:
+- `node/src/substrate/service.rs` - Use runtime WASM
+
+**Code to Add**:
+```rust
+// At top of service.rs
+pub use runtime::WASM_BINARY;
+
+// Verify WASM is available
+pub fn check_wasm() -> Result<(), String> {
+    WASM_BINARY.ok_or_else(|| {
+        "WASM binary not available. Build with `cargo build -p runtime`.".to_string()
+    })?;
+    Ok(())
+}
+```
+
+**In `new_partial()` function**:
+```rust
+let wasm_binary = runtime::WASM_BINARY
+    .ok_or("WASM binary not available")?;
+
+let executor = sc_executor::WasmExecutor::<sp_io::SubstrateHostFunctions>::builder()
+    .with_execution_method(WasmExecutionMethod::Compiled {
+        instantiation_strategy: WasmtimeInstantiationStrategy::PoolingCopyOnWrite,
+    })
+    .build();
+```
+
+**Verification**:
+- [ ] Run: `cargo run -p hegemon-node -- --dev` → node boots with WASM executor
+- [ ] Check logs: "Using WASM runtime" message appears
+
+---
+
+#### Phase 2.5 Completion Criteria
+
+- [ ] `runtime/build.rs` exists and generates WASM binary
+- [ ] `DifficultyApi` trait defined in `runtime/src/apis.rs`
+- [ ] `pallet-difficulty` created with retargeting logic
+- [ ] Runtime includes Difficulty pallet in construct_runtime!
+- [ ] `impl_runtime_apis!` block implements DifficultyApi
+- [ ] Node service uses WASM executor with runtime binary
+- [ ] `cargo run -p hegemon-node -- --dev --mine` produces blocks
+
+---
+
 ### Phase 3: PQ libp2p Integration (Week 3-5)
 
 **Goal**: Extend libp2p-noise with ML-KEM-768 for PQ-secure peer connections.
@@ -597,6 +1139,448 @@ pub fn configure_network(config: &mut NetworkConfiguration, require_pq: bool) {
 - pq-noise crate: Full hybrid X25519 + ML-KEM-768 handshake
 - network integration: PqPeerIdentity, PqSecureConnection, PqTransportConfig
 - Tests: 10 integration tests in network/tests/pq_handshake.rs
+
+---
+
+### Phase 3.5: sc-network PQ Transport Integration (Week 4-5)
+
+**Goal**: Integrate PQ-noise handshake with Substrate's sc-network for full peer-to-peer communication.
+
+**Status**: 🔲 **NOT STARTED**
+
+**Prerequisites**: Phase 3 pq-noise crate complete.
+
+**Why This Is Required**:
+The pq-noise crate provides the cryptographic handshake, but Substrate's networking uses `sc-network` which has its own transport abstraction. We need to:
+1. Create a custom `NetworkBackend` that uses our PQ transport
+2. Inject this into the Substrate service builder
+3. Handle protocol negotiation for PQ-aware vs legacy peers
+
+---
+
+#### Task 3.5.1: Create PQ Transport Wrapper for libp2p
+
+**Files to Create**:
+- `network/src/substrate_transport.rs` - sc-network compatible transport
+
+**Step-by-Step Commands**:
+```bash
+# Step 3.5.1.1: Add sc-network dependency
+cargo add -p network sc-network
+
+# Step 3.5.1.2: Create transport wrapper
+touch network/src/substrate_transport.rs
+```
+
+**File Template: `network/src/substrate_transport.rs`**:
+```rust
+//! Substrate-compatible PQ Transport
+//!
+//! Wraps our PQ-noise handshake in a libp2p Transport that
+//! sc-network can use.
+
+use libp2p::core::{
+    transport::{Boxed, Transport, TransportError},
+    upgrade::{self, Version},
+    muxing::StreamMuxerBox,
+    PeerId,
+};
+use libp2p::tcp::tokio::Transport as TcpTransport;
+use libp2p::yamux;
+use libp2p::identity::Keypair;
+use std::io;
+use std::time::Duration;
+
+use crate::pq_noise::{PqNoiseConfig, PqNoiseUpgrade};
+
+/// Build a PQ-secure transport for Substrate networking
+pub fn build_pq_transport(
+    keypair: Keypair,
+    require_pq: bool,
+    timeout: Duration,
+) -> io::Result<Boxed<(PeerId, StreamMuxerBox)>> {
+    let pq_config = PqNoiseConfig::new(keypair.clone(), require_pq);
+    
+    let tcp = TcpTransport::new(Default::default());
+    
+    let transport = tcp
+        .upgrade(Version::V1)
+        .authenticate(PqNoiseUpgrade::new(pq_config))
+        .multiplex(yamux::Config::default())
+        .timeout(timeout)
+        .boxed();
+    
+    Ok(transport)
+}
+
+/// PQ-aware noise upgrade that implements libp2p's InboundUpgrade/OutboundUpgrade
+pub struct PqNoiseUpgrade {
+    config: PqNoiseConfig,
+}
+
+impl PqNoiseUpgrade {
+    pub fn new(config: PqNoiseConfig) -> Self {
+        Self { config }
+    }
+}
+
+// Implement InboundConnectionUpgrade for responder side
+impl<C> libp2p::core::InboundConnectionUpgrade<C> for PqNoiseUpgrade
+where
+    C: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    type Output = (PeerId, libp2p::noise::Output<C>);
+    type Error = libp2p::noise::Error;
+    type Future = BoxFuture<'static, Result<Self::Output, Self::Error>>;
+
+    fn upgrade_inbound(self, socket: C, _info: Self::Info) -> Self::Future {
+        Box::pin(async move {
+            // Perform PQ-hybrid handshake as responder
+            let (peer_id, output) = self.config.handshake_responder(socket).await?;
+            Ok((peer_id, output))
+        })
+    }
+}
+
+// Implement OutboundConnectionUpgrade for initiator side
+impl<C> libp2p::core::OutboundConnectionUpgrade<C> for PqNoiseUpgrade
+where
+    C: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    type Output = (PeerId, libp2p::noise::Output<C>);
+    type Error = libp2p::noise::Error;
+    type Future = BoxFuture<'static, Result<Self::Output, Self::Error>>;
+
+    fn upgrade_outbound(self, socket: C, _info: Self::Info) -> Self::Future {
+        Box::pin(async move {
+            // Perform PQ-hybrid handshake as initiator
+            let (peer_id, output) = self.config.handshake_initiator(socket).await?;
+            Ok((peer_id, output))
+        })
+    }
+}
+```
+
+**Verification**:
+- [ ] Run: `cargo check -p network` → compiles with sc-network types
+
+---
+
+#### Task 3.5.2: Create Custom NetworkBackend
+
+**Files to Create**:
+- `node/src/substrate/network_backend.rs` - Custom network backend
+
+**File Template: `node/src/substrate/network_backend.rs`**:
+```rust
+//! Custom NetworkBackend with PQ Transport
+//!
+//! Provides Substrate with a PQ-secure networking layer.
+
+use sc_network::{
+    config::{FullNetworkConfiguration, NetworkConfiguration},
+    NetworkBackend, NetworkService, NetworkWorker,
+    ProtocolName, Multiaddr, PeerId,
+};
+use sc_network::transport::MemoryTransport;
+use libp2p::identity::Keypair;
+use std::sync::Arc;
+use std::time::Duration;
+
+use network::substrate_transport::build_pq_transport;
+
+/// PQ-aware network backend configuration
+pub struct PqNetworkBackend {
+    /// Whether to require PQ for all connections
+    require_pq: bool,
+    /// Connection timeout
+    timeout: Duration,
+}
+
+impl PqNetworkBackend {
+    pub fn new(require_pq: bool) -> Self {
+        Self {
+            require_pq,
+            timeout: Duration::from_secs(20),
+        }
+    }
+
+    /// Build the network worker with PQ transport
+    pub fn build_network<Block, H>(
+        &self,
+        config: FullNetworkConfiguration<Block, H, Self>,
+        keypair: Keypair,
+    ) -> Result<(Arc<NetworkService<Block, H>>, NetworkWorker<Block, H>), sc_network::error::Error>
+    where
+        Block: sp_runtime::traits::Block,
+        H: sp_runtime::traits::HashingT,
+    {
+        // Create PQ transport
+        let transport = build_pq_transport(
+            keypair.clone(),
+            self.require_pq,
+            self.timeout,
+        ).map_err(|e| sc_network::error::Error::Io(e))?;
+
+        // Build network with custom transport
+        // Note: This requires modifications to sc-network to accept custom transport
+        // For now, use the network builder pattern
+        
+        let network_config = config.network_config;
+        
+        // Create network params
+        let params = sc_network::config::Params {
+            role: network_config.role,
+            executor: None,
+            network_config,
+            protocol_id: config.protocol_id,
+            genesis_hash: config.genesis_hash,
+            fork_id: config.fork_id,
+            metrics_registry: config.metrics_registry,
+            block_announce_config: config.block_announce_config,
+            bitswap_config: None,
+            notification_protocols: config.notification_protocols,
+            request_response_protocols: config.request_response_protocols,
+        };
+
+        sc_network::NetworkWorker::new(params)
+    }
+}
+
+impl Default for PqNetworkBackend {
+    fn default() -> Self {
+        Self::new(false)
+    }
+}
+```
+
+**Verification**:
+- [ ] Run: `cargo check -p hegemon-node` → compiles
+
+---
+
+#### Task 3.5.3: Integrate PQ Network into Service Builder
+
+**Files to Modify**:
+- `node/src/substrate/service.rs` - Use PQ network backend
+
+**Code Changes**:
+```rust
+// Add import
+use crate::substrate::network_backend::PqNetworkBackend;
+
+// In new_full() function, replace network setup:
+pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
+    let sc_service::PartialComponents {
+        client,
+        backend,
+        mut task_manager,
+        import_queue,
+        keystore_container,
+        select_chain,
+        transaction_pool,
+        other: (pow_block_import, pow_algorithm),
+    } = new_partial(&config)?;
+
+    // Configure PQ network backend
+    let pq_backend = PqNetworkBackend::new(
+        config.network.require_pq.unwrap_or(false)
+    );
+
+    // Build network configuration
+    let genesis_hash = client
+        .block_hash(0)
+        .ok()
+        .flatten()
+        .expect("Genesis block exists; qed");
+
+    let warp_sync = Arc::new(sc_consensus_grandpa::warp_proof::NetworkProvider::new(
+        backend.clone(),
+        grandpa_link.shared_authority_set().clone(),
+        Vec::default(),
+    ));
+
+    let net_config = sc_network::config::FullNetworkConfiguration::<_, _, PqNetworkBackend>::new(
+        &config.network,
+    );
+
+    let (network, network_starter, system_rpc_tx, tx_handler_controller) =
+        sc_service::build_network(sc_service::BuildNetworkParams {
+            config: &config,
+            net_config,
+            client: client.clone(),
+            transaction_pool: transaction_pool.clone(),
+            spawn_handle: task_manager.spawn_handle(),
+            import_queue,
+            block_announce_validator_builder: None,
+            warp_sync_params: Some(sc_service::WarpSyncParams::WithProvider(warp_sync)),
+            block_relay: None,
+            metrics: None,
+        })?;
+
+    // ... rest of service setup
+}
+```
+
+**Verification**:
+- [ ] Run: `cargo check -p hegemon-node` → compiles
+- [ ] Run: `cargo run -p hegemon-node -- --dev` → starts with PQ networking
+
+---
+
+#### Task 3.5.4: Add PQ Protocol Negotiation
+
+**Files to Create**:
+- `network/src/protocol.rs` - PQ protocol version negotiation
+
+**File Template: `network/src/protocol.rs`**:
+```rust
+//! PQ Protocol Negotiation
+//!
+//! Handles version negotiation between PQ and non-PQ peers.
+
+use sc_network::ProtocolName;
+
+/// Protocol identifier for PQ-aware peers
+pub const PQ_PROTOCOL_V1: &str = "/hegemon/pq/1";
+
+/// Protocol identifier for legacy (non-PQ) peers
+pub const LEGACY_PROTOCOL_V1: &str = "/hegemon/legacy/1";
+
+/// Supported protocols in order of preference
+pub fn supported_protocols() -> Vec<ProtocolName> {
+    vec![
+        ProtocolName::from(PQ_PROTOCOL_V1),
+        ProtocolName::from(LEGACY_PROTOCOL_V1),
+    ]
+}
+
+/// Check if a protocol is PQ-secure
+pub fn is_pq_protocol(protocol: &ProtocolName) -> bool {
+    protocol.as_ref().contains("/pq/")
+}
+
+/// Notification protocol for block announcements (PQ version)
+pub const BLOCK_ANNOUNCE_PQ: &str = "/hegemon/block-announces/pq/1";
+
+/// Transaction propagation protocol (PQ version)  
+pub const TRANSACTIONS_PQ: &str = "/hegemon/transactions/pq/1";
+```
+
+**Verification**:
+- [ ] Run: `cargo test -p network protocol_` → protocol tests pass
+
+---
+
+#### Task 3.5.5: Add CLI Flags for PQ Networking
+
+**Files to Modify**:
+- `node/src/substrate/command.rs` - Add --require-pq flag
+
+**Code Changes**:
+```rust
+#[derive(Debug, clap::Parser)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub subcommand: Option<Subcommand>,
+    
+    #[command(flatten)]
+    pub run: sc_cli::RunCmd,
+    
+    /// Require PQ-secure connections for all peers.
+    /// Non-PQ peers will be rejected.
+    #[arg(long, default_value = "false")]
+    pub require_pq: bool,
+    
+    /// Enable hybrid mode: prefer PQ but allow legacy.
+    #[arg(long, default_value = "true")]
+    pub hybrid_pq: bool,
+}
+```
+
+**Verification**:
+- [ ] Run: `cargo run -p hegemon-node -- --help` → shows --require-pq flag
+- [ ] Run: `cargo run -p hegemon-node -- --dev --require-pq` → starts in strict PQ mode
+
+---
+
+#### Task 3.5.6: Integration Test - Multi-Node PQ Network
+
+**Files to Create**:
+- `tests/pq_network_integration.rs` - Multi-node network test
+
+**File Template**:
+```rust
+//! PQ Network Integration Test
+//!
+//! Tests that multiple nodes can form a network using PQ transport.
+
+use hegemon_node::service;
+use sc_service::config::Configuration;
+use std::time::Duration;
+use tokio::time::sleep;
+
+#[tokio::test]
+async fn test_two_nodes_pq_connect() {
+    // Start node 1
+    let config1 = test_config(30333, true);
+    let node1 = service::new_full(config1).expect("Node 1 failed to start");
+    
+    // Start node 2 with node 1 as bootnode
+    let mut config2 = test_config(30334, true);
+    config2.network.boot_nodes.push(
+        "/ip4/127.0.0.1/tcp/30333".parse().unwrap()
+    );
+    let node2 = service::new_full(config2).expect("Node 2 failed to start");
+    
+    // Wait for connection
+    sleep(Duration::from_secs(5)).await;
+    
+    // Verify peer count
+    // TODO: Query via RPC
+    
+    // Cleanup
+    node1.abort();
+    node2.abort();
+}
+
+#[tokio::test]
+async fn test_pq_only_rejects_legacy_peer() {
+    // Start PQ-only node
+    let config1 = test_config_pq_only(30335);
+    let node1 = service::new_full(config1).expect("Node 1 failed to start");
+    
+    // Start legacy node (if we had one)
+    // Verify it cannot connect
+    
+    sleep(Duration::from_secs(3)).await;
+    
+    // Assert no peers connected
+    
+    node1.abort();
+}
+
+fn test_config(port: u16, require_pq: bool) -> Configuration {
+    // Build test configuration
+    todo!("Implement test config builder")
+}
+```
+
+**Verification**:
+- [ ] Run: `cargo test -p tests pq_network` → integration tests pass
+- [ ] Manual: Start two nodes, verify PQ handshake in logs
+
+---
+
+#### Phase 3.5 Completion Criteria
+
+- [ ] `network/src/substrate_transport.rs` wraps pq-noise for libp2p
+- [ ] `node/src/substrate/network_backend.rs` provides custom NetworkBackend
+- [ ] Service builder uses PQ transport
+- [ ] `--require-pq` and `--hybrid-pq` CLI flags work
+- [ ] Two nodes connect using PQ handshake
+- [ ] Logs show "PQ handshake complete with ML-KEM-768"
+- [ ] Non-PQ peer rejected when `--require-pq` is set
 
 ---
 
@@ -1369,17 +2353,21 @@ pqcrypto-traits = "0.3"
 
 ## Timeline Summary
 
-| Week | Phase | Deliverable |
-|------|-------|-------------|
-| 1-2 | Phase 1: Node Scaffold | Booting Substrate node |
-| 2-3 | Phase 2: PoW Integration | Blake3 PoW mining |
-| 3-5 | Phase 3: PQ libp2p | ML-KEM peer connections |
-| 4-5 | Phase 4: RPC Extensions | Custom hegemon_* endpoints |
-| 5-6 | Phase 5: Wallet Migration | jsonrpsee wallet client |
-| 6-7 | Phase 6: Dashboard Migration | Polkadot.js dashboard |
-| 7-8 | Phase 7: Testing | Full test suite |
-| 8-9 | Phase 8: Testnet | Live testnet deployment |
-| 9-11 | Phase 9: Electron [OPTIONAL] | Desktop app bundle |
+| Week | Phase | Deliverable | Status |
+|------|-------|-------------|--------|
+| 1-2 | Phase 1: Node Scaffold | Booting Substrate node | ✅ Complete |
+| 2-3 | Phase 2: PoW Integration | Blake3 PoW templates | ✅ Complete |
+| 2-3 | **Phase 2.5: Runtime WASM** | DifficultyApi, WASM binary | 🔲 **BLOCKING** |
+| 3-5 | Phase 3: PQ libp2p | ML-KEM peer connections | ✅ Complete |
+| 4-5 | **Phase 3.5: sc-network PQ** | Substrate network integration | 🔲 **BLOCKING** |
+| 4-5 | Phase 4: RPC Extensions | Custom hegemon_* endpoints | ✅ Complete |
+| 5-6 | Phase 5: Wallet Migration | jsonrpsee wallet client | ✅ Complete |
+| 6-7 | Phase 6: Dashboard Migration | Polkadot.js dashboard | ✅ Complete |
+| 7-8 | Phase 7: Testing | Full test suite | ✅ Complete |
+| 8-9 | Phase 8: Testnet | Live testnet deployment | ✅ Scaffold Mode |
+| 9-11 | Phase 9: Electron [OPTIONAL] | Desktop app bundle | 🔲 Optional |
+
+**Critical Path**: Phase 2.5 → Phase 3.5 → Full block production
 
 **Total Duration**: 9 weeks (+ 2 weeks optional for Electron)
 
