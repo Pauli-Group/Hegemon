@@ -47,6 +47,7 @@ pub mod network;
 pub mod network_bridge;
 pub mod rpc;
 pub mod service;
+pub mod transaction_pool;
 
 // Re-export common types
 pub use chain_spec::ChainSpec;
@@ -58,3 +59,7 @@ pub use network_bridge::{
 };
 pub use rpc::{HegemonApiServer, WalletApiServer, HegemonService, MiningHandle, WalletService};
 pub use service::{new_full, new_partial, FullComponents, MiningConfig, PartialComponents};
+pub use transaction_pool::{
+    MockTransactionPool, PoolBridgeStats, PoolError, SubmissionResult, TransactionPool,
+    TransactionPoolBridge, TransactionPoolConfig, TransactionSource,
+};

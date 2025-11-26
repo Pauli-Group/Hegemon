@@ -108,6 +108,9 @@
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::{NetworkBridge, NetworkBridgeBuilder};
+use crate::substrate::transaction_pool::{
+    MockTransactionPool, TransactionPoolBridge, TransactionPoolConfig,
+};
 use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqPeerIdentity, PqTransportConfig,
     SubstratePqTransport, SubstratePqTransportConfig,
@@ -223,6 +226,8 @@ pub struct FullComponents {
     pub pq_backend: Option<PqNetworkBackend>,
     /// Network bridge for block/tx routing (Phase 9)
     pub network_bridge: Option<Arc<Mutex<NetworkBridge>>>,
+    /// Transaction pool bridge (Phase 9.2)
+    pub transaction_pool_bridge: Option<Arc<TransactionPoolBridge<MockTransactionPool>>>,
 }
 
 /// Creates partial node components.
@@ -458,7 +463,7 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
                     listen_addr = %pq_service_config.listen_addr,
                     max_peers = pq_service_config.max_peers,
                     peer_id = %hex::encode(local_peer_id),
-                    "PqNetworkBackend started (Phase 3.5 + Phase 9 - Full Integration)"
+                    "PqNetworkBackend started (Phase 3.5 + Phase 9.2 - Full Integration with TxPool)"
                 );
 
                 // Phase 9: Create the network bridge for block/tx routing
@@ -469,18 +474,45 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
                 ));
                 let bridge_clone = Arc::clone(&network_bridge);
 
-                // Spawn the PQ network event handler task with NetworkBridge
+                // Phase 9.2: Create the transaction pool bridge
+                let pool_config = TransactionPoolConfig::from_env();
+                let mock_pool = Arc::new(MockTransactionPool::new(pool_config.capacity));
+                let pool_bridge = Arc::new(TransactionPoolBridge::with_max_pending(
+                    mock_pool.clone(),
+                    pool_config.max_pending,
+                ));
+                let pool_bridge_clone = Arc::clone(&pool_bridge);
+
+                tracing::info!(
+                    pool_capacity = pool_config.capacity,
+                    max_pending = pool_config.max_pending,
+                    process_interval_ms = pool_config.process_interval_ms,
+                    "Transaction pool bridge created (Phase 9.2)"
+                );
+
+                // Clone for the transaction processor task
+                let pool_bridge_for_processor = Arc::clone(&pool_bridge);
+                let process_interval = pool_config.process_interval_ms;
+                let pool_verbose = pool_config.verbose;
+
+                // Spawn the PQ network event handler task with NetworkBridge and TxPool integration
                 task_manager.spawn_handle().spawn(
                     "pq-network-events",
                     Some("network"),
                     async move {
-                        tracing::info!("PQ network event handler started (with NetworkBridge)");
+                        tracing::info!("PQ network event handler started (with NetworkBridge + TxPool)");
                         
                         while let Some(event) = event_rx.recv().await {
                             // Route events through the NetworkBridge
                             {
                                 let mut bridge = bridge_clone.lock().await;
                                 bridge.handle_event(event.clone()).await;
+                                
+                                // Phase 9.2: Forward transactions to pool bridge
+                                let pending_txs = bridge.drain_transactions();
+                                if !pending_txs.is_empty() {
+                                    pool_bridge_clone.queue_from_bridge(pending_txs).await;
+                                }
                             }
 
                             // Also handle lifecycle events directly
@@ -539,6 +571,50 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
                                 decode_errors = stats.decode_errors,
                                 "PQ network event handler stopped - final stats"
                             );
+                        }
+                        
+                        // Log transaction pool stats
+                        {
+                            let pool_stats = pool_bridge_clone.stats().snapshot();
+                            tracing::info!(
+                                tx_received = pool_stats.transactions_received,
+                                tx_submitted = pool_stats.transactions_submitted,
+                                tx_rejected = pool_stats.transactions_rejected,
+                                "Transaction pool bridge - final stats"
+                            );
+                        }
+                    },
+                );
+
+                // Spawn the transaction pool processing task (Phase 9.2)
+                task_manager.spawn_handle().spawn(
+                    "tx-pool-processor",
+                    Some("txpool"),
+                    async move {
+                        let interval = tokio::time::Duration::from_millis(process_interval);
+                        let mut process_timer = tokio::time::interval(interval);
+                        
+                        tracing::info!(
+                            interval_ms = process_interval,
+                            "Transaction pool processor started (Phase 9.2)"
+                        );
+                        
+                        loop {
+                            process_timer.tick().await;
+                            
+                            let submitted = pool_bridge_for_processor.process_pending().await;
+                            
+                            if submitted > 0 && pool_verbose {
+                                let stats = pool_bridge_for_processor.stats().snapshot();
+                                tracing::debug!(
+                                    submitted = submitted,
+                                    total_received = stats.transactions_received,
+                                    total_submitted = stats.transactions_submitted,
+                                    total_rejected = stats.transactions_rejected,
+                                    pool_size = pool_bridge_for_processor.pool_size(),
+                                    "Processed pending transactions"
+                                );
+                            }
                         }
                     },
                 );
@@ -605,9 +681,8 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
     //    );
 
     tracing::info!(
-        "Phase 9.1 NetworkBridge integration complete. Remaining for full block production:"
+        "Phase 9.2 Transaction Pool integration complete. Remaining for full block production:"
     );
-    tracing::info!("  - Task 9.2: Transaction pool integration (forward txs to pool.submit_one)");
     tracing::info!("  - Task 9.3: Mining worker spawning (MiningWorker with block production)");
     tracing::info!("  - Aligned polkadot-sdk git dependencies (sc-service, sc-consensus-pow)");
 
