@@ -6,6 +6,7 @@
 //! - RPC extensions
 //! - CLI commands
 //! - PQ-secure network transport (Phase 3)
+//! - Network bridge for block/tx propagation (Phase 9)
 //!
 //! # Phase 2 Status
 //!
@@ -31,16 +32,29 @@
 //! - hegemon_generateProof, hegemon_submitTransaction
 //! - hegemon_consensusStatus, hegemon_telemetry, hegemon_storageFootprint
 //!
+//! # Phase 9 Status
+//!
+//! This phase implements full block production:
+//! - NetworkBridge for routing PQ network events to block import
+//! - Transaction pool integration for tx propagation
+//! - Mining worker spawning for block production
+//!
 //! Full completion requires aligned polkadot-sdk git dependencies.
 
 pub mod chain_spec;
 pub mod command;
 pub mod network;
+pub mod network_bridge;
 pub mod rpc;
 pub mod service;
 
 // Re-export common types
 pub use chain_spec::ChainSpec;
 pub use network::{PqNetworkConfig, PqNetworkKeypair};
+pub use network_bridge::{
+    BlockAnnounce, BlockState, IncomingMessage, NetworkBridge, NetworkBridgeBuilder,
+    NetworkBridgeStats, SyncRequest, SyncResponse, TransactionMessage,
+    BLOCK_ANNOUNCE_PROTOCOL, SYNC_PROTOCOL, TRANSACTIONS_PROTOCOL,
+};
 pub use rpc::{HegemonApiServer, WalletApiServer, HegemonService, MiningHandle, WalletService};
 pub use service::{new_full, new_partial, FullComponents, MiningConfig, PartialComponents};

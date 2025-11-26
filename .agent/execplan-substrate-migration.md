@@ -18,6 +18,8 @@
 | D6 | Unconditional serde in runtime | polkadot-sdk crates (sp-staking, bounded-collections) require serde unconditionally; removed std feature guards | 2025-11-25 |
 | D7 | Box large PQ signatures | SLH-DSA signatures (~17KB) exceed parity-scale-codec's 16KB preallocation; use Box<> to avoid inline size issues | 2025-11-25 |
 | D8 | AccountIdLookup for MultiAddress | TransactionExtension trait requires AccountIdLookup<AccountId, ()> instead of IdentityLookup for MultiAddress compatibility | 2025-11-25 |
+| D9 | Async service initialization | PqNetworkBackend start requires async; made new_full() async to spawn event handler task | 2025-11-25 |
+| D10 | NetworkBridge for message routing | Created separate network_bridge.rs module to decode/queue block announcements and transactions from PQ network events | 2025-11-25 |
 
 ---
 
@@ -45,14 +47,18 @@
   - [x] Task 3.5.4: Add PQ protocol negotiation (protocol.rs)
   - [x] Task 3.5.5: Add CLI flags (--require-pq, --hybrid-pq, --pq-verbose)
   - [x] Task 3.5.6: Multi-node integration test (19 tests passing)
+  - [x] **Task 3.5.7: PqNetworkBackend event loop integration (2025-11-25)**
 - [x] Custom RPC extensions complete (Phase 4 complete - hegemon_* endpoints, wallet_* endpoints, jsonrpsee integration)
 - [x] Wallet migrated to sc-rpc (Phase 5 complete - SubstrateRpcClient, AsyncWalletSyncEngine, CLI commands)
 - [x] Dashboard migrated to Substrate WS (Phase 6 complete - Polkadot.js API, SubstrateApiProvider, useSubstrateData hooks)
 - [x] E2E test suite passing (Phase 7 complete - mining_integration.rs, p2p_pq.rs, wallet_e2e.rs, substrate.spec.ts)
 - [x] Testnet deployment configured (Phase 8 complete - docker-compose.testnet.yml, Prometheus/Grafana, soak-test.sh)
 - [x] Testnet deployed and validated (3 nodes + dashboard + monitoring running in scaffold mode)
-- [~] **Full block production enabled** - Phase 2.5 complete; pending service integration
-- [ ] Electron desktop app packaged [OPTIONAL]
+- [x] **PQ Network event handling in service.rs (Phase 3.5.7 COMPLETE - 2025-11-25)**
+- [ ] **Full block production (Phase 9)** - sc-network bridge, transaction pool, mining worker
+  - [x] Task 9.1: sc-network bridge integration (block announcements)
+  - [ ] Task 9.2: Transaction pool integration (tx propagation)
+  - [ ] Task 9.3: Mining worker spawning (block production)
 
 ---
 
@@ -1263,9 +1269,11 @@ pub fn configure_network(config: &mut NetworkConfiguration, require_pq: bool) {
 - [x] `cargo test -p security-tests --test pq_network_integration` → 19 tests pass
 
 **Remaining Work for Full Block Production**:
-- Phase 2.5 sp-runtime/sp-api version alignment (blocking WASM runtime)
-- PqNetworkBackend event loop spawn in service.rs (TODO comment in code)
-- Full sc-network transport integration (requires Substrate API changes)
+- [x] Phase 2.5 sp-runtime/sp-api version alignment (blocking WASM runtime) - COMPLETE
+- [x] PqNetworkBackend event loop spawn in service.rs - COMPLETE (2025-11-25)
+- [ ] sc-network bridge integration for block announcements
+- [ ] Transaction pool integration with PQ network
+- [ ] Mining worker spawning with actual block production
 
 **Why This Is Required**:
 The pq-noise crate provides the cryptographic handshake, but Substrate's networking uses `sc-network` which has its own transport abstraction. We need to:
@@ -2482,581 +2490,491 @@ pqcrypto-traits = "0.3"
 | 6-7 | Phase 6: Dashboard Migration | Polkadot.js dashboard | ✅ Complete |
 | 7-8 | Phase 7: Testing | Full test suite | ✅ Complete |
 | 8-9 | Phase 8: Testnet | Live testnet deployment | ✅ Scaffold Mode |
-| 9-11 | Phase 9: Electron [OPTIONAL] | Desktop app bundle | 🔲 Optional |
+| 9-10 | **Phase 9: Full Block Production** | sc-network bridge, mining | 🔲 In Progress |
 
-**Critical Path**: Service integration → Full block production
+**Critical Path**: sc-network bridge → Transaction pool → Mining worker → Full block production
 
-**Total Duration**: 9 weeks (+ 2 weeks optional for Electron)
+**Total Duration**: 10 weeks
+
+**Note**: Electron Desktop App has been moved to separate execution plan: `.agent/execplan-electron-desktop.md`
 
 ---
 
-### Phase 9: Electron Desktop App (Week 9-11) [OPTIONAL]
+### Phase 9: Full Block Production (Week 9-10)
 
-**Goal**: Bundle node + wallet + dashboard into a single desktop application for easy distribution.
+**Goal**: Complete the integration required for actual block production - bridging PQ network events to sc-network, transaction pool, and mining worker.
+
+**Status**: 🔲 In Progress
+
+**Prerequisites**:
+- [x] Phase 3.5.7: PqNetworkBackend event loop integration
+- [x] Phase 2.5: Runtime WASM with DifficultyApi
+- [x] Phase 4: Custom RPC extensions
+
+---
+
+#### Task 9.1: sc-network Bridge Integration
+
+**Goal**: Route block announcements from PQ channels to block import pipeline.
+
+**Files to Create/Modify**:
+- `node/src/substrate/network_bridge.rs` - Bridge between PqNetworkBackend and sc-network
+- `node/src/substrate/service.rs` - Wire up the bridge
 
 **Architecture**:
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
-│                    Hegemon Desktop App                          │
+│                   Network Bridge                                 │
 ├─────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │                   Electron Main Process                     ││
-│  │  ┌─────────────────┐  ┌──────────────────────────────────┐ ││
-│  │  │ Node Manager    │  │ IPC Bridge                       │ ││
-│  │  │ - spawn binary  │  │ - renderer ↔ node RPC            │ ││
-│  │  │ - health checks │  │ - native file dialogs            │ ││
-│  │  │ - log capture   │  │ - system tray integration        │ ││
-│  │  └─────────────────┘  └──────────────────────────────────┘ ││
-│  └─────────────────────────────────────────────────────────────┘│
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │                  Electron Renderer Process                  ││
-│  │  ┌─────────────────────────────────────────────────────────┐││
-│  │  │              dashboard-ui (React/TypeScript)            │││
-│  │  │  - Block Explorer    - Wallet UI    - Mining Controls  │││
-│  │  └─────────────────────────────────────────────────────────┘││
-│  └─────────────────────────────────────────────────────────────┘│
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │                  Bundled Resources                          ││
-│  │  hegemon-node (platform binary)  │  chain-spec.json        ││
-│  └─────────────────────────────────────────────────────────────┘│
+│                                                                  │
+│  PqNetworkBackend ──────▶ NetworkBridge ──────▶ BlockImport     │
+│        │                       │                     │          │
+│        │                       │                     ▼          │
+│        ▼                       ▼               ┌─────────────┐  │
+│  PqNetworkEvent          Decode/Validate       │   Client    │  │
+│  ::MessageReceived       Block Announce        └─────────────┘  │
+│                                │                                 │
+│                                ▼                                 │
+│                          Import Queue                            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Files to Create**:
-```
-electron/
-├── package.json
-├── electron-builder.yml
-├── src/
-│   ├── main.ts              # Electron main process
-│   ├── preload.ts           # Secure bridge to renderer
-│   ├── node-manager.ts      # Spawns/manages hegemon-node
-│   ├── ipc-handlers.ts      # IPC channel definitions
-│   └── tray.ts              # System tray integration
-├── resources/
-│   ├── icon.icns            # macOS icon
-│   ├── icon.ico             # Windows icon
-│   └── icon.png             # Linux icon
-└── scripts/
-    ├── fetch-binaries.sh    # Download platform binaries
-    └── notarize.js          # macOS notarization
-```
+**Implementation Steps**:
+1. Create `BlockAnnounceDecoder` to parse block announcements from PQ messages
+2. Create `NetworkBridge` struct that holds block import references
+3. Wire `PqNetworkEvent::MessageReceived` to `NetworkBridge::handle_message`
+4. Forward decoded block headers to import queue
 
-**Step-by-Step Commands**:
-```bash
-# Step 9.1: Create Electron scaffold
-mkdir -p electron/src electron/resources electron/scripts
-cd electron
-npm init -y
-npm install electron electron-builder --save-dev
-npm install @electron/remote electron-store --save
+**File Template: `node/src/substrate/network_bridge.rs`**:
+```rust
+//! Bridge between PQ Network Backend and Substrate block import
+//!
+//! Routes block announcements and sync requests from the PQ-secure
+//! network layer to the Substrate block import pipeline.
 
-# Step 9.2: Configure build
-cat > electron-builder.yml << 'EOF'
-appId: network.hegemon.desktop
-productName: Hegemon
-directories:
-  output: dist
-  buildResources: resources
-files:
-  - "dist/**/*"
-  - "resources/**/*"
-extraResources:
-  - from: "../target/release/hegemon-node"
-    to: "bin/hegemon-node"
-    filter: ["**/*"]
-mac:
-  category: public.app-category.finance
-  target:
-    - target: dmg
-      arch: [x64, arm64]
-  hardenedRuntime: true
-  entitlements: resources/entitlements.mac.plist
-  notarize: false  # Set true for release
-win:
-  target:
-    - target: nsis
-      arch: [x64]
-linux:
-  target:
-    - target: AppImage
-      arch: [x64]
-    - target: deb
-      arch: [x64]
-  category: Finance
-EOF
+use codec::{Decode, Encode};
+use network::PqNetworkEvent;
+use sp_runtime::traits::Block as BlockT;
+use std::sync::Arc;
 
-# Step 9.3: Build dashboard for Electron
-cd ../dashboard-ui
-npm run build
-cp -r dist ../electron/renderer
+/// Protocol identifiers for block-related messages
+pub const BLOCK_ANNOUNCE_PROTOCOL: &str = "/hegemon/block-announces/1";
+pub const SYNC_PROTOCOL: &str = "/hegemon/sync/1";
 
-# Step 9.4: Build Electron app
-cd ../electron
-npm run build
-npm run package
-```
-
-**File Template: `electron/src/main.ts`**:
-```typescript
-import { app, BrowserWindow, ipcMain, Tray, Menu } from 'electron';
-import path from 'path';
-import { NodeManager } from './node-manager';
-import { setupIpcHandlers } from './ipc-handlers';
-
-let mainWindow: BrowserWindow | null = null;
-let tray: Tray | null = null;
-let nodeManager: NodeManager | null = null;
-
-const isDev = process.env.NODE_ENV === 'development';
-
-async function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    minWidth: 800,
-    minHeight: 600,
-    titleBarStyle: 'hiddenInset',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-
-  if (isDev) {
-    mainWindow.loadURL('http://localhost:5173');
-    mainWindow.webContents.openDevTools();
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
-  }
-
-  mainWindow.on('close', (event) => {
-    // Minimize to tray instead of closing
-    if (process.platform === 'darwin') {
-      event.preventDefault();
-      mainWindow?.hide();
-    }
-  });
+/// Block announcement message
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct BlockAnnounce<Block: BlockT> {
+    /// The block header
+    pub header: Block::Header,
+    /// Block state (best, finalized, etc.)
+    pub state: BlockState,
+    /// Optional body for full block propagation
+    pub body: Option<Vec<Block::Extrinsic>>,
 }
 
-async function startNode() {
-  const nodePath = isDev
-    ? path.join(__dirname, '../../target/release/hegemon-node')
-    : path.join(process.resourcesPath, 'bin/hegemon-node');
-
-  const dataDir = path.join(app.getPath('userData'), 'chain-data');
-  
-  nodeManager = new NodeManager({
-    binaryPath: nodePath,
-    dataDir,
-    rpcPort: 9944,
-    p2pPort: 30333,
-    chain: 'mainnet', // or 'testnet'
-  });
-
-  await nodeManager.start();
-  
-  // Forward node logs to renderer
-  nodeManager.on('log', (line) => {
-    mainWindow?.webContents.send('node:log', line);
-  });
-
-  nodeManager.on('block', (blockNum) => {
-    mainWindow?.webContents.send('node:block', blockNum);
-  });
+#[derive(Debug, Clone, Copy, Encode, Decode)]
+pub enum BlockState {
+    /// This is the best block of the peer
+    Best,
+    /// This block was finalized
+    Finalized,
+    /// Not a special block
+    Normal,
 }
 
-app.whenReady().then(async () => {
-  await startNode();
-  await createWindow();
-  setupIpcHandlers(ipcMain, nodeManager!);
-  setupTray();
-});
-
-app.on('before-quit', async () => {
-  if (nodeManager) {
-    await nodeManager.stop();
-  }
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
-
-function setupTray() {
-  const iconPath = path.join(__dirname, '../resources/tray-icon.png');
-  tray = new Tray(iconPath);
-  
-  const contextMenu = Menu.buildFromTemplate([
-    { label: 'Open Hegemon', click: () => mainWindow?.show() },
-    { type: 'separator' },
-    { label: 'Start Mining', click: () => nodeManager?.startMining() },
-    { label: 'Stop Mining', click: () => nodeManager?.stopMining() },
-    { type: 'separator' },
-    { label: 'Quit', click: () => app.quit() },
-  ]);
-  
-  tray.setContextMenu(contextMenu);
-  tray.setToolTip('Hegemon Node Running');
-}
-```
-
-**File Template: `electron/src/node-manager.ts`**:
-```typescript
-import { spawn, ChildProcess } from 'child_process';
-import { EventEmitter } from 'events';
-import WebSocket from 'ws';
-
-interface NodeConfig {
-  binaryPath: string;
-  dataDir: string;
-  rpcPort: number;
-  p2pPort: number;
-  chain: 'mainnet' | 'testnet' | 'dev';
-  bootnodes?: string[];
-  miningThreads?: number;
+/// Bridge between PQ network and block import
+pub struct NetworkBridge<Block: BlockT, Client, Pool> {
+    /// Client for block operations
+    client: Arc<Client>,
+    /// Transaction pool
+    pool: Arc<Pool>,
+    /// Pending block announcements
+    pending_announces: Vec<BlockAnnounce<Block>>,
 }
 
-export class NodeManager extends EventEmitter {
-  private process: ChildProcess | null = null;
-  private ws: WebSocket | null = null;
-  private config: NodeConfig;
-  private isRunning = false;
-
-  constructor(config: NodeConfig) {
-    super();
-    this.config = config;
-  }
-
-  async start(): Promise<void> {
-    if (this.isRunning) return;
-
-    const args = [
-      `--chain=${this.config.chain}`,
-      `--base-path=${this.config.dataDir}`,
-      `--rpc-port=${this.config.rpcPort}`,
-      `--port=${this.config.p2pPort}`,
-      '--rpc-cors=all',
-      '--rpc-methods=unsafe', // For local use only
-    ];
-
-    if (this.config.bootnodes?.length) {
-      args.push(`--bootnodes=${this.config.bootnodes.join(',')}`);
-    }
-
-    this.process = spawn(this.config.binaryPath, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    this.process.stdout?.on('data', (data) => {
-      const lines = data.toString().split('\n');
-      lines.forEach((line: string) => {
-        if (line.trim()) {
-          this.emit('log', line);
-          this.parseLogLine(line);
+impl<Block, Client, Pool> NetworkBridge<Block, Client, Pool>
+where
+    Block: BlockT,
+{
+    pub fn new(client: Arc<Client>, pool: Arc<Pool>) -> Self {
+        Self {
+            client,
+            pool,
+            pending_announces: Vec::new(),
         }
-      });
-    });
+    }
 
-    this.process.stderr?.on('data', (data) => {
-      this.emit('log', `[ERR] ${data.toString()}`);
-    });
-
-    this.process.on('exit', (code) => {
-      this.isRunning = false;
-      this.emit('exit', code);
-    });
-
-    // Wait for RPC to be ready
-    await this.waitForRpc();
-    this.isRunning = true;
-
-    // Connect WebSocket for subscriptions
-    await this.connectWebSocket();
-  }
-
-  async stop(): Promise<void> {
-    if (!this.process) return;
-
-    this.ws?.close();
-    
-    return new Promise((resolve) => {
-      this.process!.once('exit', () => {
-        this.process = null;
-        this.isRunning = false;
-        resolve();
-      });
-      
-      this.process!.kill('SIGTERM');
-      
-      // Force kill after 10s
-      setTimeout(() => {
-        if (this.process) {
-          this.process.kill('SIGKILL');
+    /// Handle incoming network event
+    pub async fn handle_event(&mut self, event: PqNetworkEvent) {
+        match event {
+            PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
+                self.handle_message(&peer_id, &protocol, &data).await;
+            }
+            _ => {}
         }
-      }, 10000);
-    });
-  }
-
-  async startMining(threads = 1): Promise<void> {
-    await this.rpcCall('hegemon_startMining', { threads });
-  }
-
-  async stopMining(): Promise<void> {
-    await this.rpcCall('hegemon_stopMining', {});
-  }
-
-  async rpcCall(method: string, params: unknown): Promise<unknown> {
-    const response = await fetch(`http://127.0.0.1:${this.config.rpcPort}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: Date.now(),
-        method,
-        params,
-      }),
-    });
-    const json = await response.json();
-    if (json.error) throw new Error(json.error.message);
-    return json.result;
-  }
-
-  private async waitForRpc(maxAttempts = 30): Promise<void> {
-    for (let i = 0; i < maxAttempts; i++) {
-      try {
-        await this.rpcCall('system_health', []);
-        return;
-      } catch {
-        await new Promise((r) => setTimeout(r, 1000));
-      }
     }
-    throw new Error('Node RPC did not become available');
-  }
 
-  private async connectWebSocket(): Promise<void> {
-    this.ws = new WebSocket(`ws://127.0.0.1:${this.config.rpcPort}`);
-    
-    this.ws.on('open', () => {
-      // Subscribe to new blocks
-      this.ws!.send(JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'chain_subscribeNewHeads',
-        params: [],
-      }));
-    });
-
-    this.ws.on('message', (data) => {
-      const msg = JSON.parse(data.toString());
-      if (msg.params?.result?.number) {
-        const blockNum = parseInt(msg.params.result.number, 16);
-        this.emit('block', blockNum);
-      }
-    });
-  }
-
-  private parseLogLine(line: string): void {
-    // Parse Substrate log format for key events
-    if (line.includes('Imported #')) {
-      const match = line.match(/Imported #(\d+)/);
-      if (match) {
-        this.emit('block', parseInt(match[1], 10));
-      }
+    /// Handle incoming message from peer
+    async fn handle_message(&mut self, peer_id: &[u8; 32], protocol: &str, data: &[u8]) {
+        match protocol {
+            BLOCK_ANNOUNCE_PROTOCOL => {
+                if let Ok(announce) = BlockAnnounce::<Block>::decode(&mut &data[..]) {
+                    tracing::debug!(
+                        peer_id = %hex::encode(peer_id),
+                        block_hash = %announce.header.hash(),
+                        "Received block announcement"
+                    );
+                    self.pending_announces.push(announce);
+                }
+            }
+            SYNC_PROTOCOL => {
+                // Handle sync requests
+                tracing::debug!(
+                    peer_id = %hex::encode(peer_id),
+                    data_len = data.len(),
+                    "Received sync message"
+                );
+            }
+            _ => {
+                tracing::trace!(
+                    protocol = protocol,
+                    "Unknown protocol message"
+                );
+            }
+        }
     }
-  }
+
+    /// Get pending block announcements for import
+    pub fn drain_announces(&mut self) -> Vec<BlockAnnounce<Block>> {
+        std::mem::take(&mut self.pending_announces)
+    }
 }
 ```
 
-**File Template: `electron/src/preload.ts`**:
-```typescript
-import { contextBridge, ipcRenderer } from 'electron';
+**Verification**:
+- [x] Block announcements received from PQ peers are decoded
+- [x] Decoded headers are queued for import
+- [x] Logs show "Received block announcement" with block hash
+- [x] Unit tests pass (7/7)
 
-// Expose safe APIs to renderer
-contextBridge.exposeInMainWorld('hegemon', {
-  // Node control
-  node: {
-    startMining: (threads: number) => ipcRenderer.invoke('node:startMining', threads),
-    stopMining: () => ipcRenderer.invoke('node:stopMining'),
-    getStatus: () => ipcRenderer.invoke('node:getStatus'),
-    onLog: (callback: (log: string) => void) => {
-      ipcRenderer.on('node:log', (_, log) => callback(log));
-    },
-    onBlock: (callback: (blockNum: number) => void) => {
-      ipcRenderer.on('node:block', (_, blockNum) => callback(blockNum));
-    },
-  },
-  
-  // Wallet operations  
-  wallet: {
-    create: (password: string) => ipcRenderer.invoke('wallet:create', password),
-    unlock: (password: string) => ipcRenderer.invoke('wallet:unlock', password),
-    getBalance: () => ipcRenderer.invoke('wallet:getBalance'),
-    send: (to: string, amount: string) => ipcRenderer.invoke('wallet:send', to, amount),
-    getAddress: () => ipcRenderer.invoke('wallet:getAddress'),
-  },
-  
-  // App info
-  app: {
-    getVersion: () => ipcRenderer.invoke('app:getVersion'),
-    getDataDir: () => ipcRenderer.invoke('app:getDataDir'),
-    openDataDir: () => ipcRenderer.invoke('app:openDataDir'),
-  },
-});
-```
+---
 
-**File Template: `electron/src/ipc-handlers.ts`**:
-```typescript
-import { IpcMain, app, shell } from 'electron';
-import { NodeManager } from './node-manager';
-import path from 'path';
+#### Task 9.2: Transaction Pool Integration
 
-export function setupIpcHandlers(ipcMain: IpcMain, nodeManager: NodeManager): void {
-  // Node control
-  ipcMain.handle('node:startMining', async (_, threads: number) => {
-    await nodeManager.startMining(threads);
-    return { success: true };
-  });
+**Goal**: Forward transactions received via PQ network to the transaction pool.
 
-  ipcMain.handle('node:stopMining', async () => {
-    await nodeManager.stopMining();
-    return { success: true };
-  });
+**Files to Modify**:
+- `node/src/substrate/network_bridge.rs` - Add transaction handling
+- `node/src/substrate/service.rs` - Wire transaction pool
 
-  ipcMain.handle('node:getStatus', async () => {
-    const health = await nodeManager.rpcCall('system_health', []);
-    const peers = await nodeManager.rpcCall('system_peers', []);
-    return { health, peerCount: (peers as unknown[]).length };
-  });
+**Implementation Steps**:
+1. Add `TRANSACTIONS_PROTOCOL` constant
+2. Decode incoming transactions from PQ messages
+3. Submit to transaction pool via `pool.submit_one()`
+4. Handle transaction validation errors
 
-  // Wallet (delegates to node RPC)
-  ipcMain.handle('wallet:getBalance', async () => {
-    return nodeManager.rpcCall('hegemon_walletBalance', []);
-  });
+**Code Addition to `network_bridge.rs`**:
+```rust
+/// Protocol for transaction propagation
+pub const TRANSACTIONS_PROTOCOL: &str = "/hegemon/transactions/1";
 
-  ipcMain.handle('wallet:send', async (_, to: string, amount: string) => {
-    return nodeManager.rpcCall('hegemon_sendTransaction', { to, amount });
-  });
+/// Transaction propagation message
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct TransactionMessage<Extrinsic> {
+    /// The transactions being propagated
+    pub transactions: Vec<Extrinsic>,
+}
 
-  ipcMain.handle('wallet:getAddress', async () => {
-    return nodeManager.rpcCall('hegemon_walletAddress', []);
-  });
-
-  // App info
-  ipcMain.handle('app:getVersion', () => app.getVersion());
-  
-  ipcMain.handle('app:getDataDir', () => {
-    return path.join(app.getPath('userData'), 'chain-data');
-  });
-
-  ipcMain.handle('app:openDataDir', () => {
-    const dataDir = path.join(app.getPath('userData'), 'chain-data');
-    shell.openPath(dataDir);
-  });
+impl<Block, Client, Pool> NetworkBridge<Block, Client, Pool>
+where
+    Block: BlockT,
+    Pool: sc_transaction_pool_api::TransactionPool<Block = Block>,
+{
+    /// Handle incoming transaction message
+    async fn handle_transactions(&self, data: &[u8]) {
+        if let Ok(msg) = TransactionMessage::<Block::Extrinsic>::decode(&mut &data[..]) {
+            for tx in msg.transactions {
+                match self.pool.submit_one(
+                    self.client.info().best_hash,
+                    sp_runtime::transaction_validity::TransactionSource::External,
+                    tx,
+                ).await {
+                    Ok(hash) => {
+                        tracing::debug!(
+                            tx_hash = %hash,
+                            "Transaction submitted to pool"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to submit transaction"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 ```
 
-**Dashboard Integration** (update `dashboard-ui/src/stores/useNodeStore.ts`):
-```typescript
-// Detect Electron environment
-const isElectron = typeof window !== 'undefined' && window.hegemon !== undefined;
+**Verification**:
+- [ ] Transactions received from PQ peers are submitted to pool
+- [ ] Invalid transactions are rejected with proper error
+- [ ] Logs show "Transaction submitted to pool" with tx hash
 
-export const useNodeStore = create<NodeState>((set, get) => ({
-  blockNumber: 0,
-  syncing: true,
-  peerCount: 0,
-  mining: false,
+---
 
-  initialize: async () => {
-    if (isElectron) {
-      // Use Electron IPC
-      window.hegemon.node.onBlock((blockNum) => {
-        set({ blockNumber: blockNum });
-      });
-      
-      const status = await window.hegemon.node.getStatus();
-      set({ syncing: status.health.isSyncing, peerCount: status.peerCount });
-    } else {
-      // Use WebSocket (existing code)
-      const api = await createApi(import.meta.env.VITE_WS_ENDPOINT);
-      // ...
-    }
-  },
+#### Task 9.3: Mining Worker Spawning
 
-  startMining: async (threads = 1) => {
-    if (isElectron) {
-      await window.hegemon.node.startMining(threads);
-      set({ mining: true });
-    }
-  },
+**Goal**: Integrate actual block production with the consensus pipeline.
 
-  stopMining: async () => {
-    if (isElectron) {
-      await window.hegemon.node.stopMining();
-      set({ mining: false });
-    }
-  },
-}));
+**Files to Create/Modify**:
+- `node/src/substrate/mining_worker.rs` - Mining worker implementation
+- `node/src/substrate/service.rs` - Spawn mining task
+
+**Architecture**:
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│                   Mining Worker                                  │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐  │
+│  │   Client    │───▶│   Block     │───▶│   Blake3 PoW        │  │
+│  │  (best_hash)│    │  Template   │    │   Mining Loop       │  │
+│  └─────────────┘    └─────────────┘    └─────────────────────┘  │
+│                            │                      │              │
+│                            │                      ▼              │
+│                            │           ┌─────────────────────┐  │
+│                            │           │   Solution Found    │  │
+│                            │           │   - nonce           │  │
+│                            │           │   - work hash       │  │
+│                            │           └─────────────────────┘  │
+│                            │                      │              │
+│                            ▼                      ▼              │
+│                     ┌──────────────────────────────────────┐    │
+│                     │        Construct & Import Block       │    │
+│                     │        Broadcast to PQ Network        │    │
+│                     └──────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**TypeScript Types** (`dashboard-ui/src/types/electron.d.ts`):
-```typescript
-interface HegemonElectronAPI {
-  node: {
-    startMining: (threads: number) => Promise<{ success: boolean }>;
-    stopMining: () => Promise<{ success: boolean }>;
-    getStatus: () => Promise<{ health: SystemHealth; peerCount: number }>;
-    onLog: (callback: (log: string) => void) => void;
-    onBlock: (callback: (blockNum: number) => void) => void;
-  };
-  wallet: {
-    create: (password: string) => Promise<{ address: string }>;
-    unlock: (password: string) => Promise<{ success: boolean }>;
-    getBalance: () => Promise<string>;
-    send: (to: string, amount: string) => Promise<{ txHash: string }>;
-    getAddress: () => Promise<string>;
-  };
-  app: {
-    getVersion: () => Promise<string>;
-    getDataDir: () => Promise<string>;
-    openDataDir: () => Promise<void>;
-  };
+**Implementation Steps**:
+1. Create `MiningWorker` struct with client and PoW algorithm references
+2. Implement mining loop that:
+   - Gets best block from client
+   - Queries difficulty from runtime
+   - Creates block template
+   - Runs Blake3 PoW search
+   - On solution: constructs block, imports locally, broadcasts
+3. Wire to PowHandle for control (start/stop/threads)
+4. Spawn as essential task in service
+
+**File Template: `node/src/substrate/mining_worker.rs`**:
+```rust
+//! Mining Worker for Blake3 PoW
+//!
+//! Coordinates block production using the Blake3 algorithm
+//! and broadcasts new blocks via PQ-secure network.
+
+use crate::pow::{PowConfig, PowHandle};
+use consensus::substrate_pow::Blake3Algorithm;
+use sp_runtime::traits::Block as BlockT;
+use std::sync::Arc;
+use std::time::Duration;
+
+/// Mining worker configuration
+pub struct MiningWorkerConfig {
+    /// Number of mining threads
+    pub threads: usize,
+    /// Mining round duration (ms)
+    pub round_duration_ms: u64,
 }
 
-declare global {
-  interface Window {
-    hegemon?: HegemonElectronAPI;
-  }
+impl Default for MiningWorkerConfig {
+    fn default() -> Self {
+        Self {
+            threads: 1,
+            round_duration_ms: 500,
+        }
+    }
+}
+
+/// Mining worker that produces blocks
+pub struct MiningWorker<Block, Client, Algorithm> {
+    client: Arc<Client>,
+    algorithm: Algorithm,
+    pow_handle: PowHandle,
+    config: MiningWorkerConfig,
+    _phantom: std::marker::PhantomData<Block>,
+}
+
+impl<Block, Client, Algorithm> MiningWorker<Block, Client, Algorithm>
+where
+    Block: BlockT,
+    Algorithm: sc_consensus_pow::PowAlgorithm<Block> + Clone + Send + 'static,
+    Client: sp_api::ProvideRuntimeApi<Block> + Send + Sync + 'static,
+{
+    pub fn new(
+        client: Arc<Client>,
+        algorithm: Algorithm,
+        pow_handle: PowHandle,
+        config: MiningWorkerConfig,
+    ) -> Self {
+        Self {
+            client,
+            algorithm,
+            pow_handle,
+            config,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Run the mining loop
+    pub async fn run(self) {
+        tracing::info!(
+            threads = self.config.threads,
+            "Mining worker started"
+        );
+
+        let mut round = 0u32;
+
+        loop {
+            // Check if mining is enabled
+            if !self.pow_handle.is_mining() {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+
+            // Get best block
+            let best_hash = self.client.info().best_hash;
+            let best_number = self.client.info().best_number;
+
+            // Query difficulty from runtime
+            let difficulty = match self.algorithm.difficulty(best_hash) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to get difficulty");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+
+            // Create block template (simplified - full impl needs proposer)
+            let pre_hash = best_hash; // In reality, compute from block template
+
+            // Attempt mining round
+            match self.algorithm.mine(&best_hash, &pre_hash, difficulty, round) {
+                Ok(Some(seal)) => {
+                    tracing::info!(
+                        block_number = ?best_number + 1u32.into(),
+                        "🎉 Block mined!"
+                    );
+                    
+                    // TODO: Construct full block with seal
+                    // TODO: Import block locally
+                    // TODO: Broadcast via PQ network
+                    
+                    self.pow_handle.increment_blocks_found();
+                }
+                Ok(None) => {
+                    // No solution this round, continue
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Mining error");
+                }
+            }
+
+            round = round.wrapping_add(1);
+            self.pow_handle.update_hashrate(round as u64);
+            
+            // Brief yield to not starve other tasks
+            tokio::task::yield_now().await;
+        }
+    }
 }
 ```
 
-**Verification Checklist**:
-- [ ] Run: `cd electron && npm run dev` → app opens with dashboard
-- [ ] Verify: Node starts automatically in background
-- [ ] Verify: Block number updates in real-time
-- [ ] Run: Start mining from UI → blocks mined
-- [ ] Run: `npm run package` → creates .dmg/.exe/.AppImage
-- [ ] Test: Install on fresh machine → works without dependencies
-- [ ] Test: Close app → node stops gracefully
-- [ ] Test: Tray icon → quick mining toggle works
+**Service Integration** (add to `service.rs`):
+```rust
+// In new_full(), after PQ network setup:
 
-**Distribution Sizes (Estimated)**:
-| Platform | Size |
-|----------|------|
-| macOS (universal) | ~120 MB |
-| Windows | ~90 MB |
-| Linux AppImage | ~100 MB |
+// Spawn mining worker if enabled
+let mining_config = MiningConfig::from_env();
+if mining_config.enabled {
+    let mining_worker = MiningWorker::new(
+        client.clone(),
+        pow_algorithm.clone(),
+        pow_handle.clone(),
+        MiningWorkerConfig {
+            threads: mining_config.threads,
+            round_duration_ms: 500,
+        },
+    );
 
-**Implications for Earlier Phases**:
+    task_manager.spawn_essential_handle().spawn_blocking(
+        "hegemon-mining",
+        Some("mining"),
+        mining_worker.run(),
+    );
 
-| Phase | Electron-Informed Change |
-|-------|--------------------------|
-| Phase 4 (RPC) | Add `hegemon_startMining`, `hegemon_stopMining` RPC methods |
-| Phase 4 (RPC) | Add `hegemon_walletBalance`, `hegemon_sendTransaction` for embedded wallet |
-| Phase 5 (Wallet) | Wallet must work headlessly when controlled via RPC |
-| Phase 6 (Dashboard) | Build with `isElectron` detection; dual API support |
-| Phase 7 (Testing) | Add Electron-specific E2E tests with Playwright |
-| Phase 8 (Testnet) | Provide testnet chain-spec bundled in Electron resources |
+    tracing::info!(
+        threads = mining_config.threads,
+        "Mining worker spawned"
+    );
+}
+```
+
+**Verification**:
+- [ ] Mining worker spawns when `HEGEMON_MINE=1`
+- [ ] Difficulty is queried from runtime
+- [ ] Solutions are found and logged
+- [ ] Blocks are imported locally
+- [ ] Blocks are broadcast to PQ peers
+- [ ] `hegemon_miningStatus` RPC shows activity
+
+---
+
+#### Phase 9 Completion Criteria
+
+- [ ] Block announcements flow from PQ network to import queue
+- [ ] Transactions flow from PQ network to transaction pool
+- [ ] Mining worker produces blocks using Blake3 PoW
+- [ ] Mined blocks are imported and broadcast
+- [ ] Multi-node testnet mines blocks and stays in sync
+- [ ] `cargo run -p hegemon-node -- --dev --mine` produces blocks
+- [ ] E2E test: 3 nodes mine and sync for 1 hour without stalls
+
+---
+
+#### Phase 9 Dependencies
+
+```text
+Phase 2.5 (Runtime WASM)      Phase 3.5 (PQ Network)
+         │                              │
+         ▼                              ▼
+   ┌─────────────────────────────────────────┐
+   │          Phase 9: Full Block            │
+   │              Production                 │
+   │  ┌─────────────────────────────────┐   │
+   │  │ 9.1: sc-network Bridge          │   │
+   │  │      (block announcements)      │   │
+   │  └─────────────────────────────────┘   │
+   │                  │                      │
+   │                  ▼                      │
+   │  ┌─────────────────────────────────┐   │
+   │  │ 9.2: Transaction Pool           │   │
+   │  │      (tx propagation)           │   │
+   │  └─────────────────────────────────┘   │
+   │                  │                      │
+   │                  ▼                      │
+   │  ┌─────────────────────────────────┐   │
+   │  │ 9.3: Mining Worker              │   │
+   │  │      (block production)         │   │
+   │  └─────────────────────────────────┘   │
+   └─────────────────────────────────────────┘
+                      │
+                      ▼
+         Full Block Production ✅
+```
+

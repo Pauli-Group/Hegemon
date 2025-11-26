@@ -7,6 +7,7 @@
 //! - Block import pipeline configuration with Blake3 PoW
 //! - Mining coordination
 //! - PQ-secure network transport (Phase 3 + Phase 3.5)
+//! - Network bridge for block/tx routing (Phase 9)
 //!
 //! # Architecture
 //!
@@ -72,6 +73,28 @@
 //! └─────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
+//! # Network Bridge (Phase 9)
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────────────┐
+//! │                         Network Bridge                                   │
+//! ├─────────────────────────────────────────────────────────────────────────┤
+//! │                                                                          │
+//! │  PqNetworkBackend ──────▶ NetworkBridge ──────▶ Block Import            │
+//! │        │                       │                     │                  │
+//! │        │                       │                     ▼                  │
+//! │        ▼                       ▼               ┌─────────────┐          │
+//! │  PqNetworkEvent          Decode/Validate       │   Client    │          │
+//! │  ::MessageReceived       Block Announce        └─────────────┘          │
+//! │        │                       │                                        │
+//! │        │                       ▼                                        │
+//! │        │                 Transaction Pool                               │
+//! │        │                       │                                        │
+//! │        ▼                       ▼                                        │
+//! │  Transactions ──────────▶ Submit to Pool                                │
+//! └─────────────────────────────────────────────────────────────────────────┘
+//! ```
+//!
 //! # Runtime WASM Integration (Phase 2.5)
 //!
 //! The runtime provides:
@@ -84,11 +107,14 @@
 
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
+use crate::substrate::network_bridge::{NetworkBridge, NetworkBridgeBuilder};
 use network::{
-    PqNetworkBackend, PqNetworkBackendConfig, PqPeerIdentity, PqTransportConfig,
+    PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqPeerIdentity, PqTransportConfig,
     SubstratePqTransport, SubstratePqTransportConfig,
 };
 use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Re-export the runtime WASM binary for node use
 #[cfg(feature = "substrate")]
@@ -195,6 +221,8 @@ pub struct FullComponents {
     pub rpc: (),
     /// PQ network backend (Phase 3.5)
     pub pq_backend: Option<PqNetworkBackend>,
+    /// Network bridge for block/tx routing (Phase 9)
+    pub network_bridge: Option<Arc<Mutex<NetworkBridge>>>,
 }
 
 /// Creates partial node components.
@@ -359,7 +387,7 @@ pub fn new_partial(config: &Configuration) -> Result<PartialComponents, ServiceE
 /// 4. Handle peer events (connect/disconnect/message)
 /// 5. Route block announcements through PQ channels
 /// ```
-pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
+pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     let PartialComponents {
         task_manager,
         pow_handle,
@@ -409,7 +437,7 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         tracing::info!("Mining disabled (set HEGEMON_MINE=1 to enable)");
     }
 
-    // Phase 3.5: Create PQ network backend
+    // Phase 3.5: Create and start PQ network backend
     if let Some(ref identity) = pq_identity {
         let backend_config = PqNetworkBackendConfig {
             listen_addr: pq_service_config.listen_addr,
@@ -420,26 +448,118 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             verbose_logging: pq_service_config.verbose_logging,
         };
 
-        let _pq_backend = PqNetworkBackend::new(identity, backend_config);
+        let mut pq_backend = PqNetworkBackend::new(identity, backend_config);
+        let local_peer_id = pq_backend.local_peer_id();
         
-        tracing::info!(
-            listen_addr = %pq_service_config.listen_addr,
-            max_peers = pq_service_config.max_peers,
-            "PqNetworkBackend initialized (Phase 3.5)"
-        );
+        // Start the PQ network backend and get the event receiver
+        match pq_backend.start().await {
+            Ok(mut event_rx) => {
+                tracing::info!(
+                    listen_addr = %pq_service_config.listen_addr,
+                    max_peers = pq_service_config.max_peers,
+                    peer_id = %hex::encode(local_peer_id),
+                    "PqNetworkBackend started (Phase 3.5 + Phase 9 - Full Integration)"
+                );
 
-        // TODO: Start the network backend and spawn event handler task
-        // This will be completed when sc-network integration is finalized
+                // Phase 9: Create the network bridge for block/tx routing
+                let network_bridge = Arc::new(Mutex::new(
+                    NetworkBridgeBuilder::new()
+                        .verbose(pq_service_config.verbose_logging)
+                        .build()
+                ));
+                let bridge_clone = Arc::clone(&network_bridge);
+
+                // Spawn the PQ network event handler task with NetworkBridge
+                task_manager.spawn_handle().spawn(
+                    "pq-network-events",
+                    Some("network"),
+                    async move {
+                        tracing::info!("PQ network event handler started (with NetworkBridge)");
+                        
+                        while let Some(event) = event_rx.recv().await {
+                            // Route events through the NetworkBridge
+                            {
+                                let mut bridge = bridge_clone.lock().await;
+                                bridge.handle_event(event.clone()).await;
+                            }
+
+                            // Also handle lifecycle events directly
+                            match event {
+                                PqNetworkEvent::PeerConnected { peer_id, addr, is_outbound } => {
+                                    tracing::info!(
+                                        peer_id = %hex::encode(peer_id),
+                                        addr = %addr,
+                                        direction = if is_outbound { "outbound" } else { "inbound" },
+                                        "PQ peer connected"
+                                    );
+                                }
+                                PqNetworkEvent::PeerDisconnected { peer_id, reason } => {
+                                    tracing::info!(
+                                        peer_id = %hex::encode(peer_id),
+                                        reason = %reason,
+                                        "PQ peer disconnected"
+                                    );
+                                }
+                                PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
+                                    // Already handled by NetworkBridge, just log
+                                    tracing::debug!(
+                                        peer_id = %hex::encode(peer_id),
+                                        protocol = %protocol,
+                                        data_len = data.len(),
+                                        "PQ message routed to NetworkBridge"
+                                    );
+                                }
+                                PqNetworkEvent::Started { listen_addr } => {
+                                    tracing::info!(
+                                        listen_addr = %listen_addr,
+                                        "PQ network listener started"
+                                    );
+                                }
+                                PqNetworkEvent::Stopped => {
+                                    tracing::info!("PQ network stopped");
+                                    break;
+                                }
+                                PqNetworkEvent::ConnectionFailed { addr, reason } => {
+                                    tracing::warn!(
+                                        addr = %addr,
+                                        reason = %reason,
+                                        "PQ connection failed"
+                                    );
+                                }
+                            }
+                        }
+                        
+                        // Log final statistics
+                        {
+                            let bridge = bridge_clone.lock().await;
+                            let stats = bridge.stats();
+                            tracing::info!(
+                                block_announces = stats.block_announces_received,
+                                transactions = stats.transactions_received,
+                                decode_errors = stats.decode_errors,
+                                "PQ network event handler stopped - final stats"
+                            );
+                        }
+                    },
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "Failed to start PqNetworkBackend - continuing without PQ networking"
+                );
+            }
+        }
     }
 
-    // Phase 2 TODO: Full implementation requires:
+    // Phase 2 TODO: Full sc-network integration requires:
     // 
-    // 1. Client setup:
+    // 1. Client setup (requires aligned polkadot-sdk git dependencies):
     //    let executor = WasmExecutor::new(...);
     //    let (client, backend, keystore, task_manager) = 
     //        sc_service::new_full_parts::<Block, RuntimeApi, Executor>(&config)?;
     //
-    // 2. PoW block import:
+    // 2. PoW block import (requires runtime WASM with DifficultyApi):
     //    let pow_algorithm = Blake3Algorithm::new(client.clone());
     //    let pow_block_import = PowBlockImport::new(
     //        client.clone(),
@@ -458,22 +578,10 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     //        config.prometheus_registry(),
     //    )?;
     //
-    // 4. Network with PQ backend (Phase 3.5):
-    //    let pq_backend = PqNetworkBackend::new(&pq_identity, backend_config);
-    //    let mut events = pq_backend.start().await?;
-    //    task_manager.spawn_essential_handle().spawn(
-    //        "pq-network-events",
-    //        Some("network"),
-    //        async move {
-    //            while let Some(event) = events.recv().await {
-    //                match event {
-    //                    PqNetworkEvent::PeerConnected { peer_id, addr, .. } => { ... }
-    //                    PqNetworkEvent::MessageReceived { peer_id, data, .. } => { ... }
-    //                    _ => {}
-    //                }
-    //            }
-    //        },
-    //    );
+    // 4. sc-network integration with PQ transport:
+    //    - Bridge PqNetworkBackend events to sc-network NotificationService
+    //    - Route block announcements via PQ secure channels
+    //    - Forward transactions to transaction pool
     //
     // 5. Mining task (if enabled):
     //    if config.role.is_authority() {
@@ -497,12 +605,11 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     //    );
 
     tracing::info!(
-        "Phase 2 + Phase 3.5 scaffold complete. Full implementation requires:"
+        "Phase 9.1 NetworkBridge integration complete. Remaining for full block production:"
     );
-    tracing::info!("  - Aligned polkadot-sdk git dependencies");
-    tracing::info!("  - Runtime WASM binary with DifficultyApi");
-    tracing::info!("  - sc-consensus-pow block import pipeline");
-    tracing::info!("  - PqNetworkBackend event loop integration");
+    tracing::info!("  - Task 9.2: Transaction pool integration (forward txs to pool.submit_one)");
+    tracing::info!("  - Task 9.3: Mining worker spawning (MiningWorker with block production)");
+    tracing::info!("  - Aligned polkadot-sdk git dependencies (sc-service, sc-consensus-pow)");
 
     Ok(task_manager)
 }

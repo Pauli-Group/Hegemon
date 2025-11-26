@@ -3409,6 +3409,7 @@ dependencies = [
  "network",
  "num-bigint",
  "num-traits",
+ "parity-scale-codec",
  "parking_lot 0.12.5",
  "pq-noise",
  "protocol-versioning",
