@@ -152,8 +152,8 @@ cmd_pq() {
         exit 1
     fi
     
-    log_info "Running p2p_pq tests..."
-    if cargo test -p security-tests --test p2p_pq -- --nocapture; then
+    log_info "Running p2p_pq tests (serial execution for stability)..."
+    if cargo test -p security-tests --test p2p_pq -- --nocapture --test-threads=1; then
         log_success "P2P PQ tests passed"
     else
         log_error "P2P PQ tests failed"
