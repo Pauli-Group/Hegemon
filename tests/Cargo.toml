@@ -59,3 +59,7 @@ path = "p2p_pq.rs"
 [[test]]
 name = "wallet_e2e"
 path = "wallet_e2e.rs"
+
+[[test]]
+name = "pq_network_integration"
+path = "pq_network_integration.rs"

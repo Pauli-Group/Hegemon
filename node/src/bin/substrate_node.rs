@@ -7,6 +7,13 @@
 //!
 //! This is a scaffold for the Substrate CLI. Most subcommands are placeholders
 //! that will be fully implemented once polkadot-sdk dependencies are aligned.
+//!
+//! # Phase 3.5 Status
+//!
+//! Added PQ networking CLI flags:
+//! - `--require-pq`: Require PQ-secure connections for all peers
+//! - `--hybrid-pq`: Allow hybrid mode (prefer PQ, allow legacy)
+//! - `--pq-verbose`: Enable verbose PQ handshake logging
 
 fn main() -> sc_cli::Result<()> {
     cli::run()
@@ -31,6 +38,47 @@ mod cli {
 
         #[command(flatten)]
         pub run: sc_cli::RunCmd,
+
+        /// Require PQ-secure connections for all peers.
+        /// Non-PQ peers will be rejected.
+        #[arg(long, default_value = "true")]
+        pub require_pq: bool,
+
+        /// Enable hybrid mode: prefer PQ but allow legacy connections.
+        /// Only effective when --require-pq is false.
+        #[arg(long, default_value = "false")]
+        pub hybrid_pq: bool,
+
+        /// Enable verbose PQ handshake logging.
+        /// Useful for debugging PQ transport issues.
+        #[arg(long, default_value = "false")]
+        pub pq_verbose: bool,
+
+        /// Number of mining threads (0 = no mining).
+        #[arg(long, default_value = "0")]
+        pub mine_threads: usize,
+    }
+
+    /// PQ network configuration derived from CLI arguments
+    #[derive(Debug, Clone)]
+    pub struct PqCliConfig {
+        /// Whether PQ is required
+        pub require_pq: bool,
+        /// Whether hybrid mode is enabled
+        pub hybrid_pq: bool,
+        /// Whether verbose logging is enabled
+        pub verbose: bool,
+    }
+
+    impl Cli {
+        /// Get PQ network configuration from CLI arguments
+        pub fn pq_config(&self) -> PqCliConfig {
+            PqCliConfig {
+                require_pq: self.require_pq,
+                hybrid_pq: self.hybrid_pq,
+                verbose: self.pq_verbose,
+            }
+        }
     }
 
     #[derive(Debug, clap::Subcommand)]
@@ -88,6 +136,15 @@ mod cli {
 
     pub fn run() -> sc_cli::Result<()> {
         let cli = Cli::parse();
+
+        // Log PQ configuration
+        let pq_config = cli.pq_config();
+        tracing::info!(
+            require_pq = %pq_config.require_pq,
+            hybrid_pq = %pq_config.hybrid_pq,
+            pq_verbose = %pq_config.verbose,
+            "PQ network configuration"
+        );
 
         match &cli.subcommand {
             Some(Subcommand::BuildSpec(cmd)) => {

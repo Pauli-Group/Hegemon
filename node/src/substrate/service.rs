@@ -6,7 +6,7 @@
 //! - Full node service initialization
 //! - Block import pipeline configuration with Blake3 PoW
 //! - Mining coordination
-//! - PQ-secure network transport (Phase 3)
+//! - PQ-secure network transport (Phase 3 + Phase 3.5)
 //!
 //! # Architecture
 //!
@@ -39,12 +39,19 @@
 //! └─────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! # PQ Network Layer (Phase 3)
+//! # PQ Network Layer (Phase 3 + Phase 3.5)
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────────────┐
 //! │                     PQ-Secure Transport Layer                           │
 //! ├─────────────────────────────────────────────────────────────────────────┤
+//! │  ┌─────────────────────────────────────────────────────────────────────┐│
+//! │  │                   PqNetworkBackend (Phase 3.5)                       ││
+//! │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────┐ ││
+//! │  │  │  Listener   │  │  Dialer     │  │  SubstratePqTransport       │ ││
+//! │  │  │  (inbound)  │  │  (outbound) │  │  (hybrid handshake)         │ ││
+//! │  │  └─────────────┘  └─────────────┘  └─────────────────────────────┘ ││
+//! │  └─────────────────────────────────────────────────────────────────────┘│
 //! │  ┌─────────────────────────────────────────────────────────────────────┐│
 //! │  │                   Hybrid Handshake Protocol                         ││
 //! │  │  ┌─────────────────┐   ┌──────────────────────────────────────────┐││
@@ -77,6 +84,10 @@
 
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
+use network::{
+    PqNetworkBackend, PqNetworkBackendConfig, PqPeerIdentity, PqTransportConfig,
+    SubstratePqTransport, SubstratePqTransportConfig,
+};
 use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
 
 /// Re-export the runtime WASM binary for node use
@@ -98,6 +109,55 @@ pub fn check_wasm() -> Result<(), String> {
     Ok(())
 }
 
+/// PQ network configuration for the node service
+#[derive(Clone, Debug)]
+pub struct PqServiceConfig {
+    /// Whether PQ is required for all connections
+    pub require_pq: bool,
+    /// Whether hybrid mode is enabled (PQ preferred but legacy allowed)
+    pub hybrid_mode: bool,
+    /// Enable verbose PQ handshake logging
+    pub verbose_logging: bool,
+    /// Listen address for P2P
+    pub listen_addr: std::net::SocketAddr,
+    /// Bootstrap nodes
+    pub bootstrap_nodes: Vec<std::net::SocketAddr>,
+    /// Maximum peers
+    pub max_peers: usize,
+}
+
+impl Default for PqServiceConfig {
+    fn default() -> Self {
+        Self {
+            require_pq: true,
+            hybrid_mode: true,
+            verbose_logging: false,
+            listen_addr: "0.0.0.0:30333".parse().unwrap(),
+            bootstrap_nodes: Vec::new(),
+            max_peers: 50,
+        }
+    }
+}
+
+impl PqServiceConfig {
+    /// Create from environment variables
+    pub fn from_env() -> Self {
+        let require_pq = std::env::var("HEGEMON_REQUIRE_PQ")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(true);
+
+        let verbose = std::env::var("HEGEMON_PQ_VERBOSE")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+
+        Self {
+            require_pq,
+            verbose_logging: verbose,
+            ..Default::default()
+        }
+    }
+}
+
 /// Node service components after partial initialization
 ///
 /// Full implementation will include:
@@ -107,6 +167,7 @@ pub fn check_wasm() -> Result<(), String> {
 /// - LongestChain for select chain
 /// - PowBlockImport for PoW consensus
 /// - PQ-secure network keypair
+/// - PQ network backend (Phase 3.5)
 pub struct PartialComponents {
     /// Task manager for spawning async tasks
     pub task_manager: TaskManager,
@@ -116,6 +177,12 @@ pub struct PartialComponents {
     pub network_keypair: Option<PqNetworkKeypair>,
     /// PQ network configuration
     pub network_config: PqNetworkConfig,
+    /// PQ peer identity for transport layer (Phase 3.5)
+    pub pq_identity: Option<PqPeerIdentity>,
+    /// Substrate PQ transport (Phase 3.5)
+    pub pq_transport: Option<SubstratePqTransport>,
+    /// PQ service configuration (Phase 3.5)
+    pub pq_service_config: PqServiceConfig,
 }
 
 /// Full node service components
@@ -126,6 +193,8 @@ pub struct FullComponents {
     pub network: (),
     /// RPC handle (placeholder)  
     pub rpc: (),
+    /// PQ network backend (Phase 3.5)
+    pub pq_backend: Option<PqNetworkBackend>,
 }
 
 /// Creates partial node components.
@@ -133,6 +202,7 @@ pub struct FullComponents {
 /// This sets up the core components needed before the full service:
 /// - Task manager for async coordination
 /// - PoW mining coordinator
+/// - PQ network identity and transport (Phase 3.5)
 ///
 /// # Phase 2 Implementation Notes
 ///
@@ -141,6 +211,13 @@ pub struct FullComponents {
 /// 2. Runtime implementing RuntimeApi trait  
 /// 3. WASM binary for runtime execution
 /// 4. Blake3Algorithm implementing PowAlgorithm trait
+///
+/// # Phase 3.5 Implementation
+///
+/// PQ network components:
+/// 1. PqPeerIdentity - Node identity with ML-KEM-768 + ML-DSA-65
+/// 2. SubstratePqTransport - Substrate-compatible PQ transport
+/// 3. PqServiceConfig - Configuration from CLI/env
 pub fn new_partial(config: &Configuration) -> Result<PartialComponents, ServiceError> {
     // Create basic task manager for CLI commands
     let task_manager = TaskManager::new(config.tokio_handle.clone(), None)
@@ -160,16 +237,24 @@ pub fn new_partial(config: &Configuration) -> Result<PartialComponents, ServiceE
     
     let (pow_handle, _pow_events) = PowHandle::new(pow_config);
 
+    // Initialize PQ service configuration (Phase 3.5)
+    let pq_service_config = PqServiceConfig::from_env();
+
     // Initialize PQ network configuration (Phase 3)
     let pq_network_config = PqNetworkConfig {
-        listen_addresses: vec!["/ip4/0.0.0.0/tcp/30333".to_string()],
-        bootstrap_nodes: Vec::new(),
+        listen_addresses: vec![format!("/ip4/{}/tcp/{}", 
+            pq_service_config.listen_addr.ip(),
+            pq_service_config.listen_addr.port()
+        )],
+        bootstrap_nodes: pq_service_config.bootstrap_nodes.iter()
+            .map(|addr| format!("/ip4/{}/tcp/{}", addr.ip(), addr.port()))
+            .collect(),
         enable_pq_transport: true,
-        hybrid_mode: true, // Use both X25519 and ML-KEM-768
-        max_peers: 50,
+        hybrid_mode: pq_service_config.hybrid_mode,
+        max_peers: pq_service_config.max_peers as u32,
         connection_timeout_secs: 30,
-        require_pq: true, // Require PQ handshake for all connections
-        verbose_logging: false,
+        require_pq: pq_service_config.require_pq,
+        verbose_logging: pq_service_config.verbose_logging,
     };
 
     // Generate PQ network keypair for this node
@@ -187,8 +272,33 @@ pub fn new_partial(config: &Configuration) -> Result<PartialComponents, ServiceE
         }
     };
 
+    // Create PQ peer identity and transport (Phase 3.5)
+    let node_seed = network_keypair.as_ref()
+        .map(|k| k.peer_id_bytes().to_vec())
+        .unwrap_or_else(|| vec![0u8; 32]);
+    
+    let pq_transport_config = PqTransportConfig {
+        require_pq: pq_service_config.require_pq,
+        handshake_timeout: std::time::Duration::from_secs(30),
+        verbose_logging: pq_service_config.verbose_logging,
+    };
+    
+    let pq_identity = PqPeerIdentity::new(&node_seed, pq_transport_config.clone());
+    
+    let substrate_transport_config = SubstratePqTransportConfig {
+        require_pq: pq_service_config.require_pq,
+        connection_timeout: std::time::Duration::from_secs(30),
+        handshake_timeout: std::time::Duration::from_secs(30),
+        verbose_logging: pq_service_config.verbose_logging,
+        protocol_id: "/hegemon/pq/1".to_string(),
+    };
+    
+    let pq_transport = SubstratePqTransport::new(&pq_identity, substrate_transport_config);
+
     tracing::info!(
-        "Hegemon node partial components initialized (Phase 2+3 - PoW + PQ ready)"
+        pq_peer_id = %hex::encode(pq_transport.local_peer_id()),
+        require_pq = %pq_service_config.require_pq,
+        "Hegemon node partial components initialized (Phase 2 + Phase 3.5 - PoW + PQ Transport)"
     );
 
     Ok(PartialComponents {
@@ -196,6 +306,9 @@ pub fn new_partial(config: &Configuration) -> Result<PartialComponents, ServiceE
         pow_handle,
         network_keypair,
         network_config: pq_network_config,
+        pq_identity: Some(pq_identity),
+        pq_transport: Some(pq_transport),
+        pq_service_config,
     })
 }
 
@@ -203,7 +316,7 @@ pub fn new_partial(config: &Configuration) -> Result<PartialComponents, ServiceE
 ///
 /// This starts all node components including:
 /// 1. Client with WASM executor (placeholder)
-/// 2. Networking with libp2p (placeholder)
+/// 2. Networking with PQ transport (Phase 3.5)
 /// 3. Transaction pool (placeholder)
 /// 4. Block import with Blake3 PoW verification
 /// 5. RPC server with mining control endpoints
@@ -236,12 +349,25 @@ pub fn new_partial(config: &Configuration) -> Result<PartialComponents, ServiceE
 /// 8. Import locally
 /// 9. Broadcast to network
 /// ```
+///
+/// # PQ Network (Phase 3.5)
+///
+/// ```text
+/// 1. Create PqNetworkBackend with SubstratePqTransport
+/// 2. Start listener for inbound connections
+/// 3. Connect to bootstrap nodes
+/// 4. Handle peer events (connect/disconnect/message)
+/// 5. Route block announcements through PQ channels
+/// ```
 pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     let PartialComponents {
         task_manager,
         pow_handle,
         network_keypair,
         network_config,
+        pq_identity,
+        pq_transport,
+        pq_service_config,
     } = new_partial(&config)?;
 
     let chain_name = config.chain_spec.name().to_string();
@@ -251,7 +377,8 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         chain = %chain_name,
         role = %role,
         pq_enabled = %network_config.enable_pq_transport,
-        "Hegemon node started (Phase 2+3 - Blake3 PoW + PQ Transport)"
+        require_pq = %pq_service_config.require_pq,
+        "Hegemon node started (Phase 2 + Phase 3.5 - Blake3 PoW + PQ Network Backend)"
     );
 
     // Log PQ network configuration
@@ -263,6 +390,15 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         );
     }
 
+    // Log PQ transport configuration (Phase 3.5)
+    if let Some(ref transport) = pq_transport {
+        tracing::info!(
+            transport_peer_id = %hex::encode(transport.local_peer_id()),
+            protocol = %transport.config().protocol_id,
+            "SubstratePqTransport ready for peer connections"
+        );
+    }
+
     // Log PoW configuration
     if pow_handle.is_mining() {
         tracing::info!(
@@ -271,6 +407,29 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
         );
     } else {
         tracing::info!("Mining disabled (set HEGEMON_MINE=1 to enable)");
+    }
+
+    // Phase 3.5: Create PQ network backend
+    if let Some(ref identity) = pq_identity {
+        let backend_config = PqNetworkBackendConfig {
+            listen_addr: pq_service_config.listen_addr,
+            bootstrap_nodes: pq_service_config.bootstrap_nodes.clone(),
+            max_peers: pq_service_config.max_peers,
+            require_pq: pq_service_config.require_pq,
+            connection_timeout: std::time::Duration::from_secs(30),
+            verbose_logging: pq_service_config.verbose_logging,
+        };
+
+        let _pq_backend = PqNetworkBackend::new(identity, backend_config);
+        
+        tracing::info!(
+            listen_addr = %pq_service_config.listen_addr,
+            max_peers = pq_service_config.max_peers,
+            "PqNetworkBackend initialized (Phase 3.5)"
+        );
+
+        // TODO: Start the network backend and spawn event handler task
+        // This will be completed when sc-network integration is finalized
     }
 
     // Phase 2 TODO: Full implementation requires:
@@ -299,17 +458,22 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     //        config.prometheus_registry(),
     //    )?;
     //
-    // 4. Network:
-    //    let (network, system_rpc_tx, network_starter) = 
-    //        sc_service::build_network(sc_service::BuildNetworkParams {
-    //            config: &config,
-    //            client: client.clone(),
-    //            transaction_pool: transaction_pool.clone(),
-    //            spawn_handle: task_manager.spawn_handle(),
-    //            import_queue,
-    //            block_announce_validator_builder: None,
-    //            warp_sync_params: None,
-    //        })?;
+    // 4. Network with PQ backend (Phase 3.5):
+    //    let pq_backend = PqNetworkBackend::new(&pq_identity, backend_config);
+    //    let mut events = pq_backend.start().await?;
+    //    task_manager.spawn_essential_handle().spawn(
+    //        "pq-network-events",
+    //        Some("network"),
+    //        async move {
+    //            while let Some(event) = events.recv().await {
+    //                match event {
+    //                    PqNetworkEvent::PeerConnected { peer_id, addr, .. } => { ... }
+    //                    PqNetworkEvent::MessageReceived { peer_id, data, .. } => { ... }
+    //                    _ => {}
+    //                }
+    //            }
+    //        },
+    //    );
     //
     // 5. Mining task (if enabled):
     //    if config.role.is_authority() {
@@ -333,12 +497,12 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
     //    );
 
     tracing::info!(
-        "Phase 2+3 scaffold complete. Full implementation requires:"
+        "Phase 2 + Phase 3.5 scaffold complete. Full implementation requires:"
     );
     tracing::info!("  - Aligned polkadot-sdk git dependencies");
     tracing::info!("  - Runtime WASM binary with DifficultyApi");
     tracing::info!("  - sc-consensus-pow block import pipeline");
-    tracing::info!("  - PQ transport integration with sc-network");
+    tracing::info!("  - PqNetworkBackend event loop integration");
 
     Ok(task_manager)
 }
@@ -405,6 +569,21 @@ mod tests {
     fn test_mining_config_from_env() {
         // This test depends on environment, so just verify it doesn't panic
         let _config = MiningConfig::from_env();
+    }
+
+    #[test]
+    fn test_pq_service_config_default() {
+        let config = PqServiceConfig::default();
+        assert!(config.require_pq);
+        assert!(config.hybrid_mode);
+        assert!(!config.verbose_logging);
+        assert_eq!(config.max_peers, 50);
+    }
+
+    #[test]
+    fn test_pq_service_config_from_env() {
+        // This test depends on environment, so just verify it doesn't panic
+        let _config = PqServiceConfig::from_env();
     }
 }
 
