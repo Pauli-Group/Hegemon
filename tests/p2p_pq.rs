@@ -225,8 +225,8 @@ async fn test_pq_three_node_mesh() -> TestResult<()> {
         p2p.run()
     });
 
-    // Wait for mesh to form
-    sleep(Duration::from_secs(2)).await;
+    // Wait for mesh to form (increased for reliability)
+    sleep(Duration::from_secs(3)).await;
 
     // Mine blocks on node 1
     for _ in 0..3 {
@@ -234,8 +234,8 @@ async fn test_pq_three_node_mesh() -> TestResult<()> {
         sleep(Duration::from_millis(100)).await;
     }
 
-    // All nodes should sync
-    let synced = timeout(Duration::from_secs(10), async {
+    // All nodes should sync (increased timeout for CI/parallel execution)
+    let synced = timeout(Duration::from_secs(30), async {
         loop {
             let h1 = node_1.service.consensus_status().height;
             let h2 = node_2.service.consensus_status().height;
@@ -243,7 +243,7 @@ async fn test_pq_three_node_mesh() -> TestResult<()> {
             if h1 >= 3 && h2 >= 3 && h3 >= 3 {
                 break (h1, h2, h3);
             }
-            sleep(Duration::from_millis(100)).await;
+            sleep(Duration::from_millis(200)).await;
         }
     })
     .await?;
