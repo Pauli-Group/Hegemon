@@ -1,4 +1,4 @@
-//! Full Substrate Client Integration (Task 10.2)
+//! Full Substrate Client Integration (Task 10.2 + Task 10.5)
 //!
 //! This module provides the full Substrate client integration for the Hegemon node,
 //! replacing the scaffold mode mock implementations with real Substrate components:
@@ -8,6 +8,7 @@
 //! - `BasicPool`: Full transaction pool with validation
 //! - `LongestChain`: Chain selection rule
 //! - `SubstrateChainStateProvider`: Real chain state for mining
+//! - `ProductionChainStateProvider`: Full production provider with client integration
 //!
 //! # Architecture
 //!
@@ -34,7 +35,7 @@
 //! │  └──────────────────────────────────────────────────────────────────┘  │
 //! │                                  │                                      │
 //! │  ┌───────────────────────────────▼──────────────────────────────────┐  │
-//! │  │               SubstrateChainStateProvider                         │  │
+//! │  │            ProductionChainStateProvider (Task 10.5)               │  │
 //! │  │  - best_hash()          → client.info().best_hash                 │  │
 //! │  │  - difficulty_bits()    → runtime_api.difficulty_bits()           │  │
 //! │  │  - pending_transactions() → pool.ready()                          │  │
@@ -45,13 +46,12 @@
 //!
 //! # Implementation Status
 //!
-//! Task 10.2 provides the type definitions and trait implementations needed for
-//! full client integration. The actual instantiation of these types requires:
-//! - Task 10.3: Block import pipeline with PowBlockImport
-//! - sc-service::Configuration from CLI parsing
+//! - Task 10.2: Type definitions and trait implementations ✅
+//! - Task 10.3: Block import pipeline with PowBlockImport ✅
+//! - Task 10.5: ProductionChainStateProvider with client integration ✅
 //!
-//! The `SubstrateChainStateProvider` is designed to work with the concrete client
-//! types that will be instantiated in service.rs once the full pipeline is ready.
+//! The `ProductionChainStateProvider` is designed to work with the concrete client
+//! types once the full sc-service pipeline is ready.
 
 use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
 use consensus::Blake3Seal;
@@ -309,6 +309,251 @@ pub fn create_chain_state_provider_with_state(
     Arc::new(SubstrateChainStateProvider::with_state(hash, number, difficulty))
 }
 
+// =============================================================================
+// Task 10.5: Production Chain State Provider
+// =============================================================================
+
+/// Configuration for the production chain state provider
+#[derive(Clone, Debug)]
+pub struct ProductionConfig {
+    /// How often to poll client state (ms)
+    pub poll_interval_ms: u64,
+    /// Maximum transactions to include in block template
+    pub max_block_transactions: usize,
+    /// Whether to log verbose state updates
+    pub verbose: bool,
+}
+
+impl Default for ProductionConfig {
+    fn default() -> Self {
+        Self {
+            poll_interval_ms: 100,
+            max_block_transactions: 1000,
+            verbose: false,
+        }
+    }
+}
+
+impl ProductionConfig {
+    /// Create from environment variables
+    pub fn from_env() -> Self {
+        let poll_interval_ms = std::env::var("HEGEMON_POLL_INTERVAL_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100);
+
+        let max_block_transactions = std::env::var("HEGEMON_MAX_BLOCK_TXS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1000);
+
+        let verbose = std::env::var("HEGEMON_STATE_VERBOSE")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+
+        Self {
+            poll_interval_ms,
+            max_block_transactions,
+            verbose,
+        }
+    }
+}
+
+/// Production chain state provider with callbacks for client integration
+///
+/// This provider is designed for production use where the actual Substrate
+/// client manages state. It uses callbacks to query state rather than
+/// maintaining internal state.
+///
+/// # Task 10.5 Implementation
+///
+/// The provider uses function callbacks that can be set up to query:
+/// - `best_block_fn`: Returns (hash, number) from client.info()
+/// - `difficulty_fn`: Returns difficulty bits from runtime API
+/// - `pending_txs_fn`: Returns pending transactions from pool
+/// - `import_fn`: Imports block via block import pipeline
+///
+/// This allows the production mining worker to integrate with any Substrate
+/// client implementation without tight coupling.
+pub struct ProductionChainStateProvider {
+    /// Callback to get best block (hash, number)
+    best_block_fn: parking_lot::RwLock<Option<Box<dyn Fn() -> (H256, u64) + Send + Sync>>>,
+    /// Callback to get difficulty bits
+    difficulty_fn: parking_lot::RwLock<Option<Box<dyn Fn() -> u32 + Send + Sync>>>,
+    /// Callback to get pending transactions
+    pending_txs_fn: parking_lot::RwLock<Option<Box<dyn Fn() -> Vec<Vec<u8>> + Send + Sync>>>,
+    /// Callback to import a block
+    import_fn: parking_lot::RwLock<Option<Box<dyn Fn(&BlockTemplate, &Blake3Seal) -> Result<H256, String> + Send + Sync>>>,
+    /// Fallback state for when callbacks aren't set
+    pub fallback_state: SubstrateChainStateProvider,
+    /// Configuration
+    config: ProductionConfig,
+}
+
+impl std::fmt::Debug for ProductionChainStateProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProductionChainStateProvider")
+            .field("has_best_block_fn", &self.best_block_fn.read().is_some())
+            .field("has_difficulty_fn", &self.difficulty_fn.read().is_some())
+            .field("has_pending_txs_fn", &self.pending_txs_fn.read().is_some())
+            .field("has_import_fn", &self.import_fn.read().is_some())
+            .field("fallback_state", &"<SubstrateChainStateProvider>")
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
+impl ProductionChainStateProvider {
+    /// Create a new production provider
+    pub fn new(config: ProductionConfig) -> Self {
+        Self {
+            best_block_fn: parking_lot::RwLock::new(None),
+            difficulty_fn: parking_lot::RwLock::new(None),
+            pending_txs_fn: parking_lot::RwLock::new(None),
+            import_fn: parking_lot::RwLock::new(None),
+            fallback_state: SubstrateChainStateProvider::new(),
+            config,
+        }
+    }
+
+    /// Create with default config
+    pub fn with_defaults() -> Self {
+        Self::new(ProductionConfig::default())
+    }
+
+    /// Set the callback for getting best block info
+    pub fn set_best_block_fn<F>(&self, f: F)
+    where
+        F: Fn() -> (H256, u64) + Send + Sync + 'static,
+    {
+        *self.best_block_fn.write() = Some(Box::new(f));
+    }
+
+    /// Set the callback for getting difficulty
+    pub fn set_difficulty_fn<F>(&self, f: F)
+    where
+        F: Fn() -> u32 + Send + Sync + 'static,
+    {
+        *self.difficulty_fn.write() = Some(Box::new(f));
+    }
+
+    /// Set the callback for getting pending transactions
+    pub fn set_pending_txs_fn<F>(&self, f: F)
+    where
+        F: Fn() -> Vec<Vec<u8>> + Send + Sync + 'static,
+    {
+        *self.pending_txs_fn.write() = Some(Box::new(f));
+    }
+
+    /// Set the callback for importing blocks
+    pub fn set_import_fn<F>(&self, f: F)
+    where
+        F: Fn(&BlockTemplate, &Blake3Seal) -> Result<H256, String> + Send + Sync + 'static,
+    {
+        *self.import_fn.write() = Some(Box::new(f));
+    }
+
+    /// Check if all callbacks are configured
+    pub fn is_fully_configured(&self) -> bool {
+        self.best_block_fn.read().is_some()
+            && self.difficulty_fn.read().is_some()
+            && self.pending_txs_fn.read().is_some()
+            && self.import_fn.read().is_some()
+    }
+
+    /// Update fallback state (for use when callbacks aren't set)
+    pub fn update_fallback(&self, hash: H256, number: u64, difficulty: u32) {
+        self.fallback_state.update_best(hash, number);
+        self.fallback_state.update_difficulty(difficulty);
+    }
+}
+
+impl ChainStateProvider for ProductionChainStateProvider {
+    fn best_hash(&self) -> H256 {
+        if let Some(ref f) = *self.best_block_fn.read() {
+            let (hash, _) = f();
+            hash
+        } else {
+            self.fallback_state.best_hash()
+        }
+    }
+
+    fn best_number(&self) -> u64 {
+        if let Some(ref f) = *self.best_block_fn.read() {
+            let (_, number) = f();
+            number
+        } else {
+            self.fallback_state.best_number()
+        }
+    }
+
+    fn difficulty_bits(&self) -> u32 {
+        if let Some(ref f) = *self.difficulty_fn.read() {
+            f()
+        } else {
+            self.fallback_state.difficulty_bits()
+        }
+    }
+
+    fn pending_transactions(&self) -> Vec<Vec<u8>> {
+        if let Some(ref f) = *self.pending_txs_fn.read() {
+            let mut txs = f();
+            txs.truncate(self.config.max_block_transactions);
+            txs
+        } else {
+            self.fallback_state.pending_transactions()
+        }
+    }
+
+    fn import_block(&self, template: &BlockTemplate, seal: &Blake3Seal) -> Result<H256, String> {
+        if let Some(ref f) = *self.import_fn.read() {
+            let result = f(template, seal);
+            if self.config.verbose {
+                match &result {
+                    Ok(hash) => tracing::debug!(
+                        block_hash = %hex::encode(hash.as_bytes()),
+                        block_number = template.number,
+                        "Production provider: block imported via callback"
+                    ),
+                    Err(e) => tracing::warn!(
+                        error = %e,
+                        block_number = template.number,
+                        "Production provider: block import failed"
+                    ),
+                }
+            }
+            result
+        } else {
+            self.fallback_state.import_block(template, seal)
+        }
+    }
+
+    fn on_new_block(&self, block_hash: &H256, block_number: u64) {
+        // Update fallback state
+        self.fallback_state.on_new_block(block_hash, block_number);
+        
+        if self.config.verbose {
+            tracing::debug!(
+                block_hash = %hex::encode(block_hash.as_bytes()),
+                block_number = block_number,
+                "Production provider: notified of new block"
+            );
+        }
+    }
+}
+
+/// Create a production chain state provider
+pub fn create_production_chain_state_provider(
+    config: ProductionConfig,
+) -> Arc<ProductionChainStateProvider> {
+    Arc::new(ProductionChainStateProvider::new(config))
+}
+
+/// Create a production provider from environment configuration
+pub fn create_production_provider_from_env() -> Arc<ProductionChainStateProvider> {
+    Arc::new(ProductionChainStateProvider::new(ProductionConfig::from_env()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,5 +662,113 @@ mod tests {
         // State should be updated
         assert_eq!(provider.best_number(), 1);
         assert!(provider.pending_transactions().is_empty()); // Cleared
+    }
+
+    // Task 10.5: Production provider tests
+
+    #[test]
+    fn test_production_config_default() {
+        let config = ProductionConfig::default();
+        assert_eq!(config.poll_interval_ms, 100);
+        assert_eq!(config.max_block_transactions, 1000);
+        assert!(!config.verbose);
+    }
+
+    #[test]
+    fn test_production_config_from_env() {
+        // Just verify it doesn't panic
+        let _config = ProductionConfig::from_env();
+    }
+
+    #[test]
+    fn test_production_provider_new() {
+        let provider = ProductionChainStateProvider::with_defaults();
+        assert!(!provider.is_fully_configured());
+        assert_eq!(provider.best_hash(), H256::zero());
+        assert_eq!(provider.best_number(), 0);
+        assert_eq!(provider.difficulty_bits(), DEFAULT_DIFFICULTY_BITS);
+    }
+
+    #[test]
+    fn test_production_provider_with_callbacks() {
+        let provider = ProductionChainStateProvider::with_defaults();
+        
+        let expected_hash = H256::repeat_byte(0x42);
+        let expected_number = 100u64;
+        let hash_for_callback = expected_hash;
+        
+        provider.set_best_block_fn(move || (hash_for_callback, expected_number));
+        provider.set_difficulty_fn(|| 0x2000ffff);
+        provider.set_pending_txs_fn(|| vec![vec![1, 2, 3]]);
+        provider.set_import_fn(|_, seal| Ok(H256::from_slice(seal.work.as_bytes())));
+        
+        assert!(provider.is_fully_configured());
+        assert_eq!(provider.best_hash(), expected_hash);
+        assert_eq!(provider.best_number(), expected_number);
+        assert_eq!(provider.difficulty_bits(), 0x2000ffff);
+        assert_eq!(provider.pending_transactions(), vec![vec![1, 2, 3]]);
+    }
+
+    #[test]
+    fn test_production_provider_fallback() {
+        let provider = ProductionChainStateProvider::with_defaults();
+        
+        // Update fallback state
+        let hash = H256::repeat_byte(0xab);
+        provider.update_fallback(hash, 50, 0x1f00ffff);
+        
+        // Without callbacks, should use fallback
+        assert_eq!(provider.best_hash(), hash);
+        assert_eq!(provider.best_number(), 50);
+        assert_eq!(provider.difficulty_bits(), 0x1f00ffff);
+    }
+
+    #[test]
+    fn test_production_provider_import() {
+        let provider = ProductionChainStateProvider::with_defaults();
+        
+        let import_result = H256::repeat_byte(0xcc);
+        let import_hash = import_result;
+        provider.set_import_fn(move |_, _| Ok(import_hash));
+        
+        let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
+        let seal = Blake3Seal {
+            nonce: 12345,
+            difficulty: DEFAULT_DIFFICULTY_BITS,
+            work: H256::repeat_byte(0xaa),
+        };
+        
+        let result = provider.import_block(&template, &seal);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), import_result);
+    }
+
+    #[test]
+    fn test_production_provider_tx_limit() {
+        let config = ProductionConfig {
+            max_block_transactions: 2,
+            ..Default::default()
+        };
+        let provider = ProductionChainStateProvider::new(config);
+        
+        // Return 5 transactions, but config limits to 2
+        provider.set_pending_txs_fn(|| {
+            vec![vec![1], vec![2], vec![3], vec![4], vec![5]]
+        });
+        
+        let txs = provider.pending_transactions();
+        assert_eq!(txs.len(), 2); // Limited by config
+    }
+
+    #[test]
+    fn test_production_provider_on_new_block() {
+        let provider = ProductionChainStateProvider::with_defaults();
+        
+        let hash = H256::repeat_byte(0x11);
+        provider.on_new_block(&hash, 10);
+        
+        // Should update fallback state
+        assert_eq!(provider.fallback_state.best_hash(), hash);
+        assert_eq!(provider.fallback_state.best_number(), 10);
     }
 }

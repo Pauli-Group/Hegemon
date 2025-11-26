@@ -538,6 +538,15 @@ pub struct MiningWorker<CSP: ChainStateProvider, BB: BlockBroadcaster> {
     stats: Arc<parking_lot::RwLock<MiningWorkerStats>>,
 }
 
+impl<CSP: ChainStateProvider, BB: BlockBroadcaster> std::fmt::Debug for MiningWorker<CSP, BB> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MiningWorker")
+            .field("config", &self.config)
+            .field("stats", &*self.stats.read())
+            .finish_non_exhaustive()
+    }
+}
+
 impl<CSP, BB> MiningWorker<CSP, BB>
 where
     CSP: ChainStateProvider + 'static,
@@ -729,6 +738,183 @@ pub fn create_network_mining_worker(
     MiningWorker::new(pow_handle, chain_state, broadcaster, config)
 }
 
+// =============================================================================
+// Task 10.5: Production Mining Worker
+// =============================================================================
+
+use crate::substrate::client::{ProductionChainStateProvider, ProductionConfig};
+
+/// Create a production mining worker with real chain state and network broadcasting
+///
+/// This is the full production configuration for mining:
+/// - Uses ProductionChainStateProvider with callback-based chain state
+/// - Broadcasts via PQ network using NetworkBridgeBroadcaster
+/// - Intended for use with a full Substrate client
+///
+/// # Arguments
+///
+/// * `pow_handle` - Handle for PoW control and statistics
+/// * `chain_state` - Production chain state provider (pre-configured with callbacks)
+/// * `pq_handle` - Handle to the PQ network backend
+/// * `config` - Mining worker configuration
+///
+/// # Example
+///
+/// ```ignore
+/// let chain_state = ProductionChainStateProvider::with_defaults();
+/// 
+/// // Configure callbacks to query real Substrate client
+/// chain_state.set_best_block_fn(|| {
+///     let info = client.info();
+///     (info.best_hash, info.best_number)
+/// });
+/// chain_state.set_difficulty_fn(|| {
+///     runtime_api.difficulty_bits(best_hash).unwrap_or(DEFAULT_DIFFICULTY_BITS)
+/// });
+/// chain_state.set_pending_txs_fn(|| {
+///     pool.ready().map(|tx| tx.data().encode()).collect()
+/// });
+/// chain_state.set_import_fn(|template, seal| {
+///     block_import.import_block(construct_block(template, seal))
+/// });
+///
+/// let worker = create_production_mining_worker(
+///     pow_handle,
+///     Arc::new(chain_state),
+///     pq_handle,
+///     config,
+/// );
+/// worker.run().await;
+/// ```
+pub fn create_production_mining_worker(
+    pow_handle: PowHandle,
+    chain_state: Arc<ProductionChainStateProvider>,
+    pq_handle: network::PqNetworkHandle,
+    config: MiningWorkerConfig,
+) -> MiningWorker<ProductionChainStateProvider, NetworkBridgeBroadcaster> {
+    let broadcaster = Arc::new(NetworkBridgeBroadcaster::new(pq_handle));
+    
+    tracing::info!(
+        threads = config.threads,
+        is_production = true,
+        verbose = config.verbose,
+        "Creating production mining worker (Task 10.5)"
+    );
+    
+    MiningWorker::new(pow_handle, chain_state, broadcaster, config)
+}
+
+/// Create a production mining worker with mock broadcasting (for testing)
+///
+/// Uses production chain state provider but mock broadcaster.
+/// Useful for testing the production provider without network.
+pub fn create_production_mining_worker_mock_broadcast(
+    pow_handle: PowHandle,
+    chain_state: Arc<ProductionChainStateProvider>,
+    config: MiningWorkerConfig,
+) -> MiningWorker<ProductionChainStateProvider, MockBlockBroadcaster> {
+    let broadcaster = Arc::new(MockBlockBroadcaster::new(config.verbose));
+    
+    MiningWorker::new(pow_handle, chain_state, broadcaster, config)
+}
+
+/// Production mining worker builder for ergonomic configuration
+///
+/// Provides a builder pattern for constructing production mining workers
+/// with all necessary callbacks.
+pub struct ProductionMiningWorkerBuilder {
+    config: MiningWorkerConfig,
+    production_config: ProductionConfig,
+    pow_handle: Option<PowHandle>,
+    pq_handle: Option<network::PqNetworkHandle>,
+}
+
+impl ProductionMiningWorkerBuilder {
+    /// Create a new builder with default configuration
+    pub fn new() -> Self {
+        Self {
+            config: MiningWorkerConfig::default(),
+            production_config: ProductionConfig::default(),
+            pow_handle: None,
+            pq_handle: None,
+        }
+    }
+
+    /// Set the mining worker configuration
+    pub fn with_config(mut self, config: MiningWorkerConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    /// Set the production provider configuration
+    pub fn with_production_config(mut self, config: ProductionConfig) -> Self {
+        self.production_config = config;
+        self
+    }
+
+    /// Set the PoW handle
+    pub fn with_pow_handle(mut self, handle: PowHandle) -> Self {
+        self.pow_handle = Some(handle);
+        self
+    }
+
+    /// Set the PQ network handle
+    pub fn with_pq_handle(mut self, handle: network::PqNetworkHandle) -> Self {
+        self.pq_handle = Some(handle);
+        self
+    }
+
+    /// Build the production mining worker
+    ///
+    /// Returns the worker and the chain state provider (so callbacks can be configured).
+    pub fn build(self) -> Result<
+        (
+            MiningWorker<ProductionChainStateProvider, NetworkBridgeBroadcaster>,
+            Arc<ProductionChainStateProvider>,
+        ),
+        String,
+    > {
+        let pow_handle = self.pow_handle.ok_or("PoW handle is required")?;
+        let pq_handle = self.pq_handle.ok_or("PQ network handle is required")?;
+
+        let chain_state = Arc::new(ProductionChainStateProvider::new(self.production_config));
+        let worker = create_production_mining_worker(
+            pow_handle,
+            chain_state.clone(),
+            pq_handle,
+            self.config,
+        );
+
+        Ok((worker, chain_state))
+    }
+
+    /// Build with mock broadcaster (for testing)
+    pub fn build_mock(self) -> Result<
+        (
+            MiningWorker<ProductionChainStateProvider, MockBlockBroadcaster>,
+            Arc<ProductionChainStateProvider>,
+        ),
+        String,
+    > {
+        let pow_handle = self.pow_handle.ok_or("PoW handle is required")?;
+
+        let chain_state = Arc::new(ProductionChainStateProvider::new(self.production_config));
+        let worker = create_production_mining_worker_mock_broadcast(
+            pow_handle,
+            chain_state.clone(),
+            self.config,
+        );
+
+        Ok((worker, chain_state))
+    }
+}
+
+impl Default for ProductionMiningWorkerBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -885,5 +1071,123 @@ mod tests {
         
         let _worker = create_scaffold_mining_worker(pow_handle, worker_config);
         // Just verify creation doesn't panic
+    }
+
+    // Task 10.5: Production mining worker tests
+
+    #[test]
+    fn test_production_mining_worker_builder_default() {
+        let builder = ProductionMiningWorkerBuilder::new();
+        // Without required handles, build should fail
+        let result = builder.build_mock();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("PoW handle"));
+    }
+
+    #[test]
+    fn test_production_mining_worker_builder_with_pow() {
+        use crate::pow::{PowConfig, PowHandle};
+        
+        let config = PowConfig::mining(1);
+        let (pow_handle, _rx) = PowHandle::new(config);
+        
+        let builder = ProductionMiningWorkerBuilder::new()
+            .with_pow_handle(pow_handle);
+        
+        // Should succeed with mock build (doesn't require PQ handle)
+        let result = builder.build_mock();
+        assert!(result.is_ok());
+        
+        let (worker, chain_state) = result.unwrap();
+        assert!(!chain_state.is_fully_configured());
+        assert_eq!(worker.stats().blocks_mined, 0);
+    }
+
+    #[test]
+    fn test_production_mining_worker_builder_with_config() {
+        use crate::pow::{PowConfig, PowHandle};
+        
+        let config = PowConfig::mining(2);
+        let (pow_handle, _rx) = PowHandle::new(config);
+        
+        let worker_config = MiningWorkerConfig {
+            threads: 4,
+            round_duration_ms: 200,
+            verbose: true,
+            test_mode: true,
+            ..Default::default()
+        };
+        
+        let builder = ProductionMiningWorkerBuilder::new()
+            .with_pow_handle(pow_handle)
+            .with_config(worker_config.clone());
+        
+        let result = builder.build_mock();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_production_chain_state_with_callbacks() {
+        use crate::pow::{PowConfig, PowHandle};
+        
+        let config = PowConfig::mining(1);
+        let (pow_handle, _rx) = PowHandle::new(config);
+        
+        let builder = ProductionMiningWorkerBuilder::new()
+            .with_pow_handle(pow_handle);
+        
+        let result = builder.build_mock();
+        assert!(result.is_ok());
+        
+        let (_, chain_state) = result.unwrap();
+        
+        // Configure callbacks
+        let expected_hash = H256::repeat_byte(0xaa);
+        let hash_for_callback = expected_hash;
+        chain_state.set_best_block_fn(move || (hash_for_callback, 42));
+        chain_state.set_difficulty_fn(|| 0x2000ffff);
+        chain_state.set_pending_txs_fn(|| vec![vec![1, 2, 3]]);
+        chain_state.set_import_fn(|_, seal| Ok(H256::from_slice(seal.work.as_bytes())));
+        
+        assert!(chain_state.is_fully_configured());
+        assert_eq!(chain_state.best_hash(), expected_hash);
+        assert_eq!(chain_state.best_number(), 42);
+        assert_eq!(chain_state.difficulty_bits(), 0x2000ffff);
+        assert_eq!(chain_state.pending_transactions(), vec![vec![1, 2, 3]]);
+    }
+
+    #[test]
+    fn test_production_mining_worker_import() {
+        use crate::pow::{PowConfig, PowHandle};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        
+        let config = PowConfig::mining(1);
+        let (pow_handle, _rx) = PowHandle::new(config);
+        
+        let builder = ProductionMiningWorkerBuilder::new()
+            .with_pow_handle(pow_handle);
+        
+        let (_, chain_state) = builder.build_mock().unwrap();
+        
+        // Track import calls
+        let import_count = Arc::new(AtomicU64::new(0));
+        let count_clone = Arc::clone(&import_count);
+        
+        chain_state.set_import_fn(move |template, seal| {
+            count_clone.fetch_add(1, Ordering::SeqCst);
+            Ok(H256::from_slice(seal.work.as_bytes()))
+        });
+        
+        // Import a block
+        let template = BlockTemplate::new(H256::zero(), 1, 0x1d00ffff);
+        let seal = Blake3Seal {
+            nonce: 12345,
+            difficulty: 0x1d00ffff,
+            work: H256::repeat_byte(0xbb),
+        };
+        
+        let result = chain_state.import_block(&template, &seal);
+        assert!(result.is_ok());
+        assert_eq!(import_count.load(Ordering::SeqCst), 1);
     }
 }
