@@ -22,11 +22,13 @@ use url::Url;
 use wallet::{
     address::ShieldedAddress,
     api::{self, RecipientSpec},
+    async_sync::AsyncWalletSyncEngine,
     build_transaction,
     keys::{DerivedKeys, RootSecret},
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
     rpc::WalletRpcClient,
     store::{TransferRecipient, WalletMode, WalletStore},
+    substrate_rpc::SubstrateRpcClient,
     sync::WalletSyncEngine,
     tx_builder::Recipient,
     viewing::{IncomingViewingKey, OutgoingViewingKey},
@@ -82,10 +84,22 @@ enum Commands {
         out: Option<PathBuf>,
     },
     Init(InitArgs),
+    /// Sync wallet using legacy HTTP RPC (deprecated, use substrate-sync)
     Sync(SyncArgs),
+    /// Sync wallet using Substrate WebSocket RPC
+    #[command(name = "substrate-sync")]
+    SubstrateSync(SubstrateSyncArgs),
+    /// Run daemon using legacy HTTP RPC (deprecated, use substrate-daemon)
     Daemon(DaemonArgs),
+    /// Run daemon using Substrate WebSocket RPC with real-time subscriptions
+    #[command(name = "substrate-daemon")]
+    SubstrateDaemon(SubstrateDaemonArgs),
     Status(StoreArgs),
+    /// Send using legacy HTTP RPC (deprecated, use substrate-send)
     Send(SendArgs),
+    /// Send using Substrate WebSocket RPC
+    #[command(name = "substrate-send")]
+    SubstrateSend(SubstrateSendArgs),
     #[command(name = "export-viewing-key")]
     ExportViewingKey(ExportArgs),
 }
@@ -166,6 +180,66 @@ struct ExportArgs {
     out: Option<PathBuf>,
 }
 
+/// Arguments for Substrate WebSocket sync
+#[derive(Parser)]
+struct SubstrateSyncArgs {
+    /// Path to wallet store file
+    #[arg(long)]
+    store: PathBuf,
+    /// Wallet passphrase
+    #[arg(long)]
+    passphrase: String,
+    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    ws_url: String,
+}
+
+/// Arguments for Substrate WebSocket daemon
+#[derive(Parser)]
+struct SubstrateDaemonArgs {
+    /// Path to wallet store file
+    #[arg(long)]
+    store: PathBuf,
+    /// Wallet passphrase
+    #[arg(long)]
+    passphrase: String,
+    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    ws_url: String,
+    /// Use block subscriptions for real-time sync (vs polling)
+    #[arg(long, default_value_t = true)]
+    subscribe: bool,
+    /// Only sync on finalized blocks (more reliable but slower)
+    #[arg(long, default_value_t = false)]
+    finalized_only: bool,
+    /// HTTP API listen address (optional)
+    #[arg(long)]
+    http_listen: Option<SocketAddr>,
+}
+
+/// Arguments for Substrate WebSocket send
+#[derive(Parser)]
+struct SubstrateSendArgs {
+    /// Path to wallet store file
+    #[arg(long)]
+    store: PathBuf,
+    /// Wallet passphrase
+    #[arg(long)]
+    passphrase: String,
+    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    ws_url: String,
+    /// Path to recipients JSON file
+    #[arg(long)]
+    recipients: PathBuf,
+    /// Transaction fee
+    #[arg(long, default_value_t = 0)]
+    fee: u64,
+    /// Randomize output order for privacy
+    #[arg(long, default_value_t = false)]
+    randomize_memo_order: bool,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -193,9 +267,12 @@ fn main() -> Result<()> {
         Commands::Scan { ivk, ledger, out } => cmd_scan(&ivk, &ledger, out.as_deref()),
         Commands::Init(args) => cmd_init(args),
         Commands::Sync(args) => cmd_sync(args),
+        Commands::SubstrateSync(args) => cmd_substrate_sync(args),
         Commands::Daemon(args) => cmd_daemon(args),
+        Commands::SubstrateDaemon(args) => cmd_substrate_daemon(args),
         Commands::Status(args) => cmd_status(args),
         Commands::Send(args) => cmd_send(args),
+        Commands::SubstrateSend(args) => cmd_substrate_send(args),
         Commands::ExportViewingKey(args) => cmd_export_viewing_key(args),
     }
 }
@@ -415,6 +492,180 @@ fn cmd_export_viewing_key(args: ExportArgs) -> Result<()> {
     } else {
         println!("{}", json);
     }
+    Ok(())
+}
+
+/// Sync wallet using Substrate WebSocket RPC
+fn cmd_substrate_sync(args: SubstrateSyncArgs) -> Result<()> {
+    let store = Arc::new(WalletStore::open(&args.store, &args.passphrase)?);
+    
+    // Build async runtime
+    let runtime = RuntimeBuilder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to create tokio runtime")?;
+    
+    runtime.block_on(async {
+        // Connect to Substrate node
+        println!("Connecting to {}...", args.ws_url);
+        let client = Arc::new(
+            SubstrateRpcClient::connect(&args.ws_url)
+                .await
+                .map_err(|e| anyhow!("Failed to connect: {}", e))?
+        );
+        println!("Connected!");
+        
+        // Create sync engine and sync
+        let engine = AsyncWalletSyncEngine::new(client, store);
+        let outcome = engine
+            .sync_once()
+            .await
+            .map_err(|e| anyhow!("Sync failed: {}", e))?;
+        
+        print_sync_outcome(&outcome);
+        Ok(())
+    })
+}
+
+/// Run wallet daemon with Substrate WebSocket RPC
+fn cmd_substrate_daemon(args: SubstrateDaemonArgs) -> Result<()> {
+    let store = Arc::new(WalletStore::open(&args.store, &args.passphrase)?);
+    
+    let runtime = RuntimeBuilder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to create tokio runtime")?;
+    
+    runtime.block_on(async {
+        // Connect to Substrate node
+        println!("Connecting to {}...", args.ws_url);
+        let client = Arc::new(
+            SubstrateRpcClient::connect(&args.ws_url)
+                .await
+                .map_err(|e| anyhow!("Failed to connect: {}", e))?
+        );
+        println!("Connected to Substrate node!");
+        
+        // Optionally spawn HTTP API
+        if let Some(addr) = args.http_listen {
+            let store_clone = store.clone();
+            let client_clone = client.clone();
+            tokio::spawn(async move {
+                if let Err(e) = spawn_substrate_wallet_api(addr, store_clone, client_clone).await {
+                    eprintln!("HTTP API error: {}", e);
+                }
+            });
+            println!("Wallet HTTP API listening on http://{}", addr);
+        }
+        
+        // Create sync engine
+        let engine = AsyncWalletSyncEngine::new(client, store);
+        
+        if args.subscribe {
+            println!("Starting continuous sync with block subscriptions...");
+            if args.finalized_only {
+                engine
+                    .run_continuous_finalized(|outcome| {
+                        print_sync_outcome(&outcome);
+                    })
+                    .await
+                    .map_err(|e| anyhow!("Subscription sync failed: {}", e))?;
+            } else {
+                engine
+                    .run_continuous(|outcome| {
+                        print_sync_outcome(&outcome);
+                    })
+                    .await
+                    .map_err(|e| anyhow!("Subscription sync failed: {}", e))?;
+            }
+        } else {
+            // Polling mode (for compatibility)
+            println!("Starting polling sync...");
+            loop {
+                match engine.sync_once().await {
+                    Ok(outcome) => print_sync_outcome(&outcome),
+                    Err(e) => eprintln!("Sync error: {}", e),
+                }
+                tokio::time::sleep(Duration::from_secs(10)).await;
+            }
+        }
+        
+        Ok(())
+    })
+}
+
+/// Send transaction using Substrate WebSocket RPC
+fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
+    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    if store.mode()? == WalletMode::WatchOnly {
+        anyhow::bail!("watch-only wallets cannot send");
+    }
+    
+    let runtime = RuntimeBuilder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to create tokio runtime")?;
+    
+    runtime.block_on(async {
+        // Connect and sync first
+        println!("Connecting to {}...", args.ws_url);
+        let client = Arc::new(
+            SubstrateRpcClient::connect(&args.ws_url)
+                .await
+                .map_err(|e| anyhow!("Failed to connect: {}", e))?
+        );
+        
+        let store = Arc::new(store);
+        let engine = AsyncWalletSyncEngine::new(client.clone(), store.clone());
+        
+        println!("Syncing wallet...");
+        engine.sync_once().await.map_err(|e| anyhow!("Sync failed: {}", e))?;
+        
+        // Parse recipients
+        let specs: Vec<RecipientSpec> = read_json(&args.recipients)?;
+        let randomized_specs = randomize_recipient_specs(&specs, args.randomize_memo_order);
+        let recipients = parse_recipients(&randomized_specs).map_err(|e| anyhow!(e.to_string()))?;
+        let metadata = transfer_recipients_from_specs(&randomized_specs);
+        
+        // Build transaction
+        let built = build_transaction(&store, &recipients, args.fee)?;
+        store.mark_notes_pending(&built.spent_note_indexes, true)?;
+        
+        // Submit via Substrate RPC
+        match client.submit_transaction(&built.bundle).await {
+            Ok(tx_id) => {
+                store.record_pending_submission(
+                    tx_id,
+                    built.nullifiers.clone(),
+                    built.spent_note_indexes.clone(),
+                    metadata,
+                    args.fee,
+                )?;
+                println!("Submitted transaction: {}", hex::encode(tx_id));
+                Ok(())
+            }
+            Err(e) => {
+                store.mark_notes_pending(&built.spent_note_indexes, false)?;
+                Err(anyhow!("Transaction submission failed: {}", e))
+            }
+        }
+    })
+}
+
+/// Spawn wallet HTTP API with Substrate RPC backend
+async fn spawn_substrate_wallet_api(
+    addr: SocketAddr,
+    _store: Arc<WalletStore>,
+    _client: Arc<SubstrateRpcClient>,
+) -> Result<()> {
+    // For now, just bind and serve a minimal health endpoint
+    // Full API integration would require updating the api module
+    let app = axum::Router::new()
+        .route("/health", axum::routing::get(|| async { "ok" }));
+    
+    let listener = TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+    
     Ok(())
 }
 
