@@ -19,6 +19,7 @@ members = [
     "pallets/oracles",
     "pallets/feature-flags",
     "pallets/observability",
+    "pallets/difficulty",
     "tests", "node",
     "runtime",
 ]

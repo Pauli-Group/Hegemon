@@ -55,21 +55,26 @@ sp-consensus-pow = { version = "0.42.0", optional = true }
 
 jsonrpsee = { version = "0.24", features = ["server", "macros"], optional = true }
 
+# Runtime dependency (for WASM binary and APIs)
+runtime = { path = "../runtime", optional = true }
+
 [features]
 default = []
 test-utils = []
 
-# Enable Substrate-based node implementation (Phase 2 with PoW)
+# Enable Substrate-based node implementation (Phase 2.5 with PoW + DifficultyApi)
 # 
 # This provides:
 # - CLI scaffolding (sc-cli)
 # - Node service framework (sc-service)
 # - Blake3 PoW consensus (sc-consensus-pow)
 # - Mining coordination
-#
-# Full implementation requires:
-# - Aligned polkadot-sdk dependencies (use git deps)
 # - Runtime with WASM binary and DifficultyApi
+#
+# Phase 2.5 adds:
+# - WASM binary for runtime execution
+# - DifficultyApi for PoW difficulty queries
+# - ConsensusApi for consensus parameters
 substrate = [
     "dep:sc-cli",
     "dep:sc-service",
@@ -77,6 +82,7 @@ substrate = [
     "dep:sc-consensus-pow",
     "dep:sp-consensus-pow",
     "dep:jsonrpsee",
+    "dep:runtime",
 ]
 
 [dev-dependencies]
