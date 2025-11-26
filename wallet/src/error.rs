@@ -28,6 +28,9 @@ pub enum WalletError {
     #[error("http error: {0}")]
     Http(String),
 
+    #[error("rpc error: {0}")]
+    Rpc(String),
+
     #[error("wallet is watch-only")]
     WatchOnly,
 

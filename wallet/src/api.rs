@@ -133,7 +133,7 @@ impl From<WalletError> for ApiError {
                 StatusCode::BAD_REQUEST
             }
             WalletError::WatchOnly => StatusCode::FORBIDDEN,
-            WalletError::Http(_) => StatusCode::BAD_GATEWAY,
+            WalletError::Http(_) | WalletError::Rpc(_) => StatusCode::BAD_GATEWAY,
             WalletError::AddressEncoding(_)
             | WalletError::UnknownDiversifier(_)
             | WalletError::Crypto(_)
