@@ -1286,7 +1286,8 @@ echo "Fork count: $fork_count"
 - [x] Create: `scripts/generate-testnet-keys.sh` for key generation
 - [x] Create: `scripts/soak-test.sh` for stability testing
 - [x] Create: `config/testnet/README.md` deployment documentation
-- [ ] Build: `docker build -f Dockerfile.substrate -t hegemon/node:latest .`
+- [x] Build: `docker build -f Dockerfile.substrate -t hegemon/node:latest .` ✅ (203 MB)
+- [x] Build: `docker build -t hegemon/dashboard:latest dashboard-ui/` ✅ (82.7 MB)
 - [ ] Generate: Chain spec with `hegemon-node build-spec --chain=testnet`
 - [ ] Run: `docker-compose -f docker-compose.testnet.yml up -d` → all containers healthy
 - [ ] Verify: `curl localhost:9944 -d '{"jsonrpc":"2.0","method":"system_health","id":1}'` → syncing: false
