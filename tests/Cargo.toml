@@ -27,6 +27,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_bytes = "0.11"
 axum = "0.7"
+sp-core = { workspace = true, features = ["std"], optional = true }
+
+[features]
+default = []
+# Enable substrate-based tests (requires hegemon-node substrate feature)
+substrate = ["sp-core", "hegemon-node/substrate"]
 
 [[test]]
 name = "block_flow"
@@ -63,3 +69,8 @@ path = "wallet_e2e.rs"
 [[test]]
 name = "pq_network_integration"
 path = "pq_network_integration.rs"
+
+[[test]]
+name = "multi_node_substrate"
+path = "multi_node_substrate.rs"
+required-features = ["substrate"]
