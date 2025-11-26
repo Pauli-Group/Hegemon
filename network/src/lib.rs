@@ -12,20 +12,39 @@ use thiserror::Error;
 use tokio::sync::broadcast;
 
 pub mod nat;
+pub mod network_backend;
 pub mod p2p;
 pub mod peer_manager;
 pub mod peer_store;
 pub mod pq_transport;
+pub mod protocol;
 pub mod service;
+pub mod substrate_transport;
 
 pub use nat::{NatProtocol, NatTraversal, NatTraversalConfig, NatTraversalResult};
+pub use network_backend::{
+    PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle,
+};
 pub use peer_store::{PeerStore, PeerStoreConfig};
 pub use pq_transport::{
     ConnectionMode, PqPeerIdentity, PqSecureConnection, PqTransportConfig,
     upgrade_inbound, upgrade_outbound,
 };
+pub use protocol::{
+    is_hybrid_protocol, is_legacy_protocol, is_pq_protocol, negotiate_protocol,
+    protocol_security_level, protocol_type, supported_protocols,
+    NegotiationResult, NotificationProtocolConfig, ProtocolNegotiationConfig,
+    ProtocolSecurityLevel, ProtocolType,
+    BLOCK_ANNOUNCES_LEGACY, BLOCK_ANNOUNCES_PQ, HYBRID_PROTOCOL_V1,
+    LEGACY_PROTOCOL_V1, PQ_PROTOCOL_V1, SYNC_LEGACY, SYNC_PQ,
+    TRANSACTIONS_LEGACY, TRANSACTIONS_PQ,
+};
 pub use service::RelayConfig;
 pub use service::{P2PService, ProtocolHandle};
+pub use substrate_transport::{
+    PqConnectionInfo, PqUpgradeOutput, SubstratePqConnection,
+    SubstratePqTransport, SubstratePqTransportConfig, SubstrateTransportError,
+};
 
 pub type PeerId = [u8; 32];
 pub type ProtocolId = u32;
