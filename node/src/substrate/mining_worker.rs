@@ -333,11 +333,14 @@ pub struct MockChainState {
 
 /// Default difficulty for ~1 minute block time at 1 MH/s
 /// 
-/// Calculation: 1 MH/s × 60s = 60M hashes per block
-/// Target = 2^256 / 60,000,000 ≈ 2^230
-/// Compact bits 0x1d0fffff ≈ 0x0fffff × 2^208 ≈ 2^228
-/// This gives roughly 60-120 million hashes per block on average
-pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1d0fffff;
+/// Compact bits format: 0xEEMMMMMM where target = mantissa × 256^(exponent-3)
+/// 
+/// 0x1f00ffff = 0x00ffff × 256^28 ≈ 2^240 (very easy, ~instant blocks)
+/// 0x1e00ffff = 0x00ffff × 256^27 ≈ 2^232 (~1-10 sec blocks at 4 threads)
+/// 0x1d00ffff = 0x00ffff × 256^26 ≈ 2^224 (~minutes to hours per block)
+/// 
+/// For development/testing: 0x1e00ffff gives reasonable ~10-60 second blocks
+pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1e00ffff;
 
 impl Default for MockChainState {
     fn default() -> Self {
