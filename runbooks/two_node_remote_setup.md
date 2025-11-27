@@ -16,9 +16,11 @@ This guide walks you through setting up a peer-to-peer HEGEMON network between y
 
 | Port | Protocol | Purpose | Who Opens |
 |------|----------|---------|-----------|
-| **30333** | TCP | P2P networking (Substrate) | Both |
-| **9944** | TCP | RPC/WebSocket API | Optional (for remote dashboard access) |
+| **30333** | TCP | P2P networking (Substrate) | **Both** (required) |
+| **9944** | TCP | RPC/WebSocket API | Neither (local access only) |
 
+> **Important:** Only port **30333** needs to be forwarded in your router. Port 9944 is for local RPC access (`127.0.0.1:9944`) and should NOT be exposed to the internet for security reasons.
+>
 > **Note:** If using the legacy `hegemon` binary instead of Substrate, use ports **9000** (P2P) and **8080** (API).
 
 ---
@@ -127,7 +129,7 @@ mkdir -p /tmp/my-hegemon-node
 
 # Start your mining node
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
-cargo run --release -p hegemon-node --features substrate -- \
+cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --base-path /tmp/my-hegemon-node \
   --chain dev \
   --port 30333 \
@@ -140,11 +142,13 @@ cargo run --release -p hegemon-node --features substrate -- \
 
 **Wait for the node to start.** You'll see output like:
 ```
-Hegemon node started
-Local node identity is: 12D3KooWAbCdEf...
-Listening on /ip4/0.0.0.0/tcp/30333
-Mining enabled with 4 threads
-SubstratePqTransport ready
+Hegemon Node
+✌️  version 0.1.0
+📋 Chain specification: Hegemon Development
+🏷  Node name: MyNode
+👤 Role: FULL
+PQ network listener started listen_addr=0.0.0.0:30333
+Mining worker started (Phase 9.3) threads=4
 ```
 
 **Important:** Note the "Local node identity" (peer ID) for debugging purposes.
@@ -176,7 +180,7 @@ mkdir -p /tmp/friend-hegemon-node
 
 # Start the node, connecting to the bootnode
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
-cargo run --release -p hegemon-node --features substrate -- \
+cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --base-path /tmp/friend-hegemon-node \
   --chain dev \
   --port 30333 \
@@ -242,7 +246,7 @@ For more robust connectivity, update both nodes to know about each other.
 
 ```bash
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
-cargo run --release -p hegemon-node --features substrate -- \
+cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --base-path /tmp/my-hegemon-node \
   --chain dev \
   --port 30333 \
@@ -398,7 +402,7 @@ curl http://127.0.0.1:9944 -d '{"jsonrpc":"2.0","method":"system_health","params
 |------|-----|-------------|
 | **P2P Port** | 30333 | 30333 |
 | **RPC Port** | 9944 | 9944 |
-| **Open in Router** | 30333 TCP | 30333 TCP |
+| **Open in Router** | 30333 TCP only | 30333 TCP only |
 | **Bootnode** | — (start first) | Your IP:30333 |
 | **Mining** | `HEGEMON_MINE=1` | `HEGEMON_MINE=1` |
 
