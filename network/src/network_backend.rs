@@ -346,21 +346,14 @@ impl PqNetworkBackend {
             }
         }
 
-        // Return a new receiver (event_rx was already created in new())
-        let (new_event_tx, new_event_rx) = mpsc::channel(1024);
+        // Take ownership of the event receiver and return it to the caller.
+        // The caller will receive all events sent via self.event_tx.
+        // We replace with a dummy receiver to satisfy the struct's field requirement.
+        let (dummy_tx, dummy_rx) = mpsc::channel(1);
+        drop(dummy_tx); // Drop immediately, we don't need it
+        let event_rx = std::mem::replace(&mut self.event_rx, dummy_rx);
         
-        // Forward events to new receiver
-        // Note: new_event_tx and old_event_tx reserved for production event forwarding
-        let _new_event_tx = new_event_tx;
-        let _old_event_tx = self.event_tx.clone();
-        tokio::spawn(async move {
-            // This is a simplification - in production you'd want proper event forwarding
-            loop {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        });
-        
-        Ok(new_event_rx)
+        Ok(event_rx)
     }
 
     /// Connect to a peer

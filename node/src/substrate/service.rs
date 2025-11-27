@@ -504,10 +504,15 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
                 let pool_verbose = pool_config.verbose;
 
                 // Spawn the PQ network event handler task with NetworkBridge and TxPool integration
+                // IMPORTANT: We move pq_backend into this task to keep it alive for the node's lifetime.
+                // If pq_backend is dropped, the shutdown channel closes and the network listener stops.
                 task_manager.spawn_handle().spawn(
                     "pq-network-events",
                     Some("network"),
                     async move {
+                        // Keep pq_backend alive by holding it in this task
+                        let _pq_backend = pq_backend;
+                        
                         tracing::info!("PQ network event handler started (with NetworkBridge + TxPool)");
                         
                         while let Some(event) = event_rx.recv().await {
