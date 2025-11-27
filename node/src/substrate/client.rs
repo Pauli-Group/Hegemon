@@ -86,7 +86,11 @@ pub type FullTransactionPool<Client> = sc_transaction_pool::BasicPool<
 >;
 
 /// Default difficulty bits if runtime query fails
-pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1d00ffff;
+/// 
+/// Set for ~1 minute block time at 1 MH/s:
+/// 1 MH/s × 60s = 60M hashes per block
+/// Compact bits 0x1d0fffff gives target ≈ 2^228
+pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1d0fffff;
 
 /// Configuration for creating full Substrate components
 #[derive(Clone)]
@@ -592,7 +596,8 @@ mod tests {
 
     #[test]
     fn test_default_difficulty_bits() {
-        assert_eq!(DEFAULT_DIFFICULTY_BITS, 0x1d00ffff);
+        // 0x1d0fffff = ~1 minute block time at 1 MH/s
+        assert_eq!(DEFAULT_DIFFICULTY_BITS, 0x1d0fffff);
     }
 
     #[test]

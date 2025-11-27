@@ -205,6 +205,7 @@ mod substrate_impl {
     use sc_consensus_pow::{Error as PowError, PowAlgorithm};
     use sp_api::ProvideRuntimeApi;
     use sp_consensus_pow::Seal;
+    use sp_runtime::generic::BlockId;
     use sp_runtime::traits::Block as BlockT;
 
     /// Runtime API for querying PoW difficulty
@@ -237,14 +238,14 @@ mod substrate_impl {
 
         fn verify(
             &self,
-            _parent: &B::Hash,
-            pre_hash: &H256,
+            _parent: &BlockId<B>,
+            pre_hash: &B::Hash,
             _pre_digest: Option<&[u8]>,
             seal: &Seal,
             difficulty: Self::Difficulty,
         ) -> Result<bool, PowError<B>> {
             let blake3_seal = Blake3Seal::decode(&mut &seal[..])
-                .map_err(|_| PowError::FailedToDecode)?;
+                .map_err(|e| PowError::Codec(e))?;
             
             // Convert difficulty to compact bits for comparison
             let expected_bits = target_to_compact(U256::MAX / difficulty);
@@ -269,24 +270,6 @@ mod substrate_impl {
             
             // Verify the seal work meets the target
             Ok(verify_seal(pre_hash, &blake3_seal))
-        }
-
-        fn mine(
-            &self,
-            _parent: &B::Hash,
-            pre_hash: &H256,
-            difficulty: Self::Difficulty,
-            round: u32,
-        ) -> Result<Option<Seal>, PowError<B>> {
-            const NONCES_PER_ROUND: u64 = 10_000;
-            
-            // Convert U256 difficulty to compact bits
-            let pow_bits = target_to_compact(U256::MAX / difficulty);
-            
-            match mine_round(pre_hash, pow_bits, round, NONCES_PER_ROUND) {
-                Some(seal) => Ok(Some(seal.encode())),
-                None => Ok(None),
-            }
         }
     }
 }

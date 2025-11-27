@@ -436,11 +436,13 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
         );
     }
 
-    // Log PoW configuration
-    if pow_handle.is_mining() {
+    // Auto-start mining if HEGEMON_MINE=1 is set
+    let mining_config = MiningConfig::from_env();
+    if mining_config.enabled {
+        pow_handle.start_mining();
         tracing::info!(
-            hashrate = %pow_handle.hashrate(),
-            "Mining enabled"
+            threads = mining_config.threads,
+            "Mining enabled and started"
         );
     } else {
         tracing::info!("Mining disabled (set HEGEMON_MINE=1 to enable)");
