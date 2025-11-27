@@ -147,8 +147,10 @@ Hegemon Node
 📋 Chain specification: Hegemon Development
 🏷  Node name: MyNode
 👤 Role: FULL
+Started 4 mining thread(s)
+Mining started threads=4
+Mining enabled and started threads=4
 PQ network listener started listen_addr=0.0.0.0:30333
-Mining worker started (Phase 9.3) threads=4
 ```
 
 **Important:** Note the "Local node identity" (peer ID) for debugging purposes.
