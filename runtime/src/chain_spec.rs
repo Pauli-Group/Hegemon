@@ -2,7 +2,7 @@ use sp_core::H256;
 
 use crate::{
     AccountId, Balance, BalancesConfig, DifficultyConfig, DummySessionKeys, PowDifficulty,
-    RuntimeGenesisConfig, SessionConfig, SudoConfig, SystemConfig,
+    RuntimeGenesisConfig, SessionConfig, ShieldedPoolConfig, SudoConfig, SystemConfig,
 };
 
 /// Structured chain spec describing PoW parameters, telemetry defaults, and genesis state.
@@ -36,6 +36,7 @@ fn base_genesis(endowed: &[(AccountId, Balance)], sudo: AccountId) -> RuntimeGen
                 .collect(),
         },
         difficulty: DifficultyConfig::default(),
+        shielded_pool: ShieldedPoolConfig::default(),
     }
 }
 

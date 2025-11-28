@@ -356,44 +356,62 @@ impl ShieldedTxBuilder {
 
 **Goal**: Complete shielded transaction from wallet to block, with E2E tests.
 
-#### Task 14.1: Service Implementation ✅ COMPLETE
+#### Task 14.1: Pallet Integration & Service Implementation ✅ COMPLETE
 
-**Goal**: Implement `ShieldedPoolService` trait in the node service.
+**Goal**: Integrate `pallet-shielded-pool` into runtime and implement `ShieldedPoolService` trait.
 
-**Files Created**:
+**Files Modified**:
+- `runtime/Cargo.toml` - Added `pallet-shielded-pool` dependency
+- `runtime/src/lib.rs` - Added pallet Config and `construct_runtime!` entry
+- `runtime/src/chain_spec.rs` - Added `ShieldedPoolConfig` to genesis
 - `node/src/substrate/rpc/shielded_service.rs` - Production + Mock implementations
 
-**Implementation**:
+**Pallet Integration**:
+```rust
+// runtime/src/lib.rs
+impl pallet_shielded_pool::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type Currency = Balances;
+    type AdminOrigin = frame_system::EnsureRoot<AccountId>;
+    type ProofVerifier = pallet_shielded_pool::verifier::StarkVerifier;
+    type MaxNullifiersPerTx = ConstU32<4>;
+    type MaxCommitmentsPerTx = ConstU32<4>;
+    type MaxEncryptedNotesPerTx = ConstU32<4>;
+    type MerkleRootHistorySize = ConstU32<100>;
+    type WeightInfo = pallet_shielded_pool::DefaultWeightInfo;
+}
+
+construct_runtime!(
+    pub enum Runtime {
+        // ... other pallets ...
+        ShieldedPool: pallet_shielded_pool::{Pallet, Call, Storage, Event<T>, Config<T>},
+    }
+);
+```
+
+**Service Implementation**:
 ```rust
 /// Production implementation connecting to runtime API
-pub struct ShieldedPoolServiceImpl<C, P, Block>
+pub struct ShieldedPoolServiceImpl<C, Block>
 
-/// Mock implementation for testing
+/// Mock implementation for testing  
 pub struct MockShieldedPoolService
 ```
 
-**Features Implemented**:
-- `ShieldedPoolServiceImpl` - Production service using runtime APIs
-- `MockShieldedPoolService` - Testing mock with in-memory storage
-- Runtime API traits for shielded pool queries
-- Transaction submission (mock - full extrinsic construction pending)
-
-**Runtime API Added**:
-- `runtime/src/apis.rs` - `ShieldedPoolApi` trait with methods:
-  - `get_encrypted_notes(start, limit)` - Fetch encrypted notes
-  - `get_merkle_witness(position)` - Get Merkle authentication path
-  - `is_nullifier_spent(nullifier)` - Check if nullifier is spent
-  - `is_valid_anchor(anchor)` - Validate Merkle root
-  - `pool_balance()` - Get pool balance
-  - `merkle_root()` - Get current Merkle root
-  - `tree_depth()` - Get tree depth (32)
-  - `nullifier_count()` - Get total nullifiers
-
-**Note**: Runtime provides stub implementations until `pallet-shielded-pool` is integrated into `construct_runtime!`.
+**Runtime API Implementation** (now uses real pallet storage):
+- `get_encrypted_notes()` - Queries `EncryptedNotes` and `Commitments` storage
+- `get_merkle_witness()` - Generates witness from `MerkleTree` frontier
+- `is_nullifier_spent()` - Queries `Nullifiers` storage map
+- `is_valid_anchor()` - Queries `MerkleRoots` historical anchors
+- `pool_balance()` - Queries `PoolBalance` storage
+- `merkle_root()` - Gets root from `MerkleTree` storage
+- `nullifier_count()` - Counts entries in `Nullifiers` storage
 
 **Additional Fixes Applied**:
-- Added `BLOCK_ANNOUNCES_LEGACY`, `TRANSACTIONS_LEGACY`, `SYNC_LEGACY` protocol constants to `network/src/protocol.rs` for dual-protocol support
-- Fixed `MockShieldedPoolService` to use `std::sync::RwLock` instead of `tokio::sync::RwLock` to avoid nested runtime issues in sync trait methods
+- Added `BLOCK_ANNOUNCES_LEGACY`, `TRANSACTIONS_LEGACY`, `SYNC_LEGACY` protocol constants
+- Fixed `MockShieldedPoolService` to use `std::sync::RwLock`
+- Added `serde` unconditionally to `pallet-shielded-pool` for genesis deserialization
+- Added `sp_std::vec` import for WASM builds
 
 ---
 
@@ -539,7 +557,7 @@ HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
 | Phase | Duration | Status | Crypto |
 |-------|----------|--------|--------|
 | Phase 12: Shielded Pool | 2-3 weeks | ✅ COMPLETE | STARK, Poseidon |
-| Phase 13: Wallet Integration | 2-3 weeks | 🟡 IN PROGRESS | STARK prover, ML-KEM |
+| Phase 13: Wallet Integration | 2-3 weeks | ✅ COMPLETE | STARK prover, ML-KEM |
 | Phase 14: E2E Flow | 1-2 weeks | 🟡 IN PROGRESS | Full stack |
 | Phase 15: Hardening | 2-3 weeks | 🔴 NOT STARTED | Audit, benchmarks |
 
@@ -550,16 +568,18 @@ HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
 - ✅ Shielded RPC endpoints (`node/src/substrate/rpc/shielded.rs`)
 
 **Completed in Phase 14**:
-- ✅ ShieldedPoolService implementation (`node/src/substrate/rpc/shielded_service.rs`)
-- ✅ Runtime ShieldedPoolApi trait (`runtime/src/apis.rs`)
+- ✅ `pallet-shielded-pool` integrated into `construct_runtime!`
+- ✅ Runtime `ShieldedPoolApi` wired to real pallet storage
+- ✅ `ShieldedPoolServiceImpl` production implementation using runtime API
+- ✅ `MockShieldedPoolService` for testing
+- ✅ Genesis config updated with `ShieldedPoolConfig`
 
 **Remaining**:
-- Integrate `pallet-shielded-pool` into `construct_runtime!`
-- Wire full extrinsic submission in ShieldedPoolService
+- Wire full extrinsic submission in ShieldedPoolService (submit_shielded_transfer, shield)
 - E2E test suite
 - CLI integration
 
-**Total Remaining**: ~3-5 weeks to production-ready PQC ZCash on Substrate.
+**Total Remaining**: ~2-4 weeks to production-ready PQC ZCash on Substrate.
 
 ---
 

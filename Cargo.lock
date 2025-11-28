@@ -7459,6 +7459,7 @@ dependencies = [
  "pallet-oracles",
  "pallet-session",
  "pallet-settlement",
+ "pallet-shielded-pool",
  "pallet-sudo",
  "pallet-timestamp",
  "pallet-transaction-payment",

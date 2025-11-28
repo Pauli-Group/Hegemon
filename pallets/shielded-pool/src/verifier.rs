@@ -22,8 +22,8 @@ use crate::types::{BindingSignature, StarkProof};
 /// Uses transparent setup - no ceremony required.
 #[derive(
     Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
+    serde::Serialize, serde::Deserialize,
 )]
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 pub struct VerifyingKey {
     /// Key identifier.
     pub id: u32,

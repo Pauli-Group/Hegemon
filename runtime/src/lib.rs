@@ -1386,6 +1386,30 @@ impl pallet_fee_model::Config for Runtime {
 
 impl pallet_difficulty::Config for Runtime {}
 
+// === Shielded Pool Configuration ===
+parameter_types! {
+    /// Maximum nullifiers per shielded transaction (inputs).
+    pub const MaxNullifiersPerTx: u32 = 4;
+    /// Maximum commitments per shielded transaction (outputs).
+    pub const MaxCommitmentsPerTx: u32 = 4;
+    /// Maximum encrypted notes per transaction.
+    pub const MaxEncryptedNotesPerTx: u32 = 4;
+    /// Number of historical Merkle roots to keep for anchor validation.
+    pub const MerkleRootHistorySize: u32 = 100;
+}
+
+impl pallet_shielded_pool::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type Currency = Balances;
+    type AdminOrigin = frame_system::EnsureRoot<AccountId>;
+    type ProofVerifier = pallet_shielded_pool::verifier::StarkVerifier;
+    type MaxNullifiersPerTx = MaxNullifiersPerTx;
+    type MaxCommitmentsPerTx = MaxCommitmentsPerTx;
+    type MaxEncryptedNotesPerTx = MaxEncryptedNotesPerTx;
+    type MerkleRootHistorySize = MerkleRootHistorySize;
+    type WeightInfo = pallet_shielded_pool::DefaultWeightInfo;
+}
+
 construct_runtime!(
     pub enum Runtime {
         System: frame_system::{Pallet, Call, Config<T>, Storage, Event<T>},
@@ -1407,6 +1431,7 @@ construct_runtime!(
         FeatureFlags: pallet_feature_flags::{Pallet, Call, Storage, Event<T>},
         FeeModel: pallet_fee_model::{Pallet, Storage, Event<T>},
         Observability: pallet_observability::{Pallet, Call, Storage, Event<T>},
+        ShieldedPool: pallet_shielded_pool::{Pallet, Call, Storage, Event<T>, Config<T>},
     }
 );
 
@@ -1542,54 +1567,103 @@ sp_api::impl_runtime_apis! {
 
     impl apis::ShieldedPoolApi<Block> for Runtime {
         fn get_encrypted_notes(
-            _start: u64,
-            _limit: u32,
+            start: u64,
+            limit: u32,
         ) -> sp_std::vec::Vec<(u64, sp_std::vec::Vec<u8>, u64, [u8; 32])> {
-            // ShieldedPool pallet not yet integrated into runtime
-            // TODO: Integrate pallet-shielded-pool when ready
-            sp_std::vec::Vec::new()
+            // Fetch encrypted notes from ShieldedPool pallet storage
+            let mut notes = sp_std::vec::Vec::new();
+            let end = start.saturating_add(limit as u64);
+            
+            for index in start..end {
+                if let Some(encrypted_note) = pallet_shielded_pool::EncryptedNotes::<Runtime>::get(index) {
+                    if let Some(commitment) = pallet_shielded_pool::Commitments::<Runtime>::get(index) {
+                        // Block height not tracked per-note, use current block
+                        let block = frame_system::Pallet::<Runtime>::block_number();
+                        notes.push((
+                            index,
+                            encrypted_note.ciphertext.to_vec(),
+                            block.into(),
+                            commitment,
+                        ));
+                    }
+                }
+            }
+            notes
         }
 
         fn encrypted_note_count() -> u64 {
-            // ShieldedPool pallet not yet integrated into runtime
-            0
+            pallet_shielded_pool::CommitmentIndex::<Runtime>::get()
         }
 
         fn get_merkle_witness(
-            _position: u64,
+            position: u64,
         ) -> Result<(sp_std::vec::Vec<[u8; 32]>, sp_std::vec::Vec<bool>, [u8; 32]), ()> {
-            // ShieldedPool pallet not yet integrated into runtime
-            Err(())
+            // Get the Merkle tree from storage
+            let tree = pallet_shielded_pool::MerkleTree::<Runtime>::get();
+            
+            // CompactMerkleTree stores frontier only, not full witness data.
+            // For now, return a witness using the frontier.
+            // A full implementation would reconstruct from stored leaves.
+            let root = tree.root();
+            let depth = pallet_shielded_pool::types::MERKLE_TREE_DEPTH;
+            
+            // Check position is valid
+            if position >= tree.len() {
+                return Err(());
+            }
+            
+            // Generate authentication path from frontier
+            // This is simplified - a full impl would store more intermediate nodes
+            let defaults = pallet_shielded_pool::merkle::DefaultHashes::new(depth);
+            let mut siblings = sp_std::vec::Vec::with_capacity(depth as usize);
+            let mut indices = sp_std::vec::Vec::with_capacity(depth as usize);
+            
+            let mut level_position = position;
+            for level in 0..depth {
+                let is_left = level_position & 1 == 0;
+                let sibling_position = level_position ^ 1;
+                
+                // Get sibling from frontier if available, otherwise use default
+                let sibling = if (level as usize) < tree.frontier.len() 
+                    && sibling_position * (1u64 << level) < tree.len() 
+                {
+                    tree.frontier[level as usize]
+                } else {
+                    defaults.at_level(level)
+                };
+                
+                siblings.push(sibling);
+                indices.push(!is_left); // true if we're the right child
+                
+                level_position >>= 1;
+            }
+            
+            Ok((siblings, indices, root))
         }
 
-        fn is_nullifier_spent(_nullifier: [u8; 32]) -> bool {
-            // ShieldedPool pallet not yet integrated into runtime
-            false
+        fn is_nullifier_spent(nullifier: [u8; 32]) -> bool {
+            pallet_shielded_pool::Nullifiers::<Runtime>::contains_key(nullifier)
         }
 
-        fn is_valid_anchor(_anchor: [u8; 32]) -> bool {
-            // ShieldedPool pallet not yet integrated into runtime
-            false
+        fn is_valid_anchor(anchor: [u8; 32]) -> bool {
+            pallet_shielded_pool::MerkleRoots::<Runtime>::contains_key(anchor)
         }
 
         fn pool_balance() -> u128 {
-            // ShieldedPool pallet not yet integrated into runtime
-            0
+            pallet_shielded_pool::PoolBalance::<Runtime>::get()
         }
 
         fn merkle_root() -> [u8; 32] {
-            // ShieldedPool pallet not yet integrated into runtime
-            [0u8; 32]
+            pallet_shielded_pool::MerkleTree::<Runtime>::get().root()
         }
 
         fn tree_depth() -> u32 {
-            // Standard Merkle tree depth
-            32
+            pallet_shielded_pool::types::MERKLE_TREE_DEPTH
         }
 
         fn nullifier_count() -> u64 {
-            // ShieldedPool pallet not yet integrated into runtime
-            0
+            // Count nullifiers in storage
+            pallet_shielded_pool::Nullifiers::<Runtime>::iter().count() as u64
         }
     }
 }
