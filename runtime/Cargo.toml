@@ -58,6 +58,7 @@ pallet-fee-model = { path = "../pallets/fee-model", default-features = false }
 pallet-feature-flags = { path = "../pallets/feature-flags", default-features = false }
 pallet-observability = { path = "../pallets/observability", default-features = false }
 pallet-difficulty = { path = "../pallets/difficulty", default-features = false }
+pallet-shielded-pool = { path = "../pallets/shielded-pool", default-features = false }
 
 [dev-dependencies]
 sp-runtime = { workspace = true, features = ["std"] }
@@ -105,6 +106,7 @@ std = [
     "pallet-feature-flags/std",
     "pallet-observability/std",
     "pallet-difficulty/std",
+    "pallet-shielded-pool/std",
     "crypto/std",
     "serde/std",
     "dep:serde_json",

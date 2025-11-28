@@ -16,7 +16,7 @@ sp-core = { workspace = true }
 codec = { workspace = true }
 scale-info = { workspace = true }
 log = { version = "0.4", default-features = false }
-serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 
 [dev-dependencies]
 sp-io = { workspace = true, features = ["std"] }
