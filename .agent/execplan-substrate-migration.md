@@ -127,10 +127,14 @@
     - FullBlockImportConfig: enabled, verify_pow, verbose (all env-configurable)
     - Best block state tracked atomically for thread safety
     - Note: Full sc-consensus-pow::PowBlockImport integration documented for Task 11.4
-  - [ ] Task 11.3: Transaction pool wiring
-    - Transactions from RPC must enter sc-transaction-pool
-    - Mining worker must pull from real pool
-    - Mined blocks must include transactions
+  - [x] Task 11.3: Transaction pool wiring (2025-01-13)
+    - Added TransactionPool::ready_transactions() and clear_transactions() trait methods
+    - Implemented ready_for_block(max) on TransactionPoolBridge for mining worker
+    - Implemented clear_included(txs) on TransactionPoolBridge for post-import cleanup
+    - Added on_import_success_fn callback to ProductionChainStateProvider
+    - Wired pending_txs_fn callback to get transactions from pool in service.rs
+    - Wired on_import_success_fn to clear included transactions after block import
+    - Full pipeline: RPC → NetworkBridge → TransactionPoolBridge → MockTransactionPool → mining worker → block
   - [ ] Task 11.4: State execution
     - Transactions must execute against runtime state
     - Balances must update after transfers
