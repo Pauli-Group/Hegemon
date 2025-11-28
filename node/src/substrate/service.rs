@@ -115,7 +115,8 @@
 
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::client::{
-    ProductionChainStateProvider, ProductionConfig, DEFAULT_DIFFICULTY_BITS,
+    FullBackend, HegemonFullClient, ProductionChainStateProvider, ProductionConfig,
+    DEFAULT_DIFFICULTY_BITS,
 };
 use crate::substrate::mining_worker::{
     create_production_mining_worker, create_scaffold_mining_worker,
@@ -131,7 +132,7 @@ use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
-use sc_service::{error::Error as ServiceError, Configuration, TaskManager};
+use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sp_core::H256;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -215,6 +216,47 @@ impl PqServiceConfig {
 /// - PQ-secure network keypair
 /// - PQ network backend (Phase 3.5)
 pub struct PartialComponents {
+    /// Task manager for spawning async tasks
+    pub task_manager: TaskManager,
+    /// PoW mining handle
+    pub pow_handle: PowHandle,
+    /// PQ network keypair for secure connections
+    pub network_keypair: Option<PqNetworkKeypair>,
+    /// PQ network configuration
+    pub network_config: PqNetworkConfig,
+    /// PQ peer identity for transport layer (Phase 3.5)
+    pub pq_identity: Option<PqPeerIdentity>,
+    /// Substrate PQ transport (Phase 3.5)
+    pub pq_transport: Option<SubstratePqTransport>,
+    /// PQ service configuration (Phase 3.5)
+    pub pq_service_config: PqServiceConfig,
+}
+
+/// Partial components with full Substrate client (Task 11.4.2)
+///
+/// This struct extends `PartialComponents` with the full Substrate client,
+/// backend, and keystore created by `sc_service::new_full_parts()`.
+///
+/// # Components
+///
+/// - `client`: Full Substrate client with WASM executor and runtime API access
+/// - `backend`: Database backend (RocksDB in production, in-memory for tests)
+/// - `keystore`: Keystore container for managing cryptographic keys
+///
+/// # Usage
+///
+/// Use `new_partial_with_client()` to create these components. The client
+/// provides access to:
+/// - Block import and finalization
+/// - Runtime API calls (DifficultyApi, BlockBuilder, etc.)
+/// - State queries and storage
+pub struct PartialComponentsWithClient {
+    /// Full Substrate client with WASM executor
+    pub client: Arc<HegemonFullClient>,
+    /// Backend for state storage
+    pub backend: Arc<FullBackend>,
+    /// Keystore container for key management
+    pub keystore_container: KeystoreContainer,
     /// Task manager for spawning async tasks
     pub task_manager: TaskManager,
     /// PoW mining handle
@@ -352,6 +394,187 @@ pub fn new_partial(config: &Configuration) -> Result<PartialComponents, ServiceE
     );
 
     Ok(PartialComponents {
+        task_manager,
+        pow_handle,
+        network_keypair,
+        network_config: pq_network_config,
+        pq_identity: Some(pq_identity),
+        pq_transport: Some(pq_transport),
+        pq_service_config,
+    })
+}
+
+/// Creates partial node components with full Substrate client (Task 11.4.2)
+///
+/// This function uses `sc_service::new_full_parts()` to create the real
+/// Substrate client with WASM executor, database backend, and keystore.
+///
+/// # Components Created
+///
+/// - `client`: Full client (`TFullClient<Block, RuntimeApi, WasmExecutor>`)
+///   - Executes runtime WASM
+///   - Provides runtime API access (DifficultyApi, BlockBuilder, etc.)
+///   - Manages state and block storage
+///
+/// - `backend`: Full backend (`TFullBackend<Block>`)
+///   - RocksDB or ParityDB for persistent storage
+///   - In-memory backend available for testing
+///
+/// - `keystore_container`: Keystore for cryptographic keys
+///   - Managed by sc-service
+///   - Used for signing operations
+///
+/// - `task_manager`: Spawner for async tasks
+///   - Created by new_full_parts
+///   - Manages node lifecycle
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// let PartialComponentsWithClient {
+///     client,
+///     backend,
+///     keystore_container,
+///     task_manager,
+///     pow_handle,
+///     ..
+/// } = new_partial_with_client(&config)?;
+///
+/// // Use client for runtime API calls
+/// let api = client.runtime_api();
+/// let difficulty = api.difficulty_bits(best_hash).unwrap_or(DEFAULT_DIFFICULTY);
+/// ```
+///
+/// # Errors
+///
+/// Returns error if:
+/// - WASM binary is not available
+/// - Database initialization fails
+/// - Configuration is invalid
+pub fn new_partial_with_client(
+    config: &Configuration,
+) -> Result<PartialComponentsWithClient, ServiceError> {
+    // Check WASM binary availability
+    #[cfg(feature = "substrate")]
+    {
+        if runtime::WASM_BINARY.is_none() {
+            return Err(ServiceError::Other(
+                "WASM binary not available. Build with `cargo build -p runtime --features std`."
+                    .to_string(),
+            ));
+        }
+    }
+
+    // Create the WASM executor
+    // new_wasm_executor uses default configuration from sc_executor::WasmExecutor
+    let executor = sc_service::new_wasm_executor::<sp_io::SubstrateHostFunctions>(&config.executor);
+
+    // Create full Substrate client components using new_full_parts
+    // This creates:
+    // - TFullClient with WASM executor
+    // - TFullBackend with database
+    // - KeystoreContainer for key management
+    // - TaskManager for async coordination
+    let (client, backend, keystore_container, task_manager) =
+        sc_service::new_full_parts::<runtime::Block, runtime::RuntimeApi, _>(
+            config,
+            None, // telemetry - None for now, can add later
+            executor,
+        )?;
+
+    let client = Arc::new(client);
+
+    tracing::info!(
+        best_number = %client.chain_info().best_number,
+        best_hash = %client.chain_info().best_hash,
+        "Full Substrate client created (Task 11.4.2)"
+    );
+
+    // Initialize PoW mining coordinator
+    let pow_config = if std::env::var("HEGEMON_MINE").is_ok() {
+        let threads = std::env::var("HEGEMON_MINE_THREADS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+        PowConfig::mining(threads)
+    } else {
+        PowConfig::non_mining()
+    };
+
+    let (pow_handle, _pow_events) = PowHandle::new(pow_config);
+
+    // Initialize PQ service configuration (Phase 3.5)
+    let pq_service_config = PqServiceConfig::from_env();
+
+    // Initialize PQ network configuration
+    let pq_network_config = PqNetworkConfig {
+        listen_addresses: vec![format!(
+            "/ip4/{}/tcp/{}",
+            pq_service_config.listen_addr.ip(),
+            pq_service_config.listen_addr.port()
+        )],
+        bootstrap_nodes: pq_service_config
+            .bootstrap_nodes
+            .iter()
+            .map(|addr| format!("/ip4/{}/tcp/{}", addr.ip(), addr.port()))
+            .collect(),
+        enable_pq_transport: true,
+        hybrid_mode: pq_service_config.hybrid_mode,
+        max_peers: pq_service_config.max_peers as u32,
+        connection_timeout_secs: 30,
+        require_pq: pq_service_config.require_pq,
+        verbose_logging: pq_service_config.verbose_logging,
+    };
+
+    // Generate PQ network keypair for this node
+    let network_keypair = match PqNetworkKeypair::generate() {
+        Ok(keypair) => {
+            tracing::info!(
+                peer_id = %keypair.peer_id(),
+                "Generated PQ network keypair"
+            );
+            Some(keypair)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to generate PQ network keypair: {}", e);
+            None
+        }
+    };
+
+    // Create PQ peer identity and transport (Phase 3.5)
+    let node_seed = network_keypair
+        .as_ref()
+        .map(|k| k.peer_id_bytes().to_vec())
+        .unwrap_or_else(|| vec![0u8; 32]);
+
+    let pq_transport_config = PqTransportConfig {
+        require_pq: pq_service_config.require_pq,
+        handshake_timeout: std::time::Duration::from_secs(30),
+        verbose_logging: pq_service_config.verbose_logging,
+    };
+
+    let pq_identity = PqPeerIdentity::new(&node_seed, pq_transport_config.clone());
+
+    let substrate_transport_config = SubstratePqTransportConfig {
+        require_pq: pq_service_config.require_pq,
+        connection_timeout: std::time::Duration::from_secs(30),
+        handshake_timeout: std::time::Duration::from_secs(30),
+        verbose_logging: pq_service_config.verbose_logging,
+        protocol_id: "/hegemon/pq/1".to_string(),
+    };
+
+    let pq_transport = SubstratePqTransport::new(&pq_identity, substrate_transport_config);
+
+    tracing::info!(
+        pq_peer_id = %hex::encode(pq_transport.local_peer_id()),
+        require_pq = %pq_service_config.require_pq,
+        "Hegemon node with full client initialized (Task 11.4.2 + Phase 3.5)"
+    );
+
+    Ok(PartialComponentsWithClient {
+        client,
+        backend,
+        keystore_container,
         task_manager,
         pow_handle,
         network_keypair,

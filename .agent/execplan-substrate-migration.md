@@ -160,27 +160,21 @@ This is NOT an account-based chain. Per DESIGN.md and METHODS.md:
     - ❌ Balances do NOT update after transfers
     - **Requires**: Full Substrate client (TFullClient) to wire real execution
     - **See**: Task 11.4.x sub-tasks below for production mode
-  - [ ] **Task 11.4.1: Export RuntimeApi from runtime** (COMPLETE - 2025-11-27)
+  - [x] **Task 11.4.1: Export RuntimeApi from runtime** (COMPLETE - 2025-11-27)
     - The `impl_runtime_apis!` macro generates a `RuntimeApi` struct
     - The struct is automatically `pub` and available for node import
     - Added documentation in runtime/src/lib.rs explaining the export
     - Added `HegemonFullClient` type alias in node/src/substrate/client.rs
     - Pattern: `use runtime::RuntimeApi;`
     - Verification: `cargo check -p hegemon-node --features substrate` ✅
-  - [ ] **Task 11.4.2: Create real Substrate client in new_partial()** (NEW)
-    - Replace manual TaskManager creation with sc_service::new_full_parts()
-    - This creates: TFullClient, TFullBackend, KeystoreContainer, TaskManager
-    - Reference: polkadot-evm/frontier template/node/src/service.rs lines 92-123
-    ```rust
-    let executor = sc_service::new_wasm_executor(&config.executor);
-    let (client, backend, keystore_container, task_manager) = 
-        sc_service::new_full_parts::<Block, RuntimeApi, _>(
-            &config,
-            telemetry.as_ref().map(|(_, telemetry)| telemetry.handle()),
-            executor,
-        )?;
-    let client = Arc::new(client);
-    ```
+  - [x] **Task 11.4.2: Create real Substrate client in new_partial()** (COMPLETE - 2025-11-27)
+    - Created `PartialComponentsWithClient` struct with client, backend, keystore
+    - Implemented `new_partial_with_client()` function using `sc_service::new_full_parts()`
+    - Uses `sc_service::new_wasm_executor::<sp_io::SubstrateHostFunctions>()` for WASM execution
+    - Added WASM binary availability check before client creation
+    - Client provides runtime API access for DifficultyApi, BlockBuilder, etc.
+    - Verification: `cargo check -p hegemon-node --features substrate` ✅
+    - Reference implementation based on polkadot-evm/frontier template pattern
   - [ ] **Task 11.4.3: Create real transaction pool** (NEW)
     - Replace MockTransactionPool with sc_transaction_pool::BasicPool
     - Pool validates transactions against runtime
