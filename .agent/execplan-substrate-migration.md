@@ -22,11 +22,11 @@
 - ✅ Real transaction pool with `sc_transaction_pool::Builder` (Task 11.4.3)
 - ✅ BlockBuilder API wired via `wire_block_builder_api()` (Task 11.4.4)
 - ✅ PoW block import pipeline with PowBlockImport + Blake3Algorithm (Task 11.4.5)
+- ✅ `new_full_with_client()` uses real client for all callbacks (Task 11.4.6)
 
 **What is scaffolded but NOT wired:**
-- ⚠️ State execution uses mock state root in `new_full()` (Task 11.4 scaffold mode)
-- ⚠️ `new_full()` uses `new_partial()` not `new_partial_with_client()` yet
-- ⚠️ Block import logs success but doesn't update Substrate runtime state
+- ⚠️ Default `new_full()` still uses scaffold mode (mock state root)
+- ⚠️ Use `new_full_with_client()` for production mode with real client
 
 **What is NOT implemented:**
 - ❌ No `pallet-shielded-pool` - commitment tree + nullifier set (Phase 12)
@@ -44,8 +44,8 @@ This is NOT an account-based chain. Per DESIGN.md and METHODS.md:
 - NO public balance queries - privacy is fundamental
 
 **Critical Path to Shielded State Execution:**
-1. ~~Task 11.4.1-11.4.5: Wire real Substrate client + PoW block import~~ ✅ COMPLETE
-2. Task 11.4.6: Update service.rs to use real client in new_full()
+1. ~~Task 11.4.1-11.4.6: Wire real Substrate client + full production mode~~ ✅ COMPLETE
+2. Task 11.4.7: Integration test - single transaction execution
 3. Task 12.x: Create pallet-shielded-pool (commitment tree + nullifiers)
 4. Task 12.2: Wire STARK verifier into pallet
 5. Task 12.5: Shielded coinbase for mining rewards
@@ -56,7 +56,7 @@ This is NOT an account-based chain. Per DESIGN.md and METHODS.md:
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1-10 | Node scaffold, PoW, P2P, RPC | Mostly scaffolded |
-| 11 | Wire scaffolds to real Substrate client | Tasks 11.1-11.3 ✅, 11.4 SCAFFOLD ONLY |
+| 11 | Wire scaffolds to real Substrate client | Tasks 11.1-11.4.6 ✅ COMPLETE |
 | 12 | **Shielded Pool Pallet** (commitment tree + nullifiers) | NOT STARTED |
 | 13 | **Shielded Wallet** (viewing keys, note scanning, proofs) | NOT STARTED |
 | 14 | **Shielded E2E Testing** (privacy verification) | NOT STARTED |
@@ -217,11 +217,19 @@ This is NOT an account-based chain. Per DESIGN.md and METHODS.md:
     - Updated consensus crate to import `runtime::apis::DifficultyApi` instead of declaring duplicate
     - Added `sp-inherents` dependency to node/Cargo.toml
     - Verification: `cargo check -p hegemon-node --features substrate` ✅
-  - [ ] **Task 11.4.6: Update service.rs to use real client** (NEW)
-    - Thread client Arc through to all components
-    - Update PartialComponents struct to include client, backend
-    - Wire client to RPC endpoints for state queries
-    - Update mining worker to use client for best block
+  - [x] **Task 11.4.6: Update service.rs to use real client** ✅ COMPLETE
+    - Created `new_full_with_client()` function in service.rs:
+      - Uses `new_partial_with_client()` instead of `new_partial()`
+      - Full Substrate client threaded through all components
+    - Wired `ProductionChainStateProvider` callbacks to real client:
+      - `set_best_block_fn` → `client.chain_info()` for hash/number
+      - `set_difficulty_fn` → `runtime::apis::ConsensusApi::difficulty_bits()`
+      - `set_execute_extrinsics_fn` → `wire_block_builder_api()` (real runtime execution)
+      - `set_import_fn` → `wire_pow_block_import()` (PowBlockImport with Blake3)
+    - Added `ChainStateProvider` trait import for method access
+    - Added `ConsensusApi` trait import for difficulty queries
+    - Comprehensive logging with status banner on startup
+    - Verification: `cargo check -p hegemon-node --features substrate` ✅
   - [ ] **Task 11.4.7: Integration test - single transaction execution** (NEW)
     - Submit transfer transaction via RPC
     - Mine block with transaction
