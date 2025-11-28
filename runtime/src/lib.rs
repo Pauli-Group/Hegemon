@@ -1544,6 +1544,25 @@ sp_api::impl_runtime_apis! {
     }
 }
 
+// Task 11.4.1: RuntimeApi Export Documentation
+//
+// The `impl_runtime_apis!` macro above generates a `pub struct RuntimeApi {}`
+// that implements `ConstructRuntimeApi<Block, C>` for the node to use when
+// creating the full Substrate client:
+//
+// ```rust
+// sc_service::new_full_parts::<runtime::Block, runtime::RuntimeApi, _>(...)
+// ```
+//
+// The RuntimeApi struct is automatically public and available for import by
+// the node crate. No explicit re-export is needed since the macro already
+// declares it as `pub struct RuntimeApi {}`.
+//
+// The node should import it as:
+// ```rust
+// use runtime::RuntimeApi;
+// ```
+
 #[cfg(all(test, feature = "runtime-tests"))]
 mod tests {
     use super::*;
