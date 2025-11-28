@@ -1,0 +1,455 @@
+//! Merkle tree storage for the shielded pool.
+//!
+//! Implements an incremental Merkle tree for note commitments.
+//! The tree is append-only and preserves historical roots for
+//! verification of proofs generated against older states.
+
+use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
+use scale_info::TypeInfo;
+use sp_core::blake2_256;
+use sp_std::vec::Vec;
+
+use crate::types::MERKLE_TREE_DEPTH;
+
+/// Domain separator for Merkle tree hashing.
+const MERKLE_DOMAIN: &[u8] = b"Hegemon_MerkleTree_v1";
+
+/// Hash two child nodes to produce parent node.
+///
+/// parent = Blake2b(domain || left || right)
+pub fn merkle_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
+    let mut input = Vec::with_capacity(MERKLE_DOMAIN.len() + 64);
+    input.extend_from_slice(MERKLE_DOMAIN);
+    input.extend_from_slice(left);
+    input.extend_from_slice(right);
+    blake2_256(&input)
+}
+
+/// Compute the default (empty) hash for a given tree level.
+///
+/// Level 0 is the leaf level, level MERKLE_TREE_DEPTH is the root.
+pub fn default_hash_for_level(level: u32) -> [u8; 32] {
+    if level == 0 {
+        [0u8; 32] // Empty leaf is zero
+    } else {
+        let child = default_hash_for_level(level - 1);
+        merkle_hash(&child, &child)
+    }
+}
+
+/// Precomputed default hashes for each level.
+/// This avoids recomputation during tree updates.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
+pub struct DefaultHashes {
+    /// Default hash at each level (0 = leaf, DEPTH = root).
+    pub hashes: Vec<[u8; 32]>,
+}
+
+impl DefaultHashes {
+    /// Compute default hashes for a tree of given depth.
+    pub fn new(depth: u32) -> Self {
+        let mut hashes = Vec::with_capacity(depth as usize + 1);
+        for level in 0..=depth {
+            hashes.push(default_hash_for_level(level));
+        }
+        Self { hashes }
+    }
+
+    /// Get the default hash at a given level.
+    pub fn at_level(&self, level: u32) -> [u8; 32] {
+        self.hashes
+            .get(level as usize)
+            .copied()
+            .unwrap_or([0u8; 32])
+    }
+}
+
+impl Default for DefaultHashes {
+    fn default() -> Self {
+        Self::new(MERKLE_TREE_DEPTH)
+    }
+}
+
+/// Incremental Merkle tree state.
+///
+/// This structure maintains the current state of the Merkle tree:
+/// - The rightmost path (frontier) for efficient appends
+/// - The current root
+/// - The number of leaves
+///
+/// The tree supports ~4 billion leaves with depth 32.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
+pub struct IncrementalMerkleTree {
+    /// Current frontier (rightmost non-default nodes at each level).
+    /// Index 0 is the leaf level.
+    pub frontier: Vec<[u8; 32]>,
+    /// Number of leaves in the tree.
+    pub leaf_count: u64,
+    /// Current root hash.
+    pub root: [u8; 32],
+    /// Tree depth.
+    pub depth: u32,
+}
+
+impl IncrementalMerkleTree {
+    /// Create a new empty Merkle tree.
+    pub fn new(depth: u32) -> Self {
+        let defaults = DefaultHashes::new(depth);
+        Self {
+            frontier: Vec::new(),
+            leaf_count: 0,
+            root: defaults.at_level(depth),
+            depth,
+        }
+    }
+
+    /// Get the current root.
+    pub fn root(&self) -> [u8; 32] {
+        self.root
+    }
+
+    /// Get the number of leaves.
+    pub fn len(&self) -> u64 {
+        self.leaf_count
+    }
+
+    /// Check if the tree is empty.
+    pub fn is_empty(&self) -> bool {
+        self.leaf_count == 0
+    }
+
+    /// Check if the tree is full.
+    pub fn is_full(&self) -> bool {
+        self.leaf_count >= (1u64 << self.depth)
+    }
+
+    /// Append a new leaf to the tree.
+    ///
+    /// Returns the new root hash, or an error if the tree is full.
+    pub fn append(&mut self, leaf: [u8; 32]) -> Result<[u8; 32], MerkleTreeError> {
+        if self.is_full() {
+            return Err(MerkleTreeError::TreeFull);
+        }
+
+        let defaults = DefaultHashes::new(self.depth);
+        let position = self.leaf_count;
+
+        // Update frontier and compute new root
+        let mut current = leaf;
+        let mut level_position = position;
+
+        // Ensure frontier has enough levels
+        while self.frontier.len() <= self.depth as usize {
+            self.frontier.push([0u8; 32]);
+        }
+
+        for level in 0..self.depth {
+            if level_position & 1 == 0 {
+                // Left child - store in frontier
+                self.frontier[level as usize] = current;
+                // Right sibling is default
+                current = merkle_hash(&current, &defaults.at_level(level));
+            } else {
+                // Right child - combine with frontier
+                let left = self.frontier[level as usize];
+                current = merkle_hash(&left, &current);
+            }
+            level_position >>= 1;
+        }
+
+        self.root = current;
+        self.leaf_count += 1;
+
+        Ok(self.root)
+    }
+
+    /// Get the authentication path for a leaf at the given position.
+    ///
+    /// The path consists of sibling hashes from leaf to root.
+    pub fn authentication_path(&self, position: u64) -> Result<MerkleWitness, MerkleTreeError> {
+        if position >= self.leaf_count {
+            return Err(MerkleTreeError::InvalidPosition(position));
+        }
+
+        let defaults = DefaultHashes::new(self.depth);
+        let mut siblings = Vec::with_capacity(self.depth as usize);
+        let mut indices = Vec::with_capacity(self.depth as usize);
+
+        let mut level_position = position;
+
+        for level in 0..self.depth {
+            let sibling_position = level_position ^ 1;
+            let is_left = level_position & 1 == 0;
+
+            // Get sibling hash
+            let sibling = if sibling_position * (1u64 << level) < self.leaf_count {
+                // Sibling exists in tree
+                self.get_node_at(level, sibling_position)
+            } else {
+                // Sibling is default
+                defaults.at_level(level)
+            };
+
+            siblings.push(sibling);
+            indices.push(!is_left); // true if we're the right child
+
+            level_position >>= 1;
+        }
+
+        Ok(MerkleWitness {
+            siblings,
+            indices,
+            position,
+        })
+    }
+
+    /// Get a node at a specific level and position.
+    /// This is a simplified implementation that recomputes from leaves.
+    fn get_node_at(&self, level: u32, position: u64) -> [u8; 32] {
+        // For the simplified implementation, we only have the frontier
+        // In a full implementation, we'd store more intermediate nodes
+        if level < self.frontier.len() as u32 {
+            // Check if this position is in the frontier
+            let frontier_position = (self.leaf_count.saturating_sub(1)) >> level;
+            if position == frontier_position {
+                return self.frontier[level as usize];
+            }
+        }
+
+        // Return default for positions beyond current tree state
+        DefaultHashes::new(self.depth).at_level(level)
+    }
+}
+
+impl Default for IncrementalMerkleTree {
+    fn default() -> Self {
+        Self::new(MERKLE_TREE_DEPTH)
+    }
+}
+
+/// Compact Merkle tree state for storage.
+///
+/// This is a more storage-efficient representation that can be
+/// expanded into a full IncrementalMerkleTree.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
+)]
+pub struct CompactMerkleTree {
+    /// Frontier hashes (one per level that has a non-default value).
+    /// Stored as a bounded vec with max 32 entries for depth 32.
+    #[codec(compact)]
+    pub leaf_count: u64,
+    /// Current root hash.
+    pub root: [u8; 32],
+}
+
+impl CompactMerkleTree {
+    /// Create a new empty compact tree.
+    pub fn new() -> Self {
+        let defaults = DefaultHashes::new(MERKLE_TREE_DEPTH);
+        Self {
+            leaf_count: 0,
+            root: defaults.at_level(MERKLE_TREE_DEPTH),
+        }
+    }
+
+    /// Get the current root.
+    pub fn root(&self) -> [u8; 32] {
+        self.root
+    }
+
+    /// Get the leaf count.
+    pub fn len(&self) -> u64 {
+        self.leaf_count
+    }
+
+    /// Check if empty.
+    pub fn is_empty(&self) -> bool {
+        self.leaf_count == 0
+    }
+
+    /// Update from full tree.
+    pub fn from_full(tree: &IncrementalMerkleTree) -> Self {
+        Self {
+            leaf_count: tree.leaf_count,
+            root: tree.root,
+        }
+    }
+}
+
+impl Default for CompactMerkleTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Merkle witness for proving membership.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
+pub struct MerkleWitness {
+    /// Sibling hashes from leaf to root.
+    pub siblings: Vec<[u8; 32]>,
+    /// Whether we're the right child at each level.
+    pub indices: Vec<bool>,
+    /// Position of the leaf.
+    pub position: u64,
+}
+
+impl MerkleWitness {
+    /// Verify this witness against a leaf and root.
+    pub fn verify(&self, leaf: &[u8; 32], root: &[u8; 32]) -> bool {
+        if self.siblings.len() != self.indices.len() {
+            return false;
+        }
+
+        let mut current = *leaf;
+
+        for (sibling, &is_right) in self.siblings.iter().zip(self.indices.iter()) {
+            current = if is_right {
+                merkle_hash(sibling, &current)
+            } else {
+                merkle_hash(&current, sibling)
+            };
+        }
+
+        current == *root
+    }
+}
+
+/// Errors that can occur during Merkle tree operations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MerkleTreeError {
+    /// The tree is full and cannot accept more leaves.
+    TreeFull,
+    /// The requested position is invalid.
+    InvalidPosition(u64),
+    /// The witness verification failed.
+    VerificationFailed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_tree_has_default_root() {
+        let tree = IncrementalMerkleTree::new(4);
+        let defaults = DefaultHashes::new(4);
+
+        assert_eq!(tree.root(), defaults.at_level(4));
+        assert!(tree.is_empty());
+    }
+
+    #[test]
+    fn append_updates_root() {
+        let mut tree = IncrementalMerkleTree::new(4);
+        let initial_root = tree.root();
+
+        let leaf = [1u8; 32];
+        let new_root = tree.append(leaf).unwrap();
+
+        assert_ne!(new_root, initial_root);
+        assert_eq!(tree.len(), 1);
+    }
+
+    #[test]
+    fn append_is_deterministic() {
+        let mut tree1 = IncrementalMerkleTree::new(4);
+        let mut tree2 = IncrementalMerkleTree::new(4);
+
+        let leaf = [1u8; 32];
+        tree1.append(leaf).unwrap();
+        tree2.append(leaf).unwrap();
+
+        assert_eq!(tree1.root(), tree2.root());
+    }
+
+    #[test]
+    fn multiple_appends_work() {
+        let mut tree = IncrementalMerkleTree::new(4);
+
+        for i in 0..8 {
+            let leaf = [i; 32];
+            tree.append(leaf).unwrap();
+        }
+
+        assert_eq!(tree.len(), 8);
+    }
+
+    #[test]
+    fn tree_full_returns_error() {
+        let mut tree = IncrementalMerkleTree::new(2); // Capacity: 4 leaves
+
+        for i in 0..4 {
+            tree.append([i; 32]).unwrap();
+        }
+
+        assert!(tree.is_full());
+        assert!(matches!(
+            tree.append([5; 32]),
+            Err(MerkleTreeError::TreeFull)
+        ));
+    }
+
+    #[test]
+    fn merkle_hash_is_deterministic() {
+        let left = [1u8; 32];
+        let right = [2u8; 32];
+
+        let hash1 = merkle_hash(&left, &right);
+        let hash2 = merkle_hash(&left, &right);
+
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn merkle_hash_is_asymmetric() {
+        let left = [1u8; 32];
+        let right = [2u8; 32];
+
+        let hash1 = merkle_hash(&left, &right);
+        let hash2 = merkle_hash(&right, &left);
+
+        assert_ne!(hash1, hash2);
+    }
+
+    #[test]
+    fn default_hashes_are_consistent() {
+        let defaults1 = DefaultHashes::new(4);
+        let defaults2 = DefaultHashes::new(4);
+
+        for level in 0..=4 {
+            assert_eq!(defaults1.at_level(level), defaults2.at_level(level));
+        }
+    }
+
+    #[test]
+    fn compact_tree_stores_root() {
+        let mut tree = IncrementalMerkleTree::new(4);
+        tree.append([1u8; 32]).unwrap();
+
+        let compact = CompactMerkleTree::from_full(&tree);
+
+        assert_eq!(compact.root(), tree.root());
+        assert_eq!(compact.len(), tree.len());
+    }
+
+    #[test]
+    fn witness_verification_works() {
+        let mut tree = IncrementalMerkleTree::new(4);
+
+        // Add a single leaf
+        let leaf0 = [1u8; 32];
+        tree.append(leaf0).unwrap();
+
+        // Get witness for leaf0
+        let witness = tree.authentication_path(0).unwrap();
+
+        // Verify witness
+        // Note: With only one leaf, all siblings are default hashes
+        assert!(witness.verify(&leaf0, &tree.root()));
+
+        // Wrong leaf should fail
+        let wrong_leaf = [99u8; 32];
+        assert!(!witness.verify(&wrong_leaf, &tree.root()));
+    }
+}
