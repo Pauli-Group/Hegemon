@@ -1,8 +1,55 @@
 # Hegemon Substrate Migration Execution Plan
 
 **Status**: Active  
-**Last Updated**: 2025-11-25  
+**Last Updated**: 2025-11-27  
 **Owner**: Core Team
+
+---
+
+## Current Honest Status (2025-11-27)
+
+**What actually works:**
+- ✅ Node boots and runs
+- ✅ P2P connections via PQ-secure transport (ML-KEM-768)
+- ✅ Blake3 PoW mining produces blocks
+- ✅ Blocks broadcast to connected peers
+- ✅ Mining difficulty adjustable via constants
+
+**What is scaffolded but NOT wired:**
+- ⚠️ Transaction pool exists but mining worker returns empty transactions
+- ⚠️ ProductionChainStateProvider exists but MockChainStateProvider is used
+- ⚠️ Block import logs success but doesn't update Substrate chain state
+- ⚠️ RPC endpoints exist but transaction submission doesn't work end-to-end
+
+**What is NOT implemented:**
+- ❌ Transactions cannot be submitted and included in blocks
+- ❌ Balance queries don't reflect actual state
+- ❌ Block sync between nodes doesn't import to Substrate chain
+- ❌ Wallet cannot send transactions that execute
+- ❌ Chain doesn't persist to disk (in-memory only with --dev)
+- ❌ No difficulty adjustment (static difficulty)
+- ❌ No proper genesis configuration
+- ❌ No block explorer or faucet
+
+**Phases Overview:**
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1-10 | Node scaffold, PoW, P2P, RPC | Mostly scaffolded |
+| 11 | Wire scaffolds to real Substrate | NOT STARTED |
+| 12 | Transaction & wallet flow | NOT STARTED |
+| 13 | Verification testing | NOT STARTED |
+| 14 | Chain persistence | NOT STARTED |
+| 15 | Network robustness | NOT STARTED |
+| 16 | Difficulty adjustment | NOT STARTED |
+| 17 | Genesis & chain spec | NOT STARTED |
+| 18 | Monitoring & telemetry | NOT STARTED |
+| 19 | Security hardening | NOT STARTED |
+| 20 | Faucet & explorer | NOT STARTED |
+
+**Legend for task status:**
+- `[x]` = Complete and verified working
+- `[~]` = Code exists but not wired/integrated (SCAFFOLDED)
+- `[ ]` = Not started
 
 ---
 
@@ -58,15 +105,182 @@
 - [x] Testnet deployed and validated (3 nodes + dashboard + monitoring running in scaffold mode)
 - [x] **PQ Network event handling in service.rs (Phase 3.5.7 COMPLETE - 2025-11-25)**
 - [x] **Full block production (Phase 9)** - sc-network bridge, transaction pool, mining worker
-  - [x] Task 9.1: sc-network bridge integration (block announcements)
-  - [x] Task 9.2: Transaction pool integration (tx propagation)
-  - [x] Task 9.3: Mining worker spawning (block production)
+  - [x] Task 9.1: sc-network bridge integration (block announcements) - SCAFFOLDED
+  - [x] Task 9.2: Transaction pool integration (tx propagation) - SCAFFOLDED
+  - [x] Task 9.3: Mining worker spawning (block production) - WORKING with MockChainStateProvider
 - [ ] **Production Readiness (Phase 10)** - Full Substrate integration for production use
   - [x] Task 10.1: Polkadot-SDK dependency alignment (2025-11-25) - polkadot-stable2509-2
-  - [x] Task 10.2: Full client integration (2025-01-13) - TFullClient, WasmExecutor, TFullBackend, SubstrateChainStateProvider
-  - [x] Task 10.3: Block import pipeline (2025-11-25) - MockBlockImport, HegemonBlockImport, verify_pow_seal
-  - [x] Task 10.4: Live network integration (2025-11-25) - PqNetworkHandle.broadcast_to_all, NetworkBridgeBroadcaster
-  - [x] Task 10.5: Production mining worker (2025-11-25) - ProductionChainStateProvider, ProductionMiningWorkerBuilder, multi_node_substrate tests
+  - [~] Task 10.2: Full client integration - SCAFFOLDED, not wired to service.rs
+  - [~] Task 10.3: Block import pipeline - MockBlockImport only, not real Substrate import
+  - [x] Task 10.4: Live network integration (2025-11-25) - PqNetworkHandle.broadcast_to_all works
+  - [~] Task 10.5: Production mining worker - SCAFFOLDED, uses MockChainStateProvider not ProductionChainStateProvider
+- [ ] **Full Substrate Runtime Integration (Phase 11)** - Wire scaffolds to real Substrate client
+  - [ ] Task 11.1: Wire ProductionChainStateProvider to service.rs
+    - Replace MockChainStateProvider with ProductionChainStateProvider in create_network_mining_worker
+    - Connect best_block_fn to client.info()
+    - Connect difficulty_fn to runtime_api.difficulty()
+    - Connect pending_txs_fn to transaction_pool.ready()
+    - Connect import_fn to block_import.import_block()
+  - [ ] Task 11.2: Real block import to Substrate chain
+    - Create PowBlockImport with Blake3Algorithm
+    - Wire import queue to sc-consensus-pow
+    - Blocks must update Substrate's chain state, not just log
+  - [ ] Task 11.3: Transaction pool wiring
+    - Transactions from RPC must enter sc-transaction-pool
+    - Mining worker must pull from real pool
+    - Mined blocks must include transactions
+  - [ ] Task 11.4: State execution
+    - Transactions must execute against runtime state
+    - Balances must update after transfers
+    - State root must be computed and included in block header
+  - [ ] Task 11.5: Chain sync between nodes
+    - Received blocks must be validated and imported
+    - Nodes must request missing blocks
+    - Fork choice must work correctly
+- [ ] **Transaction & Wallet Integration (Phase 12)** - End-to-end transaction flow
+  - [ ] Task 12.1: RPC endpoint for transaction submission
+    - author_submitExtrinsic must accept signed transactions
+    - Transactions must validate signature and enter pool
+  - [ ] Task 12.2: Account balance queries
+    - system_account RPC must return balance and nonce
+    - state_getStorage must work for balances pallet
+  - [ ] Task 12.3: Wallet transaction signing
+    - Wallet must create signed extrinsics with correct format
+    - ML-DSA-65 signatures must verify in runtime
+  - [ ] Task 12.4: End-to-end transfer test
+    - Alice sends tokens to Bob via RPC
+    - Transaction included in mined block
+    - Bob's balance increases, Alice's decreases
+    - Both nodes see same state after sync
+- [ ] **Verification & Testing (Phase 13)** - Prove it actually works
+  - [ ] Task 13.1: Single-node transaction test
+    - Submit transaction via RPC
+    - Verify transaction in mined block
+    - Verify state changed
+  - [ ] Task 13.2: Two-node sync test
+    - Node A mines block with transaction
+    - Node B receives and imports block
+    - Both nodes have same state
+  - [ ] Task 13.3: Multi-node network test
+    - 3+ nodes mining concurrently
+    - Transactions propagate correctly
+    - Chain converges to same tip
+  - [ ] Task 13.4: Wallet integration test
+    - Generate keypair
+    - Fund account (from genesis or faucet)
+    - Send transaction
+    - Query balance
+- [ ] **Chain Persistence & Recovery (Phase 14)** - Data durability
+  - [ ] Task 14.1: RocksDB chain storage
+    - Blocks persist to disk
+    - Node restarts from last state
+    - Chain data survives reboot
+  - [ ] Task 14.2: State pruning
+    - Old state can be pruned to save space
+    - Archive mode for full history
+  - [ ] Task 14.3: Chain export/import
+    - Export blocks to file
+    - Import blocks from file
+    - Snapshot and restore
+- [ ] **Network Robustness (Phase 15)** - Production networking
+  - [ ] Task 15.1: Peer discovery
+    - Bootstrap from seed nodes
+    - DHT-based peer discovery
+    - Peer exchange protocol
+  - [ ] Task 15.2: Connection management
+    - Max peer limits
+    - Peer scoring/reputation
+    - Ban misbehaving peers
+  - [ ] Task 15.3: Network resilience
+    - Handle peer disconnects gracefully
+    - Reconnection logic
+    - NAT traversal (optional)
+  - [ ] Task 15.4: Block request protocol
+    - Request specific blocks by hash
+    - Request block ranges for sync
+    - Handle missing block requests
+- [ ] **Difficulty Adjustment (Phase 16)** - Dynamic difficulty
+  - [ ] Task 16.1: Difficulty retargeting algorithm
+    - Adjust difficulty based on block times
+    - Target block time (e.g., 60 seconds)
+    - Smoothing to prevent oscillation
+  - [ ] Task 16.2: Difficulty storage in runtime
+    - Difficulty pallet tracks adjustments
+    - Query current difficulty via RPC
+  - [ ] Task 16.3: Difficulty in block validation
+    - Validate block meets difficulty at that height
+    - Reject blocks with wrong difficulty
+- [ ] **Genesis & Chain Spec (Phase 17)** - Proper chain initialization
+  - [ ] Task 17.1: Genesis block configuration
+    - Initial token distribution
+    - Initial difficulty
+    - System accounts (treasury, etc.)
+  - [ ] Task 17.2: Chain spec generation
+    - Testnet chain spec
+    - Mainnet chain spec
+    - Custom chain spec tool
+  - [ ] Task 17.3: Bootnodes configuration
+    - Hardcoded bootnode list
+    - DNS-based bootnode discovery
+- [ ] **Monitoring & Telemetry (Phase 18)** - Observability
+  - [ ] Task 18.1: Prometheus metrics
+    - Block height, peer count, tx pool size
+    - Mining hashrate, difficulty
+    - RPC request latency
+  - [ ] Task 18.2: Telemetry endpoint
+    - Report to telemetry server
+    - Node name, version, location
+  - [ ] Task 18.3: Logging improvements
+    - Structured logging
+    - Log levels configurable
+    - Log rotation
+- [ ] **Security Hardening (Phase 19)** - Production security
+  - [ ] Task 19.1: Transaction validation
+    - Signature verification
+    - Nonce checking
+    - Balance sufficiency
+  - [ ] Task 19.2: Block validation
+    - PoW verification
+    - Transaction merkle root
+    - State root verification
+  - [ ] Task 19.3: DoS protection
+    - Rate limiting RPC
+    - Transaction pool limits
+    - Peer connection limits
+  - [ ] Task 19.4: PQ crypto audit
+    - ML-DSA-65 implementation review
+    - ML-KEM-768 implementation review
+    - Key generation security
+- [ ] **Faucet & Block Explorer (Phase 20)** - User tooling
+  - [ ] Task 20.1: Testnet faucet
+    - Web UI to request tokens
+    - Rate limiting per address/IP
+  - [ ] Task 20.2: Block explorer
+    - View blocks and transactions
+    - Search by hash/address
+    - Account balance lookup
+  - [ ] Task 20.3: Wallet UI
+    - Web wallet for sending transactions
+    - Balance display
+    - Transaction history
+
+---
+
+## Completion Criteria
+
+**Minimum Viable Blockchain (after Phase 13):**
+- ✓ Nodes can connect and sync
+- ✓ Transactions can be sent and confirmed
+- ✓ Balances update correctly
+
+**Production-Ready Blockchain (after Phase 20):**
+- ✓ Chain persists and recovers from restart
+- ✓ Network handles peer churn gracefully
+- ✓ Difficulty adjusts to maintain target block time
+- ✓ Proper genesis with token distribution
+- ✓ Monitoring and alerting in place
+- ✓ Security reviewed and hardened
+- ✓ User tooling (faucet, explorer, wallet) available
 
 ---
 
