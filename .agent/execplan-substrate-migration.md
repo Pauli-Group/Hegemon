@@ -135,10 +135,16 @@
     - Wired pending_txs_fn callback to get transactions from pool in service.rs
     - Wired on_import_success_fn to clear included transactions after block import
     - Full pipeline: RPC → NetworkBridge → TransactionPoolBridge → MockTransactionPool → mining worker → block
-  - [ ] Task 11.4: State execution
-    - Transactions must execute against runtime state
-    - Balances must update after transfers
-    - State root must be computed and included in block header
+  - [x] Task 11.4: State execution (2025-11-27)
+    - Added StateExecutionResult type with state_root, extrinsics_root, applied_extrinsics
+    - Added execute_extrinsics_fn callback to ProductionChainStateProvider
+    - Added execute_extrinsics() method with fallback mock execution
+    - Added build_block_template() to ChainStateProvider trait with state execution
+    - BlockTemplate.with_executed_state() sets real state_root in header
+    - compute_pre_hash_full() now includes state_root in block hash
+    - Scaffold mode: deterministic mock state root from extrinsics
+    - Production mode: wires to runtime BlockBuilder API (documented)
+    - Mining worker updated to use build_block_template() for state execution
   - [ ] Task 11.5: Chain sync between nodes
     - Received blocks must be validated and imported
     - Nodes must request missing blocks

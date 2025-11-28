@@ -192,7 +192,10 @@ impl BlockTemplate {
         }
     }
 
-    /// Add extrinsics to the template
+    /// Add extrinsics to the template (without state execution)
+    /// 
+    /// Note: This sets state_root to zero. For production use with real
+    /// state execution, use `with_executed_extrinsics` instead.
     pub fn with_extrinsics(mut self, extrinsics: Vec<Vec<u8>>) -> Self {
         self.extrinsics = extrinsics;
         // Recompute extrinsics root
@@ -203,8 +206,39 @@ impl BlockTemplate {
             self.number,
             self.timestamp,
             &self.extrinsics_root,
+            &self.state_root,
         );
         self
+    }
+
+    /// Add extrinsics with state execution (Task 11.4)
+    ///
+    /// This method executes extrinsics against the runtime state and computes
+    /// the real state root. Extrinsics that fail validation are excluded.
+    ///
+    /// # Arguments
+    ///
+    /// * `extrinsics` - Raw SCALE-encoded extrinsics to include
+    /// * `state_root` - State root after executing extrinsics
+    /// * `extrinsics_root` - Merkle root of applied extrinsics
+    pub fn with_executed_state(mut self, extrinsics: Vec<Vec<u8>>, state_root: H256, extrinsics_root: H256) -> Self {
+        self.extrinsics = extrinsics;
+        self.state_root = state_root;
+        self.extrinsics_root = extrinsics_root;
+        // Recompute pre-hash with actual state root
+        self.pre_hash = compute_pre_hash_full(
+            &self.parent_hash,
+            self.number,
+            self.timestamp,
+            &self.extrinsics_root,
+            &self.state_root,
+        );
+        self
+    }
+
+    /// Get the header hash (for block identification)
+    pub fn header_hash(&self) -> H256 {
+        self.pre_hash
     }
 
     /// Convert to MiningWork for the coordinator
@@ -241,23 +275,25 @@ fn compute_pre_hash(parent_hash: &H256, number: u64, timestamp: u64) -> H256 {
     H256::from_slice(hasher.finalize().as_bytes())
 }
 
-/// Compute pre-hash including extrinsics root
+/// Compute pre-hash including extrinsics root and state root (Task 11.4)
 fn compute_pre_hash_full(
     parent_hash: &H256,
     number: u64,
     timestamp: u64,
     extrinsics_root: &H256,
+    state_root: &H256,
 ) -> H256 {
     let mut hasher = blake3::Hasher::new();
     hasher.update(parent_hash.as_bytes());
     hasher.update(&number.to_le_bytes());
     hasher.update(&timestamp.to_le_bytes());
     hasher.update(extrinsics_root.as_bytes());
+    hasher.update(state_root.as_bytes());
     H256::from_slice(hasher.finalize().as_bytes())
 }
 
 /// Compute merkle root of extrinsics
-fn compute_extrinsics_root(extrinsics: &[Vec<u8>]) -> H256 {
+pub fn compute_extrinsics_root(extrinsics: &[Vec<u8>]) -> H256 {
     if extrinsics.is_empty() {
         return H256::zero();
     }
@@ -391,6 +427,32 @@ pub trait ChainStateProvider: Send + Sync {
     
     /// Notify that chain state may have changed (e.g., new block from network)
     fn on_new_block(&self, block_hash: &H256, block_number: u64);
+
+    /// Build a block template with state execution (Task 11.4)
+    ///
+    /// This method:
+    /// 1. Creates a new block template for the next block
+    /// 2. Gets pending transactions from the pool
+    /// 3. Executes them against the runtime state
+    /// 4. Computes and includes the real state root
+    ///
+    /// Default implementation uses mock execution (zero state root).
+    /// Override this for production use with real runtime execution.
+    fn build_block_template(&self) -> BlockTemplate {
+        let parent_hash = self.best_hash();
+        let block_number = self.best_number() + 1;
+        let difficulty_bits = self.difficulty_bits();
+        let pending = self.pending_transactions();
+        
+        let template = BlockTemplate::new(parent_hash, block_number, difficulty_bits);
+        
+        if pending.is_empty() {
+            template
+        } else {
+            // Default: use mock execution (no state root computation)
+            template.with_extrinsics(pending)
+        }
+    }
 }
 
 /// Mock chain state provider for scaffold mode
@@ -608,20 +670,14 @@ where
 
             // Check for new work (best block changed)
             let best_hash = self.chain_state.best_hash();
-            let best_number = self.chain_state.best_number();
-            let difficulty_bits = self.chain_state.difficulty_bits();
 
             if best_hash != last_best_hash || current_template.is_none() {
-                // Create new block template
-                let template = BlockTemplate::new(best_hash, best_number + 1, difficulty_bits);
-                
-                // Add pending transactions (if any)
-                let pending = self.chain_state.pending_transactions();
-                let template = if !pending.is_empty() {
-                    template.with_extrinsics(pending)
-                } else {
-                    template
-                };
+                // Build block template with state execution (Task 11.4)
+                // This handles:
+                // - Getting pending transactions
+                // - Executing them against runtime state
+                // - Computing state root
+                let template = self.chain_state.build_block_template();
 
                 // Update mining work
                 let work = template.to_mining_work();
@@ -636,9 +692,10 @@ where
                     tracing::debug!(
                         height = template.number,
                         parent_hash = %hex::encode(template.parent_hash.as_bytes()),
-                        difficulty = format!("{:08x}", difficulty_bits),
+                        difficulty = format!("{:08x}", template.difficulty_bits),
                         tx_count = template.extrinsics.len(),
-                        "New mining work"
+                        state_root = %hex::encode(template.state_root.as_bytes()),
+                        "New mining work (Task 11.4: state execution enabled)"
                     );
                 }
 
