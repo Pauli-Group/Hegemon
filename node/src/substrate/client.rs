@@ -392,10 +392,26 @@ pub struct ProductionChainStateProvider {
     /// Callback called after successful block import (Task 11.3)
     /// Used to clear included transactions from the pool
     on_import_success_fn: parking_lot::RwLock<Option<Box<dyn Fn(&[Vec<u8>]) + Send + Sync>>>,
+    /// Callback to execute extrinsics and compute state root (Task 11.4)
+    /// Takes parent hash and extrinsics, returns execution result with state root
+    execute_extrinsics_fn: parking_lot::RwLock<Option<Box<dyn Fn(&H256, u64, &[Vec<u8>]) -> Result<StateExecutionResult, String> + Send + Sync>>>,
     /// Fallback state for when callbacks aren't set
     pub fallback_state: SubstrateChainStateProvider,
     /// Configuration
     config: ProductionConfig,
+}
+
+/// Result of executing extrinsics against runtime state (Task 11.4)
+#[derive(Clone, Debug)]
+pub struct StateExecutionResult {
+    /// Extrinsics that were successfully applied
+    pub applied_extrinsics: Vec<Vec<u8>>,
+    /// State root after applying extrinsics
+    pub state_root: H256,
+    /// Extrinsics root (merkle root of applied extrinsics)
+    pub extrinsics_root: H256,
+    /// Number of extrinsics that failed validation
+    pub failed_count: usize,
 }
 
 impl std::fmt::Debug for ProductionChainStateProvider {
@@ -406,6 +422,7 @@ impl std::fmt::Debug for ProductionChainStateProvider {
             .field("has_pending_txs_fn", &self.pending_txs_fn.read().is_some())
             .field("has_import_fn", &self.import_fn.read().is_some())
             .field("has_on_import_success_fn", &self.on_import_success_fn.read().is_some())
+            .field("has_execute_extrinsics_fn", &self.execute_extrinsics_fn.read().is_some())
             .field("fallback_state", &"<SubstrateChainStateProvider>")
             .field("config", &self.config)
             .finish()
@@ -421,6 +438,7 @@ impl ProductionChainStateProvider {
             pending_txs_fn: parking_lot::RwLock::new(None),
             import_fn: parking_lot::RwLock::new(None),
             on_import_success_fn: parking_lot::RwLock::new(None),
+            execute_extrinsics_fn: parking_lot::RwLock::new(None),
             fallback_state: SubstrateChainStateProvider::new(),
             config,
         }
@@ -483,6 +501,85 @@ impl ProductionChainStateProvider {
         *self.on_import_success_fn.write() = Some(Box::new(f));
     }
 
+    /// Set the callback for executing extrinsics (Task 11.4)
+    ///
+    /// This callback executes extrinsics against the runtime state and computes
+    /// the resulting state root. It should use the Substrate runtime API:
+    /// 1. Initialize block with parent header
+    /// 2. Apply each extrinsic via `apply_extrinsic`
+    /// 3. Finalize block via `finalize_block` to get state root
+    ///
+    /// # Arguments
+    ///
+    /// * `parent_hash` - Hash of the parent block
+    /// * `block_number` - Number of the block being built
+    /// * `extrinsics` - SCALE-encoded extrinsics to execute
+    ///
+    /// # Returns
+    ///
+    /// `StateExecutionResult` containing state root and applied extrinsics
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// chain_state.set_execute_extrinsics_fn(move |parent_hash, block_number, extrinsics| {
+    ///     // Use runtime API to execute extrinsics
+    ///     let result = client.runtime_api()
+    ///         .execute_block_with_extrinsics(parent_hash, block_number, extrinsics)?;
+    ///     Ok(StateExecutionResult {
+    ///         applied_extrinsics: result.applied,
+    ///         state_root: result.state_root,
+    ///         extrinsics_root: result.extrinsics_root,
+    ///         failed_count: result.failed,
+    ///     })
+    /// });
+    /// ```
+    pub fn set_execute_extrinsics_fn<F>(&self, f: F)
+    where
+        F: Fn(&H256, u64, &[Vec<u8>]) -> Result<StateExecutionResult, String> + Send + Sync + 'static,
+    {
+        *self.execute_extrinsics_fn.write() = Some(Box::new(f));
+    }
+
+    /// Execute extrinsics and get state root (Task 11.4)
+    ///
+    /// If execute_extrinsics_fn is set, uses it to execute against real runtime.
+    /// Otherwise, falls back to mock execution with zero state root.
+    pub fn execute_extrinsics(&self, parent_hash: &H256, block_number: u64, extrinsics: &[Vec<u8>]) -> Result<StateExecutionResult, String> {
+        if let Some(ref f) = *self.execute_extrinsics_fn.read() {
+            let result = f(parent_hash, block_number, extrinsics);
+            if self.config.verbose {
+                match &result {
+                    Ok(r) => tracing::debug!(
+                        parent = %hex::encode(parent_hash.as_bytes()),
+                        block_number,
+                        applied = r.applied_extrinsics.len(),
+                        failed = r.failed_count,
+                        state_root = %hex::encode(r.state_root.as_bytes()),
+                        "State execution complete (Task 11.4)"
+                    ),
+                    Err(e) => tracing::warn!(
+                        parent = %hex::encode(parent_hash.as_bytes()),
+                        block_number,
+                        error = %e,
+                        "State execution failed (Task 11.4)"
+                    ),
+                }
+            }
+            result
+        } else {
+            // Fallback: mock execution with zero state root
+            // This allows mining to work in scaffold mode without full runtime
+            let extrinsics_root = crate::substrate::mining_worker::compute_extrinsics_root(extrinsics);
+            Ok(StateExecutionResult {
+                applied_extrinsics: extrinsics.to_vec(),
+                state_root: H256::zero(),
+                extrinsics_root,
+                failed_count: 0,
+            })
+        }
+    }
+
     /// Check if all callbacks are configured
     pub fn is_fully_configured(&self) -> bool {
         self.best_block_fn.read().is_some()
@@ -490,6 +587,12 @@ impl ProductionChainStateProvider {
             && self.pending_txs_fn.read().is_some()
             && self.import_fn.read().is_some()
             // on_import_success_fn is optional
+            // execute_extrinsics_fn is optional (fallback to mock)
+    }
+
+    /// Check if state execution is configured (Task 11.4)
+    pub fn has_state_execution(&self) -> bool {
+        self.execute_extrinsics_fn.read().is_some()
     }
 
     /// Update fallback state (for use when callbacks aren't set)
@@ -584,6 +687,55 @@ impl ChainStateProvider for ProductionChainStateProvider {
                 block_number = block_number,
                 "Production provider: notified of new block"
             );
+        }
+    }
+
+    fn build_block_template(&self) -> BlockTemplate {
+        let parent_hash = self.best_hash();
+        let block_number = self.best_number() + 1;
+        let difficulty_bits = self.difficulty_bits();
+        let pending = self.pending_transactions();
+        
+        let template = BlockTemplate::new(parent_hash, block_number, difficulty_bits);
+        
+        if pending.is_empty() {
+            if self.config.verbose {
+                tracing::debug!(
+                    block_number,
+                    parent = %hex::encode(parent_hash.as_bytes()),
+                    "Building empty block template (no pending transactions)"
+                );
+            }
+            return template;
+        }
+        
+        // Task 11.4: Execute extrinsics against runtime state
+        match self.execute_extrinsics(&parent_hash, block_number, &pending) {
+            Ok(result) => {
+                if self.config.verbose {
+                    tracing::debug!(
+                        block_number,
+                        applied = result.applied_extrinsics.len(),
+                        failed = result.failed_count,
+                        state_root = %hex::encode(result.state_root.as_bytes()),
+                        "Block template built with state execution (Task 11.4)"
+                    );
+                }
+                template.with_executed_state(
+                    result.applied_extrinsics,
+                    result.state_root,
+                    result.extrinsics_root,
+                )
+            }
+            Err(e) => {
+                tracing::warn!(
+                    block_number,
+                    error = %e,
+                    "State execution failed, falling back to mock (Task 11.4)"
+                );
+                // Fallback to simple extrinsics without state execution
+                template.with_extrinsics(pending)
+            }
         }
     }
 }
@@ -871,5 +1023,101 @@ mod tests {
         assert_eq!(cleared.len(), 2);
         assert!(cleared.contains(&tx1));
         assert!(cleared.contains(&tx2));
+    }
+
+    #[test]
+    fn test_production_provider_execute_extrinsics() {
+        let provider = ProductionChainStateProvider::new(ProductionConfig::default());
+        
+        let parent = H256::from([1u8; 32]);
+        let extrinsics = vec![vec![1, 2, 3], vec![4, 5, 6]];
+        
+        // Without callback, should return mock execution
+        let result = provider.execute_extrinsics(&parent, 1, &extrinsics);
+        assert!(result.is_ok());
+        let exec_result = result.unwrap();
+        assert_eq!(exec_result.applied_extrinsics.len(), 2);
+        assert_eq!(exec_result.failed_count, 0);
+        // State root should be zero in fallback mode
+        assert_eq!(exec_result.state_root, H256::zero());
+    }
+
+    #[test]
+    fn test_production_provider_execute_extrinsics_with_callback() {
+        let provider = ProductionChainStateProvider::new(ProductionConfig::default());
+        
+        // Set up custom state execution callback
+        let custom_state_root = H256::repeat_byte(0xab);
+        let custom_extrinsics_root = H256::repeat_byte(0xcd);
+        
+        provider.set_execute_extrinsics_fn(move |_parent, _number, extrinsics| {
+            Ok(StateExecutionResult {
+                applied_extrinsics: extrinsics.to_vec(),
+                state_root: custom_state_root,
+                extrinsics_root: custom_extrinsics_root,
+                failed_count: 0,
+            })
+        });
+        
+        let parent = H256::from([1u8; 32]);
+        let extrinsics = vec![vec![1, 2, 3]];
+        
+        let result = provider.execute_extrinsics(&parent, 1, &extrinsics);
+        assert!(result.is_ok());
+        let exec_result = result.unwrap();
+        assert_eq!(exec_result.state_root, custom_state_root);
+        assert_eq!(exec_result.extrinsics_root, custom_extrinsics_root);
+    }
+
+    #[test]
+    fn test_production_provider_build_block_template_with_state() {
+        use crate::substrate::mining_worker::BlockTemplate;
+        
+        let provider = ProductionChainStateProvider::new(ProductionConfig::default());
+        
+        // Set up callbacks
+        let parent = H256::repeat_byte(0x11);
+        provider.set_best_block_fn(move || (parent, 5));
+        provider.set_difficulty_fn(|| 0x1f_00_ff_ff);
+        provider.set_pending_txs_fn(|| vec![vec![1, 2, 3], vec![4, 5, 6]]);
+        
+        let custom_state_root = H256::repeat_byte(0xab);
+        provider.set_execute_extrinsics_fn(move |_parent, _number, extrinsics| {
+            Ok(StateExecutionResult {
+                applied_extrinsics: extrinsics.to_vec(),
+                state_root: custom_state_root,
+                extrinsics_root: crate::substrate::compute_extrinsics_root(extrinsics),
+                failed_count: 0,
+            })
+        });
+        
+        // Build template
+        let template = provider.build_block_template();
+        
+        assert_eq!(template.number, 6);
+        assert_eq!(template.parent_hash, parent);
+        assert_eq!(template.difficulty_bits, 0x1f_00_ff_ff);
+        assert_eq!(template.extrinsics.len(), 2);
+        assert_eq!(template.state_root, custom_state_root);
+    }
+
+    #[test]
+    fn test_has_state_execution() {
+        let provider = ProductionChainStateProvider::new(ProductionConfig::default());
+        
+        // Initially no state execution
+        assert!(!provider.has_state_execution());
+        
+        // After setting callback
+        provider.set_execute_extrinsics_fn(|_, _, _| {
+            Ok(StateExecutionResult {
+                applied_extrinsics: vec![],
+                state_root: H256::zero(),
+                extrinsics_root: H256::zero(),
+                failed_count: 0,
+            })
+        });
+        
+        assert!(provider.has_state_execution());
     }
 }

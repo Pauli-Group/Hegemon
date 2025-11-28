@@ -71,12 +71,12 @@ pub use chain_spec::ChainSpec;
 pub use client::{
     FullBackend, FullClient, FullClientConfig, FullTransactionPool, SubstrateChainStateProvider,
     WasmExecutor, create_chain_state_provider, create_chain_state_provider_with_state,
-    DEFAULT_DIFFICULTY_BITS,
+    DEFAULT_DIFFICULTY_BITS, StateExecutionResult,
 };
 pub use mining_worker::{
     BlockBroadcaster, BlockTemplate, ChainStateProvider, MiningWorker, MiningWorkerConfig,
     MiningWorkerStats, MockBlockBroadcaster, MockChainStateProvider, NetworkBridgeBroadcaster,
-    create_network_mining_worker, create_scaffold_mining_worker,
+    create_network_mining_worker, create_scaffold_mining_worker, compute_extrinsics_root,
 };
 pub use network::{PqNetworkConfig, PqNetworkKeypair};
 pub use network_bridge::{
