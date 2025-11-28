@@ -985,7 +985,8 @@ mod tests {
         
         assert_eq!(provider.best_number(), 0);
         assert_eq!(provider.best_hash(), H256::zero());
-        assert_eq!(provider.difficulty_bits(), 0x1d00ffff);
+        // DEFAULT_DIFFICULTY_BITS = 0x1e00ffff for reasonable dev/test block times
+        assert_eq!(provider.difficulty_bits(), DEFAULT_DIFFICULTY_BITS);
     }
 
     #[test]

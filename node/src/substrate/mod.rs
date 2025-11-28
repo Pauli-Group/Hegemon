@@ -85,7 +85,10 @@ pub use network_bridge::{
     BLOCK_ANNOUNCE_PROTOCOL, SYNC_PROTOCOL, TRANSACTIONS_PROTOCOL,
 };
 pub use rpc::{HegemonApiServer, WalletApiServer, HegemonService, MiningHandle, WalletService};
-pub use service::{new_full, new_partial, FullComponents, MiningConfig, PartialComponents};
+pub use service::{
+    new_full, new_partial, FullComponents, MiningConfig, PartialComponents,
+    BlockImportStats, BlockImportTracker, FullBlockImportConfig, wire_import_tracker,
+};
 pub use transaction_pool::{
     MockTransactionPool, PoolBridgeStats, PoolError, SubmissionResult,
     TransactionPool as TransactionPoolTrait, TransactionPoolBridge, TransactionPoolConfig,
