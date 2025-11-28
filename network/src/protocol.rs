@@ -1,12 +1,12 @@
 //! PQ Protocol Negotiation
 //!
-//! Handles version negotiation between PQ and non-PQ peers.
+//! Handles version negotiation for PQ-secured connections.
 //!
 //! # Phase 3.5 Implementation
 //!
 //! This module implements Task 3.5.4 of the substrate migration plan:
 //! - PQ protocol version negotiation
-//! - Protocol identification for PQ-aware vs legacy peers
+//! - Protocol identification for PQ peers
 //! - Notification protocol configuration
 //!
 //! # Protocol Versioning
@@ -15,10 +15,10 @@
 //! ┌─────────────────────────────────────────────────────────────────┐
 //! │                    Protocol Negotiation                          │
 //! ├─────────────────────────────────────────────────────────────────┤
-//! │  Priority Order (highest first):                                 │
-//! │  1. /hegemon/pq/1        - Full PQ (ML-KEM-768 + ML-DSA-65)    │
-//! │  2. /hegemon/hybrid/1    - Hybrid (X25519 + ML-KEM-768)        │
-//! │  3. /hegemon/legacy/1    - Legacy (X25519 only) [if allowed]   │
+//! │  Security (ML-KEM-768 + ML-DSA-65 only):                        │
+//! │  1. /hegemon/pq/1 - Full PQ (ML-KEM-768 + ML-DSA-65)            │
+//! │                                                                  │
+//! │  No classical/ECC fallbacks - pure post-quantum only.           │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 
@@ -27,29 +27,14 @@ use std::fmt;
 /// Protocol version for PQ-secured connections (full PQ)
 pub const PQ_PROTOCOL_V1: &str = "/hegemon/pq/1";
 
-/// Protocol version for hybrid connections (classical + PQ)
-pub const HYBRID_PROTOCOL_V1: &str = "/hegemon/hybrid/1";
-
-/// Protocol version for legacy connections (classical only)
-pub const LEGACY_PROTOCOL_V1: &str = "/hegemon/legacy/1";
-
 /// Block announcement protocol (PQ version)
 pub const BLOCK_ANNOUNCES_PQ: &str = "/hegemon/block-announces/pq/1";
-
-/// Block announcement protocol (legacy version)
-pub const BLOCK_ANNOUNCES_LEGACY: &str = "/hegemon/block-announces/1";
 
 /// Transaction propagation protocol (PQ version)
 pub const TRANSACTIONS_PQ: &str = "/hegemon/transactions/pq/1";
 
-/// Transaction propagation protocol (legacy version)
-pub const TRANSACTIONS_LEGACY: &str = "/hegemon/transactions/1";
-
 /// Sync protocol (PQ version)
 pub const SYNC_PQ: &str = "/hegemon/sync/pq/1";
-
-/// Sync protocol (legacy version)
-pub const SYNC_LEGACY: &str = "/hegemon/sync/1";
 
 /// State request protocol
 pub const STATE_REQUEST: &str = "/hegemon/state/1";
@@ -57,13 +42,9 @@ pub const STATE_REQUEST: &str = "/hegemon/state/1";
 /// Light client protocol
 pub const LIGHT_CLIENT: &str = "/hegemon/light/1";
 
-/// Protocol security level
+/// Protocol security level (PQ-only network - no classical fallbacks)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ProtocolSecurityLevel {
-    /// Legacy security (classical cryptography only)
-    Legacy = 0,
-    /// Hybrid security (classical + post-quantum)
-    Hybrid = 1,
     /// Full PQ security (post-quantum only)
     PostQuantum = 2,
 }
@@ -77,8 +58,6 @@ impl ProtocolSecurityLevel {
     /// Get the protocol identifier for this security level
     pub fn protocol_id(&self) -> &'static str {
         match self {
-            ProtocolSecurityLevel::Legacy => LEGACY_PROTOCOL_V1,
-            ProtocolSecurityLevel::Hybrid => HYBRID_PROTOCOL_V1,
             ProtocolSecurityLevel::PostQuantum => PQ_PROTOCOL_V1,
         }
     }
@@ -87,8 +66,6 @@ impl ProtocolSecurityLevel {
 impl fmt::Display for ProtocolSecurityLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ProtocolSecurityLevel::Legacy => write!(f, "Legacy (X25519)"),
-            ProtocolSecurityLevel::Hybrid => write!(f, "Hybrid (X25519 + ML-KEM-768)"),
             ProtocolSecurityLevel::PostQuantum => write!(f, "PQ (ML-KEM-768 + ML-DSA-65)"),
         }
     }
@@ -121,17 +98,6 @@ impl ProtocolType {
             ProtocolType::Transactions => Some(TRANSACTIONS_PQ),
             ProtocolType::Sync => Some(SYNC_PQ),
             ProtocolType::Handshake => Some(PQ_PROTOCOL_V1),
-            _ => None,
-        }
-    }
-
-    /// Get the legacy version of this protocol
-    pub fn legacy_protocol(&self) -> Option<&'static str> {
-        match self {
-            ProtocolType::BlockAnnounces => Some(BLOCK_ANNOUNCES_LEGACY),
-            ProtocolType::Transactions => Some(TRANSACTIONS_LEGACY),
-            ProtocolType::Sync => Some(SYNC_LEGACY),
-            ProtocolType::Handshake => Some(LEGACY_PROTOCOL_V1),
             ProtocolType::StateRequest => Some(STATE_REQUEST),
             ProtocolType::LightClient => Some(LIGHT_CLIENT),
             _ => None,
@@ -139,13 +105,9 @@ impl ProtocolType {
     }
 }
 
-/// Get the list of supported protocols in order of preference
-pub fn supported_protocols(require_pq: bool) -> Vec<&'static str> {
-    if require_pq {
-        vec![PQ_PROTOCOL_V1, HYBRID_PROTOCOL_V1]
-    } else {
-        vec![PQ_PROTOCOL_V1, HYBRID_PROTOCOL_V1, LEGACY_PROTOCOL_V1]
-    }
+/// Get the list of supported protocols (PQ-only)
+pub fn supported_protocols() -> Vec<&'static str> {
+    vec![PQ_PROTOCOL_V1]
 }
 
 /// Check if a protocol identifier is PQ-secure
@@ -153,25 +115,10 @@ pub fn is_pq_protocol(protocol: &str) -> bool {
     protocol.contains("/pq/") || protocol == PQ_PROTOCOL_V1
 }
 
-/// Check if a protocol identifier is hybrid
-pub fn is_hybrid_protocol(protocol: &str) -> bool {
-    protocol.contains("/hybrid/") || protocol == HYBRID_PROTOCOL_V1
-}
-
-/// Check if a protocol identifier is legacy
-pub fn is_legacy_protocol(protocol: &str) -> bool {
-    !is_pq_protocol(protocol) && !is_hybrid_protocol(protocol)
-}
-
 /// Get the security level of a protocol identifier
-pub fn protocol_security_level(protocol: &str) -> ProtocolSecurityLevel {
-    if is_pq_protocol(protocol) {
-        ProtocolSecurityLevel::PostQuantum
-    } else if is_hybrid_protocol(protocol) {
-        ProtocolSecurityLevel::Hybrid
-    } else {
-        ProtocolSecurityLevel::Legacy
-    }
+pub fn protocol_security_level(_protocol: &str) -> ProtocolSecurityLevel {
+    // All protocols in this PQ-only network are PostQuantum
+    ProtocolSecurityLevel::PostQuantum
 }
 
 /// Get the protocol type from a protocol identifier
@@ -186,7 +133,7 @@ pub fn protocol_type(protocol: &str) -> ProtocolType {
         ProtocolType::StateRequest
     } else if protocol.contains("light") {
         ProtocolType::LightClient
-    } else if protocol.contains("/pq/") || protocol.contains("/hybrid/") || protocol.contains("/legacy/") {
+    } else if protocol.contains("/pq/") {
         ProtocolType::Handshake
     } else {
         ProtocolType::Unknown
@@ -194,24 +141,15 @@ pub fn protocol_type(protocol: &str) -> ProtocolType {
 }
 
 /// Negotiate the best protocol between local and remote supported protocols
+/// (PQ-only network - only PQ is accepted)
 pub fn negotiate_protocol(
     local_supported: &[&str],
     remote_supported: &[&str],
-    require_pq: bool,
 ) -> Option<&'static str> {
-    // Priority order: PQ > Hybrid > Legacy
-    let priority_order = if require_pq {
-        vec![PQ_PROTOCOL_V1, HYBRID_PROTOCOL_V1]
-    } else {
-        vec![PQ_PROTOCOL_V1, HYBRID_PROTOCOL_V1, LEGACY_PROTOCOL_V1]
-    };
-
-    for protocol in priority_order {
-        if local_supported.contains(&protocol) && remote_supported.contains(&protocol) {
-            return Some(protocol);
-        }
+    // PQ-only network - only accept PQ protocol
+    if local_supported.contains(&PQ_PROTOCOL_V1) && remote_supported.contains(&PQ_PROTOCOL_V1) {
+        return Some(PQ_PROTOCOL_V1);
     }
-
     None
 }
 
@@ -230,115 +168,59 @@ pub struct NegotiationResult {
 
 impl NegotiationResult {
     /// Create a new negotiation result
-    pub fn new(
-        protocol: &str,
-        require_pq: bool,
-    ) -> Self {
+    pub fn new(protocol: &str) -> Self {
         let security_level = protocol_security_level(protocol);
-        let peer_supports_pq = security_level >= ProtocolSecurityLevel::Hybrid;
-        let meets_pq_requirement = !require_pq || peer_supports_pq;
+        let peer_supports_pq = is_pq_protocol(protocol);
 
         Self {
             protocol: protocol.to_string(),
             security_level,
             peer_supports_pq,
-            meets_pq_requirement,
+            meets_pq_requirement: peer_supports_pq, // PQ required in this network
         }
     }
 }
 
-/// Configuration for protocol negotiation
+/// Configuration for protocol negotiation (PQ-only network)
 #[derive(Debug, Clone)]
 pub struct ProtocolNegotiationConfig {
-    /// Whether to require PQ for all connections
-    pub require_pq: bool,
-    /// Preferred security level
+    /// Preferred security level (always PostQuantum)
     pub preferred_level: ProtocolSecurityLevel,
-    /// Minimum acceptable security level
-    pub minimum_level: ProtocolSecurityLevel,
-    /// Locally supported protocols
+    /// Locally supported protocols (PQ only)
     pub supported_protocols: Vec<String>,
 }
 
 impl Default for ProtocolNegotiationConfig {
     fn default() -> Self {
         Self {
-            require_pq: true,
             preferred_level: ProtocolSecurityLevel::PostQuantum,
-            minimum_level: ProtocolSecurityLevel::Hybrid,
-            supported_protocols: vec![
-                PQ_PROTOCOL_V1.to_string(),
-                HYBRID_PROTOCOL_V1.to_string(),
-            ],
+            supported_protocols: vec![PQ_PROTOCOL_V1.to_string()],
         }
     }
 }
 
 impl ProtocolNegotiationConfig {
-    /// Create a configuration that requires PQ
+    /// Create a configuration (PQ required by default)
     pub fn pq_required() -> Self {
         Self::default()
-    }
-
-    /// Create a configuration that allows hybrid
-    pub fn hybrid_allowed() -> Self {
-        Self {
-            require_pq: false,
-            preferred_level: ProtocolSecurityLevel::PostQuantum,
-            minimum_level: ProtocolSecurityLevel::Hybrid,
-            supported_protocols: vec![
-                PQ_PROTOCOL_V1.to_string(),
-                HYBRID_PROTOCOL_V1.to_string(),
-            ],
-        }
-    }
-
-    /// Create a configuration that allows legacy (development only)
-    pub fn legacy_allowed() -> Self {
-        Self {
-            require_pq: false,
-            preferred_level: ProtocolSecurityLevel::PostQuantum,
-            minimum_level: ProtocolSecurityLevel::Legacy,
-            supported_protocols: vec![
-                PQ_PROTOCOL_V1.to_string(),
-                HYBRID_PROTOCOL_V1.to_string(),
-                LEGACY_PROTOCOL_V1.to_string(),
-            ],
-        }
     }
 }
 
 /// Notification protocol configuration for block announcements
-pub fn block_announces_config(pq_enabled: bool) -> NotificationProtocolConfig {
+pub fn block_announces_config() -> NotificationProtocolConfig {
     NotificationProtocolConfig {
-        name: if pq_enabled {
-            BLOCK_ANNOUNCES_PQ.to_string()
-        } else {
-            BLOCK_ANNOUNCES_LEGACY.to_string()
-        },
-        fallback_names: if pq_enabled {
-            vec![BLOCK_ANNOUNCES_LEGACY.to_string()]
-        } else {
-            vec![]
-        },
+        name: BLOCK_ANNOUNCES_PQ.to_string(),
+        fallback_names: vec![],
         max_notification_size: 1024 * 1024, // 1 MB
         handshake: None,
     }
 }
 
 /// Notification protocol configuration for transactions
-pub fn transactions_config(pq_enabled: bool) -> NotificationProtocolConfig {
+pub fn transactions_config() -> NotificationProtocolConfig {
     NotificationProtocolConfig {
-        name: if pq_enabled {
-            TRANSACTIONS_PQ.to_string()
-        } else {
-            TRANSACTIONS_LEGACY.to_string()
-        },
-        fallback_names: if pq_enabled {
-            vec![TRANSACTIONS_LEGACY.to_string()]
-        } else {
-            vec![]
-        },
+        name: TRANSACTIONS_PQ.to_string(),
+        fallback_names: vec![],
         max_notification_size: 16 * 1024 * 1024, // 16 MB
         handshake: None,
     }
@@ -357,11 +239,11 @@ pub struct NotificationProtocolConfig {
     pub handshake: Option<Vec<u8>>,
 }
 
-/// Build notification protocol configurations for the node
-pub fn build_notification_configs(pq_enabled: bool) -> Vec<NotificationProtocolConfig> {
+/// Build notification protocol configurations for the node (PQ-only)
+pub fn build_notification_configs() -> Vec<NotificationProtocolConfig> {
     vec![
-        block_announces_config(pq_enabled),
-        transactions_config(pq_enabled),
+        block_announces_config(),
+        transactions_config(),
     ]
 }
 
@@ -371,14 +253,7 @@ mod tests {
 
     #[test]
     fn test_protocol_security_levels() {
-        assert!(ProtocolSecurityLevel::PostQuantum > ProtocolSecurityLevel::Hybrid);
-        assert!(ProtocolSecurityLevel::Hybrid > ProtocolSecurityLevel::Legacy);
-        
-        assert!(ProtocolSecurityLevel::PostQuantum.meets_requirement(ProtocolSecurityLevel::Legacy));
-        assert!(ProtocolSecurityLevel::PostQuantum.meets_requirement(ProtocolSecurityLevel::Hybrid));
         assert!(ProtocolSecurityLevel::PostQuantum.meets_requirement(ProtocolSecurityLevel::PostQuantum));
-        
-        assert!(!ProtocolSecurityLevel::Legacy.meets_requirement(ProtocolSecurityLevel::Hybrid));
     }
 
     #[test]
@@ -386,18 +261,6 @@ mod tests {
         assert!(is_pq_protocol(PQ_PROTOCOL_V1));
         assert!(is_pq_protocol(BLOCK_ANNOUNCES_PQ));
         assert!(is_pq_protocol(TRANSACTIONS_PQ));
-        
-        assert!(!is_pq_protocol(LEGACY_PROTOCOL_V1));
-        assert!(!is_pq_protocol(BLOCK_ANNOUNCES_LEGACY));
-    }
-
-    #[test]
-    fn test_is_hybrid_protocol() {
-        assert!(is_hybrid_protocol(HYBRID_PROTOCOL_V1));
-        assert!(is_hybrid_protocol("/hegemon/hybrid/2"));
-        
-        assert!(!is_hybrid_protocol(PQ_PROTOCOL_V1));
-        assert!(!is_hybrid_protocol(LEGACY_PROTOCOL_V1));
     }
 
     #[test]
@@ -412,57 +275,35 @@ mod tests {
     #[test]
     fn test_negotiate_protocol() {
         // Both support PQ
-        let local = vec![PQ_PROTOCOL_V1, HYBRID_PROTOCOL_V1];
-        let remote = vec![PQ_PROTOCOL_V1, HYBRID_PROTOCOL_V1];
-        assert_eq!(negotiate_protocol(&local, &remote, true), Some(PQ_PROTOCOL_V1));
+        let local = vec![PQ_PROTOCOL_V1];
+        let remote = vec![PQ_PROTOCOL_V1];
+        assert_eq!(negotiate_protocol(&local, &remote), Some(PQ_PROTOCOL_V1));
 
-        // Remote only supports Hybrid
-        let remote = vec![HYBRID_PROTOCOL_V1];
-        assert_eq!(negotiate_protocol(&local, &remote, true), Some(HYBRID_PROTOCOL_V1));
-
-        // Remote only supports Legacy
-        let remote = vec![LEGACY_PROTOCOL_V1];
-        assert_eq!(negotiate_protocol(&local, &remote, true), None);
-
-        // Legacy allowed
-        let local = vec![PQ_PROTOCOL_V1, HYBRID_PROTOCOL_V1, LEGACY_PROTOCOL_V1];
-        let remote = vec![LEGACY_PROTOCOL_V1];
-        assert_eq!(negotiate_protocol(&local, &remote, false), Some(LEGACY_PROTOCOL_V1));
+        // Remote doesn't support PQ - should fail
+        let local = vec![PQ_PROTOCOL_V1];
+        let remote: Vec<&str> = vec![];
+        assert_eq!(negotiate_protocol(&local, &remote), None);
     }
 
     #[test]
     fn test_negotiation_result() {
-        let result = NegotiationResult::new(PQ_PROTOCOL_V1, true);
+        let result = NegotiationResult::new(PQ_PROTOCOL_V1);
         assert_eq!(result.security_level, ProtocolSecurityLevel::PostQuantum);
         assert!(result.peer_supports_pq);
-        assert!(result.meets_pq_requirement);
-
-        let result = NegotiationResult::new(LEGACY_PROTOCOL_V1, true);
-        assert_eq!(result.security_level, ProtocolSecurityLevel::Legacy);
-        assert!(!result.peer_supports_pq);
-        assert!(!result.meets_pq_requirement);
-
-        let result = NegotiationResult::new(LEGACY_PROTOCOL_V1, false);
         assert!(result.meets_pq_requirement);
     }
 
     #[test]
     fn test_notification_configs() {
-        let configs = build_notification_configs(true);
+        let configs = build_notification_configs();
         assert_eq!(configs.len(), 2);
         assert!(configs[0].name.contains("/pq/"));
         assert!(configs[1].name.contains("/pq/"));
-        assert!(!configs[0].fallback_names.is_empty());
     }
 
     #[test]
     fn test_protocol_negotiation_config() {
         let pq_required = ProtocolNegotiationConfig::pq_required();
-        assert!(pq_required.require_pq);
-        assert_eq!(pq_required.minimum_level, ProtocolSecurityLevel::Hybrid);
-
-        let legacy_allowed = ProtocolNegotiationConfig::legacy_allowed();
-        assert!(!legacy_allowed.require_pq);
-        assert_eq!(legacy_allowed.minimum_level, ProtocolSecurityLevel::Legacy);
+        assert_eq!(pq_required.preferred_level, ProtocolSecurityLevel::PostQuantum);
     }
 }

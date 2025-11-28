@@ -59,13 +59,13 @@ Use *only* NIST PQC signatures:
 * Primary: **ML-DSA** (Dilithium, FIPS 204) for “everyday” signatures. ([NIST][1])
 * Backup: **SLH-DSA** (SPHINCS+, FIPS 205) for long-lived roots of trust (genesis multisig, governance keys, etc.). ([Cloud Security Alliance][3])
 
-Where they’re used:
+Where they're used:
 
 * **Consensus / networking**:
 
   * Block producers sign block headers with ML-DSA.
   * Mining node identity keys = ML-DSA.
-  * Identity/session records keep a **hybrid bundle** (Dilithium/Falcon + Ed25519) so legacy tooling can ride alongside PQ keys until upgrades retire classical crypto entirely. The runtime migration in `pallet_identity` wraps any stored `AuthorityId` into `SessionKey::Legacy` on upgrade so operators inherit their previous keys before rotating into PQ-only or hybrid bundles.
+  * Identity/session records support `SessionKey::Legacy` (existing `AuthorityId`) and `SessionKey::PostQuantum` (Dilithium/Falcon). The runtime migration in `pallet_identity` wraps any stored `AuthorityId` into `SessionKey::Legacy` on upgrade so operators inherit their previous keys before rotating into PQ-only bundles.
 * **User layer**:
 
   * Surprisingly little: within the shielded protocol, we can get rid of *per-input signatures* entirely and instead authorize spends by proving knowledge of a secret key in ZK (like Zcash already does with spend authorizing keys; here we do it with hash/lattice PRFs rather than ECC).

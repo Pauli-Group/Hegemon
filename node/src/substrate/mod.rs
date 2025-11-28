@@ -22,7 +22,7 @@
 //!
 //! This phase implements PQ libp2p integration:
 //! - PqNetworkConfig for PQ-secure networking
-//! - Hybrid X25519 + ML-KEM-768 handshake
+//! - Pure ML-KEM-768 handshake (no classical ECDH)
 //! - ML-DSA-65 peer authentication
 //! - Integration with sc-network (pending aligned polkadot-sdk)
 //!

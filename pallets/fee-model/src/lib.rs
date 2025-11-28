@@ -397,14 +397,6 @@ mod tests {
     }
 
     #[derive(Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Debug, TypeInfo)]
-    pub struct MaxEd25519KeyBytes;
-    impl frame_support::traits::Get<u32> for MaxEd25519KeyBytes {
-        fn get() -> u32 {
-            64
-        }
-    }
-
-    #[derive(Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Debug, TypeInfo)]
     pub struct MaxPqKeyBytes;
     impl frame_support::traits::Get<u32> for MaxPqKeyBytes {
         fn get() -> u32 {
@@ -475,7 +467,6 @@ mod tests {
         type MaxProofSize = MaxProofSize;
         type MaxIdentityTags = MaxIdentityTags;
         type MaxTagLength = MaxTagLength;
-        type MaxEd25519KeyBytes = MaxEd25519KeyBytes;
         type MaxPqKeyBytes = MaxPqKeyBytes;
         type WeightInfo = ();
     }

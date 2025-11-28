@@ -21,7 +21,7 @@ const PRF_KEY_DOMAIN: &[u8] = b"Hegemon_PrfKey_v1";
 
 /// Poseidon-like hash parameters for note commitments.
 /// These are simplified for the pallet; the actual ZK circuit uses
-/// proper Poseidon with SNARK-friendly field elements.
+/// proper Poseidon with STARK-friendly field elements.
 const POSEIDON_ROUNDS: usize = 8;
 const POSEIDON_WIDTH: usize = 3;
 
@@ -113,7 +113,8 @@ fn poseidon_mix(state: &mut [FieldElement; POSEIDON_WIDTH]) {
 /// Poseidon hash function.
 ///
 /// This is a simplified implementation for the pallet runtime.
-/// The ZK circuits use the full algebraic Poseidon over the BLS12-381 scalar field.
+/// The ZK circuits use the full algebraic Poseidon over the Goldilocks field (2^64 - 2^32 + 1).
+/// Poseidon is STARK-friendly and uses only field arithmetic.
 pub fn poseidon_hash(inputs: &[FieldElement]) -> FieldElement {
     let constants = poseidon_round_constants();
     let mut state = [

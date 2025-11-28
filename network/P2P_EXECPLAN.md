@@ -110,15 +110,14 @@ Update the node binary to start the P2P service.
 
 ### 5.1 Overview
 
-Upgraded the P2P transport layer to use hybrid post-quantum cryptography:
-- **Classical:** X25519 ECDH (immediate security)
-- **Post-Quantum:** ML-KEM-768 encapsulation (future-proof)
+Upgraded the P2P transport layer to use post-quantum cryptography:
+- **Key Exchange:** ML-KEM-768 encapsulation (lattice-based)
 - **Authentication:** ML-DSA-65 signatures
 
 ### 5.2 Components
 
-*   **`pq-noise` crate**: Standalone hybrid noise protocol implementation
-    - `handshake.rs`: X25519 + ML-KEM-768 hybrid key exchange
+*   **`pq-noise` crate**: Standalone PQ noise protocol implementation
+    - `handshake.rs`: ML-KEM-768 key encapsulation
     - `session.rs`: AES-256-GCM encrypted sessions with rekeying
     - `transport.rs`: Async transport layer over TCP
     - `noise.rs`: Cipher states and transcript management
@@ -134,16 +133,16 @@ Upgraded the P2P transport layer to use hybrid post-quantum cryptography:
 
 ### 5.3 Security Properties
 
-The hybrid approach provides defense-in-depth:
-1. If X25519 is broken but ML-KEM is secure → connection remains secure
-2. If ML-KEM is broken but X25519 is secure → connection remains secure  
-3. Both must be broken simultaneously to compromise security
+Pure post-quantum security based on lattice assumptions:
+- ML-KEM-768 for key encapsulation (IND-CCA2 secure)
+- ML-DSA-65 for authentication signatures
+- No classical cryptography dependencies (no ECDH/X25519)
 
 Key derivation uses domain-separated HKDF:
 ```
 combined_secret = HKDF-SHA256(
     salt = transcript_hash,
-    ikm = x25519_shared || mlkem_shared,
+    ikm = mlkem_shared_1 || mlkem_shared_2,
     info = "hegemon-pq-noise-combined-key"
 )
 ```

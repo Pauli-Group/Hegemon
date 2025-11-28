@@ -21,13 +21,13 @@
 //! │  ┌─────────────────────────▼─────────────────────────────────┐  │
 //! │  │                   PQ Transport Layer                       │  │
 //! │  │  ┌──────────────────────────────────────────────────────┐ │  │
-//! │  │  │              Hybrid Handshake                         │ │  │
-//! │  │  │  X25519 ECDH + ML-KEM-768 Encapsulation              │ │  │
+//! │  │  │              PQ Handshake                             │ │  │
+//! │  │  │  ML-KEM-768 Key Encapsulation                        │ │  │
 //! │  │  │  ML-DSA-65 Signature Authentication                  │ │  │
 //! │  │  └──────────────────────────────────────────────────────┘ │  │
 //! │  │  ┌──────────────────────────────────────────────────────┐ │  │
 //! │  │  │              Encrypted Session                        │ │  │
-//! │  │  │  AES-256-GCM with hybrid-derived keys                │ │  │
+//! │  │  │  AES-256-GCM with PQ-derived keys                    │ │  │
 //! │  │  └──────────────────────────────────────────────────────┘ │  │
 //! │  └───────────────────────────────────────────────────────────┘  │
 //! │                            │                                    │
@@ -72,8 +72,6 @@ pub struct PqNetworkConfig {
     pub bootstrap_nodes: Vec<String>,
     /// Whether PQ transport is enabled
     pub enable_pq_transport: bool,
-    /// Whether to use hybrid mode (X25519 + ML-KEM)
-    pub hybrid_mode: bool,
     /// Maximum peers
     pub max_peers: u32,
     /// Connection timeout in seconds
@@ -90,7 +88,6 @@ impl Default for PqNetworkConfig {
             listen_addresses: vec!["/ip4/0.0.0.0/tcp/30333".to_string()],
             bootstrap_nodes: Vec::new(),
             enable_pq_transport: true,
-            hybrid_mode: true,
             max_peers: 50,
             connection_timeout_secs: 30,
             require_pq: true,
@@ -106,7 +103,6 @@ impl PqNetworkConfig {
             listen_addresses: vec!["/ip4/127.0.0.1/tcp/30333".to_string()],
             bootstrap_nodes: Vec::new(),
             enable_pq_transport: true,
-            hybrid_mode: true,
             max_peers: 25,
             connection_timeout_secs: 30,
             require_pq: false,
@@ -120,7 +116,6 @@ impl PqNetworkConfig {
             listen_addresses: vec!["/ip4/0.0.0.0/tcp/30333".to_string()],
             bootstrap_nodes: Vec::new(),
             enable_pq_transport: true,
-            hybrid_mode: true,
             max_peers: 50,
             connection_timeout_secs: 30,
             require_pq: true,
@@ -134,7 +129,6 @@ impl PqNetworkConfig {
             listen_addresses: vec!["/ip4/0.0.0.0/tcp/30333".to_string()],
             bootstrap_nodes: Vec::new(),
             enable_pq_transport: true,
-            hybrid_mode: true,
             max_peers: 100,
             connection_timeout_secs: 60,
             require_pq: true,

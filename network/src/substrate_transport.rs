@@ -34,7 +34,7 @@
 //!
 //! This module implements Task 3.5.1 of the substrate migration plan:
 //! - PQ transport wrapper compatible with sc-network
-//! - Hybrid X25519 + ML-KEM-768 handshake
+//! - ML-KEM-768 handshake (pure post-quantum)
 //! - libp2p upgrade traits for inbound/outbound connections
 
 use crate::pq_transport::{PqPeerIdentity, PqTransportConfig};

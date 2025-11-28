@@ -430,8 +430,6 @@ parameter_types! {
     #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
     pub const MaxTagLength: u32 = 32;
     #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
-    pub const MaxEd25519KeyBytes: u32 = 32;
-    #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
     pub const MaxPqKeyBytes: u32 = 4000;
     #[derive(Clone, Copy, PartialEq, Eq, Debug, TypeInfo)]
     pub const MaxMetadataLength: u32 = 128;
@@ -1243,7 +1241,6 @@ impl pallet_identity::Config for Runtime {
     type MaxProofSize = MaxProofSize;
     type MaxIdentityTags = MaxIdentityTags;
     type MaxTagLength = MaxTagLength;
-    type MaxEd25519KeyBytes = MaxEd25519KeyBytes;
     type MaxPqKeyBytes = MaxPqKeyBytes;
     type WeightInfo = ();
 }
