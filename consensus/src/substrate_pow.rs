@@ -197,7 +197,7 @@ pub fn mine_round(
 // 
 // To enable, add to consensus/Cargo.toml:
 // [features]
-// substrate = ["sc-consensus-pow", "sp-consensus-pow"]
+// substrate = ["sc-consensus-pow", "sp-consensus-pow", "sp-api", "runtime"]
 
 #[cfg(feature = "substrate")]
 mod substrate_impl {
@@ -207,19 +207,10 @@ mod substrate_impl {
     use sp_consensus_pow::Seal;
     use sp_runtime::generic::BlockId;
     use sp_runtime::traits::Block as BlockT;
-
-    /// Runtime API for querying PoW difficulty
-    ///
-    /// The runtime must implement this API to provide difficulty values
-    /// to the consensus engine.
-    ///
-    /// Note: This API declaration must match the one in runtime/src/apis.rs
-    sp_api::decl_runtime_apis! {
-        pub trait DifficultyApi {
-            /// Get the current PoW difficulty as U256
-            fn difficulty() -> U256;
-        }
-    }
+    
+    // Use the DifficultyApi from the runtime crate
+    // This ensures we use the same trait that the runtime implements
+    use runtime::apis::DifficultyApi;
 
     impl<B, C> PowAlgorithm<B> for Blake3Algorithm<C>
     where
@@ -274,8 +265,9 @@ mod substrate_impl {
     }
 }
 
-#[cfg(feature = "substrate")]
-pub use substrate_impl::*;
+// The substrate_impl module only contains the PowAlgorithm trait implementation
+// which is used automatically when the substrate feature is enabled.
+// No need to re-export anything from it.
 
 // ============================================================================
 // Tests

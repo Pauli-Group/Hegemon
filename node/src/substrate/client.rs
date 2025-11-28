@@ -106,6 +106,37 @@ pub type HegemonTransactionPool = sc_transaction_pool::TransactionPoolHandle<
     HegemonFullClient,
 >;
 
+/// Type alias for the chain selection rule (Task 11.4.5)
+///
+/// Uses `LongestChain` which selects the chain with the most blocks.
+/// This is the standard selection rule for PoW chains.
+pub type HegemonSelectChain = sc_consensus::LongestChain<FullBackend, runtime::Block>;
+
+/// Type alias for the PoW block import wrapper (Task 11.4.5)
+///
+/// This wraps the client with PoW verification using our Blake3Algorithm.
+/// All blocks imported through this wrapper are verified for valid PoW
+/// before being committed to the backend.
+///
+/// The type parameters are:
+/// - `runtime::Block`: The block type
+/// - `Arc<HegemonFullClient>`: The inner block import (implements BlockImport)
+/// - `HegemonFullClient`: Client for runtime API queries
+/// - `HegemonSelectChain`: Chain selection rule
+/// - `Blake3Algorithm<HegemonFullClient>`: Our PoW algorithm
+/// - CIDP: A function type for creating inherent data providers
+///
+/// For our PoW chain, we don't use inherents, so CIDP is a simple closure
+/// that returns an empty tuple.
+pub type HegemonPowBlockImport<CIDP> = sc_consensus_pow::PowBlockImport<
+    runtime::Block,
+    Arc<HegemonFullClient>,
+    HegemonFullClient,
+    HegemonSelectChain,
+    consensus::Blake3Algorithm<HegemonFullClient>,
+    CIDP,
+>;
+
 /// Default difficulty bits if runtime query fails
 /// 
 /// Set for ~1 minute block time at 1 MH/s:

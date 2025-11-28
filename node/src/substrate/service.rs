@@ -12,10 +12,11 @@
 //! # Phase 11 Integration
 //!
 //! This module now supports full Substrate client integration:
-//! - `new_partial_with_client()`: Creates full client with TFullClient
+//! - `new_partial_with_client()`: Creates full client with TFullClient (Task 11.4.2)
 //! - `ProductionChainStateProvider`: Real chain state for mining
 //! - Runtime API callbacks for difficulty and block queries
-//! - Transaction pool integration with sc-transaction-pool
+//! - Transaction pool integration with sc-transaction-pool (Task 11.4.3)
+//! - BlockBuilder API for real state execution (Task 11.4.4)
 //!
 //! # Architecture
 //!
@@ -115,8 +116,9 @@
 
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::client::{
-    FullBackend, HegemonFullClient, HegemonTransactionPool, ProductionChainStateProvider,
-    ProductionConfig, DEFAULT_DIFFICULTY_BITS,
+    FullBackend, HegemonFullClient, HegemonPowBlockImport, HegemonSelectChain,
+    HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig,
+    StateExecutionResult, DEFAULT_DIFFICULTY_BITS,
 };
 use crate::substrate::mining_worker::{
     create_production_mining_worker, create_scaffold_mining_worker,
@@ -127,15 +129,32 @@ use crate::substrate::network_bridge::{NetworkBridge, NetworkBridgeBuilder};
 use crate::substrate::transaction_pool::{
     MockTransactionPool, TransactionPoolBridge, TransactionPoolConfig,
 };
-use consensus::Blake3Seal;
+use codec::Decode;
+use consensus::{Blake3Algorithm, Blake3Seal};
 use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
+use sp_api::{Core, ProvideRuntimeApi};
+use sp_block_builder::BlockBuilder;
 use sp_core::H256;
+use sp_runtime::traits::Header as HeaderT;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+/// Type alias for the no-op inherent data providers creator
+///
+/// For our PoW chain, we don't need any inherent data providers since
+/// timestamps and other inherents are handled differently. This type
+/// is used as the CIDP parameter for PowBlockImport.
+type NoOpInherentDataProviders = fn(
+    <runtime::Block as sp_runtime::traits::Block>::Hash,
+    (),
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send>>;
+
+/// Concrete type for the PoW block import with no-op inherent providers
+pub type ConcretePowBlockImport = HegemonPowBlockImport<NoOpInherentDataProviders>;
 
 /// Re-export the runtime WASM binary for node use
 #[cfg(feature = "substrate")]
@@ -154,6 +173,318 @@ pub fn check_wasm() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+// =============================================================================
+// Task 11.4.4: Wire BlockBuilder API to execute_extrinsics_fn
+// =============================================================================
+//
+// This function connects the ProductionChainStateProvider's execute_extrinsics_fn
+// callback to the real Substrate BlockBuilder runtime API.
+//
+// The BlockBuilder API provides:
+// - initialize_block(header): Initialize block execution context
+// - apply_extrinsic(ext): Apply a single extrinsic to state  
+// - finalize_block(): Finalize and return header with state_root
+//
+// The callback is called during block production to:
+// 1. Execute pending transactions against the runtime
+// 2. Compute the resulting state root after all state transitions
+// 3. Return which extrinsics were successfully applied
+
+/// Wires the BlockBuilder runtime API to the ProductionChainStateProvider (Task 11.4.4)
+///
+/// This connects the `execute_extrinsics_fn` callback to use the real Substrate
+/// runtime API for block execution. When the mining worker produces a block,
+/// it will:
+///
+/// 1. Call `initialize_block` with the parent hash and block number
+/// 2. Decode each extrinsic from bytes using `codec::Decode`
+/// 3. Call `apply_extrinsic` for each decoded extrinsic
+/// 4. Call `finalize_block` to get the header with computed state_root
+///
+/// # Arguments
+///
+/// * `chain_state` - The ProductionChainStateProvider to wire
+/// * `client` - The full Substrate client providing runtime API access
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let chain_state = Arc::new(ProductionChainStateProvider::new(config));
+/// wire_block_builder_api(&chain_state, client.clone());
+///
+/// // Now execute_extrinsics uses real runtime
+/// let result = chain_state.execute_extrinsics(&parent_hash, 1, &extrinsics)?;
+/// // result.state_root is computed by the runtime
+/// ```
+pub fn wire_block_builder_api(
+    chain_state: &Arc<ProductionChainStateProvider>,
+    client: Arc<HegemonFullClient>,
+) {
+    let client_for_exec = client;
+    
+    chain_state.set_execute_extrinsics_fn(move |parent_hash, block_number, extrinsics| {
+        // Get the runtime API from the client
+        let api = client_for_exec.runtime_api();
+        
+        // Convert our H256 to the runtime's Hash type via substrate H256
+        let parent_substrate_hash: sp_core::H256 = (*parent_hash).into();
+        
+        // Create a header for initialize_block using the Header trait
+        // The header is used to set up the block context (block number, parent hash)
+        // The state_root and extrinsics_root will be computed by finalize_block
+        let header = <runtime::Header as HeaderT>::new(
+            block_number,         // BlockNumber is u64 in our runtime
+            Default::default(),   // extrinsics_root - will be computed
+            Default::default(),   // state_root - will be computed
+            parent_substrate_hash,
+            Default::default(),   // digest
+        );
+        
+        // Initialize block execution context
+        // This sets up the runtime state for executing transactions
+        if let Err(e) = api.initialize_block(parent_substrate_hash, &header) {
+            return Err(format!("Failed to initialize block: {:?}", e));
+        }
+        
+        tracing::debug!(
+            block_number,
+            parent = %hex::encode(parent_hash.as_bytes()),
+            tx_count = extrinsics.len(),
+            "Initializing block execution (Task 11.4.4)"
+        );
+        
+        // Apply each extrinsic
+        let mut applied = Vec::new();
+        let mut failed = 0usize;
+        
+        for ext_bytes in extrinsics {
+            // Decode extrinsic bytes to UncheckedExtrinsic
+            match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
+                Ok(extrinsic) => {
+                    // Apply the extrinsic via runtime API
+                    match api.apply_extrinsic(parent_substrate_hash, extrinsic) {
+                        Ok(Ok(_)) => {
+                            // Successfully applied
+                            applied.push(ext_bytes.clone());
+                        }
+                        Ok(Err(dispatch_error)) => {
+                            // Dispatch error (runtime rejected the extrinsic)
+                            tracing::warn!(
+                                error = ?dispatch_error,
+                                "Extrinsic dispatch failed"
+                            );
+                            failed += 1;
+                        }
+                        Err(api_error) => {
+                            // API call failed
+                            tracing::warn!(
+                                error = ?api_error,
+                                "apply_extrinsic API call failed"
+                            );
+                            failed += 1;
+                        }
+                    }
+                }
+                Err(decode_error) => {
+                    tracing::warn!(
+                        error = ?decode_error,
+                        bytes_len = ext_bytes.len(),
+                        "Failed to decode extrinsic"
+                    );
+                    failed += 1;
+                }
+            }
+        }
+        
+        // Finalize block and get the header with state root
+        let finalized_header = match api.finalize_block(parent_substrate_hash) {
+            Ok(header) => header,
+            Err(e) => {
+                return Err(format!("Failed to finalize block: {:?}", e));
+            }
+        };
+        
+        // Extract state_root and extrinsics_root using the Header trait
+        let state_root = *finalized_header.state_root();
+        let extrinsics_root = *finalized_header.extrinsics_root();
+        
+        tracing::debug!(
+            block_number,
+            applied = applied.len(),
+            failed,
+            state_root = %hex::encode(state_root.as_bytes()),
+            extrinsics_root = %hex::encode(extrinsics_root.as_bytes()),
+            "Block execution finalized (Task 11.4.4)"
+        );
+        
+        Ok(StateExecutionResult {
+            applied_extrinsics: applied,
+            state_root,
+            extrinsics_root,
+            failed_count: failed,
+        })
+    });
+    
+    tracing::info!(
+        "Phase 11.4.4: BlockBuilder API wired to execute_extrinsics_fn"
+    );
+}
+
+// =============================================================================
+// Task 11.4.5: Wire PoW block import to ProductionChainStateProvider
+// =============================================================================
+//
+// This function wires the PowBlockImport to the chain state provider's
+// import_fn callback. When a mined block needs to be imported, the callback
+// constructs a proper BlockImportParams and imports through PowBlockImport.
+//
+// The PowBlockImport verifies the Blake3 PoW seal before allowing the block
+// to be committed to the backend.
+
+use crate::substrate::mining_worker::BlockTemplate;
+use sc_consensus::{BlockImport, BlockImportParams, ForkChoiceStrategy, ImportResult};
+use sp_consensus::BlockOrigin;
+use sp_runtime::generic::Digest;
+use sp_runtime::DigestItem;
+
+/// Wire the PoW block import pipeline to a ProductionChainStateProvider.
+///
+/// This sets the `import_fn` callback on the chain state provider to use
+/// the real `PowBlockImport` for importing mined blocks.
+///
+/// # Task 11.4.5 Implementation
+///
+/// The import flow:
+/// 1. Mining worker finds valid seal via `mine_round()`
+/// 2. Calls `chain_state.import_block(template, seal)`
+/// 3. `import_fn` callback constructs `BlockImportParams`
+/// 4. `PowBlockImport.import_block()` verifies the seal
+/// 5. If valid, block is committed to backend
+///
+/// # Arguments
+///
+/// * `chain_state` - The ProductionChainStateProvider to wire
+/// * `pow_block_import` - The PowBlockImport wrapper for verified imports
+/// * `client` - The full Substrate client for header construction
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let chain_state = Arc::new(ProductionChainStateProvider::new(config));
+/// wire_pow_block_import(&chain_state, pow_block_import, client.clone());
+///
+/// // Now when mining finds a valid seal:
+/// let hash = chain_state.import_block(&template, &seal)?;
+/// // Block is imported through PowBlockImport with PoW verification
+/// ```
+pub fn wire_pow_block_import(
+    chain_state: &Arc<ProductionChainStateProvider>,
+    pow_block_import: ConcretePowBlockImport,
+    _client: Arc<HegemonFullClient>,
+) {
+    use codec::Encode;
+    use sp_runtime::traits::Block as BlockT;
+    
+    // Clone for the closure
+    let block_import = pow_block_import;
+    
+    chain_state.set_import_fn(move |template: &BlockTemplate, seal: &Blake3Seal| {
+        // Construct the block header from the template
+        let parent_hash: sp_core::H256 = template.parent_hash.into();
+        
+        // Create header with the seal as a digest item
+        let mut digest = Digest::default();
+        
+        // Add the PoW seal as a DigestItem::Seal
+        // Engine ID "bpow" for Blake3 PoW
+        let seal_bytes = seal.encode();
+        digest.push(DigestItem::Seal(*b"bpow", seal_bytes));
+        
+        let header = <runtime::Header as HeaderT>::new(
+            template.number,              // Use 'number' field from BlockTemplate
+            template.extrinsics_root,
+            template.state_root,
+            parent_hash,
+            digest,
+        );
+        
+        // Decode the extrinsics from template
+        let encoded_extrinsics: Vec<runtime::UncheckedExtrinsic> = template
+            .extrinsics                   // Use 'extrinsics' field from BlockTemplate
+            .iter()
+            .filter_map(|tx_bytes| {
+                runtime::UncheckedExtrinsic::decode(&mut &tx_bytes[..]).ok()
+            })
+            .collect();
+        
+        // Construct the block
+        let block = runtime::Block::new(header.clone(), encoded_extrinsics);
+        
+        // Get the block hash
+        let block_hash = block.hash();
+        
+        // Construct BlockImportParams
+        let mut import_params = BlockImportParams::new(BlockOrigin::Own, header);
+        import_params.body = Some(block.extrinsics().to_vec());
+        import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
+        
+        // Import the block through PowBlockImport
+        // Note: BlockImport::import_block is async, but we're in a sync context
+        // For now, we use block_on. In production, this should be properly async.
+        let import_result = futures::executor::block_on(async {
+            let import = block_import.clone();
+            import.import_block(import_params).await
+        });
+        
+        match import_result {
+            Ok(ImportResult::Imported(_aux)) => {
+                tracing::info!(
+                    block_hash = %hex::encode(block_hash.as_bytes()),
+                    block_number = template.number,
+                    "Block imported successfully via PowBlockImport (Task 11.4.5)"
+                );
+                Ok(block_hash)
+            }
+            Ok(ImportResult::AlreadyInChain) => {
+                tracing::warn!(
+                    block_hash = %hex::encode(block_hash.as_bytes()),
+                    "Block already in chain"
+                );
+                Ok(block_hash)
+            }
+            Ok(ImportResult::KnownBad) => {
+                Err(format!("Block {} is known bad", hex::encode(block_hash.as_bytes())))
+            }
+            Ok(ImportResult::UnknownParent) => {
+                Err(format!(
+                    "Unknown parent {} for block {}",
+                    hex::encode(template.parent_hash.as_bytes()),
+                    hex::encode(block_hash.as_bytes())
+                ))
+            }
+            Ok(ImportResult::MissingState) => {
+                Err(format!(
+                    "Missing state for parent {}",
+                    hex::encode(template.parent_hash.as_bytes())
+                ))
+            }
+            Err(e) => {
+                Err(format!("Block import failed: {:?}", e))
+            }
+        }
+    });
+    
+    tracing::info!(
+        "Phase 11.4.5: PoW block import wired to ProductionChainStateProvider"
+    );
+    tracing::debug!(
+        "  - Mined blocks verified via PowBlockImport"
+    );
+    tracing::debug!(
+        "  - Blake3 seals validated before commit"
+    );
 }
 
 /// PQ network configuration for the node service
@@ -262,6 +593,20 @@ pub struct PartialComponentsWithClient {
     /// This is the production transaction pool that validates transactions
     /// against the runtime. It replaces MockTransactionPool for full client mode.
     pub transaction_pool: Arc<HegemonTransactionPool>,
+    /// Chain selection rule (Task 11.4.5)
+    ///
+    /// Uses LongestChain which selects the chain with the most blocks.
+    /// This is the standard selection rule for PoW chains.
+    pub select_chain: HegemonSelectChain,
+    /// PoW block import wrapper (Task 11.4.5)
+    ///
+    /// Wraps the client with PoW verification using Blake3Algorithm.
+    /// All blocks imported through this wrapper are verified for valid PoW.
+    pub pow_block_import: ConcretePowBlockImport,
+    /// Blake3 PoW algorithm (Task 11.4.5)
+    ///
+    /// The PoW algorithm implementation used for block verification and mining.
+    pub pow_algorithm: Blake3Algorithm<HegemonFullClient>,
     /// Task manager for spawning async tasks
     pub task_manager: TaskManager,
     /// PoW mining handle
@@ -531,6 +876,58 @@ pub fn new_partial_with_client(
 
     let (pow_handle, _pow_events) = PowHandle::new(pow_config);
 
+    // ==========================================================================
+    // Task 11.4.5: Create PoW block import pipeline
+    // ==========================================================================
+    //
+    // The block import pipeline verifies PoW seals before importing blocks:
+    // 1. Create LongestChain for chain selection (standard PoW rule)
+    // 2. Create Blake3Algorithm with client reference for difficulty queries
+    // 3. Wrap client in PowBlockImport for PoW verification
+    //
+    // Flow: Network → Import Queue → PowBlockImport → Client → Backend
+
+    // Create chain selection rule (LongestChain for PoW)
+    let select_chain = sc_consensus::LongestChain::new(backend.clone());
+
+    // Create Blake3 PoW algorithm with client for difficulty queries
+    let pow_algorithm = Blake3Algorithm::new(client.clone());
+
+    // Create inherent data providers creator
+    // For our PoW chain, we don't need any inherent data providers since
+    // timestamps are handled separately in the mining worker.
+    // We use a function pointer type for compatibility with PowBlockImport.
+    fn create_inherent_data_providers(
+        _parent_hash: <runtime::Block as sp_runtime::traits::Block>::Hash,
+        _: (),
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    // Create the PoW block import wrapper
+    // This verifies Blake3 PoW seals before allowing blocks to be imported
+    let pow_block_import = sc_consensus_pow::PowBlockImport::new(
+        client.clone(),                         // Inner block import (client implements BlockImport)
+        client.clone(),                         // Client for runtime API queries
+        pow_algorithm.clone(),                  // PoW algorithm for verification
+        0,                                      // check_inherents_after: 0 = always check
+        select_chain.clone(),                   // Chain selection rule
+        create_inherent_data_providers as NoOpInherentDataProviders, // Inherent data providers creator
+    );
+
+    tracing::info!(
+        "PoW block import pipeline created (Task 11.4.5)"
+    );
+    tracing::debug!(
+        "  - Blake3Algorithm for PoW verification"
+    );
+    tracing::debug!(
+        "  - LongestChain for chain selection"
+    );
+    tracing::debug!(
+        "  - PowBlockImport wrapping full client"
+    );
+
     // Initialize PQ service configuration (Phase 3.5)
     let pq_service_config = PqServiceConfig::from_env();
 
@@ -596,7 +993,7 @@ pub fn new_partial_with_client(
     tracing::info!(
         pq_peer_id = %hex::encode(pq_transport.local_peer_id()),
         require_pq = %pq_service_config.require_pq,
-        "Hegemon node with full client initialized (Task 11.4.2 + 11.4.3 + Phase 3.5)"
+        "Hegemon node with full client initialized (Task 11.4.2 + 11.4.3 + 11.4.5 + Phase 3.5)"
     );
 
     Ok(PartialComponentsWithClient {
@@ -604,6 +1001,9 @@ pub fn new_partial_with_client(
         backend,
         keystore_container,
         transaction_pool,
+        select_chain,
+        pow_block_import,
+        pow_algorithm,
         task_manager,
         pow_handle,
         network_keypair,
@@ -1158,6 +1558,7 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
     tracing::info!("  - Task 11.2: BlockImportTracker ✅ (PoW verification + state tracking)");
     tracing::info!("  - Task 11.3: Transaction pool wiring ✅ (pool → mining worker → blocks)");
     tracing::info!("  - Task 11.4: State execution ✅ (scaffold mode - mock state root)");
+    tracing::info!("  - Task 11.4.4: wire_block_builder_api() ✅ (real runtime execution available)");
     tracing::info!("  Set HEGEMON_MINE=1 to enable mining");
     tracing::info!("  Remaining: Task 11.5 - Chain sync between nodes");
 
