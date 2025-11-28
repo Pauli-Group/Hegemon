@@ -138,13 +138,16 @@ use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
+use sc_client_api::BlockchainEvents;
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
+use sc_transaction_pool_api::MaintainedTransactionPool;
 use sp_api::{Core, ProvideRuntimeApi};
 use sp_block_builder::BlockBuilder;
 use sp_core::H256;
 use sp_runtime::traits::Header as HeaderT;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use futures::StreamExt;
 
 // Import runtime APIs for difficulty queries (Task 11.4.6)
 use runtime::apis::ConsensusApi;
@@ -1688,6 +1691,53 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     tracing::debug!(
         "Real transaction pool: {:?}",
         std::any::type_name_of_val(&*transaction_pool)
+    );
+
+    // =========================================================================
+    // CRITICAL: Spawn Transaction Pool Maintenance Task
+    // =========================================================================
+    // The transaction pool's internal ForkAwareTxPool spawns background tasks
+    // that require block import/finality notifications to function. Without
+    // this maintenance task, those internal tasks will fail because they
+    // never receive ChainEvent notifications.
+    //
+    // This task listens to:
+    // - client.import_notification_stream() -> ChainEvent::NewBestBlock
+    // - client.finality_notification_stream() -> ChainEvent::Finalized
+    //
+    // And calls transaction_pool.maintain(event) for each notification,
+    // which keeps the pool's internal state synchronized with the chain.
+    let client_for_pool_maint = client.clone();
+    let transaction_pool_for_maint = transaction_pool.clone();
+    task_manager.spawn_essential_handle().spawn(
+        "txpool-maintenance",
+        Some("transaction-pool"),
+        async move {
+            let import_stream = client_for_pool_maint
+                .import_notification_stream()
+                .filter_map(|n| futures::future::ready(n.try_into().ok()))
+                .fuse();
+            let finality_stream = client_for_pool_maint
+                .finality_notification_stream()
+                .map(Into::into)
+                .fuse();
+            
+            tracing::info!("Transaction pool maintenance task started");
+            
+            futures::stream::select(import_stream, finality_stream)
+                .for_each(|evt| {
+                    let pool = transaction_pool_for_maint.clone();
+                    async move {
+                        pool.maintain(evt).await;
+                    }
+                })
+                .await;
+            
+            tracing::info!("Transaction pool maintenance task stopped");
+        },
+    );
+    tracing::info!(
+        "CRITICAL: Transaction pool maintenance task spawned - pool will receive block notifications"
     );
 
     // Phase 3.5: Create and start PQ network backend
