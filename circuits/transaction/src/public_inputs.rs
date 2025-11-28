@@ -1,5 +1,6 @@
-use protocol_versioning::{CircuitVersion, CryptoSuiteId, VersionBinding};
+use protocol_versioning::{CircuitVersion, CryptoSuiteId, VersionBinding, DEFAULT_VERSION_BINDING};
 use serde::{Deserialize, Serialize};
+use winterfell::math::FieldElement;
 
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID},
@@ -27,6 +28,30 @@ pub struct TransactionPublicInputs {
     pub balance_tag: Felt,
     pub circuit_version: CircuitVersion,
     pub crypto_suite: CryptoSuiteId,
+}
+
+impl Default for TransactionPublicInputs {
+    fn default() -> Self {
+        let nullifiers = vec![Felt::ZERO; MAX_INPUTS];
+        let commitments = vec![Felt::ZERO; MAX_OUTPUTS];
+        let balance_slots = (0..BALANCE_SLOTS)
+            .map(|_| BalanceSlot {
+                asset_id: u64::MAX,
+                delta: 0,
+            })
+            .collect();
+
+        Self {
+            merkle_root: Felt::ZERO,
+            nullifiers,
+            commitments,
+            balance_slots,
+            native_fee: 0,
+            balance_tag: Felt::ZERO,
+            circuit_version: DEFAULT_VERSION_BINDING.circuit,
+            crypto_suite: DEFAULT_VERSION_BINDING.crypto,
+        }
+    }
 }
 
 impl TransactionPublicInputs {

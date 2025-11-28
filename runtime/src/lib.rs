@@ -1539,6 +1539,59 @@ sp_api::impl_runtime_apis! {
             Difficulty::difficulty_bits()
         }
     }
+
+    impl apis::ShieldedPoolApi<Block> for Runtime {
+        fn get_encrypted_notes(
+            _start: u64,
+            _limit: u32,
+        ) -> sp_std::vec::Vec<(u64, sp_std::vec::Vec<u8>, u64, [u8; 32])> {
+            // ShieldedPool pallet not yet integrated into runtime
+            // TODO: Integrate pallet-shielded-pool when ready
+            sp_std::vec::Vec::new()
+        }
+
+        fn encrypted_note_count() -> u64 {
+            // ShieldedPool pallet not yet integrated into runtime
+            0
+        }
+
+        fn get_merkle_witness(
+            _position: u64,
+        ) -> Result<(sp_std::vec::Vec<[u8; 32]>, sp_std::vec::Vec<bool>, [u8; 32]), ()> {
+            // ShieldedPool pallet not yet integrated into runtime
+            Err(())
+        }
+
+        fn is_nullifier_spent(_nullifier: [u8; 32]) -> bool {
+            // ShieldedPool pallet not yet integrated into runtime
+            false
+        }
+
+        fn is_valid_anchor(_anchor: [u8; 32]) -> bool {
+            // ShieldedPool pallet not yet integrated into runtime
+            false
+        }
+
+        fn pool_balance() -> u128 {
+            // ShieldedPool pallet not yet integrated into runtime
+            0
+        }
+
+        fn merkle_root() -> [u8; 32] {
+            // ShieldedPool pallet not yet integrated into runtime
+            [0u8; 32]
+        }
+
+        fn tree_depth() -> u32 {
+            // Standard Merkle tree depth
+            32
+        }
+
+        fn nullifier_count() -> u64 {
+            // ShieldedPool pallet not yet integrated into runtime
+            0
+        }
+    }
 }
 
 // Task 11.4.1: RuntimeApi Export Documentation

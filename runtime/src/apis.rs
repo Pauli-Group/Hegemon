@@ -1,7 +1,8 @@
 //! Runtime API trait definitions for Hegemon
 //!
 //! These traits define the interface between the node and runtime
-//! for PoW difficulty queries and other consensus operations.
+//! for PoW difficulty queries, shielded pool operations, and other
+//! consensus operations.
 //!
 //! # Usage
 //!
@@ -10,18 +11,27 @@
 //! 2. Query difficulty for mining target calculation
 //! 3. Check consensus parameters
 //!
+//! The shielded pool RPC uses ShieldedPoolApi to:
+//! 1. Query encrypted notes for wallet scanning
+//! 2. Get Merkle witnesses for spending notes
+//! 3. Check nullifier status and pool statistics
+//!
 //! # Example
 //!
 //! ```ignore
 //! // In node code:
 //! let difficulty = runtime_api.difficulty(parent_hash)?;
 //! let target = U256::MAX / difficulty;
+//!
+//! // Query shielded notes:
+//! let notes = runtime_api.get_encrypted_notes(0, 100)?;
 //! ```
 
 // Note: no_std is handled by the parent crate (runtime/src/lib.rs)
 
 use sp_api::decl_runtime_apis;
 use sp_core::U256;
+use sp_std::vec::Vec;
 
 decl_runtime_apis! {
     /// API for PoW difficulty queries
@@ -68,5 +78,65 @@ decl_runtime_apis! {
         /// - Upper byte: exponent
         /// - Lower 3 bytes: mantissa
         fn difficulty_bits() -> u32;
+    }
+
+    /// API for shielded pool queries
+    ///
+    /// Provides access to shielded pool state for RPC endpoints:
+    /// - Encrypted notes for wallet scanning
+    /// - Merkle witnesses for spending
+    /// - Nullifier status checks
+    /// - Pool statistics
+    ///
+    /// # Security
+    ///
+    /// All operations use post-quantum cryptography:
+    /// - ML-KEM-768 for note encryption
+    /// - STARK proofs for transaction verification
+    /// - Poseidon hash for Merkle tree
+    pub trait ShieldedPoolApi {
+        /// Get encrypted notes in a range.
+        ///
+        /// Returns tuples of (index, ciphertext, block_number, commitment).
+        /// Wallets trial-decrypt these using their viewing keys.
+        ///
+        /// # Parameters
+        /// - `start`: Starting note index
+        /// - `limit`: Maximum notes to return
+        fn get_encrypted_notes(
+            start: u64,
+            limit: u32,
+        ) -> Vec<(u64, Vec<u8>, u64, [u8; 32])>;
+
+        /// Get total number of encrypted notes.
+        fn encrypted_note_count() -> u64;
+
+        /// Get Merkle witness for a note position.
+        ///
+        /// Returns (siblings, indices, root) where:
+        /// - siblings: 32 sibling hashes from leaf to root
+        /// - indices: position bits (true = right child)
+        /// - root: current Merkle root
+        fn get_merkle_witness(
+            position: u64,
+        ) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), ()>;
+
+        /// Check if a nullifier has been spent.
+        fn is_nullifier_spent(nullifier: [u8; 32]) -> bool;
+
+        /// Check if an anchor (Merkle root) is valid.
+        fn is_valid_anchor(anchor: [u8; 32]) -> bool;
+
+        /// Get shielded pool balance.
+        fn pool_balance() -> u128;
+
+        /// Get current Merkle root.
+        fn merkle_root() -> [u8; 32];
+
+        /// Get Merkle tree depth.
+        fn tree_depth() -> u32;
+
+        /// Get total nullifier count (spent notes).
+        fn nullifier_count() -> u64;
     }
 }
