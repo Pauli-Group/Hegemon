@@ -376,6 +376,7 @@ impl ProductionConfig {
 /// - `difficulty_fn`: Returns difficulty bits from runtime API
 /// - `pending_txs_fn`: Returns pending transactions from pool
 /// - `import_fn`: Imports block via block import pipeline
+/// - `on_import_success_fn`: Called after successful block import (Task 11.3)
 ///
 /// This allows the production mining worker to integrate with any Substrate
 /// client implementation without tight coupling.
@@ -388,6 +389,9 @@ pub struct ProductionChainStateProvider {
     pending_txs_fn: parking_lot::RwLock<Option<Box<dyn Fn() -> Vec<Vec<u8>> + Send + Sync>>>,
     /// Callback to import a block
     import_fn: parking_lot::RwLock<Option<Box<dyn Fn(&BlockTemplate, &Blake3Seal) -> Result<H256, String> + Send + Sync>>>,
+    /// Callback called after successful block import (Task 11.3)
+    /// Used to clear included transactions from the pool
+    on_import_success_fn: parking_lot::RwLock<Option<Box<dyn Fn(&[Vec<u8>]) + Send + Sync>>>,
     /// Fallback state for when callbacks aren't set
     pub fallback_state: SubstrateChainStateProvider,
     /// Configuration
@@ -401,6 +405,7 @@ impl std::fmt::Debug for ProductionChainStateProvider {
             .field("has_difficulty_fn", &self.difficulty_fn.read().is_some())
             .field("has_pending_txs_fn", &self.pending_txs_fn.read().is_some())
             .field("has_import_fn", &self.import_fn.read().is_some())
+            .field("has_on_import_success_fn", &self.on_import_success_fn.read().is_some())
             .field("fallback_state", &"<SubstrateChainStateProvider>")
             .field("config", &self.config)
             .finish()
@@ -415,6 +420,7 @@ impl ProductionChainStateProvider {
             difficulty_fn: parking_lot::RwLock::new(None),
             pending_txs_fn: parking_lot::RwLock::new(None),
             import_fn: parking_lot::RwLock::new(None),
+            on_import_success_fn: parking_lot::RwLock::new(None),
             fallback_state: SubstrateChainStateProvider::new(),
             config,
         }
@@ -457,12 +463,33 @@ impl ProductionChainStateProvider {
         *self.import_fn.write() = Some(Box::new(f));
     }
 
+    /// Set the callback for post-import success actions (Task 11.3)
+    ///
+    /// This callback is called after a block is successfully imported.
+    /// It receives the list of transactions that were included in the block.
+    /// Use this to clear transactions from the pool after they're mined.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// chain_state.set_on_import_success_fn(move |included_txs| {
+    ///     pool_bridge.clear_included(included_txs);
+    /// });
+    /// ```
+    pub fn set_on_import_success_fn<F>(&self, f: F)
+    where
+        F: Fn(&[Vec<u8>]) + Send + Sync + 'static,
+    {
+        *self.on_import_success_fn.write() = Some(Box::new(f));
+    }
+
     /// Check if all callbacks are configured
     pub fn is_fully_configured(&self) -> bool {
         self.best_block_fn.read().is_some()
             && self.difficulty_fn.read().is_some()
             && self.pending_txs_fn.read().is_some()
             && self.import_fn.read().is_some()
+            // on_import_success_fn is optional
     }
 
     /// Update fallback state (for use when callbacks aren't set)
@@ -517,6 +544,7 @@ impl ChainStateProvider for ProductionChainStateProvider {
                     Ok(hash) => tracing::debug!(
                         block_hash = %hex::encode(hash.as_bytes()),
                         block_number = template.number,
+                        tx_count = template.extrinsics.len(),
                         "Production provider: block imported via callback"
                     ),
                     Err(e) => tracing::warn!(
@@ -526,6 +554,20 @@ impl ChainStateProvider for ProductionChainStateProvider {
                     ),
                 }
             }
+            
+            // Task 11.3: Call on_import_success_fn to clear included transactions
+            if result.is_ok() {
+                if let Some(ref on_success) = *self.on_import_success_fn.read() {
+                    on_success(&template.extrinsics);
+                    if self.config.verbose {
+                        tracing::debug!(
+                            tx_count = template.extrinsics.len(),
+                            "Production provider: cleared included transactions (Task 11.3)"
+                        );
+                    }
+                }
+            }
+            
             result
         } else {
             self.fallback_state.import_block(template, seal)
@@ -775,5 +817,59 @@ mod tests {
         // Should update fallback state
         assert_eq!(provider.fallback_state.best_hash(), hash);
         assert_eq!(provider.fallback_state.best_number(), 10);
+    }
+    
+    #[test]
+    fn test_production_provider_on_import_success() {
+        use crate::substrate::mining_worker::BlockTemplate;
+        use consensus::Blake3Seal;
+        
+        let provider = ProductionChainStateProvider::new(ProductionConfig::default());
+        
+        // Track callback invocations
+        let callback_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let callback_called_clone = callback_called.clone();
+        let cleared_txs = Arc::new(std::sync::Mutex::new(Vec::<Vec<u8>>::new()));
+        let cleared_txs_clone = cleared_txs.clone();
+        
+        provider.set_on_import_success_fn(move |included_txs: &[Vec<u8>]| {
+            callback_called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+            cleared_txs_clone.lock().unwrap().extend(included_txs.iter().cloned());
+        });
+        
+        // Set up import callback (fallback path)
+        provider.set_import_fn(|_template, _seal| {
+            // Simulate successful import
+            Ok(H256::random())
+        });
+        
+        // Create a simple template with some transactions
+        let parent = H256::from([1u8; 32]);
+        provider.on_new_block(&parent, 5);
+        
+        let tx1 = vec![1, 2, 3];
+        let tx2 = vec![4, 5, 6];
+        let template = BlockTemplate::new(parent, 6, 0x1f_00_ff_ff)
+            .with_extrinsics(vec![tx1.clone(), tx2.clone()]);
+        
+        let seal = Blake3Seal {
+            nonce: 1,
+            difficulty: 0x1f_00_ff_ff,
+            work: H256::zero(),
+        };
+        
+        // Import the block 
+        let result = provider.import_block(&template, &seal);
+        
+        // Should succeed and callback should have been called
+        assert!(result.is_ok());
+        assert!(callback_called.load(std::sync::atomic::Ordering::SeqCst), 
+            "on_import_success callback should be called after successful import");
+        
+        // Verify the included transactions were passed to the callback
+        let cleared = cleared_txs.lock().unwrap();
+        assert_eq!(cleared.len(), 2);
+        assert!(cleared.contains(&tx1));
+        assert!(cleared.contains(&tx2));
     }
 }

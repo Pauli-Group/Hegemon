@@ -464,6 +464,22 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
         tracing::info!("Mining disabled (set HEGEMON_MINE=1 to enable)");
     }
 
+    // Phase 9.2 + 11.3: Create the transaction pool bridge early
+    // This is created outside the PQ network block so it can be wired to mining worker
+    let pool_config = TransactionPoolConfig::from_env();
+    let mock_pool = Arc::new(MockTransactionPool::new(pool_config.capacity));
+    let pool_bridge = Arc::new(TransactionPoolBridge::with_max_pending(
+        mock_pool.clone(),
+        pool_config.max_pending,
+    ));
+
+    tracing::info!(
+        pool_capacity = pool_config.capacity,
+        max_pending = pool_config.max_pending,
+        process_interval_ms = pool_config.process_interval_ms,
+        "Transaction pool created (Task 11.3 - available for mining and RPC)"
+    );
+
     // Phase 3.5: Create and start PQ network backend
     if let Some(ref identity) = pq_identity {
         let backend_config = PqNetworkBackendConfig {
@@ -500,21 +516,8 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
                 ));
                 let bridge_clone = Arc::clone(&network_bridge);
 
-                // Phase 9.2: Create the transaction pool bridge
-                let pool_config = TransactionPoolConfig::from_env();
-                let mock_pool = Arc::new(MockTransactionPool::new(pool_config.capacity));
-                let pool_bridge = Arc::new(TransactionPoolBridge::with_max_pending(
-                    mock_pool.clone(),
-                    pool_config.max_pending,
-                ));
+                // Clone pool_bridge for use in network event handler
                 let pool_bridge_clone = Arc::clone(&pool_bridge);
-
-                tracing::info!(
-                    pool_capacity = pool_config.capacity,
-                    max_pending = pool_config.max_pending,
-                    process_interval_ms = pool_config.process_interval_ms,
-                    "Transaction pool bridge created (Phase 9.2)"
-                );
 
                 // Clone for the transaction processor task
                 let pool_bridge_for_processor = Arc::clone(&pool_bridge);
@@ -659,9 +662,10 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
         }
     }
 
-    // Phase 9.3 + 10.4 + 11.1 + 11.2: Spawn mining worker if enabled
+    // Phase 9.3 + 10.4 + 11.1 + 11.2 + 11.3: Spawn mining worker if enabled
     // Phase 11.1: Use ProductionChainStateProvider with callbacks
     // Phase 11.2: Wire BlockImportTracker for real block imports
+    // Phase 11.3: Wire transaction pool to chain state provider
     let mining_config = MiningConfig::from_env();
     if mining_config.enabled {
         let worker_config = MiningWorkerConfig::from_env();
@@ -669,7 +673,7 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
 
         // Phase 11.1: Create production chain state provider
         let production_config = ProductionConfig::from_env();
-        let chain_state = Arc::new(ProductionChainStateProvider::new(production_config));
+        let chain_state = Arc::new(ProductionChainStateProvider::new(production_config.clone()));
 
         // Phase 11.2: Create and wire block import tracker
         // This provides:
@@ -684,13 +688,32 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
             "Phase 11.2: BlockImportTracker wired to ProductionChainStateProvider"
         );
 
+        // Phase 11.3: Wire transaction pool to chain state provider
+        // Mining worker calls pending_transactions() to get txs for block template
+        let pool_for_mining = Arc::clone(&pool_bridge);
+        let max_block_txs = production_config.max_block_transactions;
+        chain_state.set_pending_txs_fn(move || {
+            pool_for_mining.ready_for_block(max_block_txs)
+        });
+
+        // Phase 11.3: Wire post-import callback to clear mined transactions
+        let pool_for_import = Arc::clone(&pool_bridge);
+        chain_state.set_on_import_success_fn(move |included_txs: &[Vec<u8>]| {
+            pool_for_import.clear_included(included_txs);
+        });
+
+        tracing::info!(
+            max_block_transactions = max_block_txs,
+            "Phase 11.3: Transaction pool wired to ProductionChainStateProvider"
+        );
+
         // Initial state from genesis (block 0)
         chain_state.update_fallback(H256::zero(), 0, DEFAULT_DIFFICULTY_BITS);
         
         tracing::info!(
             using_production_provider = true,
             difficulty_bits = DEFAULT_DIFFICULTY_BITS,
-            "Phase 11.1 + 11.2: Full block import pipeline configured"
+            "Phase 11.1 + 11.2 + 11.3: Full block production pipeline configured"
         );
         
         // Check if we have a PQ network handle for live broadcasting (Phase 10.4)
@@ -802,15 +825,16 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
     //    ```
 
     let has_pq_broadcast = pq_network_handle.is_some();
-    tracing::info!("Phase 11.2 Complete - Block Import Pipeline wired");
+    tracing::info!("Phase 11.3 Complete - Transaction Pool Wired");
     tracing::info!("  - Task 9.1: Network bridge (block announcements) ✅");
     tracing::info!("  - Task 9.2: Transaction pool integration ✅");
     tracing::info!("  - Task 9.3: Mining worker spawning ✅");
     tracing::info!("  - Task 10.4: Live PQ network broadcasting ✅ (enabled: {})", has_pq_broadcast);
     tracing::info!("  - Task 11.1: ProductionChainStateProvider ✅");
     tracing::info!("  - Task 11.2: BlockImportTracker ✅ (PoW verification + state tracking)");
+    tracing::info!("  - Task 11.3: Transaction pool wiring ✅ (pool → mining worker → blocks)");
     tracing::info!("  Set HEGEMON_MINE=1 to enable mining");
-    tracing::info!("  Remaining: Task 11.3 - Transaction pool wiring to sc-transaction-pool");
+    tracing::info!("  Remaining: Task 11.4 - State execution (runtime tx execution)");
 
     Ok(task_manager)
 }

@@ -206,6 +206,19 @@ pub trait TransactionPool: Send + Sync {
     
     /// Remove a transaction by hash (for reorgs/invalidation)
     fn remove(&self, hash: &[u8; 32]) -> bool;
+    
+    /// Get all ready transactions for block production (Task 11.3)
+    ///
+    /// Returns encoded transactions that are ready to be included in a block.
+    /// For MockTransactionPool, this returns all pooled transactions.
+    /// For a real pool, this would return transactions from the "ready" queue.
+    fn ready_transactions(&self) -> Vec<Vec<u8>>;
+    
+    /// Clear transactions that were included in a block (Task 11.3)
+    ///
+    /// Called after a block is mined to remove included transactions.
+    /// This prevents transactions from being included twice.
+    fn clear_transactions(&self, hashes: &[[u8; 32]]);
 }
 
 /// Mock transaction pool for scaffold mode
@@ -305,6 +318,21 @@ impl TransactionPool for MockTransactionPool {
         match self.transactions.try_lock() {
             Ok(mut pool) => pool.remove(hash).is_some(),
             Err(_) => false,
+        }
+    }
+
+    fn ready_transactions(&self) -> Vec<Vec<u8>> {
+        match self.transactions.try_lock() {
+            Ok(pool) => pool.values().cloned().collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn clear_transactions(&self, hashes: &[[u8; 32]]) {
+        if let Ok(mut pool) = self.transactions.try_lock() {
+            for hash in hashes {
+                pool.remove(hash);
+            }
         }
     }
 }
@@ -461,6 +489,47 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
     /// Get pool capacity
     pub fn pool_capacity(&self) -> usize {
         self.pool.pool_capacity()
+    }
+
+    /// Get ready transactions for block production (Task 11.3)
+    ///
+    /// Returns all transactions that are ready to be included in a block.
+    /// This is called by the mining worker to populate block templates.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // In mining worker:
+    /// let txs = pool_bridge.ready_for_block(100);
+    /// let template = BlockTemplate::new(parent_hash, block_number, difficulty)
+    ///     .with_extrinsics(txs);
+    /// ```
+    pub fn ready_for_block(&self, max_txs: usize) -> Vec<Vec<u8>> {
+        let mut txs = self.pool.ready_transactions();
+        txs.truncate(max_txs);
+        txs
+    }
+
+    /// Clear transactions after block is mined (Task 11.3)
+    ///
+    /// Removes transactions that were included in a mined block.
+    /// Called by the mining worker after successful block import.
+    pub fn clear_included(&self, txs: &[Vec<u8>]) {
+        let hashes: Vec<[u8; 32]> = txs.iter()
+            .map(|tx| sp_core::hashing::blake2_256(tx))
+            .collect();
+        self.pool.clear_transactions(&hashes);
+        
+        tracing::debug!(
+            cleared_count = hashes.len(),
+            pool_size = self.pool_size(),
+            "Cleared included transactions from pool (Task 11.3)"
+        );
+    }
+
+    /// Get a reference to the underlying pool
+    pub fn pool(&self) -> &Arc<P> {
+        &self.pool
     }
 }
 
@@ -685,5 +754,121 @@ mod tests {
         assert_eq!(config.max_pending, 1000);
         assert_eq!(config.process_interval_ms, 100);
         assert!(!config.verbose);
+    }
+
+    // Task 11.3: Transaction pool wiring tests
+
+    #[tokio::test]
+    async fn test_pool_ready_transactions() {
+        let pool = MockTransactionPool::new(100);
+        
+        // Submit transactions
+        pool.submit(&[1, 2, 3], TransactionSource::External).await.unwrap();
+        pool.submit(&[4, 5, 6], TransactionSource::External).await.unwrap();
+        pool.submit(&[7, 8, 9], TransactionSource::External).await.unwrap();
+        
+        // Get ready transactions
+        let ready = pool.ready_transactions();
+        assert_eq!(ready.len(), 3);
+        
+        // All submitted transactions should be ready
+        assert!(ready.iter().any(|tx| tx == &[1, 2, 3]));
+        assert!(ready.iter().any(|tx| tx == &[4, 5, 6]));
+        assert!(ready.iter().any(|tx| tx == &[7, 8, 9]));
+    }
+
+    #[tokio::test]
+    async fn test_pool_clear_transactions() {
+        let pool = MockTransactionPool::new(100);
+        
+        // Submit transactions
+        pool.submit(&[1, 2, 3], TransactionSource::External).await.unwrap();
+        pool.submit(&[4, 5, 6], TransactionSource::External).await.unwrap();
+        pool.submit(&[7, 8, 9], TransactionSource::External).await.unwrap();
+        
+        assert_eq!(pool.pool_size(), 3);
+        
+        // Clear some transactions
+        let hash1 = sp_core::hashing::blake2_256(&[1, 2, 3]);
+        let hash2 = sp_core::hashing::blake2_256(&[4, 5, 6]);
+        pool.clear_transactions(&[hash1, hash2]);
+        
+        assert_eq!(pool.pool_size(), 1);
+        
+        // Only the third transaction should remain
+        let ready = pool.ready_transactions();
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0], vec![7, 8, 9]);
+    }
+
+    #[tokio::test]
+    async fn test_bridge_ready_for_block() {
+        let pool = Arc::new(MockTransactionPool::new(100));
+        let bridge = TransactionPoolBridge::new(pool);
+        
+        // Submit transactions directly to pool
+        bridge.submit_transaction(&[1, 2, 3], None).await.unwrap();
+        bridge.submit_transaction(&[4, 5, 6], None).await.unwrap();
+        bridge.submit_transaction(&[7, 8, 9], None).await.unwrap();
+        
+        // Get ready transactions with limit
+        let ready = bridge.ready_for_block(2);
+        assert_eq!(ready.len(), 2);
+        
+        // Get all ready
+        let ready_all = bridge.ready_for_block(100);
+        assert_eq!(ready_all.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_bridge_clear_included() {
+        let pool = Arc::new(MockTransactionPool::new(100));
+        let bridge = TransactionPoolBridge::new(pool);
+        
+        // Submit transactions
+        let tx1 = vec![1, 2, 3];
+        let tx2 = vec![4, 5, 6];
+        let tx3 = vec![7, 8, 9];
+        
+        bridge.submit_transaction(&tx1, None).await.unwrap();
+        bridge.submit_transaction(&tx2, None).await.unwrap();
+        bridge.submit_transaction(&tx3, None).await.unwrap();
+        
+        assert_eq!(bridge.pool_size(), 3);
+        
+        // Simulate mining: clear included transactions
+        bridge.clear_included(&[tx1.clone(), tx2.clone()]);
+        
+        assert_eq!(bridge.pool_size(), 1);
+        
+        // Only tx3 should remain
+        let ready = bridge.ready_for_block(100);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0], tx3);
+    }
+
+    #[tokio::test]
+    async fn test_mining_with_pool_transactions() {
+        // Simulate the full mining flow with transaction pool
+        let pool = Arc::new(MockTransactionPool::new(100));
+        let bridge = TransactionPoolBridge::new(pool);
+        
+        // 1. Submit transactions (simulating RPC submission)
+        bridge.submit_transaction(&[0xaa, 0xbb, 0xcc], None).await.unwrap();
+        bridge.submit_transaction(&[0xdd, 0xee, 0xff], None).await.unwrap();
+        
+        // 2. Mining worker gets ready transactions
+        let ready = bridge.ready_for_block(100);
+        assert_eq!(ready.len(), 2);
+        
+        // 3. Mining worker would create block template with these transactions
+        // and mine a block...
+        
+        // 4. After successful mining, clear included transactions
+        bridge.clear_included(&ready);
+        
+        // 5. Pool should now be empty
+        assert_eq!(bridge.pool_size(), 0);
+        assert_eq!(bridge.ready_for_block(100).len(), 0);
     }
 }
