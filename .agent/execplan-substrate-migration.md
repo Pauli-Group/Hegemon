@@ -18,10 +18,14 @@
 - ✅ Transaction pool bridge collects transactions from network (Task 11.3)
 - ✅ Mining worker retrieves transactions from pool for block templates
 - ✅ Transaction circuit exists (`circuits/transaction/`) with STARK proofs
+- ✅ Full Substrate client created via `new_partial_with_client()` (Task 11.4.2)
+- ✅ Real transaction pool with `sc_transaction_pool::Builder` (Task 11.4.3)
+- ✅ BlockBuilder API wired via `wire_block_builder_api()` (Task 11.4.4)
+- ✅ PoW block import pipeline with PowBlockImport + Blake3Algorithm (Task 11.4.5)
 
 **What is scaffolded but NOT wired:**
-- ⚠️ State execution uses mock state root (Task 11.4 scaffold mode)
-- ⚠️ No real Substrate TFullClient created - using mock chain state
+- ⚠️ State execution uses mock state root in `new_full()` (Task 11.4 scaffold mode)
+- ⚠️ `new_full()` uses `new_partial()` not `new_partial_with_client()` yet
 - ⚠️ Block import logs success but doesn't update Substrate runtime state
 
 **What is NOT implemented:**
@@ -40,12 +44,13 @@ This is NOT an account-based chain. Per DESIGN.md and METHODS.md:
 - NO public balance queries - privacy is fundamental
 
 **Critical Path to Shielded State Execution:**
-1. Task 11.4.x: Wire real Substrate client (runtime execution)
-2. Task 12.x: Create pallet-shielded-pool (commitment tree + nullifiers)
-3. Task 12.2: Wire STARK verifier into pallet
-4. Task 12.5: Shielded coinbase for mining rewards
-5. Task 13.x: Wallet viewing key scanning + spend proof generation
-6. Task 14.x: E2E shielded transfer tests
+1. ~~Task 11.4.1-11.4.5: Wire real Substrate client + PoW block import~~ ✅ COMPLETE
+2. Task 11.4.6: Update service.rs to use real client in new_full()
+3. Task 12.x: Create pallet-shielded-pool (commitment tree + nullifiers)
+4. Task 12.2: Wire STARK verifier into pallet
+5. Task 12.5: Shielded coinbase for mining rewards
+6. Task 13.x: Wallet viewing key scanning + spend proof generation
+7. Task 14.x: E2E shielded transfer tests
 
 **Phases Overview:**
 | Phase | Description | Status |
@@ -182,55 +187,36 @@ This is NOT an account-based chain. Per DESIGN.md and METHODS.md:
     - Created pool in `new_partial_with_client()` using `sc_transaction_pool::Builder`
     - Pool validates transactions against runtime and maintains ready/future queues
     - Verification: `cargo check -p hegemon-node --features substrate` ✅
-  - [ ] **Task 11.4.4: Wire BlockBuilder API to execute_extrinsics_fn** (NEW)
-    - Use client.runtime_api() to get runtime BlockBuilder
-    - Implement real state execution callback:
-    ```rust
-    let client_for_exec = client.clone();
-    chain_state.set_execute_extrinsics_fn(move |parent_hash, block_number, extrinsics| {
-        let api = client_for_exec.runtime_api();
-        let parent_id = sp_runtime::generic::BlockId::Hash(parent_hash);
-        
-        // Initialize block with header
-        let header = create_header_for_block(parent_hash, block_number);
-        api.initialize_block(parent_hash, &header)?;
-        
-        // Execute each extrinsic
-        let mut applied = Vec::new();
-        let mut failed = 0;
-        for ext_bytes in extrinsics {
-            let ext = UncheckedExtrinsic::decode(&mut &ext_bytes[..])?;
-            match api.apply_extrinsic(parent_hash, ext) {
-                Ok(Ok(_)) => applied.push(ext_bytes.clone()),
-                Ok(Err(_)) | Err(_) => failed += 1,
-            }
-        }
-        
-        // Finalize block and get state root
-        let header = api.finalize_block(parent_hash)?;
-        
-        Ok(StateExecutionResult {
-            applied_extrinsics: applied,
-            state_root: header.state_root,
-            extrinsics_root: header.extrinsics_root,
-            failed_count: failed,
-        })
-    });
-    ```
-  - [ ] **Task 11.4.5: Create PoW block import pipeline** (NEW)
-    - Use sc_consensus_pow::PowBlockImport for validated imports
-    - Wire to ProductionChainStateProvider.set_import_fn()
-    - Reference: consensus/src/substrate_pow.rs Blake3Algorithm
-    ```rust
-    let pow_algorithm = consensus::Blake3Algorithm::new(client.clone());
-    let pow_block_import = sc_consensus_pow::PowBlockImport::new(
-        client.clone(),
-        client.clone(),
-        pow_algorithm.clone(),
-        0, // check_inherents_after
-        select_chain.clone(),
-    );
-    ```
+  - [x] **Task 11.4.4: Wire BlockBuilder API to execute_extrinsics_fn** (COMPLETE - 2025-11-27)
+    - Created `wire_block_builder_api()` function in `node/src/substrate/service.rs`
+    - Uses `sp_api::Core` and `sp_block_builder::BlockBuilder` traits from runtime API
+    - Implementation pattern:
+      1. Get runtime API via `client.runtime_api()`
+      2. Create header with `<runtime::Header as HeaderT>::new()`
+      3. Call `api.initialize_block()` to set up block context
+      4. Decode each extrinsic via `codec::Decode` to `UncheckedExtrinsic`
+      5. Call `api.apply_extrinsic()` for each extrinsic
+      6. Call `api.finalize_block()` to get header with computed state_root
+    - Added `sp-block-builder` dependency to node/Cargo.toml
+    - Returns `StateExecutionResult` with real runtime-computed state_root
+    - Function is available for use when switching from scaffold to production mode
+    - Verification: `cargo check -p hegemon-node --features substrate` ✅
+  - [x] **Task 11.4.5: Create PoW block import pipeline** ✅ COMPLETE
+    - Added `HegemonSelectChain` type alias using `sc_consensus::LongestChain`
+    - Added `HegemonPowBlockImport<CIDP>` type alias for generic PoW block import
+    - Created `ConcretePowBlockImport` type with no-op inherent data providers
+    - Created `wire_pow_block_import()` function in service.rs:
+      - Constructs block from `BlockTemplate` + `Blake3Seal`
+      - Uses `BlockImportParams` with `BlockOrigin::Own`
+      - Imports through `PowBlockImport.import_block()` for PoW verification
+    - Updated `PartialComponentsWithClient` struct with:
+      - `select_chain: HegemonSelectChain`
+      - `pow_block_import: ConcretePowBlockImport`
+      - `pow_algorithm: Blake3Algorithm<HegemonFullClient>`
+    - Updated `new_partial_with_client()` to create all PoW pipeline components
+    - Updated consensus crate to import `runtime::apis::DifficultyApi` instead of declaring duplicate
+    - Added `sp-inherents` dependency to node/Cargo.toml
+    - Verification: `cargo check -p hegemon-node --features substrate` ✅
   - [ ] **Task 11.4.6: Update service.rs to use real client** (NEW)
     - Thread client Arc through to all components
     - Update PartialComponents struct to include client, backend

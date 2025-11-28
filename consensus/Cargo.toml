@@ -26,6 +26,9 @@ sc-consensus-pow = { workspace = true, optional = true }
 sp-consensus-pow = { workspace = true, optional = true }
 sp-api = { workspace = true, optional = true }
 
+# Runtime dependency for DifficultyApi (optional, for full Substrate integration)
+runtime = { path = "../runtime", optional = true, default-features = false, features = ["std"] }
+
 [dev-dependencies]
 network = { path = "../network" }
 proptest = "1"
@@ -34,4 +37,4 @@ tokio = { version = "1", features = ["macros", "rt", "time", "sync"] }
 [features]
 default = []
 # Enable full Substrate PowAlgorithm implementation
-substrate = ["sc-consensus-pow", "sp-consensus-pow", "sp-api"]
+substrate = ["sc-consensus-pow", "sp-consensus-pow", "sp-api", "runtime"]

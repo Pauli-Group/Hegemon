@@ -66,6 +66,8 @@ sp-timestamp = { workspace = true, optional = true }
 sp-runtime = { workspace = true, features = ["std"], optional = true }
 sp-api = { workspace = true, features = ["std"], optional = true }
 sp-io = { workspace = true, features = ["std"], optional = true }
+sp-block-builder = { workspace = true, features = ["std"], optional = true }
+sp-inherents = { workspace = true, features = ["std"], optional = true }
 codec = { workspace = true, optional = true }
 
 jsonrpsee = { version = "0.24", features = ["server", "macros"], optional = true }
@@ -114,6 +116,8 @@ substrate = [
     "dep:sp-runtime",
     "dep:sp-api",
     "dep:sp-io",
+    "dep:sp-block-builder",
+    "dep:sp-inherents",
     "dep:jsonrpsee",
     "dep:runtime",
     "dep:codec",
