@@ -118,6 +118,8 @@ cargo check -p hegemon-node
 
 **These tasks MUST be completed before the node is usable for real transactions.**
 
+**COMPLETION POLICY**: A task is NOT complete until the agent runs the **Runtime Verification** commands and they succeed. Code compilation and unit tests are insufficient.
+
 ### Phase 11.5: Wire Real Substrate Client 🔴 NOT STARTED
 
 **Goal**: Replace `new_full()` scaffold mode with `new_full_with_client()` production mode.
@@ -154,9 +156,33 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
 }
 ```
 
-**Verification**:
-- [ ] `new_full_with_client()` is called instead of scaffold `new_full()`
-- [ ] `PartialComponentsWithClient` returned (has real client, pool, etc.)
+**Runtime Verification** (agent must run these):
+```bash
+# 1. Build and start node in background
+cargo build --release -p hegemon-node --features substrate
+HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp &
+NODE_PID=$!
+sleep 10
+
+# 2. Verify real client is initialized (not scaffold)
+curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
+  http://127.0.0.1:9944 | jq -e '.result.peers >= 0'
+# MUST return: true (not error)
+
+# 3. Verify blocks are being produced with real state
+curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"chain_getBlock","params":[],"id":1}' \
+  http://127.0.0.1:9944 | jq -e '.result.block.header.stateRoot'
+# MUST return: a hex string (not null, not error)
+
+# 4. Cleanup
+kill $NODE_PID
+```
+
+**Status**: 🔴 NOT STARTED
+- [ ] Code changed
+- [ ] Runtime verification passed
 
 ---
 
@@ -181,10 +207,28 @@ chain_state.set_pending_txs_fn(move || {
 });
 ```
 
-**Verification**:
-- [ ] Transactions submitted via RPC appear in pool
-- [ ] Invalid transactions rejected by runtime
-- [ ] Pool persists transactions across restarts
+**Runtime Verification** (agent must run these):
+```bash
+# 1. Start node
+HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp &
+NODE_PID=$!
+sleep 10
+
+# 2. Get pool status - should return pending count
+curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"author_pendingExtrinsics","params":[],"id":1}' \
+  http://127.0.0.1:9944 | jq -e '.result'
+# MUST return: [] (empty array, not error)
+
+# 3. Submit a transaction and verify it appears in pool
+# (Specific tx submission test after extrinsic encoding is wired)
+
+kill $NODE_PID
+```
+
+**Status**: 🔴 NOT STARTED
+- [ ] Code changed
+- [ ] Runtime verification passed
 
 ---
 
@@ -203,10 +247,32 @@ This uses the runtime to:
 2. `apply_extrinsic()` - Execute each transaction
 3. `finalize_block()` - Compute real state root
 
-**Verification**:
-- [ ] State root changes when transactions included
-- [ ] Invalid transactions fail at execution
-- [ ] Balances actually change in storage
+**Runtime Verification** (agent must run these):
+```bash
+# 1. Start node
+HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp &
+NODE_PID=$!
+sleep 15
+
+# 2. Query state storage for Alice's balance (should be non-zero from genesis)
+curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"state_getStorage","params":["0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9de1e86a9a8c739864cf3cc5ec2bea59fd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d"],"id":1}' \
+  http://127.0.0.1:9944 | jq -e '.result'
+# MUST return: hex-encoded balance (not null, not error)
+
+# 3. Verify state root is different across blocks (not static mock)
+BLOCK1=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getBlockHash","params":[1],"id":1}' http://127.0.0.1:9944 | jq -r '.result')
+BLOCK2=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getBlockHash","params":[2],"id":1}' http://127.0.0.1:9944 | jq -r '.result')
+STATE1=$(curl -s -X POST -d "{\"jsonrpc\":\"2.0\",\"method\":\"chain_getHeader\",\"params\":[\"$BLOCK1\"],\"id\":1}" http://127.0.0.1:9944 | jq -r '.result.stateRoot')
+STATE2=$(curl -s -X POST -d "{\"jsonrpc\":\"2.0\",\"method\":\"chain_getHeader\",\"params\":[\"$BLOCK2\"],\"id\":1}" http://127.0.0.1:9944 | jq -r '.result.stateRoot')
+[ "$STATE1" != "$STATE2" ] && echo "PASS: State roots differ" || echo "FAIL: State roots identical (mock)"
+
+kill $NODE_PID
+```
+
+**Status**: 🔴 NOT STARTED
+- [ ] Code changed
+- [ ] Runtime verification passed
 
 ---
 
@@ -232,10 +298,38 @@ chain_state.set_import_fn(move |template, seal| {
 });
 ```
 
-**Verification**:
-- [ ] Mined blocks stored in RocksDB
-- [ ] Blocks retrievable via RPC after restart
-- [ ] `chain_getBlock` returns real block data
+**Runtime Verification** (agent must run these):
+```bash
+# 1. Start node, let it mine some blocks
+HEGEMON_MINE=1 ./target/release/hegemon-node --dev --base-path /tmp/hegemon-test &
+NODE_PID=$!
+sleep 20
+
+# 2. Get current block number
+BLOCK_NUM=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' http://127.0.0.1:9944 | jq -r '.result.number' | xargs printf "%d")
+echo "Block number: $BLOCK_NUM"
+[ "$BLOCK_NUM" -gt 0 ] || { echo "FAIL: No blocks mined"; kill $NODE_PID; exit 1; }
+
+# 3. Stop node
+kill $NODE_PID
+sleep 2
+
+# 4. Restart and verify blocks persisted
+./target/release/hegemon-node --dev --base-path /tmp/hegemon-test &
+NODE_PID=$!
+sleep 5
+
+BLOCK_NUM_AFTER=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' http://127.0.0.1:9944 | jq -r '.result.number' | xargs printf "%d")
+echo "Block number after restart: $BLOCK_NUM_AFTER"
+[ "$BLOCK_NUM_AFTER" -ge "$BLOCK_NUM" ] && echo "PASS: Blocks persisted" || echo "FAIL: Blocks lost on restart"
+
+kill $NODE_PID
+rm -rf /tmp/hegemon-test
+```
+
+**Status**: 🔴 NOT STARTED
+- [ ] Code changed
+- [ ] Runtime verification passed
 
 ---
 
@@ -270,6 +364,43 @@ enum SyncState {
 #### Task 11.6.3: Warp Sync (Optional) 🔴
 
 For faster sync, implement finality proof downloading.
+
+**Runtime Verification for 11.6.1-11.6.3** (agent must run these):
+```bash
+# Two-node sync test
+
+# 1. Start Node 1, let it mine 10+ blocks
+HEGEMON_MINE=1 ./target/release/hegemon-node --dev --base-path /tmp/node1 --port 30333 --rpc-port 9944 &
+NODE1_PID=$!
+sleep 30
+
+# Get Node 1 block height
+NODE1_HEIGHT=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' http://127.0.0.1:9944 | jq -r '.result.number' | xargs printf "%d")
+echo "Node 1 height: $NODE1_HEIGHT"
+
+# 2. Start Node 2 connecting to Node 1 (no mining)
+./target/release/hegemon-node --dev --base-path /tmp/node2 --port 30334 --rpc-port 9945 --bootnodes /ip4/127.0.0.1/tcp/30333 &
+NODE2_PID=$!
+sleep 15
+
+# 3. Verify Node 2 synced to Node 1's height
+NODE2_HEIGHT=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' http://127.0.0.1:9945 | jq -r '.result.number' | xargs printf "%d")
+echo "Node 2 height: $NODE2_HEIGHT"
+
+[ "$NODE2_HEIGHT" -ge "$NODE1_HEIGHT" ] && echo "PASS: Node 2 synced" || echo "FAIL: Node 2 did not sync"
+
+# 4. Verify same chain (compare block hashes)
+HASH1=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getBlockHash","params":[5],"id":1}' http://127.0.0.1:9944 | jq -r '.result')
+HASH2=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getBlockHash","params":[5],"id":1}' http://127.0.0.1:9945 | jq -r '.result')
+[ "$HASH1" = "$HASH2" ] && echo "PASS: Same chain" || echo "FAIL: Chain fork"
+
+kill $NODE1_PID $NODE2_PID
+rm -rf /tmp/node1 /tmp/node2
+```
+
+**Status**: 🔴 NOT STARTED
+- [ ] Code changed
+- [ ] Runtime verification passed
 
 ---
 
@@ -340,6 +471,39 @@ fn submit_shielded_transfer(&self, ...) -> Result<TxHash, RpcError> {
 }
 ```
 
+**Runtime Verification for 11.7.1-11.7.3** (agent must run these):
+```bash
+# 1. Start node
+HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp &
+NODE_PID=$!
+sleep 10
+
+# 2. Verify hegemon_consensusStatus returns real data (not mock)
+curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"hegemon_consensusStatus","params":[],"id":1}' \
+  http://127.0.0.1:9944 | jq -e '.result.height > 0'
+# MUST return: true
+
+# 3. Verify shielded pool status returns real data
+curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"hegemon_getShieldedPoolStatus","params":[],"id":1}' \
+  http://127.0.0.1:9944 | jq -e '.result.merkle_root'
+# MUST return: a hex string (not error)
+
+# 4. Verify submit_shielded_transfer doesn't return "not implemented" error
+# (Will fail with proof validation error, but should NOT say "not implemented")
+curl -s -X POST -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"hegemon_submitShieldedTransfer","params":{"proof":"0x00","nullifiers":[],"commitments":[],"encrypted_notes":[],"anchor":"0x0000000000000000000000000000000000000000000000000000000000000000","binding_sig":"0x00"},"id":1}' \
+  http://127.0.0.1:9944 | tee /dev/stderr | grep -v "not implemented"
+# MUST NOT contain: "not implemented" or "not yet implemented"
+
+kill $NODE_PID
+```
+
+**Status**: 🔴 NOT STARTED
+- [ ] Code changed
+- [ ] Runtime verification passed
+
 ---
 
 ### Phase 11.8: Integration Verification 🔴 NOT STARTED
@@ -348,38 +512,148 @@ fn submit_shielded_transfer(&self, ...) -> Result<TxHash, RpcError> {
 
 #### Task 11.8.1: Single Node Smoke Test 🔴
 
+**Runtime Verification** (agent must run these):
 ```bash
-# Start node
-HEGEMON_MINE=1 cargo run -p hegemon-node --features substrate -- --dev
+# Full single-node smoke test
+set -e
 
-# Verify:
-# 1. Blocks are mined and stored
-curl -X POST -d '{"jsonrpc":"2.0","method":"chain_getBlock","params":[],"id":1}' http://localhost:9944
+# 1. Build release
+cargo build --release -p hegemon-node --features substrate
 
-# 2. Pool accepts transactions
-curl -X POST -d '{"jsonrpc":"2.0","method":"author_submitExtrinsic","params":["0x..."],"id":1}' http://localhost:9944
+# 2. Start node with mining
+HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp &
+NODE_PID=$!
+sleep 15
 
-# 3. Balances change
-curl -X POST -d '{"jsonrpc":"2.0","method":"state_getStorage","params":["0x..."],"id":1}' http://localhost:9944
+# 3. Verify blocks are being mined
+BLOCK_NUM=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' http://127.0.0.1:9944 | jq -r '.result.number' | xargs printf "%d")
+echo "Current block: $BLOCK_NUM"
+[ "$BLOCK_NUM" -gt 0 ] || { echo "FAIL: No blocks mined"; kill $NODE_PID; exit 1; }
+echo "PASS: Blocks being mined"
+
+# 4. Verify state storage works
+ALICE_BALANCE=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"state_getStorage","params":["0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9de1e86a9a8c739864cf3cc5ec2bea59fd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d"],"id":1}' http://127.0.0.1:9944 | jq -r '.result')
+[ "$ALICE_BALANCE" != "null" ] || { echo "FAIL: Cannot read storage"; kill $NODE_PID; exit 1; }
+echo "PASS: State storage readable"
+
+# 5. Verify transaction pool RPC works
+PENDING=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"author_pendingExtrinsics","params":[],"id":1}' http://127.0.0.1:9944 | jq -e '.result')
+echo "PASS: Transaction pool RPC works"
+
+# 6. Verify consensus RPC works
+CONSENSUS=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"hegemon_consensusStatus","params":[],"id":1}' http://127.0.0.1:9944 | jq -e '.result')
+echo "PASS: Consensus RPC works"
+
+kill $NODE_PID
+echo "=== ALL SINGLE NODE TESTS PASSED ==="
 ```
+
+**Status**: 🔴 NOT STARTED
+- [ ] Runtime verification passed
+
+---
 
 #### Task 11.8.2: Two Node Sync Test 🔴
 
+**Runtime Verification** (agent must run these):
 ```bash
-# Node 1 mines blocks
-# Node 2 connects and syncs
-# Verify Node 2 has same chain state as Node 1
+# Two-node sync and communication test
+set -e
+
+# 1. Start Node 1 with mining
+HEGEMON_MINE=1 ./target/release/hegemon-node --dev --base-path /tmp/node1 --port 30333 --rpc-port 9944 &
+NODE1_PID=$!
+sleep 20
+
+# 2. Get Node 1 info
+NODE1_HEIGHT=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' http://127.0.0.1:9944 | jq -r '.result.number' | xargs printf "%d")
+echo "Node 1 height: $NODE1_HEIGHT"
+[ "$NODE1_HEIGHT" -gt 5 ] || { echo "FAIL: Node 1 not mining enough blocks"; kill $NODE1_PID; exit 1; }
+
+# 3. Start Node 2 (no mining, just sync)
+./target/release/hegemon-node --dev --base-path /tmp/node2 --port 30334 --rpc-port 9945 --bootnodes /ip4/127.0.0.1/tcp/30333 &
+NODE2_PID=$!
+sleep 20
+
+# 4. Verify Node 2 connected to Node 1
+NODE2_PEERS=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"system_peers","params":[],"id":1}' http://127.0.0.1:9945 | jq '.result | length')
+echo "Node 2 peers: $NODE2_PEERS"
+[ "$NODE2_PEERS" -gt 0 ] || { echo "FAIL: Node 2 not connected"; kill $NODE1_PID $NODE2_PID; exit 1; }
+echo "PASS: Nodes connected"
+
+# 5. Verify Node 2 synced
+NODE2_HEIGHT=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' http://127.0.0.1:9945 | jq -r '.result.number' | xargs printf "%d")
+echo "Node 2 height: $NODE2_HEIGHT"
+[ "$NODE2_HEIGHT" -ge "$((NODE1_HEIGHT - 2))" ] || { echo "FAIL: Node 2 not synced"; kill $NODE1_PID $NODE2_PID; exit 1; }
+echo "PASS: Node 2 synced"
+
+# 6. Verify same chain (compare block hash at height 5)
+HASH1=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getBlockHash","params":[5],"id":1}' http://127.0.0.1:9944 | jq -r '.result')
+HASH2=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getBlockHash","params":[5],"id":1}' http://127.0.0.1:9945 | jq -r '.result')
+[ "$HASH1" = "$HASH2" ] || { echo "FAIL: Chain fork detected"; kill $NODE1_PID $NODE2_PID; exit 1; }
+echo "PASS: Same chain on both nodes"
+
+kill $NODE1_PID $NODE2_PID
+rm -rf /tmp/node1 /tmp/node2
+echo "=== ALL TWO NODE TESTS PASSED ==="
 ```
+
+**Status**: 🔴 NOT STARTED
+- [ ] Runtime verification passed
+
+---
 
 #### Task 11.8.3: Shielded Transaction E2E 🔴
 
+**Runtime Verification** (agent must run these):
 ```bash
-# 1. Shield funds
-# 2. Build STARK proof
-# 3. Submit shielded transfer
-# 4. Verify nullifier spent
-# 5. Verify recipient can scan note
+# End-to-end shielded transaction test
+set -e
+
+# 1. Start node
+HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp &
+NODE_PID=$!
+sleep 15
+
+# 2. Get initial shielded pool status
+INITIAL_STATUS=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"hegemon_getShieldedPoolStatus","params":[],"id":1}' http://127.0.0.1:9944)
+INITIAL_NOTES=$(echo $INITIAL_STATUS | jq -r '.result.total_notes')
+echo "Initial notes in pool: $INITIAL_NOTES"
+
+# 3. Shield some funds (requires wallet to build tx)
+# This test requires the wallet CLI to be functional
+cargo run -p wallet --bin wallet -- shield \
+  --node http://127.0.0.1:9944 \
+  --amount 1000000 \
+  --to <SHIELDED_ADDRESS> \
+  2>&1 | tee /tmp/shield_result.txt
+
+# Check shield succeeded
+grep -q "Transaction submitted" /tmp/shield_result.txt || { echo "FAIL: Shield tx not submitted"; kill $NODE_PID; exit 1; }
+echo "PASS: Shield transaction submitted"
+
+# 4. Wait for block inclusion
+sleep 15
+
+# 5. Verify pool status changed
+FINAL_STATUS=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"hegemon_getShieldedPoolStatus","params":[],"id":1}' http://127.0.0.1:9944)
+FINAL_NOTES=$(echo $FINAL_STATUS | jq -r '.result.total_notes')
+echo "Final notes in pool: $FINAL_NOTES"
+[ "$FINAL_NOTES" -gt "$INITIAL_NOTES" ] || { echo "FAIL: No new notes in pool"; kill $NODE_PID; exit 1; }
+echo "PASS: Note added to shielded pool"
+
+# 6. Verify merkle root changed
+INITIAL_ROOT=$(echo $INITIAL_STATUS | jq -r '.result.merkle_root')
+FINAL_ROOT=$(echo $FINAL_STATUS | jq -r '.result.merkle_root')
+[ "$INITIAL_ROOT" != "$FINAL_ROOT" ] || { echo "FAIL: Merkle root unchanged"; kill $NODE_PID; exit 1; }
+echo "PASS: Merkle root updated"
+
+kill $NODE_PID
+echo "=== ALL SHIELDED TX TESTS PASSED ==="
 ```
+
+**Status**: 🔴 NOT STARTED
+- [ ] Runtime verification passed
 
 ---
 
