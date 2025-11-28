@@ -229,18 +229,27 @@ impl Default for IncrementalMerkleTree {
 
 /// Compact Merkle tree state for storage.
 ///
-/// This is a more storage-efficient representation that can be
-/// expanded into a full IncrementalMerkleTree.
-#[derive(
-    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
-)]
+/// This stores the frontier (rightmost path) to enable incremental appends
+/// without storing all leaves.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
 pub struct CompactMerkleTree {
-    /// Frontier hashes (one per level that has a non-default value).
-    /// Stored as a bounded vec with max 32 entries for depth 32.
+    /// Number of leaves in the tree.
     #[codec(compact)]
     pub leaf_count: u64,
     /// Current root hash.
     pub root: [u8; 32],
+    /// Frontier: the rightmost non-default node at each level.
+    /// This enables O(log n) appends without storing all leaves.
+    /// Vec is bounded by MERKLE_TREE_DEPTH (32).
+    pub frontier: Vec<[u8; 32]>,
+}
+
+// Manual MaxEncodedLen implementation since Vec doesn't impl it
+impl MaxEncodedLen for CompactMerkleTree {
+    fn max_encoded_len() -> usize {
+        // compact u64 + [u8;32] + Vec<[u8;32]> with max 33 entries
+        9 + 32 + 4 + (33 * 32) // ~1100 bytes max
+    }
 }
 
 impl CompactMerkleTree {
@@ -250,6 +259,7 @@ impl CompactMerkleTree {
         Self {
             leaf_count: 0,
             root: defaults.at_level(MERKLE_TREE_DEPTH),
+            frontier: Vec::new(),
         }
     }
 
@@ -268,11 +278,56 @@ impl CompactMerkleTree {
         self.leaf_count == 0
     }
 
+    /// Check if full.
+    pub fn is_full(&self) -> bool {
+        self.leaf_count >= (1u64 << MERKLE_TREE_DEPTH)
+    }
+
+    /// Append a new leaf to the tree.
+    ///
+    /// Returns the new root hash.
+    pub fn append(&mut self, leaf: [u8; 32]) -> Result<[u8; 32], MerkleTreeError> {
+        if self.is_full() {
+            return Err(MerkleTreeError::TreeFull);
+        }
+
+        let defaults = DefaultHashes::new(MERKLE_TREE_DEPTH);
+        let position = self.leaf_count;
+
+        // Ensure frontier has enough levels
+        while self.frontier.len() <= MERKLE_TREE_DEPTH as usize {
+            self.frontier.push([0u8; 32]);
+        }
+
+        let mut current = leaf;
+        let mut level_position = position;
+
+        for level in 0..MERKLE_TREE_DEPTH {
+            if level_position & 1 == 0 {
+                // Left child - store in frontier
+                self.frontier[level as usize] = current;
+                // Right sibling is default
+                current = merkle_hash(&current, &defaults.at_level(level));
+            } else {
+                // Right child - combine with frontier
+                let left = self.frontier[level as usize];
+                current = merkle_hash(&left, &current);
+            }
+            level_position >>= 1;
+        }
+
+        self.root = current;
+        self.leaf_count += 1;
+
+        Ok(self.root)
+    }
+
     /// Update from full tree.
     pub fn from_full(tree: &IncrementalMerkleTree) -> Self {
         Self {
             leaf_count: tree.leaf_count,
             root: tree.root,
+            frontier: tree.frontier.clone(),
         }
     }
 }
@@ -431,6 +486,41 @@ mod tests {
 
         assert_eq!(compact.root(), tree.root());
         assert_eq!(compact.len(), tree.len());
+    }
+
+    #[test]
+    fn compact_tree_incremental_append_matches_full_tree() {
+        // Both must use the same depth - CompactMerkleTree uses MERKLE_TREE_DEPTH
+        let mut full_tree = IncrementalMerkleTree::new(MERKLE_TREE_DEPTH);
+        for i in 0..8 {
+            full_tree.append([i; 32]).unwrap();
+        }
+
+        // Build compact tree incrementally
+        let mut compact_tree = CompactMerkleTree::new();
+        for i in 0..8 {
+            compact_tree.append([i; 32]).unwrap();
+        }
+
+        // Roots should match!
+        assert_eq!(compact_tree.root(), full_tree.root());
+        assert_eq!(compact_tree.len(), full_tree.len());
+    }
+
+    #[test]
+    fn compact_tree_append_works() {
+        let mut tree = CompactMerkleTree::new();
+
+        let root0 = tree.root();
+        tree.append([1u8; 32]).unwrap();
+        let root1 = tree.root();
+        tree.append([2u8; 32]).unwrap();
+        let root2 = tree.root();
+
+        // Each append should change the root
+        assert_ne!(root0, root1);
+        assert_ne!(root1, root2);
+        assert_eq!(tree.len(), 2);
     }
 
     #[test]

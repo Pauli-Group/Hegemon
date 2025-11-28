@@ -20,8 +20,10 @@ pub const MAX_NULLIFIERS_PER_TX: u32 = 4;
 /// Maximum number of commitments (output notes) per transaction.
 pub const MAX_COMMITMENTS_PER_TX: u32 = 4;
 
-/// Size of a Groth16 proof in bytes (BLS12-381).
-pub const GROTH16_PROOF_SIZE: usize = 192;
+/// Maximum size of a STARK proof in bytes.
+/// STARK proofs require NO trusted setup.
+/// Typical range: 20KB-100KB depending on circuit complexity.
+pub const STARK_PROOF_MAX_SIZE: usize = 65536;
 
 /// Size of a binding signature.
 pub const BINDING_SIG_SIZE: usize = 64;
@@ -93,8 +95,9 @@ impl Note {
 pub struct EncryptedNote {
     /// Encrypted ciphertext containing note data.
     pub ciphertext: [u8; ENCRYPTED_NOTE_SIZE],
-    /// Ephemeral public key for ECDH key agreement.
-    pub ephemeral_pk: [u8; 32],
+    /// Ephemeral public key for ML-KEM key encapsulation.
+    /// This is the KEM ciphertext (1088 bytes for ML-KEM-768).
+    pub ephemeral_pk: [u8; 32], // TODO: Expand to ML-KEM ciphertext size
 }
 
 impl Default for EncryptedNote {
@@ -106,29 +109,46 @@ impl Default for EncryptedNote {
     }
 }
 
-/// Groth16 ZK-SNARK proof for shielded transfers.
-#[derive(
-    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
-)]
-pub struct Groth16Proof {
-    /// The proof bytes (A, B, C points on BLS12-381).
-    pub data: [u8; GROTH16_PROOF_SIZE],
+/// STARK proof for shielded transfers.
+///
+/// Uses a transparent proving system (FRI-based IOP) with no trusted setup.
+/// Security relies only on hash functions.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct StarkProof {
+    /// Variable-length proof data.
+    /// Contains FRI layers, query responses, and auxiliary data.
+    pub data: Vec<u8>,
 }
 
-impl Default for Groth16Proof {
+impl Default for StarkProof {
     fn default() -> Self {
         Self {
-            data: [0u8; GROTH16_PROOF_SIZE],
+            data: Vec::new(),
         }
     }
 }
 
-/// Binding signature for value balance verification.
+impl StarkProof {
+    /// Create a proof from raw bytes.
+    pub fn from_bytes(data: Vec<u8>) -> Self {
+        Self { data }
+    }
+
+    /// Check if the proof is empty (invalid).
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+}
+
+/// Balance commitment for value balance verification.
+///
+/// In the PQC model, value balance is verified inside the STARK proof itself.
+/// This struct exists for API compatibility but is checked in-circuit.
 #[derive(
     Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
 )]
 pub struct BindingSignature {
-    /// The signature bytes.
+    /// Hash-based commitment to the value balance.
     pub data: [u8; BINDING_SIG_SIZE],
 }
 
@@ -167,16 +187,16 @@ impl MerklePath {
 /// A shielded transfer transaction.
 ///
 /// This structure contains all the data needed for a shielded transfer:
-/// - ZK proof that the transaction is valid
+/// - ZK proof that the transaction is valid (STARK)
 /// - Nullifiers for spent notes (prevents double-spending)
 /// - Commitments for new notes (added to Merkle tree)
 /// - Encrypted notes for recipients
 /// - Anchor (Merkle root the proof was generated against)
-/// - Binding signature (ensures value balance)
+/// - Value balance commitment (verified in-circuit)
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
 pub struct ShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
-    /// Groth16 proof.
-    pub proof: Groth16Proof,
+    /// STARK proof (FRI-based, no trusted setup).
+    pub proof: StarkProof,
     /// Nullifiers for spent notes.
     pub nullifiers: BoundedVec<[u8; 32], MaxNullifiers>,
     /// New note commitments.
@@ -185,7 +205,7 @@ pub struct ShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
     pub ciphertexts: BoundedVec<EncryptedNote, MaxCommitments>,
     /// Merkle root the proof was generated against.
     pub anchor: [u8; 32],
-    /// Binding signature for value balance.
+    /// Value balance commitment (verified in STARK circuit).
     pub binding_sig: BindingSignature,
     /// Net value change (positive = deposit from transparent, negative = withdraw to transparent).
     pub value_balance: i128,
@@ -210,7 +230,7 @@ impl Default for TransferType {
 
 impl DecodeWithMemTracking for TransferType {}
 
-/// Parameters for the Groth16 verifying key.
+/// Parameters for the STARK verifying key.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
 pub struct VerifyingKeyParams {
     /// The verifying key identifier.

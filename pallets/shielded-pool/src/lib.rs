@@ -14,7 +14,7 @@
 //! - **Note Commitments**: Hashed representations of notes that hide their contents
 //! - **Nullifiers**: Unique identifiers for spent notes that prevent double-spending
 //! - **Merkle Tree**: Stores all note commitments for membership proofs
-//! - **ZK Proofs**: Groth16 proofs that verify transaction validity without revealing details
+//! - **ZK Proofs**: STARK proofs that verify transaction validity without revealing details
 //!
 //! ## Verification Process
 //!
@@ -35,18 +35,22 @@ pub mod nullifier;
 pub mod types;
 pub mod verifier;
 
-use merkle::{CompactMerkleTree, IncrementalMerkleTree};
-use types::{BindingSignature, EncryptedNote, Groth16Proof, VerifyingKeyParams, MERKLE_TREE_DEPTH};
+use merkle::CompactMerkleTree;
+use types::{BindingSignature, EncryptedNote, StarkProof, VerifyingKeyParams, MERKLE_TREE_DEPTH};
 use verifier::{ProofVerifier, ShieldedTransferInputs, VerificationResult, VerifyingKey};
 
-use codec::Decode;
 use frame_support::dispatch::DispatchResult;
 use frame_support::pallet_prelude::*;
 use frame_support::traits::{Currency, ExistenceRequirement, StorageVersion};
 use frame_support::weights::Weight;
+use frame_support::PalletId;
 use frame_system::pallet_prelude::*;
 use log::{info, warn};
+use sp_runtime::traits::AccountIdConversion;
 use sp_std::vec::Vec;
+
+/// Pallet ID for deriving the pool account.
+const PALLET_ID: PalletId = PalletId(*b"shld/pol");
 
 /// Weight information for pallet extrinsics.
 pub trait WeightInfo {
@@ -342,7 +346,7 @@ pub mod pallet {
         ))]
         pub fn shielded_transfer(
             origin: OriginFor<T>,
-            proof: Groth16Proof,
+            proof: StarkProof,
             nullifiers: BoundedVec<[u8; 32], T::MaxNullifiersPerTx>,
             commitments: BoundedVec<[u8; 32], T::MaxCommitmentsPerTx>,
             ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
@@ -397,9 +401,9 @@ pub mod pallet {
             let vk = VerifyingKeyStorage::<T>::get();
             ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
 
-            // Verify ZK proof
+            // Verify ZK proof (STARK-based, no trusted setup)
             let verifier = T::ProofVerifier::default();
-            match verifier.verify_groth16(&proof, &inputs, &vk) {
+            match verifier.verify_stark(&proof, &inputs, &vk) {
                 VerificationResult::Valid => {}
                 VerificationResult::InvalidProofFormat => {
                     return Err(Error::<T>::InvalidProofFormat.into())
@@ -413,7 +417,7 @@ pub mod pallet {
                 _ => return Err(Error::<T>::ProofVerificationFailed.into()),
             }
 
-            // Verify binding signature
+            // Verify value balance commitment (checked in-circuit for PQC)
             ensure!(
                 verifier.verify_binding_signature(&binding_sig, &inputs),
                 Error::<T>::InvalidBindingSignature
@@ -555,42 +559,24 @@ pub mod pallet {
     impl<T: Config> Pallet<T> {
         /// Get the pool account (derives from pallet ID).
         pub fn pool_account() -> T::AccountId {
-            // Use a deterministic account derived from the pallet
-            let pallet_id = b"shld/pol";
-            let mut account_bytes = [0u8; 32];
-            account_bytes[..8].copy_from_slice(pallet_id);
-            T::AccountId::decode(&mut &account_bytes[..]).expect("32 bytes is valid AccountId")
+            PALLET_ID.into_account_truncating()
         }
 
         /// Update the Merkle tree with new commitments.
         fn update_merkle_tree(
             new_commitments: &BoundedVec<[u8; 32], T::MaxCommitmentsPerTx>,
         ) -> DispatchResult {
-            // Get current compact tree state
-            let compact = MerkleTree::<T>::get();
+            // Get current compact tree state and mutate it
+            let mut tree = MerkleTree::<T>::get();
 
-            // Create full tree for operations
-            let mut tree = IncrementalMerkleTree::new(MERKLE_TREE_DEPTH);
-
-            // We rebuild from the leaf count - this is simplified
-            // In production, we'd store the frontier
+            // Append each new commitment
             for cm in new_commitments.iter() {
                 tree.append(*cm).map_err(|_| Error::<T>::MerkleTreeFull)?;
             }
 
-            // Get new root (simplified - in production we'd update incrementally)
-            let new_root = if new_commitments.is_empty() {
-                compact.root()
-            } else {
-                tree.root()
-            };
-
-            // Store updated compact tree
-            let new_compact = CompactMerkleTree {
-                leaf_count: compact.leaf_count + new_commitments.len() as u64,
-                root: new_root,
-            };
-            MerkleTree::<T>::put(new_compact);
+            // Store updated tree
+            let new_root = tree.root();
+            MerkleTree::<T>::put(tree);
 
             // Store root in history
             let block = <frame_system::Pallet<T>>::block_number();
@@ -616,13 +602,20 @@ pub mod pallet {
         }
 
         /// Get Merkle witness for a commitment at given index.
+        ///
+        /// NOTE: This requires rebuilding the tree from stored commitments,
+        /// which is expensive. For production, consider storing witnesses
+        /// off-chain or using a different data structure.
         pub fn get_merkle_witness(index: u64) -> Option<merkle::MerkleWitness> {
+            use merkle::IncrementalMerkleTree;
+
             let tree = MerkleTree::<T>::get();
             if index >= tree.len() {
                 return None;
             }
 
             // Build tree from stored commitments
+            // This is O(n) and expensive - production should optimize
             let mut full_tree = IncrementalMerkleTree::new(MERKLE_TREE_DEPTH);
             for i in 0..tree.len() {
                 if let Some(cm) = Commitments::<T>::get(i) {

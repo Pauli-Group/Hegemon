@@ -1,26 +1,22 @@
 //! Post-Quantum Noise Protocol Extension
 //!
-//! This crate implements a hybrid key exchange protocol combining:
-//! - Classical X25519 ECDH (for immediate security)
-//! - ML-KEM-768 encapsulation (for post-quantum security)
+//! This crate implements a post-quantum key exchange protocol using:
+//! - ML-KEM-768 encapsulation (FIPS 203, lattice-based)
 //!
 //! # Security Properties
 //!
-//! The hybrid approach ensures:
-//! 1. If X25519 is broken but ML-KEM is secure → connection remains secure
-//! 2. If ML-KEM is broken but X25519 is secure → connection remains secure
-//! 3. Both must be broken simultaneously to compromise security
+//! ML-KEM provides IND-CCA2 security against quantum adversaries.
+//! All key exchange is based on lattice problems (Module-LWE).
 //!
 //! # Protocol Overview
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────┐
-//! │                     Hybrid Handshake                        │
+//! │                     PQ Handshake                            │
 //! ├─────────────────────────────────────────────────────────────┤
-//! │  1. X25519 ECDH        │  Classical fallback (always run)  │
-//! │  2. ML-KEM-768 Encaps  │  PQ encapsulation (if supported)  │
-//! │  3. Combined Key       │  HKDF(x25519_ss || mlkem_ss)      │
-//! │  4. ML-DSA-65 Sign     │  Authenticate peer identity       │
+//! │  1. ML-KEM-768 Encaps  │  PQ key encapsulation              │
+//! │  2. Shared Secret      │  HKDF(mlkem_ss)                    │
+//! │  3. ML-DSA-65 Sign     │  Authenticate peer identity        │
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
 //!

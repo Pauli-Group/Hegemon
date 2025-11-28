@@ -2,7 +2,7 @@
 name = "pq-noise"
 version = "0.1.0"
 edition = "2021"
-description = "Post-Quantum Noise Protocol Extension with ML-KEM-768 hybrid handshake"
+description = "Post-Quantum Noise Protocol Extension with ML-KEM-768 handshake"
 authors = ["Hegemon Team"]
 license = "MIT OR Apache-2.0"
 
@@ -12,9 +12,6 @@ crypto = { path = "../crypto", package = "synthetic-crypto" }
 sha2 = "0.10"
 hkdf = "0.12"
 rand = { version = "0.8", features = ["std"] }
-
-# X25519 for classical fallback
-x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 
 # AES-GCM for encryption
 aead = "0.5"

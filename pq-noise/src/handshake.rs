@@ -1,4 +1,4 @@
-//! Hybrid X25519 + ML-KEM-768 handshake implementation
+//! Pure ML-KEM-768 handshake implementation (no classical ECDH)
 
 use crypto::hashes::sha256;
 use crypto::ml_dsa::{MlDsaPublicKey, MlDsaSignature};
@@ -6,7 +6,6 @@ use crypto::ml_kem::{MlKemCiphertext, MlKemPublicKey, MlKemSharedSecret};
 use crypto::traits::{KemKeyPair, KemPublicKey, SigningKey, VerifyKey};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::config::PqNoiseConfig;
 use crate::error::{HandshakeError, Result};
@@ -20,12 +19,9 @@ use crate::types::{
 pub struct PqHandshake {
     config: PqNoiseConfig,
     transcript: Transcript,
-    x25519_secret: Option<StaticSecret>,
-    x25519_public: Option<X25519PublicKey>,
     remote_peer: Option<RemotePeer>,
     mlkem_shared_1: Option<MlKemSharedSecret>,
     mlkem_shared_2: Option<MlKemSharedSecret>,
-    x25519_shared: Option<[u8; 32]>,
 }
 
 impl PqHandshake {
@@ -34,25 +30,15 @@ impl PqHandshake {
         Self {
             config,
             transcript: Transcript::new(),
-            x25519_secret: None,
-            x25519_public: None,
             remote_peer: None,
             mlkem_shared_1: None,
             mlkem_shared_2: None,
-            x25519_shared: None,
         }
     }
 
     /// Generate the initiator's hello message
     pub fn initiator_hello(&mut self) -> Result<HandshakeMessage> {
         let mut rng = rand::thread_rng();
-
-        // Generate X25519 ephemeral key pair
-        let x25519_secret = StaticSecret::random_from_rng(&mut rng);
-        let x25519_public = X25519PublicKey::from(&x25519_secret);
-
-        self.x25519_secret = Some(x25519_secret);
-        self.x25519_public = Some(x25519_public);
 
         // Get our identity and KEM public keys
         let identity_key = self.config.identity.verify_key.to_bytes();
@@ -66,7 +52,6 @@ impl PqHandshake {
         // Create message (without signature first)
         let message = InitHelloMessage {
             version: PROTOCOL_VERSION,
-            x25519_ephemeral: x25519_public.as_bytes().clone(),
             mlkem_public_key: mlkem_public_key.clone(),
             identity_key: identity_key.clone(),
             nonce,
@@ -128,18 +113,6 @@ impl PqHandshake {
 
         let mut rng = rand::thread_rng();
 
-        // Generate our X25519 ephemeral
-        let x25519_secret = StaticSecret::random_from_rng(&mut rng);
-        let x25519_public = X25519PublicKey::from(&x25519_secret);
-
-        // Compute X25519 shared secret
-        let initiator_x25519 = X25519PublicKey::from(init_hello.x25519_ephemeral);
-        let x25519_shared = x25519_secret.diffie_hellman(&initiator_x25519);
-        self.x25519_shared = Some(x25519_shared.to_bytes());
-
-        self.x25519_secret = Some(x25519_secret);
-        self.x25519_public = Some(x25519_public);
-
         // Encapsulate to initiator's ML-KEM public key
         let initiator_mlkem_pk = MlKemPublicKey::from_bytes(&init_hello.mlkem_public_key)?;
         let encap_seed = sha256(&[&self.transcript.hash()[..], b"encap1"].concat());
@@ -158,7 +131,6 @@ impl PqHandshake {
         // Create message (without signature)
         let message = RespHelloMessage {
             version: PROTOCOL_VERSION,
-            x25519_ephemeral: x25519_public.as_bytes().clone(),
             mlkem_public_key: mlkem_public_key.clone(),
             mlkem_ciphertext: ciphertext.to_bytes().to_vec(),
             identity_key: identity_key.clone(),
@@ -218,13 +190,6 @@ impl PqHandshake {
         // Store remote peer info
         let remote_peer = RemotePeer::from_handshake(&resp_hello.identity_key, &resp_hello.mlkem_public_key)?;
         self.remote_peer = Some(remote_peer.clone());
-
-        // Compute X25519 shared secret
-        let x25519_secret = self.x25519_secret.as_ref()
-            .ok_or(HandshakeError::InvalidState)?;
-        let responder_x25519 = X25519PublicKey::from(resp_hello.x25519_ephemeral);
-        let x25519_shared = x25519_secret.diffie_hellman(&responder_x25519);
-        self.x25519_shared = Some(x25519_shared.to_bytes());
 
         // Decapsulate the ciphertext from responder
         let ciphertext = MlKemCiphertext::from_bytes(&resp_hello.mlkem_ciphertext)?;
@@ -307,8 +272,6 @@ impl PqHandshake {
 
     /// Derive session keys from handshake state
     fn derive_session_keys(&self) -> Result<SessionKeys> {
-        let x25519_shared = self.x25519_shared.as_ref()
-            .ok_or(HandshakeError::KeyDerivation)?;
         let mlkem_shared_1 = self.mlkem_shared_1.as_ref()
             .ok_or(HandshakeError::KeyDerivation)?;
         let mlkem_shared_2 = self.mlkem_shared_2.as_ref()
@@ -321,10 +284,10 @@ impl PqHandshake {
         ss2.copy_from_slice(mlkem_shared_2.as_bytes());
 
         let transcript_hash = self.transcript.hash();
-        let keys = SessionKeys::derive(&transcript_hash, x25519_shared, &ss1, &ss2);
+        let keys = SessionKeys::derive(&transcript_hash, &ss1, &ss2);
 
         if self.config.verbose_logging {
-            tracing::info!("PQ handshake complete with ML-KEM-768");
+            tracing::info!("PQ handshake complete with ML-KEM-768 (pure post-quantum)");
         }
 
         Ok(keys)
@@ -346,7 +309,6 @@ impl PqHandshake {
         let mut hasher = Sha256::new();
         hasher.update(b"init-hello");
         hasher.update([msg.version]);
-        hasher.update(&msg.x25519_ephemeral);
         hasher.update(&msg.mlkem_public_key);
         hasher.update(&msg.identity_key);
         hasher.update(msg.nonce.to_be_bytes());
@@ -357,7 +319,6 @@ impl PqHandshake {
         let mut hasher = Sha256::new();
         hasher.update(b"resp-hello");
         hasher.update([msg.version]);
-        hasher.update(&msg.x25519_ephemeral);
         hasher.update(&msg.mlkem_public_key);
         hasher.update(&msg.mlkem_ciphertext);
         hasher.update(&msg.identity_key);

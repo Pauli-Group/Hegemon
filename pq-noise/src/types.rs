@@ -17,11 +17,11 @@ pub const PROTOCOL_ID: &str = "/hegemon/pq-noise/1.0.0";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum HandshakeMessage {
     /// Initiator's first message
-    /// Contains X25519 ephemeral public key and optionally ML-KEM public key
+    /// Contains ML-KEM public key for encapsulation
     InitHello(InitHelloMessage),
 
     /// Responder's reply
-    /// Contains X25519 ephemeral, ML-KEM public key, ciphertext, and signature
+    /// Contains ML-KEM public key, ciphertext, and signature
     RespHello(RespHelloMessage),
 
     /// Final confirmation from initiator
@@ -34,8 +34,6 @@ pub enum HandshakeMessage {
 pub struct InitHelloMessage {
     /// Protocol version
     pub version: u8,
-    /// X25519 ephemeral public key (32 bytes)
-    pub x25519_ephemeral: [u8; 32],
     /// Initiator's ML-KEM-768 public key (1184 bytes)
     pub mlkem_public_key: Vec<u8>,
     /// Initiator's identity public key (ML-DSA-65)
@@ -51,8 +49,6 @@ pub struct InitHelloMessage {
 pub struct RespHelloMessage {
     /// Protocol version
     pub version: u8,
-    /// X25519 ephemeral public key (32 bytes)
-    pub x25519_ephemeral: [u8; 32],
     /// Responder's ML-KEM-768 public key (1184 bytes)
     pub mlkem_public_key: Vec<u8>,
     /// ML-KEM ciphertext encapsulated to initiator's public key (1088 bytes)
@@ -99,19 +95,17 @@ pub struct SessionKeys {
 }
 
 impl SessionKeys {
-    /// Create session keys from the combined key material
+    /// Create session keys from the combined ML-KEM key material
     pub fn derive(
         transcript: &[u8],
-        x25519_shared: &[u8; 32],
         mlkem_shared_1: &[u8; 32],
         mlkem_shared_2: &[u8; 32],
     ) -> Self {
         use hkdf::Hkdf;
         use sha2::Sha256;
 
-        // Combine all shared secrets
-        let mut combined = Vec::with_capacity(32 * 3);
-        combined.extend_from_slice(x25519_shared);
+        // Combine ML-KEM shared secrets (pure PQ, no classical ECDH)
+        let mut combined = Vec::with_capacity(64);
         combined.extend_from_slice(mlkem_shared_1);
         combined.extend_from_slice(mlkem_shared_2);
 

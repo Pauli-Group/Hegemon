@@ -129,13 +129,11 @@ pub fn new_test_ext() -> TestExternalities {
 mod tests {
     use super::*;
     use crate::pallet::{Pallet, MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage};
-    use crate::types::{BindingSignature, EncryptedNote, Groth16Proof, GROTH16_PROOF_SIZE};
+    use crate::types::{BindingSignature, EncryptedNote, StarkProof};
     use frame_support::{assert_noop, assert_ok, BoundedVec};
 
-    fn valid_proof() -> Groth16Proof {
-        Groth16Proof {
-            data: [1u8; GROTH16_PROOF_SIZE],
-        }
+    fn valid_proof() -> StarkProof {
+        StarkProof::from_bytes(vec![1u8; 1024])
     }
 
     fn valid_binding_sig() -> BindingSignature {

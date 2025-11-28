@@ -31,13 +31,11 @@ pub use pq_transport::{
     upgrade_inbound, upgrade_outbound,
 };
 pub use protocol::{
-    is_hybrid_protocol, is_legacy_protocol, is_pq_protocol, negotiate_protocol,
+    is_pq_protocol, negotiate_protocol,
     protocol_security_level, protocol_type, supported_protocols,
     NegotiationResult, NotificationProtocolConfig, ProtocolNegotiationConfig,
     ProtocolSecurityLevel, ProtocolType,
-    BLOCK_ANNOUNCES_LEGACY, BLOCK_ANNOUNCES_PQ, HYBRID_PROTOCOL_V1,
-    LEGACY_PROTOCOL_V1, PQ_PROTOCOL_V1, SYNC_LEGACY, SYNC_PQ,
-    TRANSACTIONS_LEGACY, TRANSACTIONS_PQ,
+    BLOCK_ANNOUNCES_PQ, PQ_PROTOCOL_V1, SYNC_PQ, TRANSACTIONS_PQ,
 };
 pub use service::RelayConfig;
 pub use service::{P2PService, ProtocolHandle};

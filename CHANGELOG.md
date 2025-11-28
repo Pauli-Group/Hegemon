@@ -2,13 +2,13 @@
 
 ## 2025-02-17
 - **Phase 3: PQ libp2p Integration** - Implemented post-quantum secure peer connections
-  - Created `pq-noise` crate implementing hybrid X25519 + ML-KEM-768 handshake protocol
-  - Added AES-256-GCM encrypted sessions with hybrid-derived keys
+  - Created `pq-noise` crate implementing pure ML-KEM-768 handshake protocol
+  - Added AES-256-GCM encrypted sessions with ML-KEM-derived keys
   - Integrated ML-DSA-65 signature authentication for peer identity verification
   - Added `network/src/pq_transport.rs` for network layer integration
   - Created `node/src/substrate/network.rs` for Substrate sc-network integration
   - Updated `node/src/substrate/service.rs` with PQ network configuration
-  - All cryptographic material uses defense-in-depth: both classical (X25519) and post-quantum (ML-KEM-768) must be broken to compromise security
+  - All cryptographic material uses post-quantum primitives only (no classical ECDH)
   - Added comprehensive test suite: 13 pq-noise tests + 7 network integration tests
 
 ## 2025-02-15

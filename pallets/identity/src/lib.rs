@@ -116,7 +116,6 @@ pub mod pallet {
         type MaxProofSize: Get<u32> + Clone + Debug + TypeInfo;
         type MaxIdentityTags: Get<u32> + Clone + Debug + TypeInfo;
         type MaxTagLength: Get<u32> + Clone + PartialEq + Eq + Debug + TypeInfo;
-        type MaxEd25519KeyBytes: Get<u32> + Clone + PartialEq + Eq + Debug + TypeInfo;
         type MaxPqKeyBytes: Get<u32> + Clone + PartialEq + Eq + Debug + TypeInfo;
         type WeightInfo: WeightInfo;
     }
@@ -153,16 +152,12 @@ pub mod pallet {
     #[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
     #[scale_info(skip_type_params(T))]
     pub enum SessionKey<T: Config> {
+        /// Legacy key for migration compatibility.
         Legacy(T::AuthorityId),
-        Ed25519(BoundedVec<u8, T::MaxEd25519KeyBytes>),
+        /// Post-quantum signature key (ML-DSA/SLH-DSA).
         PostQuantum {
             algorithm: PqSignatureAlgorithm,
             key: BoundedVec<u8, T::MaxPqKeyBytes>,
-        },
-        Hybrid {
-            algorithm: PqSignatureAlgorithm,
-            pq_key: BoundedVec<u8, T::MaxPqKeyBytes>,
-            ed25519_key: BoundedVec<u8, T::MaxEd25519KeyBytes>,
         },
     }
 
@@ -172,21 +167,10 @@ pub mod pallet {
         fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
             match self {
                 SessionKey::Legacy(_) => f.write_str("Legacy"),
-                SessionKey::Ed25519(pk) => f.debug_tuple("Ed25519").field(pk).finish(),
                 SessionKey::PostQuantum { algorithm, key } => f
                     .debug_struct("PostQuantum")
                     .field("algorithm", algorithm)
                     .field("key", key)
-                    .finish(),
-                SessionKey::Hybrid {
-                    algorithm,
-                    pq_key,
-                    ed25519_key,
-                } => f
-                    .debug_struct("Hybrid")
-                    .field("algorithm", algorithm)
-                    .field("pq_key", pq_key)
-                    .field("ed25519_key", ed25519_key)
                     .finish(),
             }
         }

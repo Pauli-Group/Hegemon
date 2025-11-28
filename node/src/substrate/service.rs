@@ -59,19 +59,18 @@
 //! │  │                   PqNetworkBackend (Phase 3.5)                       ││
 //! │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────┐ ││
 //! │  │  │  Listener   │  │  Dialer     │  │  SubstratePqTransport       │ ││
-//! │  │  │  (inbound)  │  │  (outbound) │  │  (hybrid handshake)         │ ││
+//! │  │  │  (inbound)  │  │  (outbound) │  │  (PQ handshake)             │ ││
 //! │  │  └─────────────┘  └─────────────┘  └─────────────────────────────┘ ││
 //! │  └─────────────────────────────────────────────────────────────────────┘│
 //! │  ┌─────────────────────────────────────────────────────────────────────┐│
-//! │  │                   Hybrid Handshake Protocol                         ││
-//! │  │  ┌─────────────────┐   ┌──────────────────────────────────────────┐││
-//! │  │  │ X25519 ECDH     │ + │ ML-KEM-768 Encapsulation                 │││
-//! │  │  │ (classical)     │   │ (post-quantum)                           │││
-//! │  │  └─────────────────┘   └──────────────────────────────────────────┘││
+//! │  │                   PQ Handshake Protocol                             ││
+//! │  │  ┌─────────────────────────────────────────────────────────────────┐││
+//! │  │  │        ML-KEM-768 Key Encapsulation (post-quantum)              │││
+//! │  │  └─────────────────────────────────────────────────────────────────┘││
 //! │  │                                    │                                ││
 //! │  │                                    ▼                                ││
 //! │  │  ┌─────────────────────────────────────────────────────────────────┐││
-//! │  │  │        Combined Key = HKDF(X25519_SS || ML-KEM_SS)              │││
+//! │  │  │        Session Key = HKDF(ML-KEM_SS)                            │││
 //! │  │  └─────────────────────────────────────────────────────────────────┘││
 //! │  │                                    │                                ││
 //! │  │                                    ▼                                ││
@@ -495,8 +494,6 @@ pub fn wire_pow_block_import(
 pub struct PqServiceConfig {
     /// Whether PQ is required for all connections
     pub require_pq: bool,
-    /// Whether hybrid mode is enabled (PQ preferred but legacy allowed)
-    pub hybrid_mode: bool,
     /// Enable verbose PQ handshake logging
     pub verbose_logging: bool,
     /// Listen address for P2P
@@ -511,7 +508,6 @@ impl Default for PqServiceConfig {
     fn default() -> Self {
         Self {
             require_pq: true,
-            hybrid_mode: true,
             verbose_logging: false,
             listen_addr: "0.0.0.0:30333".parse().unwrap(),
             bootstrap_nodes: Vec::new(),
@@ -695,7 +691,6 @@ pub fn new_partial(config: &Configuration) -> Result<PartialComponents, ServiceE
             .map(|addr| format!("/ip4/{}/tcp/{}", addr.ip(), addr.port()))
             .collect(),
         enable_pq_transport: true,
-        hybrid_mode: pq_service_config.hybrid_mode,
         max_peers: pq_service_config.max_peers as u32,
         connection_timeout_secs: 30,
         require_pq: pq_service_config.require_pq,
@@ -947,7 +942,6 @@ pub fn new_partial_with_client(
             .map(|addr| format!("/ip4/{}/tcp/{}", addr.ip(), addr.port()))
             .collect(),
         enable_pq_transport: true,
-        hybrid_mode: pq_service_config.hybrid_mode,
         max_peers: pq_service_config.max_peers as u32,
         connection_timeout_secs: 30,
         require_pq: pq_service_config.require_pq,
@@ -1093,7 +1087,6 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
     if let Some(ref keypair) = network_keypair {
         tracing::info!(
             peer_id = %keypair.peer_id(),
-            hybrid_mode = %network_config.hybrid_mode,
             "PQ-secure network transport configured"
         );
     }
@@ -1645,7 +1638,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     if let Some(ref keypair) = network_keypair {
         tracing::info!(
             peer_id = %keypair.peer_id(),
-            hybrid_mode = %network_config.hybrid_mode,
             "PQ-secure network transport configured"
         );
     }
@@ -2051,7 +2043,6 @@ mod tests {
     fn test_pq_service_config_default() {
         let config = PqServiceConfig::default();
         assert!(config.require_pq);
-        assert!(config.hybrid_mode);
         assert!(!config.verbose_logging);
         assert_eq!(config.max_peers, 50);
     }
