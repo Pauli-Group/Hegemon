@@ -159,7 +159,10 @@ mod cli {
             None => {
                 let runner = cli.create_runner(&cli.run)?;
                 runner.run_node_until_exit(|config| async move {
-                    service::new_full(config).await.map_err(sc_cli::Error::Service)
+                    // Phase 11.5.1: Use production mode with full Substrate client
+                    // This replaces scaffold mode (new_full) with production mode (new_full_with_client)
+                    // that uses real state execution, block import, and transaction pool.
+                    service::new_full_with_client(config).await.map_err(sc_cli::Error::Service)
                 })
             }
         }

@@ -205,6 +205,37 @@ impl Clone for PowHandle {
     }
 }
 
+/// Implementation of MiningHandle trait for RPC integration (Phase 11.7)
+#[cfg(feature = "substrate")]
+impl crate::substrate::rpc::MiningHandle for PowHandle {
+    fn is_mining(&self) -> bool {
+        let coordinator = self.coordinator.lock();
+        coordinator.is_mining()
+    }
+
+    fn start_mining(&self, _threads: u32) {
+        // Note: Thread count is configured at creation time
+        // For now, just start with existing config
+        self.start_mining();
+    }
+
+    fn stop_mining(&self) {
+        PowHandle::stop_mining(self);
+    }
+
+    fn hashrate(&self) -> f64 {
+        PowHandle::hashrate(self)
+    }
+
+    fn blocks_found(&self) -> u64 {
+        PowHandle::blocks_found(self)
+    }
+
+    fn thread_count(&self) -> u32 {
+        self.config.threads as u32
+    }
+}
+
 /// Block import result for PoW blocks
 #[derive(Clone, Debug)]
 pub struct PowBlockImportResult {
