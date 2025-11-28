@@ -3,23 +3,16 @@
 //! This module defines the chain specifications for different network
 //! configurations: development, local testnet, and public testnet.
 //!
-//! # Phase 1 Status
+//! # Phase 11 Status
 //!
-//! This is a scaffold. Full chain spec configuration requires:
-//! - WASM binary from substrate-wasm-builder
-//! - Aligned runtime types with sc-chain-spec
-//! - Full genesis state configuration
+//! Now using real WASM binary and genesis configuration.
 
+use runtime::WASM_BINARY;
 use sc_service::ChainType;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 /// Specialized `ChainSpec` for the Hegemon runtime.
-///
-/// In full implementation, this will use:
-/// ```ignore
-/// sc_service::GenericChainSpec<Extensions>
-/// ```
-/// For now, we use a simple JSON-based chain spec.
 pub type ChainSpec = sc_service::GenericChainSpec;
 
 /// Chain spec extensions for Hegemon (placeholder).
@@ -39,19 +32,50 @@ pub struct Extensions {
 /// This configuration is intended for local development with a single node.
 /// Uses easy PoW difficulty and pre-funded development accounts.
 pub fn development_config() -> Result<ChainSpec, String> {
-    // Phase 1: Create minimal chain spec without WASM binary
-    // In Phase 2+, this will use runtime::WASM_BINARY
+    let wasm_binary = WASM_BINARY.ok_or("Development WASM binary not available")?;
 
     let mut properties = sc_chain_spec::Properties::new();
     properties.insert("tokenSymbol".into(), "HGM".into());
     properties.insert("tokenDecimals".into(), 12.into());
     properties.insert("ss58Format".into(), 42.into());
 
-    Ok(ChainSpec::builder(&[], None)
+    // Development genesis with pre-funded accounts
+    // Uses very easy difficulty for fast mining during development
+    // Only includes pallets that have genesis config
+    let genesis_config = json!({
+        "system": {},
+        "balances": {
+            "balances": [
+                // Alice (development key)
+                ["5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", 1_000_000_000_000_000_000_000_u128],
+                // Bob (development key)
+                ["5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty", 500_000_000_000_000_000_000_u128]
+            ],
+            "devAccounts": null
+        },
+        "sudo": {
+            "key": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+        },
+        "session": {
+            "keys": [],
+            "nonAuthorityKeys": []
+        },
+        "difficulty": {
+            // Very low difficulty for development (easy mining)
+            "initialDifficulty": "0x1000000",
+            "initialBits": 0x207fffff_u32
+        },
+        "shieldedPool": {
+            "verifyingKey": null
+        }
+    });
+
+    Ok(ChainSpec::builder(wasm_binary, None)
         .with_name("Hegemon Development")
         .with_id("hegemon_dev")
         .with_chain_type(ChainType::Development)
         .with_properties(properties)
+        .with_genesis_config(genesis_config)
         .build())
 }
 
@@ -59,16 +83,44 @@ pub fn development_config() -> Result<ChainSpec, String> {
 ///
 /// This configuration is intended for multi-node local testing.
 pub fn local_testnet_config() -> Result<ChainSpec, String> {
+    let wasm_binary = WASM_BINARY.ok_or("Local testnet WASM binary not available")?;
+
     let mut properties = sc_chain_spec::Properties::new();
     properties.insert("tokenSymbol".into(), "HGM".into());
     properties.insert("tokenDecimals".into(), 12.into());
     properties.insert("ss58Format".into(), 42.into());
 
-    Ok(ChainSpec::builder(&[], None)
+    let genesis_config = json!({
+        "system": {},
+        "balances": {
+            "balances": [
+                ["5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", 1_000_000_000_000_000_000_000_u128],
+                ["5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty", 500_000_000_000_000_000_000_u128]
+            ],
+            "devAccounts": null
+        },
+        "sudo": {
+            "key": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+        },
+        "session": {
+            "keys": [],
+            "nonAuthorityKeys": []
+        },
+        "difficulty": {
+            "initialDifficulty": "0x1000000",
+            "initialBits": 0x207fffff_u32
+        },
+        "shieldedPool": {
+            "verifyingKey": null
+        }
+    });
+
+    Ok(ChainSpec::builder(wasm_binary, None)
         .with_name("Hegemon Local Testnet")
         .with_id("hegemon_local")
         .with_chain_type(ChainType::Local)
         .with_properties(properties)
+        .with_genesis_config(genesis_config)
         .build())
 }
 
@@ -76,16 +128,45 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
 ///
 /// This configuration is for the public testnet deployment.
 pub fn testnet_config() -> Result<ChainSpec, String> {
+    let wasm_binary = WASM_BINARY.ok_or("Testnet WASM binary not available")?;
+
     let mut properties = sc_chain_spec::Properties::new();
     properties.insert("tokenSymbol".into(), "HGM".into());
     properties.insert("tokenDecimals".into(), 12.into());
     properties.insert("ss58Format".into(), 42.into());
 
-    Ok(ChainSpec::builder(&[], None)
+    let genesis_config = json!({
+        "system": {},
+        "balances": {
+            "balances": [
+                // Sudo account for testnet
+                ["5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", 5_000_000_000_000_000_000_000_u128]
+            ],
+            "devAccounts": null
+        },
+        "sudo": {
+            "key": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+        },
+        "session": {
+            "keys": [],
+            "nonAuthorityKeys": []
+        },
+        "difficulty": {
+            // Harder difficulty for testnet
+            "initialDifficulty": "0x10000000000",
+            "initialBits": 0x1e00ffff_u32
+        },
+        "shieldedPool": {
+            "verifyingKey": null
+        }
+    });
+
+    Ok(ChainSpec::builder(wasm_binary, None)
         .with_name("Hegemon Testnet")
         .with_id("hegemon_testnet")
         .with_chain_type(ChainType::Live)
         .with_properties(properties)
+        .with_genesis_config(genesis_config)
         .build())
 }
 

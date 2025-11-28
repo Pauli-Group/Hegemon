@@ -125,6 +125,10 @@ use crate::substrate::mining_worker::{
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::{NetworkBridge, NetworkBridgeBuilder};
+use crate::substrate::rpc::{
+    HegemonApiServer, HegemonRpc,
+    ProductionRpcService, ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
+};
 use crate::substrate::transaction_pool::{
     MockTransactionPool, TransactionPoolBridge, TransactionPoolConfig,
 };
@@ -144,6 +148,9 @@ use tokio::sync::Mutex;
 
 // Import runtime APIs for difficulty queries (Task 11.4.6)
 use runtime::apis::ConsensusApi;
+
+// Import jsonrpsee for RPC server (Phase 11.7)
+use jsonrpsee::server::ServerBuilder;
 
 /// Type alias for the no-op inherent data providers creator
 ///
@@ -1954,9 +1961,92 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         tracing::info!("Mining worker not spawned (HEGEMON_MINE not set)");
     }
 
+    // =========================================================================
+    // Phase 11.7: Spawn RPC Server with Production Service
+    // =========================================================================
+    //
+    // The RPC server provides HTTP and WebSocket access to:
+    // - Chain state queries (chain_*, state_*)  
+    // - Transaction submission (author_*)
+    // - Hegemon-specific RPCs (hegemon_*, wallet RPCs)
+    // - Shielded pool RPCs (STARK proofs, encrypted notes)
+    
+    let rpc_port: u16 = std::env::var("HEGEMON_RPC_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(9944);
+    
+    // Create production RPC service with client access
+    let rpc_service = Arc::new(ProductionRpcService::new(client.clone()));
+    
+    // Create RPC module with all extensions
+    let rpc_module = {
+        use jsonrpsee::RpcModule;
+        
+        let mut module = RpcModule::new(());
+        
+        // Add Hegemon RPC (mining, consensus, telemetry)
+        let hegemon_rpc = HegemonRpc::new(rpc_service.clone(), pow_handle.clone());
+        if let Err(e) = module.merge(hegemon_rpc.into_rpc()) {
+            tracing::warn!(error = %e, "Failed to merge Hegemon RPC");
+        }
+        
+        // Add Wallet RPC (notes, commitments, proofs)
+        let wallet_rpc = WalletRpc::new(rpc_service.clone());
+        if let Err(e) = module.merge(wallet_rpc.into_rpc()) {
+            tracing::warn!(error = %e, "Failed to merge Wallet RPC");
+        }
+        
+        // Add Shielded Pool RPC (STARK proofs, encrypted notes)
+        let shielded_rpc = ShieldedRpc::new(rpc_service);
+        if let Err(e) = module.merge(shielded_rpc.into_rpc()) {
+            tracing::warn!(error = %e, "Failed to merge Shielded RPC");
+        }
+        
+        module
+    };
+    
+    // Spawn RPC server task
+    let rpc_handle = task_manager.spawn_handle();
+    rpc_handle.spawn(
+        "hegemon-rpc-server",
+        Some("rpc"),
+        async move {
+            let addr = format!("127.0.0.1:{}", rpc_port);
+            
+            match ServerBuilder::default().build(&addr).await {
+                Ok(server) => {
+                    tracing::info!(
+                        addr = %addr,
+                        "RPC server started (Phase 11.7)"
+                    );
+                    
+                    let handle = server.start(rpc_module);
+                    
+                    // Keep the server running
+                    handle.stopped().await;
+                    
+                    tracing::info!("RPC server stopped");
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        addr = %addr,
+                        "Failed to start RPC server"
+                    );
+                }
+            }
+        },
+    );
+    
+    tracing::info!(
+        rpc_port = rpc_port,
+        "Phase 11.7: RPC server spawned with production service"
+    );
+
     let has_pq_broadcast = pq_network_handle.is_some();
     tracing::info!("═══════════════════════════════════════════════════════════════");
-    tracing::info!("Task 11.4.6 Complete - FULL SUBSTRATE CLIENT INTEGRATION");
+    tracing::info!("Phase 11 Complete - FULL SUBSTRATE NODE INTEGRATION");
     tracing::info!("═══════════════════════════════════════════════════════════════");
     tracing::info!("  ✅ Task 11.4.1: RuntimeApi exported from runtime");
     tracing::info!("  ✅ Task 11.4.2: Full Substrate client created");
@@ -1964,11 +2054,18 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     tracing::info!("  ✅ Task 11.4.4: BlockBuilder API wired (real state execution)");
     tracing::info!("  ✅ Task 11.4.5: PowBlockImport pipeline created");
     tracing::info!("  ✅ Task 11.4.6: Client wired to ProductionChainStateProvider");
+    tracing::info!("  ✅ Task 11.5.1: new_full() now uses new_full_with_client()");
+    tracing::info!("  ✅ Task 11.5.2: Real transaction pool wired");
+    tracing::info!("  ✅ Task 11.5.3: Real state execution wired (BlockBuilder API)");
+    tracing::info!("  ✅ Task 11.5.4: Real block import wired (PowBlockImport)");
+    tracing::info!("  ✅ Task 11.7.1: ProductionRpcService created");
+    tracing::info!("  ✅ Task 11.7.2: RPC server spawned on port {}", rpc_port);
     tracing::info!("    - best_block_fn → client.chain_info()");
     tracing::info!("    - difficulty_fn → runtime DifficultyApi");
     tracing::info!("    - execute_extrinsics_fn → BlockBuilder API");
     tracing::info!("    - import_fn → PowBlockImport");
     tracing::info!("  PQ network broadcasting: {}", has_pq_broadcast);
+    tracing::info!("  RPC server: http://127.0.0.1:{}", rpc_port);
     tracing::info!("  Set HEGEMON_MINE=1 to enable mining");
     tracing::info!("═══════════════════════════════════════════════════════════════");
 

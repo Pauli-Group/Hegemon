@@ -48,6 +48,7 @@
 //! ```
 
 pub mod hegemon;
+pub mod production_service;
 pub mod shielded;
 pub mod shielded_service;
 pub mod wallet;
@@ -56,6 +57,7 @@ use jsonrpsee::RpcModule;
 use std::sync::Arc;
 
 pub use hegemon::{HegemonApiServer, HegemonRpc, HegemonService, MiningHandle};
+pub use production_service::ProductionRpcService;
 pub use shielded::{ShieldedApiServer, ShieldedPoolService, ShieldedRpc};
 pub use shielded_service::MockShieldedPoolService;
 pub use wallet::{WalletApiServer, WalletRpc, WalletService};
