@@ -2030,17 +2030,15 @@ HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
 
 **These must be done FIRST before any other work matters.**
 
-| Task | Est. Time | Blocker For |
-|------|-----------|-------------|
-| **11.5.1**: Switch to `new_full_with_client()` | 2-4 hrs | Everything |
-| **11.5.2**: Wire real transaction pool | 2-4 hrs | Tx submission |
-| **11.5.3**: Wire real state execution | 2-4 hrs | Tx execution |
-| **11.5.4**: Wire real block import | 2-4 hrs | Block storage |
-| **11.6.1-11.6.3**: Chain sync | 4-8 hrs | Multi-node |
-| **11.7.1-11.7.3**: Production RPC service | 4-6 hrs | Wallet/Dashboard |
-| **11.8.1-11.8.3**: Integration verification | 4-6 hrs | Confidence |
-
-**Critical Path Total**: ~20-36 hours
+| Task | Blocker For |
+|------|-------------|
+| **11.5.1**: Switch to `new_full_with_client()` | Everything |
+| **11.5.2**: Wire real transaction pool | Tx submission |
+| **11.5.3**: Wire real state execution | Tx execution |
+| **11.5.4**: Wire real block import | Block storage |
+| **11.6.1-11.6.3**: Chain sync | Multi-node |
+| **11.7.1-11.7.3**: Production RPC service | Wallet/Dashboard |
+| **11.8.1-11.8.3**: Integration verification | Confidence |
 
 ### Phase Status (Code vs Runtime)
 
@@ -2052,19 +2050,15 @@ HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
 | Phase 14: E2E Flow | 🔴 NOT DONE | ❌ Cannot test | Blocked by 11.5-11.8 |
 | Phase 15: Hardening | 🔴 NOT DONE | N/A | After everything works |
 
-### Corrected Timeline
+### Remaining Work
 
-| Phase | Duration | Actual Status |
-|-------|----------|---------------|
-| Phase 11.5-11.8: Make It Work | 1 week | 🔴 **BLOCKING** - must do first |
-| Phase 12: Shielded Pool Pallet | - | ✅ Code complete (not running) |
-| Phase 13: Wallet Integration | - | ✅ Code complete (RPC blocked) |
-| Phase 14: E2E Testing | 1 week | 🔴 Blocked by 11.5-11.8 |
-| Phase 15: Hardening | 2-3 weeks | 🔴 After E2E verified |
-
-**Honest Total Remaining**: ~4-6 weeks to production-ready
-
-**To "friends can transact" milestone**: ~1 week (Phase 11.5-11.8 only)
+| Phase | Actual Status |
+|-------|---------------|
+| Phase 11.5-11.8: Make It Work | 🔴 **BLOCKING** - must do first |
+| Phase 12: Shielded Pool Pallet | ✅ Code complete (not running) |
+| Phase 13: Wallet Integration | ✅ Code complete (RPC blocked) |
+| Phase 14: E2E Testing | 🔴 Blocked by 11.5-11.8 |
+| Phase 15: Hardening | 🔴 After E2E verified |
 
 ---
 
