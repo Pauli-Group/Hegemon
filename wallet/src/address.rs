@@ -2,8 +2,8 @@ use bech32::{self, FromBase32, ToBase32, Variant};
 use serde::{Deserialize, Serialize};
 
 use synthetic_crypto::{
-    ml_kem::{MlKemPublicKey, ML_KEM_PUBLIC_KEY_LEN},
-    traits::KemPublicKey,
+    ml_kem::{MlKemKeyPair, MlKemPublicKey, ML_KEM_PUBLIC_KEY_LEN},
+    traits::{KemKeyPair, KemPublicKey},
 };
 
 use crate::error::WalletError;
@@ -20,6 +20,20 @@ pub struct ShieldedAddress {
     pub pk_enc: MlKemPublicKey,
     #[serde(with = "serde_bytes32")]
     pub address_tag: [u8; 32],
+}
+
+impl Default for ShieldedAddress {
+    fn default() -> Self {
+        // Generate a dummy address for testing purposes
+        let keypair = MlKemKeyPair::generate_deterministic(b"test-default-address");
+        Self {
+            version: 1,
+            diversifier_index: 0,
+            pk_recipient: [0u8; 32],
+            pk_enc: keypair.public_key(),
+            address_tag: [0u8; 32],
+        }
+    }
 }
 
 impl ShieldedAddress {

@@ -35,7 +35,9 @@ pub use protocol::{
     protocol_security_level, protocol_type, supported_protocols,
     NegotiationResult, NotificationProtocolConfig, ProtocolNegotiationConfig,
     ProtocolSecurityLevel, ProtocolType,
-    BLOCK_ANNOUNCES_PQ, PQ_PROTOCOL_V1, SYNC_PQ, TRANSACTIONS_PQ,
+    BLOCK_ANNOUNCES_PQ, BLOCK_ANNOUNCES_LEGACY,
+    PQ_PROTOCOL_V1, SYNC_PQ, SYNC_LEGACY,
+    TRANSACTIONS_PQ, TRANSACTIONS_LEGACY,
 };
 pub use service::RelayConfig;
 pub use service::{P2PService, ProtocolHandle};
