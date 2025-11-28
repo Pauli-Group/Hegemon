@@ -1,0 +1,439 @@
+//! Mock runtime for testing the shielded pool pallet.
+
+use crate as pallet_shielded_pool;
+use crate::verifier::AcceptAllProofs;
+
+use frame_support::{
+    parameter_types,
+    traits::{ConstU16, ConstU32, Everything},
+};
+use sp_io::TestExternalities;
+use sp_runtime::testing::H256;
+use sp_runtime::traits::{BlakeTwo256, IdentityLookup};
+use sp_runtime::BuildStorage;
+
+frame_support::construct_runtime!(
+    pub enum Test {
+        System: frame_system,
+        Balances: pallet_balances,
+        ShieldedPool: pallet_shielded_pool,
+    }
+);
+
+parameter_types! {
+    pub const BlockHashCount: u64 = 250;
+    pub const ExistentialDeposit: u128 = 1;
+}
+
+impl frame_system::Config for Test {
+    type BaseCallFilter = Everything;
+    type BlockWeights = ();
+    type BlockLength = ();
+    type DbWeight = ();
+    type RuntimeOrigin = RuntimeOrigin;
+    type RuntimeCall = RuntimeCall;
+    type RuntimeTask = ();
+    type Nonce = u64;
+    type Block = frame_system::mocking::MockBlock<Self>;
+    type Hash = H256;
+    type Hashing = BlakeTwo256;
+    type AccountId = u64;
+    type Lookup = IdentityLookup<Self::AccountId>;
+    type RuntimeEvent = RuntimeEvent;
+    type BlockHashCount = BlockHashCount;
+    type Version = ();
+    type PalletInfo = PalletInfo;
+    type AccountData = pallet_balances::AccountData<u128>;
+    type OnNewAccount = ();
+    type OnKilledAccount = ();
+    type SystemWeightInfo = ();
+    type ExtensionsWeightInfo = ();
+    type SS58Prefix = ConstU16<42>;
+    type OnSetCode = ();
+    type MaxConsumers = ConstU32<16>;
+    type SingleBlockMigrations = ();
+    type MultiBlockMigrator = ();
+    type PreInherents = ();
+    type PostInherents = ();
+    type PostTransactions = ();
+}
+
+impl pallet_balances::Config for Test {
+    type Balance = u128;
+    type DustRemoval = ();
+    type RuntimeEvent = RuntimeEvent;
+    type ExistentialDeposit = ExistentialDeposit;
+    type AccountStore = System;
+    type WeightInfo = ();
+    type MaxLocks = ConstU32<50>;
+    type MaxReserves = ConstU32<50>;
+    type ReserveIdentifier = [u8; 8];
+    type RuntimeHoldReason = ();
+    type RuntimeFreezeReason = ();
+    type FreezeIdentifier = ();
+    type MaxFreezes = ConstU32<0>;
+    type DoneSlashHandler = ();
+}
+
+parameter_types! {
+    pub const MaxNullifiersPerTx: u32 = 4;
+    pub const MaxCommitmentsPerTx: u32 = 4;
+    pub const MaxEncryptedNotesPerTx: u32 = 4;
+    pub const MerkleRootHistorySize: u32 = 100;
+}
+
+impl pallet_shielded_pool::Config for Test {
+    type RuntimeEvent = RuntimeEvent;
+    type Currency = Balances;
+    type AdminOrigin = frame_system::EnsureRoot<u64>;
+    type ProofVerifier = AcceptAllProofs;
+    type MaxNullifiersPerTx = MaxNullifiersPerTx;
+    type MaxCommitmentsPerTx = MaxCommitmentsPerTx;
+    type MaxEncryptedNotesPerTx = MaxEncryptedNotesPerTx;
+    type MerkleRootHistorySize = MerkleRootHistorySize;
+    type WeightInfo = crate::DefaultWeightInfo;
+}
+
+/// Build genesis storage for testing.
+pub fn new_test_ext() -> TestExternalities {
+    let mut t = frame_system::GenesisConfig::<Test>::default()
+        .build_storage()
+        .expect("system storage");
+
+    pallet_balances::GenesisConfig::<Test> {
+        balances: vec![(1, 1_000_000), (2, 1_000_000), (3, 1_000_000)],
+        dev_accounts: None,
+    }
+    .assimilate_storage(&mut t)
+    .expect("balances storage");
+
+    let mut ext: TestExternalities = t.into();
+    ext.execute_with(|| {
+        frame_system::Pallet::<Test>::set_block_number(1);
+
+        // Initialize shielded pool storage
+        use crate::merkle::CompactMerkleTree;
+        use crate::verifier::VerifyingKey;
+
+        let tree = CompactMerkleTree::new();
+        pallet_shielded_pool::pallet::MerkleTree::<Test>::put(tree.clone());
+        pallet_shielded_pool::pallet::MerkleRoots::<Test>::insert(tree.root(), 0u64);
+
+        let vk = VerifyingKey::default();
+        pallet_shielded_pool::pallet::VerifyingKeyStorage::<Test>::put(vk);
+    });
+    ext
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pallet::{Pallet, MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage};
+    use crate::types::{BindingSignature, EncryptedNote, Groth16Proof, GROTH16_PROOF_SIZE};
+    use frame_support::{assert_noop, assert_ok, BoundedVec};
+
+    fn valid_proof() -> Groth16Proof {
+        Groth16Proof {
+            data: [1u8; GROTH16_PROOF_SIZE],
+        }
+    }
+
+    fn valid_binding_sig() -> BindingSignature {
+        BindingSignature { data: [1u8; 64] }
+    }
+
+    fn valid_encrypted_note() -> EncryptedNote {
+        EncryptedNote::default()
+    }
+
+    #[test]
+    fn shield_works() {
+        new_test_ext().execute_with(|| {
+            let amount = 1000u128;
+            let commitment = [42u8; 32];
+            let encrypted_note = valid_encrypted_note();
+
+            assert_ok!(Pallet::<Test>::shield(
+                RuntimeOrigin::signed(1),
+                amount,
+                commitment,
+                encrypted_note,
+            ));
+
+            // Check pool balance increased
+            assert_eq!(Pallet::<Test>::pool_balance(), amount);
+
+            // Check commitment was added
+            assert!(Pallet::<Test>::commitments(0).is_some());
+
+            // Check Merkle root was updated
+            let tree = MerkleTreeStorage::<Test>::get();
+            assert_eq!(tree.len(), 1);
+        });
+    }
+
+    #[test]
+    fn shielded_transfer_with_valid_proof_works() {
+        new_test_ext().execute_with(|| {
+            // First shield some funds
+            let amount = 1000u128;
+            let commitment = [42u8; 32];
+            let encrypted_note = valid_encrypted_note();
+
+            assert_ok!(Pallet::<Test>::shield(
+                RuntimeOrigin::signed(1),
+                amount,
+                commitment,
+                encrypted_note.clone(),
+            ));
+
+            // Get the current Merkle root as anchor
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            // Now do a shielded transfer
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![[1u8; 32]].try_into().unwrap();
+            let new_commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![[2u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![encrypted_note].try_into().unwrap();
+
+            assert_ok!(Pallet::<Test>::shielded_transfer(
+                RuntimeOrigin::signed(1),
+                valid_proof(),
+                nullifiers,
+                new_commitments,
+                ciphertexts,
+                anchor,
+                valid_binding_sig(),
+                0, // value_balance = 0 for shielded-to-shielded
+            ));
+
+            // Check nullifier was added
+            assert!(NullifiersStorage::<Test>::contains_key([1u8; 32]));
+        });
+    }
+
+    #[test]
+    fn double_spend_rejected() {
+        new_test_ext().execute_with(|| {
+            // Shield some funds
+            assert_ok!(Pallet::<Test>::shield(
+                RuntimeOrigin::signed(1),
+                1000,
+                [42u8; 32],
+                valid_encrypted_note(),
+            ));
+
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            // First spend
+            let nullifier = [99u8; 32];
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![nullifier].try_into().unwrap();
+            let new_commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![[2u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            assert_ok!(Pallet::<Test>::shielded_transfer(
+                RuntimeOrigin::signed(1),
+                valid_proof(),
+                nullifiers.clone(),
+                new_commitments.clone(),
+                ciphertexts.clone(),
+                anchor,
+                valid_binding_sig(),
+                0,
+            ));
+
+            // Get new anchor
+            let new_tree = MerkleTreeStorage::<Test>::get();
+            let new_anchor = new_tree.root();
+
+            // Try to double-spend with same nullifier
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer(
+                    RuntimeOrigin::signed(1),
+                    valid_proof(),
+                    nullifiers,
+                    new_commitments,
+                    ciphertexts,
+                    new_anchor,
+                    valid_binding_sig(),
+                    0,
+                ),
+                crate::Error::<Test>::NullifierAlreadyExists
+            );
+        });
+    }
+
+    #[test]
+    fn invalid_anchor_rejected() {
+        new_test_ext().execute_with(|| {
+            let invalid_anchor = [99u8; 32];
+
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![[1u8; 32]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![[2u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer(
+                    RuntimeOrigin::signed(1),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    invalid_anchor,
+                    valid_binding_sig(),
+                    0,
+                ),
+                crate::Error::<Test>::InvalidAnchor
+            );
+        });
+    }
+
+    #[test]
+    fn duplicate_nullifier_in_tx_rejected() {
+        new_test_ext().execute_with(|| {
+            assert_ok!(Pallet::<Test>::shield(
+                RuntimeOrigin::signed(1),
+                1000,
+                [42u8; 32],
+                valid_encrypted_note(),
+            ));
+
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            // Same nullifier twice
+            let duplicate_nf = [1u8; 32];
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![duplicate_nf, duplicate_nf].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![[2u8; 32], [3u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note(), valid_encrypted_note()]
+                    .try_into()
+                    .unwrap();
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer(
+                    RuntimeOrigin::signed(1),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    valid_binding_sig(),
+                    0,
+                ),
+                crate::Error::<Test>::DuplicateNullifierInTx
+            );
+        });
+    }
+
+    #[test]
+    fn update_verifying_key_works() {
+        new_test_ext().execute_with(|| {
+            use crate::verifier::VerifyingKey;
+
+            let new_key = VerifyingKey {
+                id: 42,
+                enabled: true,
+                ..Default::default()
+            };
+
+            assert_ok!(Pallet::<Test>::update_verifying_key(
+                RuntimeOrigin::root(),
+                new_key.clone(),
+            ));
+
+            let stored = Pallet::<Test>::verifying_key();
+            assert_eq!(stored.id, 42);
+        });
+    }
+
+    #[test]
+    fn non_admin_cannot_update_key() {
+        new_test_ext().execute_with(|| {
+            use crate::verifier::VerifyingKey;
+
+            assert_noop!(
+                Pallet::<Test>::update_verifying_key(
+                    RuntimeOrigin::signed(1),
+                    VerifyingKey::default(),
+                ),
+                sp_runtime::DispatchError::BadOrigin
+            );
+        });
+    }
+
+    #[test]
+    fn encrypted_notes_mismatch_rejected() {
+        new_test_ext().execute_with(|| {
+            assert_ok!(Pallet::<Test>::shield(
+                RuntimeOrigin::signed(1),
+                1000,
+                [42u8; 32],
+                valid_encrypted_note(),
+            ));
+
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            // 2 commitments but 1 encrypted note
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![[1u8; 32]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![[2u8; 32], [3u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer(
+                    RuntimeOrigin::signed(1),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    valid_binding_sig(),
+                    0,
+                ),
+                crate::Error::<Test>::EncryptedNotesMismatch
+            );
+        });
+    }
+
+    #[test]
+    fn is_valid_anchor_helper_works() {
+        new_test_ext().execute_with(|| {
+            let tree = MerkleTreeStorage::<Test>::get();
+            let valid_anchor = tree.root();
+            let invalid_anchor = [99u8; 32];
+
+            assert!(Pallet::<Test>::is_valid_anchor(&valid_anchor));
+            assert!(!Pallet::<Test>::is_valid_anchor(&invalid_anchor));
+        });
+    }
+
+    #[test]
+    fn is_nullifier_spent_helper_works() {
+        new_test_ext().execute_with(|| {
+            let nf = [42u8; 32];
+
+            assert!(!Pallet::<Test>::is_nullifier_spent(&nf));
+
+            // Add nullifier directly
+            NullifiersStorage::<Test>::insert(nf, ());
+
+            assert!(Pallet::<Test>::is_nullifier_spent(&nf));
+        });
+    }
+}

@@ -1,0 +1,40 @@
+[package]
+name = "pallet-shielded-pool"
+version = "0.1.0"
+edition = "2021"
+authors = ["Synthetic Hegemonic Currency Contributors"]
+description = "Shielded transaction pool pallet with note commitments, nullifiers, and Merkle tree for ZCash-like privacy."
+license = "Apache-2.0"
+
+[dependencies]
+frame-support = { workspace = true }
+frame-system = { workspace = true }
+frame-benchmarking = { workspace = true, optional = true }
+sp-runtime = { workspace = true }
+sp-std = { workspace = true }
+sp-core = { workspace = true }
+codec = { workspace = true }
+scale-info = { workspace = true }
+log = { version = "0.4", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+
+[dev-dependencies]
+sp-io = { workspace = true, features = ["std"] }
+pallet-balances = { workspace = true, features = ["std"] }
+
+[features]
+default = ["std"]
+std = [
+    "frame-support/std",
+    "frame-system/std",
+    "frame-benchmarking?/std",
+    "sp-runtime/std",
+    "sp-std/std",
+    "sp-core/std",
+    "sp-io/std",
+    "codec/std",
+    "scale-info/std",
+    "serde/std",
+]
+runtime-benchmarks = ["frame-benchmarking"]
+try-runtime = ["frame-support/try-runtime"]

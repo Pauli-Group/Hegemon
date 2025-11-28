@@ -6125,6 +6125,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "pallet-shielded-pool"
+version = "0.1.0"
+dependencies = [
+ "frame-benchmarking",
+ "frame-support",
+ "frame-system",
+ "log",
+ "pallet-balances",
+ "parity-scale-codec",
+ "scale-info",
+ "serde",
+ "sp-core",
+ "sp-io",
+ "sp-runtime",
+ "sp-std",
+]
+
+[[package]]
 name = "pallet-sudo"
 version = "43.0.0"
 source = "git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2509-2#7304752b47858f2cd601b35d0eb734ad4ccbbc48"
