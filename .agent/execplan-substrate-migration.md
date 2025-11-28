@@ -175,22 +175,13 @@ This is NOT an account-based chain. Per DESIGN.md and METHODS.md:
     - Client provides runtime API access for DifficultyApi, BlockBuilder, etc.
     - Verification: `cargo check -p hegemon-node --features substrate` ✅
     - Reference implementation based on polkadot-evm/frontier template pattern
-  - [ ] **Task 11.4.3: Create real transaction pool** (NEW)
-    - Replace MockTransactionPool with sc_transaction_pool::BasicPool
-    - Pool validates transactions against runtime
-    - Reference: frontier template/node/src/service.rs lines 170-185
-    ```rust
-    let transaction_pool = Arc::from(
-        sc_transaction_pool::Builder::new(
-            task_manager.spawn_essential_handle(),
-            client.clone(),
-            config.role.is_authority().into(),
-        )
-        .with_options(config.transaction_pool.clone())
-        .with_prometheus(config.prometheus_registry())
-        .build(),
-    );
-    ```
+  - [x] **Task 11.4.3: Create real transaction pool** (COMPLETE - 2025-11-27)
+    - Added `HegemonTransactionPool` type alias in `node/src/substrate/client.rs`
+    - Uses `sc_transaction_pool::TransactionPoolHandle<Block, HegemonFullClient>`
+    - Added `transaction_pool` field to `PartialComponentsWithClient` struct
+    - Created pool in `new_partial_with_client()` using `sc_transaction_pool::Builder`
+    - Pool validates transactions against runtime and maintains ready/future queues
+    - Verification: `cargo check -p hegemon-node --features substrate` ✅
   - [ ] **Task 11.4.4: Wire BlockBuilder API to execute_extrinsics_fn** (NEW)
     - Use client.runtime_api() to get runtime BlockBuilder
     - Implement real state execution callback:

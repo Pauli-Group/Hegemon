@@ -115,8 +115,8 @@
 
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::client::{
-    FullBackend, HegemonFullClient, ProductionChainStateProvider, ProductionConfig,
-    DEFAULT_DIFFICULTY_BITS,
+    FullBackend, HegemonFullClient, HegemonTransactionPool, ProductionChainStateProvider,
+    ProductionConfig, DEFAULT_DIFFICULTY_BITS,
 };
 use crate::substrate::mining_worker::{
     create_production_mining_worker, create_scaffold_mining_worker,
@@ -257,6 +257,11 @@ pub struct PartialComponentsWithClient {
     pub backend: Arc<FullBackend>,
     /// Keystore container for key management
     pub keystore_container: KeystoreContainer,
+    /// Real Substrate transaction pool (Task 11.4.3)
+    ///
+    /// This is the production transaction pool that validates transactions
+    /// against the runtime. It replaces MockTransactionPool for full client mode.
+    pub transaction_pool: Arc<HegemonTransactionPool>,
     /// Task manager for spawning async tasks
     pub task_manager: TaskManager,
     /// PoW mining handle
@@ -490,6 +495,29 @@ pub fn new_partial_with_client(
         "Full Substrate client created (Task 11.4.2)"
     );
 
+    // Task 11.4.3: Create real Substrate transaction pool
+    //
+    // The transaction pool validates transactions against the runtime and
+    // maintains ready (valid) and future (pending) queues. It uses:
+    // - FullChainApi: Provides runtime access for transaction validation
+    // - Builder pattern: Configures pool options and prometheus metrics
+    //
+    // Reference: polkadot-evm/frontier template/node/src/service.rs lines 174-183
+    let transaction_pool = Arc::from(
+        sc_transaction_pool::Builder::new(
+            task_manager.spawn_essential_handle(),
+            client.clone(),
+            config.role.is_authority().into(),
+        )
+        .with_options(config.transaction_pool.clone())
+        .with_prometheus(config.prometheus_registry())
+        .build(),
+    );
+
+    tracing::info!(
+        "Full Substrate transaction pool created (Task 11.4.3)"
+    );
+
     // Initialize PoW mining coordinator
     let pow_config = if std::env::var("HEGEMON_MINE").is_ok() {
         let threads = std::env::var("HEGEMON_MINE_THREADS")
@@ -568,13 +596,14 @@ pub fn new_partial_with_client(
     tracing::info!(
         pq_peer_id = %hex::encode(pq_transport.local_peer_id()),
         require_pq = %pq_service_config.require_pq,
-        "Hegemon node with full client initialized (Task 11.4.2 + Phase 3.5)"
+        "Hegemon node with full client initialized (Task 11.4.2 + 11.4.3 + Phase 3.5)"
     );
 
     Ok(PartialComponentsWithClient {
         client,
         backend,
         keystore_container,
+        transaction_pool,
         task_manager,
         pow_handle,
         network_keypair,

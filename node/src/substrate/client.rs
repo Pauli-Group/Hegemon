@@ -92,6 +92,20 @@ pub type FullTransactionPool<Client> = sc_transaction_pool::BasicPool<
     runtime::Block,
 >;
 
+/// Concrete type alias for the Hegemon transaction pool (Task 11.4.3)
+///
+/// This uses `sc_transaction_pool::TransactionPoolHandle` which is the
+/// type returned by `sc_transaction_pool::Builder::build()`. It provides
+/// the standard transaction pool interface for submitting and querying
+/// transactions.
+///
+/// The pool validates transactions against the runtime and maintains
+/// ready (valid) and future (pending) queues.
+pub type HegemonTransactionPool = sc_transaction_pool::TransactionPoolHandle<
+    runtime::Block,
+    HegemonFullClient,
+>;
+
 /// Default difficulty bits if runtime query fails
 /// 
 /// Set for ~1 minute block time at 1 MH/s:
