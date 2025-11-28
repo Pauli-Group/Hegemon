@@ -15,37 +15,53 @@
 - ✅ Blocks broadcast to connected peers
 - ✅ Mining difficulty adjustable via constants
 - ✅ ProductionChainStateProvider wired to mining worker (Task 11.1)
+- ✅ Transaction pool bridge collects transactions from network (Task 11.3)
+- ✅ Mining worker retrieves transactions from pool for block templates
+- ✅ Transaction circuit exists (`circuits/transaction/`) with STARK proofs
 
 **What is scaffolded but NOT wired:**
-- ⚠️ Transaction pool exists but mining worker returns empty transactions
-- ⚠️ ProductionChainStateProvider uses fallback mode (callbacks not connected to full client)
-- ⚠️ Block import logs success but doesn't update Substrate chain state
-- ⚠️ RPC endpoints exist but transaction submission doesn't work end-to-end
+- ⚠️ State execution uses mock state root (Task 11.4 scaffold mode)
+- ⚠️ No real Substrate TFullClient created - using mock chain state
+- ⚠️ Block import logs success but doesn't update Substrate runtime state
 
 **What is NOT implemented:**
-- ❌ Transactions cannot be submitted and included in blocks
-- ❌ Balance queries don't reflect actual state
-- ❌ Block sync between nodes doesn't import to Substrate chain
-- ❌ Wallet cannot send transactions that execute
-- ❌ Chain doesn't persist to disk (in-memory only with --dev)
-- ❌ No difficulty adjustment (static difficulty)
-- ❌ No proper genesis configuration
-- ❌ No block explorer or faucet
+- ❌ No `pallet-shielded-pool` - commitment tree + nullifier set (Phase 12)
+- ❌ STARK verifier not wired into runtime (Task 12.2)
+- ❌ No shielded transact extrinsic (Task 12.3)
+- ❌ No note scanning / viewing key decryption (Task 13.2)
+- ❌ Mining rewards not going to shielded notes (Task 12.5)
+
+**Architecture Note (ZCash-like Privacy Model):**
+This is NOT an account-based chain. Per DESIGN.md and METHODS.md:
+- Values stored as **note commitments** in append-only Merkle tree
+- Spends tracked via **nullifier set** (no balance queries)
+- All transfers use **STARK proofs** proving balance in ZK
+- Wallet scans blocks with **viewing keys** (trial decryption)
+- NO public balance queries - privacy is fundamental
+
+**Critical Path to Shielded State Execution:**
+1. Task 11.4.x: Wire real Substrate client (runtime execution)
+2. Task 12.x: Create pallet-shielded-pool (commitment tree + nullifiers)
+3. Task 12.2: Wire STARK verifier into pallet
+4. Task 12.5: Shielded coinbase for mining rewards
+5. Task 13.x: Wallet viewing key scanning + spend proof generation
+6. Task 14.x: E2E shielded transfer tests
 
 **Phases Overview:**
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1-10 | Node scaffold, PoW, P2P, RPC | Mostly scaffolded |
-| 11 | Wire scaffolds to real Substrate | Task 11.1 COMPLETE |
-| 12 | Transaction & wallet flow | NOT STARTED |
-| 13 | Verification testing | NOT STARTED |
-| 14 | Chain persistence | NOT STARTED |
-| 15 | Network robustness | NOT STARTED |
-| 16 | Difficulty adjustment | NOT STARTED |
-| 17 | Genesis & chain spec | NOT STARTED |
-| 18 | Monitoring & telemetry | NOT STARTED |
-| 19 | Security hardening | NOT STARTED |
-| 20 | Faucet & explorer | NOT STARTED |
+| 11 | Wire scaffolds to real Substrate client | Tasks 11.1-11.3 ✅, 11.4 SCAFFOLD ONLY |
+| 12 | **Shielded Pool Pallet** (commitment tree + nullifiers) | NOT STARTED |
+| 13 | **Shielded Wallet** (viewing keys, note scanning, proofs) | NOT STARTED |
+| 14 | **Shielded E2E Testing** (privacy verification) | NOT STARTED |
+| 15 | Chain persistence | NOT STARTED |
+| 16 | Network robustness | NOT STARTED |
+| 17 | Difficulty adjustment | NOT STARTED |
+| 18 | Genesis & chain spec | NOT STARTED |
+| 19 | Monitoring & telemetry | NOT STARTED |
+| 20 | Security hardening | NOT STARTED |
+| 21 | Shielded block explorer | NOT STARTED |
 
 **Legend for task status:**
 - `[x]` = Complete and verified working
@@ -135,141 +151,267 @@
     - Wired pending_txs_fn callback to get transactions from pool in service.rs
     - Wired on_import_success_fn to clear included transactions after block import
     - Full pipeline: RPC → NetworkBridge → TransactionPoolBridge → MockTransactionPool → mining worker → block
-  - [x] Task 11.4: State execution (2025-11-27)
-    - Added StateExecutionResult type with state_root, extrinsics_root, applied_extrinsics
-    - Added execute_extrinsics_fn callback to ProductionChainStateProvider
-    - Added execute_extrinsics() method with fallback mock execution
-    - Added build_block_template() to ChainStateProvider trait with state execution
-    - BlockTemplate.with_executed_state() sets real state_root in header
-    - compute_pre_hash_full() now includes state_root in block hash
-    - Scaffold mode: deterministic mock state root from extrinsics
-    - Production mode: wires to runtime BlockBuilder API (documented)
-    - Mining worker updated to use build_block_template() for state execution
+  - [~] Task 11.4: State execution - **SCAFFOLD ONLY** (2025-11-27)
+    - ✅ Added StateExecutionResult type with state_root, extrinsics_root, applied_extrinsics
+    - ✅ Added execute_extrinsics_fn callback to ProductionChainStateProvider
+    - ✅ Mining worker calls build_block_template() for state execution
+    - ⚠️ Scaffold mode only: deterministic mock state root from extrinsics
+    - ❌ Transactions do NOT actually execute against runtime state
+    - ❌ Balances do NOT update after transfers
+    - **Requires**: Full Substrate client (TFullClient) to wire real execution
+    - **See**: Task 11.4.x sub-tasks below for production mode
+  - [ ] **Task 11.4.1: Export RuntimeApi from runtime** (NEW)
+    - The `impl_runtime_apis!` macro generates a `RuntimeApi` struct
+    - Export it from runtime/src/lib.rs for node to use
+    - Pattern: `pub use runtime::RuntimeApi;`
+    - Verification: `cargo check -p hegemon-node --features substrate`
+  - [ ] **Task 11.4.2: Create real Substrate client in new_partial()** (NEW)
+    - Replace manual TaskManager creation with sc_service::new_full_parts()
+    - This creates: TFullClient, TFullBackend, KeystoreContainer, TaskManager
+    - Reference: polkadot-evm/frontier template/node/src/service.rs lines 92-123
+    ```rust
+    let executor = sc_service::new_wasm_executor(&config.executor);
+    let (client, backend, keystore_container, task_manager) = 
+        sc_service::new_full_parts::<Block, RuntimeApi, _>(
+            &config,
+            telemetry.as_ref().map(|(_, telemetry)| telemetry.handle()),
+            executor,
+        )?;
+    let client = Arc::new(client);
+    ```
+  - [ ] **Task 11.4.3: Create real transaction pool** (NEW)
+    - Replace MockTransactionPool with sc_transaction_pool::BasicPool
+    - Pool validates transactions against runtime
+    - Reference: frontier template/node/src/service.rs lines 170-185
+    ```rust
+    let transaction_pool = Arc::from(
+        sc_transaction_pool::Builder::new(
+            task_manager.spawn_essential_handle(),
+            client.clone(),
+            config.role.is_authority().into(),
+        )
+        .with_options(config.transaction_pool.clone())
+        .with_prometheus(config.prometheus_registry())
+        .build(),
+    );
+    ```
+  - [ ] **Task 11.4.4: Wire BlockBuilder API to execute_extrinsics_fn** (NEW)
+    - Use client.runtime_api() to get runtime BlockBuilder
+    - Implement real state execution callback:
+    ```rust
+    let client_for_exec = client.clone();
+    chain_state.set_execute_extrinsics_fn(move |parent_hash, block_number, extrinsics| {
+        let api = client_for_exec.runtime_api();
+        let parent_id = sp_runtime::generic::BlockId::Hash(parent_hash);
+        
+        // Initialize block with header
+        let header = create_header_for_block(parent_hash, block_number);
+        api.initialize_block(parent_hash, &header)?;
+        
+        // Execute each extrinsic
+        let mut applied = Vec::new();
+        let mut failed = 0;
+        for ext_bytes in extrinsics {
+            let ext = UncheckedExtrinsic::decode(&mut &ext_bytes[..])?;
+            match api.apply_extrinsic(parent_hash, ext) {
+                Ok(Ok(_)) => applied.push(ext_bytes.clone()),
+                Ok(Err(_)) | Err(_) => failed += 1,
+            }
+        }
+        
+        // Finalize block and get state root
+        let header = api.finalize_block(parent_hash)?;
+        
+        Ok(StateExecutionResult {
+            applied_extrinsics: applied,
+            state_root: header.state_root,
+            extrinsics_root: header.extrinsics_root,
+            failed_count: failed,
+        })
+    });
+    ```
+  - [ ] **Task 11.4.5: Create PoW block import pipeline** (NEW)
+    - Use sc_consensus_pow::PowBlockImport for validated imports
+    - Wire to ProductionChainStateProvider.set_import_fn()
+    - Reference: consensus/src/substrate_pow.rs Blake3Algorithm
+    ```rust
+    let pow_algorithm = consensus::Blake3Algorithm::new(client.clone());
+    let pow_block_import = sc_consensus_pow::PowBlockImport::new(
+        client.clone(),
+        client.clone(),
+        pow_algorithm.clone(),
+        0, // check_inherents_after
+        select_chain.clone(),
+    );
+    ```
+  - [ ] **Task 11.4.6: Update service.rs to use real client** (NEW)
+    - Thread client Arc through to all components
+    - Update PartialComponents struct to include client, backend
+    - Wire client to RPC endpoints for state queries
+    - Update mining worker to use client for best block
+  - [ ] **Task 11.4.7: Integration test - single transaction execution** (NEW)
+    - Submit transfer transaction via RPC
+    - Mine block with transaction
+    - Nullifier set updated (spent notes marked)
+    - Note commitment tree has new output commitments
+    - State root reflects new Merkle root
   - [ ] Task 11.5: Chain sync between nodes
     - Received blocks must be validated and imported
     - Nodes must request missing blocks
     - Fork choice must work correctly
-- [ ] **Transaction & Wallet Integration (Phase 12)** - End-to-end transaction flow
-  - [ ] Task 12.1: RPC endpoint for transaction submission
-    - author_submitExtrinsic must accept signed transactions
-    - Transactions must validate signature and enter pool
-  - [ ] Task 12.2: Account balance queries
-    - system_account RPC must return balance and nonce
-    - state_getStorage must work for balances pallet
-  - [ ] Task 12.3: Wallet transaction signing
-    - Wallet must create signed extrinsics with correct format
-    - ML-DSA-65 signatures must verify in runtime
-  - [ ] Task 12.4: End-to-end transfer test
-    - Alice sends tokens to Bob via RPC
-    - Transaction included in mined block
-    - Bob's balance increases, Alice's decreases
-    - Both nodes see same state after sync
-- [ ] **Verification & Testing (Phase 13)** - Prove it actually works
-  - [ ] Task 13.1: Single-node transaction test
-    - Submit transaction via RPC
-    - Verify transaction in mined block
-    - Verify state changed
-  - [ ] Task 13.2: Two-node sync test
-    - Node A mines block with transaction
-    - Node B receives and imports block
-    - Both nodes have same state
-  - [ ] Task 13.3: Multi-node network test
-    - 3+ nodes mining concurrently
-    - Transactions propagate correctly
-    - Chain converges to same tip
-  - [ ] Task 13.4: Wallet integration test
-    - Generate keypair
-    - Fund account (from genesis or faucet)
-    - Send transaction
-    - Query balance
-- [ ] **Chain Persistence & Recovery (Phase 14)** - Data durability
-  - [ ] Task 14.1: RocksDB chain storage
+- [ ] **Shielded Pool Pallet (Phase 12)** - ZCash-like privacy layer
+  - [ ] Task 12.1: Create pallet-shielded-pool
+    - Note commitment tree (append-only Merkle tree of `cm`)
+    - Nullifier set storage (spent note tracking)
+    - Pool state: `(merkle_root, nullifier_set)`
+    - Reference: METHODS.md §1.1 Data model
+  - [ ] Task 12.2: STARK proof verifier integration
+    - Wire `circuits/transaction` verifier into pallet
+    - Verify proof before state mutation
+    - Reject invalid proofs at runtime level
+    - Reference: DESIGN.md §1.3 - transparent proving system
+  - [ ] Task 12.3: Shielded transact extrinsic
+    - `ShieldedPool::transact(proof, nullifiers[], new_commitments[], encrypted_outputs[])`
+    - Validate: nullifiers not already spent
+    - Validate: STARK proof verifies
+    - Mutate: append new_commitments to tree, add nullifiers to set
+    - No public balance visible - all value hidden in commitments
+  - [ ] Task 12.4: Note encryption with ML-KEM
+    - Encrypt output notes to recipient `pk_enc` using ML-KEM-768
+    - Store encrypted notes on-chain for recipient scanning
+    - Reference: DESIGN.md §1.2 Key exchange
+  - [ ] Task 12.5: Mining reward shielded coinbase
+    - Block reward as shielded note to miner's address
+    - Coinbase commitment added to tree (no inputs, just output)
+    - Miner's wallet scans for incoming notes
+- [ ] **Shielded Wallet Integration (Phase 13)** - Private wallet operations
+  - [ ] Task 13.1: Viewing key derivation
+    - Full viewing key: can see incoming + outgoing
+    - Incoming viewing key: can see received notes only
+    - Spending key: can create spend proofs
+    - Reference: DESIGN.md §1.1 - ML-DSA for keys
+  - [ ] Task 13.2: Note scanning (trial decryption)
+    - Wallet scans blocks with viewing key
+    - Attempt ML-KEM decryption of each encrypted output
+    - Successful decryption = note belongs to wallet
+    - NO public balance query - privacy preserved
+  - [ ] Task 13.3: Spend witness generation
+    - Generate Merkle path for owned note
+    - Derive nullifier from note + spending key
+    - Create STARK witness for spend circuit
+  - [ ] Task 13.4: Transaction proof generation
+    - Call `circuits/transaction` prover with witness
+    - Output: STARK proof + public inputs (nullifiers, new_commitments)
+    - Submit via `ShieldedPool::transact()`
+- [ ] **Shielded E2E Testing (Phase 14)** - Prove privacy works
+  - [ ] Task 14.1: Single shielded transfer
+    - Alice has note from mining reward
+    - Alice creates shielded transfer to Bob
+    - Proof verifies, nullifier added, new commitment added
+    - Bob scans with viewing key, finds note
+    - External observer: sees nullifier + commitment, NOT amounts
+  - [ ] Task 14.2: Two-node shielded sync
+    - Node A mines block with shielded tx
+    - Node B imports block, updates commitment tree
+    - Both nodes have same Merkle root
+    - Bob's wallet on Node B can scan and find note
+  - [ ] Task 14.3: Multi-input/output transaction
+    - Spend multiple notes in single transaction
+    - Create multiple output notes
+    - Balance proven in ZK (sum inputs = sum outputs + fee)
+  - [ ] Task 14.4: Privacy verification
+    - Confirm: no balance queries possible via RPC
+    - Confirm: transaction values not visible on-chain
+    - Confirm: only viewing key holders see amounts
+- [ ] **Chain Persistence & Recovery (Phase 15)** - Data durability
+  - [ ] Task 15.1: RocksDB chain storage
     - Blocks persist to disk
+    - Note commitment tree persists
+    - Nullifier set persists
     - Node restarts from last state
-    - Chain data survives reboot
-  - [ ] Task 14.2: State pruning
+  - [ ] Task 15.2: State pruning
     - Old state can be pruned to save space
     - Archive mode for full history
-  - [ ] Task 14.3: Chain export/import
+    - Note: commitment tree is append-only, never pruned
+  - [ ] Task 15.3: Chain export/import
     - Export blocks to file
     - Import blocks from file
     - Snapshot and restore
-- [ ] **Network Robustness (Phase 15)** - Production networking
-  - [ ] Task 15.1: Peer discovery
+- [ ] **Network Robustness (Phase 16)** - Production networking
+  - [ ] Task 16.1: Peer discovery
     - Bootstrap from seed nodes
     - DHT-based peer discovery
     - Peer exchange protocol
-  - [ ] Task 15.2: Connection management
+  - [ ] Task 16.2: Connection management
     - Max peer limits
     - Peer scoring/reputation
     - Ban misbehaving peers
-  - [ ] Task 15.3: Network resilience
+  - [ ] Task 16.3: Network resilience
     - Handle peer disconnects gracefully
     - Reconnection logic
     - NAT traversal (optional)
-  - [ ] Task 15.4: Block request protocol
+  - [ ] Task 16.4: Block request protocol
     - Request specific blocks by hash
     - Request block ranges for sync
     - Handle missing block requests
-- [ ] **Difficulty Adjustment (Phase 16)** - Dynamic difficulty
-  - [ ] Task 16.1: Difficulty retargeting algorithm
+- [ ] **Difficulty Adjustment (Phase 17)** - Dynamic difficulty
+  - [ ] Task 17.1: Difficulty retargeting algorithm
     - Adjust difficulty based on block times
     - Target block time (e.g., 60 seconds)
     - Smoothing to prevent oscillation
-  - [ ] Task 16.2: Difficulty storage in runtime
+  - [ ] Task 17.2: Difficulty storage in runtime
     - Difficulty pallet tracks adjustments
     - Query current difficulty via RPC
-  - [ ] Task 16.3: Difficulty in block validation
+  - [ ] Task 17.3: Difficulty in block validation
     - Validate block meets difficulty at that height
     - Reject blocks with wrong difficulty
-- [ ] **Genesis & Chain Spec (Phase 17)** - Proper chain initialization
-  - [ ] Task 17.1: Genesis block configuration
-    - Initial token distribution
+- [ ] **Genesis & Chain Spec (Phase 18)** - Proper chain initialization
+  - [ ] Task 18.1: Genesis block configuration
+    - Initial shielded pool state (empty tree)
     - Initial difficulty
-    - System accounts (treasury, etc.)
-  - [ ] Task 17.2: Chain spec generation
+    - Treasury note (shielded genesis allocation)
+  - [ ] Task 18.2: Chain spec generation
     - Testnet chain spec
     - Mainnet chain spec
     - Custom chain spec tool
-  - [ ] Task 17.3: Bootnodes configuration
+  - [ ] Task 18.3: Bootnodes configuration
     - Hardcoded bootnode list
     - DNS-based bootnode discovery
-- [ ] **Monitoring & Telemetry (Phase 18)** - Observability
-  - [ ] Task 18.1: Prometheus metrics
+- [ ] **Monitoring & Telemetry (Phase 19)** - Observability
+  - [ ] Task 19.1: Prometheus metrics
     - Block height, peer count, tx pool size
     - Mining hashrate, difficulty
-    - RPC request latency
-  - [ ] Task 18.2: Telemetry endpoint
+    - Commitment tree size, nullifier count
+  - [ ] Task 19.2: Telemetry endpoint
     - Report to telemetry server
     - Node name, version, location
-  - [ ] Task 18.3: Logging improvements
+  - [ ] Task 19.3: Logging improvements
     - Structured logging
     - Log levels configurable
     - Log rotation
-- [ ] **Security Hardening (Phase 19)** - Production security
-  - [ ] Task 19.1: Transaction validation
-    - Signature verification
-    - Nonce checking
-    - Balance sufficiency
-  - [ ] Task 19.2: Block validation
+- [ ] **Security Hardening (Phase 20)** - Production security
+  - [ ] Task 20.1: Proof validation
+    - STARK proof verification in pallet
+    - Reject invalid proofs
+    - Nullifier double-spend prevention
+  - [ ] Task 20.2: Block validation
     - PoW verification
-    - Transaction merkle root
-    - State root verification
-  - [ ] Task 19.3: DoS protection
+    - Transaction proof root
+    - State root (commitment tree root) verification
+  - [ ] Task 20.3: DoS protection
     - Rate limiting RPC
-    - Transaction pool limits
+    - Proof size limits
     - Peer connection limits
-  - [ ] Task 19.4: PQ crypto audit
+  - [ ] Task 20.4: PQ crypto audit
     - ML-DSA-65 implementation review
     - ML-KEM-768 implementation review
-    - Key generation security
-- [ ] **Faucet & Block Explorer (Phase 20)** - User tooling
-  - [ ] Task 20.1: Testnet faucet
-    - Web UI to request tokens
-    - Rate limiting per address/IP
-  - [ ] Task 20.2: Block explorer
-    - View blocks and transactions
-    - Search by hash/address
+    - STARK circuit soundness review
+- [ ] **Shielded Block Explorer (Phase 21)** - Privacy-preserving tooling
+  - [ ] Task 21.1: Block explorer (shielded-aware)
+    - View blocks and commitment counts
+    - Show nullifiers (no amounts visible)
+    - Show commitment tree growth
+    - NO balance or amount visibility
     - Account balance lookup
   - [ ] Task 20.3: Wallet UI
     - Use BlueWallet as template
