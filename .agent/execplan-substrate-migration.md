@@ -160,11 +160,13 @@ This is NOT an account-based chain. Per DESIGN.md and METHODS.md:
     - ❌ Balances do NOT update after transfers
     - **Requires**: Full Substrate client (TFullClient) to wire real execution
     - **See**: Task 11.4.x sub-tasks below for production mode
-  - [ ] **Task 11.4.1: Export RuntimeApi from runtime** (NEW)
+  - [ ] **Task 11.4.1: Export RuntimeApi from runtime** (COMPLETE - 2025-11-27)
     - The `impl_runtime_apis!` macro generates a `RuntimeApi` struct
-    - Export it from runtime/src/lib.rs for node to use
-    - Pattern: `pub use runtime::RuntimeApi;`
-    - Verification: `cargo check -p hegemon-node --features substrate`
+    - The struct is automatically `pub` and available for node import
+    - Added documentation in runtime/src/lib.rs explaining the export
+    - Added `HegemonFullClient` type alias in node/src/substrate/client.rs
+    - Pattern: `use runtime::RuntimeApi;`
+    - Verification: `cargo check -p hegemon-node --features substrate` ✅
   - [ ] **Task 11.4.2: Create real Substrate client in new_partial()** (NEW)
     - Replace manual TaskManager creation with sc_service::new_full_parts()
     - This creates: TFullClient, TFullBackend, KeystoreContainer, TaskManager
