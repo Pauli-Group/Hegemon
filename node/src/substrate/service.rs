@@ -130,7 +130,7 @@ use crate::substrate::rpc::{
     ProductionRpcService, ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
 };
 use crate::substrate::transaction_pool::{
-    MockTransactionPool, TransactionPoolBridge, TransactionPoolConfig,
+    MockTransactionPool, SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
 use codec::Decode;
 use consensus::{Blake3Algorithm, Blake3Seal};
@@ -1673,20 +1673,29 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         tracing::info!("Mining disabled (set HEGEMON_MINE=1 to enable)");
     }
 
-    // Task 11.4.3: Use real Substrate transaction pool
-    // Note: For now we still use the mock pool bridge for network integration,
-    // but the real transaction_pool is available for validation
+    // =========================================================================
+    // Task 11.5.2: Wire Real Transaction Pool to Network Bridge
+    // =========================================================================
+    // Create a wrapper around the real Substrate transaction pool that
+    // implements our TransactionPool trait. This enables the TransactionPoolBridge
+    // to submit transactions to the real pool (with runtime validation) instead
+    // of the mock pool.
     let pool_config = TransactionPoolConfig::from_env();
-    let mock_pool = Arc::new(MockTransactionPool::new(pool_config.capacity));
+    let real_pool_wrapper = Arc::new(SubstrateTransactionPoolWrapper::new(
+        transaction_pool.clone(),
+        client.clone(),
+        pool_config.capacity,
+    ));
     let pool_bridge = Arc::new(TransactionPoolBridge::with_max_pending(
-        mock_pool.clone(),
+        real_pool_wrapper.clone(),
         pool_config.max_pending,
     ));
 
     tracing::info!(
         pool_capacity = pool_config.capacity,
         max_pending = pool_config.max_pending,
-        "Transaction pool bridge created (real pool available via client)"
+        pool_type = "SubstrateTransactionPoolWrapper (real pool)",
+        "Task 11.5.2: Transaction pool bridge wired to REAL Substrate pool"
     );
     tracing::debug!(
         "Real transaction pool: {:?}",

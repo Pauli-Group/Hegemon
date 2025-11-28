@@ -337,6 +337,160 @@ impl TransactionPool for MockTransactionPool {
     }
 }
 
+// =============================================================================
+// Task 11.5.2: Real Substrate Transaction Pool Wrapper
+// =============================================================================
+//
+// This wrapper implements our TransactionPool trait for the real Substrate
+// sc_transaction_pool, enabling the TransactionPoolBridge to work with either
+// MockTransactionPool (for testing) or the real pool (for production).
+
+use crate::substrate::client::{HegemonFullClient, HegemonTransactionPool};
+use sc_transaction_pool_api::{TransactionPool as ScTransactionPool, InPoolTransaction};
+use sc_client_api::HeaderBackend;
+use codec::{Decode, Encode};
+
+/// Wrapper around the real Substrate transaction pool (Task 11.5.2)
+///
+/// This implements our simplified `TransactionPool` trait for the real
+/// `sc_transaction_pool::TransactionPoolHandle`, bridging between our
+/// network layer and Substrate's transaction pool.
+pub struct SubstrateTransactionPoolWrapper {
+    /// The real Substrate transaction pool
+    pool: Arc<HegemonTransactionPool>,
+    /// Client for querying chain info (best block hash)
+    client: Arc<HegemonFullClient>,
+    /// Pool capacity (informational, actual limit is in Substrate pool config)
+    capacity: usize,
+}
+
+impl SubstrateTransactionPoolWrapper {
+    /// Create a new wrapper around the real Substrate pool
+    pub fn new(pool: Arc<HegemonTransactionPool>, client: Arc<HegemonFullClient>, capacity: usize) -> Self {
+        Self { pool, client, capacity }
+    }
+
+    /// Get a reference to the underlying Substrate pool
+    pub fn inner(&self) -> &Arc<HegemonTransactionPool> {
+        &self.pool
+    }
+
+    /// Compute transaction hash (blake2_256)
+    fn compute_hash(data: &[u8]) -> [u8; 32] {
+        use sp_core::hashing::blake2_256;
+        blake2_256(data)
+    }
+}
+
+#[async_trait::async_trait]
+impl TransactionPool for SubstrateTransactionPoolWrapper {
+    async fn submit(&self, tx: &[u8], source: TransactionSource) -> Result<SubmissionResult, PoolError> {
+        let hash = Self::compute_hash(tx);
+        
+        // Basic validation
+        if tx.is_empty() {
+            return Err(PoolError::InvalidTransaction("Empty transaction".into()));
+        }
+        if tx.len() > 5 * 1024 * 1024 {
+            return Err(PoolError::InvalidTransaction("Transaction too large (>5MB)".into()));
+        }
+        
+        // Decode the transaction bytes into an UncheckedExtrinsic
+        let extrinsic = match <runtime::UncheckedExtrinsic as Decode>::decode(&mut &tx[..]) {
+            Ok(ext) => ext,
+            Err(e) => {
+                return Err(PoolError::InvalidTransaction(format!("Failed to decode extrinsic: {:?}", e)));
+            }
+        };
+        
+        // Convert our TransactionSource to Substrate's
+        let sc_source = match source {
+            TransactionSource::External => sc_transaction_pool_api::TransactionSource::External,
+            TransactionSource::Local => sc_transaction_pool_api::TransactionSource::Local,
+            TransactionSource::InBlock => sc_transaction_pool_api::TransactionSource::InBlock,
+        };
+        
+        // Get the best block hash from the client
+        let at = self.client.info().best_hash;
+        
+        // Submit to the real Substrate pool
+        // The pool will validate against the runtime
+        match self.pool.submit_one(at, sc_source, extrinsic).await {
+            Ok(tx_hash) => {
+                tracing::debug!(
+                    tx_hash = %tx_hash,
+                    "Transaction submitted to Substrate pool (Task 11.5.2)"
+                );
+                Ok(SubmissionResult::success(hash, None))
+            }
+            Err(e) => {
+                let error_msg = format!("{:?}", e);
+                tracing::debug!(
+                    error = %error_msg,
+                    "Transaction rejected by Substrate pool"
+                );
+                
+                // Map Substrate pool errors to our PoolError
+                if error_msg.contains("already in pool") || error_msg.contains("Already imported") {
+                    Err(PoolError::AlreadyInPool(hex::encode(hash)))
+                } else if error_msg.contains("full") {
+                    Err(PoolError::PoolFull)
+                } else {
+                    Err(PoolError::InvalidTransaction(error_msg))
+                }
+            }
+        }
+    }
+
+    fn contains(&self, hash: &[u8; 32]) -> bool {
+        // Convert our hash to Substrate's H256
+        let h256 = sp_core::H256::from_slice(hash);
+        // Check if transaction is in the pool by looking at ready transactions
+        self.pool.ready().any(|tx| {
+            let tx_hash: sp_core::H256 = *InPoolTransaction::hash(&*tx);
+            tx_hash == h256
+        })
+    }
+
+    fn pool_size(&self) -> usize {
+        let status = self.pool.status();
+        status.ready + status.future
+    }
+
+    fn pool_capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn remove(&self, _hash: &[u8; 32]) -> bool {
+        // The real Substrate pool doesn't expose a direct remove method.
+        // Transactions are removed when:
+        // 1. Included in a block (via maintain())
+        // 2. Become stale (via prune())
+        // For now, we just return false to indicate removal isn't directly supported
+        false
+    }
+
+    fn ready_transactions(&self) -> Vec<Vec<u8>> {
+        // Get all ready transactions from the pool
+        self.pool
+            .ready()
+            .map(|tx| InPoolTransaction::data(&*tx).encode())
+            .collect()
+    }
+
+    fn clear_transactions(&self, _hashes: &[[u8; 32]]) {
+        // The real pool clears transactions automatically when:
+        // 1. maintain() is called with new block notifications
+        // 2. Transactions become stale
+        //
+        // We don't need to manually clear - the maintenance task handles this.
+        // See the txpool-maintenance task in service.rs
+        tracing::debug!(
+            "clear_transactions called on SubstrateTransactionPoolWrapper - handled by maintenance task"
+        );
+    }
+}
+
 /// Bridge between NetworkBridge and TransactionPool
 ///
 /// Handles the flow of transactions from the network to the pool:
