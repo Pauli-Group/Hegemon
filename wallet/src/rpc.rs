@@ -1,30 +1,57 @@
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use transaction_circuit::proof::TransactionProof;
 use url::Url;
 
 use crate::{error::WalletError, notes::NoteCiphertext};
 
+/// Transaction bundle for submission to the node.
+/// 
+/// This contains all data needed to submit a shielded transfer to the chain.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionBundle {
-    pub proof: TransactionProof,
+    /// STARK proof bytes (serialized winterfell proof).
+    #[serde(with = "serde_bytes_vec")]
+    pub proof_bytes: Vec<u8>,
+    /// Nullifiers (32 bytes each, left-padded field elements).
+    pub nullifiers: Vec<[u8; 32]>,
+    /// Commitments (32 bytes each, left-padded field elements).
+    pub commitments: Vec<[u8; 32]>,
+    /// Encrypted note ciphertexts.
     #[serde(with = "serde_ciphertexts")]
     pub ciphertexts: Vec<Vec<u8>>,
+    /// Merkle tree anchor (root hash).
+    pub anchor: [u8; 32],
+    /// Binding signature commitment.
+    #[serde(with = "serde_bytes_64")]
+    pub binding_sig: [u8; 64],
+    /// Value balance (positive = shielding, negative = unshielding).
+    pub value_balance: i128,
 }
 
 impl TransactionBundle {
-    pub fn from_notes(
-        proof: TransactionProof,
+    /// Create a new transaction bundle from proof components.
+    pub fn new(
+        proof_bytes: Vec<u8>,
+        nullifiers: Vec<[u8; 32]>,
+        commitments: Vec<[u8; 32]>,
         ciphertexts: &[NoteCiphertext],
+        anchor: [u8; 32],
+        binding_sig: [u8; 64],
+        value_balance: i128,
     ) -> Result<Self, WalletError> {
         let mut encoded = Vec::with_capacity(ciphertexts.len());
         for ct in ciphertexts {
             encoded.push(bincode::serialize(ct)?);
         }
         Ok(Self {
-            proof,
+            proof_bytes,
+            nullifiers,
+            commitments,
             ciphertexts: encoded,
+            anchor,
+            binding_sig,
+            value_balance,
         })
     }
 
@@ -272,5 +299,51 @@ mod serde_ciphertexts {
     {
         let wrappers: Vec<serde_bytes::ByteBuf> = Vec::deserialize(deserializer)?;
         Ok(wrappers.into_iter().map(|buf| buf.into_vec()).collect())
+    }
+}
+
+mod serde_bytes_vec {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serde_bytes::Bytes::new(value).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let buf: serde_bytes::ByteBuf = serde_bytes::ByteBuf::deserialize(deserializer)?;
+        Ok(buf.into_vec())
+    }
+}
+
+mod serde_bytes_64 {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(value: &[u8; 64], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serde_bytes::Bytes::new(value).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 64], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let buf: serde_bytes::ByteBuf = serde_bytes::ByteBuf::deserialize(deserializer)?;
+        let vec = buf.into_vec();
+        if vec.len() != 64 {
+            return Err(serde::de::Error::custom(
+                format!("expected 64 bytes, got {}", vec.len())
+            ));
+        }
+        let mut arr = [0u8; 64];
+        arr.copy_from_slice(&vec);
+        Ok(arr)
     }
 }

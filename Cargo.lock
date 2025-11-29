@@ -10364,6 +10364,7 @@ dependencies = [
 name = "synthetic-crypto"
 version = "0.1.0"
 dependencies = [
+ "blake2 0.10.6",
  "blake3",
  "hex",
  "hybrid-array 0.2.3",

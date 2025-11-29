@@ -32,9 +32,9 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
-    keys::{generate_keys, ProvingKey, VerifyingKey as CircuitVerifyingKey},
-    proof::{prove as circuit_prove, verify as circuit_verify, TransactionProof},
+    TransactionProverStark, default_proof_options, fast_proof_options,
     witness::TransactionWitness,
+    hashing::felt_to_bytes32,
 };
 
 use crate::error::WalletError;
@@ -108,14 +108,11 @@ impl StarkProverConfig {
 ///
 /// Generates zero-knowledge proofs using FRI-based STARKs.
 /// The proving system is transparent (no trusted setup) and post-quantum secure.
-#[derive(Clone)]
 pub struct StarkProver {
     /// Prover configuration.
     config: StarkProverConfig,
-    /// Circuit proving key (generated, not trusted setup).
-    proving_key: ProvingKey,
-    /// Circuit verifying key.
-    verifying_key: CircuitVerifyingKey,
+    /// The actual winterfell STARK prover.
+    inner: TransactionProverStark,
 }
 
 impl StarkProver {
@@ -123,12 +120,13 @@ impl StarkProver {
     ///
     /// Note: Key generation is deterministic and requires no trusted setup.
     pub fn new(config: StarkProverConfig) -> Self {
-        let (proving_key, verifying_key) = generate_keys();
-        Self {
-            config,
-            proving_key,
-            verifying_key,
-        }
+        let options = if config.blowup_factor <= 4 {
+            fast_proof_options()
+        } else {
+            default_proof_options()
+        };
+        let inner = TransactionProverStark::new(options);
+        Self { config, inner }
     }
 
     /// Create a prover with default configuration.
@@ -141,11 +139,6 @@ impl StarkProver {
         &self.config
     }
 
-    /// Get the verifying key.
-    pub fn verifying_key(&self) -> &CircuitVerifyingKey {
-        &self.verifying_key
-    }
-
     /// Generate a STARK proof for a transaction witness.
     ///
     /// # Arguments
@@ -155,15 +148,6 @@ impl StarkProver {
     /// # Returns
     ///
     /// A `ProofResult` containing the proof and metadata, or an error.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let prover = StarkProver::with_defaults();
-    /// let witness = TransactionWitness { ... };
-    /// let result = prover.prove(&witness)?;
-    /// println!("Proof generated in {:?}", result.proving_time);
-    /// ```
     pub fn prove(&self, witness: &TransactionWitness) -> Result<ProofResult, WalletError> {
         // Validate witness before proving
         witness
@@ -172,9 +156,12 @@ impl StarkProver {
 
         let start = Instant::now();
 
-        // Generate the proof using the transaction circuit
-        let proof = circuit_prove(witness, &self.proving_key)
-            .map_err(|e| WalletError::Serialization(format!("Proof generation failed: {}", e)))?;
+        // Get public inputs from witness
+        let pub_inputs = self.inner.get_public_inputs(witness);
+        
+        // Generate the real STARK proof
+        let proof = self.inner.prove_transaction(witness)
+            .map_err(|e| WalletError::Serialization(format!("STARK proof generation failed: {}", e)))?;
 
         let proving_time = start.elapsed();
 
@@ -184,35 +171,38 @@ impl StarkProver {
         }
 
         // Serialize the proof for transmission
-        let proof_bytes = bincode::serialize(&proof)
-            .map_err(|e| WalletError::Serialization(e.to_string()))?;
+        let proof_bytes = proof.to_bytes();
+        
+        // Convert field elements to 32-byte arrays
+        let nullifiers: Vec<[u8; 32]> = pub_inputs.nullifiers.iter()
+            .map(|f| felt_to_bytes32(*f))
+            .collect();
+        let commitments: Vec<[u8; 32]> = pub_inputs.commitments.iter()
+            .map(|f| felt_to_bytes32(*f))
+            .collect();
+        let anchor = felt_to_bytes32(pub_inputs.merkle_root);
 
         Ok(ProofResult {
-            proof,
             proof_bytes,
+            nullifiers,
+            commitments,
+            anchor,
             proving_time,
-            nullifiers: witness.nullifiers().iter().map(|f| f.as_int()).collect(),
-            commitments: witness.commitments().iter().map(|f| f.as_int()).collect(),
+            value_balance: 0, // For now, pure shielded transfer
         })
     }
 
     /// Verify a STARK proof locally.
     ///
     /// This is useful for testing and validation before submission.
-    pub fn verify(&self, proof: &TransactionProof) -> Result<bool, WalletError> {
-        let report = circuit_verify(proof, &self.verifying_key)
-            .map_err(|e| WalletError::Serialization(format!("Verification failed: {}", e)))?;
-        Ok(report.verified)
-    }
-
-    /// Serialize a proof to bytes for on-chain submission.
-    pub fn serialize_proof(&self, proof: &TransactionProof) -> Result<Vec<u8>, WalletError> {
-        bincode::serialize(proof).map_err(|e| WalletError::Serialization(e.to_string()))
-    }
-
-    /// Deserialize a proof from bytes.
-    pub fn deserialize_proof(&self, bytes: &[u8]) -> Result<TransactionProof, WalletError> {
-        bincode::deserialize(bytes).map_err(|e| WalletError::Serialization(e.to_string()))
+    pub fn verify(&self, proof_bytes: &[u8], witness: &TransactionWitness) -> Result<bool, WalletError> {
+        use transaction_circuit::verify_transaction_proof_bytes;
+        
+        let pub_inputs = self.inner.get_public_inputs(witness);
+        match verify_transaction_proof_bytes(proof_bytes, &pub_inputs) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
     }
 }
 
@@ -225,16 +215,18 @@ impl Default for StarkProver {
 /// Result of proof generation.
 #[derive(Clone, Debug)]
 pub struct ProofResult {
-    /// The generated STARK proof.
-    pub proof: TransactionProof,
-    /// Serialized proof bytes.
+    /// Serialized STARK proof bytes (winterfell proof format).
     pub proof_bytes: Vec<u8>,
+    /// Nullifiers from the transaction (32-byte arrays).
+    pub nullifiers: Vec<[u8; 32]>,
+    /// Commitments from the transaction (32-byte arrays).
+    pub commitments: Vec<[u8; 32]>,
+    /// Merkle root anchor (32-byte array).
+    pub anchor: [u8; 32],
     /// Time taken to generate the proof.
     pub proving_time: Duration,
-    /// Nullifiers from the transaction (as u64 field elements).
-    pub nullifiers: Vec<u64>,
-    /// Commitments from the transaction (as u64 field elements).
-    pub commitments: Vec<u64>,
+    /// Value balance (transparent delta).
+    pub value_balance: i128,
 }
 
 impl ProofResult {
@@ -243,28 +235,14 @@ impl ProofResult {
         self.proof_bytes.len()
     }
 
-    /// Get nullifiers as 32-byte arrays.
-    pub fn nullifiers_bytes(&self) -> Vec<[u8; 32]> {
-        self.nullifiers
-            .iter()
-            .map(|&n| {
-                let mut bytes = [0u8; 32];
-                bytes[24..32].copy_from_slice(&n.to_be_bytes());
-                bytes
-            })
-            .collect()
+    /// Get nullifiers as bytes (already in correct format).
+    pub fn nullifiers_bytes(&self) -> &[[u8; 32]] {
+        &self.nullifiers
     }
 
-    /// Get commitments as 32-byte arrays.
-    pub fn commitments_bytes(&self) -> Vec<[u8; 32]> {
-        self.commitments
-            .iter()
-            .map(|&c| {
-                let mut bytes = [0u8; 32];
-                bytes[24..32].copy_from_slice(&c.to_be_bytes());
-                bytes
-            })
-            .collect()
+    /// Get commitments as bytes (already in correct format).
+    pub fn commitments_bytes(&self) -> &[[u8; 32]] {
+        &self.commitments
     }
 }
 
@@ -337,16 +315,12 @@ mod tests {
 
         // Simulate recording a proof
         let fake_result = ProofResult {
-            proof: TransactionProof {
-                public_inputs: transaction_circuit::public_inputs::TransactionPublicInputs::default(),
-                nullifiers: vec![],
-                commitments: vec![],
-                balance_slots: vec![],
-            },
             proof_bytes: vec![0u8; 1000],
-            proving_time: Duration::from_millis(500),
             nullifiers: vec![],
             commitments: vec![],
+            anchor: [0u8; 32],
+            proving_time: Duration::from_millis(500),
+            value_balance: 0,
         };
 
         stats.record(&fake_result);

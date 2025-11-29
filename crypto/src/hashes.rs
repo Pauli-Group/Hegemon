@@ -105,6 +105,13 @@ pub enum CommitmentHash {
     Sha3,
 }
 
+pub fn blake2_256(data: &[u8]) -> [u8; 32] {
+    use blake2::{Blake2b, Digest, digest::consts::U32};
+    let mut hasher = Blake2b::<U32>::new();
+    hasher.update(data);
+    hasher.finalize().into()
+}
+
 pub fn blake3_256(data: &[u8]) -> [u8; 32] {
     let mut hasher = Blake3Hasher::new();
     hasher.update(data);

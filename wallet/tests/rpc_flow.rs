@@ -251,20 +251,24 @@ async fn handle_transaction(
     Json(bundle): Json<TransactionBundle>,
 ) -> Result<Json<TxResponse>, StatusCode> {
     require_auth(&headers, &state.token)?;
-    let mut commitments = Vec::new();
-    for felt in &bundle.proof.public_inputs.commitments {
-        if felt.as_int() != 0 {
-            commitments.push(felt.as_int());
-        }
-    }
-    let mut nullifiers = Vec::new();
-    for felt in &bundle.proof.public_inputs.nullifiers {
-        if felt.as_int() != 0 {
-            let mut bytes = [0u8; 32];
-            bytes[24..].copy_from_slice(&felt.as_int().to_be_bytes());
-            nullifiers.push(bytes);
-        }
-    }
+    
+    // Commitments are now already in the correct format
+    let commitments: Vec<u64> = bundle.commitments.iter()
+        .filter(|cm| *cm != &[0u8; 32])
+        .map(|cm| {
+            // Extract u64 from last 8 bytes
+            let mut bytes = [0u8; 8];
+            bytes.copy_from_slice(&cm[24..32]);
+            u64::from_be_bytes(bytes)
+        })
+        .collect();
+    
+    // Nullifiers are now already in the correct format
+    let nullifiers: Vec<[u8; 32]> = bundle.nullifiers.iter()
+        .filter(|nf| *nf != &[0u8; 32])
+        .cloned()
+        .collect();
+    
     let wire = PendingTx {
         commitments,
         ciphertexts: bundle.ciphertexts.clone(),
@@ -272,7 +276,7 @@ async fn handle_transaction(
     };
     state.pending.lock().unwrap().push(wire);
     let mut hasher = Sha256::new();
-    hasher.update(bincode::serialize(&bundle.proof).unwrap());
+    hasher.update(&bundle.proof_bytes);
     for ct in &bundle.ciphertexts {
         hasher.update(ct);
     }
