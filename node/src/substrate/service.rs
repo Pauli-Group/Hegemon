@@ -687,6 +687,13 @@ impl Default for PqServiceConfig {
 
 impl PqServiceConfig {
     /// Create from environment variables
+    ///
+    /// Environment variables:
+    /// - `HEGEMON_REQUIRE_PQ`: Require PQ connections (default: true)
+    /// - `HEGEMON_PQ_VERBOSE`: Enable verbose logging (default: false)
+    /// - `HEGEMON_SEEDS`: Comma-separated list of seed peers (IP:port)
+    /// - `HEGEMON_LISTEN_ADDR`: Listen address (default: 0.0.0.0:30333)
+    /// - `HEGEMON_MAX_PEERS`: Maximum peers (default: 50)
     pub fn from_env() -> Self {
         let require_pq = std::env::var("HEGEMON_REQUIRE_PQ")
             .map(|v| v == "1" || v.to_lowercase() == "true")
@@ -696,10 +703,54 @@ impl PqServiceConfig {
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
 
+        // Parse bootstrap/seed nodes from environment
+        let bootstrap_nodes: Vec<std::net::SocketAddr> = std::env::var("HEGEMON_SEEDS")
+            .map(|s| {
+                s.split(',')
+                    .filter_map(|addr| {
+                        let addr = addr.trim();
+                        if addr.is_empty() {
+                            return None;
+                        }
+                        match addr.parse() {
+                            Ok(sock_addr) => Some(sock_addr),
+                            Err(e) => {
+                                tracing::warn!(
+                                    addr = %addr,
+                                    error = %e,
+                                    "Failed to parse seed address"
+                                );
+                                None
+                            }
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let listen_addr = std::env::var("HEGEMON_LISTEN_ADDR")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| "0.0.0.0:30333".parse().unwrap());
+
+        let max_peers = std::env::var("HEGEMON_MAX_PEERS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(50);
+
+        if !bootstrap_nodes.is_empty() {
+            tracing::info!(
+                seeds = ?bootstrap_nodes,
+                "Configured bootstrap nodes from HEGEMON_SEEDS"
+            );
+        }
+
         Self {
             require_pq,
             verbose_logging: verbose,
-            ..Default::default()
+            bootstrap_nodes,
+            listen_addr,
+            max_peers,
         }
     }
 }
@@ -1994,14 +2045,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     pool_bridge_clone.queue_from_bridge(pending_txs).await;
                                 }
                                 
-                                // Phase 11.6: Process block announcements for sync
-                                let pending_announces = bridge.drain_announces();
-                                if !pending_announces.is_empty() {
-                                    let mut sync = sync_service_clone.lock().await;
-                                    for (peer_id, announce) in pending_announces {
-                                        sync.on_block_announce(peer_id, &announce);
-                                    }
-                                }
+                                // Note: Block announcements are NOT drained here.
+                                // They are drained by the block-import-handler task (Task 11.5.4)
+                                // which handles both sync state updates and block import.
                             }
 
                             match event {
@@ -2035,6 +2081,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     use crate::substrate::network_bridge::{SYNC_PROTOCOL, SYNC_PROTOCOL_LEGACY};
                                     use crate::substrate::network_bridge::{SyncRequest, SyncResponse};
                                     
+                                    // Handle sync protocol messages
                                     if protocol == SYNC_PROTOCOL || protocol == SYNC_PROTOCOL_LEGACY {
                                         // Try to decode as sync request
                                         if let Ok(request) = SyncRequest::decode(&mut &data[..]) {
@@ -2061,6 +2108,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             sync.handle_sync_response(peer_id, response);
                                         }
                                     }
+                                    // Note: Block announcements are handled by the network bridge's
+                                    // handle_event() above, which queues them for the block import
+                                    // handler task (Task 11.5.4)
                                 }
                                 PqNetworkEvent::Stopped => {
                                     tracing::info!("PQ network stopped");
