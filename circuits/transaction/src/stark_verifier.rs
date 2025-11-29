@@ -130,7 +130,7 @@ impl TransactionPublicInputsStark {
 mod tests {
     use super::*;
     use crate::{
-        note::{InputNoteWitness, NoteData, OutputNoteWitness},
+        note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
         stark_prover::{TransactionProverStark, fast_proof_options},
         witness::TransactionWitness,
     };
@@ -158,6 +158,7 @@ mod tests {
                 note: input_note,
                 position: 0,
                 rho_seed: [7u8; 32],
+                merkle_path: MerklePath::default(),
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
             sk_spend: [6u8; 32],
