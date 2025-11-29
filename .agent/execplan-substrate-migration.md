@@ -40,76 +40,85 @@
 
 ## Current Status
 
-**Last Updated**: 2025-11-28
+**Last Updated**: 2025-11-28 (Post-Task 11.5.4 Testing)
 
-### ⚠️ CRITICAL: Scaffold vs Production Status
+### ⚠️ HONEST ASSESSMENT: What Actually Works
 
-**The node compiles and tests pass, but core functionality uses MOCK implementations.**
+**Block import now works, but state is not persisted. This is progress but NOT production-ready.**
 
-| Component | Code Status | Runtime Status | Blocker |
-|-----------|-------------|----------------|---------|
-| Substrate Node | ✅ Compiles | ✅ PRODUCTION | Uses `new_full_with_client()` |
-| Blake3 PoW | ✅ Works | ✅ PRODUCTION | Mining produces valid PoW |
+| Component | Code Status | Runtime Status | Actual Behavior |
+|-----------|-------------|----------------|-----------------|
+| Substrate Node | ✅ Compiles | ✅ RUNS | Uses `new_full_with_client()`, stable |
+| Blake3 PoW Mining | ✅ Works | ✅ WORKS | 191+ blocks mined in test run |
+| Block Import (Headers) | ✅ Works | ✅ WORKS | Headers persist via direct import |
+| Block Import (State) | ⚠️ PARTIAL | ❌ BROKEN | `StateAction::Skip` - state discarded |
 | PQ Network | ✅ Works | ✅ PRODUCTION | ML-KEM-768 handshakes succeed |
-| Runtime WASM | ✅ Compiles | ⚠️ NOT EXECUTED | Mock state execution ignores runtime |
-| Full Client Types | ✅ Defined | ✅ IN USE | `new_full_with_client()` uses them |
-| Block Import Pipeline | ✅ Defined | ⚠️ NOT WIRED | `PowBlockImport` commented out |
-| Transaction Pool | ✅ Works | ⚠️ PARTIAL | Real pool maintained, bridge uses mock |
-| State Execution | ⚠️ MOCK | ❌ BROKEN | Mock hash, not runtime execution |
-| Mining Worker | ✅ Works | ⚠️ SCAFFOLD | Mines but blocks have mock state |
-| RPC Extensions | ✅ Defined | ⚠️ PARTIAL | Some return errors/mock data |
-| Wallet RPC Client | ✅ Works | ⚠️ BLOCKED | Server returns errors |
-| Shielded Pool Pallet | ✅ Compiles | ⚠️ ISOLATED | In runtime but not executed |
-| Chain Sync | ❌ MISSING | ❌ BROKEN | Task 11.5 not implemented |
+| Runtime WASM | ✅ Compiles | ⚠️ NOT CALLED | State discarded prevents API calls |
+| State Execution | ⚠️ CODE EXISTS | ❌ BROKEN | Falls back to mock due to state loss |
+| Transaction Pool | ✅ Works | ⚠️ UNTESTED | Real pool created, submission untested |
+| RPC Extensions | ✅ Defined | ⚠️ PARTIAL | Some work, state queries fail |
+| Chain Sync | ❌ MISSING | ❌ BROKEN | Not implemented |
 
-### What This Means
+### What Actually Works (Verified 2025-11-28)
 
 **CAN do today:**
-- ✅ Start nodes, connect via PQ network
-- ✅ Mine blocks with valid Blake3 PoW
-- ✅ Propagate block announcements between peers
-- ✅ Dashboard shows block numbers increasing
+- ✅ Start nodes via `new_full_with_client()` production mode
+- ✅ Mine blocks with valid Blake3 PoW (tested: 191 blocks in ~30s)
+- ✅ Import mined blocks to Substrate (headers + bodies)
+- ✅ PoW verification passes for locally mined blocks
+- ✅ Block numbers increment correctly (1, 2, 3... 191)
+- ✅ Transaction pool maintenance task runs without crash
 
-**CANNOT do today:**
-- ❌ Submit and execute real transactions
-- ❌ Persist blocks to real Substrate storage
-- ❌ Sync chain history to new peers
-- ❌ Execute shielded transfers (RPC returns error)
-- ❌ Query real balances from runtime
+**CANNOT do today (verified failures):**
+- ❌ Query state at any block ("State already discarded")
+- ❌ Execute runtime API calls (api.difficulty_bits() fails)
+- ❌ State execution falls back to MOCK for every block
+- ❌ Persist actual runtime state changes (balances, etc.)
+- ❌ Submit transactions (state required for validation)
+- ❌ Query balances via RPC (state required)
+
+### Root Cause: StateAction::Skip
+
+The block import uses `StateAction::Skip` which imports headers/bodies but **discards state**.
+This was necessary because:
+1. `StateAction::Execute` causes digest mismatch (header hash differs)
+2. Timestamp inherent requires block re-execution
+3. Without proper `StorageChanges`, state cannot be persisted
+
+**The fix requires passing `StorageChanges` from block building to block import.**
 
 ### Infrastructure (Code Exists)
 
-| Component | Status | Crypto | Key Files |
-|-----------|--------|--------|-----------|
-| Substrate Node | ✅ PRODUCTION | - | `node/src/substrate/service.rs` |
-| Blake3 PoW | ✅ PRODUCTION | Blake3 | `consensus/src/substrate_pow.rs` |
-| PQ Network | ✅ PRODUCTION | ML-KEM-768 | `pq-noise/src/handshake.rs` |
-| Runtime WASM | ✅ COMPILES | - | `runtime/src/lib.rs` |
-| Full Client Types | ✅ IN USE | - | `node/src/substrate/client.rs` |
-| Block Import Pipeline | ✅ DEFINED | Blake3 | `node/src/substrate/pow_block_import.rs` |
-| Transaction Pool | ✅ WORKS | - | `node/src/substrate/service.rs` (lines ~1695-1740) |
-| Mining Worker | ✅ PRODUCTION | Blake3 | `node/src/substrate/mining_worker.rs` |
-| RPC Extensions | ⚠️ PARTIAL | - | `node/src/substrate/rpc/` |
-| Wallet RPC Client | ✅ COMPILES | - | `wallet/src/substrate_rpc.rs` |
-| Dashboard (Polkadot.js) | ✅ COMPILES | - | `dashboard-ui/src/api/substrate.ts` |
-| Shielded Pool Pallet | ✅ COMPILES | STARK, Poseidon | `pallets/shielded-pool/` |
-| Identity Pallet (PQ) | ✅ COMPILES | ML-DSA-65 | `pallets/identity/src/lib.rs` |
+| Component | Status | Crypto | Notes |
+|-----------|--------|--------|-------|
+| Substrate Node | ✅ RUNS | - | `new_full_with_client()` production mode |
+| Blake3 PoW | ✅ WORKS | Blake3 | 191+ blocks mined in test |
+| Block Import | ⚠️ PARTIAL | Blake3 | Headers only, state discarded |
+| PQ Network | ✅ PRODUCTION | ML-KEM-768 | Handshakes verified |
+| Runtime WASM | ✅ COMPILES | - | Not executed due to state loss |
+| Transaction Pool | ⚠️ UNTESTED | - | Real pool, no tx submitted |
+| Mining Worker | ✅ WORKS | Blake3 | Produces valid blocks |
+| RPC Extensions | ⚠️ PARTIAL | - | State queries fail |
+| Shielded Pool Pallet | ✅ COMPILES | STARK, Poseidon | Cannot execute without state |
+| Identity Pallet (PQ) | ✅ COMPILES | ML-DSA-65 | Cannot execute without state |
 
 ### Test Results
 
 ```bash
-# All tests passing
-cargo test -p pallet-shielded-pool
-# Result: 53 passed
+# Unit tests pass (code compiles, logic correct)
+cargo test -p pallet-shielded-pool  # 53 passed
+cargo test -p pq-noise              # 13 passed  
+cargo test -p network               # 10 passed
+cargo check -p hegemon-node         # SUCCESS
 
-cargo test -p pq-noise  
-# Result: 13 passed
-
-cargo test -p network
-# Result: 10 passed
-
-cargo check -p hegemon-node
-# Result: SUCCESS
+# Runtime tests (actual node behavior)
+HEGEMON_MINE=1 ./target/debug/hegemon-node --dev --tmp
+# ✅ Node starts
+# ✅ Blocks mined (191 in 30 seconds)
+# ✅ Block numbers increment (1, 2, 3... 191)
+# ❌ "State already discarded" for every block
+# ❌ State execution falls back to mock
+# ❌ Runtime API calls fail
 ```
 
 ---
@@ -119,6 +128,35 @@ cargo check -p hegemon-node
 **These tasks MUST be completed before the node is usable for real transactions.**
 
 **COMPLETION POLICY**: A task is NOT complete until the agent runs the **Runtime Verification** commands and they succeed. Code compilation and unit tests are insufficient.
+
+### 🚨 THE ACTUAL BLOCKER (Discovered 2025-11-28)
+
+**Problem**: Block import uses `StateAction::Skip`, discarding state immediately.
+
+**Symptom**: Every block after genesis shows:
+```
+State already discarded for 0x...
+State execution failed, falling back to mock
+```
+
+**Impact**: 
+- Runtime API calls fail (no state to query)
+- State execution always uses mock
+- Transactions cannot be validated
+- Balances/storage cannot be queried
+
+**Solution Required**: Pass `StorageChanges` from block building to block import.
+
+```rust
+// Current (broken):
+import_params.state_action = StateAction::Skip;
+
+// Required:
+let storage_changes = build_block_template(...)?;  // Return changes
+import_params.state_action = StateAction::ApplyChanges(storage_changes);
+```
+
+**This is the SINGLE BLOCKER preventing real state persistence.**
 
 ### Phase 11.5: Wire Real Substrate Client ✅ COMPLETE
 
@@ -227,102 +265,215 @@ impl TransactionPool for SubstrateTransactionPoolWrapper {
 
 ---
 
-#### Task 11.5.3: Wire Real State Execution ✅ COMPLETE
+#### Task 11.5.3: Wire Real State Execution ⚠️ PARTIAL (Falls Back to Mock)
 
-**Status**: Already implemented via `wire_block_builder_api()` function.
+**Status**: Code exists via `wire_block_builder_api()`, but falls back to mock every block.
 
-The `execute_extrinsics_fn` callback uses the real runtime to:
-1. `api.initialize_block()` - Set up block execution context
-2. `api.apply_extrinsic()` - Execute each transaction against runtime
-3. `api.finalize_block()` - Compute real state root
+**What Was Implemented**:
+1. ✅ `wire_block_builder_api()` function creates proper closure
+2. ✅ Uses `api.initialize_block()`, `api.apply_extrinsic()`, `api.finalize_block()`
+3. ✅ Timestamp inherent created via `sp_timestamp::InherentDataProvider`
+4. ✅ Inherent extrinsics fetched via `api.inherent_extrinsics()`
+5. ⚠️ **Falls back to mock every time due to state loss**
 
-See log message:
+**Actual Runtime Behavior (from logs)**:
 ```
-✅ Task 11.5.3: Real state execution wired (BlockBuilder API)
+State execution failed, falling back to mock (Task 11.4) block_number=2 
+error=Failed to initialize block: UnknownBlock("State already discarded for 0xd05b...")
 ```
 
-**Runtime Verification** (agent must run these):
+This happens for EVERY block because:
+1. Block N imports with `StateAction::Skip`
+2. State for block N is immediately discarded
+3. Building block N+1 tries `api.initialize_block(block_N_hash)`
+4. Fails because state doesn't exist
+5. Falls back to mock state execution
+
+**The flow that should work**:
+```
+build_block_template(parent) 
+  → api.initialize_block(parent_hash)  // FAILS: state discarded
+  → falls back to mock
+```
+
+**The fix**: Task 11.5.4 must use `StateAction::ApplyChanges(storage_changes)` instead of `Skip`.
+
+**Runtime Verification** (currently FAILING):
 ```bash
-# 1. Start node
-HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp &
-NODE_PID=$!
-sleep 15
-
-# 2. Query state storage for Alice's balance (should be non-zero from genesis)
-curl -s -X POST -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"state_getStorage","params":["0x26aa394eea5630e07c48ae0c9558cef7b99d880ec681799c0cf30e8886371da9de1e86a9a8c739864cf3cc5ec2bea59fd43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d"],"id":1}' \
-  http://127.0.0.1:9944 | jq -e '.result'
-# MUST return: hex-encoded balance (not null, not error)
-
-# 3. Verify state root is different across blocks (not static mock)
-BLOCK1=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getBlockHash","params":[1],"id":1}' http://127.0.0.1:9944 | jq -r '.result')
-BLOCK2=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getBlockHash","params":[2],"id":1}' http://127.0.0.1:9944 | jq -r '.result')
-STATE1=$(curl -s -X POST -d "{\"jsonrpc\":\"2.0\",\"method\":\"chain_getHeader\",\"params\":[\"$BLOCK1\"],\"id\":1}" http://127.0.0.1:9944 | jq -r '.result.stateRoot')
-STATE2=$(curl -s -X POST -d "{\"jsonrpc\":\"2.0\",\"method\":\"chain_getHeader\",\"params\":[\"$BLOCK2\"],\"id\":1}" http://127.0.0.1:9944 | jq -r '.result.stateRoot')
-[ "$STATE1" != "$STATE2" ] && echo "PASS: State roots differ" || echo "FAIL: State roots identical (mock)"
-
-kill $NODE_PID
+# State roots are mock (not computed by runtime)
+STATE1=$(curl ... | jq -r '.result.stateRoot')
+STATE2=$(curl ... | jq -r '.result.stateRoot')
+# These will be mock hashes, not real runtime state
 ```
 
-**Status**: 🔴 NOT STARTED
-- [ ] Code changed
-- [ ] Runtime verification passed
+**Status**: ⚠️ PARTIAL - Code exists, blocked by 11.5.4
+- [x] Code changed - `wire_block_builder_api()` implemented
+- [x] Timestamp inherent properly created
+- [ ] Actually executes runtime (BLOCKED by state loss)
+- [ ] Runtime verification passed (BLOCKED)
 
 ---
 
-#### Task 11.5.4: Wire Real Block Import 🔴
+#### Task 11.5.4: Wire Real Block Import ⚠️ PARTIAL (Headers Only)
 
-**Current**: `BlockImportTracker` - tracks stats but doesn't store blocks
+**Status**: Block headers and bodies import successfully, but **state is NOT persisted**.
 
-**Required** (code exists at line 1482, commented):
+**What Was Implemented**:
+1. ✅ Bypassed `PowBlockImport` for locally mined blocks (pre_hash mismatch issue)
+2. ✅ Direct client import using `client.import_block()`
+3. ✅ PoW verification done locally before import
+4. ✅ Seal placed in header digest with "bpow" engine ID
+5. ⚠️ `StateAction::Skip` used - **state discarded after import**
+
+**Test Results (2025-11-28)**:
+```
+Block imported successfully block_number=191 block_hash=d726... nonce=190000003
+# 191 blocks mined and imported in ~30 seconds
+```
+
+**The Problem**:
+```
+State already discarded for 0xd05b1c10...
+State execution failed, falling back to mock (Task 11.4)
+```
+
+Every block import discards state because we use `StateAction::Skip`. This means:
+- ✅ Block headers persist
+- ✅ Block bodies persist  
+- ❌ Runtime state (balances, pool data) does NOT persist
+- ❌ Cannot query state at any block
+- ❌ Runtime API calls fail
+
+**Why StateAction::Skip Was Necessary**:
+1. `StateAction::Execute` requires re-executing block → causes digest mismatch
+2. Timestamp inherent needs proper handling during re-execution
+3. Without `StorageChanges`, no other option works
+
+**Required to Complete**:
 ```rust
-// Create real PoW block import pipeline
-let pow_block_import = sc_consensus_pow::PowBlockImport::new(
-    client.clone(),
-    client.clone(),
-    pow_algorithm.clone(),
-    0,  // check_inherents_after
-    select_chain.clone(),
-);
-
-// Wire to chain state
-let import = pow_block_import.clone();
-chain_state.set_import_fn(move |template, seal| {
-    import.import_block(construct_block(template, seal), ...)
-});
+// Need to pass StorageChanges from block building
+import_params.state_action = StateAction::ApplyChanges(storage_changes);
 ```
 
-**Runtime Verification** (agent must run these):
+This requires:
+1. `build_block_template()` to return `StorageChanges` along with block
+2. Modify `wire_pow_block_import()` to accept and apply those changes
+3. Ensure state root matches between build and import
+
+**Runtime Verification** (currently FAILING):
 ```bash
-# 1. Start node, let it mine some blocks
-HEGEMON_MINE=1 ./target/release/hegemon-node --dev --base-path /tmp/hegemon-test &
-NODE_PID=$!
-sleep 20
-
-# 2. Get current block number
-BLOCK_NUM=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' http://127.0.0.1:9944 | jq -r '.result.number' | xargs printf "%d")
-echo "Block number: $BLOCK_NUM"
-[ "$BLOCK_NUM" -gt 0 ] || { echo "FAIL: No blocks mined"; kill $NODE_PID; exit 1; }
-
-# 3. Stop node
-kill $NODE_PID
-sleep 2
-
-# 4. Restart and verify blocks persisted
-./target/release/hegemon-node --dev --base-path /tmp/hegemon-test &
-NODE_PID=$!
-sleep 5
-
-BLOCK_NUM_AFTER=$(curl -s -X POST -d '{"jsonrpc":"2.0","method":"chain_getHeader","params":[],"id":1}' http://127.0.0.1:9944 | jq -r '.result.number' | xargs printf "%d")
-echo "Block number after restart: $BLOCK_NUM_AFTER"
-[ "$BLOCK_NUM_AFTER" -ge "$BLOCK_NUM" ] && echo "PASS: Blocks persisted" || echo "FAIL: Blocks lost on restart"
-
-kill $NODE_PID
-rm -rf /tmp/hegemon-test
+# State queries fail:
+curl -s -X POST -d '{"jsonrpc":"2.0","method":"state_getStorage","params":["..."],"id":1}' \
+  http://127.0.0.1:9944
+# Returns: null or error (state discarded)
 ```
 
-**Status**: 🔴 NOT STARTED
-- [ ] Code changed
+**Status**: ⚠️ PARTIAL - Headers work, state broken
+- [x] Code changed - blocks import
+- [x] Block numbers increment correctly
+- [ ] State persists (BLOCKED - needs StorageChanges)
+- [ ] Runtime verification passed (BLOCKED)
+
+---
+
+#### Task 11.5.5: Pass StorageChanges to Block Import 🔴 NEW (CRITICAL)
+
+**Goal**: Persist runtime state changes alongside block headers.
+
+**Current Flow (Broken)**:
+```
+build_block_template() 
+  → executes transactions
+  → computes state_root
+  → DISCARDS storage changes  // <-- Problem
+  → returns BlockTemplate
+  
+wire_pow_block_import()
+  → receives BlockTemplate
+  → creates BlockImportParams
+  → state_action = StateAction::Skip  // <-- Discards state
+  → imports block
+  → state immediately garbage collected
+```
+
+**Required Flow**:
+```
+build_block_template()
+  → executes transactions  
+  → computes state_root
+  → RETURNS storage_changes alongside block  // <-- Fix
+  
+wire_pow_block_import()
+  → receives (BlockTemplate, StorageChanges)
+  → creates BlockImportParams
+  → state_action = StateAction::ApplyChanges(storage_changes)  // <-- Fix
+  → imports block WITH state
+  → state available for next block
+```
+
+**Implementation Steps**:
+
+1. Modify `build_block_template()` return type:
+```rust
+// Current:
+fn build_block_template(...) -> Result<BlockTemplate, Error>
+
+// Required:
+fn build_block_template(...) -> Result<(BlockTemplate, Option<StorageChanges>), Error>
+```
+
+2. Capture `StorageChanges` from `BlockBuilder`:
+```rust
+// In execute_extrinsics closure:
+let (header, storage_changes) = block_builder.build()?;
+// Return storage_changes to caller
+```
+
+3. Pass `StorageChanges` through mining pipeline:
+```rust
+// BlockTemplate needs to carry storage_changes
+struct BlockTemplate {
+    // ... existing fields
+    storage_changes: Option<StorageChanges>,
+}
+```
+
+4. Apply in block import:
+```rust
+// In wire_pow_block_import:
+import_params.state_action = match block.storage_changes {
+    Some(changes) => StateAction::ApplyChanges(changes),
+    None => StateAction::Skip,  // Fallback for remote blocks
+};
+```
+
+**Files to Modify**:
+- `node/src/substrate/client.rs` - `build_block_template()` return type
+- `node/src/chain_state.rs` - `BlockTemplate` struct
+- `node/src/substrate/service.rs` - `wire_pow_block_import()` 
+
+**Runtime Verification**:
+```bash
+# 1. Start node, mine blocks
+HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp &
+sleep 15
+
+# 2. Query state (MUST NOT fail with "State already discarded")
+curl -s -X POST -d '{"jsonrpc":"2.0","method":"state_getStorage","params":["0x..."],"id":1}' \
+  http://127.0.0.1:9944 | jq -e '.result != null'
+# MUST return: true
+
+# 3. Verify runtime API works
+curl -s -X POST -d '{"jsonrpc":"2.0","method":"state_getRuntimeVersion","params":[],"id":1}' \
+  http://127.0.0.1:9944 | jq -e '.result.specName'
+# MUST return: "hegemon"
+```
+
+**Status**: 🔴 NOT STARTED - **THIS IS THE CRITICAL BLOCKER**
+- [ ] `build_block_template()` returns `StorageChanges`
+- [ ] `BlockTemplate` carries `storage_changes`
+- [ ] `wire_pow_block_import()` uses `StateAction::ApplyChanges`
+- [ ] State queries work after block import
 - [ ] Runtime verification passed
 
 ---
@@ -2298,35 +2449,51 @@ HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
 
 **These must be done FIRST before any other work matters.**
 
-| Task | Blocker For |
-|------|-------------|
-| **11.5.1**: Switch to `new_full_with_client()` | Everything |
-| **11.5.2**: Wire real transaction pool | Tx submission |
-| **11.5.3**: Wire real state execution | Tx execution |
-| **11.5.4**: Wire real block import | Block storage |
-| **11.6.1-11.6.3**: Chain sync | Multi-node |
-| **11.7.1-11.7.3**: Production RPC service | Wallet/Dashboard |
-| **11.8.1-11.8.3**: Integration verification | Confidence |
+| Task | Status | Blocker For |
+|------|--------|-------------|
+| **11.5.1**: Switch to `new_full_with_client()` | ✅ DONE | - |
+| **11.5.2**: Wire real transaction pool | ✅ DONE | Tx submission |
+| **11.5.3**: Wire real state execution | ⚠️ CODE EXISTS | State needed |
+| **11.5.4**: Wire real block import (STATE) | ⚠️ HEADERS ONLY | **EVERYTHING** |
+| **11.5.5**: Pass StorageChanges to import | 🔴 NEW TASK | State persistence |
+| **11.6.1-11.6.3**: Chain sync | 🔴 NOT STARTED | Multi-node |
+| **11.7.1-11.7.3**: Production RPC service | 🔴 NOT STARTED | Wallet/Dashboard |
+| **11.8.1-11.8.3**: Integration verification | 🔴 NOT STARTED | Confidence |
 
-### Phase Status (Code vs Runtime)
+### The Single Blocker
 
-| Phase | Code Status | Runtime Status | Notes |
-|-------|-------------|----------------|-------|
-| Phase 11.5-11.8: Node Wiring | 🔴 NOT DONE | ❌ BROKEN | **DO THIS FIRST** |
-| Phase 12: Shielded Pool | ✅ CODE DONE | ⚠️ Not executed | Blocked by 11.5 |
-| Phase 13: Wallet Integration | ✅ CODE DONE | ⚠️ RPC errors | Blocked by 11.7 |
-| Phase 14: E2E Flow | 🔴 NOT DONE | ❌ Cannot test | Blocked by 11.5-11.8 |
+**Task 11.5.5 (NEW)**: Pass `StorageChanges` from block building to block import.
+
+Until this is done:
+- State queries fail ("State already discarded")
+- State execution falls back to mock
+- Runtime pallets cannot be tested
+- Transactions cannot be validated
+
+### Phase Status (Honest Assessment)
+
+| Phase | Code Status | Runtime Status | Honest Notes |
+|-------|-------------|----------------|--------------|
+| Phase 11.5.1-11.5.2 | ✅ DONE | ✅ WORKS | Node starts, pool maintained |
+| Phase 11.5.3 | ✅ CODE DONE | ❌ FAILS | Falls back to mock (state discarded) |
+| Phase 11.5.4 | ⚠️ PARTIAL | ⚠️ HEADERS ONLY | State not persisted |
+| Phase 11.6: Chain Sync | 🔴 NOT DONE | ❌ BROKEN | Not started |
+| Phase 11.7: RPC Service | 🔴 NOT DONE | ⚠️ PARTIAL | State queries fail |
+| Phase 11.8: Integration | 🔴 NOT DONE | ❌ CANNOT TEST | Blocked by state |
+| Phase 12: Shielded Pool | ✅ CODE DONE | ❌ CANNOT EXECUTE | Blocked by state |
+| Phase 13: Wallet | ✅ CODE DONE | ❌ RPC ERRORS | Blocked by state |
+| Phase 14: E2E Testing | 🔴 NOT DONE | ❌ CANNOT TEST | Blocked by state |
 | Phase 15: Hardening | 🔴 NOT DONE | N/A | After everything works |
 
-### Remaining Work
+### What "Working" Actually Means
 
-| Phase | Actual Status |
-|-------|---------------|
-| Phase 11.5-11.8: Make It Work | 🔴 **BLOCKING** - must do first |
-| Phase 12: Shielded Pool Pallet | ✅ Code complete (not running) |
-| Phase 13: Wallet Integration | ✅ Code complete (RPC blocked) |
-| Phase 14: E2E Testing | 🔴 Blocked by 11.5-11.8 |
-| Phase 15: Hardening | 🔴 After E2E verified |
+| Claim | Reality |
+|-------|---------|
+| "Blocks import" | ✅ Headers/bodies persist, ❌ state discarded |
+| "Mining works" | ✅ PoW valid, blocks mined, ❌ mock state roots |
+| "State execution" | ❌ Falls back to mock every block |
+| "Transaction pool" | ⚠️ Created but untested (no txs submitted) |
+| "RPC works" | ⚠️ Some endpoints, ❌ state queries fail |
 
 ---
 
