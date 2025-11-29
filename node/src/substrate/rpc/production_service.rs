@@ -46,6 +46,8 @@
 use super::hegemon::{ConsensusStatus, HegemonService, StorageFootprint, TelemetrySnapshot};
 use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
+use codec::Encode;
+use pallet_shielded_pool::types::{BindingSignature, EncryptedNote, StarkProof, ENCRYPTED_NOTE_SIZE};
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use sp_api::ProvideRuntimeApi;
 use sp_blockchain::HeaderBackend;
@@ -317,36 +319,119 @@ where
 {
     fn submit_shielded_transfer(
         &self,
-        _proof: Vec<u8>,
-        _nullifiers: Vec<[u8; 32]>,
-        _commitments: Vec<[u8; 32]>,
-        _encrypted_notes: Vec<Vec<u8>>,
-        _anchor: [u8; 32],
-        _binding_sig: [u8; 64],
-        _value_balance: i128,
+        proof: Vec<u8>,
+        nullifiers: Vec<[u8; 32]>,
+        commitments: Vec<[u8; 32]>,
+        encrypted_notes: Vec<Vec<u8>>,
+        anchor: [u8; 32],
+        binding_sig: [u8; 64],
+        value_balance: i128,
     ) -> Result<[u8; 32], String> {
-        // TODO (Phase 14): Build and submit extrinsic to transaction pool
+        // Task 11.7.3: Build the shielded transfer call for the pallet
         //
-        // Implementation:
-        // 1. Encode call: pallet_shielded_pool::Call::shielded_transfer { ... }
-        // 2. Build unsigned extrinsic
-        // 3. Submit to transaction pool
-        //
-        // ```rust
-        // let call = pallet_shielded_pool::Call::<Runtime>::shielded_transfer {
-        //     proof: proof.try_into().map_err(|_| "Invalid proof")?,
-        //     nullifiers: nullifiers.try_into().map_err(|_| "Too many nullifiers")?,
-        //     commitments: commitments.try_into().map_err(|_| "Too many commitments")?,
-        //     encrypted_notes: encrypted_notes.try_into().map_err(|_| "Too many notes")?,
-        //     anchor,
-        //     binding_sig: binding_sig.try_into().map_err(|_| "Invalid signature")?,
-        // };
-        // let ext = UncheckedExtrinsic::new_unsigned(call.into());
-        // let hash = pool.submit_one(ext)?;
-        // ```
+        // The shielded_transfer extrinsic requires a signed origin (the sender's account).
+        // This RPC builds the encoded call data that can be:
+        // 1. Signed client-side and submitted via author_submitExtrinsic
+        // 2. Used directly if the transaction pool accepts unsigned extrinsics (future)
         
-        Err("Shielded transfer submission requires transaction pool integration. \
-             Use RPC `author_submitExtrinsic` with encoded pallet call.".to_string())
+        // Validate input sizes
+        if nullifiers.len() > 4 {
+            return Err("Too many nullifiers (max 4)".to_string());
+        }
+        if commitments.len() > 4 {
+            return Err("Too many commitments (max 4)".to_string());
+        }
+        if encrypted_notes.len() != commitments.len() {
+            return Err("Encrypted notes count must match commitments count".to_string());
+        }
+        
+        // Save lengths for logging before conversion
+        let nullifier_count = nullifiers.len();
+        let commitment_count = commitments.len();
+        
+        // Convert proof to StarkProof
+        let stark_proof = StarkProof::from_bytes(proof);
+        if stark_proof.is_empty() {
+            return Err("Empty proof provided".to_string());
+        }
+        
+        // Convert nullifiers to BoundedVec
+        let bounded_nullifiers: frame_support::BoundedVec<[u8; 32], runtime::MaxNullifiersPerTx> = 
+            nullifiers.try_into().map_err(|_| "Failed to convert nullifiers")?;
+        
+        // Convert commitments to BoundedVec
+        let bounded_commitments: frame_support::BoundedVec<[u8; 32], runtime::MaxCommitmentsPerTx> = 
+            commitments.try_into().map_err(|_| "Failed to convert commitments")?;
+        
+        // Convert encrypted notes to EncryptedNote structs
+        let mut enc_notes = Vec::with_capacity(encrypted_notes.len());
+        for note_bytes in encrypted_notes {
+            if note_bytes.len() < ENCRYPTED_NOTE_SIZE {
+                return Err(format!(
+                    "Encrypted note too small: {} bytes (need {})", 
+                    note_bytes.len(), 
+                    ENCRYPTED_NOTE_SIZE
+                ));
+            }
+            
+            let mut ciphertext = [0u8; ENCRYPTED_NOTE_SIZE];
+            ciphertext.copy_from_slice(&note_bytes[..ENCRYPTED_NOTE_SIZE]);
+            
+            // Ephemeral PK is optional, defaults to zeros if not provided
+            let mut ephemeral_pk = [0u8; 32];
+            if note_bytes.len() >= ENCRYPTED_NOTE_SIZE + 32 {
+                ephemeral_pk.copy_from_slice(&note_bytes[ENCRYPTED_NOTE_SIZE..ENCRYPTED_NOTE_SIZE + 32]);
+            }
+            
+            enc_notes.push(EncryptedNote {
+                ciphertext,
+                ephemeral_pk,
+            });
+        }
+        
+        let bounded_ciphertexts: frame_support::BoundedVec<EncryptedNote, runtime::MaxEncryptedNotesPerTx> = 
+            enc_notes.try_into().map_err(|_| "Failed to convert encrypted notes")?;
+        
+        // Convert binding signature
+        let binding = BindingSignature { data: binding_sig };
+        
+        // Build the pallet call
+        let call = runtime::RuntimeCall::ShieldedPool(
+            pallet_shielded_pool::Call::shielded_transfer {
+                proof: stark_proof,
+                nullifiers: bounded_nullifiers,
+                commitments: bounded_commitments,
+                ciphertexts: bounded_ciphertexts,
+                anchor,
+                binding_sig: binding,
+                value_balance,
+            }
+        );
+        
+        // Encode the call
+        let encoded_call = call.encode();
+        
+        // Return hash of the encoded call
+        // The client should sign this and submit via author_submitExtrinsic
+        use sp_core::hashing::blake2_256;
+        let call_hash = blake2_256(&encoded_call);
+        
+        // Log for debugging
+        tracing::info!(
+            nullifiers = nullifier_count,
+            commitments = commitment_count,
+            call_size = encoded_call.len(),
+            call_hash = %hex::encode(call_hash),
+            "Built shielded_transfer call (Task 11.7.3)"
+        );
+        
+        // Return the encoded call as hex in the "error" field for client to use
+        // This is a workaround since the actual submission requires signing
+        Err(format!(
+            "CALL_DATA:0x{}|CALL_HASH:0x{}|NOTE:Sign this call and submit via author_submitExtrinsic",
+            hex::encode(&encoded_call),
+            hex::encode(call_hash)
+        ))
     }
 
     fn get_encrypted_notes(
@@ -404,12 +489,64 @@ where
 
     fn shield(
         &self,
-        _amount: u128,
-        _commitment: [u8; 32],
-        _encrypted_note: Vec<u8>,
+        amount: u128,
+        commitment: [u8; 32],
+        encrypted_note: Vec<u8>,
     ) -> Result<([u8; 32], u64), String> {
-        // Shield requires a signed extrinsic from a transparent account
-        Err("Shield requires signed extrinsic. Use RPC `author_submitExtrinsic` with encoded pallet call.".to_string())
+        // Task 11.7.3: Build shield call
+        
+        // Convert encrypted note to EncryptedNote struct
+        if encrypted_note.len() < ENCRYPTED_NOTE_SIZE {
+            return Err(format!(
+                "Encrypted note too small: {} bytes (need {})",
+                encrypted_note.len(),
+                ENCRYPTED_NOTE_SIZE
+            ));
+        }
+        
+        let mut ciphertext = [0u8; ENCRYPTED_NOTE_SIZE];
+        ciphertext.copy_from_slice(&encrypted_note[..ENCRYPTED_NOTE_SIZE]);
+        
+        let mut ephemeral_pk = [0u8; 32];
+        if encrypted_note.len() >= ENCRYPTED_NOTE_SIZE + 32 {
+            ephemeral_pk.copy_from_slice(&encrypted_note[ENCRYPTED_NOTE_SIZE..ENCRYPTED_NOTE_SIZE + 32]);
+        }
+        
+        let enc_note = EncryptedNote {
+            ciphertext,
+            ephemeral_pk,
+        };
+        
+        // Build the pallet call
+        // Note: amount needs to be converted to Balance type
+        let call = runtime::RuntimeCall::ShieldedPool(
+            pallet_shielded_pool::Call::shield {
+                amount: amount.into(),
+                commitment,
+                encrypted_note: enc_note,
+            }
+        );
+        
+        // Encode the call
+        let encoded_call = call.encode();
+        
+        // Return hash of the encoded call
+        use sp_core::hashing::blake2_256;
+        let call_hash = blake2_256(&encoded_call);
+        
+        tracing::info!(
+            amount = amount,
+            commitment = %hex::encode(commitment),
+            call_size = encoded_call.len(),
+            "Built shield call (Task 11.7.3)"
+        );
+        
+        // Return encoded call info - client must sign and submit
+        Err(format!(
+            "CALL_DATA:0x{}|CALL_HASH:0x{}|NOTE:Sign this call and submit via author_submitExtrinsic",
+            hex::encode(&encoded_call),
+            hex::encode(call_hash)
+        ))
     }
 
     fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
