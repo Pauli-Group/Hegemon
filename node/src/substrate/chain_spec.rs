@@ -61,10 +61,10 @@ pub fn development_config() -> Result<ChainSpec, String> {
             "nonAuthorityKeys": []
         },
         "difficulty": {
-            // Very low difficulty for development (easy mining)
-            // initial_bits=0x207fffff corresponds to difficulty=2 (easiest)
-            "initialDifficulty": "0x2",
-            "initialBits": 0x207fffff_u32
+            // Low difficulty for development (fast but not instant mining)
+            // initial_bits=0x2000ffff corresponds to difficulty=256 (2^8)
+            "initialDifficulty": "0x100",
+            "initialBits": 0x2000ffff_u32
         },
         "shieldedPool": {
             "verifyingKey": null
