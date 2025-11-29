@@ -19,6 +19,9 @@ use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_std::vec::Vec;
 
+#[cfg(feature = "stark-verify")]
+use winterfell::math::FieldElement;
+
 use crate::types::{BindingSignature, StarkProof};
 
 /// Verification key for STARK proofs.
@@ -204,6 +207,265 @@ mod proof_structure {
     }
 }
 
+// ================================================================================================
+// STARK AIR for Verification (feature-gated)
+// ================================================================================================
+
+/// Public inputs structure for STARK verification.
+#[cfg(feature = "stark-verify")]
+#[derive(Clone, Debug)]
+pub struct StarkPublicInputs {
+    pub nullifiers: Vec<winterfell::math::fields::f64::BaseElement>,
+    pub commitments: Vec<winterfell::math::fields::f64::BaseElement>,
+    pub total_input: winterfell::math::fields::f64::BaseElement,
+    pub total_output: winterfell::math::fields::f64::BaseElement,
+    pub fee: winterfell::math::fields::f64::BaseElement,
+    pub merkle_root: winterfell::math::fields::f64::BaseElement,
+}
+
+#[cfg(feature = "stark-verify")]
+impl winterfell::math::ToElements<winterfell::math::fields::f64::BaseElement> for StarkPublicInputs {
+    fn to_elements(&self) -> Vec<winterfell::math::fields::f64::BaseElement> {
+        use winterfell::math::fields::f64::BaseElement;
+        let mut elements = Vec::new();
+        elements.extend(&self.nullifiers);
+        elements.extend(&self.commitments);
+        elements.push(self.total_input);
+        elements.push(self.total_output);
+        elements.push(self.fee);
+        elements.push(self.merkle_root);
+        elements
+    }
+}
+
+/// Minimal AIR implementation for STARK verification.
+/// This must match the AIR used by the prover in transaction-circuit.
+#[cfg(feature = "stark-verify")]
+pub struct StarkTransactionAir {
+    context: winterfell::AirContext<winterfell::math::fields::f64::BaseElement>,
+    pub_inputs: StarkPublicInputs,
+}
+
+#[cfg(feature = "stark-verify")]
+impl StarkTransactionAir {
+    /// Circuit constants matching transaction-circuit
+    const TRACE_WIDTH: usize = 3;
+    const CYCLE_LENGTH: usize = 16;
+    const POSEIDON_ROUNDS: usize = 8;
+    const MAX_INPUTS: usize = 2;
+    const MAX_OUTPUTS: usize = 2;
+    const NULLIFIER_CYCLES: usize = 3;
+    const COMMITMENT_CYCLES: usize = 7;
+    
+    pub fn new(
+        trace_info: winterfell::TraceInfo,
+        pub_inputs: StarkPublicInputs,
+        options: winterfell::ProofOptions,
+    ) -> Result<Self, &'static str> {
+        use winterfell::{AirContext, TransitionConstraintDegree};
+        use winterfell::math::fields::f64::BaseElement;
+        
+        // Validate trace dimensions
+        if trace_info.width() != Self::TRACE_WIDTH {
+            return Err("Invalid trace width");
+        }
+        
+        // Constraint degrees: Poseidon S-box is x^5, times hash_flag gives degree 6
+        let degrees = vec![
+            TransitionConstraintDegree::with_cycles(6, vec![Self::CYCLE_LENGTH]),
+            TransitionConstraintDegree::with_cycles(6, vec![Self::CYCLE_LENGTH]),
+            TransitionConstraintDegree::with_cycles(6, vec![Self::CYCLE_LENGTH]),
+        ];
+        
+        // Count assertions for nullifiers and commitments
+        let num_assertions = pub_inputs.nullifiers.iter()
+            .filter(|nf| **nf != BaseElement::ZERO)
+            .count()
+            + pub_inputs.commitments.iter()
+            .filter(|cm| **cm != BaseElement::ZERO)
+            .count();
+        
+        let context = AirContext::new(trace_info, degrees, num_assertions, options);
+        
+        Ok(Self { context, pub_inputs })
+    }
+    
+    /// Generate periodic column for hash mask
+    fn make_hash_mask() -> Vec<winterfell::math::fields::f64::BaseElement> {
+        use winterfell::math::fields::f64::BaseElement;
+        let mut mask = vec![BaseElement::ZERO; Self::CYCLE_LENGTH];
+        for i in 0..Self::POSEIDON_ROUNDS {
+            mask[i] = BaseElement::ONE;
+        }
+        mask
+    }
+    
+    /// Generate round constant
+    fn round_constant(round: usize, position: usize) -> winterfell::math::fields::f64::BaseElement {
+        use winterfell::math::fields::f64::BaseElement;
+        let seed = ((round as u64 + 1).wrapping_mul(0x9e37_79b9u64))
+            ^ ((position as u64 + 1).wrapping_mul(0x7f4a_7c15u64));
+        BaseElement::new(seed)
+    }
+    
+    /// Poseidon S-box: x^5
+    fn sbox(x: winterfell::math::fields::f64::BaseElement) -> winterfell::math::fields::f64::BaseElement {
+        let x2 = x * x;
+        let x4 = x2 * x2;
+        x4 * x
+    }
+    
+    /// MDS matrix multiplication
+    fn mds_mix(state: &[winterfell::math::fields::f64::BaseElement; 3]) -> [winterfell::math::fields::f64::BaseElement; 3] {
+        use winterfell::math::fields::f64::BaseElement;
+        let m00 = BaseElement::new(3);
+        let m01 = BaseElement::new(1);
+        let m02 = BaseElement::new(1);
+        let m10 = BaseElement::new(1);
+        let m11 = BaseElement::new(3);
+        let m12 = BaseElement::new(1);
+        let m20 = BaseElement::new(1);
+        let m21 = BaseElement::new(1);
+        let m22 = BaseElement::new(3);
+        
+        [
+            m00 * state[0] + m01 * state[1] + m02 * state[2],
+            m10 * state[0] + m11 * state[1] + m12 * state[2],
+            m20 * state[0] + m21 * state[1] + m22 * state[2],
+        ]
+    }
+}
+
+#[cfg(feature = "stark-verify")]
+impl winterfell::Air for StarkTransactionAir {
+    type BaseField = winterfell::math::fields::f64::BaseElement;
+    type PublicInputs = StarkPublicInputs;
+    
+    fn new(
+        trace_info: winterfell::TraceInfo,
+        pub_inputs: Self::PublicInputs,
+        options: winterfell::ProofOptions,
+    ) -> Self {
+        Self::new(trace_info, pub_inputs, options).expect("AIR creation should succeed")
+    }
+    
+    fn context(&self) -> &winterfell::AirContext<Self::BaseField> {
+        &self.context
+    }
+    
+    fn evaluate_transition<E: winterfell::math::FieldElement<BaseField = Self::BaseField>>(
+        &self,
+        frame: &winterfell::EvaluationFrame<E>,
+        periodic_values: &[E],
+        result: &mut [E],
+    ) {
+        let current = frame.current();
+        let next = frame.next();
+        
+        let hash_flag = periodic_values[0];
+        let rc0 = periodic_values[1];
+        let rc1 = periodic_values[2];
+        let rc2 = periodic_values[3];
+        
+        // Current state
+        let s0 = current[0];
+        let s1 = current[1];
+        let s2 = current[2];
+        
+        // Add round constants
+        let t0 = s0 + rc0;
+        let t1 = s1 + rc1;
+        let t2 = s2 + rc2;
+        
+        // S-box (x^5)
+        let u0 = {
+            let t0_2 = t0 * t0;
+            let t0_4 = t0_2 * t0_2;
+            t0_4 * t0
+        };
+        let u1 = {
+            let t1_2 = t1 * t1;
+            let t1_4 = t1_2 * t1_2;
+            t1_4 * t1
+        };
+        let u2 = {
+            let t2_2 = t2 * t2;
+            let t2_4 = t2_2 * t2_2;
+            t2_4 * t2
+        };
+        
+        // MDS mix
+        let m00 = E::from(3u32);
+        let m01 = E::ONE;
+        let m02 = E::ONE;
+        let m10 = E::ONE;
+        let m11 = E::from(3u32);
+        let m12 = E::ONE;
+        let m20 = E::ONE;
+        let m21 = E::ONE;
+        let m22 = E::from(3u32);
+        
+        let expected0 = m00 * u0 + m01 * u1 + m02 * u2;
+        let expected1 = m10 * u0 + m11 * u1 + m12 * u2;
+        let expected2 = m20 * u0 + m21 * u1 + m22 * u2;
+        
+        // Constraint: hash_flag * (next - expected) + (1 - hash_flag) * (next - current) = 0
+        let one = E::ONE;
+        let copy_flag = one - hash_flag;
+        
+        result[0] = hash_flag * (next[0] - expected0) + copy_flag * (next[0] - s0);
+        result[1] = hash_flag * (next[1] - expected1) + copy_flag * (next[1] - s1);
+        result[2] = hash_flag * (next[2] - expected2) + copy_flag * (next[2] - s2);
+    }
+    
+    fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
+        use winterfell::math::fields::f64::BaseElement;
+        
+        let mut result = vec![Self::make_hash_mask()];
+        
+        // Round constants for each position
+        for pos in 0..3 {
+            let mut column = Vec::with_capacity(Self::CYCLE_LENGTH);
+            for step in 0..Self::CYCLE_LENGTH {
+                if step < Self::POSEIDON_ROUNDS {
+                    column.push(Self::round_constant(step, pos));
+                } else {
+                    column.push(BaseElement::ZERO);
+                }
+            }
+            result.push(column);
+        }
+        
+        result
+    }
+    
+    fn get_assertions(&self) -> Vec<winterfell::Assertion<Self::BaseField>> {
+        use winterfell::Assertion;
+        use winterfell::math::fields::f64::BaseElement;
+        
+        let mut assertions = Vec::new();
+        
+        // Add assertions for nullifiers
+        for (i, nf) in self.pub_inputs.nullifiers.iter().enumerate() {
+            if *nf != BaseElement::ZERO {
+                let row = (i + 1) * Self::NULLIFIER_CYCLES * Self::CYCLE_LENGTH - 1;
+                assertions.push(Assertion::single(0, row, *nf));
+            }
+        }
+        
+        // Add assertions for commitments  
+        let commitment_base = Self::MAX_INPUTS * Self::NULLIFIER_CYCLES;
+        for (i, cm) in self.pub_inputs.commitments.iter().enumerate() {
+            if *cm != BaseElement::ZERO {
+                let row = (commitment_base + (i + 1) * Self::COMMITMENT_CYCLES) * Self::CYCLE_LENGTH - 1;
+                assertions.push(Assertion::single(0, row, *cm));
+            }
+        }
+        
+        assertions
+    }
+}
+
 impl StarkVerifier {
     /// Encode public inputs as field elements for STARK verification.
     pub fn encode_public_inputs(inputs: &ShieldedTransferInputs) -> Vec<[u8; 32]> {
@@ -339,8 +601,8 @@ impl ProofVerifier for StarkVerifier {
         inputs: &ShieldedTransferInputs,
         vk: &VerifyingKey,
     ) -> VerificationResult {
-        use sp_core::hashing::blake2_256;
         use winterfell::Proof;
+        use winterfell::math::fields::f64::BaseElement;
         
         // Check key is enabled
         if !vk.enabled {
@@ -358,78 +620,34 @@ impl ProofVerifier for StarkVerifier {
         }
         
         // Try to deserialize the winterfell proof
-        let winterfell_proof = match Proof::from_bytes(&proof.data) {
+        let winterfell_proof: Proof = match Proof::from_bytes(&proof.data) {
             Ok(p) => p,
             Err(_) => {
-                // If winterfell deserialization fails, fall back to FRI verification
-                return Self::verify_fri_proof(proof, inputs);
+                return VerificationResult::InvalidProofFormat;
             }
         };
         
-        // Verify the proof context matches our expectations
-        let trace_info = winterfell_proof.context.trace_info();
-        let options = winterfell_proof.context.options();
+        // Convert public inputs to field elements for verification
+        let pub_inputs = Self::convert_public_inputs(inputs);
         
-        // Check trace width is reasonable for shielded transfer (4 columns minimum)
-        if trace_info.width() < 4 {
-            return VerificationResult::InvalidProofFormat;
+        // Build acceptable options matching the prover
+        let acceptable = winterfell::AcceptableOptions::OptionSet(vec![
+            Self::default_acceptable_options(),
+            Self::fast_acceptable_options(),
+        ]);
+        
+        // Perform actual winterfell verification
+        use winterfell::crypto::{DefaultRandomCoin, MerkleTree};
+        type Blake3 = winter_crypto::hashers::Blake3_256<BaseElement>;
+        
+        match winterfell::verify::<StarkTransactionAir, Blake3, DefaultRandomCoin<Blake3>, MerkleTree<Blake3>>(
+            winterfell_proof,
+            pub_inputs,
+            &acceptable,
+        ) {
+            Ok(_) => VerificationResult::Valid,
+            Err(_) => VerificationResult::VerificationFailed,
         }
-        
-        // Check blowup factor is sufficient for security (minimum 8x)
-        if options.blowup_factor() < 8 {
-            return VerificationResult::VerificationFailed;
-        }
-        
-        // Check number of queries is sufficient (minimum 32 for 128-bit security)
-        if options.num_queries() < 32 {
-            return VerificationResult::VerificationFailed;
-        }
-        
-        // Compute public input binding
-        let encoded_inputs = Self::encode_public_inputs(inputs);
-        let mut binding_data = Vec::new();
-        binding_data.extend_from_slice(b"STARK-BINDING-V1");
-        for input in &encoded_inputs {
-            binding_data.extend_from_slice(input);
-        }
-        let input_binding = blake2_256(&binding_data);
-        
-        // Verify FRI proof exists and has expected structure
-        let fri_proof = &winterfell_proof.fri_proof;
-        if fri_proof.num_layers() < 4 {
-            return VerificationResult::VerificationFailed;
-        }
-        
-        // Verify query count matches
-        let num_queries = winterfell_proof.num_unique_queries as usize;
-        if num_queries < 32 {
-            return VerificationResult::VerificationFailed;
-        }
-        
-        // Hash verification data with input binding
-        let mut verification_data = Vec::new();
-        verification_data.extend_from_slice(b"STARK-VERIFY-V1");
-        verification_data.extend_from_slice(&input_binding);
-        verification_data.extend_from_slice(&winterfell_proof.pow_nonce.to_le_bytes());
-        
-        let verification_hash = blake2_256(&verification_data);
-        
-        // The verification hash must have sufficient entropy (not all zeros)
-        if verification_hash.iter().all(|&b| b == 0) {
-            return VerificationResult::VerificationFailed;
-        }
-        
-        // Full winterfell verification would require matching AIR and hash types.
-        // Since we've verified:
-        // 1. Proof deserializes correctly (winterfell format)
-        // 2. Trace has correct width
-        // 3. Security parameters are sufficient (blowup, queries)
-        // 4. FRI proof has sufficient layers
-        // 5. Public inputs are bound to verification
-        //
-        // This provides meaningful verification for winterfell-format proofs.
-        
-        VerificationResult::Valid
     }
 
     fn verify_binding_signature(
@@ -444,83 +662,58 @@ impl ProofVerifier for StarkVerifier {
 }
 
 impl StarkVerifier {
-    /// Perform FRI-based verification for proofs not in winterfell format.
-    /// This implements the core FRI verification algorithm.
     #[cfg(feature = "stark-verify")]
-    fn verify_fri_proof(
-        proof: &StarkProof,
-        inputs: &ShieldedTransferInputs,
-    ) -> VerificationResult {
-        use sp_core::hashing::blake2_256;
+    fn default_acceptable_options() -> winterfell::ProofOptions {
+        winterfell::ProofOptions::new(
+            32, 8, 0,
+            winterfell::FieldExtension::None,
+            4, 31,
+            winterfell::BatchingMethod::Linear,
+            winterfell::BatchingMethod::Linear,
+        )
+    }
+    
+    #[cfg(feature = "stark-verify")]
+    fn fast_acceptable_options() -> winterfell::ProofOptions {
+        winterfell::ProofOptions::new(
+            8, 16, 0,
+            winterfell::FieldExtension::None,
+            2, 7,
+            winterfell::BatchingMethod::Linear,
+            winterfell::BatchingMethod::Linear,
+        )
+    }
+
+    /// Convert pallet public inputs to the format expected by winterfell verification.
+    #[cfg(feature = "stark-verify")]
+    fn convert_public_inputs(inputs: &ShieldedTransferInputs) -> StarkPublicInputs {
+        use winterfell::math::fields::f64::BaseElement;
         
-        let data = &proof.data;
-        
-        // Parse FRI proof header
-        if data.len() < proof_structure::PROOF_HEADER_SIZE {
-            return VerificationResult::InvalidProofFormat;
+        // Convert 32-byte values to field elements
+        fn bytes_to_felt(bytes: &[u8; 32]) -> BaseElement {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(&bytes[24..32]);
+            BaseElement::new(u64::from_be_bytes(buf))
         }
         
-        let version = data[0];
-        let num_fri_layers = data[1] as usize;
-        let _trace_length = u32::from_le_bytes([data[2], data[3], data[4], data[5]]) as usize;
+        let nullifiers: Vec<BaseElement> = inputs.nullifiers.iter()
+            .map(bytes_to_felt)
+            .collect();
         
-        if version != 1 || num_fri_layers < 4 {
-            return VerificationResult::InvalidProofFormat;
+        let commitments: Vec<BaseElement> = inputs.commitments.iter()
+            .map(bytes_to_felt)
+            .collect();
+        
+        let merkle_root = bytes_to_felt(&inputs.anchor);
+        
+        StarkPublicInputs {
+            nullifiers,
+            commitments,
+            total_input: BaseElement::ZERO,
+            total_output: BaseElement::ZERO,
+            fee: BaseElement::ZERO,
+            merkle_root,
         }
-        
-        // Compute challenge based on public inputs
-        let challenge = Self::compute_challenge(inputs, proof);
-        
-        // Verify FRI layer commitments
-        let mut offset = proof_structure::PROOF_HEADER_SIZE;
-        let mut layer_commitments = Vec::new();
-        
-        for _ in 0..num_fri_layers {
-            if offset + 32 > data.len() {
-                return VerificationResult::InvalidProofFormat;
-            }
-            
-            let mut commitment = [0u8; 32];
-            commitment.copy_from_slice(&data[offset..offset + 32]);
-            layer_commitments.push(commitment);
-            offset += 32;
-        }
-        
-        // Verify layer commitment chain (each layer commits to the previous)
-        for i in 1..layer_commitments.len() {
-            let mut chain_data = Vec::new();
-            chain_data.extend_from_slice(b"FRI-LAYER-");
-            chain_data.extend_from_slice(&(i as u32).to_le_bytes());
-            chain_data.extend_from_slice(&layer_commitments[i - 1]);
-            chain_data.extend_from_slice(&challenge);
-            
-            let expected_prefix = blake2_256(&chain_data);
-            
-            // The commitment should be derived from the previous layer
-            // We check that at least the first 4 bytes show correlation
-            let prefix_match = layer_commitments[i][0..4]
-                .iter()
-                .zip(expected_prefix[0..4].iter())
-                .any(|(a, b)| a == b);
-                
-            if !prefix_match && layer_commitments[i] != expected_prefix {
-                // Allow either correlation or exact match
-                // This is relaxed to support different FRI implementations
-            }
-        }
-        
-        // Verify query responses exist
-        let min_query_data = 8 * proof_structure::MIN_QUERY_SIZE;
-        if data.len() < offset + min_query_data {
-            return VerificationResult::InvalidProofFormat;
-        }
-        
-        // Verify final polynomial commitment
-        if data.len() < offset + min_query_data + 32 {
-            return VerificationResult::InvalidProofFormat;
-        }
-        
-        VerificationResult::Valid
     }
 }
 

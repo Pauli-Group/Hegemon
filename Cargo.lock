@@ -6279,6 +6279,7 @@ dependencies = [
  "sp-runtime",
  "sp-std",
  "winter-air",
+ "winter-crypto",
  "winter-math",
  "winter-prover",
  "winter-verifier",
