@@ -17,14 +17,35 @@ type Blake3 = Blake3_256<BaseElement>;
 // VERIFICATION
 // ================================================================================================
 
+/// Check that the balance equation holds: total_input = total_output + fee
+pub fn check_balance(pub_inputs: &TransactionPublicInputsStark) -> Result<(), TransactionVerifyError> {
+    let expected_input = pub_inputs.total_output + pub_inputs.fee;
+    if pub_inputs.total_input != expected_input {
+        return Err(TransactionVerifyError::InvalidPublicInputs(
+            format!("Balance mismatch: total_input ({:?}) != total_output ({:?}) + fee ({:?})",
+                pub_inputs.total_input, pub_inputs.total_output, pub_inputs.fee)
+        ));
+    }
+    Ok(())
+}
+
 /// Verify a STARK proof of a transaction.
 ///
 /// This function ACTUALLY calls winterfell::verify() to cryptographically
 /// verify that the proof is valid for the given public inputs.
+/// It also checks that the balance equation holds.
 pub fn verify_transaction_proof(
     proof: &Proof,
     pub_inputs: &TransactionPublicInputsStark,
 ) -> Result<(), VerifierError> {
+    // First check balance - if it fails, we return an error that indicates invalid inputs
+    // We use a custom approach since VerifierError doesn't have a balance variant
+    let expected_input = pub_inputs.total_output + pub_inputs.fee;
+    if pub_inputs.total_input != expected_input {
+        // Return a verification error - the proof can't be valid with mismatched balance
+        return Err(VerifierError::InconsistentOodConstraintEvaluations);
+    }
+    
     let acceptable = AcceptableOptions::OptionSet(vec![
         default_acceptable_options(),
         fast_acceptable_options(),
@@ -232,6 +253,23 @@ mod tests {
 
         let result = verify_transaction_proof_bytes(&proof_bytes, &pub_inputs);
         assert!(result.is_ok(), "Verification from bytes should succeed: {:?}", result);
+    }
+
+    #[test]
+    fn test_verify_balance_failure() {
+        let prover = TransactionProverStark::new(fast_proof_options());
+        let witness = make_test_witness();
+
+        let trace = prover.build_trace(&witness).unwrap();
+        let mut pub_inputs = prover.get_pub_inputs(&trace);
+
+        let proof = prover.prove(trace).expect("proving should succeed");
+
+        // Tamper with fee to break balance equation
+        pub_inputs.fee = pub_inputs.fee + BaseElement::new(1);
+
+        let result = verify_transaction_proof(&proof, &pub_inputs);
+        assert!(result.is_err(), "Verification should fail with wrong balance");
     }
 
     #[test]
