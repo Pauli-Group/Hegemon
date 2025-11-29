@@ -141,13 +141,14 @@ use network::{
 use sc_client_api::BlockchainEvents;
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
-use sp_api::{Core, ProvideRuntimeApi};
+use sp_api::{Core, ProvideRuntimeApi, StorageChanges};
 use sp_block_builder::BlockBuilder;
 use sp_core::H256;
 use sp_inherents::{InherentData, InherentDataProvider};
 use sp_runtime::traits::Header as HeaderT;
 use codec::Encode;
 use std::sync::Arc;
+use std::collections::HashMap;
 use tokio::sync::Mutex;
 use futures::StreamExt;
 
@@ -156,6 +157,63 @@ use runtime::apis::ConsensusApi;
 
 // Import jsonrpsee for RPC server (Phase 11.7)
 use jsonrpsee::server::ServerBuilder;
+
+// =============================================================================
+// Task 11.5.5: Storage Changes Cache
+// =============================================================================
+//
+// This module provides a global cache for storing StorageChanges from block
+// building so they can be used during block import. This is necessary because:
+// 1. StorageChanges is not Clone, so it can't be returned through callbacks
+// 2. We need to persist state alongside block headers during import
+// 3. Without this, state is discarded via StateAction::Skip
+
+/// Type alias for storage changes in our runtime
+pub type HegemonStorageChanges = StorageChanges<runtime::Block>;
+
+/// Global storage changes cache (Task 11.5.5)
+/// 
+/// This cache stores StorageChanges indexed by a unique key (block number + timestamp).
+/// The changes are inserted during block building and retrieved during block import.
+/// 
+/// Thread-safe via parking_lot::RwLock for concurrent access.
+static STORAGE_CHANGES_CACHE: once_cell::sync::Lazy<
+    parking_lot::RwLock<HashMap<u64, HegemonStorageChanges>>
+> = once_cell::sync::Lazy::new(|| {
+    parking_lot::RwLock::new(HashMap::new())
+});
+
+/// Counter for generating unique cache keys
+static STORAGE_CHANGES_KEY_COUNTER: std::sync::atomic::AtomicU64 = 
+    std::sync::atomic::AtomicU64::new(1);
+
+/// Store storage changes in the cache and return the key (Task 11.5.5)
+pub fn cache_storage_changes(changes: HegemonStorageChanges) -> u64 {
+    let key = STORAGE_CHANGES_KEY_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    STORAGE_CHANGES_CACHE.write().insert(key, changes);
+    tracing::debug!(
+        key,
+        "Cached storage changes for block import (Task 11.5.5)"
+    );
+    key
+}
+
+/// Retrieve and remove storage changes from the cache (Task 11.5.5)
+pub fn take_storage_changes(key: u64) -> Option<HegemonStorageChanges> {
+    let changes = STORAGE_CHANGES_CACHE.write().remove(&key);
+    if changes.is_some() {
+        tracing::debug!(
+            key,
+            "Retrieved storage changes from cache (Task 11.5.5)"
+        );
+    } else {
+        tracing::warn!(
+            key,
+            "Storage changes not found in cache (Task 11.5.5)"
+        );
+    }
+    changes
+}
 
 /// Type alias for the no-op inherent data providers creator
 ///
@@ -190,111 +248,100 @@ pub fn check_wasm() -> Result<(), String> {
 }
 
 // =============================================================================
-// Task 11.4.4: Wire BlockBuilder API to execute_extrinsics_fn
+// Task 11.4.4 + 11.5.5: Wire BlockBuilder API with StorageChanges capture
 // =============================================================================
 //
 // This function connects the ProductionChainStateProvider's execute_extrinsics_fn
-// callback to the real Substrate BlockBuilder runtime API.
+// callback to use sc_block_builder::BlockBuilder which provides:
+// - Block building with proper state execution
+// - StorageChanges capture for persisting state during import
 //
-// The BlockBuilder API provides:
-// - initialize_block(header): Initialize block execution context
-// - apply_extrinsic(ext): Apply a single extrinsic to state  
-// - finalize_block(): Finalize and return header with state_root
-//
-// The callback is called during block production to:
-// 1. Execute pending transactions against the runtime
-// 2. Compute the resulting state root after all state transitions
-// 3. Return which extrinsics were successfully applied
+// Task 11.5.5: The key improvement is using BlockBuilder.build() which returns
+// BuiltBlock containing StorageChanges. These changes are cached and later
+// used in wire_pow_block_import() with StateAction::ApplyChanges.
 
-/// Wires the BlockBuilder runtime API to the ProductionChainStateProvider (Task 11.4.4)
+/// Wires the BlockBuilder to the ProductionChainStateProvider (Task 11.4.4 + 11.5.5)
 ///
-/// This connects the `execute_extrinsics_fn` callback to use the real Substrate
-/// runtime API for block execution. When the mining worker produces a block,
-/// it will:
+/// This connects the `execute_extrinsics_fn` callback to use `sc_block_builder::BlockBuilder`
+/// for block execution. This is the key fix for Task 11.5.5 because BlockBuilder:
 ///
-/// 1. Call `initialize_block` with the parent hash and block number
-/// 2. Decode each extrinsic from bytes using `codec::Decode`
-/// 3. Call `apply_extrinsic` for each decoded extrinsic
-/// 4. Call `finalize_block` to get the header with computed state_root
+/// 1. Executes extrinsics against runtime state
+/// 2. Computes the correct state_root
+/// 3. **Returns StorageChanges** which we cache for block import
 ///
-/// # Arguments
+/// The StorageChanges are stored in a global cache (STORAGE_CHANGES_CACHE) and
+/// the cache key is returned in StateExecutionResult.storage_changes_key.
+/// When wire_pow_block_import imports the block, it retrieves the changes
+/// and uses StateAction::ApplyChanges instead of StateAction::Skip.
 ///
-/// * `chain_state` - The ProductionChainStateProvider to wire
-/// * `client` - The full Substrate client providing runtime API access
+/// # Flow
 ///
-/// # Example
+/// ```text
+/// execute_extrinsics_fn() 
+///   → BlockBuilder::new(client)
+///   → builder.create_inherents(inherent_data)
+///   → builder.push(extrinsic) for each tx
+///   → builder.build() → BuiltBlock { block, storage_changes, proof }
+///   → cache_storage_changes(storage_changes) → key
+///   → return StateExecutionResult { ..., storage_changes_key: Some(key) }
 ///
-/// ```rust,ignore
-/// let chain_state = Arc::new(ProductionChainStateProvider::new(config));
-/// wire_block_builder_api(&chain_state, client.clone());
-///
-/// // Now execute_extrinsics uses real runtime
-/// let result = chain_state.execute_extrinsics(&parent_hash, 1, &extrinsics)?;
-/// // result.state_root is computed by the runtime
+/// wire_pow_block_import()
+///   → take_storage_changes(key) → Some(changes)
+///   → import_params.state_action = StateAction::ApplyChanges(changes)
+///   → client.import_block(import_params) → state persisted!
 /// ```
 pub fn wire_block_builder_api(
     chain_state: &Arc<ProductionChainStateProvider>,
     client: Arc<HegemonFullClient>,
 ) {
+    use sc_block_builder::BlockBuilderBuilder;
+    use sp_blockchain::HeaderBackend;
+    
     let client_for_exec = client;
     
     chain_state.set_execute_extrinsics_fn(move |parent_hash, block_number, extrinsics| {
-        // Get the runtime API from the client
-        let api = client_for_exec.runtime_api();
-        
-        // Convert our H256 to the runtime's Hash type via substrate H256
+        // Convert our H256 to the runtime's Hash type
         let parent_substrate_hash: sp_core::H256 = (*parent_hash).into();
         
-        // Create a header for initialize_block using the Header trait
-        // The header is used to set up the block context (block number, parent hash)
-        // The state_root and extrinsics_root will be computed by finalize_block
-        let header = <runtime::Header as HeaderT>::new(
-            block_number,         // BlockNumber is u64 in our runtime
-            Default::default(),   // extrinsics_root - will be computed
-            Default::default(),   // state_root - will be computed
-            parent_substrate_hash,
-            Default::default(),   // digest
-        );
-        
-        // Initialize block execution context
-        // This sets up the runtime state for executing transactions
-        if let Err(e) = api.initialize_block(parent_substrate_hash, &header) {
-            return Err(format!("Failed to initialize block: {:?}", e));
-        }
-        
-        tracing::debug!(
+        tracing::info!(
             block_number,
             parent = %hex::encode(parent_hash.as_bytes()),
             tx_count = extrinsics.len(),
-            "Initializing block execution (Task 11.4.4)"
+            "Building block with sc_block_builder (Task 11.5.5)"
         );
         
-        // Create inherent data using sp_timestamp's InherentDataProvider
-        // This is the proper way to create timestamp inherents that pallet_timestamp expects
+        // Create inherent data for timestamp
         let mut inherent_data = InherentData::new();
         let timestamp_provider = sp_timestamp::InherentDataProvider::from_system_time();
-        let timestamp_ms = *timestamp_provider; // Get the timestamp value
-        
-        // Provide the timestamp data to inherent_data synchronously
-        // We use block_on since the trait is async but we need to run it now
         if let Err(e) = futures::executor::block_on(
             timestamp_provider.provide_inherent_data(&mut inherent_data)
         ) {
             tracing::warn!(error = ?e, "Failed to provide timestamp inherent data");
         }
         
-        tracing::debug!(
-            timestamp_ms = timestamp_ms.as_millis(),
-            "Created timestamp inherent data"
-        );
+        // Create BlockBuilder using the builder pattern
+        // This is the sc_block_builder::BlockBuilder, not the runtime API
+        let mut block_builder = match BlockBuilderBuilder::new(&*client_for_exec)
+            .on_parent_block(parent_substrate_hash)
+            .fetch_parent_block_number(&*client_for_exec)
+        {
+            Ok(stage2) => match stage2.build() {
+                Ok(builder) => builder,
+                Err(e) => {
+                    return Err(format!("Failed to create BlockBuilder: {:?}", e));
+                }
+            },
+            Err(e) => {
+                return Err(format!("Failed to fetch parent block number: {:?}", e));
+            }
+        };
         
-        // Get properly formatted inherent extrinsics from the runtime
-        // This uses the BlockBuilder_inherent_extrinsics runtime API
-        let inherent_extrinsics = match api.inherent_extrinsics(parent_substrate_hash, inherent_data) {
+        // Create inherent extrinsics (timestamp, etc.)
+        let inherent_extrinsics = match block_builder.create_inherents(inherent_data) {
             Ok(exts) => {
-                tracing::info!(
+                tracing::debug!(
                     count = exts.len(),
-                    "BlockBuilder_inherent_extrinsics returned {} extrinsics",
+                    "Created {} inherent extrinsics",
                     exts.len()
                 );
                 exts
@@ -305,89 +352,67 @@ pub fn wire_block_builder_api(
             }
         };
         
-        // Apply inherent extrinsics first
+        // Push inherent extrinsics
         let mut applied = Vec::new();
-        for (i, inherent_ext) in inherent_extrinsics.into_iter().enumerate() {
-            tracing::debug!(
-                index = i,
-                ext_bytes = inherent_ext.encode().len(),
-                "Applying inherent extrinsic"
-            );
-            match api.apply_extrinsic(parent_substrate_hash, inherent_ext.clone()) {
-                Ok(Ok(_)) => {
+        for inherent_ext in inherent_extrinsics {
+            match block_builder.push(inherent_ext.clone()) {
+                Ok(_) => {
                     applied.push(inherent_ext.encode());
-                    tracing::info!("Applied inherent extrinsic #{}", i);
-                }
-                Ok(Err(e)) => {
-                    tracing::warn!(error = ?e, index = i, "Inherent extrinsic dispatch failed");
                 }
                 Err(e) => {
-                    tracing::warn!(error = ?e, index = i, "Inherent extrinsic API call failed");
+                    tracing::warn!(error = ?e, "Failed to push inherent extrinsic");
                 }
             }
         }
         
-        // Apply each user extrinsic
+        // Push user extrinsics
         let mut failed = 0usize;
-        
         for ext_bytes in extrinsics {
-            // Decode extrinsic bytes to UncheckedExtrinsic
             match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
                 Ok(extrinsic) => {
-                    // Apply the extrinsic via runtime API
-                    match api.apply_extrinsic(parent_substrate_hash, extrinsic) {
-                        Ok(Ok(_)) => {
-                            // Successfully applied
+                    match block_builder.push(extrinsic) {
+                        Ok(_) => {
                             applied.push(ext_bytes.clone());
                         }
-                        Ok(Err(dispatch_error)) => {
-                            // Dispatch error (runtime rejected the extrinsic)
-                            tracing::warn!(
-                                error = ?dispatch_error,
-                                "Extrinsic dispatch failed"
-                            );
-                            failed += 1;
-                        }
-                        Err(api_error) => {
-                            // API call failed
-                            tracing::warn!(
-                                error = ?api_error,
-                                "apply_extrinsic API call failed"
-                            );
+                        Err(e) => {
+                            tracing::debug!(error = ?e, "Extrinsic push failed");
                             failed += 1;
                         }
                     }
                 }
                 Err(decode_error) => {
-                    tracing::warn!(
-                        error = ?decode_error,
-                        bytes_len = ext_bytes.len(),
-                        "Failed to decode extrinsic"
-                    );
+                    tracing::warn!(error = ?decode_error, "Failed to decode extrinsic");
                     failed += 1;
                 }
             }
         }
         
-        // Finalize block and get the header with state root
-        let finalized_header = match api.finalize_block(parent_substrate_hash) {
-            Ok(header) => header,
+        // Build the block - this returns BuiltBlock with StorageChanges!
+        let built_block = match block_builder.build() {
+            Ok(built) => built,
             Err(e) => {
-                return Err(format!("Failed to finalize block: {:?}", e));
+                return Err(format!("Failed to build block: {:?}", e));
             }
         };
         
-        // Extract state_root and extrinsics_root using the Header trait
-        let state_root = *finalized_header.state_root();
-        let extrinsics_root = *finalized_header.extrinsics_root();
+        // Extract the block and header
+        // Use the block's header field directly (it's a field, not a method)
+        let block = built_block.block;
+        let header = &block.header;
+        let state_root = *header.state_root();
+        let extrinsics_root = *header.extrinsics_root();
         
-        tracing::debug!(
+        // Task 11.5.5: Cache the StorageChanges for use during import
+        let storage_changes_key = cache_storage_changes(built_block.storage_changes);
+        
+        tracing::info!(
             block_number,
             applied = applied.len(),
             failed,
             state_root = %hex::encode(state_root.as_bytes()),
             extrinsics_root = %hex::encode(extrinsics_root.as_bytes()),
-            "Block execution finalized (Task 11.4.4)"
+            storage_changes_key,
+            "Block built with StorageChanges cached (Task 11.5.5)"
         );
         
         Ok(StateExecutionResult {
@@ -395,11 +420,12 @@ pub fn wire_block_builder_api(
             state_root,
             extrinsics_root,
             failed_count: failed,
+            storage_changes_key: Some(storage_changes_key),
         })
     });
     
     tracing::info!(
-        "Phase 11.4.4: BlockBuilder API wired to execute_extrinsics_fn"
+        "Task 11.5.5: BlockBuilder API wired with StorageChanges capture"
     );
 }
 
@@ -450,6 +476,13 @@ use sp_runtime::DigestItem;
 /// let hash = chain_state.import_block(&template, &seal)?;
 /// // Block is imported directly (PoW already verified by mining worker)
 /// ```
+///
+/// # Task 11.5.5: State Persistence
+///
+/// This function now retrieves cached StorageChanges from the block building
+/// phase and applies them during import using `StateAction::ApplyChanges`.
+/// This ensures that runtime state (balances, nonces, etc.) is persisted
+/// to the database after block import.
 pub fn wire_pow_block_import(
     chain_state: &Arc<ProductionChainStateProvider>,
     _pow_block_import: ConcretePowBlockImport,
@@ -509,11 +542,36 @@ pub fn wire_pow_block_import(
         let mut import_params = BlockImportParams::new(BlockOrigin::Own, header);
         import_params.body = Some(block.extrinsics().to_vec());
         import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
-        // Skip block re-execution since we already executed during block building
-        // For locally mined blocks, we computed state_root during template building
-        // Re-execution would fail because Core_execute_block expects a clean header
-        // without the seal, but we need the seal for PoW verification by peers
-        import_params.state_action = sc_consensus::StateAction::Skip;
+        
+        // Task 11.5.5: Apply StorageChanges if available
+        // The block building phase caches StorageChanges with a key stored in the template.
+        // We retrieve and apply them here so state persists after import.
+        if let Some(storage_changes_key) = template.storage_changes_key {
+            if let Some(storage_changes) = take_storage_changes(storage_changes_key) {
+                tracing::info!(
+                    block_number = template.number,
+                    storage_changes_key,
+                    "Applying cached StorageChanges during import (Task 11.5.5)"
+                );
+                import_params.state_action = sc_consensus::StateAction::ApplyChanges(
+                    sc_consensus::StorageChanges::Changes(storage_changes)
+                );
+            } else {
+                tracing::warn!(
+                    block_number = template.number,
+                    storage_changes_key,
+                    "StorageChanges not found in cache, falling back to Skip"
+                );
+                import_params.state_action = sc_consensus::StateAction::Skip;
+            }
+        } else {
+            // Fallback for blocks built without new mechanism
+            tracing::debug!(
+                block_number = template.number,
+                "No storage_changes_key in template, using StateAction::Skip"
+            );
+            import_params.state_action = sc_consensus::StateAction::Skip;
+        }
         
         // Import the block directly through the client
         // This bypasses PowBlockImport verification since we already verified locally
@@ -527,7 +585,7 @@ pub fn wire_pow_block_import(
                 tracing::info!(
                     block_hash = %hex::encode(block_hash.as_bytes()),
                     block_number = template.number,
-                    "Block imported successfully (direct import, PoW verified locally)"
+                    "Block imported successfully with state changes applied (Task 11.5.5)"
                 );
                 Ok(block_hash)
             }
@@ -561,10 +619,10 @@ pub fn wire_pow_block_import(
     });
     
     tracing::info!(
-        "Phase 11.4.5: Direct block import wired to ProductionChainStateProvider"
+        "Phase 11.4.5 + Task 11.5.5: Block import wired with StorageChanges application"
     );
     tracing::debug!(
-        "  - Mined blocks imported directly (PoW verified by mining worker)"
+        "  - Mined blocks imported with state persistence"
     );
     tracing::debug!(
         "  - Blake3 seals validated before commit"
@@ -1502,6 +1560,7 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
                 state_root,
                 extrinsics_root,
                 failed_count: 0,
+                storage_changes_key: None,  // No storage changes in scaffold mode
             })
         });
 

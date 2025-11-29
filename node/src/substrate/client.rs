@@ -453,7 +453,11 @@ pub struct ProductionChainStateProvider {
     config: ProductionConfig,
 }
 
-/// Result of executing extrinsics against runtime state (Task 11.4)
+/// Result of executing extrinsics against runtime state (Task 11.4 + Task 11.5.5)
+///
+/// Task 11.5.5: Added `storage_changes_key` to track storage changes for block import.
+/// The actual `StorageChanges` are stored in a global cache indexed by this key,
+/// because `StorageChanges` is not Clone and cannot be passed through callbacks easily.
 #[derive(Clone, Debug)]
 pub struct StateExecutionResult {
     /// Extrinsics that were successfully applied
@@ -464,6 +468,10 @@ pub struct StateExecutionResult {
     pub extrinsics_root: H256,
     /// Number of extrinsics that failed validation
     pub failed_count: usize,
+    /// Key to retrieve storage changes from cache (Task 11.5.5)
+    /// If Some, storage changes were captured and can be applied during import.
+    /// If None, block import will use StateAction::Skip (scaffold mode).
+    pub storage_changes_key: Option<u64>,
 }
 
 impl std::fmt::Debug for ProductionChainStateProvider {
@@ -638,6 +646,7 @@ impl ProductionChainStateProvider {
                 state_root: H256::zero(),
                 extrinsics_root,
                 failed_count: 0,
+                storage_changes_key: None,  // No storage changes in mock mode
             })
         }
     }
@@ -771,13 +780,15 @@ impl ChainStateProvider for ProductionChainStateProvider {
                         applied = result.applied_extrinsics.len(),
                         failed = result.failed_count,
                         state_root = %hex::encode(result.state_root.as_bytes()),
-                        "Block template built with state execution (Task 11.4)"
+                        storage_changes_key = ?result.storage_changes_key,
+                        "Block template built with state execution (Task 11.4 + 11.5.5)"
                     );
                 }
                 template.with_executed_state(
                     result.applied_extrinsics,
                     result.state_root,
                     result.extrinsics_root,
+                    result.storage_changes_key,
                 )
             }
             Err(e) => {
