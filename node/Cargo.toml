@@ -80,6 +80,8 @@ codec = { workspace = true, optional = true }
 pallet-timestamp = { workspace = true, features = ["std"], optional = true }
 
 jsonrpsee = { version = "0.24", features = ["server", "macros"], optional = true }
+tower = { version = "0.4", optional = true }
+hyper = { version = "1.5", optional = true }
 
 # Runtime dependency (for WASM binary and APIs)
 runtime = { path = "../runtime", optional = true }
@@ -136,6 +138,8 @@ substrate = [
     "dep:runtime",
     "dep:codec",
     "dep:pallet-timestamp",
+    "dep:tower",
+    "dep:hyper",
     "consensus/substrate",
 ]
 

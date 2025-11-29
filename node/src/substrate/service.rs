@@ -215,6 +215,32 @@ pub fn take_storage_changes(key: u64) -> Option<HegemonStorageChanges> {
     changes
 }
 
+// =============================================================================
+// Phase 11.7: DenyUnsafe RPC Middleware
+// =============================================================================
+//
+// This middleware injects DenyUnsafe extension into RPC requests so that
+// Substrate's author RPC can check whether unsafe methods are allowed.
+
+/// RPC middleware that injects DenyUnsafe extension into requests
+#[derive(Clone)]
+struct DenyUnsafeMiddleware<S> {
+    inner: S,
+    deny_unsafe: sc_rpc::DenyUnsafe,
+}
+
+impl<'a, S> jsonrpsee::server::middleware::rpc::RpcServiceT<'a> for DenyUnsafeMiddleware<S>
+where
+    S: jsonrpsee::server::middleware::rpc::RpcServiceT<'a> + Send + Sync + Clone + 'static,
+{
+    type Future = S::Future;
+
+    fn call(&self, mut req: jsonrpsee::types::Request<'a>) -> Self::Future {
+        req.extensions_mut().insert(self.deny_unsafe);
+        self.inner.call(req)
+    }
+}
+
 /// Type alias for the no-op inherent data providers creator
 ///
 /// For our PoW chain, we don't need any inherent data providers since
@@ -1745,7 +1771,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let PartialComponentsWithClient {
         client,
         backend: _backend,
-        keystore_container: _keystore,
+        keystore_container,
         transaction_pool,
         select_chain: _select_chain,
         pow_block_import,
@@ -2370,10 +2396,29 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             tracing::warn!(error = %e, "Failed to merge Child State RPC");
         }
         
+        // =====================================================================
+        // Task 11.7.2: Author RPC (author_submitExtrinsic, author_pendingExtrinsics)
+        // =====================================================================
+        
+        // Add Author RPC for transaction submission
+        use sc_rpc::author::{Author, AuthorApiServer};
+        
+        let author_rpc = Author::new(
+            client.clone(),
+            transaction_pool.clone(),
+            keystore_container.keystore(),
+            executor.clone(),
+        );
+        if let Err(e) = module.merge(author_rpc.into_rpc()) {
+            tracing::warn!(error = %e, "Failed to merge Author RPC");
+        } else {
+            tracing::info!("Author RPC wired (author_submitExtrinsic, author_pendingExtrinsics, etc.)");
+        }
+        
         // Add System RPC (system_name, system_version, system_chain, system_health, etc.)
         // SystemInfo provides static node metadata
         let system_info = sc_rpc::system::SystemInfo {
-            impl_name: "Synthetic Hegemonic".into(),
+            impl_name: "Hegemon".into(),
             impl_version: env!("CARGO_PKG_VERSION").into(),
             chain_name: chain_name.clone(),
             properties: chain_properties.clone(),
@@ -2486,30 +2531,52 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         "hegemon-rpc-server",
         Some("rpc"),
         async move {
+            use sc_rpc::DenyUnsafe;
+            use jsonrpsee::server::middleware::http::HostFilterLayer;
+            
             let addr = format!("127.0.0.1:{}", rpc_port);
             
-            match ServerBuilder::default().build(&addr).await {
-                Ok(server) => {
-                    tracing::info!(
-                        addr = %addr,
-                        "RPC server started (Phase 11.7)"
-                    );
-                    
-                    let handle = server.start(rpc_module);
-                    
-                    // Keep the server running
-                    handle.stopped().await;
-                    
-                    tracing::info!("RPC server stopped");
-                }
+            // Create HTTP middleware 
+            // Note: DenyUnsafe is injected via extension middleware below
+            let http_middleware = tower::ServiceBuilder::new();
+            
+            // For dev mode, allow all methods; for production, we'd deny unsafe
+            let deny_unsafe = DenyUnsafe::No;
+            
+            // Create a custom RPC middleware that injects DenyUnsafe
+            use jsonrpsee::server::middleware::rpc::RpcServiceBuilder;
+            let rpc_middleware = RpcServiceBuilder::new().layer_fn(move |svc| {
+                DenyUnsafeMiddleware { inner: svc, deny_unsafe }
+            });
+            
+            let server = match ServerBuilder::default()
+                .set_http_middleware(http_middleware)
+                .set_rpc_middleware(rpc_middleware)
+                .build(&addr)
+                .await
+            {
+                Ok(s) => s,
                 Err(e) => {
                     tracing::error!(
                         error = %e,
                         addr = %addr,
-                        "Failed to start RPC server"
+                        "Failed to build RPC server"
                     );
+                    return;
                 }
-            }
+            };
+            
+            tracing::info!(
+                addr = %addr,
+                "RPC server started (Phase 11.7)"
+            );
+            
+            let handle = server.start(rpc_module);
+            
+            // Keep the server running
+            handle.stopped().await;
+            
+            tracing::info!("RPC server stopped");
         },
     );
     
