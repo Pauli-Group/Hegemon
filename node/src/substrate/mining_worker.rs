@@ -64,6 +64,9 @@ use crate::substrate::network_bridge::{BlockAnnounce, BlockState};
 use codec::Encode;
 use consensus::{Blake3Seal, MiningWork};
 use sp_core::H256;
+use sp_runtime::generic::Digest;
+use sp_runtime::traits::Header as HeaderT;
+use sp_runtime::DigestItem;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -264,17 +267,30 @@ impl BlockTemplate {
     }
 
     /// Create encoded header bytes (for block announcement)
+    /// 
+    /// Creates a proper SCALE-encoded Substrate header that includes:
+    /// - Parent hash
+    /// - Block number
+    /// - State root
+    /// - Extrinsics root
+    /// - Digest (containing the PoW seal)
     pub fn encode_header(&self, seal: &Blake3Seal) -> Vec<u8> {
-        // Simplified header encoding
-        // In a real implementation, this would be proper SCALE encoding
-        let mut header = Vec::new();
-        header.extend_from_slice(self.parent_hash.as_bytes());
-        header.extend_from_slice(&self.number.to_le_bytes());
-        header.extend_from_slice(&self.timestamp.to_le_bytes());
-        header.extend_from_slice(self.extrinsics_root.as_bytes());
-        header.extend_from_slice(self.state_root.as_bytes());
-        header.extend_from_slice(&seal.encode());
-        header
+        // Create seal digest item with our engine ID "bpow"
+        let seal_bytes = seal.encode();
+        let seal_digest = DigestItem::Seal(*b"bpow", seal_bytes);
+        let digest = Digest { logs: vec![seal_digest] };
+        
+        // Create a proper Substrate header
+        let header = <runtime::Header as HeaderT>::new(
+            self.number,
+            self.extrinsics_root,
+            self.state_root,
+            self.parent_hash.into(),
+            digest,
+        );
+        
+        // SCALE-encode the header
+        header.encode()
     }
 }
 
