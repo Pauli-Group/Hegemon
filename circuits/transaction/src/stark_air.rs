@@ -26,7 +26,9 @@ pub const COL_S2: usize = 2;
 pub const CYCLE_LENGTH: usize = 16;
 
 /// Minimum trace length (power of 2)
-pub const MIN_TRACE_LENGTH: usize = 256;
+/// Must accommodate: MAX_INPUTS × NULLIFIER_CYCLES + MAX_OUTPUTS × COMMITMENT_CYCLES
+/// = 2 × 3 + 2 × 7 = 20 cycles × 16 = 320, round up to 512
+pub const MIN_TRACE_LENGTH: usize = 512;
 
 // ================================================================================================
 // PERIODIC COLUMN: HASH MASK
@@ -129,6 +131,29 @@ pub struct TransactionAirStark {
     pub_inputs: TransactionPublicInputsStark,
 }
 
+/// Number of cycles needed for a nullifier hash (6 inputs / rate 2 = 3 cycles)
+pub const NULLIFIER_CYCLES: usize = 3;
+
+/// Number of cycles needed for a commitment hash (14 inputs / rate 2 = 7 cycles)
+pub const COMMITMENT_CYCLES: usize = 7;
+
+/// Calculate trace row where nullifier N's hash output is located.
+pub fn nullifier_output_row(nullifier_index: usize) -> usize {
+    // Each nullifier takes NULLIFIER_CYCLES cycles
+    // Nullifier 0: cycles 0,1,2 -> output at row 47 (3*16-1)
+    // Nullifier 1: cycles 3,4,5 -> output at row 95 (6*16-1)
+    let start_cycle = nullifier_index * NULLIFIER_CYCLES;
+    (start_cycle + NULLIFIER_CYCLES) * CYCLE_LENGTH - 1
+}
+
+/// Calculate trace row where commitment M's hash output is located.
+pub fn commitment_output_row(commitment_index: usize) -> usize {
+    // Commitments start after all nullifiers
+    let nullifier_total_cycles = MAX_INPUTS * NULLIFIER_CYCLES;
+    let start_cycle = nullifier_total_cycles + commitment_index * COMMITMENT_CYCLES;
+    (start_cycle + COMMITMENT_CYCLES) * CYCLE_LENGTH - 1
+}
+
 impl Air for TransactionAirStark {
     type BaseField = BaseElement;
     type PublicInputs = TransactionPublicInputsStark;
@@ -142,20 +167,22 @@ impl Air for TransactionAirStark {
             TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
         ];
 
-        // Count assertions: one for first non-zero nullifier, one for first non-zero commitment
-        let nullifier_cycles = 3;
-        let commitment_cycles = 7;
+        // Count assertions: one for each non-zero nullifier and commitment
+        let mut num_assertions = 0;
         
-        let nf_row = nullifier_cycles * CYCLE_LENGTH - 1;
-        let cm_row = (nullifier_cycles + commitment_cycles) * CYCLE_LENGTH - 1;
+        for (i, &nf) in pub_inputs.nullifiers.iter().enumerate() {
+            let row = nullifier_output_row(i);
+            if nf != BaseElement::ZERO && row < trace_info.length() {
+                num_assertions += 1;
+            }
+        }
         
-        let num_nf_assertions = if pub_inputs.nullifiers.first().map_or(false, |&nf| nf != BaseElement::ZERO) 
-            && nf_row < trace_info.length() { 1 } else { 0 };
-        
-        let num_cm_assertions = if pub_inputs.commitments.first().map_or(false, |&cm| cm != BaseElement::ZERO)
-            && cm_row < trace_info.length() { 1 } else { 0 };
-
-        let num_assertions = num_nf_assertions + num_cm_assertions;
+        for (i, &cm) in pub_inputs.commitments.iter().enumerate() {
+            let row = commitment_output_row(i);
+            if cm != BaseElement::ZERO && row < trace_info.length() {
+                num_assertions += 1;
+            }
+        }
 
         Self {
             context: AirContext::new(trace_info, degrees, num_assertions, options),
@@ -215,23 +242,20 @@ impl Air for TransactionAirStark {
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
         let mut assertions = Vec::new();
         
-        let nullifier_cycles = 3;
-        let commitment_cycles = 7;
-        
-        // Nullifier assertion at end of nullifier cycles
-        if let Some(&nf) = self.pub_inputs.nullifiers.first() {
+        // Assertions for all non-zero nullifiers
+        for (i, &nf) in self.pub_inputs.nullifiers.iter().enumerate() {
             if nf != BaseElement::ZERO {
-                let row = nullifier_cycles * CYCLE_LENGTH - 1;
+                let row = nullifier_output_row(i);
                 if row < self.context.trace_len() {
                     assertions.push(Assertion::single(COL_S0, row, nf));
                 }
             }
         }
 
-        // Commitment assertion at end of commitment cycles (after nullifier)
-        if let Some(&cm) = self.pub_inputs.commitments.first() {
+        // Assertions for all non-zero commitments
+        for (i, &cm) in self.pub_inputs.commitments.iter().enumerate() {
             if cm != BaseElement::ZERO {
-                let row = (nullifier_cycles + commitment_cycles) * CYCLE_LENGTH - 1;
+                let row = commitment_output_row(i);
                 if row < self.context.trace_len() {
                     assertions.push(Assertion::single(COL_S0, row, cm));
                 }
@@ -418,7 +442,7 @@ mod tests {
     fn test_constraint_on_trace() {
         use crate::stark_prover::TransactionProverStark;
         use crate::witness::TransactionWitness;
-        use crate::note::{InputNoteWitness, NoteData, OutputNoteWitness};
+        use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
         
         let input_note = NoteData {
             value: 1000,
@@ -439,6 +463,7 @@ mod tests {
                 note: input_note,
                 position: 0,
                 rho_seed: [7u8; 32],
+                merkle_path: MerklePath::default(),
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
             sk_spend: [6u8; 32],

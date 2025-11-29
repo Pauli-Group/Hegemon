@@ -31,3 +31,8 @@ pub const MERKLE_DOMAIN_TAG: u64 = 4;
 
 /// Identifier reserved for the native asset in the MASP balance rules.
 pub const NATIVE_ASSET_ID: u64 = 0;
+
+/// Merkle tree depth for the STARK circuit.
+/// Smaller than the full tree depth to keep trace size manageable.
+/// Each Merkle level requires one hash cycle (16 steps).
+pub const CIRCUIT_MERKLE_DEPTH: usize = 8;
