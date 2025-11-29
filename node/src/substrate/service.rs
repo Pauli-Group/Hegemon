@@ -1760,6 +1760,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     } = new_partial_with_client(&config)?;
 
     let chain_name = config.chain_spec.name().to_string();
+    let chain_properties = config.chain_spec.properties();
+    let chain_type = config.chain_spec.chain_type();
     let role = format!("{:?}", config.role);
 
     // Track PQ network handle for mining worker (Phase 10.4)
@@ -2330,6 +2332,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         use sc_rpc::SubscriptionTaskExecutor;
         use sc_rpc::chain::ChainApiServer;
         use sc_rpc::state::{StateApiServer, ChildStateApiServer};
+        use sc_rpc::system::{System, SystemApiServer};
+        use sc_utils::mpsc::tracing_unbounded;
         
         let mut module = RpcModule::new(());
         
@@ -2337,7 +2341,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         let executor: SubscriptionTaskExecutor = Arc::new(task_manager.spawn_handle());
         
         // =====================================================================
-        // Task 11.7.1: Standard Substrate RPCs (chain_*, state_*)
+        // Task 11.7.1: Standard Substrate RPCs (chain_*, state_*, system_*)
         // =====================================================================
         
         // Add Chain RPC (chain_getBlock, chain_getHeader, chain_getBlockHash, etc.)
@@ -2365,6 +2369,85 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         if let Err(e) = module.merge(child_state_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Child State RPC");
         }
+        
+        // Add System RPC (system_name, system_version, system_chain, system_health, etc.)
+        // SystemInfo provides static node metadata
+        let system_info = sc_rpc::system::SystemInfo {
+            impl_name: "Synthetic Hegemonic".into(),
+            impl_version: env!("CARGO_PKG_VERSION").into(),
+            chain_name: chain_name.clone(),
+            properties: chain_properties.clone(),
+            chain_type: chain_type.clone(),
+        };
+        // Create a channel for network-dependent system RPC methods
+        // Network requests will be handled by a background task
+        let (system_rpc_tx, mut system_rpc_rx) = tracing_unbounded::<sc_rpc::system::Request<runtime::Block>>(
+            "system-rpc-requests",
+            10_000,
+        );
+        let system_rpc = System::new(system_info, system_rpc_tx);
+        if let Err(e) = module.merge(system_rpc.into_rpc()) {
+            tracing::warn!(error = %e, "Failed to merge System RPC");
+        } else {
+            tracing::info!("System RPC wired (system_name, system_version, system_chain, etc.)");
+        }
+        
+        // Spawn a task to handle system RPC network requests
+        // For now, we provide stub responses since full network integration comes in Phase 12
+        task_manager.spawn_handle().spawn(
+            "system-rpc-handler",
+            Some("rpc"),
+            async move {
+                use sc_rpc::system::{Request, Health};
+                
+                while let Some(request) = system_rpc_rx.next().await {
+                    match request {
+                        Request::Health(sender) => {
+                            let health = Health {
+                                peers: 0, // Actual peer count comes with full network integration
+                                is_syncing: false,
+                                should_have_peers: true,
+                            };
+                            let _ = sender.send(health);
+                        }
+                        Request::LocalPeerId(sender) => {
+                            // Return a placeholder - real PeerId comes with network integration
+                            let _ = sender.send("12D3KooWStub...".into());
+                        }
+                        Request::LocalListenAddresses(sender) => {
+                            let _ = sender.send(vec!["/ip4/127.0.0.1/tcp/30333".into()]);
+                        }
+                        Request::Peers(sender) => {
+                            let _ = sender.send(vec![]);
+                        }
+                        Request::NetworkState(sender) => {
+                            let _ = sender.send(serde_json::json!({"stub": true}));
+                        }
+                        Request::NetworkAddReservedPeer(_, sender) => {
+                            let _ = sender.send(Ok(()));
+                        }
+                        Request::NetworkRemoveReservedPeer(_, sender) => {
+                            let _ = sender.send(Ok(()));
+                        }
+                        Request::NetworkReservedPeers(sender) => {
+                            let _ = sender.send(vec![]);
+                        }
+                        Request::NodeRoles(sender) => {
+                            use sc_rpc::system::NodeRole;
+                            let _ = sender.send(vec![NodeRole::Authority]);
+                        }
+                        Request::SyncState(sender) => {
+                            use sc_rpc::system::SyncState;
+                            let _ = sender.send(SyncState {
+                                starting_block: 0u32.into(),
+                                current_block: 0u32.into(),
+                                highest_block: 0u32.into(),
+                            });
+                        }
+                    }
+                }
+            },
+        );
         
         // =====================================================================
         // Task 11.7.2: Hegemon Custom RPCs
