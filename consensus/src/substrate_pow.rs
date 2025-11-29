@@ -241,6 +241,14 @@ mod substrate_impl {
             // Convert difficulty to compact bits for comparison
             let expected_bits = target_to_compact(U256::MAX / difficulty);
             
+            // Debug logging for seal verification
+            tracing::debug!(
+                seal_nonce = blake3_seal.nonce,
+                seal_difficulty_bits = blake3_seal.difficulty,
+                expected_difficulty_bits = expected_bits,
+                "Verifying PoW seal"
+            );
+            
             // Verify the difficulty matches (with some tolerance for rounding)
             if blake3_seal.difficulty != expected_bits {
                 // Allow small differences due to compact representation precision
@@ -255,12 +263,40 @@ mod substrate_impl {
                 };
                 
                 if diff > expected_target / U256::from(1000u32) {
+                    tracing::warn!(
+                        seal_difficulty = blake3_seal.difficulty,
+                        expected_difficulty = expected_bits,
+                        "Difficulty mismatch in PoW seal"
+                    );
                     return Ok(false);
                 }
             }
             
             // Verify the seal work meets the target
-            Ok(verify_seal(pre_hash, &blake3_seal))
+            // First compute the expected work hash
+            // Convert pre_hash to H256 - it's already 32 bytes
+            let pre_hash_bytes: [u8; 32] = pre_hash.as_ref().try_into().unwrap_or([0u8; 32]);
+            let pre_hash_h256: H256 = H256::from(pre_hash_bytes);
+            let computed_work = compute_work(&pre_hash_h256, blake3_seal.nonce);
+            let work_matches = computed_work == blake3_seal.work;
+            
+            tracing::debug!(
+                pre_hash = ?pre_hash,
+                nonce = blake3_seal.nonce,
+                work_matches = work_matches,
+                "PoW seal verification"
+            );
+            
+            let result = verify_seal(&pre_hash_h256, &blake3_seal);
+            if !result {
+                tracing::warn!(
+                    pre_hash = ?pre_hash,
+                    nonce = blake3_seal.nonce,
+                    work_matches = work_matches,
+                    "PoW seal verification FAILED"
+                );
+            }
+            Ok(result)
         }
     }
 }

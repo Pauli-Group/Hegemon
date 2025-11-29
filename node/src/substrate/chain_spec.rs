@@ -62,7 +62,8 @@ pub fn development_config() -> Result<ChainSpec, String> {
         },
         "difficulty": {
             // Very low difficulty for development (easy mining)
-            "initialDifficulty": "0x1000000",
+            // initial_bits=0x207fffff corresponds to difficulty=2 (easiest)
+            "initialDifficulty": "0x2",
             "initialBits": 0x207fffff_u32
         },
         "shieldedPool": {
@@ -107,7 +108,9 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
             "nonAuthorityKeys": []
         },
         "difficulty": {
-            "initialDifficulty": "0x1000000",
+            // Low difficulty for local testing (easy mining)
+            // initial_bits=0x207fffff corresponds to difficulty=2 (easiest)
+            "initialDifficulty": "0x2",
             "initialBits": 0x207fffff_u32
         },
         "shieldedPool": {
@@ -152,8 +155,9 @@ pub fn testnet_config() -> Result<ChainSpec, String> {
             "nonAuthorityKeys": []
         },
         "difficulty": {
-            // Harder difficulty for testnet
-            "initialDifficulty": "0x10000000000",
+            // Medium difficulty for public testnet
+            // initial_bits=0x1e00ffff corresponds to difficulty=0x1000100
+            "initialDifficulty": "0x1000100",
             "initialBits": 0x1e00ffff_u32
         },
         "shieldedPool": {
