@@ -128,6 +128,15 @@ impl TransactionMessage {
     }
 }
 
+/// Sync message wrapper - distinguishes request vs response unambiguously
+#[derive(Debug, Clone, Encode, Decode)]
+pub enum SyncMessage {
+    /// A sync request
+    Request(SyncRequest),
+    /// A sync response
+    Response(SyncResponse),
+}
+
 /// Sync request message
 #[derive(Debug, Clone, Encode, Decode)]
 pub enum SyncRequest {

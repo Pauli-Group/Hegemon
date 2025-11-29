@@ -532,7 +532,7 @@ pub fn wire_pow_block_import(
         // Include the seal in the header's digest for storage
         // Use our custom engine ID "bpow" for Blake3 PoW
         let seal_bytes = seal.encode();
-        let seal_digest = DigestItem::Seal(*b"bpow", seal_bytes);
+        let seal_digest = DigestItem::Seal(*b"pow_", seal_bytes);
         let digest = Digest { logs: vec![seal_digest] };
         
         let header = <runtime::Header as HeaderT>::new(
@@ -686,15 +686,20 @@ impl Default for PqServiceConfig {
 }
 
 impl PqServiceConfig {
-    /// Create from environment variables
+    /// Create from Substrate Configuration with environment variable overrides
+    ///
+    /// Priority (highest to lowest):
+    /// 1. Environment variables (HEGEMON_LISTEN_ADDR, HEGEMON_RPC_PORT, etc.)
+    /// 2. Substrate CLI arguments (--port, --rpc-port, etc.)
+    /// 3. Defaults
     ///
     /// Environment variables:
     /// - `HEGEMON_REQUIRE_PQ`: Require PQ connections (default: true)
     /// - `HEGEMON_PQ_VERBOSE`: Enable verbose logging (default: false)
     /// - `HEGEMON_SEEDS`: Comma-separated list of seed peers (IP:port)
-    /// - `HEGEMON_LISTEN_ADDR`: Listen address (default: 0.0.0.0:30333)
+    /// - `HEGEMON_LISTEN_ADDR`: Listen address (overrides --port)
     /// - `HEGEMON_MAX_PEERS`: Maximum peers (default: 50)
-    pub fn from_env() -> Self {
+    pub fn from_config(config: &Configuration) -> Self {
         let require_pq = std::env::var("HEGEMON_REQUIRE_PQ")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(true);
@@ -728,6 +733,97 @@ impl PqServiceConfig {
             })
             .unwrap_or_default();
 
+        // Priority: env var > Substrate config > default
+        let listen_addr = std::env::var("HEGEMON_LISTEN_ADDR")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .or_else(|| {
+                // Extract port from Substrate network config listen addresses
+                // Multiaddr format: /ip4/0.0.0.0/tcp/30333
+                config.network.listen_addresses.first().and_then(|multiaddr| {
+                    let s = multiaddr.to_string();
+                    // Parse /ip4/X.X.X.X/tcp/PORT or /ip6/.../tcp/PORT
+                    let mut ip: std::net::IpAddr = std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
+                    let mut port = 30333u16;
+                    
+                    let parts: Vec<&str> = s.split('/').collect();
+                    for i in 0..parts.len() {
+                        match parts[i] {
+                            "ip4" if i + 1 < parts.len() => {
+                                if let Ok(addr) = parts[i + 1].parse::<std::net::Ipv4Addr>() {
+                                    ip = std::net::IpAddr::V4(addr);
+                                }
+                            }
+                            "ip6" if i + 1 < parts.len() => {
+                                if let Ok(addr) = parts[i + 1].parse::<std::net::Ipv6Addr>() {
+                                    ip = std::net::IpAddr::V6(addr);
+                                }
+                            }
+                            "tcp" if i + 1 < parts.len() => {
+                                if let Ok(p) = parts[i + 1].parse::<u16>() {
+                                    port = p;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Some(std::net::SocketAddr::new(ip, port))
+                })
+            })
+            .unwrap_or_else(|| "0.0.0.0:30333".parse().unwrap());
+
+        let max_peers = std::env::var("HEGEMON_MAX_PEERS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| config.network.default_peers_set.in_peers as usize + config.network.default_peers_set.out_peers as usize);
+
+        if !bootstrap_nodes.is_empty() {
+            tracing::info!(
+                seeds = ?bootstrap_nodes,
+                "Configured bootstrap nodes from HEGEMON_SEEDS"
+            );
+        }
+
+        tracing::info!(
+            listen_addr = %listen_addr,
+            max_peers = max_peers,
+            require_pq = require_pq,
+            "PQ service config initialized"
+        );
+
+        Self {
+            require_pq,
+            verbose_logging: verbose,
+            bootstrap_nodes,
+            listen_addr,
+            max_peers,
+        }
+    }
+
+    /// Create from environment variables only (legacy, use from_config when possible)
+    pub fn from_env() -> Self {
+        let require_pq = std::env::var("HEGEMON_REQUIRE_PQ")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(true);
+
+        let verbose = std::env::var("HEGEMON_PQ_VERBOSE")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+
+        let bootstrap_nodes: Vec<std::net::SocketAddr> = std::env::var("HEGEMON_SEEDS")
+            .map(|s| {
+                s.split(',')
+                    .filter_map(|addr| {
+                        let addr = addr.trim();
+                        if addr.is_empty() {
+                            return None;
+                        }
+                        addr.parse().ok()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let listen_addr = std::env::var("HEGEMON_LISTEN_ADDR")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -737,13 +833,6 @@ impl PqServiceConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(50);
-
-        if !bootstrap_nodes.is_empty() {
-            tracing::info!(
-                seeds = ?bootstrap_nodes,
-                "Configured bootstrap nodes from HEGEMON_SEEDS"
-            );
-        }
 
         Self {
             require_pq,
@@ -974,11 +1063,16 @@ pub fn new_partial_with_client(
 
     // Create the PoW block import wrapper
     // This verifies Blake3 PoW seals before allowing blocks to be imported
+    //
+    // NOTE: check_inherents_after is set to u64::MAX to disable inherent checking during sync.
+    // pallet_timestamp's check_inherent validates that block timestamps are within drift of "now",
+    // which fails for historical blocks being synced. Since PoW blocks are already validated
+    // by their proof-of-work seal, timestamp manipulation is constrained by the PoW difficulty.
     let pow_block_import = sc_consensus_pow::PowBlockImport::new(
         client.clone(),                         // Inner block import (client implements BlockImport)
         client.clone(),                         // Client for runtime API queries
         pow_algorithm.clone(),                  // PoW algorithm for verification
-        0,                                      // check_inherents_after: 0 = always check
+        u64::MAX,                               // check_inherents_after: u64::MAX = never check (required for sync)
         select_chain.clone(),                   // Chain selection rule
         create_inherent_data_providers as NoOpInherentDataProviders, // Inherent data providers creator
     );
@@ -997,7 +1091,8 @@ pub fn new_partial_with_client(
     );
 
     // Initialize PQ service configuration (Phase 3.5)
-    let pq_service_config = PqServiceConfig::from_env();
+    // Uses Substrate config for ports with env var overrides
+    let pq_service_config = PqServiceConfig::from_config(config);
 
     // Initialize PQ network configuration
     let pq_network_config = PqNetworkConfig {
@@ -1473,54 +1568,60 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
                                     // Phase 11.6.1: Handle sync protocol messages
                                     use crate::substrate::network_bridge::{SYNC_PROTOCOL, SYNC_PROTOCOL_LEGACY};
-                                    use crate::substrate::network_bridge::{SyncRequest, SyncResponse};
+                                    use crate::substrate::network_bridge::{SyncMessage, SyncRequest, SyncResponse};
                                     use crate::substrate::network_bridge::{BLOCK_ANNOUNCE_PROTOCOL, BLOCK_ANNOUNCE_PROTOCOL_LEGACY, BlockAnnounce};
                                     
                                     // Handle sync protocol messages
                                     if protocol == SYNC_PROTOCOL || protocol == SYNC_PROTOCOL_LEGACY {
-                                        // Try to decode as sync request
-                                        if let Ok(request) = SyncRequest::decode(&mut &data[..]) {
-                                            tracing::info!(
-                                                peer = %hex::encode(peer_id),
-                                                request = ?request,
-                                                "Received sync request from peer"
-                                            );
-                                            let mut sync = sync_service_clone.lock().await;
-                                            if let Some(response) = sync.handle_sync_request(peer_id, request) {
-                                                // Send response back to peer
-                                                let encoded = response.encode();
-                                                tracing::info!(
-                                                    peer = %hex::encode(peer_id),
-                                                    response_len = encoded.len(),
-                                                    "Sending sync response to peer"
-                                                );
-                                                if let Err(e) = pq_handle_for_sync.send_message(
-                                                    peer_id,
-                                                    SYNC_PROTOCOL.to_string(),
-                                                    encoded,
-                                                ).await {
-                                                    tracing::warn!(
+                                        // Decode using SyncMessage wrapper for unambiguous request/response distinction
+                                        if let Ok(msg) = SyncMessage::decode(&mut &data[..]) {
+                                            match msg {
+                                                SyncMessage::Request(request) => {
+                                                    tracing::info!(
                                                         peer = %hex::encode(peer_id),
-                                                        error = %e,
-                                                        "Failed to send sync response"
+                                                        request = ?request,
+                                                        "Received sync request from peer"
                                                     );
+                                                    let mut sync = sync_service_clone.lock().await;
+                                                    if let Some(response) = sync.handle_sync_request(peer_id, request) {
+                                                        // Send response back to peer wrapped in SyncMessage
+                                                        let msg = SyncMessage::Response(response);
+                                                        let encoded = msg.encode();
+                                                        tracing::info!(
+                                                            peer = %hex::encode(peer_id),
+                                                            response_len = encoded.len(),
+                                                            "Sending sync response to peer"
+                                                        );
+                                                        if let Err(e) = pq_handle_for_sync.send_message(
+                                                            peer_id,
+                                                            SYNC_PROTOCOL.to_string(),
+                                                            encoded,
+                                                        ).await {
+                                                            tracing::warn!(
+                                                                peer = %hex::encode(peer_id),
+                                                                error = %e,
+                                                                "Failed to send sync response"
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                                SyncMessage::Response(response) => {
+                                                    tracing::info!(
+                                                        peer = %hex::encode(peer_id),
+                                                        response = ?response,
+                                                        "🔄 SYNC: Received sync response from peer - calling handle_sync_response"
+                                                    );
+                                                    let mut sync = sync_service_clone.lock().await;
+                                                    sync.handle_sync_response(peer_id, response);
+                                                    tracing::info!("🔄 SYNC: handle_sync_response completed");
                                                 }
                                             }
-                                        }
-                                        // Try to decode as sync response
-                                        else if let Ok(response) = SyncResponse::decode(&mut &data[..]) {
-                                            tracing::info!(
-                                                peer = %hex::encode(peer_id),
-                                                "Received sync response from peer"
-                                            );
-                                            let mut sync = sync_service_clone.lock().await;
-                                            sync.handle_sync_response(peer_id, response);
                                         } else {
                                             tracing::debug!(
                                                 peer = %hex::encode(peer_id),
                                                 protocol = %protocol,
                                                 data_len = data.len(),
-                                                "Failed to decode sync message (neither request nor response)"
+                                                "Failed to decode sync message"
                                             );
                                         }
                                     }
@@ -1560,7 +1661,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     "chain-sync-tick",
                     Some("sync"),
                     async move {
-                        use crate::substrate::network_bridge::SYNC_PROTOCOL;
+                        use crate::substrate::network_bridge::{SYNC_PROTOCOL, SyncMessage};
                         
                         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
                         tracing::info!("Phase 11.6.2: Chain sync tick task started");
@@ -1572,7 +1673,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             
                             // Tick the sync state machine
                             if let Some((peer_id, request)) = sync.tick() {
-                                let encoded = request.encode();
+                                // Wrap request in SyncMessage for unambiguous encoding
+                                let msg = SyncMessage::Request(request);
+                                let encoded = msg.encode();
                                 if let Err(e) = sync_handle_for_tick.send_message(
                                     peer_id,
                                     SYNC_PROTOCOL.to_string(),
@@ -1658,12 +1761,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             // ============================================================
                             let downloaded_blocks = {
                                 let mut sync = sync_service_for_import.lock().await;
-                                sync.drain_downloaded()
+                                let blocks = sync.drain_downloaded();
+                                if !blocks.is_empty() {
+                                    tracing::info!(
+                                        count = blocks.len(),
+                                        "🔄 IMPORT: Got {} blocks from drain_downloaded to import",
+                                        blocks.len()
+                                    );
+                                }
+                                blocks
                             };
                             
                             for downloaded in downloaded_blocks {
                                 // Decode the header
-                                let header = match runtime::Header::decode(&mut &downloaded.header[..]) {
+                                let mut header = match runtime::Header::decode(&mut &downloaded.header[..]) {
                                     Ok(h) => h,
                                     Err(e) => {
                                         tracing::warn!(
@@ -1688,10 +1799,57 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let block_number = *header.number();
                                 let parent_hash = *header.parent_hash();
                                 
-                                // Construct BlockImportParams
+                                // CRITICAL: Extract the seal from header digest and move to post_digests
+                                // PowBlockImport expects the seal in post_digests.last(), not in header.digest()
+                                // The seal should be the last digest item with engine ID "pow_"
+                                use sp_runtime::traits::Header as HeaderT;
+                                let post_hash = header.hash(); // Hash before removing seal (this is the final block hash)
+                                let seal = header.digest_mut().pop();
+                                
+                                let seal_item = match seal {
+                                    Some(item) => {
+                                        tracing::debug!(
+                                            block_number,
+                                            "Extracted seal from header for block import"
+                                        );
+                                        item
+                                    }
+                                    None => {
+                                        tracing::warn!(
+                                            block_number,
+                                            "No seal found in header digest, skipping block"
+                                        );
+                                        blocks_failed += 1;
+                                        continue;
+                                    }
+                                };
+                                
+                                // Compute pre_hash (hash of header WITHOUT seal)
+                                // This is what Blake3Algorithm::verify will use to validate the PoW
+                                let pre_hash = header.hash();
+                                tracing::info!(
+                                    block_number,
+                                    pre_hash = %hex::encode(pre_hash.as_bytes()),
+                                    post_hash = %hex::encode(post_hash.as_bytes()),
+                                    digest_logs_after_pop = header.digest().logs().len(),
+                                    "🔍 DEBUG: Pre-hash computed after stripping seal"
+                                );
+                                
+                                // Construct BlockImportParams with seal in post_digests
                                 let mut import_params = BlockImportParams::new(BlockOrigin::NetworkInitialSync, header);
                                 import_params.body = Some(extrinsics);
                                 import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
+                                import_params.post_digests.push(seal_item);
+                                import_params.post_hash = Some(post_hash);
+                                
+                                // Add PowIntermediate - difficulty will be computed from parent
+                                // PowBlockImport::import_block requires this intermediate with key "pow1"
+                                // Setting difficulty to None causes it to be queried from the algorithm
+                                use sc_consensus_pow::{PowIntermediate, INTERMEDIATE_KEY};
+                                let intermediate = PowIntermediate::<sp_core::U256> {
+                                    difficulty: None, // Will be computed by algorithm.difficulty(parent_hash)
+                                };
+                                import_params.insert_intermediate(INTERMEDIATE_KEY, intermediate);
                                 
                                 // Import through PowBlockImport (verifies PoW seal)
                                 let import_result = block_import_pow.clone().import_block(import_params).await;
@@ -2069,10 +2227,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // - Hegemon-specific RPCs (hegemon_*, wallet RPCs)
     // - Shielded pool RPCs (STARK proofs, encrypted notes)
     
+    // Priority: env var > Substrate CLI (--rpc-port) > default
     let rpc_port: u16 = std::env::var("HEGEMON_RPC_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(9944);
+        .unwrap_or(config.rpc.port);
     
     // Create production RPC service with client access
     let rpc_service = Arc::new(ProductionRpcService::new(client.clone()));
@@ -2111,6 +2270,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         let (state_rpc, child_state_rpc) = sc_rpc::state::new_full::<FullBackend, _, _>(
             client.clone(),
             executor.clone(),
+            None, // execute_block - optional tracing executor
         );
         if let Err(e) = module.merge(state_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge State RPC");

@@ -243,6 +243,8 @@ fn mining_thread_loop(
     
     let mut round_offset = 0u32;
     
+    tracing::debug!(thread_id, "Mining thread starting");
+    
     while !stop_flag.load(Ordering::Relaxed) {
         // Get current work
         let work = {
@@ -252,9 +254,22 @@ fn mining_thread_loop(
         
         let Some(work) = work else {
             // No work available, sleep briefly
+            if round_offset == 0 {
+                tracing::debug!(thread_id, "Mining thread waiting for work");
+            }
             thread::sleep(Duration::from_millis(100));
             continue;
         };
+        
+        if round_offset == 0 {
+            tracing::info!(
+                thread_id,
+                pre_hash = %format!("{:?}", work.pre_hash),
+                pow_bits = format!("{:08x}", work.pow_bits),
+                height = work.height,
+                "Mining thread got work, starting to mine"
+            );
+        }
         
         // Calculate round number for this thread
         // Distribute work: thread 0 does rounds 0, N, 2N, ...
@@ -264,6 +279,13 @@ fn mining_thread_loop(
         // Try to find a solution
         if let Some(seal) = mine_round(&work.pre_hash, work.pow_bits, round, NONCES_PER_ROUND) {
             // Found a solution!
+            tracing::info!(
+                thread_id,
+                nonce = seal.nonce,
+                round,
+                "🎯 Mining thread found solution!"
+            );
+            
             let solution = MiningSolution {
                 seal,
                 work: work.clone(),

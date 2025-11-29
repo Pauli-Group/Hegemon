@@ -121,7 +121,18 @@ pub fn compute_work(pre_hash: &H256, nonce: u64) -> H256 {
     let mut hasher = blake3::Hasher::new();
     hasher.update(pre_hash.as_bytes());
     hasher.update(&nonce.to_le_bytes());
-    H256::from_slice(hasher.finalize().as_bytes())
+    let result = H256::from_slice(hasher.finalize().as_bytes());
+    
+    // Debug: log the computation
+    tracing::trace!(
+        pre_hash_bytes = ?pre_hash.as_bytes(),
+        nonce = nonce,
+        nonce_bytes = ?nonce.to_le_bytes(),
+        result = ?result,
+        "compute_work inputs and output"
+    );
+    
+    result
 }
 
 /// Check if a work hash meets the target difficulty
@@ -171,6 +182,19 @@ pub fn mine_round(
     let target = compact_to_target(pow_bits)?;
     let start_nonce = (round as u64).saturating_mul(nonces_per_round);
     let end_nonce = start_nonce.saturating_add(nonces_per_round);
+    
+    // Debug: Log target and first work value on first round
+    if round == 0 {
+        let first_work = compute_work(pre_hash, start_nonce);
+        let first_work_value = U256::from_big_endian(first_work.as_bytes());
+        tracing::info!(
+            pow_bits = format!("{:08x}", pow_bits),
+            target = %format!("{:x}", target),
+            first_work_value = %format!("{:x}", first_work_value),
+            passes = first_work_value <= target,
+            "mine_round: checking difficulty"
+        );
+    }
     
     for nonce in start_nonce..end_nonce {
         let work = compute_work(pre_hash, nonce);
@@ -280,11 +304,14 @@ mod substrate_impl {
             let computed_work = compute_work(&pre_hash_h256, blake3_seal.nonce);
             let work_matches = computed_work == blake3_seal.work;
             
-            tracing::debug!(
+            // Detailed debug logging to compare computed vs stored work
+            tracing::info!(
                 pre_hash = ?pre_hash,
                 nonce = blake3_seal.nonce,
+                computed_work = ?computed_work,
+                stored_work = ?blake3_seal.work,
                 work_matches = work_matches,
-                "PoW seal verification"
+                "🔍 PoW seal verification details"
             );
             
             let result = verify_seal(&pre_hash_h256, &blake3_seal);

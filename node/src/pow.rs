@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn test_pow_verifier() {
-        let difficulty = 0x2100ffff; // Easy difficulty
+        let difficulty = 0x1d00ffff; // Higher difficulty (2^12)
         let verifier = PowVerifier::new(difficulty);
 
         // Create a valid seal using the mining function
