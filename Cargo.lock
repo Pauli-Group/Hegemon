@@ -3384,6 +3384,7 @@ dependencies = [
  "sc-service",
  "sc-transaction-pool",
  "sc-transaction-pool-api",
+ "sc-utils",
  "serde",
  "serde_bytes",
  "serde_json",
