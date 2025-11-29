@@ -61,10 +61,11 @@ pub fn development_config() -> Result<ChainSpec, String> {
             "nonAuthorityKeys": []
         },
         "difficulty": {
-            // Low difficulty for development (fast but not instant mining)
-            // initial_bits=0x2000ffff corresponds to difficulty=256 (2^8)
-            "initialDifficulty": "0x100",
-            "initialBits": 0x2000ffff_u32
+            // ~4096 hashes per block for development
+            // 0x1f00ffff = exponent 31, mantissa 0xffff
+            // target ≈ 2^240, difficulty ≈ 4096
+            "initialDifficulty": "0x1000",
+            "initialBits": 0x1f00ffff_u32
         },
         "shieldedPool": {
             "verifyingKey": null
@@ -108,10 +109,11 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
             "nonAuthorityKeys": []
         },
         "difficulty": {
-            // Low difficulty for local testing (easy mining)
-            // initial_bits=0x207fffff corresponds to difficulty=2 (easiest)
-            "initialDifficulty": "0x2",
-            "initialBits": 0x207fffff_u32
+            // Higher difficulty for local testing to avoid overwhelming logs
+            // initial_bits=0x1800ffff corresponds to difficulty=0x100000 (2^20)
+            // This gives roughly 10-30 second blocks with 4 mining threads
+            "initialDifficulty": "0x100000",
+            "initialBits": 0x1800ffff_u32
         },
         "shieldedPool": {
             "verifyingKey": null

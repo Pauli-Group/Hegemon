@@ -47,7 +47,7 @@ use super::hegemon::{ConsensusStatus, HegemonService, StorageFootprint, Telemetr
 use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
 use codec::Encode;
-use pallet_shielded_pool::types::{BindingSignature, EncryptedNote, StarkProof, ENCRYPTED_NOTE_SIZE};
+use pallet_shielded_pool::types::{BindingSignature, EncryptedNote, StarkProof, ENCRYPTED_NOTE_SIZE, ML_KEM_CIPHERTEXT_LEN};
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use sp_api::ProvideRuntimeApi;
 use sp_blockchain::HeaderBackend;
@@ -364,28 +364,28 @@ where
             commitments.try_into().map_err(|_| "Failed to convert commitments")?;
         
         // Convert encrypted notes to EncryptedNote structs
+        // Expected format: [ciphertext (611 bytes)][kem_ciphertext (1088 bytes)]
+        let required_len = ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN;
         let mut enc_notes = Vec::with_capacity(encrypted_notes.len());
         for note_bytes in encrypted_notes {
-            if note_bytes.len() < ENCRYPTED_NOTE_SIZE {
+            if note_bytes.len() < required_len {
                 return Err(format!(
                     "Encrypted note too small: {} bytes (need {})", 
                     note_bytes.len(), 
-                    ENCRYPTED_NOTE_SIZE
+                    required_len
                 ));
             }
             
             let mut ciphertext = [0u8; ENCRYPTED_NOTE_SIZE];
             ciphertext.copy_from_slice(&note_bytes[..ENCRYPTED_NOTE_SIZE]);
             
-            // Ephemeral PK is optional, defaults to zeros if not provided
-            let mut ephemeral_pk = [0u8; 32];
-            if note_bytes.len() >= ENCRYPTED_NOTE_SIZE + 32 {
-                ephemeral_pk.copy_from_slice(&note_bytes[ENCRYPTED_NOTE_SIZE..ENCRYPTED_NOTE_SIZE + 32]);
-            }
+            // ML-KEM-768 ciphertext for key encapsulation
+            let mut kem_ciphertext = [0u8; ML_KEM_CIPHERTEXT_LEN];
+            kem_ciphertext.copy_from_slice(&note_bytes[ENCRYPTED_NOTE_SIZE..ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN]);
             
             enc_notes.push(EncryptedNote {
                 ciphertext,
-                ephemeral_pk,
+                kem_ciphertext,
             });
         }
         
@@ -496,25 +496,25 @@ where
         // Task 11.7.3: Build shield call
         
         // Convert encrypted note to EncryptedNote struct
-        if encrypted_note.len() < ENCRYPTED_NOTE_SIZE {
+        // Expected format: [ciphertext (611 bytes)][kem_ciphertext (1088 bytes)]
+        let required_len = ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN;
+        if encrypted_note.len() < required_len {
             return Err(format!(
                 "Encrypted note too small: {} bytes (need {})",
                 encrypted_note.len(),
-                ENCRYPTED_NOTE_SIZE
+                required_len
             ));
         }
         
         let mut ciphertext = [0u8; ENCRYPTED_NOTE_SIZE];
         ciphertext.copy_from_slice(&encrypted_note[..ENCRYPTED_NOTE_SIZE]);
         
-        let mut ephemeral_pk = [0u8; 32];
-        if encrypted_note.len() >= ENCRYPTED_NOTE_SIZE + 32 {
-            ephemeral_pk.copy_from_slice(&encrypted_note[ENCRYPTED_NOTE_SIZE..ENCRYPTED_NOTE_SIZE + 32]);
-        }
+        let mut kem_ciphertext = [0u8; ML_KEM_CIPHERTEXT_LEN];
+        kem_ciphertext.copy_from_slice(&encrypted_note[ENCRYPTED_NOTE_SIZE..ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN]);
         
         let enc_note = EncryptedNote {
             ciphertext,
-            ephemeral_pk,
+            kem_ciphertext,
         };
         
         // Build the pallet call

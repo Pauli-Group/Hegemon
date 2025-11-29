@@ -153,14 +153,11 @@ pub enum PqNetworkEvent {
     },
 }
 
-/// Active peer connection state
+/// Active peer connection state - only stores write channel, connection moved to dedicated task
 struct PeerConnection {
-    /// The secure connection
-    connection: SubstratePqConnection,
     /// Connection info
     info: PqConnectionInfo,
-    /// Message sender for this peer (reserved for message routing)
-    #[allow(dead_code)]
+    /// Message sender for this peer - used for all writes to avoid deadlock
     msg_tx: mpsc::Sender<Vec<u8>>,
 }
 
@@ -293,12 +290,10 @@ impl PqNetworkBackend {
                                         Ok(conn) => {
                                             let peer_id = conn.peer_id();
                                             let info = PqConnectionInfo::from(&conn);
-                                            let (msg_tx, _msg_rx) = mpsc::channel(256);
+                                            let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
 
-                                            // Store connection - it will be used for both read and write
-                                            // via the peers HashMap
+                                            // Store only the write channel - connection owned by task
                                             peers.write().await.insert(peer_id, PeerConnection {
-                                                connection: conn,
                                                 info: info.clone(),
                                                 msg_tx,
                                             });
@@ -316,67 +311,73 @@ impl PqNetworkBackend {
                                                 "Inbound peer connected via PQ handshake - event sent"
                                             );
                                             
-                                            // Spawn read loop for this peer
-                                            let event_tx_for_read = event_tx.clone();
-                                            let peers_for_read = peers.clone();
+                                            // Spawn combined read/write loop for this peer
+                                            // Connection is owned by this task, writes come via msg_rx channel
+                                            let event_tx_for_task = event_tx.clone();
+                                            let peers_for_task = peers.clone();
                                             tokio::spawn(async move {
+                                                let mut conn = conn;
                                                 loop {
-                                                    // Try to receive data from the peer
-                                                    let recv_result = {
-                                                        let mut peers_guard = peers_for_read.write().await;
-                                                        if let Some(peer) = peers_guard.get_mut(&peer_id) {
-                                                            peer.connection.recv().await
-                                                        } else {
-                                                            // Peer disconnected
-                                                            break;
-                                                        }
-                                                    };
-                                                    
-                                                    match recv_result {
-                                                        Ok(Some(data)) => {
-                                                            // Decode framed message
-                                                            #[derive(serde::Deserialize)]
-                                                            struct FramedMessage {
-                                                                protocol: String,
-                                                                data: Vec<u8>,
+                                                    tokio::select! {
+                                                        // Handle incoming data
+                                                        recv_result = conn.recv() => {
+                                                            match recv_result {
+                                                                Ok(Some(data)) => {
+                                                                    // Decode framed message
+                                                                    #[derive(serde::Deserialize)]
+                                                                    struct FramedMessage {
+                                                                        protocol: String,
+                                                                        data: Vec<u8>,
+                                                                    }
+                                                                    
+                                                                    if let Ok(msg) = bincode::deserialize::<FramedMessage>(&data) {
+                                                                        let _ = event_tx_for_task.send(PqNetworkEvent::MessageReceived {
+                                                                            peer_id,
+                                                                            protocol: msg.protocol,
+                                                                            data: msg.data,
+                                                                        }).await;
+                                                                    } else {
+                                                                        tracing::trace!(
+                                                                            peer_id = %hex::encode(peer_id),
+                                                                            data_len = data.len(),
+                                                                            "Received non-framed message, ignoring"
+                                                                        );
+                                                                    }
+                                                                }
+                                                                Ok(None) => {
+                                                                    tracing::debug!(
+                                                                        peer_id = %hex::encode(peer_id),
+                                                                        "Peer connection closed (EOF)"
+                                                                    );
+                                                                    break;
+                                                                }
+                                                                Err(e) => {
+                                                                    tracing::debug!(
+                                                                        peer_id = %hex::encode(peer_id),
+                                                                        error = %e,
+                                                                        "Peer connection read error"
+                                                                    );
+                                                                    break;
+                                                                }
                                                             }
-                                                            
-                                                            if let Ok(msg) = bincode::deserialize::<FramedMessage>(&data) {
-                                                                let _ = event_tx_for_read.send(PqNetworkEvent::MessageReceived {
-                                                                    peer_id,
-                                                                    protocol: msg.protocol,
-                                                                    data: msg.data,
-                                                                }).await;
-                                                            } else {
-                                                                tracing::trace!(
+                                                        }
+                                                        // Handle outgoing data from channel
+                                                        Some(data) = msg_rx.recv() => {
+                                                            if let Err(e) = conn.send(&data).await {
+                                                                tracing::debug!(
                                                                     peer_id = %hex::encode(peer_id),
-                                                                    data_len = data.len(),
-                                                                    "Received non-framed message, ignoring"
+                                                                    error = %e,
+                                                                    "Failed to send to peer"
                                                                 );
+                                                                break;
                                                             }
-                                                        }
-                                                        Ok(None) => {
-                                                            // Connection closed
-                                                            tracing::debug!(
-                                                                peer_id = %hex::encode(peer_id),
-                                                                "Peer connection closed (EOF)"
-                                                            );
-                                                            break;
-                                                        }
-                                                        Err(e) => {
-                                                            tracing::debug!(
-                                                                peer_id = %hex::encode(peer_id),
-                                                                error = %e,
-                                                                "Peer connection read error"
-                                                            );
-                                                            break;
                                                         }
                                                     }
                                                 }
                                                 
                                                 // Clean up on disconnect
-                                                peers_for_read.write().await.remove(&peer_id);
-                                                let _ = event_tx_for_read.send(PqNetworkEvent::PeerDisconnected {
+                                                peers_for_task.write().await.remove(&peer_id);
+                                                let _ = event_tx_for_task.send(PqNetworkEvent::PeerDisconnected {
                                                     peer_id,
                                                     reason: "Connection closed".to_string(),
                                                 }).await;
@@ -447,10 +448,10 @@ impl PqNetworkBackend {
 
         let peer_id = conn.peer_id();
         let info = PqConnectionInfo::from(&conn);
-        let (msg_tx, _msg_rx) = mpsc::channel(256);
+        let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
 
+        // Store only the write channel - connection owned by task
         self.peers.write().await.insert(peer_id, PeerConnection {
-            connection: conn,
             info: info.clone(),
             msg_tx,
         });
@@ -467,67 +468,73 @@ impl PqNetworkBackend {
             "Outbound peer connected via PQ handshake"
         );
         
-        // Spawn read loop for this peer
-        let event_tx_for_read = self.event_tx.clone();
-        let peers_for_read = self.peers.clone();
+        // Spawn combined read/write loop for this peer
+        // Connection is owned by this task, writes come via msg_rx channel
+        let event_tx_for_task = self.event_tx.clone();
+        let peers_for_task = self.peers.clone();
         tokio::spawn(async move {
+            let mut conn = conn;
             loop {
-                // Try to receive data from the peer
-                let recv_result = {
-                    let mut peers_guard = peers_for_read.write().await;
-                    if let Some(peer) = peers_guard.get_mut(&peer_id) {
-                        peer.connection.recv().await
-                    } else {
-                        // Peer disconnected
-                        break;
-                    }
-                };
-                
-                match recv_result {
-                    Ok(Some(data)) => {
-                        // Decode framed message
-                        #[derive(serde::Deserialize)]
-                        struct FramedMessage {
-                            protocol: String,
-                            data: Vec<u8>,
+                tokio::select! {
+                    // Handle incoming data
+                    recv_result = conn.recv() => {
+                        match recv_result {
+                            Ok(Some(data)) => {
+                                // Decode framed message
+                                #[derive(serde::Deserialize)]
+                                struct FramedMessage {
+                                    protocol: String,
+                                    data: Vec<u8>,
+                                }
+                                
+                                if let Ok(msg) = bincode::deserialize::<FramedMessage>(&data) {
+                                    let _ = event_tx_for_task.send(PqNetworkEvent::MessageReceived {
+                                        peer_id,
+                                        protocol: msg.protocol,
+                                        data: msg.data,
+                                    }).await;
+                                } else {
+                                    tracing::trace!(
+                                        peer_id = %hex::encode(peer_id),
+                                        data_len = data.len(),
+                                        "Received non-framed message, ignoring"
+                                    );
+                                }
+                            }
+                            Ok(None) => {
+                                tracing::debug!(
+                                    peer_id = %hex::encode(peer_id),
+                                    "Peer connection closed (EOF)"
+                                );
+                                break;
+                            }
+                            Err(e) => {
+                                tracing::debug!(
+                                    peer_id = %hex::encode(peer_id),
+                                    error = %e,
+                                    "Peer connection read error"
+                                );
+                                break;
+                            }
                         }
-                        
-                        if let Ok(msg) = bincode::deserialize::<FramedMessage>(&data) {
-                            let _ = event_tx_for_read.send(PqNetworkEvent::MessageReceived {
-                                peer_id,
-                                protocol: msg.protocol,
-                                data: msg.data,
-                            }).await;
-                        } else {
-                            tracing::trace!(
+                    }
+                    // Handle outgoing data from channel
+                    Some(data) = msg_rx.recv() => {
+                        if let Err(e) = conn.send(&data).await {
+                            tracing::debug!(
                                 peer_id = %hex::encode(peer_id),
-                                data_len = data.len(),
-                                "Received non-framed message, ignoring"
+                                error = %e,
+                                "Failed to send to peer"
                             );
+                            break;
                         }
-                    }
-                    Ok(None) => {
-                        // Connection closed
-                        tracing::debug!(
-                            peer_id = %hex::encode(peer_id),
-                            "Peer connection closed (EOF)"
-                        );
-                        break;
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            peer_id = %hex::encode(peer_id),
-                            error = %e,
-                            "Peer connection read error"
-                        );
-                        break;
                     }
                 }
             }
             
             // Clean up on disconnect
-            peers_for_read.write().await.remove(&peer_id);
-            let _ = event_tx_for_read.send(PqNetworkEvent::PeerDisconnected {
+            peers_for_task.write().await.remove(&peer_id);
+            let _ = event_tx_for_task.send(PqNetworkEvent::PeerDisconnected {
                 peer_id,
                 reason: "Connection closed".to_string(),
             }).await;
@@ -552,39 +559,43 @@ impl PqNetworkBackend {
         }
     }
 
-    /// Send a message to a specific peer
+    /// Send a message to a specific peer via channel (non-blocking)
     pub async fn send_to_peer(&self, peer_id: [u8; 32], data: Vec<u8>) -> Result<(), String> {
-        let mut peers = self.peers.write().await;
+        let peers = self.peers.read().await;
         
-        if let Some(peer) = peers.get_mut(&peer_id) {
-            peer.connection
-                .send(&data)
+        if let Some(peer) = peers.get(&peer_id) {
+            peer.msg_tx
+                .send(data)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|_| "Failed to send to peer channel".to_string())?;
             Ok(())
         } else {
             Err("Peer not found".to_string())
         }
     }
 
-    /// Broadcast a message to all connected peers
+    /// Broadcast a message to all connected peers via channels
     pub async fn broadcast(&self, data: Vec<u8>) -> Vec<[u8; 32]> {
         let mut failed = Vec::new();
-        let mut peers = self.peers.write().await;
+        let peers = self.peers.read().await;
         
-        for (peer_id, peer) in peers.iter_mut() {
-            if peer.connection.send(&data).await.is_err() {
+        for (peer_id, peer) in peers.iter() {
+            if peer.msg_tx.send(data.clone()).await.is_err() {
                 failed.push(*peer_id);
             }
         }
+        drop(peers);
         
         // Remove failed peers
-        for peer_id in &failed {
-            peers.remove(peer_id);
-            let _ = self.event_tx.send(PqNetworkEvent::PeerDisconnected {
-                peer_id: *peer_id,
-                reason: "Send failed".to_string(),
-            }).await;
+        if !failed.is_empty() {
+            let mut peers_mut = self.peers.write().await;
+            for peer_id in &failed {
+                peers_mut.remove(peer_id);
+                let _ = self.event_tx.send(PqNetworkEvent::PeerDisconnected {
+                    peer_id: *peer_id,
+                    reason: "Send failed".to_string(),
+                }).await;
+            }
         }
         
         failed
@@ -645,7 +656,7 @@ impl PqNetworkHandle {
         self.peers.read().await.keys().copied().collect()
     }
 
-    /// Broadcast data to all connected peers
+    /// Broadcast data to all connected peers via channels
     ///
     /// This is used by the mining worker to broadcast newly mined blocks
     /// and by the transaction pool to propagate transactions.
@@ -671,32 +682,34 @@ impl PqNetworkHandle {
         };
         
         let mut failed = Vec::new();
-        let mut peers = self.peers.write().await;
+        let peers = self.peers.read().await;
         
-        for (peer_id, peer) in peers.iter_mut() {
-            if let Err(e) = peer.connection.send(&encoded).await {
+        for (peer_id, peer) in peers.iter() {
+            if let Err(e) = peer.msg_tx.send(encoded.clone()).await {
                 tracing::debug!(
                     peer_id = %hex::encode(peer_id),
                     protocol = %protocol,
                     error = %e,
-                    "Failed to send message to peer"
+                    "Failed to send message to peer channel"
                 );
                 failed.push(*peer_id);
             }
         }
+        drop(peers);
         
         // Remove failed peers
-        for peer_id in &failed {
-            if let Some(_) = peers.remove(peer_id) {
-                // Send disconnect event
-                let _ = self.event_tx.send(PqNetworkEvent::PeerDisconnected {
-                    peer_id: *peer_id,
-                    reason: "Send failed during broadcast".to_string(),
-                }).await;
-            }
-        }
-        
         if !failed.is_empty() {
+            let mut peers_mut = self.peers.write().await;
+            for peer_id in &failed {
+                if peers_mut.remove(peer_id).is_some() {
+                    // Send disconnect event
+                    let _ = self.event_tx.send(PqNetworkEvent::PeerDisconnected {
+                        peer_id: *peer_id,
+                        reason: "Send failed during broadcast".to_string(),
+                    }).await;
+                }
+            }
+        
             tracing::warn!(
                 failed_count = failed.len(),
                 protocol = %protocol,
@@ -707,17 +720,15 @@ impl PqNetworkHandle {
         failed
     }
 
-    /// Send data to a specific peer
-    ///
-    /// Returns Ok(()) on success, or an error message on failure.
+    /// Send data to a specific peer via channel (non-blocking)
     pub async fn send_to_peer(&self, peer_id: [u8; 32], data: Vec<u8>) -> Result<(), String> {
-        let mut peers = self.peers.write().await;
+        let peers = self.peers.read().await;
         
-        if let Some(peer) = peers.get_mut(&peer_id) {
-            peer.connection
-                .send(&data)
+        if let Some(peer) = peers.get(&peer_id) {
+            peer.msg_tx
+                .send(data)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|_| "Failed to send to peer channel".to_string())?;
             Ok(())
         } else {
             Err("Peer not found".to_string())

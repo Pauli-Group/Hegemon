@@ -277,7 +277,7 @@ impl BlockTemplate {
     pub fn encode_header(&self, seal: &Blake3Seal) -> Vec<u8> {
         // Create seal digest item with our engine ID "bpow"
         let seal_bytes = seal.encode();
-        let seal_digest = DigestItem::Seal(*b"bpow", seal_bytes);
+        let seal_digest = DigestItem::Seal(*b"pow_", seal_bytes);
         let digest = Digest { logs: vec![seal_digest] };
         
         // Create a proper Substrate header
@@ -431,9 +431,10 @@ pub struct MockChainState {
 /// 0x1f00ffff = 0x00ffff × 256^28 ≈ 2^240 (very easy, ~instant blocks)
 /// 0x1e00ffff = 0x00ffff × 256^27 ≈ 2^232 (~1-10 sec blocks at 4 threads)
 /// 0x1d00ffff = 0x00ffff × 256^26 ≈ 2^224 (~minutes to hours per block)
+/// 0x1800ffff = 0x00ffff × 256^21 ≈ 2^184 (difficulty ~2^20, ~10-30 sec blocks)
 /// 
-/// For development/testing: 0x1e00ffff gives reasonable ~10-60 second blocks
-pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1e00ffff;
+/// For development/testing: 0x1800ffff gives ~10-30 second blocks to avoid log spam
+pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1800ffff;
 
 impl Default for MockChainState {
     fn default() -> Self {
@@ -451,7 +452,7 @@ impl MockChainState {
         Self {
             best_hash: H256::zero(),
             best_number: 0,
-            difficulty_bits: 0x2100ffff, // Very easy for testing (~instant blocks)
+            difficulty_bits: 0x1f00ffff, // ~4096 hashes per block
         }
     }
 
@@ -738,6 +739,18 @@ where
 
                 // Update mining work
                 let work = template.to_mining_work();
+                
+                // DEBUG: Log the pre_hash being used for mining
+                tracing::info!(
+                    height = template.number,
+                    pre_hash = %hex::encode(work.pre_hash.as_bytes()),
+                    parent_hash = %hex::encode(work.parent_hash.as_bytes()),
+                    difficulty = format!("{:08x}", work.pow_bits),
+                    state_root = %hex::encode(template.state_root.as_bytes()),
+                    extrinsics_root = %hex::encode(template.extrinsics_root.as_bytes()),
+                    "🔍 DEBUG: Mining work pre_hash (verifier must match this)"
+                );
+                
                 self.pow_handle.update_work(
                     work.pre_hash,
                     work.pow_bits,
@@ -763,6 +776,21 @@ where
             // Check for solutions
             if let Some(solution) = self.pow_handle.try_get_solution() {
                 let template = current_template.as_ref().expect("must have template");
+                
+                // CRITICAL: Verify the solution is for the current template
+                // The mining threads may have found a solution for an old template
+                // after we've already moved to a new template
+                if solution.work.height != template.number || solution.work.pre_hash != template.pre_hash {
+                    tracing::warn!(
+                        solution_height = solution.work.height,
+                        template_height = template.number,
+                        solution_pre_hash = %hex::encode(solution.work.pre_hash.as_bytes()),
+                        template_pre_hash = %hex::encode(template.pre_hash.as_bytes()),
+                        "⚠️ Discarding stale mining solution - height/pre_hash mismatch"
+                    );
+                    // Discard this stale solution and continue
+                    continue;
+                }
                 
                 // Update stats
                 {

@@ -660,8 +660,13 @@ impl NodeService {
     }
 
     fn validate_bundle(&self, bundle: &TransactionBundle) -> NodeResult<ValidatedTransaction> {
-        let proof = bundle.proof.clone();
-        let ciphertexts = bundle.ciphertexts.clone();
+        // Deserialize proof from bytes
+        let proof: transaction_circuit::proof::TransactionProof = bincode::deserialize(&bundle.proof_bytes)
+            .map_err(|e| NodeError::Internal(format!("Failed to deserialize proof: {}", e)))?;
+        // Convert ciphertexts from Vec<Vec<u8>> to Vec<NoteCiphertext>
+        let ciphertexts: Vec<NoteCiphertext> = bundle.ciphertexts.iter()
+            .map(|ct| NoteCiphertext::try_from(ct.as_slice()).unwrap_or_default())
+            .collect();
         let version = proof.version_binding();
         let verifying_key = self
             .verifying_keys
@@ -724,9 +729,19 @@ impl NodeService {
         let weight = validated.weight();
         self.mempool.insert(validated.clone(), weight)?;
         if persist {
+            let proof_bytes = bincode::serialize(&validated.proof)
+                .unwrap_or_default();
+            let ciphertexts: Vec<Vec<u8>> = validated.ciphertexts.iter()
+                .map(|ct| ct.as_bytes().to_vec())
+                .collect();
             let bundle = TransactionBundle {
-                proof: validated.proof.clone(),
-                ciphertexts: validated.ciphertexts.clone(),
+                proof_bytes,
+                nullifiers: validated.nullifiers.clone(),
+                commitments: validated.commitments.iter().map(|c| felt_to_bytes(*c)).collect(),
+                ciphertexts,
+                anchor: felt_to_bytes(validated.proof.public_inputs.merkle_root),
+                binding_sig: [0u8; 64], // Legacy mode doesn't use binding signatures
+                value_balance: validated.proof.public_inputs.native_fee as i128,
             };
             self.storage.record_mempool_bundle(validated.id, &bundle)?;
         }
@@ -736,9 +751,19 @@ impl NodeService {
             tx_id: validated.id,
         });
         if broadcast {
+            let proof_bytes = bincode::serialize(&validated.proof)
+                .unwrap_or_default();
+            let ciphertexts: Vec<Vec<u8>> = validated.ciphertexts.iter()
+                .map(|ct| ct.as_bytes().to_vec())
+                .collect();
             let payload = bincode::serialize(&TransactionBundle {
-                proof: validated.proof.clone(),
-                ciphertexts: validated.ciphertexts.clone(),
+                proof_bytes,
+                nullifiers: validated.nullifiers.clone(),
+                commitments: validated.commitments.iter().map(|c| felt_to_bytes(*c)).collect(),
+                ciphertexts,
+                anchor: felt_to_bytes(validated.proof.public_inputs.merkle_root),
+                binding_sig: [0u8; 64],
+                value_balance: validated.proof.public_inputs.native_fee as i128,
             })?;
             let _ = self.gossip.broadcast_transaction(payload);
         }

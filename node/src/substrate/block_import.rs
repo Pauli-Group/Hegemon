@@ -212,7 +212,7 @@ pub fn extract_seal_from_header<Block: BlockT<Hash = H256>>(
         .find_map(|item| {
             if let DigestItem::Seal(engine_id, data) = item {
                 // Our engine ID for Blake3 PoW
-                if engine_id == b"pow0" || engine_id == b"bpow" {
+                if engine_id == b"pow_" || engine_id == b"pow0" || engine_id == b"bpow" {
                     return Some(data.clone());
                 }
             }

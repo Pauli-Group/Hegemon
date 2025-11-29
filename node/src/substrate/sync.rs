@@ -276,7 +276,15 @@ where
     ///
     /// Called by the block-import-handler in service.rs
     pub fn drain_downloaded(&mut self) -> Vec<DownloadedBlock> {
-        self.downloaded_blocks.drain(..).collect()
+        let blocks: Vec<DownloadedBlock> = self.downloaded_blocks.drain(..).collect();
+        if !blocks.is_empty() {
+            tracing::info!(
+                count = blocks.len(),
+                "🔄 SYNC: drain_downloaded returning {} blocks for import",
+                blocks.len()
+            );
+        }
+        blocks
     }
 
     /// Get our best block number
@@ -406,13 +414,21 @@ where
         let max_blocks = max_blocks.min(MAX_BLOCKS_PER_REQUEST);
         let our_best = self.best_number();
         
+        tracing::info!(
+            peer = %hex::encode(peer_id),
+            start_height = start_height,
+            max_blocks = max_blocks,
+            our_best = our_best,
+            "🔄 SYNC SERVER: Handling GetBlocks request"
+        );
+        
         // Can't provide blocks we don't have
         if start_height > our_best {
-            tracing::debug!(
+            tracing::warn!(
                 peer = %hex::encode(peer_id),
                 requested = start_height,
                 our_best = our_best,
-                "GetBlocks: requested height beyond our chain"
+                "🔄 SYNC SERVER: GetBlocks requested height beyond our chain"
             );
             return Some(SyncResponse::Blocks {
                 request_id: self.next_request_id(),
@@ -474,7 +490,9 @@ where
             peer = %hex::encode(peer_id),
             start_height = start_height,
             count = blocks.len(),
-            "Responding to GetBlocks request"
+            response_bytes = blocks.iter().map(|b| b.header.len() + b.body.iter().map(|e| e.len()).sum::<usize>()).sum::<usize>(),
+            "🔄 SYNC SERVER: Responding to GetBlocks request with {} blocks",
+            blocks.len()
         );
 
         self.stats.responses_sent += 1;
@@ -674,6 +692,14 @@ where
 
     /// Handle a Blocks response (full blocks for PoW sync)
     fn handle_blocks_response(&mut self, peer_id: PeerId, request_id: u64, blocks: Vec<crate::substrate::network_bridge::SyncBlock>) {
+        tracing::info!(
+            peer = %hex::encode(peer_id),
+            request_id = request_id,
+            block_count = blocks.len(),
+            state = ?self.state,
+            "🔄 SYNC: handle_blocks_response CALLED"
+        );
+        
         // Remove from pending
         let _pending = self.pending_requests.remove(&request_id);
         
@@ -683,10 +709,10 @@ where
         }
 
         if blocks.is_empty() {
-            tracing::debug!(
+            tracing::warn!(
                 peer = %hex::encode(peer_id),
                 request_id = request_id,
-                "Received empty blocks response"
+                "🔄 SYNC: Received EMPTY blocks response - peer has no blocks?"
             );
             
             // Mark peer failure
@@ -706,7 +732,8 @@ where
             count = block_count,
             first = blocks.first().map(|b| b.number).unwrap_or(0),
             last = blocks.last().map(|b| b.number).unwrap_or(0),
-            "Received {} blocks from peer - queueing for import",
+            queue_before = self.downloaded_blocks.len(),
+            "🔄 SYNC: Received {} blocks from peer - queueing for import",
             block_count
         );
 
@@ -720,6 +747,12 @@ where
                 sync_block.body,
             );
         }
+        
+        tracing::info!(
+            queue_after = self.downloaded_blocks.len(),
+            "🔄 SYNC: Blocks queued, queue size now {}",
+            self.downloaded_blocks.len()
+        );
     }
 
     /// Handle a headers response
@@ -899,6 +932,14 @@ where
     pub fn tick(&mut self) -> Option<(PeerId, SyncRequest)> {
         let our_best = self.best_number();
         let now = Instant::now();
+        
+        // DEBUG: Log every tick to trace state machine
+        tracing::debug!(
+            our_best = our_best,
+            state = ?self.state,
+            peer_count = self.peers.len(),
+            "🔄 TICK: Sync tick starting"
+        );
 
         // Log sync status periodically
         if now.duration_since(self.last_log_time) > Duration::from_secs(10) {
@@ -956,6 +997,16 @@ where
                 request_pending,
                 last_request_time,
             } => {
+                tracing::debug!(
+                    target_height = target_height,
+                    current_height = current_height,
+                    requested_height = requested_height,
+                    request_pending = request_pending,
+                    our_best = our_best,
+                    queue_len = self.downloaded_blocks.len(),
+                    "🔄 TICK: In Downloading state"
+                );
+                
                 // Check if we've caught up
                 if our_best >= target_height {
                     tracing::info!(
@@ -1006,6 +1057,11 @@ where
 
                 // Request the next batch of blocks
                 let next_height = our_best + 1;
+                tracing::info!(
+                    peer = %hex::encode(peer),
+                    next_height = next_height,
+                    "🔄 TICK: About to create_block_request"
+                );
                 self.create_block_request(peer, next_height)
             }
             SyncState::Synced => {
