@@ -4,13 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-winterfell = "0.8"
+winterfell = "0.13"
+winter-crypto = "0.13"
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 synthetic-crypto = { path = "../../crypto" }
 hex = "0.4"
 protocol-versioning = { path = "../../protocol/versioning" }
+blake3 = "1"
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }
