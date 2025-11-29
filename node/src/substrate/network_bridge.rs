@@ -152,6 +152,13 @@ pub enum SyncRequest {
         /// Storage keys to fetch (empty = all)
         keys: Vec<Vec<u8>>,
     },
+    /// Request full blocks starting from a height (PoW-style sync)
+    GetBlocks {
+        /// Starting block height
+        start_height: u64,
+        /// Maximum blocks to return
+        max_blocks: u32,
+    },
 }
 
 /// Sync response message
@@ -178,6 +185,26 @@ pub enum SyncResponse {
         /// Key-value pairs
         entries: Vec<(Vec<u8>, Vec<u8>)>,
     },
+    /// Full blocks response (PoW-style sync)
+    Blocks {
+        /// Request ID for correlation
+        request_id: u64,
+        /// Full blocks (header + body for each)
+        blocks: Vec<SyncBlock>,
+    },
+}
+
+/// A full block for sync responses
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct SyncBlock {
+    /// Block number
+    pub number: u64,
+    /// Block hash (32 bytes)
+    pub hash: [u8; 32],
+    /// SCALE-encoded header
+    pub header: Vec<u8>,
+    /// SCALE-encoded extrinsics (body)
+    pub body: Vec<Vec<u8>>,
 }
 
 /// Incoming message from the network

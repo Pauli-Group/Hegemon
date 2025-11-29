@@ -1348,187 +1348,9 @@ pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError
         "Transaction pool created (Task 11.3 - available for mining and RPC)"
     );
 
-    // Phase 3.5: Create and start PQ network backend
-    if let Some(ref identity) = pq_identity {
-        let backend_config = PqNetworkBackendConfig {
-            listen_addr: pq_service_config.listen_addr,
-            bootstrap_nodes: pq_service_config.bootstrap_nodes.clone(),
-            max_peers: pq_service_config.max_peers,
-            require_pq: pq_service_config.require_pq,
-            connection_timeout: std::time::Duration::from_secs(30),
-            verbose_logging: pq_service_config.verbose_logging,
-        };
-
-        let mut pq_backend = PqNetworkBackend::new(identity, backend_config);
-        let local_peer_id = pq_backend.local_peer_id();
-        
-        // Start the PQ network backend and get the event receiver
-        match pq_backend.start().await {
-            Ok(mut event_rx) => {
-                tracing::info!(
-                    listen_addr = %pq_service_config.listen_addr,
-                    max_peers = pq_service_config.max_peers,
-                    peer_id = %hex::encode(local_peer_id),
-                    "PqNetworkBackend started (Phase 3.5 + Phase 9.2 + Phase 10.4 - Full Integration)"
-                );
-
-                // Phase 10.4: Get PQ network handle for mining worker broadcasting
-                pq_network_handle = Some(pq_backend.handle());
-                tracing::info!("PQ network handle captured for mining worker (Phase 10.4)");
-
-                // Phase 9: Create the network bridge for block/tx routing
-                let network_bridge = Arc::new(Mutex::new(
-                    NetworkBridgeBuilder::new()
-                        .verbose(pq_service_config.verbose_logging)
-                        .build()
-                ));
-                let bridge_clone = Arc::clone(&network_bridge);
-
-                // Clone pool_bridge for use in network event handler
-                let pool_bridge_clone = Arc::clone(&pool_bridge);
-
-                // Clone for the transaction processor task
-                let pool_bridge_for_processor = Arc::clone(&pool_bridge);
-                let process_interval = pool_config.process_interval_ms;
-                let pool_verbose = pool_config.verbose;
-
-                // Spawn the PQ network event handler task with NetworkBridge and TxPool integration
-                // IMPORTANT: We move pq_backend into this task to keep it alive for the node's lifetime.
-                // If pq_backend is dropped, the shutdown channel closes and the network listener stops.
-                task_manager.spawn_handle().spawn(
-                    "pq-network-events",
-                    Some("network"),
-                    async move {
-                        // Keep pq_backend alive by holding it in this task
-                        let _pq_backend = pq_backend;
-                        
-                        tracing::info!("PQ network event handler started (with NetworkBridge + TxPool)");
-                        
-                        while let Some(event) = event_rx.recv().await {
-                            // Route events through the NetworkBridge
-                            {
-                                let mut bridge = bridge_clone.lock().await;
-                                bridge.handle_event(event.clone()).await;
-                                
-                                // Phase 9.2: Forward transactions to pool bridge
-                                let pending_txs = bridge.drain_transactions();
-                                if !pending_txs.is_empty() {
-                                    pool_bridge_clone.queue_from_bridge(pending_txs).await;
-                                }
-                            }
-
-                            // Also handle lifecycle events directly
-                            match event {
-                                PqNetworkEvent::PeerConnected { peer_id, addr, is_outbound } => {
-                                    tracing::info!(
-                                        peer_id = %hex::encode(peer_id),
-                                        addr = %addr,
-                                        direction = if is_outbound { "outbound" } else { "inbound" },
-                                        "PQ peer connected"
-                                    );
-                                }
-                                PqNetworkEvent::PeerDisconnected { peer_id, reason } => {
-                                    tracing::info!(
-                                        peer_id = %hex::encode(peer_id),
-                                        reason = %reason,
-                                        "PQ peer disconnected"
-                                    );
-                                }
-                                PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
-                                    // Already handled by NetworkBridge, just log
-                                    tracing::debug!(
-                                        peer_id = %hex::encode(peer_id),
-                                        protocol = %protocol,
-                                        data_len = data.len(),
-                                        "PQ message routed to NetworkBridge"
-                                    );
-                                }
-                                PqNetworkEvent::Started { listen_addr } => {
-                                    tracing::info!(
-                                        listen_addr = %listen_addr,
-                                        "PQ network listener started"
-                                    );
-                                }
-                                PqNetworkEvent::Stopped => {
-                                    tracing::info!("PQ network stopped");
-                                    break;
-                                }
-                                PqNetworkEvent::ConnectionFailed { addr, reason } => {
-                                    tracing::warn!(
-                                        addr = %addr,
-                                        reason = %reason,
-                                        "PQ connection failed"
-                                    );
-                                }
-                            }
-                        }
-                        
-                        // Log final statistics
-                        {
-                            let bridge = bridge_clone.lock().await;
-                            let stats = bridge.stats();
-                            tracing::info!(
-                                block_announces = stats.block_announces_received,
-                                transactions = stats.transactions_received,
-                                decode_errors = stats.decode_errors,
-                                "PQ network event handler stopped - final stats"
-                            );
-                        }
-                        
-                        // Log transaction pool stats
-                        {
-                            let pool_stats = pool_bridge_clone.stats().snapshot();
-                            tracing::info!(
-                                tx_received = pool_stats.transactions_received,
-                                tx_submitted = pool_stats.transactions_submitted,
-                                tx_rejected = pool_stats.transactions_rejected,
-                                "Transaction pool bridge - final stats"
-                            );
-                        }
-                    },
-                );
-
-                // Spawn the transaction pool processing task (Phase 9.2)
-                task_manager.spawn_handle().spawn(
-                    "tx-pool-processor",
-                    Some("txpool"),
-                    async move {
-                        let interval = tokio::time::Duration::from_millis(process_interval);
-                        let mut process_timer = tokio::time::interval(interval);
-                        
-                        tracing::info!(
-                            interval_ms = process_interval,
-                            "Transaction pool processor started (Phase 9.2)"
-                        );
-                        
-                        loop {
-                            process_timer.tick().await;
-                            
-                            let submitted = pool_bridge_for_processor.process_pending().await;
-                            
-                            if submitted > 0 && pool_verbose {
-                                let stats = pool_bridge_for_processor.stats().snapshot();
-                                tracing::debug!(
-                                    submitted = submitted,
-                                    total_received = stats.transactions_received,
-                                    total_submitted = stats.transactions_submitted,
-                                    total_rejected = stats.transactions_rejected,
-                                    pool_size = pool_bridge_for_processor.pool_size(),
-                                    "Processed pending transactions"
-                                );
-                            }
-                        }
-                    },
-                );
-            }
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    "Failed to start PqNetworkBackend - continuing without PQ networking"
-                );
-            }
-        }
-    }
+    // NOTE: PQ network backend is now created in the Full Client Mode section below (Task 11.4.6)
+    // The old Phase 3.5 handler has been removed to avoid duplicate event handlers.
+    // See the "Phase 11.6: Create Chain Sync Service" section for the sync-enabled handler.
 
     // Phase 9.3 + 10.4 + 11.1 + 11.2 + 11.3: Spawn mining worker if enabled
     // Phase 11.1: Use ProductionChainStateProvider with callbacks
@@ -2054,8 +1876,21 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 // which handles both sync state updates and block import.
                             }
 
+                            // Debug: log all events received by the handler
+                            tracing::info!(
+                                event = ?format!("{:?}", std::mem::discriminant(&event)),
+                                "PQ network event received by Full Client handler"
+                            );
+
                             match event {
                                 PqNetworkEvent::PeerConnected { peer_id, addr, is_outbound } => {
+                                    tracing::info!(
+                                        peer = %hex::encode(peer_id),
+                                        addr = %addr,
+                                        direction = if is_outbound { "outbound" } else { "inbound" },
+                                        "EVENT HANDLER: Processing PeerConnected event"
+                                    );
+                                    
                                     // Update sync service with new peer
                                     {
                                         let mut sync = sync_service_clone.lock().await;
@@ -2073,32 +1908,54 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         let mut hash_bytes = [0u8; 32];
                                         hash_bytes.copy_from_slice(info.best_hash.as_ref());
                                         
+                                        tracing::info!(
+                                            peer = %hex::encode(peer_id),
+                                            best_number = best_number,
+                                            "Attempting to send best block to new peer"
+                                        );
+                                        
                                         // Get the best block header
-                                        if let Ok(Some(header)) = client_for_network.header(info.best_hash) {
-                                            let header_bytes = header.encode();
-                                            let announce = BlockAnnounce::new(
-                                                header_bytes,
-                                                best_number,
-                                                hash_bytes,
-                                                BlockState::Best,
-                                            );
-                                            
-                                            let encoded = announce.encode();
-                                            if let Err(e) = pq_handle_for_status.send_message(
-                                                peer_id,
-                                                BLOCK_ANNOUNCE_PROTOCOL.to_string(),
-                                                encoded,
-                                            ).await {
+                                        match client_for_network.header(info.best_hash) {
+                                            Ok(Some(header)) => {
+                                                let header_bytes = header.encode();
+                                                let announce = BlockAnnounce::new(
+                                                    header_bytes,
+                                                    best_number,
+                                                    hash_bytes,
+                                                    BlockState::Best,
+                                                );
+                                                
+                                                let encoded = announce.encode();
+                                                if let Err(e) = pq_handle_for_status.send_message(
+                                                    peer_id,
+                                                    BLOCK_ANNOUNCE_PROTOCOL.to_string(),
+                                                    encoded,
+                                                ).await {
+                                                    tracing::warn!(
+                                                        peer = %hex::encode(peer_id),
+                                                        error = %e,
+                                                        "Failed to send best block to new peer"
+                                                    );
+                                                } else {
+                                                    tracing::info!(
+                                                        peer = %hex::encode(peer_id),
+                                                        best_number = best_number,
+                                                        "Sent our best block to new peer for sync"
+                                                    );
+                                                }
+                                            }
+                                            Ok(None) => {
                                                 tracing::warn!(
                                                     peer = %hex::encode(peer_id),
-                                                    error = %e,
-                                                    "Failed to send best block to new peer"
+                                                    best_hash = ?info.best_hash,
+                                                    "Header not found for best block"
                                                 );
-                                            } else {
-                                                tracing::info!(
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!(
                                                     peer = %hex::encode(peer_id),
-                                                    best_number = best_number,
-                                                    "Sent our best block to new peer for sync"
+                                                    error = ?e,
+                                                    "Error getting header for best block"
                                                 );
                                             }
                                         }
@@ -2127,15 +1984,26 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     // Phase 11.6.1: Handle sync protocol messages
                                     use crate::substrate::network_bridge::{SYNC_PROTOCOL, SYNC_PROTOCOL_LEGACY};
                                     use crate::substrate::network_bridge::{SyncRequest, SyncResponse};
+                                    use crate::substrate::network_bridge::{BLOCK_ANNOUNCE_PROTOCOL, BLOCK_ANNOUNCE_PROTOCOL_LEGACY, BlockAnnounce};
                                     
                                     // Handle sync protocol messages
                                     if protocol == SYNC_PROTOCOL || protocol == SYNC_PROTOCOL_LEGACY {
                                         // Try to decode as sync request
                                         if let Ok(request) = SyncRequest::decode(&mut &data[..]) {
+                                            tracing::info!(
+                                                peer = %hex::encode(peer_id),
+                                                request = ?request,
+                                                "Received sync request from peer"
+                                            );
                                             let mut sync = sync_service_clone.lock().await;
                                             if let Some(response) = sync.handle_sync_request(peer_id, request) {
                                                 // Send response back to peer
                                                 let encoded = response.encode();
+                                                tracing::info!(
+                                                    peer = %hex::encode(peer_id),
+                                                    response_len = encoded.len(),
+                                                    "Sending sync response to peer"
+                                                );
                                                 if let Err(e) = pq_handle_for_sync.send_message(
                                                     peer_id,
                                                     SYNC_PROTOCOL.to_string(),
@@ -2151,13 +2019,37 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         }
                                         // Try to decode as sync response
                                         else if let Ok(response) = SyncResponse::decode(&mut &data[..]) {
+                                            tracing::info!(
+                                                peer = %hex::encode(peer_id),
+                                                "Received sync response from peer"
+                                            );
                                             let mut sync = sync_service_clone.lock().await;
                                             sync.handle_sync_response(peer_id, response);
+                                        } else {
+                                            tracing::debug!(
+                                                peer = %hex::encode(peer_id),
+                                                protocol = %protocol,
+                                                data_len = data.len(),
+                                                "Failed to decode sync message (neither request nor response)"
+                                            );
                                         }
                                     }
-                                    // Note: Block announcements are handled by the network bridge's
-                                    // handle_event() above, which queues them for the block import
-                                    // handler task (Task 11.5.4)
+                                    // Handle block announce messages - update peer's best height
+                                    else if protocol == BLOCK_ANNOUNCE_PROTOCOL || protocol == BLOCK_ANNOUNCE_PROTOCOL_LEGACY {
+                                        if let Ok(announce) = BlockAnnounce::decode(&mut &data[..]) {
+                                            let peer_best = announce.number;
+                                            tracing::info!(
+                                                peer = %hex::encode(peer_id),
+                                                peer_best = peer_best,
+                                                peer_hash = %hex::encode(&announce.hash),
+                                                "Received block announce from peer"
+                                            );
+                                            
+                                            // Update peer's best height in sync service
+                                            let mut sync = sync_service_clone.lock().await;
+                                            sync.on_block_announce(peer_id, &announce);
+                                        }
+                                    }
                                 }
                                 PqNetworkEvent::Stopped => {
                                     tracing::info!("PQ network stopped");
@@ -2242,9 +2134,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 // =======================================================================
                 // Task 11.5.4: Spawn block import task for network blocks
                 // =======================================================================
-                // This task processes incoming block announcements from peers and
-                // imports them through the PowBlockImport pipeline. This is essential
-                // for non-mining nodes to sync the chain.
+                // This task processes:
+                // 1. Incoming block announcements from peers (new blocks)
+                // 2. Downloaded blocks from the sync service (historical sync)
+                // Both go through the PowBlockImport pipeline.
                 let block_import_bridge = Arc::clone(&network_bridge);
                 let block_import_pow = pow_block_import.clone();
                 let block_import_client = client.clone();
@@ -2258,17 +2151,131 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         use sp_consensus::BlockOrigin;
                         use sp_runtime::traits::Block as BlockT;
                         
-                        tracing::info!("Task 11.5.4: Block import handler started (syncs blocks from network)");
+                        tracing::info!("Task 11.5.4: Block import handler started (syncs blocks from network + historical sync)");
                         
                         let import_interval = tokio::time::Duration::from_millis(100);
                         let mut import_timer = tokio::time::interval(import_interval);
                         
                         let mut blocks_imported: u64 = 0;
                         let mut blocks_failed: u64 = 0;
+                        let mut sync_blocks_imported: u64 = 0;
                         
                         loop {
                             import_timer.tick().await;
                             
+                            // ============================================================
+                            // Part 1: Process downloaded blocks from sync service
+                            // ============================================================
+                            let downloaded_blocks = {
+                                let mut sync = sync_service_for_import.lock().await;
+                                sync.drain_downloaded()
+                            };
+                            
+                            for downloaded in downloaded_blocks {
+                                // Decode the header
+                                let header = match runtime::Header::decode(&mut &downloaded.header[..]) {
+                                    Ok(h) => h,
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            peer = %hex::encode(&downloaded.from_peer),
+                                            block_number = downloaded.number,
+                                            error = %e,
+                                            "Failed to decode synced block header"
+                                        );
+                                        blocks_failed += 1;
+                                        continue;
+                                    }
+                                };
+                                
+                                // Decode extrinsics
+                                let extrinsics: Vec<runtime::UncheckedExtrinsic> = downloaded.body
+                                    .iter()
+                                    .filter_map(|ext_bytes| {
+                                        runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]).ok()
+                                    })
+                                    .collect();
+                                
+                                let block_number = *header.number();
+                                let parent_hash = *header.parent_hash();
+                                
+                                // Construct BlockImportParams
+                                let mut import_params = BlockImportParams::new(BlockOrigin::NetworkInitialSync, header);
+                                import_params.body = Some(extrinsics);
+                                import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
+                                
+                                // Import through PowBlockImport (verifies PoW seal)
+                                let import_result = block_import_pow.clone().import_block(import_params).await;
+                                
+                                match import_result {
+                                    Ok(sc_consensus::ImportResult::Imported(_)) => {
+                                        blocks_imported += 1;
+                                        sync_blocks_imported += 1;
+                                        
+                                        // Notify sync service of successful import
+                                        {
+                                            let mut sync = sync_service_for_import.lock().await;
+                                            sync.on_block_imported(block_number as u64);
+                                        }
+                                        
+                                        if sync_blocks_imported % 100 == 0 {
+                                            tracing::info!(
+                                                block_number,
+                                                sync_imported = sync_blocks_imported,
+                                                total_imported = blocks_imported,
+                                                "Sync progress: {} blocks imported",
+                                                sync_blocks_imported
+                                            );
+                                        } else {
+                                            tracing::debug!(
+                                                block_number,
+                                                hash = %hex::encode(&downloaded.hash),
+                                                "Synced block imported"
+                                            );
+                                        }
+                                    }
+                                    Ok(sc_consensus::ImportResult::AlreadyInChain) => {
+                                        tracing::trace!(
+                                            block_number,
+                                            "Synced block already in chain"
+                                        );
+                                    }
+                                    Ok(sc_consensus::ImportResult::KnownBad) => {
+                                        blocks_failed += 1;
+                                        tracing::warn!(
+                                            peer = %hex::encode(&downloaded.from_peer),
+                                            block_number,
+                                            "Synced block is known bad - PoW invalid"
+                                        );
+                                    }
+                                    Ok(sc_consensus::ImportResult::UnknownParent) => {
+                                        tracing::debug!(
+                                            block_number,
+                                            parent = %hex::encode(parent_hash.as_bytes()),
+                                            "Synced block has unknown parent - out of order?"
+                                        );
+                                    }
+                                    Ok(sc_consensus::ImportResult::MissingState) => {
+                                        blocks_failed += 1;
+                                        tracing::warn!(
+                                            block_number,
+                                            "Missing state for synced block parent"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        blocks_failed += 1;
+                                        tracing::warn!(
+                                            peer = %hex::encode(&downloaded.from_peer),
+                                            block_number,
+                                            error = ?e,
+                                            "Synced block import failed"
+                                        );
+                                    }
+                                }
+                            }
+                            
+                            // ============================================================
+                            // Part 2: Process block announcements (new blocks from mining)
+                            // ============================================================
                             // Drain pending block announcements from the bridge
                             let pending_announces = {
                                 let mut bridge = block_import_bridge.lock().await;
