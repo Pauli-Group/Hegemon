@@ -632,10 +632,27 @@ echo "=== ALL TWO NODE TESTS PASSED ==="
 ```
 
 **Status**: 🟡 PARTIAL (2025-11-29)
-- [x] Node 1 mining verified (2609+ blocks)
+- [x] Node 1 mining verified (3177+ blocks)
 - [x] PQ network connection established
 - [x] Same genesis block on both nodes
-- [ ] Historical chain sync not yet working
+- [x] Best block announcement sent on peer connect (FIX IMPLEMENTED)
+- [x] Sync detection working ("Peer is ahead, should start sync")
+- [ ] Sync protocol incomplete - stuck in Downloading state
+
+**Bug Fix Implemented (2025-11-29)**:
+The initial issue was that Node 2 didn't know Node 1's chain height. Fixed by:
+1. Adding `on_block_announce()` call in block-import-handler to update sync service peer state
+2. Sending best block announcement to new peers on `PeerConnected` event
+
+**Root Cause Analysis**:
+- ✅ PQ network connection: Working - ML-KEM-768 handshake succeeds
+- ✅ Best block exchange: Working - Nodes send best block on connect
+- ✅ Sync detection: Working - "Peer is ahead, should start sync" triggers
+- ❌ Sync protocol: **INCOMPLETE** - `ChainSyncService::tick()` transitions to `Downloading` state but:
+  - Only sends initial headers request when entering `Downloading` state
+  - `handle_sync_response()` has TODO comments for processing headers/bodies
+  - `tick()` in `Downloading` state just logs, doesn't request more blocks
+  - `current_height` stays at 0, never advances
 
 **Execution Notes**:
 - ⚠️ **Script incompatibility**: The original bash script uses `--bootnodes` CLI flag with libp2p multiaddr format, but Hegemon uses a custom PQ-only network that requires `HEGEMON_SEEDS` environment variable with simple `IP:PORT` format.
@@ -651,16 +668,22 @@ HEGEMON_SEEDS="127.0.0.1:30333" HEGEMON_RPC_PORT=9945 HEGEMON_LISTEN_ADDR="0.0.0
 **Verified Results**:
 | Test | Result | Details |
 |------|--------|---------|
-| ✅ Node 1 mining | PASS | Block 2609 (0xa31) reached |
+| ✅ Node 1 mining | PASS | Block 3177+ reached |
 | ✅ Node 2 started | PASS | Listening on :30334, RPC on :9945 |
 | ✅ PQ handshake | PASS | ML-KEM-768 connection established |
 | ✅ Same genesis | PASS | Both nodes: `0x3661ea36...4424` |
-| ⚠️ Historical sync | NOT WORKING | Node 2 stays at block 0 |
+| ✅ Best block sent | PASS | "Sent our best block to new peer for sync" |
+| ✅ Peer state updated | PASS | "Updated peer best block" |
+| ✅ Sync detected | PASS | "Peer is ahead, should start sync" |
+| ❌ Sync progress | FAIL | Stuck in Downloading state, current_height=0 |
 | ⚠️ Peer count RPC | SHOWS 0 | Despite active connection in logs |
 
-**Issue Identified**: The PQ network establishes connections but the chain sync mechanism doesn't trigger historical block download. The `system_peers` RPC returns 0 even when PQ peer is connected (logs show successful handshake). This needs investigation in Phase 11.6 (Chain Sync).
-
-**Recommendation**: Create follow-up task to wire PQ network peer count to `system_peers` RPC and investigate historical sync trigger.
+**Next Steps (Phase 11.6 completion)**:
+1. Implement `handle_sync_response()` to process received headers
+2. Request block bodies after receiving headers
+3. Import blocks after receiving bodies
+4. Continue requesting until caught up
+5. Wire PQ peer count to `system_peers` RPC
 
 ---
 
