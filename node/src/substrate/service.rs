@@ -2324,28 +2324,74 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Create production RPC service with client access
     let rpc_service = Arc::new(ProductionRpcService::new(client.clone()));
     
-    // Create RPC module with all extensions
+    // Create RPC module with all extensions (Task 11.7)
     let rpc_module = {
         use jsonrpsee::RpcModule;
+        use sc_rpc::SubscriptionTaskExecutor;
+        use sc_rpc::chain::ChainApiServer;
+        use sc_rpc::state::{StateApiServer, ChildStateApiServer};
         
         let mut module = RpcModule::new(());
+        
+        // Create subscription task executor for RPC subscriptions
+        let executor: SubscriptionTaskExecutor = Arc::new(task_manager.spawn_handle());
+        
+        // =====================================================================
+        // Task 11.7.1: Standard Substrate RPCs (chain_*, state_*)
+        // =====================================================================
+        
+        // Add Chain RPC (chain_getBlock, chain_getHeader, chain_getBlockHash, etc.)
+        let chain_rpc = sc_rpc::chain::new_full::<runtime::Block, _>(
+            client.clone(),
+            executor.clone(),
+        );
+        if let Err(e) = module.merge(chain_rpc.into_rpc()) {
+            tracing::warn!(error = %e, "Failed to merge Chain RPC");
+        } else {
+            tracing::info!("Chain RPC wired (chain_getBlock, chain_getHeader, etc.)");
+        }
+        
+        // Add State RPC (state_getStorage, state_getRuntimeVersion, state_call, etc.)
+        // This requires the backend for storage queries
+        let (state_rpc, child_state_rpc) = sc_rpc::state::new_full::<FullBackend, _, _>(
+            client.clone(),
+            executor.clone(),
+        );
+        if let Err(e) = module.merge(state_rpc.into_rpc()) {
+            tracing::warn!(error = %e, "Failed to merge State RPC");
+        } else {
+            tracing::info!("State RPC wired (state_getStorage, state_getRuntimeVersion, etc.)");
+        }
+        if let Err(e) = module.merge(child_state_rpc.into_rpc()) {
+            tracing::warn!(error = %e, "Failed to merge Child State RPC");
+        }
+        
+        // =====================================================================
+        // Task 11.7.2: Hegemon Custom RPCs
+        // =====================================================================
         
         // Add Hegemon RPC (mining, consensus, telemetry)
         let hegemon_rpc = HegemonRpc::new(rpc_service.clone(), pow_handle.clone());
         if let Err(e) = module.merge(hegemon_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Hegemon RPC");
+        } else {
+            tracing::info!("Hegemon RPC wired (hegemon_miningStatus, hegemon_consensusStatus, etc.)");
         }
         
         // Add Wallet RPC (notes, commitments, proofs)
         let wallet_rpc = WalletRpc::new(rpc_service.clone());
         if let Err(e) = module.merge(wallet_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Wallet RPC");
+        } else {
+            tracing::info!("Wallet RPC wired (wallet_notes, wallet_commitments, etc.)");
         }
         
         // Add Shielded Pool RPC (STARK proofs, encrypted notes)
         let shielded_rpc = ShieldedRpc::new(rpc_service);
         if let Err(e) = module.merge(shielded_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Shielded RPC");
+        } else {
+            tracing::info!("Shielded RPC wired (shielded_submitTransfer, etc.)");
         }
         
         module
