@@ -1,0 +1,7 @@
+# Cargo configuration for the workspace
+
+# Required for wasm32 builds - getrandom 0.3 needs a custom backend
+# The substrate-wasm-builder handles getrandom 0.2 via the "custom" feature,
+# but getrandom 0.3 uses cfg-based backend selection
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "getrandom_backend=\"custom\""]

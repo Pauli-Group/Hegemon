@@ -290,6 +290,7 @@ mod pq_crypto {
         const ID: KeyTypeId = PQ_KEY_TYPE;
 
         type Signature = Signature;
+        type ProofOfPossession = Signature;
 
         fn all() -> Vec<Self> {
             Self::load_secrets().into_iter().map(PqAppPublic).collect()
@@ -317,7 +318,8 @@ mod pq_crypto {
             match secret {
                 StoredSecret::MlDsa(bytes) => {
                     let secret = MlDsaSecretKey::from_bytes(&bytes).ok()?;
-                    let signature = secret.sign(msg.as_ref()).to_bytes();
+                    let signature_vec = secret.sign(msg.as_ref()).to_bytes();
+                    let signature: [u8; ML_DSA_SIGNATURE_LEN] = signature_vec.try_into().ok()?;
                     Some(Signature::MlDsa { signature, public })
                 }
                 StoredSecret::SlhDsa(bytes) => {
@@ -334,12 +336,17 @@ mod pq_crypto {
             signature.verify(msg.as_ref(), &account)
         }
 
-        fn generate_proof_of_possession(&mut self) -> Option<Self::Signature> {
-            self.sign(&self.0.as_bytes().to_vec())
+        fn generate_proof_of_possession(&mut self, context: &[u8]) -> Option<Self::ProofOfPossession> {
+            // Proof of possession: sign the public key bytes concatenated with context
+            let mut msg = self.0.as_bytes().to_vec();
+            msg.extend_from_slice(context);
+            self.sign(&msg)
         }
 
-        fn verify_proof_of_possession(&self, signature: &Self::Signature) -> bool {
-            self.verify(&self.0.as_bytes().to_vec(), signature)
+        fn verify_proof_of_possession(&self, context: &[u8], pop: &Self::ProofOfPossession) -> bool {
+            let mut msg = self.0.as_bytes().to_vec();
+            msg.extend_from_slice(context);
+            self.verify(&msg, pop)
         }
 
         fn to_raw_vec(&self) -> Vec<u8> {
@@ -1462,7 +1469,7 @@ sp_api::impl_runtime_apis! {
             VERSION
         }
 
-        fn execute_block(block: Block) {
+        fn execute_block(block: <Block as sp_runtime::traits::Block>::LazyBlock) {
             Executive::execute_block(block);
         }
 
@@ -1499,7 +1506,7 @@ sp_api::impl_runtime_apis! {
         }
 
         fn check_inherents(
-            block: Block,
+            block: <Block as sp_runtime::traits::Block>::LazyBlock,
             data: sp_inherents::InherentData,
         ) -> sp_inherents::CheckInherentsResult {
             data.check_extrinsics(&block)

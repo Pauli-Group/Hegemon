@@ -3,7 +3,7 @@
 pub use pallet::*;
 pub use weights::WeightInfo;
 
-use codec::MaxEncodedLen;
+use codec::{FullCodec, MaxEncodedLen};
 use frame_support::dispatch::{
     DispatchClass, DispatchInfo, GetDispatchInfo, Pays, PostDispatchInfo,
 };
@@ -14,6 +14,7 @@ use frame_support::traits::{
     Currency, ExistenceRequirement, Imbalance, OnUnbalanced, WithdrawReasons,
 };
 use frame_support::unsigned::TransactionValidityError;
+use pallet_transaction_payment::TxCreditHold;
 use sp_runtime::traits::{Saturating, Zero};
 use sp_runtime::{FixedPointNumber, FixedU128, RuntimeDebug};
 use sp_std::marker::PhantomData;
@@ -116,9 +117,17 @@ pub mod pallet {
     #[derive(Default)]
     pub struct FeeModelOnCharge<T: Config, OU>(PhantomData<(T, OU)>);
 
+    /// Implement TxCreditHold for the fee model - we don't store credit
+    impl<T, OU> TxCreditHold<T> for FeeModelOnCharge<T, OU>
+    where
+        T: Config + pallet_transaction_payment::Config,
+    {
+        type Credit = ();
+    }
+
     impl<T, OU> OnChargeTransaction<T> for FeeModelOnCharge<T, OU>
     where
-        T: Config,
+        T: Config + pallet_transaction_payment::Config,
         T::RuntimeCall:
             Dispatchable<Info = DispatchInfo, PostInfo = PostDispatchInfo> + GetDispatchInfo,
         T::Currency: Currency<T::AccountId>,
