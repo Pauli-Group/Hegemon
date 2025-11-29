@@ -14,7 +14,8 @@ pub const MAX_NOTE_VALUE: u128 = u64::MAX as u128;
 pub const POSEIDON_WIDTH: usize = 3;
 
 /// Number of rounds for the poseidon-like permutation.
-pub const POSEIDON_ROUNDS: usize = 5;
+/// Must be a power of 2 for winterfell's periodic columns.
+pub const POSEIDON_ROUNDS: usize = 8;
 
 /// Domain separation tag for note commitments.
 pub const NOTE_DOMAIN_TAG: u64 = 1;
