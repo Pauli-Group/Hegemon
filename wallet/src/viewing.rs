@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use synthetic_crypto::hashes::derive_nullifier;
-use transaction_circuit::note::{InputNoteWitness, NoteData};
+use transaction_circuit::hashing::{nullifier_bytes, prf_key as compute_prf_key};
+use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData};
 
 use crate::{
     address::ShieldedAddress,
@@ -101,7 +101,9 @@ impl FullViewingKey {
     }
 
     pub fn compute_nullifier(&self, rho: &[u8; 32], position: u64) -> [u8; 32] {
-        derive_nullifier(&self.nullifier_key, position, rho)
+        // Use Poseidon-based nullifier matching the circuit
+        let prf = compute_prf_key(&self.nullifier_key);
+        nullifier_bytes(prf, rho, position)
     }
 }
 
@@ -119,6 +121,7 @@ impl RecoveredNote {
             note: self.note_data.clone(),
             position,
             rho_seed: self.note.rho,
+            merkle_path: MerklePath::default(), // Filled in by tx builder from tree
         }
     }
 }

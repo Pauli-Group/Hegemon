@@ -654,15 +654,70 @@ impl ProofVerifier for StarkVerifier {
     fn verify_binding_signature(
         &self,
         signature: &BindingSignature,
-        _inputs: &ShieldedTransferInputs,
+        inputs: &ShieldedTransferInputs,
     ) -> bool {
         // In the STARK model, value balance is verified in-circuit.
-        // This check just ensures the commitment is non-zero.
-        signature.data != [0u8; 64]
+        // The binding signature is a Blake2 commitment to the public inputs,
+        // providing defense-in-depth and a simple integrity check.
+        //
+        // Commitment = Blake2_256(anchor || nullifiers || commitments || value_balance)
+        
+        use sp_core::hashing::blake2_256;
+        
+        // Build the commitment message
+        let mut message = sp_std::vec::Vec::with_capacity(
+            32 + inputs.nullifiers.len() * 32 + inputs.commitments.len() * 32 + 16
+        );
+        message.extend_from_slice(&inputs.anchor);
+        for nf in &inputs.nullifiers {
+            message.extend_from_slice(nf);
+        }
+        for cm in &inputs.commitments {
+            message.extend_from_slice(cm);
+        }
+        message.extend_from_slice(&inputs.value_balance.to_le_bytes());
+        
+        // Compute expected commitment
+        let hash = blake2_256(&message);
+        
+        // The binding signature's first 32 bytes should match the hash
+        signature.data[..32] == hash
     }
 }
 
 impl StarkVerifier {
+    /// Compute the binding signature commitment for given public inputs.
+    /// 
+    /// This should be used by wallet/client code to generate the binding signature
+    /// that will be verified by `verify_binding_signature`.
+    /// 
+    /// Returns a 64-byte binding signature (first 32 bytes are the commitment hash).
+    pub fn compute_binding_commitment(inputs: &ShieldedTransferInputs) -> BindingSignature {
+        use sp_core::hashing::blake2_256;
+        
+        // Build the commitment message
+        let mut message = sp_std::vec::Vec::with_capacity(
+            32 + inputs.nullifiers.len() * 32 + inputs.commitments.len() * 32 + 16
+        );
+        message.extend_from_slice(&inputs.anchor);
+        for nf in &inputs.nullifiers {
+            message.extend_from_slice(nf);
+        }
+        for cm in &inputs.commitments {
+            message.extend_from_slice(cm);
+        }
+        message.extend_from_slice(&inputs.value_balance.to_le_bytes());
+        
+        // Compute commitment hash
+        let hash = blake2_256(&message);
+        
+        // Build binding signature (hash in first 32 bytes, zeros in rest)
+        let mut data = [0u8; 64];
+        data[..32].copy_from_slice(&hash);
+        
+        BindingSignature { data }
+    }
+
     #[cfg(feature = "stark-verify")]
     fn default_acceptable_options() -> winterfell::ProofOptions {
         winterfell::ProofOptions::new(
@@ -782,7 +837,8 @@ mod tests {
     #[test]
     fn accept_all_binding_sig_accepts() {
         let verifier = AcceptAllProofs;
-        let sig = BindingSignature::default();
+        // AcceptAllProofs accepts anything non-zero
+        let sig = BindingSignature { data: [1u8; 64] };
         assert!(verifier.verify_binding_signature(&sig, &sample_inputs()));
     }
 
@@ -793,5 +849,19 @@ mod tests {
             data: [1u8; 64],
         };
         assert!(!verifier.verify_binding_signature(&sig, &sample_inputs()));
+    }
+
+    #[test]
+    fn stark_verifier_binding_sig_works() {
+        let verifier = StarkVerifier;
+        let inputs = sample_inputs();
+        
+        // Compute correct binding signature
+        let sig = StarkVerifier::compute_binding_commitment(&inputs);
+        assert!(verifier.verify_binding_signature(&sig, &inputs));
+        
+        // Incorrect signature should fail
+        let bad_sig = BindingSignature { data: [1u8; 64] };
+        assert!(!verifier.verify_binding_signature(&bad_sig, &inputs));
     }
 }
