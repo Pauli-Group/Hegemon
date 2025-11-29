@@ -162,6 +162,9 @@ pub struct BlockTemplate {
     pub difficulty_bits: u32,
     /// Extrinsics to include in the block
     pub extrinsics: Vec<Vec<u8>>,
+    /// Task 11.5.5: Key to retrieve cached StorageChanges for block import
+    /// This is set during block building when using sc_block_builder::BlockBuilder
+    pub storage_changes_key: Option<u64>,
 }
 
 impl BlockTemplate {
@@ -189,6 +192,7 @@ impl BlockTemplate {
             pre_hash,
             difficulty_bits,
             extrinsics: Vec::new(),
+            storage_changes_key: None,     // Task 11.5.5: Set during block building
         }
     }
 
@@ -211,7 +215,7 @@ impl BlockTemplate {
         self
     }
 
-    /// Add extrinsics with state execution (Task 11.4)
+    /// Add extrinsics with state execution (Task 11.4 + 11.5.5)
     ///
     /// This method executes extrinsics against the runtime state and computes
     /// the real state root. Extrinsics that fail validation are excluded.
@@ -221,10 +225,18 @@ impl BlockTemplate {
     /// * `extrinsics` - Raw SCALE-encoded extrinsics to include
     /// * `state_root` - State root after executing extrinsics
     /// * `extrinsics_root` - Merkle root of applied extrinsics
-    pub fn with_executed_state(mut self, extrinsics: Vec<Vec<u8>>, state_root: H256, extrinsics_root: H256) -> Self {
+    /// * `storage_changes_key` - Optional key to retrieve cached StorageChanges (Task 11.5.5)
+    pub fn with_executed_state(
+        mut self, 
+        extrinsics: Vec<Vec<u8>>, 
+        state_root: H256, 
+        extrinsics_root: H256,
+        storage_changes_key: Option<u64>,
+    ) -> Self {
         self.extrinsics = extrinsics;
         self.state_root = state_root;
         self.extrinsics_root = extrinsics_root;
+        self.storage_changes_key = storage_changes_key;
         // Recompute pre-hash with actual state root
         self.pre_hash = compute_pre_hash_full(
             &self.parent_hash,
