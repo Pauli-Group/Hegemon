@@ -406,18 +406,20 @@ impl SubstrateRpcClient {
             .map_err(|e| WalletError::Rpc(format!("hegemon_latestBlock failed: {}", e)))
     }
 
-    /// Submit a transaction to the network
+    /// Submit a shielded transaction to the network
     ///
-    /// Submits a signed transaction bundle containing the proof
-    /// and encrypted note ciphertexts.
+    /// Submits a signed transaction bundle containing the STARK proof,
+    /// nullifiers, commitments, encrypted notes, anchor, and binding signature.
+    /// This calls the `hegemon_submitShieldedTransfer` RPC which verifies
+    /// the STARK proof and submits the transaction to the shielded pool.
     ///
     /// # Arguments
     ///
-    /// * `bundle` - Transaction bundle with proof and ciphertexts
+    /// * `bundle` - Transaction bundle with proof and all components
     ///
     /// # Returns
     ///
-    /// The transaction ID (32 bytes) if successful.
+    /// The transaction hash (32 bytes) if successful.
     pub async fn submit_transaction(
         &self,
         bundle: &TransactionBundle,
@@ -425,26 +427,26 @@ impl SubstrateRpcClient {
         self.ensure_connected().await?;
         let client = self.client.read().await;
         
-        // Convert to wire format (base64 encoded)
-        let wire_bundle = WireTransactionBundle::from_bundle(bundle)?;
+        // Convert to ShieldedTransferRequest wire format
+        let request = ShieldedTransferRequest::from_bundle(bundle)?;
         
-        let response: TransactionResponse = client
-            .request("hegemon_submitTransaction", rpc_params![wire_bundle])
+        let response: ShieldedTransferResponse = client
+            .request("hegemon_submitShieldedTransfer", rpc_params![request])
             .await
-            .map_err(|e| WalletError::Rpc(format!("hegemon_submitTransaction failed: {}", e)))?;
+            .map_err(|e| WalletError::Rpc(format!("hegemon_submitShieldedTransfer failed: {}", e)))?;
         
         if !response.success {
             return Err(WalletError::Http(format!(
-                "Transaction submission failed: {}",
+                "Shielded transfer failed: {}",
                 response.error.unwrap_or_else(|| "unknown error".to_string())
             )));
         }
         
-        let tx_id = response
-            .tx_id
-            .ok_or_else(|| WalletError::Rpc("Missing tx_id in response".to_string()))?;
+        let tx_hash = response
+            .tx_hash
+            .ok_or_else(|| WalletError::Rpc("Missing tx_hash in response".to_string()))?;
         
-        hex_to_array(&tx_id)
+        hex_to_array(&tx_hash)
     }
 
     /// Check if connected to the node
@@ -494,21 +496,176 @@ impl SubstrateRpcClient {
             .await
             .map_err(|e| WalletError::Rpc(format!("Failed to subscribe to finalized heads: {}", e)))
     }
+
+    /// Get chain metadata required for extrinsic construction
+    ///
+    /// Returns genesis hash, current block hash/number, and runtime versions.
+    pub async fn get_chain_metadata(&self) -> Result<crate::extrinsic::ChainMetadata, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        
+        // Get genesis hash
+        let genesis_hash: String = client
+            .request("chain_getBlockHash", rpc_params![0u32])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("chain_getBlockHash(0) failed: {}", e)))?;
+        let genesis_hash = hex_to_array(&genesis_hash.trim_start_matches("0x"))?;
+        
+        // Get current block header
+        let header: serde_json::Value = client
+            .request("chain_getHeader", rpc_params![])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("chain_getHeader failed: {}", e)))?;
+        
+        let block_number = header["number"]
+            .as_str()
+            .ok_or_else(|| WalletError::Rpc("Missing block number".into()))?;
+        let block_number = u64::from_str_radix(block_number.trim_start_matches("0x"), 16)
+            .map_err(|e| WalletError::Rpc(format!("Invalid block number: {}", e)))?;
+        
+        // Get current block hash
+        let block_hash: String = client
+            .request("chain_getBlockHash", rpc_params![])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("chain_getBlockHash failed: {}", e)))?;
+        let block_hash = hex_to_array(&block_hash.trim_start_matches("0x"))?;
+        
+        // Get runtime version
+        let version: serde_json::Value = client
+            .request("state_getRuntimeVersion", rpc_params![])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("state_getRuntimeVersion failed: {}", e)))?;
+        
+        let spec_version = version["specVersion"]
+            .as_u64()
+            .ok_or_else(|| WalletError::Rpc("Missing specVersion".into()))? as u32;
+        let tx_version = version["transactionVersion"]
+            .as_u64()
+            .ok_or_else(|| WalletError::Rpc("Missing transactionVersion".into()))? as u32;
+        
+        Ok(crate::extrinsic::ChainMetadata {
+            genesis_hash,
+            block_hash,
+            block_number,
+            spec_version,
+            tx_version,
+        })
+    }
+
+    /// Get account nonce for replay protection
+    pub async fn get_nonce(&self, account_id: &[u8; 32]) -> Result<u32, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        
+        let account_hex = format!("0x{}", hex::encode(account_id));
+        let nonce: u32 = client
+            .request("system_accountNextIndex", rpc_params![account_hex])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("system_accountNextIndex failed: {}", e)))?;
+        
+        Ok(nonce)
+    }
+
+    /// Submit a signed extrinsic to the network
+    ///
+    /// This is the proper Substrate way to submit transactions.
+    /// The extrinsic should be SCALE-encoded and signed.
+    ///
+    /// # Arguments
+    ///
+    /// * `extrinsic` - SCALE-encoded signed extrinsic bytes
+    ///
+    /// # Returns
+    ///
+    /// The transaction hash (32 bytes) if accepted into the pool.
+    pub async fn submit_extrinsic(&self, extrinsic: &[u8]) -> Result<[u8; 32], WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        
+        // Encode as hex with 0x prefix
+        let extrinsic_hex = format!("0x{}", hex::encode(extrinsic));
+        
+        let tx_hash: String = client
+            .request("author_submitExtrinsic", rpc_params![extrinsic_hex])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("author_submitExtrinsic failed: {}", e)))?;
+        
+        hex_to_array(&tx_hash.trim_start_matches("0x"))
+    }
+
+    /// Submit a shielded transfer using proper Substrate extrinsic signing
+    ///
+    /// This is the full E2E path:
+    /// 1. Build the shielded_transfer call
+    /// 2. Fetch chain metadata (genesis, block hash, versions)
+    /// 3. Get account nonce
+    /// 4. Construct and sign extrinsic with ML-DSA
+    /// 5. Submit via author_submitExtrinsic
+    ///
+    /// # Arguments
+    ///
+    /// * `bundle` - Transaction bundle with STARK proof and components
+    /// * `signing_seed` - 32-byte seed for ML-DSA key derivation
+    ///
+    /// # Returns
+    ///
+    /// The transaction hash (32 bytes) if accepted into the pool.
+    pub async fn submit_shielded_transfer_signed(
+        &self,
+        bundle: &TransactionBundle,
+        signing_seed: &[u8; 32],
+    ) -> Result<[u8; 32], WalletError> {
+        use crate::extrinsic::{Era, ExtrinsicBuilder, ShieldedTransferCall};
+        
+        // 1. Create extrinsic builder from seed
+        let builder = ExtrinsicBuilder::from_seed(signing_seed);
+        
+        // 2. Get chain metadata
+        let metadata = self.get_chain_metadata().await?;
+        
+        // 3. Get account nonce
+        let nonce = self.get_nonce(&builder.account_id()).await?;
+        
+        // 4. Build the call
+        let call = ShieldedTransferCall::from_bundle(bundle);
+        
+        // 5. Build mortal era (64 block validity)
+        let era = Era::mortal(64, metadata.block_number.saturating_sub(1));
+        
+        // 6. Build and sign the extrinsic
+        let extrinsic = builder.build_shielded_transfer(
+            &call,
+            nonce,
+            era,
+            0, // tip
+            &metadata,
+        )?;
+        
+        // 7. Submit
+        self.submit_extrinsic(&extrinsic).await
+    }
 }
 
-/// Wire format for transaction bundle (base64 encoded)
+/// Shielded transfer request matching `hegemon_submitShieldedTransfer` RPC
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct WireTransactionBundle {
+struct ShieldedTransferRequest {
+    /// STARK proof (base64 encoded)
     proof: String,
+    /// Nullifiers for spent notes (hex encoded)
     nullifiers: Vec<String>,
+    /// New note commitments (hex encoded)
     commitments: Vec<String>,
-    ciphertexts: Vec<String>,
+    /// Encrypted notes for recipients (base64 encoded)
+    encrypted_notes: Vec<String>,
+    /// Merkle root anchor (hex encoded)
     anchor: String,
+    /// Binding signature (hex encoded)
     binding_sig: String,
+    /// Value balance (positive = shielding, negative = unshielding)
     value_balance: i128,
 }
 
-impl WireTransactionBundle {
+impl ShieldedTransferRequest {
     fn from_bundle(bundle: &TransactionBundle) -> Result<Self, WalletError> {
         use base64::Engine;
         
@@ -530,7 +687,7 @@ impl WireTransactionBundle {
             .collect();
         
         // Encode each ciphertext as base64
-        let ciphertexts = bundle
+        let encrypted_notes = bundle
             .ciphertexts
             .iter()
             .map(|ct| base64::engine::general_purpose::STANDARD.encode(ct))
@@ -544,12 +701,25 @@ impl WireTransactionBundle {
             proof, 
             nullifiers,
             commitments,
-            ciphertexts,
+            encrypted_notes,
             anchor,
             binding_sig,
             value_balance: bundle.value_balance,
         })
     }
+}
+
+/// Shielded transfer response matching `hegemon_submitShieldedTransfer` RPC
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ShieldedTransferResponse {
+    /// Whether submission succeeded
+    success: bool,
+    /// Transaction hash if successful (hex encoded)
+    tx_hash: Option<String>,
+    /// Block number if already included
+    block_number: Option<u64>,
+    /// Error message if failed
+    error: Option<String>,
 }
 
 fn hex_to_array(hex_str: &str) -> Result<[u8; 32], WalletError> {

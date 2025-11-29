@@ -10,6 +10,7 @@ axum = { version = "0.7", default-features = false, features = ["macros", "json"
 base64 = "0.22"
 bech32 = "0.9"
 bincode = "1"
+blake2 = "0.10"
 chacha20poly1305 = { version = "0.10", features = ["alloc"] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }

@@ -11351,6 +11351,7 @@ dependencies = [
  "base64",
  "bech32",
  "bincode",
+ "blake2 0.10.6",
  "chacha20poly1305",
  "chrono",
  "clap",
