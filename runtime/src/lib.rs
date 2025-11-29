@@ -1326,7 +1326,7 @@ impl pallet_settlement::Config for Runtime {
     type ReferendaOrigin = ReferendaOrigin;
     type Currency = Balances;
     type AuthorityId = PqAppCrypto;
-    type ProofVerifier = pallet_settlement::AcceptAllProofs;
+    type ProofVerifier = pallet_settlement::StarkVerifier;
     type DefaultVerifierParams = DefaultSettlementVerifierParams;
     type WeightInfo = pallet_settlement::weights::DefaultWeightInfo<Self>;
     type MaxLegs = MaxLegs;
