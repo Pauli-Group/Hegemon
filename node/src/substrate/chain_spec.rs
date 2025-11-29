@@ -61,10 +61,11 @@ pub fn development_config() -> Result<ChainSpec, String> {
             "nonAuthorityKeys": []
         },
         "difficulty": {
-            // ~4096 hashes per block for development
-            // 0x1f00ffff = exponent 31, mantissa 0xffff
-            // target ≈ 2^240, difficulty ≈ 4096
-            "initialDifficulty": "0x1000",
+            // 0x1f00ffff = exponent 31, mantissa 0x00ffff
+            // target = 0x00ffff << 224 = 0x00ffff000...000
+            // difficulty = U256::MAX / target ≈ 65537 (0x10001)
+            // These MUST match or sync verification fails!
+            "initialDifficulty": "0x10001",
             "initialBits": 0x1f00ffff_u32
         },
         "shieldedPool": {
