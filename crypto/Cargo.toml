@@ -14,9 +14,10 @@ rand = { version = "0.9", default-features = false, features = ["std", "std_rng"
 rand_chacha = { version = "0.9", default-features = false }
 rand_core = { version = "0.9", default-features = false }
 
-# REAL Post-Quantum Cryptography (FIPS 203/204)
+# REAL Post-Quantum Cryptography (FIPS 203/204/205)
 ml-kem = { version = "0.3.0-pre.2", default-features = false, features = ["deterministic"] }
 ml-dsa = { version = "0.1.0-rc.2", default-features = false }
+slh-dsa = { version = "0.2.0-rc.1", default-features = false }
 
 # Utilities
 thiserror = { version = "1", optional = true }
@@ -40,5 +41,6 @@ std = [
     "hex/std",
     "ml-kem/alloc",
     "ml-dsa/alloc",
+    "slh-dsa/default",
     "thiserror",
 ]
