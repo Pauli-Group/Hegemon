@@ -2025,6 +2025,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 // NOTE: Get all handles before pq_backend is moved into the task
                 let pq_handle_for_sync = pq_backend.handle();
                 let sync_handle_for_tick = pq_backend.handle();
+                let pq_handle_for_status = pq_backend.handle();  // For sending best block on connect
+                
+                // Clone client for the network event handler to send our best block
+                let client_for_network = client.clone();
 
                 // Spawn the PQ network event handler task with sync integration
                 task_manager.spawn_handle().spawn(
@@ -2057,6 +2061,49 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         let mut sync = sync_service_clone.lock().await;
                                         sync.on_peer_connected(peer_id);
                                     }
+                                    
+                                    // Send our best block to the new peer so they know our chain tip
+                                    // This enables the peer to initiate sync if they're behind us
+                                    {
+                                        use crate::substrate::network_bridge::{BlockAnnounce, BlockState, BLOCK_ANNOUNCE_PROTOCOL};
+                                        use sp_runtime::traits::Block as BlockT;
+                                        
+                                        let info = client_for_network.chain_info();
+                                        let best_number: u64 = info.best_number.try_into().unwrap_or(0);
+                                        let mut hash_bytes = [0u8; 32];
+                                        hash_bytes.copy_from_slice(info.best_hash.as_ref());
+                                        
+                                        // Get the best block header
+                                        if let Ok(Some(header)) = client_for_network.header(info.best_hash) {
+                                            let header_bytes = header.encode();
+                                            let announce = BlockAnnounce::new(
+                                                header_bytes,
+                                                best_number,
+                                                hash_bytes,
+                                                BlockState::Best,
+                                            );
+                                            
+                                            let encoded = announce.encode();
+                                            if let Err(e) = pq_handle_for_status.send_message(
+                                                peer_id,
+                                                BLOCK_ANNOUNCE_PROTOCOL.to_string(),
+                                                encoded,
+                                            ).await {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(peer_id),
+                                                    error = %e,
+                                                    "Failed to send best block to new peer"
+                                                );
+                                            } else {
+                                                tracing::info!(
+                                                    peer = %hex::encode(peer_id),
+                                                    best_number = best_number,
+                                                    "Sent our best block to new peer for sync"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    
                                     tracing::info!(
                                         peer_id = %hex::encode(peer_id),
                                         addr = %addr,
@@ -2201,6 +2248,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let block_import_bridge = Arc::clone(&network_bridge);
                 let block_import_pow = pow_block_import.clone();
                 let block_import_client = client.clone();
+                let sync_service_for_import = Arc::clone(&sync_service);
 
                 task_manager.spawn_handle().spawn(
                     "block-import-handler",
@@ -2228,16 +2276,23 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             };
                             
                             for (peer_id, announce) in pending_announces {
+                                // Update sync service with block announcement to track peer's best height
+                                // This is critical for triggering historical sync when we're behind
+                                {
+                                    let mut sync = sync_service_for_import.lock().await;
+                                    sync.on_block_announce(peer_id, &announce);
+                                }
+                                
                                 // Only process blocks that have a body (full blocks)
                                 let body = match &announce.body {
                                     Some(body) => body.clone(),
                                     None => {
-                                        // Header-only announcement - skip for now
-                                        // TODO: Request full block from peer
+                                        // Header-only announcement - the sync service was already
+                                        // notified above, so it can request the full block
                                         tracing::trace!(
                                             peer = %hex::encode(&peer_id),
                                             block_number = announce.number,
-                                            "Skipping header-only announcement (no body)"
+                                            "Header-only announcement - sync service notified"
                                         );
                                         continue;
                                     }
