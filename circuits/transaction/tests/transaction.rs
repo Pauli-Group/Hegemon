@@ -1,5 +1,6 @@
 use transaction_circuit::hashing::Felt;
 use transaction_circuit::keys::generate_keys;
+use transaction_circuit::note::MerklePath;
 use transaction_circuit::proof::{prove, verify};
 use transaction_circuit::{
     InputNoteWitness, OutputNoteWitness, TransactionCircuitError, TransactionWitness,
@@ -17,6 +18,7 @@ fn sample_witness() -> TransactionWitness {
         },
         position: 1,
         rho_seed: [9u8; 32],
+        merkle_path: MerklePath::default(),
     };
     let input_note_asset = InputNoteWitness {
         note: transaction_circuit::note::NoteData {
@@ -28,6 +30,7 @@ fn sample_witness() -> TransactionWitness {
         },
         position: 2,
         rho_seed: [8u8; 32],
+        merkle_path: MerklePath::default(),
     };
     let output_native = OutputNoteWitness {
         note: transaction_circuit::note::NoteData {

@@ -2,6 +2,19 @@
 //!
 //! Uses periodic columns for round constants and a hash_flag for active rounds.
 //! Follows the winterfell rescue example pattern.
+//!
+//! ## Trace Layout
+//!
+//! The trace has 5 columns:
+//! - COL_S0, COL_S1, COL_S2: Poseidon state
+//! - COL_MERKLE_SIBLING: Merkle sibling for path verification
+//! - COL_VALUE: Note values for balance checking
+//!
+//! ## Computation Phases
+//!
+//! 1. Nullifier phase: For each input, compute H(prf || position || rho) (3 cycles each)
+//! 2. Merkle phase: For each input, verify Merkle path to root (MERKLE_CYCLES cycles each)
+//! 3. Commitment phase: For each output, compute note commitment (7 cycles each)
 
 use winterfell::{
     math::{fields::f64::BaseElement, FieldElement, ToElements},
@@ -9,26 +22,31 @@ use winterfell::{
     TransitionConstraintDegree,
 };
 
-use crate::constants::{MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS, POSEIDON_WIDTH};
+use crate::constants::{MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS, POSEIDON_WIDTH, CIRCUIT_MERKLE_DEPTH};
 
 // ================================================================================================
 // TRACE CONFIGURATION
 // ================================================================================================
 
-/// Trace width: 3 state elements only
-pub const TRACE_WIDTH: usize = 3;
+/// Trace width: 3 state elements + merkle sibling + value accumulator
+pub const TRACE_WIDTH: usize = 5;
 pub const COL_S0: usize = 0;
 pub const COL_S1: usize = 1;
 pub const COL_S2: usize = 2;
+pub const COL_MERKLE_SIBLING: usize = 3;
+pub const COL_VALUE: usize = 4;
 
 /// Cycle length: power of 2, must be > POSEIDON_ROUNDS to allow copy steps
 /// Using 16 allows 8 hash rounds + 8 copy/idle steps
 pub const CYCLE_LENGTH: usize = 16;
 
+/// Number of cycles for Merkle path verification (one hash per level)
+pub const MERKLE_CYCLES: usize = CIRCUIT_MERKLE_DEPTH;
+
 /// Minimum trace length (power of 2)
-/// Must accommodate: MAX_INPUTS × NULLIFIER_CYCLES + MAX_OUTPUTS × COMMITMENT_CYCLES
-/// = 2 × 3 + 2 × 7 = 20 cycles × 16 = 320, round up to 512
-pub const MIN_TRACE_LENGTH: usize = 512;
+/// Layout: (NULLIFIER_CYCLES + MERKLE_CYCLES) * MAX_INPUTS + COMMITMENT_CYCLES * MAX_OUTPUTS
+/// = (3 + 8) * 2 + 7 * 2 = 22 + 14 = 36 cycles × 16 = 576, round up to 1024
+pub const MIN_TRACE_LENGTH: usize = 1024;
 
 // ================================================================================================
 // PERIODIC COLUMN: HASH MASK
@@ -137,20 +155,32 @@ pub const NULLIFIER_CYCLES: usize = 3;
 /// Number of cycles needed for a commitment hash (14 inputs / rate 2 = 7 cycles)
 pub const COMMITMENT_CYCLES: usize = 7;
 
+/// Cycles per input: nullifier + merkle path verification
+pub const CYCLES_PER_INPUT: usize = NULLIFIER_CYCLES + MERKLE_CYCLES;
+
 /// Calculate trace row where nullifier N's hash output is located.
 pub fn nullifier_output_row(nullifier_index: usize) -> usize {
-    // Each nullifier takes NULLIFIER_CYCLES cycles
-    // Nullifier 0: cycles 0,1,2 -> output at row 47 (3*16-1)
-    // Nullifier 1: cycles 3,4,5 -> output at row 95 (6*16-1)
-    let start_cycle = nullifier_index * NULLIFIER_CYCLES;
+    // Nullifier is computed first, then Merkle path
+    // Nullifier 0: cycles 0,1,2 -> output at row 47
+    // Nullifier 1: cycles 11,12,13 -> output at row (11+3)*16-1 = 223
+    let start_cycle = nullifier_index * CYCLES_PER_INPUT;
     (start_cycle + NULLIFIER_CYCLES) * CYCLE_LENGTH - 1
+}
+
+/// Calculate trace row where Merkle root for input N is located.
+pub fn merkle_root_output_row(input_index: usize) -> usize {
+    // Merkle verification follows nullifier
+    // Input 0: cycles 3-10 -> root at row (3+8)*16-1 = 175
+    // Input 1: cycles 14-21 -> root at row (14+8)*16-1 = 351
+    let start_cycle = input_index * CYCLES_PER_INPUT + NULLIFIER_CYCLES;
+    (start_cycle + MERKLE_CYCLES) * CYCLE_LENGTH - 1
 }
 
 /// Calculate trace row where commitment M's hash output is located.
 pub fn commitment_output_row(commitment_index: usize) -> usize {
-    // Commitments start after all nullifiers
-    let nullifier_total_cycles = MAX_INPUTS * NULLIFIER_CYCLES;
-    let start_cycle = nullifier_total_cycles + commitment_index * COMMITMENT_CYCLES;
+    // Commitments start after all inputs (nullifier + merkle)
+    let input_total_cycles = MAX_INPUTS * CYCLES_PER_INPUT;
+    let start_cycle = input_total_cycles + commitment_index * COMMITMENT_CYCLES;
     (start_cycle + COMMITMENT_CYCLES) * CYCLE_LENGTH - 1
 }
 
@@ -161,19 +191,28 @@ impl Air for TransactionAirStark {
     fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
         // Constraint degree: S-box is x^5, so base degree is 5
         // The periodic hash_flag contributes via the cycles parameter
+        // We have 5 columns now, but only constrain 3 (the Poseidon state)
         let degrees = vec![
             TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
             TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
             TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
         ];
 
-        // Count assertions: one for each non-zero nullifier and commitment
+        // Count assertions: 
+        // - One for each non-zero nullifier
+        // - One for each Merkle root (must match public merkle_root)
+        // - One for each non-zero commitment
         let mut num_assertions = 0;
         
         for (i, &nf) in pub_inputs.nullifiers.iter().enumerate() {
             let row = nullifier_output_row(i);
             if nf != BaseElement::ZERO && row < trace_info.length() {
                 num_assertions += 1;
+                // Also count Merkle root assertion for this input
+                let merkle_row = merkle_root_output_row(i);
+                if merkle_row < trace_info.length() {
+                    num_assertions += 1;
+                }
             }
         }
         
@@ -242,12 +281,19 @@ impl Air for TransactionAirStark {
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
         let mut assertions = Vec::new();
         
-        // Assertions for all non-zero nullifiers
+        // Assertions for all non-zero nullifiers and their Merkle roots
         for (i, &nf) in self.pub_inputs.nullifiers.iter().enumerate() {
             if nf != BaseElement::ZERO {
+                // Nullifier hash output
                 let row = nullifier_output_row(i);
                 if row < self.context.trace_len() {
                     assertions.push(Assertion::single(COL_S0, row, nf));
+                }
+                
+                // Merkle root output (must match public merkle_root)
+                let merkle_row = merkle_root_output_row(i);
+                if merkle_row < self.context.trace_len() {
+                    assertions.push(Assertion::single(COL_S0, merkle_row, self.pub_inputs.merkle_root));
                 }
             }
         }
@@ -443,6 +489,7 @@ mod tests {
         use crate::stark_prover::TransactionProverStark;
         use crate::witness::TransactionWitness;
         use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+        use crate::hashing::merkle_node;
         
         let input_note = NoteData {
             value: 1000,
@@ -458,16 +505,32 @@ mod tests {
             rho: [4u8; 32],
             r: [5u8; 32],
         };
+        
+        // Compute correct merkle root from default path
+        let merkle_path = MerklePath::default();
+        let leaf = input_note.commitment();
+        let mut current = leaf;
+        let mut pos = 0u64;
+        for sibling in &merkle_path.siblings {
+            current = if pos & 1 == 0 {
+                merkle_node(current, *sibling)
+            } else {
+                merkle_node(*sibling, current)
+            };
+            pos >>= 1;
+        }
+        let merkle_root = current;
+        
         let witness = TransactionWitness {
             inputs: vec![InputNoteWitness {
                 note: input_note,
                 position: 0,
                 rho_seed: [7u8; 32],
-                merkle_path: MerklePath::default(),
+                merkle_path,
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
             sk_spend: [6u8; 32],
-            merkle_root: BaseElement::new(12345),
+            merkle_root,
             fee: 100,
             version: protocol_versioning::DEFAULT_VERSION_BINDING,
         };
