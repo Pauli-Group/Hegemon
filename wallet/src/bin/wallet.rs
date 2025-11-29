@@ -601,6 +601,10 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         anyhow::bail!("watch-only wallets cannot send");
     }
     
+    // Get the spend key for ML-DSA signing
+    let derived = store.derived_keys()?.ok_or_else(|| anyhow!("watch-only wallet has no spend key"))?;
+    let signing_seed = derived.spend.to_bytes();
+    
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
         .build()
@@ -627,21 +631,24 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         let recipients = parse_recipients(&randomized_specs).map_err(|e| anyhow!(e.to_string()))?;
         let metadata = transfer_recipients_from_specs(&randomized_specs);
         
-        // Build transaction
+        // Build transaction (creates STARK proof)
+        println!("Building shielded transaction with STARK proof...");
         let built = build_transaction(&store, &recipients, args.fee)?;
         store.mark_notes_pending(&built.spent_note_indexes, true)?;
         
-        // Submit via Substrate RPC
-        match client.submit_transaction(&built.bundle).await {
-            Ok(tx_id) => {
+        // Submit via properly signed Substrate extrinsic (ML-DSA signature)
+        println!("Signing extrinsic with ML-DSA and submitting...");
+        match client.submit_shielded_transfer_signed(&built.bundle, &signing_seed).await {
+            Ok(tx_hash) => {
                 store.record_pending_submission(
-                    tx_id,
+                    tx_hash,
                     built.nullifiers.clone(),
                     built.spent_note_indexes.clone(),
                     metadata,
                     args.fee,
                 )?;
-                println!("Submitted transaction: {}", hex::encode(tx_id));
+                println!("✓ Transaction submitted successfully!");
+                println!("  TX Hash: 0x{}", hex::encode(tx_hash));
                 Ok(())
             }
             Err(e) => {
