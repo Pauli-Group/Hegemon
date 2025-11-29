@@ -303,7 +303,7 @@ impl PqNetworkBackend {
                                                 msg_tx,
                                             });
 
-                                            let _ = event_tx.send(PqNetworkEvent::PeerConnected {
+                                            let send_result = event_tx.send(PqNetworkEvent::PeerConnected {
                                                 peer_id,
                                                 addr,
                                                 is_outbound: false,
@@ -312,7 +312,8 @@ impl PqNetworkBackend {
                                             tracing::info!(
                                                 peer_id = %hex::encode(peer_id),
                                                 addr = %addr,
-                                                "Inbound peer connected via PQ handshake"
+                                                send_ok = send_result.is_ok(),
+                                                "Inbound peer connected via PQ handshake - event sent"
                                             );
                                             
                                             // Spawn read loop for this peer

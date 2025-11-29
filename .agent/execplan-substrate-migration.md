@@ -60,7 +60,7 @@
 | Transaction Pool | ✅ Works | ✅ WIRED | Real pool created with author_* RPCs |
 | Standard RPCs | ✅ COMPLETE | ✅ VERIFIED | chain_*, state_*, system_* all work |
 | author_* RPCs | ✅ COMPLETE | ✅ VERIFIED | pendingExtrinsics, submitExtrinsic, hasKey work |
-| Chain Sync | ❌ MISSING | ❌ BROKEN | Not implemented |
+| Chain Sync | ✅ COMPLETE | ⚠️ NEEDS TEST | PoW-style GetBlocks sync implemented |
 
 ### Verified Working (2025-11-28 RPC Tests)
 
@@ -360,15 +360,20 @@ wire_pow_block_import()
 
 ---
 
-### Phase 11.6: Chain Sync ✅ COMPLETE
+### Phase 11.6: Chain Sync ✅ COMPLETE (PoW-style GetBlocks)
 
 **Goal**: New peers can download and verify full chain history.
+
+**Implementation**: Bitcoin-style "GetBlocks" sync - simpler than Substrate's ChainSync because PoW doesn't need finality gadgets, warp sync, or complex ancestor search.
 
 #### Task 11.6.1: Block Request Handler ✅
 
 Implemented in `node/src/substrate/sync.rs`:
-- `handle_sync_request()` - Responds to `SyncRequest::BlockHeaders` and `SyncRequest::BlockBodies`
-- Fetches headers/bodies from client backend and returns `SyncResponse`
+- `handle_sync_request()` - Responds to:
+  - `SyncRequest::GetBlocks { start_height, max_blocks }` - Returns full blocks (PoW-style)
+  - `SyncRequest::BlockHeaders` - Returns headers from start_hash
+  - `SyncRequest::BlockBodies` - Returns bodies for given hashes
+- `handle_get_blocks_request()` - Core handler that fetches blocks by height and returns `SyncResponse::Blocks`
 
 #### Task 11.6.2: Chain Sync State Machine ✅
 
@@ -376,32 +381,59 @@ Implemented `ChainSyncService<Block, Client>` in `node/src/substrate/sync.rs`:
 ```rust
 enum SyncState {
     Idle,
-    Downloading { target_height: u64, peer: PeerId, current_height: u64 },
+    Downloading { 
+        target_height, 
+        peer, 
+        current_height,
+        requested_height,
+        request_pending,
+        last_request_time 
+    },
     Synced,
 }
 ```
 
 Key components:
 - `on_block_announce()` - Updates peer state and triggers sync if behind
-- `handle_sync_response()` - Processes incoming headers/bodies and imports blocks
-- `tick()` - Periodic sync state machine, returns pending requests
-- Per-peer state tracking with `PeerSyncState` (best_height, best_hash, last_seen)
-- Integrated into service.rs with two tasks:
-  - `pq-network-events`: Handles block announcements and sync responses
-  - `chain-sync-tick`: Periodic sync tick task (1s interval)
+- `handle_blocks_response()` - Processes `SyncResponse::Blocks`, queues for import
+- `queue_downloaded_block()` - Adds blocks to download queue
+- `drain_downloaded()` - Returns queued blocks for import handler
+- `tick()` - Periodic sync state machine with:
+  - Timeout detection (30s per request)
+  - Progress logging (every 10s)
+  - Automatic retry on failure
+- Per-peer state tracking with `PeerSyncState` (best_height, best_hash, failed_requests)
+
+#### New Protocol Messages
+
+Added to `node/src/substrate/network_bridge.rs`:
+```rust
+// Request
+SyncRequest::GetBlocks { start_height: u64, max_blocks: u32 }
+
+// Response  
+SyncResponse::Blocks { request_id: u64, blocks: Vec<SyncBlock> }
+
+// Block structure
+SyncBlock { number, hash, header, body }
+```
 
 #### Task 11.6.3: Warp Sync (Optional) 🔴 DEFERRED
 
-Warp sync not implemented (lower priority - full sync works).
+Warp sync not implemented (lower priority - full sync works for PoW).
 
 **Key Files**:
-- `node/src/substrate/sync.rs` - Full ChainSyncService implementation (~665 lines)
-- `network/src/network_backend.rs` - Added `send_message()` for sending protocol messages
-- `node/src/substrate/service.rs` - Integrated sync service with PQ network events
+- `node/src/substrate/sync.rs` - Full ChainSyncService implementation (~1100 lines)
+- `node/src/substrate/network_bridge.rs` - Added `SyncRequest::GetBlocks`, `SyncResponse::Blocks`, `SyncBlock`
+- `network/src/network_backend.rs` - `send_message()` for sending protocol messages
+- `node/src/substrate/service.rs` - Block import handler processes both:
+  - Downloaded blocks from sync service (historical sync)
+  - Block announcements from peers (new blocks)
 
 **Status**: ✅ COMPLETE (Tasks 11.6.1-11.6.2)
-- [x] Code changed
-- [ ] Runtime verification pending
+- [x] Code implemented
+- [x] Compiles successfully
+- [ ] Two-node sync test pending
 
 ---
 
