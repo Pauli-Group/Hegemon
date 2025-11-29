@@ -18,9 +18,16 @@ scale-info = { workspace = true }
 log = { version = "0.4", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 
+# REAL STARK verification
+winterfell = { version = "0.13.1", default-features = false, optional = true }
+winter-verifier = { version = "0.13.1", default-features = false, optional = true }
+winter-air = { version = "0.13.1", default-features = false, optional = true }
+winter-math = { version = "0.13.1", default-features = false, optional = true }
+
 [dev-dependencies]
 sp-io = { workspace = true, features = ["std"] }
 pallet-balances = { workspace = true, features = ["std"] }
+winter-prover = { version = "0.13.1" }
 
 [features]
 default = ["std"]
@@ -35,6 +42,11 @@ std = [
     "codec/std",
     "scale-info/std",
     "serde/std",
+    "winterfell?/std",
+    "winter-verifier?/std",
+    "winter-air?/std",
+    "winter-math?/std",
 ]
 runtime-benchmarks = ["frame-benchmarking"]
 try-runtime = ["frame-support/try-runtime"]
+stark-verify = ["winterfell", "winter-verifier", "winter-air", "winter-math"]

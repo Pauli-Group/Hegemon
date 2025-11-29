@@ -12,6 +12,12 @@ pub enum CryptoError {
 
     #[cfg_attr(feature = "std", error("decapsulation failed"))]
     DecapsulationFailed,
+
+    #[cfg_attr(feature = "std", error("invalid key"))]
+    InvalidKey,
+
+    #[cfg_attr(feature = "std", error("invalid signature"))]
+    InvalidSignature,
 }
 
 #[cfg(not(feature = "std"))]
@@ -23,6 +29,8 @@ impl core::fmt::Display for CryptoError {
             }
             CryptoError::VerificationFailed => write!(f, "verification failed"),
             CryptoError::DecapsulationFailed => write!(f, "decapsulation failed"),
+            CryptoError::InvalidKey => write!(f, "invalid key"),
+            CryptoError::InvalidSignature => write!(f, "invalid signature"),
         }
     }
 }

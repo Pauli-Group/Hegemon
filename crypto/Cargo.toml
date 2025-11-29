@@ -4,13 +4,24 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Hashing
 sha2 = { version = "0.10", default-features = false }
 blake3 = { version = "1", default-features = false }
 sha3 = { version = "0.10", default-features = false }
-rand = { version = "0.8", default-features = false }
-rand_chacha = { version = "0.3", default-features = false }
+
+# RNG - use versions compatible with ml-kem/ml-dsa
+rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "os_rng"] }
+rand_chacha = { version = "0.9", default-features = false }
+rand_core = { version = "0.9", default-features = false }
+
+# REAL Post-Quantum Cryptography (FIPS 203/204)
+ml-kem = { version = "0.3.0-pre.2", default-features = false, features = ["deterministic"] }
+ml-dsa = { version = "0.1.0-rc.2", default-features = false }
+
+# Utilities
 thiserror = { version = "1", optional = true }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
+hybrid-array = { version = "0.2", default-features = false }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -22,9 +33,12 @@ std = [
     "rand/std",
     "rand/std_rng",
     "rand_chacha/std",
+    "rand_core/std",
     "sha2/std",
     "sha3/std",
     "blake3/std",
     "hex/std",
+    "ml-kem/alloc",
+    "ml-dsa/alloc",
     "thiserror",
 ]

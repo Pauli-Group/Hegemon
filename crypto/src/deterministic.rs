@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use core::cmp::min;
-use rand::{RngCore, SeedableRng};
+use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use sha2::{Digest, Sha256};
 
@@ -25,7 +25,7 @@ impl DeterministicRng {
 
     /// Fill the provided buffer with pseudo-random bytes.
     pub fn fill_bytes(&mut self, buffer: &mut [u8]) {
-        self.inner.fill_bytes(buffer);
+        rand_core::RngCore::fill_bytes(&mut self.inner, buffer);
     }
 }
 
