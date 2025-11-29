@@ -271,14 +271,34 @@ impl<'a> ShieldedTxBuilder<'a> {
         stats.proving_time = proof_result.proving_time;
         stats.proof_size = proof_result.proof_size();
 
-        // Build transaction bundle
-        let bundle = TransactionBundle::from_notes(proof_result.proof.clone(), &ciphertexts)?;
+        // Compute binding signature commitment
+        let binding_data = self.compute_binding_data(
+            &proof_result.anchor,
+            &proof_result.nullifiers,
+            &proof_result.commitments,
+            proof_result.value_balance,
+        );
+        let binding_sig = synthetic_crypto::hashes::blake2_256(&binding_data);
+        let mut binding_sig_64 = [0u8; 64];
+        binding_sig_64[..32].copy_from_slice(&binding_sig);
+        binding_sig_64[32..].copy_from_slice(&binding_sig);
 
-        // Compute nullifiers
+        // Build transaction bundle
+        let bundle = TransactionBundle::new(
+            proof_result.proof_bytes.clone(),
+            proof_result.nullifiers.to_vec(),
+            proof_result.commitments.to_vec(),
+            &ciphertexts,
+            proof_result.anchor,
+            binding_sig_64,
+            proof_result.value_balance,
+        )?;
+
+        // Compute nullifiers for wallet tracking
         let nullifiers = self.compute_nullifiers(&fvk, &selection);
 
-        // Compute commitments
-        let commitments = proof_result.commitments_bytes();
+        // Get commitments
+        let commitments = proof_result.commitments.to_vec();
 
         stats.total_time = total_start.elapsed();
 
@@ -448,6 +468,26 @@ impl<'a> ShieldedTxBuilder<'a> {
             fee,
             version: TransactionWitness::default_version_binding(),
         })
+    }
+
+    /// Compute binding data for signature commitment.
+    fn compute_binding_data(
+        &self,
+        anchor: &[u8; 32],
+        nullifiers: &[[u8; 32]],
+        commitments: &[[u8; 32]],
+        value_balance: i128,
+    ) -> Vec<u8> {
+        let mut data = Vec::new();
+        data.extend_from_slice(anchor);
+        for nf in nullifiers {
+            data.extend_from_slice(nf);
+        }
+        for cm in commitments {
+            data.extend_from_slice(cm);
+        }
+        data.extend_from_slice(&value_balance.to_le_bytes());
+        data
     }
 
     /// Compute nullifiers for the spent notes.

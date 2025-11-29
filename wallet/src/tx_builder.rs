@@ -1,13 +1,12 @@
 use rand::rngs::OsRng;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
-use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::OutputNoteWitness;
-use transaction_circuit::proof::prove;
 use transaction_circuit::witness::TransactionWitness;
 
 use crate::address::ShieldedAddress;
 use crate::error::WalletError;
 use crate::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
+use crate::prover::StarkProver;
 use crate::rpc::TransactionBundle;
 use crate::store::{SpendableNote, WalletMode, WalletStore};
 
@@ -108,16 +107,57 @@ pub fn build_transaction(
         fee,
         version: TransactionWitness::default_version_binding(),
     };
-    let (proving_key, _) = generate_keys();
-    let proof =
-        prove(&witness, &proving_key).map_err(|err| WalletError::Serialization(err.to_string()))?;
-    let bundle = TransactionBundle::from_notes(proof, &ciphertexts)?;
+    
+    // Generate STARK proof using the real prover
+    let prover = StarkProver::with_defaults();
+    let proof_result = prover.prove(&witness)?;
+    
+    // Compute binding signature commitment
+    let binding_data = compute_binding_data(
+        &proof_result.anchor,
+        &proof_result.nullifiers,
+        &proof_result.commitments,
+        proof_result.value_balance,
+    );
+    let binding_sig = synthetic_crypto::hashes::blake2_256(&binding_data);
+    let mut binding_sig_64 = [0u8; 64];
+    binding_sig_64[..32].copy_from_slice(&binding_sig);
+    binding_sig_64[32..].copy_from_slice(&binding_sig); // Double for 64 bytes
+    
+    let bundle = TransactionBundle::new(
+        proof_result.proof_bytes,
+        proof_result.nullifiers.to_vec(),
+        proof_result.commitments.to_vec(),
+        &ciphertexts,
+        proof_result.anchor,
+        binding_sig_64,
+        proof_result.value_balance,
+    )?;
     let spent_indexes = selection.spent.iter().map(|note| note.index).collect();
     Ok(BuiltTransaction {
         bundle,
         nullifiers,
         spent_note_indexes: spent_indexes,
     })
+}
+
+/// Compute binding data for signature commitment.
+fn compute_binding_data(
+    anchor: &[u8; 32],
+    nullifiers: &[[u8; 32]],
+    commitments: &[[u8; 32]],
+    value_balance: i128,
+) -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(anchor);
+    for nf in nullifiers {
+        data.extend_from_slice(nf);
+    }
+    for cm in commitments {
+        data.extend_from_slice(cm);
+    }
+    data.extend_from_slice(&value_balance.to_le_bytes());
+    data
 }
 
 struct Selection {

@@ -500,16 +500,34 @@ impl SubstrateRpcClient {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct WireTransactionBundle {
     proof: String,
+    nullifiers: Vec<String>,
+    commitments: Vec<String>,
     ciphertexts: Vec<String>,
+    anchor: String,
+    binding_sig: String,
+    value_balance: i128,
 }
 
 impl WireTransactionBundle {
     fn from_bundle(bundle: &TransactionBundle) -> Result<Self, WalletError> {
         use base64::Engine;
         
-        // Serialize proof to bytes then base64
-        let proof_bytes = bincode::serialize(&bundle.proof)?;
-        let proof = base64::engine::general_purpose::STANDARD.encode(&proof_bytes);
+        // Proof bytes are already serialized, just base64 encode
+        let proof = base64::engine::general_purpose::STANDARD.encode(&bundle.proof_bytes);
+        
+        // Encode nullifiers as hex
+        let nullifiers = bundle
+            .nullifiers
+            .iter()
+            .map(|nf| hex::encode(nf))
+            .collect();
+        
+        // Encode commitments as hex
+        let commitments = bundle
+            .commitments
+            .iter()
+            .map(|cm| hex::encode(cm))
+            .collect();
         
         // Encode each ciphertext as base64
         let ciphertexts = bundle
@@ -518,7 +536,19 @@ impl WireTransactionBundle {
             .map(|ct| base64::engine::general_purpose::STANDARD.encode(ct))
             .collect();
         
-        Ok(Self { proof, ciphertexts })
+        // Encode anchor and binding sig
+        let anchor = hex::encode(bundle.anchor);
+        let binding_sig = hex::encode(bundle.binding_sig);
+        
+        Ok(Self { 
+            proof, 
+            nullifiers,
+            commitments,
+            ciphertexts,
+            anchor,
+            binding_sig,
+            value_balance: bundle.value_balance,
+        })
     }
 }
 
