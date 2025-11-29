@@ -23,6 +23,7 @@ winterfell = { version = "0.13.1", default-features = false, optional = true }
 winter-verifier = { version = "0.13.1", default-features = false, optional = true }
 winter-air = { version = "0.13.1", default-features = false, optional = true }
 winter-math = { version = "0.13.1", default-features = false, optional = true }
+winter-crypto = { version = "0.13.1", default-features = false, optional = true }
 
 [dev-dependencies]
 sp-io = { workspace = true, features = ["std"] }
@@ -46,7 +47,8 @@ std = [
     "winter-verifier?/std",
     "winter-air?/std",
     "winter-math?/std",
+    "winter-crypto?/std",
 ]
 runtime-benchmarks = ["frame-benchmarking"]
 try-runtime = ["frame-support/try-runtime"]
-stark-verify = ["winterfell", "winter-verifier", "winter-air", "winter-math"]
+stark-verify = ["winterfell", "winter-verifier", "winter-air", "winter-math", "winter-crypto"]
