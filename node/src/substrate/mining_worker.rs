@@ -276,20 +276,49 @@ fn compute_pre_hash(parent_hash: &H256, number: u64, timestamp: u64) -> H256 {
 }
 
 /// Compute pre-hash including extrinsics root and state root (Task 11.4)
+/// 
+/// NOTE: This is a FALLBACK function that uses Blake3.
+/// For production, use `compute_substrate_pre_hash` which computes
+/// the actual Substrate header hash.
 fn compute_pre_hash_full(
     parent_hash: &H256,
     number: u64,
-    timestamp: u64,
+    _timestamp: u64,
     extrinsics_root: &H256,
     state_root: &H256,
 ) -> H256 {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(parent_hash.as_bytes());
-    hasher.update(&number.to_le_bytes());
-    hasher.update(&timestamp.to_le_bytes());
-    hasher.update(extrinsics_root.as_bytes());
-    hasher.update(state_root.as_bytes());
-    H256::from_slice(hasher.finalize().as_bytes())
+    // Use actual Substrate header hashing for compatibility with PowBlockImport
+    compute_substrate_pre_hash(parent_hash, number, extrinsics_root, state_root)
+}
+
+/// Compute the pre-hash the same way Substrate's Header::hash() does.
+///
+/// This creates a Substrate header (without seal in digest) and computes
+/// its hash, which is what PowBlockImport will use for verification.
+///
+/// The header is SCALE-encoded and hashed using Blake2b-256 (the default
+/// for Substrate's `Header` type).
+pub fn compute_substrate_pre_hash(
+    parent_hash: &H256,
+    number: u64,
+    extrinsics_root: &H256,
+    state_root: &H256,
+) -> H256 {
+    use runtime::Header;
+    use sp_runtime::Digest;
+    use sp_runtime::traits::Header as HeaderT;
+    
+    // Create a header without any digest items (no seal yet)
+    let header = Header::new(
+        number,
+        *extrinsics_root,
+        *state_root,
+        *parent_hash,
+        Digest::default(),
+    );
+    
+    // Compute the hash the same way Substrate does
+    header.hash()
 }
 
 /// Compute merkle root of extrinsics

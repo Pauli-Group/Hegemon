@@ -3349,6 +3349,7 @@ dependencies = [
  "network",
  "num-bigint",
  "num-traits",
+ "pallet-timestamp",
  "parity-scale-codec",
  "parking_lot 0.12.5",
  "pq-noise",

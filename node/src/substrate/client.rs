@@ -599,6 +599,12 @@ impl ProductionChainStateProvider {
     /// Otherwise, falls back to mock execution with zero state root.
     pub fn execute_extrinsics(&self, parent_hash: &H256, block_number: u64, extrinsics: &[Vec<u8>]) -> Result<StateExecutionResult, String> {
         if let Some(ref f) = *self.execute_extrinsics_fn.read() {
+            tracing::info!(
+                parent = %hex::encode(parent_hash.as_bytes()),
+                block_number,
+                tx_count = extrinsics.len(),
+                "CALLING REAL execute_extrinsics_fn"
+            );
             let result = f(parent_hash, block_number, extrinsics);
             if self.config.verbose {
                 match &result {
@@ -620,6 +626,10 @@ impl ProductionChainStateProvider {
             }
             result
         } else {
+            tracing::warn!(
+                block_number,
+                "execute_extrinsics_fn NOT SET - using mock"
+            );
             // Fallback: mock execution with zero state root
             // This allows mining to work in scaffold mode without full runtime
             let extrinsics_root = crate::substrate::mining_worker::compute_extrinsics_root(extrinsics);
@@ -750,18 +760,9 @@ impl ChainStateProvider for ProductionChainStateProvider {
         
         let template = BlockTemplate::new(parent_hash, block_number, difficulty_bits);
         
-        if pending.is_empty() {
-            if self.config.verbose {
-                tracing::debug!(
-                    block_number,
-                    parent = %hex::encode(parent_hash.as_bytes()),
-                    "Building empty block template (no pending transactions)"
-                );
-            }
-            return template;
-        }
-        
         // Task 11.4: Execute extrinsics against runtime state
+        // Always call execute_extrinsics even if pending is empty, 
+        // because inherents (like timestamp) need to be injected
         match self.execute_extrinsics(&parent_hash, block_number, &pending) {
             Ok(result) => {
                 if self.config.verbose {

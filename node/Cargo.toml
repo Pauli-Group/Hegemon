@@ -70,6 +70,9 @@ sp-block-builder = { workspace = true, features = ["std"], optional = true }
 sp-inherents = { workspace = true, features = ["std"], optional = true }
 codec = { workspace = true, optional = true }
 
+# Pallet dependencies for inherent creation
+pallet-timestamp = { workspace = true, features = ["std"], optional = true }
+
 jsonrpsee = { version = "0.24", features = ["server", "macros"], optional = true }
 
 # Runtime dependency (for WASM binary and APIs)
@@ -121,6 +124,7 @@ substrate = [
     "dep:jsonrpsee",
     "dep:runtime",
     "dep:codec",
+    "dep:pallet-timestamp",
     "consensus/substrate",
 ]
 
