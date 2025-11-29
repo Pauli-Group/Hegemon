@@ -60,6 +60,9 @@ sc-transaction-pool = { workspace = true, optional = true }
 sc-transaction-pool-api = { workspace = true, optional = true }
 sc-basic-authorship = { workspace = true, optional = true }
 sc-block-builder = { workspace = true, optional = true }
+sc-rpc = { workspace = true, optional = true }
+sc-rpc-api = { workspace = true, optional = true }
+substrate-frame-rpc-system = { workspace = true, optional = true }
 sp-consensus-pow = { workspace = true, optional = true }
 sp-blockchain = { workspace = true, optional = true }
 sp-consensus = { workspace = true, optional = true }
@@ -114,6 +117,9 @@ substrate = [
     "dep:sc-transaction-pool-api",
     "dep:sc-basic-authorship",
     "dep:sc-block-builder",
+    "dep:sc-rpc",
+    "dep:sc-rpc-api",
+    "dep:substrate-frame-rpc-system",
     "dep:sp-consensus-pow",
     "dep:sp-blockchain",
     "dep:sp-consensus",

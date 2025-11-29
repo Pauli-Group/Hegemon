@@ -2858,6 +2858,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "frame-system-rpc-runtime-api"
+version = "39.0.0"
+source = "git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2509-2#7304752b47858f2cd601b35d0eb734ad4ccbbc48"
+dependencies = [
+ "docify",
+ "parity-scale-codec",
+ "sp-api",
+]
+
+[[package]]
 name = "frame-try-runtime"
 version = "0.49.0"
 source = "git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2509-2#7304752b47858f2cd601b35d0eb734ad4ccbbc48"
@@ -3369,6 +3379,8 @@ dependencies = [
  "sc-consensus",
  "sc-consensus-pow",
  "sc-executor",
+ "sc-rpc",
+ "sc-rpc-api",
  "sc-service",
  "sc-transaction-pool",
  "sc-transaction-pool-api",
@@ -3389,6 +3401,7 @@ dependencies = [
  "sp-runtime",
  "sp-timestamp",
  "state-merkle",
+ "substrate-frame-rpc-system",
  "synthetic-crypto",
  "tempfile",
  "thiserror 1.0.69",
@@ -9897,6 +9910,26 @@ dependencies = [
  "schnorrkel",
  "sha2 0.10.9",
  "zeroize",
+]
+
+[[package]]
+name = "substrate-frame-rpc-system"
+version = "47.0.0"
+source = "git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2509-2#7304752b47858f2cd601b35d0eb734ad4ccbbc48"
+dependencies = [
+ "docify",
+ "frame-system-rpc-runtime-api",
+ "futures",
+ "jsonrpsee",
+ "log",
+ "parity-scale-codec",
+ "sc-rpc-api",
+ "sc-transaction-pool-api",
+ "sp-api",
+ "sp-block-builder",
+ "sp-blockchain",
+ "sp-core",
+ "sp-runtime",
 ]
 
 [[package]]
