@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use proptest::{collection::vec, prelude::*};
 use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
 use transaction_circuit::hashing::Felt;
-use transaction_circuit::note::{InputNoteWitness, NoteData, OutputNoteWitness};
+use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use transaction_circuit::{TransactionCircuitError, TransactionWitness};
 use winterfell::math::FieldElement;
 
@@ -40,6 +40,7 @@ fn arb_input_note() -> impl Strategy<Value = InputNoteWitness> {
             note,
             position: position as u64,
             rho_seed,
+            merkle_path: MerklePath::default(),
         }
     })
 }
@@ -147,6 +148,7 @@ fn witness_rejects_oversized_inputs() {
                 },
                 position: 0,
                 rho_seed: [4u8; 32],
+                merkle_path: MerklePath::default(),
             };
             MAX_INPUTS + 1
         ],

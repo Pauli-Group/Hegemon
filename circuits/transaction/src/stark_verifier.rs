@@ -130,11 +130,27 @@ impl TransactionPublicInputsStark {
 mod tests {
     use super::*;
     use crate::{
-        note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
+        note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness, MERKLE_TREE_DEPTH},
         stark_prover::{TransactionProverStark, fast_proof_options},
         witness::TransactionWitness,
+        hashing::merkle_node,
     };
     use winterfell::Prover;
+    
+    /// Compute the Merkle root from a leaf and a path of siblings
+    fn compute_merkle_root_from_path(leaf: BaseElement, position: u64, path: &MerklePath) -> BaseElement {
+        let mut current = leaf;
+        let mut pos = position;
+        for sibling in &path.siblings {
+            current = if pos & 1 == 0 {
+                merkle_node(current, *sibling)
+            } else {
+                merkle_node(*sibling, current)
+            };
+            pos >>= 1;
+        }
+        current
+    }
 
     fn make_test_witness() -> TransactionWitness {
         let input_note = NoteData {
@@ -153,16 +169,20 @@ mod tests {
             r: [5u8; 32],
         };
 
+        let merkle_path = MerklePath::default();
+        let leaf = input_note.commitment();
+        let merkle_root = compute_merkle_root_from_path(leaf, 0, &merkle_path);
+
         TransactionWitness {
             inputs: vec![InputNoteWitness {
                 note: input_note,
                 position: 0,
                 rho_seed: [7u8; 32],
-                merkle_path: MerklePath::default(),
+                merkle_path,
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
             sk_spend: [6u8; 32],
-            merkle_root: BaseElement::new(12345),
+            merkle_root,
             fee: 100,
             version: protocol_versioning::DEFAULT_VERSION_BINDING,
         }

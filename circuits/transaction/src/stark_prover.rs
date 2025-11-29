@@ -14,14 +14,15 @@ use winterfell::{
 use winter_crypto::hashers::Blake3_256;
 
 use crate::{
-    constants::{MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS, POSEIDON_WIDTH, NULLIFIER_DOMAIN_TAG, NOTE_DOMAIN_TAG},
+    constants::{MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS, POSEIDON_WIDTH, NULLIFIER_DOMAIN_TAG, NOTE_DOMAIN_TAG, MERKLE_DOMAIN_TAG, CIRCUIT_MERKLE_DEPTH},
     hashing::prf_key,
     stark_air::{
         TransactionAirStark, TransactionPublicInputsStark,
         TRACE_WIDTH, MIN_TRACE_LENGTH, CYCLE_LENGTH,
-        NULLIFIER_CYCLES, COMMITMENT_CYCLES,
-        COL_S0, COL_S1, COL_S2,
+        NULLIFIER_CYCLES, COMMITMENT_CYCLES, CYCLES_PER_INPUT, MERKLE_CYCLES,
+        COL_S0, COL_S1, COL_S2, COL_MERKLE_SIBLING, COL_VALUE,
         round_constant, sbox, mds_mix,
+        nullifier_output_row, commitment_output_row, merkle_root_output_row,
     },
     witness::TransactionWitness,
     TransactionCircuitError,
@@ -52,14 +53,16 @@ impl TransactionProverStark {
     /// - Steps 0-7: Apply Poseidon rounds (state changes each step)
     /// - Steps 8-15: Copy state (state remains unchanged, hash output preserved)
     ///
-    /// For a sponge that requires multiple absorptions, we use multiple cycles.
-    /// The final hash output appears at the end of the last cycle for that hash.
+    /// ## Trace Layout (cycles per input):
+    /// 
+    /// For each input (MAX_INPUTS = 2):
+    /// - Nullifier hash: NULLIFIER_CYCLES (3) cycles
+    /// - Merkle path verification: MERKLE_CYCLES (8) cycles
     ///
-    /// Trace layout (cycles):
-    /// - Nullifier 0: cycles 0-2 (NULLIFIER_CYCLES=3), output at row 47
-    /// - Nullifier 1: cycles 3-5, output at row 95
-    /// - Commitment 0: cycles 6-12 (COMMITMENT_CYCLES=7), output at row 207
-    /// - Commitment 1: cycles 13-19, output at row 319
+    /// For each output (MAX_OUTPUTS = 2):
+    /// - Commitment hash: COMMITMENT_CYCLES (7) cycles
+    ///
+    /// Total cycles = 2 * (3 + 8) + 2 * 7 = 36 cycles = 576 rows → 1024 (power of 2)
     pub fn build_trace(
         &self,
         witness: &TransactionWitness,
@@ -127,7 +130,58 @@ impl TransactionProverStark {
             state[0]
         };
         
+        // Helper to compute merkle_node hash (2 inputs → 1 output) in one cycle
+        let compute_merkle_node_in_trace = |
+            trace: &mut Vec<Vec<BaseElement>>,
+            cycle: usize,
+            left: BaseElement,
+            right: BaseElement,
+            sibling: BaseElement,
+        | -> BaseElement {
+            let cycle_start = cycle * CYCLE_LENGTH;
+            if cycle_start + CYCLE_LENGTH > trace_len {
+                return BaseElement::ZERO;
+            }
+            
+            // merkle_node uses sponge with domain tag and 2 inputs
+            let mut state = [
+                BaseElement::new(MERKLE_DOMAIN_TAG),
+                BaseElement::ZERO,
+                BaseElement::ONE,
+            ];
+            
+            // Absorb left and right
+            state[0] += left;
+            state[1] += right;
+            
+            // Record 8 hash rounds
+            for round in 0..POSEIDON_ROUNDS {
+                let row = cycle_start + round;
+                trace[COL_S0][row] = state[0];
+                trace[COL_S1][row] = state[1];
+                trace[COL_S2][row] = state[2];
+                trace[COL_MERKLE_SIBLING][row] = sibling;
+
+                let t0 = state[0] + round_constant(round, 0);
+                let t1 = state[1] + round_constant(round, 1);
+                let t2 = state[2] + round_constant(round, 2);
+                state = mds_mix(&[sbox(t0), sbox(t1), sbox(t2)]);
+            }
+
+            // Record copy steps
+            for step in POSEIDON_ROUNDS..CYCLE_LENGTH {
+                let row = cycle_start + step;
+                trace[COL_S0][row] = state[0];
+                trace[COL_S1][row] = state[1];
+                trace[COL_S2][row] = state[2];
+                trace[COL_MERKLE_SIBLING][row] = sibling;
+            }
+            
+            state[0]
+        };
+        
         // Helper to fill cycles with dummy hash for padding
+        // This runs valid Poseidon rounds so the AIR constraints are satisfied
         let fill_dummy_cycles = |
             trace: &mut Vec<Vec<BaseElement>>,
             start_cycle: usize,
@@ -164,14 +218,14 @@ impl TransactionProverStark {
             }
         };
 
-        // Process nullifiers - each gets NULLIFIER_CYCLES (3) cycles
+        // Process each input: nullifier hash + Merkle path verification
         for idx in 0..MAX_INPUTS {
-            let start_cycle = idx * NULLIFIER_CYCLES;
+            let input_base_cycle = idx * CYCLES_PER_INPUT;
             
             if idx < witness.inputs.len() {
                 let input = &witness.inputs[idx];
                 
-                // Build hash inputs (same as hashing.rs nullifier function)
+                // Phase 1: Compute nullifier hash (3 cycles)
                 let mut hash_inputs = Vec::new();
                 hash_inputs.push(prf);
                 hash_inputs.push(BaseElement::new(input.position));
@@ -181,16 +235,52 @@ impl TransactionProverStark {
                     buf[8 - len..].copy_from_slice(&chunk[..len]);
                     hash_inputs.push(BaseElement::new(u64::from_be_bytes(buf)));
                 }
-
-                compute_hash_in_trace(&mut trace, start_cycle, NULLIFIER_DOMAIN_TAG, &hash_inputs);
+                compute_hash_in_trace(&mut trace, input_base_cycle, NULLIFIER_DOMAIN_TAG, &hash_inputs);
+                
+                // Phase 2: Merkle path verification (MERKLE_CYCLES cycles)
+                // Compute note commitment as the leaf
+                let leaf = input.note.commitment();
+                let merkle_start_cycle = input_base_cycle + NULLIFIER_CYCLES;
+                
+                // Verify Merkle path from leaf to root
+                let mut current = leaf;
+                let mut pos = input.position;
+                
+                for level in 0..MERKLE_CYCLES {
+                    let cycle = merkle_start_cycle + level;
+                    
+                    // Get sibling from merkle_path (or use zero if path is shorter)
+                    let sibling = if level < input.merkle_path.siblings.len() {
+                        input.merkle_path.siblings[level]
+                    } else {
+                        BaseElement::ZERO
+                    };
+                    
+                    // Compute merkle_node based on position bit
+                    let (left, right) = if pos & 1 == 0 {
+                        (current, sibling)
+                    } else {
+                        (sibling, current)
+                    };
+                    
+                    current = compute_merkle_node_in_trace(&mut trace, cycle, left, right, sibling);
+                    pos >>= 1;
+                }
+                
+                // Store marker in COL_VALUE at the nullifier output row
+                // We use value + 1 so zero-value notes still have a non-zero marker
+                let nf_row = (input_base_cycle + NULLIFIER_CYCLES) * CYCLE_LENGTH - 1;
+                if nf_row < trace_len {
+                    trace[COL_VALUE][nf_row] = BaseElement::new(input.note.value.wrapping_add(1));
+                }
             } else {
-                // Pad with dummy hash cycles
-                fill_dummy_cycles(&mut trace, start_cycle, NULLIFIER_CYCLES);
+                // Pad with dummy hash cycles (COL_VALUE stays zero for padding)
+                fill_dummy_cycles(&mut trace, input_base_cycle, CYCLES_PER_INPUT);
             }
         }
 
         // Process commitments - each gets COMMITMENT_CYCLES (7) cycles
-        let commitment_base_cycle = MAX_INPUTS * NULLIFIER_CYCLES;
+        let commitment_base_cycle = MAX_INPUTS * CYCLES_PER_INPUT;
         
         for idx in 0..MAX_OUTPUTS {
             let start_cycle = commitment_base_cycle + idx * COMMITMENT_CYCLES;
@@ -212,14 +302,21 @@ impl TransactionProverStark {
                 }
 
                 compute_hash_in_trace(&mut trace, start_cycle, NOTE_DOMAIN_TAG, &hash_inputs);
+                
+                // Store marker in COL_VALUE at the commitment output row
+                // We use value + 1 so zero-value notes still have a non-zero marker
+                let cm_row = (start_cycle + COMMITMENT_CYCLES) * CYCLE_LENGTH - 1;
+                if cm_row < trace_len {
+                    trace[COL_VALUE][cm_row] = BaseElement::new(output.note.value.wrapping_add(1));
+                }
             } else {
-                // Pad with dummy hash cycles
+                // Pad with dummy hash cycles (COL_VALUE stays zero for padding)
                 fill_dummy_cycles(&mut trace, start_cycle, COMMITMENT_CYCLES);
             }
         }
 
         // Fill remaining rows with proper dummy hash cycles
-        let total_used_cycles = MAX_INPUTS * NULLIFIER_CYCLES + MAX_OUTPUTS * COMMITMENT_CYCLES;
+        let total_used_cycles = MAX_INPUTS * CYCLES_PER_INPUT + MAX_OUTPUTS * COMMITMENT_CYCLES;
         let total_cycles = trace_len / CYCLE_LENGTH;
         
         if total_used_cycles < total_cycles {
@@ -285,31 +382,64 @@ impl Prover for TransactionProverStark {
 
     fn get_pub_inputs(&self, trace: &Self::Trace) -> TransactionPublicInputsStark {
         // Read all nullifiers and commitments from their deterministic trace positions
-        // Nullifier i ends at row: (i + 1) * NULLIFIER_CYCLES * CYCLE_LENGTH - 1
-        // Commitment i ends at row: (MAX_INPUTS * NULLIFIER_CYCLES + (i + 1) * COMMITMENT_CYCLES) * CYCLE_LENGTH - 1
+        // Nullifier i ends at row: (i * CYCLES_PER_INPUT + NULLIFIER_CYCLES) * CYCLE_LENGTH - 1
+        // Commitment i ends at row: (MAX_INPUTS * CYCLES_PER_INPUT + (i + 1) * COMMITMENT_CYCLES) * CYCLE_LENGTH - 1
+        //
+        // We use COL_VALUE to distinguish real inputs from padding:
+        // - Real inputs have COL_VALUE set to note.value (can be 0 for zero-value notes)
+        // - We mark real inputs with a 1 in position COL_VALUE at nullifier row
+        // For now, use a simpler heuristic: real inputs have non-default hash outputs
         
         let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
         for i in 0..MAX_INPUTS {
-            let row = (i + 1) * NULLIFIER_CYCLES * CYCLE_LENGTH - 1;
+            let row = nullifier_output_row(i);
             let nf = if row < trace.length() {
-                trace.get(COL_S0, row)
+                let val = trace.get(COL_S0, row);
+                // Check if this is a real input by looking at COL_VALUE
+                // Real inputs have note values stored; padding has zero
+                let note_value = trace.get(COL_VALUE, row);
+                if note_value == BaseElement::ZERO {
+                    // This is a padding slot, treat nullifier as zero
+                    BaseElement::ZERO
+                } else {
+                    val
+                }
             } else {
                 BaseElement::ZERO
             };
             nullifiers.push(nf);
         }
         
-        let commitment_base_cycles = MAX_INPUTS * NULLIFIER_CYCLES;
         let mut commitments = Vec::with_capacity(MAX_OUTPUTS);
         for i in 0..MAX_OUTPUTS {
-            let row = (commitment_base_cycles + (i + 1) * COMMITMENT_CYCLES) * CYCLE_LENGTH - 1;
+            let row = commitment_output_row(i);
             let cm = if row < trace.length() {
-                trace.get(COL_S0, row)
+                let val = trace.get(COL_S0, row);
+                // Check if this is a real output by looking at COL_VALUE
+                let note_value = trace.get(COL_VALUE, row);
+                if note_value == BaseElement::ZERO {
+                    // This is a padding slot, treat commitment as zero
+                    BaseElement::ZERO
+                } else {
+                    val
+                }
             } else {
                 BaseElement::ZERO
             };
             commitments.push(cm);
         }
+        
+        // Read merkle root from the first input's Merkle output row
+        let merkle_root = if trace.length() > 0 {
+            let row = merkle_root_output_row(0);
+            if row < trace.length() {
+                trace.get(COL_S0, row)
+            } else {
+                BaseElement::ZERO
+            }
+        } else {
+            BaseElement::ZERO
+        };
 
         TransactionPublicInputsStark {
             nullifiers,
@@ -317,7 +447,7 @@ impl Prover for TransactionProverStark {
             total_input: BaseElement::ZERO,
             total_output: BaseElement::ZERO,
             fee: BaseElement::ZERO,
-            merkle_root: BaseElement::ZERO,
+            merkle_root,
         }
     }
 
@@ -389,7 +519,52 @@ pub fn fast_proof_options() -> ProofOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
-        use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};    fn make_test_witness() -> TransactionWitness {
+    use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness, MERKLE_TREE_DEPTH};
+    use crate::hashing::merkle_node;
+    
+    /// Compute the Merkle root from a leaf and a path of siblings (all zeros for default path)
+    fn compute_merkle_root_from_path(leaf: BaseElement, position: u64, path: &MerklePath) -> BaseElement {
+        let mut current = leaf;
+        let mut pos = position;
+        for sibling in &path.siblings {
+            current = if pos & 1 == 0 {
+                merkle_node(current, *sibling)
+            } else {
+                merkle_node(*sibling, current)
+            };
+            pos >>= 1;
+        }
+        current
+    }
+    
+    /// Build a Merkle tree with 2 leaves at positions 0 and 1, returning paths for both
+    /// This is a minimal tree where leaves 0 and 1 are siblings at the bottom level.
+    fn build_two_leaf_merkle_tree(leaf0: BaseElement, leaf1: BaseElement) -> (MerklePath, MerklePath, BaseElement) {
+        // At level 0, leaves 0 and 1 are siblings
+        // For leaf at position 0: sibling at level 0 is leaf1
+        // For leaf at position 1: sibling at level 0 is leaf0
+        
+        let mut siblings0 = vec![leaf1];  // Path for position 0
+        let mut siblings1 = vec![leaf0];  // Path for position 1
+        
+        // The parent of leaves 0,1 is merkle_node(leaf0, leaf1)
+        let mut current = merkle_node(leaf0, leaf1);
+        
+        // For levels 1 through MERKLE_TREE_DEPTH-1, the sibling is zero (no other nodes in tree)
+        for _ in 1..MERKLE_TREE_DEPTH {
+            siblings0.push(BaseElement::ZERO);
+            siblings1.push(BaseElement::ZERO);
+            // Parent: merkle_node(current, 0) since we're always on left branch
+            current = merkle_node(current, BaseElement::ZERO);
+        }
+        
+        let path0 = MerklePath { siblings: siblings0 };
+        let path1 = MerklePath { siblings: siblings1 };
+        
+        (path0, path1, current)
+    }
+    
+    fn make_test_witness() -> TransactionWitness {
         let input_note = NoteData {
             value: 1000,
             asset_id: 0,
@@ -406,16 +581,20 @@ mod tests {
             r: [5u8; 32],
         };
 
+        let merkle_path = MerklePath::default();
+        let leaf = input_note.commitment();
+        let merkle_root = compute_merkle_root_from_path(leaf, 0, &merkle_path);
+
         TransactionWitness {
             inputs: vec![InputNoteWitness {
                 note: input_note,
                 position: 0,
                 rho_seed: [7u8; 32],
-                merkle_path: MerklePath::default(),
+                merkle_path,
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
             sk_spend: [6u8; 32],
-            merkle_root: BaseElement::new(12345),
+            merkle_root,
             fee: 100,
             version: protocol_versioning::DEFAULT_VERSION_BINDING,
         }
@@ -443,18 +622,15 @@ mod tests {
         let expected_nf = crate::hashing::nullifier(prf, &witness.inputs[0].note.rho, 0);
         let expected_cm = witness.outputs[0].note.commitment();
         
-        // With multi-I/O layout:
-        // - Nullifier 0 at cycles 0-2, output at row (0+1)*NULLIFIER_CYCLES*CYCLE_LENGTH - 1 = 47
-        // - Nullifier 1 at cycles 3-5, output at row 95
-        // - Commitment 0 at cycles 6-12, output at row (MAX_INPUTS*NULLIFIER_CYCLES + 1*COMMITMENT_CYCLES)*CYCLE_LENGTH - 1 = 207
-        // - Commitment 1 at cycles 13-19, output at row 319
-        let nf_row = NULLIFIER_CYCLES * CYCLE_LENGTH - 1;  // 47
+        // With merkle-path layout:
+        // Input 0: nullifier cycles 0-2 (output at row 47), merkle cycles 3-10 (root at row 175)
+        // Input 1: nullifier cycles 11-13 (output at row 223), merkle cycles 14-21 (root at row 351)
+        // Commitment 0: cycles 22-28 (output at row 463)
+        // Commitment 1: cycles 29-35 (output at row 575)
+        let nf_row = nullifier_output_row(0);
         let trace_nf = trace.get(COL_S0, nf_row);
         
-        // Commitment 0: base cycles = MAX_INPUTS * NULLIFIER_CYCLES = 6
-        // Position = (6 + 7) * 16 - 1 = 207
-        let commitment_base_cycles = MAX_INPUTS * NULLIFIER_CYCLES;
-        let cm_row = (commitment_base_cycles + COMMITMENT_CYCLES) * CYCLE_LENGTH - 1;  // 207
+        let cm_row = commitment_output_row(0);
         let trace_cm = trace.get(COL_S0, cm_row);
         
         println!("Expected nullifier: {:?}", expected_nf);
@@ -542,19 +718,24 @@ mod tests {
             r: [15u8; 32],
         };
 
+        // Build proper Merkle tree with both input notes
+        let leaf0 = input_note1.commitment();
+        let leaf1 = input_note2.commitment();
+        let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
+
         let witness = TransactionWitness {
             inputs: vec![
                 InputNoteWitness {
                     note: input_note1,
                     position: 0,
                     rho_seed: [7u8; 32],
-                    merkle_path: MerklePath::default(),
+                    merkle_path: merkle_path0,
                 },
                 InputNoteWitness {
                     note: input_note2,
                     position: 1,
                     rho_seed: [17u8; 32],
-                    merkle_path: MerklePath::default(),
+                    merkle_path: merkle_path1,
                 },
             ],
             outputs: vec![
@@ -562,7 +743,7 @@ mod tests {
                 OutputNoteWitness { note: output_note2 },
             ],
             sk_spend: [6u8; 32],
-            merkle_root: BaseElement::new(12345),
+            merkle_root,
             fee: 100,
             version: protocol_versioning::DEFAULT_VERSION_BINDING,
         };
@@ -573,24 +754,23 @@ mod tests {
         // Verify all hashes are at expected positions
         let prf = prf_key(&witness.sk_spend);
 
-        // Nullifier 0 at row (0+1)*3*16 - 1 = 47
-        let nf0_row = NULLIFIER_CYCLES * CYCLE_LENGTH - 1;
+        // Nullifier 0 at nullifier_output_row(0)
+        let nf0_row = nullifier_output_row(0);
         let expected_nf0 = crate::hashing::nullifier(prf, &witness.inputs[0].note.rho, 0);
         assert_eq!(trace.get(COL_S0, nf0_row), expected_nf0, "Nullifier 0 mismatch");
 
-        // Nullifier 1 at row (1+1)*3*16 - 1 = 95
-        let nf1_row = 2 * NULLIFIER_CYCLES * CYCLE_LENGTH - 1;
+        // Nullifier 1 at nullifier_output_row(1)
+        let nf1_row = nullifier_output_row(1);
         let expected_nf1 = crate::hashing::nullifier(prf, &witness.inputs[1].note.rho, 1);
         assert_eq!(trace.get(COL_S0, nf1_row), expected_nf1, "Nullifier 1 mismatch");
 
-        // Commitment 0 at row (2*3 + 1*7)*16 - 1 = 207
-        let commitment_base = MAX_INPUTS * NULLIFIER_CYCLES;
-        let cm0_row = (commitment_base + COMMITMENT_CYCLES) * CYCLE_LENGTH - 1;
+        // Commitment 0 at commitment_output_row(0)
+        let cm0_row = commitment_output_row(0);
         let expected_cm0 = witness.outputs[0].note.commitment();
         assert_eq!(trace.get(COL_S0, cm0_row), expected_cm0, "Commitment 0 mismatch");
 
-        // Commitment 1 at row (2*3 + 2*7)*16 - 1 = 319
-        let cm1_row = (commitment_base + 2 * COMMITMENT_CYCLES) * CYCLE_LENGTH - 1;
+        // Commitment 1 at commitment_output_row(1)
+        let cm1_row = commitment_output_row(1);
         let expected_cm1 = witness.outputs[1].note.commitment();
         assert_eq!(trace.get(COL_S0, cm1_row), expected_cm1, "Commitment 1 mismatch");
 
