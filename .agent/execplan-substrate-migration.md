@@ -107,14 +107,36 @@
 | Chain Sync | ❌ MISSING | - | Multi-node sync not implemented |
 | Shielded Pool Pallet | ✅ COMPILES | STARK, Poseidon | Ready for E2E testing |
 | Identity Pallet (PQ) | ✅ COMPILES | ML-DSA-65 | Ready for E2E testing |
+| **ML-KEM-768** | ✅ REAL | FIPS 203 | RustCrypto `ml-kem` v0.3.0-pre.2 |
+| **ML-DSA-65** | ✅ REAL | FIPS 204 | RustCrypto `ml-dsa` v0.1.0-rc.2 |
+| **STARK Verifier** | ⚠️ PARTIAL | winterfell | Validates structure, not full AIR |
+| **Transaction Circuit** | 🔴 **FAKE** | - | **NO REAL STARK PROOFS - Phase 11.9** |
 
-### Test Results (Updated 2025-11-28)
+### 🚨 CRITICAL: Fake STARK Circuit (Discovered 2025-11-29)
+
+The `circuits/transaction/` crate is **100% FAKE**:
+- `prove()` returns trace data, NOT a STARK proof
+- `verify()` does equality checks, NOT algebraic verification
+- `ProvingKey`/`VerifyingKey` have NO cryptographic material
+- winterfell dependency is declared but **UNUSED**
+
+**Impact**: Shielded transactions provide **ZERO privacy guarantees** until Phase 11.9 is complete.
+
+**See Phase 11.9 for detailed fix plan.**
+
+### Test Results (Updated 2025-11-29)
 
 ```bash
-# Unit tests pass
+# PQC crypto tests - ALL PASS (REAL implementations)
+cargo test --manifest-path crypto/Cargo.toml
+# ✅ 6 unit tests pass (ML-KEM, ML-DSA)
+# ✅ 4 integration tests pass (test vectors)
+
+# Pallet tests - ALL PASS
 cargo test -p pallet-shielded-pool  # 53 passed
+cargo test -p pallet-settlement     # 2 passed
 cargo test -p pq-noise              # 13 passed  
-cargo test -p network               # 10 passed
+cargo test -p network               # 10 passed (2 perf tests flaky)
 cargo check -p hegemon-node         # SUCCESS
 
 # Runtime tests - ALL PASSING NOW
@@ -772,6 +794,562 @@ echo "=== ALL SHIELDED TX TESTS PASSED ==="
 
 **Status**: 🔴 NOT STARTED
 - [ ] Runtime verification passed
+
+---
+
+### Phase 11.9: Real STARK Circuit Implementation 🔴 CRITICAL
+
+**Goal**: Replace the fake transaction circuit with real winterfell STARK proofs.
+
+**CRITICAL FINDING (2025-11-29)**: The entire `circuits/transaction/` crate is **FAKE**:
+- `prove()` just calls `check_constraints()` - **NO STARK PROVING**
+- `verify()` just calls `air.check()` - **NO STARK VERIFICATION**
+- `TransactionAir::check()` does basic equality comparisons - **NOT algebraic constraints**
+- `ProvingKey` / `VerifyingKey` are empty structs with constants - **NO cryptographic keys**
+- The winterfell dependency is **UNUSED**
+
+**Impact**: Without real STARK proofs, the shielded transaction system provides **ZERO privacy guarantees**.
+
+---
+
+#### Task 11.9.1: Define Real AIR (Algebraic Intermediate Representation) 🔴
+
+**File**: `circuits/transaction/src/air.rs`
+
+**Current** (FAKE):
+```rust
+impl TransactionAir {
+    pub fn check(&self, public_inputs: &TransactionPublicInputs) -> Result<(), Error> {
+        // Just equality checks - NOT real constraints
+        for (idx, expected) in public_inputs.nullifiers.iter().enumerate() {
+            let actual = self.trace.nullifiers.get(idx);
+            if actual != *expected { return Err(...) }
+        }
+    }
+}
+```
+
+**Required** (REAL):
+```rust
+impl Air for TransactionAir {
+    type BaseField = Felt; // 64-bit Goldilocks prime field
+    type PublicInputs = TransactionPublicInputs;
+    
+    fn evaluate_transition<E: FieldElement>(&self, frame: &EvaluationFrame<E>, result: &mut [E]) {
+        let current = frame.current();
+        let next = frame.next();
+        
+        // Constraint 1: Nullifier derivation (Poseidon hash chain)
+        // nf[i+1] = poseidon(nf[i], spending_key)
+        result[0] = next[0] - poseidon_constraint(current[0], current[1]);
+        
+        // Constraint 2: Commitment integrity (Poseidon hash)
+        // cm = poseidon(value, rcm, asset_id)
+        result[1] = next[1] - poseidon_constraint(current[2], current[3], current[4]);
+        
+        // Constraint 3: Balance conservation
+        // Σ inputs = Σ outputs + fee
+        result[2] = next[2] - current[2] - current[5]; // delta accumulator
+        
+        // Constraint 4: Merkle inclusion proof
+        // path[i+1] = poseidon(path[i], sibling[i]) if direction[i] == 0
+        // path[i+1] = poseidon(sibling[i], path[i]) if direction[i] == 1
+        result[3] = next[3] - merkle_step_constraint(current[3], current[6], current[7]);
+    }
+    
+    fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
+        vec![
+            // Public inputs must match at specific trace positions
+            Assertion::single(COL_MERKLE_ROOT, 0, self.pub_inputs.merkle_root),
+            Assertion::single(COL_NULLIFIER, 0, self.pub_inputs.nullifiers[0]),
+            Assertion::single(COL_COMMITMENT, 0, self.pub_inputs.commitments[0]),
+            // Final balance must equal fee (value balanced)
+            Assertion::single(COL_BALANCE, TRACE_LEN - 1, self.pub_inputs.native_fee),
+        ]
+    }
+}
+```
+
+**Deliverables**:
+- [ ] Implement `winter_air::Air` trait for `TransactionAir`
+- [ ] Define 4-column trace layout (nullifier, commitment, balance, merkle)
+- [ ] Implement Poseidon constraints as field operations
+- [ ] Define boundary assertions for public inputs
+- [ ] Handle variable number of inputs/outputs (up to MAX_INPUTS/MAX_OUTPUTS)
+
+**Status**: 🔴 NOT STARTED
+
+---
+
+#### Task 11.9.2: Build Execution Trace Generator 🔴
+
+**File**: `circuits/transaction/src/trace.rs`
+
+**Goal**: Generate valid execution trace from transaction witness.
+
+```rust
+pub fn build_trace(witness: &TransactionWitness) -> TraceTable<Felt> {
+    let trace_len = next_power_of_two(witness.num_steps());
+    let mut trace = TraceTable::new(NUM_COLUMNS, trace_len);
+    
+    // Column 0: Nullifier computation steps
+    for (i, input) in witness.inputs.iter().enumerate() {
+        let nf = poseidon_hash(&[input.note.cm, input.spending_key]);
+        trace.set(COL_NULLIFIER, i, nf);
+    }
+    
+    // Column 1: Commitment computation steps  
+    for (i, output) in witness.outputs.iter().enumerate() {
+        let cm = poseidon_hash(&[output.value, output.rcm, output.asset_id]);
+        trace.set(COL_COMMITMENT, i, cm);
+    }
+    
+    // Column 2: Balance accumulation
+    let mut balance = Felt::ZERO;
+    for (i, delta) in witness.balance_deltas().enumerate() {
+        balance += delta;
+        trace.set(COL_BALANCE, i, balance);
+    }
+    
+    // Column 3: Merkle path verification
+    for (i, (node, sibling, dir)) in witness.merkle_steps().enumerate() {
+        let next = if dir == 0 {
+            poseidon_hash(&[node, sibling])
+        } else {
+            poseidon_hash(&[sibling, node])
+        };
+        trace.set(COL_MERKLE, i, next);
+    }
+    
+    // Pad remaining rows with last values (for power-of-2 length)
+    pad_trace(&mut trace);
+    
+    trace
+}
+```
+
+**Deliverables**:
+- [ ] Implement `build_trace()` function
+- [ ] Handle trace padding to power-of-2 length
+- [ ] Implement Poseidon hash in field arithmetic
+- [ ] Extract merkle path steps from witness
+- [ ] Unit tests for trace generation
+
+**Status**: 🔴 NOT STARTED
+
+---
+
+#### Task 11.9.3: Implement Real Proving 🔴
+
+**File**: `circuits/transaction/src/proof.rs`
+
+**Current** (FAKE):
+```rust
+pub fn prove(witness: &TransactionWitness, _pk: &ProvingKey) -> Result<TransactionProof, Error> {
+    let (trace, public_inputs) = check_constraints(witness)?;  // Just equality checks!
+    Ok(TransactionProof { ... })  // No actual STARK proof
+}
+```
+
+**Required** (REAL):
+```rust
+use winterfell::{Prover, ProofOptions, Proof};
+
+pub fn prove(
+    witness: &TransactionWitness,
+    proving_key: &ProvingKey,
+) -> Result<StarkProof, TransactionCircuitError> {
+    // 1. Validate witness
+    witness.validate()?;
+    
+    // 2. Build execution trace
+    let trace = build_trace(witness);
+    
+    // 3. Extract public inputs
+    let pub_inputs = witness.public_inputs()?;
+    
+    // 4. Create proof options from proving key
+    let options = ProofOptions::new(
+        proving_key.num_queries,      // 32 for 128-bit security
+        proving_key.blowup_factor,    // 8
+        proving_key.grinding_factor,  // 16
+        HashFunction::Blake3_256,
+        FieldExtension::None,
+        8,   // FRI folding factor
+        31,  // FRI max remainder
+    );
+    
+    // 5. Create prover and generate proof
+    let prover = TransactionProver::new(options);
+    let winterfell_proof = prover.prove(trace)?;
+    
+    // 6. Return serialized proof
+    Ok(StarkProof {
+        data: winterfell_proof.to_bytes(),
+        public_inputs: pub_inputs,
+    })
+}
+```
+
+**Deliverables**:
+- [ ] Implement `TransactionProver` struct implementing `winterfell::Prover` trait
+- [ ] Replace fake `prove()` with real winterfell proving
+- [ ] Ensure proof size is reasonable (target: 20-50KB)
+- [ ] Benchmark proving time (target: <30s for typical transaction)
+
+**Status**: 🔴 NOT STARTED
+
+---
+
+#### Task 11.9.4: Implement Real Verification 🔴
+
+**File**: `circuits/transaction/src/proof.rs`
+
+**Current** (FAKE):
+```rust
+pub fn verify(proof: &TransactionProof, _vk: &VerifyingKey) -> Result<VerificationReport, Error> {
+    // Just reconstructs trace and checks equality - NOT real verification
+    let air = TransactionAir::new(trace);
+    air.check(&proof.public_inputs)?;
+    Ok(VerificationReport { verified: true })
+}
+```
+
+**Required** (REAL):
+```rust
+use winterfell::{verify, AcceptableOptions};
+use winter_verifier::VerifierError;
+
+pub fn verify(
+    proof: &StarkProof,
+    verifying_key: &VerifyingKey,
+) -> Result<VerificationReport, TransactionCircuitError> {
+    // 1. Deserialize winterfell proof
+    let winterfell_proof = Proof::from_bytes(&proof.data)
+        .map_err(|_| TransactionCircuitError::InvalidProofFormat)?;
+    
+    // 2. Set acceptable security parameters from verifying key
+    let acceptable = AcceptableOptions::new(
+        verifying_key.min_security_bits,  // 128
+        verifying_key.min_blowup,         // 8
+        verifying_key.min_queries,        // 32
+    );
+    
+    // 3. Verify using winterfell
+    verify::<TransactionAir, Blake3_256<Felt>, DefaultRandomCoin<_>, MerkleTree<_>>(
+        winterfell_proof,
+        proof.public_inputs.clone(),
+        &acceptable,
+    ).map_err(|e| match e {
+        VerifierError::InconsistentOodEvaluations => 
+            TransactionCircuitError::ConstraintViolation("OOD check failed"),
+        VerifierError::QueryDoesNotMatchCommitment => 
+            TransactionCircuitError::ConstraintViolation("FRI query mismatch"),
+        _ => TransactionCircuitError::VerificationFailed,
+    })?;
+    
+    Ok(VerificationReport { verified: true })
+}
+```
+
+**Deliverables**:
+- [ ] Replace fake `verify()` with real winterfell verification
+- [ ] Handle all `VerifierError` variants with meaningful messages
+- [ ] Verify proof security level meets minimum requirements
+- [ ] Benchmark verification time (target: <10ms)
+
+**Status**: 🔴 NOT STARTED
+
+---
+
+#### Task 11.9.5: Update Key Structures 🔴
+
+**File**: `circuits/transaction/src/keys.rs`
+
+**Current** (FAKE):
+```rust
+pub struct ProvingKey {
+    pub max_inputs: usize,
+    pub max_outputs: usize,
+    pub balance_slots: usize,
+}
+// No actual cryptographic parameters!
+```
+
+**Required** (REAL):
+```rust
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProvingKey {
+    /// Number of FRI queries (security parameter)
+    pub num_queries: usize,
+    /// Blowup factor for Reed-Solomon encoding
+    pub blowup_factor: usize,  
+    /// Grinding factor for proof-of-work
+    pub grinding_factor: usize,
+    /// Hash function identifier
+    pub hash_fn: HashFunctionId,
+    /// Maximum trace length supported
+    pub max_trace_len: usize,
+    /// Maximum inputs/outputs supported
+    pub max_inputs: usize,
+    pub max_outputs: usize,
+    /// Circuit version for compatibility
+    pub version: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct VerifyingKey {
+    /// Minimum security level to accept (bits)
+    pub min_security_bits: usize,
+    /// Minimum blowup factor to accept
+    pub min_blowup: usize,
+    /// Minimum query count to accept
+    pub min_queries: usize,
+    /// Supported hash functions
+    pub supported_hash_fns: Vec<HashFunctionId>,
+    /// Maximum inputs/outputs supported
+    pub max_inputs: usize,
+    pub max_outputs: usize,
+    /// Circuit version for compatibility
+    pub version: u32,
+}
+
+pub fn generate_keys() -> (ProvingKey, VerifyingKey) {
+    let proving = ProvingKey {
+        num_queries: 32,
+        blowup_factor: 8,
+        grinding_factor: 16,
+        hash_fn: HashFunctionId::Blake3_256,
+        max_trace_len: 1 << 20,
+        max_inputs: MAX_INPUTS,
+        max_outputs: MAX_OUTPUTS,
+        version: 1,
+    };
+    
+    let verifying = VerifyingKey {
+        min_security_bits: 128,
+        min_blowup: 8,
+        min_queries: 32,
+        supported_hash_fns: vec![HashFunctionId::Blake3_256],
+        max_inputs: MAX_INPUTS,
+        max_outputs: MAX_OUTPUTS,
+        version: 1,
+    };
+    
+    (proving, verifying)
+}
+```
+
+**Deliverables**:
+- [ ] Add security parameters to `ProvingKey`
+- [ ] Add verification parameters to `VerifyingKey`
+- [ ] Add version field for compatibility checking
+- [ ] Update `generate_keys()` with production defaults
+
+**Status**: 🔴 NOT STARTED
+
+---
+
+#### Task 11.9.6: Implement Prover Trait 🔴
+
+**File**: `circuits/transaction/src/prover.rs` (NEW)
+
+```rust
+use winterfell::{
+    ProofOptions, Prover, Trace, TraceTable, 
+    matrix::ColMatrix, DefaultTraceLde, DefaultConstraintEvaluator,
+};
+
+pub struct TransactionProver {
+    options: ProofOptions,
+}
+
+impl TransactionProver {
+    pub fn new(options: ProofOptions) -> Self {
+        Self { options }
+    }
+}
+
+impl Prover for TransactionProver {
+    type BaseField = Felt;
+    type Air = TransactionAir;
+    type Trace = TraceTable<Felt>;
+    type HashFn = Blake3_256<Felt>;
+    type RandomCoin = DefaultRandomCoin<Self::HashFn>;
+    type TraceLde<E: FieldElement<BaseField = Felt>> = DefaultTraceLde<E, Self::HashFn>;
+    type ConstraintEvaluator<'a, E: FieldElement<BaseField = Felt>> = 
+        DefaultConstraintEvaluator<'a, Self::Air, E>;
+
+    fn get_pub_inputs(&self, trace: &Self::Trace) -> TransactionPublicInputs {
+        TransactionPublicInputs {
+            merkle_root: trace.get(COL_MERKLE, 0),
+            nullifiers: (0..MAX_INPUTS)
+                .map(|i| trace.get(COL_NULLIFIER, i))
+                .collect(),
+            commitments: (0..MAX_OUTPUTS)
+                .map(|i| trace.get(COL_COMMITMENT, i))
+                .collect(),
+            native_fee: trace.get(COL_BALANCE, trace.length() - 1).as_int() as u64,
+            // ...
+        }
+    }
+
+    fn options(&self) -> &ProofOptions {
+        &self.options
+    }
+    
+    fn new_trace_lde<E>(&self, trace_info: &TraceInfo, ...) -> Self::TraceLde<E> {
+        DefaultTraceLde::new(trace_info, main_trace, domain)
+    }
+    
+    fn new_evaluator<'a, E>(&self, air: &'a Self::Air, ...) -> Self::ConstraintEvaluator<'a, E> {
+        DefaultConstraintEvaluator::new(air, aux_rand_elements, composition_coefficients)
+    }
+}
+```
+
+**Deliverables**:
+- [ ] Create new `prover.rs` file
+- [ ] Implement `winterfell::Prover` trait
+- [ ] Wire up trace LDE and constraint evaluator
+- [ ] Extract public inputs from trace for AIR
+
+**Status**: 🔴 NOT STARTED
+
+---
+
+#### Task 11.9.7: Update Dependencies 🔴
+
+**File**: `circuits/transaction/Cargo.toml`
+
+**Current**:
+```toml
+winterfell = "0.8"  # Declared but UNUSED
+```
+
+**Required**:
+```toml
+[dependencies]
+winterfell = "0.8"
+winter-air = "0.8"
+winter-prover = "0.8"
+winter-verifier = "0.8"
+winter-math = "0.8"
+winter-crypto = "0.8"
+winter-utils = "0.8"
+```
+
+**Deliverables**:
+- [ ] Add all required winterfell crates
+- [ ] Ensure version compatibility with pallets (0.8 vs 0.13)
+- [ ] Enable necessary features (std, default)
+
+**Status**: 🔴 NOT STARTED
+
+---
+
+#### Task 11.9.8: Update and Add Tests 🔴
+
+**File**: `circuits/transaction/tests/transaction.rs`
+
+```rust
+#[test]
+fn proving_and_verification_succeeds() {
+    let witness = create_valid_witness();
+    let (pk, vk) = generate_keys();
+    
+    // This now generates a REAL STARK proof
+    let proof = prove(&witness, &pk).expect("proving should succeed");
+    
+    // Proof should be substantial size (not just serialized trace)
+    assert!(proof.data.len() > 10_000, "STARK proof should be >10KB");
+    
+    // This now does REAL winterfell verification
+    let report = verify(&proof, &vk).expect("verification should succeed");
+    assert!(report.verified);
+}
+
+#[test]
+fn verification_fails_for_tampered_proof() {
+    let witness = create_valid_witness();
+    let (pk, vk) = generate_keys();
+    
+    let mut proof = prove(&witness, &pk).unwrap();
+    
+    // Tamper with proof data
+    proof.data[100] ^= 0xFF;
+    
+    // Verification should fail
+    let result = verify(&proof, &vk);
+    assert!(result.is_err() || !result.unwrap().verified);
+}
+
+#[test]
+fn verification_fails_for_wrong_public_inputs() {
+    let witness = create_valid_witness();
+    let (pk, vk) = generate_keys();
+    
+    let mut proof = prove(&witness, &pk).unwrap();
+    
+    // Modify public inputs
+    proof.public_inputs.nullifiers[0] = Felt::from(12345u64);
+    
+    // Verification should fail
+    let result = verify(&proof, &vk);
+    assert!(result.is_err());
+}
+
+#[test]
+fn proof_size_is_reasonable() {
+    let witness = create_typical_witness();
+    let (pk, _) = generate_keys();
+    
+    let proof = prove(&witness, &pk).unwrap();
+    
+    // Target: 20-50KB for STARK proofs
+    assert!(proof.data.len() >= 20_000, "Proof too small - probably fake");
+    assert!(proof.data.len() <= 100_000, "Proof too large for practical use");
+}
+
+#[test]
+fn proving_time_is_acceptable() {
+    let witness = create_typical_witness();
+    let (pk, _) = generate_keys();
+    
+    let start = std::time::Instant::now();
+    let _ = prove(&witness, &pk).unwrap();
+    let elapsed = start.elapsed();
+    
+    // Target: <30s for typical transaction
+    assert!(elapsed.as_secs() < 60, "Proving took too long: {:?}", elapsed);
+}
+```
+
+**Deliverables**:
+- [ ] Update existing tests for real STARK behavior
+- [ ] Add tamper detection tests
+- [ ] Add wrong public input tests
+- [ ] Add proof size validation tests
+- [ ] Add performance benchmarks
+- [ ] All tests must PASS with real proofs
+
+**Status**: 🔴 NOT STARTED
+
+---
+
+#### Estimated Effort for Phase 11.9
+
+| Task | Description | Complexity | Est. Time |
+|------|-------------|------------|-----------|
+| 11.9.1 | Define real AIR with constraints | High | 1-2 days |
+| 11.9.2 | Build execution trace generator | Medium | 0.5-1 day |
+| 11.9.3 | Implement real proving | Medium | 0.5-1 day |
+| 11.9.4 | Implement real verification | Medium | 0.5 day |
+| 11.9.5 | Update key structures | Low | 0.25 day |
+| 11.9.6 | Implement Prover trait | Medium | 0.5 day |
+| 11.9.7 | Update dependencies | Low | 0.25 day |
+| 11.9.8 | Update and add tests | Low | 0.5 day |
+| **Total** | | | **4-6 days** |
 
 ---
 
@@ -2473,6 +3051,7 @@ With chain sync and all RPCs implemented, the next priority is multi-node integr
 | Phase 11.7: author_* RPCs | ✅ DONE | ✅ WORKS | Tx submission, pending, keys all work |
 | Phase 11.7.3: Custom RPCs | ✅ DONE | ⚠️ NEEDS TEST | All RPCs wired, write ops return call data |
 | Phase 11.8: Integration | 🔴 NOT DONE | ⚠️ PARTIAL | Single-node works, multi-node untested |
+| **Phase 11.9: STARK Circuit** | **🔴 NOT STARTED** | **❌ FAKE** | **circuits/transaction/ does equality checks, NOT real STARKs** |
 | Phase 12: Shielded Pool | ✅ CODE DONE | ⚠️ CAN TEST | State works, needs E2E verification |
 | Phase 13: Wallet | ✅ CODE DONE | ⚠️ CAN TEST | RPCs work, needs tx submission |
 | Phase 14: E2E Testing | 🔴 NOT DONE | ⚠️ CAN START | Infrastructure ready |
@@ -2488,7 +3067,8 @@ With chain sync and all RPCs implemented, the next priority is multi-node integr
 | "State queries" | ✅ state_getStorage returns Alice's balance |
 | "Transaction pool" | ✅ Real ForkAwareTxPool (SubstrateTransactionPoolWrapper) |
 | "RPC works" | ✅ All RPCs work (chain_*, state_*, system_*, author_*) |
-| "Proof verification" | ✅ StarkVerifier used (AcceptAllProofs removed from production) |
+| "Proof verification" | ✅ Pallet verifiers use winterfell structure validation |
+| "STARK proofs" | ❌ **FAKE** - circuits/transaction does equality checks, NOT real STARKs |
 | "Legacy code" | ✅ Scaffold functions removed, only test mocks remain |
 
 ---
