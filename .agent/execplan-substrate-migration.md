@@ -523,11 +523,11 @@ All custom Hegemon RPCs are now fully wired to the real runtime:
 
 ---
 
-### Phase 11.8: Integration Verification 🔴 NOT STARTED
+### Phase 11.8: Integration Verification 🟡 IN PROGRESS
 
 **Goal**: End-to-end verification that everything works together.
 
-#### Task 11.8.1: Single Node Smoke Test 🔴
+#### Task 11.8.1: Single Node Smoke Test ✅ COMPLETE
 
 **Runtime Verification** (agent must run these):
 ```bash
@@ -565,12 +565,28 @@ kill $NODE_PID
 echo "=== ALL SINGLE NODE TESTS PASSED ==="
 ```
 
-**Status**: 🔴 NOT STARTED
-- [ ] Runtime verification passed
+**Status**: ✅ COMPLETE (2025-11-29)
+- [x] Runtime verification passed
+
+**Execution Notes**:
+- ⚠️ **Terminal Crash Issue**: The original bash script with `set -e`, background processes (`&`), and `kill $NODE_PID` caused VS Code terminals to crash/hang, requiring VS Code restart. Tests were run manually step-by-step instead.
+- Tests were run individually via curl commands to avoid terminal instability.
+
+**Verified Results**:
+| Test | Result | Details |
+|------|--------|---------|
+| ✅ Block production | PASS | Block 2811+ (0xafb) mined |
+| ✅ State storage | PASS | Alice's balance returned (non-null hex) |
+| ✅ Transaction pool RPC | PASS | `author_pendingExtrinsics` returns `[]` |
+| ✅ Consensus RPC | PASS | `hegemon_consensusStatus` returns height, hash, roots |
+| ✅ system_name | PASS | `"Hegemon"` |
+| ✅ system_version | PASS | `"0.1.0"` |
+| ✅ system_chain | PASS | `"Hegemon Development"` |
+| ✅ Runtime version | PASS | `synthetic-hegemonic` specVersion 2 |
 
 ---
 
-#### Task 11.8.2: Two Node Sync Test 🔴
+#### Task 11.8.2: Two Node Sync Test 🟡 PARTIAL
 
 **Runtime Verification** (agent must run these):
 ```bash
@@ -615,8 +631,36 @@ rm -rf /tmp/node1 /tmp/node2
 echo "=== ALL TWO NODE TESTS PASSED ==="
 ```
 
-**Status**: 🔴 NOT STARTED
-- [ ] Runtime verification passed
+**Status**: 🟡 PARTIAL (2025-11-29)
+- [x] Node 1 mining verified (2609+ blocks)
+- [x] PQ network connection established
+- [x] Same genesis block on both nodes
+- [ ] Historical chain sync not yet working
+
+**Execution Notes**:
+- ⚠️ **Script incompatibility**: The original bash script uses `--bootnodes` CLI flag with libp2p multiaddr format, but Hegemon uses a custom PQ-only network that requires `HEGEMON_SEEDS` environment variable with simple `IP:PORT` format.
+- ⚠️ **RPC port ignored**: The `--rpc-port` CLI flag is ignored; must use `HEGEMON_RPC_PORT` environment variable.
+- ⚠️ **Network port**: Must use `HEGEMON_LISTEN_ADDR` environment variable for network listen address.
+
+**Correct startup command for Node 2**:
+```bash
+HEGEMON_SEEDS="127.0.0.1:30333" HEGEMON_RPC_PORT=9945 HEGEMON_LISTEN_ADDR="0.0.0.0:30334" \
+  ./target/release/hegemon-node --dev --base-path /tmp/node2
+```
+
+**Verified Results**:
+| Test | Result | Details |
+|------|--------|---------|
+| ✅ Node 1 mining | PASS | Block 2609 (0xa31) reached |
+| ✅ Node 2 started | PASS | Listening on :30334, RPC on :9945 |
+| ✅ PQ handshake | PASS | ML-KEM-768 connection established |
+| ✅ Same genesis | PASS | Both nodes: `0x3661ea36...4424` |
+| ⚠️ Historical sync | NOT WORKING | Node 2 stays at block 0 |
+| ⚠️ Peer count RPC | SHOWS 0 | Despite active connection in logs |
+
+**Issue Identified**: The PQ network establishes connections but the chain sync mechanism doesn't trigger historical block download. The `system_peers` RPC returns 0 even when PQ peer is connected (logs show successful handshake). This needs investigation in Phase 11.6 (Chain Sync).
+
+**Recommendation**: Create follow-up task to wire PQ network peer count to `system_peers` RPC and investigate historical sync trigger.
 
 ---
 
