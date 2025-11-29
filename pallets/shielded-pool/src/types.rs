@@ -35,6 +35,9 @@ pub const MEMO_SIZE: usize = 512;
 /// Recipient (43) + Value (8) + Rcm (32) + Memo (512) + AEAD overhead (16)
 pub const ENCRYPTED_NOTE_SIZE: usize = 611;
 
+/// Size of the ML-KEM-768 ciphertext for key encapsulation.
+pub const ML_KEM_CIPHERTEXT_LEN: usize = 1088;
+
 /// Diversified address size (post-quantum compatible).
 pub const DIVERSIFIED_ADDRESS_SIZE: usize = 43;
 
@@ -95,16 +98,15 @@ impl Note {
 pub struct EncryptedNote {
     /// Encrypted ciphertext containing note data.
     pub ciphertext: [u8; ENCRYPTED_NOTE_SIZE],
-    /// Ephemeral public key for ML-KEM key encapsulation.
-    /// This is the KEM ciphertext (1088 bytes for ML-KEM-768).
-    pub ephemeral_pk: [u8; 32], // TODO: Expand to ML-KEM ciphertext size
+    /// ML-KEM-768 ciphertext for key encapsulation (1088 bytes).
+    pub kem_ciphertext: [u8; ML_KEM_CIPHERTEXT_LEN],
 }
 
 impl Default for EncryptedNote {
     fn default() -> Self {
         Self {
             ciphertext: [0u8; ENCRYPTED_NOTE_SIZE],
-            ephemeral_pk: [0u8; 32],
+            kem_ciphertext: [0u8; ML_KEM_CIPHERTEXT_LEN],
         }
     }
 }
@@ -285,7 +287,7 @@ mod tests {
     fn encrypted_note_default_works() {
         let enc = EncryptedNote::default();
         assert_eq!(enc.ciphertext, [0u8; ENCRYPTED_NOTE_SIZE]);
-        assert_eq!(enc.ephemeral_pk, [0u8; 32]);
+        assert_eq!(enc.kem_ciphertext, [0u8; ML_KEM_CIPHERTEXT_LEN]);
     }
 
     #[test]

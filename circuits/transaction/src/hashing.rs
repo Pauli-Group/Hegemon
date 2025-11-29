@@ -96,6 +96,26 @@ pub fn nullifier(prf_key: Felt, rho: &[u8], position: u64) -> Felt {
     sponge(NULLIFIER_DOMAIN_TAG, &inputs)
 }
 
+/// Convert a field element to 32 bytes (left-padded with zeros).
+/// This is the canonical serialization for nullifiers/commitments.
+pub fn felt_to_bytes32(felt: Felt) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    // Put the 8-byte BE representation in the last 8 bytes
+    out[24..32].copy_from_slice(&felt.as_int().to_be_bytes());
+    out
+}
+
+/// Compute a nullifier and return it as 32 bytes.
+/// This is the format expected by the pallet for on-chain storage.
+pub fn nullifier_bytes(prf_key: Felt, rho: &[u8], position: u64) -> [u8; 32] {
+    felt_to_bytes32(nullifier(prf_key, rho, position))
+}
+
+/// Compute note commitment and return it as 32 bytes.
+pub fn note_commitment_bytes(value: u64, asset_id: u64, pk: &[u8], rho: &[u8], r: &[u8]) -> [u8; 32] {
+    felt_to_bytes32(note_commitment(value, asset_id, pk, rho, r))
+}
+
 pub fn prf_key(sk_spend: &[u8]) -> Felt {
     let elements = bytes_to_field_elements(sk_spend);
     sponge(NULLIFIER_DOMAIN_TAG, &elements)

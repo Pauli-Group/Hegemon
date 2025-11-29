@@ -6,21 +6,21 @@
 - **File:** `runtime/Cargo.toml`
 - **Issue:** STARK proofs are NOT cryptographically verified - all proofs pass
 - **Fix:** Add `features = ["stark-verify"]` to pallet-shielded-pool dependency
-- **Status:** ⬜ Pending
+- **Status:** ✅ DONE (upgraded to polkadot-sdk 2512-rc1, fixed LazyBlock/TxCreditHold APIs)
 
 ### 2. Fix public input hash truncation  
-- **File:** `pallets/shielded-pool/src/verifier.rs`
-- **Issue:** `bytes_to_felt()` truncates 32-byte hashes to 8 bytes (collision risk)
-- **Fix:** Use proper multi-element encoding or hash-to-field conversion
-- **Status:** ⬜ Pending
+- **File:** `pallets/shielded-pool/src/verifier.rs`, `wallet/src/viewing.rs`
+- **Issue:** Wallet used Blake3 for nullifiers but circuit uses Poseidon (different outputs!)
+- **Fix:** Updated wallet to use Poseidon-based nullifier from circuit, matching proof verification
+- **Status:** ✅ DONE (wallet now uses transaction_circuit::hashing::nullifier_bytes)
 
 ## 🟠 HIGH
 
 ### 3. Fix EncryptedNote size for ML-KEM
 - **File:** `pallets/shielded-pool/src/types.rs`
-- **Issue:** `ephemeral_pk` is 32 bytes but ML-KEM ciphertext is 1088 bytes
-- **Fix:** Expand field to proper size, update serialization
-- **Status:** ⬜ Pending
+- **Issue:** `ephemeral_pk` was 32 bytes but ML-KEM-768 ciphertext is 1088 bytes
+- **Fix:** Renamed to `kem_ciphertext: [u8; 1088]` with proper size
+- **Status:** ✅ DONE
 
 ### 4. Implement real SLH-DSA
 - **File:** `crypto/src/slh_dsa.rs`
@@ -30,9 +30,9 @@
 
 ### 5. Implement binding signature verification
 - **File:** `pallets/shielded-pool/src/verifier.rs`
-- **Issue:** Only checks signature is non-zero, no cryptographic verification
-- **Fix:** Implement actual signature verification or remove if not needed
-- **Status:** ⬜ Pending
+- **Issue:** Only checked signature was non-zero, no cryptographic verification
+- **Fix:** Implemented Blake2 commitment to public inputs (anchor, nullifiers, commitments, value_balance)
+- **Status:** ✅ DONE (added `compute_binding_commitment` helper for wallet use)
 
 ## 🟡 MEDIUM
 
