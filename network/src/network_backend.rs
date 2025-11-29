@@ -570,6 +570,29 @@ impl PqNetworkHandle {
             Err("Peer not found".to_string())
         }
     }
+
+    /// Send a protocol message to a specific peer (Phase 11.6)
+    ///
+    /// This is used for sync protocol messages. The protocol name and data
+    /// are wrapped in a framing format for the receiver to decode.
+    ///
+    /// Returns Ok(()) on success, or an error message on failure.
+    pub async fn send_message(&self, peer_id: [u8; 32], protocol: String, data: Vec<u8>) -> Result<(), String> {
+        use serde::{Serialize, Deserialize};
+        
+        // Frame the message with protocol name
+        #[derive(Serialize, Deserialize)]
+        struct FramedMessage {
+            protocol: String,
+            data: Vec<u8>,
+        }
+        
+        let framed = FramedMessage { protocol, data };
+        let encoded = bincode::serialize(&framed)
+            .map_err(|e| format!("Failed to serialize message: {}", e))?;
+        
+        self.send_to_peer(peer_id, encoded).await
+    }
 }
 
 #[cfg(test)]

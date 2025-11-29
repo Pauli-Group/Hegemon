@@ -158,6 +158,9 @@ use runtime::apis::ConsensusApi;
 // Import jsonrpsee for RPC server (Phase 11.7)
 use jsonrpsee::server::ServerBuilder;
 
+// Import sync service (Phase 11.6)
+use crate::substrate::sync::{ChainSyncService, SyncState};
+
 // =============================================================================
 // Task 11.5.5: Storage Changes Cache
 // =============================================================================
@@ -1944,6 +1947,21 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 ));
                 let bridge_clone = Arc::clone(&network_bridge);
 
+                // =======================================================================
+                // Phase 11.6: Create Chain Sync Service
+                // =======================================================================
+                // The sync service handles:
+                // - Responding to sync requests from peers (Task 11.6.1)
+                // - Managing the sync state machine (Task 11.6.2)
+                // - Downloading blocks from peers when behind
+                let sync_service = Arc::new(Mutex::new(
+                    ChainSyncService::new(client.clone())
+                ));
+                let sync_service_clone = Arc::clone(&sync_service);
+                let sync_service_for_handler = Arc::clone(&sync_service);
+                
+                tracing::info!("Phase 11.6: Chain sync service created");
+
                 // Clone pool_bridge for use in network event handler
                 let pool_bridge_clone = Arc::clone(&pool_bridge);
 
@@ -1952,27 +1970,47 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let process_interval = pool_config.process_interval_ms;
                 let pool_verbose = pool_config.verbose;
 
-                // Spawn the PQ network event handler task
+                // Get handles for sending sync messages
+                // NOTE: Get all handles before pq_backend is moved into the task
+                let pq_handle_for_sync = pq_backend.handle();
+                let sync_handle_for_tick = pq_backend.handle();
+
+                // Spawn the PQ network event handler task with sync integration
                 task_manager.spawn_handle().spawn(
                     "pq-network-events",
                     Some("network"),
                     async move {
                         let _pq_backend = pq_backend;
-                        tracing::info!("PQ network event handler started (Full Client Mode)");
+                        tracing::info!("PQ network event handler started (Full Client Mode + Sync)");
                         
                         while let Some(event) = event_rx.recv().await {
                             {
                                 let mut bridge = bridge_clone.lock().await;
                                 bridge.handle_event(event.clone()).await;
                                 
+                                // Process transactions
                                 let pending_txs = bridge.drain_transactions();
                                 if !pending_txs.is_empty() {
                                     pool_bridge_clone.queue_from_bridge(pending_txs).await;
+                                }
+                                
+                                // Phase 11.6: Process block announcements for sync
+                                let pending_announces = bridge.drain_announces();
+                                if !pending_announces.is_empty() {
+                                    let mut sync = sync_service_clone.lock().await;
+                                    for (peer_id, announce) in pending_announces {
+                                        sync.on_block_announce(peer_id, &announce);
+                                    }
                                 }
                             }
 
                             match event {
                                 PqNetworkEvent::PeerConnected { peer_id, addr, is_outbound } => {
+                                    // Update sync service with new peer
+                                    {
+                                        let mut sync = sync_service_clone.lock().await;
+                                        sync.on_peer_connected(peer_id);
+                                    }
                                     tracing::info!(
                                         peer_id = %hex::encode(peer_id),
                                         addr = %addr,
@@ -1981,17 +2019,102 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     );
                                 }
                                 PqNetworkEvent::PeerDisconnected { peer_id, reason } => {
+                                    // Update sync service
+                                    {
+                                        let mut sync = sync_service_clone.lock().await;
+                                        sync.on_peer_disconnected(&peer_id);
+                                    }
                                     tracing::info!(
                                         peer_id = %hex::encode(peer_id),
                                         reason = %reason,
                                         "PQ peer disconnected"
                                     );
                                 }
+                                PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
+                                    // Phase 11.6.1: Handle sync protocol messages
+                                    use crate::substrate::network_bridge::{SYNC_PROTOCOL, SYNC_PROTOCOL_LEGACY};
+                                    use crate::substrate::network_bridge::{SyncRequest, SyncResponse};
+                                    
+                                    if protocol == SYNC_PROTOCOL || protocol == SYNC_PROTOCOL_LEGACY {
+                                        // Try to decode as sync request
+                                        if let Ok(request) = SyncRequest::decode(&mut &data[..]) {
+                                            let mut sync = sync_service_clone.lock().await;
+                                            if let Some(response) = sync.handle_sync_request(peer_id, request) {
+                                                // Send response back to peer
+                                                let encoded = response.encode();
+                                                if let Err(e) = pq_handle_for_sync.send_message(
+                                                    peer_id,
+                                                    SYNC_PROTOCOL.to_string(),
+                                                    encoded,
+                                                ).await {
+                                                    tracing::warn!(
+                                                        peer = %hex::encode(peer_id),
+                                                        error = %e,
+                                                        "Failed to send sync response"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        // Try to decode as sync response
+                                        else if let Ok(response) = SyncResponse::decode(&mut &data[..]) {
+                                            let mut sync = sync_service_clone.lock().await;
+                                            sync.handle_sync_response(peer_id, response);
+                                        }
+                                    }
+                                }
                                 PqNetworkEvent::Stopped => {
                                     tracing::info!("PQ network stopped");
                                     break;
                                 }
                                 _ => {}
+                            }
+                        }
+                    },
+                );
+
+                // =======================================================================
+                // Phase 11.6.2: Spawn sync state machine tick task
+                // =======================================================================
+                let sync_service_for_tick = Arc::clone(&sync_service);
+                
+                task_manager.spawn_handle().spawn(
+                    "chain-sync-tick",
+                    Some("sync"),
+                    async move {
+                        use crate::substrate::network_bridge::SYNC_PROTOCOL;
+                        
+                        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+                        tracing::info!("Phase 11.6.2: Chain sync tick task started");
+                        
+                        loop {
+                            interval.tick().await;
+                            
+                            let mut sync = sync_service_for_tick.lock().await;
+                            
+                            // Tick the sync state machine
+                            if let Some((peer_id, request)) = sync.tick() {
+                                let encoded = request.encode();
+                                if let Err(e) = sync_handle_for_tick.send_message(
+                                    peer_id,
+                                    SYNC_PROTOCOL.to_string(),
+                                    encoded,
+                                ).await {
+                                    tracing::warn!(
+                                        peer = %hex::encode(peer_id),
+                                        error = %e,
+                                        "Failed to send sync request"
+                                    );
+                                }
+                            }
+                            
+                            // Log sync status periodically
+                            let state = sync.state();
+                            if sync.is_syncing() {
+                                tracing::debug!(
+                                    state = ?state,
+                                    peers = sync.peer_count(),
+                                    "Sync in progress"
+                                );
                             }
                         }
                     },
