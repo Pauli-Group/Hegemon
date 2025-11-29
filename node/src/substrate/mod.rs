@@ -49,6 +49,13 @@
 //! - Task 10.3: Block import pipeline (PowBlockImport) ✅
 //! - Task 10.4: Live network integration 🔲
 //! - Task 10.5: Production mining worker 🔲
+//!
+//! # Phase 11.6 Status
+//!
+//! Chain synchronization:
+//! - Task 11.6.1: Block request handler ✅
+//! - Task 11.6.2: Chain sync state machine ✅
+//! - Task 11.6.3: Warp sync (optional) 🔲
 
 pub mod block_import;
 pub mod chain_spec;
@@ -59,6 +66,7 @@ pub mod network;
 pub mod network_bridge;
 pub mod rpc;
 pub mod service;
+pub mod sync;
 pub mod transaction_pool;
 
 // Re-export common types
@@ -93,4 +101,8 @@ pub use transaction_pool::{
     MockTransactionPool, PoolBridgeStats, PoolError, SubmissionResult,
     TransactionPool as TransactionPoolTrait, TransactionPoolBridge, TransactionPoolConfig,
     TransactionSource,
+};
+pub use sync::{
+    ChainSyncService, SyncHandle, SyncState, SyncStats, PeerSyncState,
+    MAX_HEADERS_PER_RESPONSE, MAX_BODIES_PER_RESPONSE, HEADER_BATCH,
 };
