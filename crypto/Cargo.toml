@@ -9,8 +9,8 @@ sha2 = { version = "0.10", default-features = false }
 blake3 = { version = "1", default-features = false }
 sha3 = { version = "0.10", default-features = false }
 
-# RNG - use versions compatible with ml-kem/ml-dsa
-rand = { version = "0.9", default-features = false, features = ["std", "std_rng", "os_rng"] }
+# RNG - deterministic only by default, no OS randomness in no_std
+rand = { version = "0.9", default-features = false }
 rand_chacha = { version = "0.9", default-features = false }
 rand_core = { version = "0.9", default-features = false }
 
@@ -33,6 +33,7 @@ default = ["std"]
 std = [
     "rand/std",
     "rand/std_rng",
+    "rand/os_rng",  # OS randomness only available in std builds
     "rand_chacha/std",
     "rand_core/std",
     "sha2/std",

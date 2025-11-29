@@ -42,6 +42,8 @@ fn main() {
             .export_heap_base()
             .import_memory()
             .disable_runtime_version_section_check()
+            // getrandom 0.3 requires custom backend cfg for wasm32
+            .append_to_rust_flags("--cfg=getrandom_backend=\"custom\"")
             .build();
     }
 }
