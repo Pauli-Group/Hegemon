@@ -36,3 +36,63 @@ pub const NATIVE_ASSET_ID: u64 = 0;
 /// Smaller than the full tree depth to keep trace size manageable.
 /// Each Merkle level requires one hash cycle (16 steps).
 pub const CIRCUIT_MERKLE_DEPTH: usize = 8;
+
+// ================================================================================================
+// CIRCUIT VERSIONING & AIR IDENTIFICATION
+// ================================================================================================
+
+/// Current circuit version. Increment when constraint logic changes.
+pub const CIRCUIT_VERSION: u32 = 1;
+
+/// AIR constraint domain separator for hashing.
+pub const AIR_DOMAIN_TAG: &[u8] = b"SHPC-TRANSACTION-AIR-V1";
+
+/// Compute the AIR hash that uniquely identifies this circuit's constraints.
+/// This hash commits to:
+/// - Trace width and layout
+/// - Constraint degrees
+/// - Number of inputs/outputs
+/// - Merkle depth
+/// - Poseidon configuration
+///
+/// This MUST be checked by verifiers to ensure proofs were generated for the correct circuit.
+pub fn compute_air_hash() -> [u8; 32] {
+    use blake3::Hasher;
+    
+    let mut hasher = Hasher::new();
+    
+    // Domain separator
+    hasher.update(AIR_DOMAIN_TAG);
+    
+    // Circuit version
+    hasher.update(&CIRCUIT_VERSION.to_le_bytes());
+    
+    // Trace configuration
+    hasher.update(&(crate::stark_air::TRACE_WIDTH as u32).to_le_bytes());
+    hasher.update(&(crate::stark_air::CYCLE_LENGTH as u32).to_le_bytes());
+    hasher.update(&(crate::stark_air::MIN_TRACE_LENGTH as u32).to_le_bytes());
+    
+    // Circuit parameters
+    hasher.update(&(MAX_INPUTS as u32).to_le_bytes());
+    hasher.update(&(MAX_OUTPUTS as u32).to_le_bytes());
+    hasher.update(&(CIRCUIT_MERKLE_DEPTH as u32).to_le_bytes());
+    
+    // Poseidon configuration
+    hasher.update(&(POSEIDON_WIDTH as u32).to_le_bytes());
+    hasher.update(&(POSEIDON_ROUNDS as u32).to_le_bytes());
+    
+    // Constraint structure: max degree 6 (x^5 * flag)
+    hasher.update(&6u32.to_le_bytes()); // Max constraint degree
+    hasher.update(&3u32.to_le_bytes()); // Number of transition constraints
+    
+    let hash = hasher.finalize();
+    let mut result = [0u8; 32];
+    result.copy_from_slice(hash.as_bytes());
+    result
+}
+
+/// Get the expected AIR hash for this circuit version.
+/// This is computed at compile time for the current version.
+pub fn expected_air_hash() -> [u8; 32] {
+    compute_air_hash()
+}

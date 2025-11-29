@@ -52,7 +52,7 @@ pallet-sudo = { workspace = true }
 pallet-identity = { path = "../pallets/identity", default-features = false }
 pallet-attestations = { path = "../pallets/attestations", default-features = false }
 pallet-asset-registry = { path = "../pallets/asset-registry", default-features = false }
-pallet-settlement = { path = "../pallets/settlement", default-features = false }
+pallet-settlement = { path = "../pallets/settlement", default-features = false, features = ["stark-verify"] }
 pallet-oracles = { path = "../pallets/oracles", default-features = false }
 pallet-fee-model = { path = "../pallets/fee-model", default-features = false }
 pallet-feature-flags = { path = "../pallets/feature-flags", default-features = false }

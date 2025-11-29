@@ -26,3 +26,6 @@ pub use witness::TransactionWitness;
 pub use stark_air::{TransactionAirStark, TransactionPublicInputsStark, TRACE_WIDTH, MIN_TRACE_LENGTH};
 pub use stark_prover::{TransactionProverStark, default_proof_options, fast_proof_options};
 pub use stark_verifier::{verify_transaction_proof, verify_transaction_proof_bytes, TransactionVerifyError};
+
+// Re-export circuit versioning and AIR identification
+pub use constants::{CIRCUIT_VERSION, compute_air_hash, expected_air_hash};

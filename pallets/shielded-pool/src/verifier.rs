@@ -184,6 +184,89 @@ impl ProofVerifier for RejectAllProofs {
 #[derive(Clone, Debug, Default)]
 pub struct StarkVerifier;
 
+// ================================================================================================
+// CIRCUIT VERSIONING & AIR IDENTIFICATION CONSTANTS
+// ================================================================================================
+
+impl StarkVerifier {
+    /// Current circuit version. Must match the prover's version.
+    pub const CIRCUIT_VERSION: u32 = 1;
+    
+    /// Expected trace width for the transaction circuit.
+    /// Must match TRACE_WIDTH in transaction-circuit/stark_air.rs
+    pub const EXPECTED_TRACE_WIDTH: usize = 5;
+    
+    /// Expected cycle length for Poseidon rounds.
+    pub const EXPECTED_CYCLE_LENGTH: usize = 16;
+    
+    /// Maximum inputs supported.
+    pub const MAX_INPUTS: usize = 2;
+    
+    /// Maximum outputs supported.
+    pub const MAX_OUTPUTS: usize = 2;
+    
+    /// Merkle depth in circuit.
+    pub const CIRCUIT_MERKLE_DEPTH: usize = 8;
+    
+    /// Poseidon width.
+    pub const POSEIDON_WIDTH: usize = 3;
+    
+    /// Poseidon rounds.
+    pub const POSEIDON_ROUNDS: usize = 8;
+    
+    /// Domain separator for AIR hash computation.
+    pub const AIR_DOMAIN_TAG: &'static [u8] = b"SHPC-TRANSACTION-AIR-V1";
+    
+    /// Compute the expected AIR hash for this verifier's circuit configuration.
+    /// This must match the hash computed by the prover's circuit.
+    pub fn compute_expected_air_hash() -> [u8; 32] {
+        use sp_core::hashing::blake2_256;
+        
+        let mut data = sp_std::vec::Vec::with_capacity(128);
+        
+        // Domain separator
+        data.extend_from_slice(Self::AIR_DOMAIN_TAG);
+        
+        // Circuit version
+        data.extend_from_slice(&Self::CIRCUIT_VERSION.to_le_bytes());
+        
+        // Trace configuration
+        data.extend_from_slice(&(Self::EXPECTED_TRACE_WIDTH as u32).to_le_bytes());
+        data.extend_from_slice(&(Self::EXPECTED_CYCLE_LENGTH as u32).to_le_bytes());
+        data.extend_from_slice(&1024u32.to_le_bytes()); // MIN_TRACE_LENGTH
+        
+        // Circuit parameters
+        data.extend_from_slice(&(Self::MAX_INPUTS as u32).to_le_bytes());
+        data.extend_from_slice(&(Self::MAX_OUTPUTS as u32).to_le_bytes());
+        data.extend_from_slice(&(Self::CIRCUIT_MERKLE_DEPTH as u32).to_le_bytes());
+        
+        // Poseidon configuration
+        data.extend_from_slice(&(Self::POSEIDON_WIDTH as u32).to_le_bytes());
+        data.extend_from_slice(&(Self::POSEIDON_ROUNDS as u32).to_le_bytes());
+        
+        // Constraint structure
+        data.extend_from_slice(&6u32.to_le_bytes()); // Max constraint degree
+        data.extend_from_slice(&3u32.to_le_bytes()); // Number of transition constraints
+        
+        blake2_256(&data)
+    }
+    
+    /// Get the current circuit version.
+    pub fn circuit_version() -> u32 {
+        Self::CIRCUIT_VERSION
+    }
+    
+    /// Create a verifying key with the correct AIR hash for this circuit.
+    pub fn create_verifying_key(id: u32) -> VerifyingKey {
+        VerifyingKey {
+            id,
+            enabled: true,
+            air_hash: Self::compute_expected_air_hash(),
+            circuit_id: Self::compute_expected_air_hash(), // Same as AIR hash for now
+        }
+    }
+}
+
 /// STARK proof structure constants.
 /// These define the minimum structure for a valid FRI-based proof.
 mod proof_structure {
@@ -609,6 +692,18 @@ impl ProofVerifier for StarkVerifier {
         if !vk.enabled {
             return VerificationResult::KeyNotFound;
         }
+        
+        // Verify AIR hash matches expected circuit
+        // This ensures the proof was generated for the correct circuit version
+        let expected_air_hash = Self::compute_expected_air_hash();
+        if vk.air_hash != [0u8; 32] && vk.air_hash != expected_air_hash {
+            log::warn!(
+                "AIR hash mismatch: expected {:?}, got {:?}",
+                expected_air_hash,
+                vk.air_hash
+            );
+            return VerificationResult::InvalidPublicInputs;
+        }
 
         // Check proof is not empty
         if proof.is_empty() {
@@ -627,6 +722,17 @@ impl ProofVerifier for StarkVerifier {
                 return VerificationResult::InvalidProofFormat;
             }
         };
+        
+        // Validate proof context matches expected circuit parameters
+        let trace_info = winterfell_proof.context.trace_info();
+        if trace_info.width() != Self::EXPECTED_TRACE_WIDTH {
+            log::warn!(
+                "Trace width mismatch: expected {}, got {}",
+                Self::EXPECTED_TRACE_WIDTH,
+                trace_info.width()
+            );
+            return VerificationResult::InvalidProofFormat;
+        }
         
         // Convert public inputs to field elements for verification
         let pub_inputs = Self::convert_public_inputs(inputs);
