@@ -1453,6 +1453,9 @@ pub use pallet_difficulty::{
     TARGET_BLOCK_TIME_MS,
 };
 
+// Note: MaxNullifiersPerTx, MaxCommitmentsPerTx, MaxEncryptedNotesPerTx are
+// already defined via parameter_types! above and are accessible from the runtime crate.
+
 sp_api::impl_runtime_apis! {
     impl sp_api::Core<Block> for Runtime {
         fn version() -> sp_version::RuntimeVersion {

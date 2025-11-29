@@ -86,6 +86,12 @@ hyper = { version = "1.5", optional = true }
 # Runtime dependency (for WASM binary and APIs)
 runtime = { path = "../runtime", optional = true }
 
+# Shielded pool pallet (for RPC types)
+pallet-shielded-pool = { path = "../pallets/shielded-pool", optional = true }
+
+# Frame support (for BoundedVec in RPC)
+frame-support = { workspace = true, features = ["std"], optional = true }
+
 [features]
 default = []
 test-utils = []
@@ -138,6 +144,8 @@ substrate = [
     "dep:runtime",
     "dep:codec",
     "dep:pallet-timestamp",
+    "dep:pallet-shielded-pool",
+    "dep:frame-support",
     "dep:tower",
     "dep:hyper",
     "consensus/substrate",

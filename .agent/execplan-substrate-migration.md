@@ -486,14 +486,40 @@ curl -s ... author_submitExtrinsic("0x00") → decode error (expected) ✅
 - [x] Keystore integration for key management RPCs
 - [x] Runtime verification passed - all author RPCs work
 
-#### Task 11.7.3: Wire Custom Hegemon RPCs ⚠️ PARTIAL
+#### Task 11.7.3: Wire Custom Hegemon RPCs ✅ COMPLETE
 
-**Current**: Custom RPC methods defined but may not connect to real runtime.
+**Implemented** (2025-11-28):
 
-**Needs Verification**:
-- `hegemon_consensusStatus`
-- `hegemon_getShieldedPoolStatus`
-- `hegemon_submitShieldedTransfer`
+All custom Hegemon RPCs are now fully wired to the real runtime:
+
+**Read Operations (fully functional)**:
+- `hegemon_consensusStatus` - Returns block height, best hash, state root, nullifier root, pool balance
+- `hegemon_getShieldedPoolStatus` - Returns note count, nullifier count, merkle root, pool balance
+- `hegemon_getEncryptedNotes` - Fetches encrypted notes from runtime storage
+- `hegemon_getMerkleWitness` - Gets Merkle proof for spending notes
+- `hegemon_isNullifierSpent` - Checks if nullifier has been spent
+- `hegemon_isValidAnchor` - Checks if anchor (Merkle root) is valid
+- `hegemon_miningStatus` - Mining status via MiningHandle
+- `hegemon_telemetry` - Node telemetry metrics
+
+**Write Operations (returns encoded call for signing)**:
+- `hegemon_submitShieldedTransfer` - Builds encoded pallet call, returns call data for client signing
+- `hegemon_shield` - Builds encoded shield call, returns call data for client signing
+
+**Implementation Details**:
+- Added `pallet-shielded-pool` and `frame-support` dependencies to node
+- `ProductionRpcService` now imports pallet types: `StarkProof`, `EncryptedNote`, `BindingSignature`
+- Write operations build `runtime::RuntimeCall::ShieldedPool(...)` and return encoded call
+- Client must sign the call and submit via `author_submitExtrinsic`
+
+**Files Modified**:
+- `node/Cargo.toml`: Added `pallet-shielded-pool` and `frame-support` deps
+- `node/src/substrate/rpc/production_service.rs`: Full implementation of shielded transfer call building
+
+**Status**: ✅ COMPLETE
+- [x] Read operations wired to runtime API
+- [x] Write operations build encoded calls
+- [x] Compiles and passes type checks
 
 ---
 
@@ -2307,15 +2333,16 @@ HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
 | **11.7.2**: author_* RPCs | ✅ DONE | Tx submission |
 | **11.6.1-11.6.2**: Chain sync | ✅ DONE | Multi-node |
 | **11.6.3**: Warp sync (optional) | 🔴 DEFERRED | Fast sync |
-| **11.7.3**: Custom Hegemon RPCs | ⚠️ PARTIAL | Shielded txns |
+| **11.7.3**: Custom Hegemon RPCs | ✅ DONE | Shielded txns |
 | **11.8.1-11.8.3**: Integration verification | 🔴 NOT STARTED | Confidence |
 
 ### Next Priority: Integration Testing (Phase 11.8)
 
-With chain sync implemented, the next priority is multi-node integration testing:
+With chain sync and all RPCs implemented, the next priority is multi-node integration testing:
 - Two-node sync verification
 - Transaction propagation tests
 - Block production across peers
+- Shielded transaction E2E tests
 
 ### Phase Status (Updated 2025-11-28)
 
@@ -2325,6 +2352,7 @@ With chain sync implemented, the next priority is multi-node integration testing
 | Phase 11.6: Chain Sync | ✅ DONE | ⚠️ NEEDS TEST | Code complete, runtime test pending |
 | Phase 11.7: Standard RPCs | ✅ DONE | ✅ WORKS | chain_*, state_*, system_* all work |
 | Phase 11.7: author_* RPCs | ✅ DONE | ✅ WORKS | Tx submission, pending, keys all work |
+| Phase 11.7.3: Custom RPCs | ✅ DONE | ⚠️ NEEDS TEST | All RPCs wired, write ops return call data |
 | Phase 11.8: Integration | 🔴 NOT DONE | ⚠️ PARTIAL | Single-node works, multi-node untested |
 | Phase 12: Shielded Pool | ✅ CODE DONE | ⚠️ CAN TEST | State works, needs E2E verification |
 | Phase 13: Wallet | ✅ CODE DONE | ⚠️ CAN TEST | RPCs work, needs tx submission |
