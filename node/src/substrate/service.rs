@@ -2611,7 +2611,7 @@ mod tests {
         let config = MiningConfig::default();
         assert!(!config.enabled);
         assert_eq!(config.threads, 1);
-        assert_eq!(config.target_block_time_ms, 15_000); // 15 seconds
+        assert_eq!(config.target_block_time_ms, 5_000); // 5 seconds
     }
 
     #[test]
