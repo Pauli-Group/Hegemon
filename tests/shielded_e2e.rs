@@ -1094,3 +1094,263 @@ mod integration_tests {
         }
     }
 }
+
+// ============================================================================
+// SLH-DSA Signature Tests (Protocol 14.2.7)
+// ============================================================================
+
+/// Tests for SLH-DSA (SPHINCS+) signature support per FIPS 205.
+///
+/// SLH-DSA is designated for "long-lived trust roots" and provides
+/// hash-based (stateless) signatures as a conservative fallback.
+#[cfg(test)]
+mod slh_dsa_tests {
+    use crypto::slh_dsa::{
+        SlhDsaSecretKey, SlhDsaPublicKey, SlhDsaSignature,
+        SLH_DSA_PUBLIC_KEY_LEN, SLH_DSA_SECRET_KEY_LEN, SLH_DSA_SIGNATURE_LEN,
+    };
+    use crypto::traits::{SigningKey, VerifyKey, Signature};
+    use rand::rngs::OsRng;
+    use rand::RngCore;
+
+    /// Test SLH-DSA keypair generation.
+    #[tokio::test]
+    async fn test_slh_dsa_keypair_generation() {
+        eprintln!("Generating SLH-DSA keypair (SPHINCS+-SHAKE-128f)...");
+        
+        // Generate deterministic keypair
+        let mut seed = [0u8; 32];
+        OsRng.fill_bytes(&mut seed);
+        
+        let start = std::time::Instant::now();
+        let secret_key = SlhDsaSecretKey::generate_deterministic(&seed);
+        let keygen_time = start.elapsed();
+        eprintln!("  Keypair generated in {:?}", keygen_time);
+        
+        let public_key = secret_key.verify_key();
+        
+        // Verify key sizes
+        let sk_bytes = secret_key.to_bytes();
+        let pk_bytes = public_key.to_bytes();
+        
+        eprintln!("  Secret key size: {} bytes (expected {})", sk_bytes.len(), SLH_DSA_SECRET_KEY_LEN);
+        eprintln!("  Public key size: {} bytes (expected {})", pk_bytes.len(), SLH_DSA_PUBLIC_KEY_LEN);
+        
+        assert_eq!(sk_bytes.len(), SLH_DSA_SECRET_KEY_LEN, "SLH-DSA secret key should be 64 bytes");
+        assert_eq!(pk_bytes.len(), SLH_DSA_PUBLIC_KEY_LEN, "SLH-DSA public key should be 32 bytes");
+    }
+
+    /// Test SLH-DSA signature generation and verification.
+    #[tokio::test]
+    async fn test_slh_dsa_sign_verify() {
+        eprintln!("Testing SLH-DSA sign/verify...");
+        
+        // Generate keypair
+        let mut seed = [0u8; 32];
+        OsRng.fill_bytes(&mut seed);
+        let secret_key = SlhDsaSecretKey::generate_deterministic(&seed);
+        let public_key = secret_key.verify_key();
+        
+        // Sign a message
+        let message = b"Hello, post-quantum world! This tests SLH-DSA (FIPS 205).";
+        
+        let start = std::time::Instant::now();
+        let signature = secret_key.sign(message);
+        let sign_time = start.elapsed();
+        eprintln!("  Signature generated in {:?}", sign_time);
+        
+        // Verify signature size
+        let sig_bytes = signature.as_bytes();
+        eprintln!("  Signature size: {} bytes (expected {})", sig_bytes.len(), SLH_DSA_SIGNATURE_LEN);
+        assert_eq!(sig_bytes.len(), SLH_DSA_SIGNATURE_LEN, "SLH-DSA signature should be 17088 bytes");
+        
+        // Verify signature
+        let start = std::time::Instant::now();
+        let result = public_key.verify(message, &signature);
+        let verify_time = start.elapsed();
+        eprintln!("  Signature verified in {:?}", verify_time);
+        
+        assert!(result.is_ok(), "Valid signature should verify");
+    }
+
+    /// Test SLH-DSA rejects invalid signatures.
+    #[tokio::test]
+    async fn test_slh_dsa_rejects_invalid_signature() {
+        eprintln!("Testing SLH-DSA invalid signature rejection...");
+        
+        // Generate keypair
+        let mut seed = [0u8; 32];
+        OsRng.fill_bytes(&mut seed);
+        let secret_key = SlhDsaSecretKey::generate_deterministic(&seed);
+        let public_key = secret_key.verify_key();
+        
+        // Sign a message
+        let message = b"Original message";
+        let signature = secret_key.sign(message);
+        
+        // Try to verify with different message
+        let wrong_message = b"Different message";
+        let result = public_key.verify(wrong_message, &signature);
+        assert!(result.is_err(), "Signature should not verify for wrong message");
+        
+        // Create corrupted signature
+        let mut corrupted_sig_bytes = signature.as_bytes().to_vec();
+        corrupted_sig_bytes[1000] ^= 0xff; // Flip some bits
+        
+        if let Ok(corrupted_sig) = SlhDsaSignature::from_bytes(&corrupted_sig_bytes) {
+            let result = public_key.verify(message, &corrupted_sig);
+            assert!(result.is_err(), "Corrupted signature should not verify");
+        }
+        
+        eprintln!("  Invalid signature correctly rejected");
+    }
+
+    /// Test SLH-DSA key serialization roundtrip.
+    #[tokio::test]
+    async fn test_slh_dsa_key_serialization() {
+        eprintln!("Testing SLH-DSA key serialization...");
+        
+        // Generate keypair
+        let mut seed = [0u8; 32];
+        OsRng.fill_bytes(&mut seed);
+        let original_sk = SlhDsaSecretKey::generate_deterministic(&seed);
+        let original_pk = original_sk.verify_key();
+        
+        // Serialize and deserialize secret key
+        let sk_bytes = original_sk.to_bytes();
+        let restored_sk = SlhDsaSecretKey::from_bytes(&sk_bytes)
+            .expect("Secret key deserialization should work");
+        
+        // Serialize and deserialize public key
+        let pk_bytes = original_pk.to_bytes();
+        let restored_pk = SlhDsaPublicKey::from_bytes(&pk_bytes)
+            .expect("Public key deserialization should work");
+        
+        // Verify restored keys work
+        let message = b"Test serialization roundtrip";
+        let signature = restored_sk.sign(message);
+        let result = restored_pk.verify(message, &signature);
+        assert!(result.is_ok(), "Restored keys should work for signing/verification");
+        
+        eprintln!("  Key serialization roundtrip successful");
+    }
+
+    /// Test SLH-DSA vs ML-DSA comparison.
+    ///
+    /// Compares key sizes and signature sizes between the two PQ signature schemes.
+    #[tokio::test]
+    async fn test_slh_dsa_vs_ml_dsa_comparison() {
+        use crypto::ml_dsa::{MlDsaSecretKey as MlSk, ML_DSA_SECRET_KEY_LEN, ML_DSA_PUBLIC_KEY_LEN, ML_DSA_SIGNATURE_LEN};
+        use crypto::traits::Signature as SigTrait;
+        
+        eprintln!("Comparing SLH-DSA vs ML-DSA...");
+        
+        let mut seed = [0u8; 32];
+        OsRng.fill_bytes(&mut seed);
+        
+        // Generate both keypairs
+        let slh_sk = SlhDsaSecretKey::generate_deterministic(&seed);
+        let ml_sk = MlSk::generate_deterministic(&seed);
+        
+        let slh_pk = slh_sk.verify_key();
+        let ml_pk = ml_sk.verify_key();
+        
+        // Sign same message
+        let message = b"Compare PQ signature schemes";
+        let slh_sig = slh_sk.sign(message);
+        let ml_sig = ml_sk.sign(message);
+        
+        let slh_sig_len = SigTrait::as_bytes(&slh_sig).len();
+        let ml_sig_len = SigTrait::as_bytes(&ml_sig).len();
+        
+        eprintln!("\n  Algorithm Comparison:");
+        eprintln!("  ┌─────────────────┬────────────┬────────────┐");
+        eprintln!("  │ Metric          │ SLH-DSA    │ ML-DSA-65  │");
+        eprintln!("  ├─────────────────┼────────────┼────────────┤");
+        eprintln!("  │ Secret Key      │ {:>6} B   │ {:>6} B   │", 
+            SLH_DSA_SECRET_KEY_LEN, ML_DSA_SECRET_KEY_LEN);
+        eprintln!("  │ Public Key      │ {:>6} B   │ {:>6} B   │", 
+            SLH_DSA_PUBLIC_KEY_LEN, ML_DSA_PUBLIC_KEY_LEN);
+        eprintln!("  │ Signature       │ {:>6} B   │ {:>6} B   │", 
+            slh_sig_len, ml_sig_len);
+        eprintln!("  └─────────────────┴────────────┴────────────┘");
+        
+        // SLH-DSA signatures are ~5x larger than ML-DSA
+        let size_ratio = slh_sig_len as f64 / ml_sig_len as f64;
+        eprintln!("\n  SLH-DSA signatures are {:.1}x larger than ML-DSA", size_ratio);
+        
+        // Verify both work
+        assert!(slh_pk.verify(message, &slh_sig).is_ok());
+        assert!(ml_pk.verify(message, &ml_sig).is_ok());
+        
+        eprintln!("  Both signature schemes verified successfully");
+    }
+
+    /// Test algorithm identification by signature size.
+    #[tokio::test]
+    async fn test_signature_algorithm_identification() {
+        use crypto::ml_dsa::ML_DSA_SIGNATURE_LEN;
+        use crypto::traits::Signature as SigTrait;
+        
+        eprintln!("Testing signature algorithm identification...");
+        
+        /// Identify PQ signature algorithm by size
+        fn identify_pq_signature(sig_bytes: &[u8]) -> &'static str {
+            match sig_bytes.len() {
+                len if len == ML_DSA_SIGNATURE_LEN => "ML-DSA-65 (Dilithium)",
+                len if len == SLH_DSA_SIGNATURE_LEN => "SLH-DSA-SHAKE-128f (SPHINCS+)",
+                _ => "Unknown",
+            }
+        }
+        
+        // Generate test signatures
+        let mut seed = [0u8; 32];
+        OsRng.fill_bytes(&mut seed);
+        
+        let slh_sk = SlhDsaSecretKey::generate_deterministic(&seed);
+        let ml_sk = crypto::ml_dsa::MlDsaSecretKey::generate_deterministic(&seed);
+        
+        let message = b"Test";
+        let slh_sig = slh_sk.sign(message);
+        let ml_sig = ml_sk.sign(message);
+        
+        let slh_bytes = SigTrait::as_bytes(&slh_sig);
+        let ml_bytes = SigTrait::as_bytes(&ml_sig);
+        
+        // Identify by size
+        let slh_id = identify_pq_signature(slh_bytes);
+        let ml_id = identify_pq_signature(ml_bytes);
+        
+        eprintln!("  {} byte signature -> {}", slh_bytes.len(), slh_id);
+        eprintln!("  {} byte signature -> {}", ml_bytes.len(), ml_id);
+        
+        assert_eq!(slh_id, "SLH-DSA-SHAKE-128f (SPHINCS+)");
+        assert_eq!(ml_id, "ML-DSA-65 (Dilithium)");
+        
+        // Test invalid size
+        let unknown_sig = vec![0u8; 1000];
+        assert_eq!(identify_pq_signature(&unknown_sig), "Unknown");
+    }
+
+    /// Test deterministic key generation produces same keys from same seed.
+    #[tokio::test]
+    async fn test_slh_dsa_deterministic_keygen() {
+        eprintln!("Testing SLH-DSA deterministic key generation...");
+        
+        let seed = [0x42u8; 32];
+        
+        // Generate twice from same seed
+        let sk1 = SlhDsaSecretKey::generate_deterministic(&seed);
+        let sk2 = SlhDsaSecretKey::generate_deterministic(&seed);
+        
+        // Should produce identical keys
+        assert_eq!(sk1.to_bytes(), sk2.to_bytes(), "Same seed should produce same key");
+        
+        // Different seed should produce different key
+        let different_seed = [0x43u8; 32];
+        let sk3 = SlhDsaSecretKey::generate_deterministic(&different_seed);
+        assert_ne!(sk1.to_bytes(), sk3.to_bytes(), "Different seeds should produce different keys");
+        
+        eprintln!("  Deterministic key generation verified");
+    }
+}

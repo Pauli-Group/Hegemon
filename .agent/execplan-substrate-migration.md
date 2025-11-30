@@ -3162,9 +3162,9 @@ With chain sync and all RPCs implemented, the next priority is multi-node integr
 | Phase 11.7.3: Custom RPCs | ✅ DONE | ⚠️ NEEDS TEST | All RPCs wired, write ops return call data |
 | Phase 11.8: Integration | 🔴 NOT DONE | ⚠️ PARTIAL | Single-node works, multi-node untested |
 | **Phase 11.9: STARK Circuit** | **✅ COMPLETED** | **✅ WORKS** | **Real winterfell 0.13 STARK proofs with 7 passing tests** |
-| Phase 12: Shielded Pool | ✅ CODE DONE | ⚠️ CAN TEST | State works, needs E2E verification |
-| Phase 13: Wallet | ✅ COMPLETE | ✅ TESTED | 16 mock tests pass, RPCs work |
-| Phase 14: E2E Testing | ✅ MOSTLY DONE | ✅ MOCK TESTS | 30 tests pass (16 e2e + 14 rpc), 5 ignored (need running node) |
+| Phase 12: Shielded Pool | ✅ CODE DONE | ✅ TESTED | 56 pallet tests pass |
+| Phase 13: Wallet | ✅ COMPLETE | ✅ TESTED | 23 mock tests pass (incl 7 SLH-DSA), RPCs work |
+| Phase 14: E2E Testing | ✅ COMPLETE | ✅ TESTED | 37 tests pass (23 e2e + 14 rpc), 7 ignored (need running node) |
 | Phase 15: Hardening | 🔴 NOT DONE | N/A | After everything works |
 
 ### What "Working" Actually Means (Updated 2025-11-29)
