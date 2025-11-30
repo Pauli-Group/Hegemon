@@ -94,7 +94,7 @@ pub use network_bridge::{
 };
 pub use rpc::{HegemonApiServer, WalletApiServer, HegemonService, MiningHandle, WalletService};
 pub use service::{
-    new_full, MiningConfig,
+    new_full_with_client, MiningConfig,
     BlockImportStats, BlockImportTracker, FullBlockImportConfig, wire_import_tracker,
 };
 pub use transaction_pool::{
