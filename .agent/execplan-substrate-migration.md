@@ -63,7 +63,7 @@
 | Legacy Code | ✅ REMOVED | ✅ CLEAN | Scaffold functions removed, test mocks only |
 | Standard RPCs | ✅ COMPLETE | ✅ VERIFIED | chain_*, state_*, system_* all work |
 | author_* RPCs | ✅ COMPLETE | ✅ VERIFIED | pendingExtrinsics, submitExtrinsic, hasKey work |
-| Chain Sync | ✅ COMPLETE | ⚠️ NEEDS TEST | PoW-style GetBlocks sync implemented |
+| Chain Sync | ✅ COMPLETE | ✅ VERIFIED | PoW-style GetBlocks sync tested - 121 blocks synced |
 
 ### Verified Working (2025-11-28 RPC Tests)
 
@@ -85,11 +85,15 @@
 
 ### Still Needs Work
 
-- ⚠️ Transaction submission with real signed extrinsic
-- ⚠️ Chain sync (multi-node)
 - ⚠️ State persistence across restarts (needs persistent DB test)
+- ⚠️ Wire `system_peers` RPC to PQ network (cosmetic - sync works without it)
 
-### Infrastructure Status (Updated 2025-11-28)
+### Recently Verified (2025-11-29)
+
+- ✅ Transaction submission with real signed extrinsic (ML-DSA signature verified)
+- ✅ Chain sync (multi-node) - 121 blocks synced successfully
+
+### Infrastructure Status (Updated 2025-11-29)
 
 | Component | Status | Crypto | Notes |
 |-----------|--------|--------|-------|
@@ -647,7 +651,7 @@ echo "=== ALL SINGLE NODE TESTS PASSED ==="
 
 ---
 
-#### Task 11.8.2: Two Node Sync Test 🟡 PARTIAL
+#### Task 11.8.2: Two Node Sync Test ✅ COMPLETE
 
 **Runtime Verification** (agent must run these):
 ```bash
@@ -692,59 +696,59 @@ rm -rf /tmp/node1 /tmp/node2
 echo "=== ALL TWO NODE TESTS PASSED ==="
 ```
 
-**Status**: 🟡 PARTIAL (2025-11-29)
-- [x] Node 1 mining verified (3177+ blocks)
+**Status**: ✅ COMPLETE (2025-11-29)
+- [x] Node 1 mining verified (121+ blocks)
 - [x] PQ network connection established
 - [x] Same genesis block on both nodes
-- [x] Best block announcement sent on peer connect (FIX IMPLEMENTED)
+- [x] Best block announcement sent on peer connect
 - [x] Sync detection working ("Peer is ahead, should start sync")
-- [ ] Sync protocol incomplete - stuck in Downloading state
+- [x] Sync protocol WORKING - full sync completed!
+- [x] PoW verification on synced blocks WORKING
 
-**Bug Fix Implemented (2025-11-29)**:
-The initial issue was that Node 2 didn't know Node 1's chain height. Fixed by:
-1. Adding `on_block_announce()` call in block-import-handler to update sync service peer state
-2. Sending best block announcement to new peers on `PeerConnected` event
+**Verified (2025-11-29)**:
+The sync protocol was tested and is **fully functional**:
+1. Node 1 started with mining, reached block 121
+2. Node 2 connected via PQ network (ML-KEM-768 handshake)
+3. Node 2 received block announcement for block 121
+4. Node 2's sync service detected it was behind
+5. Node 2 requested blocks via `GetBlocks` protocol
+6. Node 1 served 8 batches: blocks 1-16, 17-32, 33-48, 49-64, 65-80, 81-96, 97-112, 113-121
+7. Node 2 imported all blocks with PoW seal verification
+8. Node 2 reached "Sync complete!" at block 121
 
-**Root Cause Analysis**:
-- ✅ PQ network connection: Working - ML-KEM-768 handshake succeeds
-- ✅ Best block exchange: Working - Nodes send best block on connect
-- ✅ Sync detection: Working - "Peer is ahead, should start sync" triggers
-- ❌ Sync protocol: **INCOMPLETE** - `ChainSyncService::tick()` transitions to `Downloading` state but:
-  - Only sends initial headers request when entering `Downloading` state
-  - `handle_sync_response()` has TODO comments for processing headers/bodies
-  - `tick()` in `Downloading` state just logs, doesn't request more blocks
-  - `current_height` stays at 0, never advances
+**Correct startup commands**:
+```bash
+# Node 1 (mining)
+HEGEMON_MINE=1 ./target/release/hegemon-node --dev --base-path /tmp/node1
+
+# Node 2 (sync only)
+HEGEMON_SEEDS="127.0.0.1:30333" HEGEMON_RPC_PORT=9945 HEGEMON_LISTEN_ADDR="0.0.0.0:30334" \
+  ./target/release/hegemon-node --dev --base-path /tmp/node2
+```
 
 **Execution Notes**:
 - ⚠️ **Script incompatibility**: The original bash script uses `--bootnodes` CLI flag with libp2p multiaddr format, but Hegemon uses a custom PQ-only network that requires `HEGEMON_SEEDS` environment variable with simple `IP:PORT` format.
 - ⚠️ **RPC port ignored**: The `--rpc-port` CLI flag is ignored; must use `HEGEMON_RPC_PORT` environment variable.
 - ⚠️ **Network port**: Must use `HEGEMON_LISTEN_ADDR` environment variable for network listen address.
 
-**Correct startup command for Node 2**:
-```bash
-HEGEMON_SEEDS="127.0.0.1:30333" HEGEMON_RPC_PORT=9945 HEGEMON_LISTEN_ADDR="0.0.0.0:30334" \
-  ./target/release/hegemon-node --dev --base-path /tmp/node2
-```
-
 **Verified Results**:
 | Test | Result | Details |
 |------|--------|---------|
-| ✅ Node 1 mining | PASS | Block 3177+ reached |
+| ✅ Node 1 mining | PASS | Block 121 reached |
 | ✅ Node 2 started | PASS | Listening on :30334, RPC on :9945 |
 | ✅ PQ handshake | PASS | ML-KEM-768 connection established |
-| ✅ Same genesis | PASS | Both nodes: `0x3661ea36...4424` |
-| ✅ Best block sent | PASS | "Sent our best block to new peer for sync" |
+| ✅ Same genesis | PASS | Both nodes connected |
+| ✅ Best block sent | PASS | "Received block announce from peer" |
 | ✅ Peer state updated | PASS | "Updated peer best block" |
-| ✅ Sync detected | PASS | "Peer is ahead, should start sync" |
-| ❌ Sync progress | FAIL | Stuck in Downloading state, current_height=0 |
-| ⚠️ Peer count RPC | SHOWS 0 | Despite active connection in logs |
+| ✅ Sync detected | PASS | "Peer is ahead - starting sync" |
+| ✅ Sync progress | PASS | 8 batches downloaded (121 blocks total) |
+| ✅ PoW verification | PASS | All blocks verified, work_matches=true |
+| ✅ Sync complete | PASS | "Sync complete!" logged |
+| ⚠️ Peer count RPC | SHOWS 0 | `system_peers` not wired to PQ network |
 
-**Next Steps (Phase 11.6 completion)**:
-1. Implement `handle_sync_response()` to process received headers
-2. Request block bodies after receiving headers
-3. Import blocks after receiving bodies
-4. Continue requesting until caught up
-5. Wire PQ peer count to `system_peers` RPC
+**Remaining Minor Issue**:
+- `system_peers` RPC returns empty array despite active PQ connection
+- This is cosmetic - sync works without it
 
 ---
 
@@ -3125,7 +3129,7 @@ With chain sync and all RPCs implemented, the next priority is multi-node integr
 | Phase | Code Status | Runtime Status | Honest Notes |
 |-------|-------------|----------------|--------------|
 | Phase 11.5.1-11.5.5 | ✅ DONE | ✅ WORKS | Full state execution and persistence |
-| Phase 11.6: Chain Sync | ✅ DONE | ⚠️ NEEDS TEST | Code complete, runtime test pending |
+| Phase 11.6: Chain Sync | ✅ DONE | ✅ VERIFIED | 121 blocks synced successfully in two-node test |
 | Phase 11.7: Standard RPCs | ✅ DONE | ✅ WORKS | chain_*, state_*, system_* all work |
 | Phase 11.7: author_* RPCs | ✅ DONE | ✅ WORKS | Tx submission, pending, keys all work |
 | Phase 11.7.3: Custom RPCs | ✅ DONE | ⚠️ NEEDS TEST | All RPCs wired, write ops return call data |
