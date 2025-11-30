@@ -1,0 +1,109 @@
+{
+  "name": "Hegemon Mainnet",
+  "id": "hegemon_mainnet",
+  "chainType": "Live",
+  "bootNodes": [
+    "/dns4/boot1.hegemon.network/tcp/30333/p2p/12D3KooWPLACEHOLDER1",
+    "/dns4/boot2.hegemon.network/tcp/30333/p2p/12D3KooWPLACEHOLDER2",
+    "/dns4/boot3.hegemon.network/tcp/30333/p2p/12D3KooWPLACEHOLDER3"
+  ],
+  "telemetryEndpoints": [
+    ["wss://telemetry.hegemon.network/submit/", 0]
+  ],
+  "protocolId": "hegemon",
+  "properties": {
+    "tokenSymbol": "HEG",
+    "tokenDecimals": 12,
+    "ss58Format": 42
+  },
+  "consensusEngine": "blake3pow",
+  "genesis": {
+    "runtime": {
+      "system": {
+        "code": "0x..."
+      },
+      "balances": {
+        "balances": []
+      },
+      "shieldedPool": {
+        "merkleTreeDepth": 32,
+        "maxNullifiersPerTx": 4,
+        "maxCommitmentsPerTx": 4,
+        "verifyingKeyHash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "difficulty": {
+        "targetBlockTimeMs": 60000,
+        "difficultyAdjustmentPeriod": 2016,
+        "initialDifficulty": "0x0000ffff00000000000000000000000000000000000000000000000000000000"
+      },
+      "identity": {
+        "signatureScheme": "ML-DSA-65"
+      },
+      "feeModel": {
+        "baseFeePerByte": 1000000,
+        "proofVerificationFee": 10000000000,
+        "maxBlockWeight": 2000000000000
+      }
+    },
+    "raw": {
+      "top": {},
+      "childrenDefault": {}
+    }
+  },
+  "extensions": {
+    "powBits": 32,
+    "requirePq": true,
+    "targetBlockTimeMs": 60000,
+    "handshakeProtocol": "ml-kem-768",
+    "signatureScheme": "ml-dsa-65"
+  },
+  "_securityParameters": {
+    "_comment": "Post-Quantum Security Parameters for Audit",
+    "keyEncapsulation": {
+      "algorithm": "ML-KEM-768",
+      "standard": "FIPS 203",
+      "securityLevel": 3,
+      "publicKeySize": 1184,
+      "ciphertextSize": 1088,
+      "sharedSecretSize": 32
+    },
+    "digitalSignatures": {
+      "algorithm": "ML-DSA-65",
+      "standard": "FIPS 204", 
+      "securityLevel": 3,
+      "publicKeySize": 1952,
+      "secretKeySize": 4032,
+      "signatureSize": 3309
+    },
+    "proofSystem": {
+      "type": "STARK",
+      "library": "winterfell 0.13",
+      "field": "Goldilocks (2^64 - 2^32 + 1)",
+      "hashFunction": "Blake3-256",
+      "friBlowupFactor": 8,
+      "friQueryCount": 32,
+      "securityBits": 128
+    },
+    "hashing": {
+      "pow": "Blake3-256",
+      "commitments": "Blake3-256",
+      "starkFriendly": "Poseidon (Goldilocks)",
+      "merkleTree": "Blake3-256"
+    },
+    "forbiddenPrimitives": [
+      "Ed25519", "X25519", "ECDSA", "secp256k1",
+      "Groth16", "BLS12-381", "BN254", "Halo2",
+      "Jubjub", "BabyJubjub", "Pallas", "Vesta"
+    ]
+  },
+  "_genesisChecklist": {
+    "_comment": "Pre-launch verification checklist",
+    "tokenDecimals": "12 (matches existing chain spec)",
+    "merkleTreeDepth": "32 (supports 4 billion notes)",
+    "starkVerifyingKey": "Must be generated from production circuit",
+    "initialDifficulty": "Set for expected launch hashrate",
+    "preMinedBalances": "NONE (fair launch)",
+    "bootNodes": "At least 3 geographically distributed",
+    "telemetry": "Optional but recommended for monitoring"
+  }
+}
