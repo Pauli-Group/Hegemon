@@ -46,15 +46,16 @@ pub fn development_config() -> Result<ChainSpec, String> {
         "system": {},
         "balances": {
             "balances": [
-                // Alice (development key)
-                ["5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", 1_000_000_000_000_000_000_000_u128],
-                // Bob (development key)
-                ["5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty", 500_000_000_000_000_000_000_u128]
+                // Alice (ML-DSA dev key, seed = blake2_256("//Alice"))
+                ["5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp", 1_000_000_000_000_000_000_000_u128],
+                // Bob (ML-DSA dev key, seed = blake2_256("//Bob"))
+                ["5GoRoFmF8ApeyFGt1MKiqwrbW9dfcSZkaXh1rmxRK4976b1X", 500_000_000_000_000_000_000_u128]
             ],
             "devAccounts": null
         },
         "sudo": {
-            "key": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+            // Alice's ML-DSA account
+            "key": "5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp"
         },
         "session": {
             "keys": [],
@@ -97,13 +98,16 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
         "system": {},
         "balances": {
             "balances": [
-                ["5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", 1_000_000_000_000_000_000_000_u128],
-                ["5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty", 500_000_000_000_000_000_000_u128]
+                // Alice (ML-DSA dev key, seed = blake2_256("//Alice"))
+                ["5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp", 1_000_000_000_000_000_000_000_u128],
+                // Bob (ML-DSA dev key, seed = blake2_256("//Bob"))
+                ["5GoRoFmF8ApeyFGt1MKiqwrbW9dfcSZkaXh1rmxRK4976b1X", 500_000_000_000_000_000_000_u128]
             ],
             "devAccounts": null
         },
         "sudo": {
-            "key": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+            // Alice's ML-DSA account
+            "key": "5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp"
         },
         "session": {
             "keys": [],
@@ -145,13 +149,14 @@ pub fn testnet_config() -> Result<ChainSpec, String> {
         "system": {},
         "balances": {
             "balances": [
-                // Sudo account for testnet
-                ["5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY", 5_000_000_000_000_000_000_000_u128]
+                // Alice sudo account for testnet (ML-DSA dev key)
+                ["5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp", 5_000_000_000_000_000_000_000_u128]
             ],
             "devAccounts": null
         },
         "sudo": {
-            "key": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY"
+            // Alice's ML-DSA account
+            "key": "5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp"
         },
         "session": {
             "keys": [],

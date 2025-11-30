@@ -297,4 +297,49 @@ mod tests {
         let path = MerklePath::new(siblings, position_bits);
         assert_eq!(path.depth(), 5);
     }
+
+    #[test]
+    fn encrypted_note_scale_encoding() {
+        // Create a test note with known data
+        let mut note = EncryptedNote::default();
+        note.ciphertext[0] = 0xAB;
+        note.ciphertext[610] = 0xCD;
+        note.kem_ciphertext[0] = 0xEF;
+        note.kem_ciphertext[1087] = 0x99;
+
+        // Encode it
+        let encoded = note.encode();
+        
+        // Verify exact size - fixed arrays encode without length prefix
+        assert_eq!(
+            encoded.len(),
+            ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN,
+            "EncryptedNote should encode to exactly {} bytes",
+            ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN
+        );
+
+        // Decode it back
+        let decoded = EncryptedNote::decode(&mut &encoded[..])
+            .expect("Should decode successfully");
+        
+        assert_eq!(decoded.ciphertext[0], 0xAB);
+        assert_eq!(decoded.ciphertext[610], 0xCD);
+        assert_eq!(decoded.kem_ciphertext[0], 0xEF);
+        assert_eq!(decoded.kem_ciphertext[1087], 0x99);
+    }
+
+    #[test]
+    fn encrypted_note_raw_bytes_decode() {
+        // Simulate wallet-style encoding (just concatenating raw bytes)
+        let mut raw_bytes = vec![0u8; ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN];
+        raw_bytes[0] = 0x42;  // first byte of ciphertext
+        raw_bytes[ENCRYPTED_NOTE_SIZE] = 0x43;  // first byte of kem_ciphertext
+        
+        // This should decode correctly
+        let decoded = EncryptedNote::decode(&mut raw_bytes.as_slice())
+            .expect("Should decode raw concatenated bytes");
+        
+        assert_eq!(decoded.ciphertext[0], 0x42);
+        assert_eq!(decoded.kem_ciphertext[0], 0x43);
+    }
 }

@@ -663,10 +663,8 @@ impl NodeService {
         // Deserialize proof from bytes
         let proof: transaction_circuit::proof::TransactionProof = bincode::deserialize(&bundle.proof_bytes)
             .map_err(|e| NodeError::Internal(format!("Failed to deserialize proof: {}", e)))?;
-        // Convert ciphertexts from Vec<Vec<u8>> to Vec<NoteCiphertext>
-        let ciphertexts: Vec<NoteCiphertext> = bundle.ciphertexts.iter()
-            .map(|ct| NoteCiphertext::try_from(ct.as_slice()).unwrap_or_default())
-            .collect();
+        // Keep ciphertexts as Vec<Vec<u8>> (raw encrypted notes)
+        let ciphertexts: Vec<Vec<u8>> = bundle.ciphertexts.clone();
         let version = proof.version_binding();
         let verifying_key = self
             .verifying_keys
@@ -731,9 +729,8 @@ impl NodeService {
         if persist {
             let proof_bytes = bincode::serialize(&validated.proof)
                 .unwrap_or_default();
-            let ciphertexts: Vec<Vec<u8>> = validated.ciphertexts.iter()
-                .map(|ct| ct.as_bytes().to_vec())
-                .collect();
+            // ciphertexts are already Vec<Vec<u8>>, just clone them
+            let ciphertexts: Vec<Vec<u8>> = validated.ciphertexts.clone();
             let bundle = TransactionBundle {
                 proof_bytes,
                 nullifiers: validated.nullifiers.clone(),
@@ -753,9 +750,8 @@ impl NodeService {
         if broadcast {
             let proof_bytes = bincode::serialize(&validated.proof)
                 .unwrap_or_default();
-            let ciphertexts: Vec<Vec<u8>> = validated.ciphertexts.iter()
-                .map(|ct| ct.as_bytes().to_vec())
-                .collect();
+            // ciphertexts are already Vec<Vec<u8>>, just clone them
+            let ciphertexts: Vec<Vec<u8>> = validated.ciphertexts.clone();
             let payload = bincode::serialize(&TransactionBundle {
                 proof_bytes,
                 nullifiers: validated.nullifiers.clone(),

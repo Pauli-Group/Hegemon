@@ -209,7 +209,9 @@ mod pq_crypto {
         type AccountId = AccountId32;
 
         fn into_account(self) -> Self::AccountId {
-            let hash = BlakeTwo256::hash_of(&self);
+            // Hash just the raw public key bytes (not the SCALE-encoded enum)
+            // This matches how genesis accounts are derived in gen_dev_account.rs
+            let hash = BlakeTwo256::hash(self.as_bytes());
             AccountId32::new(hash.into())
         }
     }
