@@ -121,8 +121,13 @@ impl LiveNodeManager {
         let _ = std::fs::remove_dir_all(&base_path);
         
         let node_key = identity.node_key();
+        
+        // Use CARGO_MANIFEST_DIR to get absolute path to binary
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let workspace_root = std::path::Path::new(manifest_dir).parent().unwrap();
+        let default_binary = workspace_root.join("target/release/hegemon-node");
         let binary = std::env::var("HEGEMON_NODE_BIN")
-            .unwrap_or_else(|_| "./target/release/hegemon-node".to_string());
+            .unwrap_or_else(|_| default_binary.to_string_lossy().to_string());
 
         let mut cmd = Command::new(&binary);
         cmd.arg("--dev")
@@ -133,7 +138,7 @@ impl LiveNodeManager {
             .arg("--rpc-cors").arg("all")
             .env("HEGEMON_MINE", "1")
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(std::fs::File::create(format!("/tmp/{}.log", identity.name.to_lowercase())).unwrap());
 
         if let Some(bootnode) = bootnode {
             cmd.arg("--bootnodes").arg(bootnode);

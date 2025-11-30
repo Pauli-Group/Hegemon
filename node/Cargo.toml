@@ -12,6 +12,7 @@ axum = { version = "0.7", features = ["json", "ws"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 bincode = "1.3"
 blake3 = "1.5"
+bs58 = "0.5"
 clap = { version = "4.5", features = ["derive", "env"] }
 consensus = { path = "../consensus", default-features = false }
 crypto = { path = "../crypto", package = "synthetic-crypto" }
