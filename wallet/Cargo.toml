@@ -15,6 +15,7 @@ chacha20poly1305 = { version = "0.10", features = ["alloc"] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
+bs58 = "0.5"
 hex = "0.4"
 jsonrpsee = { version = "0.24", features = ["ws-client", "client"] }
 rand = { version = "0.8", features = ["std"] }
@@ -23,11 +24,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_bytes = "0.11"
 sha2 = "0.10"
+sp-crypto-hashing = "0.1"
 state-merkle = { path = "../state/merkle" }
 thiserror = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 transaction-circuit = { path = "../circuits/transaction" }
 synthetic-crypto = { path = "../crypto" }
+twox-hash = "1.6"
 url = "2"
 
 [dev-dependencies]

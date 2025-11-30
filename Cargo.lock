@@ -2895,7 +2895,7 @@ dependencies = [
  "proc-macro-warning",
  "proc-macro2",
  "quote",
- "sp-crypto-hashing",
+ "sp-crypto-hashing 0.1.0 (git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2512-rc1)",
  "syn 2.0.111",
 ]
 
@@ -8074,7 +8074,7 @@ dependencies = [
  "serde_json",
  "sp-blockchain",
  "sp-core",
- "sp-crypto-hashing",
+ "sp-crypto-hashing 0.1.0 (git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2512-rc1)",
  "sp-genesis-builder",
  "sp-io",
  "sp-runtime",
@@ -8723,7 +8723,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sp-core",
- "sp-crypto-hashing",
+ "sp-crypto-hashing 0.1.0 (git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2512-rc1)",
  "sp-io",
 ]
 
@@ -8805,7 +8805,7 @@ dependencies = [
  "sp-api",
  "sp-blockchain",
  "sp-core",
- "sp-crypto-hashing",
+ "sp-crypto-hashing 0.1.0 (git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2512-rc1)",
  "sp-runtime",
  "sp-tracing",
  "sp-transaction-pool",
@@ -9610,7 +9610,7 @@ dependencies = [
  "secrecy",
  "serde",
  "sha2 0.10.9",
- "sp-crypto-hashing",
+ "sp-crypto-hashing 0.1.0 (git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2512-rc1)",
  "sp-debug-derive",
  "sp-externalities",
  "sp-std",
@@ -9621,6 +9621,20 @@ dependencies = [
  "tracing",
  "w3f-bls",
  "zeroize",
+]
+
+[[package]]
+name = "sp-crypto-hashing"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc9927a7f81334ed5b8a98a4a978c81324d12bd9713ec76b5c68fd410174c5eb"
+dependencies = [
+ "blake2b_simd",
+ "byteorder",
+ "digest 0.10.7",
+ "sha2 0.10.9",
+ "sha3 0.10.8",
+ "twox-hash",
 ]
 
 [[package]]
@@ -9642,7 +9656,7 @@ version = "0.1.0"
 source = "git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2512-rc1#ec0d4a3fdd9a05496f1b078aa33a7d5658767ddb"
 dependencies = [
  "quote",
- "sp-crypto-hashing",
+ "sp-crypto-hashing 0.1.0 (git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2512-rc1)",
  "syn 2.0.111",
 ]
 
@@ -9715,7 +9729,7 @@ dependencies = [
  "rustversion",
  "secp256k1",
  "sp-core",
- "sp-crypto-hashing",
+ "sp-crypto-hashing 0.1.0 (git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2512-rc1)",
  "sp-externalities",
  "sp-keystore",
  "sp-runtime-interface",
@@ -9930,7 +9944,7 @@ dependencies = [
  "sp-api",
  "sp-application-crypto",
  "sp-core",
- "sp-crypto-hashing",
+ "sp-crypto-hashing 0.1.0 (git+https://github.com/paritytech/polkadot-sdk?tag=polkadot-stable2512-rc1)",
  "sp-externalities",
  "sp-runtime",
  "sp-runtime-interface",
@@ -11352,6 +11366,7 @@ dependencies = [
  "bech32",
  "bincode",
  "blake2 0.10.6",
+ "bs58",
  "chacha20poly1305",
  "chrono",
  "clap",
@@ -11366,12 +11381,14 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha2 0.10.9",
+ "sp-crypto-hashing 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "state-merkle",
  "synthetic-crypto",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "transaction-circuit",
+ "twox-hash",
  "url",
 ]
 

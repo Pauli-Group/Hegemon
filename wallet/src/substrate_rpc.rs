@@ -553,15 +553,39 @@ impl SubstrateRpcClient {
     }
 
     /// Get account nonce for replay protection
+    /// 
+    /// Queries the System.Account storage to get the nonce for the account.
+    /// Uses state_getStorage RPC with the proper storage key construction.
     pub async fn get_nonce(&self, account_id: &[u8; 32]) -> Result<u32, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
         
-        let account_hex = format!("0x{}", hex::encode(account_id));
-        let nonce: u32 = client
-            .request("system_accountNextIndex", rpc_params![account_hex])
+        // Build storage key for System.Account(account_id)
+        // Key = twox_128("System") ++ twox_128("Account") ++ blake2_128_concat(account_id)
+        let storage_key = build_system_account_key(account_id);
+        let storage_key_hex = format!("0x{}", hex::encode(&storage_key));
+        
+        // Query storage
+        let result: Option<String> = client
+            .request("state_getStorage", rpc_params![storage_key_hex])
             .await
-            .map_err(|e| WalletError::Rpc(format!("system_accountNextIndex failed: {}", e)))?;
+            .map_err(|e| WalletError::Rpc(format!("state_getStorage failed: {}", e)))?;
+        
+        // If account doesn't exist, nonce is 0
+        let Some(data_hex) = result else {
+            return Ok(0);
+        };
+        
+        // Decode AccountInfo: { nonce: u32, consumers: u32, providers: u32, sufficients: u32, data: AccountData }
+        // Nonce is the first u32 (4 bytes)
+        let data = hex::decode(data_hex.trim_start_matches("0x"))
+            .map_err(|e| WalletError::Rpc(format!("failed to decode storage: {}", e)))?;
+        
+        if data.len() < 4 {
+            return Err(WalletError::Rpc("invalid AccountInfo data".into()));
+        }
+        
+        let nonce = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         
         Ok(nonce)
     }
@@ -630,7 +654,8 @@ impl SubstrateRpcClient {
         let call = ShieldedTransferCall::from_bundle(bundle);
         
         // 5. Build mortal era (64 block validity)
-        let era = Era::mortal(64, metadata.block_number.saturating_sub(1));
+        // Use current block number directly - block_hash is the hash of this block
+        let era = Era::mortal(64, metadata.block_number);
         
         // 6. Build and sign the extrinsic
         let extrinsic = builder.build_shielded_transfer(
@@ -640,6 +665,143 @@ impl SubstrateRpcClient {
             0, // tip
             &metadata,
         )?;
+        
+        // 7. Submit
+        self.submit_extrinsic(&extrinsic).await
+    }
+
+    /// Shield transparent funds into the shielded pool
+    ///
+    /// This converts transparent balance to a shielded note by calling
+    /// `pallet_shielded_pool::shield(amount, commitment, encrypted_note)`
+    ///
+    /// # Arguments
+    ///
+    /// * `amount` - Amount to shield (in smallest units)
+    /// * `commitment` - Note commitment (32 bytes, hash of note contents)
+    /// * `encrypted_note` - Encrypted note data for recipient
+    /// * `signing_seed` - 32-byte seed for ML-DSA key derivation
+    ///
+    /// # Returns
+    ///
+    /// The transaction hash (32 bytes) if accepted into the pool.
+    pub async fn submit_shield_signed(
+        &self,
+        amount: u128,
+        commitment: [u8; 32],
+        encrypted_note: crate::extrinsic::EncryptedNote,
+        signing_seed: &[u8; 32],
+    ) -> Result<[u8; 32], WalletError> {
+        use crate::extrinsic::{Era, ExtrinsicBuilder, ShieldCall};
+        
+        // 1. Create extrinsic builder from seed
+        let builder = ExtrinsicBuilder::from_seed(signing_seed);
+        
+        // 2. Get chain metadata
+        let metadata = self.get_chain_metadata().await?;
+        eprintln!("DEBUG: Block number: {}", metadata.block_number);
+        eprintln!("DEBUG: Genesis hash: 0x{}", hex::encode(&metadata.genesis_hash));
+        eprintln!("DEBUG: Block hash: 0x{}", hex::encode(&metadata.block_hash));
+        eprintln!("DEBUG: Spec version: {}", metadata.spec_version);
+        eprintln!("DEBUG: Tx version: {}", metadata.tx_version);
+        
+        // 3. Get account nonce
+        let nonce = self.get_nonce(&builder.account_id()).await?;
+        eprintln!("DEBUG: Account nonce: {}", nonce);
+        
+        // 4. Build the call
+        let call = ShieldCall::new(amount, commitment, encrypted_note);
+        
+        // 5. Build mortal era (64 block validity)
+        // Use current block number directly - block_hash is the hash of this block
+        let era = Era::mortal(64, metadata.block_number);
+        eprintln!("DEBUG: Era bytes: {:?}", era.encode());
+        
+        // Calculate expected extra bytes
+        let era_bytes = era.encode().len();
+        let nonce_compact_bytes = if nonce < 64 { 1 } else if nonce < 16384 { 2 } else { 4 };
+        let tip_bytes = 1; // tip=0 is always 1 byte
+        let extra_total = era_bytes + nonce_compact_bytes + tip_bytes;
+        eprintln!("DEBUG: Extra bytes expected: {} (era={}, nonce_compact={}, tip={})", 
+            extra_total, era_bytes, nonce_compact_bytes, tip_bytes);
+        
+        // 6. Build and sign the extrinsic
+        let extrinsic = builder.build_shield(
+            &call,
+            nonce,
+            era,
+            0, // tip
+            &metadata,
+        )?;
+        
+        // DEBUG: Detailed byte-by-byte analysis
+        eprintln!("DEBUG: Extrinsic total length: {} bytes", extrinsic.len());
+        
+        // Parse compact length prefix
+        let compact_mode = extrinsic[0] & 0b11;
+        let (compact_value, compact_len) = match compact_mode {
+            0 => ((extrinsic[0] >> 2) as usize, 1),
+            1 => {
+                let v = u16::from_le_bytes([extrinsic[0], extrinsic[1]]) >> 2;
+                (v as usize, 2)
+            },
+            2 => {
+                let v = u32::from_le_bytes([extrinsic[0], extrinsic[1], extrinsic[2], extrinsic[3]]) >> 2;
+                (v as usize, 4)
+            },
+            _ => {
+                let n = (extrinsic[0] >> 2) + 4;
+                (0usize, 1 + n as usize) // simplified
+            }
+        };
+        eprintln!("DEBUG: Compact length: {} (encoded in {} bytes)", compact_value, compact_len);
+        
+        let pos = compact_len;
+        eprintln!("DEBUG: Version byte at {}: 0x{:02x} (expected 0x84)", pos, extrinsic[pos]);
+        
+        let pos = pos + 1;
+        eprintln!("DEBUG: MultiAddress variant at {}: 0x{:02x} (expected 0x00)", pos, extrinsic[pos]);
+        
+        let pos = pos + 1;
+        eprintln!("DEBUG: AccountId at {}: {}", pos, hex::encode(&extrinsic[pos..pos+32]));
+        
+        let pos = pos + 32;
+        eprintln!("DEBUG: Signature variant at {}: 0x{:02x} (expected 0x00 for MlDsa)", pos, extrinsic[pos]);
+        
+        let pos = pos + 1;
+        eprintln!("DEBUG: Signature (3309 bytes) starts at {}", pos);
+        
+        let pos = pos + 3309;
+        eprintln!("DEBUG: Public variant at {}: 0x{:02x} (expected 0x00)", pos, extrinsic[pos]);
+        
+        let pos = pos + 1;
+        eprintln!("DEBUG: Public key (1952 bytes) starts at {}", pos);
+        
+        let pos = pos + 1952;
+        eprintln!("DEBUG: Extra starts at {}", pos);
+        eprintln!("DEBUG: Extra bytes: {}", hex::encode(&extrinsic[pos..pos+extra_total]));
+        
+        let pos = pos + extra_total;
+        eprintln!("DEBUG: Call starts at {}", pos);
+        eprintln!("DEBUG: First 50 bytes of call: {}", hex::encode(&extrinsic[pos..pos+50.min(extrinsic.len()-pos)]));
+        
+        // Verify call structure
+        eprintln!("DEBUG: Pallet index: {} (expected 19)", extrinsic[pos]);
+        eprintln!("DEBUG: Call index: {} (expected 1)", extrinsic[pos+1]);
+        
+        // Calculate where kem_ciphertext should start
+        // Call: pallet(1) + call(1) + amount(16) + commitment(32) + ciphertext(611) = 661
+        let kem_start_in_call = 1 + 1 + 16 + 32 + 611;
+        let kem_start_absolute = pos + kem_start_in_call;
+        let kem_end = kem_start_absolute + 1088;
+        eprintln!("DEBUG: kem_ciphertext should be at bytes {}-{}", kem_start_absolute, kem_end);
+        eprintln!("DEBUG: Extrinsic ends at byte {}", extrinsic.len());
+        
+        if kem_end > extrinsic.len() {
+            eprintln!("DEBUG: ERROR! kem_ciphertext would extend {} bytes beyond extrinsic!", kem_end - extrinsic.len());
+        } else {
+            eprintln!("DEBUG: kem_ciphertext fits within extrinsic ✓");
+        }
         
         // 7. Submit
         self.submit_extrinsic(&extrinsic).await
@@ -809,6 +971,60 @@ impl BlockingSubstrateRpcClient {
     pub fn endpoint(&self) -> &str {
         self.inner.endpoint()
     }
+}
+
+/// Build the storage key for System.Account(account_id)
+///
+/// Key format: twox_128("System") ++ twox_128("Account") ++ blake2_128_concat(account_id)
+fn build_system_account_key(account_id: &[u8; 32]) -> Vec<u8> {
+    // twox_128("System")
+    let system_hash = twox_128(b"System");
+    
+    // twox_128("Account")
+    let account_hash = twox_128(b"Account");
+    
+    // blake2_128_concat(account_id) = blake2_128(account_id) ++ account_id
+    let blake2_hash = blake2_128(account_id);
+    
+    // Concatenate all parts
+    let mut key = Vec::with_capacity(16 + 16 + 16 + 32);
+    key.extend_from_slice(&system_hash);
+    key.extend_from_slice(&account_hash);
+    key.extend_from_slice(&blake2_hash);
+    key.extend_from_slice(account_id);
+    
+    key
+}
+
+/// xxHash 128-bit (two rounds of xxHash64)
+fn twox_128(data: &[u8]) -> [u8; 16] {
+    use twox_hash::XxHash64;
+    use std::hash::Hasher;
+    
+    let mut h0 = XxHash64::with_seed(0);
+    let mut h1 = XxHash64::with_seed(1);
+    h0.write(data);
+    h1.write(data);
+    
+    let r0 = h0.finish();
+    let r1 = h1.finish();
+    
+    let mut result = [0u8; 16];
+    result[..8].copy_from_slice(&r0.to_le_bytes());
+    result[8..].copy_from_slice(&r1.to_le_bytes());
+    result
+}
+
+/// Blake2b-128 hash
+fn blake2_128(data: &[u8]) -> [u8; 16] {
+    use blake2::{Blake2b, Digest};
+    use blake2::digest::consts::U16;
+    
+    type Blake2b128 = Blake2b<U16>;
+    let hash = Blake2b128::digest(data);
+    let mut result = [0u8; 16];
+    result.copy_from_slice(&hash);
+    result
 }
 
 #[cfg(test)]

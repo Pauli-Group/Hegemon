@@ -206,3 +206,44 @@ fn test_blocking_client_config() {
     let config = SubstrateRpcConfig::with_endpoint("ws://localhost:9944");
     assert_eq!(config.endpoint, "ws://localhost:9944");
 }
+
+/// Test shield transaction submission with ML-DSA signature
+/// Requires a running Substrate node (run with: cargo test test_shield_e2e -- --ignored)
+#[tokio::test]
+#[ignore]
+async fn test_shield_e2e() {
+    use wallet::extrinsic::EncryptedNote;
+    use synthetic_crypto::hashes::blake2_256;
+    
+    // Connect to local node
+    let client = SubstrateRpcClient::connect("ws://127.0.0.1:9944")
+        .await
+        .expect("Should connect to node");
+    
+    // Alice dev seed: blake2_256("//Alice")
+    let alice_seed = blake2_256(b"//Alice");
+    
+    // Create test commitment and encrypted note
+    let commitment = [0u8; 32]; // dummy commitment
+    let encrypted_note = EncryptedNote::default(); // dummy encrypted note
+    
+    // Submit shield transaction for 1000 units
+    println!("Submitting shield transaction...");
+    let result = client.submit_shield_signed(
+        1000,
+        commitment,
+        encrypted_note,
+        &alice_seed,
+    ).await;
+    
+    match &result {
+        Ok(tx_hash) => {
+            println!("SUCCESS! Transaction hash: 0x{}", hex::encode(tx_hash));
+        }
+        Err(e) => {
+            println!("FAILED: {:?}", e);
+        }
+    }
+    
+    assert!(result.is_ok(), "Shield transaction should succeed: {:?}", result.err());
+}

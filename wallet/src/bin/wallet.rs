@@ -100,6 +100,9 @@ enum Commands {
     /// Send using Substrate WebSocket RPC
     #[command(name = "substrate-send")]
     SubstrateSend(SubstrateSendArgs),
+    /// Shield transparent funds into the shielded pool
+    #[command(name = "substrate-shield")]
+    SubstrateShield(SubstrateShieldArgs),
     #[command(name = "export-viewing-key")]
     ExportViewingKey(ExportArgs),
 }
@@ -240,6 +243,26 @@ struct SubstrateSendArgs {
     randomize_memo_order: bool,
 }
 
+/// Arguments for Substrate WebSocket shield command
+#[derive(Parser)]
+struct SubstrateShieldArgs {
+    /// Path to wallet store file
+    #[arg(long)]
+    store: PathBuf,
+    /// Wallet passphrase
+    #[arg(long)]
+    passphrase: String,
+    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    ws_url: String,
+    /// Amount to shield (in smallest units)
+    #[arg(long)]
+    amount: u128,
+    /// Use Alice dev account (for testing with --dev chain)
+    #[arg(long, default_value_t = false)]
+    use_alice: bool,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -273,6 +296,7 @@ fn main() -> Result<()> {
         Commands::Status(args) => cmd_status(args),
         Commands::Send(args) => cmd_send(args),
         Commands::SubstrateSend(args) => cmd_substrate_send(args),
+        Commands::SubstrateShield(args) => cmd_substrate_shield(args),
         Commands::ExportViewingKey(args) => cmd_export_viewing_key(args),
     }
 }
@@ -654,6 +678,71 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
             Err(e) => {
                 store.mark_notes_pending(&built.spent_note_indexes, false)?;
                 Err(anyhow!("Transaction submission failed: {}", e))
+            }
+        }
+    })
+}
+
+/// Shield transparent funds into the shielded pool
+fn cmd_substrate_shield(args: SubstrateShieldArgs) -> Result<()> {
+    // Determine signing seed
+    let signing_seed: [u8; 32] = if args.use_alice {
+        // Alice dev account: blake2_256("//Alice")
+        use blake2::{Blake2s256, Digest};
+        let mut hasher = Blake2s256::new();
+        hasher.update(b"//Alice");
+        hasher.finalize().into()
+    } else {
+        let store = WalletStore::open(&args.store, &args.passphrase)?;
+        if store.mode()? == WalletMode::WatchOnly {
+            anyhow::bail!("watch-only wallets cannot shield");
+        }
+        let derived = store.derived_keys()?.ok_or_else(|| anyhow!("watch-only wallet has no spend key"))?;
+        derived.spend.to_bytes()
+    };
+    
+    let runtime = RuntimeBuilder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to create tokio runtime")?;
+    
+    runtime.block_on(async {
+        use wallet::extrinsic::{EncryptedNote, ExtrinsicBuilder};
+        use blake2::{Blake2s256, Digest};
+        
+        println!("Connecting to {}...", args.ws_url);
+        let client = SubstrateRpcClient::connect(&args.ws_url)
+            .await
+            .map_err(|e| anyhow!("Failed to connect: {}", e))?;
+        
+        // Get account info
+        let builder = ExtrinsicBuilder::from_seed(&signing_seed);
+        let account_id = builder.account_id();
+        println!("Using account: 0x{}", hex::encode(&account_id));
+        
+        // Generate note commitment
+        // In a real implementation, this would be properly encrypted using ML-KEM
+        let mut hasher = Blake2s256::new();
+        hasher.update(&args.amount.to_le_bytes());
+        hasher.update(&account_id);
+        hasher.update(b"shield_commitment_v1");
+        let commitment: [u8; 32] = hasher.finalize().into();
+        
+        // Create encrypted note (in practice, use ML-KEM to encrypt)
+        let encrypted_note = EncryptedNote::default();
+        
+        println!("Shielding {} units to commitment 0x{}...", args.amount, hex::encode(&commitment[..8]));
+        
+        match client.submit_shield_signed(args.amount, commitment, encrypted_note, &signing_seed).await {
+            Ok(tx_hash) => {
+                println!("✓ Shield transaction submitted successfully!");
+                println!("  TX Hash: 0x{}", hex::encode(tx_hash));
+                println!("  Amount: {} units", args.amount);
+                println!("  Commitment: 0x{}", hex::encode(commitment));
+                Ok(())
+            }
+            Err(e) => {
+                Err(anyhow!("Shield transaction failed: {}", e))
             }
         }
     })
