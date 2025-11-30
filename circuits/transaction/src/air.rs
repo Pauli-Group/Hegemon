@@ -1,3 +1,17 @@
+//! Legacy AIR for public input consistency checking.
+//!
+//! **WARNING**: This module does NOT provide cryptographic security.
+//! It only performs equality checks on public inputs.
+//! 
+//! For real STARK proving/verification, use the `stark_air`, `stark_prover`,
+//! and `stark_verifier` modules instead.
+//!
+//! This module is retained only for:
+//! - Backwards compatibility with old test fixtures
+//! - Quick sanity checks during development
+//!
+//! Production code should always use real STARK proofs.
+
 use crate::{
     constants::{BALANCE_SLOTS, NATIVE_ASSET_ID},
     error::TransactionCircuitError,
@@ -6,10 +20,19 @@ use crate::{
     trace::TransactionTrace,
 };
 
+/// Legacy AIR that only checks public input consistency.
+/// 
+/// **WARNING**: This does NOT verify cryptographic proofs!
+/// Use `stark_verifier::verify_transaction_proof` for real verification.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use stark_air::TransactionAirStark for real STARK proofs"
+)]
 pub struct TransactionAir {
     trace: TransactionTrace,
 }
 
+#[allow(deprecated)]
 impl TransactionAir {
     pub fn new(trace: TransactionTrace) -> Self {
         Self { trace }
@@ -112,6 +135,14 @@ impl BalanceSlot {
     }
 }
 
+/// Legacy constraint checking function.
+/// 
+/// **WARNING**: This only validates consistency, NOT cryptographic proofs!
+#[deprecated(
+    since = "0.2.0",
+    note = "Use stark_prover::TransactionProverStark::prove_transaction for real STARK proofs"
+)]
+#[allow(deprecated)]
 pub fn check_constraints(
     witness: &crate::witness::TransactionWitness,
 ) -> Result<(TransactionTrace, TransactionPublicInputs), TransactionCircuitError> {
