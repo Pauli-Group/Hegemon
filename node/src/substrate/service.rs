@@ -1981,10 +1981,39 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     );
                                 }
                                 
-                                // Construct BlockImportParams
-                                let mut import_params = BlockImportParams::new(BlockOrigin::NetworkBroadcast, header);
+                                // CRITICAL: Extract the seal from header digest and move to post_digests
+                                // PowBlockImport expects the seal in post_digests.last(), not in header.digest()
+                                // The seal should be the last digest item with engine ID "pow_"
+                                use sp_runtime::traits::Header as HeaderT;
+                                let mut header_mut = header.clone();
+                                let post_hash = header_mut.hash(); // Hash before removing seal (this is the final block hash)
+                                let seal = header_mut.digest_mut().pop();
+                                
+                                let seal_item = match seal {
+                                    Some(item) => item,
+                                    None => {
+                                        tracing::warn!(
+                                            block_number,
+                                            "No seal found in announced block header, skipping"
+                                        );
+                                        blocks_failed += 1;
+                                        continue;
+                                    }
+                                };
+                                
+                                // Construct BlockImportParams with seal in post_digests
+                                let mut import_params = BlockImportParams::new(BlockOrigin::NetworkBroadcast, header_mut);
                                 import_params.body = Some(extrinsics);
                                 import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
+                                import_params.post_digests.push(seal_item);
+                                import_params.post_hash = Some(post_hash);
+                                
+                                // Add PowIntermediate - difficulty will be computed from parent
+                                use sc_consensus_pow::{PowIntermediate, INTERMEDIATE_KEY};
+                                let intermediate = PowIntermediate::<sp_core::U256> {
+                                    difficulty: None, // Will be computed by algorithm.difficulty(parent_hash)
+                                };
+                                import_params.insert_intermediate(INTERMEDIATE_KEY, intermediate);
                                 
                                 // Import through PowBlockImport (verifies PoW seal)
                                 let import_result = block_import_pow.clone().import_block(import_params).await;
@@ -2322,9 +2351,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         }
         
         // Spawn a task to handle system RPC network requests
-        // Captures the real peer ID from PQ network backend
+        // Captures the real peer ID and PQ network handle for peer count
         let peer_id_for_rpc = rpc_peer_id;
         let p2p_port = pq_service_config.listen_addr.port();
+        let pq_handle_for_rpc = pq_network_handle.clone();
         task_manager.spawn_handle().spawn(
             "system-rpc-handler",
             Some("rpc"),
@@ -2350,8 +2380,14 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 while let Some(request) = system_rpc_rx.next().await {
                     match request {
                         Request::Health(sender) => {
+                            // Get real peer count from PQ network handle
+                            let peer_count = if let Some(ref handle) = pq_handle_for_rpc {
+                                handle.peer_count().await
+                            } else {
+                                0
+                            };
                             let health = Health {
-                                peers: 0, // Actual peer count comes with full network integration
+                                peers: peer_count,
                                 is_syncing: false,
                                 should_have_peers: true,
                             };

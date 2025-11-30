@@ -5,3 +5,7 @@
 # but getrandom 0.3 uses cfg-based backend selection
 [target.wasm32-unknown-unknown]
 rustflags = ["--cfg", "getrandom_backend=\"custom\""]
+
+# Force all tests to run serially (1 thread) to avoid port conflicts
+[env]
+RUST_TEST_THREADS = "1"
