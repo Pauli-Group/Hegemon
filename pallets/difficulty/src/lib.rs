@@ -58,39 +58,23 @@ pub mod pallet {
     use sp_core::U256;
     use sp_runtime::traits::Saturating;
 
-    /// Target block time in milliseconds (15 seconds)
-    /// 
-    /// Rationale: 15-second blocks provide a good balance between:
-    /// - Fast enough for reasonable transaction confirmation times
-    /// - Slow enough to minimize orphan blocks and allow propagation
-    /// - Compatible with PQ signature verification overhead
-    pub const TARGET_BLOCK_TIME_MS: u64 = 15_000;
+    /// Target block time in milliseconds (5 seconds)
+    pub const TARGET_BLOCK_TIME_MS: u64 = 5_000;
 
     /// Number of blocks between difficulty adjustments
-    /// 
-    /// At 15s blocks, 120 blocks = 30 minutes between adjustments.
-    /// This is aggressive for testnet (allows fast adaptation to hashrate changes).
-    /// For mainnet, consider 2016 blocks (~8.4 hours at 15s blocks).
+    /// At 5s blocks, 120 blocks = 10 minutes between adjustments.
     pub const RETARGET_INTERVAL: u32 = 120;
 
     /// Maximum adjustment factor per retarget period
-    /// Prevents difficulty from changing more than 4x up or down per period.
-    /// This bounds the adjustment to prevent gaming and smooth hashrate changes.
     pub const MAX_ADJUSTMENT_FACTOR: u64 = 4;
 
-    /// Genesis difficulty value
-    /// 
-    /// Calculation for 15-second blocks with ~100 KH/s single miner:
-    /// - Expected hashes per block = hashrate × block_time = 100,000 × 15 = 1,500,000
-    /// - Set initial difficulty lower (500,000) to ensure quick blocks at start
-    /// - Retargeting will adjust up as hashrate is measured
-    /// 
-    /// For multi-threaded mining (e.g., 4 threads at 100 KH/s each = 400 KH/s):
-    /// - Expected hashes = 400,000 × 15 = 6,000,000 per block
-    /// - Starting at 500,000 means ~0.8 second blocks initially
-    /// - After first retarget (120 blocks), difficulty will 4x to 2,000,000
-    /// - After second retarget, will approach equilibrium
-    pub const GENESIS_DIFFICULTY: u128 = 500_000;
+    /// Genesis difficulty value (expected hashes per block)
+    /// For 5-second blocks at ~500 KH/s: 500,000 * 5 = 2,500,000
+    pub const GENESIS_DIFFICULTY: u128 = 2_500_000;
+
+    /// Genesis compact bits: 0x1e06b5fc
+    /// This encodes target = MAX_U256 / GENESIS_DIFFICULTY
+    pub const GENESIS_BITS: u32 = 0x1e06_b5fc;
 
     /// Minimum difficulty to prevent divide by zero
     pub const MIN_DIFFICULTY: u128 = 1;
@@ -135,12 +119,11 @@ pub mod pallet {
         }
     }
 
-    /// Default difficulty bits (easy difficulty for genesis)
+    /// Default difficulty bits - uses GENESIS_BITS
     pub struct DefaultBits;
     impl Get<u32> for DefaultBits {
         fn get() -> u32 {
-            // 0x1f00ffff represents a relatively easy target
-            0x1f00_ffff
+            GENESIS_BITS
         }
     }
 
