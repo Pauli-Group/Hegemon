@@ -114,11 +114,11 @@ pub fn local_testnet_config() -> Result<ChainSpec, String> {
             "nonAuthorityKeys": []
         },
         "difficulty": {
-            // Higher difficulty for local testing to avoid overwhelming logs
-            // initial_bits=0x1800ffff corresponds to difficulty=0x100000 (2^20)
-            // This gives roughly 10-30 second blocks with 4 mining threads
-            "initialDifficulty": "0x100000",
-            "initialBits": 0x1800ffff_u32
+            // GENESIS_DIFFICULTY = 500,000 for 15-second blocks at ~100 KH/s
+            // Same difficulty for ALL networks (dev, testnet, mainnet)
+            // Retargeting algorithm will adjust based on actual hashrate
+            "initialDifficulty": "0x7a120",
+            "initialBits": 0x1f07_a120_u32
         },
         "shieldedPool": {
             "verifyingKey": null
@@ -163,10 +163,11 @@ pub fn testnet_config() -> Result<ChainSpec, String> {
             "nonAuthorityKeys": []
         },
         "difficulty": {
-            // Medium difficulty for public testnet
-            // initial_bits=0x1e00ffff corresponds to difficulty=0x1000100
-            "initialDifficulty": "0x1000100",
-            "initialBits": 0x1e00ffff_u32
+            // GENESIS_DIFFICULTY = 500,000 for 15-second blocks at ~100 KH/s
+            // Same difficulty for ALL networks (dev, testnet, mainnet)
+            // Retargeting algorithm will adjust based on actual hashrate
+            "initialDifficulty": "0x7a120",
+            "initialBits": 0x1f07_a120_u32
         },
         "shieldedPool": {
             "verifyingKey": null

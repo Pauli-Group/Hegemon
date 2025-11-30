@@ -139,10 +139,11 @@ pub type HegemonPowBlockImport<CIDP> = sc_consensus_pow::PowBlockImport<
 
 /// Default difficulty bits if runtime query fails
 /// 
-/// Set for ~1 minute block time at 1 MH/s:
-/// 1 MH/s × 60s = 60M hashes per block
-/// Compact bits 0x1d0fffff gives target ≈ 2^228
-pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1d0fffff;
+/// For 15-second blocks at ~100 KH/s:
+/// 100 KH/s × 15s = 1.5M hashes per block
+/// Compact bits 0x1f07a120 encodes difficulty ~500,000 (GENESIS_DIFFICULTY)
+/// This matches pallet_difficulty::GENESIS_DIFFICULTY
+pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1f07_a120;
 
 /// Configuration for creating full Substrate components
 #[derive(Clone)]
@@ -854,8 +855,9 @@ mod tests {
 
     #[test]
     fn test_default_difficulty_bits() {
-        // 0x1d0fffff = ~1 minute block time at 1 MH/s
-        assert_eq!(DEFAULT_DIFFICULTY_BITS, 0x1d0fffff);
+        // 0x1f07a120 = ~15 second block time at ~100 KH/s
+        // Matches pallet_difficulty::GENESIS_DIFFICULTY = 500,000
+        assert_eq!(DEFAULT_DIFFICULTY_BITS, 0x1f07_a120);
     }
 
     #[test]
