@@ -58,6 +58,11 @@ pub mod pallet {
     use sp_core::U256;
     use sp_runtime::traits::Saturating;
 
+    // =========================================================================
+    // CHAIN PARAMETERS - Import from consensus::reward (single source of truth)
+    // These are re-exported here for pallet convenience.
+    // =========================================================================
+
     /// Target block time in milliseconds (5 seconds)
     pub const TARGET_BLOCK_TIME_MS: u64 = 5_000;
 
@@ -65,18 +70,18 @@ pub mod pallet {
     /// At 5s blocks, 120 blocks = 10 minutes between adjustments.
     pub const RETARGET_INTERVAL: u32 = 120;
 
-    /// Maximum adjustment factor per retarget period
+    /// Maximum adjustment factor per retarget period (4x up or down)
     pub const MAX_ADJUSTMENT_FACTOR: u64 = 4;
 
-    /// Genesis difficulty value (expected hashes per block)
-    /// For 5-second blocks at ~500 KH/s: 500,000 * 5 = 2,500,000
-    pub const GENESIS_DIFFICULTY: u128 = 2_500_000;
+    /// Genesis difficulty: 6 MH/s * 5 seconds = 30,000,000 expected hashes per block.
+    /// This targets M-series MacBooks which achieve ~5-10 MH/s with Blake3.
+    pub const GENESIS_DIFFICULTY: u128 = 30_000_000;
 
-    /// Genesis compact bits: 0x1e06b5fc
-    /// This encodes target = MAX_U256 / GENESIS_DIFFICULTY
-    pub const GENESIS_BITS: u32 = 0x1e06_b5fc;
+    /// Genesis compact bits: 0x1d8f2a63 encodes target = MAX_U256 / 30,000,000.
+    /// Decodes to: exponent=29, mantissa=0x8f2a63, target ≈ 2^231
+    pub const GENESIS_BITS: u32 = 0x1d8f_2a63;
 
-    /// Minimum difficulty to prevent divide by zero
+    /// Minimum difficulty to prevent divide-by-zero
     pub const MIN_DIFFICULTY: u128 = 1;
 
     /// Type alias for timestamp

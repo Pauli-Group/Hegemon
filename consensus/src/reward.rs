@@ -3,15 +3,42 @@ use num_traits::{One, Zero};
 
 use crate::types::SupplyDigest;
 
+// =============================================================================
+// CHAIN PARAMETERS - SINGLE SOURCE OF TRUTH
+// All other crates should import from here or from runtime re-exports.
+// =============================================================================
+
 pub const COIN: u64 = 100_000_000;
 pub const INITIAL_SUBSIDY: u64 = 50 * COIN;
 pub const HALVING_INTERVAL: u64 = 210_000;
 pub const MAX_SUPPLY: u64 = 21_000_000 * COIN;
+
+/// Target block time in milliseconds (5 seconds).
+pub const TARGET_BLOCK_INTERVAL_MS: u64 = 5_000;
+
+/// Number of blocks between difficulty adjustments.
+/// At 5s blocks, 120 blocks = 10 minutes between adjustments.
 pub const RETARGET_WINDOW: u64 = 120;
-pub const TARGET_BLOCK_INTERVAL_MS: u64 = 60_000;
+
+/// Expected total time for RETARGET_WINDOW blocks (120 * 5s = 600s = 10 minutes).
 pub const RETARGET_TIMESPAN_MS: u64 = RETARGET_WINDOW * TARGET_BLOCK_INTERVAL_MS;
+
+/// Maximum adjustment factor per retarget (4x up or down).
+pub const MAX_ADJUSTMENT_FACTOR: u64 = 4;
+
+/// Genesis difficulty: 100 kH/s * 5 seconds = 500,000 expected hashes per block.
+pub const GENESIS_DIFFICULTY: u128 = 500_000;
+
+/// Genesis compact bits: 0x1e218def encodes target = MAX_U256 / 500,000.
+pub const GENESIS_BITS: u32 = 0x1e21_8def;
+
+/// Minimum difficulty to prevent divide-by-zero.
+pub const MIN_DIFFICULTY: u128 = 1;
+
 pub const MEDIAN_TIME_WINDOW: usize = 11;
-pub const MAX_FUTURE_SKEW_MS: u64 = 90_000;
+
+/// Maximum timestamp drift allowed (15 seconds for 5s blocks).
+pub const MAX_FUTURE_SKEW_MS: u64 = 15_000;
 
 pub fn block_subsidy(height: u64) -> u64 {
     if height == 0 {

@@ -19,9 +19,9 @@ use num_bigint::BigUint;
 use num_traits::{One, Zero};
 
 const GENESIS_HASH: [u8; 32] = [0u8; 32];
-// Simplified demo target used across tests and quickstarts.
-// 0x1dc00000 is 3x easier than the old 1 MH/s baseline (about 330 kH/s for ~60s blocks).
-pub const DEFAULT_GENESIS_POW_BITS: u32 = 0x1dc00000;
+// Genesis difficulty for 100 kH/s @ 5 second blocks = 500,000 expected hashes
+// 0x1e218def encodes target = MAX_U256 / 500,000
+pub const DEFAULT_GENESIS_POW_BITS: u32 = 0x1e21_8def;
 
 #[derive(Clone)]
 struct PowNode {
