@@ -58,20 +58,39 @@ pub mod pallet {
     use sp_core::U256;
     use sp_runtime::traits::Saturating;
 
-    /// Target block time in milliseconds (10 seconds)
-    pub const TARGET_BLOCK_TIME_MS: u64 = 10_000;
+    /// Target block time in milliseconds (15 seconds)
+    /// 
+    /// Rationale: 15-second blocks provide a good balance between:
+    /// - Fast enough for reasonable transaction confirmation times
+    /// - Slow enough to minimize orphan blocks and allow propagation
+    /// - Compatible with PQ signature verification overhead
+    pub const TARGET_BLOCK_TIME_MS: u64 = 15_000;
 
-    /// Number of blocks between difficulty adjustments (~2 weeks at 10s blocks)
-    /// For testnet, using smaller value for faster adjustment
-    pub const RETARGET_INTERVAL: u32 = 120; // 20 minutes at 10s blocks
+    /// Number of blocks between difficulty adjustments
+    /// 
+    /// At 15s blocks, 120 blocks = 30 minutes between adjustments.
+    /// This is aggressive for testnet (allows fast adaptation to hashrate changes).
+    /// For mainnet, consider 2016 blocks (~8.4 hours at 15s blocks).
+    pub const RETARGET_INTERVAL: u32 = 120;
 
     /// Maximum adjustment factor per retarget period
-    /// Prevents difficulty from changing more than 4x up or down
+    /// Prevents difficulty from changing more than 4x up or down per period.
+    /// This bounds the adjustment to prevent gaming and smooth hashrate changes.
     pub const MAX_ADJUSTMENT_FACTOR: u64 = 4;
 
     /// Genesis difficulty value
-    /// Set low enough that initial mining is easy
-    pub const GENESIS_DIFFICULTY: u128 = 1_000_000;
+    /// 
+    /// Calculation for 15-second blocks with ~100 KH/s single miner:
+    /// - Expected hashes per block = hashrate × block_time = 100,000 × 15 = 1,500,000
+    /// - Set initial difficulty lower (500,000) to ensure quick blocks at start
+    /// - Retargeting will adjust up as hashrate is measured
+    /// 
+    /// For multi-threaded mining (e.g., 4 threads at 100 KH/s each = 400 KH/s):
+    /// - Expected hashes = 400,000 × 15 = 6,000,000 per block
+    /// - Starting at 500,000 means ~0.8 second blocks initially
+    /// - After first retarget (120 blocks), difficulty will 4x to 2,000,000
+    /// - After second retarget, will approach equilibrium
+    pub const GENESIS_DIFFICULTY: u128 = 500_000;
 
     /// Minimum difficulty to prevent divide by zero
     pub const MIN_DIFFICULTY: u128 = 1;
@@ -212,7 +231,7 @@ pub mod pallet {
 
     impl<T: Config> Pallet<T> {
         /// Record the current block's timestamp and check if retarget is needed
-        fn record_block_and_maybe_retarget(current_block: BlockNumberFor<T>) {
+        pub(crate) fn record_block_and_maybe_retarget(current_block: BlockNumberFor<T>) {
             let current_time = pallet_timestamp::Pallet::<T>::get();
             let last_retarget = Self::last_retarget_block();
 
@@ -274,7 +293,7 @@ pub mod pallet {
         }
 
         /// Calculate new difficulty based on actual vs expected time
-        fn calculate_new_difficulty(
+        pub(crate) fn calculate_new_difficulty(
             old_difficulty: U256,
             actual_time: u64,
             expected_time: u64,
@@ -394,7 +413,7 @@ pub mod pallet {
 mod tests {
     use super::*;
     use frame_support::{assert_ok, derive_impl, traits::Hooks};
-    use sp_core::H256;
+    use sp_core::{H256, U256};
     use sp_runtime::{
         traits::{BlakeTwo256, IdentityLookup},
         BuildStorage,
@@ -444,9 +463,7 @@ mod tests {
         type WeightInfo = ();
     }
 
-    impl pallet::Config for Test {
-        type RuntimeEvent = RuntimeEvent;
-    }
+    impl pallet::Config for Test {}
 
     fn new_test_ext() -> sp_io::TestExternalities {
         let t = frame_system::GenesisConfig::<Test>::default()
@@ -465,13 +482,20 @@ mod tests {
     #[test]
     fn blocks_until_retarget_works() {
         new_test_ext().execute_with(|| {
-            System::set_block_number(1);
+            // Before any blocks, should return RETARGET_INTERVAL
+            System::set_block_number(0);
             assert_eq!(Difficulty::blocks_until_retarget(), RETARGET_INTERVAL);
 
-            System::set_block_number(10);
-            // After initialization at block 1
+            // Initialize at block 1
+            System::set_block_number(1);
             Difficulty::record_block_and_maybe_retarget(1u64);
-            assert!(Difficulty::blocks_until_retarget() <= RETARGET_INTERVAL);
+            // After initialization at block 1, last_retarget_block = 1
+            // blocks_until = RETARGET_INTERVAL - (current - last) = 120 - (1 - 1) = 120
+            assert_eq!(Difficulty::blocks_until_retarget(), RETARGET_INTERVAL);
+
+            // At block 10, should have 120 - (10 - 1) = 111 blocks until retarget
+            System::set_block_number(10);
+            assert_eq!(Difficulty::blocks_until_retarget(), RETARGET_INTERVAL - 9);
         });
     }
 
