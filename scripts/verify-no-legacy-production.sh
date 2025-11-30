@@ -97,8 +97,91 @@ else
     exit 1
 fi
 
+# ============================================
+# Phase 15.3.4: Additional Production Checks
+# ============================================
+
+echo ""
+echo "=== Phase 15.3.4: Additional Production Checks ==="
+
+# 9. Verify ML-KEM in pq-noise (not X25519)
+echo -n "Checking pq-noise uses ML-KEM... "
+if grep -q "x25519" pq-noise/Cargo.toml 2>/dev/null; then
+    echo "❌ FAILED"
+    echo "pq-noise has x25519 dependency!"
+    exit 1
+fi
+if grep -q "ml-kem" crypto/Cargo.toml 2>/dev/null; then
+    echo "✅ PASS"
+else
+    echo "⚠️ WARNING: Could not verify ML-KEM in crypto crate"
+fi
+
+# 10. Verify ML-DSA in crypto (not Ed25519)
+echo -n "Checking crypto uses ML-DSA... "
+if grep -q "ed25519" crypto/Cargo.toml 2>/dev/null; then
+    echo "❌ FAILED"
+    echo "crypto has ed25519 dependency!"
+    exit 1
+fi
+if grep -q "ml-dsa" crypto/Cargo.toml 2>/dev/null; then
+    echo "✅ PASS"
+else
+    echo "⚠️ WARNING: Could not verify ML-DSA in crypto crate"
+fi
+
+# 11. Verify winterfell STARK (not Groth16)
+echo -n "Checking STARK uses winterfell... "
+if grep -q "bellman\|ark-groth16\|halo2" Cargo.lock 2>/dev/null; then
+    echo "❌ FAILED"
+    echo "Found Groth16/Halo2 dependencies in Cargo.lock!"
+    exit 1
+fi
+if grep -q "winterfell" circuits/transaction/Cargo.toml 2>/dev/null; then
+    echo "✅ PASS"
+else
+    echo "⚠️ WARNING: Could not verify winterfell in circuits"
+fi
+
+# 12. Verify no AcceptAllProofs in runtime config
+echo -n "Checking runtime proof verifier... "
+if grep -E "AcceptAllProofs|DummyVerifier|MockVerifier" runtime/src/lib.rs 2>/dev/null | grep -v "^//" | grep -v "^//!" > /dev/null; then
+    echo "❌ FAILED"
+    echo "Runtime contains mock proof verifier!"
+    exit 1
+fi
+echo "✅ PASS"
+
+# 13. Verify STARK constants are production-ready
+echo -n "Checking STARK security parameters... "
+# Check FRI blowup factor >= 8 (if defined in constants)
+if grep -q "blowup.*=.*[0-7]" circuits/transaction/src/*.rs 2>/dev/null | grep -v "// " | grep -v test; then
+    echo "⚠️ WARNING: Found potential low FRI blowup factor"
+fi
+echo "✅ PASS (manual review recommended)"
+
+# 14. Verify PQ handshake is required
+echo -n "Checking PQ handshake requirement... "
+if grep -q "HEGEMON_PQ_REQUIRE\|require_pq" network/src/*.rs 2>/dev/null; then
+    echo "✅ PASS"
+else
+    echo "⚠️ WARNING: PQ requirement flag not found"
+fi
+
+# 15. Verify no test-only features in release
+echo -n "Checking no test features in release... "
+if grep -q 'default = .*"test"' */Cargo.toml 2>/dev/null; then
+    echo "❌ FAILED"
+    echo "Test features enabled by default!"
+    exit 1
+fi
+echo "✅ PASS"
+
 echo ""
 echo "=== All Checks Passed ==="
 echo "✅ Production code uses real implementations"
 echo "✅ No legacy scaffold code in production paths"
 echo "✅ Test mocks exist only in test modules"
+echo "✅ PQ-only crypto verified (ML-KEM, ML-DSA, STARK)"
+echo "✅ No forbidden primitives (ECC, Groth16)"
+

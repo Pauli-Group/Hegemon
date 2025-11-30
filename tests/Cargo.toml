@@ -96,3 +96,13 @@ path = "rpc_integration.rs"
 name = "multinode_integration"
 path = "multinode_integration.rs"
 # Can run without substrate for mock tests, with substrate for full integration
+
+[[test]]
+name = "stark_soundness"
+path = "stark_soundness.rs"
+# STARK security parameter verification (Phase 15.1.2)
+
+[[test]]
+name = "pq_params_audit"
+path = "pq_params_audit.rs"
+# PQ crypto parameter verification (Phase 15.1.3)
