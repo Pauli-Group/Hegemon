@@ -2214,10 +2214,18 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // - Hegemon-specific RPCs (hegemon_*, wallet RPCs)
     // - Shielded pool RPCs (STARK proofs, encrypted notes)
     
-    // Priority: env var > Substrate CLI (--rpc-port) > default
-    let rpc_port: u16 = std::env::var("HEGEMON_RPC_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
+    // Debug: dump what Substrate actually parsed
+    eprintln!("=== RPC CONFIG DEBUG ===");
+    eprintln!("config.rpc.addr: {:?}", config.rpc.addr);
+    eprintln!("config.rpc.port: {}", config.rpc.port);
+    eprintln!("========================");
+    
+    // Get RPC port from CLI config. The --rpc-port flag populates config.rpc.addr,
+    // falling back to config.rpc.port (default 9944) if no explicit endpoints specified.
+    let rpc_port = config.rpc.addr
+        .as_ref()
+        .and_then(|endpoints| endpoints.first())
+        .map(|e| e.listen_addr.port())
         .unwrap_or(config.rpc.port);
     
     // Create production RPC service with client access
