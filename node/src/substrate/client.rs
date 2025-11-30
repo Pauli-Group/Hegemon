@@ -851,9 +851,9 @@ mod tests {
 
     #[test]
     fn test_default_difficulty_bits() {
-        // 0x1f07a120 = ~15 second block time at ~100 KH/s
-        // Matches pallet_difficulty::GENESIS_DIFFICULTY = 500,000
-        assert_eq!(DEFAULT_DIFFICULTY_BITS, 0x1f07_a120);
+        // GENESIS_BITS = 0x1e06b5fc (target = MAX_U256 / 2,500,000)
+        // Matches pallet_difficulty::GENESIS_DIFFICULTY
+        assert_eq!(DEFAULT_DIFFICULTY_BITS, 0x1e06_b5fc);
     }
 
     #[test]
@@ -1118,6 +1118,7 @@ mod tests {
                 state_root: custom_state_root,
                 extrinsics_root: custom_extrinsics_root,
                 failed_count: 0,
+                storage_changes_key: None,
             })
         });
         
@@ -1150,6 +1151,7 @@ mod tests {
                 state_root: custom_state_root,
                 extrinsics_root: crate::substrate::compute_extrinsics_root(extrinsics),
                 failed_count: 0,
+                storage_changes_key: None,
             })
         });
         
@@ -1177,6 +1179,7 @@ mod tests {
                 state_root: H256::zero(),
                 extrinsics_root: H256::zero(),
                 failed_count: 0,
+                storage_changes_key: None,
             })
         });
         

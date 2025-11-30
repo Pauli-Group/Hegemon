@@ -401,12 +401,13 @@ mod tests {
 
     #[test]
     fn test_pow_verifier() {
-        let difficulty = 0x1d00ffff; // Higher difficulty (2^12)
+        // Use easy difficulty for reliable test completion
+        let difficulty = 0x2100ffff; // Very easy (~16 hashes expected)
         let verifier = PowVerifier::new(difficulty);
 
         // Create a valid seal using the mining function
         let pre_hash = H256::repeat_byte(0xab);
-        let seal = consensus::mine_round(&pre_hash, difficulty, 0, 100_000)
+        let seal = consensus::mine_round(&pre_hash, difficulty, 0, 1_000_000)
             .expect("should find seal with easy difficulty");
 
         assert!(verifier.verify(&pre_hash, &seal).is_ok());

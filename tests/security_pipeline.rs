@@ -1,6 +1,6 @@
 use network::{establish_secure_channel, PeerIdentity};
 use transaction_circuit::hashing::Felt;
-use transaction_circuit::note::{InputNoteWitness, NoteData, OutputNoteWitness};
+use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use transaction_circuit::TransactionWitness;
 use wallet::address::ShieldedAddress;
 use wallet::RootSecret;
@@ -18,6 +18,7 @@ fn sample_witness() -> TransactionWitness {
                 },
                 position: 1,
                 rho_seed: [9u8; 32],
+                merkle_path: MerklePath::default(),
             },
             InputNoteWitness {
                 note: NoteData {
@@ -29,6 +30,7 @@ fn sample_witness() -> TransactionWitness {
                 },
                 position: 2,
                 rho_seed: [8u8; 32],
+                merkle_path: MerklePath::default(),
             },
         ],
         outputs: vec![

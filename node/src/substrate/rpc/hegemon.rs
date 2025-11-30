@@ -464,7 +464,7 @@ mod tests {
         // Initial state: not mining
         let status = rpc.mining_status().await.unwrap();
         assert!(!status.is_mining);
-        assert_eq!(status.hashrate, 0.0);
+        assert_eq!(status.hash_rate, 0.0);
 
         // Start mining
         let start_result = rpc.start_mining(Some(StartMiningParams { threads: 4 })).await.unwrap();
@@ -474,7 +474,7 @@ mod tests {
         // Status should reflect mining
         let status = rpc.mining_status().await.unwrap();
         assert!(status.is_mining);
-        assert!(status.hashrate > 0.0);
+        assert!(status.hash_rate > 0.0);
 
         // Stop mining
         let stop_result = rpc.stop_mining().await.unwrap();

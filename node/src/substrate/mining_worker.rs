@@ -1135,8 +1135,8 @@ mod tests {
     fn test_mock_chain_state_provider_test_mode() {
         let provider = MockChainStateProvider::new(true);
         
-        // Test mode should have easier difficulty
-        assert_eq!(provider.difficulty_bits(), 0x2100ffff);
+        // Test mode should have easier difficulty (~4096 hashes per block)
+        assert_eq!(provider.difficulty_bits(), 0x1f00ffff);
     }
 
     #[test]
