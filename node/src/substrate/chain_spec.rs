@@ -10,7 +10,7 @@ pub type ChainSpec = sc_service::GenericChainSpec;
 
 /// The ONE chain configuration.
 ///
-/// GENESIS_DIFFICULTY = 2,500,000 for 5-second blocks at ~500 KH/s
+/// GENESIS_DIFFICULTY = 500,000 for 5-second blocks at ~100 kH/s
 /// Retargeting adjusts automatically based on actual hashrate.
 pub fn chain_spec() -> Result<ChainSpec, String> {
     let wasm_binary = WASM_BINARY.ok_or("WASM binary not available")?;
@@ -39,10 +39,10 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
             "nonAuthorityKeys": []
         },
         "difficulty": {
-            // GENESIS_BITS = 0x1e06b5fc encodes target = MAX_U256 / 2,500,000
-            // For 5-second blocks at ~500 KH/s
-            "initialDifficulty": "0x2625A0",
-            "initialBits": 0x1e06_b5fc_u32
+            // GENESIS_BITS = 0x1d8f2a63 encodes target = MAX_U256 / 30,000,000
+            // For 5-second blocks at ~6 MH/s (typical M-series MacBook)
+            "initialDifficulty": "0x1C9C380",
+            "initialBits": 0x1d8f_2a63_u32
         },
         "shieldedPool": {
             "verifyingKey": null
