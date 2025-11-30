@@ -74,3 +74,8 @@ path = "pq_network_integration.rs"
 name = "multi_node_substrate"
 path = "multi_node_substrate.rs"
 required-features = ["substrate"]
+
+[[test]]
+name = "shielded_e2e"
+path = "shielded_e2e.rs"
+# Can run without substrate for mock tests, with substrate for full integration
