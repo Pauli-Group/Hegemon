@@ -436,4 +436,101 @@ mod tests {
         assert_eq!(snapshot.uptime_secs, 3600);
         assert_eq!(snapshot.tx_count, 1000);
     }
+
+    // ============================================================================
+    // Phase 11.7.3: Additional Custom RPC Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_storage_footprint() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle);
+
+        let footprint = rpc.storage_footprint().await.unwrap();
+        assert_eq!(footprint.total_bytes, 1024 * 1024 * 100);
+        assert_eq!(footprint.blocks_bytes, 1024 * 1024 * 50);
+        assert_eq!(footprint.state_bytes, 1024 * 1024 * 30);
+        assert_eq!(footprint.transactions_bytes, 1024 * 1024 * 15);
+        assert_eq!(footprint.nullifiers_bytes, 1024 * 1024 * 5);
+    }
+
+    #[tokio::test]
+    async fn test_mining_lifecycle() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle);
+
+        // Initial state: not mining
+        let status = rpc.mining_status().await.unwrap();
+        assert!(!status.is_mining);
+        assert_eq!(status.hashrate, 0.0);
+
+        // Start mining
+        let start_result = rpc.start_mining(Some(StartMiningParams { threads: 4 })).await.unwrap();
+        assert!(start_result.success);
+        assert!(start_result.status.is_mining);
+
+        // Status should reflect mining
+        let status = rpc.mining_status().await.unwrap();
+        assert!(status.is_mining);
+        assert!(status.hashrate > 0.0);
+
+        // Stop mining
+        let stop_result = rpc.stop_mining().await.unwrap();
+        assert!(stop_result.success);
+        assert!(!stop_result.status.is_mining);
+
+        // Status should reflect stopped
+        let status = rpc.mining_status().await.unwrap();
+        assert!(!status.is_mining);
+    }
+
+    #[tokio::test]
+    async fn test_consensus_status_fields() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle);
+
+        let status = rpc.consensus_status().await.unwrap();
+        
+        // Verify all fields are populated
+        assert_eq!(status.height, 100);
+        assert_eq!(status.best_hash, "0x1234");
+        assert_eq!(status.state_root, "0x5678");
+        assert_eq!(status.nullifier_root, "0x9abc");
+        assert_eq!(status.supply_digest, 1_000_000);
+        assert!(!status.syncing);
+        assert_eq!(status.peers, 5);
+    }
+
+    #[tokio::test]
+    async fn test_telemetry_fields() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle);
+
+        let snapshot = rpc.telemetry().await.unwrap();
+        
+        // Verify all telemetry fields
+        assert_eq!(snapshot.uptime_secs, 3600);
+        assert_eq!(snapshot.tx_count, 1000);
+        assert_eq!(snapshot.blocks_imported, 100);
+        assert_eq!(snapshot.blocks_mined, 10);
+        assert_eq!(snapshot.memory_bytes, 512 * 1024 * 1024);
+        assert_eq!(snapshot.network_rx_bytes, 1024 * 1024);
+        assert_eq!(snapshot.network_tx_bytes, 512 * 1024);
+    }
+
+    #[tokio::test]
+    async fn test_start_mining_with_default_threads() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle);
+
+        // Start mining with no params (should use default threads)
+        let result = rpc.start_mining(None).await.unwrap();
+        assert!(result.success);
+        assert!(result.status.is_mining);
+    }
 }
