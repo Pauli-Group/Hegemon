@@ -706,4 +706,205 @@ mod tests {
         assert_eq!(witness.indices.len(), 32);
         assert_eq!(witness.position, 5);
     }
+
+    // ============================================================================
+    // Phase 11.7.3: Additional Custom RPC Tests
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_submit_shielded_transfer() {
+        let service = Arc::new(MockShieldedService);
+        let rpc = ShieldedRpc::new(service);
+
+        // Create a valid request with base64-encoded proof
+        let proof_bytes = vec![0u8; 100]; // Mock proof
+        let proof_base64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &proof_bytes,
+        );
+
+        let request = ShieldedTransferRequest {
+            proof: proof_base64,
+            nullifiers: vec![hex::encode([0x11u8; 32])],
+            commitments: vec![hex::encode([0x22u8; 32])],
+            encrypted_notes: vec![base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                &[1, 2, 3, 4],
+            )],
+            anchor: hex::encode([0x33u8; 32]),
+            binding_sig: hex::encode([0x44u8; 64]),
+            value_balance: 0,
+        };
+
+        let response = rpc.submit_shielded_transfer(request).await.unwrap();
+        assert!(response.success);
+        assert!(response.tx_hash.is_some());
+        assert_eq!(response.tx_hash.unwrap(), hex::encode([0xab; 32]));
+        assert!(response.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_submit_shielded_transfer_invalid_proof() {
+        let service = Arc::new(MockShieldedService);
+        let rpc = ShieldedRpc::new(service);
+
+        // Invalid base64 proof
+        let request = ShieldedTransferRequest {
+            proof: "not-valid-base64!!!".to_string(),
+            nullifiers: vec![hex::encode([0x11u8; 32])],
+            commitments: vec![hex::encode([0x22u8; 32])],
+            encrypted_notes: vec![],
+            anchor: hex::encode([0x33u8; 32]),
+            binding_sig: hex::encode([0x44u8; 64]),
+            value_balance: 0,
+        };
+
+        let response = rpc.submit_shielded_transfer(request).await.unwrap();
+        assert!(!response.success);
+        assert!(response.error.is_some());
+        assert!(response.error.unwrap().contains("Invalid proof encoding"));
+    }
+
+    #[tokio::test]
+    async fn test_submit_shielded_transfer_invalid_nullifier() {
+        let service = Arc::new(MockShieldedService);
+        let rpc = ShieldedRpc::new(service);
+
+        let proof_bytes = vec![0u8; 100];
+        let proof_base64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &proof_bytes,
+        );
+
+        // Nullifier with wrong length
+        let request = ShieldedTransferRequest {
+            proof: proof_base64,
+            nullifiers: vec!["0011223344".to_string()], // Too short
+            commitments: vec![hex::encode([0x22u8; 32])],
+            encrypted_notes: vec![],
+            anchor: hex::encode([0x33u8; 32]),
+            binding_sig: hex::encode([0x44u8; 64]),
+            value_balance: 0,
+        };
+
+        let response = rpc.submit_shielded_transfer(request).await.unwrap();
+        assert!(!response.success);
+        assert!(response.error.is_some());
+        assert!(response.error.unwrap().contains("Invalid nullifier"));
+    }
+
+    #[tokio::test]
+    async fn test_get_encrypted_notes() {
+        let service = Arc::new(MockShieldedService);
+        let rpc = ShieldedRpc::new(service);
+
+        // Get notes with default params
+        let response = rpc.get_encrypted_notes(None).await.unwrap();
+        assert!(response.notes.len() <= 10);
+        assert_eq!(response.total, 1000);
+        assert!(response.has_more);
+
+        // Verify note structure
+        if !response.notes.is_empty() {
+            let note = &response.notes[0];
+            assert_eq!(note.index, 0);
+            assert!(!note.ciphertext.is_empty());
+            assert!(!note.commitment.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_encrypted_notes_with_params() {
+        let service = Arc::new(MockShieldedService);
+        let rpc = ShieldedRpc::new(service);
+
+        let params = Some(EncryptedNotesParams {
+            start: 5,
+            limit: 3,
+            from_block: Some(100),
+            to_block: Some(200),
+        });
+
+        let response = rpc.get_encrypted_notes(params).await.unwrap();
+        // Should start at index 5
+        if !response.notes.is_empty() {
+            assert_eq!(response.notes[0].index, 5);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_shield_operation() {
+        let service = Arc::new(MockShieldedService);
+        let rpc = ShieldedRpc::new(service);
+
+        let encrypted_note = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &[1, 2, 3, 4],
+        );
+
+        let request = ShieldRequest {
+            amount: 1_000_000,
+            commitment: hex::encode([0xaa; 32]),
+            encrypted_note,
+        };
+
+        let response = rpc.shield(request).await.unwrap();
+        assert!(response.success);
+        assert!(response.tx_hash.is_some());
+        assert_eq!(response.tx_hash.unwrap(), hex::encode([0xcd; 32]));
+        assert_eq!(response.note_index, Some(1001));
+        assert!(response.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_shield_invalid_commitment() {
+        let service = Arc::new(MockShieldedService);
+        let rpc = ShieldedRpc::new(service);
+
+        let encrypted_note = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &[1, 2, 3, 4],
+        );
+
+        // Invalid hex commitment
+        let request = ShieldRequest {
+            amount: 1_000_000,
+            commitment: "not-valid-hex-zzz".to_string(),
+            encrypted_note,
+        };
+
+        let response = rpc.shield(request).await.unwrap();
+        assert!(!response.success);
+        assert!(response.error.is_some());
+        assert!(response.error.unwrap().contains("Invalid commitment"));
+    }
+
+    #[tokio::test]
+    async fn test_shield_invalid_encrypted_note() {
+        let service = Arc::new(MockShieldedService);
+        let rpc = ShieldedRpc::new(service);
+
+        let request = ShieldRequest {
+            amount: 1_000_000,
+            commitment: hex::encode([0xaa; 32]),
+            encrypted_note: "not-valid-base64!!!".to_string(),
+        };
+
+        let response = rpc.shield(request).await.unwrap();
+        assert!(!response.success);
+        assert!(response.error.is_some());
+        assert!(response.error.unwrap().contains("Invalid encrypted note"));
+    }
+
+    #[tokio::test]
+    async fn test_storage_footprint_rpc() {
+        let service = Arc::new(MockShieldedService);
+        let rpc = ShieldedRpc::new(service);
+
+        // Verify pool status includes balance information
+        let status = rpc.get_shielded_pool_status().await.unwrap();
+        assert_eq!(status.pool_balance, 1_000_000_000);
+        assert_eq!(status.tree_depth, 32);
+        assert_eq!(status.last_update_block, 100);
+    }
 }

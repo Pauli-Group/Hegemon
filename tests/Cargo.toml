@@ -85,3 +85,8 @@ path = "shielded_e2e.rs"
 name = "rpc_integration"
 path = "rpc_integration.rs"
 # Can run without substrate for mock tests, with substrate for full integration
+
+[[test]]
+name = "multinode_integration"
+path = "multinode_integration.rs"
+# Can run without substrate for mock tests, with substrate for full integration
