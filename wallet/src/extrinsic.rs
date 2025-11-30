@@ -1,7 +1,7 @@
 //! Substrate Extrinsic Construction for Hegemon
 //!
 //! This module constructs properly signed Substrate extrinsics for the
-//! Hegemon runtime using ML-DSA (FIPS 204) post-quantum signatures.
+//! Hegemon runtime using ML-DSA (FIPS 204) and SLH-DSA (FIPS 205) post-quantum signatures.
 //!
 //! The extrinsic format matches the runtime's `UncheckedExtrinsic` type:
 //! - Address: MultiAddress<AccountId32, ()>
@@ -16,6 +16,10 @@ use crate::rpc::TransactionBundle;
 use synthetic_crypto::ml_dsa::{
     MlDsaPublicKey, MlDsaSecretKey, ML_DSA_PUBLIC_KEY_LEN,
     ML_DSA_SIGNATURE_LEN,
+};
+use synthetic_crypto::slh_dsa::{
+    SlhDsaPublicKey, SlhDsaSecretKey, SLH_DSA_PUBLIC_KEY_LEN,
+    SLH_DSA_SIGNATURE_LEN,
 };
 use synthetic_crypto::traits::{Signature as SigTrait, SigningKey, VerifyKey};
 
@@ -483,6 +487,265 @@ impl ExtrinsicBuilder {
         result.extend_from_slice(&extrinsic);
         
         result
+    }
+}
+
+// ============================================================================
+// SLH-DSA Extrinsic Builder (Protocol 14.2.7)
+// ============================================================================
+
+/// Extrinsic builder using SLH-DSA (SPHINCS+) signatures per FIPS 205
+///
+/// This provides an alternative to ML-DSA for scenarios requiring maximum
+/// cryptographic conservatism. SLH-DSA is a stateless hash-based signature
+/// scheme that relies only on the security of hash functions.
+///
+/// **Note**: SLH-DSA signatures are ~5x larger than ML-DSA (17KB vs 3.3KB),
+/// which increases transaction size significantly. Use ML-DSA for routine
+/// transactions and reserve SLH-DSA for long-lived trust roots or governance.
+pub struct SlhDsaExtrinsicBuilder {
+    /// SLH-DSA signing key
+    signing_key: SlhDsaSecretKey,
+    /// SLH-DSA public key (cached)
+    public_key: SlhDsaPublicKey,
+    /// Account ID (blake2_256 hash of raw public key bytes)
+    account_id: [u8; 32],
+}
+
+impl SlhDsaExtrinsicBuilder {
+    /// Create a new SLH-DSA extrinsic builder from a seed
+    ///
+    /// # Arguments
+    /// * `seed` - 32-byte seed for deterministic key generation
+    pub fn from_seed(seed: &[u8; 32]) -> Self {
+        let signing_key = SlhDsaSecretKey::generate_deterministic(seed);
+        let public_key = signing_key.verify_key();
+        
+        // Account ID is blake2_256 hash of the raw public key bytes
+        // This matches the runtime's IdentifyAccount implementation
+        let pk_bytes = public_key.to_bytes();
+        let account_id = blake2_256_hash(&pk_bytes);
+        
+        Self {
+            signing_key,
+            public_key,
+            account_id,
+        }
+    }
+
+    /// Get the account ID
+    pub fn account_id(&self) -> [u8; 32] {
+        self.account_id
+    }
+
+    /// Get the public key bytes
+    pub fn public_key_bytes(&self) -> Vec<u8> {
+        self.public_key.to_bytes()
+    }
+
+    /// Build a signed extrinsic for a balance transfer
+    ///
+    /// This is call_index(0) in pallet_balances (transfer_allow_death)
+    pub fn build_transfer(
+        &self,
+        dest: &[u8; 32],
+        amount: u128,
+        nonce: Nonce,
+        era: Era,
+        tip: u128,
+        metadata: &ChainMetadata,
+    ) -> Result<Vec<u8>, WalletError> {
+        // 1. Encode the call
+        let encoded_call = encode_transfer_call(dest, amount);
+        
+        // 2. Encode SignedExtra
+        let encoded_extra = encode_signed_extra(nonce, &era, tip);
+        
+        // 3. Build the payload to sign
+        let payload = build_sign_payload(&encoded_call, &encoded_extra, metadata);
+        
+        // 4. Sign with SLH-DSA
+        let signature = self.sign_payload(&payload);
+        
+        // 5. Build the final extrinsic
+        let extrinsic = self.build_extrinsic(&encoded_call, &signature, &encoded_extra);
+        
+        Ok(extrinsic)
+    }
+
+    /// Build a signed extrinsic for shielding transparent funds
+    pub fn build_shield(
+        &self,
+        call: &ShieldCall,
+        nonce: Nonce,
+        era: Era,
+        tip: u128,
+        metadata: &ChainMetadata,
+    ) -> Result<Vec<u8>, WalletError> {
+        // 1. Encode the call
+        let encoded_call = encode_shield_call(call);
+        
+        // 2. Encode SignedExtra
+        let encoded_extra = encode_signed_extra(nonce, &era, tip);
+        
+        // 3. Build the payload to sign
+        let payload = build_sign_payload(&encoded_call, &encoded_extra, metadata);
+        
+        // 4. Sign with SLH-DSA
+        let signature = self.sign_payload(&payload);
+        
+        // 5. Build the final extrinsic
+        let extrinsic = self.build_extrinsic(&encoded_call, &signature, &encoded_extra);
+        
+        Ok(extrinsic)
+    }
+
+    /// Sign payload with SLH-DSA
+    fn sign_payload(&self, payload: &[u8]) -> Vec<u8> {
+        let signature = self.signing_key.sign(payload);
+        
+        // Encode as Signature::SlhDsa variant
+        // Format: variant_byte(1) + signature[17088] + Public::SlhDsa(variant_byte(1) + pk[32])
+        //
+        // The runtime's Signature enum is:
+        //   enum Signature { MlDsa { .. }, SlhDsa { signature: Box<[u8; 17088]>, public: Public } }
+        // And Public enum is:
+        //   enum Public { MlDsa([u8; 1952]), SlhDsa([u8; 32]) }
+        //
+        // So we need: Signature variant + signature bytes + Public variant + public key bytes
+        let mut encoded = Vec::with_capacity(1 + SLH_DSA_SIGNATURE_LEN + 1 + SLH_DSA_PUBLIC_KEY_LEN);
+        encoded.push(1u8); // Signature::SlhDsa variant
+        encoded.extend_from_slice(signature.as_bytes());
+        encoded.push(1u8); // Public::SlhDsa variant
+        encoded.extend_from_slice(&self.public_key.to_bytes());
+        
+        encoded
+    }
+
+    /// Build the final signed extrinsic
+    fn build_extrinsic(
+        &self,
+        encoded_call: &[u8],
+        signature: &[u8],
+        encoded_extra: &[u8],
+    ) -> Vec<u8> {
+        let mut extrinsic = Vec::new();
+        
+        // Version byte: 0x84 = signed extrinsic (0b10000100)
+        extrinsic.push(0x84);
+        
+        // Address: MultiAddress::Id(AccountId32)
+        extrinsic.push(0x00);
+        extrinsic.extend_from_slice(&self.account_id);
+        
+        // Signature (already encoded with variant byte)
+        extrinsic.extend_from_slice(signature);
+        
+        // Extra
+        extrinsic.extend_from_slice(encoded_extra);
+        
+        // Call
+        extrinsic.extend_from_slice(encoded_call);
+        
+        // Wrap with compact length prefix
+        let mut result = Vec::new();
+        encode_compact_len(extrinsic.len(), &mut result);
+        result.extend_from_slice(&extrinsic);
+        
+        result
+    }
+}
+
+// ============================================================================
+// Shared Encoding Helpers (used by both ML-DSA and SLH-DSA builders)
+// ============================================================================
+
+/// Encode a balance transfer call (pallet_balances::transfer_allow_death)
+fn encode_transfer_call(dest: &[u8; 32], amount: u128) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    
+    // Pallet index for Balances (from construct_runtime! ordering)
+    const BALANCES_INDEX: u8 = 5;
+    encoded.push(BALANCES_INDEX);
+    
+    // Call index for transfer_allow_death (first call in pallet)
+    const TRANSFER_CALL_INDEX: u8 = 0;
+    encoded.push(TRANSFER_CALL_INDEX);
+    
+    // Destination as MultiAddress::Id(AccountId32)
+    encoded.push(0x00); // Id variant
+    encoded.extend_from_slice(dest);
+    
+    // Amount as Compact<u128>
+    encode_compact_u128(amount, &mut encoded);
+    
+    encoded
+}
+
+/// Encode shield call (standalone function for reuse)
+fn encode_shield_call(call: &ShieldCall) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    
+    const SHIELDED_POOL_INDEX: u8 = 19;
+    encoded.push(SHIELDED_POOL_INDEX);
+    
+    const SHIELD_CALL_INDEX: u8 = 1;
+    encoded.push(SHIELD_CALL_INDEX);
+    
+    // Amount as raw u128 (NOT Compact)
+    encoded.extend_from_slice(&call.amount.to_le_bytes());
+    
+    // Commitment
+    encoded.extend_from_slice(&call.commitment);
+    
+    // Encrypted note
+    encoded.extend_from_slice(&call.encrypted_note.ciphertext);
+    encoded.extend_from_slice(&call.encrypted_note.kem_ciphertext);
+    
+    encoded
+}
+
+/// Encode SignedExtra (standalone function for reuse)
+fn encode_signed_extra(nonce: Nonce, era: &Era, tip: u128) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    
+    // Era encoding
+    encoded.extend_from_slice(&era.encode());
+    
+    // Nonce as Compact<u32>
+    encode_compact_u32(nonce, &mut encoded);
+    
+    // Tip as Compact<u128>
+    encode_compact_u128(tip, &mut encoded);
+    
+    encoded
+}
+
+/// Build sign payload (standalone function for reuse)
+fn build_sign_payload(
+    encoded_call: &[u8],
+    encoded_extra: &[u8],
+    metadata: &ChainMetadata,
+) -> Vec<u8> {
+    let mut payload = Vec::new();
+    
+    // Call
+    payload.extend_from_slice(encoded_call);
+    
+    // Extra
+    payload.extend_from_slice(encoded_extra);
+    
+    // Additional signed data
+    payload.extend_from_slice(&metadata.spec_version.to_le_bytes());
+    payload.extend_from_slice(&metadata.tx_version.to_le_bytes());
+    payload.extend_from_slice(&metadata.genesis_hash);
+    payload.extend_from_slice(&metadata.block_hash);
+    
+    // If payload > 256 bytes, hash it first (Substrate convention)
+    if payload.len() > 256 {
+        blake2_256_hash(&payload).to_vec()
+    } else {
+        payload
     }
 }
 

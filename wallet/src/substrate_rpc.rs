@@ -590,6 +590,57 @@ impl SubstrateRpcClient {
         Ok(nonce)
     }
 
+    /// Query transparent account balance
+    ///
+    /// Queries the System.Account storage to get the free balance for an account.
+    /// Uses state_getStorage RPC with the proper storage key construction.
+    ///
+    /// # Arguments
+    ///
+    /// * `account_id` - 32-byte account identifier
+    ///
+    /// # Returns
+    ///
+    /// The free balance in smallest units. Returns 0 if account doesn't exist.
+    pub async fn query_balance(&self, account_id: &[u8; 32]) -> Result<u128, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        
+        // Build storage key for System.Account(account_id)
+        // Key = twox_128("System") ++ twox_128("Account") ++ blake2_128_concat(account_id)
+        let storage_key = build_system_account_key(account_id);
+        let storage_key_hex = format!("0x{}", hex::encode(&storage_key));
+        
+        // Query storage
+        let result: Option<String> = client
+            .request("state_getStorage", rpc_params![storage_key_hex])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("state_getStorage failed: {}", e)))?;
+        
+        // If account doesn't exist, balance is 0
+        let Some(data_hex) = result else {
+            return Ok(0);
+        };
+        
+        // Decode AccountInfo: { nonce: u32, consumers: u32, providers: u32, sufficients: u32, data: AccountData }
+        // AccountData: { free: u128, reserved: u128, misc_frozen: u128, fee_frozen: u128 }
+        // Layout: nonce(4) + consumers(4) + providers(4) + sufficients(4) = 16 bytes, then free(16 bytes)
+        let data = hex::decode(data_hex.trim_start_matches("0x"))
+            .map_err(|e| WalletError::Rpc(format!("failed to decode storage: {}", e)))?;
+        
+        if data.len() < 32 {
+            // Not enough data for free balance
+            return Err(WalletError::Rpc("invalid AccountInfo data (too short)".into()));
+        }
+        
+        // Free balance starts at offset 16 (after nonce, consumers, providers, sufficients)
+        let free_balance = u128::from_le_bytes(
+            data[16..32].try_into().map_err(|_| WalletError::Rpc("invalid balance bytes".into()))?
+        );
+        
+        Ok(free_balance)
+    }
+
     /// Submit a signed extrinsic to the network
     ///
     /// This is the proper Substrate way to submit transactions.

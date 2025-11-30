@@ -1477,11 +1477,17 @@ Test file: `tests/shielded_e2e.rs`
 - Double-spend prevention
 - Invalid proof rejection
 
-##### Protocol 14.2.0: Mining Reward Bootstrap 🔴 NOT STARTED
+##### Protocol 14.2.0: Mining Reward Bootstrap ✅ COMPLETE
 
 **Goal**: All test funds originate from mining rewards. No genesis pre-funding shortcuts.
 
 **Rationale**: Pre-funded accounts create hidden dependencies and mask real-world funding flows. Tests must prove the complete lifecycle: generate keys → mine → receive coinbase → transact.
+
+**Implementation**: 
+- Added `query_balance()` method to `wallet/src/substrate_rpc.rs` for querying account balances via `state_getStorage` RPC
+- Unit tests in `tests/shielded_e2e.rs::mining_bootstrap_tests` verify mock chain state mining rewards
+- Integration test `test_mining_reward_flow_integration` verifies balance query infrastructure against live node
+- `MinerAccount` fixture generates fresh ML-DSA keypairs that start with zero balance
 
 **Test**: `test_mining_reward_flow`
 
@@ -2048,11 +2054,26 @@ async fn test_multi_input_multi_output() {
 
 ---
 
-##### Protocol 14.2.7: SLH-DSA Signature Test 🔴 NOT STARTED
+##### Protocol 14.2.7: SLH-DSA Signature Test ✅ COMPLETE
 
 **Goal**: Verify SLH-DSA (SPHINCS+) signatures work for extrinsics alongside ML-DSA.
 
 **Rationale**: SLH-DSA is designated for "long-lived trust roots" per FIPS 205. While ML-DSA is the primary signature scheme, SLH-DSA provides hash-based (stateless) signatures as a conservative fallback for scenarios requiring maximum cryptographic conservatism.
+
+**Implementation**:
+- Added `SlhDsaExtrinsicBuilder` in `wallet/src/extrinsic.rs` for building SLH-DSA signed extrinsics
+- Added import of SLH-DSA types from `synthetic_crypto::slh_dsa`
+- Exported `SlhDsaExtrinsicBuilder` from `wallet/src/lib.rs`
+- 8 unit tests in `tests/shielded_e2e.rs::slh_dsa_tests` verify:
+  - Keypair generation (32-byte public key, 64-byte secret key)
+  - Sign/verify with 17088-byte SPHINCS+ signatures
+  - Invalid signature rejection
+  - Key serialization roundtrip
+  - ML-DSA vs SLH-DSA comparison (~5x larger signatures)
+  - Algorithm identification by signature size
+  - Deterministic key generation
+  - Extrinsic builder construction (~17KB extrinsics)
+- Integration test `test_slh_dsa_extrinsic_integration` verifies SLH-DSA extrinsic construction against live node
 
 **Test**: `test_slh_dsa_extrinsic_signature`
 

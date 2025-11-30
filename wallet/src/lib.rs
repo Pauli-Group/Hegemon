@@ -18,7 +18,7 @@ pub mod viewing;
 pub use address::ShieldedAddress;
 pub use async_sync::{AsyncWalletSyncEngine, SharedSyncEngine};
 pub use error::WalletError;
-pub use extrinsic::{ChainMetadata, Era, ExtrinsicBuilder, ShieldedTransferCall};
+pub use extrinsic::{ChainMetadata, Era, ExtrinsicBuilder, ShieldedTransferCall, SlhDsaExtrinsicBuilder};
 pub use keys::{AddressKeyMaterial, DerivedKeys, RootSecret, SpendKey, ViewKey};
 pub use notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 pub use prover::{ProofResult, ProverStats, StarkProver, StarkProverConfig};
