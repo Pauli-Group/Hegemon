@@ -1454,7 +1454,98 @@ pub struct MockShieldedPoolService
 4. Multi-input multi-output STARK proof
 5. Invalid STARK proof rejection
 6. Double-spend rejection
-7. **NO ECC/Groth16 anywhere in test suite**
+7. SLH-DSA signature verification (FIPS 205)
+8. **NO ECC/Groth16 anywhere in test suite**
+9. **NO GENESIS PRE-FUNDING** - All funds come from mining rewards
+
+##### Protocol 14.2.0: Mining Reward Bootstrap 🔴 NOT STARTED
+
+**Goal**: All test funds originate from mining rewards. No genesis pre-funding shortcuts.
+
+**Rationale**: Pre-funded accounts create hidden dependencies and mask real-world funding flows. Tests must prove the complete lifecycle: generate keys → mine → receive coinbase → transact.
+
+**Test**: `test_mining_reward_flow`
+
+```rust
+#[tokio::test]
+async fn test_mining_reward_flow() {
+    // 1. Generate fresh ML-DSA keypair (no pre-funded accounts)
+    let miner_keypair = MlDsaKeypair::generate();
+    let miner_account = miner_keypair.public_key().to_account_id();
+    
+    // 2. Start node with NO genesis balances
+    let node = TestNode::new_empty_genesis().await;
+    
+    // 3. Verify miner starts with zero balance
+    let initial_balance = node.query_balance(&miner_account).await;
+    assert_eq!(initial_balance, 0);
+    
+    // 4. Mine blocks with miner as coinbase recipient
+    node.set_coinbase_recipient(&miner_account);
+    node.mine_blocks(10).await?;
+    
+    // 5. Verify miner received block rewards
+    let mined_balance = node.query_balance(&miner_account).await;
+    assert!(mined_balance > 0, "Miner must receive coinbase rewards");
+    
+    // 6. Calculate expected reward (10 blocks × block_reward)
+    let expected_minimum = 10 * node.block_reward();
+    assert!(mined_balance >= expected_minimum);
+    
+    // 7. Now miner can transact - transfer to fresh account
+    let recipient_keypair = MlDsaKeypair::generate();
+    let recipient = recipient_keypair.public_key().to_account_id();
+    
+    let transfer_amount = 100_000u64;
+    let extrinsic = node.build_transfer_extrinsic(
+        &miner_keypair,
+        &recipient,
+        transfer_amount,
+    ).await;
+    
+    node.submit_and_wait(&extrinsic).await?;
+    
+    // 8. Verify transfer succeeded
+    let recipient_balance = node.query_balance(&recipient).await;
+    assert_eq!(recipient_balance, transfer_amount);
+}
+```
+
+**Test Node Configuration (Empty Genesis)**:
+```rust
+impl TestNode {
+    /// Creates a node with ZERO pre-funded accounts
+    pub async fn new_empty_genesis() -> Self {
+        let mut config = Configuration::default_dev();
+        
+        // Override genesis to have no balances
+        config.chain_spec = ChainSpec::builder()
+            .with_name("Test (No Pre-funding)")
+            .with_id("test_empty")
+            .with_chain_type(ChainType::Development)
+            .with_genesis_config(GenesisConfig {
+                balances: vec![], // NO PRE-FUNDED ACCOUNTS
+                ..Default::default()
+            })
+            .build();
+        
+        let (client, task_manager) = new_full(config).await.unwrap();
+        Self { client, task_manager }
+    }
+    
+    pub fn set_coinbase_recipient(&mut self, account: &AccountId);
+    pub fn block_reward(&self) -> u64;
+}
+```
+
+**Verification Checklist**:
+- [ ] Fresh keypair starts with zero balance
+- [ ] Mining produces coinbase rewards
+- [ ] Miner balance increases with each block
+- [ ] Miner can spend mined funds
+- [ ] No AccountKeyring or pre-funded accounts used
+
+---
 
 ##### Protocol 14.2.1: Create E2E Test Infrastructure
 
@@ -1463,23 +1554,38 @@ pub struct MockShieldedPoolService
 **Step 1: Test Node Harness**
 ```rust
 use hegemon_node::substrate::{service::new_full, client::FullClient};
-use sp_keyring::AccountKeyring;
+use crypto::mldsa::MlDsaKeypair;
 use std::sync::Arc;
+
+// NOTE: No AccountKeyring import - we generate all keys fresh
 
 /// Test harness for E2E shielded pool testing
 pub struct TestNode {
     client: Arc<FullClient>,
     task_manager: TaskManager,
+    coinbase_recipient: Option<AccountId>,
 }
 
 impl TestNode {
+    /// Creates node with empty genesis (no pre-funded accounts)
     pub async fn new() -> Self {
-        let config = Configuration::default_dev();
+        Self::new_empty_genesis().await
+    }
+    
+    pub async fn new_empty_genesis() -> Self {
+        let mut config = Configuration::default_dev();
+        // Override to remove pre-funded accounts
+        config.chain_spec = empty_genesis_spec();
         let (client, task_manager) = new_full(config).await.unwrap();
-        Self { client, task_manager }
+        Self { client, task_manager, coinbase_recipient: None }
+    }
+    
+    pub fn set_coinbase_recipient(&mut self, account: &AccountId) {
+        self.coinbase_recipient = Some(account.clone());
     }
     
     pub async fn mine_blocks(&self, n: u32) -> Result<(), Error>;
+    pub fn block_reward(&self) -> u64;
     pub fn client(&self) -> Arc<FullClient>;
 }
 
@@ -1488,9 +1594,49 @@ impl Drop for TestNode {
         self.task_manager.terminate();
     }
 }
+
+fn empty_genesis_spec() -> ChainSpec {
+    ChainSpec::builder()
+        .with_name("Test (No Pre-funding)")
+        .with_id("test_empty")
+        .with_genesis_config(GenesisConfig {
+            balances: vec![], // ZERO pre-funded accounts
+            ..Default::default()
+        })
+        .build()
+}
 ```
 
-**Step 2: Wallet Test Fixture**
+**Step 2: Miner Account Fixture**
+```rust
+use crypto::mldsa::MlDsaKeypair;
+
+/// A miner account that earns funds through mining (no pre-funding)
+pub struct MinerAccount {
+    keypair: MlDsaKeypair,
+    account_id: AccountId,
+}
+
+impl MinerAccount {
+    pub fn generate() -> Self {
+        let keypair = MlDsaKeypair::generate();
+        let account_id = keypair.public_key().to_account_id();
+        Self { keypair, account_id }
+    }
+    
+    pub fn account_id(&self) -> &AccountId { &self.account_id }
+    pub fn keypair(&self) -> &MlDsaKeypair { &self.keypair }
+    
+    /// Mine blocks to fund this account
+    pub async fn fund_via_mining(&self, node: &mut TestNode, blocks: u32) -> Result<u64, Error> {
+        node.set_coinbase_recipient(&self.account_id);
+        node.mine_blocks(blocks).await?;
+        node.query_balance(&self.account_id).await
+    }
+}
+```
+
+**Step 3: Wallet Test Fixture**
 ```rust
 use wallet::{WalletStore, SpendingKey, ViewingKey, scanner::NoteScanner};
 
@@ -1514,7 +1660,7 @@ impl TestWallet {
 }
 ```
 
-**Step 3: STARK Proof Test Utilities**
+**Step 4: STARK Proof Test Utilities**
 ```rust
 use wallet::prover::StarkProver;
 use pallet_shielded_pool::{StarkProof, TransactionWitness};
@@ -1547,6 +1693,7 @@ pub fn create_invalid_proof() -> StarkProof {
 - [ ] Test node starts and mines blocks
 - [ ] Wallet fixture generates valid keys
 - [ ] Test prover generates verifiable STARK proofs
+- [ ] No AccountKeyring or pre-funded accounts anywhere
 
 ---
 
@@ -1557,46 +1704,50 @@ pub fn create_invalid_proof() -> StarkProof {
 ```rust
 #[tokio::test]
 async fn test_shield_transparent_to_shielded() {
-    // SETUP
-    let node = TestNode::new().await;
-    let wallet = TestWallet::new_random();
-    let alice = AccountKeyring::Alice.to_account_id();
+    // SETUP - All funds from mining, no pre-funding
+    let mut node = TestNode::new().await;
+    let shielded_wallet = TestWallet::new_random();
     
-    // 1. Ensure Alice has transparent balance
-    let initial_balance = node.query_balance(&alice).await;
+    // 1. Create miner and fund via mining (NOT pre-funded)
+    let miner = MinerAccount::generate();
+    let mined_balance = miner.fund_via_mining(&mut node, 10).await?;
+    assert!(mined_balance >= 1_000_000, "Need sufficient mined funds");
+    
+    // 2. Record initial state
+    let initial_balance = node.query_balance(miner.account_id()).await;
     assert!(initial_balance >= 1_000_000);
     
-    // 2. Build shield extrinsic
+    // 3. Build shield extrinsic (signed with miner's ML-DSA key)
     let shield_amount = 500_000u64;
-    let shield_address = wallet.address();
+    let shield_address = shielded_wallet.address();
     let extrinsic = node.build_shield_extrinsic(
-        &alice,
+        miner.keypair(),
         shield_amount,
         &shield_address,
     ).await;
     
-    // 3. Submit and wait for inclusion
+    // 4. Submit and wait for inclusion
     let block_hash = node.submit_and_wait(&extrinsic).await?;
     
-    // 4. Verify transparent balance decreased
-    let final_balance = node.query_balance(&alice).await;
-    assert_eq!(final_balance, initial_balance - shield_amount);
+    // 5. Verify transparent balance decreased
+    let final_balance = node.query_balance(miner.account_id()).await;
+    assert!(final_balance < initial_balance - shield_amount); // minus fees
     
-    // 5. Verify pool balance increased
+    // 6. Verify pool balance increased
     let pool_balance = node.query_pool_balance().await;
     assert_eq!(pool_balance, shield_amount);
     
-    // 6. Verify note commitment added to Merkle tree
+    // 7. Verify note commitment added to Merkle tree
     let root = node.query_merkle_root().await;
     assert_ne!(root, [0u8; 32]);
     
-    // 7. Scan and verify wallet received note
-    let notes = wallet.scan_notes(0).await;
+    // 8. Scan and verify wallet received note
+    let notes = shielded_wallet.scan_notes(0).await;
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].value, shield_amount);
     
-    // 8. NO ECC CHECK
-    // Verify no Ed25519, X25519, or secp256k1 in transaction
+    // 9. NO ECC CHECK - Verify no Ed25519, X25519, or secp256k1 in transaction
+    // 10. NO PRE-FUNDING CHECK - Verify no AccountKeyring used
 }
 ```
 
@@ -1616,14 +1767,25 @@ async fn test_shield_transparent_to_shielded() {
 ```rust
 #[tokio::test]
 async fn test_shielded_to_shielded_transfer() {
-    // SETUP
-    let node = TestNode::new().await;
-    let sender = TestWallet::new_random();
-    let recipient = TestWallet::new_random();
+    // SETUP - All funds from mining, no pre-funding
+    let mut node = TestNode::new().await;
+    let sender_wallet = TestWallet::new_random();
+    let recipient_wallet = TestWallet::new_random();
     
-    // 1. Shield funds to sender (prerequisite)
-    node.shield_to(&sender, 1_000_000).await;
-    let sender_notes = sender.scan_notes(0).await;
+    // 1. Fund via mining then shield to sender
+    let miner = MinerAccount::generate();
+    miner.fund_via_mining(&mut node, 10).await?;
+    
+    // 2. Shield mined funds to sender wallet
+    let shield_amount = 1_000_000u64;
+    let extrinsic = node.build_shield_extrinsic(
+        miner.keypair(),
+        shield_amount,
+        &sender_wallet.address(),
+    ).await;
+    node.submit_and_wait(&extrinsic).await?;
+    
+    let sender_notes = sender_wallet.scan_notes(0).await;
     assert_eq!(sender_notes.len(), 1);
     
     // 2. Build shielded transfer
@@ -1693,40 +1855,53 @@ async fn test_shielded_to_shielded_transfer() {
 ```rust
 #[tokio::test]
 async fn test_unshield_to_transparent() {
-    // SETUP
-    let node = TestNode::new().await;
-    let wallet = TestWallet::new_random();
-    let bob = AccountKeyring::Bob.to_account_id();
+    // SETUP - All funds from mining, no pre-funding
+    let mut node = TestNode::new().await;
+    let shielded_wallet = TestWallet::new_random();
     
-    // 1. Shield funds first
-    node.shield_to(&wallet, 1_000_000).await;
-    let notes = wallet.scan_notes(0).await;
+    // 1. Fund via mining
+    let miner = MinerAccount::generate();
+    miner.fund_via_mining(&mut node, 10).await?;
     
-    // 2. Build unshield proof (value_balance > 0 reveals value)
+    // 2. Shield mined funds
+    let shield_amount = 1_000_000u64;
+    let extrinsic = node.build_shield_extrinsic(
+        miner.keypair(),
+        shield_amount,
+        &shielded_wallet.address(),
+    ).await;
+    node.submit_and_wait(&extrinsic).await?;
+    let notes = shielded_wallet.scan_notes(0).await;
+    
+    // 3. Create fresh recipient (NOT pre-funded Bob)
+    let recipient = MinerAccount::generate();
+    let initial_recipient_balance = node.query_balance(recipient.account_id()).await;
+    assert_eq!(initial_recipient_balance, 0); // Starts with ZERO
+    
+    // 4. Build unshield proof (value_balance > 0 reveals value)
     let unshield_amount = 600_000u64;
     let anchor = node.query_merkle_root().await;
     
     let proof = generate_unshield_proof(
         &notes,
         unshield_amount,
-        &bob, // transparent recipient
+        recipient.account_id(), // fresh account, not pre-funded
         anchor,
     )?;
     
-    // 3. Submit unshield
-    let initial_bob_balance = node.query_balance(&bob).await;
-    node.submit_unshield(&proof, unshield_amount, &bob).await?;
+    // 5. Submit unshield
+    node.submit_unshield(&proof, unshield_amount, recipient.account_id()).await?;
     
-    // 4. Verify Bob received transparent funds
-    let final_bob_balance = node.query_balance(&bob).await;
-    assert_eq!(final_bob_balance, initial_bob_balance + unshield_amount);
+    // 6. Verify recipient received transparent funds (from ZERO)
+    let final_recipient_balance = node.query_balance(recipient.account_id()).await;
+    assert_eq!(final_recipient_balance, unshield_amount);
     
-    // 5. Verify pool balance decreased
+    // 7. Verify pool balance decreased
     let pool_balance = node.query_pool_balance().await;
-    assert_eq!(pool_balance, 1_000_000 - unshield_amount);
+    assert_eq!(pool_balance, shield_amount - unshield_amount);
     
-    // 6. Verify nullifier spent
-    let nullifier = notes[0].nullifier(&wallet.spending_key);
+    // 8. Verify nullifier spent
+    let nullifier = notes[0].nullifier(&shielded_wallet.spending_key);
     assert!(node.is_nullifier_spent(&nullifier).await);
 }
 ```
@@ -1740,14 +1915,23 @@ async fn test_unshield_to_transparent() {
 ```rust
 #[tokio::test]
 async fn test_invalid_stark_proof_rejected() {
-    let node = TestNode::new().await;
+    // SETUP - All funds from mining
+    let mut node = TestNode::new().await;
     let wallet = TestWallet::new_random();
     
-    // Shield funds
-    node.shield_to(&wallet, 1_000_000).await;
+    // 1. Fund via mining then shield
+    let miner = MinerAccount::generate();
+    miner.fund_via_mining(&mut node, 10).await?;
+    
+    let extrinsic = node.build_shield_extrinsic(
+        miner.keypair(),
+        1_000_000,
+        &wallet.address(),
+    ).await;
+    node.submit_and_wait(&extrinsic).await?;
     let notes = wallet.scan_notes(0).await;
     
-    // 1. Create invalid STARK proof
+    // 2. Create invalid STARK proof
     let invalid_proof = create_invalid_proof();
     let anchor = node.query_merkle_root().await;
     
@@ -1756,14 +1940,14 @@ async fn test_invalid_stark_proof_rejected() {
         vec![notes[0].nullifier(&wallet.spending_key)],
     ).await;
     
-    // 2. Verify rejection
+    // 3. Verify rejection
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
         Error::ProofVerificationFailed
     ));
     
-    // 3. Verify nullifier NOT spent (tx failed)
+    // 4. Verify nullifier NOT spent (tx failed)
     let nullifier = notes[0].nullifier(&wallet.spending_key);
     assert!(!node.is_nullifier_spent(&nullifier).await);
 }
@@ -1778,19 +1962,29 @@ async fn test_invalid_stark_proof_rejected() {
 ```rust
 #[tokio::test]
 async fn test_multi_input_multi_output() {
-    let node = TestNode::new().await;
+    // SETUP - All funds from mining
+    let mut node = TestNode::new().await;
     let sender = TestWallet::new_random();
     let recipient1 = TestWallet::new_random();
     let recipient2 = TestWallet::new_random();
     
-    // 1. Create multiple input notes
-    node.shield_to(&sender, 500_000).await;
-    node.shield_to(&sender, 300_000).await;
-    node.shield_to(&sender, 200_000).await;
+    // 1. Fund via mining
+    let miner = MinerAccount::generate();
+    miner.fund_via_mining(&mut node, 20).await?; // Need more blocks for 3 shields
+    
+    // 2. Create multiple input notes via separate shield transactions
+    for amount in [500_000u64, 300_000, 200_000] {
+        let extrinsic = node.build_shield_extrinsic(
+            miner.keypair(),
+            amount,
+            &sender.address(),
+        ).await;
+        node.submit_and_wait(&extrinsic).await?;
+    }
     let notes = sender.scan_notes(0).await;
     assert_eq!(notes.len(), 3);
     
-    // 2. Build multi-input multi-output transfer
+    // 3. Build multi-input multi-output transfer
     let anchor = node.query_merkle_root().await;
     let outputs = vec![
         ShieldedOutput::new(recipient1.address(), 600_000),
@@ -1824,6 +2018,109 @@ async fn test_multi_input_multi_output() {
 - [ ] All 3 nullifiers marked spent
 - [ ] Both recipients can scan notes
 - [ ] Total value preserved (1M in, 1M out)
+
+---
+
+##### Protocol 14.2.7: SLH-DSA Signature Test 🔴 NOT STARTED
+
+**Goal**: Verify SLH-DSA (SPHINCS+) signatures work for extrinsics alongside ML-DSA.
+
+**Rationale**: SLH-DSA is designated for "long-lived trust roots" per FIPS 205. While ML-DSA is the primary signature scheme, SLH-DSA provides hash-based (stateless) signatures as a conservative fallback for scenarios requiring maximum cryptographic conservatism.
+
+**Test**: `test_slh_dsa_extrinsic_signature`
+
+```rust
+#[tokio::test]
+async fn test_slh_dsa_extrinsic_signature() {
+    // SETUP - All funds from mining
+    let mut node = TestNode::new().await;
+    
+    // 1. Mine funds with ML-DSA miner first
+    let ml_dsa_miner = MinerAccount::generate();
+    ml_dsa_miner.fund_via_mining(&mut node, 10).await?;
+    
+    // 2. Generate SLH-DSA keypair (SPHINCS+-SHAKE-128f)
+    let slh_keypair = SlhDsaKeypair::generate();
+    let slh_account_id = slh_keypair.public_key().to_account_id();
+    
+    // 3. Transfer mined funds to SLH-DSA account
+    let fund_amount = 1_000_000u64;
+    let fund_extrinsic = node.build_transfer_extrinsic(
+        ml_dsa_miner.keypair(),
+        &slh_account_id,
+        fund_amount,
+    ).await;
+    node.submit_and_wait(&fund_extrinsic).await?;
+    
+    // 4. Verify SLH-DSA account received funds
+    let slh_balance = node.query_balance(&slh_account_id).await;
+    assert_eq!(slh_balance, fund_amount);
+    
+    // 5. Create fresh recipient (NOT pre-funded)
+    let recipient = MinerAccount::generate();
+    let initial_recipient_balance = node.query_balance(recipient.account_id()).await;
+    assert_eq!(initial_recipient_balance, 0); // Starts at ZERO
+    
+    // 6. Build a transfer extrinsic signed with SLH-DSA
+    let transfer_amount = 100_000u64;
+    let metadata = node.get_signing_metadata().await;
+    let call = build_transfer_call(recipient.account_id(), transfer_amount);
+    
+    // 7. Sign with SLH-DSA (NOT ML-DSA)
+    let signature = slh_keypair.sign(&signing_payload);
+    assert_eq!(signature.len(), 17088); // SPHINCS+-SHAKE-128f signature size
+    
+    // 8. Construct and submit extrinsic
+    let extrinsic = build_extrinsic_with_slh_dsa(
+        &slh_keypair.public_key(),
+        signature,
+        call,
+        &metadata,
+    );
+    
+    let tx_hash = node.submit_and_wait(&extrinsic).await?;
+    
+    // 9. Verify transaction executed (recipient went from 0 to transfer_amount)
+    let final_recipient_balance = node.query_balance(recipient.account_id()).await;
+    assert_eq!(final_recipient_balance, transfer_amount);
+    
+    // 10. Verify SLH-DSA account balance decreased
+    let final_slh_balance = node.query_balance(&slh_account_id).await;
+    assert!(final_slh_balance < fund_amount - transfer_amount); // minus fees
+}
+```
+
+**Test**: `test_algorithm_identification`
+
+```rust
+#[tokio::test]
+async fn test_signature_algorithm_identification() {
+    // Verify runtime can distinguish ML-DSA vs SLH-DSA signatures
+    
+    let ml_dsa_sig = [0u8; 3309];  // ML-DSA-65 signature
+    let slh_dsa_sig = [0u8; 17088]; // SPHINCS+-SHAKE-128f signature
+    
+    // Runtime should accept both and route to correct verifier
+    assert!(is_valid_pq_signature_format(&ml_dsa_sig));
+    assert!(is_valid_pq_signature_format(&slh_dsa_sig));
+    
+    // Verify algorithm detection
+    assert_eq!(detect_signature_algorithm(&ml_dsa_sig), SignatureAlgorithm::MlDsa65);
+    assert_eq!(detect_signature_algorithm(&slh_dsa_sig), SignatureAlgorithm::SlhDsaShake128f);
+}
+```
+
+**Verification Checklist**:
+- [ ] SLH-DSA keypair generation works
+- [ ] SLH-DSA signature accepted by runtime
+- [ ] Transaction executes successfully with SLH-DSA signature
+- [ ] Runtime distinguishes ML-DSA from SLH-DSA by signature size
+- [ ] Both algorithms interoperate (ML-DSA account can send to SLH-DSA account)
+
+**Implementation Notes**:
+- SLH-DSA signatures are ~5x larger than ML-DSA (17KB vs 3.3KB)
+- Weight calculation must account for larger signature verification cost
+- Consider whether to support SLH-DSA-128s (smaller, slower) vs 128f (larger, faster)
 
 ---
 
