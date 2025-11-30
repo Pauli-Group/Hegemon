@@ -15,7 +15,7 @@ use transaction_circuit::{
     constants::MAX_INPUTS,
     hashing::Felt,
     keys::{generate_keys, VerifyingKey},
-    note::{InputNoteWitness, NoteData, OutputNoteWitness},
+    note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
     proof, TransactionWitness,
 };
 
@@ -159,6 +159,7 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64, merkle_root: Felt) -> 
             },
             position: counter * MAX_INPUTS as u64 + idx as u64,
             rho_seed: random_bytes(rng),
+            merkle_path: MerklePath::default(),
         })
         .collect::<Vec<_>>();
 
