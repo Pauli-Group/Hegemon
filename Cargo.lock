@@ -9029,6 +9029,7 @@ dependencies = [
  "transaction-circuit",
  "url",
  "wallet",
+ "winter-math",
 ]
 
 [[package]]
