@@ -158,13 +158,6 @@ block-circuit = { path = "../circuits/block" }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 tokio-tungstenite = "0.21"
 
-# Original custom node binary (legacy, non-substrate)
-# Only built when substrate feature is NOT enabled
-[[bin]]
-name = "hegemon"
-path = "src/bin/node.rs"
-required-features = []
-
 # Substrate-based node binary
 [[bin]]
 name = "hegemon-node"

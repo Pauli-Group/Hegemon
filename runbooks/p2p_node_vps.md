@@ -1,81 +1,86 @@
-# VPS node operations runbook
+# VPS node operations runbook (Substrate node)
 
-Use this playbook to provision a small virtual private server (VPS), expose the public peer-to-peer socket and administrative API, start the unified `hegemon` binary with explicit `--p2p-addr` and `--seeds`, and supervise it under `systemd`. These steps assume a fresh Ubuntu 22.04 host with a static or long-lived public IP.
+Use this playbook to provision a virtual private server (VPS), expose the peer-to-peer and RPC ports, start the Substrate-based `hegemon-node` binary, and supervise it under `systemd`. These steps assume a fresh Ubuntu 22.04 host with a static or long-lived public IP.
 
 ## 1. Provision a lightweight host
 
 - Minimum shape: 2 vCPUs, 4 GB RAM, 40 GB SSD. Enable auto-restart on host failure.
 - Choose an image with current security updates (Ubuntu 22.04 LTS) and add your SSH key at creation time.
-- Allocate an IPv4 address. If the provider supports firewall groups or security lists, allow TCP/UDP for your chosen P2P port (default example below: 9000) and TCP for the API port (example: 8080).
-- Record the public IP (e.g., `203.0.113.45`) and the DNS name if you assign one; you will share this with testers as a seed.
+- Allocate an IPv4 address. If the provider supports firewall groups or security lists, allow TCP for the P2P port (default: 30333) and the RPC port (default: 9944).
+- Record the public IP (e.g., `203.0.113.45`) and the DNS name if you assign one; you will share this with testers as a bootnode.
 
 ## 2. Prepare the OS and user
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y build-essential pkg-config libssl-dev ufw
+sudo apt install -y build-essential pkg-config libssl-dev clang llvm ufw
 # Create a dedicated user and data directory for the node
 sudo useradd --create-home --shell /bin/bash node
-sudo mkdir -p /var/lib/synthetic-node
-sudo chown node:node /var/lib/synthetic-node
+sudo mkdir -p /var/lib/hegemon-node
+sudo chown node:node /var/lib/hegemon-node
 ```
 
-If you copy a prebuilt binary instead of compiling, place it in `/usr/local/bin/hegemon` and ensure it is executable. For source installs, run `make quickstart` once, then `cargo build -p node --release` and copy `target/release/hegemon` into `/usr/local/bin/`.
+If you copy a prebuilt binary instead of compiling, place it in `/usr/local/bin/hegemon-node` and ensure it is executable. For source installs, run `make node` and copy `target/release/hegemon-node` into `/usr/local/bin/`.
 
-## 3. Open the P2P and API ports
+## 3. Open the P2P and RPC ports
 
-Use UFW for a simple host firewall. Replace the P2P/API ports if you pick different values.
+Use UFW for a simple host firewall. Replace the ports if you pick different values.
 
 ```bash
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
-sudo ufw allow 9000/tcp   # P2P
-sudo ufw allow 9000/udp   # P2P
-sudo ufw allow 8080/tcp   # API (optional; restrict if only local access is needed)
+sudo ufw allow 30333/tcp   # P2P (libp2p)
+sudo ufw allow 9944/tcp    # RPC (restrict if only local access is needed)
+sudo ufw allow 9615/tcp    # Prometheus metrics (optional)
 sudo ufw enable
 sudo ufw status
 ```
 
-If your cloud provider also enforces security groups, mirror these rules there. Forward the same P2P port through any load balancer or NAT if present.
+If your cloud provider also enforces security groups, mirror these rules there.
 
 ## 4. Persistent node configuration
 
-Create an environment file that locks in your advertised P2P address and the seed list you will publish.
+Create an environment file for node options:
 
 ```bash
-sudo tee /etc/default/synthetic-node <<'ENV'
-NODE_DB_PATH=/var/lib/synthetic-node/db
-NODE_API_ADDR=0.0.0.0:8080
-NODE_API_TOKEN=replace-me-with-a-strong-token
-NODE_P2P_ADDR=0.0.0.0:9000
-NODE_SEEDS=203.0.113.45:9000,198.51.100.12:9000
+sudo tee /etc/default/hegemon-node <<'ENV'
+NODE_NAME=my-vps-node
+NODE_BASE_PATH=/var/lib/hegemon-node
+NODE_RPC_EXTERNAL=--rpc-external
+NODE_RPC_CORS=--rpc-cors all
+NODE_PORT=30333
+NODE_RPC_PORT=9944
+# Comma-separated bootnodes (update with known peers)
+NODE_BOOTNODES=/ip4/198.51.100.12/tcp/30333/p2p/<peer-id>
 ENV
-sudo chown node:node /etc/default/synthetic-node
+sudo chown node:node /etc/default/hegemon-node
 ```
 
-- `NODE_P2P_ADDR` should use `0.0.0.0:<port>` so the node listens on all interfaces while advertising the VPS’s public IP.
-- `NODE_SEEDS` holds a comma-separated list of reachable peers you want this node to dial on startup. Include your own public address once another peer is online to simplify bootstrapping for testers.
+- `NODE_RPC_EXTERNAL` makes the RPC endpoint accessible remotely; omit for local-only access.
+- `NODE_BOOTNODES` holds multiaddrs of reachable peers. Include your own once other peers are online.
 
 ## 5. Systemd unit
 
-Create a unit that reads the environment file and restarts on failure. The service exposes the embedded dashboard on `NODE_API_ADDR` so operators can watch mining progress without deploying the deprecated FastAPI/Vite stack.
+Create a unit that reads the environment file and restarts on failure:
 
 ```bash
-sudo tee /etc/systemd/system/synthetic-node.service <<'UNIT'
+sudo tee /etc/systemd/system/hegemon-node.service <<'UNIT'
 [Unit]
-Description=Synthetic Network Node
+Description=Hegemon Substrate Node
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 User=node
-EnvironmentFile=/etc/default/synthetic-node
-ExecStart=/usr/local/bin/hegemon \
-  --db-path ${NODE_DB_PATH} \
-  --api-addr ${NODE_API_ADDR} \
-  --api-token ${NODE_API_TOKEN} \
-  --p2p-addr ${NODE_P2P_ADDR} \
-  --seeds ${NODE_SEEDS}
+EnvironmentFile=/etc/default/hegemon-node
+ExecStart=/usr/local/bin/hegemon-node \
+  --name ${NODE_NAME} \
+  --base-path ${NODE_BASE_PATH} \
+  --port ${NODE_PORT} \
+  --rpc-port ${NODE_RPC_PORT} \
+  ${NODE_RPC_EXTERNAL} \
+  ${NODE_RPC_CORS} \
+  --bootnodes ${NODE_BOOTNODES}
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
@@ -85,49 +90,64 @@ WantedBy=multi-user.target
 UNIT
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now synthetic-node.service
-sudo systemctl status synthetic-node.service
+sudo systemctl enable --now hegemon-node.service
+sudo systemctl status hegemon-node.service
 ```
 
 Logs stream through journald:
 
 ```bash
-journalctl -u synthetic-node.service -f
+journalctl -u hegemon-node.service -f
 ```
 
-## 6. Sharing seed information with testers
+## 6. Sharing bootnode information with testers
 
-- Publish the public P2P endpoint as `seed_ip:port` (e.g., `203.0.113.45:9000`) in the testnet channel, pinned ops message, or a shared document. Include the current `NODE_SEEDS` list so testers can mirror it for faster convergence.
-- When onboarding new testers, ask them to return their reachable public P2P endpoints. Update your `/etc/default/synthetic-node` `NODE_SEEDS` to include them, separated by commas, and run `sudo systemctl restart synthetic-node` to apply.
-- If you provide DNS (e.g., `seed1.testnet.example.com`), keep A/AAAA records updated to avoid stale seeds when IPs rotate.
-
-## 6b. Export/import peer bundles for fresh nodes
-
-- After your VPS has a stable peer list, capture it into a portable bundle that also records the current genesis metadata:
+- Get your node's peer ID from the logs (look for `Local node identity is: <peer-id>`) or query it via RPC:
   ```bash
-  sudo -u node /usr/local/bin/hegemon --db-path ${NODE_DB_PATH} export-peers --output /var/lib/synthetic-node/peer_bundle.json
+  curl -s -H "Content-Type: application/json" \
+    -d '{"id":1, "jsonrpc":"2.0", "method": "system_localPeerId"}' \
+    http://127.0.0.1:9944
   ```
-- You can seed additional nodes (or rescue a wiped peer store) by copying that JSON and adding `--import-peers /var/lib/synthetic-node/peer_bundle.json` to the `ExecStart` line in the systemd unit. Imported peers are written into the local store and dialed before the DNS/static seeds in `NODE_SEEDS`.
+- Publish the full multiaddr: `/ip4/<public-ip>/tcp/30333/p2p/<peer-id>`
+- When onboarding new testers, ask them to return their multiaddrs. Update `/etc/default/hegemon-node` and restart.
 
-## 7. Rotating or removing compromised/offline seeds
+## 7. Health checks and lifecycle
 
-- If a peer is compromised or repeatedly offline, edit `/etc/default/synthetic-node` to remove its entry from `NODE_SEEDS` and restart the service.
-- Announce the removal in the tester channel and ask peers to drop the same seed from their configurations. If you operate DNS-based seeds, update the records immediately and lower TTLs (60–300 seconds) so clients pick up changes quickly.
-- When replacing the seed with a new node, add the replacement endpoint and restart both nodes to ensure mutual connectivity: `sudo systemctl restart synthetic-node`.
-- For incident response, temporarily block the compromised IP at the host firewall: `sudo ufw deny from <bad-ip> to any port 9000` while you coordinate a permanent rotation.
-
-## 8. Health checks and lifecycle
-
-- Confirm the listener is reachable from outside with `nc -vz <public-ip> 9000` (TCP) and a simple UDP probe if your tooling supports it.
-- Verify the API is protected: unauthenticated requests should be rejected; keep `NODE_API_TOKEN` strong and rotate it alongside seeds if you suspect leakage.
-- For upgrades, stop the service, replace `/usr/local/bin/hegemon` or update the release artifact, then start the unit:
+Confirm the node is reachable and syncing:
 
 ```bash
-sudo systemctl stop synthetic-node.service
-sudo install -m 0755 /tmp/node-release/hegemon /usr/local/bin/hegemon
-sudo systemctl start synthetic-node.service
+# Check health
+curl -s -H "Content-Type: application/json" \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "system_health"}' \
+  http://127.0.0.1:9944
+
+# Check peer count
+curl -s -H "Content-Type: application/json" \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "system_peers"}' \
+  http://127.0.0.1:9944
+
+# Check latest block
+curl -s -H "Content-Type: application/json" \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "chain_getHeader"}' \
+  http://127.0.0.1:9944
 ```
 
-- Periodically prune old logs and keep at least 20% free disk space to avoid database corruption.
+For upgrades, stop the service, replace the binary, then start:
 
-With these steps, the VPS maintains a stable advertised `--p2p-addr`, dials the published seeds on boot, and automatically restarts if the process exits while keeping peers informed about seed changes.
+```bash
+sudo systemctl stop hegemon-node.service
+sudo install -m 0755 /tmp/hegemon-node /usr/local/bin/hegemon-node
+sudo systemctl start hegemon-node.service
+```
+
+Periodically prune old logs and keep at least 20% free disk space to avoid database corruption.
+
+## 8. Mining (optional)
+
+To enable mining on a VPS node, set the `HEGEMON_MINE` environment variable:
+
+```bash
+# Add to /etc/default/hegemon-node
+echo 'HEGEMON_MINE=1' | sudo tee -a /etc/default/hegemon-node
+sudo systemctl restart hegemon-node.service
+```

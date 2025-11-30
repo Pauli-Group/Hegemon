@@ -1177,19 +1177,6 @@ pub fn new_partial_with_client(
 }
 
 // =============================================================================
-// LEGACY new_full() REMOVED - Use new_full_with_client() instead
-// =============================================================================
-
-/// Creates a full node service (LEGACY REDIRECT)
-///
-/// This function now redirects to `new_full_with_client()` which uses the real
-/// Substrate client instead of scaffold components.
-#[deprecated(since = "0.1.0", note = "Use new_full_with_client() directly")]
-pub async fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
-    new_full_with_client(config).await
-}
-
-// =============================================================================
 // Full node service with real Substrate client (Production Mode)
 // =============================================================================
 //

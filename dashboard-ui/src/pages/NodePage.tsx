@@ -372,7 +372,7 @@ export function NodePage() {
               )}
               {missingCargo && (
                 <ul className={styles.helperList}>
-                  <li>Run `make quickstart` or `./scripts/dev-setup.sh` to install Rustup and cargo.</li>
+                  <li>Run `make setup` or `./scripts/dev-setup.sh` to install Rustup and cargo.</li>
                   <li>Verify the toolchain with `cargo --version`, then retry launching the node.</li>
                 </ul>
               )}

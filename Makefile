@@ -23,5 +23,6 @@ bench:
 wallet-demo:
 	./scripts/wallet-demo.sh --out wallet-demo-artifacts
 
-quickstart:
-	./scripts/full-quickstart.sh
+# Build the Substrate-based node binary
+node:
+	cargo build -p hegemon-node --features substrate --release
