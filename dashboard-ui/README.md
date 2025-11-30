@@ -21,15 +21,15 @@ npm run sync-actions   # copies docs/ui/brand_tokens.json for the design layer
 VITE_DASHBOARD_SERVICE_URL=http://127.0.0.1:8080 npm run dev
 ```
 
-`VITE_DASHBOARD_SERVICE_URL` should point at the unified `hegemon` API endpoint (default `http://127.0.0.1:8080`). If it is omitted, the UI assumes it is being served directly by the node and falls back to mock payloads when requests fail.
+`VITE_DASHBOARD_SERVICE_URL` should point at the unified `Substrate node RPC endpoint (default `http://127.0.0.1:9944`). If it is omitted, the UI assumes it is being served directly by the node and falls back to mock payloads when requests fail.
 
 During development you can pass `--host 0.0.0.0 --port 4173` to `npm run dev` to expose the server externally (useful for screenshots with Playwright). When using mocks, set `VITE_FORCE_MOCK_DATA_INDICATOR=true` to keep the UI in a known offline state.
 
 ## Connection badge & fallbacks
 
-- The nav renders a `ConnectionBadge` sourced from `useNodeMetrics()`. When the `hegemon` API answers requests it glows Proof Green and reads “Live.”
-- If the API is unreachable or errors, the badge flips to Guard Rail red with “Offline,” every panel surfaces a tooltip explaining why mocks are in use, and a `DataStatusBanner` appears above the affected grids.
-- Restoring connectivity (restart `hegemon start` with the correct `--api-token` or update the UI token input) clears the banner on the next poll and flips the badge back to Proof Green.
+- The nav renders a `ConnectionBadge` sourced from `useNodeMetrics()`. When the node RPC answers requests it glows Proof Green and reads “Live.”
+- If the RPC is unreachable or errors, the badge flips to Guard Rail red with “Offline,” every panel surfaces a tooltip explaining why mocks are in use, and a `DataStatusBanner` appears above the affected grids.
+- Restoring connectivity (restart the node or update the connection URL) clears the banner on the next poll and flips the badge back to Proof Green.
 
 ## Log severity & export workflow
 

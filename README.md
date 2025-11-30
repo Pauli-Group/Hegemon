@@ -109,95 +109,88 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 ## Getting started
 
-### Quickstart (unified `hegemon` binary)
+### Building the Substrate Node
 
-Start every fresh clone with `make quickstart` to install toolchains and run the baseline guard rails. The quickstart pipeline runs `scripts/dev-setup.sh`, `make check`, `make bench`, the wallet demo, then performs `cargo build -p node --release` and launches the `hegemon start` command against the local state directory. It is meant as a one-button “trust but verify” path for new contributors; for day-to-day development, call `cargo build -p node --release`, `make check`, or `make bench` directly without waiting on the full demo chain.
-
-1. **Build the binary and embed the dashboard**:
+1. **Install toolchains**:
    ```bash
-   cargo build -p node --release
-   # Optional: copy the binary to the repo root for convenience
-   cp target/release/hegemon .
+   make setup
    ```
-   The dashboard assets are already vendored under `node/src/dashboard/assets`; only run `./scripts/build_dashboard.sh` if you modify `dashboard-ui/` and need to refresh the embedded bundle to match the brand palette in `BRAND.md`.
+   This runs `scripts/dev-setup.sh` to install Rust, Go, and other dependencies.
 
-2. **Run the setup wizard**:
+2. **Build the node**:
    ```bash
-   ./hegemon setup
+   make node
    ```
-   This writes `api.token`, initializes the local wallet store, and honors `HEGEMON_WRITE_WALLET_PASS=1` if you want a passphrase dropped into `wallet.pass` for unattended starts.
 
-3. **Start the system**:
+3. **Run a development node with mining**:
    ```bash
-   ./hegemon start --miner-payout-address <wallet-address>
+   HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
    ```
-   The command boots the node, wallet, and embedded dashboard on port 8080. Override defaults with the global flags shown in `./hegemon --help` (e.g., `--p2p-addr`, `--seeds`, `--api-token`).
+   The node starts with a temporary database, mining enabled, and RPC on port 9944.
 
-4. **Open the dashboard**:
-   Visit **http://localhost:8080**. If you change the API token, update the dashboard “API auth token” field and click “Use for dashboard session” so subsequent requests stay authorized.
-
-For multi-node lab setups, see [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md). For VPS or public seed duties, follow the hardening guidance in [runbooks/p2p_node_vps.md](runbooks/p2p_node_vps.md).
-
-#### Bootstrapping peers with export/import bundles
-
-- Capture your current peers and genesis metadata into a portable bundle:
-  ```bash
-  ./hegemon export-peers peer_bundle.json
-  ```
-- Start a new node from that bundle before hitting DNS/static seeds:
-  ```bash
-  ./hegemon start --import-peers peer_bundle.json
-  ```
-  Imported peers persist to the local store and are dialed before the configured `--seeds` list. The VPS runbook above walks through promoting an exported bundle into a systemd unit.
-
-### Two-node testnet pairing (miner + peer)
-
-Use this when you and a friend want to mine and transact against each other on the same testnet profile.
-
-1. **Prepare binaries and wallets**:
+4. **Query the node via RPC**:
    ```bash
-   cargo build -p node --release
-   cp target/release/hegemon .
-   ./hegemon setup   # run once to create wallet.store and api.token; set HEGEMON_WRITE_WALLET_PASS=1 if you want wallet.pass
+   curl -s -H "Content-Type: application/json" \
+     -d '{"id":1, "jsonrpc":"2.0", "method": "system_health"}' \
+     http://127.0.0.1:9944
    ```
-2. **Start your miner** (public listener, mining on):
+
+For multi-node setups, see [runbooks/two_node_remote_setup.md](runbooks/two_node_remote_setup.md). For VPS deployments, follow [runbooks/p2p_node_vps.md](runbooks/p2p_node_vps.md).
+
+### Node CLI Options
+
+```bash
+./target/release/hegemon-node --help
+```
+
+Key options:
+- `--dev` - Run in development mode with pre-funded accounts
+- `--tmp` - Use a temporary database (cleaned on exit)
+- `--base-path <PATH>` - Persistent database location
+- `--rpc-port <PORT>` - JSON-RPC port (default: 9944)
+- `--port <PORT>` - P2P port (default: 30333)
+- `--bootnodes <MULTIADDR>` - Bootstrap peers
+
+Environment variables:
+- `HEGEMON_MINE=1` - Enable mining
+- `HEGEMON_MINE_THREADS=N` - Mining thread count
+
+### Two-node testnet pairing
+
+Use this when you want to run two nodes that peer with each other:
+
+1. **Build the binary**:
    ```bash
-   ./hegemon start \
-     --chain testnet \
-     --db-path /tmp/miner.db \
-     --wallet-store /tmp/miner.wallet \
-     --wallet-passphrase "your-pass" \
-     --api-addr 0.0.0.0:8080 \
-     --p2p-addr 0.0.0.0:9000 \
-     --seeds <friend-ip>:9001 \
-     --miner-seed <YOUR_32B_HEX> \
-     --miner-workers 2
+   make node
    ```
-   If you omit `--miner-payout-address`, rewards default to your wallet’s primary shielded address (or a deterministic address from `--miner-seed` if you have no wallet keys yet).
-3. **Friend starts a peer** (non-mining unless workers > 0):
+
+2. **Start the first node (mining)**:
    ```bash
-   ./hegemon start \
-     --chain testnet \
-     --db-path /tmp/friend.db \
-     --wallet-store /tmp/friend.wallet \
-     --wallet-passphrase "friend-pass" \
-     --api-addr 127.0.0.1:8081 \
-     --p2p-addr 0.0.0.0:9001 \
-     --seeds <your-ip>:9000 \
-     --miner-workers 0  # set to 2 if they also want to mine
+   HEGEMON_MINE=1 ./target/release/hegemon-node --dev \
+     --base-path /tmp/node1 \
+     --port 30333 \
+     --rpc-port 9944
    ```
+
+3. **Start the second node (peering with first)**:
+   ```bash
+   ./target/release/hegemon-node --dev \
+     --base-path /tmp/node2 \
+     --port 30334 \
+     --rpc-port 9945 \
+     --bootnodes /ip4/127.0.0.1/tcp/30333
+   ```
+
 4. **Verify connectivity**:
-   - Open `http://<api-host>:<port>` for each node, paste the token from `api.token` if prompted.
-   - Check the dashboard peers list to confirm both see each other and heights advance.
-5. **Optional peer sharing**:
-   - Export peers from the healthier node: `./hegemon export-peers peer_bundle.json --db-path /tmp/miner.db`
-   - Start new nodes with `--import-peers peer_bundle.json` so they dial known peers before static `--seeds`.
-
-This supersedes the legacy “separate dashboard process” flow: `hegemon start` now boots the node, wallet sync, miners, and embedded dashboard in one process.
+   ```bash
+   curl -s -H "Content-Type: application/json" \
+     -d '{"id":1, "jsonrpc":"2.0", "method": "system_peers"}' \
+     http://127.0.0.1:9944
+   ```
 
 ### Developer Setup
 
-- **Toolchains** – Run `./scripts/dev-setup.sh` (or `make setup`) after `make quickstart` to install Rust/Go/jq/clang-format. The unified `hegemon` binary serves the dashboard directly; no external Python proxy is required.
+- **Toolchains** – Run `./scripts/dev-setup.sh` (or `make setup`) to install Rust/Go/jq/clang-format.
 - **Tests** – `make check` mirrors the fmt/lint/test CI combo.
 - **Benchmarks** – `make bench` exercises prover, wallet, and network smoke benches.
 
@@ -206,6 +199,7 @@ This supersedes the legacy “separate dashboard process” flow: `hegemon start
 | Target | Purpose |
 | --- | --- |
 | `make setup` | Runs `scripts/dev-setup.sh` to install toolchains and CLI prerequisites. |
+| `make node` | Builds the Substrate-based `hegemon-node` binary. |
 | `make check` | Formats, lints, and tests the entire Rust workspace. |
 | `make bench` | Executes the prover, wallet, and network smoke benchmarks. |
 | `make wallet-demo` | Generates example wallet artifacts plus a balance report inside `wallet-demo-artifacts/`. |

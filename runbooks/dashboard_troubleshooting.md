@@ -1,45 +1,53 @@
-# Dashboard troubleshooting guide (embedded UI)
+# Dashboard troubleshooting guide
 
-Use this runbook when the dashboard served by `hegemon start` looks stale, fails to authenticate, or does not reflect node activity. The Python FastAPI proxy and standalone Vite UI have been removed; new issues should be debugged against the embedded bundle.
+Use this runbook when the dashboard does not reflect node activity. The Substrate node exposes JSON-RPC on port 9944 by default, which the dashboard queries for state.
 
 ## What to expect
 
-- `hegemon start` serves the dashboard on the configured `--api-addr` (default `127.0.0.1:8080`).
-- All UI actions map directly to the underlying node RPCs; there is no separate shim or proxy.
-- Branding and asset changes must go through `./scripts/build_dashboard.sh` so the embedded bundle stays aligned with `BRAND.md`.
+- `hegemon-node` serves JSON-RPC on the configured `--rpc-port` (default `9944`).
+- Dashboard fetches data via standard Substrate RPC methods (`system_health`, `chain_getHeader`, etc.).
 
 ## Common fixes
 
-### Dashboard shows mock/empty data
-- **Symptom:** Tiles read "mock data" or stay empty after the node has been mining.
+### Dashboard shows no data
+- **Symptom:** Tiles remain empty or show connection errors.
 - **Fix:**
-  1. Verify the node is running: `ps -ef | grep hegemon` or `curl -s -H "x-auth-token: $TOKEN" http://127.0.0.1:8080/blocks/latest`.
-  2. Confirm the dashboard token matches the node token. If you regenerated it, paste the new value into the dashboard "API auth token" field and click **Use for dashboard session**.
-  3. Restart the node with the correct `--db-path` if you accidentally pointed the UI at an empty data directory.
+  1. Verify the node is running: `ps -ef | grep hegemon-node` or:
+     ```bash
+     curl -s -H "Content-Type: application/json" \
+       -d '{"id":1, "jsonrpc":"2.0", "method": "system_health"}' \
+       http://127.0.0.1:9944
+     ```
+  2. Check that the dashboard is pointed at the correct RPC endpoint.
+  3. Ensure the node has started with `--rpc-external` if accessing from a different host.
 
 ### Port or bind conflicts
-- **Symptom:** Browser cannot connect to the dashboard, or another service already binds the API port.
-- **Fix:** Restart with an explicit bind and port: `./hegemon start --api-addr 127.0.0.1:8085`. If running multiple nodes, ensure each uses a unique `--api-addr`/`--p2p-addr` pair.
+- **Symptom:** Browser cannot connect, or another service already binds the RPC port.
+- **Fix:** Restart with an explicit port: `./target/release/hegemon-node --rpc-port 9945`. If running multiple nodes, ensure each uses a unique port combination.
 
-### Missing assets after UI edits
-- **Symptom:** The UI loads but styling or icons look outdated compared to local `dashboard-ui/` changes.
-- **Fix:** Rebuild the embedded assets and rebuild the binary:
+### CORS errors in browser
+- **Symptom:** Dashboard shows network errors; browser console reports CORS rejection.
+- **Fix:** Start the node with `--rpc-cors all` to allow browser requests:
   ```bash
-  ./scripts/build_dashboard.sh
-  cargo build -p node --release
-  cp target/release/hegemon .
-  ./hegemon start
+  ./target/release/hegemon-node --dev --rpc-cors all
   ```
-  Document any intentional deviations from `BRAND.md` when you commit.
 
-### Emergency fallback to CLI
-- **Symptom:** UI remains unavailable after the above steps.
-- **Fix:** Interact via CLI until the dashboard returns:
-  ```bash
-  ./hegemon start --api-addr 127.0.0.1:8080 --api-token $TOKEN
-  cargo run -p wallet --bin wallet -- status --store /path/to/wallet --passphrase "$PASS"
-  ```
-  These commands exercise the same endpoints the UI uses, so you can continue operations while debugging the embedded dashboard.
+### Checking node status via CLI
+If the dashboard is unavailable, query the node directly:
 
-## Legacy proxy/UI
-The historical FastAPI + Vite stack has been removed. If you uncover discrepancies, file an issue against the embedded dashboard instead of reviving the old scripts.
+```bash
+# Health check
+curl -s -H "Content-Type: application/json" \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "system_health"}' \
+  http://127.0.0.1:9944
+
+# Latest block
+curl -s -H "Content-Type: application/json" \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "chain_getHeader"}' \
+  http://127.0.0.1:9944
+
+# Peer list
+curl -s -H "Content-Type: application/json" \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "system_peers"}' \
+  http://127.0.0.1:9944
+```

@@ -41,7 +41,7 @@
 //! ```
 
 use crate::substrate_transport::{
-    PqConnectionInfo, SubstratePqConnection, SubstratePqTransport, SubstratePqTransportConfig,
+    PqConnectionInfo, SubstratePqTransport, SubstratePqTransportConfig,
 };
 use crate::pq_transport::PqPeerIdentity;
 use std::collections::HashMap;

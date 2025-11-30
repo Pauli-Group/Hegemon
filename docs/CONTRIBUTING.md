@@ -20,7 +20,7 @@ The unified `hegemon` binary is the canonical way to exercise the node, wallet, 
 
 All commands above are invoked by CI (see below). Run them locally before opening a pull request.
 
-> Tip: Run `make quickstart` once on a fresh clone to install guard-rail dependencies, execute the smoke benches, and launch the unified node. For daily work, skip the quickstart chain and call `make setup`, `make check`, or `cargo build -p node --release` directly so you do not wait on the wallet demo or benchmark stages.
+> Tip: Run `make setup` once on a fresh clone to install toolchains. Then build the node with `make node` and run `HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp` to start a development node. For daily work, use `make check` to lint/test or `make bench` to run benchmarks.
 
 ## Continuous integration
 

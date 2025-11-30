@@ -34,17 +34,26 @@ else
     echo "⚠️ WARNING: Could not find StarkVerifier config for shielded-pool"
 fi
 
-# 3. Check new_full() redirects to new_full_with_client()
-echo -n "Checking new_full() redirects to production mode... "
-if grep -A5 "pub async fn new_full(" node/src/substrate/service.rs | grep -q "new_full_with_client"; then
+# 3. Check new_full_with_client() exists (legacy new_full() has been removed)
+echo -n "Checking new_full_with_client() exists in service.rs... "
+if grep -q "pub async fn new_full_with_client" node/src/substrate/service.rs; then
     echo "✅ PASS"
 else
     echo "❌ FAILED"
-    echo "new_full() does not redirect to new_full_with_client()!"
+    echo "new_full_with_client() not found in service.rs!"
     exit 1
 fi
 
-# 4. Check MockTransactionPool not imported in service.rs (excluding comments)
+# 4. Check deprecated new_full() wrapper has been removed
+echo -n "Checking deprecated new_full() has been removed... "
+if grep -q "pub async fn new_full(" node/src/substrate/service.rs; then
+    echo "❌ FAILED"
+    echo "Deprecated new_full() still exists in service.rs!"
+    exit 1
+fi
+echo "✅ PASS"
+
+# 5. Check MockTransactionPool not imported in service.rs (excluding comments)
 echo -n "Checking MockTransactionPool not used in service.rs... "
 if grep "^use.*MockTransactionPool" node/src/substrate/service.rs 2>/dev/null; then
     echo "❌ FAILED"
@@ -53,7 +62,7 @@ if grep "^use.*MockTransactionPool" node/src/substrate/service.rs 2>/dev/null; t
 fi
 echo "✅ PASS"
 
-# 5. Check no duplicate backup files exist
+# 6. Check no duplicate backup files exist
 echo -n "Checking no duplicate backup files... "
 if ls node/src/substrate/*\ 2.rs 2>/dev/null; then
     echo "❌ FAILED"
@@ -62,7 +71,23 @@ if ls node/src/substrate/*\ 2.rs 2>/dev/null; then
 fi
 echo "✅ PASS"
 
-# 6. Check code compiles
+# 7. Check legacy node modules have been removed
+echo -n "Checking legacy node modules removed... "
+legacy_found=0
+for file in api.rs bootstrap.rs mempool.rs storage.rs sync.rs service.rs codec.rs; do
+    if [ -f "node/src/$file" ]; then
+        echo "❌ FAILED"
+        echo "Legacy module node/src/$file still exists!"
+        legacy_found=1
+    fi
+done
+if [ $legacy_found -eq 0 ]; then
+    echo "✅ PASS"
+else
+    exit 1
+fi
+
+# 8. Check code compiles
 echo -n "Checking code compiles... "
 if cargo check -p hegemon-node -p runtime --quiet 2>/dev/null; then
     echo "✅ PASS"
