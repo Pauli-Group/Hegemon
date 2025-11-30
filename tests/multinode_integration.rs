@@ -179,12 +179,20 @@ impl MockNode {
         let parent = blocks.last().unwrap();
 
         let new_height = parent.height + 1;
-        let parent_hash = parent.hash; // Copy before dropping blocks
+        let parent_hash = parent.hash;
         let transactions = mempool.drain(..).collect::<Vec<_>>();
+        
+        // Release locks before processing
+        drop(mempool);
+        drop(blocks);
+
+        // Get current note count once (avoid repeated lock acquisition)
+        let base_note_index = self.notes.read().await.len() as u64;
 
         // Process transactions
         let mut nullifiers_to_add = Vec::new();
         let mut notes_to_add = Vec::new();
+        let mut note_offset = 0u64;
 
         for tx in &transactions {
             match tx {
@@ -196,20 +204,22 @@ impl MockNode {
                     nullifiers_to_add.extend(nullifiers.clone());
                     for (i, commitment) in commitments.iter().enumerate() {
                         notes_to_add.push(MockNote {
-                            index: self.notes.read().await.len() as u64 + i as u64,
+                            index: base_note_index + note_offset + i as u64,
                             commitment: *commitment,
-                            encrypted_note: vec![0u8; 64], // Mock encrypted note
+                            encrypted_note: vec![0u8; 64],
                             block_height: new_height,
                         });
                     }
+                    note_offset += commitments.len() as u64;
                 }
                 MockTransaction::Shield { commitment, .. } => {
                     notes_to_add.push(MockNote {
-                        index: self.notes.read().await.len() as u64,
+                        index: base_note_index + note_offset,
                         commitment: *commitment,
                         encrypted_note: vec![0u8; 64],
                         block_height: new_height,
                     });
+                    note_offset += 1;
                 }
                 MockTransaction::Unshield { nullifier, .. } => {
                     nullifiers_to_add.push(*nullifier);
@@ -219,7 +229,6 @@ impl MockNode {
         }
 
         // Update state
-        drop(blocks);
         self.nullifiers.write().await.extend(nullifiers_to_add);
         self.notes.write().await.extend(notes_to_add);
 
@@ -273,7 +282,26 @@ impl MockNode {
 
         drop(blocks);
 
-        // Process transactions
+        // Check double spend first (read-only pass)
+        {
+            let spent = self.nullifiers.read().await;
+            for tx in &block.transactions {
+                if let MockTransaction::ShieldedTransfer { nullifiers, .. } = tx {
+                    for nf in nullifiers {
+                        if spent.contains(nf) {
+                            return Err("Double spend in imported block".to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Collect all updates
+        let mut nullifiers_to_add = Vec::new();
+        let mut notes_to_add = Vec::new();
+        let base_note_index = self.notes.read().await.len() as u64;
+        let mut note_offset = 0u64;
+
         for tx in &block.transactions {
             match tx {
                 MockTransaction::ShieldedTransfer {
@@ -281,41 +309,42 @@ impl MockNode {
                     commitments,
                     ..
                 } => {
-                    // Check double spend
-                    let spent = self.nullifiers.read().await;
-                    for nf in nullifiers {
-                        if spent.contains(nf) {
-                            return Err("Double spend in imported block".to_string());
-                        }
-                    }
-                    drop(spent);
-
-                    // Add nullifiers
-                    self.nullifiers.write().await.extend(nullifiers.clone());
-
-                    // Add notes
+                    nullifiers_to_add.extend(nullifiers.clone());
                     for (i, commitment) in commitments.iter().enumerate() {
-                        self.notes.write().await.push(MockNote {
-                            index: self.notes.read().await.len() as u64 + i as u64,
+                        notes_to_add.push(MockNote {
+                            index: base_note_index + note_offset + i as u64,
                             commitment: *commitment,
                             encrypted_note: vec![0u8; 64],
                             block_height: block.height,
                         });
                     }
+                    note_offset += commitments.len() as u64;
                 }
                 MockTransaction::Shield { commitment, .. } => {
-                    self.notes.write().await.push(MockNote {
-                        index: self.notes.read().await.len() as u64,
+                    notes_to_add.push(MockNote {
+                        index: base_note_index + note_offset,
                         commitment: *commitment,
                         encrypted_note: vec![0u8; 64],
                         block_height: block.height,
                     });
+                    note_offset += 1;
                 }
                 MockTransaction::Unshield { nullifier, .. } => {
-                    self.nullifiers.write().await.push(*nullifier);
+                    nullifiers_to_add.push(*nullifier);
                 }
                 _ => {}
             }
+        }
+
+        // Apply all updates
+        self.nullifiers.write().await.extend(nullifiers_to_add);
+        self.notes.write().await.extend(notes_to_add);
+
+        // Remove imported transactions from our mempool (they're now in a block)
+        {
+            let tx_hashes: Vec<[u8; 32]> = block.transactions.iter().map(|t| t.hash()).collect();
+            let mut mempool = self.mempool.write().await;
+            mempool.retain(|t| !tx_hashes.contains(&t.hash()));
         }
 
         // Update merkle root
@@ -929,13 +958,12 @@ mod network_resilience_tests {
         let block0 = network.node(0).mine_block().await;
         network.propagate_block(0, &block0).await;
 
-        // Now node 1 mines (its block would fail to import due to parent mismatch in real system)
-        // But in our mock, the mempool was already propagated, so we just verify consistency
-        let block1 = network.node(1).mine_block().await;
+        // Now node 1 mines on top of the propagated block
+        let _block1 = network.node(1).mine_block().await;
 
-        // Both nodes should have processed block0
-        assert_eq!(network.node(0).current_height(), 2); // 0 mined + 1 imported
-        assert!(network.node(1).current_height() >= 2);
+        // Node 0 mined block 1, node 1 received it and mined block 2
+        assert_eq!(network.node(0).current_height(), 1);
+        assert_eq!(network.node(1).current_height(), 2);
     }
 
     #[tokio::test]
