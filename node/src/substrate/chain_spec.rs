@@ -1,60 +1,37 @@
-//! Hegemon Substrate Chain Specification
+//! Hegemon Chain Specification
 //!
-//! This module defines the chain specifications for different network
-//! configurations: development, local testnet, and public testnet.
-//!
-//! # Phase 11 Status
-//!
-//! Now using real WASM binary and genesis configuration.
+//! ONE chain spec. Difficulty retargeting handles hashrate differences.
 
 use runtime::WASM_BINARY;
 use sc_service::ChainType;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 
 /// Specialized `ChainSpec` for the Hegemon runtime.
 pub type ChainSpec = sc_service::GenericChainSpec;
 
-/// Chain spec extensions for Hegemon (placeholder).
+/// The ONE chain configuration.
 ///
-/// In full implementation, this derives ChainSpecGroup and ChainSpecExtension.
-/// These extensions configure PoW-specific parameters.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct Extensions {
-    /// The PoW difficulty bits for this chain.
-    pub pow_bits: u32,
-    /// Whether this chain requires PQ-secure connections.
-    pub require_pq: bool,
-}
-
-/// Development chain configuration.
-///
-/// This configuration is intended for local development with a single node.
-/// Uses easy PoW difficulty and pre-funded development accounts.
-pub fn development_config() -> Result<ChainSpec, String> {
-    let wasm_binary = WASM_BINARY.ok_or("Development WASM binary not available")?;
+/// GENESIS_DIFFICULTY = 2,500,000 for 5-second blocks at ~500 KH/s
+/// Retargeting adjusts automatically based on actual hashrate.
+pub fn chain_spec() -> Result<ChainSpec, String> {
+    let wasm_binary = WASM_BINARY.ok_or("WASM binary not available")?;
 
     let mut properties = sc_chain_spec::Properties::new();
     properties.insert("tokenSymbol".into(), "HGM".into());
     properties.insert("tokenDecimals".into(), 12.into());
     properties.insert("ss58Format".into(), 42.into());
 
-    // Development genesis with pre-funded accounts
-    // Uses very easy difficulty for fast mining during development
-    // Only includes pallets that have genesis config
-    let genesis_config = json!({
+    let genesis_config = serde_json::json!({
         "system": {},
         "balances": {
             "balances": [
-                // Alice (ML-DSA dev key, seed = blake2_256("//Alice"))
+                // Alice (ML-DSA dev key)
                 ["5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp", 1_000_000_000_000_000_000_000_u128],
-                // Bob (ML-DSA dev key, seed = blake2_256("//Bob"))
+                // Bob (ML-DSA dev key)
                 ["5GoRoFmF8ApeyFGt1MKiqwrbW9dfcSZkaXh1rmxRK4976b1X", 500_000_000_000_000_000_000_u128]
             ],
             "devAccounts": null
         },
         "sudo": {
-            // Alice's ML-DSA account
             "key": "5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp"
         },
         "session": {
@@ -62,12 +39,10 @@ pub fn development_config() -> Result<ChainSpec, String> {
             "nonAuthorityKeys": []
         },
         "difficulty": {
-            // 0x1f00ffff = exponent 31, mantissa 0x00ffff
-            // target = 0x00ffff << 224 = 0x00ffff000...000
-            // difficulty = U256::MAX / target ≈ 65537 (0x10001)
-            // These MUST match or sync verification fails!
-            "initialDifficulty": "0x10001",
-            "initialBits": 0x1f00ffff_u32
+            // GENESIS_BITS = 0x1e06b5fc encodes target = MAX_U256 / 2,500,000
+            // For 5-second blocks at ~500 KH/s
+            "initialDifficulty": "0x2625A0",
+            "initialBits": 0x1e06_b5fc_u32
         },
         "shieldedPool": {
             "verifyingKey": null
@@ -75,130 +50,25 @@ pub fn development_config() -> Result<ChainSpec, String> {
     });
 
     Ok(ChainSpec::builder(wasm_binary, None)
-        .with_name("Hegemon Development")
-        .with_id("hegemon_dev")
-        .with_chain_type(ChainType::Development)
-        .with_properties(properties)
-        .with_genesis_config(genesis_config)
-        .build())
-}
-
-/// Local testnet chain configuration.
-///
-/// This configuration is intended for multi-node local testing.
-pub fn local_testnet_config() -> Result<ChainSpec, String> {
-    let wasm_binary = WASM_BINARY.ok_or("Local testnet WASM binary not available")?;
-
-    let mut properties = sc_chain_spec::Properties::new();
-    properties.insert("tokenSymbol".into(), "HGM".into());
-    properties.insert("tokenDecimals".into(), 12.into());
-    properties.insert("ss58Format".into(), 42.into());
-
-    let genesis_config = json!({
-        "system": {},
-        "balances": {
-            "balances": [
-                // Alice (ML-DSA dev key, seed = blake2_256("//Alice"))
-                ["5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp", 1_000_000_000_000_000_000_000_u128],
-                // Bob (ML-DSA dev key, seed = blake2_256("//Bob"))
-                ["5GoRoFmF8ApeyFGt1MKiqwrbW9dfcSZkaXh1rmxRK4976b1X", 500_000_000_000_000_000_000_u128]
-            ],
-            "devAccounts": null
-        },
-        "sudo": {
-            // Alice's ML-DSA account
-            "key": "5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp"
-        },
-        "session": {
-            "keys": [],
-            "nonAuthorityKeys": []
-        },
-        "difficulty": {
-            // GENESIS_DIFFICULTY = 500,000 for 15-second blocks at ~100 KH/s
-            // Same difficulty for ALL networks (dev, testnet, mainnet)
-            // Retargeting algorithm will adjust based on actual hashrate
-            "initialDifficulty": "0x7a120",
-            "initialBits": 0x1f07_a120_u32
-        },
-        "shieldedPool": {
-            "verifyingKey": null
-        }
-    });
-
-    Ok(ChainSpec::builder(wasm_binary, None)
-        .with_name("Hegemon Local Testnet")
-        .with_id("hegemon_local")
-        .with_chain_type(ChainType::Local)
-        .with_properties(properties)
-        .with_genesis_config(genesis_config)
-        .build())
-}
-
-/// Public testnet chain configuration.
-///
-/// This configuration is for the public testnet deployment.
-pub fn testnet_config() -> Result<ChainSpec, String> {
-    let wasm_binary = WASM_BINARY.ok_or("Testnet WASM binary not available")?;
-
-    let mut properties = sc_chain_spec::Properties::new();
-    properties.insert("tokenSymbol".into(), "HGM".into());
-    properties.insert("tokenDecimals".into(), 12.into());
-    properties.insert("ss58Format".into(), 42.into());
-
-    let genesis_config = json!({
-        "system": {},
-        "balances": {
-            "balances": [
-                // Alice sudo account for testnet (ML-DSA dev key)
-                ["5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp", 5_000_000_000_000_000_000_000_u128]
-            ],
-            "devAccounts": null
-        },
-        "sudo": {
-            // Alice's ML-DSA account
-            "key": "5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp"
-        },
-        "session": {
-            "keys": [],
-            "nonAuthorityKeys": []
-        },
-        "difficulty": {
-            // GENESIS_DIFFICULTY = 500,000 for 15-second blocks at ~100 KH/s
-            // Same difficulty for ALL networks (dev, testnet, mainnet)
-            // Retargeting algorithm will adjust based on actual hashrate
-            "initialDifficulty": "0x7a120",
-            "initialBits": 0x1f07_a120_u32
-        },
-        "shieldedPool": {
-            "verifyingKey": null
-        }
-    });
-
-    Ok(ChainSpec::builder(wasm_binary, None)
-        .with_name("Hegemon Testnet")
-        .with_id("hegemon_testnet")
+        .with_name("Hegemon")
+        .with_id("hegemon")
         .with_chain_type(ChainType::Live)
         .with_properties(properties)
         .with_genesis_config(genesis_config)
         .build())
 }
 
+// Keep old names as aliases for compatibility
+pub fn development_config() -> Result<ChainSpec, String> { chain_spec() }
+pub fn local_testnet_config() -> Result<ChainSpec, String> { chain_spec() }
+pub fn testnet_config() -> Result<ChainSpec, String> { chain_spec() }
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn development_config_works() {
-        assert!(development_config().is_ok());
-    }
-
-    #[test]
-    fn local_testnet_config_works() {
-        assert!(local_testnet_config().is_ok());
-    }
-
-    #[test]
-    fn testnet_config_works() {
-        assert!(testnet_config().is_ok());
+    fn chain_spec_works() {
+        assert!(chain_spec().is_ok());
     }
 }

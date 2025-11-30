@@ -94,7 +94,7 @@ pallet-shielded-pool = { path = "../pallets/shielded-pool", optional = true }
 frame-support = { workspace = true, features = ["std"], optional = true }
 
 [features]
-default = []
+default = ["substrate"]
 test-utils = []
 
 # Enable Substrate-based node implementation (Phase 2.5 with PoW + DifficultyApi)
