@@ -162,28 +162,23 @@ impl MockNode {
                     Json(bundle): Json<TransactionBundle>,
                 ) -> Result<Json<TxResponse>, StatusCode> {
                     require_auth(&headers, &state.token)?;
+                    // New TransactionBundle has commitments/nullifiers directly as [u8; 32]
                     let mut commitments = Vec::new();
-                    for felt in &bundle.proof.public_inputs.commitments {
-                        if felt.as_int() != 0 {
-                            commitments.push(felt.as_int());
-                        }
-                    }
-                    let mut nullifiers = Vec::new();
-                    for felt in &bundle.proof.public_inputs.nullifiers {
-                        if felt.as_int() != 0 {
-                            let mut bytes = [0u8; 32];
-                            bytes[24..].copy_from_slice(&felt.as_int().to_be_bytes());
-                            nullifiers.push(bytes);
+                    for bytes in &bundle.commitments {
+                        // Convert [u8; 32] to u64 (last 8 bytes)
+                        let val = u64::from_be_bytes(bytes[24..32].try_into().unwrap());
+                        if val != 0 {
+                            commitments.push(val);
                         }
                     }
                     let wire = PendingTx {
                         commitments,
                         ciphertexts: bundle.ciphertexts.clone(),
-                        nullifiers,
+                        nullifiers: bundle.nullifiers.clone(),
                     };
                     state.pending.lock().unwrap().push(wire);
                     let mut hasher = Sha256::new();
-                    hasher.update(bincode::serialize(&bundle.proof).unwrap());
+                    hasher.update(&bundle.proof_bytes);
                     for ct in &bundle.ciphertexts {
                         hasher.update(ct);
                     }

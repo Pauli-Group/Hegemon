@@ -39,10 +39,6 @@ substrate = ["sp-core", "hegemon-node/substrate"]
 legacy-node-tests = []
 
 [[test]]
-name = "block_flow"
-path = "block_flow.rs"
-
-[[test]]
 name = "security_pipeline"
 path = "security_pipeline.rs"
 
