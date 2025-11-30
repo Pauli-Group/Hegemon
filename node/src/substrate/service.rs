@@ -1356,6 +1356,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         "CRITICAL: Transaction pool maintenance task spawned - pool will receive block notifications"
     );
 
+    // Capture local peer ID for RPC (will be set inside PQ backend block)
+    let mut rpc_peer_id: Option<[u8; 32]> = None;
+
     // Phase 3.5: Create and start PQ network backend
     if let Some(ref identity) = pq_identity {
         let backend_config = PqNetworkBackendConfig {
@@ -1369,6 +1372,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
         let mut pq_backend = PqNetworkBackend::new(identity, backend_config);
         let local_peer_id = pq_backend.local_peer_id();
+        rpc_peer_id = Some(local_peer_id);  // Capture for RPC handler
         
         // Start the PQ network backend and get the event receiver
         match pq_backend.start().await {
@@ -2318,12 +2322,30 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         }
         
         // Spawn a task to handle system RPC network requests
-        // For now, we provide stub responses since full network integration comes in Phase 12
+        // Captures the real peer ID from PQ network backend
+        let peer_id_for_rpc = rpc_peer_id;
+        let p2p_port = pq_service_config.listen_addr.port();
         task_manager.spawn_handle().spawn(
             "system-rpc-handler",
             Some("rpc"),
             async move {
                 use sc_rpc::system::{Request, Health};
+                
+                // Convert 32-byte PQ peer ID to libp2p-compatible multihash PeerId
+                // Format: 0x00 (identity) + 0x24 (36 bytes: 4-byte prefix + 32-byte key) + data
+                // The ed25519 public key multihash prefix is 0x08 0x01 0x12 0x20
+                fn pq_peer_id_to_libp2p(id: &[u8; 32]) -> String {
+                    // Build multihash: identity(0x00) + length + ed25519-pub prefix + key
+                    // Ed25519 public key multicodec: 0xed (in varint = 0xed 0x01)
+                    // But libp2p uses protobuf encoding for keys in PeerId
+                    // Simpler: use identity multihash with raw 32 bytes
+                    // 0x00 = identity hash, 0x20 = 32 bytes length
+                    let mut multihash = vec![0x00, 0x24]; // identity + 36 bytes
+                    // Add ed25519 public key protobuf prefix (type=1, length=32)
+                    multihash.extend_from_slice(&[0x08, 0x01, 0x12, 0x20]);
+                    multihash.extend_from_slice(id);
+                    bs58::encode(&multihash).into_string()
+                }
                 
                 while let Some(request) = system_rpc_rx.next().await {
                     match request {
@@ -2336,11 +2358,16 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             let _ = sender.send(health);
                         }
                         Request::LocalPeerId(sender) => {
-                            // Return a placeholder - real PeerId comes with network integration
-                            let _ = sender.send("12D3KooWStub...".into());
+                            // Return the real PQ peer ID as libp2p-compatible base58 multihash
+                            let peer_id_str = if let Some(id) = peer_id_for_rpc {
+                                pq_peer_id_to_libp2p(&id)
+                            } else {
+                                "12D3KooWNotConfigured".to_string()
+                            };
+                            let _ = sender.send(peer_id_str);
                         }
                         Request::LocalListenAddresses(sender) => {
-                            let _ = sender.send(vec!["/ip4/127.0.0.1/tcp/30333".into()]);
+                            let _ = sender.send(vec![format!("/ip4/127.0.0.1/tcp/{}", p2p_port)]);
                         }
                         Request::Peers(sender) => {
                             let _ = sender.send(vec![]);
