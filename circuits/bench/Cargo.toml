@@ -13,4 +13,4 @@ serde_json = "1"
 transaction-circuit = { path = "../transaction" }
 block-circuit = { path = "../block" }
 protocol-versioning = { path = "../../protocol/versioning" }
-state-merkle = { path = "../../state/merkle" }
+winterfell = "0.13"

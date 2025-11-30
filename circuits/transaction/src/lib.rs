@@ -1,4 +1,18 @@
-pub mod air;
+//! Transaction circuit crate for shielded transactions.
+//!
+//! This crate provides real STARK proofs using winterfell.
+//!
+//! ## Main API (Real STARK Proofs)
+//!
+//! - [`stark_prover::TransactionProverStark`] - Generate real STARK proofs
+//! - [`stark_verifier::verify_transaction_proof`] - Verify STARK proofs
+//! - [`stark_air::TransactionAirStark`] - The AIR (Algebraic Intermediate Representation)
+//!
+//! ## Legacy API (Deprecated)
+//!
+//! The `air` module and `check_constraints` function are deprecated.
+//! They only perform equality checks, not cryptographic verification.
+
 pub mod constants;
 pub mod error;
 pub mod hashing;
@@ -14,7 +28,10 @@ pub mod stark_air;
 pub mod stark_prover;
 pub mod stark_verifier;
 
-pub use air::{check_constraints, TransactionAir};
+// Legacy module (deprecated)
+#[deprecated(since = "0.2.0", note = "Use stark_air module for real STARK proofs")]
+pub mod air;
+
 pub use error::TransactionCircuitError;
 pub use keys::{generate_keys, ProvingKey, VerifyingKey};
 pub use note::{InputNoteWitness, OutputNoteWitness};
@@ -22,10 +39,15 @@ pub use proof::{TransactionProof, VerificationReport};
 pub use public_inputs::TransactionPublicInputs;
 pub use witness::TransactionWitness;
 
-// Re-export real STARK types
+// Re-export real STARK types (preferred API)
 pub use stark_air::{TransactionAirStark, TransactionPublicInputsStark, TRACE_WIDTH, MIN_TRACE_LENGTH};
 pub use stark_prover::{TransactionProverStark, default_proof_options, fast_proof_options};
 pub use stark_verifier::{verify_transaction_proof, verify_transaction_proof_bytes, TransactionVerifyError};
 
 // Re-export circuit versioning and AIR identification
 pub use constants::{CIRCUIT_VERSION, compute_air_hash, expected_air_hash};
+
+// Legacy re-exports (deprecated)
+#[deprecated(since = "0.2.0", note = "Use stark_air::TransactionAirStark instead")]
+#[allow(deprecated)]
+pub use air::{check_constraints, TransactionAir};
