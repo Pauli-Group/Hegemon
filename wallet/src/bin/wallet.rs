@@ -95,6 +95,9 @@ enum Commands {
     #[command(name = "substrate-daemon")]
     SubstrateDaemon(SubstrateDaemonArgs),
     Status(StoreArgs),
+    /// Print miner account ID (hex) for HEGEMON_MINER_ACCOUNT
+    #[command(name = "account-id")]
+    AccountId(StoreArgs),
     /// Send using legacy HTTP RPC (deprecated, use substrate-send)
     Send(SendArgs),
     /// Send using Substrate WebSocket RPC
@@ -294,6 +297,7 @@ fn main() -> Result<()> {
         Commands::Daemon(args) => cmd_daemon(args),
         Commands::SubstrateDaemon(args) => cmd_substrate_daemon(args),
         Commands::Status(args) => cmd_status(args),
+        Commands::AccountId(args) => cmd_account_id(args),
         Commands::Send(args) => cmd_send(args),
         Commands::SubstrateSend(args) => cmd_substrate_send(args),
         Commands::SubstrateShield(args) => cmd_substrate_shield(args),
@@ -450,7 +454,25 @@ fn cmd_daemon(args: DaemonArgs) -> Result<()> {
 }
 
 fn cmd_status(args: StoreArgs) -> Result<()> {
+    use wallet::extrinsic::ExtrinsicBuilder;
+    
     let store = WalletStore::open(&args.store, &args.passphrase)?;
+    
+    // Show miner account ID (for HEGEMON_MINER_ACCOUNT)
+    if let Ok(Some(derived)) = store.derived_keys() {
+        let signing_seed = derived.spend.to_bytes();
+        let builder = ExtrinsicBuilder::from_seed(&signing_seed);
+        let account_id = builder.account_id();
+        println!("Miner Account ID (hex): {}", hex::encode(&account_id));
+        println!();
+    }
+    
+    // Show first shielded address
+    if let Ok(addr) = store.next_address() {
+        println!("Shielded Address: {}", addr.encode().unwrap_or_default());
+        println!();
+    }
+    
     let balances = store.balances()?;
     println!("Balances:");
     for (asset, value) in balances {
@@ -472,6 +494,24 @@ fn cmd_status(args: StoreArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Print just the hex account ID (for use in shell command substitution)
+fn cmd_account_id(args: StoreArgs) -> Result<()> {
+    use wallet::extrinsic::ExtrinsicBuilder;
+    
+    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    
+    if let Ok(Some(derived)) = store.derived_keys() {
+        let signing_seed = derived.spend.to_bytes();
+        let builder = ExtrinsicBuilder::from_seed(&signing_seed);
+        let account_id = builder.account_id();
+        // Print ONLY the hex, no label, no newline decorations - for shell substitution
+        println!("{}", hex::encode(&account_id));
+        Ok(())
+    } else {
+        anyhow::bail!("No derived keys found in wallet")
+    }
 }
 
 fn cmd_send(args: SendArgs) -> Result<()> {

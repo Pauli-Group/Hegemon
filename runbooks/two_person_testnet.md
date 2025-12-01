@@ -25,25 +25,16 @@ Both participants need:
 ./target/release/wallet init --store ~/.hegemon-wallet --passphrase "CHANGE_ME"
 ```
 
-### 2. Get Your Account ID
-
-```bash
-./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME"
-```
-
-Copy the hex account ID (32 bytes, looks like `a1b2c3d4...`).
-
-### 3. Start the Boot Node
+### 2. Start the Boot Node
 
 ```bash
 mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
-HEGEMON_MINER_ACCOUNT=<YOUR_HEX_ACCOUNT_ID> \
+HEGEMON_MINER_ACCOUNT=$(./target/release/wallet account-id --store ~/.hegemon-wallet --passphrase "CHANGE_ME") \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
   --chain dev \
-  --port 30333 \
   --rpc-port 9944 \
   --rpc-cors all \
   --unsafe-rpc-external \
@@ -51,7 +42,7 @@ HEGEMON_MINER_ACCOUNT=<YOUR_HEX_ACCOUNT_ID> \
   --name "PL-BootNode"
 ```
 
-### 4. Get Your Peer ID
+### 3. Get Your Peer ID
 
 In another terminal:
 
@@ -64,7 +55,7 @@ Example output: `12D3KooWH7ntuFTu5DtV2XPHfzjdFQCxxpDRgZaVEDgGYXTaKdhH`
 
 Send this peer ID to your friend.
 
-### 5. Monitor Mining
+### 4. Monitor Mining
 
 ```bash
 # Watch blocks
@@ -93,15 +84,7 @@ cargo build -p hegemon-node -p wallet --features substrate --release
 ./target/release/wallet init --store ~/.hegemon-wallet --passphrase "FRIEND_CHANGE_ME"
 ```
 
-### 3. Get Your Account ID
-
-```bash
-./target/release/wallet status --store ~/.hegemon-wallet --passphrase "FRIEND_CHANGE_ME"
-```
-
-Copy your hex account ID.
-
-### 4. Start Node (Connect to Boot Node)
+### 3. Start Node (Connect to Boot Node)
 
 Replace `<PL_PEER_ID>` with the peer ID Pierre-Luc gave you:
 
@@ -109,18 +92,17 @@ Replace `<PL_PEER_ID>` with the peer ID Pierre-Luc gave you:
 mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
-HEGEMON_MINER_ACCOUNT=<YOUR_HEX_ACCOUNT_ID> \
+HEGEMON_MINER_ACCOUNT=$(./target/release/wallet account-id --store ~/.hegemon-wallet --passphrase "FRIEND_CHANGE_ME") \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
   --chain dev \
-  --port 30333 \
   --rpc-port 9944 \
   --rpc-cors all \
   --bootnodes /ip4/75.155.93.185/tcp/30333/p2p/<PL_PEER_ID> \
   --name "FriendNode"
 ```
 
-### 5. Verify Connection
+### 4. Verify Connection
 
 ```bash
 # Should show Pierre-Luc's node
