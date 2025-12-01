@@ -14,12 +14,7 @@ This directory contains configuration and tools for deploying the Hegemon testne
 
 ```bash
 # From project root
-docker build -f Dockerfile.substrate -t hegemon/node:latest .
-
-# Build dashboard image
-cd dashboard-ui
-docker build -t hegemon/dashboard:latest .
-cd ..
+docker build -t hegemon/node:latest .
 ```
 
 ### 2. Generate Node Keys
