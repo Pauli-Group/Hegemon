@@ -2309,6 +2309,64 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         
         let mut module = RpcModule::new(());
         
+        // Register rpc_methods endpoint (required by Polkadot.js Apps)
+        // This returns the list of available RPC methods
+        module.register_method("rpc_methods", |_, _, _| {
+            // Return a static list of methods we support
+            // Polkadot.js Apps uses this to discover available methods
+            let result: Result<serde_json::Value, jsonrpsee::types::ErrorObjectOwned> = Ok(serde_json::json!({
+                "methods": [
+                    "chain_getBlock",
+                    "chain_getBlockHash", 
+                    "chain_getHeader",
+                    "chain_getFinalizedHead",
+                    "chain_subscribeNewHead",
+                    "chain_subscribeFinalizedHeads",
+                    "chain_unsubscribeNewHead",
+                    "chain_unsubscribeFinalizedHeads",
+                    "state_call",
+                    "state_getKeys",
+                    "state_getKeysPaged",
+                    "state_getMetadata",
+                    "state_getPairs",
+                    "state_getReadProof",
+                    "state_getRuntimeVersion",
+                    "state_getStorage",
+                    "state_getStorageAt",
+                    "state_getStorageHash",
+                    "state_getStorageHashAt",
+                    "state_getStorageSize",
+                    "state_getStorageSizeAt",
+                    "state_queryStorage",
+                    "state_queryStorageAt",
+                    "state_subscribeRuntimeVersion",
+                    "state_subscribeStorage",
+                    "state_unsubscribeRuntimeVersion",
+                    "state_unsubscribeStorage",
+                    "system_chain",
+                    "system_chainType",
+                    "system_health",
+                    "system_localListenAddresses",
+                    "system_localPeerId",
+                    "system_name",
+                    "system_nodeRoles",
+                    "system_peers",
+                    "system_properties",
+                    "system_version",
+                    "author_hasKey",
+                    "author_hasSessionKeys",
+                    "author_insertKey",
+                    "author_pendingExtrinsics",
+                    "author_rotateKeys",
+                    "author_submitAndWatchExtrinsic",
+                    "author_submitExtrinsic",
+                    "author_unwatchExtrinsic",
+                    "rpc_methods"
+                ]
+            }));
+            result
+        }).expect("rpc_methods registration should not fail");
+        
         // Create subscription task executor for RPC subscriptions
         let executor: SubscriptionTaskExecutor = Arc::new(task_manager.spawn_handle());
         
