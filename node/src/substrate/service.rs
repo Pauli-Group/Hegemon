@@ -328,6 +328,17 @@ pub fn wire_block_builder_api(
     
     let client_for_exec = client;
     
+    // Capture the miner account for coinbase rewards
+    let miner_account = chain_state.miner_account();
+    if let Some(ref account) = miner_account {
+        tracing::info!(
+            miner = %hex::encode(account),
+            "Coinbase rewards enabled for miner"
+        );
+    } else {
+        tracing::warn!("No miner account configured - coinbase rewards disabled");
+    }
+    
     chain_state.set_execute_extrinsics_fn(move |parent_hash, block_number, extrinsics| {
         // Convert our H256 to the runtime's Hash type
         let parent_substrate_hash: sp_core::H256 = (*parent_hash).into();
@@ -348,6 +359,29 @@ pub fn wire_block_builder_api(
             tracing::warn!(error = ?e, "Failed to provide timestamp inherent data");
         }
         
+        // Add coinbase inherent data if miner account is configured
+        if let Some(ref miner) = miner_account {
+            // Calculate block subsidy for this height using Bitcoin-style halving
+            let subsidy = pallet_coinbase::block_subsidy(block_number);
+            
+            let coinbase_provider = pallet_coinbase::CoinbaseInherentDataProvider::new(
+                miner.clone(),
+                subsidy,
+            );
+            if let Err(e) = futures::executor::block_on(
+                coinbase_provider.provide_inherent_data(&mut inherent_data)
+            ) {
+                tracing::warn!(error = ?e, "Failed to provide coinbase inherent data");
+            } else {
+                tracing::debug!(
+                    block_number,
+                    subsidy,
+                    miner = %hex::encode(miner),
+                    "Added coinbase inherent for block reward"
+                );
+            }
+        }
+        
         // Create BlockBuilder using the builder pattern
         // This is the sc_block_builder::BlockBuilder, not the runtime API
         let mut block_builder = match BlockBuilderBuilder::new(&*client_for_exec)
@@ -365,12 +399,12 @@ pub fn wire_block_builder_api(
             }
         };
         
-        // Create inherent extrinsics (timestamp, etc.)
+        // Create inherent extrinsics (timestamp, coinbase, etc.)
         let inherent_extrinsics = match block_builder.create_inherents(inherent_data) {
             Ok(exts) => {
                 tracing::debug!(
                     count = exts.len(),
-                    "Created {} inherent extrinsics",
+                    "Created {} inherent extrinsics (timestamp + coinbase)",
                     exts.len()
                 );
                 exts

@@ -1395,6 +1395,18 @@ impl pallet_fee_model::Config for Runtime {
 
 impl pallet_difficulty::Config for Runtime {}
 
+// === Coinbase Configuration ===
+parameter_types! {
+    /// Maximum subsidy per block (50 HGM = 50 * 10^8 base units)
+    /// This is a safety limit - actual subsidy follows halving schedule
+    pub const MaxSubsidy: u64 = 50 * 100_000_000;
+}
+
+impl pallet_coinbase::Config for Runtime {
+    type Currency = Balances;
+    type MaxSubsidy = MaxSubsidy;
+}
+
 // === Shielded Pool Configuration ===
 parameter_types! {
     /// Maximum nullifiers per shielded transaction (inputs).
@@ -1423,6 +1435,7 @@ construct_runtime!(
     pub enum Runtime {
         System: frame_system::{Pallet, Call, Config<T>, Storage, Event<T>},
         Timestamp: pallet_timestamp::{Pallet, Call, Storage, Inherent},
+        Coinbase: pallet_coinbase::{Pallet, Call, Storage, Event<T>, Inherent},
         Pow: pow::{Pallet, Call, Storage, Event<T>},
         Difficulty: pallet_difficulty::{Pallet, Call, Storage, Event<T>, Config<T>},
         Session: pallet_session::{Pallet, Call, Storage, Event<T>, Config<T>},

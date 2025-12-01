@@ -375,6 +375,9 @@ pub struct ProductionConfig {
     pub max_block_transactions: usize,
     /// Whether to log verbose state updates
     pub verbose: bool,
+    /// Miner account for coinbase rewards (SCALE-encoded AccountId)
+    /// If None, no coinbase inherent will be created (testing/relay mode)
+    pub miner_account: Option<Vec<u8>>,
 }
 
 impl Default for ProductionConfig {
@@ -383,6 +386,7 @@ impl Default for ProductionConfig {
             poll_interval_ms: 100,
             max_block_transactions: 1000,
             verbose: false,
+            miner_account: None,
         }
     }
 }
@@ -404,11 +408,26 @@ impl ProductionConfig {
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
 
+        // Parse miner account from environment (hex-encoded SS58 or raw bytes)
+        let miner_account = std::env::var("HEGEMON_MINER_ACCOUNT")
+            .ok()
+            .and_then(|s| {
+                // Try to decode as hex first
+                hex::decode(s.trim_start_matches("0x")).ok()
+            });
+
         Self {
             poll_interval_ms,
             max_block_transactions,
             verbose,
+            miner_account,
         }
+    }
+
+    /// Set the miner account for coinbase rewards
+    pub fn with_miner_account(mut self, account: Vec<u8>) -> Self {
+        self.miner_account = Some(account);
+        self
     }
 }
 
@@ -504,6 +523,11 @@ impl ProductionChainStateProvider {
     /// Create with default config
     pub fn with_defaults() -> Self {
         Self::new(ProductionConfig::default())
+    }
+
+    /// Get the miner account (if configured)
+    pub fn miner_account(&self) -> Option<Vec<u8>> {
+        self.config.miner_account.clone()
     }
 
     /// Set the callback for getting best block info

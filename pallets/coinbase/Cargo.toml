@@ -1,0 +1,41 @@
+[package]
+name = "pallet-coinbase"
+version = "0.1.0"
+edition = "2021"
+authors = ["Hegemon Team"]
+description = "PoW coinbase reward pallet - mints block rewards to miners via inherent"
+license = "Apache-2.0"
+
+[dependencies]
+codec = { package = "parity-scale-codec", version = "3.6", default-features = false, features = ["derive"] }
+scale-info = { version = "2.10", default-features = false, features = ["derive"] }
+frame-support = { workspace = true }
+frame-system = { workspace = true }
+sp-core = { workspace = true }
+sp-runtime = { workspace = true }
+sp-std = { workspace = true }
+sp-inherents = { workspace = true }
+pallet-balances = { workspace = true }
+log = { version = "0.4", default-features = false }
+async-trait = { version = "0.1", optional = true }
+
+[dev-dependencies]
+sp-io = { workspace = true, features = ["std"] }
+
+[features]
+default = ["std"]
+std = [
+    "codec/std",
+    "scale-info/std",
+    "frame-support/std",
+    "frame-system/std",
+    "sp-core/std",
+    "sp-runtime/std",
+    "sp-std/std",
+    "sp-inherents/std",
+    "pallet-balances/std",
+    "log/std",
+    "async-trait",
+]
+runtime-benchmarks = []
+try-runtime = ["frame-support/try-runtime"]
