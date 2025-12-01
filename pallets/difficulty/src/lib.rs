@@ -73,13 +73,13 @@ pub mod pallet {
     /// Maximum adjustment factor per retarget period (4x up or down)
     pub const MAX_ADJUSTMENT_FACTOR: u64 = 4;
 
-    /// Genesis difficulty: 32 MH/s * 5 seconds = 160,000,000 expected hashes per block.
-    /// This targets 4 threads on M-series MacBooks (~8 MH/s per thread).
-    pub const GENESIS_DIFFICULTY: u128 = 160_000_000;
+    /// Genesis difficulty: 334 kH/s * 5 seconds = 1,670,000 expected hashes per block.
+    /// This targets 1 thread on M-series MacBooks (~334 kH/s measured).
+    pub const GENESIS_DIFFICULTY: u128 = 1_670_000;
 
-    /// Genesis compact bits: 0x1d1ad7f2 encodes target = MAX_U256 / 160,000,000.
-    /// Decodes to: exponent=29, mantissa=0x1ad7f2, target ≈ 2^229
-    pub const GENESIS_BITS: u32 = 0x1d1a_d7f2;
+    /// Genesis compact bits: 0x1e0a0bd6 encodes target = MAX_U256 / 1,670,000.
+    /// Decodes to: exponent=30, mantissa=0x0a0bd6, target ≈ 2^237
+    pub const GENESIS_BITS: u32 = 0x1e0a_0bd6;
 
     /// Minimum difficulty to prevent divide-by-zero
     pub const MIN_DIFFICULTY: u128 = 1;
@@ -164,7 +164,6 @@ pub mod pallet {
     }
 
     #[pallet::genesis_config]
-    #[derive(frame_support::DefaultNoBound)]
     pub struct GenesisConfig<T: Config> {
         /// Initial difficulty value
         pub initial_difficulty: U256,
@@ -172,6 +171,16 @@ pub mod pallet {
         pub initial_bits: u32,
         #[serde(skip)]
         pub _phantom: core::marker::PhantomData<T>,
+    }
+
+    impl<T: Config> Default for GenesisConfig<T> {
+        fn default() -> Self {
+            Self {
+                initial_difficulty: U256::from(GENESIS_DIFFICULTY),
+                initial_bits: GENESIS_BITS,
+                _phantom: core::marker::PhantomData,
+            }
+        }
     }
 
     #[pallet::genesis_build]
