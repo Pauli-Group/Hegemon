@@ -42,10 +42,8 @@ fn base_genesis(endowed: &[(AccountId, Balance)], sudo: AccountId) -> RuntimeGen
 
 pub fn development_config() -> ChainSpec {
     let sudo = account(1);
-    let endowed = vec![
-        (sudo.clone(), 1_000_000_000_000),
-        (account(2), 500_000_000_000),
-    ];
+    // No pre-mine. All issuance from mining rewards only.
+    let endowed: Vec<(AccountId, Balance)> = vec![];
     ChainSpec {
         name: "hegemon-devnet-pow",
         id: "hegemon-devnet-pow",
@@ -58,11 +56,8 @@ pub fn development_config() -> ChainSpec {
 
 pub fn testnet_config() -> ChainSpec {
     let sudo = account(42);
-    let endowed = vec![
-        (sudo.clone(), 5_000_000_000_000),
-        (account(43), 2_000_000_000_000),
-        (account(44), 2_000_000_000_000),
-    ];
+    // No pre-mine. All issuance from mining rewards only.
+    let endowed: Vec<(AccountId, Balance)> = vec![];
     ChainSpec {
         name: "hegemon-testnet-pow",
         id: "hegemon-testnet-pow",

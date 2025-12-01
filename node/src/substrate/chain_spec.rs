@@ -23,12 +23,8 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
     let genesis_config = serde_json::json!({
         "system": {},
         "balances": {
-            "balances": [
-                // Alice (ML-DSA dev key)
-                ["5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp", 1_000_000_000_000_000_000_000_u128],
-                // Bob (ML-DSA dev key)
-                ["5GoRoFmF8ApeyFGt1MKiqwrbW9dfcSZkaXh1rmxRK4976b1X", 500_000_000_000_000_000_000_u128]
-            ],
+            // No pre-mine. All issuance from mining rewards only.
+            "balances": [],
             "devAccounts": null
         },
         "sudo": {

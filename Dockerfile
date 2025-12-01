@@ -1,42 +1,61 @@
-# Build Stage
-FROM rust:1.81-slim-bookworm as builder
+# Build Stage - Substrate Node
+# Using Rust nightly for Edition 2024 and latest crate compatibility
+FROM rust:nightly-slim-bookworm AS builder
 
-# Install Node.js for dashboard build
-RUN apt-get update && apt-get install -y nodejs npm pkg-config libssl-dev git clang
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    git \
+    clang \
+    cmake \
+    protobuf-compiler \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # Copy source code
 COPY . .
 
-# Build Dashboard
-RUN ./scripts/build_dashboard.sh
-
-# Build Node Binary
-RUN cargo build --release -p node
+# Build Substrate Node Binary with all features
+RUN cargo build --release -p hegemon-node --features substrate
 
 # Runtime Stage
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates libssl3 && rm -rf /var/lib/apt/lists/*
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    curl \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY --from=builder /app/target/release/node /usr/local/bin/node
+# Copy the Substrate node binary
+COPY --from=builder /app/target/release/hegemon-node /usr/local/bin/hegemon-node
 
 # Create data directory
-RUN mkdir -p /data
+RUN mkdir -p /data /config /keys
+
+# Health check endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:9944/health || exit 1
 
 # Expose ports
-EXPOSE 8080 9000
+# 30333 - P2P
+# 9944  - RPC (HTTP/WS)
+# 9615  - Prometheus metrics
+EXPOSE 30333 9944 9615
+
+# Default environment
+ENV RUST_LOG=info,hegemon=debug
+ENV RUST_BACKTRACE=1
 
 # Entrypoint
-ENTRYPOINT ["node"]
-ENV NODE_WALLET_PASSPHRASE=changeme
-CMD [
-  "--db-path", "/data/node.db",
-  "--wallet-store", "/data/wallet.db",
-  "--wallet-auto-create",
-  "--api-addr", "0.0.0.0:8080",
-  "--p2p-addr", "0.0.0.0:9000"
-]
+ENTRYPOINT ["hegemon-node"]
+
+# Default command - development mode
+CMD ["--dev", "--tmp", "--rpc-cors=all", "--rpc-external"]

@@ -27,7 +27,7 @@ services:
     image: hegemon/node:latest
     build:
       context: .
-      dockerfile: Dockerfile.substrate
+      dockerfile: Dockerfile
     container_name: hegemon-boot1
     command:
       - --dev
