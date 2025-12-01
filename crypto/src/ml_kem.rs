@@ -31,7 +31,7 @@ impl MlKemCiphertext {
         if bytes.len() != ML_KEM_CIPHERTEXT_LEN {
             return Err(CryptoError::InvalidLength {
                 expected: ML_KEM_CIPHERTEXT_LEN,
-                found: bytes.len(),
+                actual: bytes.len(),
             });
         }
         let mut arr = [0u8; ML_KEM_CIPHERTEXT_LEN];
@@ -59,7 +59,7 @@ impl MlKemSharedSecret {
         if bytes.len() != ML_KEM_SHARED_SECRET_LEN {
             return Err(CryptoError::InvalidLength {
                 expected: ML_KEM_SHARED_SECRET_LEN,
-                found: bytes.len(),
+                actual: bytes.len(),
             });
         }
         let mut arr = [0u8; ML_KEM_SHARED_SECRET_LEN];
@@ -133,7 +133,7 @@ impl KemPublicKey for MlKemPublicKey {
         if bytes.len() != ML_KEM_PUBLIC_KEY_LEN {
             return Err(CryptoError::InvalidLength {
                 expected: ML_KEM_PUBLIC_KEY_LEN,
-                found: bytes.len(),
+                actual: bytes.len(),
             });
         }
         let mut arr = [0u8; ML_KEM_PUBLIC_KEY_LEN];
@@ -166,7 +166,7 @@ impl MlKemSecretKey {
         if bytes.len() != ML_KEM_SECRET_KEY_LEN {
             return Err(CryptoError::InvalidLength {
                 expected: ML_KEM_SECRET_KEY_LEN,
-                found: bytes.len(),
+                actual: bytes.len(),
             });
         }
         let mut arr = [0u8; ML_KEM_SECRET_KEY_LEN];
@@ -180,14 +180,14 @@ impl MlKemSecretKey {
     }
 
     /// REAL ML-KEM decapsulation using lattice operations
-    fn decapsulate(&self, ciphertext: &MlKemCiphertext) -> MlKemSharedSecret {
+    pub fn decapsulate(&self, ciphertext: &MlKemCiphertext) -> Result<MlKemSharedSecret, CryptoError> {
         let dk = self.to_inner();
         let ct: Array<u8, _> = Array::clone_from_slice(&ciphertext.bytes);
-        let ss = dk.decapsulate(&ct).expect("decapsulation failed");
+        let ss = dk.decapsulate(&ct).map_err(|_| CryptoError::DecapsulationFailed)?;
         
         let mut ss_bytes = [0u8; ML_KEM_SHARED_SECRET_LEN];
         ss_bytes.copy_from_slice(ss.as_ref());
-        MlKemSharedSecret { bytes: ss_bytes }
+        Ok(MlKemSharedSecret { bytes: ss_bytes })
     }
 }
 
@@ -282,7 +282,7 @@ impl KemKeyPair for MlKemKeyPair {
         &self,
         ciphertext: &Self::Ciphertext,
     ) -> Result<Self::SharedSecret, CryptoError> {
-        Ok(self.secret.decapsulate(ciphertext))
+        self.secret.decapsulate(ciphertext)
     }
 
     fn public_key(&self) -> Self::PublicKey {
@@ -301,7 +301,7 @@ impl KemKeyPair for MlKemKeyPair {
         if bytes.len() != ML_KEM_KEYPAIR_BYTES {
             return Err(CryptoError::InvalidLength {
                 expected: ML_KEM_KEYPAIR_BYTES,
-                found: bytes.len(),
+                actual: bytes.len(),
             });
         }
         let (sk_bytes, _pk_bytes) = bytes.split_at(ML_KEM_SECRET_KEY_LEN);

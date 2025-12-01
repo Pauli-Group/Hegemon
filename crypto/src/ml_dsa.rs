@@ -29,7 +29,7 @@ impl MlDsaSignature {
         if bytes.len() != ML_DSA_SIGNATURE_LEN {
             return Err(CryptoError::InvalidLength {
                 expected: ML_DSA_SIGNATURE_LEN,
-                found: bytes.len(),
+                actual: bytes.len(),
             });
         }
         Ok(Self { bytes: bytes.to_vec() })
@@ -100,7 +100,7 @@ impl VerifyKey for MlDsaPublicKey {
         if bytes.len() != ML_DSA_PUBLIC_KEY_LEN {
             return Err(CryptoError::InvalidLength {
                 expected: ML_DSA_PUBLIC_KEY_LEN,
-                found: bytes.len(),
+                actual: bytes.len(),
             });
         }
         let mut arr = [0u8; ML_DSA_PUBLIC_KEY_LEN];
@@ -180,7 +180,7 @@ impl SigningKeyTrait for MlDsaSecretKey {
         if bytes.len() != ML_DSA_SECRET_KEY_LEN {
             return Err(CryptoError::InvalidLength {
                 expected: ML_DSA_SECRET_KEY_LEN,
-                found: bytes.len(),
+                actual: bytes.len(),
             });
         }
         let mut arr = [0u8; ML_DSA_SECRET_KEY_LEN];

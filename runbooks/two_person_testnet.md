@@ -1,6 +1,6 @@
 # Two-Person Testnet Guide
 
-This guide walks through setting up a two-node Hegemon network where both participants can mine blocks, earn coinbase rewards, and send transactions to each other using the CLI wallet.
+This guide walks through setting up a two-node Hegemon network where both participants can mine blocks, earn coinbase rewards directly to their shielded wallets, and send private transactions to each other using the CLI wallet.
 
 ## Prerequisites
 
@@ -14,6 +14,7 @@ Both participants need:
 - **Chain:** dev (ephemeral until we snapshot)
 - **Block time:** ~5 seconds
 - **Coinbase reward:** 50 HGM per block (halves every 210,000 blocks)
+- **Privacy:** All coinbase rewards go directly to shielded pool - no transparent balances
 
 ---
 
@@ -25,13 +26,21 @@ Both participants need:
 ./target/release/wallet init --store ~/.hegemon-wallet --passphrase "CHANGE_ME"
 ```
 
-### 2. Start the Boot Node
+### 2. Get Your Shielded Address
+
+```bash
+./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME"
+```
+
+Look for the line starting with `Shielded Address: shca1...` and copy the full address.
+
+### 3. Start the Boot Node
 
 ```bash
 mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
-HEGEMON_MINER_ACCOUNT=$(./target/release/wallet account-id --store ~/.hegemon-wallet --passphrase "CHANGE_ME") \
+HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME" 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
   --chain dev \
@@ -42,7 +51,7 @@ HEGEMON_MINER_ACCOUNT=$(./target/release/wallet account-id --store ~/.hegemon-wa
   --name "PL-BootNode"
 ```
 
-### 3. Get Your Peer ID
+### 4. Get Your Peer ID
 
 In another terminal:
 
@@ -55,7 +64,7 @@ Example output: `12D3KooWH7ntuFTu5DtV2XPHfzjdFQCxxpDRgZaVEDgGYXTaKdhH`
 
 Send this peer ID to your friend.
 
-### 4. Monitor Mining
+### 5. Monitor Mining
 
 ```bash
 # Watch blocks
@@ -92,7 +101,7 @@ Replace `<PL_PEER_ID>` with the peer ID Pierre-Luc gave you:
 mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
-HEGEMON_MINER_ACCOUNT=$(./target/release/wallet account-id --store ~/.hegemon-wallet --passphrase "FRIEND_CHANGE_ME") \
+HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "FRIEND_CHANGE_ME" 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
   --chain dev \

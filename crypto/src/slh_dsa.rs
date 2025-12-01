@@ -87,14 +87,14 @@ impl SlhDsaSignature {
         if bytes.len() != SLH_DSA_SIGNATURE_LEN {
             return Err(CryptoError::InvalidLength {
                 expected: SLH_DSA_SIGNATURE_LEN,
-                found: bytes.len(),
+                actual: bytes.len(),
             });
         }
         // slh_dsa::Signature implements TryFrom<&[u8]>
         let inner = slh_dsa::Signature::<Shake128f>::try_from(bytes)
             .map_err(|_| CryptoError::InvalidLength {
                 expected: SLH_DSA_SIGNATURE_LEN,
-                found: bytes.len(),
+                actual: bytes.len(),
             })?;
         Ok(Self { 
             inner,
@@ -151,7 +151,7 @@ impl VerifyKey for SlhDsaPublicKey {
         if bytes.len() != SLH_DSA_PUBLIC_KEY_LEN {
             return Err(CryptoError::InvalidLength {
                 expected: SLH_DSA_PUBLIC_KEY_LEN,
-                found: bytes.len(),
+                actual: bytes.len(),
             });
         }
         // slh_dsa::VerifyingKey implements TryFrom<&[u8]>
@@ -206,7 +206,7 @@ impl SigningKey for SlhDsaSecretKey {
         if bytes.len() != SLH_DSA_SECRET_KEY_LEN {
             return Err(CryptoError::InvalidLength {
                 expected: SLH_DSA_SECRET_KEY_LEN,
-                found: bytes.len(),
+                actual: bytes.len(),
             });
         }
         // slh_dsa::SigningKey implements TryFrom<&[u8]>

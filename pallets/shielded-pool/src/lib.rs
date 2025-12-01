@@ -28,8 +28,10 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub use pallet::*;
+pub use inherent::*;
 
 pub mod commitment;
+pub mod inherent;
 pub mod merkle;
 pub mod nullifier;
 pub mod types;
@@ -186,6 +188,16 @@ pub mod pallet {
     #[pallet::getter(fn pool_balance)]
     pub type PoolBalance<T: Config> = StorageValue<_, u128, ValueQuery>;
 
+    /// Coinbase notes indexed by commitment index (for audit purposes).
+    #[pallet::storage]
+    #[pallet::getter(fn coinbase_notes)]
+    pub type CoinbaseNotes<T: Config> =
+        StorageMap<_, Blake2_128Concat, u64, types::CoinbaseNoteData, OptionQuery>;
+
+    /// Whether coinbase was already processed this block (prevents double-mint).
+    #[pallet::storage]
+    pub type CoinbaseProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
+
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
@@ -242,6 +254,16 @@ pub mod pallet {
             /// Key ID.
             key_id: u32,
         },
+
+        /// Coinbase reward minted directly to shielded pool.
+        CoinbaseMinted {
+            /// Commitment index of the new note.
+            commitment_index: u64,
+            /// Amount minted.
+            amount: u64,
+            /// Block height.
+            block_number: BlockNumberFor<T>,
+        },
     }
 
     #[pallet::error]
@@ -274,6 +296,10 @@ pub mod pallet {
         InsufficientBalance,
         /// Verifying key not found or disabled.
         VerifyingKeyNotFound,
+        /// Coinbase commitment verification failed.
+        InvalidCoinbaseCommitment,
+        /// Coinbase already processed for this block.
+        CoinbaseAlreadyProcessed,
     }
 
     #[pallet::genesis_config]
@@ -328,6 +354,12 @@ pub mod pallet {
             } else {
                 Weight::zero()
             }
+        }
+
+        fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
+            // Reset coinbase processed flag at start of each block
+            CoinbaseProcessed::<T>::kill();
+            Weight::from_parts(1_000, 0)
         }
     }
 
@@ -555,6 +587,85 @@ pub mod pallet {
 
             Ok(())
         }
+
+        /// Mint coinbase reward directly to the shielded pool.
+        ///
+        /// This is an inherent extrinsic that creates a shielded note for the miner.
+        /// Unlike regular shielding, this creates new coins (no transparent input).
+        ///
+        /// # Arguments
+        /// * `coinbase_data` - The coinbase note data containing encrypted note and audit info
+        ///
+        /// # Security
+        /// - Called via inherent (None origin)
+        /// - Can only be called once per block
+        /// - Commitment is verified against plaintext data
+        #[pallet::call_index(3)]
+        #[pallet::weight(T::WeightInfo::shield())]
+        pub fn mint_coinbase(
+            origin: OriginFor<T>,
+            coinbase_data: types::CoinbaseNoteData,
+        ) -> DispatchResult {
+            // Inherent extrinsics use None origin
+            ensure_none(origin)?;
+
+            // Ensure not already processed this block
+            ensure!(
+                !CoinbaseProcessed::<T>::get(),
+                Error::<T>::CoinbaseAlreadyProcessed
+            );
+
+            // Verify the commitment matches the plaintext data
+            // This ensures the miner can't claim more than stated
+            let expected_commitment = commitment::coinbase_commitment(
+                &coinbase_data.recipient_address,
+                coinbase_data.amount,
+                &coinbase_data.public_seed,
+            );
+            ensure!(
+                coinbase_data.commitment == expected_commitment,
+                Error::<T>::InvalidCoinbaseCommitment
+            );
+
+            // Add commitment to tree
+            let index = CommitmentIndex::<T>::get();
+            Commitments::<T>::insert(index, coinbase_data.commitment);
+            EncryptedNotes::<T>::insert(index, coinbase_data.encrypted_note.clone());
+            CoinbaseNotes::<T>::insert(index, coinbase_data);
+
+            CommitmentIndex::<T>::put(index + 1);
+
+            // Update Merkle tree
+            let commitments =
+                BoundedVec::<[u8; 32], T::MaxCommitmentsPerTx>::try_from(vec![expected_commitment])
+                    .map_err(|_| Error::<T>::InvalidCommitmentCount)?;
+            Self::update_merkle_tree(&commitments)?;
+
+            // Update pool balance (new coins minted)
+            let amount = CoinbaseNotes::<T>::get(index)
+                .map(|n| n.amount as u128)
+                .unwrap_or(0);
+            PoolBalance::<T>::mutate(|b| *b = b.saturating_add(amount));
+
+            // Mark as processed
+            CoinbaseProcessed::<T>::put(true);
+
+            let block_number = <frame_system::Pallet<T>>::block_number();
+            Self::deposit_event(Event::CoinbaseMinted {
+                commitment_index: index,
+                amount: amount as u64,
+                block_number,
+            });
+
+            info!(
+                target: "shielded-pool",
+                "💰 Minted {} shielded coins at commitment index {}",
+                amount,
+                index
+            );
+
+            Ok(())
+        }
     }
 
     impl<T: Config> Pallet<T> {
@@ -635,6 +746,60 @@ pub mod pallet {
         /// Check if a nullifier has been spent.
         pub fn is_nullifier_spent(nullifier: &[u8; 32]) -> bool {
             Nullifiers::<T>::contains_key(nullifier)
+        }
+    }
+
+    // =========================================================================
+    // INHERENT PROVIDER IMPLEMENTATION (for shielded coinbase)
+    // =========================================================================
+
+    #[pallet::inherent]
+    impl<T: Config> ProvideInherent for Pallet<T> {
+        type Call = Call<T>;
+        type Error = sp_inherents::MakeFatalError<()>;
+        const INHERENT_IDENTIFIER: [u8; 8] = *b"shldcoin";
+
+        fn create_inherent(data: &sp_inherents::InherentData) -> Option<Self::Call> {
+            // Extract shielded coinbase data from inherent data
+            let coinbase_data: Option<crate::inherent::ShieldedCoinbaseInherentData> = data
+                .get_data(&Self::INHERENT_IDENTIFIER)
+                .ok()
+                .flatten();
+
+            coinbase_data.map(|cb| Call::mint_coinbase {
+                coinbase_data: cb.note_data,
+            })
+        }
+
+        fn is_inherent(call: &Self::Call) -> bool {
+            matches!(call, Call::mint_coinbase { .. })
+        }
+
+        fn check_inherent(
+            call: &Self::Call,
+            _data: &sp_inherents::InherentData,
+        ) -> Result<(), Self::Error> {
+            // Validate the inherent call
+            if let Call::mint_coinbase { coinbase_data } = call {
+                // Verify commitment matches plaintext data
+                let expected = commitment::coinbase_commitment(
+                    &coinbase_data.recipient_address,
+                    coinbase_data.amount,
+                    &coinbase_data.public_seed,
+                );
+                if coinbase_data.commitment != expected {
+                    return Err(sp_inherents::MakeFatalError::from(()));
+                }
+            }
+            Ok(())
+        }
+
+        fn is_inherent_required(
+            _data: &sp_inherents::InherentData,
+        ) -> Result<Option<Self::Error>, Self::Error> {
+            // Shielded coinbase is NOT strictly required - blocks without rewards are valid
+            // (though economically pointless for miners)
+            Ok(None)
         }
     }
 }

@@ -191,6 +191,45 @@ pub fn note_commitment_from_parts(
     note_commitment(&note)
 }
 
+/// Domain separator for coinbase rho derivation.
+const COINBASE_RHO_DOMAIN: &[u8] = b"Hegemon_CoinbaseRho_v1";
+
+/// Domain separator for coinbase r derivation.
+const COINBASE_R_DOMAIN: &[u8] = b"Hegemon_CoinbaseR_v1";
+
+/// Derive deterministic rho for coinbase notes.
+///
+/// rho = Blake2b(domain || public_seed)
+///
+/// Since the seed is public, anyone can verify rho. Privacy comes from
+/// the nullifier requiring the secret nullifier key (nk).
+pub fn derive_coinbase_rho(public_seed: &[u8; 32]) -> [u8; 32] {
+    blake2_256(&[COINBASE_RHO_DOMAIN, public_seed.as_slice()].concat())
+}
+
+/// Derive deterministic r (commitment randomness) for coinbase notes.
+///
+/// r = Blake2b(domain || public_seed)
+pub fn derive_coinbase_r(public_seed: &[u8; 32]) -> [u8; 32] {
+    blake2_256(&[COINBASE_R_DOMAIN, public_seed.as_slice()].concat())
+}
+
+/// Compute coinbase note commitment.
+///
+/// This is a specialized commitment for coinbase notes that uses the
+/// deterministic rho/r derived from the public seed.
+///
+/// commitment = note_commitment(recipient, value, r)
+/// where r = derive_coinbase_r(public_seed)
+pub fn coinbase_commitment(
+    recipient: &[u8; DIVERSIFIED_ADDRESS_SIZE],
+    value: u64,
+    public_seed: &[u8; 32],
+) -> [u8; 32] {
+    let r = derive_coinbase_r(public_seed);
+    note_commitment_from_parts(recipient, value, &r)
+}
+
 /// Derive PRF key from spending key.
 ///
 /// prf_key = Blake2b(domain || sk_spend)

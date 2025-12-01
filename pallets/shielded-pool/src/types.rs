@@ -171,6 +171,28 @@ pub struct MerklePath {
     pub position_bits: Vec<bool>,
 }
 
+/// Coinbase note data for shielded mining rewards.
+///
+/// This structure contains the encrypted note plus public audit data.
+/// The encrypted note can only be decrypted by the miner.
+/// The plaintext fields allow public supply auditing.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
+)]
+pub struct CoinbaseNoteData {
+    /// The note commitment (H(note_contents))
+    pub commitment: [u8; 32],
+    /// Encrypted note for the miner (only they can decrypt)
+    pub encrypted_note: EncryptedNote,
+    /// Plaintext recipient address (for audit)
+    pub recipient_address: [u8; DIVERSIFIED_ADDRESS_SIZE],
+    /// Plaintext amount (for supply audit)
+    pub amount: u64,
+    /// Public seed for deterministic rho/r derivation
+    /// seed = H("coinbase_seed" || block_hash || block_height)
+    pub public_seed: [u8; 32],
+}
+
 impl MerklePath {
     /// Create a new Merkle path.
     pub fn new(siblings: Vec<[u8; 32]>, position_bits: Vec<bool>) -> Self {
