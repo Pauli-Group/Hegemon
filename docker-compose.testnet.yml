@@ -17,7 +17,7 @@
 # Monitoring:
 #   - Prometheus: http://localhost:9090
 #   - Grafana: http://localhost:3000 (admin/admin)
-#   - Dashboard: http://localhost:80
+#   - Dashboard: https://polkadot.js.org/apps/?rpc=ws%3A%2F%2Flocalhost%3A9944
 
 version: '3.8'
 
@@ -116,24 +116,6 @@ services:
       - "30335:30333"
       - "9946:9944"
       - "9617:9615"
-    networks:
-      - hegemon-testnet
-    depends_on:
-      - boot1
-    restart: unless-stopped
-
-  # Dashboard UI
-  dashboard:
-    image: hegemon/dashboard:latest
-    build:
-      context: ./dashboard-ui
-      dockerfile: Dockerfile
-    container_name: hegemon-dashboard
-    environment:
-      - VITE_WS_ENDPOINT=ws://boot1:9944
-      - VITE_USE_SUBSTRATE=true
-    ports:
-      - "80:80"
     networks:
       - hegemon-testnet
     depends_on:

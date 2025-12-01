@@ -2,7 +2,7 @@
 name = "pallet-difficulty"
 version = "0.1.0"
 edition = "2021"
-authors = ["Hegemon Team"]
+authors = ["Pauli Group Inc."]
 description = "PoW difficulty management pallet with automatic retargeting"
 license = "Apache-2.0"
 

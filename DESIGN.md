@@ -257,7 +257,7 @@ No transparent outputs; everything is in this one PQ pool from day 1.
 
 `node/src/api.rs` exposes that state machine over HTTP so operators can monitor the same fields remotely. `/blocks/latest` and `/metrics` stream hash rate, mempool depth, stale share rate, best height, and compact difficulty values that miners compare against the reward policy in `consensus/src/reward.rs` (`INITIAL_SUBSIDY = 50 · 10⁸`, `HALVING_INTERVAL = 210_000`). Every mined block updates the header’s `supply_digest`, and the quickstart playbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through querying those endpoints before wiring wallets to the node API. Substrate integrations reuse the same machinery: the `consensus::substrate::import_pow_block` helper executes the PoW ledger checks (version-commitment + STARK commitments + reward checks) as blocks flow through a Substrate import queue, and the node exposes `/consensus/status` to mirror the latest `ImportReceipt` alongside miner telemetry so the benchmarking tools under `consensus/bench` see consistent values.
 
-The workspace-level test `tests/node_wallet_daemon.rs` keeps the HTTP API, miner loop, and wallet RPC client in sync by spinning two nodes, verifying the minted supply, and forcing a user-facing transfer. Its telemetry expectations match the `/wallet` and `/network` dashboard views, so the Playwright smoke tests (`dashboard-ui/tests/smoke.spec.ts`) double-check the same metrics with brand-compliant snapshots.
+The workspace-level test `tests/node_wallet_daemon.rs` keeps the HTTP API, miner loop, and wallet RPC client in sync by spinning two nodes, verifying the minted supply, and forcing a user-facing transfer.
 
 ---
 
@@ -321,7 +321,7 @@ Integration tests in `wallet/tests/cli.rs` exercise those CLI flows, so anyone c
 
 Long-lived wallets rely on the RPC client (`wallet/src/rpc.rs`) and sync engine (`wallet/src/sync.rs`) rather than ad-hoc scripts. `WalletSyncEngine` pages through `/wallet/notes`, `/wallet/commitments`, `/wallet/ciphertexts`, `/wallet/nullifiers`, and `/blocks/latest`, storing commitments inside the encrypted `WalletStore` so daemons can resume after crashes. The runbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through starting those daemons against two nodes, and the `tests/node_wallet_daemon.rs` integration test codifies the same flow so CI fails if either the RPC contract or the local merkle bookkeeping drifts.
 
-`dashboard-ui/` consumes that same RPC catalog directly from the `hegemon` API (served alongside the embedded dashboard). `/wallet` summarizes balances, note coverage, and transaction history while `/network` charts hash rate, mempool churn, stale share rate, and the live block/transaction feeds. The Playwright suite (`dashboard-ui/tests/screenshot.spec.ts` and `dashboard-ui/tests/smoke.spec.ts`) captures SVG snapshots of the mining, wallet, and network routes using the typography and color palette from `BRAND.md`, so any analytics regression surfaces as a visual diff in CI.
+The Polkadot.js Apps dashboard (https://polkadot.js.org/apps/) connects to the node's standard Substrate RPC endpoint and provides block exploration, account management, and chain state queries out of the box.
 
 ---
 

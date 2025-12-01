@@ -4,7 +4,6 @@ FROM rust:nightly-slim-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
-    nodejs npm \
     pkg-config \
     libssl-dev \
     git \
@@ -18,9 +17,6 @@ WORKDIR /app
 
 # Copy source code
 COPY . .
-
-# Build Dashboard
-RUN ./scripts/build_dashboard.sh
 
 # Build Substrate Node Binary with all features
 RUN cargo build --release -p hegemon-node --features substrate
@@ -40,9 +36,6 @@ WORKDIR /app
 
 # Copy the Substrate node binary
 COPY --from=builder /app/target/release/hegemon-node /usr/local/bin/hegemon-node
-
-# Copy dashboard static files (optional, can be served separately)
-COPY --from=builder /app/dashboard-ui/dist /app/dashboard
 
 # Create data directory
 RUN mkdir -p /data /config /keys

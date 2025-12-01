@@ -3,8 +3,8 @@ services:
     build: .
     image: shc-node:latest
     ports:
-      - "8080:8080" # Dashboard & API
-      - "9000:9000" # P2P
+      - "9944:9944" # RPC
+      - "30333:30333" # P2P
     volumes:
       - ./data:/data
     environment:

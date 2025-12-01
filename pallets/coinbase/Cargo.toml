@@ -2,7 +2,7 @@
 name = "pallet-coinbase"
 version = "0.1.0"
 edition = "2021"
-authors = ["Hegemon Team"]
+authors = ["Pauli Group Inc."]
 description = "PoW coinbase reward pallet - mints block rewards to miners via inherent"
 license = "Apache-2.0"
 
