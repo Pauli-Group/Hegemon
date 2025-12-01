@@ -73,13 +73,13 @@ pub mod pallet {
     /// Maximum adjustment factor per retarget period (4x up or down)
     pub const MAX_ADJUSTMENT_FACTOR: u64 = 4;
 
-    /// Genesis difficulty: 6 MH/s * 5 seconds = 30,000,000 expected hashes per block.
-    /// This targets M-series MacBooks which achieve ~5-10 MH/s with Blake3.
-    pub const GENESIS_DIFFICULTY: u128 = 30_000_000;
+    /// Genesis difficulty: 32 MH/s * 5 seconds = 160,000,000 expected hashes per block.
+    /// This targets 4 threads on M-series MacBooks (~8 MH/s per thread).
+    pub const GENESIS_DIFFICULTY: u128 = 160_000_000;
 
-    /// Genesis compact bits: 0x1d8f2a63 encodes target = MAX_U256 / 30,000,000.
-    /// Decodes to: exponent=29, mantissa=0x8f2a63, target ≈ 2^231
-    pub const GENESIS_BITS: u32 = 0x1d8f_2a63;
+    /// Genesis compact bits: 0x1d1ad7f2 encodes target = MAX_U256 / 160,000,000.
+    /// Decodes to: exponent=29, mantissa=0x1ad7f2, target ≈ 2^229
+    pub const GENESIS_BITS: u32 = 0x1d1a_d7f2;
 
     /// Minimum difficulty to prevent divide-by-zero
     pub const MIN_DIFFICULTY: u128 = 1;
