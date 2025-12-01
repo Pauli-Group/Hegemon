@@ -18,7 +18,28 @@ Both participants need:
 
 ---
 
-## Pierre-Luc (Boot Node)
+## Quick Start (Recommended)
+
+Use the interactive script that handles wallet creation and node startup:
+
+```bash
+./scripts/start-mining.sh
+```
+
+The script will:
+1. Check for existing wallet/node data and ask if you want to keep or wipe it
+2. Create a new wallet if needed (prompts for passphrase)
+3. Start the mining node with your shielded address configured
+
+To connect to the boot node, set `BOOTNODE` before running:
+
+```bash
+BOOTNODE="/ip4/75.155.93.185/tcp/30333/p2p/<PL_PEER_ID>" ./scripts/start-mining.sh
+```
+
+---
+
+## Manual Setup (Pierre-Luc - Boot Node)
 
 ### 1. Initialize Wallet
 
