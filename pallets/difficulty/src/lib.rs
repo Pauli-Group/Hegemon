@@ -271,8 +271,10 @@ pub mod pallet {
                 expected_time,
             );
 
-            // Convert to compact bits format
-            let new_bits = Self::target_to_compact(new_difficulty);
+            // Convert difficulty to target, then to compact bits format
+            // target = MAX_U256 / difficulty
+            let new_target = U256::MAX / new_difficulty;
+            let new_bits = Self::target_to_compact(new_target);
 
             // Update storage
             Difficulty::<T>::put(new_difficulty);
@@ -307,7 +309,8 @@ pub mod pallet {
             );
 
             // new_difficulty = old_difficulty * expected_time / actual_time
-            // But we use bounded_actual to limit the adjustment
+            // If blocks are too fast (actual < expected), increase difficulty
+            // If blocks are too slow (actual > expected), decrease difficulty
             let numerator = old_difficulty.saturating_mul(U256::from(expected_time));
             let new_difficulty = numerator / U256::from(bounded_actual);
 
