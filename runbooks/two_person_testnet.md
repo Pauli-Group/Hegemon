@@ -62,7 +62,7 @@ curl -s -d '{"id":1,"jsonrpc":"2.0","method":"system_localPeerId"}' \
 
 Example output: `12D3KooWH7ntuFTu5DtV2XPHfzjdFQCxxpDRgZaVEDgGYXTaKdhH`
 
-Send this peer ID to your friend.
+Send this peer ID to William.
 
 ### 5. Monitor Mining
 
@@ -71,14 +71,14 @@ Send this peer ID to your friend.
 curl -s -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader"}' \
   -H "Content-Type: application/json" http://127.0.0.1:9944 | jq '.result.number'
 
-# Check peer count (should be 1+ after friend connects)
+# Check peer count (should be 1+ after William connects)
 curl -s -d '{"id":1,"jsonrpc":"2.0","method":"system_peers"}' \
   -H "Content-Type: application/json" http://127.0.0.1:9944 | jq 'length'
 ```
 
 ---
 
-## Friend (Second Node)
+## William (Second Node)
 
 ### 1. Get the Binary
 
@@ -90,7 +90,7 @@ cargo build -p hegemon-node -p wallet --features substrate --release
 ### 2. Initialize Wallet
 
 ```bash
-./target/release/wallet init --store ~/.hegemon-wallet --passphrase "FRIEND_CHANGE_ME"
+./target/release/wallet init --store ~/.hegemon-wallet --passphrase "WILL_CHANGE_ME"
 ```
 
 ### 3. Start Node (Connect to Boot Node)
@@ -101,14 +101,14 @@ Replace `<PL_PEER_ID>` with the peer ID Pierre-Luc gave you:
 mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
-HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "FRIEND_CHANGE_ME" 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
+HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "WILL_CHANGE_ME" 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
   --chain dev \
   --rpc-port 9944 \
   --rpc-cors all \
   --bootnodes /ip4/75.155.93.185/tcp/30333/p2p/<PL_PEER_ID> \
-  --name "FriendNode"
+  --name "WilliamNode"
 ```
 
 ### 4. Verify Connection
@@ -147,11 +147,11 @@ You should see coinbase rewards accumulating (50 HGM per block you mined).
 
 ## Send a Transaction
 
-### 1. Get Friend's Address
+### 1. Get William's Address
 
-Friend runs:
+William runs:
 ```bash
-./target/release/wallet status --store ~/.hegemon-wallet --passphrase "FRIEND_CHANGE_ME"
+./target/release/wallet status --store ~/.hegemon-wallet --passphrase "WILL_CHANGE_ME"
 ```
 
 They send you their shielded address.
@@ -162,7 +162,7 @@ Create `recipients.json`:
 ```json
 [
   {
-    "address": "<FRIEND_SHIELDED_ADDRESS>",
+    "address": "<WILLIAM_SHIELDED_ADDRESS>",
     "amount": 5000000000,
     "memo": "first hegemon tx!"
   }
@@ -179,16 +179,16 @@ Create `recipients.json`:
   --ws-url ws://127.0.0.1:9944
 ```
 
-### 4. Friend Receives
+### 4. William Receives
 
-Friend syncs and checks:
+William syncs and checks:
 ```bash
 ./target/release/wallet substrate-sync \
   --store ~/.hegemon-wallet \
-  --passphrase "FRIEND_CHANGE_ME" \
+  --passphrase "WILL_CHANGE_ME" \
   --ws-url ws://127.0.0.1:9944
 
-./target/release/wallet status --store ~/.hegemon-wallet --passphrase "FRIEND_CHANGE_ME"
+./target/release/wallet status --store ~/.hegemon-wallet --passphrase "WILL_CHANGE_ME"
 ```
 
 They should see the incoming shielded funds!
@@ -208,7 +208,7 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 
 ## Troubleshooting
 
-### Friend can't connect
+### William can't connect
 - Verify port 30333 is forwarded on Pierre-Luc's router
 - Check firewall allows inbound TCP 30333
 - Verify peer ID is correct (no typos)
