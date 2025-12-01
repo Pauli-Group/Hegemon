@@ -39,10 +39,10 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
             "nonAuthorityKeys": []
         },
         "difficulty": {
-            // GENESIS_BITS = 0x1d8f2a63 encodes target = MAX_U256 / 30,000,000
-            // For 5-second blocks at ~6 MH/s (typical M-series MacBook)
-            "initialDifficulty": "0x1C9C380",
-            "initialBits": 0x1d8f_2a63_u32
+            // GENESIS_BITS = 0x1d1ad7f2 encodes target = MAX_U256 / 160,000,000
+            // For 5-second blocks at ~32 MH/s (4 threads on M-series MacBook)
+            "initialDifficulty": "0x9896800",
+            "initialBits": 0x1d1a_d7f2_u32
         },
         "shieldedPool": {
             "verifyingKey": null
