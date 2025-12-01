@@ -18,17 +18,28 @@ To see it working: Start a mining node with `HEGEMON_MINER_ADDRESS=<shielded_add
 
 ## Progress
 
-- [ ] Milestone 1: Extract note encryption to shared crate
-- [ ] Milestone 2: Implement `mint_coinbase` in shielded-pool pallet
-- [ ] Milestone 3: Refactor coinbase pallet to use shielded-pool
-- [ ] Milestone 4: Update node service to encrypt coinbase notes
-- [ ] Milestone 5: Update wallet CLI and runbooks
-- [ ] Milestone 6: End-to-end validation
+- [x] Milestone 1: Extract note encryption to shared crate
+- [x] Milestone 2: Implement `mint_coinbase` in shielded-pool pallet
+- [x] Milestone 3: Refactor coinbase pallet to use shielded-pool
+- [x] Milestone 4: Update node service to encrypt coinbase notes
+- [x] Milestone 5: Update wallet CLI and runbooks
+- [x] Milestone 6: End-to-end validation
 
 
 ## Surprises & Discoveries
 
-(None yet)
+- The wallet/src/notes.rs already re-exported derive_coinbase_r and derive_coinbase_rho. Had to remove duplicate imports after refactoring.
+- Added CoinbaseNoteData type to shielded-pool/types.rs with encrypted_note, recipient_address, amount, public_seed, and commitment fields.
+- Added coinbase_commitment() and derive_coinbase_rho/r() functions to shielded-pool/commitment.rs for verification.
+- Shielded-pool pallet now owns the coinbase inherent (identifier `b"shldcoin"`) with its own ProvideInherent implementation.
+- Added ShieldedCoinbaseInherentDataProvider for client-side inherent data provision.
+- Created node/src/shielded_coinbase.rs with encrypt_coinbase_note() function. Module is feature-gated to `substrate`.
+- Local rocksdb build issue was resolved by setting DYLD_LIBRARY_PATH="/opt/homebrew/opt/llvm/lib".
+- ProductionConfig now has miner_shielded_address field for HEGEMON_MINER_ADDRESS env var.
+- wire_block_builder_api updated to prefer shielded coinbase, with fallback to deprecated transparent coinbase.
+- Updated runbooks/two_person_testnet.md and runbooks/miner_wallet_quickstart.md with new shielded mining workflow.
+- Wallet `status` command already shows Shielded Address - no new command needed.
+- The node/src/shielded_coinbase.rs import was initially wrong (`synthetic_crypto` instead of `crypto` per Cargo.toml alias).
 
 
 ## Decision Log
@@ -48,7 +59,63 @@ To see it working: Start a mining node with `HEGEMON_MINER_ADDRESS=<shielded_add
 
 ## Outcomes & Retrospective
 
-(To be filled upon completion)
+### What Was Accomplished
+
+The shielded coinbase implementation is now complete. Block rewards are minted directly into the shielded pool as encrypted notes, aligning with DESIGN.md's requirement: "No transparent outputs; everything is in this one PQ pool from day 1."
+
+### Key Technical Decisions
+
+1. **Inherent over Extrinsic**: Used `#[pallet::inherent]` for coinbase to ensure it's applied every block without user intervention.
+
+2. **Node-side Encryption**: ML-KEM encryption happens in the node (not runtime) because runtime is deterministic and can't generate randomness.
+
+3. **Deterministic Verification**: Runtime can verify commitments using deterministic derivation of rho/r from public seed.
+
+4. **Runtime Wiring**: Added `Inherent` to construct_runtime! macro for ShieldedPool pallet - critical step that was initially missed.
+
+### Validation Results
+
+```
+2025-12-01 00:18:10 Block built with StorageChanges cached block_number=4
+  applied=2 failed=0
+  ...
+2025-12-01 00:18:10 Encrypting shielded coinbase note block_number=4 subsidy=5000000000
+  commitment=40c99ad3e81db452a145993b964056851ba8bd9078282bad49310b0cf6170247
+2025-12-01 00:18:10 Added shielded coinbase inherent for block reward block_number=4
+2025-12-01 00:18:10 🎉 Block mined!
+```
+
+- Blocks now apply 2 inherent extrinsics (timestamp + shielded coinbase)
+- Block body size ~2026 bytes (includes ~1700 byte encrypted note)
+- 50 HGM (5,000,000,000 base units) per block
+
+### Files Changed
+
+Core implementation:
+- `pallets/shielded-pool/src/lib.rs` - Added `mint_coinbase` + inherent provider
+- `pallets/shielded-pool/src/inherent.rs` - Client-side inherent data provider
+- `pallets/shielded-pool/src/types.rs` - Added `CoinbaseNoteData`
+- `pallets/shielded-pool/src/commitment.rs` - Added coinbase commitment functions
+- `crypto/src/note_encryption.rs` - Note encryption (shared with wallet)
+- `node/src/shielded_coinbase.rs` - Node-side coinbase encryption
+- `node/src/substrate/service.rs` - Wire shielded coinbase into block building
+- `runtime/src/lib.rs` - Added `Inherent` to ShieldedPool in construct_runtime!
+
+Documentation:
+- `runbooks/miner_wallet_quickstart.md` - Updated with shielded workflow
+- `runbooks/two_person_testnet.md` - Updated with HEGEMON_MINER_ADDRESS usage
+
+### Next Steps
+
+1. Implement wallet sync to detect and decrypt coinbase notes
+2. Add `wallet substrate-sync` command that scans for encrypted notes matching the wallet's viewing key
+3. Create integration test that mines blocks and verifies shielded balance increases
+
+### Lessons Learned
+
+- Substrate's `construct_runtime!` macro requires explicit `Inherent` entry for pallets with inherent providers
+- The `ProvideInherent` trait implementation alone isn't sufficient
+- Block size increases significantly (~10x) with encrypted coinbase notes due to ML-KEM ciphertext overhead
 
 
 ## Context and Orientation

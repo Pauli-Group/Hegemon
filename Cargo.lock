@@ -6376,6 +6376,7 @@ dependencies = [
 name = "pallet-shielded-pool"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "frame-benchmarking",
  "frame-support",
  "frame-system",
@@ -6385,6 +6386,7 @@ dependencies = [
  "scale-info",
  "serde",
  "sp-core",
+ "sp-inherents",
  "sp-io",
  "sp-runtime",
  "sp-std",
@@ -10403,6 +10405,7 @@ version = "0.1.0"
 dependencies = [
  "blake2 0.10.6",
  "blake3",
+ "chacha20poly1305",
  "hex",
  "hybrid-array 0.2.3",
  "ml-dsa",

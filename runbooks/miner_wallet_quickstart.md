@@ -1,27 +1,62 @@
 # Miner + wallet quickstart (Substrate node)
 
-Use this runbook to stand up mining nodes and verify they are producing blocks with the Substrate-based `hegemon-node` binary.
+Use this runbook to stand up mining nodes and verify they are producing blocks with the Substrate-based `hegemon-node` binary. Block rewards are minted directly to the shielded pool for privacy-preserving mining.
 
 ## 1. Prerequisites
 
 - Run `make setup` on a fresh clone to install toolchains and baseline dependencies.
-- Build the binary:
+- Build the binaries:
   ```bash
   make node
+  cargo build --release -p hegemon-wallet
   ```
 
-## 2. Start a mining node
+## 2. Create or restore a wallet
+
+Create a new wallet:
+```bash
+./target/release/wallet init --store ~/.hegemon-wallet --passphrase "your-secure-passphrase"
+```
+
+**Important:** Save the mnemonic phrase securely—it's your only recovery method.
+
+Restore from existing mnemonic:
+```bash
+./target/release/wallet restore --store ~/.hegemon-wallet --passphrase "your-secure-passphrase"
+# Enter your 24-word mnemonic when prompted
+```
+
+## 3. Get your shielded address
+
+View your wallet status to get your shielded address:
+```bash
+./target/release/wallet status --store ~/.hegemon-wallet --passphrase "your-secure-passphrase"
+```
+
+Output includes:
+- **Shielded Address**: A ~2KB bech32m string starting with `shca1...` 
+- **Miner Account ID (hex)**: Legacy transparent address (not recommended)
+
+Export the shielded address for mining:
+```bash
+export HEGEMON_MINER_ADDRESS=$(./target/release/wallet status \
+  --store ~/.hegemon-wallet --passphrase "your-secure-passphrase" 2>/dev/null \
+  | grep "Shielded Address" | awk '{print $3}')
+```
+
+## 4. Start a mining node
 
 ```bash
-HEGEMON_MINE=1 ./target/release/hegemon-node --dev \
+HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
+  ./target/release/hegemon-node --dev \
   --base-path /tmp/node-a \
   --port 30333 \
   --rpc-port 9944
 ```
 
-The `--dev` flag pre-funds test accounts and enables fast block times.
+The `--dev` flag pre-funds test accounts and enables fast block times. Block rewards (50 HGM per block) are minted as shielded notes only your wallet can spend.
 
-## 3. Verify the node is running
+## 5. Verify the node is running
 
 ```bash
 curl -s -H "Content-Type: application/json" \
@@ -36,7 +71,7 @@ curl -s -H "Content-Type: application/json" \
   http://127.0.0.1:9944
 ```
 
-## 4. Start a second node
+## 6. Start a second node
 
 In another terminal, start a second node that peers with the first:
 
@@ -48,7 +83,9 @@ In another terminal, start a second node that peers with the first:
   --bootnodes /ip4/127.0.0.1/tcp/30333
 ```
 
-## 5. Verify peer connectivity
+Note: This node doesn't mine (no `HEGEMON_MINE=1`), but syncs blocks from Node A.
+
+## 7. Verify peer connectivity
 
 ```bash
 curl -s -H "Content-Type: application/json" \
@@ -57,3 +94,26 @@ curl -s -H "Content-Type: application/json" \
 ```
 
 Both nodes should see each other as peers and sync blocks.
+
+## 8. Check your shielded balance
+
+After mining some blocks, sync your wallet to detect received notes:
+
+```bash
+./target/release/wallet sync --store ~/.hegemon-wallet --passphrase "your-secure-passphrase" \
+  --rpc http://127.0.0.1:9944
+```
+
+Check your balance:
+```bash
+./target/release/wallet balance --store ~/.hegemon-wallet --passphrase "your-secure-passphrase"
+```
+
+Each mined block adds 50 HGM to your shielded balance (subject to halving every 210,000 blocks).
+
+## Privacy model
+
+- **Block rewards are shielded**: Coinbase outputs are encrypted notes in the shielded pool
+- **No transparent outputs**: Per DESIGN.md, all value exists in the PQ-encrypted pool
+- **Only you can spend**: The nullifier key (nk) derived from your mnemonic is required
+- **Public commitment**: The note commitment is visible on-chain, but amount/recipient are hidden

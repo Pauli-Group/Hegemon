@@ -20,6 +20,9 @@ ml-kem = { version = "0.3.0-pre.2", default-features = false, features = ["deter
 ml-dsa = { version = "0.1.0-rc.2", default-features = false }
 slh-dsa = { version = "0.2.0-rc.1", default-features = false }
 
+# AEAD for note encryption
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+
 # Utilities
 thiserror = { version = "1", optional = true }
 hex = { version = "0.4", default-features = false, features = ["alloc"] }

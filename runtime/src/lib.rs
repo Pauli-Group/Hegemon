@@ -1450,7 +1450,7 @@ construct_runtime!(
         FeatureFlags: pallet_feature_flags::{Pallet, Call, Storage, Event<T>},
         FeeModel: pallet_fee_model::{Pallet, Storage, Event<T>},
         Observability: pallet_observability::{Pallet, Call, Storage, Event<T>},
-        ShieldedPool: pallet_shielded_pool::{Pallet, Call, Storage, Event<T>, Config<T>},
+        ShieldedPool: pallet_shielded_pool::{Pallet, Call, Storage, Event<T>, Config<T>, Inherent},
     }
 );
 

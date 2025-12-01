@@ -23,6 +23,10 @@ pub mod pow;
 pub mod telemetry;
 pub mod transaction;
 
+/// Shielded coinbase encryption module (only available with substrate feature)
+#[cfg(feature = "substrate")]
+pub mod shielded_coinbase;
+
 /// Substrate integration module.
 ///
 /// This module contains the Substrate-based node implementation

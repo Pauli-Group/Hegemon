@@ -1,21 +1,17 @@
-use chacha20poly1305::{
-    aead::{Aead, Payload},
-    ChaCha20Poly1305, KeyInit,
-};
+//! Note encryption for wallet
+//!
+//! This module wraps the crypto crate's note_encryption for wallet-specific types.
+
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use synthetic_crypto::{
-    deterministic::expand_to_length,
-    ml_kem::{MlKemCiphertext, MlKemSharedSecret},
-    traits::KemPublicKey,
+use synthetic_crypto::note_encryption::{
+    self as crypto_notes, NoteCiphertext as CryptoNoteCiphertext,
+    NotePlaintext as CryptoNotePlaintext,
 };
 use transaction_circuit::note::NoteData;
 
 use crate::{address::ShieldedAddress, error::WalletError, keys::AddressKeyMaterial};
-
-const AEAD_KEY_SIZE: usize = 32;
-const AEAD_NONCE_SIZE: usize = 12;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct MemoPlaintext(#[serde(with = "serde_bytes_vec")] pub Vec<u8>);
@@ -62,6 +58,17 @@ impl NotePlaintext {
         }
     }
 
+    /// Create a coinbase note with deterministic rho/r from seed
+    pub fn coinbase(value: u64, seed: &[u8; 32]) -> Self {
+        Self {
+            value,
+            asset_id: 0,
+            rho: derive_coinbase_rho(seed),
+            r: derive_coinbase_r(seed),
+            memo: MemoPlaintext::default(),
+        }
+    }
+
     pub fn to_note_data(&self, pk_recipient: [u8; 32]) -> NoteData {
         NoteData {
             value: self.value,
@@ -69,6 +76,26 @@ impl NotePlaintext {
             pk_recipient,
             rho: self.rho,
             r: self.r,
+        }
+    }
+
+    fn to_crypto(&self) -> CryptoNotePlaintext {
+        CryptoNotePlaintext::new(
+            self.value,
+            self.asset_id,
+            self.rho,
+            self.r,
+            self.memo.0.clone(),
+        )
+    }
+
+    fn from_crypto(crypto: CryptoNotePlaintext) -> Self {
+        Self {
+            value: crypto.value,
+            asset_id: crypto.asset_id,
+            rho: crypto.rho,
+            r: crypto.r,
+            memo: MemoPlaintext::new(crypto.memo),
         }
     }
 }
@@ -95,30 +122,20 @@ impl NoteCiphertext {
     ) -> Result<Self, WalletError> {
         let mut kem_seed = [0u8; 32];
         rng.fill_bytes(&mut kem_seed);
-        let (kem_ct, shared) = address.pk_enc.encapsulate(&kem_seed);
-        let payload = NotePayload {
-            value: note.value,
-            asset_id: note.asset_id,
-            rho: note.rho,
-            r: note.r,
-            pk_recipient: address.pk_recipient,
-        };
-        let payload_bytes = bincode::serialize(&payload)?;
-        let aad = aad(
+
+        let crypto_note = note.to_crypto();
+        let crypto_ct = CryptoNoteCiphertext::encrypt(
+            &address.pk_enc,
+            address.pk_recipient,
             address.version,
             address.diversifier_index,
-            &address.address_tag,
-        );
-        let note_payload = encrypt_payload(&shared, b"note-aead", &payload_bytes, &aad)?;
-        let memo_payload = encrypt_payload(&shared, b"memo-aead", note.memo.as_bytes(), &aad)?;
-        Ok(Self {
-            version: address.version,
-            diversifier_index: address.diversifier_index,
-            kem_ciphertext: kem_ct.to_bytes().to_vec(),
-            note_payload,
-            memo_payload,
-            hint_tag: address.address_tag,
-        })
+            address.address_tag,
+            &crypto_note,
+            &kem_seed,
+        )
+        .map_err(|e| WalletError::EncryptionFailure)?;
+
+        Ok(Self::from_crypto(crypto_ct))
     }
 
     pub fn decrypt(&self, material: &AddressKeyMaterial) -> Result<NotePlaintext, WalletError> {
@@ -131,85 +148,57 @@ impl NoteCiphertext {
         if material.addr_tag != self.hint_tag {
             return Err(WalletError::NoteMismatch("address tag mismatch"));
         }
-        let kem = MlKemCiphertext::from_bytes(&self.kem_ciphertext)?;
-        let shared = material.decapsulate(&kem)?;
-        let aad = aad(self.version, self.diversifier_index, &self.hint_tag);
-        let payload_bytes = decrypt_payload(&shared, b"note-aead", &self.note_payload, &aad)?;
-        let payload: NotePayload = bincode::deserialize(&payload_bytes)?;
-        if payload.pk_recipient != material.pk_recipient {
-            return Err(WalletError::NoteMismatch("pk_recipient mismatch"));
+
+        let crypto_ct = self.to_crypto();
+        let crypto_note = crypto_ct
+            .decrypt(
+                material.secret_key(),
+                material.pk_recipient,
+                material.diversifier_index,
+                material.addr_tag,
+            )
+            .map_err(|_| WalletError::DecryptionFailure)?;
+
+        Ok(NotePlaintext::from_crypto(crypto_note))
+    }
+
+    /// Serialize to bytes (for on-chain storage)
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_crypto().to_bytes()
+    }
+
+    /// Deserialize from bytes
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
+        let crypto_ct =
+            CryptoNoteCiphertext::from_bytes(bytes).map_err(|_| WalletError::DecryptionFailure)?;
+        Ok(Self::from_crypto(crypto_ct))
+    }
+
+    fn to_crypto(&self) -> CryptoNoteCiphertext {
+        CryptoNoteCiphertext {
+            version: self.version,
+            diversifier_index: self.diversifier_index,
+            kem_ciphertext: self.kem_ciphertext.clone(),
+            note_payload: self.note_payload.clone(),
+            memo_payload: self.memo_payload.clone(),
+            hint_tag: self.hint_tag,
         }
-        let memo_bytes = decrypt_payload(&shared, b"memo-aead", &self.memo_payload, &aad)?;
-        Ok(NotePlaintext {
-            value: payload.value,
-            asset_id: payload.asset_id,
-            rho: payload.rho,
-            r: payload.r,
-            memo: MemoPlaintext::new(memo_bytes),
-        })
+    }
+
+    fn from_crypto(crypto: CryptoNoteCiphertext) -> Self {
+        Self {
+            version: crypto.version,
+            diversifier_index: crypto.diversifier_index,
+            kem_ciphertext: crypto.kem_ciphertext,
+            note_payload: crypto.note_payload,
+            memo_payload: crypto.memo_payload,
+            hint_tag: crypto.hint_tag,
+        }
     }
 }
 
-fn encrypt_payload(
-    shared: &MlKemSharedSecret,
-    label: &[u8],
-    data: &[u8],
-    aad: &[u8],
-) -> Result<Vec<u8>, WalletError> {
-    let (key, nonce) = derive_aead_material(shared, label);
-    let cipher = ChaCha20Poly1305::new(&key.into());
-    cipher
-        .encrypt(&nonce.into(), Payload { msg: data, aad })
-        .map_err(|_| WalletError::EncryptionFailure)
-}
-
-fn decrypt_payload(
-    shared: &MlKemSharedSecret,
-    label: &[u8],
-    data: &[u8],
-    aad: &[u8],
-) -> Result<Vec<u8>, WalletError> {
-    let (key, nonce) = derive_aead_material(shared, label);
-    let cipher = ChaCha20Poly1305::new(&key.into());
-    cipher
-        .decrypt(&nonce.into(), Payload { msg: data, aad })
-        .map_err(|_| WalletError::DecryptionFailure)
-}
-
-fn derive_aead_material(
-    shared: &MlKemSharedSecret,
-    label: &[u8],
-) -> ([u8; AEAD_KEY_SIZE], [u8; AEAD_NONCE_SIZE]) {
-    let mut material = Vec::with_capacity(shared.as_bytes().len() + label.len());
-    material.extend_from_slice(shared.as_bytes());
-    material.extend_from_slice(label);
-    let bytes = expand_to_length(b"wallet-aead", &material, AEAD_KEY_SIZE + AEAD_NONCE_SIZE);
-    let mut key = [0u8; AEAD_KEY_SIZE];
-    let mut nonce = [0u8; AEAD_NONCE_SIZE];
-    key.copy_from_slice(&bytes[..AEAD_KEY_SIZE]);
-    nonce.copy_from_slice(&bytes[AEAD_KEY_SIZE..]);
-    (key, nonce)
-}
-
-fn aad(version: u8, index: u32, tag: &[u8; 32]) -> Vec<u8> {
-    let mut aad = Vec::with_capacity(1 + 4 + 32);
-    aad.push(version);
-    aad.extend_from_slice(&index.to_le_bytes());
-    aad.extend_from_slice(tag);
-    aad
-}
-
-#[derive(Serialize, Deserialize)]
-struct NotePayload {
-    value: u64,
-    asset_id: u64,
-    #[serde(with = "serde_bytes32")]
-    rho: [u8; 32],
-    #[serde(with = "serde_bytes32")]
-    r: [u8; 32],
-    #[serde(with = "serde_bytes32")]
-    pk_recipient: [u8; 32],
-}
+// Re-export crypto functions for coinbase
+pub use synthetic_crypto::note_encryption::{derive_coinbase_r, derive_coinbase_rho};
 
 mod serde_bytes32 {
     use serde::{Deserialize, Deserializer, Serializer};
@@ -274,5 +263,33 @@ mod tests {
         assert_eq!(recovered.value, note.value);
         assert_eq!(recovered.asset_id, note.asset_id);
         assert_eq!(recovered.memo.as_bytes(), note.memo.as_bytes());
+    }
+
+    #[test]
+    fn coinbase_note_deterministic() {
+        let seed = [42u8; 32];
+        let note1 = NotePlaintext::coinbase(5_000_000_000, &seed);
+        let note2 = NotePlaintext::coinbase(5_000_000_000, &seed);
+        assert_eq!(note1.rho, note2.rho);
+        assert_eq!(note1.r, note2.r);
+        assert_eq!(note1.value, 5_000_000_000);
+        assert_eq!(note1.asset_id, 0);
+    }
+
+    #[test]
+    fn serialization_round_trip() {
+        let mut rng = StdRng::seed_from_u64(456);
+        let root = RootSecret::from_rng(&mut rng);
+        let keys = root.derive();
+        let material = keys.address(0).unwrap();
+        let address = material.shielded_address();
+        let note = NotePlaintext::random(100, 0, MemoPlaintext::new(b"test".to_vec()), &mut rng);
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+
+        let bytes = ciphertext.to_bytes();
+        let recovered = NoteCiphertext::from_bytes(&bytes).unwrap();
+
+        assert_eq!(recovered.version, ciphertext.version);
+        assert_eq!(recovered.hint_tag, ciphertext.hint_tag);
     }
 }

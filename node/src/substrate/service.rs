@@ -326,16 +326,39 @@ pub fn wire_block_builder_api(
     
     let client_for_exec = client;
     
-    // Capture the miner account for coinbase rewards
+    // Capture the miner's shielded address (preferred) or transparent account (deprecated)
+    let miner_shielded_address = chain_state.miner_shielded_address();
     let miner_account = chain_state.miner_account();
-    if let Some(ref account) = miner_account {
+    
+    // Log coinbase configuration
+    if let Some(ref address) = miner_shielded_address {
         tracing::info!(
+            address = %address,
+            "Shielded coinbase enabled for miner"
+        );
+    } else if let Some(ref account) = miner_account {
+        tracing::warn!(
             miner = %hex::encode(account),
-            "Coinbase rewards enabled for miner"
+            "Using deprecated transparent coinbase - set HEGEMON_MINER_ADDRESS for shielded rewards"
         );
     } else {
-        tracing::warn!("No miner account configured - coinbase rewards disabled");
+        tracing::warn!("No miner address configured - coinbase rewards disabled");
     }
+    
+    // Parse shielded address once outside the closure
+    let parsed_shielded_address = miner_shielded_address.as_ref().and_then(|addr| {
+        match crate::shielded_coinbase::parse_shielded_address(addr) {
+            Ok(parsed) => Some(parsed),
+            Err(e) => {
+                tracing::error!(
+                    error = ?e,
+                    address = %addr,
+                    "Failed to parse shielded miner address - falling back to transparent"
+                );
+                None
+            }
+        }
+    });
     
     chain_state.set_execute_extrinsics_fn(move |parent_hash, block_number, extrinsics| {
         // Convert our H256 to the runtime's Hash type
@@ -357,9 +380,55 @@ pub fn wire_block_builder_api(
             tracing::warn!(error = ?e, "Failed to provide timestamp inherent data");
         }
         
-        // Add coinbase inherent data if miner account is configured
-        if let Some(ref miner) = miner_account {
+        // Add coinbase inherent data
+        // Prefer shielded coinbase if address is configured
+        if let Some(ref address) = parsed_shielded_address {
             // Calculate block subsidy for this height using Bitcoin-style halving
+            let subsidy = pallet_coinbase::block_subsidy(block_number);
+            
+            // Derive block hash for seed (use parent hash + block number)
+            let mut block_hash_input = [0u8; 40];
+            block_hash_input[..32].copy_from_slice(parent_hash.as_bytes());
+            block_hash_input[32..40].copy_from_slice(&block_number.to_le_bytes());
+            let block_hash: [u8; 32] = blake3::hash(&block_hash_input).into();
+            
+            // Encrypt the coinbase note
+            match crate::shielded_coinbase::encrypt_coinbase_note(
+                address,
+                subsidy,
+                &block_hash,
+                block_number,
+            ) {
+                Ok(coinbase_data) => {
+                    tracing::info!(
+                        block_number,
+                        subsidy,
+                        commitment = %hex::encode(&coinbase_data.commitment),
+                        "Encrypting shielded coinbase note"
+                    );
+                    let coinbase_provider = pallet_shielded_pool::ShieldedCoinbaseInherentDataProvider::from_note_data(coinbase_data);
+                    if let Err(e) = futures::executor::block_on(
+                        coinbase_provider.provide_inherent_data(&mut inherent_data)
+                    ) {
+                        tracing::warn!(error = ?e, "Failed to provide shielded coinbase inherent data");
+                    } else {
+                        tracing::info!(
+                            block_number,
+                            subsidy,
+                            "Added shielded coinbase inherent for block reward"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = ?e,
+                        block_number,
+                        "Failed to encrypt coinbase note - no reward for this block"
+                    );
+                }
+            }
+        } else if let Some(ref miner) = miner_account {
+            // Fall back to deprecated transparent coinbase
             let subsidy = pallet_coinbase::block_subsidy(block_number);
             
             let coinbase_provider = pallet_coinbase::CoinbaseInherentDataProvider::new(
