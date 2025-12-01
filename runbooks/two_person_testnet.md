@@ -156,21 +156,7 @@ Friend runs:
 
 They send you their shielded address.
 
-### 2. First: Shield Your Transparent Balance
-
-Mining rewards go to transparent balance. To send privately, first shield them:
-
-```bash
-./target/release/wallet substrate-shield \
-  --store ~/.hegemon-wallet \
-  --passphrase "YOUR_PASSPHRASE" \
-  --amount 10000000000 \
-  --ws-url ws://127.0.0.1:9944
-```
-
-(Amount is in smallest units - 10000000000 = 100 HGM with 8 decimals)
-
-### 3. Create Recipients File
+### 2. Create Recipients File
 
 Create `recipients.json`:
 ```json
@@ -183,7 +169,7 @@ Create `recipients.json`:
 ]
 ```
 
-### 4. Send Shielded Transaction
+### 3. Send Shielded Transaction
 
 ```bash
 ./target/release/wallet substrate-send \
@@ -193,7 +179,7 @@ Create `recipients.json`:
   --ws-url ws://127.0.0.1:9944
 ```
 
-### 5. Friend Receives
+### 4. Friend Receives
 
 Friend syncs and checks:
 ```bash
@@ -237,8 +223,9 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 - Check node logs for extrinsic errors
 
 ### Balance shows 0
-- Mining rewards require `HEGEMON_MINER_ACCOUNT` to be set
+- Mining rewards require `HEGEMON_MINER_ADDRESS` to be set (shielded address)
 - Sync wallet after blocks are mined
+- Ensure node started with your wallet's shielded address
 
 ---
 
@@ -249,6 +236,6 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 | `wallet init` | Create new wallet |
 | `wallet status` | Show addresses and balances |
 | `wallet substrate-sync` | Sync with node |
-| `wallet substrate-shield` | Convert transparent → shielded |
+| `wallet substrate-shield` | Shield external funds (rarely needed with shielded coinbase) |
 | `wallet substrate-send` | Send shielded transaction |
 | `wallet export-viewing-key` | Export keys for watch-only |
