@@ -20,6 +20,7 @@ members = [
     "pallets/feature-flags",
     "pallets/observability",
     "pallets/difficulty",
+    "pallets/coinbase",
     "pallets/shielded-pool",
     "tests", "node",
     "runtime",

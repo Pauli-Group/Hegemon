@@ -79,6 +79,7 @@ codec = { workspace = true, optional = true }
 
 # Pallet dependencies for inherent creation
 pallet-timestamp = { workspace = true, features = ["std"], optional = true }
+pallet-coinbase = { path = "../pallets/coinbase", features = ["std"], optional = true }
 
 jsonrpsee = { version = "0.24", features = ["server", "macros"], optional = true }
 tower = { version = "0.4", optional = true }
@@ -145,6 +146,7 @@ substrate = [
     "dep:runtime",
     "dep:codec",
     "dep:pallet-timestamp",
+    "dep:pallet-coinbase",
     "dep:pallet-shielded-pool",
     "dep:frame-support",
     "dep:tower",
