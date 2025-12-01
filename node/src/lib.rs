@@ -22,7 +22,6 @@ pub mod miner;
 pub mod pow;
 pub mod telemetry;
 pub mod transaction;
-pub mod ui;
 
 /// Substrate integration module.
 ///

@@ -3,7 +3,7 @@ name = "pq-noise"
 version = "0.1.0"
 edition = "2021"
 description = "Post-Quantum Noise Protocol Extension with ML-KEM-768 handshake"
-authors = ["Hegemon Team"]
+authors = ["Pauli Group Inc."]
 license = "MIT OR Apache-2.0"
 
 [dependencies]

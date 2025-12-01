@@ -95,7 +95,7 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 | `circuits/` | Transaction/block STARK circuits plus the `circuits-bench` prover benchmark. |
 | `consensus/` | Ledger/miner logic and the Go `netbench` throughput simulator under `consensus/bench`. |
 | `crypto/` | Rust crate (`synthetic-crypto`) with ML-DSA/SLH-DSA signatures, ML-KEM, and hash/commitment utilities. |
-| `dashboard-ui/` | React/Vite frontend for the operations dashboard. |
+
 | `docs/` | Contributor docs (`CONTRIBUTING.md`), threat model, and API references that stay in sync with `DESIGN.md`/`METHODS.md`. |
 | `governance/` | Governance documentation and versioning policies. |
 | network/ | P2P networking stack and connectivity logic. |

@@ -2,21 +2,19 @@
 //!
 //! This module provides the core service implementation for the Substrate-based
 //! Hegemon node, including:
-//! - Partial node components setup with full Substrate client (Phase 11)
+//! - Partial node components setup with full Substrate client
 //! - Full node service initialization
 //! - Block import pipeline configuration with Blake3 PoW
 //! - Mining coordination with ProductionChainStateProvider
-//! - PQ-secure network transport (Phase 3 + Phase 3.5)
-//! - Network bridge for block/tx routing (Phase 9)
-//!
-//! # Phase 11 Integration
+//! - PQ-secure network transport
+//! - Network bridge for block/tx routing
 //!
 //! This module now supports full Substrate client integration:
-//! - `new_partial_with_client()`: Creates full client with TFullClient (Task 11.4.2)
+//! - `new_partial_with_client()`: Creates full client with TFullClient 
 //! - `ProductionChainStateProvider`: Real chain state for mining
 //! - Runtime API callbacks for difficulty and block queries
-//! - Transaction pool integration with sc-transaction-pool (Task 11.4.3)
-//! - BlockBuilder API for real state execution (Task 11.4.4)
+//! - Transaction pool integration with sc-transaction-pool 
+//! - BlockBuilder API for real state execution 
 //!
 //! # Architecture
 //!
@@ -49,14 +47,14 @@
 //! └─────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! # PQ Network Layer (Phase 3 + Phase 3.5)
+//! # PQ Network Layer
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────────────┐
 //! │                     PQ-Secure Transport Layer                           │
 //! ├─────────────────────────────────────────────────────────────────────────┤
 //! │  ┌─────────────────────────────────────────────────────────────────────┐│
-//! │  │                   PqNetworkBackend (Phase 3.5)                       ││
+//! │  │                   PqNetworkBackend                                  ││
 //! │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────┐ ││
 //! │  │  │  Listener   │  │  Dialer     │  │  SubstratePqTransport       │ ││
 //! │  │  │  (inbound)  │  │  (outbound) │  │  (PQ handshake)             │ ││
@@ -81,7 +79,7 @@
 //! └─────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! # Network Bridge (Phase 9)
+//! # Network Bridge
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────────────┐
@@ -103,7 +101,7 @@
 //! └─────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! # Runtime WASM Integration (Phase 2.5)
+//! # Runtime WASM Integration
 //!
 //! The runtime provides:
 //! - `WASM_BINARY`: Compiled WebAssembly runtime for execution
@@ -152,17 +150,17 @@ use std::collections::HashMap;
 use tokio::sync::Mutex;
 use futures::StreamExt;
 
-// Import runtime APIs for difficulty queries (Task 11.4.6)
+// Import runtime APIs for difficulty queries
 use runtime::apis::ConsensusApi;
 
-// Import jsonrpsee for RPC server (Phase 11.7)
+// Import jsonrpsee for RPC server 
 use jsonrpsee::server::ServerBuilder;
 
-// Import sync service (Phase 11.6)
+// Import sync service
 use crate::substrate::sync::{ChainSyncService, SyncState};
 
 // =============================================================================
-// Task 11.5.5: Storage Changes Cache
+// Storage Changes Cache
 // =============================================================================
 //
 // This module provides a global cache for storing StorageChanges from block
@@ -174,7 +172,7 @@ use crate::substrate::sync::{ChainSyncService, SyncState};
 /// Type alias for storage changes in our runtime
 pub type HegemonStorageChanges = StorageChanges<runtime::Block>;
 
-/// Global storage changes cache (Task 11.5.5)
+/// Global storage changes cache
 /// 
 /// This cache stores StorageChanges indexed by a unique key (block number + timestamp).
 /// The changes are inserted during block building and retrieved during block import.
@@ -190,36 +188,36 @@ static STORAGE_CHANGES_CACHE: once_cell::sync::Lazy<
 static STORAGE_CHANGES_KEY_COUNTER: std::sync::atomic::AtomicU64 = 
     std::sync::atomic::AtomicU64::new(1);
 
-/// Store storage changes in the cache and return the key (Task 11.5.5)
+/// Store storage changes in the cache and return the key
 pub fn cache_storage_changes(changes: HegemonStorageChanges) -> u64 {
     let key = STORAGE_CHANGES_KEY_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     STORAGE_CHANGES_CACHE.write().insert(key, changes);
     tracing::debug!(
         key,
-        "Cached storage changes for block import (Task 11.5.5)"
+        "Cached storage changes for block import"
     );
     key
 }
 
-/// Retrieve and remove storage changes from the cache (Task 11.5.5)
+/// Retrieve and remove storage changes from the cache 
 pub fn take_storage_changes(key: u64) -> Option<HegemonStorageChanges> {
     let changes = STORAGE_CHANGES_CACHE.write().remove(&key);
     if changes.is_some() {
         tracing::debug!(
             key,
-            "Retrieved storage changes from cache (Task 11.5.5)"
+            "Retrieved storage changes from cache"
         );
     } else {
         tracing::warn!(
             key,
-            "Storage changes not found in cache (Task 11.5.5)"
+            "Storage changes not found in cache"
         );
     }
     changes
 }
 
 // =============================================================================
-// Phase 11.7: DenyUnsafe RPC Middleware
+// DenyUnsafe RPC Middleware
 // =============================================================================
 //
 // This middleware injects DenyUnsafe extension into RPC requests so that
@@ -271,13 +269,13 @@ pub fn check_wasm() -> Result<(), String> {
                 "WASM binary not available. Build with `cargo build -p runtime --features std`."
                     .to_string(),
             );
-        }
+        } 
     }
     Ok(())
 }
 
 // =============================================================================
-// Task 11.4.4 + 11.5.5: Wire BlockBuilder API with StorageChanges capture
+// Wire BlockBuilder API with StorageChanges capture
 // =============================================================================
 //
 // This function connects the ProductionChainStateProvider's execute_extrinsics_fn
@@ -285,14 +283,14 @@ pub fn check_wasm() -> Result<(), String> {
 // - Block building with proper state execution
 // - StorageChanges capture for persisting state during import
 //
-// Task 11.5.5: The key improvement is using BlockBuilder.build() which returns
+// The key improvement is using BlockBuilder.build() which returns
 // BuiltBlock containing StorageChanges. These changes are cached and later
 // used in wire_pow_block_import() with StateAction::ApplyChanges.
 
-/// Wires the BlockBuilder to the ProductionChainStateProvider (Task 11.4.4 + 11.5.5)
+/// Wires the BlockBuilder to the ProductionChainStateProvider
 ///
 /// This connects the `execute_extrinsics_fn` callback to use `sc_block_builder::BlockBuilder`
-/// for block execution. This is the key fix for Task 11.5.5 because BlockBuilder:
+/// for block execution. This is the key fix because BlockBuilder:
 ///
 /// 1. Executes extrinsics against runtime state
 /// 2. Computes the correct state_root
@@ -347,7 +345,7 @@ pub fn wire_block_builder_api(
             block_number,
             parent = %hex::encode(parent_hash.as_bytes()),
             tx_count = extrinsics.len(),
-            "Building block with sc_block_builder (Task 11.5.5)"
+            "Building block with sc_block_builder"
         );
         
         // Create inherent data for timestamp
@@ -465,7 +463,7 @@ pub fn wire_block_builder_api(
         let state_root = *header.state_root();
         let extrinsics_root = *header.extrinsics_root();
         
-        // Task 11.5.5: Cache the StorageChanges for use during import
+        // Cache the StorageChanges for use during import
         let storage_changes_key = cache_storage_changes(built_block.storage_changes);
         
         tracing::info!(
@@ -475,7 +473,7 @@ pub fn wire_block_builder_api(
             state_root = %hex::encode(state_root.as_bytes()),
             extrinsics_root = %hex::encode(extrinsics_root.as_bytes()),
             storage_changes_key,
-            "Block built with StorageChanges cached (Task 11.5.5)"
+            "Block built with StorageChanges cached"
         );
         
         Ok(StateExecutionResult {
@@ -488,12 +486,12 @@ pub fn wire_block_builder_api(
     });
     
     tracing::info!(
-        "Task 11.5.5: BlockBuilder API wired with StorageChanges capture"
+        "BlockBuilder API wired with StorageChanges capture"
     );
 }
 
 // =============================================================================
-// Task 11.4.5: Wire PoW block import to ProductionChainStateProvider
+// Wire PoW block import to ProductionChainStateProvider
 // =============================================================================
 //
 // This function wires the PowBlockImport to the chain state provider's
@@ -514,7 +512,7 @@ use sp_runtime::DigestItem;
 /// This sets the `import_fn` callback on the chain state provider to use
 /// the real `PowBlockImport` for importing mined blocks.
 ///
-/// # Task 11.4.5 Implementation
+/// # Implementation
 ///
 /// The import flow:
 /// 1. Mining worker finds valid seal via `mine_round()`
@@ -540,7 +538,7 @@ use sp_runtime::DigestItem;
 /// // Block is imported directly (PoW already verified by mining worker)
 /// ```
 ///
-/// # Task 11.5.5: State Persistence
+/// # State Persistence
 ///
 /// This function now retrieves cached StorageChanges from the block building
 /// phase and applies them during import using `StateAction::ApplyChanges`.
@@ -606,7 +604,7 @@ pub fn wire_pow_block_import(
         import_params.body = Some(block.extrinsics().to_vec());
         import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
         
-        // Task 11.5.5: Apply StorageChanges if available
+        // Apply StorageChanges if available
         // The block building phase caches StorageChanges with a key stored in the template.
         // We retrieve and apply them here so state persists after import.
         if let Some(storage_changes_key) = template.storage_changes_key {
@@ -614,7 +612,7 @@ pub fn wire_pow_block_import(
                 tracing::info!(
                     block_number = template.number,
                     storage_changes_key,
-                    "Applying cached StorageChanges during import (Task 11.5.5)"
+                    "Applying cached StorageChanges during import"
                 );
                 import_params.state_action = sc_consensus::StateAction::ApplyChanges(
                     sc_consensus::StorageChanges::Changes(storage_changes)
@@ -648,7 +646,7 @@ pub fn wire_pow_block_import(
                 tracing::info!(
                     block_hash = %hex::encode(block_hash.as_bytes()),
                     block_number = template.number,
-                    "Block imported successfully with state changes applied (Task 11.5.5)"
+                    "Block imported successfully with state changes applied"
                 );
                 Ok(block_hash)
             }
@@ -682,7 +680,7 @@ pub fn wire_pow_block_import(
     });
     
     tracing::info!(
-        "Phase 11.4.5 + Task 11.5.5: Block import wired with StorageChanges application"
+        "Block import wired with StorageChanges application"
     );
     tracing::debug!(
         "  - Mined blocks imported with state persistence"
@@ -910,22 +908,22 @@ pub struct PartialComponentsWithClient {
     pub backend: Arc<FullBackend>,
     /// Keystore container for key management
     pub keystore_container: KeystoreContainer,
-    /// Real Substrate transaction pool (Task 11.4.3)
+    /// Substrate transaction pool
     ///
     /// This is the production transaction pool that validates transactions
     /// against the runtime. It replaces MockTransactionPool for full client mode.
     pub transaction_pool: Arc<HegemonTransactionPool>,
-    /// Chain selection rule (Task 11.4.5)
+    /// Chain selection rule
     ///
     /// Uses LongestChain which selects the chain with the most blocks.
     /// This is the standard selection rule for PoW chains.
     pub select_chain: HegemonSelectChain,
-    /// PoW block import wrapper (Task 11.4.5)
+    /// PoW block import wrapper
     ///
     /// Wraps the client with PoW verification using Blake3Algorithm.
     /// All blocks imported through this wrapper are verified for valid PoW.
     pub pow_block_import: ConcretePowBlockImport,
-    /// Blake3 PoW algorithm (Task 11.4.5)
+    /// Blake3 PoW algorithm
     ///
     /// The PoW algorithm implementation used for block verification and mining.
     pub pow_algorithm: Blake3Algorithm<HegemonFullClient>,
@@ -937,11 +935,11 @@ pub struct PartialComponentsWithClient {
     pub network_keypair: Option<PqNetworkKeypair>,
     /// PQ network configuration
     pub network_config: PqNetworkConfig,
-    /// PQ peer identity for transport layer (Phase 3.5)
+    /// PQ peer identity for transport layer
     pub pq_identity: Option<PqPeerIdentity>,
-    /// Substrate PQ transport (Phase 3.5)
+    /// Substrate PQ transport 
     pub pq_transport: Option<SubstratePqTransport>,
-    /// PQ service configuration (Phase 3.5)
+    /// PQ service configuration
     pub pq_service_config: PqServiceConfig,
 }
 
@@ -1028,10 +1026,10 @@ pub fn new_partial_with_client(
     tracing::info!(
         best_number = %client.chain_info().best_number,
         best_hash = %client.chain_info().best_hash,
-        "Full Substrate client created (Task 11.4.2)"
+        "Full Substrate client created"
     );
 
-    // Task 11.4.3: Create real Substrate transaction pool
+    // Create Substrate transaction pool
     //
     // The transaction pool validates transactions against the runtime and
     // maintains ready (valid) and future (pending) queues. It uses:
@@ -1051,7 +1049,7 @@ pub fn new_partial_with_client(
     );
 
     tracing::info!(
-        "Full Substrate transaction pool created (Task 11.4.3)"
+        "Full Substrate transaction pool created"
     );
 
     // Initialize PoW mining coordinator
@@ -1068,7 +1066,7 @@ pub fn new_partial_with_client(
     let (pow_handle, _pow_events) = PowHandle::new(pow_config);
 
     // ==========================================================================
-    // Task 11.4.5: Create PoW block import pipeline
+    // Create PoW block import pipeline
     // ==========================================================================
     //
     // The block import pipeline verifies PoW seals before importing blocks:
@@ -1112,7 +1110,7 @@ pub fn new_partial_with_client(
     );
 
     tracing::info!(
-        "PoW block import pipeline created (Task 11.4.5)"
+        "PoW block import pipeline created"
     );
     tracing::debug!(
         "  - Blake3Algorithm for PoW verification"
@@ -1124,7 +1122,7 @@ pub fn new_partial_with_client(
         "  - PowBlockImport wrapping full client"
     );
 
-    // Initialize PQ service configuration (Phase 3.5)
+    // Initialize PQ service configuration
     // Uses Substrate config for ports with env var overrides
     let pq_service_config = PqServiceConfig::from_config(config);
 
@@ -1162,7 +1160,7 @@ pub fn new_partial_with_client(
         }
     };
 
-    // Create PQ peer identity and transport (Phase 3.5)
+    // Create PQ peer identity and transport
     let node_seed = network_keypair
         .as_ref()
         .map(|k| k.peer_id_bytes().to_vec())
@@ -1189,7 +1187,7 @@ pub fn new_partial_with_client(
     tracing::info!(
         pq_peer_id = %hex::encode(pq_transport.local_peer_id()),
         require_pq = %pq_service_config.require_pq,
-        "Hegemon node with full client initialized (Task 11.4.2 + 11.4.3 + 11.4.5 + Phase 3.5)"
+        "Hegemon node with full client initialized"
     );
 
     Ok(PartialComponentsWithClient {
@@ -1214,14 +1212,14 @@ pub fn new_partial_with_client(
 // Full node service with real Substrate client (Production Mode)
 // =============================================================================
 //
-// This function creates a full node using the real Substrate client instead
+// This function creates a full node using the Substrate client instead
 // of scaffold components. It wires:
-// - Real Substrate client to ProductionChainStateProvider callbacks
-// - Real BlockBuilder API for state execution
-// - Real PowBlockImport for block import with PoW verification
+// - Substrate client to ProductionChainStateProvider callbacks
+// - BlockBuilder API for state execution
+// - PowBlockImport for block import with PoW verification
 // - Runtime API for difficulty queries
 
-/// Creates a full node service with real Substrate client (Task 11.4.6)
+/// Creates a full node service with Substrate client
 ///
 /// This is the production version that uses `new_partial_with_client()` to create
 /// a full Substrate client with WASM executor. It wires all callbacks to use
@@ -1249,7 +1247,7 @@ pub fn new_partial_with_client(
 /// let task_manager = new_full_with_client(config).await?;
 /// ```
 pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, ServiceError> {
-    // Task 11.4.2: Create full Substrate client components
+    // Create full Substrate client components
     let PartialComponentsWithClient {
         client,
         backend: _backend,
@@ -1272,7 +1270,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let chain_type = config.chain_spec.chain_type();
     let role = format!("{:?}", config.role);
 
-    // Track PQ network handle for mining worker (Phase 10.4)
+    // Track PQ network handle for mining worker
     let mut pq_network_handle: Option<PqNetworkHandle> = None;
 
     tracing::info!(
@@ -1282,7 +1280,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         best_hash = %client.chain_info().best_hash,
         pq_enabled = %network_config.enable_pq_transport,
         require_pq = %pq_service_config.require_pq,
-        "Hegemon node started with FULL SUBSTRATE CLIENT (Task 11.4.6)"
+        "Hegemon node started with FULL SUBSTRATE CLIENT"
     );
 
     // Log PQ network configuration
@@ -1293,7 +1291,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         );
     }
 
-    // Log PQ transport configuration (Phase 3.5)
+    // Log PQ transport configuration
     if let Some(ref transport) = pq_transport {
         tracing::info!(
             transport_peer_id = %hex::encode(transport.local_peer_id()),
@@ -1315,12 +1313,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     }
 
     // =========================================================================
-    // Task 11.5.2: Wire Real Transaction Pool to Network Bridge
+    // Wire Transaction Pool to Network Bridge
     // =========================================================================
-    // Create a wrapper around the real Substrate transaction pool that
+    // Create a wrapper around the Substrate transaction pool that
     // implements our TransactionPool trait. This enables the TransactionPoolBridge
-    // to submit transactions to the real pool (with runtime validation) instead
-    // of the mock pool.
+    // to submit transactions to the pool (with runtime validation) 
     let pool_config = TransactionPoolConfig::from_env();
     let real_pool_wrapper = Arc::new(SubstrateTransactionPoolWrapper::new(
         transaction_pool.clone(),
@@ -1336,7 +1333,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         pool_capacity = pool_config.capacity,
         max_pending = pool_config.max_pending,
         pool_type = "SubstrateTransactionPoolWrapper (real pool)",
-        "Task 11.5.2: Transaction pool bridge wired to REAL Substrate pool"
+        "Transaction pool bridge wired to Substrate pool"
     );
     tracing::debug!(
         "Real transaction pool: {:?}",
@@ -1393,7 +1390,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Capture local peer ID for RPC (will be set inside PQ backend block)
     let mut rpc_peer_id: Option<[u8; 32]> = None;
 
-    // Phase 3.5: Create and start PQ network backend
+    // Create and start PQ network backend
     if let Some(ref identity) = pq_identity {
         let backend_config = PqNetworkBackendConfig {
             listen_addr: pq_service_config.listen_addr,
@@ -1415,14 +1412,14 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     listen_addr = %pq_service_config.listen_addr,
                     max_peers = pq_service_config.max_peers,
                     peer_id = %hex::encode(local_peer_id),
-                    "PqNetworkBackend started (Task 11.4.6 - Full Client Mode)"
+                    "PqNetworkBackend started"
                 );
 
-                // Phase 10.4: Get PQ network handle for mining worker broadcasting
+                // Get PQ network handle for mining worker broadcasting
                 pq_network_handle = Some(pq_backend.handle());
-                tracing::info!("PQ network handle captured for mining worker (Phase 10.4)");
+                tracing::info!("PQ network handle captured for mining worker");
 
-                // Phase 9: Create the network bridge for block/tx routing
+                // Create the network bridge for block/tx routing
                 let network_bridge = Arc::new(Mutex::new(
                     NetworkBridgeBuilder::new()
                         .verbose(pq_service_config.verbose_logging)
@@ -1431,11 +1428,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let bridge_clone = Arc::clone(&network_bridge);
 
                 // =======================================================================
-                // Phase 11.6: Create Chain Sync Service
+                // Create Chain Sync Service
                 // =======================================================================
                 // The sync service handles:
-                // - Responding to sync requests from peers (Task 11.6.1)
-                // - Managing the sync state machine (Task 11.6.2)
+                // - Responding to sync requests from peers
+                // - Managing the sync state machine
                 // - Downloading blocks from peers when behind
                 let sync_service = Arc::new(Mutex::new(
                     ChainSyncService::new(client.clone())
@@ -1443,7 +1440,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let sync_service_clone = Arc::clone(&sync_service);
                 let sync_service_for_handler = Arc::clone(&sync_service);
                 
-                tracing::info!("Phase 11.6: Chain sync service created");
+                tracing::info!("Chain sync service created");
 
                 // Clone pool_bridge for use in network event handler
                 let pool_bridge_clone = Arc::clone(&pool_bridge);
@@ -1482,7 +1479,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 }
                                 
                                 // Note: Block announcements are NOT drained here.
-                                // They are drained by the block-import-handler task (Task 11.5.4)
+                                // They are drained by the block-import-handler task 
                                 // which handles both sync state updates and block import.
                             }
 
@@ -1591,7 +1588,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     );
                                 }
                                 PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
-                                    // Phase 11.6.1: Handle sync protocol messages
+                                    // Handle sync protocol messages
                                     use crate::substrate::network_bridge::{SYNC_PROTOCOL, SYNC_PROTOCOL_LEGACY};
                                     use crate::substrate::network_bridge::{SyncMessage, SyncRequest, SyncResponse};
                                     use crate::substrate::network_bridge::{BLOCK_ANNOUNCE_PROTOCOL, BLOCK_ANNOUNCE_PROTOCOL_LEGACY, BlockAnnounce};
@@ -1678,7 +1675,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 );
 
                 // =======================================================================
-                // Phase 11.6.2: Spawn sync state machine tick task
+                // Spawn sync state machine tick task
                 // =======================================================================
                 let sync_service_for_tick = Arc::clone(&sync_service);
                 
@@ -1689,7 +1686,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         use crate::substrate::network_bridge::{SYNC_PROTOCOL, SyncMessage};
                         
                         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
-                        tracing::info!("Phase 11.6.2: Chain sync tick task started");
+                        tracing::info!("Chain sync tick task started");
                         
                         loop {
                             interval.tick().await;
@@ -1750,7 +1747,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 );
 
                 // =======================================================================
-                // Task 11.5.4: Spawn block import task for network blocks
+                // Spawn block import task for network blocks
                 // =======================================================================
                 // This task processes:
                 // 1. Incoming block announcements from peers (new blocks)
@@ -1769,7 +1766,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         use sp_consensus::BlockOrigin;
                         use sp_runtime::traits::Block as BlockT;
                         
-                        tracing::info!("Task 11.5.4: Block import handler started (syncs blocks from network + historical sync)");
+                        tracing::info!("Block import handler started (syncs blocks from network + historical sync)");
                         
                         let import_interval = tokio::time::Duration::from_millis(100);
                         let mut import_timer = tokio::time::interval(import_interval);
@@ -2060,7 +2057,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             block_number,
                                             block_hash = %hex::encode(block_hash.as_bytes()),
                                             total_imported = blocks_imported,
-                                            "Task 11.5.4: Block imported from network via PowBlockImport"
+                                            "Block imported from network via PowBlockImport"
                                         );
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
@@ -2108,7 +2105,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 );
                 
                 tracing::info!(
-                    "Task 11.5.4: Block import handler wired to PowBlockImport for network sync"
+                    "Block import handler wired to PowBlockImport for network sync"
                 );
             }
             Err(e) => {
@@ -2121,7 +2118,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     }
 
     // ==========================================================================
-    // Task 11.4.6: Wire real client to ProductionChainStateProvider
+    // Wire client to ProductionChainStateProvider
     // ==========================================================================
     
     let mining_config = MiningConfig::from_env();
@@ -2134,7 +2131,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         let chain_state = Arc::new(ProductionChainStateProvider::new(production_config.clone()));
 
         // =======================================================================
-        // Task 11.4.6a: Wire best_block_fn to real client
+        // Wire best_block_fn to client
         // =======================================================================
         let client_for_best_block = client.clone();
         chain_state.set_best_block_fn(move || {
@@ -2144,11 +2141,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         });
         
         tracing::info!(
-            "Task 11.4.6a: best_block_fn wired to client.chain_info()"
+            "best_block_fn wired to client.chain_info()"
         );
 
         // =======================================================================
-        // Task 11.4.6b: Wire difficulty_fn to runtime API
+        // Wire difficulty_fn to runtime API
         // =======================================================================
         // Note: ConsensusApi::difficulty_bits() must be called at the best block
         let client_for_difficulty = client.clone();
@@ -2172,11 +2169,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         });
         
         tracing::info!(
-            "Task 11.4.6b: difficulty_fn wired to runtime ConsensusApi::difficulty_bits()"
+            "difficulty_fn wired to runtime ConsensusApi::difficulty_bits()"
         );
 
         // =======================================================================
-        // Task 11.4.6c: Wire pending_txs_fn to transaction pool
+        // Wire pending_txs_fn to transaction pool
         // =======================================================================
         // For now, use the pool bridge which collects from network
         // Full integration would use transaction_pool.ready() directly
@@ -2194,25 +2191,25 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
         tracing::info!(
             max_block_transactions = max_block_txs,
-            "Task 11.4.6c: Transaction pool wired to chain state provider"
+            "Transaction pool wired to chain state provider"
         );
 
         // =======================================================================
-        // Task 11.4.6d: Wire BlockBuilder API for real state execution
+        // Wire BlockBuilder API for real state execution
         // =======================================================================
         wire_block_builder_api(&chain_state, client.clone());
         
         tracing::info!(
-            "Task 11.4.6d: BlockBuilder API wired for real state execution"
+            "BlockBuilder API wired for real state execution"
         );
 
         // =======================================================================
-        // Task 11.4.6e: Wire PowBlockImport for real block import
+        // Wire PowBlockImport for real block import
         // =======================================================================
         wire_pow_block_import(&chain_state, pow_block_import, client.clone());
         
         tracing::info!(
-            "Task 11.4.6e: PowBlockImport wired for real block import"
+            "PowBlockImport wired for real block import"
         );
 
         // Log full configuration
@@ -2221,7 +2218,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             difficulty_bits = chain_state.difficulty_bits(),
             best_number = chain_state.best_number(),
             best_hash = %hex::encode(chain_state.best_hash().as_bytes()),
-            "Task 11.4.6: FULL PRODUCTION PIPELINE CONFIGURED"
+            "FULL PRODUCTION PIPELINE CONFIGURED"
         );
         
         // Check if we have a PQ network handle for live broadcasting
@@ -2272,7 +2269,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     }
 
     // =========================================================================
-    // Phase 11.7: Spawn RPC Server with Production Service
+    // Spawn RPC Server with Production Service
     // =========================================================================
     //
     // The RPC server provides HTTP and WebSocket access to:
@@ -2298,7 +2295,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Create production RPC service with client access
     let rpc_service = Arc::new(ProductionRpcService::new(client.clone()));
     
-    // Create RPC module with all extensions (Task 11.7)
+    // Create RPC module with all extensions
     let rpc_module = {
         use jsonrpsee::RpcModule;
         use sc_rpc::SubscriptionTaskExecutor;
@@ -2371,7 +2368,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         let executor: SubscriptionTaskExecutor = Arc::new(task_manager.spawn_handle());
         
         // =====================================================================
-        // Task 11.7.1: Standard Substrate RPCs (chain_*, state_*, system_*)
+        // Standard Substrate RPCs (chain_*, state_*, system_*)
         // =====================================================================
         
         // Add Chain RPC (chain_getBlock, chain_getHeader, chain_getBlockHash, etc.)
@@ -2402,7 +2399,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         }
         
         // =====================================================================
-        // Task 11.7.2: Author RPC (author_submitExtrinsic, author_pendingExtrinsics)
+        // Author RPC (author_submitExtrinsic, author_pendingExtrinsics)
         // =====================================================================
         
         // Add Author RPC for transaction submission
@@ -2530,7 +2527,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         );
         
         // =====================================================================
-        // Task 11.7.2: Hegemon Custom RPCs
+        // Hegemon Custom RPCs
         // =====================================================================
         
         // Add Hegemon RPC (mining, consensus, telemetry)
@@ -2603,7 +2600,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             
             tracing::info!(
                 addr = %addr,
-                "RPC server started (Phase 11.7)"
+                "RPC server started"
             );
             
             let handle = server.start(rpc_module);
@@ -2617,29 +2614,14 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     
     tracing::info!(
         rpc_port = rpc_port,
-        "Phase 11.7: RPC server spawned with production service"
+        "RPC server spawned with production service"
     );
 
     let has_pq_broadcast = pq_network_handle.is_some();
     tracing::info!("═══════════════════════════════════════════════════════════════");
-    tracing::info!("Phase 11 Complete - FULL SUBSTRATE NODE INTEGRATION");
+    tracing::info!("STARTING NODE");
     tracing::info!("═══════════════════════════════════════════════════════════════");
-    tracing::info!("  ✅ Task 11.4.1: RuntimeApi exported from runtime");
-    tracing::info!("  ✅ Task 11.4.2: Full Substrate client created");
-    tracing::info!("  ✅ Task 11.4.3: Real transaction pool created");
-    tracing::info!("  ✅ Task 11.4.4: BlockBuilder API wired (real state execution)");
-    tracing::info!("  ✅ Task 11.4.5: PowBlockImport pipeline created");
-    tracing::info!("  ✅ Task 11.4.6: Client wired to ProductionChainStateProvider");
-    tracing::info!("  ✅ Task 11.5.1: new_full() now uses new_full_with_client()");
-    tracing::info!("  ✅ Task 11.5.2: Real transaction pool wired");
-    tracing::info!("  ✅ Task 11.5.3: Real state execution wired (BlockBuilder API)");
-    tracing::info!("  ✅ Task 11.5.4: Real block import wired (PowBlockImport)");
-    tracing::info!("  ✅ Task 11.7.1: ProductionRpcService created");
-    tracing::info!("  ✅ Task 11.7.2: RPC server spawned on port {}", rpc_port);
-    tracing::info!("    - best_block_fn → client.chain_info()");
-    tracing::info!("    - difficulty_fn → runtime DifficultyApi");
-    tracing::info!("    - execute_extrinsics_fn → BlockBuilder API");
-    tracing::info!("    - import_fn → PowBlockImport");
+    tracing::info!("  RPC server spawned on port {}", rpc_port);
     tracing::info!("  PQ network broadcasting: {}", has_pq_broadcast);
     tracing::info!("  RPC server: http://127.0.0.1:{}", rpc_port);
     tracing::info!("  Set HEGEMON_MINE=1 to enable mining");
@@ -2728,7 +2710,7 @@ mod tests {
 }
 
 // =============================================================================
-// Task 11.2: Full Block Import Pipeline
+// Full Block Import Pipeline
 // =============================================================================
 //
 // This module provides the real block import pipeline integration.
@@ -2745,7 +2727,7 @@ mod tests {
 // - Setting up import_queue for network imports
 //
 // These steps are documented below and will be fully wired when
-// Task 11.4 (state execution) is complete.
+// state execution is complete.
 
 /// Configuration for the full block import
 #[derive(Clone, Debug)]
@@ -2791,7 +2773,7 @@ impl FullBlockImportConfig {
     }
 }
 
-/// Statistics for block imports (Task 11.2)
+/// Statistics for block imports
 #[derive(Clone, Debug, Default)]
 pub struct BlockImportStats {
     /// Total blocks imported
@@ -2806,7 +2788,7 @@ pub struct BlockImportStats {
     pub import_errors: u64,
 }
 
-/// Block import tracker for Task 11.2
+/// Block import tracker
 ///
 /// This provides a simple way to track block imports and wire them
 /// to the ProductionChainStateProvider. Full sc-consensus-pow integration
@@ -2902,7 +2884,7 @@ impl BlockImportTracker {
                     block_hash = %hex::encode(block_hash.as_bytes()),
                     nonce = seal.nonce,
                     difficulty = seal.difficulty,
-                    "Block imported via BlockImportTracker (Task 11.2)"
+                    "Block imported via BlockImportTracker"
                 );
             } else {
                 tracing::debug!(
@@ -2955,7 +2937,7 @@ pub fn wire_import_tracker(
     tracing::info!(
         verify_pow = tracker.config.verify_pow,
         verbose = tracker.config.verbose,
-        "Block import tracker wired to ProductionChainStateProvider (Task 11.2)"
+        "Block import tracker wired to ProductionChainStateProvider"
     );
 }
 

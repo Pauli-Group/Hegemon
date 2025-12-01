@@ -111,7 +111,7 @@ mod cli {
         }
 
         fn author() -> String {
-            "Hegemon Team".into()
+            "Pauli Group Inc.".into()
         }
 
         fn support_url() -> String {
