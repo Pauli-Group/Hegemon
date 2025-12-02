@@ -34,7 +34,7 @@ The script will:
 To connect to the boot node, set `BOOTNODE` before running:
 
 ```bash
-BOOTNODE="/ip4/75.155.93.185/tcp/30333/p2p/<PL_PEER_ID>" ./scripts/start-mining.sh
+BOOTNODE="75.155.93.185:30333" ./scripts/start-mining.sh
 ```
 
 ---
