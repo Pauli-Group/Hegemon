@@ -1601,9 +1601,16 @@ sp_api::impl_runtime_apis! {
                     if let Some(commitment) = pallet_shielded_pool::Commitments::<Runtime>::get(index) {
                         // Block height not tracked per-note, use current block
                         let block = frame_system::Pallet::<Runtime>::block_number();
+                        // Return FULL encrypted note: ciphertext (611) + kem_ciphertext (1088) = 1699 bytes
+                        // The wallet needs both to decrypt the note
+                        let mut full_note = sp_std::vec::Vec::with_capacity(
+                            encrypted_note.ciphertext.len() + encrypted_note.kem_ciphertext.len()
+                        );
+                        full_note.extend_from_slice(&encrypted_note.ciphertext);
+                        full_note.extend_from_slice(&encrypted_note.kem_ciphertext);
                         notes.push((
                             index,
-                            encrypted_note.ciphertext.to_vec(),
+                            full_note,
                             block.into(),
                             commitment,
                         ));

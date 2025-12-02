@@ -190,6 +190,79 @@ pub struct TransactionResponse {
     pub error: Option<String>,
 }
 
+/// Parse a NoteCiphertext from the pallet's on-chain format.
+///
+/// The pallet stores encrypted notes as:
+/// - ciphertext[611]: version(1) + diversifier_index(4) + note_len(4) + note_payload + 
+///                    memo_len(4) + memo_payload + padding + hint_tag(32)
+/// - kem_ciphertext[1088]: ML-KEM ciphertext
+///
+/// Total: 1699 bytes
+fn parse_pallet_encrypted_note(bytes: &[u8]) -> Result<NoteCiphertext, WalletError> {
+    const CIPHERTEXT_SIZE: usize = 611;
+    const KEM_CIPHERTEXT_SIZE: usize = 1088;
+    const EXPECTED_SIZE: usize = CIPHERTEXT_SIZE + KEM_CIPHERTEXT_SIZE;
+    
+    if bytes.len() != EXPECTED_SIZE {
+        return Err(WalletError::Serialization(format!(
+            "Invalid encrypted note size: expected {}, got {}",
+            EXPECTED_SIZE, bytes.len()
+        )));
+    }
+    
+    let ciphertext_bytes = &bytes[..CIPHERTEXT_SIZE];
+    let kem_ciphertext = bytes[CIPHERTEXT_SIZE..].to_vec();
+    
+    // Parse the ciphertext portion
+    let version = ciphertext_bytes[0];
+    let diversifier_index = u32::from_le_bytes(
+        ciphertext_bytes[1..5].try_into().map_err(|_| WalletError::Serialization("diversifier parse failed".into()))?
+    );
+    
+    let mut offset = 5;
+    
+    // Note payload length and data
+    let note_len = u32::from_le_bytes(
+        ciphertext_bytes[offset..offset + 4].try_into().map_err(|_| WalletError::Serialization("note_len parse failed".into()))?
+    ) as usize;
+    offset += 4;
+    
+    if offset + note_len > CIPHERTEXT_SIZE - 32 {
+        return Err(WalletError::Serialization(format!(
+            "Note payload too large: {} bytes at offset {}",
+            note_len, offset
+        )));
+    }
+    let note_payload = ciphertext_bytes[offset..offset + note_len].to_vec();
+    offset += note_len;
+    
+    // Memo payload length and data  
+    let memo_len = u32::from_le_bytes(
+        ciphertext_bytes[offset..offset + 4].try_into().map_err(|_| WalletError::Serialization("memo_len parse failed".into()))?
+    ) as usize;
+    offset += 4;
+    
+    let memo_payload = if memo_len > 0 && offset + memo_len <= CIPHERTEXT_SIZE - 32 {
+        ciphertext_bytes[offset..offset + memo_len].to_vec()
+    } else {
+        Vec::new()
+    };
+    
+    // Hint tag is at the end of the 611-byte ciphertext
+    let hint_tag_start = CIPHERTEXT_SIZE - 32;
+    let mut hint_tag = [0u8; 32];
+    hint_tag.copy_from_slice(&ciphertext_bytes[hint_tag_start..]);
+    
+    Ok(NoteCiphertext {
+        version,
+        diversifier_index,
+        kem_ciphertext,
+        note_payload,
+        memo_payload,
+        hint_tag,
+    })
+}
+
 /// Ciphertext entry with decoded content
 #[derive(Clone, Debug)]
 pub struct CiphertextEntry {
@@ -345,7 +418,7 @@ impl SubstrateRpcClient {
             .await
             .map_err(|e| WalletError::Rpc(format!("hegemon_walletCiphertexts failed: {}", e)))?;
         
-        // Decode base64 ciphertexts
+        // Decode base64 ciphertexts and parse pallet format
         let mut entries = Vec::with_capacity(response.entries.len());
         for entry in response.entries {
             let bytes = base64::Engine::decode(
@@ -354,7 +427,8 @@ impl SubstrateRpcClient {
             )
             .map_err(|e| WalletError::Serialization(format!("Invalid base64 ciphertext: {}", e)))?;
             
-            let ciphertext: NoteCiphertext = bincode::deserialize(&bytes)?;
+            // Parse the pallet's packed format (ciphertext + kem_ciphertext)
+            let ciphertext = parse_pallet_encrypted_note(&bytes)?;
             entries.push(CiphertextEntry {
                 index: entry.index,
                 ciphertext,
