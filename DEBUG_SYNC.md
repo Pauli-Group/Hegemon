@@ -25,4 +25,22 @@ GENESIS_FROM_NODE:
 
 ## WINDOWS RESULTS:
 
-(will be filled by Windows agent)
+```
+CHAINSPEC_SHA256:
+22e7fa88dbd59870dee5504cd9960c6af95ab059a6069eaae8e8eff4bc9ce013
+
+DIAGNOSIS: Chainspecs differ - Mac and Windows compile different WASM bytecode.
+```
+
+## FIX
+
+Mac agent: Export the raw chainspec to a file:
+```bash
+./target/release/hegemon-node build-spec --chain dev --raw > config/dev-chainspec.json
+```
+
+Then both machines use:
+```bash
+--chain config/dev-chainspec.json
+```
+instead of `--chain dev`
