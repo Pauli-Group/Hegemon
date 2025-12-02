@@ -467,13 +467,22 @@ pub fn wire_block_builder_api(
         };
         
         // Create inherent extrinsics (timestamp, coinbase, etc.)
-        let inherent_extrinsics = match block_builder.create_inherents(inherent_data) {
+        let inherent_extrinsics = match block_builder.create_inherents(inherent_data.clone()) {
             Ok(exts) => {
-                tracing::debug!(
+                tracing::info!(
                     count = exts.len(),
-                    "Created {} inherent extrinsics (timestamp + coinbase)",
+                    "Created {} inherent extrinsics",
                     exts.len()
                 );
+                for (i, ext) in exts.iter().enumerate() {
+                    let encoded = ext.encode();
+                    tracing::info!(
+                        index = i,
+                        encoded_len = encoded.len(),
+                        first_bytes = %hex::encode(&encoded[..encoded.len().min(20)]),
+                        "Inherent extrinsic {}", i
+                    );
+                }
                 exts
             },
             Err(e) => {
