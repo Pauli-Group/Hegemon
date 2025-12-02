@@ -108,10 +108,23 @@ NODE_ARGS=(
     --name "HegemonMiner"
 )
 
-# Add bootnode if specified
+# Handle bootnode connection
+# BOOTNODE can be either:
+#   - Simple IP:port format: "75.155.93.185:30333"
+#   - Multiaddr format: "/ip4/75.155.93.185/tcp/30333/p2p/..." (peer ID ignored)
 if [[ -n "$BOOTNODE" ]]; then
-    echo "Connecting to bootnode: $BOOTNODE"
-    NODE_ARGS+=(--bootnodes "$BOOTNODE")
+    # Extract IP:port from multiaddr if needed
+    if [[ "$BOOTNODE" == /ip4/* ]]; then
+        # Parse /ip4/X.X.X.X/tcp/PORT/...
+        IP=$(echo "$BOOTNODE" | sed -n 's|/ip4/\([^/]*\)/.*|\1|p')
+        PORT=$(echo "$BOOTNODE" | sed -n 's|.*/tcp/\([0-9]*\).*|\1|p')
+        SEED_ADDR="${IP}:${PORT}"
+    else
+        # Assume it's already IP:port format
+        SEED_ADDR="$BOOTNODE"
+    fi
+    echo "Connecting to seed node: $SEED_ADDR"
+    export HEGEMON_SEEDS="$SEED_ADDR"
 fi
 
 exec "$NODE_BIN" "${NODE_ARGS[@]}"
