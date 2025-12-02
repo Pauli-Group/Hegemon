@@ -2564,10 +2564,14 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             let _ = sender.send(vec![format!("/ip4/127.0.0.1/tcp/{}", p2p_port)]);
                         }
                         Request::Peers(sender) => {
+                            // NOTE: system_peers returns empty because PQ network doesn't track
+                            // peer metadata (name, roles, etc.) like libp2p does.
+                            // Use system_health.peers for the actual peer count instead.
                             let _ = sender.send(vec![]);
                         }
                         Request::NetworkState(sender) => {
-                            let _ = sender.send(serde_json::json!({"stub": true}));
+                            // DEPRECATED: libp2p network state - not used in PQ network
+                            let _ = sender.send(serde_json::json!({"note": "PQ network - use system_health"}));
                         }
                         Request::NetworkAddReservedPeer(_, sender) => {
                             let _ = sender.send(Ok(()));

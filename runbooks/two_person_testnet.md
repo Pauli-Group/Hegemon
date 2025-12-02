@@ -72,18 +72,11 @@ HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet
   --name "PL-BootNode"
 ```
 
-### 4. Get Your Peer ID
+### 4. Share Your IP Address
 
-In another terminal:
+William just needs your public IP and port. No peer ID is required (the network uses PQ-Noise, not libp2p).
 
-```bash
-curl -s -d '{"id":1,"jsonrpc":"2.0","method":"system_localPeerId"}' \
-  -H "Content-Type: application/json" http://127.0.0.1:9944 | jq -r '.result'
-```
-
-Example output: `12D3KooWH7ntuFTu5DtV2XPHfzjdFQCxxpDRgZaVEDgGYXTaKdhH`
-
-Send this peer ID to William.
+Your bootnode address: `75.155.93.185:30333`
 
 ### 5. Monitor Mining
 
@@ -93,8 +86,8 @@ curl -s -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader"}' \
   -H "Content-Type: application/json" http://127.0.0.1:9944 | jq '.result.number'
 
 # Check peer count (should be 1+ after William connects)
-curl -s -d '{"id":1,"jsonrpc":"2.0","method":"system_peers"}' \
-  -H "Content-Type: application/json" http://127.0.0.1:9944 | jq 'length'
+curl -s -d '{"id":1,"jsonrpc":"2.0","method":"system_health"}' \
+  -H "Content-Type: application/json" http://127.0.0.1:9944 | jq '.result.peers'
 ```
 
 ---
@@ -116,28 +109,28 @@ cargo build -p hegemon-node -p wallet --features substrate --release
 
 ### 3. Start Node (Connect to Boot Node)
 
-Replace `<PL_PEER_ID>` with the peer ID Pierre-Luc gave you:
-
 ```bash
 mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
+HEGEMON_SEEDS="75.155.93.185:30333" \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "WILL_CHANGE_ME" 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
   --chain dev \
   --rpc-port 9944 \
   --rpc-cors all \
-  --bootnodes /ip4/75.155.93.185/tcp/30333/p2p/<PL_PEER_ID> \
   --name "WilliamNode"
 ```
+
+> **Note:** The network uses PQ-Noise transport, not libp2p. Use `HEGEMON_SEEDS` with IP:port format, not `--bootnodes` with multiaddr.
 
 ### 4. Verify Connection
 
 ```bash
-# Should show Pierre-Luc's node
-curl -s -d '{"id":1,"jsonrpc":"2.0","method":"system_peers"}' \
-  -H "Content-Type: application/json" http://127.0.0.1:9944 | jq '.[].name'
+# Check peer count (should be 1+)
+curl -s -d '{"id":1,"jsonrpc":"2.0","method":"system_health"}' \
+  -H "Content-Type: application/json" http://127.0.0.1:9944 | jq '.result.peers'
 
 # Block height should match (or be close to) boot node
 curl -s -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader"}' \
@@ -231,8 +224,8 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 
 ### William can't connect
 - Verify port 30333 is forwarded on Pierre-Luc's router
-- Check firewall allows inbound TCP 30333
-- Verify peer ID is correct (no typos)
+- Check firewall allows inbound TCP 30333 (macOS: add hegemon-node to allowed apps)
+- Ensure `HEGEMON_SEEDS` is set correctly (IP:port format, e.g., `75.155.93.185:30333`)
 
 ### Blocks not syncing
 - Check both nodes are on same `--chain dev`

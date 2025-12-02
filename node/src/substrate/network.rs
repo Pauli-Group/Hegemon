@@ -39,7 +39,12 @@
 //!
 //! # Phase 3 Status
 //!
-//! This module implements PQ libp2p integration:
+//! This module implements PQ network configuration:
+//!
+//! NOTE: This network does NOT use libp2p. All peer connections use PQ-Noise.
+//! - Bootnodes are specified as IP:port via HEGEMON_SEEDS env var
+//! - Peer discovery is handled by the PQ network layer
+//! - Use system_health RPC for peer count, NOT system_peers
 //! - PqNetworkConfig: Configuration for PQ-secure networking
 //! - Protocol definitions for Substrate integration
 //! - Notification handlers for block and transaction gossip
