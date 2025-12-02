@@ -11,10 +11,56 @@ Both participants need:
 ## Network Info
 
 - **Boot Node (Pierre-Luc):** `75.155.93.185:30333`
-- **Chain:** dev (ephemeral until we snapshot)
+- **Chain:** Shared chainspec file (see below)
 - **Block time:** ~5 seconds
 - **Coinbase reward:** 50 HGM per block (halves every 210,000 blocks)
 - **Privacy:** All coinbase rewards go directly to shielded pool - no transparent balances
+
+---
+
+## ⚠️ Critical: Shared Chain Specification
+
+**Why this matters:** The WASM runtime compiles differently on different platforms (macOS vs Windows vs Linux). If each node uses `--chain dev`, they will generate different genesis hashes and cannot sync.
+
+**Solution:** The boot node exports the chain specification once, and all other nodes use that exact file.
+
+### Boot Node: Export Chain Spec
+
+Run once on the boot node machine:
+
+```bash
+./target/release/hegemon-node build-spec --chain dev --raw > config/dev-chainspec.json
+```
+
+Verify the hash:
+```bash
+sha256sum config/dev-chainspec.json
+```
+
+### Other Nodes: Import Chain Spec
+
+Copy `config/dev-chainspec.json` from the boot node to your machine (same relative path).
+
+**Important:** Do NOT regenerate the chainspec locally. Use the exact file from the boot node.
+
+Verify your copy matches:
+```bash
+# Linux/macOS
+sha256sum config/dev-chainspec.json
+
+# Windows (PowerShell)
+Get-FileHash config/dev-chainspec.json -Algorithm SHA256
+```
+
+The hashes must be identical across all machines.
+
+### Starting Nodes
+
+All nodes (including boot node) must use the shared chainspec:
+
+```bash
+--chain config/dev-chainspec.json   # NOT --chain dev
+```
 
 ---
 
@@ -64,7 +110,7 @@ HEGEMON_MINE=1 \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME" 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
-  --chain dev \
+  --chain config/dev-chainspec.json \
   --rpc-port 9944 \
   --rpc-cors all \
   --unsafe-rpc-external \
@@ -117,13 +163,15 @@ HEGEMON_SEEDS="75.155.93.185:30333" \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "WILL_CHANGE_ME" 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
-  --chain dev \
+  --chain config/dev-chainspec.json \
   --rpc-port 9944 \
   --rpc-cors all \
   --name "WilliamNode"
 ```
 
 > **Note:** The network uses PQ-Noise transport, not libp2p. Use `HEGEMON_SEEDS` with IP:port format, not `--bootnodes` with multiaddr.
+>
+> **Critical:** You must use the same `config/dev-chainspec.json` file exported from the boot node. Do not regenerate it locally.
 
 ### 4. Verify Connection
 
@@ -228,7 +276,9 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 - Ensure `HEGEMON_SEEDS` is set correctly (IP:port format, e.g., `75.155.93.185:30333`)
 
 ### Blocks not syncing
-- Check both nodes are on same `--chain dev`
+- **Genesis mismatch:** Ensure all nodes use the same `config/dev-chainspec.json` file from the boot node
+- Do NOT use `--chain dev` — always use `--chain config/dev-chainspec.json`
+- Verify chainspec hash matches across machines (see "Shared Chain Specification" section)
 - Look at node logs for sync errors
 
 ### Transaction not appearing
