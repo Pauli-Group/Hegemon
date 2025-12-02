@@ -131,7 +131,7 @@ mkdir -p /tmp/my-hegemon-node
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
 cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --base-path /tmp/my-hegemon-node \
-  --chain dev \
+  --chain config/dev-chainspec.json \
   --port 30333 \
   --rpc-port 9944 \
   --rpc-cors all \
@@ -184,7 +184,7 @@ mkdir -p /tmp/friend-hegemon-node
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
 cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --base-path /tmp/friend-hegemon-node \
-  --chain dev \
+  --chain config/dev-chainspec.json \
   --port 30333 \
   --rpc-port 9944 \
   --rpc-cors all \
@@ -250,7 +250,7 @@ For more robust connectivity, update both nodes to know about each other.
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
 cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --base-path /tmp/my-hegemon-node \
-  --chain dev \
+  --chain config/dev-chainspec.json \
   --port 30333 \
   --rpc-port 9944 \
   --rpc-cors all \
