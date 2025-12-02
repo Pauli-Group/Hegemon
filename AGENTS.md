@@ -1,6 +1,6 @@
 # Always Be Shipping
 
-The product must be made real, not a mock up.
+The product must be made real, not a mock up. DON'T BE A SYCOPHANT.
 
 # ExecPlans
 
