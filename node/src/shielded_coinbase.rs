@@ -11,9 +11,12 @@ use crypto::{
     traits::KemPublicKey,
 };
 
-use pallet_shielded_pool::types::{
-    CoinbaseNoteData, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE, ENCRYPTED_NOTE_SIZE,
-    ML_KEM_CIPHERTEXT_LEN,
+use pallet_shielded_pool::{
+    commitment::coinbase_commitment as pallet_coinbase_commitment,
+    types::{
+        CoinbaseNoteData, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE, ENCRYPTED_NOTE_SIZE,
+        ML_KEM_CIPHERTEXT_LEN,
+    },
 };
 
 /// Error type for coinbase encryption
@@ -174,28 +177,17 @@ fn extract_recipient_address(address: &ShieldedAddress) -> Result<[u8; DIVERSIFI
     Ok(recipient)
 }
 
-/// Compute coinbase commitment using Blake3
+/// Compute coinbase commitment using the pallet's Poseidon-based algorithm
 ///
-/// This must match the pallet's commitment::coinbase_commitment function
+/// This delegates to the pallet's commitment::coinbase_commitment function
+/// to ensure the commitment matches what the pallet expects during verification.
 fn compute_coinbase_commitment(
     recipient: &[u8; DIVERSIFIED_ADDRESS_SIZE],
     amount: u64,
     public_seed: &[u8; 32],
 ) -> [u8; 32] {
-    // Use the same derivation as the pallet
-    let r = derive_coinbase_r(public_seed);
-    
-    // The pallet uses its own Poseidon-based note_commitment_from_parts
-    // We need to match that here. For now, use a simplified Blake3 version
-    // TODO: Ensure this matches pallet's commitment::coinbase_commitment
-    
-    use blake3::Hasher;
-    let mut hasher = Hasher::new();
-    hasher.update(b"Hegemon_NoteCommitment_v1");
-    hasher.update(recipient);
-    hasher.update(&amount.to_le_bytes());
-    hasher.update(&r);
-    *hasher.finalize().as_bytes()
+    // Use the pallet's commitment function directly
+    pallet_coinbase_commitment(recipient, amount, public_seed)
 }
 
 /// Parse a shielded address from Bech32m string

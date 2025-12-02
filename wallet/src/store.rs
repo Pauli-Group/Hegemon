@@ -158,6 +158,16 @@ impl WalletStore {
         self.with_state(|state| Ok(state.outgoing.clone()))
     }
 
+    /// Returns the primary shielded address (diversifier index 0).
+    /// This address is stable and never changes - ideal for mining rewards.
+    pub fn primary_address(&self) -> Result<ShieldedAddress, WalletError> {
+        self.with_state(|state| {
+            let keys = state.derived.as_ref().ok_or(WalletError::WatchOnly)?;
+            let material = keys.address(0)?;
+            Ok(material.shielded_address())
+        })
+    }
+
     pub fn next_address(&self) -> Result<ShieldedAddress, WalletError> {
         self.with_mut(|state| {
             let keys = state.derived.as_ref().ok_or(WalletError::WatchOnly)?;

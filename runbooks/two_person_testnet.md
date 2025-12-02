@@ -225,7 +225,8 @@ Create `recipients.json`:
 [
   {
     "address": "<WILLIAM_SHIELDED_ADDRESS>",
-    "amount": 5000000000,
+    "value": 5000000000,
+    "asset_id": 0,
     "memo": "first hegemon tx!"
   }
 ]

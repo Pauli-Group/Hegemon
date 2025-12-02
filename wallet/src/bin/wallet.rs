@@ -467,8 +467,8 @@ fn cmd_status(args: StoreArgs) -> Result<()> {
         println!();
     }
     
-    // Show first shielded address
-    if let Ok(addr) = store.next_address() {
+    // Show primary shielded address (stable, for mining)
+    if let Ok(addr) = store.primary_address() {
         println!("Shielded Address: {}", addr.encode().unwrap_or_default());
         println!();
     }
