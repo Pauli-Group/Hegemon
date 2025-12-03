@@ -122,7 +122,7 @@ use crate::substrate::mining_worker::{
     ChainStateProvider, MiningWorkerConfig,
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
-use crate::substrate::network_bridge::{NetworkBridge, NetworkBridgeBuilder};
+use crate::substrate::network_bridge::NetworkBridgeBuilder;
 use crate::substrate::rpc::{
     HegemonApiServer, HegemonRpc,
     ProductionRpcService, ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
@@ -139,8 +139,7 @@ use network::{
 use sc_client_api::BlockchainEvents;
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
-use sp_api::{Core, ProvideRuntimeApi, StorageChanges};
-use sp_block_builder::BlockBuilder;
+use sp_api::{ProvideRuntimeApi, StorageChanges};
 use sp_core::H256;
 use sp_inherents::{InherentData, InherentDataProvider};
 use sp_runtime::traits::Header as HeaderT;
@@ -157,7 +156,7 @@ use runtime::apis::ConsensusApi;
 use jsonrpsee::server::ServerBuilder;
 
 // Import sync service
-use crate::substrate::sync::{ChainSyncService, SyncState};
+use crate::substrate::sync::ChainSyncService;
 
 // =============================================================================
 // Storage Changes Cache
@@ -322,7 +321,6 @@ pub fn wire_block_builder_api(
     client: Arc<HegemonFullClient>,
 ) {
     use sc_block_builder::BlockBuilderBuilder;
-    use sp_blockchain::HeaderBackend;
     
     let client_for_exec = client;
     
@@ -1516,7 +1514,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     ChainSyncService::new(client.clone())
                 ));
                 let sync_service_clone = Arc::clone(&sync_service);
-                let sync_service_for_handler = Arc::clone(&sync_service);
+                let _sync_service_for_handler = Arc::clone(&sync_service);
                 
                 tracing::info!("Chain sync service created");
 
@@ -1586,7 +1584,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     // This enables the peer to initiate sync if they're behind us
                                     {
                                         use crate::substrate::network_bridge::{BlockAnnounce, BlockState, BLOCK_ANNOUNCE_PROTOCOL};
-                                        use sp_runtime::traits::Block as BlockT;
                                         
                                         let info = client_for_network.chain_info();
                                         let best_number: u64 = info.best_number.try_into().unwrap_or(0);
@@ -1668,7 +1665,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
                                     // Handle sync protocol messages
                                     use crate::substrate::network_bridge::{SYNC_PROTOCOL, SYNC_PROTOCOL_LEGACY};
-                                    use crate::substrate::network_bridge::{SyncMessage, SyncRequest, SyncResponse};
+                                    use crate::substrate::network_bridge::SyncMessage;
                                     use crate::substrate::network_bridge::{BLOCK_ANNOUNCE_PROTOCOL, BLOCK_ANNOUNCE_PROTOCOL_LEGACY, BlockAnnounce};
                                     
                                     // Handle sync protocol messages
@@ -1850,6 +1847,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         let mut import_timer = tokio::time::interval(import_interval);
                         
                         let mut blocks_imported: u64 = 0;
+                        #[allow(unused_variables, unused_assignments)] // Counter for metrics/monitoring
                         let mut blocks_failed: u64 = 0;
                         let mut sync_blocks_imported: u64 = 0;
                         
@@ -2646,7 +2644,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         Some("rpc"),
         async move {
             use sc_rpc::DenyUnsafe;
-            use jsonrpsee::server::middleware::http::HostFilterLayer;
             
             let addr = format!("127.0.0.1:{}", rpc_port);
             

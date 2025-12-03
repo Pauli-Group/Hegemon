@@ -79,8 +79,8 @@ impl MerklePath {
 }
 
 pub(crate) mod serde_merkle_path {
-    use super::*;
     use serde::{Deserializer, Serializer, ser::SerializeSeq, de::SeqAccess, de::Visitor};
+    #[allow(unused_imports)] // FieldElement trait is used for .as_int() method
     use winterfell::math::FieldElement;
     
     pub fn serialize<S>(value: &Vec<crate::hashing::Felt>, serializer: S) -> Result<S::Ok, S::Error>

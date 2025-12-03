@@ -336,6 +336,7 @@ impl StarkTransactionAir {
     const CYCLE_LENGTH: usize = 16;
     const POSEIDON_ROUNDS: usize = 8;
     const MAX_INPUTS: usize = 2;
+    #[allow(dead_code)] // Used by non-stark-verify path
     const MAX_OUTPUTS: usize = 2;
     const NULLIFIER_CYCLES: usize = 3;
     const COMMITMENT_CYCLES: usize = 7;
@@ -627,6 +628,7 @@ impl StarkVerifier {
     
     /// Compute a challenge hash for FRI verification.
     /// This binds the proof to the public inputs.
+    #[allow(dead_code)] // Used by non-stark-verify path
     fn compute_challenge(inputs: &ShieldedTransferInputs, proof: &StarkProof) -> [u8; 32] {
         use sp_core::hashing::blake2_256;
         

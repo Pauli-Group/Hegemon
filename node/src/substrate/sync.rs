@@ -203,6 +203,7 @@ where
 
 /// A pending sync request
 #[derive(Debug)]
+#[allow(dead_code)] // Reserved for future sync protocol implementation
 struct PendingRequest {
     /// Type of request
     request_type: PendingRequestType,
@@ -215,6 +216,7 @@ struct PendingRequest {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Reserved for future sync protocol implementation
 enum PendingRequestType {
     /// Requesting blocks starting from a height
     GetBlocks { from_height: u64 },
@@ -291,7 +293,6 @@ where
     pub fn best_number(&self) -> u64 {
         let info = self.client.info();
         // Convert BlockNumber to u64 - BlockNumber is u32 for most chains
-        use sp_runtime::traits::BlockNumber;
         let num = info.best_number;
         // Use saturating conversion to u64
         num.try_into().unwrap_or(0u64)
@@ -944,7 +945,7 @@ where
         // Log sync status periodically
         if now.duration_since(self.last_log_time) > Duration::from_secs(10) {
             self.last_log_time = now;
-            if let SyncState::Downloading { target_height, current_height, .. } = &self.state {
+            if let SyncState::Downloading { target_height, current_height: _, .. } = &self.state {
                 let remaining = target_height.saturating_sub(our_best);
                 let progress = if *target_height > 0 {
                     (our_best as f64 / *target_height as f64 * 100.0).min(100.0)

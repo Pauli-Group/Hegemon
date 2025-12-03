@@ -3,7 +3,7 @@
 pub use pallet::*;
 pub use weights::WeightInfo;
 
-use codec::{FullCodec, MaxEncodedLen};
+use codec::MaxEncodedLen;
 use frame_support::dispatch::{
     DispatchClass, DispatchInfo, GetDispatchInfo, Pays, PostDispatchInfo,
 };
