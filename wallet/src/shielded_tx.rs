@@ -271,17 +271,17 @@ impl<'a> ShieldedTxBuilder<'a> {
         stats.proving_time = proof_result.proving_time;
         stats.proof_size = proof_result.proof_size();
 
-        // Compute binding signature commitment
-        let binding_data = self.compute_binding_data(
+        // Compute binding signature commitment (Blake2-256 hash of public inputs)
+        let binding_hash = self.compute_binding_hash(
             &proof_result.anchor,
             &proof_result.nullifiers,
             &proof_result.commitments,
             proof_result.value_balance,
         );
-        let binding_sig = synthetic_crypto::hashes::blake2_256(&binding_data);
+        // The binding signature is the 32-byte hash duplicated to 64 bytes
         let mut binding_sig_64 = [0u8; 64];
-        binding_sig_64[..32].copy_from_slice(&binding_sig);
-        binding_sig_64[32..].copy_from_slice(&binding_sig);
+        binding_sig_64[..32].copy_from_slice(&binding_hash);
+        binding_sig_64[32..].copy_from_slice(&binding_hash);
 
         // Build transaction bundle
         let bundle = TransactionBundle::new(
@@ -482,14 +482,17 @@ impl<'a> ShieldedTxBuilder<'a> {
         })
     }
 
-    /// Compute binding data for signature commitment.
-    fn compute_binding_data(
+    /// Compute binding signature hash for transaction commitment.
+    /// 
+    /// Returns the 32-byte Blake2-256 hash of the public inputs:
+    /// Blake2_256(anchor || nullifiers || commitments || value_balance)
+    fn compute_binding_hash(
         &self,
         anchor: &[u8; 32],
         nullifiers: &[[u8; 32]],
         commitments: &[[u8; 32]],
         value_balance: i128,
-    ) -> Vec<u8> {
+    ) -> [u8; 32] {
         let mut data = Vec::new();
         data.extend_from_slice(anchor);
         for nf in nullifiers {
@@ -499,7 +502,7 @@ impl<'a> ShieldedTxBuilder<'a> {
             data.extend_from_slice(cm);
         }
         data.extend_from_slice(&value_balance.to_le_bytes());
-        data
+        synthetic_crypto::hashes::blake2_256(&data)
     }
 
     /// Compute nullifiers for the spent notes.

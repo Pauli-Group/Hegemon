@@ -721,15 +721,15 @@ impl ProofVerifier for StarkVerifier {
             return VerificationResult::InvalidProofFormat;
         }
 
-        // Validate basic proof structure first
-        if !Self::validate_proof_structure(proof) {
-            return VerificationResult::InvalidProofFormat;
-        }
+        // NOTE: We skip validate_proof_structure() here because it checks a custom
+        // header format that winterfell proofs don't use. The winterfell deserializer
+        // (Proof::from_bytes) is the authoritative format validator.
         
         // Try to deserialize the winterfell proof
         let winterfell_proof: Proof = match Proof::from_bytes(&proof.data) {
             Ok(p) => p,
-            Err(_) => {
+            Err(e) => {
+                log::warn!("Failed to deserialize winterfell proof: {:?}", e);
                 return VerificationResult::InvalidProofFormat;
             }
         };
@@ -781,6 +781,18 @@ impl ProofVerifier for StarkVerifier {
         
         use sp_core::hashing::blake2_256;
         
+        // Debug output
+        log::info!(target: "shielded-pool", "verify_binding_signature: anchor = {:02x?}", &inputs.anchor[..8]);
+        log::info!(target: "shielded-pool", "verify_binding_signature: nullifiers.len = {}", inputs.nullifiers.len());
+        for (i, nf) in inputs.nullifiers.iter().enumerate() {
+            log::info!(target: "shielded-pool", "verify_binding_signature: nullifiers[{}] = {:02x?}", i, &nf[..8]);
+        }
+        log::info!(target: "shielded-pool", "verify_binding_signature: commitments.len = {}", inputs.commitments.len());
+        for (i, cm) in inputs.commitments.iter().enumerate() {
+            log::info!(target: "shielded-pool", "verify_binding_signature: commitments[{}] = {:02x?}", i, &cm[..8]);
+        }
+        log::info!(target: "shielded-pool", "verify_binding_signature: value_balance = {}", inputs.value_balance);
+        
         // Build the commitment message
         let mut message = sp_std::vec::Vec::with_capacity(
             32 + inputs.nullifiers.len() * 32 + inputs.commitments.len() * 32 + 16
@@ -794,11 +806,18 @@ impl ProofVerifier for StarkVerifier {
         }
         message.extend_from_slice(&inputs.value_balance.to_le_bytes());
         
+        log::info!(target: "shielded-pool", "verify_binding_signature: message.len = {}", message.len());
+        
         // Compute expected commitment
         let hash = blake2_256(&message);
         
+        log::info!(target: "shielded-pool", "verify_binding_signature: computed_hash = {:02x?}", &hash[..8]);
+        log::info!(target: "shielded-pool", "verify_binding_signature: signature[0..8] = {:02x?}", &signature.data[..8]);
+        
         // The binding signature's first 32 bytes should match the hash
-        signature.data[..32] == hash
+        let result = signature.data[..32] == hash;
+        log::info!(target: "shielded-pool", "verify_binding_signature: result = {}", result);
+        result
     }
 }
 
