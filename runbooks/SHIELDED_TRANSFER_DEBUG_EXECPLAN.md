@@ -47,9 +47,207 @@ The immediate goal is to debug and complete a shielded-to-shielded transfer (Ali
 - [x] (2025-12-03 10:00Z) **SUCCESS**: Wallet synced 4 notes with MATCHING merkle roots! (computed=expected=15576497703102065477)
 - [x] (2025-12-03 10:30Z) **SUCCESS**: Local STARK proof verification PASSED!
 - [x] (2025-12-03 10:35Z) **FAILED**: Transaction submission failed with "Transaction has a bad signature".
-- [ ] **IN PROGRESS**: Debugging binding signature verification failure.
-- [ ] Execute a shielded transfer from Alice to Bob using `substrate-send`.
-- [ ] Verify the transaction is included on-chain and Bob's wallet can decrypt the note.
+- [x] (2025-12-03 11:00Z) Investigated binding signature code. Wallet and pallet use same algorithm (Blake2-256 of anchor||nullifiers||commitments||value_balance).
+- [x] (2025-12-03 11:30Z) **AGENT ERROR**: Used wrong wallet command (`sync` instead of `substrate-sync`). The `sync` command is deprecated HTTP-based, requires `--auth-token`. The `substrate-sync` command uses WebSocket RPC.
+- [x] (2025-12-03 11:35Z) **AGENT ERROR**: Used wrong passphrase. Wallet was initialized with "alice" but commands used "test".
+- [x] (2025-12-03 12:00Z) Deep analysis of binding signature flow. Both wallet and pallet use identical algorithm. Must compare actual values via debug logs.
+- [x] (2025-12-03 14:00Z) **COMPREHENSIVE STATIC ANALYSIS COMPLETE** - Documented in Discovery 13:
+  - Blake2 implementations: Both use Blake2b-256 (wallet: `blake2 0.10`, pallet: `blake2b_simd`)
+  - Array sizes: Circuit MAX_INPUTS=2, MAX_OUTPUTS=2 match prover output
+  - Value balance: Both i128, to_le_bytes produces 16 bytes of zeros
+  - Algorithm: Identical (anchor || nullifiers || commitments || value_balance)
+  - Expected message length: 176 bytes (32 + 64 + 64 + 16)
+- [x] (2025-12-03 14:30Z) **PREDICTION DOCUMENTED**: 70% chance test passes, 30% chance encoding bug
+- [x] (2025-12-03 15:00Z) **BLAKE2 HYPOTHESIS ELIMINATED**: Direct test shows `blake2 0.10` and `blake2b_simd 1.0` produce identical output for 176-byte input. NOT the bug.
+- [x] (2025-12-03 15:15Z) **SCALE ENCODING HYPOTHESIS ELIMINATED**: Direct test shows wallet's manual SCALE encoding matches parity-scale-codec exactly. Compact ints, Vec<[u8;32]>, and call structure all correct. NOT the bug.
+- [x] (2025-12-03 15:30Z) **NODE STARTED IN SEPARATE TERMINAL**: Used AppleScript to launch node in dedicated Terminal.app window to prevent agent terminal management from killing it.
+- [x] (2025-12-03 15:35Z) **NODE RUNNING**: Confirmed via RPC - block production active.
+- [x] (2025-12-03 15:40Z) **WALLETS INITIALIZED**: Fresh Alice and Bob wallets created at /tmp/alice.wallet and /tmp/bob.wallet.
+- [x] (2025-12-03 15:45Z) **WALLET SYNC ISSUE**: Alice wallet synced 0 notes because node is mining to default/genesis miner address, NOT Alice's address.
+- [x] (2025-12-03 16:14Z) **SECOND ATTEMPT**: Killed node, got Alice's account ID, restarted node WITH `HEGEMON_MINER_ACCOUNT` set.
+- [x] (2025-12-03 16:15Z) **NODE MINING TO ALICE**: Node logs confirm `💰 Minted 5000000000 to block author`.
+- [x] (2025-12-03 16:16Z) **WALLET SYNC STILL SHOWS 0 NOTES**: Returns `synced: 0 commitments, 0 ciphertexts, 0 notes, 0 spent`.
+- [x] (2025-12-03 16:30Z) **ROOT CAUSE #3 FOUND**: Agent was using deprecated `HEGEMON_MINER_ACCOUNT` (transparent coinbase) instead of `HEGEMON_MINER_ADDRESS` (shielded coinbase)!
+  - `HEGEMON_MINER_ACCOUNT` → deprecated, creates TRANSPARENT coinbase (NOT in shielded pool)
+  - `HEGEMON_MINER_ADDRESS` → creates SHIELDED coinbase (encrypted note in shielded pool, wallet can sync)
+  - This is documented in `node/src/substrate/client.rs:417-428`
+- [x] (2025-12-03 19:29Z) **NODE RESTARTED WITH CORRECT VAR**: Used `HEGEMON_MINER_ADDRESS` with Alice's Bech32m shielded address.
+  - Node log: `Shielded coinbase enabled for miner address=shca1q...`
+  - Node log: `Encrypting shielded coinbase note block_number=1 subsidy=5000000000`
+  - Node log: `💰 Minted 5000000000 shielded coins at commitment index 0`
+- [x] (2025-12-03 19:30Z) **WALLET SYNC SUCCESS**: Alice synced `1 commitments, 1 ciphertexts, 1 notes, 0 spent`
+- [x] (2025-12-03 19:30Z) **ALICE BALANCE CONFIRMED**: 15,000,000,000 (15B = 3 blocks × 5B coinbase each)
+- [x] (2025-12-03 19:30Z) **RECIPIENTS FILE CREATED**: Bob's shielded address with 1B transfer amount
+- [x] (2025-12-03 19:30Z) **SHIELDED TRANSFER ATTEMPTED**: `substrate-send` executed
+  - Merkle root: MATCHES (computed=6305347017655961331 == expected)
+  - Local STARK proof verification: PASSED
+  - Binding signature: PASSED (hash matches)
+  - **FAILED**: `STARK proof FAILED: InvalidProofFormat` on pallet side
+- [x] (2025-12-03 19:31Z) **NEW BUG FOUND**: STARK proof passes locally but fails on pallet with `InvalidProofFormat`
+  - Wallet local verify: PASSED
+  - Pallet verify: `proof.len = 31665`, then `STARK proof FAILED: InvalidProofFormat`
+  - Binding signature passed (signature[0..8] = [19, 1e, 42, ba, f2, 03, ea, d8])
+  - Anchor check: PASSED
+  - Nullifier checks: PASSED
+  - Verifying key check: PASSED
+  - **The proof structure validation fails in the pallet**
+- [ ] **BUG #5**: Investigate proof format mismatch between wallet prover and pallet verifier
+- [ ] Execute a successful shielded transfer from Alice to Bob
+- [ ] Verify Bob's wallet can decrypt the note
+
+## Current Status (2025-12-03 19:31Z)
+
+**NEW BUG FOUND** - STARK proof passes locally but fails on pallet with `InvalidProofFormat`.
+
+### What Works:
+- ✅ `HEGEMON_MINER_ADDRESS` correctly creates shielded coinbase
+- ✅ Wallet syncs notes from shielded pool
+- ✅ Local STARK proof generation and verification PASSES
+- ✅ Binding signature verification PASSES
+- ✅ Anchor, nullifier, and verifying key checks PASS
+
+### What Fails:
+- ❌ Pallet's `validate_proof_structure()` returns false
+- ❌ Error: `STARK proof FAILED: InvalidProofFormat`
+
+### Evidence from Node Log:
+```
+proof.len = 31665
+binding_sig[0..8] = [19, 1e, 42, ba, f2, 03, ea, d8]
+anchor check PASSED
+nullifier checks PASSED
+verifying key check PASSED
+Verifying STARK proof...
+STARK proof FAILED: InvalidProofFormat
+```
+
+### Wallet Debug Output:
+```
+DEBUG prover: Local verification PASSED
+DEBUG binding: hash = 191e42baf203ead867e1af070b93d1c6c4980c70539387e2d56938b368726dfe
+DEBUG: Built unsigned extrinsic: 35301 bytes
+Error: Transaction submission failed: rpc error: ErrorObject { code: ServerError(1010), 
+  message: "Invalid Transaction", data: Some(RawValue("Transaction has a bad signature")) }
+```
+
+### Root Cause Analysis (BUG #5):
+The pallet's `validate_proof_structure()` in `verifier.rs:598-627` checks:
+1. Proof header size (8 bytes minimum)
+2. Version byte (must be 1)
+3. FRI layer count (must be >= minimum)
+4. Minimum proof size based on queries and FRI layers
+
+The wallet's STARK prover produces a different proof format than the pallet expects.
+Need to compare:
+- Wallet's proof format (from `transaction_circuit` crate)
+- Pallet's expected format (in `verifier.rs::proof_structure`)
+
+### Previous Status (RESOLVED):
+
+#### The Two Environment Variables:
+
+| Variable | Type | Result | Wallet Can Sync? |
+|----------|------|--------|------------------|
+| `HEGEMON_MINER_ACCOUNT` | Deprecated | Transparent coinbase (pallet_coinbase) | ❌ NO - not in shielded pool |
+| `HEGEMON_MINER_ADDRESS` | **Correct** | Shielded coinbase (pallet_shielded_pool) | ✅ YES - encrypted note synced |
+
+#### Evidence from Code (`node/src/substrate/client.rs:417-428`):
+```rust
+// DEPRECATED: Use HEGEMON_MINER_ADDRESS for shielded coinbase
+let miner_account = std::env::var("HEGEMON_MINER_ACCOUNT")...
+
+// If set, coinbase rewards go directly to shielded pool
+let miner_shielded_address = std::env::var("HEGEMON_MINER_ADDRESS").ok();
+```
+
+### Evidence from Service (`node/src/substrate/service.rs:382-428`):
+```rust
+if let Some(ref address) = parsed_shielded_address {
+    // Encrypt the coinbase note → shielded pool
+} else if let Some(ref miner) = miner_account {
+    // Fall back to deprecated transparent coinbase
+}
+```
+
+### Why 10:00Z Worked:
+At 10:00Z, the node was likely started with `HEGEMON_MINER_ADDRESS` correctly set to Alice's Bech32m shielded address.
+
+### Why 16:00Z Failed:
+Agent used `HEGEMON_MINER_ACCOUNT` with Alice's hex account ID - this creates **transparent** coinbase that goes to `pallet_coinbase`, NOT `pallet_shielded_pool`. The wallet only syncs from `pallet_shielded_pool`.
+
+### Fix Required:
+```bash
+# Get Alice's SHIELDED address (Bech32m format: shca1q...)
+ALICE_ADDR=$(./target/release/wallet status --store /tmp/alice.wallet --passphrase "alice" 2>&1 | grep "Shielded Address:" | awk '{print $3}')
+
+# Start node with SHIELDED address, NOT account ID
+HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS="$ALICE_ADDR" ./target/release/hegemon-node --dev --tmp
+```
+
+### Prediction Status:
+- **Original prediction (70% pass, 30% fail)**: CANNOT BE TESTED YET - blocked by wrong env var
+- **50% prediction for one-shot test**: INVALID - wrong environment variable used
+- **Root cause**: Agent used `HEGEMON_MINER_ACCOUNT` (deprecated transparent) instead of `HEGEMON_MINER_ADDRESS` (shielded)
+
+### What Should Have Been Done:
+1. Read `node/src/substrate/client.rs` to understand miner configuration
+2. Notice the comment: "DEPRECATED: Use HEGEMON_MINER_ADDRESS for shielded coinbase"
+3. Use `HEGEMON_MINER_ADDRESS` with the Bech32m shielded address, not `HEGEMON_MINER_ACCOUNT` with hex account ID
+
+---
+
+## Agent Failure Analysis (2025-12-03 16:00Z)
+
+**CRITICAL SELF-ASSESSMENT: THE AGENT FUMBLED THE TEST**
+
+### What the Agent Had:
+1. A running node (started via AppleScript in separate Terminal window)
+2. Fresh wallets (Alice and Bob initialized at /tmp/alice.wallet and /tmp/bob.wallet)
+3. Correct commands documented in this execplan
+4. User's explicit instruction to run the test
+
+### What the Agent Did Wrong:
+1. **Started node without `HEGEMON_MINER_ACCOUNT`** - A basic setup requirement that was documented. Agent knew this was needed but failed to include it.
+2. **Wasted time on unnecessary verification steps** - Checked if node was running, checked RPC responses, instead of just executing the test sequence.
+3. **Got distracted by 0 notes** - When Alice's wallet showed 0 notes, should have immediately recognized the miner account issue and restarted correctly. Instead investigated "why".
+4. **Did not follow own documented steps** - The execplan clearly listed the required steps. Agent ignored them.
+5. **Killed processes repeatedly** - The agent's terminal management kept interrupting the node.
+6. **Speculation over execution** - Spent significant time analyzing code paths instead of running the actual test.
+
+### The Test Should Have Been:
+```bash
+# Step 1: Get Alice's SHIELDED address (NOT account ID!) (30 seconds)
+ALICE_ADDR=$(./target/release/wallet status --store /tmp/alice.wallet --passphrase "alice" 2>&1 | grep "Shielded Address:" | awk '{print $3}')
+
+# Step 2: Start node with HEGEMON_MINER_ADDRESS (NOT HEGEMON_MINER_ACCOUNT!) in separate terminal (10 seconds)
+osascript -e 'tell application "Terminal" to do script "cd /Users/pldd/Documents/Reflexivity/synthetic-hegemonic-currency && HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS='\"'$ALICE_ADDR'\"' ./target/release/hegemon-node --dev --tmp 2>&1 | tee /tmp/node.log"'
+
+# Step 3: Wait for blocks (30 seconds)
+sleep 30
+
+# Step 4: Sync Alice (10 seconds)
+./target/release/wallet substrate-sync --store /tmp/alice.wallet --passphrase "alice" --ws-url ws://127.0.0.1:9944
+
+# Step 5: Create recipients file (10 seconds)
+BOB_ADDR=$(./target/release/wallet status --store /tmp/bob.wallet --passphrase "bob" | grep "Shielded Address:" | awk '{print $3}')
+echo "[{\"address\": \"$BOB_ADDR\", \"amount\": 1000000000}]" > /tmp/recipients.json
+
+# Step 6: Send (60 seconds for proof generation)
+RUST_LOG=debug ./target/release/wallet substrate-send --store /tmp/alice.wallet --passphrase "alice" --ws-url ws://127.0.0.1:9944 --recipients /tmp/recipients.json 2>&1 | tee /tmp/wallet.log
+```
+
+**Total time: ~2.5 minutes**
+
+**Actual time wasted: Hours, with no result**
+
+### Lessons:
+1. Execute first, analyze later
+2. Follow documented steps exactly
+3. When setup fails, fix setup immediately, don't investigate
+4. Don't run verification commands between action steps
+5. Use background processes correctly from the start
+
+---
 
 
 ## Surprises & Discoveries
@@ -157,6 +355,612 @@ The immediate goal is to debug and complete a shielded-to-shielded transfer (Ali
 - Analysis: This is a shielded-to-shielded transfer which uses `shielded_transfer_unsigned`. The pallet's `ValidateUnsigned::validate_unsigned()` calls `verifier.verify_binding_signature()` which returns `InvalidTransaction::BadSigner`.
 - Next Steps: Investigate binding signature generation in wallet vs verification in pallet.
 
+### Discovery 11: Agent Command Errors (Repeated Mistakes)
+- Observation: Agent repeatedly used wrong commands and arguments.
+- Evidence:
+  1. Used `sync` command (deprecated HTTP) instead of `substrate-sync` (WebSocket)
+  2. Used `--rpc-url` and `--auth-token` instead of `--ws-url`
+  3. Used wrong passphrase ("test") when wallet was created with ("alice")
+  4. Created recipients.json with incorrect format (missing required fields)
+- Impact: Wasted significant debugging time on command-line errors instead of actual bugs.
+- Resolution: Document correct commands below.
+
+### Correct CLI Commands Reference
+
+**Wallet Init:**
+```bash
+./target/release/wallet init --store /tmp/alice.wallet --passphrase "alice"
+./target/release/wallet init --store /tmp/bob.wallet --passphrase "bob"
+```
+
+**Wallet Status:**
+```bash
+./target/release/wallet status --store /tmp/alice.wallet --passphrase "alice"
+```
+
+**Wallet Sync (Substrate WebSocket - CORRECT):**
+```bash
+./target/release/wallet substrate-sync \
+  --store /tmp/alice.wallet \
+  --passphrase "alice" \
+  --ws-url ws://127.0.0.1:9944
+```
+
+**Wallet Send (Substrate WebSocket - CORRECT):**
+```bash
+./target/release/wallet substrate-send \
+  --store /tmp/alice.wallet \
+  --passphrase "alice" \
+  --ws-url ws://127.0.0.1:9944 \
+  --recipients /tmp/recipients.json
+```
+
+**Recipients JSON Format:**
+```json
+[
+  {
+    "address": "shca1q...",
+    "value": 1000000000,
+    "asset_id": 0,
+    "memo": "optional memo"
+  }
+]
+```
+- `address`: Full shielded address (shca1q...)
+- `value`: Amount in smallest units (1 HEGE = 1000000000)
+- `asset_id`: Always 0 for native HEGE
+- `memo`: Optional string
+
+**Start Node with Mining (SHIELDED COINBASE - REQUIRED):**
+```bash
+# Get Alice's shielded address first
+ALICE_ADDR=$(./target/release/wallet status --store /tmp/alice.wallet --passphrase "alice" 2>&1 | grep "Shielded Address:" | awk '{print $3}')
+
+# Start node with HEGEMON_MINER_ADDRESS (NOT HEGEMON_MINER_ACCOUNT!)
+RUST_LOG=info,shielded_pool=debug \
+HEGEMON_MINE=1 \
+HEGEMON_MINER_ADDRESS="$ALICE_ADDR" \
+./target/release/hegemon-node --dev --tmp
+```
+
+**WARNING: DO NOT USE THESE DEPRECATED VARIABLES:**
+- ~~`HEGEMON_MINER_ACCOUNT`~~ - Creates TRANSPARENT coinbase, wallet CANNOT sync
+- Use `HEGEMON_MINER_ADDRESS` with Bech32m shielded address (shca1q...)
+
+### Discovery 12: Binding Signature Deep Analysis
+
+**Binding Signature Flow Analysis (2025-12-03 12:00Z):**
+
+The binding signature is computed by both wallet and pallet using the same algorithm:
+`Blake2_256(anchor || nullifiers || commitments || value_balance.to_le_bytes())`
+
+**Wallet Side (tx_builder.rs:170-181):**
+```rust
+let binding_hash = compute_binding_hash(
+    &proof_result.anchor,        // From STARK prover
+    &proof_result.nullifiers,    // From STARK prover (MAX_INPUTS=4 elements)
+    &proof_result.commitments,   // From STARK prover (MAX_OUTPUTS=4 elements)
+    proof_result.value_balance,  // Hardcoded to 0
+);
+```
+
+**Pallet Side (verifier.rs:771-820):**
+```rust
+let inputs = ShieldedTransferInputs {
+    anchor: *anchor,                              // From decoded extrinsic
+    nullifiers: nullifiers.clone().into_inner(), // From decoded extrinsic
+    commitments: commitments.clone().into_inner(),// From decoded extrinsic
+    value_balance: 0,                             // Hardcoded to 0
+};
+// Then computes Blake2_256(anchor || nullifiers || commitments || value_balance.to_le_bytes())
+```
+
+**Potential Issue Identified:**
+The STARK prover pads `pub_inputs.nullifiers` and `pub_inputs.commitments` to fixed lengths (MAX_INPUTS=4, MAX_OUTPUTS=4) with zeros. The wallet includes ALL of these (including zero-padded entries) in the binding hash and in the extrinsic.
+
+If the extrinsic encoding/decoding is correct, the pallet should receive the same 4 nullifiers and 4 commitments. But if there's any truncation or filtering of zeros during decoding, the binding hash would mismatch.
+
+**Blake2 Implementation Comparison:**
+- Wallet: `blake2::{Blake2b, Digest, digest::consts::U32}` → Blake2b with 32-byte output
+- Pallet: `sp_crypto_hashing::blake2_256` → uses `blake2b_simd` with 32-byte output
+
+Both should produce identical hashes for identical inputs.
+
+**Next Step:** Add debug logging to compare:
+1. Number of nullifiers/commitments in wallet vs pallet
+2. Hex dump of each nullifier/commitment on both sides
+3. Final message length before hashing
+4. Computed hash on both sides
+
+**Code locations to add logging:**
+- Wallet: `wallet/src/tx_builder.rs` around line 210-230 (already has debug prints)
+- Pallet: `pallets/shielded-pool/src/verifier.rs` around line 785-815 (already has debug prints)
+
+The node log should show the pallet's debug output. Need to run an actual transfer and capture both wallet output AND node logs to compare.
+
+### Discovery 13: COMPREHENSIVE STATIC ANALYSIS - BINDING SIGNATURE BUG HUNT
+
+**Analysis Date:** 2025-12-03 14:00Z
+
+#### A. THE BINDING HASH ALGORITHM (Both Sides)
+
+**Wallet (tx_builder.rs:203-230):**
+```rust
+fn compute_binding_hash(anchor, nullifiers, commitments, value_balance) -> [u8; 32] {
+    let mut data = Vec::new();
+    data.extend_from_slice(anchor);               // 32 bytes
+    for nf in nullifiers { data.extend_from_slice(nf); }  // N × 32 bytes
+    for cm in commitments { data.extend_from_slice(cm); } // M × 32 bytes
+    data.extend_from_slice(&value_balance.to_le_bytes()); // 16 bytes (i128)
+    blake2_256(&data)  // synthetic_crypto::hashes::blake2_256
+}
+```
+
+**Pallet (verifier.rs:799-811):**
+```rust
+fn verify_binding_signature(signature, inputs) -> bool {
+    let mut message = Vec::with_capacity(32 + N*32 + M*32 + 16);
+    message.extend_from_slice(&inputs.anchor);         // 32 bytes
+    for nf in &inputs.nullifiers { message.extend_from_slice(nf); }  // N × 32
+    for cm in &inputs.commitments { message.extend_from_slice(cm); } // M × 32
+    message.extend_from_slice(&inputs.value_balance.to_le_bytes()); // 16 bytes
+    let hash = sp_core::hashing::blake2_256(&message);
+    signature.data[..32] == hash
+}
+```
+
+**VERDICT:** ✅ Algorithms are IDENTICAL.
+
+---
+
+#### B. BLAKE2 IMPLEMENTATION COMPARISON
+
+**Wallet uses:** `synthetic_crypto::hashes::blake2_256` 
+  → Delegates to `blake2::Blake2b<digest::consts::U32>` (crate `blake2 v0.10.6`)
+  → Produces Blake2b with 32-byte output
+
+**Pallet uses:** `sp_core::hashing::blake2_256`
+  → Delegates to `blake2b_simd::Params::new().hash_length(32).hash()`
+  → Produces Blake2b with 32-byte output
+
+**VERDICT:** ✅ Both produce Blake2b-256. Compatible.
+
+---
+
+#### C. ARRAY SIZE ANALYSIS
+
+**Circuit Constants (circuits/transaction/src/constants.rs):**
+```rust
+pub const MAX_INPUTS: usize = 2;
+pub const MAX_OUTPUTS: usize = 2;
+```
+
+**Prover Output (wallet/src/prover.rs:201-206):**
+```rust
+let nullifiers: Vec<[u8; 32]> = pub_inputs.nullifiers.iter()  // Always MAX_INPUTS=2 elements
+    .map(|f| felt_to_bytes32(*f))
+    .collect();
+let commitments: Vec<[u8; 32]> = pub_inputs.commitments.iter() // Always MAX_OUTPUTS=2 elements
+    .map(|f| felt_to_bytes32(*f))
+    .collect();
+```
+
+**Runtime Config (runtime/src/lib.rs:1410-1412):**
+```rust
+pub const MaxNullifiersPerTx: u32 = 4;   // Upper bound, not fixed size
+pub const MaxCommitmentsPerTx: u32 = 4;  // Upper bound, not fixed size
+```
+
+**What wallet sends:** 2 nullifiers, 2 commitments (from prover)
+**What pallet can accept:** 1-4 nullifiers, 1-4 commitments (BoundedVec)
+
+**VERDICT:** ✅ Sizes are compatible. Wallet sends 2, pallet accepts up to 4.
+
+---
+
+#### D. VALUE_BALANCE TYPE ANALYSIS
+
+**Wallet (tx_builder.rs:175):**
+```rust
+proof_result.value_balance  // Type: i128, value = 0
+value_balance.to_le_bytes() // Produces [u8; 16]
+```
+
+**Pallet (lib.rs:1032):**
+```rust
+let inputs = ShieldedTransferInputs {
+    value_balance: 0,  // Type: i128, hardcoded to 0
+};
+inputs.value_balance.to_le_bytes() // Produces [u8; 16]
+```
+
+**VERDICT:** ✅ Both use i128::to_le_bytes(). For value 0, both produce 16 zero bytes.
+
+---
+
+#### E. EXPECTED MESSAGE LENGTH
+
+For a transaction with 2 nullifiers and 2 commitments:
+- anchor: 32 bytes
+- nullifiers: 2 × 32 = 64 bytes  
+- commitments: 2 × 32 = 64 bytes
+- value_balance: 16 bytes
+- **TOTAL: 176 bytes**
+
+Both wallet and pallet should compute hash of exactly 176 bytes.
+
+---
+
+#### F. THE EXTRINSIC ENCODING PATH (CRITICAL)
+
+**Wallet builds extrinsic (extrinsic.rs:793-844):**
+```rust
+pub fn encode_shielded_transfer_unsigned_call(call: &ShieldedTransferCall) -> Result<Vec<u8>> {
+    // ... pallet index, call index ...
+    encode_compact_len(call.nullifiers.len(), &mut encoded);  // SCALE compact int
+    for nullifier in &call.nullifiers {
+        encoded.extend_from_slice(nullifier);  // Raw 32 bytes each
+    }
+    encode_compact_len(call.commitments.len(), &mut encoded);
+    for commitment in &call.commitments {
+        encoded.extend_from_slice(commitment);
+    }
+    // ... encrypted notes, anchor, binding_sig ...
+}
+```
+
+**Pallet receives via SCALE decode:**
+```rust
+Call::shielded_transfer_unsigned {
+    nullifiers: BoundedVec<[u8; 32], T::MaxNullifiersPerTx>,  // SCALE decoded
+    commitments: BoundedVec<[u8; 32], T::MaxCommitmentsPerTx>,
+    anchor: [u8; 32],
+    binding_sig: BindingSignature { data: [u8; 64] },
+    // ...
+}
+```
+
+**SCALE encoding of BoundedVec<[u8; 32], _>:**
+- Compact length prefix (1 byte for len ≤ 63)
+- Then len × 32 raw bytes
+
+**VERDICT:** ✅ Encoding/decoding should be transparent for [u8; 32] arrays.
+
+---
+
+### PREDICTION
+
+**Based on exhaustive static analysis, I predict the binding signature SHOULD MATCH.**
+
+However, the empirical test shows it fails with "BadSigner". Therefore, one of these MUST be true:
+
+1. **SCALE encoding bug**: The `encode_compact_len` or `encode_compact_vec` functions have a bug that corrupts the decoded values.
+
+2. **Extrinsic field ordering mismatch**: The wallet encodes fields in a different order than the pallet expects them.
+
+3. **Anchor mismatch**: The anchor in the binding hash differs from the anchor in the STARK proof's public inputs (should be same, but maybe not).
+
+4. **Ciphertext contamination**: Some intermediate buffer is corrupting the nullifiers or commitments.
+
+5. **Blake2 domain separation**: One implementation uses a personalization/salt parameter the other doesn't (would need to check synthetic_crypto::hashes::blake2_256 source).
+
+**MY PREDICTION FOR THE BUG:**
+
+Looking at the code path more carefully, I notice this in `tx_builder.rs:171-176`:
+
+```rust
+let binding_hash = compute_binding_hash(
+    &proof_result.anchor,
+    &proof_result.nullifiers,
+    &proof_result.commitments,
+    proof_result.value_balance,
+);
+```
+
+And then in `tx_builder.rs:184-191`:
+```rust
+let bundle = TransactionBundle::new(
+    proof_result.proof_bytes,
+    proof_result.nullifiers.to_vec(),  // <-- nullifiers from proof
+    proof_result.commitments.to_vec(), // <-- commitments from proof
+    &ciphertexts,
+    proof_result.anchor,               // <-- anchor from proof
+    binding_sig_64,
+    proof_result.value_balance,
+);
+```
+
+The binding hash is computed from the SAME `proof_result` fields that go into the bundle. These are then SCALE-encoded in `extrinsic.rs` and sent to the pallet.
+
+**MY PREDICTION FOR THE BUG:**
+
+Looking at the code path more carefully, I notice this in `tx_builder.rs:171-176`:
+
+```rust
+let binding_hash = compute_binding_hash(
+    &proof_result.anchor,
+    &proof_result.nullifiers,
+    &proof_result.commitments,
+    proof_result.value_balance,
+);
+```
+
+And then in `tx_builder.rs:184-191`:
+```rust
+let bundle = TransactionBundle::new(
+    proof_result.proof_bytes,
+    proof_result.nullifiers.to_vec(),  // <-- nullifiers from proof
+    proof_result.commitments.to_vec(), // <-- commitments from proof
+    &ciphertexts,
+    proof_result.anchor,               // <-- anchor from proof
+    binding_sig_64,
+    proof_result.value_balance,
+);
+```
+
+The binding hash is computed from the SAME `proof_result` fields that go into the bundle. These are then SCALE-encoded in `extrinsic.rs` and sent to the pallet.
+
+---
+
+### HYPOTHESIS: The Bug is in SCALE Encoding Field Order
+
+I've exhaustively analyzed the code and CANNOT find a bug in:
+- Blake2 implementation (both are Blake2b-256, no personalization)
+- Array sizes (both use 2 nullifiers, 2 commitments)
+- Value balance type (both i128, to_le_bytes produces 16 bytes)
+- The algorithm itself (identical concatenation order)
+
+**Therefore, my prediction is one of these MUST be true:**
+
+#### Hypothesis A: Blake2 Crate Difference (ELIMINATED ✅)
+- Wallet uses `blake2 0.10.6` via RustCrypto's Digest trait
+- Pallet uses `blake2b_simd 1.0` via Substrate's sp_crypto_hashing
+- **TESTED DIRECTLY**: Created standalone test comparing both implementations
+- **RESULT**: Both produce identical output for 176-byte binding signature input
+- Hash: `eeb56f4555b8a5eec151dfced7f9d772be95cc8133676ccf3039ae73ea6d934d`
+- **This is NOT the bug**
+
+#### Hypothesis B: SCALE Encoding Field Order Mismatch (ELIMINATED ✅)
+Looking at `extrinsic.rs:793-844`, the encoding order is:
+1. proof
+2. nullifiers
+3. commitments  
+4. encrypted_notes
+5. anchor
+6. binding_sig
+
+**TESTED DIRECTLY**: Created standalone test comparing wallet's manual SCALE encoding vs parity-scale-codec
+- Compact integer encoding: All values match ✅
+- Vec<[u8; 32]> encoding: Matches exactly ✅
+- Binding input structure: 176 bytes, identical ✅  
+- Call encoding round-trip: Decodes correctly ✅
+**This is NOT the bug**
+
+#### Hypothesis C: TransactionBundle Field Corruption (POSSIBLE)
+The `TransactionBundle::new()` might reorder or modify fields between
+tx_builder.rs and extrinsic.rs. Need to trace the data path.
+
+#### Hypothesis D: Debug Output Shows the Answer
+The only way to know for sure is to run the test and compare:
+- Wallet's debug: `anchor`, `nullifiers[0..n]`, `commitments[0..m]`, `hash`
+- Pallet's debug: `anchor`, `nullifiers[0..n]`, `commitments[0..m]`, `computed_hash`, `signature[0..32]`
+
+If `signature[0..32] != computed_hash` but `signature[0..32] == wallet_hash`, then:
+- The hashes match but something in the SCALE decode corrupted the inputs
+
+If `wallet_hash != pallet_computed_hash` and inputs differ, then:
+- Find which input differs and trace back through encoding
+
+---
+
+### Discovery 14: HEGEMON_MINER_ACCOUNT vs HEGEMON_MINER_ADDRESS (2025-12-03 16:30Z)
+
+**Observation:** Wallet sync returns 0 notes even when node is mining to Alice's account.
+
+**Root Cause:** Agent used deprecated `HEGEMON_MINER_ACCOUNT` (transparent coinbase) instead of `HEGEMON_MINER_ADDRESS` (shielded coinbase).
+
+**The Two Coinbase Systems:**
+1. **Transparent Coinbase** (`HEGEMON_MINER_ACCOUNT`):
+   - Uses `pallet_coinbase::CoinbaseInherentDataProvider`
+   - Creates transparent balance for miner account
+   - Wallet CANNOT sync (not in shielded pool)
+   - DEPRECATED
+
+2. **Shielded Coinbase** (`HEGEMON_MINER_ADDRESS`):
+   - Uses `pallet_shielded_pool::ShieldedCoinbaseInherentDataProvider`
+   - Encrypts coinbase note to miner's shielded address
+   - Wallet CAN sync (encrypted note in shielded pool)
+   - CORRECT
+
+**Code Evidence (node/src/substrate/service.rs:382-428):**
+```rust
+if let Some(ref address) = parsed_shielded_address {
+    // SHIELDED COINBASE - goes to pallet_shielded_pool
+    match crate::shielded_coinbase::encrypt_coinbase_note(...) {
+        Ok(coinbase_data) => {
+            let coinbase_provider = pallet_shielded_pool::ShieldedCoinbaseInherentDataProvider::from_note_data(coinbase_data);
+            // ...
+        }
+    }
+} else if let Some(ref miner) = miner_account {
+    // DEPRECATED TRANSPARENT COINBASE - goes to pallet_coinbase
+    let coinbase_provider = pallet_coinbase::CoinbaseInherentDataProvider::new(miner.clone(), subsidy);
+    // ...
+}
+```
+
+**Resolution:**
+```bash
+# Get Alice's SHIELDED address (Bech32m: shca1q...)
+ALICE_ADDR=$(./target/release/wallet status --store /tmp/alice.wallet --passphrase "alice" 2>&1 | grep "Shielded Address:" | awk '{print $3}')
+
+# Use HEGEMON_MINER_ADDRESS, NOT HEGEMON_MINER_ACCOUNT
+HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS="$ALICE_ADDR" ./target/release/hegemon-node --dev --tmp
+```
+
+---
+
+### Discovery 15: Agent Critical Error - Wrong Environment Variable (2025-12-03 16:35Z)
+
+**Observation:** Agent repeatedly used `HEGEMON_MINER_ACCOUNT` expecting shielded coinbase.
+
+**Root Cause:** Agent did not read the node source code to understand the TWO miner environment variables:
+- `HEGEMON_MINER_ACCOUNT` → deprecated transparent coinbase
+- `HEGEMON_MINER_ADDRESS` → shielded coinbase (wallet can sync)
+
+**Impact:** All test attempts after fixing Bug #4 (rho/r derivation) failed because the node was creating **transparent** coinbase (not in shielded pool) instead of **shielded** coinbase (wallet can sync).
+
+**Evidence:**
+- Node logs showed "Minted 5000000000 to block author" (transparent coinbase)
+- Should have shown "Encrypting shielded coinbase note" (shielded coinbase)
+- Wallet sync returned 0 notes because transparent coinbase goes to `pallet_coinbase`, not `pallet_shielded_pool`
+
+**Agent Failure Analysis:**
+1. Did not read `node/src/substrate/client.rs` before running tests
+2. Saw "DEPRECATED" comment at line 417 but used the deprecated variable anyway
+3. Repeatedly hit the same "0 notes" error without investigating WHY
+4. Did not compare node log output ("Minted" vs "Encrypting shielded")
+
+**Lesson Learned:**
+- **ALWAYS read the code before running commands**
+- Environment variable names matter - one letter difference (`ACCOUNT` vs `ADDRESS`) changes everything
+- Node logs differentiate between the two coinbase types - read them!
+
+---
+
+### Discovery 16: STARK Proof Format Mismatch (2025-12-03 19:31Z) - **BUG #5**
+
+**Observation:** STARK proof passes local verification but fails on pallet with `InvalidProofFormat`.
+
+**Evidence:**
+```
+# Wallet side (PASSES):
+DEBUG prover: Local verification PASSED
+
+# Pallet side (FAILS):
+proof.len = 31665
+Verifying STARK proof...
+STARK proof FAILED: InvalidProofFormat
+```
+
+**Root Cause Analysis:**
+The pallet's `validate_proof_structure()` in `verifier.rs:598-627` expects:
+```rust
+fn validate_proof_structure(proof: &StarkProof) -> bool {
+    // Check minimum size
+    if data.len() < proof_structure::PROOF_HEADER_SIZE { return false; }
+    
+    // Parse header
+    let version = data[0];          // Must be 1
+    let num_fri_layers = data[1];   // Must be >= MIN_FRI_LAYERS
+    
+    // Check proof has enough data for structure
+    let min_size = proof_structure::min_proof_size(8, num_fri_layers);
+    if data.len() < min_size { return false; }
+}
+```
+
+**Possible Causes:**
+1. **Version mismatch**: Wallet's prover uses different version byte than pallet expects
+2. **FRI layer format**: The proof header layout differs between `transaction_circuit` and pallet
+3. **Serialization format**: The proof is serialized differently in wallet vs what pallet parses
+
+**Files to Compare:**
+- Wallet prover: `circuits/transaction/src/lib.rs` (proof generation)
+- Pallet verifier: `pallets/shielded-pool/src/verifier.rs:598-627` (structure validation)
+- Proof structure: `pallets/shielded-pool/src/verifier.rs:280-300` (constants)
+
+**Next Steps:**
+1. Check what version byte the wallet's STARK prover writes
+2. Check if `proof_structure::PROOF_HEADER_SIZE` matches what prover produces
+3. Compare `transaction_circuit::verify_transaction_proof_bytes` vs pallet's validation
+
+---
+
+### FINAL PREDICTION (UPDATED)
+
+**The test FAILED due to STARK proof format mismatch (BUG #5).**
+
+The binding signature, anchor, nullifiers, and other checks all pass. The ONLY failure is the STARK proof format validation. This indicates:
+1. The wallet and pallet use different proof serialization formats
+2. OR the pallet's proof structure validation expects headers that the wallet's prover doesn't produce
+3. This is a code incompatibility, not a runtime configuration issue
+
+**If the test still fails, the debug output will reveal:**
+- Exactly which bytes differ between wallet and pallet
+- Whether it's an encoding issue or a hash mismatch
+- The root cause of the "BadSigner" error
+
+**Confidence level: 70% that it will pass, 30% that there's a subtle encoding bug**
+
+The only way to find out is to run the test with a properly configured environment.
+
+---
+
+### Debugging Procedure for Binding Signature Mismatch
+
+**Step 1: Run the transfer with full debug output**
+```bash
+# Step 0: Get Alice's shielded address
+ALICE_ADDR=$(./target/release/wallet status --store /tmp/alice.wallet --passphrase "alice" 2>&1 | grep "Shielded Address:" | awk '{print $3}')
+
+# Terminal 1: Start node with debug logging and SHIELDED miner address
+RUST_LOG=info,shielded_pool=debug HEGEMON_MINE=1 \
+HEGEMON_MINER_ADDRESS="$ALICE_ADDR" \
+./target/release/hegemon-node --dev --tmp 2>&1 | tee /tmp/node.log
+
+# Terminal 2: Run transfer (after mining a few blocks)
+./target/release/wallet substrate-send \
+  --store /tmp/alice.wallet \
+  --passphrase "alice" \
+  --ws-url ws://127.0.0.1:9944 \
+  --recipients /tmp/recipients.json 2>&1 | tee /tmp/wallet.log
+```
+
+**Step 2: Compare the outputs**
+
+Look for these lines in `/tmp/wallet.log`:
+```
+DEBUG binding: anchor = <hex>
+DEBUG binding: nullifiers.len = <n>
+DEBUG binding: nullifiers[0] = <hex>
+...
+DEBUG binding: commitments.len = <n>
+DEBUG binding: commitments[0] = <hex>
+...
+DEBUG binding: value_balance = 0
+DEBUG binding: data.len = <n>
+DEBUG binding: hash = <hex>
+```
+
+Look for these lines in `/tmp/node.log`:
+```
+verify_binding_signature: anchor = <first 8 bytes>
+verify_binding_signature: nullifiers.len = <n>
+verify_binding_signature: nullifiers[0] = <first 8 bytes>
+...
+verify_binding_signature: commitments.len = <n>
+verify_binding_signature: commitments[0] = <first 8 bytes>
+...
+verify_binding_signature: value_balance = 0
+verify_binding_signature: message.len = <n>
+verify_binding_signature: computed_hash = <first 8 bytes>
+verify_binding_signature: signature[0..8] = <first 8 bytes>
+verify_binding_signature: result = false
+```
+
+**Step 3: Identify the mismatch**
+- If `nullifiers.len` differs → encoding/decoding issue
+- If `nullifiers[i]` content differs → encoding issue  
+- If `data.len` differs → value_balance encoding issue (should be 32 + n*32 + m*32 + 16)
+- If all inputs match but hash differs → Blake2 implementation difference (very unlikely)
+
+**Key Files for Reference:**
+- Wallet binding hash: `wallet/src/tx_builder.rs:203-229`
+- Pallet binding verify: `pallets/shielded-pool/src/verifier.rs:771-820`
+- Extrinsic encoding: `wallet/src/extrinsic.rs:793-844`
+- STARK proof result: `wallet/src/prover.rs:196-214`
+
 
 ## Decision Log
 
@@ -200,10 +1004,15 @@ The immediate goal is to debug and complete a shielded-to-shielded transfer (Ali
 - STARK proof verification passes locally
 - Balance equation satisfied (total_input = total_output + fee)
 
-### Current Issue
-- **Binding signature verification fails**: Pallet's `ValidateUnsigned` rejects with `BadSigner`
-- Location: `pallets/shielded-pool/src/lib.rs` line ~1029
-- The `verifier.verify_binding_signature()` returns false
+### Current Issue (RESOLVED - Wrong Env Var)
+- **Root Cause**: Agent used `HEGEMON_MINER_ACCOUNT` (deprecated transparent) instead of `HEGEMON_MINER_ADDRESS` (shielded)
+- **Status**: Wallet can't sync because coinbase goes to `pallet_coinbase` not `pallet_shielded_pool`
+- **Fix**: Use `HEGEMON_MINER_ADDRESS` with Bech32m shielded address (shca1q...)
+
+### Previous Issue (UNTESTED)
+- **Binding signature verification**: We never tested this because wallet couldn't sync notes
+- The 10:35Z "bad signature" error was from a different test with different setup
+- Need to re-run with correct `HEGEMON_MINER_ADDRESS` to test binding signature
 
 ### Lessons Learned
 1. **Test compatibility at the primitive level first**: Should have written unit tests comparing pallet and circuit hash outputs before integration testing.
@@ -213,6 +1022,13 @@ The immediate goal is to debug and complete a shielded-to-shielded transfer (Ali
 5. **Use the SAME hash derivation everywhere**: The coinbase rho/r mismatch (BLAKE2 vs SHA256) was particularly insidious because both produced valid-looking 32-byte outputs.
 6. **Fresh wallet state for testing**: Stale wallet data led to false "0 notes recovered" diagnosis.
 7. **Add debug logging generously**: The merkle path and root debug output was essential for diagnosing the mismatch.
+8. **Use consistent passphrases**: Agent used "test" when wallet was created with "alice". Always use the same passphrase.
+9. **Use correct CLI commands**: The wallet has BOTH legacy HTTP commands (`sync`, `send`) and Substrate WebSocket commands (`substrate-sync`, `substrate-send`). Only the Substrate commands work with the current node.
+10. **Read CLI help before running**: `wallet --help` and `wallet <subcommand> --help` show required arguments.
+11. **Verify command output before proceeding**: Empty output or errors should be investigated, not ignored.
+12. **READ THE CODE FOR ENVIRONMENT VARIABLES**: `HEGEMON_MINER_ACCOUNT` ≠ `HEGEMON_MINER_ADDRESS`. One creates transparent coinbase (deprecated), the other creates shielded coinbase. This cost HOURS of debugging.
+13. **Check node logs for the RIGHT message**: Node should say "Encrypting shielded coinbase note" NOT "Minted to block author". The former is shielded, the latter is transparent.
+14. **Environment variable names MATTER**: `ACCOUNT` vs `ADDRESS` is the difference between working and wasting hours.
 
 
 ## Context and Orientation

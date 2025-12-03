@@ -167,17 +167,17 @@ pub fn build_transaction(
     eprintln!("DEBUG tx_builder: proof_result.commitments.len() = {}", proof_result.commitments.len());
     eprintln!("DEBUG tx_builder: ciphertexts.len() = {}", ciphertexts.len());
     
-    // Compute binding signature commitment
-    let binding_data = compute_binding_data(
+    // Compute binding signature commitment (Blake2-256 hash of public inputs)
+    let binding_hash = compute_binding_hash(
         &proof_result.anchor,
         &proof_result.nullifiers,
         &proof_result.commitments,
         proof_result.value_balance,
     );
-    let binding_sig = synthetic_crypto::hashes::blake2_256(&binding_data);
+    // The binding signature is the 32-byte hash duplicated to 64 bytes
     let mut binding_sig_64 = [0u8; 64];
-    binding_sig_64[..32].copy_from_slice(&binding_sig);
-    binding_sig_64[32..].copy_from_slice(&binding_sig); // Double for 64 bytes
+    binding_sig_64[..32].copy_from_slice(&binding_hash);
+    binding_sig_64[32..].copy_from_slice(&binding_hash);
     
     let bundle = TransactionBundle::new(
         proof_result.proof_bytes,
@@ -196,13 +196,27 @@ pub fn build_transaction(
     })
 }
 
-/// Compute binding data for signature commitment.
-fn compute_binding_data(
+/// Compute binding signature hash for transaction commitment.
+/// 
+/// Returns the 32-byte Blake2-256 hash of the public inputs:
+/// Blake2_256(anchor || nullifiers || commitments || value_balance)
+fn compute_binding_hash(
     anchor: &[u8; 32],
     nullifiers: &[[u8; 32]],
     commitments: &[[u8; 32]],
     value_balance: i128,
-) -> Vec<u8> {
+) -> [u8; 32] {
+    eprintln!("DEBUG binding: anchor = {}", hex::encode(anchor));
+    eprintln!("DEBUG binding: nullifiers.len = {}", nullifiers.len());
+    for (i, nf) in nullifiers.iter().enumerate() {
+        eprintln!("DEBUG binding: nullifiers[{}] = {}", i, hex::encode(nf));
+    }
+    eprintln!("DEBUG binding: commitments.len = {}", commitments.len());
+    for (i, cm) in commitments.iter().enumerate() {
+        eprintln!("DEBUG binding: commitments[{}] = {}", i, hex::encode(cm));
+    }
+    eprintln!("DEBUG binding: value_balance = {}", value_balance);
+    
     let mut data = Vec::new();
     data.extend_from_slice(anchor);
     for nf in nullifiers {
@@ -212,7 +226,12 @@ fn compute_binding_data(
         data.extend_from_slice(cm);
     }
     data.extend_from_slice(&value_balance.to_le_bytes());
-    data
+    
+    eprintln!("DEBUG binding: data.len = {}", data.len());
+    let hash = synthetic_crypto::hashes::blake2_256(&data);
+    eprintln!("DEBUG binding: hash = {}", hex::encode(&hash));
+    
+    hash
 }
 
 struct Selection {

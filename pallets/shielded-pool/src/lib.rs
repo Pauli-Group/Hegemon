@@ -961,6 +961,7 @@ pub mod pallet {
         type Call = Call<T>;
 
         fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
+            log::info!(target: "shielded-pool", "ValidateUnsigned::validate_unsigned called");
             match call {
                 Call::shielded_transfer_unsigned {
                     proof,
@@ -970,25 +971,38 @@ pub mod pallet {
                     anchor,
                     binding_sig,
                 } => {
+                    log::info!(target: "shielded-pool", "Validating shielded_transfer_unsigned");
+                    log::info!(target: "shielded-pool", "  proof.len = {}", proof.data.len());
+                    log::info!(target: "shielded-pool", "  nullifiers.len = {}", nullifiers.len());
+                    log::info!(target: "shielded-pool", "  commitments.len = {}", commitments.len());
+                    log::info!(target: "shielded-pool", "  ciphertexts.len = {}", ciphertexts.len());
+                    log::info!(target: "shielded-pool", "  anchor = {:02x?}", &anchor[..8]);
+                    log::info!(target: "shielded-pool", "  binding_sig[0..8] = {:02x?}", &binding_sig.data[..8]);
+                    
                     // Basic validation before accepting into pool
 
                     // Check counts are valid
                     if nullifiers.is_empty() && commitments.is_empty() {
+                        log::info!(target: "shielded-pool", "  REJECTED: Empty nullifiers and commitments");
                         return InvalidTransaction::Custom(1).into();
                     }
                     if ciphertexts.len() != commitments.len() {
+                        log::info!(target: "shielded-pool", "  REJECTED: ciphertexts.len != commitments.len");
                         return InvalidTransaction::Custom(2).into();
                     }
 
                     // Check anchor is valid (historical Merkle root)
                     if !MerkleRoots::<T>::contains_key(anchor) {
+                        log::info!(target: "shielded-pool", "  REJECTED: Invalid anchor - not in MerkleRoots");
                         return InvalidTransaction::Custom(3).into();
                     }
+                    log::info!(target: "shielded-pool", "  anchor check PASSED");
 
                     // Check for duplicate nullifiers within the transaction
                     let mut seen = Vec::new();
                     for nf in nullifiers.iter() {
                         if seen.contains(nf) {
+                            log::info!(target: "shielded-pool", "  REJECTED: Duplicate nullifier in tx");
                             return InvalidTransaction::Custom(4).into();
                         }
                         seen.push(*nf);
@@ -997,15 +1011,19 @@ pub mod pallet {
                     // Check nullifiers haven't been spent already
                     for nf in nullifiers.iter() {
                         if Nullifiers::<T>::contains_key(nf) {
+                            log::info!(target: "shielded-pool", "  REJECTED: Nullifier already spent");
                             return InvalidTransaction::Custom(5).into();
                         }
                     }
+                    log::info!(target: "shielded-pool", "  nullifier checks PASSED");
 
                     // Get verifying key - needed for proof verification
                     let vk = VerifyingKeyStorage::<T>::get();
                     if !vk.enabled {
+                        log::info!(target: "shielded-pool", "  REJECTED: Verifying key not enabled");
                         return InvalidTransaction::Custom(6).into();
                     }
+                    log::info!(target: "shielded-pool", "  verifying key check PASSED");
 
                     // Build verification inputs
                     let inputs = ShieldedTransferInputs {
@@ -1016,18 +1034,26 @@ pub mod pallet {
                     };
 
                     // Verify the STARK proof (this is the main validation)
+                    log::info!(target: "shielded-pool", "  Verifying STARK proof...");
                     let verifier = T::ProofVerifier::default();
                     match verifier.verify_stark(proof, &inputs, &vk) {
-                        VerificationResult::Valid => {}
-                        _ => {
+                        VerificationResult::Valid => {
+                            log::info!(target: "shielded-pool", "  STARK proof PASSED");
+                        }
+                        other => {
+                            log::info!(target: "shielded-pool", "  STARK proof FAILED: {:?}", other);
                             return InvalidTransaction::BadProof.into();
                         }
                     }
 
                     // Verify binding signature
+                    log::info!(target: "shielded-pool", "  Verifying binding signature...");
                     if !verifier.verify_binding_signature(binding_sig, &inputs) {
+                        log::info!(target: "shielded-pool", "  binding signature FAILED");
                         return InvalidTransaction::BadSigner.into();
                     }
+                    log::info!(target: "shielded-pool", "  binding signature PASSED");
+                    log::info!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
 
                     // Create a unique tag based on the nullifiers
                     // This prevents duplicate transactions in the pool
@@ -1058,7 +1084,10 @@ pub mod pallet {
                         .build()
                 }
                 // All other calls are invalid as unsigned
-                _ => InvalidTransaction::Call.into(),
+                _ => {
+                    log::info!(target: "shielded-pool", "ValidateUnsigned: Call did NOT match shielded_transfer_unsigned or mint_coinbase - returning InvalidTransaction::Call");
+                    InvalidTransaction::Call.into()
+                }
             }
         }
     }
