@@ -372,26 +372,48 @@ pub fn note_commitment_from_parts(
 }
 
 /// Domain separator for coinbase rho derivation.
-const COINBASE_RHO_DOMAIN: &[u8] = b"Hegemon_CoinbaseRho_v1";
+/// MUST match crypto/src/note_encryption.rs::derive_coinbase_rho
+const COINBASE_RHO_DOMAIN: &[u8] = b"coinbase-rho";
 
 /// Domain separator for coinbase r derivation.
-const COINBASE_R_DOMAIN: &[u8] = b"Hegemon_CoinbaseR_v1";
+/// MUST match crypto/src/note_encryption.rs::derive_coinbase_r
+const COINBASE_R_DOMAIN: &[u8] = b"coinbase-r";
 
 /// Derive deterministic rho for coinbase notes.
 ///
-/// rho = Blake2b(domain || public_seed)
+/// MUST match crypto/src/note_encryption.rs::derive_coinbase_rho
+/// Uses SHA256 for compatibility with the crypto library.
 ///
 /// Since the seed is public, anyone can verify rho. Privacy comes from
 /// the nullifier requiring the secret nullifier key (nk).
 pub fn derive_coinbase_rho(public_seed: &[u8; 32]) -> [u8; 32] {
-    blake2_256(&[COINBASE_RHO_DOMAIN, public_seed.as_slice()].concat())
+    // Match crypto::deterministic::expand_to_length with counter=0
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(COINBASE_RHO_DOMAIN);
+    hasher.update(0u32.to_be_bytes());
+    hasher.update(public_seed);
+    let digest = hasher.finalize();
+    let mut result = [0u8; 32];
+    result.copy_from_slice(&digest);
+    result
 }
 
 /// Derive deterministic r (commitment randomness) for coinbase notes.
 ///
-/// r = Blake2b(domain || public_seed)
+/// MUST match crypto/src/note_encryption.rs::derive_coinbase_r
+/// Uses SHA256 for compatibility with the crypto library.
 pub fn derive_coinbase_r(public_seed: &[u8; 32]) -> [u8; 32] {
-    blake2_256(&[COINBASE_R_DOMAIN, public_seed.as_slice()].concat())
+    // Match crypto::deterministic::expand_to_length with counter=0
+    use sha2::{Sha256, Digest};
+    let mut hasher = Sha256::new();
+    hasher.update(COINBASE_R_DOMAIN);
+    hasher.update(0u32.to_be_bytes());
+    hasher.update(public_seed);
+    let digest = hasher.finalize();
+    let mut result = [0u8; 32];
+    result.copy_from_slice(&digest);
+    result
 }
 
 /// Compute coinbase note commitment (LEGACY - uses Blake2-wrapped hash).

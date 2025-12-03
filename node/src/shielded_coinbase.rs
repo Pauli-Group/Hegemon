@@ -55,6 +55,14 @@ pub fn encrypt_coinbase_note(
     let mut kem_randomness = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut kem_randomness);
     
+    // Debug: log the address_tag being used for encryption
+    tracing::info!(
+        address_tag = %hex::encode(&address.address_tag),
+        pk_recipient = %hex::encode(&address.pk_recipient),
+        diversifier_index = address.diversifier_index,
+        "Encrypting coinbase with address_tag"
+    );
+    
     // Encrypt the note
     let ciphertext = NoteCiphertext::encrypt(
         &address.pk_enc,

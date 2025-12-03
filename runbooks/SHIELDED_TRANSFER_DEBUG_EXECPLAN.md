@@ -35,7 +35,19 @@ The immediate goal is to debug and complete a shielded-to-shielded transfer (Ali
 - [x] (2025-12-03 04:00Z) **BUG #3 FIXED**: Pallet used `MERKLE_TREE_DEPTH=32`, circuit uses `CIRCUIT_MERKLE_DEPTH=8`. Changed pallet and wallet to use 8.
 - [x] (2025-12-03 04:30Z) **FAILED**: Still `InconsistentOodConstraintEvaluations` after all fixes.
 - [x] (2025-12-03 05:00Z) **ROOT CAUSE FOUND**: Pallet commitment scheme incompatible with circuit!
-- [ ] **IN PROGRESS**: Implementing circuit-compatible commitment in pallet.
+- [x] (2025-12-03 06:00Z) **FAILED**: 49 commitments synced, 0 notes recovered (wallet can't decrypt coinbase ciphertexts).
+- [x] (2025-12-03 07:00Z) **DISCOVERY**: Notes ARE recovering! The "0 notes" was stale wallet data. Fresh wallet showed 5/5 notes, 45B balance.
+- [x] (2025-12-03 07:30Z) **FAILED**: Shielded transfer attempt failed with `InconsistentOodConstraintEvaluations` STARK proof error.
+- [x] (2025-12-03 08:00Z) **ROOT CAUSE #2 FOUND**: Merkle root mismatch - wallet computed different root than pallet tree.
+- [x] (2025-12-03 08:30Z) **BUG #4 FOUND**: `derive_coinbase_rho/r` in pallet used BLAKE2, but crypto lib used SHA256!
+  - Pallet: `blake2_256(b"Hegemon_CoinbaseRho_v1" || seed)`
+  - Crypto: `SHA256(b"coinbase-rho" || 0u32 || seed)` via `expand_to_length`
+- [x] (2025-12-03 09:00Z) **BUG #4 FIXED**: Modified `derive_coinbase_rho/r` in `pallets/shielded-pool/src/commitment.rs` to use SHA256 matching crypto lib.
+- [x] (2025-12-03 09:30Z) Rebuilt pallet and node, restarted with fresh wallets.
+- [x] (2025-12-03 10:00Z) **SUCCESS**: Wallet synced 4 notes with MATCHING merkle roots! (computed=expected=15576497703102065477)
+- [x] (2025-12-03 10:30Z) **SUCCESS**: Local STARK proof verification PASSED!
+- [x] (2025-12-03 10:35Z) **FAILED**: Transaction submission failed with "Transaction has a bad signature".
+- [ ] **IN PROGRESS**: Debugging binding signature verification failure.
 - [ ] Execute a shielded transfer from Alice to Bob using `substrate-send`.
 - [ ] Verify the transaction is included on-chain and Bob's wallet can decrypt the note.
 
@@ -97,6 +109,54 @@ The immediate goal is to debug and complete a shielded-to-shielded transfer (Ali
   - This suggests the encrypted note format or key derivation doesn't match between node and wallet
   - Need to investigate `node/src/shielded_coinbase.rs` encryption vs `wallet/src/notes.rs` decryption
 
+### Discovery 6: Notes WERE Recovering (False Alarm)
+- Observation: Previous "0 notes recovered" was stale wallet data.
+- Evidence: Fresh wallet synced 5/5 notes correctly with 45B balance.
+- Resolution: N/A - the issue was using an old wallet that had synced before the RPC fix.
+
+### Discovery 7: **COINBASE RHO/R DERIVATION MISMATCH** (Root Cause #2 - FIXED!)
+- Observation: Merkle root computed by wallet didn't match pallet's stored root.
+- Evidence:
+  ```
+  DEBUG: wallet merkle_root = 14077802134379361009
+  DEBUG: computed_root = 14077802134379361009
+  DEBUG: expected_root = 8286632674386164380
+  ROOT MISMATCH!
+  ```
+- Root Cause: **Pallet and crypto lib used DIFFERENT hash functions for coinbase rho/r derivation!**
+  - **Pallet** (`commitment.rs`): `blake2_256(b"Hegemon_CoinbaseRho_v1" || seed)`
+  - **Crypto** (`spend_auth.rs`): `SHA256(b"coinbase-rho" || 0u32 || seed)` via `expand_to_length`
+- Impact: Node encrypts coinbase notes using crypto lib's rho/r. Pallet stores commitment using different rho/r. Wallet decrypts and computes commitment with crypto lib's rho/r. **The commitments don't match!**
+- Resolution: Modified `pallets/shielded-pool/src/commitment.rs` to use SHA256 with `expand_to_length` pattern matching the crypto library.
+
+### Discovery 8: Merkle Root Now Matches! (After rho/r fix)
+- Observation: After fixing rho/r derivation, merkle roots match.
+- Evidence:
+  ```
+  DEBUG: computed_root = 15576497703102065477
+  DEBUG: expected_root = 15576497703102065477
+  ```
+- Resolution: The rho/r fix was correct.
+
+### Discovery 9: STARK Proof Now Passes Locally!
+- Observation: Local proof verification succeeds after all fixes.
+- Evidence:
+  ```
+  DEBUG prover: Local verification PASSED
+  ```
+- Resolution: The circuit constraints are now satisfied.
+
+### Discovery 10: "Bad Signature" Error (Current Issue)
+- Observation: Transaction submission fails with "Transaction has a bad signature".
+- Evidence:
+  ```
+  Error: Transaction submission failed: rpc error: author_submitExtrinsic failed: 
+  ErrorObject { code: ServerError(1010), message: "Invalid Transaction", 
+  data: Some(RawValue("Transaction has a bad signature")) }
+  ```
+- Analysis: This is a shielded-to-shielded transfer which uses `shielded_transfer_unsigned`. The pallet's `ValidateUnsigned::validate_unsigned()` calls `verifier.verify_binding_signature()` which returns `InvalidTransaction::BadSigner`.
+- Next Steps: Investigate binding signature generation in wallet vs verification in pallet.
+
 
 ## Decision Log
 
@@ -120,26 +180,39 @@ The immediate goal is to debug and complete a shielded-to-shielded transfer (Ali
   Rationale: The circuit uses CIRCUIT_MERKLE_DEPTH=8. The pallet and wallet must match to produce valid Merkle paths.
   Date/Author: 2025-12-03, pldd
 
+- Decision: Fix coinbase rho/r derivation to use SHA256 matching crypto library.
+  Rationale: The node uses crypto lib's `SpendAuthorization::coinbase_rho/r()` to encrypt notes. The pallet must compute commitments with the same rho/r values. Previously pallet used BLAKE2 with different domain separators.
+  Date/Author: 2025-12-03, pldd
+
 
 ## Outcomes & Retrospective
 
-### Bugs Fixed (not yet verified working)
-1. RPC byte extraction: `commitment[0..8] LE` → `commitment[24..32] BE`
-2. Proof zero-filtering: Removed `.filter()` calls
-3. Merkle path population: Added `tree.authentication_path()` calls
-4. Tree depth alignment: Changed to 8 everywhere
-5. Commitment scheme: Added `circuit_*` functions (in progress)
+### Bugs Fixed and Verified Working
+1. **RPC byte extraction**: `commitment[0..8] LE` → `commitment[24..32] BE` ✓
+2. **Proof zero-filtering**: Removed `.filter()` calls ✓
+3. **Merkle path population**: Added `tree.authentication_path()` calls ✓
+4. **Tree depth alignment**: Changed to 8 everywhere ✓
+5. **Commitment scheme**: Added `circuit_*` functions ✓
+6. **Coinbase rho/r derivation**: Changed from BLAKE2 to SHA256 matching crypto lib ✓
 
-### Remaining Issues
-1. **Note decryption failure**: 49 commitments synced, 0 notes recovered
-   - Wallet cannot decrypt coinbase ciphertexts
-   - Likely mismatch between node encryption and wallet decryption
+### Verified Working
+- Merkle roots now match between wallet computation and pallet storage
+- STARK proof verification passes locally
+- Balance equation satisfied (total_input = total_output + fee)
+
+### Current Issue
+- **Binding signature verification fails**: Pallet's `ValidateUnsigned` rejects with `BadSigner`
+- Location: `pallets/shielded-pool/src/lib.rs` line ~1029
+- The `verifier.verify_binding_signature()` returns false
 
 ### Lessons Learned
 1. **Test compatibility at the primitive level first**: Should have written unit tests comparing pallet and circuit hash outputs before integration testing.
 2. **Document cryptographic formats explicitly**: The `felt_to_bytes32` format (u64 BE in last 8 bytes) should be documented as canonical.
 3. **Don't wrap hashes in more hashes**: The pallet's Blake2 wrapper around Poseidon was unnecessary complexity that caused mismatch.
 4. **Trace data through the full pipeline**: The commitment goes: circuit → pallet storage → RPC → wallet tree → proof → verification. Any mismatch breaks everything.
+5. **Use the SAME hash derivation everywhere**: The coinbase rho/r mismatch (BLAKE2 vs SHA256) was particularly insidious because both produced valid-looking 32-byte outputs.
+6. **Fresh wallet state for testing**: Stale wallet data led to false "0 notes recovered" diagnosis.
+7. **Add debug logging generously**: The merkle path and root debug output was essential for diagnosing the mismatch.
 
 
 ## Context and Orientation

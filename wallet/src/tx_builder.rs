@@ -94,13 +94,49 @@ pub fn build_transaction(
     }
 
     let tree = store.commitment_tree()?;
-    eprintln!("DEBUG: wallet merkle_root = {:?}", tree.root());
+    let wallet_root = tree.root();
+    eprintln!("DEBUG: wallet merkle_root = {:?}", wallet_root);
+    eprintln!("DEBUG: tree.len = {}", tree.len());
+    
     let mut inputs = Vec::new();
     let mut nullifiers = Vec::new();
     for note in &selection.spent {
         // Get the Merkle authentication path for this note's position
         let auth_path = tree.authentication_path(note.position as usize)
             .map_err(|e| WalletError::InvalidState(Box::leak(format!("merkle path error: {}", e).into_boxed_str())))?;
+        
+        eprintln!("DEBUG: note.position = {}", note.position);
+        eprintln!("DEBUG: auth_path.len() = {}", auth_path.len());
+        
+        // Verify the path locally to debug
+        let leaf = note.recovered.note_data.commitment();
+        eprintln!("DEBUG: recovered note commitment (Poseidon) = {:?}", leaf);
+        
+        // Get tree leaf at that position and compare
+        let tree_leaf = auth_path.first().map(|_| {
+            // Actually need to get the leaf from tree.levels[0][position]
+            // But we don't have direct access. Let me print the first few siblings
+            eprintln!("DEBUG: auth_path siblings: {:?}", &auth_path[..std::cmp::min(3, auth_path.len())]);
+        });
+        let _ = tree_leaf;
+        
+        let mut current = leaf;
+        let mut pos = note.position;
+        for (level, sibling) in auth_path.iter().enumerate() {
+            use transaction_circuit::hashing::merkle_node;
+            let (left, right) = if pos & 1 == 0 {
+                (current, *sibling)
+            } else {
+                (*sibling, current)
+            };
+            current = merkle_node(left, right);
+            pos >>= 1;
+        }
+        eprintln!("DEBUG: computed_root = {:?}", current);
+        eprintln!("DEBUG: expected_root = {:?}", wallet_root);
+        if current != wallet_root {
+            eprintln!("DEBUG: ROOT MISMATCH!");
+        }
         
         // Convert Felt path to MerklePath
         let merkle_path = transaction_circuit::note::MerklePath {
