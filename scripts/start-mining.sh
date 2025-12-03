@@ -15,7 +15,7 @@ echo ""
 # Check binaries exist
 if [[ ! -x "$NODE_BIN" ]] || [[ ! -x "$WALLET_BIN" ]]; then
     echo "ERROR: Binaries not found. Build first with:"
-    echo "  cargo build -p hegemon-node -p wallet --features substrate --release"
+    echo "  cargo build -p hegemon-node -p wallet --release"
     exit 1
 fi
 
