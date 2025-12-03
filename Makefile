@@ -1,5 +1,19 @@
 SHELL := /bin/bash
-.PHONY: setup fmt lint test check bench wallet-demo quickstart
+.PHONY: setup fmt lint test check bench wallet-demo quickstart node
+
+# macOS: librocksdb-sys requires libclang.dylib at runtime during build
+# Set these environment variables for the build to find clang libraries
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+  # Check for Command Line Tools first, then Xcode.app
+  ifneq ($(wildcard /Library/Developer/CommandLineTools/usr/lib/libclang.dylib),)
+    export LIBCLANG_PATH := /Library/Developer/CommandLineTools/usr/lib
+    export DYLD_LIBRARY_PATH := /Library/Developer/CommandLineTools/usr/lib:$(DYLD_LIBRARY_PATH)
+  else ifneq ($(wildcard /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/libclang.dylib),)
+    export LIBCLANG_PATH := /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib
+    export DYLD_LIBRARY_PATH := /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib:$(DYLD_LIBRARY_PATH)
+  endif
+endif
 
 setup:
 	./scripts/dev-setup.sh
