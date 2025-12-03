@@ -159,6 +159,17 @@ impl StarkProver {
         // Get public inputs from witness
         let pub_inputs = self.inner.get_public_inputs(witness);
         
+        // DEBUG: Print balance info
+        let total_input: u64 = witness.inputs.iter().map(|i| i.note.value).sum();
+        let total_output: u64 = witness.outputs.iter().map(|o| o.note.value).sum();
+        eprintln!("DEBUG prover: inputs.len()={} outputs.len()={}", witness.inputs.len(), witness.outputs.len());
+        eprintln!("DEBUG prover: total_input={} total_output={} fee={}", total_input, total_output, witness.fee);
+        eprintln!("DEBUG prover: balance check: total_input ({}) = total_output ({}) + fee ({})?", 
+            total_input, total_output, witness.fee);
+        if total_input != total_output + witness.fee {
+            eprintln!("DEBUG prover: BALANCE MISMATCH! {} != {} + {}", total_input, total_output, witness.fee);
+        }
+        
         // Generate the real STARK proof
         let proof = self.inner.prove_transaction(witness)
             .map_err(|e| WalletError::Serialization(format!("STARK proof generation failed: {}", e)))?;

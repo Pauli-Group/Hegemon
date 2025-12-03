@@ -143,14 +143,30 @@ impl AsyncWalletSyncEngine {
         let CiphertextEntry { index, ciphertext } = entry;
         let ivk = self.store.incoming_key()?;
         
+        // Debug: log ciphertext details vs expected
+        if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
+            let material = ivk.address_material(ciphertext.diversifier_index)?;
+            eprintln!("[DEBUG] Ciphertext #{}: version={} div_idx={}", 
+                index, ciphertext.version, ciphertext.diversifier_index);
+            eprintln!("  hint_tag: {}", hex::encode(&ciphertext.hint_tag));
+            eprintln!("  expected addr_tag: {}", hex::encode(&material.addr_tag));
+            eprintln!("  expected version: {}", material.version());
+            eprintln!("  version match: {}", ciphertext.version == material.version());
+            eprintln!("  div_idx match: {}", ciphertext.diversifier_index == material.diversifier_index);
+            eprintln!("  tag match: {}", ciphertext.hint_tag == material.addr_tag);
+        }
+        
         match ivk.decrypt_note(&ciphertext) {
             Ok(recovered) => {
                 if self.store.record_recovered_note(recovered, index, index)? {
                     outcome.recovered += 1;
                 }
             }
-            Err(WalletError::NoteMismatch(_)) => {
+            Err(WalletError::NoteMismatch(reason)) => {
                 // Note not for this wallet, skip
+                if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
+                    eprintln!("  -> NoteMismatch: {}", reason);
+                }
             }
             Err(err) => return Err(err),
         }
