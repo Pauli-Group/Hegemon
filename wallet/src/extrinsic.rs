@@ -783,6 +783,96 @@ fn build_sign_payload(
 }
 
 // ============================================================================
+// Unsigned Shielded Transfer Support
+// ============================================================================
+
+/// Encode an unsigned shielded_transfer_unsigned call (call_index 4)
+///
+/// This encodes a pure shielded-to-shielded transfer that doesn't require
+/// a transparent account. The ZK proof authenticates the spend.
+pub fn encode_shielded_transfer_unsigned_call(call: &ShieldedTransferCall) -> Result<Vec<u8>, WalletError> {
+    let mut encoded = Vec::new();
+    
+    // Pallet index for ShieldedPool (from construct_runtime! ordering)
+    const SHIELDED_POOL_INDEX: u8 = 20;
+    encoded.push(SHIELDED_POOL_INDEX);
+    
+    // Call index for shielded_transfer_unsigned (call_index 4 in pallet)
+    const SHIELDED_TRANSFER_UNSIGNED_CALL_INDEX: u8 = 4;
+    encoded.push(SHIELDED_TRANSFER_UNSIGNED_CALL_INDEX);
+    
+    // Encode proof (StarkProof is Vec<u8>)
+    encode_compact_vec(&call.proof, &mut encoded);
+    
+    // Encode nullifiers (BoundedVec<[u8;32], _>)
+    encode_compact_len(call.nullifiers.len(), &mut encoded);
+    for nullifier in &call.nullifiers {
+        encoded.extend_from_slice(nullifier);
+    }
+    
+    // Encode commitments (BoundedVec<[u8;32], _>)
+    encode_compact_len(call.commitments.len(), &mut encoded);
+    for commitment in &call.commitments {
+        encoded.extend_from_slice(commitment);
+    }
+    
+    // Encode encrypted notes (BoundedVec<EncryptedNote, _>)
+    const PALLET_ENCRYPTED_NOTE_SIZE: usize = 611 + 1088;
+    encode_compact_len(call.encrypted_notes.len(), &mut encoded);
+    for note in &call.encrypted_notes {
+        if note.len() != PALLET_ENCRYPTED_NOTE_SIZE {
+            return Err(WalletError::Serialization(
+                format!("Encrypted note wrong size: expected {} bytes, got {}", 
+                        PALLET_ENCRYPTED_NOTE_SIZE, note.len())
+            ));
+        }
+        encoded.extend_from_slice(note);
+    }
+    
+    // Encode anchor ([u8; 32])
+    encoded.extend_from_slice(&call.anchor);
+    
+    // Encode binding signature (BindingSignature { data: [u8; 64] })
+    encoded.extend_from_slice(&call.binding_sig);
+    
+    // NOTE: No value_balance for unsigned transfers - it's always 0
+    // The pallet hardcodes value_balance = 0 for unsigned calls
+    
+    Ok(encoded)
+}
+
+/// Build an unsigned extrinsic for a pure shielded-to-shielded transfer
+///
+/// Unsigned extrinsics have a simpler format:
+/// - version byte: 0x04 (unsigned extrinsic, version 4)
+/// - call: encoded call data
+///
+/// No signature, no signer address, no extra fields.
+pub fn build_unsigned_shielded_transfer(call: &ShieldedTransferCall) -> Result<Vec<u8>, WalletError> {
+    // Encode the call
+    let encoded_call = encode_shielded_transfer_unsigned_call(call)?;
+    
+    let mut extrinsic = Vec::new();
+    
+    // Version byte: 0x04 = unsigned extrinsic
+    // Bit 7 = 0 (unsigned), bits 0-6 = 4 (extrinsic format version)
+    extrinsic.push(0x04);
+    
+    // Call data (no signature, no extra for unsigned)
+    extrinsic.extend_from_slice(&encoded_call);
+    
+    // Wrap with compact length prefix
+    let mut result = Vec::new();
+    encode_compact_len(extrinsic.len(), &mut result);
+    result.extend_from_slice(&extrinsic);
+    
+    eprintln!("DEBUG: Built unsigned extrinsic: {} bytes", result.len());
+    eprintln!("DEBUG: First 20 bytes: {}", hex::encode(&result[..20.min(result.len())]));
+    
+    Ok(result)
+}
+
+// ============================================================================
 // SCALE Encoding Helpers
 // ============================================================================
 

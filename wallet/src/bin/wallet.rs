@@ -665,7 +665,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         anyhow::bail!("watch-only wallets cannot send");
     }
     
-    // Get the spend key for ML-DSA signing
+    // Get the spend key for ML-DSA signing (only needed for signed extrinsics)
     let derived = store.derived_keys()?.ok_or_else(|| anyhow!("watch-only wallet has no spend key"))?;
     let signing_seed = derived.spend.to_bytes();
     
@@ -700,9 +700,23 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         let built = build_transaction(&store, &recipients, args.fee)?;
         store.mark_notes_pending(&built.spent_note_indexes, true)?;
         
-        // Submit via properly signed Substrate extrinsic (ML-DSA signature)
-        println!("Signing extrinsic with ML-DSA and submitting...");
-        match client.submit_shielded_transfer_signed(&built.bundle, &signing_seed).await {
+        // Check if this is a pure shielded-to-shielded transfer (value_balance = 0)
+        // If so, submit as unsigned - no transparent account needed!
+        let is_pure_shielded = built.bundle.value_balance == 0;
+        
+        let result = if is_pure_shielded {
+            // Pure shielded transfer: submit unsigned
+            // The ZK proof authenticates the spend, no signature needed
+            println!("Submitting unsigned shielded-to-shielded transfer...");
+            println!("  (No transparent account required - ZK proof authenticates the spend)");
+            client.submit_shielded_transfer_unsigned(&built.bundle).await
+        } else {
+            // Value entering/leaving shielded pool: need signed extrinsic
+            println!("Signing extrinsic with ML-DSA and submitting...");
+            client.submit_shielded_transfer_signed(&built.bundle, &signing_seed).await
+        };
+        
+        match result {
             Ok(tx_hash) => {
                 store.record_pending_submission(
                     tx_hash,

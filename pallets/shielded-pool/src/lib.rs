@@ -49,6 +49,9 @@ use frame_support::PalletId;
 use frame_system::pallet_prelude::*;
 use log::{info, warn};
 use sp_runtime::traits::AccountIdConversion;
+use sp_runtime::transaction_validity::{
+    InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity, ValidTransaction,
+};
 use sp_std::vec;
 use sp_std::vec::Vec;
 
@@ -666,6 +669,144 @@ pub mod pallet {
 
             Ok(())
         }
+
+        /// Execute an unsigned shielded-to-shielded transfer.
+        ///
+        /// This is the privacy-preserving transfer function that does NOT require
+        /// a transparent account. The ZK proof authenticates the spend, so no
+        /// external signature is needed. This follows the Zcash model where
+        /// shielded-to-shielded transfers are inherently authenticated by the proof.
+        ///
+        /// IMPORTANT: This call ONLY works for pure shielded transfers where
+        /// value_balance = 0 (no value entering or leaving the shielded pool).
+        /// For shielding (transparent → shielded) or unshielding (shielded → transparent),
+        /// use the signed `shielded_transfer` call instead.
+        #[pallet::call_index(4)]
+        #[pallet::weight(T::WeightInfo::shielded_transfer(
+            nullifiers.len() as u32,
+            commitments.len() as u32
+        ))]
+        pub fn shielded_transfer_unsigned(
+            origin: OriginFor<T>,
+            proof: StarkProof,
+            nullifiers: BoundedVec<[u8; 32], T::MaxNullifiersPerTx>,
+            commitments: BoundedVec<[u8; 32], T::MaxCommitmentsPerTx>,
+            ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
+            anchor: [u8; 32],
+            binding_sig: BindingSignature,
+        ) -> DispatchResult {
+            // This is an unsigned extrinsic - no signer required
+            ensure_none(origin)?;
+
+            // Pure shielded transfers have value_balance = 0
+            let value_balance: i128 = 0;
+
+            // Validate counts
+            ensure!(
+                !nullifiers.is_empty() || !commitments.is_empty(),
+                Error::<T>::InvalidNullifierCount
+            );
+            ensure!(
+                ciphertexts.len() == commitments.len(),
+                Error::<T>::EncryptedNotesMismatch
+            );
+
+            // Check anchor is a valid historical Merkle root
+            ensure!(
+                MerkleRoots::<T>::contains_key(anchor),
+                Error::<T>::InvalidAnchor
+            );
+
+            // Check for duplicate nullifiers in transaction
+            let mut seen_nullifiers = Vec::new();
+            for nf in nullifiers.iter() {
+                if seen_nullifiers.contains(nf) {
+                    return Err(Error::<T>::DuplicateNullifierInTx.into());
+                }
+                seen_nullifiers.push(*nf);
+            }
+
+            // Check nullifiers not already spent
+            for nf in nullifiers.iter() {
+                ensure!(
+                    !Nullifiers::<T>::contains_key(nf),
+                    Error::<T>::NullifierAlreadyExists
+                );
+            }
+
+            // Build verification inputs
+            let inputs = ShieldedTransferInputs {
+                anchor,
+                nullifiers: nullifiers.clone().into_inner(),
+                commitments: commitments.clone().into_inner(),
+                value_balance,
+            };
+
+            // Get verifying key
+            let vk = VerifyingKeyStorage::<T>::get();
+            ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
+
+            // Verify ZK proof (STARK-based, no trusted setup)
+            let verifier = T::ProofVerifier::default();
+            match verifier.verify_stark(&proof, &inputs, &vk) {
+                VerificationResult::Valid => {}
+                VerificationResult::InvalidProofFormat => {
+                    warn!(target: "shielded-pool", "Invalid proof format for unsigned transfer");
+                    return Err(Error::<T>::InvalidProofFormat.into());
+                }
+                VerificationResult::VerificationFailed => {
+                    warn!(target: "shielded-pool", "Proof verification failed for unsigned transfer");
+                    return Err(Error::<T>::ProofVerificationFailed.into());
+                }
+                VerificationResult::KeyNotFound => {
+                    return Err(Error::<T>::VerifyingKeyNotFound.into());
+                }
+                _ => return Err(Error::<T>::ProofVerificationFailed.into()),
+            }
+
+            // Verify value balance commitment (checked in-circuit for PQC)
+            ensure!(
+                verifier.verify_binding_signature(&binding_sig, &inputs),
+                Error::<T>::InvalidBindingSignature
+            );
+
+            // Add nullifiers to spent set
+            for nf in nullifiers.iter() {
+                Nullifiers::<T>::insert(nf, ());
+                Self::deposit_event(Event::NullifierAdded { nullifier: *nf });
+            }
+
+            // Add commitments to Merkle tree
+            let mut current_index = CommitmentIndex::<T>::get();
+            for (cm, enc) in commitments.iter().zip(ciphertexts.iter()) {
+                Commitments::<T>::insert(current_index, *cm);
+                EncryptedNotes::<T>::insert(current_index, enc.clone());
+                Self::deposit_event(Event::CommitmentAdded {
+                    index: current_index,
+                    commitment: *cm,
+                });
+                current_index += 1;
+            }
+            CommitmentIndex::<T>::put(current_index);
+
+            // Update Merkle tree root
+            Self::update_merkle_tree(&commitments)?;
+
+            Self::deposit_event(Event::ShieldedTransfer {
+                nullifier_count: nullifiers.len() as u32,
+                commitment_count: commitments.len() as u32,
+                value_balance,
+            });
+
+            info!(
+                target: "shielded-pool",
+                "🔐 Unsigned shielded transfer: {} nullifiers, {} commitments",
+                nullifiers.len(),
+                commitments.len()
+            );
+
+            Ok(())
+        }
     }
 
     impl<T: Config> Pallet<T> {
@@ -800,6 +941,125 @@ pub mod pallet {
             // Shielded coinbase is NOT strictly required - blocks without rewards are valid
             // (though economically pointless for miners)
             Ok(None)
+        }
+    }
+
+    // =========================================================================
+    // VALIDATE UNSIGNED IMPLEMENTATION (for shielded-to-shielded transfers)
+    // =========================================================================
+    //
+    // This allows pure shielded-to-shielded transfers to be submitted without
+    // a transparent account. The ZK proof authenticates the spend (proving
+    // knowledge of sk_spend), so no external signature is needed.
+    //
+    // This follows the Zcash model where shielded transfers are inherently
+    // authenticated by the zero-knowledge proof itself.
+    // =========================================================================
+
+    #[pallet::validate_unsigned]
+    impl<T: Config> ValidateUnsigned for Pallet<T> {
+        type Call = Call<T>;
+
+        fn validate_unsigned(_source: TransactionSource, call: &Self::Call) -> TransactionValidity {
+            match call {
+                Call::shielded_transfer_unsigned {
+                    proof,
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    binding_sig,
+                } => {
+                    // Basic validation before accepting into pool
+
+                    // Check counts are valid
+                    if nullifiers.is_empty() && commitments.is_empty() {
+                        return InvalidTransaction::Custom(1).into();
+                    }
+                    if ciphertexts.len() != commitments.len() {
+                        return InvalidTransaction::Custom(2).into();
+                    }
+
+                    // Check anchor is valid (historical Merkle root)
+                    if !MerkleRoots::<T>::contains_key(anchor) {
+                        return InvalidTransaction::Custom(3).into();
+                    }
+
+                    // Check for duplicate nullifiers within the transaction
+                    let mut seen = Vec::new();
+                    for nf in nullifiers.iter() {
+                        if seen.contains(nf) {
+                            return InvalidTransaction::Custom(4).into();
+                        }
+                        seen.push(*nf);
+                    }
+
+                    // Check nullifiers haven't been spent already
+                    for nf in nullifiers.iter() {
+                        if Nullifiers::<T>::contains_key(nf) {
+                            return InvalidTransaction::Custom(5).into();
+                        }
+                    }
+
+                    // Get verifying key - needed for proof verification
+                    let vk = VerifyingKeyStorage::<T>::get();
+                    if !vk.enabled {
+                        return InvalidTransaction::Custom(6).into();
+                    }
+
+                    // Build verification inputs
+                    let inputs = ShieldedTransferInputs {
+                        anchor: *anchor,
+                        nullifiers: nullifiers.clone().into_inner(),
+                        commitments: commitments.clone().into_inner(),
+                        value_balance: 0, // Pure shielded transfer
+                    };
+
+                    // Verify the STARK proof (this is the main validation)
+                    let verifier = T::ProofVerifier::default();
+                    match verifier.verify_stark(proof, &inputs, &vk) {
+                        VerificationResult::Valid => {}
+                        _ => {
+                            return InvalidTransaction::BadProof.into();
+                        }
+                    }
+
+                    // Verify binding signature
+                    if !verifier.verify_binding_signature(binding_sig, &inputs) {
+                        return InvalidTransaction::BadSigner.into();
+                    }
+
+                    // Create a unique tag based on the nullifiers
+                    // This prevents duplicate transactions in the pool
+                    let mut provides_tags: Vec<Vec<u8>> = Vec::new();
+                    for nf in nullifiers.iter() {
+                        let mut tag = b"shielded_nf:".to_vec();
+                        tag.extend_from_slice(nf);
+                        provides_tags.push(tag);
+                    }
+
+                    ValidTransaction::with_tag_prefix("ShieldedPoolUnsigned")
+                        .priority(100) // Medium priority
+                        .longevity(64) // Valid for ~64 blocks
+                        .and_provides(provides_tags)
+                        .propagate(true)
+                        .build()
+                }
+                // Inherent call: mint_coinbase
+                // Inherent extrinsics are validated through ProvideInherent::check_inherent
+                // but they still need to pass ValidateUnsigned to be applied.
+                // We return a valid transaction here; the actual validation happens in check_inherent.
+                Call::mint_coinbase { .. } => {
+                    ValidTransaction::with_tag_prefix("ShieldedPoolCoinbase")
+                        .priority(TransactionPriority::MAX) // Inherents have highest priority
+                        .longevity(1) // Only valid for current block
+                        .and_provides(vec![b"coinbase".to_vec()])
+                        .propagate(false) // Inherents are not propagated
+                        .build()
+                }
+                // All other calls are invalid as unsigned
+                _ => InvalidTransaction::Call.into(),
+            }
         }
     }
 }

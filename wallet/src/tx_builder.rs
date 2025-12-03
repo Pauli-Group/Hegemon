@@ -72,6 +72,7 @@ pub fn build_transaction(
     }
 
     let change_value = selection.total.saturating_sub(target_value);
+    eprintln!("DEBUG: selection.total = {}, target_value = {}, change_value = {}", selection.total, target_value, change_value);
     if change_value > 0 {
         if outputs.len() >= MAX_OUTPUTS {
             return Err(WalletError::InvalidArgument(
@@ -93,6 +94,7 @@ pub fn build_transaction(
     }
 
     let tree = store.commitment_tree()?;
+    eprintln!("DEBUG: wallet merkle_root = {:?}", tree.root());
     let mut inputs = Vec::new();
     let mut nullifiers = Vec::new();
     for note in &selection.spent {
@@ -111,6 +113,10 @@ pub fn build_transaction(
     // Generate STARK proof using the real prover
     let prover = StarkProver::with_defaults();
     let proof_result = prover.prove(&witness)?;
+    
+    eprintln!("DEBUG tx_builder: proof_result.value_balance = {}", proof_result.value_balance);
+    eprintln!("DEBUG tx_builder: proof_result.commitments.len() = {}", proof_result.commitments.len());
+    eprintln!("DEBUG tx_builder: ciphertexts.len() = {}", ciphertexts.len());
     
     // Compute binding signature commitment
     let binding_data = compute_binding_data(

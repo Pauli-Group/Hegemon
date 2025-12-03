@@ -174,11 +174,15 @@ impl StarkProver {
         let proof_bytes = proof.to_bytes();
         
         // Convert field elements to 32-byte arrays
+        // Filter out zero-valued elements (padding from fixed-size circuit)
+        let zero_bytes = [0u8; 32];
         let nullifiers: Vec<[u8; 32]> = pub_inputs.nullifiers.iter()
             .map(|f| felt_to_bytes32(*f))
+            .filter(|bytes| bytes != &zero_bytes)
             .collect();
         let commitments: Vec<[u8; 32]> = pub_inputs.commitments.iter()
             .map(|f| felt_to_bytes32(*f))
+            .filter(|bytes| bytes != &zero_bytes)
             .collect();
         let anchor = felt_to_bytes32(pub_inputs.merkle_root);
 
