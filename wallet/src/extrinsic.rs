@@ -259,7 +259,11 @@ impl ExtrinsicBuilder {
         let mut encoded = Vec::new();
         
         // Pallet index for ShieldedPool (from construct_runtime! ordering)
-        const SHIELDED_POOL_INDEX: u8 = 19;
+        // System=0, Timestamp=1, Coinbase=2, Pow=3, Difficulty=4, Session=5, Balances=6,
+        // TransactionPayment=7, Sudo=8, Council=9, CouncilMembership=10, Treasury=11,
+        // Oracles=12, Identity=13, Attestations=14, AssetRegistry=15, Settlement=16,
+        // FeatureFlags=17, FeeModel=18, Observability=19, ShieldedPool=20
+        const SHIELDED_POOL_INDEX: u8 = 20;
         encoded.push(SHIELDED_POOL_INDEX);
         
         // Call index for shield (second call in pallet, after shielded_transfer)
@@ -298,11 +302,11 @@ impl ExtrinsicBuilder {
         let mut encoded = Vec::new();
         
         // Pallet index for ShieldedPool (from construct_runtime! ordering)
-        // System=0, Timestamp=1, Pow=2, Difficulty=3, Session=4, Balances=5,
-        // TransactionPayment=6, Sudo=7, Council=8, CouncilMembership=9,
-        // Treasury=10, Oracles=11, Identity=12, Attestations=13, AssetRegistry=14,
-        // Settlement=15, FeatureFlags=16, FeeModel=17, Observability=18, ShieldedPool=19
-        const SHIELDED_POOL_INDEX: u8 = 19;
+        // System=0, Timestamp=1, Coinbase=2, Pow=3, Difficulty=4, Session=5, Balances=6,
+        // TransactionPayment=7, Sudo=8, Council=9, CouncilMembership=10, Treasury=11,
+        // Oracles=12, Identity=13, Attestations=14, AssetRegistry=15, Settlement=16,
+        // FeatureFlags=17, FeeModel=18, Observability=19, ShieldedPool=20
+        const SHIELDED_POOL_INDEX: u8 = 20;
         encoded.push(SHIELDED_POOL_INDEX);
         
         // Call index for shielded_transfer (first call in pallet)
@@ -310,41 +314,54 @@ impl ExtrinsicBuilder {
         encoded.push(SHIELDED_TRANSFER_CALL_INDEX);
         
         // Encode proof (StarkProof is Vec<u8>)
+        eprintln!("DEBUG CALL: proof size = {} bytes", call.proof.len());
         encode_compact_vec(&call.proof, &mut encoded);
+        eprintln!("DEBUG CALL: after proof, encoded size = {}", encoded.len());
         
         // Encode nullifiers (BoundedVec<[u8;32], _>)
+        eprintln!("DEBUG CALL: nullifiers count = {}", call.nullifiers.len());
         encode_compact_len(call.nullifiers.len(), &mut encoded);
         for nullifier in &call.nullifiers {
             encoded.extend_from_slice(nullifier);
         }
+        eprintln!("DEBUG CALL: after nullifiers, encoded size = {}", encoded.len());
         
         // Encode commitments (BoundedVec<[u8;32], _>)
+        eprintln!("DEBUG CALL: commitments count = {}", call.commitments.len());
         encode_compact_len(call.commitments.len(), &mut encoded);
         for commitment in &call.commitments {
             encoded.extend_from_slice(commitment);
         }
+        eprintln!("DEBUG CALL: after commitments, encoded size = {}", encoded.len());
         
         // Encode encrypted notes (BoundedVec<EncryptedNote, _>)
-        // EncryptedNote has ciphertext: [u8; 611] and kem_ciphertext: [u8; 1088]
+        // EncryptedNote has ciphertext: [u8; 611] and kem_ciphertext: [u8; 1088] = 1699 bytes total
+        const PALLET_ENCRYPTED_NOTE_SIZE: usize = 611 + 1088;
+        eprintln!("DEBUG CALL: encrypted_notes count = {}", call.encrypted_notes.len());
         encode_compact_len(call.encrypted_notes.len(), &mut encoded);
         for note in &call.encrypted_notes {
-            // The encrypted note should be exactly ciphertext + kem_ciphertext
-            if note.len() < 611 + 1088 {
+            // The encrypted note must be exactly ciphertext + kem_ciphertext
+            if note.len() != PALLET_ENCRYPTED_NOTE_SIZE {
                 return Err(WalletError::Serialization(
-                    format!("Encrypted note too short: {} bytes", note.len())
+                    format!("Encrypted note wrong size: expected {} bytes, got {}", 
+                            PALLET_ENCRYPTED_NOTE_SIZE, note.len())
                 ));
             }
             encoded.extend_from_slice(note);
         }
+        eprintln!("DEBUG CALL: after encrypted_notes, encoded size = {}", encoded.len());
         
         // Encode anchor ([u8; 32])
         encoded.extend_from_slice(&call.anchor);
+        eprintln!("DEBUG CALL: after anchor, encoded size = {}", encoded.len());
         
         // Encode binding signature (BindingSignature { data: [u8; 64] })
         encoded.extend_from_slice(&call.binding_sig);
+        eprintln!("DEBUG CALL: after binding_sig, encoded size = {}", encoded.len());
         
         // Encode value_balance (i128, little-endian)
         encoded.extend_from_slice(&call.value_balance.to_le_bytes());
+        eprintln!("DEBUG CALL: final call size = {}", encoded.len());
         
         Ok(encoded)
     }
@@ -461,6 +478,12 @@ impl ExtrinsicBuilder {
         signature: &[u8],
         encoded_extra: &[u8],
     ) -> Vec<u8> {
+        eprintln!("DEBUG EXTRINSIC BUILD:");
+        eprintln!("  call len = {} bytes", encoded_call.len());
+        eprintln!("  signature len = {} bytes", signature.len());
+        eprintln!("  extra len = {} bytes", encoded_extra.len());
+        eprintln!("  extra hex = {}", hex::encode(encoded_extra));
+        
         let mut extrinsic = Vec::new();
         
         // Version byte: 0x84 = signed extrinsic (0b10000100)
@@ -481,10 +504,19 @@ impl ExtrinsicBuilder {
         // Call
         extrinsic.extend_from_slice(encoded_call);
         
+        eprintln!("  extrinsic body = {} bytes", extrinsic.len());
+        eprintln!("  breakdown: 1(version) + 1(addr variant) + 32(account) + {}(sig) + {}(extra) + {}(call) = {}",
+                  signature.len(), encoded_extra.len(), encoded_call.len(),
+                  1 + 1 + 32 + signature.len() + encoded_extra.len() + encoded_call.len());
+        
         // Wrap with compact length prefix (standard extrinsic encoding)
         let mut result = Vec::new();
         encode_compact_len(extrinsic.len(), &mut result);
+        eprintln!("  compact prefix = {} bytes for value {}", result.len(), extrinsic.len());
         result.extend_from_slice(&extrinsic);
+        
+        eprintln!("  final extrinsic = {} bytes", result.len());
+        eprintln!("  first 20 bytes: {}", hex::encode(&result[..20.min(result.len())]));
         
         result
     }
@@ -686,7 +718,8 @@ fn encode_transfer_call(dest: &[u8; 32], amount: u128) -> Vec<u8> {
 fn encode_shield_call(call: &ShieldCall) -> Vec<u8> {
     let mut encoded = Vec::new();
     
-    const SHIELDED_POOL_INDEX: u8 = 19;
+    // ShieldedPool pallet index (see construct_runtime! in runtime/src/lib.rs)
+    const SHIELDED_POOL_INDEX: u8 = 20;
     encoded.push(SHIELDED_POOL_INDEX);
     
     const SHIELD_CALL_INDEX: u8 = 1;
@@ -892,7 +925,7 @@ mod encoding_tests {
         
         // Verify the encoding
         assert_eq!(encoded.len(), expected, "Encoded call should be {} bytes", expected);
-        assert_eq!(encoded[0], 19, "Pallet index should be 19");
+        assert_eq!(encoded[0], 20, "Pallet index should be 20 (ShieldedPool)");
         assert_eq!(encoded[1], 1, "Call index should be 1");
         
         // Verify amount encoding (1000 as u128 little-endian)
@@ -962,7 +995,7 @@ mod encoding_tests {
         let call_bytes = &body[call_start..];
         println!("\nCall starts at byte {} (offset from body)", call_start);
         println!("Call length: {} bytes", call_bytes.len());
-        println!("Call pallet index: {} (expected 19)", call_bytes[0]);
+        println!("Call pallet index: {} (expected 20)", call_bytes[0]);
         println!("Call index: {} (expected 1 for shield)", call_bytes[1]);
         
         // Amount is raw u128 (16 bytes)
