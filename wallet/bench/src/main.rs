@@ -231,4 +231,3 @@ fn run_scanning_bench(num_notes: usize) -> Result<ScanningBenchReport> {
         target_met,
     })
 }
-}

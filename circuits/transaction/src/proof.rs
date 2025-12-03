@@ -183,6 +183,7 @@ pub fn verify(
     // Legacy fallback: check public input consistency only
     // WARNING: This does NOT provide cryptographic security!
     // It's only here for backwards compatibility with old test fixtures.
+    #[allow(deprecated)] // Intentional use of legacy TransactionAir for test fixtures
     let trace = TransactionTrace {
         merkle_root: proof.public_inputs.merkle_root,
         nullifiers: proof.nullifiers.clone(),
@@ -196,7 +197,9 @@ pub fn verify(
             .unwrap_or(0),
         fee: proof.public_inputs.native_fee,
     };
+    #[allow(deprecated)]
     let air = crate::air::TransactionAir::new(trace);
+    #[allow(deprecated)]
     air.check(&proof.public_inputs)?;
     
     Ok(VerificationReport { verified: true })

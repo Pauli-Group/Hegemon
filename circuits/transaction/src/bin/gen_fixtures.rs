@@ -5,7 +5,6 @@ use std::io::Write;
 use std::path::Path;
 
 use serde::Serialize;
-use winterfell::math::FieldElement;
 
 use transaction_circuit::hashing::Felt;
 use transaction_circuit::keys::generate_keys;

@@ -88,7 +88,7 @@ impl MlKemPublicKey {
     }
     
     fn to_inner(&self) -> EncapsulationKey<MlKem768Params> {
-        let arr: Array<u8, _> = Array::clone_from_slice(&self.bytes);
+        let arr: Array<u8, _> = Array::try_from(self.bytes.as_slice()).expect("size mismatch");
         EncapsulationKey::<MlKem768Params>::from_bytes(&arr)
     }
 }
@@ -108,7 +108,7 @@ impl KemPublicKey for MlKemPublicKey {
         hasher.update(b"ml-kem-768-encapsulate");
         hasher.update(seed);
         let m: [u8; 32] = hasher.finalize().into();
-        let m_array: Array<u8, _> = Array::clone_from_slice(&m);
+        let m_array: Array<u8, _> = Array::try_from(m.as_slice()).expect("size mismatch");
         
         let ek = self.to_inner();
         let (ct, ss) = ek.encapsulate_deterministic(&m_array).expect("encapsulation failed");
@@ -175,14 +175,14 @@ impl MlKemSecretKey {
     }
     
     fn to_inner(&self) -> DecapsulationKey<MlKem768Params> {
-        let arr: Array<u8, _> = Array::clone_from_slice(&self.bytes);
+        let arr: Array<u8, _> = Array::try_from(self.bytes.as_slice()).expect("size mismatch");
         DecapsulationKey::<MlKem768Params>::from_bytes(&arr)
     }
 
     /// REAL ML-KEM decapsulation using lattice operations
     pub fn decapsulate(&self, ciphertext: &MlKemCiphertext) -> Result<MlKemSharedSecret, CryptoError> {
         let dk = self.to_inner();
-        let ct: Array<u8, _> = Array::clone_from_slice(&ciphertext.bytes);
+        let ct: Array<u8, _> = Array::try_from(ciphertext.bytes.as_slice()).expect("size mismatch");
         let ss = dk.decapsulate(&ct).map_err(|_| CryptoError::DecapsulationFailed)?;
         
         let mut ss_bytes = [0u8; ML_KEM_SHARED_SECRET_LEN];
@@ -260,7 +260,7 @@ impl KemKeyPair for MlKemKeyPair {
         let mut full_seed = [0u8; 64];
         full_seed[..32].copy_from_slice(&d);
         full_seed[32..].copy_from_slice(&z);
-        let seed_array: ml_kem::Seed = Array::clone_from_slice(&full_seed);
+        let seed_array: ml_kem::Seed = Array::try_from(full_seed.as_slice()).expect("size mismatch");
         
         // REAL ML-KEM key generation using lattice operations
         let dk = DecapsulationKey::<MlKem768Params>::from(seed_array);

@@ -7,8 +7,7 @@ use rand::RngCore;
 use wallet::address::ShieldedAddress;
 
 use crypto::{
-    note_encryption::{derive_coinbase_r, derive_coinbase_rho, NoteCiphertext, NotePlaintext},
-    traits::KemPublicKey,
+    note_encryption::{NoteCiphertext, NotePlaintext},
 };
 
 use pallet_shielded_pool::{
@@ -138,7 +137,6 @@ fn convert_to_pallet_format(
     if memo_len > 0 {
         ciphertext_bytes[offset..offset + memo_len as usize]
             .copy_from_slice(&ciphertext.memo_payload[..memo_len as usize]);
-        offset += memo_len as usize;
     }
     
     // Hint tag at the end

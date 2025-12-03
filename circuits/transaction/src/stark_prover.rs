@@ -14,7 +14,7 @@ use winterfell::{
 use winter_crypto::hashers::Blake3_256;
 
 use crate::{
-    constants::{MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS, POSEIDON_WIDTH, NULLIFIER_DOMAIN_TAG, NOTE_DOMAIN_TAG, MERKLE_DOMAIN_TAG, CIRCUIT_MERKLE_DEPTH},
+    constants::{MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS, POSEIDON_WIDTH, NULLIFIER_DOMAIN_TAG, NOTE_DOMAIN_TAG, MERKLE_DOMAIN_TAG},
     hashing::prf_key,
     stark_air::{
         TransactionAirStark, TransactionPublicInputsStark,

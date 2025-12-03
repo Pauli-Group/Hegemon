@@ -6,7 +6,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use synthetic_crypto::note_encryption::{
-    self as crypto_notes, NoteCiphertext as CryptoNoteCiphertext,
+    NoteCiphertext as CryptoNoteCiphertext,
     NotePlaintext as CryptoNotePlaintext,
 };
 use transaction_circuit::note::NoteData;
@@ -133,7 +133,7 @@ impl NoteCiphertext {
             &crypto_note,
             &kem_seed,
         )
-        .map_err(|e| WalletError::EncryptionFailure)?;
+        .map_err(|_e| WalletError::EncryptionFailure)?;
 
         Ok(Self::from_crypto(crypto_ct))
     }
