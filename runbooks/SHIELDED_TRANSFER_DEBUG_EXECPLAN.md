@@ -25,43 +25,77 @@ The immediate goal is to debug and complete a shielded-to-shielded transfer (Ali
 - [x] (2025-12-02 23:50Z) Synced Alice's wallet: 5 notes, 25B balance (5 × 5B coinbase).
 - [x] (2025-12-02 23:52Z) Created `/tmp/recipients.json` with Bob's address, 1B coin transfer.
 - [x] (2025-12-02 23:55Z) **FAILED**: `substrate-send` failed with "Custom error: 3" (InvalidAnchor) again.
-- [ ] **INVESTIGATING**: Type mismatch between wallet anchor format and pallet storage format.
+- [x] (2025-12-03 00:30Z) Fixed RPC commitment byte extraction bug (was reading bytes[0..8] LE, should be bytes[24..32] BE).
+- [x] (2025-12-03 01:00Z) **FAILED**: Transfer failed with "bad signature" error.
+- [x] (2025-12-03 01:30Z) Added local proof verification to wallet - discovered proof fails with `InconsistentOodConstraintEvaluations`.
+- [x] (2025-12-03 02:00Z) **BUG #1 FIXED**: Wallet was filtering zeros from nullifiers/commitments in ProofResult but STARK proof was generated with padding zeros.
+- [x] (2025-12-03 02:30Z) **FAILED**: Still `InconsistentOodConstraintEvaluations` - Merkle path never populated.
+- [x] (2025-12-03 03:00Z) **BUG #2 FIXED**: Wallet's `to_input_witness()` never populated `merkle_path`. Fixed `tx_builder.rs` and `shielded_tx.rs` to call `tree.authentication_path()`.
+- [x] (2025-12-03 03:30Z) **FAILED**: Still constraint failures - tree depth mismatch.
+- [x] (2025-12-03 04:00Z) **BUG #3 FIXED**: Pallet used `MERKLE_TREE_DEPTH=32`, circuit uses `CIRCUIT_MERKLE_DEPTH=8`. Changed pallet and wallet to use 8.
+- [x] (2025-12-03 04:30Z) **FAILED**: Still `InconsistentOodConstraintEvaluations` after all fixes.
+- [x] (2025-12-03 05:00Z) **ROOT CAUSE FOUND**: Pallet commitment scheme incompatible with circuit!
+- [ ] **IN PROGRESS**: Implementing circuit-compatible commitment in pallet.
 - [ ] Execute a shielded transfer from Alice to Bob using `substrate-send`.
 - [ ] Verify the transaction is included on-chain and Bob's wallet can decrypt the note.
 
 
 ## Surprises & Discoveries
 
-- Observation: The pallet had a completely separate Merkle hash implementation using Blake2b-256, while the circuit and wallet use a Poseidon-like sponge operating on 64-bit Goldilocks field elements.
-  Evidence: The pallet's `merkle.rs` now contains a full port of the Poseidon sponge from `circuits/transaction/src/hashing.rs`, with constants `POSEIDON_WIDTH=3`, `POSEIDON_ROUNDS=8`, `MERKLE_DOMAIN_TAG=4`, and `FIELD_MODULUS = 2^64 - 2^32 + 1`.
+### Discovery 1: RPC Byte Order Bug (Fixed)
+- Observation: Node RPC `commitment_slice()` was extracting commitment Felt values incorrectly.
+- Evidence: Was using `u64::from_le_bytes(commitment[0..8])` but `felt_to_bytes32` stores u64 BE in bytes[24..32].
+- Resolution: Fixed to use `u64::from_be_bytes(commitment[24..32])`.
 
-- Observation: The wallet's `CommitmentTree` (from `state_merkle` crate) uses `transaction_circuit::hashing::merkle_node` directly, ensuring wallet and circuit always produce matching Merkle roots.
-  Evidence: `state/merkle/src/lib.rs` line 8: `use transaction_circuit::hashing::{merkle_node, Felt};`
+### Discovery 2: Proof Zero-Filtering Bug (Fixed)
+- Observation: Wallet filtered zeros from `ProofResult.nullifiers` and `ProofResult.commitments`.
+- Evidence: STARK proof was generated with padding zeros, but wallet removed them before sending to pallet.
+- Resolution: Removed the `.filter(|x| *x != [0u8; 32])` calls in `prover.rs`.
 
-- Observation (2025-12-02 23:58Z): Type mismatch investigation led to discovering the byte order/extraction bug (see below).
-  The wallet's `Felt` (u64) and pallet's `[u8; 32]` conversions are actually correct via `felt_to_bytes32` which stores the u64 in the last 8 bytes with big-endian encoding.
+### Discovery 3: Merkle Path Never Populated (Fixed)
+- Observation: `InputNoteWitness.merkle_path` was always empty (default).
+- Evidence: `RecoveredNote.to_input_witness()` never set `merkle_path`, and `tx_builder.rs` didn't fetch it from tree.
+- Resolution: Added `tree.authentication_path(note.position)` call in `tx_builder.rs` and `shielded_tx.rs`.
 
-- **ROOT CAUSE FOUND (2025-12-03)**: Node RPC commitment byte extraction bug!
-  - `node/src/substrate/rpc/production_service.rs` in `commitment_slice()` was extracting commitment Felt values incorrectly:
-    ```rust
-    // WRONG: first 8 bytes, little-endian
-    let value = u64::from_le_bytes(commitment[0..8].try_into().unwrap_or([0u8; 8]));
-    ```
-  - Should be:
-    ```rust
-    // CORRECT: last 8 bytes, big-endian (matching felt_to_bytes32 format)
-    let value = u64::from_be_bytes(commitment[24..32].try_into().unwrap_or([0u8; 8]));
-    ```
-  - This caused the wallet to receive wrong commitment values when syncing, so it built a different Merkle tree than the pallet, resulting in non-matching roots.
-  
-  Evidence:
-  - `circuits/transaction/src/hashing.rs:felt_to_bytes32()` puts u64 BE in bytes[24..32]
-  - `pallets/shielded-pool/src/merkle.rs:bytes32_to_felt()` reads from bytes[24..32] as BE
-  - RPC was using bytes[0..8] with LE - completely wrong!
+### Discovery 4: Tree Depth Mismatch (Fixed)
+- Observation: Pallet used `MERKLE_TREE_DEPTH=32`, circuit uses `CIRCUIT_MERKLE_DEPTH=8`.
+- Evidence: `pallets/shielded-pool/src/types.rs` had 32, `circuits/transaction/src/constants.rs` had 8.
+- Resolution: Changed pallet and wallet `DEFAULT_TREE_DEPTH` to 8.
 
-  - `pallets/shielded-pool/src/lib.rs:716`: `MerkleRoots::<T>::contains_key(anchor)` where `anchor: [u8; 32]`
-  
-  **This is the root cause**: The wallet sends a u64 anchor but the pallet expects [u8; 32]. They will never match!
+### Discovery 5: **FUNDAMENTAL COMMITMENT SCHEME MISMATCH** (Root Cause - In Progress)
+- Observation: Pallet's `note_commitment()` returns a completely different value than circuit's.
+- Evidence:
+  1. **Pallet's `commitment.rs::note_commitment()`**:
+     - Takes `Note { recipient: [u8; 43], value, rcm, memo }`
+     - Uses Blake2-derived domain separator
+     - Computes Poseidon hash
+     - **THEN WRAPS IN BLAKE2**: `blake2_256(&[NOTE_COMMITMENT_DOMAIN, &hash_bytes].concat())`
+     - Returns 32 bytes
+
+  2. **Circuit's `hashing.rs::note_commitment()`**:
+     - Takes `(value: u64, asset_id: u64, pk_recipient: [u8; 32], rho: [u8; 32], r: [u8; 32])`
+     - Uses `NOTE_DOMAIN_TAG = 1` directly
+     - Computes Poseidon sponge
+     - Returns raw `Felt` (u64)
+
+  3. **The two schemes are COMPLETELY INCOMPATIBLE**:
+     - Different input fields (recipient 43 bytes vs pk_recipient 32 bytes + separate rho/r)
+     - Different domain separator approach
+     - Pallet wraps in Blake2, circuit doesn't
+     - Pallet returns 32 bytes, circuit returns 64-bit Felt
+
+- Impact: When wallet syncs, it receives pallet's Blake2-wrapped commitments. It extracts the last 8 bytes as Felt. But when generating a proof, the circuit computes a pure Poseidon commitment with different inputs. **The Merkle tree leaves don't match**, so the computed root differs from the pallet's root.
+
+- Resolution Attempt (2025-12-03 05:30Z):
+  1. Added `circuit_sponge()` function to `commitment.rs` that matches circuit's sponge exactly
+  2. Added `circuit_note_commitment()` that matches circuit's note_commitment signature
+  3. Added `circuit_coinbase_commitment()` that uses circuit-compatible format
+  4. Updated `coinbase_commitment()` to call the circuit-compatible version
+
+- **NEW PROBLEM DISCOVERED** (2025-12-03 06:00Z): 49 commitments synced but 0 notes recovered!
+  - The wallet cannot decrypt the coinbase ciphertexts
+  - This suggests the encrypted note format or key derivation doesn't match between node and wallet
+  - Need to investigate `node/src/shielded_coinbase.rs` encryption vs `wallet/src/notes.rs` decryption
 
 
 ## Decision Log
@@ -78,10 +112,34 @@ The immediate goal is to debug and complete a shielded-to-shielded transfer (Ali
   Rationale: The RPC was extracting the first 8 bytes with little-endian instead of the last 8 bytes with big-endian. This caused the wallet to build its Merkle tree with wrong commitment Felt values, resulting in a different root than the pallet.
   Date/Author: 2025-12-03, pldd
 
+- Decision: Add circuit-compatible commitment functions to pallet instead of modifying circuit.
+  Rationale: The circuit is the canonical source of truth for cryptographic operations. The pallet must match the circuit, not vice versa. The circuit's simpler format (pure Poseidon, no Blake2 wrapper) is also more efficient.
+  Date/Author: 2025-12-03, pldd
+
+- Decision: Align MERKLE_TREE_DEPTH to 8 everywhere.
+  Rationale: The circuit uses CIRCUIT_MERKLE_DEPTH=8. The pallet and wallet must match to produce valid Merkle paths.
+  Date/Author: 2025-12-03, pldd
+
 
 ## Outcomes & Retrospective
 
-(To be filled after the transfer succeeds.)
+### Bugs Fixed (not yet verified working)
+1. RPC byte extraction: `commitment[0..8] LE` → `commitment[24..32] BE`
+2. Proof zero-filtering: Removed `.filter()` calls
+3. Merkle path population: Added `tree.authentication_path()` calls
+4. Tree depth alignment: Changed to 8 everywhere
+5. Commitment scheme: Added `circuit_*` functions (in progress)
+
+### Remaining Issues
+1. **Note decryption failure**: 49 commitments synced, 0 notes recovered
+   - Wallet cannot decrypt coinbase ciphertexts
+   - Likely mismatch between node encryption and wallet decryption
+
+### Lessons Learned
+1. **Test compatibility at the primitive level first**: Should have written unit tests comparing pallet and circuit hash outputs before integration testing.
+2. **Document cryptographic formats explicitly**: The `felt_to_bytes32` format (u64 BE in last 8 bytes) should be documented as canonical.
+3. **Don't wrap hashes in more hashes**: The pallet's Blake2 wrapper around Poseidon was unnecessary complexity that caused mismatch.
+4. **Trace data through the full pipeline**: The commitment goes: circuit → pallet storage → RPC → wallet tree → proof → verification. Any mismatch breaks everything.
 
 
 ## Context and Orientation

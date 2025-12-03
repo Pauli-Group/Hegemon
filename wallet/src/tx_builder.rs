@@ -98,7 +98,20 @@ pub fn build_transaction(
     let mut inputs = Vec::new();
     let mut nullifiers = Vec::new();
     for note in &selection.spent {
-        inputs.push(note.recovered.to_input_witness(note.position));
+        // Get the Merkle authentication path for this note's position
+        let auth_path = tree.authentication_path(note.position as usize)
+            .map_err(|e| WalletError::InvalidState(Box::leak(format!("merkle path error: {}", e).into_boxed_str())))?;
+        
+        // Convert Felt path to MerklePath
+        let merkle_path = transaction_circuit::note::MerklePath {
+            siblings: auth_path,
+        };
+        
+        // Create input witness with the merkle path
+        let mut input_witness = note.recovered.to_input_witness(note.position);
+        input_witness.merkle_path = merkle_path;
+        inputs.push(input_witness);
+        
         nullifiers.push(fvk.compute_nullifier(&note.recovered.note.rho, note.position));
     }
     let witness = TransactionWitness {

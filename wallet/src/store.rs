@@ -23,7 +23,8 @@ const FILE_VERSION: u32 = 1;
 const KEY_LEN: usize = 32;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
-const DEFAULT_TREE_DEPTH: u32 = 32;
+/// Default tree depth - must match CIRCUIT_MERKLE_DEPTH in transaction-circuit.
+const DEFAULT_TREE_DEPTH: u32 = 8;
 
 #[derive(Debug)]
 pub struct WalletStore {
