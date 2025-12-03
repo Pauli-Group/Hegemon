@@ -5,7 +5,7 @@ This guide walks through setting up a two-node Hegemon network where both partic
 ## Prerequisites
 
 Both participants need:
-- The `hegemon-node` and `wallet` binaries (build with `cargo build -p hegemon-node -p wallet --features substrate --release`)
+- The `hegemon-node` and `wallet` binaries (build with `cargo build -p hegemon-node -p wallet --release`)
 - Port 30333 TCP forwarded if behind NAT
 
 ## Network Info
@@ -144,7 +144,7 @@ curl -s -d '{"id":1,"jsonrpc":"2.0","method":"system_health"}' \
 
 Either build from source or get the binary from Pierre-Luc:
 ```bash
-cargo build -p hegemon-node -p wallet --features substrate --release
+cargo build -p hegemon-node -p wallet --release
 ```
 
 ### 2. Initialize Wallet
