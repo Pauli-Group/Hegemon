@@ -451,14 +451,26 @@ impl<'a> ShieldedTxBuilder<'a> {
         outputs: Vec<OutputNoteWitness>,
         fee: u64,
     ) -> Result<TransactionWitness, WalletError> {
-        // Build input witnesses
-        let inputs: Vec<_> = selection
-            .iter()
-            .map(|note| note.recovered.to_input_witness(note.position))
-            .collect();
-
-        // Get Merkle root from commitment tree
+        // Get Merkle tree for authentication paths
         let tree = self.store.commitment_tree()?;
+        
+        // Build input witnesses with Merkle paths
+        let mut inputs = Vec::with_capacity(selection.len());
+        for note in selection {
+            // Get the Merkle authentication path for this note's position
+            let auth_path = tree.authentication_path(note.position as usize)
+                .map_err(|e| WalletError::InvalidState(Box::leak(format!("merkle path error: {}", e).into_boxed_str())))?;
+            
+            // Convert Felt path to MerklePath
+            let merkle_path = transaction_circuit::note::MerklePath {
+                siblings: auth_path,
+            };
+            
+            // Create input witness with the merkle path
+            let mut input_witness = note.recovered.to_input_witness(note.position);
+            input_witness.merkle_path = merkle_path;
+            inputs.push(input_witness);
+        }
 
         Ok(TransactionWitness {
             inputs,

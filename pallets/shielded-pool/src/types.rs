@@ -11,8 +11,9 @@ use scale_info::TypeInfo;
 use sp_std::vec::Vec;
 
 /// The depth of the Merkle tree for note commitments.
-/// Depth 32 supports ~4 billion notes.
-pub const MERKLE_TREE_DEPTH: u32 = 32;
+/// Must match CIRCUIT_MERKLE_DEPTH in transaction-circuit.
+/// Depth 8 supports 256 notes (sufficient for development/testnet).
+pub const MERKLE_TREE_DEPTH: u32 = 8;
 
 /// Maximum number of nullifiers per transaction.
 pub const MAX_NULLIFIERS_PER_TX: u32 = 4;

@@ -173,16 +173,25 @@ impl StarkProver {
         // Serialize the proof for transmission
         let proof_bytes = proof.to_bytes();
         
+        // Verify proof locally before returning (debug)
+        eprintln!("DEBUG prover: Verifying proof locally before sending...");
+        match transaction_circuit::verify_transaction_proof_bytes(&proof_bytes, &pub_inputs) {
+            Ok(()) => eprintln!("DEBUG prover: Local verification PASSED"),
+            Err(e) => {
+                eprintln!("DEBUG prover: Local verification FAILED: {:?}", e);
+                return Err(WalletError::Serialization(format!("Proof verification failed: {:?}", e)));
+            }
+        }
+        
         // Convert field elements to 32-byte arrays
-        // Filter out zero-valued elements (padding from fixed-size circuit)
-        let zero_bytes = [0u8; 32];
+        // IMPORTANT: Do NOT filter out zeros - the STARK proof was generated with
+        // exactly MAX_INPUTS nullifiers and MAX_OUTPUTS commitments (with zero padding).
+        // The verifier must receive the same public inputs to verify correctly.
         let nullifiers: Vec<[u8; 32]> = pub_inputs.nullifiers.iter()
             .map(|f| felt_to_bytes32(*f))
-            .filter(|bytes| bytes != &zero_bytes)
             .collect();
         let commitments: Vec<[u8; 32]> = pub_inputs.commitments.iter()
             .map(|f| felt_to_bytes32(*f))
-            .filter(|bytes| bytes != &zero_bytes)
             .collect();
         let anchor = felt_to_bytes32(pub_inputs.merkle_root);
 
