@@ -42,7 +42,8 @@ impl TransactionBundle {
     ) -> Result<Self, WalletError> {
         let mut encoded = Vec::with_capacity(ciphertexts.len());
         for ct in ciphertexts {
-            encoded.push(bincode::serialize(ct)?);
+            // Use pallet-compatible format (1699 bytes) instead of bincode
+            encoded.push(ct.to_pallet_bytes()?);
         }
         Ok(Self {
             proof_bytes,
@@ -58,7 +59,8 @@ impl TransactionBundle {
     pub fn decode_notes(&self) -> Result<Vec<NoteCiphertext>, WalletError> {
         let mut notes = Vec::with_capacity(self.ciphertexts.len());
         for bytes in &self.ciphertexts {
-            notes.push(bincode::deserialize(bytes)?);
+            // Decode from pallet format (1699 bytes)
+            notes.push(NoteCiphertext::from_pallet_bytes(bytes)?);
         }
         Ok(notes)
     }
@@ -128,7 +130,8 @@ impl WalletRpcClient {
         let response: CiphertextResponse = self.get_json("/wallet/ciphertexts", Some(&query))?;
         let mut entries = Vec::with_capacity(response.entries.len());
         for entry in response.entries {
-            let ciphertext: NoteCiphertext = bincode::deserialize(&entry.ciphertext)?;
+            // Parse from pallet format (1699 bytes)
+            let ciphertext = NoteCiphertext::from_pallet_bytes(&entry.ciphertext)?;
             entries.push(CiphertextEntry {
                 index: entry.index,
                 ciphertext,

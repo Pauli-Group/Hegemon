@@ -778,6 +778,14 @@ impl SubstrateRpcClient {
         // 4. Build the call
         let call = ShieldedTransferCall::from_bundle(bundle);
         
+        // Debug: print encrypted note sizes
+        eprintln!("DEBUG: Number of encrypted notes: {}", call.encrypted_notes.len());
+        for (i, note) in call.encrypted_notes.iter().enumerate() {
+            eprintln!("DEBUG: Encrypted note {} size: {} bytes", i, note.len());
+        }
+        eprintln!("DEBUG: Spec version: {}, TX version: {}", metadata.spec_version, metadata.tx_version);
+        eprintln!("DEBUG: Nonce: {}", nonce);
+        
         // 5. Build mortal era (64 block validity)
         // Use current block number directly - block_hash is the hash of this block
         let era = Era::mortal(64, metadata.block_number);
@@ -790,6 +798,10 @@ impl SubstrateRpcClient {
             0, // tip
             &metadata,
         )?;
+        
+        // Debug: print extrinsic size and first bytes
+        eprintln!("DEBUG: Extrinsic size: {} bytes", extrinsic.len());
+        eprintln!("DEBUG: Extrinsic first 100 bytes: {}", hex::encode(&extrinsic[..100.min(extrinsic.len())]));
         
         // 7. Submit
         self.submit_extrinsic(&extrinsic).await

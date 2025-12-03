@@ -727,11 +727,9 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
 fn cmd_substrate_shield(args: SubstrateShieldArgs) -> Result<()> {
     // Determine signing seed
     let signing_seed: [u8; 32] = if args.use_alice {
-        // Alice dev account: blake2_256("//Alice")
-        use blake2::{Blake2s256, Digest};
-        let mut hasher = Blake2s256::new();
-        hasher.update(b"//Alice");
-        hasher.finalize().into()
+        // Alice dev account: blake2_256("//Alice") - must match gen_dev_account.rs
+        // Note: Uses Blake2b-256 (sp_crypto_hashing::blake2_256), not Blake2s-256
+        sp_crypto_hashing::blake2_256(b"//Alice")
     } else {
         let store = WalletStore::open(&args.store, &args.passphrase)?;
         if store.mode()? == WalletMode::WatchOnly {

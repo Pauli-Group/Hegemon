@@ -100,6 +100,11 @@ impl NotePlaintext {
     }
 }
 
+/// Size of the ciphertext portion in pallet format
+const PALLET_CIPHERTEXT_SIZE: usize = 611;
+/// Size of the ML-KEM ciphertext
+const PALLET_KEM_CIPHERTEXT_SIZE: usize = 1088;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NoteCiphertext {
     pub version: u8,
@@ -115,6 +120,125 @@ pub struct NoteCiphertext {
 }
 
 impl NoteCiphertext {
+    /// Convert to pallet-compatible format (611 + 1088 = 1699 bytes)
+    ///
+    /// The pallet's EncryptedNote type uses fixed-size arrays:
+    /// - ciphertext: [u8; 611] containing version, diversifier_index, note/memo payloads, hint_tag
+    /// - kem_ciphertext: [u8; 1088] for ML-KEM
+    pub fn to_pallet_bytes(&self) -> Result<Vec<u8>, WalletError> {
+        if self.kem_ciphertext.len() != PALLET_KEM_CIPHERTEXT_SIZE {
+            return Err(WalletError::Serialization(format!(
+                "Invalid KEM ciphertext length: expected {}, got {}",
+                PALLET_KEM_CIPHERTEXT_SIZE,
+                self.kem_ciphertext.len()
+            )));
+        }
+        
+        // Build the 611-byte ciphertext portion
+        let mut ciphertext = [0u8; PALLET_CIPHERTEXT_SIZE];
+        let mut offset = 0;
+        
+        // Version (1 byte)
+        ciphertext[offset] = self.version;
+        offset += 1;
+        
+        // Diversifier index (4 bytes, little-endian)
+        ciphertext[offset..offset + 4].copy_from_slice(&self.diversifier_index.to_le_bytes());
+        offset += 4;
+        
+        // Note payload length (4 bytes) and data
+        let note_len = self.note_payload.len().min(400) as u32;
+        ciphertext[offset..offset + 4].copy_from_slice(&note_len.to_le_bytes());
+        offset += 4;
+        ciphertext[offset..offset + note_len as usize]
+            .copy_from_slice(&self.note_payload[..note_len as usize]);
+        offset += note_len as usize;
+        
+        // Memo payload length (4 bytes) and data
+        let memo_len = self.memo_payload.len().min(100) as u32;
+        ciphertext[offset..offset + 4].copy_from_slice(&memo_len.to_le_bytes());
+        offset += 4;
+        if memo_len > 0 {
+            ciphertext[offset..offset + memo_len as usize]
+                .copy_from_slice(&self.memo_payload[..memo_len as usize]);
+        }
+        
+        // Hint tag at the end (last 32 bytes)
+        let hint_start = PALLET_CIPHERTEXT_SIZE - 32;
+        ciphertext[hint_start..].copy_from_slice(&self.hint_tag);
+        
+        // Combine ciphertext + kem_ciphertext
+        let mut result = Vec::with_capacity(PALLET_CIPHERTEXT_SIZE + PALLET_KEM_CIPHERTEXT_SIZE);
+        result.extend_from_slice(&ciphertext);
+        result.extend_from_slice(&self.kem_ciphertext);
+        
+        Ok(result)
+    }
+    
+    /// Parse from pallet-compatible format (611 + 1088 = 1699 bytes)
+    pub fn from_pallet_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
+        const EXPECTED_SIZE: usize = PALLET_CIPHERTEXT_SIZE + PALLET_KEM_CIPHERTEXT_SIZE;
+        
+        if bytes.len() != EXPECTED_SIZE {
+            return Err(WalletError::Serialization(format!(
+                "Invalid encrypted note size: expected {}, got {}",
+                EXPECTED_SIZE, bytes.len()
+            )));
+        }
+        
+        let ciphertext_bytes = &bytes[..PALLET_CIPHERTEXT_SIZE];
+        let kem_ciphertext = bytes[PALLET_CIPHERTEXT_SIZE..].to_vec();
+        
+        // Parse the ciphertext portion
+        let version = ciphertext_bytes[0];
+        let diversifier_index = u32::from_le_bytes(
+            ciphertext_bytes[1..5].try_into().map_err(|_| WalletError::Serialization("diversifier parse failed".into()))?
+        );
+        
+        let mut offset = 5;
+        
+        // Note payload length and data
+        let note_len = u32::from_le_bytes(
+            ciphertext_bytes[offset..offset + 4].try_into().map_err(|_| WalletError::Serialization("note_len parse failed".into()))?
+        ) as usize;
+        offset += 4;
+        
+        if offset + note_len > PALLET_CIPHERTEXT_SIZE - 32 {
+            return Err(WalletError::Serialization(format!(
+                "Note payload too large: {} bytes at offset {}",
+                note_len, offset
+            )));
+        }
+        let note_payload = ciphertext_bytes[offset..offset + note_len].to_vec();
+        offset += note_len;
+        
+        // Memo payload length and data  
+        let memo_len = u32::from_le_bytes(
+            ciphertext_bytes[offset..offset + 4].try_into().map_err(|_| WalletError::Serialization("memo_len parse failed".into()))?
+        ) as usize;
+        offset += 4;
+        
+        let memo_payload = if memo_len > 0 && offset + memo_len <= PALLET_CIPHERTEXT_SIZE - 32 {
+            ciphertext_bytes[offset..offset + memo_len].to_vec()
+        } else {
+            Vec::new()
+        };
+        
+        // Hint tag is at the end (last 32 bytes)
+        let hint_tag_start = PALLET_CIPHERTEXT_SIZE - 32;
+        let mut hint_tag = [0u8; 32];
+        hint_tag.copy_from_slice(&ciphertext_bytes[hint_tag_start..]);
+        
+        Ok(Self {
+            version,
+            diversifier_index,
+            kem_ciphertext,
+            note_payload,
+            memo_payload,
+            hint_tag,
+        })
+    }
+    
     pub fn encrypt<R: RngCore + ?Sized>(
         address: &ShieldedAddress,
         note: &NotePlaintext,
