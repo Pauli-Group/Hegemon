@@ -1,5 +1,34 @@
 # Shielded-to-Shielded Transfer Debug ExecPlan
 
+Rage against the dying of the light.
+
+## Quick Start Commands (2025-12-03 15:15Z - WORKING)
+
+```bash
+# 1. Start node in external Terminal (won't be killed by agent)
+osascript -e 'tell application "Terminal" to do script "cd /Users/pldd/Documents/Reflexivity/synthetic-hegemonic-currency && HEGEMON_MINER_ADDRESS=$(cat /tmp/alice_address.txt) HEGEMON_MINE=1 RUST_LOG=warn,pallet_shielded_pool=debug ./target/release/hegemon-node --dev --tmp"'
+
+# 2. Wait for blocks, sync Alice
+sleep 15 && ./target/release/wallet substrate-sync --store /tmp/alice.wallet --passphrase alice123 --ws-url ws://127.0.0.1:9944
+
+# 3. Check Alice balance
+./target/release/wallet status --store /tmp/alice.wallet --passphrase alice123
+
+# 4. Create recipients.json with Bob's address
+BOB_ADDR=$(./target/release/wallet status --store /tmp/bob.wallet --passphrase bob123 2>&1 | grep "Shielded Address:" | awk '{print $3}')
+echo "[{\"address\": \"$BOB_ADDR\", \"value\": 1000000000, \"asset_id\": 0}]" > /tmp/recipients.json
+
+# 5. Send shielded transfer
+RUST_LOG=debug ./target/release/wallet substrate-send --store /tmp/alice.wallet --passphrase alice123 --ws-url ws://127.0.0.1:9944 --recipients /tmp/recipients.json 2>&1
+
+# 6. Check node logs for STARK error (run in another terminal)
+osascript -e 'tell application "Terminal" to get contents of front window' 2>/dev/null | grep -i "stark\|verify\|failed"
+```
+
+**Current Error (2025-12-03 15:15Z):** `InconsistentOodConstraintEvaluations` - pallet AIR differs from prover AIR.
+
+---
+
 This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
 
 This document must be maintained in accordance with `.agent/PLANS.md`.
@@ -129,6 +158,59 @@ DEBUG: Built unsigned extrinsic: 35301 bytes
 Error: Transaction submission failed: rpc error: ErrorObject { code: ServerError(1010), 
   message: "Invalid Transaction", data: Some(RawValue("Transaction has a bad signature")) }
 ```
+
+## Agent Mistakes Log (2025-12-03)
+
+### Mistake 1: Misidentified Root Cause of OOD Constraint Error (15:27Z - 16:10Z)
+**What happened:** Agent identified that prover's `get_public_inputs()` was using non-zero values for `total_input`/`total_output`/`fee` while pallet used zeros. Made a fix in `circuits/transaction/src/stark_prover.rs` to use zeros.
+
+**Why it was wrong:** The fix was made, but after `cargo clean`, the wallet was rebuilt and the error persists. The debug output still shows:
+```
+DEBUG prover: total_input=5000000000 total_output=5000000000 fee=0
+```
+This line comes from `wallet/src/prover.rs:166`, which is just debug logging of the *witness* values, NOT the public inputs. The actual public inputs ARE zeros (the fix is in place), but agent wasted ~45 minutes confused about this.
+
+**Actual issue:** The `InconsistentOodConstraintEvaluations` error has a DIFFERENT root cause that was NOT identified.
+
+### Mistake 2: Wasted Time on Miner Address Format (15:55Z - 16:02Z)
+**What happened:** Agent repeatedly tried using hex account ID (`06e14ea7b1c1fccfb37a3f95b567f4cf9bed88e0c7c55a6fd0693b16b9bdb5f0`) instead of the Bech32m shielded address (`shca1q...`).
+
+**Evidence of mistake:** Node log showed:
+```
+Failed to parse shielded miner address - falling back to transparent error=InvalidAddress("AddressEncoding(\"invalid character (code=b)\")")
+```
+
+**What should have been done:** Read the execplan which already documented this exact issue in "Discovery 14" and the correct usage with Bech32m addresses.
+
+### Mistake 3: Not Verifying Fix Was Actually Applied (16:02Z - 16:10Z)
+**What happened:** After making the `total_input: BaseElement::ZERO` fix and rebuilding, agent assumed the fix was working. But the error persists, suggesting either:
+1. The fix is not the correct solution, OR
+2. There's additional code that needs to be fixed
+
+**What should have been done:** Actually trace the code to find ALL places where `TransactionPublicInputsStark` is constructed, not just `get_public_inputs()`.
+
+### Mistake 4: Failing to Read Existing Code Carefully (ongoing)
+**What happened:** Agent made a fix to `stark_prover.rs:get_public_inputs()` but the verification still fails. The wallet's `verify_transaction_proof_bytes()` is called locally and FAILS before even submitting to the chain.
+
+**Current debug output:**
+```
+DEBUG prover: Local verification FAILED: VerificationFailed(InconsistentOodConstraintEvaluations)
+```
+
+This means the local verifier (same code as pallet) is rejecting the proof. The issue is NOT about wallet vs pallet mismatch - it's about the PROVER producing invalid proofs that even the LOCAL verifier rejects.
+
+### Mistake 5: Not Using the ExecPlan Test Commands (ongoing)
+**What happened:** Agent repeatedly ran ad-hoc commands instead of following the documented test sequence in the ExecPlan "Quick Start Commands" section. This led to:
+- Missing environment variables
+- Using wrong wallet paths
+- Using wrong command flags
+- Wasting time on already-solved problems
+
+### Next Steps (REQUIRED):
+1. Find ALL places where `TransactionPublicInputsStark` is constructed
+2. Verify the prover's trace matches the AIR constraints
+3. Run a unit test that exercises the STARK prover/verifier in isolation
+4. Add debug logging to identify WHICH constraint is failing
 
 ### Root Cause Analysis (BUG #5):
 The pallet's `validate_proof_structure()` in `verifier.rs:598-627` checks:

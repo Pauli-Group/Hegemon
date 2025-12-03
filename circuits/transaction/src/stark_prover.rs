@@ -345,15 +345,17 @@ impl TransactionProverStark {
             commitments.push(BaseElement::ZERO);
         }
 
-        let total_input: u64 = witness.inputs.iter().map(|i| i.note.value).sum();
-        let total_output: u64 = witness.outputs.iter().map(|o| o.note.value).sum();
-
+        // NOTE: total_input/total_output/fee are set to ZERO for compatibility with
+        // on-chain verification. The pallet verifier doesn't have access to private
+        // note values, so it uses zeros. Balance checking is done via value_balance
+        // in the pallet (outside the STARK). These fields are included in ToElements
+        // for the FRI public coin, so prover and verifier MUST match.
         TransactionPublicInputsStark {
             nullifiers,
             commitments,
-            total_input: BaseElement::new(total_input),
-            total_output: BaseElement::new(total_output),
-            fee: BaseElement::new(witness.fee),
+            total_input: BaseElement::ZERO,
+            total_output: BaseElement::ZERO,
+            fee: BaseElement::ZERO,
             merkle_root: witness.merkle_root,
         }
     }
@@ -381,60 +383,46 @@ impl Prover for TransactionProverStark {
         DefaultConstraintEvaluator<'a, Self::Air, E>;
 
     fn get_pub_inputs(&self, trace: &Self::Trace) -> TransactionPublicInputsStark {
-        // Read all nullifiers and commitments from their deterministic trace positions
-        // Nullifier i ends at row: (i * CYCLES_PER_INPUT + NULLIFIER_CYCLES) * CYCLE_LENGTH - 1
-        // Commitment i ends at row: (MAX_INPUTS * CYCLES_PER_INPUT + (i + 1) * COMMITMENT_CYCLES) * CYCLE_LENGTH - 1
-        //
-        // We use COL_VALUE to distinguish real inputs from padding:
-        // - Real inputs have COL_VALUE set to note.value (can be 0 for zero-value notes)
-        // - We mark real inputs with a 1 in position COL_VALUE at nullifier row
-        // For now, use a simpler heuristic: real inputs have non-default hash outputs
+        // Read nullifiers and commitments from their deterministic trace positions
+        // NOTE: total_input/total_output/fee are set to ZERO because:
+        // 1. The pallet verifier doesn't have access to private note values
+        // 2. Balance checking is done via value_balance in the pallet (outside STARK)
+        // 3. These values are part of ToElements for FRI, so prover and verifier MUST match
         
         let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
-        let mut total_input = BaseElement::ZERO;
         for i in 0..MAX_INPUTS {
             let row = nullifier_output_row(i);
-            let (nf, value) = if row < trace.length() {
+            let nf = if row < trace.length() {
                 let val = trace.get(COL_S0, row);
                 // Check if this is a real input by looking at COL_VALUE
-                // Real inputs have note values stored as (value + 1); padding has zero
                 let marker = trace.get(COL_VALUE, row);
                 if marker == BaseElement::ZERO {
-                    // This is a padding slot, treat nullifier as zero
-                    (BaseElement::ZERO, BaseElement::ZERO)
+                    BaseElement::ZERO
                 } else {
-                    // Recover original value by subtracting 1
-                    let original_value = marker - BaseElement::ONE;
-                    (val, original_value)
+                    val
                 }
             } else {
-                (BaseElement::ZERO, BaseElement::ZERO)
+                BaseElement::ZERO
             };
             nullifiers.push(nf);
-            total_input = total_input + value;
         }
         
         let mut commitments = Vec::with_capacity(MAX_OUTPUTS);
-        let mut total_output = BaseElement::ZERO;
         for i in 0..MAX_OUTPUTS {
             let row = commitment_output_row(i);
-            let (cm, value) = if row < trace.length() {
+            let cm = if row < trace.length() {
                 let val = trace.get(COL_S0, row);
                 // Check if this is a real output by looking at COL_VALUE
                 let marker = trace.get(COL_VALUE, row);
                 if marker == BaseElement::ZERO {
-                    // This is a padding slot, treat commitment as zero
-                    (BaseElement::ZERO, BaseElement::ZERO)
+                    BaseElement::ZERO
                 } else {
-                    // Recover original value by subtracting 1
-                    let original_value = marker - BaseElement::ONE;
-                    (val, original_value)
+                    val
                 }
             } else {
-                (BaseElement::ZERO, BaseElement::ZERO)
+                BaseElement::ZERO
             };
             commitments.push(cm);
-            total_output = total_output + value;
         }
         
         // Read merkle root from the first input's Merkle output row
@@ -448,16 +436,14 @@ impl Prover for TransactionProverStark {
         } else {
             BaseElement::ZERO
         };
-        
-        // Fee is total_input - total_output (balance equation)
-        let fee = total_input - total_output;
 
+        // NOTE: Use ZERO for balance fields - pallet verifier uses zeros
         TransactionPublicInputsStark {
             nullifiers,
             commitments,
-            total_input,
-            total_output,
-            fee,
+            total_input: BaseElement::ZERO,
+            total_output: BaseElement::ZERO,
+            fee: BaseElement::ZERO,
             merkle_root,
         }
     }
