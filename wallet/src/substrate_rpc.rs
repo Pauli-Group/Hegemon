@@ -807,6 +807,53 @@ impl SubstrateRpcClient {
         self.submit_extrinsic(&extrinsic).await
     }
 
+    /// Submit a pure shielded-to-shielded transfer (unsigned)
+    ///
+    /// This is for transfers where value_balance = 0 (no value entering or
+    /// leaving the shielded pool). The ZK proof authenticates the spend,
+    /// so no external signature or transparent account is needed.
+    ///
+    /// This follows the Zcash model where shielded transfers are inherently
+    /// authenticated by the zero-knowledge proof itself.
+    ///
+    /// # Arguments
+    ///
+    /// * `bundle` - The transaction bundle containing proof and encrypted notes
+    ///
+    /// # Returns
+    ///
+    /// The transaction hash (32 bytes) if accepted into the pool.
+    pub async fn submit_shielded_transfer_unsigned(
+        &self,
+        bundle: &TransactionBundle,
+    ) -> Result<[u8; 32], WalletError> {
+        use crate::extrinsic::{build_unsigned_shielded_transfer, ShieldedTransferCall};
+        
+        // Build the call from the bundle
+        let call = ShieldedTransferCall::from_bundle(bundle);
+        
+        // Verify this is a pure shielded transfer (value_balance = 0)
+        if bundle.value_balance != 0 {
+            return Err(WalletError::InvalidArgument(
+                "Unsigned shielded transfers require value_balance = 0"
+            ));
+        }
+        
+        // Debug output
+        eprintln!("DEBUG: Building unsigned shielded transfer");
+        eprintln!("DEBUG: Number of nullifiers: {}", call.nullifiers.len());
+        eprintln!("DEBUG: Number of commitments: {}", call.commitments.len());
+        eprintln!("DEBUG: Number of encrypted notes: {}", call.encrypted_notes.len());
+        
+        // Build the unsigned extrinsic
+        let extrinsic = build_unsigned_shielded_transfer(&call)?;
+        
+        eprintln!("DEBUG: Unsigned extrinsic size: {} bytes", extrinsic.len());
+        
+        // Submit
+        self.submit_extrinsic(&extrinsic).await
+    }
+
     /// Shield transparent funds into the shielded pool
     ///
     /// This converts transparent balance to a shielded note by calling
