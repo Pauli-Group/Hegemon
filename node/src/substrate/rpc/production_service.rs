@@ -228,8 +228,12 @@ where
                 .into_iter()
                 .enumerate()
                 .map(|(i, (_, _, _, commitment))| {
-                    // Convert commitment hash to a u64 for compatibility with existing API
-                    let value = u64::from_le_bytes(commitment[0..8].try_into().unwrap_or([0u8; 8]));
+                    // Convert commitment hash to a u64 Felt value
+                    // The Felt is stored in the LAST 8 bytes as big-endian
+                    // (matching circuits/transaction/src/hashing.rs felt_to_bytes32)
+                    let value = u64::from_be_bytes(
+                        commitment[24..32].try_into().unwrap_or([0u8; 8])
+                    );
                     (start + i as u64, value)
                 })
                 .collect()),
