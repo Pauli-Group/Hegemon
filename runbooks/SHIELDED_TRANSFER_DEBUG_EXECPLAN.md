@@ -1394,3 +1394,398 @@ The pallet depends on:
 - `verifier::ProofVerifier` trait - STARK proof verification
 
 Both must produce identical Merkle roots for the same set of commitments.
+
+
+---
+
+## Phase 2: Adversarial Testing
+
+Now that the happy path works, we must verify the system correctly rejects malicious inputs.
+
+### Adversarial Test Plan
+
+| ID | Category | Attack | Expected Result | Priority |
+|----|----------|--------|-----------------|----------|
+| A1 | Double-Spend | Resubmit same transaction | `NullifierAlreadyExists` | CRITICAL |
+| A2 | Double-Spend | Two txs spending same note | Second tx rejected | CRITICAL |
+| A3 | Double-Spend | Same nullifier twice in one tx | `DuplicateNullifierInTx` | CRITICAL |
+| A4 | Proof Forgery | Random proof bytes | `InvalidProofFormat` | CRITICAL |
+| A5 | Proof Forgery | Truncated valid proof | `InvalidProofFormat` | CRITICAL |
+| A6 | Proof Forgery | Bit-flipped valid proof | `VerificationFailed` | CRITICAL |
+| A7 | Anchor | Non-existent Merkle root | `InvalidAnchor` | HIGH |
+| A8 | Anchor | Stale anchor (old root) | `InvalidAnchor` or accepted | HIGH |
+| A9 | Binding Sig | Zero signature | `InvalidBindingSignature` | HIGH |
+| A10 | Binding Sig | Modified anchor after signing | `InvalidBindingSignature` | HIGH |
+| A11 | Malformed | Zero nullifiers AND commitments | `InvalidNullifierCount` | MEDIUM |
+| A12 | Malformed | Commitment count ≠ ciphertext count | `EncryptedNotesMismatch` | MEDIUM |
+| A13 | Value Balance | Overflow (i128::MAX) | `ValueBalanceOverflow` | MEDIUM |
+| A14 | Replay | Resubmit included tx | `NullifierAlreadyExists` | MEDIUM |
+
+---
+
+### Test A1: Double-Spend via Replay
+
+**Objective:** Verify that replaying an already-included transaction fails.
+
+**Procedure:**
+```bash
+# 1. Sync Alice's wallet
+./target/release/wallet substrate-sync --store /tmp/alice.wallet --passphrase alice123
+
+# 2. Send first transaction (should succeed)
+./target/release/wallet substrate-send --store /tmp/alice.wallet --passphrase alice123 --recipients /tmp/recipients.json 2>&1 | tee /tmp/tx1.log
+
+# 3. Wait for block inclusion
+sleep 15
+
+# 4. Try to send AGAIN with same wallet state (forces same note selection)
+# This should fail because the nullifier is already spent
+./target/release/wallet substrate-send --store /tmp/alice.wallet --passphrase alice123 --recipients /tmp/recipients.json 2>&1 | tee /tmp/tx2.log
+
+# 5. Check results
+grep -i "error\|fail\|nullifier\|spent" /tmp/tx2.log
+```
+
+**Expected:** Second transaction fails with nullifier-related error.
+
+**Pass Criteria:** Error message contains "nullifier" or "already spent" or "Custom error: 4"
+
+---
+
+### Test A2: Double-Spend via Concurrent Submission
+
+**Objective:** Verify that only one of two concurrent spends of the same note succeeds.
+
+**Procedure:**
+```bash
+# 1. Sync wallet to get fresh state
+./target/release/wallet substrate-sync --store /tmp/alice.wallet --passphrase alice123
+
+# 2. Create two different recipient files
+echo '[{"address": "'$(./target/release/wallet status --store /tmp/bob.wallet --passphrase bob123 2>&1 | grep "Shielded Address:" | awk '{print $3}')'", "value": 500000000, "asset_id": 0}]' > /tmp/r1.json
+echo '[{"address": "'$(./target/release/wallet status --store /tmp/bob.wallet --passphrase bob123 2>&1 | grep "Shielded Address:" | awk '{print $3}')'", "value": 600000000, "asset_id": 0}]' > /tmp/r2.json
+
+# 3. Submit both transactions simultaneously (race condition)
+./target/release/wallet substrate-send --store /tmp/alice.wallet --passphrase alice123 --recipients /tmp/r1.json 2>&1 &
+PID1=$!
+./target/release/wallet substrate-send --store /tmp/alice.wallet --passphrase alice123 --recipients /tmp/r2.json 2>&1 &
+PID2=$!
+
+# 4. Wait for both to complete
+wait $PID1; echo "TX1 exit: $?"
+wait $PID2; echo "TX2 exit: $?"
+
+# 5. Check node logs for rejection
+grep -i "nullifier\|duplicate\|already" /tmp/node.log | tail -20
+```
+
+**Expected:** One succeeds, one fails. Node logs show nullifier conflict.
+
+---
+
+### Test A3: Duplicate Nullifier in Single Transaction
+
+**Objective:** Verify that a transaction with duplicate nullifiers is rejected.
+
+**Note:** This requires crafting a malformed extrinsic directly - the wallet won't create this.
+
+**Procedure (manual RPC):**
+```bash
+# This test requires modifying wallet code or using a custom RPC call
+# to submit an extrinsic with the same nullifier appearing twice.
+# 
+# For now, verify via pallet unit tests:
+cd /Users/pldd/Documents/Reflexivity/synthetic-hegemonic-currency
+cargo test -p pallet-shielded-pool -- duplicate_nullifier --nocapture
+```
+
+**Expected:** Test passes, showing `DuplicateNullifierInTx` error.
+
+---
+
+### Test A4: Random Proof Bytes
+
+**Objective:** Verify that garbage proof data is rejected.
+
+**Procedure (requires test harness):**
+```rust
+// Add to pallets/shielded-pool/src/tests.rs or run as integration test
+
+#[test]
+fn test_random_proof_rejected() {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    
+    // Generate random proof bytes
+    let random_proof: Vec<u8> = (0..30000).map(|_| rng.gen()).collect();
+    let proof = StarkProof::from_bytes(random_proof);
+    
+    // Create valid-looking inputs
+    let inputs = ShieldedTransferInputs {
+        anchor: [1u8; 32],
+        nullifiers: vec![[2u8; 32]],
+        commitments: vec![[3u8; 32]],
+        value_balance: 0,
+    };
+    
+    let vk = VerifyingKey::default();
+    let verifier = StarkVerifier;
+    
+    let result = verifier.verify_stark(&proof, &inputs, &vk);
+    assert!(matches!(result, VerificationResult::InvalidProofFormat | VerificationResult::VerificationFailed));
+}
+```
+
+**Run:**
+```bash
+cargo test -p pallet-shielded-pool test_random_proof_rejected -- --nocapture
+```
+
+---
+
+### Test A5: Truncated Proof
+
+**Objective:** Verify that a truncated proof is rejected.
+
+**Procedure:**
+```rust
+#[test]
+fn test_truncated_proof_rejected() {
+    // First, get a valid proof by running a real transaction
+    // Then truncate it
+    
+    let valid_proof_bytes = vec![1u8; 30000]; // Simulated valid proof
+    let truncated = &valid_proof_bytes[..1000]; // Take only first 1KB
+    
+    let proof = StarkProof::from_bytes(truncated.to_vec());
+    let verifier = StarkVerifier;
+    
+    let result = verifier.verify_stark(&proof, &sample_inputs(), &VerifyingKey::default());
+    assert_eq!(result, VerificationResult::InvalidProofFormat);
+}
+```
+
+---
+
+### Test A6: Bit-Flipped Proof
+
+**Objective:** Verify that modifying a valid proof causes verification failure.
+
+**Procedure:**
+```bash
+# 1. Capture a valid proof from successful transaction
+# 2. Modify one byte
+# 3. Resubmit
+
+# This requires saving the raw extrinsic bytes and modifying them.
+# For now, test via unit test:
+```
+
+```rust
+#[test]
+fn test_bitflip_proof_rejected() {
+    // Get valid proof bytes (would need to capture from real tx)
+    let mut proof_bytes = get_valid_proof_bytes();
+    
+    // Flip a bit in the middle
+    let mid = proof_bytes.len() / 2;
+    proof_bytes[mid] ^= 0x01;
+    
+    let proof = StarkProof::from_bytes(proof_bytes);
+    let verifier = StarkVerifier;
+    
+    let result = verifier.verify_stark(&proof, &valid_inputs(), &VerifyingKey::default());
+    assert_eq!(result, VerificationResult::VerificationFailed);
+}
+```
+
+---
+
+### Test A7: Invalid Anchor (Non-Existent Root)
+
+**Objective:** Verify that a transaction with unknown anchor is rejected.
+
+**Procedure:**
+```bash
+# The wallet won't create this, but we can test via pallet:
+cargo test -p pallet-shielded-pool invalid_anchor -- --nocapture
+```
+
+**Expected:** Transaction rejected with `InvalidAnchor` (error code 3).
+
+---
+
+### Test A9: Zero Binding Signature
+
+**Objective:** Verify that an all-zero binding signature is rejected.
+
+**Procedure (pallet test):**
+```rust
+#[test]
+fn test_zero_binding_signature_rejected() {
+    let verifier = StarkVerifier;
+    let zero_sig = BindingSignature { data: [0u8; 64] };
+    let inputs = sample_inputs();
+    
+    let result = verifier.verify_binding_signature(&zero_sig, &inputs);
+    assert!(!result, "Zero signature should be rejected");
+}
+```
+
+---
+
+### Test A11: Empty Nullifiers and Commitments
+
+**Objective:** Verify that a transaction with no nullifiers AND no commitments is rejected.
+
+**Procedure (pallet test):**
+```rust
+#[test]
+fn test_empty_tx_rejected() {
+    new_test_ext().execute_with(|| {
+        let result = ShieldedPool::shielded_transfer(
+            RuntimeOrigin::signed(1),
+            StarkProof::default(),
+            BoundedVec::new(),  // Empty nullifiers
+            BoundedVec::new(),  // Empty commitments
+            BoundedVec::new(),  // Empty ciphertexts
+            [0u8; 32],
+            BindingSignature::default(),
+            0,
+        );
+        assert_noop!(result, Error::<Test>::InvalidNullifierCount);
+    });
+}
+```
+
+---
+
+### Test A12: Commitment/Ciphertext Count Mismatch
+
+**Objective:** Verify that mismatched counts are rejected.
+
+```rust
+#[test]
+fn test_commitment_ciphertext_mismatch_rejected() {
+    new_test_ext().execute_with(|| {
+        let commitments = bounded_vec![[1u8; 32], [2u8; 32]];  // 2 commitments
+        let ciphertexts = bounded_vec![EncryptedNote::default()];  // 1 ciphertext
+        
+        let result = ShieldedPool::shielded_transfer(
+            RuntimeOrigin::signed(1),
+            valid_proof(),
+            bounded_vec![[0u8; 32]],
+            commitments,
+            ciphertexts,
+            valid_anchor(),
+            valid_binding_sig(),
+            0,
+        );
+        assert_noop!(result, Error::<Test>::EncryptedNotesMismatch);
+    });
+}
+```
+
+---
+
+### Adversarial Test Progress
+
+**Pallet Unit Tests (73 tests pass):**
+- [x] A1: Double-spend replay → `mock::tests::double_spend_rejected`
+- [ ] A2: Concurrent double-spend → Requires integration test
+- [x] A3: Duplicate nullifier in tx → `mock::tests::duplicate_nullifier_in_tx_rejected`
+- [x] A4: Random proof rejection → `verifier::tests::adversarial_random_proof_rejected`
+- [x] A5: Truncated proof rejection → `verifier::tests::adversarial_truncated_proof_rejected`
+- [ ] A6: Bit-flipped proof rejection → Requires capturing real proof
+- [x] A7: Invalid anchor rejection → `mock::tests::invalid_anchor_rejected`
+- [x] A8: Stale anchor handling → `mock::tests::adversarial_stale_anchor_eventually_rejected`
+- [x] A9: Zero binding signature rejection → `verifier::tests::adversarial_zero_binding_signature_rejected`
+- [x] A10: Modified message signature rejection → `verifier::tests::adversarial_modified_*_binding_sig_fails`
+- [x] A11: Empty tx rejection → `mock::tests::adversarial_empty_tx_rejected`
+- [x] A12: Count mismatch rejection → `mock::tests::encrypted_notes_mismatch_rejected`
+- [x] A13: Value balance overflow → `verifier::tests::adversarial_large_value_balance`
+- [ ] A14: Transaction replay → Requires wallet integration test
+
+**Run All Pallet Tests:**
+```bash
+cargo test -p pallet-shielded-pool -- --nocapture 2>&1
+# Expected: 73 passed; 0 failed
+```
+
+**Additional Tests Added:**
+- `mock::tests::adversarial_commitment_replay_accepted` - Verifies commitment replay is allowed (by design)
+- `mock::tests::adversarial_zero_value_shield` - Verifies zero-value shield behavior
+- `mock::tests::adversarial_max_nullifiers_accepted` - Verifies max capacity handling
+- `mock::tests::adversarial_shielded_transfer_without_prior_shield` - Edge case handling
+- `verifier::tests::adversarial_empty_nullifiers_accepted` - Mint operation edge case
+
+---
+
+### Running Adversarial Tests
+
+**Quick smoke test for double-spend (A1):**
+```bash
+# Assumes node running, Alice has balance
+./target/release/wallet substrate-sync --store /tmp/alice.wallet --passphrase alice123
+./target/release/wallet substrate-send --store /tmp/alice.wallet --passphrase alice123 --recipients /tmp/recipients.json
+sleep 12
+# DO NOT sync - try to spend same notes again
+./target/release/wallet substrate-send --store /tmp/alice.wallet --passphrase alice123 --recipients /tmp/recipients.json
+# Should fail!
+```
+
+**Run pallet unit tests:**
+```bash
+cargo test -p pallet-shielded-pool -- --nocapture 2>&1 | tee /tmp/pallet-tests.log
+```
+
+**Run with adversarial test filter:**
+```bash
+cargo test -p pallet-shielded-pool -- adversarial --nocapture
+cargo test -p pallet-shielded-pool -- reject --nocapture
+cargo test -p pallet-shielded-pool -- invalid --nocapture
+```
+
+---
+
+### Integration Test Script
+
+Create `/tmp/adversarial-tests.sh`:
+```bash
+#!/bin/bash
+set -e
+
+WALLET="./target/release/wallet"
+ALICE_STORE="/tmp/alice.wallet"
+ALICE_PASS="alice123"
+BOB_STORE="/tmp/bob.wallet"  
+BOB_PASS="bob123"
+RECIPIENTS="/tmp/recipients.json"
+
+echo "=== Adversarial Test Suite ==="
+
+echo ""
+echo "=== Test A1: Double-Spend Replay ==="
+$WALLET substrate-sync --store $ALICE_STORE --passphrase $ALICE_PASS
+echo "Sending first transaction..."
+$WALLET substrate-send --store $ALICE_STORE --passphrase $ALICE_PASS --recipients $RECIPIENTS && echo "TX1: SUCCESS" || echo "TX1: FAILED"
+sleep 12
+echo "Attempting replay (should fail)..."
+$WALLET substrate-send --store $ALICE_STORE --passphrase $ALICE_PASS --recipients $RECIPIENTS && echo "TX2: SUCCESS (BAD!)" || echo "TX2: FAILED (GOOD!)"
+
+echo ""
+echo "=== Test A14: Post-Sync Replay ==="
+$WALLET substrate-sync --store $ALICE_STORE --passphrase $ALICE_PASS
+echo "Trying to send same amount after sync..."
+$WALLET substrate-send --store $ALICE_STORE --passphrase $ALICE_PASS --recipients $RECIPIENTS && echo "TX3: SUCCESS" || echo "TX3: FAILED"
+
+echo ""
+echo "=== Tests Complete ==="
+```
+
+Make executable and run:
+```bash
+chmod +x /tmp/adversarial-tests.sh
+/tmp/adversarial-tests.sh 2>&1 | tee /tmp/adversarial-results.log
+```
+
