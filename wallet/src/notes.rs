@@ -120,6 +120,19 @@ pub struct NoteCiphertext {
 }
 
 impl NoteCiphertext {
+    /// Create an empty/dummy ciphertext for padding.
+    /// Used when the proof has more output slots than actual recipients.
+    pub fn empty() -> Self {
+        Self {
+            version: 0,
+            diversifier_index: 0,
+            kem_ciphertext: vec![0u8; PALLET_KEM_CIPHERTEXT_SIZE],
+            note_payload: vec![],
+            memo_payload: vec![],
+            hint_tag: [0u8; 32],
+        }
+    }
+    
     /// Convert to pallet-compatible format (611 + 1088 = 1699 bytes)
     ///
     /// The pallet's EncryptedNote type uses fixed-size arrays:

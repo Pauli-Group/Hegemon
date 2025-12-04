@@ -92,6 +92,13 @@ pub fn build_transaction(
             note: note.to_note_data(address.pk_recipient),
         });
     }
+    
+    // Pad ciphertexts to match MAX_OUTPUTS (same as commitments padding in the proof)
+    // The pallet requires ciphertexts.len() == commitments.len()
+    while ciphertexts.len() < MAX_OUTPUTS {
+        // Create a dummy/empty ciphertext for padding
+        ciphertexts.push(NoteCiphertext::empty());
+    }
 
     let tree = store.commitment_tree()?;
     let wallet_root = tree.root();
