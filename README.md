@@ -19,7 +19,7 @@ HGN is a post-quantum, Zcash-inspired settlement layer focused entirely on shiel
 ### Protocol overview
 The HGN protocol consists of four tightly-coupled subsystems:
 
-1. **Shielded pool and cryptography (`crypto/`, `circuits/`, `wallet/`)** – The pool is modeled as a sparse Merkle accumulator proven via STARKs. ML-DSA/SLH-DSA signature primitives, ML-KEM key encapsulation, and Pedersen-style commitments underpin the spend authorization flow. Notes transition between states through the circuits defined in `circuits/`, and users interface with them via the wallet note-management APIs.
+1. **Shielded pool and cryptography (`crypto/`, `circuits/`, `wallet/`)** – The pool is modeled as a sparse Merkle accumulator proven via STARKs. ML-DSA/SLH-DSA signature primitives, ML-KEM key encapsulation, and hash-based commitments (Blake3/SHA3, no Pedersen or ECC) underpin the spend authorization flow. Notes transition between states through the circuits defined in `circuits/`, and users interface with them via the wallet note-management APIs.
 2. **Consensus and networking (`consensus/`, `network/`)** – A PoW protocol seals batches of shielded transactions. The Go `netbench` tooling simulates adversarial bandwidth conditions, while the Rust consensus service enforces validity proofs and data-availability sampling for miners.
 3. **State and execution (`state/`, `protocol/`)** – Mining nodes maintain on-disk Merkle forests, apply deterministic fee burning, and expose programmable hooks for sidecar applications. The `protocol/` crate codifies transaction formats, serialization, and proof verification limits.
 4. **Governance and runbooks (`governance/`, `runbooks/`)** – Multi-tier governance defines monetary policy, mining incentives, and emergency brake conditions. Operational runbooks document incident response, upgrade ceremonies, and regulator disclosures for PoW operators; see [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) for the end-to-end node + wallet pairing walkthrough referenced throughout this whitepaper.
@@ -50,6 +50,21 @@ HGN deliberately removes every discrete-log or factoring dependency that Shor’
 #### Privacy architecture and comparison to Zcash
 The privacy layer is engineered as a single, MASP-style shielded pool from genesis with no transparent escape hatches: commitments, nullifiers, balance conservation, and diversified address derivation all stay inside transparent STARK proofs built on hash- and lattice-only primitives (ML-DSA/SLH-DSA signatures, ML-KEM note encryption, and hash-based commitments). Selective disclosure relies on incoming/outgoing/full viewing keys rather than transparent outputs, preserving address privacy while enabling audits. In contrast to Zcash’s elliptic-curve commitments and trusted-setup SNARKs (Sapling/Orchard), HGN eliminates discrete-log assumptions and trusted setups entirely, accepting larger proof payloads to gain post-quantum resilience. Zcash’s history of launching new pools (Sprout → Sapling → Orchard) is replaced here by versioned circuits and recursive proofs that keep the shielded pool intact during upgrades, ensuring quantum-era safety without fragmenting privacy sets.
 
+**Quantitative privacy assessment (in bits):**
+
+| Property | Classical Security | Post-Quantum Security | Notes |
+|----------|-------------------|----------------------|-------|
+| **Note encryption (ML-KEM-768)** | 192 bits | ~96 bits | NIST Level 3; protects sender→recipient payloads |
+| **Commitment hiding (Blake3-256)** | 256 bits | ~128 bits | Grover halves effective security |
+| **Nullifier preimage resistance** | 256 bits | ~128 bits | Hash-based; no algebraic shortcuts |
+| **STARK proof soundness** | ~96 bits | ~96 bits | 32 queries × log₂(8) blowup; hash-based, Grover-resistant |
+| **Signatures (ML-DSA-65)** | ~192 bits | ~128 bits | NIST Level 3; used for block/tx authentication |
+| **Merkle path binding** | 256 bits | ~128 bits | Poseidon over Goldilocks; 32–40 depth tree |
+
+**Anonymity set**: All notes share a single shielded pool—the anonymity set equals the total note count (currently 2³²–2⁴⁰ capacity). Unlike Zcash's fragmented pools (Sprout/Sapling/Orchard), version upgrades do not partition users.
+
+**Information leakage**: Transaction timing and proof size are observable; sender, recipient, amounts, and asset types remain hidden. Viewing keys enable selective disclosure without breaking pool-wide privacy.
+
 ### Monetary model
 HGN targets a basket-pegged unit of account. Key levers include:
 
@@ -77,9 +92,9 @@ The architecture prioritizes defense-in-depth:
 #### Security and assurance program
 [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) documents the baseline adversary: Shor/Grover-era attackers can compromise miners on demand, replay malformed traffic, and attempt to bias randomness. This is why every primitive in `crypto/` sticks to ML-DSA/SLH-DSA signatures, ML-KEM key exchange, and ≥256-bit hashes, why the STARK proving system avoids trusted setups entirely, and why adaptive compromise controls (view-key rotation, nullifier privacy, parameter pinning) must survive even when an attacker briefly controls wallets or consensus nodes.
 
-[DESIGN.md §8](DESIGN.md#8-security-assurance-program) outlines the feedback loops that keep those assumptions observable. External cryptanalysis and third-party audits—tracked in [docs/SECURITY_REVIEWS.md](docs/SECURITY_REVIEWS.md)—tie concrete findings back to functions and commits so the PQ parameter set never drifts silently. The TLA+ models under `circuits/formal/` and `consensus/spec/formal/` make witness layouts, balance invariants, and HotStuff phases reviewable at every release gate, giving reviewers a mechanical view of each subsystem’s state. Continuous integration runs the `security-adversarial` workflow plus dedicated fuzz/property tests for transactions, network handshakes, wallet address derivations, and the root-level `tests/security_pipeline.rs`, so regressions surface as blocking signals with attached artifacts. Together, audits, formal specs, and CI logs ensure every subsystem—from proofs to networking—emits evidence that the live system still matches the whitepaper.
+[DESIGN.md §8](DESIGN.md#8-security-assurance-program) outlines the feedback loops that keep those assumptions observable. External cryptanalysis and third-party audits—tracked in [docs/SECURITY_REVIEWS.md](docs/SECURITY_REVIEWS.md)—tie concrete findings back to functions and commits so the PQ parameter set never drifts silently. The TLA+ models under `circuits/formal/` and `consensus/spec/formal/` make witness layouts, balance invariants, and consensus safety reviewable at every release gate, giving reviewers a mechanical view of each subsystem's state. Continuous integration runs the `security-adversarial` workflow plus dedicated fuzz/property tests for transactions, network handshakes, wallet address derivations, and the root-level `tests/security_pipeline.rs`, so regressions surface as blocking signals with attached artifacts. Together, audits, formal specs, and CI logs ensure every subsystem—from proofs to networking—emits evidence that the live system still matches the whitepaper.
 
-Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) whenever the adversarial suite fails, before releases, or after touching witnesses, networking, or wallet encodings. The runbook pins `PROPTEST_MAX_CASES`, executes the four adversarial `cargo test` commands (transaction circuit fuzzing, network handshake mutations, wallet address fuzzing, and the cross-component pipeline), and, when necessary, re-runs the TLA+/Apalache jobs for circuit balance and HotStuff safety. Findings, seeds, and transcripts are captured and logged into [docs/SECURITY_REVIEWS.md](docs/SECURITY_REVIEWS.md), which enforces that mitigation PRs add regression tests plus design updates. This workflow closes the loop between operator playbooks and the canonical review ledger so the assurance process remains enforceable rather than aspirational.
+Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) whenever the adversarial suite fails, before releases, or after touching witnesses, networking, or wallet encodings. The runbook pins `PROPTEST_MAX_CASES`, executes the four adversarial `cargo test` commands (transaction circuit fuzzing, network handshake mutations, wallet address fuzzing, and the cross-component pipeline), and, when necessary, re-runs the TLA+/Apalache jobs for circuit balance and consensus safety. Findings, seeds, and transcripts are captured and logged into [docs/SECURITY_REVIEWS.md](docs/SECURITY_REVIEWS.md), which enforces that mitigation PRs add regression tests plus design updates. This workflow closes the loop between operator playbooks and the canonical review ledger so the assurance process remains enforceable rather than aspirational.
 
 ### Roadmap
 1. **Alpha** – Deliver end-to-end shielded transfers with synthetic test assets, benchmarked via `circuits-bench` and `wallet-bench`.
@@ -154,6 +169,7 @@ Key options:
 Environment variables:
 - `HEGEMON_MINE=1` - Enable mining
 - `HEGEMON_MINE_THREADS=N` - Mining thread count
+- `HEGEMON_MINER_ADDRESS=<shielded_addr>` - Shielded address for coinbase rewards
 
 ### Two-node testnet pairing
 
@@ -183,9 +199,11 @@ Use this when you want to run two nodes that peer with each other:
 
 4. **Verify connectivity**:
    ```bash
+   # Check peer count via system_health (system_peers returns empty in PQ network)
    curl -s -H "Content-Type: application/json" \
-     -d '{"id":1, "jsonrpc":"2.0", "method": "system_peers"}' \
+     -d '{"id":1, "jsonrpc":"2.0", "method": "system_health"}' \
      http://127.0.0.1:9944
+   # Expected: {"peers":1,"isSyncing":false,"shouldHavePeers":true}
    ```
 
 ### Developer Setup
@@ -203,3 +221,48 @@ Use this when you want to run two nodes that peer with each other:
 | `make check` | Formats, lints, and tests the entire Rust workspace. |
 | `make bench` | Executes the prover, wallet, and network smoke benchmarks. |
 | `make wallet-demo` | Generates example wallet artifacts plus a balance report inside `wallet-demo-artifacts/`. |
+
+---
+
+## Future directions: programmability
+
+Hegemon currently prioritizes privacy and post-quantum security over general-purpose programmability. Unlike Ethereum or Polkadot, there is no EVM or user-deployed WASM contract layer—all logic lives in fixed Substrate pallets. This section outlines how user-deployed code could be introduced while preserving the shielded pool's privacy guarantees.
+
+### Current scriptability comparison
+
+| Chain | VM/Script | Turing Complete? | Privacy + Smart Contracts? |
+|-------|-----------|------------------|---------------------------|
+| **Bitcoin** | Script (stack-based) | ❌ No | ❌ No |
+| **Zcash** | Script (Bitcoin-like) | ❌ No | ❌ No (transparent only) |
+| **Ethereum** | EVM (Solidity) | ✅ Yes | ⚠️ No privacy by default |
+| **Polkadot** | WASM (ink!/Solidity) | ✅ Yes | ⚠️ No shielded pool |
+| **Hegemon** | Substrate Pallets | ⚠️ Limited | ✅ Yes (shielded-only) |
+
+### Candidate approaches
+
+**Option A: Predicate Notes** — Notes carry a spending predicate hash, and the STARK circuit proves predicate satisfaction. A small DSL covers common cases (timelocks, M-of-N multisig, hash preimages). Privacy is preserved because the predicate itself stays off-chain; only `H(predicate)` appears in the note commitment.
+
+**Option B: zkVM Execution Traces** — Users deploy WASM or RISC-V programs whose execution traces are proven in a recursive STARK. The chain sees only `code_hash`, nullifiers consumed, and new commitments—never the program logic or inputs. This mirrors Aleo/RISC Zero but uses PQ-safe hashing and transparent proofs.
+
+**Option C: Private State Channels** — Keep L1 simple; push complex logic to off-chain channels with ML-DSA-signed state updates. Disputes submit STARK proofs of protocol violations. This scales well but requires liveness from channel participants.
+
+### Compatibility with existing upgrade machinery
+
+All three options integrate with Hegemon's `VersionBinding` and `VersionSchedule` infrastructure:
+
+```
+VersionBinding { circuit: 1, crypto: 1 }  // Current: simple spend
+VersionBinding { circuit: 2, crypto: 1 }  // Future: + predicate interpreter
+VersionBinding { circuit: 3, crypto: 1 }  // Future: + zkVM trace verifier
+```
+
+New circuit versions are proposed via `VersionProposal`, activated at scheduled heights, and can coexist with older versions indefinitely. Notes created today could be spent with a future predicate circuit without migration—the pool stays unified.
+
+### Open research questions
+
+1. **Private state**: How do contracts maintain encrypted state across transactions? Options include encrypted blobs in note memos or dedicated "state notes" consumed and recreated each transaction.
+2. **Composability**: Can shielded contracts call each other atomically? Requires proving multiple execution traces in one STARK or cross-contract commitment schemes.
+3. **Prover delegation**: Heavy proofs may require delegated provers, introducing privacy/trust tradeoffs. TEE-assisted proving or prover markets are possible mitigations.
+
+This design space—PQ + STARK + privacy + programmability—remains largely unexplored. Hegemon's architecture is positioned to experiment with these extensions without fragmenting the privacy pool.
+
