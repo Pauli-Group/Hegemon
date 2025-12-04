@@ -1000,4 +1000,167 @@ mod tests {
         let bad_sig = BindingSignature { data: [1u8; 64] };
         assert!(!verifier.verify_binding_signature(&bad_sig, &inputs));
     }
+
+    // ============================================================================
+    // ADVERSARIAL VERIFIER TESTS
+    // ============================================================================
+
+    #[test]
+    fn adversarial_zero_binding_signature_rejected() {
+        // Test A9: All-zero binding signature must be rejected
+        let verifier = StarkVerifier;
+        let zero_sig = BindingSignature { data: [0u8; 64] };
+        let inputs = sample_inputs();
+        
+        assert!(!verifier.verify_binding_signature(&zero_sig, &inputs),
+            "Zero binding signature should be rejected");
+    }
+
+    #[test]
+    fn adversarial_modified_anchor_binding_sig_fails() {
+        // Test A10: Signing with one anchor, verifying with another
+        let verifier = StarkVerifier;
+        let inputs = sample_inputs();
+        
+        // Compute binding signature for original inputs
+        let sig = StarkVerifier::compute_binding_commitment(&inputs);
+        
+        // Modify the anchor
+        let mut modified_inputs = inputs.clone();
+        modified_inputs.anchor = [99u8; 32];
+        
+        assert!(!verifier.verify_binding_signature(&sig, &modified_inputs),
+            "Modified anchor should cause binding sig verification to fail");
+    }
+
+    #[test]
+    fn adversarial_modified_nullifier_binding_sig_fails() {
+        let verifier = StarkVerifier;
+        let inputs = sample_inputs();
+        
+        let sig = StarkVerifier::compute_binding_commitment(&inputs);
+        
+        let mut modified_inputs = inputs.clone();
+        modified_inputs.nullifiers[0] = [99u8; 32];
+        
+        assert!(!verifier.verify_binding_signature(&sig, &modified_inputs),
+            "Modified nullifier should cause binding sig verification to fail");
+    }
+
+    #[test]
+    fn adversarial_modified_commitment_binding_sig_fails() {
+        let verifier = StarkVerifier;
+        let inputs = sample_inputs();
+        
+        let sig = StarkVerifier::compute_binding_commitment(&inputs);
+        
+        let mut modified_inputs = inputs.clone();
+        modified_inputs.commitments[0] = [99u8; 32];
+        
+        assert!(!verifier.verify_binding_signature(&sig, &modified_inputs),
+            "Modified commitment should cause binding sig verification to fail");
+    }
+
+    #[test]
+    fn adversarial_modified_value_balance_binding_sig_fails() {
+        let verifier = StarkVerifier;
+        let inputs = sample_inputs();
+        
+        let sig = StarkVerifier::compute_binding_commitment(&inputs);
+        
+        let mut modified_inputs = inputs.clone();
+        modified_inputs.value_balance = 12345;
+        
+        assert!(!verifier.verify_binding_signature(&sig, &modified_inputs),
+            "Modified value_balance should cause binding sig verification to fail");
+    }
+
+    #[test]
+    fn adversarial_truncated_proof_rejected() {
+        // Test A5: Truncated proof should be rejected
+        let verifier = StarkVerifier;
+        let truncated_proof = StarkProof::from_bytes(vec![1u8; 10]); // Too short
+        
+        let result = verifier.verify_stark(&truncated_proof, &sample_inputs(), &sample_vk());
+        
+        // Should be InvalidProofFormat because it's too short to parse
+        assert!(matches!(result, 
+            VerificationResult::InvalidProofFormat | VerificationResult::VerificationFailed),
+            "Truncated proof should be rejected");
+    }
+
+    #[test]
+    fn adversarial_random_proof_rejected() {
+        // Test A4: Random bytes as proof should fail verification
+        let verifier = StarkVerifier;
+        
+        // Use deterministic "random" bytes for reproducibility
+        let random_bytes: Vec<u8> = (0..30000u32).map(|i| (i * 17 + 31) as u8).collect();
+        let random_proof = StarkProof::from_bytes(random_bytes);
+        
+        let result = verifier.verify_stark(&random_proof, &sample_inputs(), &sample_vk());
+        
+        assert!(matches!(result, 
+            VerificationResult::InvalidProofFormat | VerificationResult::VerificationFailed),
+            "Random proof bytes should be rejected");
+    }
+
+    #[test]
+    fn adversarial_disabled_vk_rejected() {
+        let verifier = StarkVerifier;
+        let proof = sample_proof();
+        let inputs = sample_inputs();
+        
+        let mut disabled_vk = sample_vk();
+        disabled_vk.enabled = false;
+        
+        let result = verifier.verify_stark(&proof, &inputs, &disabled_vk);
+        assert_eq!(result, VerificationResult::KeyNotFound,
+            "Disabled verifying key should reject proof");
+    }
+
+    #[test]
+    fn adversarial_empty_nullifiers_accepted() {
+        // Empty nullifiers with non-empty commitments might be valid (mint operation)
+        // Test that binding signature still works
+        let verifier = StarkVerifier;
+        let inputs = ShieldedTransferInputs {
+            anchor: [1u8; 32],
+            nullifiers: vec![],  // Empty
+            commitments: vec![[4u8; 32]],
+            value_balance: 1000,  // Minting 1000
+        };
+        
+        let sig = StarkVerifier::compute_binding_commitment(&inputs);
+        assert!(verifier.verify_binding_signature(&sig, &inputs),
+            "Valid binding signature should work with empty nullifiers");
+    }
+
+    #[test]
+    fn adversarial_large_value_balance() {
+        // Test with extreme value_balance values
+        let verifier = StarkVerifier;
+        
+        let inputs_max = ShieldedTransferInputs {
+            anchor: [1u8; 32],
+            nullifiers: vec![[2u8; 32]],
+            commitments: vec![[4u8; 32]],
+            value_balance: i128::MAX,
+        };
+        
+        let inputs_min = ShieldedTransferInputs {
+            anchor: [1u8; 32],
+            nullifiers: vec![[2u8; 32]],
+            commitments: vec![[4u8; 32]],
+            value_balance: i128::MIN,
+        };
+        
+        // Both should produce valid binding signatures (no panic)
+        let sig_max = StarkVerifier::compute_binding_commitment(&inputs_max);
+        let sig_min = StarkVerifier::compute_binding_commitment(&inputs_min);
+        
+        assert!(verifier.verify_binding_signature(&sig_max, &inputs_max));
+        assert!(verifier.verify_binding_signature(&sig_min, &inputs_min));
+    }
 }
+
