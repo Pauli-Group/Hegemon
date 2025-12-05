@@ -103,6 +103,11 @@ Look for the line starting with `Shielded Address: shca1...` and copy the full a
 
 ### 3. Start the Boot Node
 
+# Generate new chainspec (do this ONCE on your machine)
+```bash
+./target/release/hegemon-node build-spec --chain dev --raw > config/dev-chainspec.json
+```
+
 ```bash
 mkdir -p ~/.hegemon-node
 

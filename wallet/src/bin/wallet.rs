@@ -198,6 +198,10 @@ struct SubstrateSyncArgs {
     /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
+    /// Force rescan: reset wallet sync state if chain has changed.
+    /// Use this after wiping chain data to re-sync from scratch.
+    #[arg(long)]
+    force_rescan: bool,
 }
 
 /// Arguments for Substrate WebSocket daemon
@@ -579,8 +583,14 @@ fn cmd_substrate_sync(args: SubstrateSyncArgs) -> Result<()> {
         );
         println!("Connected!");
         
-        // Create sync engine and sync
-        let engine = AsyncWalletSyncEngine::new(client, store);
+        // Create sync engine with force-rescan if requested
+        let engine = AsyncWalletSyncEngine::new(client, store)
+            .with_skip_genesis_check(args.force_rescan);
+        
+        if args.force_rescan {
+            println!("Force rescan enabled - will reset wallet state if chain has changed");
+        }
+        
         let outcome = engine
             .sync_once()
             .await
