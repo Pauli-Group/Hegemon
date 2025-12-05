@@ -57,7 +57,7 @@ impl TransactionProverStark {
     /// 
     /// For each input (MAX_INPUTS = 2):
     /// - Nullifier hash: NULLIFIER_CYCLES (3) cycles
-    /// - Merkle path verification: MERKLE_CYCLES (8) cycles
+    /// - Merkle path verification: MERKLE_CYCLES (32) cycles
     ///
     /// For each output (MAX_OUTPUTS = 2):
     /// - Commitment hash: COMMITMENT_CYCLES (7) cycles

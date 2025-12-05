@@ -206,7 +206,7 @@ impl StarkVerifier {
     pub const MAX_OUTPUTS: usize = 2;
     
     /// Merkle depth in circuit.
-    pub const CIRCUIT_MERKLE_DEPTH: usize = 8;
+    pub const CIRCUIT_MERKLE_DEPTH: usize = 32;
     
     /// Poseidon width.
     pub const POSEIDON_WIDTH: usize = 3;
@@ -340,7 +340,7 @@ impl StarkTransactionAir {
     const MAX_OUTPUTS: usize = 2;
     const NULLIFIER_CYCLES: usize = 3;
     const COMMITMENT_CYCLES: usize = 7;
-    const MERKLE_CYCLES: usize = 8;  // CIRCUIT_MERKLE_DEPTH
+    const MERKLE_CYCLES: usize = 32;  // CIRCUIT_MERKLE_DEPTH
     const CYCLES_PER_INPUT: usize = Self::NULLIFIER_CYCLES + Self::MERKLE_CYCLES; // 11
     
     // Column indices

@@ -33,9 +33,9 @@ pub const MERKLE_DOMAIN_TAG: u64 = 4;
 pub const NATIVE_ASSET_ID: u64 = 0;
 
 /// Merkle tree depth for the STARK circuit.
-/// Smaller than the full tree depth to keep trace size manageable.
+/// Depth 32 supports 4 billion notes (production capacity).
 /// Each Merkle level requires one hash cycle (16 steps).
-pub const CIRCUIT_MERKLE_DEPTH: usize = 8;
+pub const CIRCUIT_MERKLE_DEPTH: usize = 32;
 
 // ================================================================================================
 // CIRCUIT VERSIONING & AIR IDENTIFICATION
