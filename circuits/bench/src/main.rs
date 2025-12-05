@@ -32,8 +32,8 @@ struct Cli {
     #[arg(long)]
     smoke: bool,
     /// Depth of the temporary Merkle tree used for witness generation.
-    /// Should match CIRCUIT_MERKLE_DEPTH (8) for STARK proof verification.
-    #[arg(long, default_value_t = 8)]
+    /// Should match CIRCUIT_MERKLE_DEPTH (32) for STARK proof verification.
+    #[arg(long, default_value_t = 32)]
     tree_depth: usize,
 }
 
