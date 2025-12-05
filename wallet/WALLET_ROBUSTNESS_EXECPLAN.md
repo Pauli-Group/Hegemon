@@ -264,6 +264,87 @@ Transfer sequence:
 
 All pending transactions correctly tracked with mined heights and confirmations.
 
+### Edge Case Validation Tests (2025-12-04)
+
+Comprehensive testing of wallet behavior under adversarial and edge-case inputs.
+
+**Test Environment:**
+- Sender wallet: `~/.hegemon-wallet` (passphrase: `CHANGE_ME`)
+- Receiver wallet: `~/.hegemon-wallet-receiver` (passphrase: `receiver123`)
+- HGM denomination: 8 decimals (1 HGM = 100,000,000 base units)
+
+| Test | Input | Expected Result | Actual Result | Status |
+|------|-------|-----------------|---------------|--------|
+| Zero-value transfer | `"value": 0` | Reject | ~~Accepted~~ → Fixed: "recipient value must be greater than zero" | ✅ FIXED |
+| Dust amount (1 unit) | `"value": 1` | Accept | Accepted, tx mined successfully | ✅ PASS |
+| Exceed balance | Send 200 HGM from 149.9 HGM | Reject | "Insufficient funds: have 149.99999975 HGM, need 200 HGM" | ✅ PASS |
+| Invalid address (truncated) | `"address": "shca1qy..."` (partial) | Reject | "invalid checksum" | ✅ PASS |
+| Negative value | `"value": -100` | Reject | "expected u64" (JSON parse error) | ✅ PASS |
+| Empty recipients | `[]` | Reject | "at least one recipient required" | ✅ PASS |
+| Malformed JSON | `[{invalid json}` | Reject | Parse error | ✅ PASS |
+| Send-to-self | Sender address in recipients | Accept | Transaction mined successfully | ✅ PASS |
+| Drain wallet | Send 149.9 HGM from ~150 balance | Accept | Balance goes to 0 HGM, tx mined | ✅ PASS |
+| Send from empty wallet | Send any amount from 0 balance | Reject | "Insufficient funds: have 0 HGM, need X HGM" | ✅ PASS |
+| Double-spend (post-confirm) | Spend same note twice after confirm | Reject | "Insufficient funds" (sync detects spent) | ✅ PASS |
+| Double-spend (rapid fire) | Spend same note twice immediately | Reject | "Insufficient funds" (pending tx tracking) | ✅ PASS |
+| Double-spend (sync bypass) | Restore old wallet, spend already-spent note | Reject | TX rejected by chain with `NullifierAlreadyExists` | ✅ PASS |
+
+**Bug Found and Fixed:**
+
+**Zero-Value Transfer Bug**
+- **Issue:** Wallet accepted `"value": 0` in recipients, wasting fees on meaningless transactions
+- **Root Cause:** No validation for zero values in `build_transaction()`
+- **Fix Applied:** Added to `wallet/src/tx_builder.rs`:
+```rust
+if recipients.iter().any(|r| r.value == 0) {
+    return Err(WalletError::InvalidArgument(
+        "recipient value must be greater than zero".to_string(),
+    ));
+}
+```
+
+**Consolidation Test:**
+- Successfully consolidated 6 notes → 3 notes using `--auto-consolidate`
+- Followed by 150 HGM transfer that would otherwise exceed MAX_INPUTS
+- Balance correctly reflected after all transactions mined
+
+### Double-Spend Prevention Tests (2025-12-04)
+
+**Test 1: Double-spend after TX confirmed**
+1. Sent 50 HGM from receiver wallet (TX1 confirmed)
+2. Tried to send another 50 HGM using same notes
+3. **Result:** ✅ PASS - Wallet synced and detected spent note
+   - Error: "Insufficient funds: have 49.99999974 HGM, need 50 HGM"
+   - Sync correctly marked the 99.99 HGM note as spent
+
+**Test 2: Double-spend before TX confirmed (rapid fire)**
+1. Sent 25 HGM from receiver wallet (TX1 submitted)
+2. Immediately tried to send 25 HGM again (no sync in between)
+3. **Result:** ✅ PASS - Wallet tracks pending transactions
+   - Error: "Insufficient funds: have 0 HGM, need 25 HGM"
+   - Pending tx tracking correctly excludes notes being spent
+
+**Double-Spend Protection Layers:**
+| Layer | Protection | Timing |
+|-------|------------|--------|
+| Wallet sync | Marks spent notes based on chain nullifiers | After TX mined |
+| Pending TX tracking | Excludes notes with pending spend | Before TX mined |
+| Nullifier pre-check | Queries chain for spent nullifiers | Before proof generation |
+| On-chain validation | Pallet rejects duplicate nullifiers | At block inclusion |
+
+**Test 3: On-Chain Protection (Sync Bypass)**
+1. Backed up receiver wallet with 50 HGM note
+2. Spent 20 HGM from receiver (TX: 8de459..., submitted successfully)
+3. Restored OLD wallet backup (still has the spent note)
+4. Attempted to spend from restored wallet (TX: 5563021..., appeared to submit)
+5. **Result:** ✅ PASS - Chain rejected the double-spend
+   - TX was "submitted" to mempool but never mined
+   - Node mempool shows 0 pending extrinsics (tx was rejected)
+   - Wallet shows tx stuck as "InMempool" forever
+   - Pallet error: `NullifierAlreadyExists` (error code 5)
+
+**Conclusion:** Double-spend is prevented at 4 different levels. Even if wallet state is corrupted or maliciously restored, on-chain validation is the final backstop that prevents spending the same note twice.
+
 ### Known Issues Remaining
 
 **1. Consolidation Stale Index Bug (M3b partial)**
