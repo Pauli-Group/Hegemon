@@ -205,8 +205,8 @@ pub fn parse_shielded_address(address_str: &str) -> Result<ShieldedAddress, Coin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use synthetic_crypto::ml_kem::MlKemKeyPair;
-    use synthetic_crypto::traits::KemKeyPair;
+    use crypto::ml_kem::MlKemKeyPair;
+    use crypto::traits::KemKeyPair;
 
     #[test]
     fn test_derive_public_seed() {

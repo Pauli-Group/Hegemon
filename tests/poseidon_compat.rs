@@ -133,7 +133,7 @@ fn poseidon_empty_tree_root_matches() {
         pallet_current = pallet_poseidon::merkle_node(pallet_current, pallet_current);
         
         if level < 5 || level == depth - 1 {
-            println!("Level {} default:");
+            println!("Level {level} default:");
             println!("  circuit: {}", circuit_current.as_int());
             println!("  pallet:  {}", pallet_current);
         }
