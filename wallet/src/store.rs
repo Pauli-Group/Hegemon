@@ -441,12 +441,34 @@ impl WalletStore {
         self.with_mut(|state| {
             let mut expired_indexes: Vec<usize> = Vec::new();
 
+            // Debug: print chain nullifiers
+            if std::env::var("WALLET_DEBUG_PENDING").is_ok() {
+                eprintln!("[DEBUG refresh_pending] chain nullifiers ({}):", nullifiers.len());
+                for nf in nullifiers.iter() {
+                    eprintln!("  chain: {}", hex::encode(nf));
+                }
+            }
+
             for (i, tx) in state.pending.iter_mut().enumerate() {
                 if matches!(tx.status, PendingStatus::Mined { .. }) {
                     continue;
                 }
+                
+                // Debug: print pending tx nullifiers
+                if std::env::var("WALLET_DEBUG_PENDING").is_ok() {
+                    eprintln!("[DEBUG refresh_pending] tx {} nullifiers ({}):", hex::encode(&tx.tx_id[..8]), tx.nullifiers.len());
+                    for nf in &tx.nullifiers {
+                        let found = nullifiers.contains(nf);
+                        eprintln!("  pending: {} (found: {})", hex::encode(nf), found);
+                    }
+                }
+                
                 // Check if transaction was mined (nullifiers on-chain)
-                if tx.nullifiers.iter().all(|nf| nullifiers.contains(nf)) {
+                // Skip zero-padded nullifiers when checking
+                let real_nullifiers: Vec<&[u8; 32]> = tx.nullifiers.iter()
+                    .filter(|nf| **nf != [0u8; 32])
+                    .collect();
+                if !real_nullifiers.is_empty() && real_nullifiers.iter().all(|nf| nullifiers.contains(*nf)) {
                     tx.status = PendingStatus::Mined {
                         height: latest_height,
                     };

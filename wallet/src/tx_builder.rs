@@ -236,6 +236,16 @@ pub fn build_transaction(
     let prover = StarkProver::with_defaults();
     let proof_result = prover.prove(&witness)?;
     
+    // Debug: compare wallet-computed nullifiers vs prover nullifiers
+    eprintln!("DEBUG tx_builder: wallet computed nullifiers vs prover nullifiers:");
+    for (i, (wallet_nf, prover_nf)) in nullifiers.iter().zip(proof_result.nullifiers.iter()).enumerate() {
+        eprintln!("  [{}] wallet:  {}", i, hex::encode(wallet_nf));
+        eprintln!("  [{}] prover:  {}", i, hex::encode(prover_nf));
+        if wallet_nf != prover_nf {
+            eprintln!("  [{}] MISMATCH!", i);
+        }
+    }
+    
     eprintln!("DEBUG tx_builder: proof_result.value_balance = {}", proof_result.value_balance);
     eprintln!("DEBUG tx_builder: proof_result.commitments.len() = {}", proof_result.commitments.len());
     eprintln!("DEBUG tx_builder: ciphertexts.len() = {}", ciphertexts.len());
@@ -262,9 +272,18 @@ pub fn build_transaction(
         proof_result.value_balance,
     )?;
     let spent_indexes = selection.spent.iter().map(|note| note.index).collect();
+    
+    // Filter out padding nullifiers (all zeros) - only store real nullifiers for tracking
+    let real_nullifiers: Vec<[u8; 32]> = proof_result.nullifiers
+        .iter()
+        .filter(|nf| **nf != [0u8; 32])
+        .copied()
+        .collect();
+    
     Ok(BuiltTransaction {
         bundle,
-        nullifiers,
+        // Use prover nullifiers, not wallet-computed, to match what's actually submitted
+        nullifiers: real_nullifiers,
         spent_note_indexes: spent_indexes,
     })
 }

@@ -33,7 +33,12 @@ After this work, a user will be able to:
   - Status now syncs by default (use `--no-sync` to skip)
   - Shows note counts, balance, consolidation warnings
   - Added `StatusArgs` with `--ws-url` and `--no-sync` options
-- [ ] Validation: Manual test that change outputs work correctly
+- [x] **CRITICAL FIX: `hegemon_walletNullifiers` RPC was returning empty**
+  - Root cause: `production_service.rs` `nullifier_list()` always returned `Ok(Vec::new())`
+  - This broke wallet sync - notes were never marked as spent
+  - Fixed by adding `list_nullifiers()` runtime API to iterate `ShieldedPool::Nullifiers`
+  - Updated production_service to call the new API
+- [ ] Validation: End-to-end transfer test with balance verification on receiving wallet
 
 
 ## Surprises & Discoveries
@@ -42,6 +47,12 @@ After this work, a user will be able to:
 - SpendableNote doesn't have a height field, only position, so confirmation count display was simplified
 - WalletStore doesn't implement Clone, so async sync requires Arc<WalletStore> pattern with re-open after sync
 - The existing test `wallet_send_receive_flow` was already failing (encrypted note size mismatch) - pre-existing issue
+- **CRITICAL BUG FOUND**: `hegemon_walletNullifiers` RPC was hardcoded to return empty vec! This meant:
+  - Wallet sync never detected spent notes
+  - Wallet kept trying to spend already-spent notes  
+  - Transactions failed with "Custom error: 5" (nullifier already spent)
+  - The nullifier pre-check (M1) was working correctly, but sync wasn't marking notes as spent
+- The `--no-sync` flag we added for M4 was essential for offline address extraction in node startup scripts
 
 
 ## Decision Log
@@ -77,6 +88,26 @@ After this work, a user will be able to:
 
 ## Outcomes & Retrospective
 
+### Critical Bug Found (2025-12-04)
+
+During end-to-end testing, transactions were failing with "Custom error: 5" (nullifier already spent) even though the wallet showed the notes as unspent. Investigation revealed:
+
+**Root Cause:** `node/src/substrate/rpc/production_service.rs` line 257:
+```rust
+fn nullifier_list(&self) -> Result<Vec<[u8; 32]>, String> {
+    // Note: The runtime API doesn't provide a way to list all nullifiers
+    // This would require a custom runtime API or iterating storage
+    Ok(Vec::new())  // <-- ALWAYS RETURNS EMPTY!
+}
+```
+
+This meant the `hegemon_walletNullifiers` RPC always returned 0 nullifiers, so wallet sync never marked notes as spent.
+
+**Fix Applied:**
+1. Added `list_nullifiers() -> Vec<[u8; 32]>` to `ShieldedPoolApi` in `runtime/src/apis.rs`
+2. Implemented it in `runtime/src/lib.rs` using `Nullifiers::<Runtime>::iter_keys().collect()`
+3. Updated `production_service.rs` to call the new runtime API
+
 ### Test Results (2025-12-04)
 
 **Test Environment:**
@@ -102,19 +133,16 @@ Last synced: block #21
 | ✅ M3a | --dry-run shows consolidation plan | PASSED | Shows: "Would need to consolidate 3 notes to 2 inputs, 1 levels (1 blocks latency), 1 total consolidation transactions" |
 | ✅ M3b | Small transfer (no consolidation needed) | PASSED | Shows: "No consolidation needed. Would send 30 HGM to 1 recipient(s)." |
 | ✅ M4 | Status syncs and shows note breakdown | PASSED | Shows balance, note count, consolidation warning with blocks/txs estimate |
-| ✅ TX | Transaction submission with STARK proof | PASSED | Tx submitted: `0xcd2deea1...`, local verification passed |
-| ⏳ TX | Transaction included in block | PENDING | Transaction in mempool, not yet included - may be separate miner timing issue |
+| ✅ M4b | --no-sync flag for offline use | PASSED | Essential for extracting miner address before node starts |
+| ❌ TX | Transaction fails with "Custom error: 5" | **FAILED** | Root cause: nullifier sync was broken (see above) |
+| ⏳ TX | Re-test after nullifier fix | PENDING | Awaiting node restart with fixed binary |
 
 **Key Observations:**
-1. All wallet robustness features work as designed
-2. Error messages are now actionable with clear suggestions
+1. All wallet robustness features (M1-M4) work as designed
+2. Error messages are actionable with clear suggestions
 3. Consolidation planning shows accurate O(log N) estimates
-4. Transaction submitted successfully but mempool-to-block inclusion not tested yet
-5. Mining continues to add notes while testing (expected behavior)
-
-**Outstanding Issues:**
-- Transaction stuck in mempool (may be unrelated to wallet robustness - could be miner/node issue)
-- Change output validation not yet confirmed (dependent on tx inclusion)
+4. **Critical infrastructure bug found**: nullifier RPC was broken since day one
+5. The nullifier pre-check (M1) was correctly querying on-chain state, but sync never updated local state
 
 **Files Modified:**
 - `wallet/src/error.rs` - NullifierSpent, TooManyInputs variants
@@ -124,6 +152,10 @@ Last synced: block #21
 - `wallet/src/lib.rs` - Module exports
 - `wallet/src/api.rs` - Match new error variants
 - `wallet/src/bin/wallet.rs` - CLI updates: --auto-consolidate, --dry-run, StatusArgs with --ws-url, --no-sync
+- `runtime/src/apis.rs` - Added list_nullifiers() to ShieldedPoolApi
+- `runtime/src/lib.rs` - Implemented list_nullifiers()
+- `node/src/substrate/rpc/production_service.rs` - Fixed nullifier_list() to call runtime API
+- `runbooks/two_person_testnet.md` - Updated instructions to use --no-sync for miner address extraction
 
 
 ## Zcash Patterns Research
