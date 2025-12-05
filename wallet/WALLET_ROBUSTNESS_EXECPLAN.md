@@ -77,7 +77,53 @@ After this work, a user will be able to:
 
 ## Outcomes & Retrospective
 
-(To be populated at completion)
+### Test Results (2025-12-04)
+
+**Test Environment:**
+- Fresh node and wallet initialized
+- Mining to wallet address enabled
+- 20+ blocks mined, accumulating notes
+
+**Test Wallet Status:**
+```
+Balance: 950 HGM
+Unspent notes: 20
+  ⚠ Note consolidation needed: 20 notes exceeds 2 max inputs
+    Consolidation would take 4 blocks and 18 txs
+Last synced: block #21
+```
+
+**Test Case Results:**
+
+| Test | Description | Result | Notes |
+|------|-------------|--------|-------|
+| ✅ M1 | TooManyInputs error without --auto-consolidate | PASSED | Shows: "Need 3 notes but max is 2 per transaction" + "Add --auto-consolidate flag" |
+| ✅ M2 | Human-readable error messages | PASSED | `user_message()` and `suggested_action()` display correctly |
+| ✅ M3a | --dry-run shows consolidation plan | PASSED | Shows: "Would need to consolidate 3 notes to 2 inputs, 1 levels (1 blocks latency), 1 total consolidation transactions" |
+| ✅ M3b | Small transfer (no consolidation needed) | PASSED | Shows: "No consolidation needed. Would send 30 HGM to 1 recipient(s)." |
+| ✅ M4 | Status syncs and shows note breakdown | PASSED | Shows balance, note count, consolidation warning with blocks/txs estimate |
+| ✅ TX | Transaction submission with STARK proof | PASSED | Tx submitted: `0xcd2deea1...`, local verification passed |
+| ⏳ TX | Transaction included in block | PENDING | Transaction in mempool, not yet included - may be separate miner timing issue |
+
+**Key Observations:**
+1. All wallet robustness features work as designed
+2. Error messages are now actionable with clear suggestions
+3. Consolidation planning shows accurate O(log N) estimates
+4. Transaction submitted successfully but mempool-to-block inclusion not tested yet
+5. Mining continues to add notes while testing (expected behavior)
+
+**Outstanding Issues:**
+- Transaction stuck in mempool (may be unrelated to wallet robustness - could be miner/node issue)
+- Change output validation not yet confirmed (dependent on tx inclusion)
+
+**Files Modified:**
+- `wallet/src/error.rs` - NullifierSpent, TooManyInputs variants
+- `wallet/src/substrate_rpc.rs` - is_nullifier_spent(), check_nullifiers_spent(), build_nullifier_storage_key()
+- `wallet/src/tx_builder.rs` - precheck_nullifiers() function
+- `wallet/src/consolidate.rs` - NEW: ConsolidationPlan, execute_consolidation, MAX_INPUTS
+- `wallet/src/lib.rs` - Module exports
+- `wallet/src/api.rs` - Match new error variants
+- `wallet/src/bin/wallet.rs` - CLI updates: --auto-consolidate, --dry-run, StatusArgs with --ws-url, --no-sync
 
 
 ## Zcash Patterns Research

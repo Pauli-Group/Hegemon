@@ -93,26 +93,20 @@ BOOTNODE="75.155.93.185:30333" ./scripts/start-mining.sh
 ./target/release/wallet init --store ~/.hegemon-wallet --passphrase "CHANGE_ME"
 ```
 
-### 2. Get Your Shielded Address
-
-```bash
-./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME"
-```
-
-Look for the line starting with `Shielded Address: shca1...` and copy the full address.
-
-### 3. Start the Boot Node
-
-# Generate new chainspec (do this ONCE on your machine)
-```bash
-./target/release/hegemon-node build-spec --chain dev --raw > config/dev-chainspec.json
-```
+### 2. Generate Chain Spec (do this ONCE)
 
 ```bash
 mkdir -p ~/.hegemon-node
+./target/release/hegemon-node build-spec --chain dev --raw > config/dev-chainspec.json
+```
 
+### 3. Start the Boot Node
+
+The command below extracts your shielded address (offline) and starts mining:
+
+```bash
 HEGEMON_MINE=1 \
-HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME" 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
+HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
@@ -122,6 +116,14 @@ HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet
   --listen-addr /ip4/0.0.0.0/tcp/30333 \
   --name "PL-BootNode"
 ```
+
+### 4. Check Balance (after mining some blocks)
+
+```bash
+./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME"
+```
+
+Look for the line starting with `Shielded Address: shca1...` and your balance.
 
 ### 4. Share Your IP Address
 
@@ -165,7 +167,7 @@ mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
 HEGEMON_SEEDS="75.155.93.185:30333" \
-HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "WILL_CHANGE_ME" 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
+HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "WILL_CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
