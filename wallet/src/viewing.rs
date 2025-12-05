@@ -88,7 +88,8 @@ impl FullViewingKey {
     pub fn from_keys(keys: &DerivedKeys) -> Self {
         Self {
             incoming: IncomingViewingKey::from_keys(keys),
-            nullifier_key: keys.spend.nullifier_key(),
+            // Store raw sk_spend bytes - circuit computes prf_key(sk_spend) directly
+            nullifier_key: keys.spend.to_bytes(),
         }
     }
 
