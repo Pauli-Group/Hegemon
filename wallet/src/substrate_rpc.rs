@@ -715,6 +715,56 @@ impl SubstrateRpcClient {
         Ok(free_balance)
     }
 
+    /// Check if a nullifier has been spent on-chain
+    ///
+    /// Queries the ShieldedPool.Nullifiers storage to check if a nullifier exists.
+    /// Uses state_getStorage RPC with proper storage key construction.
+    ///
+    /// # Arguments
+    ///
+    /// * `nullifier` - 32-byte nullifier to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the nullifier is in the spent set, `false` otherwise.
+    pub async fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> Result<bool, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        
+        // Build storage key for ShieldedPool.Nullifiers(nullifier)
+        // Key = twox_128("ShieldedPool") ++ twox_128("Nullifiers") ++ blake2_128_concat(nullifier)
+        let storage_key = build_nullifier_storage_key(nullifier);
+        let storage_key_hex = format!("0x{}", hex::encode(&storage_key));
+        
+        // Query storage - if key exists, nullifier is spent
+        let result: Option<String> = client
+            .request("state_getStorage", rpc_params![storage_key_hex])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("state_getStorage failed: {}", e)))?;
+        
+        // Nullifiers storage is a map to (), so any non-None result means it exists
+        Ok(result.is_some())
+    }
+
+    /// Check multiple nullifiers for spent status
+    ///
+    /// Batch version of is_nullifier_spent for efficiency.
+    ///
+    /// # Arguments
+    ///
+    /// * `nullifiers` - Slice of 32-byte nullifiers to check
+    ///
+    /// # Returns
+    ///
+    /// Vector of booleans, one per nullifier. `true` means spent.
+    pub async fn check_nullifiers_spent(&self, nullifiers: &[[u8; 32]]) -> Result<Vec<bool>, WalletError> {
+        let mut results = Vec::with_capacity(nullifiers.len());
+        for nullifier in nullifiers {
+            results.push(self.is_nullifier_spent(nullifier).await?);
+        }
+        Ok(results)
+    }
+
     /// Submit a signed extrinsic to the network
     ///
     /// This is the proper Substrate way to submit transactions.
@@ -1176,6 +1226,29 @@ fn build_system_account_key(account_id: &[u8; 32]) -> Vec<u8> {
     key.extend_from_slice(&account_hash);
     key.extend_from_slice(&blake2_hash);
     key.extend_from_slice(account_id);
+    
+    key
+}
+
+/// Build the storage key for ShieldedPool.Nullifiers(nullifier)
+///
+/// Key format: twox_128("ShieldedPool") ++ twox_128("Nullifiers") ++ blake2_128_concat(nullifier)
+fn build_nullifier_storage_key(nullifier: &[u8; 32]) -> Vec<u8> {
+    // twox_128("ShieldedPool")
+    let pallet_hash = twox_128(b"ShieldedPool");
+    
+    // twox_128("Nullifiers")
+    let storage_hash = twox_128(b"Nullifiers");
+    
+    // blake2_128_concat(nullifier) = blake2_128(nullifier) ++ nullifier
+    let blake2_hash = blake2_128(nullifier);
+    
+    // Concatenate all parts
+    let mut key = Vec::with_capacity(16 + 16 + 16 + 32);
+    key.extend_from_slice(&pallet_hash);
+    key.extend_from_slice(&storage_hash);
+    key.extend_from_slice(&blake2_hash);
+    key.extend_from_slice(nullifier);
     
     key
 }

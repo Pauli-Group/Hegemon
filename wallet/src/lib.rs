@@ -1,6 +1,7 @@
 pub mod address;
 pub mod api;
 pub mod async_sync;
+pub mod consolidate;
 pub mod error;
 pub mod extrinsic;
 pub mod keys;
@@ -36,5 +37,6 @@ pub use store::{
 };
 pub use substrate_rpc::{BlockingSubstrateRpcClient, SubstrateRpcClient, SubstrateRpcConfig};
 pub use sync::{SyncOutcome, WalletSyncEngine};
-pub use tx_builder::{build_transaction, BuiltTransaction, Recipient};
+pub use tx_builder::{build_transaction, precheck_nullifiers, BuiltTransaction, Recipient};
 pub use viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};
+pub use consolidate::{ConsolidationPlan, execute_consolidation, MAX_INPUTS};

@@ -94,7 +94,8 @@ enum Commands {
     /// Run daemon using Substrate WebSocket RPC with real-time subscriptions
     #[command(name = "substrate-daemon")]
     SubstrateDaemon(SubstrateDaemonArgs),
-    Status(StoreArgs),
+    /// Show wallet status (syncs first by default)
+    Status(StatusArgs),
     /// Print miner account ID (hex) for HEGEMON_MINER_ACCOUNT
     #[command(name = "account-id")]
     AccountId(StoreArgs),
@@ -156,6 +157,20 @@ struct StoreArgs {
     store: PathBuf,
     #[arg(long)]
     passphrase: String,
+}
+
+#[derive(Parser)]
+struct StatusArgs {
+    #[arg(long)]
+    store: PathBuf,
+    #[arg(long)]
+    passphrase: String,
+    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    ws_url: String,
+    /// Skip sync and show cached status
+    #[arg(long, default_value_t = false)]
+    no_sync: bool,
 }
 
 #[derive(Parser)]
@@ -248,6 +263,12 @@ struct SubstrateSendArgs {
     /// Randomize output order for privacy
     #[arg(long, default_value_t = false)]
     randomize_memo_order: bool,
+    /// Automatically consolidate notes if too many are needed
+    #[arg(long, default_value_t = false)]
+    auto_consolidate: bool,
+    /// Show what would happen without executing
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
 }
 
 /// Arguments for Substrate WebSocket shield command
@@ -457,46 +478,116 @@ fn cmd_daemon(args: DaemonArgs) -> Result<()> {
     }
 }
 
-fn cmd_status(args: StoreArgs) -> Result<()> {
+fn cmd_status(args: StatusArgs) -> Result<()> {
+    // Sync first unless --no-sync is specified
+    if !args.no_sync {
+        let runtime = RuntimeBuilder::new_multi_thread()
+            .enable_all()
+            .build()
+            .context("failed to create tokio runtime")?;
+        
+        runtime.block_on(async {
+            println!("Syncing with {}...", args.ws_url);
+            let client = Arc::new(
+                SubstrateRpcClient::connect(&args.ws_url)
+                    .await
+                    .map_err(|e| anyhow!("Failed to connect: {}", e))?
+            );
+            
+            let store = WalletStore::open(&args.store, &args.passphrase)?;
+            let store_arc = Arc::new(store);
+            let engine = AsyncWalletSyncEngine::new(client.clone(), store_arc.clone());
+            engine.sync_once().await.map_err(|e| anyhow!("Sync failed: {}", e))?;
+            Ok::<_, anyhow::Error>(())
+        })?;
+    }
+    
+    // Re-open to get synced state
+    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    show_status(&store)
+}
+
+fn show_status(store: &WalletStore) -> Result<()> {
     use wallet::extrinsic::ExtrinsicBuilder;
     
-    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    println!("\n═══════════════════════════════════════");
+    println!("            WALLET STATUS");
+    println!("═══════════════════════════════════════\n");
     
     // Show miner account ID (for HEGEMON_MINER_ACCOUNT)
     if let Ok(Some(derived)) = store.derived_keys() {
         let signing_seed = derived.spend.to_bytes();
         let builder = ExtrinsicBuilder::from_seed(&signing_seed);
         let account_id = builder.account_id();
-        println!("Miner Account ID (hex): {}", hex::encode(&account_id));
-        println!();
+        println!("Miner Account ID: {}", hex::encode(&account_id));
     }
     
     // Show primary shielded address (stable, for mining)
     if let Ok(addr) = store.primary_address() {
         println!("Shielded Address: {}", addr.encode().unwrap_or_default());
-        println!();
     }
     
-    let balances = store.balances()?;
-    println!("Balances:");
-    for (asset, value) in balances {
-        println!("  asset {} => {}", asset, value);
+    println!();
+    
+    // Show note counts and balances
+    let notes = store.spendable_notes(0)?; // 0 = native asset
+    let total_value: u64 = notes.iter().map(|n| n.recovered.note.value).sum();
+    
+    println!("Balance: {} HGM", total_value as f64 / 100_000_000.0);
+    println!("Unspent notes: {}", notes.len());
+    
+    if notes.len() > wallet::MAX_INPUTS {
+        println!(
+            "  ⚠ Note consolidation needed: {} notes exceeds {} max inputs",
+            notes.len(),
+            wallet::MAX_INPUTS
+        );
+        let plan = wallet::ConsolidationPlan::plan(notes.len(), wallet::MAX_INPUTS);
+        println!(
+            "    Consolidation would take {} blocks and {} txs",
+            plan.block_latency(),
+            plan.total_txs()
+        );
     }
+    
+    if !notes.is_empty() && notes.len() <= 10 {
+        println!("\nNote breakdown:");
+        for (i, note) in notes.iter().enumerate() {
+            println!(
+                "  #{}: {} HGM (position {})",
+                i,
+                note.recovered.note.value as f64 / 100_000_000.0,
+                note.position
+            );
+        }
+    }
+    
+    println!();
+    
+    // Show sync status
+    let synced_height = store.last_synced_height()?;
+    println!("Last synced: block #{}", synced_height);
+    
+    // Show genesis hash (chain identity)
+    if let Some(genesis) = store.genesis_hash()? {
+        println!("Genesis: 0x{}", hex::encode(&genesis[..8]));
+    }
+    
+    // Show pending transactions
     let pending = store.pending_transactions()?;
-    if pending.is_empty() {
-        println!("No pending transactions");
-    } else {
-        let height = store.last_synced_height()?;
-        println!("Pending transactions:");
+    if !pending.is_empty() {
+        println!("\nPending transactions:");
         for tx in pending {
             println!(
                 "  {} status={:?} confirmations={}",
                 hex::encode(tx.tx_id),
                 tx.status,
-                tx.confirmations(height)
+                tx.confirmations(synced_height)
             );
         }
     }
+    
+    println!();
     Ok(())
 }
 
@@ -693,17 +784,82 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?
         );
         
-        let store = Arc::new(store);
-        let engine = AsyncWalletSyncEngine::new(client.clone(), store.clone());
+        let store_arc = Arc::new(store);
+        let engine = AsyncWalletSyncEngine::new(client.clone(), store_arc.clone());
         
         println!("Syncing wallet...");
         engine.sync_once().await.map_err(|e| anyhow!("Sync failed: {}", e))?;
+        
+        // Re-open store to get mutable reference after sync
+        drop(store_arc);
+        let mut store = WalletStore::open(&args.store, &args.passphrase)?;
         
         // Parse recipients
         let specs: Vec<RecipientSpec> = read_json(&args.recipients)?;
         let randomized_specs = randomize_recipient_specs(&specs, args.randomize_memo_order);
         let recipients = parse_recipients(&randomized_specs).map_err(|e| anyhow!(e.to_string()))?;
         let metadata = transfer_recipients_from_specs(&randomized_specs);
+        
+        // Check if consolidation is needed
+        let notes = store.spendable_notes(0)?; // 0 = native asset
+        let total_needed: u64 = recipients.iter().map(|r| r.value).sum::<u64>() + args.fee;
+        let mut selected_count = 0;
+        let mut selected_value = 0u64;
+        for note in &notes {
+            if selected_value >= total_needed {
+                break;
+            }
+            selected_value += note.recovered.note.value;
+            selected_count += 1;
+        }
+        
+        let plan = wallet::ConsolidationPlan::plan(selected_count, wallet::MAX_INPUTS);
+        
+        if !plan.is_empty() {
+            if args.dry_run {
+                println!("\n=== DRY RUN ===");
+                println!("Would need to consolidate {} notes to {} inputs", selected_count, wallet::MAX_INPUTS);
+                println!("Consolidation plan:");
+                println!("  {} levels ({} blocks latency)", plan.block_latency(), plan.block_latency());
+                println!("  {} total consolidation transactions", plan.total_txs());
+                println!("\nRe-run with --auto-consolidate to execute.");
+                return Ok(());
+            }
+            
+            if !args.auto_consolidate {
+                eprintln!("Error: Need {} notes but max is {} per transaction", selected_count, wallet::MAX_INPUTS);
+                eprintln!("Suggestion: Add --auto-consolidate flag to automatically merge notes first");
+                eprintln!("  Consolidation would take {} blocks and {} transactions", plan.block_latency(), plan.total_txs());
+                return Err(anyhow!(wallet::WalletError::TooManyInputs {
+                    needed: selected_count,
+                    max: wallet::MAX_INPUTS,
+                }));
+            }
+            
+            // Execute consolidation
+            println!("\nConsolidating {} notes...", selected_count);
+            wallet::execute_consolidation(&mut store, &client, args.fee, true).await
+                .map_err(|e| anyhow!("Consolidation failed: {}", e))?;
+            
+            println!("\nProceeding with original transfer...");
+        } else if args.dry_run {
+            println!("\n=== DRY RUN ===");
+            println!("No consolidation needed. Would send {} HGM to {} recipient(s).", 
+                total_needed as f64 / 100_000_000.0, 
+                recipients.len());
+            return Ok(());
+        }
+        
+        // Pre-flight nullifier check (fast - avoids wasted proof generation)
+        println!("Checking note status...");
+        if let Err(e) = wallet::tx_builder::precheck_nullifiers(&store, &client, &recipients, args.fee).await {
+            // Show user-friendly error with suggested action
+            eprintln!("Error: {}", e.user_message());
+            if let Some(action) = e.suggested_action() {
+                eprintln!("Suggestion: {}", action);
+            }
+            return Err(anyhow!(e));
+        }
         
         // Build transaction (creates STARK proof)
         println!("Building shielded transaction with STARK proof...");

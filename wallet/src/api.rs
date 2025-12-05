@@ -143,6 +143,8 @@ impl From<WalletError> for ApiError {
             WalletError::InvalidState(_) => StatusCode::CONFLICT,
             WalletError::EncryptionFailure => StatusCode::INTERNAL_SERVER_ERROR,
             WalletError::ChainMismatch { .. } => StatusCode::CONFLICT,
+            WalletError::NullifierSpent { .. } => StatusCode::CONFLICT,
+            WalletError::TooManyInputs { .. } => StatusCode::BAD_REQUEST,
         };
         ApiError::new(status, err.to_string())
     }
