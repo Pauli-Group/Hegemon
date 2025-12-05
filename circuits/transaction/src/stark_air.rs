@@ -45,8 +45,8 @@ pub const MERKLE_CYCLES: usize = CIRCUIT_MERKLE_DEPTH;
 
 /// Minimum trace length (power of 2)
 /// Layout: (NULLIFIER_CYCLES + MERKLE_CYCLES) * MAX_INPUTS + COMMITMENT_CYCLES * MAX_OUTPUTS
-/// = (3 + 8) * 2 + 7 * 2 = 22 + 14 = 36 cycles × 16 = 576, round up to 1024
-pub const MIN_TRACE_LENGTH: usize = 1024;
+/// = (3 + 32) * 2 + 7 * 2 = 70 + 14 = 84 cycles × 16 = 1344, round up to 2048
+pub const MIN_TRACE_LENGTH: usize = 2048;
 
 // ================================================================================================
 // PERIODIC COLUMN: HASH MASK

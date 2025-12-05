@@ -233,7 +233,7 @@ impl StarkVerifier {
         // Trace configuration
         data.extend_from_slice(&(Self::EXPECTED_TRACE_WIDTH as u32).to_le_bytes());
         data.extend_from_slice(&(Self::EXPECTED_CYCLE_LENGTH as u32).to_le_bytes());
-        data.extend_from_slice(&1024u32.to_le_bytes()); // MIN_TRACE_LENGTH
+        data.extend_from_slice(&2048u32.to_le_bytes()); // MIN_TRACE_LENGTH (depth 32)
         
         // Circuit parameters
         data.extend_from_slice(&(Self::MAX_INPUTS as u32).to_le_bytes());
