@@ -99,6 +99,10 @@ pub fn build_transaction(
             "wallet supports a single recipient",
         ));
     }
+    // Reject zero-value outputs - they waste chain space and could be used for spam
+    if recipients.iter().any(|r| r.value == 0) {
+        return Err(WalletError::InvalidArgument("recipient value must be greater than zero"));
+    }
     if store.mode()? == WalletMode::WatchOnly {
         return Err(WalletError::WatchOnly);
     }
