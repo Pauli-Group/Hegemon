@@ -58,17 +58,18 @@ impl ConsolidationPlan {
     }
 }
 
-/// Execute consolidation using simple loop approach
+/// Execute targeted consolidation - only merge enough notes to cover target_value
 ///
 /// Algorithm:
 /// 1. Sync wallet to get fresh note list
-/// 2. If note_count <= MAX_INPUTS, done
-/// 3. Take first two notes, build consolidation tx
-/// 4. Submit tx, wait for confirmation
+/// 2. Select notes needed to cover target_value
+/// 3. If selected_count <= MAX_INPUTS, done
+/// 4. Merge first two selected notes
 /// 5. Go to step 1
 pub async fn execute_consolidation(
     store: Arc<WalletStore>,
     rpc: &Arc<SubstrateRpcClient>,
+    target_value: u64,
     fee_per_tx: u64,
     verbose: bool,
 ) -> Result<(), WalletError> {
@@ -79,28 +80,52 @@ pub async fn execute_consolidation(
         let engine = AsyncWalletSyncEngine::new(rpc.clone(), store.clone());
         engine.sync_once().await?;
         
-        // Step 2: Check if done
-        let notes = store.spendable_notes(NATIVE_ASSET_ID)?;
-        if notes.len() <= MAX_INPUTS {
-            if verbose {
-                println!("Consolidation complete. {} notes remaining.", notes.len());
+        // Step 2: Select only notes needed for target_value
+        // Sort by value descending - prefer larger notes (including consolidated ones)
+        let mut notes = store.spendable_notes(NATIVE_ASSET_ID)?;
+        notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
+        
+        let mut selected = Vec::new();
+        let mut selected_value = 0u64;
+        for note in &notes {
+            selected.push(note.clone());
+            selected_value += note.recovered.note.value;
+            if selected_value >= target_value {
+                break;
+            }
+        }
+        
+        if selected_value < target_value {
+            return Err(WalletError::InsufficientFunds {
+                needed: target_value,
+                available: selected_value,
+            });
+        }
+        
+        // Check if done - only need to consolidate selected notes
+        if selected.len() <= MAX_INPUTS {
+            if verbose && iteration > 0 {
+                println!("Consolidation complete. {} notes cover {} HGM.", 
+                    selected.len(),
+                    target_value as f64 / 100_000_000.0);
             }
             return Ok(());
         }
         
         iteration += 1;
         if verbose && iteration == 1 {
-            let plan = ConsolidationPlan::estimate(notes.len());
+            let txs_needed = selected.len() - MAX_INPUTS;
             println!(
-                "Starting consolidation: {} notes -> ~{} transactions needed",
-                notes.len(),
-                plan.txs_needed
+                "Consolidating {} notes to cover {} HGM -> ~{} transactions needed",
+                selected.len(),
+                target_value as f64 / 100_000_000.0,
+                txs_needed
             );
         }
         
-        // Step 3: Take first two notes
-        let note_0 = &notes[0];
-        let note_1 = &notes[1];
+        // Step 3: Merge first two selected notes
+        let note_0 = &selected[0];
+        let note_1 = &selected[1];
         
         let total = note_0.recovered.note.value + note_1.recovered.note.value;
         if total <= fee_per_tx {
@@ -122,7 +147,7 @@ pub async fn execute_consolidation(
             println!(
                 "[{}/~{}] Merging {} HGM + {} HGM -> {} HGM",
                 iteration,
-                notes.len() - MAX_INPUTS,
+                selected.len() - MAX_INPUTS,
                 note_0.recovered.note.value as f64 / 100_000_000.0,
                 note_1.recovered.note.value as f64 / 100_000_000.0,
                 (total - fee_per_tx) as f64 / 100_000_000.0
@@ -149,6 +174,10 @@ pub async fn execute_consolidation(
                 break;
             }
         }
+        
+        // Small delay after confirmation to avoid mempool priority collisions
+        // (coinbase tx may still be in pool right after block)
+        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
         
         // Step 5: Loop back to sync and check again
     }

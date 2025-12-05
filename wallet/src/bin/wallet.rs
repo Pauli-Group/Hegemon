@@ -797,7 +797,9 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         let metadata = transfer_recipients_from_specs(&randomized_specs);
         
         // Check if consolidation is needed
-        let notes = store_arc.spendable_notes(0)?; // 0 = native asset
+        // Sort by value descending to match tx_builder behavior
+        let mut notes = store_arc.spendable_notes(0)?; // 0 = native asset
+        notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
         let total_needed: u64 = recipients.iter().map(|r| r.value).sum::<u64>() + args.fee;
         let mut selected_count = 0;
         let mut selected_value = 0u64;
@@ -831,9 +833,9 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
                 }));
             }
             
-            // Execute consolidation
-            println!("\nConsolidating {} notes...", selected_count);
-            wallet::execute_consolidation(store_arc.clone(), &client, args.fee, true).await
+            // Execute targeted consolidation - only consolidate notes needed for this send
+            println!("\nConsolidating {} notes to cover {} HGM...", selected_count, total_needed as f64 / 100_000_000.0);
+            wallet::execute_consolidation(store_arc.clone(), &client, total_needed, args.fee, true).await
                 .map_err(|e| anyhow!("Consolidation failed: {}", e))?;
             
             println!("\nProceeding with original transfer...");
