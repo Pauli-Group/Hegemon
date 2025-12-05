@@ -340,7 +340,8 @@ struct Selection {
 }
 
 fn select_notes(notes: &mut [SpendableNote], target: u64) -> Result<Selection, WalletError> {
-    notes.sort_by_key(|note| note.position);
+    // Sort by value descending - prefer larger notes to minimize input count
+    notes.sort_by(|a, b| b.value().cmp(&a.value()));
     let mut total = 0u64;
     let mut spent = Vec::new();
     for note in notes.iter() {
