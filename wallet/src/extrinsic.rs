@@ -314,30 +314,30 @@ impl ExtrinsicBuilder {
         encoded.push(SHIELDED_TRANSFER_CALL_INDEX);
         
         // Encode proof (StarkProof is Vec<u8>)
-        eprintln!("DEBUG CALL: proof size = {} bytes", call.proof.len());
+        // eprintln!("DEBUG CALL: proof size = {} bytes", call.proof.len());
         encode_compact_vec(&call.proof, &mut encoded);
-        eprintln!("DEBUG CALL: after proof, encoded size = {}", encoded.len());
+        // eprintln!("DEBUG CALL: after proof, encoded size = {}", encoded.len());
         
         // Encode nullifiers (BoundedVec<[u8;32], _>)
-        eprintln!("DEBUG CALL: nullifiers count = {}", call.nullifiers.len());
+        // eprintln!("DEBUG CALL: nullifiers count = {}", call.nullifiers.len());
         encode_compact_len(call.nullifiers.len(), &mut encoded);
         for nullifier in &call.nullifiers {
             encoded.extend_from_slice(nullifier);
         }
-        eprintln!("DEBUG CALL: after nullifiers, encoded size = {}", encoded.len());
+        // eprintln!("DEBUG CALL: after nullifiers, encoded size = {}", encoded.len());
         
         // Encode commitments (BoundedVec<[u8;32], _>)
-        eprintln!("DEBUG CALL: commitments count = {}", call.commitments.len());
+        // eprintln!("DEBUG CALL: commitments count = {}", call.commitments.len());
         encode_compact_len(call.commitments.len(), &mut encoded);
         for commitment in &call.commitments {
             encoded.extend_from_slice(commitment);
         }
-        eprintln!("DEBUG CALL: after commitments, encoded size = {}", encoded.len());
+        // eprintln!("DEBUG CALL: after commitments, encoded size = {}", encoded.len());
         
         // Encode encrypted notes (BoundedVec<EncryptedNote, _>)
         // EncryptedNote has ciphertext: [u8; 611] and kem_ciphertext: [u8; 1088] = 1699 bytes total
         const PALLET_ENCRYPTED_NOTE_SIZE: usize = 611 + 1088;
-        eprintln!("DEBUG CALL: encrypted_notes count = {}", call.encrypted_notes.len());
+        // eprintln!("DEBUG CALL: encrypted_notes count = {}", call.encrypted_notes.len());
         encode_compact_len(call.encrypted_notes.len(), &mut encoded);
         for note in &call.encrypted_notes {
             // The encrypted note must be exactly ciphertext + kem_ciphertext
@@ -349,19 +349,19 @@ impl ExtrinsicBuilder {
             }
             encoded.extend_from_slice(note);
         }
-        eprintln!("DEBUG CALL: after encrypted_notes, encoded size = {}", encoded.len());
+        // eprintln!("DEBUG CALL: after encrypted_notes, encoded size = {}", encoded.len());
         
         // Encode anchor ([u8; 32])
         encoded.extend_from_slice(&call.anchor);
-        eprintln!("DEBUG CALL: after anchor, encoded size = {}", encoded.len());
+        // eprintln!("DEBUG CALL: after anchor, encoded size = {}", encoded.len());
         
         // Encode binding signature (BindingSignature { data: [u8; 64] })
         encoded.extend_from_slice(&call.binding_sig);
-        eprintln!("DEBUG CALL: after binding_sig, encoded size = {}", encoded.len());
+        // eprintln!("DEBUG CALL: after binding_sig, encoded size = {}", encoded.len());
         
         // Encode value_balance (i128, little-endian)
         encoded.extend_from_slice(&call.value_balance.to_le_bytes());
-        eprintln!("DEBUG CALL: final call size = {}", encoded.len());
+        // eprintln!("DEBUG CALL: final call size = {}", encoded.len());
         
         Ok(encoded)
     }
@@ -428,13 +428,13 @@ impl ExtrinsicBuilder {
         // block_hash: [u8; 32] (mortality checkpoint)
         payload.extend_from_slice(&metadata.block_hash);
         
-        eprintln!("DEBUG: Sign payload before hash: {} bytes", payload.len());
-        eprintln!("DEBUG: Sign payload first 50: {}", hex::encode(&payload[..50.min(payload.len())]));
+        // eprintln!("DEBUG: Sign payload before hash: {} bytes", payload.len());
+        // eprintln!("DEBUG: Sign payload first 50: {}", hex::encode(&payload[..50.min(payload.len())]));
         
         // If payload > 256 bytes, hash it first (Substrate convention)
         if payload.len() > 256 {
             let hashed = blake2_256_hash(&payload);
-            eprintln!("DEBUG: Sign payload hashed to: {}", hex::encode(&hashed));
+        // eprintln!("DEBUG: Sign payload hashed to: {}", hex::encode(&hashed));
             hashed.to_vec()
         } else {
             payload
@@ -478,7 +478,7 @@ impl ExtrinsicBuilder {
         signature: &[u8],
         encoded_extra: &[u8],
     ) -> Vec<u8> {
-        eprintln!("DEBUG EXTRINSIC BUILD:");
+        // eprintln!("DEBUG EXTRINSIC BUILD:");
         eprintln!("  call len = {} bytes", encoded_call.len());
         eprintln!("  signature len = {} bytes", signature.len());
         eprintln!("  extra len = {} bytes", encoded_extra.len());
@@ -866,8 +866,8 @@ pub fn build_unsigned_shielded_transfer(call: &ShieldedTransferCall) -> Result<V
     encode_compact_len(extrinsic.len(), &mut result);
     result.extend_from_slice(&extrinsic);
     
-    eprintln!("DEBUG: Built unsigned extrinsic: {} bytes", result.len());
-    eprintln!("DEBUG: First 20 bytes: {}", hex::encode(&result[..20.min(result.len())]));
+        // eprintln!("DEBUG: Built unsigned extrinsic: {} bytes", result.len());
+        // eprintln!("DEBUG: First 20 bytes: {}", hex::encode(&result[..20.min(result.len())]));
     
     Ok(result)
 }
