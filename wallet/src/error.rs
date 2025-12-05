@@ -42,6 +42,9 @@ pub enum WalletError {
 
     #[error("insufficient funds (needed {needed}, available {available})")]
     InsufficientFunds { needed: u64, available: u64 },
+
+    #[error("chain mismatch: wallet was created for chain {expected}, but connected to {actual}. Use --force-rescan to reset wallet state.")]
+    ChainMismatch { expected: String, actual: String },
 }
 
 impl From<bincode::Error> for WalletError {

@@ -65,6 +65,7 @@ impl WalletStore {
             next_commitment_index: 0,
             next_ciphertext_index: 0,
             last_synced_height: 0,
+            genesis_hash: None,
         };
         Self::create_with_state(path, passphrase, state)
     }
@@ -89,6 +90,7 @@ impl WalletStore {
             next_commitment_index: 0,
             next_ciphertext_index: 0,
             last_synced_height: 0,
+            genesis_hash: None,
         };
         Self::create_with_state(path, passphrase, state)
     }
@@ -211,6 +213,51 @@ impl WalletStore {
 
     pub fn last_synced_height(&self) -> Result<u64, WalletError> {
         self.with_state(|state| Ok(state.last_synced_height))
+    }
+
+    /// Get the genesis hash this wallet was synced with, if any.
+    pub fn genesis_hash(&self) -> Result<Option<[u8; 32]>, WalletError> {
+        self.with_state(|state| Ok(state.genesis_hash))
+    }
+
+    /// Set the genesis hash. Only succeeds if not already set, or if matches.
+    /// Returns Err(ChainMismatch) if already set to a different value.
+    pub fn set_genesis_hash(&self, hash: [u8; 32]) -> Result<(), WalletError> {
+        self.with_mut(|state| {
+            match state.genesis_hash {
+                None => {
+                    state.genesis_hash = Some(hash);
+                    Ok(())
+                }
+                Some(existing) if existing == hash => Ok(()),
+                Some(existing) => Err(WalletError::ChainMismatch {
+                    expected: hex::encode(existing),
+                    actual: hex::encode(hash),
+                }),
+            }
+        })
+    }
+
+    /// Check if genesis hash matches. Returns true if no genesis hash stored yet.
+    pub fn check_genesis_hash(&self, hash: &[u8; 32]) -> Result<bool, WalletError> {
+        self.with_state(|state| {
+            Ok(state.genesis_hash.map(|h| h == *hash).unwrap_or(true))
+        })
+    }
+
+    /// Reset all sync state (notes, commitments, pending, cursors).
+    /// Preserves keys and addresses. Use when chain has been reset.
+    pub fn reset_sync_state(&self) -> Result<(), WalletError> {
+        self.with_mut(|state| {
+            state.notes.clear();
+            state.pending.clear();
+            state.commitments.clear();
+            state.next_commitment_index = 0;
+            state.next_ciphertext_index = 0;
+            state.last_synced_height = 0;
+            state.genesis_hash = None;
+            Ok(())
+        })
     }
 
     pub fn append_commitments(&self, entries: &[(u64, u64)]) -> Result<(), WalletError> {
@@ -387,11 +434,18 @@ impl WalletStore {
         latest_height: u64,
         nullifiers: &HashSet<[u8; 32]>,
     ) -> Result<(), WalletError> {
+        // Transactions older than this are considered expired (5 minutes)
+        const PENDING_TIMEOUT_SECS: u64 = 300;
+        let now = current_timestamp();
+
         self.with_mut(|state| {
-            for tx in &mut state.pending {
+            let mut expired_indexes: Vec<usize> = Vec::new();
+
+            for (i, tx) in state.pending.iter_mut().enumerate() {
                 if matches!(tx.status, PendingStatus::Mined { .. }) {
                     continue;
                 }
+                // Check if transaction was mined (nullifiers on-chain)
                 if tx.nullifiers.iter().all(|nf| nullifiers.contains(nf)) {
                     tx.status = PendingStatus::Mined {
                         height: latest_height,
@@ -402,8 +456,25 @@ impl WalletStore {
                             note.pending_spend = false;
                         }
                     }
+                } else if now.saturating_sub(tx.submitted_at) > PENDING_TIMEOUT_SECS {
+                    // Transaction expired - release locked notes
+                    for &idx in &tx.spent_note_indexes {
+                        if let Some(note) = state.notes.get_mut(idx) {
+                            // Only release if not actually spent on-chain
+                            if !note.spent {
+                                note.pending_spend = false;
+                            }
+                        }
+                    }
+                    expired_indexes.push(i);
                 }
             }
+
+            // Remove expired transactions (iterate in reverse to preserve indexes)
+            for i in expired_indexes.into_iter().rev() {
+                state.pending.remove(i);
+            }
+
             Ok(())
         })
     }
@@ -492,6 +563,10 @@ struct WalletState {
     next_commitment_index: u64,
     next_ciphertext_index: u64,
     last_synced_height: u64,
+    /// Genesis hash of the chain this wallet was synced with.
+    /// Used to detect chain resets/mismatches.
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

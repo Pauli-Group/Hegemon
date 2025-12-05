@@ -51,6 +51,8 @@ pub struct AsyncWalletSyncEngine {
     store: Arc<WalletStore>,
     /// Page size for fetching commitments/ciphertexts
     page_limit: usize,
+    /// Skip genesis hash validation (for --force-rescan)
+    skip_genesis_check: bool,
 }
 
 impl AsyncWalletSyncEngine {
@@ -65,12 +67,19 @@ impl AsyncWalletSyncEngine {
             client,
             store,
             page_limit: 256,
+            skip_genesis_check: false,
         }
     }
 
     /// Create with custom page limit
     pub fn with_page_limit(mut self, limit: usize) -> Self {
         self.page_limit = limit;
+        self
+    }
+
+    /// Skip genesis hash validation (use after manual reset)
+    pub fn with_skip_genesis_check(mut self, skip: bool) -> Self {
+        self.skip_genesis_check = skip;
         self
     }
 
@@ -81,12 +90,35 @@ impl AsyncWalletSyncEngine {
     pub async fn sync_once(&self) -> Result<SyncOutcome, WalletError> {
         let mut outcome = SyncOutcome::default();
 
+        // Validate genesis hash to detect chain resets
+        let metadata = self.client.get_chain_metadata().await?;
+        if !self.skip_genesis_check {
+            // Try to set genesis hash (will fail if mismatched)
+            self.store.set_genesis_hash(metadata.genesis_hash)?;
+        } else {
+            // Force rescan mode: reset if genesis changed
+            if !self.store.check_genesis_hash(&metadata.genesis_hash)? {
+                eprintln!("Chain genesis mismatch detected, resetting wallet sync state...");
+                self.store.reset_sync_state()?;
+                self.store.set_genesis_hash(metadata.genesis_hash)?;
+            }
+        }
+
         // Get current note status from node
         let note_status = self.client.note_status().await?;
         self.store.set_tree_depth(note_status.depth as u32)?;
 
+        // Detect if our cursor is ahead of the chain (chain was reset)
+        let commitment_cursor = self.store.next_commitment_index()?;
+        if commitment_cursor > note_status.leaf_count {
+            return Err(WalletError::ChainMismatch {
+                expected: format!("chain with >= {} commitments", commitment_cursor),
+                actual: format!("chain with {} commitments", note_status.leaf_count),
+            });
+        }
+
         // Sync commitments
-        let mut commitment_cursor = self.store.next_commitment_index()?;
+        let mut commitment_cursor = commitment_cursor;
         while commitment_cursor < note_status.leaf_count {
             let entries = self
                 .client

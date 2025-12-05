@@ -58,6 +58,16 @@ use sp_std::vec::Vec;
 /// Pallet ID for deriving the pool account.
 const PALLET_ID: PalletId = PalletId(*b"shld/pol");
 
+/// Zero nullifier - used for padding in STARK proofs.
+/// STARK proofs require fixed-size arrays, so unused input slots are padded with zeros.
+/// The pallet must skip zero nullifiers when checking for duplicates and when storing.
+const ZERO_NULLIFIER: [u8; 32] = [0u8; 32];
+
+/// Check if a nullifier is the zero padding value.
+fn is_zero_nullifier(nf: &[u8; 32]) -> bool {
+    *nf == ZERO_NULLIFIER
+}
+
 /// Weight information for pallet extrinsics.
 pub trait WeightInfo {
     fn shielded_transfer(nullifiers: u32, commitments: u32) -> Weight;
@@ -408,17 +418,23 @@ pub mod pallet {
                 Error::<T>::InvalidAnchor
             );
 
-            // Check for duplicate nullifiers in transaction
+            // Check for duplicate nullifiers in transaction (skip zero padding)
             let mut seen_nullifiers = Vec::new();
             for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    continue;
+                }
                 if seen_nullifiers.contains(nf) {
                     return Err(Error::<T>::DuplicateNullifierInTx.into());
                 }
                 seen_nullifiers.push(*nf);
             }
 
-            // Check nullifiers not already spent
+            // Check nullifiers not already spent (skip zero padding)
             for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    continue;
+                }
                 ensure!(
                     !Nullifiers::<T>::contains_key(nf),
                     Error::<T>::NullifierAlreadyExists
@@ -487,8 +503,11 @@ pub mod pallet {
                 PoolBalance::<T>::mutate(|b| *b = b.saturating_sub((-value_balance) as u128));
             }
 
-            // Add nullifiers to spent set
+            // Add nullifiers to spent set (skip zero padding)
             for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    continue;
+                }
                 Nullifiers::<T>::insert(nf, ());
                 Self::deposit_event(Event::NullifierAdded { nullifier: *nf });
             }
@@ -717,17 +736,23 @@ pub mod pallet {
                 Error::<T>::InvalidAnchor
             );
 
-            // Check for duplicate nullifiers in transaction
+            // Check for duplicate nullifiers in transaction (skip zero padding)
             let mut seen_nullifiers = Vec::new();
             for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    continue;
+                }
                 if seen_nullifiers.contains(nf) {
                     return Err(Error::<T>::DuplicateNullifierInTx.into());
                 }
                 seen_nullifiers.push(*nf);
             }
 
-            // Check nullifiers not already spent
+            // Check nullifiers not already spent (skip zero padding)
             for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    continue;
+                }
                 ensure!(
                     !Nullifiers::<T>::contains_key(nf),
                     Error::<T>::NullifierAlreadyExists
@@ -770,8 +795,11 @@ pub mod pallet {
                 Error::<T>::InvalidBindingSignature
             );
 
-            // Add nullifiers to spent set
+            // Add nullifiers to spent set (skip zero padding)
             for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    continue;
+                }
                 Nullifiers::<T>::insert(nf, ());
                 Self::deposit_event(Event::NullifierAdded { nullifier: *nf });
             }
@@ -998,9 +1026,12 @@ pub mod pallet {
                     }
                     log::info!(target: "shielded-pool", "  anchor check PASSED");
 
-                    // Check for duplicate nullifiers within the transaction
+                    // Check for duplicate nullifiers within the transaction (skip zero padding)
                     let mut seen = Vec::new();
                     for nf in nullifiers.iter() {
+                        if is_zero_nullifier(nf) {
+                            continue;
+                        }
                         if seen.contains(nf) {
                             log::info!(target: "shielded-pool", "  REJECTED: Duplicate nullifier in tx");
                             return InvalidTransaction::Custom(4).into();
@@ -1008,8 +1039,11 @@ pub mod pallet {
                         seen.push(*nf);
                     }
 
-                    // Check nullifiers haven't been spent already
+                    // Check nullifiers haven't been spent already (skip zero padding)
                     for nf in nullifiers.iter() {
+                        if is_zero_nullifier(nf) {
+                            continue;
+                        }
                         if Nullifiers::<T>::contains_key(nf) {
                             log::info!(target: "shielded-pool", "  REJECTED: Nullifier already spent");
                             return InvalidTransaction::Custom(5).into();
