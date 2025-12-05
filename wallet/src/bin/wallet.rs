@@ -542,11 +542,11 @@ fn show_status(store: &WalletStore) -> Result<()> {
             notes.len(),
             wallet::MAX_INPUTS
         );
-        let plan = wallet::ConsolidationPlan::plan(notes.len(), wallet::MAX_INPUTS);
+        let plan = wallet::ConsolidationPlan::estimate(notes.len());
         println!(
             "    Consolidation would take {} blocks and {} txs",
-            plan.block_latency(),
-            plan.total_txs()
+            plan.blocks_needed,
+            plan.txs_needed
         );
     }
     
@@ -790,18 +790,14 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         println!("Syncing wallet...");
         engine.sync_once().await.map_err(|e| anyhow!("Sync failed: {}", e))?;
         
-        // Re-open store to get mutable reference after sync
-        drop(store_arc);
-        let mut store = WalletStore::open(&args.store, &args.passphrase)?;
-        
-        // Parse recipients
+        // Parse recipients (use store_arc for read operations)
         let specs: Vec<RecipientSpec> = read_json(&args.recipients)?;
         let randomized_specs = randomize_recipient_specs(&specs, args.randomize_memo_order);
         let recipients = parse_recipients(&randomized_specs).map_err(|e| anyhow!(e.to_string()))?;
         let metadata = transfer_recipients_from_specs(&randomized_specs);
         
         // Check if consolidation is needed
-        let notes = store.spendable_notes(0)?; // 0 = native asset
+        let notes = store_arc.spendable_notes(0)?; // 0 = native asset
         let total_needed: u64 = recipients.iter().map(|r| r.value).sum::<u64>() + args.fee;
         let mut selected_count = 0;
         let mut selected_value = 0u64;
@@ -813,15 +809,14 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
             selected_count += 1;
         }
         
-        let plan = wallet::ConsolidationPlan::plan(selected_count, wallet::MAX_INPUTS);
+        let plan = wallet::ConsolidationPlan::estimate(selected_count);
         
         if !plan.is_empty() {
             if args.dry_run {
                 println!("\n=== DRY RUN ===");
                 println!("Would need to consolidate {} notes to {} inputs", selected_count, wallet::MAX_INPUTS);
                 println!("Consolidation plan:");
-                println!("  {} levels ({} blocks latency)", plan.block_latency(), plan.block_latency());
-                println!("  {} total consolidation transactions", plan.total_txs());
+                println!("  ~{} transactions needed", plan.txs_needed);
                 println!("\nRe-run with --auto-consolidate to execute.");
                 return Ok(());
             }
@@ -829,7 +824,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
             if !args.auto_consolidate {
                 eprintln!("Error: Need {} notes but max is {} per transaction", selected_count, wallet::MAX_INPUTS);
                 eprintln!("Suggestion: Add --auto-consolidate flag to automatically merge notes first");
-                eprintln!("  Consolidation would take {} blocks and {} transactions", plan.block_latency(), plan.total_txs());
+                eprintln!("  Consolidation would take ~{} transactions", plan.txs_needed);
                 return Err(anyhow!(wallet::WalletError::TooManyInputs {
                     needed: selected_count,
                     max: wallet::MAX_INPUTS,
@@ -838,7 +833,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
             
             // Execute consolidation
             println!("\nConsolidating {} notes...", selected_count);
-            wallet::execute_consolidation(&mut store, &client, args.fee, true).await
+            wallet::execute_consolidation(store_arc.clone(), &client, args.fee, true).await
                 .map_err(|e| anyhow!("Consolidation failed: {}", e))?;
             
             println!("\nProceeding with original transfer...");
@@ -852,7 +847,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         
         // Pre-flight nullifier check (fast - avoids wasted proof generation)
         println!("Checking note status...");
-        if let Err(e) = wallet::tx_builder::precheck_nullifiers(&store, &client, &recipients, args.fee).await {
+        if let Err(e) = wallet::tx_builder::precheck_nullifiers(&*store_arc, &client, &recipients, args.fee).await {
             // Show user-friendly error with suggested action
             eprintln!("Error: {}", e.user_message());
             if let Some(action) = e.suggested_action() {
@@ -863,8 +858,8 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         
         // Build transaction (creates STARK proof)
         println!("Building shielded transaction with STARK proof...");
-        let built = build_transaction(&store, &recipients, args.fee)?;
-        store.mark_notes_pending(&built.spent_note_indexes, true)?;
+        let built = build_transaction(&*store_arc, &recipients, args.fee)?;
+        store_arc.mark_notes_pending(&built.spent_note_indexes, true)?;
         
         // Check if this is a pure shielded-to-shielded transfer (value_balance = 0)
         // If so, submit as unsigned - no transparent account needed!
@@ -884,7 +879,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         
         match result {
             Ok(tx_hash) => {
-                store.record_pending_submission(
+                store_arc.record_pending_submission(
                     tx_hash,
                     built.nullifiers.clone(),
                     built.spent_note_indexes.clone(),
@@ -896,7 +891,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
                 Ok(())
             }
             Err(e) => {
-                store.mark_notes_pending(&built.spent_note_indexes, false)?;
+                store_arc.mark_notes_pending(&built.spent_note_indexes, false)?;
                 Err(anyhow!("Transaction submission failed: {}", e))
             }
         }
