@@ -1694,6 +1694,11 @@ sp_api::impl_runtime_apis! {
             // Count nullifiers in storage
             pallet_shielded_pool::Nullifiers::<Runtime>::iter().count() as u64
         }
+
+        fn list_nullifiers() -> Vec<[u8; 32]> {
+            // Iterate all nullifiers and collect their keys
+            pallet_shielded_pool::Nullifiers::<Runtime>::iter_keys().collect()
+        }
     }
 }
 

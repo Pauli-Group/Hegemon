@@ -138,5 +138,11 @@ decl_runtime_apis! {
 
         /// Get total nullifier count (spent notes).
         fn nullifier_count() -> u64;
+
+        /// List all spent nullifiers.
+        ///
+        /// Returns all nullifiers currently in the spent set.
+        /// Used by wallets to detect which of their notes have been spent.
+        fn list_nullifiers() -> Vec<[u8; 32]>;
     }
 }

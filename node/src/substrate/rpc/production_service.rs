@@ -255,9 +255,13 @@ where
     }
 
     fn nullifier_list(&self) -> Result<Vec<[u8; 32]>, String> {
-        // Note: The runtime API doesn't provide a way to list all nullifiers
-        // This would require a custom runtime API or iterating storage
-        Ok(Vec::new())
+        let api = self.client.runtime_api();
+        let best_hash = self.best_hash();
+        
+        match api.list_nullifiers(best_hash) {
+            Ok(nullifiers) => Ok(nullifiers),
+            Err(e) => Err(format!("Runtime API error: {:?}", e)),
+        }
     }
 
     fn latest_meta(&self) -> LatestBlock {
