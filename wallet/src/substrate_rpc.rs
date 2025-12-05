@@ -829,12 +829,12 @@ impl SubstrateRpcClient {
         let call = ShieldedTransferCall::from_bundle(bundle);
         
         // Debug: print encrypted note sizes
-        eprintln!("DEBUG: Number of encrypted notes: {}", call.encrypted_notes.len());
+        // eprintln!("DEBUG: Number of encrypted notes: {}", call.encrypted_notes.len());
         for (i, note) in call.encrypted_notes.iter().enumerate() {
-            eprintln!("DEBUG: Encrypted note {} size: {} bytes", i, note.len());
+        // eprintln!("DEBUG: Encrypted note {} size: {} bytes", i, note.len());
         }
-        eprintln!("DEBUG: Spec version: {}, TX version: {}", metadata.spec_version, metadata.tx_version);
-        eprintln!("DEBUG: Nonce: {}", nonce);
+        // eprintln!("DEBUG: Spec version: {}, TX version: {}", metadata.spec_version, metadata.tx_version);
+        // eprintln!("DEBUG: Nonce: {}", nonce);
         
         // 5. Build mortal era (64 block validity)
         // Use current block number directly - block_hash is the hash of this block
@@ -850,8 +850,8 @@ impl SubstrateRpcClient {
         )?;
         
         // Debug: print extrinsic size and first bytes
-        eprintln!("DEBUG: Extrinsic size: {} bytes", extrinsic.len());
-        eprintln!("DEBUG: Extrinsic first 100 bytes: {}", hex::encode(&extrinsic[..100.min(extrinsic.len())]));
+        // eprintln!("DEBUG: Extrinsic size: {} bytes", extrinsic.len());
+        // eprintln!("DEBUG: Extrinsic first 100 bytes: {}", hex::encode(&extrinsic[..100.min(extrinsic.len())]));
         
         // 7. Submit
         self.submit_extrinsic(&extrinsic).await
@@ -890,15 +890,15 @@ impl SubstrateRpcClient {
         }
         
         // Debug output
-        eprintln!("DEBUG: Building unsigned shielded transfer");
-        eprintln!("DEBUG: Number of nullifiers: {}", call.nullifiers.len());
-        eprintln!("DEBUG: Number of commitments: {}", call.commitments.len());
-        eprintln!("DEBUG: Number of encrypted notes: {}", call.encrypted_notes.len());
+        // eprintln!("DEBUG: Building unsigned shielded transfer");
+        // eprintln!("DEBUG: Number of nullifiers: {}", call.nullifiers.len());
+        // eprintln!("DEBUG: Number of commitments: {}", call.commitments.len());
+        // eprintln!("DEBUG: Number of encrypted notes: {}", call.encrypted_notes.len());
         
         // Build the unsigned extrinsic
         let extrinsic = build_unsigned_shielded_transfer(&call)?;
         
-        eprintln!("DEBUG: Unsigned extrinsic size: {} bytes", extrinsic.len());
+        // eprintln!("DEBUG: Unsigned extrinsic size: {} bytes", extrinsic.len());
         
         // Submit
         self.submit_extrinsic(&extrinsic).await
@@ -933,15 +933,15 @@ impl SubstrateRpcClient {
         
         // 2. Get chain metadata
         let metadata = self.get_chain_metadata().await?;
-        eprintln!("DEBUG: Block number: {}", metadata.block_number);
-        eprintln!("DEBUG: Genesis hash: 0x{}", hex::encode(&metadata.genesis_hash));
-        eprintln!("DEBUG: Block hash: 0x{}", hex::encode(&metadata.block_hash));
-        eprintln!("DEBUG: Spec version: {}", metadata.spec_version);
-        eprintln!("DEBUG: Tx version: {}", metadata.tx_version);
+        // eprintln!("DEBUG: Block number: {}", metadata.block_number);
+        // eprintln!("DEBUG: Genesis hash: 0x{}", hex::encode(&metadata.genesis_hash));
+        // eprintln!("DEBUG: Block hash: 0x{}", hex::encode(&metadata.block_hash));
+        // eprintln!("DEBUG: Spec version: {}", metadata.spec_version);
+        // eprintln!("DEBUG: Tx version: {}", metadata.tx_version);
         
         // 3. Get account nonce
         let nonce = self.get_nonce(&builder.account_id()).await?;
-        eprintln!("DEBUG: Account nonce: {}", nonce);
+        // eprintln!("DEBUG: Account nonce: {}", nonce);
         
         // 4. Build the call
         let call = ShieldCall::new(amount, commitment, encrypted_note);
@@ -949,15 +949,15 @@ impl SubstrateRpcClient {
         // 5. Build mortal era (64 block validity)
         // Use current block number directly - block_hash is the hash of this block
         let era = Era::mortal(64, metadata.block_number);
-        eprintln!("DEBUG: Era bytes: {:?}", era.encode());
+        // eprintln!("DEBUG: Era bytes: {:?}", era.encode());
         
         // Calculate expected extra bytes
         let era_bytes = era.encode().len();
         let nonce_compact_bytes = if nonce < 64 { 1 } else if nonce < 16384 { 2 } else { 4 };
         let tip_bytes = 1; // tip=0 is always 1 byte
-        let extra_total = era_bytes + nonce_compact_bytes + tip_bytes;
-        eprintln!("DEBUG: Extra bytes expected: {} (era={}, nonce_compact={}, tip={})", 
-            extra_total, era_bytes, nonce_compact_bytes, tip_bytes);
+        let _extra_total = era_bytes + nonce_compact_bytes + tip_bytes;
+        // eprintln!("DEBUG: Extra bytes expected: {} (era={}, nonce_compact={}, tip={})", 
+        //     extra_total, era_bytes, nonce_compact_bytes, tip_bytes);
         
         // 6. Build and sign the extrinsic
         let extrinsic = builder.build_shield(
@@ -969,7 +969,7 @@ impl SubstrateRpcClient {
         )?;
         
         // DEBUG: Detailed byte-by-byte analysis
-        eprintln!("DEBUG: Extrinsic total length: {} bytes", extrinsic.len());
+        // eprintln!("DEBUG: Extrinsic total length: {} bytes", extrinsic.len());
         
         // Parse compact length prefix
         let compact_mode = extrinsic[0] & 0b11;
@@ -988,53 +988,53 @@ impl SubstrateRpcClient {
                 (0usize, 1 + n as usize) // simplified
             }
         };
-        eprintln!("DEBUG: Compact length: {} (encoded in {} bytes)", compact_value, compact_len);
+        // eprintln!("DEBUG: Compact length: {} (encoded in {} bytes)", compact_value, compact_len);
         
         let pos = compact_len;
-        eprintln!("DEBUG: Version byte at {}: 0x{:02x} (expected 0x84)", pos, extrinsic[pos]);
+        // eprintln!("DEBUG: Version byte at {}: 0x{:02x} (expected 0x84)", pos, extrinsic[pos]);
         
         let pos = pos + 1;
-        eprintln!("DEBUG: MultiAddress variant at {}: 0x{:02x} (expected 0x00)", pos, extrinsic[pos]);
+        // eprintln!("DEBUG: MultiAddress variant at {}: 0x{:02x} (expected 0x00)", pos, extrinsic[pos]);
         
         let pos = pos + 1;
-        eprintln!("DEBUG: AccountId at {}: {}", pos, hex::encode(&extrinsic[pos..pos+32]));
+        // eprintln!("DEBUG: AccountId at {}: {}", pos, hex::encode(&extrinsic[pos..pos+32]));
         
         let pos = pos + 32;
-        eprintln!("DEBUG: Signature variant at {}: 0x{:02x} (expected 0x00 for MlDsa)", pos, extrinsic[pos]);
+        // eprintln!("DEBUG: Signature variant at {}: 0x{:02x} (expected 0x00 for MlDsa)", pos, extrinsic[pos]);
         
         let pos = pos + 1;
-        eprintln!("DEBUG: Signature (3309 bytes) starts at {}", pos);
+        // eprintln!("DEBUG: Signature (3309 bytes) starts at {}", pos);
         
         let pos = pos + 3309;
-        eprintln!("DEBUG: Public variant at {}: 0x{:02x} (expected 0x00)", pos, extrinsic[pos]);
+        // eprintln!("DEBUG: Public variant at {}: 0x{:02x} (expected 0x00)", pos, extrinsic[pos]);
         
         let pos = pos + 1;
-        eprintln!("DEBUG: Public key (1952 bytes) starts at {}", pos);
+        // eprintln!("DEBUG: Public key (1952 bytes) starts at {}", pos);
         
         let pos = pos + 1952;
-        eprintln!("DEBUG: Extra starts at {}", pos);
-        eprintln!("DEBUG: Extra bytes: {}", hex::encode(&extrinsic[pos..pos+extra_total]));
+        // eprintln!("DEBUG: Extra starts at {}", pos);
+        // eprintln!("DEBUG: Extra bytes: {}", hex::encode(&extrinsic[pos..pos+_extra_total]));
         
-        let pos = pos + extra_total;
-        eprintln!("DEBUG: Call starts at {}", pos);
-        eprintln!("DEBUG: First 50 bytes of call: {}", hex::encode(&extrinsic[pos..pos+50.min(extrinsic.len()-pos)]));
+        let pos = pos + _extra_total;
+        // eprintln!("DEBUG: Call starts at {}", pos);
+        // eprintln!("DEBUG: First 50 bytes of call: {}", hex::encode(&extrinsic[pos..pos+50.min(extrinsic.len()-pos)]));
         
         // Verify call structure
-        eprintln!("DEBUG: Pallet index: {} (expected 19)", extrinsic[pos]);
-        eprintln!("DEBUG: Call index: {} (expected 1)", extrinsic[pos+1]);
+        // eprintln!("DEBUG: Pallet index: {} (expected 19)", extrinsic[pos]);
+        // eprintln!("DEBUG: Call index: {} (expected 1)", extrinsic[pos+1]);
         
         // Calculate where kem_ciphertext should start
         // Call: pallet(1) + call(1) + amount(16) + commitment(32) + ciphertext(611) = 661
         let kem_start_in_call = 1 + 1 + 16 + 32 + 611;
         let kem_start_absolute = pos + kem_start_in_call;
         let kem_end = kem_start_absolute + 1088;
-        eprintln!("DEBUG: kem_ciphertext should be at bytes {}-{}", kem_start_absolute, kem_end);
-        eprintln!("DEBUG: Extrinsic ends at byte {}", extrinsic.len());
+        // eprintln!("DEBUG: kem_ciphertext should be at bytes {}-{}", kem_start_absolute, kem_end);
+        // eprintln!("DEBUG: Extrinsic ends at byte {}", extrinsic.len());
         
         if kem_end > extrinsic.len() {
-            eprintln!("DEBUG: ERROR! kem_ciphertext would extend {} bytes beyond extrinsic!", kem_end - extrinsic.len());
+        // eprintln!("DEBUG: ERROR! kem_ciphertext would extend {} bytes beyond extrinsic!", kem_end - extrinsic.len());
         } else {
-            eprintln!("DEBUG: kem_ciphertext fits within extrinsic ✓");
+        // eprintln!("DEBUG: kem_ciphertext fits within extrinsic ✓");
         }
         
         // 7. Submit

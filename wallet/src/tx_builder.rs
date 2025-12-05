@@ -138,7 +138,7 @@ pub fn build_transaction(
     }
 
     let change_value = selection.total.saturating_sub(target_value);
-    eprintln!("DEBUG: selection.total = {}, target_value = {}, change_value = {}", selection.total, target_value, change_value);
+        // eprintln!("DEBUG: selection.total = {}, target_value = {}, change_value = {}", selection.total, target_value, change_value);
     if change_value > 0 {
         if outputs.len() >= MAX_OUTPUTS {
             return Err(WalletError::InvalidArgument(
@@ -168,8 +168,8 @@ pub fn build_transaction(
 
     let tree = store.commitment_tree()?;
     let wallet_root = tree.root();
-    eprintln!("DEBUG: wallet merkle_root = {:?}", wallet_root);
-    eprintln!("DEBUG: tree.len = {}", tree.len());
+        // eprintln!("DEBUG: wallet merkle_root = {:?}", wallet_root);
+        // eprintln!("DEBUG: tree.len = {}", tree.len());
     
     let mut inputs = Vec::new();
     let mut nullifiers = Vec::new();
@@ -178,18 +178,18 @@ pub fn build_transaction(
         let auth_path = tree.authentication_path(note.position as usize)
             .map_err(|e| WalletError::InvalidState(Box::leak(format!("merkle path error: {}", e).into_boxed_str())))?;
         
-        eprintln!("DEBUG: note.position = {}", note.position);
-        eprintln!("DEBUG: auth_path.len() = {}", auth_path.len());
+        // eprintln!("DEBUG: note.position = {}", note.position);
+        // eprintln!("DEBUG: auth_path.len() = {}", auth_path.len());
         
         // Verify the path locally to debug
         let leaf = note.recovered.note_data.commitment();
-        eprintln!("DEBUG: recovered note commitment (Poseidon) = {:?}", leaf);
+        // eprintln!("DEBUG: recovered note commitment (Poseidon) = {:?}", leaf);
         
         // Get tree leaf at that position and compare
         let tree_leaf = auth_path.first().map(|_| {
             // Actually need to get the leaf from tree.levels[0][position]
             // But we don't have direct access. Let me print the first few siblings
-            eprintln!("DEBUG: auth_path siblings: {:?}", &auth_path[..std::cmp::min(3, auth_path.len())]);
+        // eprintln!("DEBUG: auth_path siblings: {:?}", &auth_path[..std::cmp::min(3, auth_path.len())]);
         });
         let _ = tree_leaf;
         
@@ -205,10 +205,10 @@ pub fn build_transaction(
             current = merkle_node(left, right);
             pos >>= 1;
         }
-        eprintln!("DEBUG: computed_root = {:?}", current);
-        eprintln!("DEBUG: expected_root = {:?}", wallet_root);
+        // eprintln!("DEBUG: computed_root = {:?}", current);
+        // eprintln!("DEBUG: expected_root = {:?}", wallet_root);
         if current != wallet_root {
-            eprintln!("DEBUG: ROOT MISMATCH!");
+        // eprintln!("DEBUG: ROOT MISMATCH!");
         }
         
         // Convert Felt path to MerklePath
@@ -236,19 +236,22 @@ pub fn build_transaction(
     let prover = StarkProver::with_defaults();
     let proof_result = prover.prove(&witness)?;
     
-    // Debug: compare wallet-computed nullifiers vs prover nullifiers
-    eprintln!("DEBUG tx_builder: wallet computed nullifiers vs prover nullifiers:");
-    for (i, (wallet_nf, prover_nf)) in nullifiers.iter().zip(proof_result.nullifiers.iter()).enumerate() {
-        eprintln!("  [{}] wallet:  {}", i, hex::encode(wallet_nf));
-        eprintln!("  [{}] prover:  {}", i, hex::encode(prover_nf));
-        if wallet_nf != prover_nf {
-            eprintln!("  [{}] MISMATCH!", i);
+    // Debug: compare wallet-computed nullifiers vs prover nullifiers (only in debug builds)
+    #[cfg(debug_assertions)]
+    {
+        eprintln!("DEBUG tx_builder: wallet computed nullifiers vs prover nullifiers:");
+        for (i, (wallet_nf, prover_nf)) in nullifiers.iter().zip(proof_result.nullifiers.iter()).enumerate() {
+            eprintln!("  [{}] wallet:  {}", i, hex::encode(wallet_nf));
+            eprintln!("  [{}] prover:  {}", i, hex::encode(prover_nf));
+            if wallet_nf != prover_nf {
+                eprintln!("  [{}] MISMATCH!", i);
+            }
         }
     }
     
-    eprintln!("DEBUG tx_builder: proof_result.value_balance = {}", proof_result.value_balance);
-    eprintln!("DEBUG tx_builder: proof_result.commitments.len() = {}", proof_result.commitments.len());
-    eprintln!("DEBUG tx_builder: ciphertexts.len() = {}", ciphertexts.len());
+    // eprintln!("DEBUG tx_builder: proof_result.value_balance = {}", proof_result.value_balance);
+    // eprintln!("DEBUG tx_builder: proof_result.commitments.len() = {}", proof_result.commitments.len());
+    // eprintln!("DEBUG tx_builder: ciphertexts.len() = {}", ciphertexts.len());
     
     // Compute binding signature commitment (Blake2-256 hash of public inputs)
     let binding_hash = compute_binding_hash(
@@ -298,16 +301,17 @@ fn compute_binding_hash(
     commitments: &[[u8; 32]],
     value_balance: i128,
 ) -> [u8; 32] {
-    eprintln!("DEBUG binding: anchor = {}", hex::encode(anchor));
-    eprintln!("DEBUG binding: nullifiers.len = {}", nullifiers.len());
-    for (i, nf) in nullifiers.iter().enumerate() {
-        eprintln!("DEBUG binding: nullifiers[{}] = {}", i, hex::encode(nf));
-    }
-    eprintln!("DEBUG binding: commitments.len = {}", commitments.len());
-    for (i, cm) in commitments.iter().enumerate() {
-        eprintln!("DEBUG binding: commitments[{}] = {}", i, hex::encode(cm));
-    }
-    eprintln!("DEBUG binding: value_balance = {}", value_balance);
+    // Debug: print binding hash inputs
+    // eprintln!("DEBUG binding: anchor = {}", hex::encode(anchor));
+    // eprintln!("DEBUG binding: nullifiers.len = {}", nullifiers.len());
+    // for (i, nf) in nullifiers.iter().enumerate() {
+    //     eprintln!("DEBUG binding: nullifiers[{}] = {}", i, hex::encode(nf));
+    // }
+    // eprintln!("DEBUG binding: commitments.len = {}", commitments.len());
+    // for (i, cm) in commitments.iter().enumerate() {
+    //     eprintln!("DEBUG binding: commitments[{}] = {}", i, hex::encode(cm));
+    // }
+    // eprintln!("DEBUG binding: value_balance = {}", value_balance);
     
     let mut data = Vec::new();
     data.extend_from_slice(anchor);
@@ -319,9 +323,9 @@ fn compute_binding_hash(
     }
     data.extend_from_slice(&value_balance.to_le_bytes());
     
-    eprintln!("DEBUG binding: data.len = {}", data.len());
+    // eprintln!("DEBUG binding: data.len = {}", data.len());
     let hash = synthetic_crypto::hashes::blake2_256(&data);
-    eprintln!("DEBUG binding: hash = {}", hex::encode(&hash));
+    // eprintln!("DEBUG binding: hash = {}", hex::encode(&hash));
     
     hash
 }

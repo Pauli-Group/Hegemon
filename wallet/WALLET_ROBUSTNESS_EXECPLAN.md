@@ -38,7 +38,19 @@ After this work, a user will be able to:
   - This broke wallet sync - notes were never marked as spent
   - Fixed by adding `list_nullifiers()` runtime API to iterate `ShieldedPool::Nullifiers`
   - Updated production_service to call the new API
-- [ ] Validation: End-to-end transfer test with balance verification on receiving wallet
+- [x] **CRITICAL FIX: Wallet and prover computed different nullifiers**
+  - Root cause: FVK stored `Blake3(sk_spend)` as nullifier_key, then applied `prf_key()` again
+  - Prover used `prf_key(sk_spend)` directly - one less hash
+  - Fixed by storing raw `sk_spend` in FVK and letting `compute_nullifier()` apply `prf_key()`
+- [x] **FIX: Zero-padded nullifiers broke pending tx tracking**
+  - Root cause: Pending txs stored all nullifiers including `[0u8; 32]` padding
+  - The `.all()` check failed because zero nullifier never appeared on chain
+  - Fixed by filtering out zero nullifiers before storing in pending tx
+- [x] Validation: End-to-end transfer test with balance verification
+  - Two transactions sent and mined successfully
+  - Pending status correctly transitions from InMempool → Mined { height }
+  - Nullifiers correctly appear on chain and match wallet tracking
+  - Notes correctly marked as spent after tx mined
 
 
 ## Surprises & Discoveries
@@ -53,6 +65,17 @@ After this work, a user will be able to:
   - Transactions failed with "Custom error: 5" (nullifier already spent)
   - The nullifier pre-check (M1) was working correctly, but sync wasn't marking notes as spent
 - The `--no-sync` flag we added for M4 was essential for offline address extraction in node startup scripts
+- **CRITICAL BUG FOUND**: Wallet and prover computed different nullifiers for the same note:
+  - Wallet FVK stored `nullifier_key = Blake3("nk" || sk_spend)` 
+  - Then `compute_nullifier()` called `prf_key(nullifier_key)` = Poseidon hash
+  - Net effect: `Poseidon(Blake3(sk_spend))` - double hashing!
+  - Prover used `prf_key(sk_spend)` = `Poseidon(sk_spend)` - single hash
+  - Result: nullifiers didn't match, pending tx tracking broke
+- **BUG FOUND**: Zero-padded nullifiers in pending tx tracking:
+  - Circuit outputs `MAX_INPUTS` nullifiers, padding unused slots with zeros
+  - Pending tx stored all nullifiers including `[0u8; 32]`
+  - `.all()` check failed because zero never appears on chain
+  - Notes never marked as spent even when real nullifier was on chain
 
 
 ## Decision Log
@@ -88,7 +111,9 @@ After this work, a user will be able to:
 
 ## Outcomes & Retrospective
 
-### Critical Bug Found (2025-12-04)
+### Critical Bugs Found (2025-12-04)
+
+**Bug 1: Nullifier RPC Always Empty**
 
 During end-to-end testing, transactions were failing with "Custom error: 5" (nullifier already spent) even though the wallet showed the notes as unspent. Investigation revealed:
 
@@ -108,21 +133,53 @@ This meant the `hegemon_walletNullifiers` RPC always returned 0 nullifiers, so w
 2. Implemented it in `runtime/src/lib.rs` using `Nullifiers::<Runtime>::iter_keys().collect()`
 3. Updated `production_service.rs` to call the new runtime API
 
-### Test Results (2025-12-04)
+---
+
+**Bug 2: Wallet/Prover Nullifier Mismatch**
+
+After fixing Bug 1, transactions still showed as "InMempool" forever. Debug output revealed wallet and prover computed different nullifiers:
+
+```
+wallet:  322714b81a580a16
+prover:  04ed904ff1823fed
+```
+
+**Root Cause:** Double-hashing in wallet FVK:
+- FVK stored `nullifier_key = Blake3("nk" || sk_spend)` 
+- `compute_nullifier()` then called `prf_key(nullifier_key)` which is Poseidon
+- Net: `Poseidon(Blake3(sk_spend))` vs prover's `Poseidon(sk_spend)`
+
+**Fix Applied:**
+Changed `wallet/src/viewing.rs` `FullViewingKey::from_keys()` to store raw `sk_spend.to_bytes()` instead of `sk_spend.nullifier_key()`. Now both use same single-hash path.
+
+---
+
+**Bug 3: Zero-Padded Nullifiers**
+
+After fix 2, nullifiers matched but transactions still stuck in "InMempool". Debug showed:
+
+```
+chain: 1786c56837a4383b
+pending: 1786c56837a4383b (found: true)
+pending: 0000000000000000 (found: false)  <-- ZERO PADDING!
+```
+
+**Root Cause:** 
+- Circuit outputs `MAX_INPUTS` (2) nullifiers, padding unused slots with zeros
+- Pending tx stored all nullifiers including padding
+- `.all()` check required ALL nullifiers on chain, but zeros never appear
+
+**Fix Applied:**
+1. `tx_builder.rs`: Filter out `[0u8; 32]` before storing in `BuiltTransaction.nullifiers`
+2. `store.rs`: `refresh_pending()` now filters zeros when checking if tx is mined
+
+
+### Final Test Results (2025-12-04)
 
 **Test Environment:**
-- Fresh node and wallet initialized
+- Fresh node and wallet initialized with all fixes
 - Mining to wallet address enabled
-- 20+ blocks mined, accumulating notes
-
-**Test Wallet Status:**
-```
-Balance: 950 HGM
-Unspent notes: 20
-  ⚠ Note consolidation needed: 20 notes exceeds 2 max inputs
-    Consolidation would take 4 blocks and 18 txs
-Last synced: block #21
-```
+- Multiple blocks mined, accumulating notes
 
 **Test Case Results:**
 
@@ -130,32 +187,116 @@ Last synced: block #21
 |------|-------------|--------|-------|
 | ✅ M1 | TooManyInputs error without --auto-consolidate | PASSED | Shows: "Need 3 notes but max is 2 per transaction" + "Add --auto-consolidate flag" |
 | ✅ M2 | Human-readable error messages | PASSED | `user_message()` and `suggested_action()` display correctly |
-| ✅ M3a | --dry-run shows consolidation plan | PASSED | Shows: "Would need to consolidate 3 notes to 2 inputs, 1 levels (1 blocks latency), 1 total consolidation transactions" |
-| ✅ M3b | Small transfer (no consolidation needed) | PASSED | Shows: "No consolidation needed. Would send 30 HGM to 1 recipient(s)." |
-| ✅ M4 | Status syncs and shows note breakdown | PASSED | Shows balance, note count, consolidation warning with blocks/txs estimate |
+| ✅ M3a | --dry-run shows consolidation plan | PASSED | Shows estimated blocks and txs needed |
+| ✅ M3b | Small transfer (no consolidation needed) | PASSED | Direct send works |
+| ✅ M4 | Status syncs and shows note breakdown | PASSED | Shows balance, note count, consolidation warning |
 | ✅ M4b | --no-sync flag for offline use | PASSED | Essential for extracting miner address before node starts |
-| ❌ TX | Transaction fails with "Custom error: 5" | **FAILED** | Root cause: nullifier sync was broken (see above) |
-| ⏳ TX | Re-test after nullifier fix | PENDING | Awaiting node restart with fixed binary |
+| ✅ TX1 | First shielded transfer | PASSED | Tx mined at block 14, status=Mined, confirmations tracked |
+| ✅ TX2 | Second shielded transfer | PASSED | Tx mined at block 17, uses different note (not double-spend) |
+| ✅ NF | Nullifier tracking | PASSED | 2 nullifiers on chain, match wallet-computed nullifiers |
+| ✅ SYNC | Notes marked spent after tx | PASSED | First note correctly excluded from future tx |
 
-**Key Observations:**
-1. All wallet robustness features (M1-M4) work as designed
-2. Error messages are actionable with clear suggestions
-3. Consolidation planning shows accurate O(log N) estimates
-4. **Critical infrastructure bug found**: nullifier RPC was broken since day one
-5. The nullifier pre-check (M1) was correctly querying on-chain state, but sync never updated local state
+**Final Wallet Status (after initial tests):**
+```
+Balance: 800 HGM
+Unspent notes: 18
+Last synced: block #18
 
-**Files Modified:**
+Pending transactions:
+  cf80529b... status=Mined { height: 14 } confirmations=4
+  859fac5d... status=Mined { height: 17 } confirmations=1
+```
+
+**Chain Nullifiers (2 after initial tests):**
+```json
+{
+  "nullifiers": [
+    "0000000000000000000000000000000000000000000000001786c56837a4383b",
+    "0000000000000000000000000000000000000000000000000094a70dbf64195b"
+  ],
+  "count": 2
+}
+```
+
+### Extended Cross-Wallet Test Results (2025-12-04)
+
+**Test: Stress Tests**
+```
+✅ 73/73 pallet-shielded-pool tests pass
+✅ 23/23 transaction-circuit tests pass  
+✅ 13/13 synthetic-crypto tests pass
+✅ 4/5 wallet tests pass (1 pre-existing failure: encrypted note size mismatch)
+```
+
+**Test: Multiple Rapid Transactions**
+```
+✅ 3 transactions sent in rapid succession (no double-spend errors)
+✅ All 3 mined at same block height (34)
+✅ Total 5 transactions, 5 nullifiers on chain, all tracked correctly
+```
+
+**Test: Cross-Wallet Transfers**
+
+Created second wallet for receiver testing:
+```
+Sender Wallet: ~/.hegemon-wallet (passphrase: CHANGE_ME)
+Receiver Wallet: ~/.hegemon-wallet-receiver (passphrase: receiver123)
+```
+
+Transfer sequence:
+1. ✅ Sender → Receiver: 50 HGM (TX: b6bd8168..., mined at block 45)
+2. ✅ Sender → Receiver: 50 HGM × 3 rapid txs (all mined at block 52)
+3. ✅ Receiver → Sender: 25 units (TX: 548b0a81..., mined at block 62)
+
+**Final Balances:**
+| Wallet | Balance | Notes | 
+|--------|---------|-------|
+| Sender | 2600.00000025 HGM | 56 |
+| Receiver | 199.99999975 HGM | 4 |
+
+**Receiver Note Breakdown:**
+```
+#0: 50 HGM (position 58)
+#1: 50 HGM (position 60)  
+#2: 50 HGM (position 63)
+#3: 49.99999975 HGM (position 77) - change from sending 25 units
+```
+
+All pending transactions correctly tracked with mined heights and confirmations.
+
+### Known Issues Remaining
+
+**1. Consolidation Stale Index Bug (M3b partial)**
+- When `--auto-consolidate` builds multiple txs, note indices become stale
+- After first tx marks notes as pending, `spendable_notes()` returns different list
+- Plan uses original indices, second tx builds with wrong notes
+- **Workaround:** Send smaller amounts that don't require consolidation
+- **Fix needed:** Re-fetch note indices each iteration, or use note positions not list indices
+
+**2. Pre-existing Test Failure**
+- `wallet_send_receive_flow` fails with "encrypted note size mismatch"
+- This is a test setup issue, not new regression
+
+### Files Modified
+
+**Wallet:**
 - `wallet/src/error.rs` - NullifierSpent, TooManyInputs variants
-- `wallet/src/substrate_rpc.rs` - is_nullifier_spent(), check_nullifiers_spent(), build_nullifier_storage_key()
-- `wallet/src/tx_builder.rs` - precheck_nullifiers() function
-- `wallet/src/consolidate.rs` - NEW: ConsolidationPlan, execute_consolidation, MAX_INPUTS
+- `wallet/src/substrate_rpc.rs` - is_nullifier_spent(), check_nullifiers_spent()
+- `wallet/src/tx_builder.rs` - precheck_nullifiers(), filter zero nullifiers
+- `wallet/src/consolidate.rs` - NEW: ConsolidationPlan, execute_consolidation
+- `wallet/src/viewing.rs` - Fix nullifier_key to use raw sk_spend
+- `wallet/src/store.rs` - Filter zeros in refresh_pending()
 - `wallet/src/lib.rs` - Module exports
 - `wallet/src/api.rs` - Match new error variants
-- `wallet/src/bin/wallet.rs` - CLI updates: --auto-consolidate, --dry-run, StatusArgs with --ws-url, --no-sync
+- `wallet/src/bin/wallet.rs` - CLI: --auto-consolidate, --dry-run, --no-sync
+
+**Runtime/Node:**
 - `runtime/src/apis.rs` - Added list_nullifiers() to ShieldedPoolApi
 - `runtime/src/lib.rs` - Implemented list_nullifiers()
-- `node/src/substrate/rpc/production_service.rs` - Fixed nullifier_list() to call runtime API
-- `runbooks/two_person_testnet.md` - Updated instructions to use --no-sync for miner address extraction
+- `node/src/substrate/rpc/production_service.rs` - Call runtime API for nullifiers
+
+**Documentation:**
+- `runbooks/two_person_testnet.md` - Updated with --no-sync usage
 
 
 ## Zcash Patterns Research

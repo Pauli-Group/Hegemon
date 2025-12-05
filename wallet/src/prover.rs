@@ -162,12 +162,12 @@ impl StarkProver {
         // DEBUG: Print balance info
         let total_input: u64 = witness.inputs.iter().map(|i| i.note.value).sum();
         let total_output: u64 = witness.outputs.iter().map(|o| o.note.value).sum();
-        eprintln!("DEBUG prover: inputs.len()={} outputs.len()={}", witness.inputs.len(), witness.outputs.len());
-        eprintln!("DEBUG prover: total_input={} total_output={} fee={}", total_input, total_output, witness.fee);
-        eprintln!("DEBUG prover: balance check: total_input ({}) = total_output ({}) + fee ({})?", 
-            total_input, total_output, witness.fee);
+        // eprintln!("DEBUG prover: inputs.len()={} outputs.len()={}", witness.inputs.len(), witness.outputs.len());
+        // eprintln!("DEBUG prover: total_input={} total_output={} fee={}", total_input, total_output, witness.fee);
+        // eprintln!("DEBUG prover: balance check: total_input ({}) = total_output ({}) + fee ({})?", 
+        //     total_input, total_output, witness.fee);
         if total_input != total_output + witness.fee {
-            eprintln!("DEBUG prover: BALANCE MISMATCH! {} != {} + {}", total_input, total_output, witness.fee);
+            // eprintln!("DEBUG prover: BALANCE MISMATCH! {} != {} + {}", total_input, total_output, witness.fee);
         }
         
         // Generate the real STARK proof
@@ -184,11 +184,14 @@ impl StarkProver {
         // Serialize the proof for transmission
         let proof_bytes = proof.to_bytes();
         
-        // Verify proof locally before returning (debug)
-        eprintln!("DEBUG prover: Verifying proof locally before sending...");
+        // Verify proof locally before returning (development check)
         match transaction_circuit::verify_transaction_proof_bytes(&proof_bytes, &pub_inputs) {
-            Ok(()) => eprintln!("DEBUG prover: Local verification PASSED"),
+            Ok(()) => {
+                #[cfg(debug_assertions)]
+                eprintln!("DEBUG prover: Local verification PASSED");
+            }
             Err(e) => {
+                #[cfg(debug_assertions)]
                 eprintln!("DEBUG prover: Local verification FAILED: {:?}", e);
                 return Err(WalletError::Serialization(format!("Proof verification failed: {:?}", e)));
             }
