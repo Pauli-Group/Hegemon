@@ -9,6 +9,7 @@ use crate::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 use crate::prover::StarkProver;
 use crate::rpc::TransactionBundle;
 use crate::store::{SpendableNote, WalletMode, WalletStore};
+use crate::substrate_rpc::SubstrateRpcClient;
 
 pub struct Recipient {
     pub address: ShieldedAddress,
@@ -21,6 +22,68 @@ pub struct BuiltTransaction {
     pub bundle: TransactionBundle,
     pub nullifiers: Vec<[u8; 32]>,
     pub spent_note_indexes: Vec<usize>,
+}
+
+/// Pre-flight check: compute nullifiers for notes and verify none are spent on-chain.
+///
+/// This should be called before `build_transaction` to avoid wasting time on
+/// proof generation if any notes are already spent.
+///
+/// Returns Ok(nullifiers) if all notes are unspent, or Err with the index of the first spent note.
+pub async fn precheck_nullifiers(
+    store: &WalletStore,
+    rpc: &SubstrateRpcClient,
+    recipients: &[Recipient],
+    fee: u64,
+) -> Result<(), WalletError> {
+    if recipients.is_empty() {
+        return Err(WalletError::InvalidArgument("at least one recipient"));
+    }
+    
+    let fvk = store
+        .full_viewing_key()?
+        .ok_or(WalletError::InvalidState("missing viewing key"))?;
+    
+    let required_asset = recipients[0].asset_id;
+    let target_value: u64 = recipients.iter().map(|r| r.value).sum::<u64>().saturating_add(fee);
+    
+    let mut spendable = store.spendable_notes(required_asset)?;
+    if spendable.is_empty() {
+        return Err(WalletError::InsufficientFunds {
+            needed: target_value,
+            available: 0,
+        });
+    }
+    
+    // Select notes (same algorithm as build_transaction)
+    let selection = select_notes(&mut spendable, target_value)?;
+    
+    if selection.spent.len() > MAX_INPUTS {
+        return Err(WalletError::TooManyInputs {
+            needed: selection.spent.len(),
+            max: MAX_INPUTS,
+        });
+    }
+    
+    // Compute nullifiers for selected notes
+    let nullifiers: Vec<[u8; 32]> = selection
+        .spent
+        .iter()
+        .map(|note| fvk.compute_nullifier(&note.recovered.note.rho, note.position))
+        .collect();
+    
+    // Check each nullifier against on-chain state
+    let spent_status = rpc.check_nullifiers_spent(&nullifiers).await?;
+    
+    for (i, is_spent) in spent_status.iter().enumerate() {
+        if *is_spent {
+            return Err(WalletError::NullifierSpent {
+                note_index: selection.spent[i].index,
+            });
+        }
+    }
+    
+    Ok(())
 }
 
 pub fn build_transaction(
@@ -59,7 +122,10 @@ pub fn build_transaction(
     let target_value = recipients[0].value.saturating_add(fee);
     let selection = select_notes(&mut spendable, target_value)?;
     if selection.spent.len() > MAX_INPUTS {
-        return Err(WalletError::InvalidArgument("too many inputs required"));
+        return Err(WalletError::TooManyInputs {
+            needed: selection.spent.len(),
+            max: MAX_INPUTS,
+        });
     }
 
     let mut rng = OsRng;

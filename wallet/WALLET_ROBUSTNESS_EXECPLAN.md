@@ -17,16 +17,31 @@ After this work, a user will be able to:
 
 ## Progress
 
-- [ ] M1: Nullifier pre-check via storage query (no new RPC needed)
-- [ ] M2: Human-readable errors with actionable suggestions
-- [ ] M3: Auto-consolidate in `wallet send` when inputs > MAX_INPUTS
-- [ ] M4: `wallet status --sync` shows current chain state
+- [x] M1: Nullifier pre-check via storage query (no new RPC needed)
+  - Added `is_nullifier_spent()` and `check_nullifiers_spent()` to substrate_rpc.rs
+  - Added `NullifierSpent` and `TooManyInputs` error variants
+  - Added `precheck_nullifiers()` in tx_builder.rs
+  - Integrated into `substrate-send` command
+- [x] M2: Human-readable errors with actionable suggestions
+  - Already implemented: `user_message()` and `suggested_action()` methods on WalletError
+  - CLI displays both on errors
+- [x] M3: Auto-consolidate in `wallet send` when inputs > MAX_INPUTS
+  - Created `consolidate.rs` with `ConsolidationPlan` using binary tree O(log N) algorithm
+  - Added `--auto-consolidate` and `--dry-run` flags to `substrate-send`
+  - Exports `ConsolidationPlan`, `execute_consolidation`, `MAX_INPUTS` from lib.rs
+- [x] M4: `wallet status --sync` shows current chain state
+  - Status now syncs by default (use `--no-sync` to skip)
+  - Shows note counts, balance, consolidation warnings
+  - Added `StatusArgs` with `--ws-url` and `--no-sync` options
 - [ ] Validation: Manual test that change outputs work correctly
 
 
 ## Surprises & Discoveries
 
-(To be populated during implementation)
+- M2 was already implemented - WalletError already has `user_message()` and `suggested_action()` methods, CLI uses them
+- SpendableNote doesn't have a height field, only position, so confirmation count display was simplified
+- WalletStore doesn't implement Clone, so async sync requires Arc<WalletStore> pattern with re-open after sync
+- The existing test `wallet_send_receive_flow` was already failing (encrypted note size mismatch) - pre-existing issue
 
 
 ## Decision Log
