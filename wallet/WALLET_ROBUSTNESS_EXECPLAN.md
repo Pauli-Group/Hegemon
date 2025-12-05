@@ -17,13 +17,11 @@ After this work, a user will be able to:
 
 ## Progress
 
-- [ ] M1: Pre-send nullifier validation - check nullifiers before building proof
-- [ ] M2: Change output verification - test partial spends create correct change
-- [ ] M3: Human-readable error codes - map pallet errors to user messages
-- [ ] M4: Multi-step transaction proposals - wallet builds consolidation plan when needed
-- [ ] M5: Automatic consolidation command - `wallet consolidate` merges small notes
-- [ ] M6: Status sync-first mode - `wallet status` syncs before showing balance
-- [ ] M7: Comprehensive test suite - integration tests for all edge cases
+- [ ] M1: Nullifier pre-check via storage query (no new RPC needed)
+- [ ] M2: Human-readable errors with actionable suggestions
+- [ ] M3: Auto-consolidate in `wallet send` when inputs > MAX_INPUTS
+- [ ] M4: `wallet status --sync` shows current chain state
+- [ ] Validation: Manual test that change outputs work correctly
 
 
 ## Surprises & Discoveries
@@ -37,10 +35,169 @@ After this work, a user will be able to:
   Rationale: Nullifier validation is a prerequisite for safe consolidation - we need to know which notes are actually spendable before planning multi-step transactions
   Date/Author: 2025-12-04
 
+- Decision: Study Zcash librustzcash wallet patterns before implementation
+  Rationale: Zcash has production-grade solutions for the same problems. Their Proposal/Step architecture, ConfirmationsPolicy, and ChangeStrategy patterns should inform our design.
+  Date/Author: 2025-12-04
+
+- Decision: Simplify architecture, don't cargo-cult Zcash complexity
+  Rationale: Zcash's Proposal/Step/StepOutput indirection is for multi-pool (Sapling, Orchard, transparent). We have one pool. Use simple `Vec<(usize, usize)>` for consolidation pairs. Plans are ephemeral; chain state is truth.
+  Date/Author: 2025-12-04
+
+- Decision: Use storage queries for nullifier checks, not new RPC
+  Rationale: Nullifiers are already in `ShieldedPool::Nullifiers` storage. Direct storage query avoids pallet changes.
+  Date/Author: 2025-12-04
+
+- Decision: Default min_confirmations to 1, not 3/10 like Zcash
+  Rationale: 3+ confirmations adds 18+ second delays. Fine for mainnet, painful for testnet iteration. Make configurable.
+  Date/Author: 2025-12-04
+
+- Decision: Remove dust handling entirely
+  Rationale: We have flat fees, not per-input fees. Even 1-satoshi notes are economically spendable. Dust thresholds solve a problem we don't have.
+  Date/Author: 2025-12-04
+
+- Decision: Stateless recovery for interrupted consolidation
+  Rationale: Don't track "consolidation in progress" state. If interrupted, user re-runs command, wallet re-syncs, re-plans from current notes. Simpler, no corrupt state possible.
+  Date/Author: 2025-12-04
+
 
 ## Outcomes & Retrospective
 
 (To be populated at completion)
+
+
+## Zcash Patterns Research
+
+Analysis of `librustzcash/zcash_client_backend` wallet implementation reveals production-proven solutions for our edge cases.
+
+### Key Patterns from Zcash
+
+**1. Proposal/Step Architecture (proposal.rs)**
+
+Zcash models complex transactions as `Proposal` objects containing multiple `Step` objects:
+
+```rust
+struct Proposal<FeeRuleT, NoteRef> {
+    fee_rule: FeeRuleT,
+    target_height: TargetHeight,
+    steps: NonEmpty<Step<NoteRef>>,  // Always at least one step
+}
+
+struct Step<NoteRef> {
+    transaction_request: TransactionRequest,
+    payment_pools: BTreeMap<usize, PoolType>,
+    shielded_inputs: Option<ShieldedInputs<NoteRef>>,
+    prior_step_inputs: Vec<StepOutput>,  // Reference outputs from earlier steps
+    balance: TransactionBalance,
+    is_shielding: bool,
+}
+```
+
+Key insight: Multi-step transactions reference outputs from prior steps via `StepOutput(step_index, output_index)`. However, **shielded note chaining is NOT supported** because witnesses cannot be computed until the transaction is mined. Only transparent outputs can be chained.
+
+This affects our consolidation design: we cannot build all consolidation transactions upfront. Each must be confirmed before the next can reference its outputs.
+
+**2. ConfirmationsPolicy (ZIP 315)**
+
+Zcash distinguishes trusted vs untrusted notes based on confirmations:
+
+```rust
+struct ConfirmationsPolicy {
+    trusted: u32,    // Default: 3 - notes from your own transactions
+    untrusted: u32,  // Default: 10 - notes from external sources
+}
+```
+
+This prevents spending notes that might get reorged. For coinbase rewards (like our mining rewards), this is especially important.
+
+**3. Double-Spend Prevention Sets**
+
+During proposal validation, Zcash tracks:
+
+```rust
+consumed_chain_inputs: BTreeSet<OutPoint>  // Notes being spent from chain
+consumed_prior_inputs: BTreeSet<StepOutput>  // Outputs from earlier steps being spent
+```
+
+Before adding any input, they check it's not already in either set. This catches double-spends at proposal time, not after proof generation.
+
+**4. GreedyInputSelector (input_selection.rs)**
+
+Zcash uses a greedy algorithm that:
+- Iteratively selects notes until amount_required is satisfied
+- Tracks `prior_available` and requires `new_available > prior_available` each iteration
+- Returns `InsufficientFunds { available, required }` with exact amounts
+- Excludes "dust inputs" that cost more in fees than their value
+
+**5. ChangeError Enum (fees.rs)**
+
+Comprehensive error types with actionable information:
+
+```rust
+enum ChangeError<E, NoteRefT> {
+    InsufficientFunds { available: Zatoshis, required: Zatoshis },
+    DustInputs {
+        transparent: Vec<OutPoint>,
+        sapling: Vec<NoteRefT>,
+        orchard: Vec<NoteRefT>,
+    },
+    StrategyError(E),
+    BundleError(&'static str),
+}
+```
+
+The `DustInputs` variant returns which specific notes are dust, allowing the caller to retry without them.
+
+**6. SplitPolicy (fees.rs)**
+
+Zcash can split change into multiple notes to maintain a target note count:
+
+```rust
+struct SplitPolicy {
+    target_output_count: NonZeroUsize,
+    min_split_output_value: Option<Zatoshis>,
+}
+```
+
+This prevents note fragmentation and ensures users always have enough notes for future transactions.
+
+**7. ProposalError Enum (proposal.rs)**
+
+Specific, actionable errors:
+
+```rust
+enum ProposalError {
+    RequestTotalInvalid,           // Amounts don't add up
+    Overflow,                      // Arithmetic overflow
+    AnchorNotFound(BlockHeight),   // Can't find merkle anchor
+    ReferenceError(StepOutput),    // Invalid reference to prior step
+    StepDoubleSpend(StepOutput),   // Same output spent twice
+    ChainDoubleSpend,              // Note already spent on-chain
+    BalanceError { step_index, expected, actual },
+    ShieldedInputsInvalid,
+    EphemeralOutputsInvalid,
+    EphemeralAddressLinkability,   // Privacy violation
+}
+```
+
+### Patterns to Adopt
+
+| Zcash Pattern | Hegemon Analog | Adopt? |
+|--------------|----------------|--------|
+| Proposal/Step architecture | Simple `Vec<(usize, usize)>` pairs | ✅ Simplified |
+| ConfirmationsPolicy | `--min-confirmations` flag, default 1 | ✅ Simplified |
+| Double-spend prevention sets | Track consumed nullifiers in planner | ✅ |
+| InsufficientFunds with amounts | Include `available`/`required` in errors | ✅ |
+| DustInputs filtering | N/A - we have flat fees | ❌ Not needed |
+| Greedy input selection | Already have | ✅ |
+| SplitPolicy | N/A - over-engineering | ❌ Not needed |
+
+### Key Limitation to Match
+
+Zcash explicitly does NOT support spending unconfirmed shielded outputs:
+
+> "Only transparent outputs of earlier steps may be spent in later steps; shielded outputs cannot be spent in later steps because the witnesses required to spend them cannot be computed until the transaction is mined."
+
+Our consolidation must work the same way: each consolidation tx must be mined and confirmed before the next can be built. This means consolidation is inherently slow (1 tx per block * N steps).
 
 
 ## Context and Orientation
@@ -66,313 +223,532 @@ Error code 5 from the pallet means `NullifierAlreadySpent` - the transaction tri
 ## Plan of Work
 
 
-### Milestone 1: Pre-Send Nullifier Validation
+### Milestone 1: Nullifier Pre-Check via Storage Query
 
 Currently the wallet builds a complete STARK proof before discovering that nullifiers are already spent. This wastes significant computation time (proofs take seconds to generate).
 
-Add a pre-flight check in `wallet/src/tx_builder.rs` function `build_shielded_transfer` that queries the chain for nullifier status before proof generation. The check should call a new RPC method or use existing nullifier queries from `substrate_rpc.rs`.
+**Approach:** Query chain storage directly for nullifier existence. No new RPC endpoint needed.
+
+```rust
+// In substrate_rpc.rs - query storage directly
+pub async fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> Result<bool, WalletError> {
+    // ShieldedPool::Nullifiers is a StorageMap<[u8;32], ()>
+    // If key exists, nullifier is spent
+    let key = self.storage_key("ShieldedPool", "Nullifiers", nullifier);
+    let result = self.client.read().await
+        .storage(&key, None).await
+        .map_err(|e| WalletError::Rpc(e.to_string()))?;
+    Ok(result.is_some())
+}
+
+pub async fn check_nullifiers_spent(&self, nullifiers: &[[u8; 32]]) -> Result<Vec<bool>, WalletError> {
+    // Batch query for efficiency
+    let mut results = Vec::with_capacity(nullifiers.len());
+    for n in nullifiers {
+        results.push(self.is_nullifier_spent(n).await?);
+    }
+    Ok(results)
+}
+```
+
+**Integration point:** In `tx_builder.rs`, before `generate_proof()` call:
+
+```rust
+// Pre-flight nullifier check
+let nullifiers: Vec<_> = selected_notes.iter().map(|n| n.nullifier()).collect();
+let spent = rpc_client.check_nullifiers_spent(&nullifiers).await?;
+for (i, is_spent) in spent.iter().enumerate() {
+    if *is_spent {
+        return Err(WalletError::NullifierSpent { note_index: i });
+    }
+}
+// Now safe to generate proof
+```
+
+**Confirmation policy:** Add `--min-confirmations` flag (default: 1). Notes must have at least N confirmations to be selected. Configurable for mainnet (higher) vs testnet (1).
 
 Files to modify:
-- `wallet/src/substrate_rpc.rs` - Add `check_nullifiers(&[nullifier]) -> Vec<bool>` method
+- `wallet/src/substrate_rpc.rs` - Add `is_nullifier_spent()` and `check_nullifiers_spent()` using storage queries
 - `wallet/src/tx_builder.rs` - Add nullifier check before `generate_proof` call
-- `wallet/src/shielded_tx.rs` - Add nullifier check in `build_transaction`
+- `wallet/src/bin/wallet.rs` - Add `--min-confirmations` flag to send command
 
 
-### Milestone 2: Change Output Verification
+### Milestone 2: Human-Readable Errors with Actionable Suggestions
 
-When spending 2 notes of 50 HGM each (100 HGM total) to send 75 HGM, the wallet must create a change output of 25 HGM back to the sender. Verify this works correctly.
+Replace opaque errors like "Custom error: 5" with structured errors that tell users what went wrong and what to do.
 
-Create an integration test in `wallet/tests/` that:
-1. Creates a wallet
-2. Simulates receiving 2 notes of 50 HGM each
-3. Builds a transaction sending 75 HGM to another address
-4. Verifies the transaction has 2 inputs, 2 outputs (recipient + change)
-5. Verifies change output value is 25 HGM
-6. Verifies change output is addressed to sender
+**Error enum:**
 
-Files to create/modify:
-- `wallet/tests/change_output_test.rs` - New integration test
+```rust
+// wallet/src/errors.rs
 
-
-### Milestone 3: Human-Readable Error Codes
-
-Map pallet error codes to human-readable messages. The pallet defines errors in `pallets/shielded-pool/src/lib.rs` in the `Error<T>` enum.
-
-Create an error mapping module:
-
-    wallet/src/pallet_errors.rs:
+pub enum WalletTransactionError {
+    /// Nullifier already spent on-chain
+    NullifierSpent { note_index: usize },
     
-    pub fn decode_pallet_error(code: u8) -> &'static str {
-        match code {
-            0 => "Invalid proof: the STARK proof failed verification",
-            1 => "Invalid anchor: the merkle root is not recognized",
-            2 => "Invalid nullifier: malformed nullifier data",
-            3 => "Invalid commitment: malformed commitment data", 
-            4 => "Balance mismatch: inputs do not equal outputs plus fee",
-            5 => "Nullifier already spent: one or more notes were already consumed",
-            6 => "Invalid binding signature: transaction integrity check failed",
-            7 => "Invalid ciphertext: encrypted note data is malformed",
-            _ => "Unknown error",
+    /// Insufficient balance
+    InsufficientFunds { available: u64, required: u64 },
+    
+    /// Too many inputs needed, consolidation required
+    TooManyInputs { needed: usize, max: usize },
+    
+    /// Merkle anchor not found (stale sync)
+    StaleAnchor { wallet_height: u64, chain_height: u64 },
+    
+    /// Chain mismatch (genesis changed)
+    ChainMismatch { expected: String, actual: String },
+    
+    /// RPC error
+    Rpc(String),
+    
+    /// Proof generation failed  
+    Proof(String),
+}
+
+impl WalletTransactionError {
+    pub fn user_message(&self) -> String {
+        match self {
+            Self::NullifierSpent { note_index } => 
+                format!("Note #{} was already spent on-chain", note_index),
+            Self::InsufficientFunds { available, required } =>
+                format!("Insufficient funds: have {} HGM, need {} HGM", 
+                    available as f64 / 1e8, required as f64 / 1e8),
+            Self::TooManyInputs { needed, max } =>
+                format!("Need {} notes but max is {}. Run with --auto-consolidate", needed, max),
+            Self::StaleAnchor { .. } =>
+                "Wallet is out of sync with chain".to_string(),
+            Self::ChainMismatch { .. } =>
+                "Wallet was synced to a different chain".to_string(),
+            Self::Rpc(e) => format!("RPC error: {}", e),
+            Self::Proof(e) => format!("Proof error: {}", e),
         }
     }
-
-Update error handling in `wallet/src/substrate_rpc.rs` to parse RPC errors and translate them.
-
-
-### Milestone 4: Multi-Step Transaction Proposals
-
-When a user requests a send that requires more than MAX_INPUTS notes, the wallet should:
-1. Calculate how many consolidation transactions are needed
-2. Show the user the full plan (N consolidation txs, then final send)
-3. Execute each step, waiting for confirmation between steps
-
-Add a `TransactionPlan` type:
-
-    wallet/src/tx_planner.rs:
     
-    pub struct TransactionPlan {
-        pub consolidation_steps: Vec<ConsolidationStep>,
-        pub final_send: FinalSend,
-        pub total_fee: u64,
+    pub fn suggested_action(&self) -> String {
+        match self {
+            Self::NullifierSpent { .. } | Self::StaleAnchor { .. } =>
+                "Run: wallet substrate-sync --force-rescan".to_string(),
+            Self::ChainMismatch { .. } =>
+                "Run: wallet substrate-sync --force-rescan (chain was reset)".to_string(),
+            Self::TooManyInputs { .. } =>
+                "Add --auto-consolidate flag to automatically merge notes first".to_string(),
+            _ => String::new(),
+        }
     }
-    
-    pub struct ConsolidationStep {
-        pub input_notes: Vec<SpendableNote>,
-        pub output_value: u64,
-    }
-    
-    pub struct FinalSend {
-        pub input_notes: Vec<SpendableNote>,
-        pub recipients: Vec<Recipient>,
-        pub change: Option<u64>,
-    }
-    
-    impl TransactionPlan {
-        pub fn build(notes: Vec<SpendableNote>, recipients: Vec<Recipient>, fee: u64) -> Result<Self, WalletError>;
-    }
+}
+```
 
-The planner should be greedy: consolidate the 2 largest notes first to minimize steps.
-
-
-### Milestone 5: Automatic Consolidation Command
-
-Add `wallet consolidate` command that merges all small notes into fewer large notes:
-
-    wallet consolidate --store ~/.hegemon-wallet --passphrase "..." --ws-url ws://127.0.0.1:9944
-
-The command should:
-1. Sync wallet
-2. List all unspent notes
-3. If more than 2 notes, consolidate 2 into 1, wait for confirmation, repeat
-4. Show progress: "Consolidating notes: step 1/5..."
-5. Final output: "Consolidated N notes into M notes. Largest note: X HGM"
+**Parse pallet errors:** Extract error code from RPC response and map to our enum.
 
 Files to modify:
-- `wallet/src/bin/wallet.rs` - Add `Consolidate` command variant and handler
+- `wallet/src/errors.rs` - New file with `WalletTransactionError`
+- `wallet/src/substrate_rpc.rs` - Parse RPC errors into `WalletTransactionError`
+- `wallet/src/bin/wallet.rs` - Display `user_message()` and `suggested_action()`
 
 
-### Milestone 6: Status Sync-First Mode
+### Milestone 3: Auto-Consolidate in `wallet send`
 
-The `wallet status` command currently shows cached local balances which may be stale. Add a `--sync` flag (or make sync the default) that syncs before showing status.
+When a send requires more inputs than MAX_INPUTS (2), automatically consolidate notes first.
 
-    wallet status --store ~/.hegemon-wallet --passphrase "..." --sync --ws-url ws://127.0.0.1:9944
+**Simple data structure (not Zcash's complex Proposal/Step):**
 
-Also show:
-- Number of unspent notes and their sizes
-- Warning if any notes are locked by pending transactions
-- Genesis hash the wallet is synced with
+```rust
+// wallet/src/consolidate.rs
+
+/// A consolidation plan - just pairs of note indices per level
+pub struct ConsolidationPlan {
+    /// Each level contains pairs of notes to merge (can execute in parallel)
+    /// After each level confirms, re-sync and re-index before next level
+    pub levels: Vec<Vec<(usize, usize)>>,
+}
+
+impl ConsolidationPlan {
+    /// Plan consolidation using binary tree for O(log N) block latency
+    pub fn plan(note_count: usize, max_inputs: usize) -> Self {
+        let mut levels = vec![];
+        let mut remaining = note_count;
+        
+        while remaining > max_inputs {
+            let pairs: Vec<(usize, usize)> = (0..remaining/2)
+                .map(|i| (i*2, i*2+1))
+                .collect();
+            let odd_one = if remaining % 2 == 1 { 1 } else { 0 };
+            remaining = pairs.len() + odd_one;
+            levels.push(pairs);
+        }
+        
+        Self { levels }
+    }
+    
+    pub fn block_latency(&self) -> usize {
+        self.levels.len()
+    }
+    
+    pub fn total_txs(&self) -> usize {
+        self.levels.iter().map(|l| l.len()).sum()
+    }
+}
+```
+
+**Execution with best-effort parallelism:**
+
+```rust
+async fn execute_consolidation(plan: &ConsolidationPlan, wallet: &mut Wallet) -> Result<(), WalletError> {
+    for (level_idx, pairs) in plan.levels.iter().enumerate() {
+        println!("Level {}/{}: {} parallel transactions", 
+            level_idx + 1, plan.levels.len(), pairs.len());
+        
+        // Submit up to MAX_PARALLEL txs at once (avoid mempool limits)
+        const MAX_PARALLEL: usize = 4;
+        for chunk in pairs.chunks(MAX_PARALLEL) {
+            let mut handles = vec![];
+            for (i, j) in chunk {
+                let notes = vec![wallet.notes[*i].clone(), wallet.notes[*j].clone()];
+                handles.push(submit_consolidation_tx(notes));
+            }
+            // Wait for all in chunk to confirm
+            for h in handles {
+                h.await?;
+            }
+        }
+        
+        // Re-sync to discover new notes before next level
+        wallet.sync().await?;
+    }
+    Ok(())
+}
+```
+
+**CLI integration:**
+
+```bash
+# Auto-consolidate if needed
+wallet send --to <addr> --amount 120 --auto-consolidate
+
+# Or just show what would happen
+wallet send --to <addr> --amount 120 --dry-run
+```
+
+**Stateless recovery:** If interrupted mid-consolidation, user just re-runs the command. Wallet re-syncs, sees current notes, re-plans from there. No "consolidation in progress" state to corrupt.
+
+Files to add/modify:
+- `wallet/src/consolidate.rs` - New module with `ConsolidationPlan`
+- `wallet/src/bin/wallet.rs` - Add `--auto-consolidate` and `--dry-run` flags
+- `wallet/src/lib.rs` - Export consolidate module
 
 
-### Milestone 7: Comprehensive Test Suite
+### Milestone 4: `wallet status --sync`
 
-Create integration tests covering:
+The `wallet status` command currently shows cached local balances which may be stale. Always sync before showing status.
 
-1. **test_send_exact_single_note** - Send exactly 50 HGM from one 50 HGM note
-2. **test_send_with_change** - Send 30 HGM from 50 HGM note, verify 20 HGM change
-3. **test_send_two_notes** - Send 75 HGM using two 50 HGM notes
-4. **test_send_requires_consolidation** - Send 120 HGM with three 50 HGM notes (should fail or plan consolidation)
-5. **test_double_spend_prevention** - Try to spend same note twice, verify rejection
-6. **test_chain_reset_detection** - Sync wallet, reset chain, verify wallet detects mismatch
-7. **test_force_rescan** - After chain reset, verify --force-rescan recovers wallet
-8. **test_consolidation** - Run consolidate on 5 notes, verify result
-9. **test_dust_note_handling** - Create very small note, verify proper handling
-10. **test_concurrent_sends** - Start two sends simultaneously, verify no double-spend
+```rust
+// In bin/wallet.rs status handler
+
+async fn handle_status(args: StatusArgs) -> Result<(), WalletError> {
+    let mut store = WalletStore::open(&args.store, &args.passphrase)?;
+    let rpc = SubstrateRpcClient::connect(&args.ws_url).await?;
+    
+    // Always sync first
+    println!("Syncing with chain...");
+    let engine = AsyncWalletSyncEngine::new(rpc.clone());
+    engine.sync(&mut store).await?;
+    
+    // Show status
+    let notes = store.get_unspent_notes();
+    let total: u64 = notes.iter().map(|n| n.value).sum();
+    let chain_height = rpc.get_best_block_number().await?;
+    
+    println!("\nWallet Status");
+    println!("═════════════");
+    println!("Address: {}", store.address());
+    println!("Balance: {} HGM", total as f64 / 1e8);
+    println!("Unspent notes: {}", notes.len());
+    
+    if !notes.is_empty() {
+        println!("\nNote breakdown:");
+        for (i, note) in notes.iter().enumerate() {
+            let confirmations = chain_height.saturating_sub(note.height);
+            let conf_str = if confirmations < 3 { " (unconfirmed)" } else { "" };
+            println!("  #{}: {} HGM @ block #{}{}", 
+                i, note.value as f64 / 1e8, note.height, conf_str);
+        }
+    }
+    
+    println!("\nChain: block #{}", chain_height);
+    println!("Genesis: {}", hex::encode(&store.genesis_hash().unwrap_or([0u8; 32])[..8]));
+    
+    Ok(())
+}
+```
+
+Files to modify:
+- `wallet/src/bin/wallet.rs` - Update status command to sync first and show more detail
+
+
+### Validation: Change Output Manual Test
+
+Not a code milestone - a manual validation that change outputs work.
+
+**Test procedure:**
+1. Start fresh dev node
+2. Mine 2 blocks (get 2 × 50 HGM notes)
+3. Send 30 HGM to another address
+4. Verify wallet shows 70 HGM remaining (100 - 30 = 70)
+5. Verify the change note (20 HGM) is spendable
+
+If this fails, debug and fix before proceeding. If it works, change outputs are correct.
+
+
+### Future: Integration Test Suite
+
+After M1-M4 are complete, add integration tests:
+
+1. **test_nullifier_precheck** - Spend note, try again, verify fast rejection
+2. **test_auto_consolidate** - Send requiring 3 notes, verify consolidation happens
+3. **test_chain_reset_detection** - Reset chain, verify wallet detects mismatch
+4. **test_status_shows_notes** - Verify status shows note breakdown
 
 Location: `wallet/tests/integration/`
+
+This is lower priority than shipping M1-M4.
 
 
 ## Concrete Steps
 
-For Milestone 1 (pre-send nullifier validation):
+For Milestone 1 (nullifier pre-check via storage):
 
-    cd /Users/pldd/Documents/Reflexivity/synthetic-hegemonic-currency
-    
-    # 1. Add nullifier check RPC method
-    # Edit wallet/src/substrate_rpc.rs, add after line ~450:
-    
-    pub async fn check_nullifier_spent(&self, nullifier: &[u8; 32]) -> Result<bool, WalletError> {
-        let client = self.client.read().await;
-        let nullifier_hex = hex::encode(nullifier);
-        let result: Option<bool> = client
-            .request("hegemon_isNullifierSpent", rpc_params![nullifier_hex])
-            .await
-            .map_err(|e| WalletError::Rpc(e.to_string()))?;
-        Ok(result.unwrap_or(false))
-    }
-    
-    # 2. Add pallet RPC handler (if not exists)
-    # Check pallets/shielded-pool/src/lib.rs for RPC definitions
-    
-    # 3. Integrate check into tx_builder.rs before proof generation
-    # Find the generate_proof call and add validation before it
-    
-    # 4. Test
-    cargo build --release -p wallet
-    
-    # Create test scenario: spend a note, try to spend it again
-    # First spend should succeed, second should fail with clear message
+```bash
+cd /Users/pldd/Documents/Reflexivity/synthetic-hegemonic-currency
+
+# 1. Find how storage keys are constructed
+grep -r "storage_key\|StorageKey" wallet/src/
+
+# 2. Add is_nullifier_spent() to substrate_rpc.rs
+# Use the existing storage query pattern
+
+# 3. Add check before generate_proof() in tx_builder.rs
+
+# 4. Test: spend a note, try to spend again
+# First should succeed, second should fail in <1 second with clear message
+
+cargo build --release -p wallet
+```
+
+For Milestone 2 (error handling):
+
+```bash
+# 1. Create wallet/src/errors.rs with WalletTransactionError enum
+# 2. Add user_message() and suggested_action() methods
+# 3. Update substrate_rpc.rs to parse "Custom error: N" and convert
+# 4. Update bin/wallet.rs to display errors nicely
+
+cargo build --release -p wallet
+
+# Test: try to spend already-spent note
+# Should show: "Note #0 was already spent on-chain"
+#             "Run: wallet substrate-sync --force-rescan"
+```
+
+For Milestone 3 (auto-consolidate):
+
+```bash
+# 1. Create wallet/src/consolidate.rs with ConsolidationPlan
+# 2. Add --auto-consolidate and --dry-run flags to send command
+# 3. Integrate consolidation execution into send flow
+
+cargo build --release -p wallet
+
+# Test: mine 4 blocks, try to send 120 HGM
+# With --dry-run: shows plan
+# With --auto-consolidate: executes consolidation then sends
+```
 
 
 ## Validation and Acceptance
 
-For each milestone, acceptance is defined as:
-
-**M1 - Nullifier Validation:**
+**M1 - Nullifier Pre-Check:**
 - Spending an already-spent note fails BEFORE proof generation
-- Error message says "Note at position X was already spent on-chain"
-- Time to failure is <1 second (not proof generation time)
+- Failure happens in <1 second (not 10+ seconds of proof gen)
+- Error identifies which note was spent
 
-**M2 - Change Output:**
-- Test passes: `cargo test --package wallet change_output`
-- Transaction with partial spend shows correct change amount
+**M2 - Human-Readable Errors:**
+- "Custom error: 5" becomes "Note #X was already spent on-chain"
+- Each error includes a suggested action
+- InsufficientFunds shows "have X HGM, need Y HGM"
 
-**M3 - Error Codes:**
-- "Custom error: 5" is replaced with "Nullifier already spent: one or more notes were already consumed"
-- All error codes 0-7 have human-readable messages
+**M3 - Auto-Consolidate:**
+- `wallet send --amount 120 --dry-run` shows consolidation plan when 3+ notes needed
+- `wallet send --amount 120 --auto-consolidate` executes plan then sends
+- Parallel consolidation within levels (up to 4 txs at once)
+- If interrupted, re-running command resumes from current state
 
-**M4 - Transaction Proposals:**
-- Sending 120 HGM with 50 HGM notes shows: "This requires 1 consolidation transaction before sending. Proceed? [y/n]"
-- Plan shows expected fees and steps
+**M4 - Status Sync:**
+- `wallet status` syncs before showing balance
+- Shows individual note values and heights
+- Warns about notes with <3 confirmations
+- Shows genesis hash (first 8 bytes)
 
-**M5 - Consolidate Command:**
-- `wallet consolidate` successfully merges 5 notes into 2 notes
-- Progress is shown during execution
-- Final balance unchanged
-
-**M6 - Status Sync:**
-- `wallet status --sync` shows current on-chain balance
-- Shows note count and sizes
-- Shows genesis hash
-
-**M7 - Test Suite:**
-- `cargo test --package wallet --test integration` passes all 10 tests
-- Each test exercises a specific edge case
-- Tests can run against a dev node
+**Change Output Validation:**
+- Manual test: Send 30 HGM from 50 HGM note
+- Verify 20 HGM change note appears and is spendable
 
 
 ## Idempotence and Recovery
 
-All wallet operations should be idempotent:
-- Running `wallet consolidate` when notes are already consolidated does nothing
-- Running `wallet sync` multiple times is safe
-- Failed transactions release locked notes after timeout (already implemented: 5 min)
+**All operations are stateless and safe to retry:**
 
-Recovery paths:
-- Chain reset: `wallet substrate-sync --force-rescan` resets wallet state
-- Corrupted wallet: Re-initialize from seed (requires M8: seed export, not in this plan)
-- Stuck pending tx: Wait 5 minutes for timeout, or sync to detect if tx was mined
+- Nullifier check queries chain - always returns current state
+- Consolidation has no "in progress" state - if interrupted, re-run and it re-plans from current notes
+- Failed tx? Re-sync, notes are still there, try again
+- Already-spent note? Detected in <1 second, skip it
+
+**Recovery paths:**
+- Chain reset → `wallet substrate-sync --force-rescan`
+- Interrupted consolidation → Just re-run the send command
+- Corrupted wallet file → Re-init from seed (not in scope)
 
 
 ## Artifacts and Notes
 
-Example error message improvement:
+**Example error improvement (M2):**
 
 Before:
-    Error: Transaction submission failed: rpc error: author_submitExtrinsic 
-    failed: ErrorObject { code: ServerError(1010), message: "Invalid 
-    Transaction", data: Some(RawValue("Custom error: 5")) }
+```
+Error: Transaction submission failed: rpc error: author_submitExtrinsic 
+failed: ErrorObject { code: ServerError(1010), message: "Invalid 
+Transaction", data: Some(RawValue("Custom error: 5")) }
+```
 
 After:
-    Error: Transaction failed - Nullifier already spent
-    
-    One or more notes you tried to spend have already been consumed on-chain.
-    This can happen if:
-    - You submitted the same transaction twice
-    - Your wallet is out of sync with the chain
-    - The chain was reset since your last sync
-    
-    Try running: wallet substrate-sync --force-rescan --store <path> --passphrase <pass>
+```
+Error: Note #0 was already spent on-chain
 
-Example consolidation output:
+This can happen if:
+- You submitted the same transaction twice
+- Your wallet is out of sync with the chain
+- The chain was reset since your last sync
 
-    $ wallet consolidate --store ~/.hegemon-wallet --passphrase "..." 
-    Connecting to ws://127.0.0.1:9944...
-    Syncing wallet... done (42 notes, 2100 HGM total)
-    
-    Consolidation plan:
-      Step 1: Merge notes #0 (50 HGM) + #1 (50 HGM) → 100 HGM
-      Step 2: Merge notes #2 (50 HGM) + #3 (50 HGM) → 100 HGM
-      ... (20 more steps)
-      Step 21: Merge 100 HGM + 100 HGM → 200 HGM
-    
-    This will reduce 42 notes to 2 notes. Proceed? [y/n] y
-    
-    Executing step 1/21... done (block #1234)
-    Executing step 2/21... done (block #1235)
-    ...
-    
-    Consolidation complete!
-    Final notes: 2
-    Largest note: 1100 HGM
-    Total balance: 2100 HGM (unchanged)
+Try: wallet substrate-sync --force-rescan --store <path> --passphrase <pass>
+```
+
+**Example consolidation output (M3):**
+
+```
+$ wallet send --to hgm1abc... --amount 120 --auto-consolidate
+
+This send requires consolidation (need 3 notes, max 2 per tx).
+
+Consolidation plan:
+  Level 1 (2 parallel txs):
+    Tx 1: notes #0 + #1 → 100 HGM
+    Tx 2: notes #2 + #3 → 100 HGM
+  Level 2 (1 tx):
+    Tx 3: 100 + 100 → 200 HGM
+
+Block latency: 2 levels
+Total fees: ~0.003 HGM
+Proceed? [y/n] y
+
+Executing level 1...
+  Tx 1: submitted... confirmed (block #1234)
+  Tx 2: submitted... confirmed (block #1234)
+Syncing new notes...
+
+Executing level 2...
+  Tx 3: submitted... confirmed (block #1235)
+Syncing...
+
+Consolidation complete. Sending 120 HGM...
+Transaction confirmed in block #1236
+
+Sent: 120 HGM
+Change: 80 HGM (note #0)
+Fees: 0.003 HGM
+```
+
+**Example status output (M4):**
+
+```
+$ wallet status
+
+Syncing with chain... done
+
+Wallet Status
+═════════════
+Address: hgm1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh...
+Balance: 250 HGM
+Unspent notes: 5
+
+Note breakdown:
+  #0: 50 HGM @ block #100
+  #1: 50 HGM @ block #101
+  #2: 50 HGM @ block #102
+  #3: 50 HGM @ block #103
+  #4: 50 HGM @ block #104 (unconfirmed)
+
+Chain: block #105
+Genesis: a1b2c3d4...
+```
 
 
 ## Interfaces and Dependencies
 
 New types to add:
 
-In `wallet/src/pallet_errors.rs`:
+**`wallet/src/errors.rs`** (new file):
 
-    pub fn decode_pallet_error(code: u8) -> &'static str;
-    pub fn format_transaction_error(rpc_error: &str) -> String;
+```rust
+pub enum WalletTransactionError {
+    NullifierSpent { note_index: usize },
+    InsufficientFunds { available: u64, required: u64 },
+    TooManyInputs { needed: usize, max: usize },
+    StaleAnchor { wallet_height: u64, chain_height: u64 },
+    ChainMismatch { expected: String, actual: String },
+    Rpc(String),
+    Proof(String),
+}
 
-In `wallet/src/tx_planner.rs`:
+impl WalletTransactionError {
+    pub fn user_message(&self) -> String;
+    pub fn suggested_action(&self) -> String;
+}
+```
 
-    pub struct TransactionPlan { ... }
-    pub struct ConsolidationStep { ... }
-    pub struct FinalSend { ... }
-    
-    impl TransactionPlan {
-        pub fn build(
-            notes: Vec<SpendableNote>,
-            recipients: Vec<Recipient>,
-            fee: u64,
-            max_inputs: usize,
-        ) -> Result<Self, WalletError>;
-        
-        pub fn display(&self) -> String;
-        pub fn consolidation_count(&self) -> usize;
-    }
+**`wallet/src/consolidate.rs`** (new file):
 
-In `wallet/src/substrate_rpc.rs`:
+```rust
+pub struct ConsolidationPlan {
+    pub levels: Vec<Vec<(usize, usize)>>,
+}
 
-    impl SubstrateRpcClient {
-        pub async fn check_nullifier_spent(&self, nullifier: &[u8; 32]) -> Result<bool, WalletError>;
-        pub async fn check_nullifiers_spent(&self, nullifiers: &[[u8; 32]]) -> Result<Vec<bool>, WalletError>;
-    }
+impl ConsolidationPlan {
+    pub fn plan(note_count: usize, max_inputs: usize) -> Self;
+    pub fn block_latency(&self) -> usize;
+    pub fn total_txs(&self) -> usize;
+}
+```
 
-In `wallet/src/bin/wallet.rs`:
+**`wallet/src/substrate_rpc.rs`** additions:
 
-    enum Commands {
-        ...
-        Consolidate(ConsolidateArgs),
-    }
-    
-    struct ConsolidateArgs {
-        store: PathBuf,
-        passphrase: String,
-        ws_url: String,
-        dry_run: bool,  // Show plan without executing
-    }
+```rust
+impl SubstrateRpcClient {
+    pub async fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> Result<bool, WalletError>;
+    pub async fn check_nullifiers_spent(&self, nullifiers: &[[u8; 32]]) -> Result<Vec<bool>, WalletError>;
+}
+```
 
-Dependencies: No new external dependencies required. All changes use existing crates (tokio, jsonrpsee, etc.).
+**`wallet/src/bin/wallet.rs`** additions:
+
+```rust
+// New flags for send command
+#[arg(long)]
+auto_consolidate: bool,
+
+#[arg(long)]
+dry_run: bool,
+
+#[arg(long, default_value = "1")]
+min_confirmations: u32,
+```
+
+Dependencies: No new external dependencies. Uses existing `subxt` storage queries.
