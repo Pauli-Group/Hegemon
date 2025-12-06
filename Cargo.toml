@@ -27,6 +27,11 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+authors = ["Pauli Group Inc."]
+license = "MIT"
+repository = "https://github.com/Pauli-Group/synthetic-hegemonic-currency"
+
 # =============================================================================
 # POLKADOT-SDK WORKSPACE DEPENDENCIES
 # =============================================================================
