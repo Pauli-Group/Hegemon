@@ -15,3 +15,10 @@
 - Rewrote README quickstart/setup to anchor on the unified `hegemon-node` binary with Polkadot.js Apps dashboard.
 - Updated contributor and operational runbooks to use Substrate-based node and systemd on VPS seeds.
 - Dashboard: Use Polkadot.js Apps at `https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944`
+
+## v0.1.0 - Initial public release
+- Initial release of the Synthetic Hegemonic Currency protocol
+- Core consensus mechanism with Proof of Work and difficulty adjustment
+- Basic pallet structure including asset registry, identity, and settlement
+- Networking layer with initial P2P capabilities
+- Wallet implementation for key management and transaction signing
