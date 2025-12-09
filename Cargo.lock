@@ -11404,6 +11404,7 @@ dependencies = [
  "proptest",
  "rand 0.8.5",
  "reqwest",
+ "rpassword",
  "serde",
  "serde_bytes",
  "serde_json",

@@ -115,8 +115,9 @@ enum Commands {
 struct InitArgs {
     #[arg(long)]
     store: PathBuf,
-    #[arg(long)]
-    passphrase: String,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
     #[arg(long)]
     root_hex: Option<String>,
     #[arg(long)]
@@ -127,8 +128,9 @@ struct InitArgs {
 struct SyncArgs {
     #[arg(long)]
     store: PathBuf,
-    #[arg(long)]
-    passphrase: String,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
     #[arg(long)]
     rpc_url: String,
     #[arg(long)]
@@ -139,8 +141,9 @@ struct SyncArgs {
 struct DaemonArgs {
     #[arg(long)]
     store: PathBuf,
-    #[arg(long)]
-    passphrase: String,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
     #[arg(long)]
     rpc_url: String,
     #[arg(long)]
@@ -155,16 +158,18 @@ struct DaemonArgs {
 struct StoreArgs {
     #[arg(long)]
     store: PathBuf,
-    #[arg(long)]
-    passphrase: String,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
 }
 
 #[derive(Parser)]
 struct StatusArgs {
     #[arg(long)]
     store: PathBuf,
-    #[arg(long)]
-    passphrase: String,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
     /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
@@ -177,8 +182,9 @@ struct StatusArgs {
 struct SendArgs {
     #[arg(long)]
     store: PathBuf,
-    #[arg(long)]
-    passphrase: String,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
     #[arg(long)]
     rpc_url: String,
     #[arg(long)]
@@ -195,8 +201,9 @@ struct SendArgs {
 struct ExportArgs {
     #[arg(long)]
     store: PathBuf,
-    #[arg(long)]
-    passphrase: String,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
     #[arg(long)]
     out: Option<PathBuf>,
 }
@@ -207,9 +214,9 @@ struct SubstrateSyncArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase
-    #[arg(long)]
-    passphrase: String,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
     /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
@@ -225,9 +232,9 @@ struct SubstrateDaemonArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase
-    #[arg(long)]
-    passphrase: String,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
     /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
@@ -248,9 +255,9 @@ struct SubstrateSendArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase
-    #[arg(long)]
-    passphrase: String,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
     /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
@@ -277,9 +284,9 @@ struct SubstrateShieldArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase
-    #[arg(long)]
-    passphrase: String,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
     /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
@@ -289,6 +296,45 @@ struct SubstrateShieldArgs {
     /// Use Alice dev account (for testing with --dev chain)
     #[arg(long, default_value_t = false)]
     use_alice: bool,
+}
+
+/// Get passphrase from argument, or prompt interactively if not provided.
+/// Uses rpassword to hide input from terminal.
+fn get_passphrase(passphrase: Option<String>, prompt: &str) -> Result<String> {
+    match passphrase {
+        Some(p) => Ok(p),
+        None => {
+            eprint!("{}", prompt);
+            let pass = rpassword::read_password()
+                .context("Failed to read passphrase from terminal")?;
+            if pass.is_empty() {
+                anyhow::bail!("Passphrase cannot be empty");
+            }
+            Ok(pass)
+        }
+    }
+}
+
+/// Get passphrase for wallet init (prompts twice for confirmation)
+fn get_new_passphrase(passphrase: Option<String>) -> Result<String> {
+    match passphrase {
+        Some(p) => Ok(p),
+        None => {
+            eprint!("Enter new wallet passphrase: ");
+            let pass1 = rpassword::read_password()
+                .context("Failed to read passphrase from terminal")?;
+            if pass1.is_empty() {
+                anyhow::bail!("Passphrase cannot be empty");
+            }
+            eprint!("Confirm passphrase: ");
+            let pass2 = rpassword::read_password()
+                .context("Failed to read passphrase confirmation")?;
+            if pass1 != pass2 {
+                anyhow::bail!("Passphrases do not match");
+            }
+            Ok(pass1)
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -425,14 +471,15 @@ fn cmd_init(args: InitArgs) -> Result<()> {
     if args.viewing_key.is_some() && args.root_hex.is_some() {
         anyhow::bail!("specify either --root-hex or --viewing-key");
     }
+    let passphrase = get_new_passphrase(args.passphrase)?;
     let store = if let Some(path) = args.viewing_key {
         let ivk: IncomingViewingKey = read_json(&path)?;
-        WalletStore::import_viewing_key(&args.store, &args.passphrase, ivk)?
+        WalletStore::import_viewing_key(&args.store, &passphrase, ivk)?
     } else if let Some(root_hex) = args.root_hex {
         let root = parse_root(&root_hex)?;
-        WalletStore::create_from_root(&args.store, &args.passphrase, root)?
+        WalletStore::create_from_root(&args.store, &passphrase, root)?
     } else {
-        WalletStore::create_full(&args.store, &args.passphrase)?
+        WalletStore::create_full(&args.store, &passphrase)?
     };
     let mode = store.mode()?;
     println!("wallet initialized: mode={mode:?}");
@@ -454,7 +501,8 @@ fn cmd_init(args: InitArgs) -> Result<()> {
 }
 
 fn cmd_sync(args: SyncArgs) -> Result<()> {
-    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = WalletStore::open(&args.store, &passphrase)?;
     let client = rpc_client(&args.rpc_url, &args.auth_token)?;
     let engine = WalletSyncEngine::new(&client, &store);
     let outcome = engine.sync_once()?;
@@ -463,7 +511,8 @@ fn cmd_sync(args: SyncArgs) -> Result<()> {
 }
 
 fn cmd_daemon(args: DaemonArgs) -> Result<()> {
-    let store = Arc::new(WalletStore::open(&args.store, &args.passphrase)?);
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = Arc::new(WalletStore::open(&args.store, &passphrase)?);
     let client = Arc::new(rpc_client(&args.rpc_url, &args.auth_token)?);
     if let Some(addr) = args.http_listen {
         spawn_wallet_api(addr, store.clone(), client.clone())?;
@@ -479,6 +528,7 @@ fn cmd_daemon(args: DaemonArgs) -> Result<()> {
 }
 
 fn cmd_status(args: StatusArgs) -> Result<()> {
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
     // Sync first unless --no-sync is specified
     if !args.no_sync {
         let runtime = RuntimeBuilder::new_multi_thread()
@@ -494,7 +544,7 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
                     .map_err(|e| anyhow!("Failed to connect: {}", e))?
             );
             
-            let store = WalletStore::open(&args.store, &args.passphrase)?;
+            let store = WalletStore::open(&args.store, &passphrase)?;
             let store_arc = Arc::new(store);
             let engine = AsyncWalletSyncEngine::new(client.clone(), store_arc.clone());
             engine.sync_once().await.map_err(|e| anyhow!("Sync failed: {}", e))?;
@@ -503,7 +553,7 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
     }
     
     // Re-open to get synced state
-    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    let store = WalletStore::open(&args.store, &passphrase)?;
     show_status(&store)
 }
 
@@ -595,7 +645,8 @@ fn show_status(store: &WalletStore) -> Result<()> {
 fn cmd_account_id(args: StoreArgs) -> Result<()> {
     use wallet::extrinsic::ExtrinsicBuilder;
     
-    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = WalletStore::open(&args.store, &passphrase)?;
     
     if let Ok(Some(derived)) = store.derived_keys() {
         let signing_seed = derived.spend.to_bytes();
@@ -610,7 +661,8 @@ fn cmd_account_id(args: StoreArgs) -> Result<()> {
 }
 
 fn cmd_send(args: SendArgs) -> Result<()> {
-    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
         anyhow::bail!("watch-only wallets cannot send");
     }
@@ -643,7 +695,8 @@ fn cmd_send(args: SendArgs) -> Result<()> {
 }
 
 fn cmd_export_viewing_key(args: ExportArgs) -> Result<()> {
-    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = WalletStore::open(&args.store, &passphrase)?;
     let ivk = store.incoming_key()?;
     let json = serde_json::to_string_pretty(&ivk)?;
     if let Some(path) = args.out {
@@ -656,7 +709,8 @@ fn cmd_export_viewing_key(args: ExportArgs) -> Result<()> {
 
 /// Sync wallet using Substrate WebSocket RPC
 fn cmd_substrate_sync(args: SubstrateSyncArgs) -> Result<()> {
-    let store = Arc::new(WalletStore::open(&args.store, &args.passphrase)?);
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = Arc::new(WalletStore::open(&args.store, &passphrase)?);
     
     // Build async runtime
     let runtime = RuntimeBuilder::new_multi_thread()
@@ -694,7 +748,8 @@ fn cmd_substrate_sync(args: SubstrateSyncArgs) -> Result<()> {
 
 /// Run wallet daemon with Substrate WebSocket RPC
 fn cmd_substrate_daemon(args: SubstrateDaemonArgs) -> Result<()> {
-    let store = Arc::new(WalletStore::open(&args.store, &args.passphrase)?);
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = Arc::new(WalletStore::open(&args.store, &passphrase)?);
     
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
@@ -761,7 +816,8 @@ fn cmd_substrate_daemon(args: SubstrateDaemonArgs) -> Result<()> {
 
 /// Send transaction using Substrate WebSocket RPC
 fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
-    let store = WalletStore::open(&args.store, &args.passphrase)?;
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
         anyhow::bail!("watch-only wallets cannot send");
     }
@@ -908,7 +964,8 @@ fn cmd_substrate_shield(args: SubstrateShieldArgs) -> Result<()> {
         // Note: Uses Blake2b-256 (sp_crypto_hashing::blake2_256), not Blake2s-256
         sp_crypto_hashing::blake2_256(b"//Alice")
     } else {
-        let store = WalletStore::open(&args.store, &args.passphrase)?;
+        let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+        let store = WalletStore::open(&args.store, &passphrase)?;
         if store.mode()? == WalletMode::WatchOnly {
             anyhow::bail!("watch-only wallets cannot shield");
         }
