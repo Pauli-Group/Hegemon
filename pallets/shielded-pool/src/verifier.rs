@@ -119,9 +119,15 @@ pub trait ProofVerifier {
 /// Accept-all proof verifier for testing/development.
 ///
 /// WARNING: This should NEVER be used in production!
+///
+/// This type is only available when the `std` feature is enabled AND
+/// the `production` feature is NOT enabled. This prevents accidental
+/// use in release binaries.
+#[cfg(all(feature = "std", not(feature = "production")))]
 #[derive(Clone, Debug, Default)]
 pub struct AcceptAllProofs;
 
+#[cfg(all(feature = "std", not(feature = "production")))]
 impl ProofVerifier for AcceptAllProofs {
     fn verify_stark(
         &self,
@@ -152,9 +158,13 @@ impl ProofVerifier for AcceptAllProofs {
 }
 
 /// Reject-all proof verifier for testing.
+///
+/// This type is only available in test/dev builds.
+#[cfg(all(feature = "std", not(feature = "production")))]
 #[derive(Clone, Debug, Default)]
 pub struct RejectAllProofs;
 
+#[cfg(all(feature = "std", not(feature = "production")))]
 impl ProofVerifier for RejectAllProofs {
     fn verify_stark(
         &self,

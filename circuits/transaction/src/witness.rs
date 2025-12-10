@@ -41,6 +41,18 @@ impl TransactionWitness {
         for note in &self.outputs {
             note.validate()?;
         }
+        
+        // SECURITY: Validate that no nullifier is zero.
+        // Zero nullifiers are used as padding and skipped during double-spend checks.
+        // A malicious witness could attempt to produce a zero nullifier for a real note,
+        // which would allow that note to be spent multiple times.
+        let nullifiers = self.nullifiers();
+        for (i, nf) in nullifiers.iter().enumerate() {
+            if *nf == Felt::ZERO {
+                return Err(TransactionCircuitError::ZeroNullifier(i));
+            }
+        }
+        
         Ok(())
     }
 

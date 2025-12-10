@@ -1,6 +1,7 @@
 //! Mock runtime for testing the shielded pool pallet.
 
 use crate as pallet_shielded_pool;
+// AcceptAllProofs is only available in test builds (not production)
 use crate::verifier::AcceptAllProofs;
 
 use frame_support::{

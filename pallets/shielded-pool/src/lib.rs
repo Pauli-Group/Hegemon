@@ -58,12 +58,25 @@ use sp_std::vec::Vec;
 /// Pallet ID for deriving the pool account.
 const PALLET_ID: PalletId = PalletId(*b"shld/pol");
 
-/// Zero nullifier - used for padding in STARK proofs.
-/// STARK proofs require fixed-size arrays, so unused input slots are padded with zeros.
-/// The pallet must skip zero nullifiers when checking for duplicates and when storing.
+/// Zero nullifier constant.
+/// 
+/// SECURITY: Zero nullifiers are INVALID and must be rejected.
+/// 
+/// Background: STARK proofs use fixed-size traces, which historically led to
+/// designs where unused slots were padded with zeros. However, this creates a
+/// security vulnerability: if an attacker could craft a witness that produces
+/// a zero nullifier for a real note, that note could be spent multiple times
+/// (since zeros would be "skipped" during double-spend checks).
+///
+/// Our defense-in-depth strategy:
+/// 1. Circuit layer: TransactionWitness::validate() rejects zero nullifiers
+/// 2. Pallet layer: shielded_transfer() rejects any zero nullifier submission
+/// 3. Cryptographic: The nullifier PRF makes zero outputs computationally infeasible
+///
+/// This constant exists only for detection - any occurrence is an error.
 const ZERO_NULLIFIER: [u8; 32] = [0u8; 32];
 
-/// Check if a nullifier is the zero padding value.
+/// Check if a nullifier is the zero value (which is invalid).
 fn is_zero_nullifier(nf: &[u8; 32]) -> bool {
     *nf == ZERO_NULLIFIER
 }
@@ -313,6 +326,12 @@ pub mod pallet {
         InvalidCoinbaseCommitment,
         /// Coinbase already processed for this block.
         CoinbaseAlreadyProcessed,
+        /// Zero nullifier submitted (security violation - zero nullifiers are padding only).
+        /// This error indicates a malicious attempt to bypass double-spend protection.
+        ZeroNullifierSubmitted,
+        /// Proof exceeds maximum allowed size.
+        /// This prevents DoS attacks via oversized proofs that consume verification resources.
+        ProofTooLarge,
     }
 
     #[pallet::genesis_config]
@@ -402,6 +421,14 @@ pub mod pallet {
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
 
+            // SECURITY: Early size check to prevent DoS via oversized proofs.
+            // This is the cheapest possible rejection - no deserialization or crypto ops.
+            // Must happen before any other processing to minimize attack surface.
+            ensure!(
+                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
+                Error::<T>::ProofTooLarge
+            );
+
             // Validate counts
             ensure!(
                 !nullifiers.is_empty() || !commitments.is_empty(),
@@ -418,23 +445,39 @@ pub mod pallet {
                 Error::<T>::InvalidAnchor
             );
 
-            // Check for duplicate nullifiers in transaction (skip zero padding)
-            let mut seen_nullifiers = Vec::new();
+            // SECURITY: Count real (non-zero) nullifiers and validate transaction structure.
+            // The STARK proof commits to exact input/output counts, so we must verify
+            // that the number of real nullifiers is consistent with the claimed operation.
+            // This prevents attacks where a malicious prover attempts to:
+            // 1. Submit zero nullifiers for real notes (enabling double-spend)
+            // 2. Claim value balance without corresponding inputs
+            //
+            // IMPORTANT: We now REJECT zero nullifiers entirely (not skip them).
+            // Zero nullifiers indicate malicious or buggy proof construction.
             for nf in nullifiers.iter() {
                 if is_zero_nullifier(nf) {
-                    continue;
+                    return Err(Error::<T>::ZeroNullifierSubmitted.into());
                 }
+            }
+            
+            // For unshielding (value_balance < 0) or pure transfers (value_balance == 0 with outputs),
+            // there must be at least one input nullifier to spend from
+            if value_balance <= 0 && !commitments.is_empty() && nullifiers.is_empty() {
+                // Attempting to create outputs or unshield without any inputs
+                return Err(Error::<T>::InvalidNullifierCount.into());
+            }
+
+            // Check for duplicate nullifiers in transaction
+            let mut seen_nullifiers = Vec::new();
+            for nf in nullifiers.iter() {
                 if seen_nullifiers.contains(nf) {
                     return Err(Error::<T>::DuplicateNullifierInTx.into());
                 }
                 seen_nullifiers.push(*nf);
             }
 
-            // Check nullifiers not already spent (skip zero padding)
+            // Check nullifiers not already spent
             for nf in nullifiers.iter() {
-                if is_zero_nullifier(nf) {
-                    continue;
-                }
                 ensure!(
                     !Nullifiers::<T>::contains_key(nf),
                     Error::<T>::NullifierAlreadyExists
@@ -503,11 +546,9 @@ pub mod pallet {
                 PoolBalance::<T>::mutate(|b| *b = b.saturating_sub((-value_balance) as u128));
             }
 
-            // Add nullifiers to spent set (skip zero padding)
+            // Add nullifiers to spent set
+            // Note: Zero nullifiers were already rejected above, so no skip needed
             for nf in nullifiers.iter() {
-                if is_zero_nullifier(nf) {
-                    continue;
-                }
                 Nullifiers::<T>::insert(nf, ());
                 Self::deposit_event(Event::NullifierAdded { nullifier: *nf });
             }
