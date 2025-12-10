@@ -42,7 +42,7 @@ jobs:
           path: release/
 
   build-macos-intel:
-    runs-on: macos-13  # Intel runner
+    runs-on: macos-15  # Cross-compile for Intel from ARM runner
     steps:
       - uses: actions/checkout@v4
       
@@ -54,15 +54,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.91.1"
-          targets: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown,x86_64-apple-darwin
       
-      - name: Build node binary
-        run: cargo build -p hegemon-node --features substrate --release
+      - name: Build node binary (cross-compile for Intel)
+        run: cargo build -p hegemon-node --features substrate --release --target x86_64-apple-darwin
       
       - name: Package binary
         run: |
           mkdir -p release
-          cp target/release/hegemon-node release/hegemon-node-macos-x86_64
+          cp target/x86_64-apple-darwin/release/hegemon-node release/hegemon-node-macos-x86_64
           cd release && shasum -a 256 hegemon-node-macos-x86_64 > hegemon-node-macos-x86_64.sha256
       
       - uses: actions/upload-artifact@v4
