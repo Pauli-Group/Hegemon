@@ -166,7 +166,7 @@ Consensus stitches this MASP output into PoW validation by requiring a coinbase 
 type now carries `CoinbaseData` that either references a concrete transaction (by index) or supplies an explicit `balance_tag`.
 Miners populate `CoinbaseData` with the minted amount, collected fees, and any explicit burns, and full nodes recompute the
 running `supply_digest = parent_digest + minted + fees − burns`. If the coinbase is missing, points at an invalid transaction,
-or mints more than the scheduled subsidy `R(height)` (50 · 10⁸ base units halving every 840k blocks), the block is rejected
+or mints more than the scheduled subsidy `R(epoch)` (~4.98 × 10⁸ base units halving every ~4 years per `TOKENOMICS_CALCULATION.md`), the block is rejected
 before the fork-choice comparison runs. This keeps the STARK circuit, MASP accounting, and the PoW header’s supply digest in
 lockstep.
 
@@ -832,9 +832,7 @@ Document benchmark outputs in pull requests when they change noticeably; CI will
 
 All jobs operate on Ubuntu runners with Rust stable, Go 1.21, and clang-format installed via `apt`. Adding new languages or toolchains requires updating this table, the workflow, and `docs/CONTRIBUTING.md`.
 
-## 6. Node, wallet, and UI operations
-
-## 6. Node, wallet, and UI operations
+## 7. Node, wallet, and UI operations
 
 Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) whenever you need a reproducible demo:
 

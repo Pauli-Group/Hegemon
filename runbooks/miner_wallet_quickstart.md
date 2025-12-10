@@ -54,7 +54,7 @@ HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
   --rpc-port 9944
 ```
 
-The `--dev` flag pre-funds test accounts and enables fast block times. Block rewards (50 HGM per block) are minted as shielded notes only your wallet can spend.
+The `--dev` flag pre-funds test accounts and enables fast block times. Block rewards (~4.98 HEG per block) are minted as shielded notes only your wallet can spend.
 
 ## 5. Verify the node is running
 
@@ -109,7 +109,7 @@ Check your balance:
 ./target/release/wallet balance --store ~/.hegemon-wallet --passphrase "your-secure-passphrase"
 ```
 
-Each mined block adds 50 HGM to your shielded balance (subject to halving every 210,000 blocks).
+Each mined block adds ~4.98 HEG to your shielded balance (subject to halving every ~4 years).
 
 ## Privacy model
 
