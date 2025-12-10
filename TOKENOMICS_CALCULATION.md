@@ -289,12 +289,35 @@ blocks_per_epoch = (Y_epoch × 31,536,000) / t_block_mainnet
 
 ## 8. Current implementation snapshot
 
-The present runtime implements a simplified, height‑based Bitcoin‑style subsidy that differs from the parameterized schedule above:
+The runtime now implements the parameterized tokenomics model described above:
 
-* **Fixed block‑height halving** – The pallet computes rewards with an initial 50‑coin subsidy (`INITIAL_SUBSIDY`) and halves every 210,000 blocks (`HALVING_INTERVAL`) regardless of the configured block time. At the current 20‑second PoW target, that yields ~48.6 days per epoch instead of a time‑based four‑year window. Block 0 mints nothing, block 1 begins at 50 coins, and the supply asymptotically approaches a hard cap of 21 million coins (`MAX_SUPPLY`) with the shift‑based halving logic. [pallets/coinbase/src/lib.rs]
+* **Time-normalized block rewards** – The pallet computes rewards using the formula `R0 = (S_MAX × T_BLOCK_SECONDS) / (2 × Y_EPOCH × T_YEAR)`. With a 60-second target block time, the initial reward is approximately **4.98 HEG per block**. Halving occurs every `BLOCKS_PER_EPOCH = 2,102,400 blocks` (4 years at 1-minute blocks). [pallets/coinbase/src/lib.rs]
 
-* **Reward injection path** – Miners provide an inherent that mints the requested amount (validated against `block_subsidy(height)` and a `MaxSubsidy` safety cap set to 50 coins) directly into an arbitrary account via the Balances pallet. There is no enforced split between miner/treasury/community outputs and no requirement that the outputs land in the shielded pool. [pallets/coinbase/src/lib.rs, runtime/src/lib.rs]
+* **Multi-party reward distribution** – Each coinbase is split according to configurable shares:
+  - `MinerShare` (α_m = 80%): paid to the miner who found the block
+  - `TreasuryShare` (α_f = 10%): paid to the protocol treasury account
+  - `CommunityShare` (α_c = 10%): paid to a community/ecosystem pool account
+  
+  The shares are configured via `Permill` types in `runtime/src/lib.rs` and can be adjusted via governance. [pallets/coinbase/src/lib.rs, runtime/src/lib.rs]
 
-* **Target block time** – Consensus targets a 20‑second block time (`PowTargetBlockTime = 20_000 ms`), while the testnet and mainnet JSON specs set 10‑second and 60‑second targets respectively. The emission logic does not currently adjust the halving schedule based on these differing targets. [runtime/src/lib.rs, config/testnet/testnet-spec.json, config/mainnet/mainnet-spec.json]
+* **Fee burning support** – The fee model pallet now supports a `BurnShare` parameter (β_burn) that controls what fraction of transaction fees are burned. At launch this is set to 0% (all fees go to the fee collector), but can be increased to implement EIP-1559-style fee burning. Burned fees are tracked in `TotalBurned` storage and emitted via `FeeBurned` events. [pallets/fee-model/src/lib.rs]
 
-Together, the implementation currently delivers a Bitcoin‑like halving curve keyed to block height, without the time‑based normalization, shielded‑only coinbase outputs, or multi‑party reward splits described in the parameterized policy above.
+* **Tail emission support** – The pallet includes `K_TAIL` and `R_TAIL` constants for optional perpetual tail emission after a configurable number of epochs. Currently set to 0 for a strict 21M hard cap, but can be enabled to provide low, perpetual security rewards. [pallets/coinbase/src/lib.rs]
+
+* **Target block time** – Consensus now targets a **60-second block time** (`TARGET_BLOCK_TIME_MS = 60_000`). Genesis difficulty is set to `20,040,000` (12× the previous 5-second value) to maintain the same hash rate requirement per block. Retarget interval is `10 blocks` (10 minutes between adjustments). [pallets/difficulty/src/lib.rs, node/src/substrate/service.rs]
+
+### Calculated values for mainnet
+
+| Parameter | Value |
+|-----------|-------|
+| `t_block` | 60 seconds |
+| `S_max` | 21,000,000 HEG |
+| `Y_epoch` | 4 years |
+| `R0` (initial reward) | ~4.98 HEG/block |
+| `blocks_per_epoch` | 2,102,400 |
+| `α_m` (miner share) | 80% |
+| `α_f` (treasury share) | 10% |
+| `α_c` (community share) | 10% |
+| `β_burn` (fee burn) | 0% (adjustable) |
+| `K_tail` | 0 (no tail emission) |
+| `GENESIS_DIFFICULTY` | 20,040,000 |

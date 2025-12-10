@@ -2725,7 +2725,7 @@ impl Default for MiningConfig {
         Self {
             enabled: false,
             threads: 1,
-            target_block_time_ms: 5_000, // 5 seconds
+            target_block_time_ms: 60_000, // 60 seconds (1 minute)
         }
     }
 }
@@ -2745,7 +2745,7 @@ impl MiningConfig {
         let target_block_time_ms = std::env::var("HEGEMON_BLOCK_TIME_MS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(5_000); // 5 seconds
+            .unwrap_or(60_000); // 60 seconds (1 minute)
 
         Self {
             enabled,
@@ -2764,7 +2764,7 @@ mod tests {
         let config = MiningConfig::default();
         assert!(!config.enabled);
         assert_eq!(config.threads, 1);
-        assert_eq!(config.target_block_time_ms, 5_000); // 5 seconds
+        assert_eq!(config.target_block_time_ms, 60_000); // 60 seconds
     }
 
     #[test]
