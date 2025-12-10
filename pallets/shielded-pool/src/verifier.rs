@@ -966,6 +966,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "production"))]
     fn accept_all_verifier_accepts_valid_proof() {
         let verifier = AcceptAllProofs;
         let result = verifier.verify_stark(&sample_proof(), &sample_inputs(), &sample_vk());
@@ -973,6 +974,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "production"))]
     fn accept_all_verifier_rejects_zero_proof() {
         let verifier = AcceptAllProofs;
         let zero_proof = StarkProof::default();
@@ -981,6 +983,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "production"))]
     fn accept_all_verifier_rejects_disabled_key() {
         let verifier = AcceptAllProofs;
         let mut vk = sample_vk();
@@ -990,6 +993,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "production"))]
     fn reject_all_verifier_rejects() {
         let verifier = RejectAllProofs;
         let result = verifier.verify_stark(&sample_proof(), &sample_inputs(), &sample_vk());
@@ -1006,6 +1010,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "production"))]
     fn accept_all_binding_sig_accepts() {
         let verifier = AcceptAllProofs;
         // AcceptAllProofs accepts anything non-zero
@@ -1014,6 +1019,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "production"))]
     fn reject_all_binding_sig_rejects() {
         let verifier = RejectAllProofs;
         let sig = BindingSignature { data: [1u8; 64] };

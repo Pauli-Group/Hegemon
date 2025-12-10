@@ -2,6 +2,7 @@
 
 use crate as pallet_shielded_pool;
 // AcceptAllProofs is only available in test builds (not production)
+#[cfg(not(feature = "production"))]
 use crate::verifier::AcceptAllProofs;
 
 use frame_support::{

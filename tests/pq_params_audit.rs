@@ -32,16 +32,23 @@ use crypto::{
 /// ML-KEM-768 NIST FIPS 203 specified parameters
 mod ml_kem_768_params {
     // Module dimension (k)
+    #[allow(dead_code)]
     pub const K: usize = 3;
     // Polynomial degree
+    #[allow(dead_code)]
     pub const N: usize = 256;
     // Modulus
+    #[allow(dead_code)]
     pub const Q: u16 = 3329;
     // Secret key noise parameter
+    #[allow(dead_code)]
     pub const ETA1: usize = 2;
+    #[allow(dead_code)]
     pub const ETA2: usize = 2;
     // Compression parameters
+    #[allow(dead_code)]
     pub const DU: usize = 10;
+    #[allow(dead_code)]
     pub const DV: usize = 4;
 
     // Derived sizes (FIPS 203 Table 2)
@@ -184,7 +191,7 @@ fn test_ml_kem_768_different_encapsulations() {
 #[test]
 fn test_ml_kem_768_invalid_ciphertext() {
     let seed = [1u8; 32];
-    let kp = MlKemKeyPair::generate_deterministic(&seed);
+    let _kp = MlKemKeyPair::generate_deterministic(&seed);
 
     // Create invalid ciphertext (wrong size)
     let invalid_short = vec![0u8; ML_KEM_CIPHERTEXT_LEN - 1];
@@ -205,15 +212,21 @@ fn test_ml_kem_768_invalid_ciphertext() {
 /// ML-DSA-65 NIST FIPS 204 specified parameters
 mod ml_dsa_65_params {
     // Matrix dimensions
+    #[allow(dead_code)]
     pub const K: usize = 6;
+    #[allow(dead_code)]
     pub const L: usize = 5;
     // Secret key coefficient bound
+    #[allow(dead_code)]
     pub const ETA: usize = 4;
     // Challenge weight (number of ±1 in challenge)
+    #[allow(dead_code)]
     pub const TAU: usize = 49;
     // y coefficient bound
+    #[allow(dead_code)]
     pub const GAMMA1: usize = 1 << 19;
     // Rounding range
+    #[allow(dead_code)]
     pub const GAMMA2: usize = (8380417 - 1) / 32;
 
     // Derived sizes (FIPS 204)
@@ -348,7 +361,7 @@ fn test_ml_dsa_65_wrong_key() {
     let seed2 = [2u8; 32];
 
     let sk1 = MlDsaSecretKey::generate_deterministic(&seed1);
-    let pk1 = sk1.verify_key();
+    let _pk1 = sk1.verify_key();
     let sk2 = MlDsaSecretKey::generate_deterministic(&seed2);
     let pk2 = sk2.verify_key();
 

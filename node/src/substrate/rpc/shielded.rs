@@ -617,7 +617,7 @@ mod tests {
 
         fn get_merkle_witness(
             &self,
-            position: u64,
+            _position: u64,
         ) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), String> {
             let siblings: Vec<[u8; 32]> = (0..32).map(|i| [i; 32]).collect();
             let indices: Vec<bool> = (0..32).map(|i| i % 2 == 0).collect();

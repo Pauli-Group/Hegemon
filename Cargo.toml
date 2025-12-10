@@ -40,6 +40,16 @@ explicit_auto_deref = "allow"
 needless_borrow = "allow"
 unused_enumerate_index = "allow"
 let_and_return = "allow"
+type_complexity = "allow"
+too_many_arguments = "allow"
+result_large_err = "allow"
+derivable_impls = "allow"
+manual_ok_or = "allow"
+manual_map = "allow"
+
+[workspace.lints.rust]
+# Allow deprecated items - we'll fix these incrementally
+deprecated = "allow"
 
 [workspace.package]
 authors = ["Pauli Group Inc."]

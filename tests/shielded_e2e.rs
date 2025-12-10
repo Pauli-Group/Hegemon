@@ -950,7 +950,7 @@ mod integration_tests {
 
         // 2. Create a test wallet
         let wallet = TestWallet::new_random().unwrap();
-        let shield_address = wallet.default_address().unwrap();
+        let _shield_address = wallet.default_address().unwrap();
         eprintln!("Created test wallet with address");
 
         // 3. Get chain metadata
@@ -1255,7 +1255,6 @@ mod slh_dsa_tests {
     async fn test_slh_dsa_vs_ml_dsa_comparison() {
         use crypto::ml_dsa::{
             MlDsaSecretKey as MlSk, ML_DSA_PUBLIC_KEY_LEN, ML_DSA_SECRET_KEY_LEN,
-            ML_DSA_SIGNATURE_LEN,
         };
         use crypto::traits::Signature as SigTrait;
 

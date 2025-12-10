@@ -71,7 +71,7 @@ async fn test_pq_bidirectional_communication() {
     let mut conn2 = responder_handle.await.unwrap().unwrap();
 
     // Send multiple messages in both directions
-    for i in 0..5 {
+    for _i in 0..5 {
         // Node 1 → Node 2
         conn1.send(WireMessage::Ping).await.unwrap();
         match conn2.recv().await.unwrap() {
@@ -145,7 +145,6 @@ async fn test_pq_concurrent_connections() {
     // Connect 3 clients concurrently
     let mut client_handles = Vec::new();
     for i in 0..3 {
-        let addr = addr.clone();
         let seed = format!("client-node-{}", i);
         client_handles.push(tokio::spawn(async move {
             let identity = PqPeerIdentity::new(seed.as_bytes(), PqTransportConfig::development());

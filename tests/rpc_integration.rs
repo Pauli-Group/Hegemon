@@ -244,8 +244,8 @@ impl MockRpcService {
             .skip(start as usize)
             .take(limit)
             .filter(|(_, _, block, _)| {
-                let from_ok = from_block.map_or(true, |fb| *block >= fb);
-                let to_ok = to_block.map_or(true, |tb| *block <= tb);
+                let from_ok = from_block.is_none_or(|fb| *block >= fb);
+                let to_ok = to_block.is_none_or(|tb| *block <= tb);
                 from_ok && to_ok
             })
             .cloned()
@@ -491,8 +491,8 @@ mod basic_rpc_tests {
         let service = MockRpcService::new();
 
         // Add some notes
-        for i in 0..5 {
-            service.add_note(vec![i as u8], [i; 32]).await;
+        for i in 0u8..5 {
+            service.add_note(vec![i], [i; 32]).await;
         }
 
         // Get all notes
@@ -639,7 +639,7 @@ mod shielded_transfer_tests {
 
     #[tokio::test]
     async fn test_invalid_anchor_rejected() {
-        let (client, service) = TestRpcClient::mock();
+        let (client, _service) = TestRpcClient::mock();
 
         // Shield funds
         client.shield(1_000_000, [0xaa; 32], vec![1]).await.unwrap();
@@ -700,8 +700,8 @@ mod concurrent_tests {
         let service = Arc::new(MockRpcService::new());
 
         // Add notes
-        for i in 0..100 {
-            service.add_note(vec![i as u8], [i; 32]).await;
+        for i in 0u8..100 {
+            service.add_note(vec![i], [i; 32]).await;
         }
 
         let mut tasks = JoinSet::new();
@@ -791,7 +791,7 @@ mod full_flow_tests {
         // 2. Shield funds
         let shield_amount = 1_000_000u128;
         let shield_commitment = [0xaa; 32];
-        let shield_tx = client
+        let _shield_tx = client
             .shield(shield_amount, shield_commitment, vec![1, 2, 3, 4])
             .await
             .unwrap();
@@ -817,7 +817,7 @@ mod full_flow_tests {
         // 6. Build and submit shielded transfer
         let nullifier = [0xbb; 32];
         let new_commitment = [0xcc; 32];
-        let transfer_tx = client
+        let _transfer_tx = client
             .submit_shielded_transfer(
                 vec![0u8; 20000], // fake proof
                 vec![nullifier],

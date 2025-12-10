@@ -21,7 +21,7 @@
 
 use transaction_circuit::{
     constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS},
-    stark_prover::{default_proof_options, fast_proof_options, TransactionProverStark},
+    stark_prover::{default_proof_options, fast_proof_options},
 };
 
 /// The Goldilocks prime: p = 2^64 - 2^32 + 1
@@ -171,12 +171,15 @@ fn test_fri_security_parameters_fast() {
 fn test_poseidon_security_parameters() {
     // Verify Poseidon hash has sufficient rounds for algebraic security
 
-    assert!(
-        POSEIDON_ROUNDS >= MIN_POSEIDON_FULL_ROUNDS,
-        "Poseidon rounds {} < minimum {} for 128-bit algebraic security",
-        POSEIDON_ROUNDS,
-        MIN_POSEIDON_FULL_ROUNDS
-    );
+    #[allow(clippy::assertions_on_constants)]
+    {
+        assert!(
+            POSEIDON_ROUNDS >= MIN_POSEIDON_FULL_ROUNDS,
+            "Poseidon rounds {} < minimum {} for 128-bit algebraic security",
+            POSEIDON_ROUNDS,
+            MIN_POSEIDON_FULL_ROUNDS
+        );
+    }
 
     // Poseidon state width should be 3 for rate-2 absorption
     // This matches the standard STARK-friendly Poseidon configuration
@@ -198,12 +201,15 @@ fn test_poseidon_security_parameters() {
 fn test_merkle_tree_security() {
     // Verify Merkle tree depth provides sufficient note capacity
 
-    assert!(
-        CIRCUIT_MERKLE_DEPTH >= MIN_MERKLE_DEPTH,
-        "Merkle depth {} < minimum {} for note capacity",
-        CIRCUIT_MERKLE_DEPTH,
-        MIN_MERKLE_DEPTH
-    );
+    #[allow(clippy::assertions_on_constants)]
+    {
+        assert!(
+            CIRCUIT_MERKLE_DEPTH >= MIN_MERKLE_DEPTH,
+            "Merkle depth {} < minimum {} for note capacity",
+            CIRCUIT_MERKLE_DEPTH,
+            MIN_MERKLE_DEPTH
+        );
+    }
 
     // Calculate note capacity
     let max_notes: u128 = 1u128 << CIRCUIT_MERKLE_DEPTH;
@@ -213,8 +219,11 @@ fn test_merkle_tree_security() {
     );
 
     // Verify MAX_INPUTS and MAX_OUTPUTS are reasonable
-    assert!(MAX_INPUTS >= 2, "Must support at least 2 inputs");
-    assert!(MAX_OUTPUTS >= 2, "Must support at least 2 outputs");
+    #[allow(clippy::assertions_on_constants)]
+    {
+        assert!(MAX_INPUTS >= 2, "Must support at least 2 inputs");
+        assert!(MAX_OUTPUTS >= 2, "Must support at least 2 outputs");
+    }
 
     println!(
         "✅ Transaction limits: {} inputs, {} outputs",
@@ -231,12 +240,15 @@ fn test_hash_function_security() {
     const BLAKE3_OUTPUT_BITS: usize = 256;
     const MIN_HASH_BITS: usize = 256;
 
-    assert!(
-        BLAKE3_OUTPUT_BITS >= MIN_HASH_BITS,
-        "Hash output {} bits < minimum {} bits",
-        BLAKE3_OUTPUT_BITS,
-        MIN_HASH_BITS
-    );
+    #[allow(clippy::assertions_on_constants)]
+    {
+        assert!(
+            BLAKE3_OUTPUT_BITS >= MIN_HASH_BITS,
+            "Hash output {} bits < minimum {} bits",
+            BLAKE3_OUTPUT_BITS,
+            MIN_HASH_BITS
+        );
+    }
 
     // Verify Blake3 provides claimed security
     // Collision resistance: 128 bits (birthday bound on 256-bit output)
@@ -301,11 +313,14 @@ fn test_trace_length_security() {
     );
 
     // Minimum trace length for security (affects FRI folding)
-    assert!(
-        MIN_TRACE_LENGTH >= 256,
-        "Trace length {} < 256 minimum for FRI security",
-        MIN_TRACE_LENGTH
-    );
+    #[allow(clippy::assertions_on_constants)]
+    {
+        assert!(
+            MIN_TRACE_LENGTH >= 256,
+            "Trace length {} < 256 minimum for FRI security",
+            MIN_TRACE_LENGTH
+        );
+    }
 
     println!(
         "✅ Trace length {} (2^{})",

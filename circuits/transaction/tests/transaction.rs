@@ -13,7 +13,7 @@ use winterfell::math::FieldElement;
 fn compute_merkle_root(leaf: Felt, position: u64, path: &[Felt]) -> Felt {
     let mut current = leaf;
     let mut pos = position;
-    for (level, sibling) in path.iter().enumerate().take(CIRCUIT_MERKLE_DEPTH) {
+    for (_level, sibling) in path.iter().enumerate().take(CIRCUIT_MERKLE_DEPTH) {
         current = if pos & 1 == 0 {
             merkle_node(current, *sibling)
         } else {

@@ -1330,7 +1330,7 @@ mod tests {
         let import_count = Arc::new(AtomicU64::new(0));
         let count_clone = Arc::clone(&import_count);
 
-        chain_state.set_import_fn(move |template, seal| {
+        chain_state.set_import_fn(move |_template, seal| {
             count_clone.fetch_add(1, Ordering::SeqCst);
             Ok(H256::from_slice(seal.work.as_bytes()))
         });

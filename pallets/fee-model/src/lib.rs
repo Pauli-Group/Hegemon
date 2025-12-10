@@ -371,7 +371,7 @@ mod tests {
     use pallet_transaction_payment::OnChargeTransaction;
     use sp_runtime::testing::H256;
     use sp_runtime::traits::{BlakeTwo256, IdentityLookup};
-    use sp_runtime::{BuildStorage, FixedU128};
+    use sp_runtime::{BuildStorage, FixedU128, Permill};
 
     frame_support::construct_runtime!(
         pub enum TestRuntime {

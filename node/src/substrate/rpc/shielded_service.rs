@@ -170,8 +170,8 @@ impl ShieldedPoolService for MockShieldedPoolService {
             .skip(start as usize)
             .take(limit)
             .filter(|(_, _, block, _)| {
-                let from_ok = from_block.map_or(true, |fb| *block >= fb);
-                let to_ok = to_block.map_or(true, |tb| *block <= tb);
+                let from_ok = from_block.is_none_or(|fb| *block >= fb);
+                let to_ok = to_block.is_none_or(|tb| *block <= tb);
                 from_ok && to_ok
             })
             .cloned()

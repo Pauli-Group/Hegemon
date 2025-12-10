@@ -1200,8 +1200,6 @@ mod tests {
 
     #[test]
     fn test_production_provider_build_block_template_with_state() {
-        use crate::substrate::mining_worker::BlockTemplate;
-
         let provider = ProductionChainStateProvider::new(ProductionConfig::default());
 
         // Set up callbacks

@@ -159,6 +159,7 @@ impl frame_support::traits::Get<StarkVerifierParams> for DefaultVerifierParams {
     }
 }
 
+#[allow(dead_code)]
 pub fn new_test_ext() -> sp_io::TestExternalities {
     let mut storage = frame_system::GenesisConfig::<Test>::default()
         .build_storage()

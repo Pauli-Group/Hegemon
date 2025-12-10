@@ -820,7 +820,7 @@ mod tests {
         };
 
         let mut backend_a = PqNetworkBackend::new(&identity_a, config_a);
-        let mut backend_b = PqNetworkBackend::new(&identity_b, config_b);
+        let backend_b = PqNetworkBackend::new(&identity_b, config_b);
 
         // Start backend A
         let _ = backend_a.start().await.unwrap();

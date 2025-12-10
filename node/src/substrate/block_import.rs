@@ -531,11 +531,11 @@ pub fn create_mock_block_import_from_env() -> MockBlockImport {
 /// client types in service.rs.
 #[cfg(feature = "substrate")]
 pub mod substrate_integration {
-    //! Substrate integration helpers for block import pipeline.
-    //!
-    //! This module provides the types and documentation needed for integrating
-    //! the block import pipeline with sc-consensus-pow. The actual instantiation
-    //! should happen in service.rs where the concrete client type is known.
+    // Substrate integration helpers for block import pipeline.
+    //
+    // This module provides the types and documentation needed for integrating
+    // the block import pipeline with sc-consensus-pow. The actual instantiation
+    // should happen in service.rs where the concrete client type is known.
 
     /// Template for creating the PoW block import in service.rs
     ///
