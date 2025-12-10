@@ -12,8 +12,8 @@ Both participants need:
 
 - **Boot Node (Alice):** `hegemon.pauli.group:30333`
 - **Chain:** Shared chainspec file (see below)
-- **Block time:** ~5 seconds
-- **Coinbase reward:** 50 HGM per block (halves every 210,000 blocks)
+- **Block time:** ~60 seconds (1 minute)
+- **Coinbase reward:** ~4.98 HEG per block (halves every ~4 years / 2.1M blocks)
 - **Privacy:** All coinbase rewards go directly to shielded pool - no transparent balances
 
 ---
@@ -210,7 +210,7 @@ Check balance:
 ./target/release/wallet status --store ~/.hegemon-wallet --passphrase "YOUR_PASSPHRASE"
 ```
 
-You should see coinbase rewards accumulating (50 HGM per block you mined).
+You should see coinbase rewards accumulating (~4.98 HEG per block you mined).
 
 ---
 
@@ -290,7 +290,7 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 - Look at node logs for sync errors
 
 ### Transaction not appearing
-- Wait for block confirmation (~5 seconds)
+- Wait for block confirmation (~60 seconds)
 - Re-sync wallet
 - Check node logs for extrinsic errors
 

@@ -6,28 +6,53 @@ use crate::types::SupplyDigest;
 // =============================================================================
 // CHAIN PARAMETERS - SINGLE SOURCE OF TRUTH
 // All other crates should import from here or from runtime re-exports.
+// See TOKENOMICS_CALCULATION.md for the derivation of these parameters.
 // =============================================================================
 
 pub const COIN: u64 = 100_000_000;
-pub const INITIAL_SUBSIDY: u64 = 50 * COIN;
-pub const HALVING_INTERVAL: u64 = 210_000;
+
+/// Seconds in a year (365 × 24 × 3,600)
+pub const T_YEAR: u64 = 31_536_000;
+
+/// Target block time in seconds (60 seconds / 1 minute)
+pub const T_BLOCK_SECONDS: u64 = 60;
+
+/// Duration of one issuance epoch in years
+pub const Y_EPOCH: u64 = 4;
+
+/// Epoch duration in seconds (Y_EPOCH × T_YEAR)
+pub const T_EPOCH_SECONDS: u64 = Y_EPOCH * T_YEAR;
+
+/// Blocks per epoch (4 years of 60s blocks = 2,102,400 blocks)
+pub const BLOCKS_PER_EPOCH: u64 = T_EPOCH_SECONDS / T_BLOCK_SECONDS;
+
+/// Maximum supply: 21 million coins
 pub const MAX_SUPPLY: u64 = 21_000_000 * COIN;
 
-/// Target block time in milliseconds (5 seconds).
-pub const TARGET_BLOCK_INTERVAL_MS: u64 = 5_000;
+/// Initial block reward R0 = (S_MAX × t_block) / (2 × Y_EPOCH × T_YEAR)
+/// For 60s blocks: R0 = (21,000,000 × 60) / (2 × 4 × 31,536,000) ≈ 4.98 HEG
+/// In base units: ~498,287,671 (~4.98 coins)
+pub const INITIAL_SUBSIDY: u64 = (MAX_SUPPLY as u128 * T_BLOCK_SECONDS as u128
+    / (2 * Y_EPOCH as u128 * T_YEAR as u128)) as u64;
+
+/// Legacy halving interval - now derived from BLOCKS_PER_EPOCH
+pub const HALVING_INTERVAL: u64 = BLOCKS_PER_EPOCH;
+
+/// Target block time in milliseconds (60 seconds / 1 minute).
+pub const TARGET_BLOCK_INTERVAL_MS: u64 = 60_000;
 
 /// Number of blocks between difficulty adjustments.
-/// At 5s blocks, 120 blocks = 10 minutes between adjustments.
-pub const RETARGET_WINDOW: u64 = 120;
+/// At 60s blocks, 10 blocks = 10 minutes between adjustments.
+pub const RETARGET_WINDOW: u64 = 10;
 
-/// Expected total time for RETARGET_WINDOW blocks (120 * 5s = 600s = 10 minutes).
+/// Expected total time for RETARGET_WINDOW blocks (10 * 60s = 600s = 10 minutes).
 pub const RETARGET_TIMESPAN_MS: u64 = RETARGET_WINDOW * TARGET_BLOCK_INTERVAL_MS;
 
 /// Maximum adjustment factor per retarget (4x up or down).
 pub const MAX_ADJUSTMENT_FACTOR: u64 = 4;
 
-/// Genesis difficulty: 100 kH/s * 5 seconds = 500,000 expected hashes per block.
-pub const GENESIS_DIFFICULTY: u128 = 500_000;
+/// Genesis difficulty: ~100 kH/s * 60 seconds = 6,000,000 expected hashes per block.
+pub const GENESIS_DIFFICULTY: u128 = 6_000_000;
 
 /// Genesis compact bits: 0x1e218def encodes target = MAX_U256 / 500,000.
 pub const GENESIS_BITS: u32 = 0x1e21_8def;
@@ -37,8 +62,8 @@ pub const MIN_DIFFICULTY: u128 = 1;
 
 pub const MEDIAN_TIME_WINDOW: usize = 11;
 
-/// Maximum timestamp drift allowed (15 seconds for 5s blocks).
-pub const MAX_FUTURE_SKEW_MS: u64 = 15_000;
+/// Maximum timestamp drift allowed (90 seconds for 60s blocks).
+pub const MAX_FUTURE_SKEW_MS: u64 = 90_000;
 
 pub fn block_subsidy(height: u64) -> u64 {
     if height == 0 {

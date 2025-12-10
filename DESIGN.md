@@ -236,8 +236,8 @@ The PoW fork mirrors Bitcoin/Zcash mechanics so operators can reason about liven
 * Block headers expose an explicit `pow_bits` compact target, a 256-bit nonce, and a 128-bit `supply_digest`. Miners sign the
   full header (including the supply digest) with ML-DSA and then search over the nonce until `sha256(header) ≤ target(pow_bits)`.
   A zero mantissa is invalid, and every PoW header must carry the seal (there is no “missing” difficulty case between retargets).
-* Difficulty retargeting is deterministic: every `RETARGET_WINDOW = 120` blocks the chain recomputes the target from the window’s
-  timestamps, clamping swings to ×¼…×4 and aiming for a `TARGET_BLOCK_INTERVAL = 20 s`. Honest nodes reject any block whose
+* Difficulty retargeting is deterministic: every `RETARGET_WINDOW = 10` blocks the chain recomputes the target from the window's
+  timestamps, clamping swings to ×¼…×4 and aiming for a `TARGET_BLOCK_INTERVAL = 60 s` (1 minute). Honest nodes reject any block whose
   `pow_bits` diverges from this schedule, which makes retarget spoofing impossible even across deep reorgs. Blocks between
   retarget boundaries MUST inherit the parent’s `pow_bits` verbatim and the retarget math uses the clamped timespan so outlier
   timestamps cannot skew difficulty even after a reorg.
@@ -255,7 +255,7 @@ The PoW fork mirrors Bitcoin/Zcash mechanics so operators can reason about liven
 
 No transparent outputs; everything is in this one PQ pool from day 1.
 
-`node/src/api.rs` exposes that state machine over HTTP so operators can monitor the same fields remotely. `/blocks/latest` and `/metrics` stream hash rate, mempool depth, stale share rate, best height, and compact difficulty values that miners compare against the reward policy in `consensus/src/reward.rs` (`INITIAL_SUBSIDY = 50 · 10⁸`, `HALVING_INTERVAL = 210_000`). Every mined block updates the header’s `supply_digest`, and the quickstart playbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through querying those endpoints before wiring wallets to the node API. Substrate integrations reuse the same machinery: the `consensus::substrate::import_pow_block` helper executes the PoW ledger checks (version-commitment + STARK commitments + reward checks) as blocks flow through a Substrate import queue, and the node exposes `/consensus/status` to mirror the latest `ImportReceipt` alongside miner telemetry so the benchmarking tools under `consensus/bench` see consistent values.
+`node/src/api.rs` exposes that state machine over HTTP so operators can monitor the same fields remotely. `/blocks/latest` and `/metrics` stream hash rate, mempool depth, stale share rate, best height, and compact difficulty values that miners compare against the reward policy in `pallets/coinbase/src/lib.rs`. Per `TOKENOMICS_CALCULATION.md`, the initial block reward is ~4.98 HEG (derived from the 60-second block time), and epochs last 4 years (~2.1M blocks). Every mined block updates the header’s `supply_digest`, and the quickstart playbook in [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) walks through querying those endpoints before wiring wallets to the node API. Substrate integrations reuse the same machinery: the `consensus::substrate::import_pow_block` helper executes the PoW ledger checks (version-commitment + STARK commitments + reward checks) as blocks flow through a Substrate import queue, and the node exposes `/consensus/status` to mirror the latest `ImportReceipt` alongside miner telemetry so the benchmarking tools under `consensus/bench` see consistent values.
 
 The workspace-level test `tests/node_wallet_daemon.rs` keeps the HTTP API, miner loop, and wallet RPC client in sync by spinning two nodes, verifying the minted supply, and forcing a user-facing transfer.
 
@@ -272,7 +272,31 @@ We still want:
 
 ### 4.1 Secret key hierarchy
 
-Let’s define base secret material:
+```mermaid
+flowchart TD
+    ROOT[sk_root<br/>256-bit master secret]
+
+    ROOT -->|HKDF "spend"| SK_SPEND[sk_spend]
+    ROOT -->|HKDF "view"| SK_VIEW[sk_view]
+    ROOT -->|HKDF "enc"| SK_ENC[sk_enc]
+    ROOT -->|HKDF "derive"| SK_DERIVE[sk_derive]
+
+    SK_SPEND -->|H "nk"| NK[nk - Nullifier key]
+
+    subgraph Viewing Keys
+        IVK[Incoming VK<br/>sk_view + sk_enc]
+        FVK[Full VK<br/>IVK + vk_nf]
+    end
+
+    SK_VIEW --> IVK
+    SK_ENC --> IVK
+    SK_SPEND -->|H "view_nf"| VK_NF[vk_nf]
+    VK_NF --> FVK
+
+    SK_DERIVE --> ADDR[Diversified Addresses<br/>shca1...]
+```
+
+Let's define base secret material:
 
 * `sk_root` – master secret for the wallet.
 * Derive sub-keys via KDFs:

@@ -24,6 +24,40 @@ The HGN protocol consists of four tightly-coupled subsystems:
 3. **State and execution (`state/`, `protocol/`)** – Mining nodes maintain on-disk Merkle forests, apply deterministic fee burning, and expose programmable hooks for sidecar applications. The `protocol/` crate codifies transaction formats, serialization, and proof verification limits.
 4. **Governance and runbooks (`governance/`, `runbooks/`)** – Multi-tier governance defines monetary policy, mining incentives, and emergency brake conditions. Operational runbooks document incident response, upgrade ceremonies, and regulator disclosures for PoW operators; see [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) for the end-to-end node + wallet pairing walkthrough referenced throughout this whitepaper.
 
+```mermaid
+flowchart TB
+    subgraph User["User Layer"]
+        W[wallet/]
+        UI[dashboard-ui/]
+    end
+
+    subgraph Proving["Proving Layer"]
+        CT[circuits/transaction]
+        CB[circuits/block]
+    end
+
+    subgraph Crypto["PQ Cryptography"]
+        CR[crypto/]
+    end
+
+    subgraph Consensus["Consensus"]
+        CON[consensus/]
+        NET[network/]
+    end
+
+    subgraph State["State & Runtime"]
+        SM[state/merkle]
+        RT[runtime/]
+    end
+
+    W -->|craft tx| CT
+    CT -->|proof| CB
+    CB -->|block proof| CON
+    CON -->|seal| RT
+    CT --> CR
+    CB --> SM
+```
+
 #### Consensus, block proofs, and state management
 `DESIGN.md §6` and `METHODS.md §5` describe how the `state/merkle`, `circuits/block`, and `protocol-versioning` crates collaborate to keep the chain coherent as primitives evolve. Miners append transactions to the Poseidon-based forests in `state/merkle`, then call `circuits/block::prove_block` locally before broadcasting a PoW solution. Every transaction carries a `VersionBinding { circuit, crypto }`, and block producers batch those into a `VersionMatrix` whose hash becomes the header’s `version_commitment`. The `protocol-versioning` crate exposes helpers for encoding that matrix plus the `VersionBinding` counts that recursive proofs publish so the network can attest exactly which circuit/crypto combinations were accepted in a slot. On ingest, PoW nodes query `VersionSchedule::first_unsupported` before finalizing state; if a block references a binding that governance has not scheduled, consensus raises `ConsensusError::UnsupportedVersion` and refuses to advance the Merkle roots even if the hashpower majority momentarily disagrees.
 
@@ -32,6 +66,24 @@ Governance rolls new bindings through the flow in `governance/VERSIONING.md`: au
 Operational touchpoints anchor the theory to daily practice. `consensus/bench` replays the ML-DSA/STARK payload sizes described in `DESIGN.md §6` so operators can benchmark PQ-era throughput before activating new bindings. During an emergency swap, `runbooks/emergency_version_swap.md` walks operators through drafting the `VersionProposal`, enabling the mandated `UpgradeDirective`, and monitoring `version_counts` until the `VersionSchedule` retires the compromised binding. Together, the recursive block proofs, version commitments, and governance hooks keep consensus, state, and operations synchronized without cloning the privacy pool.
 
 #### Shielded transactions and PQ cryptography
+
+```mermaid
+sequenceDiagram
+    participant W as Wallet
+    participant C as Circuit
+    participant M as Merkle Tree
+    participant N as Network
+
+    W->>W: Select notes, derive nullifiers
+    W->>W: Create outputs, compute commitments
+    W->>C: Submit witness + Merkle paths
+    C->>C: Verify membership, nullifiers, balance
+    C-->>W: STARK proof
+    W->>N: nullifiers + commitments + proof
+    N->>M: Check nullifiers, append commitments
+    N-->>W: Confirmed
+```
+
 Each note in the MASP-style pool carries `(value, asset_id, pk_recipient, rho, r)` as described in `METHODS.md §1`, and the wallet logic in `wallet/` maintains those fields while deriving commitments via `cm = Hc("note" || enc(value) || asset_id || pk_recipient || rho || r)` before inserting them into the STARK-proven Merkle forest in `state/`. The `circuits/transaction` crate enforces that every published commitment matches an in-circuit re-computation, while the note handling API exposes the corresponding secrets so a sender can prove knowledge without leaking them on-chain.
 
 Spend authorization follows the hash-based nullifier scheme from `METHODS.md §1.2` and `DESIGN.md §1`: the `crypto/` primitives derive `nk = H("nk" || sk_spend)` and `nf = H("nf" || nk || rho || pos)` per note, and the STARK constraints in `circuits/transaction` bind each public nullifier to its witness data so the `state/` nullifier set catches double-spends. Proof witnesses also include Merkle paths for inputs, and the verifier logic wired through `protocol/` only accepts transactions whose STARK proofs simultaneously demonstrate membership, note opening correctness, and adherence to the MASP value equations.
