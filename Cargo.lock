@@ -10420,6 +10420,7 @@ dependencies = [
  "sha3 0.10.8",
  "slh-dsa",
  "thiserror 1.0.69",
+ "zeroize",
 ]
 
 [[package]]
@@ -11418,6 +11419,7 @@ dependencies = [
  "transaction-circuit",
  "twox-hash",
  "url",
+ "zeroize",
 ]
 
 [[package]]

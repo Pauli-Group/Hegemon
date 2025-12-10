@@ -1,6 +1,7 @@
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use synthetic_crypto::{
     deterministic::expand_to_length,
@@ -14,7 +15,9 @@ use crate::{address::ShieldedAddress, error::WalletError};
 const KEY_SIZE: usize = 32;
 const ADDRESS_VERSION: u8 = 1;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+/// Root secret key - the master seed for the wallet.
+/// This is zeroized on drop to prevent key material from persisting in memory.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct RootSecret(#[serde(with = "serde_bytes32")] [u8; KEY_SIZE]);
 
 impl RootSecret {
@@ -42,7 +45,9 @@ impl RootSecret {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+/// Derived keys from the root secret.
+/// All sensitive key material is zeroized on drop.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct DerivedKeys {
     pub spend: SpendKey,
     pub view: ViewKey,
@@ -61,7 +66,9 @@ impl DerivedKeys {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+/// Spend key - used for authorizing transactions.
+/// Zeroized on drop to prevent key material from persisting in memory.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct SpendKey(#[serde(with = "serde_bytes32")] [u8; KEY_SIZE]);
 
 impl SpendKey {
@@ -74,7 +81,9 @@ impl SpendKey {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+/// View key - used for deriving addresses and decrypting incoming notes.
+/// Zeroized on drop to prevent key material from persisting in memory.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct ViewKey(#[serde(with = "serde_bytes32")] [u8; KEY_SIZE]);
 
 impl ViewKey {
@@ -98,7 +107,9 @@ impl ViewKey {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+/// Encryption seed - used for deriving ML-KEM keypairs.
+/// Zeroized on drop to prevent key material from persisting in memory.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct EncryptionSeed(#[serde(with = "serde_bytes32")] [u8; KEY_SIZE]);
 
 impl EncryptionSeed {
@@ -112,7 +123,9 @@ impl EncryptionSeed {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+/// Diversifier key - used for deriving unique addresses.
+/// Zeroized on drop to prevent key material from persisting in memory.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Zeroize, ZeroizeOnDrop)]
 pub struct DiversifierKey(#[serde(with = "serde_bytes32")] [u8; KEY_SIZE]);
 
 impl DiversifierKey {

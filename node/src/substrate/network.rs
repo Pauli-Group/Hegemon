@@ -181,13 +181,13 @@ pub struct PqNetworkKeypair {
 }
 
 impl PqNetworkKeypair {
-    /// Generate a new keypair using the given seed
+    /// Generate a new keypair using OS entropy
     pub fn generate() -> Result<Self, String> {
-        use rand::RngCore;
+        use rand::{rngs::OsRng, RngCore};
         
-        // Generate random seed
+        // Generate random seed using OS entropy
         let mut seed = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut seed);
+        OsRng.fill_bytes(&mut seed);
         
         Self::from_seed(&seed)
     }

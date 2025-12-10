@@ -36,7 +36,7 @@ services:
       - --rpc-port=9944
       - --rpc-cors=all
       - --rpc-external
-      - --rpc-methods=unsafe
+      - --rpc-methods=safe
       - --prometheus-external
       - --prometheus-port=9615
       - --node-key-file=/keys/boot1.key
@@ -68,7 +68,7 @@ services:
       - --rpc-port=9944
       - --rpc-cors=all
       - --rpc-external
-      - --rpc-methods=unsafe
+      - --rpc-methods=safe
       - --prometheus-external
       - --prometheus-port=9615
       - --node-key-file=/keys/boot2.key
@@ -102,7 +102,7 @@ services:
       - --rpc-port=9944
       - --rpc-cors=all
       - --rpc-external
-      - --rpc-methods=unsafe
+      - --rpc-methods=safe
       - --prometheus-external
       - --prometheus-port=9615
       - --node-key-file=/keys/boot3.key

@@ -81,20 +81,20 @@ impl MockShieldedPoolService {
 
     /// Add a mock note for testing (synchronous)
     pub fn add_note(&self, ciphertext: Vec<u8>, commitment: [u8; 32]) {
-        let mut notes = self.notes.write().unwrap();
-        let height = *self.height.read().unwrap();
+        let mut notes = self.notes.write().expect("notes lock poisoned");
+        let height = *self.height.read().expect("height lock poisoned");
         let index = notes.len() as u64;
         notes.push((index, ciphertext, height, commitment));
     }
 
     /// Set mock height (synchronous)
     pub fn set_height(&self, height: u64) {
-        *self.height.write().unwrap() = height;
+        *self.height.write().expect("height lock poisoned") = height;
     }
 
     /// Add a valid anchor (synchronous)
     pub fn add_anchor(&self, anchor: [u8; 32]) {
-        let mut anchors = self.anchors.write().unwrap();
+        let mut anchors = self.anchors.write().expect("anchors lock poisoned");
         anchors.push(anchor);
     }
 }
@@ -115,7 +115,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
         
         // Add nullifiers to spent set
         {
-            let mut nfs = self.nullifiers.write().unwrap();
+            let mut nfs = self.nullifiers.write().expect("nullifiers lock poisoned");
             for nf in nullifiers {
                 nfs.push(nf);
             }
@@ -123,8 +123,8 @@ impl ShieldedPoolService for MockShieldedPoolService {
         
         // Add new notes
         {
-            let mut notes = self.notes.write().unwrap();
-            let height = *self.height.read().unwrap();
+            let mut notes = self.notes.write().expect("notes lock poisoned");
+            let height = *self.height.read().expect("height lock poisoned");
             for (commitment, encrypted_note) in commitments.iter().zip(encrypted_notes.iter()) {
                 let index = notes.len() as u64;
                 notes.push((index, encrypted_note.clone(), height, *commitment));
@@ -133,7 +133,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
         
         // Update balance
         {
-            let mut bal = self.balance.write().unwrap();
+            let mut bal = self.balance.write().expect("balance lock poisoned");
             if value_balance > 0 {
                 *bal = bal.saturating_add(value_balance as u128);
             } else if value_balance < 0 {
@@ -164,7 +164,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
         from_block: Option<u64>,
         to_block: Option<u64>,
     ) -> Result<Vec<(u64, Vec<u8>, u64, [u8; 32])>, String> {
-        let notes = self.notes.read().unwrap();
+        let notes = self.notes.read().expect("notes lock poisoned");
         Ok(notes
             .iter()
             .skip(start as usize)
@@ -179,7 +179,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
     }
 
     fn encrypted_note_count(&self) -> u64 {
-        self.notes.read().unwrap().len() as u64
+        self.notes.read().expect("notes lock poisoned").len() as u64
     }
 
     fn get_merkle_witness(
@@ -189,17 +189,17 @@ impl ShieldedPoolService for MockShieldedPoolService {
         // Return mock witness with 32 levels
         let siblings: Vec<[u8; 32]> = (0..32).map(|i| [i; 32]).collect();
         let indices: Vec<bool> = (0..32).map(|_| false).collect();
-        let root = *self.merkle_root.read().unwrap();
+        let root = *self.merkle_root.read().expect("merkle_root lock poisoned");
         
         Ok((siblings, indices, root))
     }
 
     fn get_pool_status(&self) -> ShieldedPoolStatus {
-        let notes = self.notes.read().unwrap();
-        let nfs = self.nullifiers.read().unwrap();
-        let bal = *self.balance.read().unwrap();
-        let h = *self.height.read().unwrap();
-        let root = *self.merkle_root.read().unwrap();
+        let notes = self.notes.read().expect("notes lock poisoned");
+        let nfs = self.nullifiers.read().expect("nullifiers lock poisoned");
+        let bal = *self.balance.read().expect("balance lock poisoned");
+        let h = *self.height.read().expect("height lock poisoned");
+        let root = *self.merkle_root.read().expect("merkle_root lock poisoned");
 
         ShieldedPoolStatus {
             total_notes: notes.len() as u64,
@@ -218,9 +218,9 @@ impl ShieldedPoolService for MockShieldedPoolService {
         encrypted_note: Vec<u8>,
     ) -> Result<([u8; 32], u64), String> {
         let note_index = {
-            let mut notes = self.notes.write().unwrap();
-            let mut bal = self.balance.write().unwrap();
-            let height = *self.height.read().unwrap();
+            let mut notes = self.notes.write().expect("notes lock poisoned");
+            let mut bal = self.balance.write().expect("balance lock poisoned");
+            let height = *self.height.read().expect("height lock poisoned");
             
             let index = notes.len() as u64;
             notes.push((index, encrypted_note, height, commitment));
@@ -245,17 +245,17 @@ impl ShieldedPoolService for MockShieldedPoolService {
     }
 
     fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
-        let nfs = self.nullifiers.read().unwrap();
+        let nfs = self.nullifiers.read().expect("nullifiers lock poisoned");
         nfs.contains(nullifier)
     }
 
     fn is_valid_anchor(&self, anchor: &[u8; 32]) -> bool {
-        let anchors = self.anchors.read().unwrap();
+        let anchors = self.anchors.read().expect("anchors lock poisoned");
         anchors.contains(anchor)
     }
 
     fn chain_height(&self) -> u64 {
-        *self.height.read().unwrap()
+        *self.height.read().expect("height lock poisoned")
     }
 }
 
