@@ -57,3 +57,6 @@ std = [
 runtime-benchmarks = ["frame-benchmarking"]
 try-runtime = ["frame-support/try-runtime"]
 stark-verify = ["winterfell", "winter-verifier", "winter-air", "winter-math", "winter-crypto"]
+# Production mode: disables AcceptAllProofs and other test-only verifiers
+# Enable this feature for mainnet/production builds to ensure only real verification is available
+production = []
