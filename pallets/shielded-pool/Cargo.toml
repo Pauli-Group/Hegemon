@@ -2,7 +2,7 @@
 name = "pallet-shielded-pool"
 version = "0.1.0"
 edition = "2021"
-authors = ["Synthetic Hegemonic Currency Contributors"]
+authors = ["Hegemon Contributors"]
 description = "Shielded transaction pool pallet with note commitments, nullifiers, and Merkle tree for ZCash-like privacy."
 license = "Apache-2.0"
 

@@ -1,6 +1,6 @@
 # Consensus Protocol Specification
 
-This document defines the proof-of-work (PoW) consensus layer for the synthetic hegemonic currency chain. The protocol mirrors
+This document defines the proof-of-work (PoW) consensus layer for the Hegemon chain. The protocol mirrors
 the survivability characteristics of Bitcoin/Zcash—deterministic block validation rules coupled with probabilistic finality—
 while preserving the project’s STARK-based execution model and nullifier accounting.
 

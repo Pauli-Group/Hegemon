@@ -17,7 +17,7 @@
 - Dashboard: Use Polkadot.js Apps at `https://polkadot.js.org/apps/?rpc=ws://127.0.0.1:9944`
 
 ## v0.1.0 - Initial public release
-- Initial release of the Synthetic Hegemonic Currency protocol
+- Initial release of the Hegemon protocol
 - Core consensus mechanism with Proof of Work and difficulty adjustment
 - Basic pallet structure including asset registry, identity, and settlement
 - Networking layer with initial P2P capabilities

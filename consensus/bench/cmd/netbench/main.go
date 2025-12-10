@@ -5,7 +5,7 @@ import (
 	"flag"
 	"fmt"
 
-	"github.com/synthetic-hegemonic-currency/consensus/bench/sim"
+	"github.com/Pauli-Group/Hegemon/consensus/bench/sim"
 )
 
 func main() {

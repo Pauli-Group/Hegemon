@@ -115,7 +115,7 @@ mod cli {
         }
 
         fn support_url() -> String {
-            "https://github.com/Pauli-Group/synthetic-hegemonic-currency/issues".into()
+            "https://github.com/Pauli-Group/Hegemon/issues".into()
         }
 
         fn copyright_start_year() -> i32 {

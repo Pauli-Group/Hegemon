@@ -2,7 +2,7 @@
 name = "pallet-identity"
 version = "0.1.0"
 edition = "2021"
-authors = ["Synthetic Hegemonic Currency Contributors"]
+authors = ["Hegemon Contributors"]
 description = "Identity and credential management pallet with role checks and external attestation hooks."
 license = "Apache-2.0"
 

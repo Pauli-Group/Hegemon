@@ -200,7 +200,7 @@ Create `/etc/systemd/system/hegemon-bootnode.service`:
 ```ini
 [Unit]
 Description=Hegemon Boot Node (Post-Quantum)
-Documentation=https://github.com/Pauli-Group/synthetic-hegemonic-currency
+Documentation=https://github.com/Pauli-Group/Hegemon
 After=network.target
 Wants=network-online.target
 

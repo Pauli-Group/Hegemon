@@ -49,7 +49,7 @@ which curl jq  # Both must be installed
 ## Step 1: Build the Node (Both of You)
 
 ```bash
-cd /path/to/synthetic-hegemonic-currency
+cd /path/to/hegemon
 
 # Build the Substrate-based node
 cargo build --release -p hegemon-node --features substrate
