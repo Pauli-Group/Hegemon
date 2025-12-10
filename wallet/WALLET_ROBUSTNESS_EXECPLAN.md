@@ -833,7 +833,7 @@ This is lower priority than shipping M1-M4.
 For Milestone 1 (nullifier pre-check via storage):
 
 ```bash
-cd /Users/pldd/Documents/Reflexivity/synthetic-hegemonic-currency
+# Run from repository root
 
 # 1. Find how storage keys are constructed
 grep -r "storage_key\|StorageKey" wallet/src/

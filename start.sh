@@ -1,14 +1,38 @@
 #!/usr/bin/env bash
-# set -euo pipefail
+# start.sh - Start a Hegemon node connecting to a boot node
+#
+# Usage:
+#   ./start.sh                           # Connect without mining
+#   HEGEMON_MINE=1 ./start.sh            # Connect and mine
+#
+# Prerequisites:
+#   1. Build the node: cargo build -p hegemon-node -p wallet --release
+#   2. Initialize wallet: ./target/release/wallet init --store ~/.hegemon-wallet --passphrase "YOUR_PASSPHRASE"
+#   3. Get your address: ./target/release/wallet status --store ~/.hegemon-wallet --passphrase "YOUR_PASSPHRASE" --no-sync
+#
+# Environment variables:
+#   HEGEMON_SEEDS          - Boot node address (default: your-bootnode.example.com:30333)
+#   HEGEMON_MINE           - Enable mining (0 or 1, default: 0)
+#   HEGEMON_MINER_ADDRESS  - Your shielded address for mining rewards
 
-# (
-  HEGEMON_MINE=0 \
-  HEGEMON_SEEDS="hegemon.pauli.group:30333" \
-  HEGEMON_MINER_ADDRESS="shca1qyqqqqqqgsyd040ajhazxz052qgnrywfjk8czhfv0k98wy2w9n6kh0zv6kl99j9u9h4r7muvx2uv4xtxpp99dxs4mvepwcxz0adqpjf56f33p9dmhx4e7dzerw5afy7jtd5s8dsupa49938vnfmc2gx8v6wlhzq6s2ytrxefnkezcne43vd93xzy0dsrjstynjahzd9s7zxw9c35mnzgh8x5wey8wsyvdqa4epne9wtgvfp4zvsvn9tvcej4jur577qsm0hwdz8yd6ad2ynk6q626sh28q6dxft3pf3zx4f8kgs8munl634w4e243l3c89mve36jud2vt9sz4q403xufwava3g0nhyed9vufl02h8ku5557dca9a5kxxg0f55aex0u964m4tyd4rfcjhmt3efn20tl7jgh823up03jnjkg3zcjev3fsxu89ngvh9yjtwdjjvl5d8spv2qhkx9e53ckqqsj5wcg59nnr8tq2meequttr6emmfxsu49fglsw5v34v8p2g5ddnhhtu8tdwycurjkufe5yfdmnmxdajjk54wfa2mxq5a845554vk9va82hcawzup0p3nmpsqsqefhyrcq5evdy43x3yusxrpadnj9hatjvvlzwvr3jrpaefrpk8vxc5dn5jv9hxp3zyvsn6kxsqpwu8q56axpvnwdngpesythsytrc7cw5jrz5teuvh6r9z9efrjzhj2pkx8vr3ffyyk9phhfwmyfyvzhuj56lyf0pe2ywt06e33qf7djdnggknczgdcgsj6fqgfdzr2mmzxp7wu33pfmzk579k8qv7jhcey3ntagq5mttmdax8dypfhglfm2yv7gsjqck89dcf3ldmc5s05sy93j22fe28fqtf5z3tnys7mdnvwtya6djkp4rnvzeff36u243f0n9snvff579fn7q2xlx4ypntpw693f4tvv5p2vj3w5ktrd64udfdmccgf3m6x2puetygg7eltu5jta25kdkx48rq5t3x9gp3mw7zf2m4ktdutxs2yaap64k98sdewd44nfckqurnzawf5xnp6y5p292z63lycdhtfjaesjdg8ja5vjc3ms6upklrdtsa6ce96jql0mfkz6sp24p09vumlrr66uts35sy604gsa6rtgd4gfhvrj95997r0sfcn5qmghssje098zd7pvdmam7pxq450277pz2x696axv3nvdnsrd0tycqd520kexmymsrg6a7n9rdfedqyg46g32tfumfcj46tfhp80xd42tr68acpsdc40t7yex6atnh0rjtue9jvnu5nq5z68g8uq7t2x9sleq6wse694h5k4m52d9ea7a87caqu9tmcq96rj8hzhjrx4v267y5sxjzfeglfn95uw8dhzyhxgqzp6jr2hzdchdqcndptgsnfrdmx6up5fg6x3av8v6hkawuydxjcn0pp0unhdzhs3d78jgv3heqn8zmyj0hukm3yd07wk5fyygtrqtnftz64hgyyegqtukuzuva5l05y9pxnntemyfzh0jk0wmqyc22cg2tfdvp3j8aszs8mjzk8nas4767gncugf2upssjtlqgly9puwhqs2m5zsw8rgw48f0qejlkp3vc6sh8e9y36ga02d7gm94zhm4htx4l2zzdta3rsw9mt3h23qunqrxqajpd2ct9wgf3zqa2cyuhxtp7ke2t432ag4sw8f5yhuyeqsx38qcff7danyutedrr9n6m5ktzn0getmsgvfkquclpnefeehpwd20khy9u2mmz4gsuv9v8ypkly8favcdmgztrthpxt7qp555fhp9vhve77yec9nwjjvuxh5jg433h0cpjdlcdt2anvuylh96z580vvdgv48jmuj2trcszsvqkycqkm3he2arn3a9hm2rg2unhv33kf2r02sg8ljtupttgqg4nzenaqmsrluc2epql9ht7cxe36lk7x879gv50f2h0zzcxwguppyqugazgyjse7tuc" \
-  ./target/release/hegemon-node \
-    --base-path "$HOME/.hegemon-node" \
-    --chain config/dev-chainspec.json \
-    --rpc-port 9944 \
-    --rpc-cors all \
-    --name "WilliamNode"
-# ) > out.txt 2>&1
+set -euo pipefail
+
+: "${HEGEMON_SEEDS:=hegemon.pauli.group:30333}"
+: "${HEGEMON_MINE:=0}"
+: "${HEGEMON_MINER_ADDRESS:=}"
+
+if [ "$HEGEMON_MINE" = "1" ] && [ -z "$HEGEMON_MINER_ADDRESS" ]; then
+  echo "Error: HEGEMON_MINER_ADDRESS must be set when mining is enabled."
+  echo "Get your address with: ./target/release/wallet status --store ~/.hegemon-wallet --passphrase YOUR_PASSPHRASE --no-sync"
+  exit 1
+fi
+
+HEGEMON_MINE="$HEGEMON_MINE" \
+HEGEMON_SEEDS="$HEGEMON_SEEDS" \
+HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
+./target/release/hegemon-node \
+  --base-path "$HOME/.hegemon-node" \
+  --chain config/dev-chainspec.json \
+  --rpc-port 9944 \
+  --rpc-cors all \
+  --name "MyNode"

@@ -21,6 +21,7 @@ ivk.json
 witness.json
 ledger.json
 recipients.json
+recipients_*.json
 inputs.json
 balances.json
 report.json
@@ -31,4 +32,12 @@ wallet.store
 wallet.pass
 key.pem
 .DS_Store
-.DS_Store
+
+# Test logs
+test-logs/
+
+# Node data directories
+data/
+
+# Debug output
+out.txt
