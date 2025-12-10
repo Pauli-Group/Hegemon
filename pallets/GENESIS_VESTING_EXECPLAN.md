@@ -202,7 +202,7 @@ Update documentation:
 
 ## Concrete Steps
 
-Run all commands from repository root: /Users/pldd/Documents/Reflexivity/synthetic-hegemonic-currency
+Run all commands from repository root.
 
 Step 1: Read current types structure.
 

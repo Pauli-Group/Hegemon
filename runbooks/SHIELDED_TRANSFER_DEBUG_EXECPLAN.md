@@ -6,7 +6,7 @@ Rage against the dying of the light.
 
 ```bash
 # 1. Start node in external Terminal (won't be killed by agent)
-osascript -e 'tell application "Terminal" to do script "cd /Users/pldd/Documents/Reflexivity/synthetic-hegemonic-currency && HEGEMON_MINER_ADDRESS=$(cat /tmp/alice_address.txt) HEGEMON_MINE=1 RUST_LOG=warn,pallet_shielded_pool=debug ./target/release/hegemon-node --dev --tmp"'
+osascript -e 'tell application "Terminal" to do script "cd $PWD && HEGEMON_MINER_ADDRESS=$(cat /tmp/alice_address.txt) HEGEMON_MINE=1 RUST_LOG=warn,pallet_shielded_pool=debug ./target/release/hegemon-node --dev --tmp"'
 
 # 2. Wait for blocks, sync Alice
 sleep 15 && ./target/release/wallet substrate-sync --store /tmp/alice.wallet --passphrase alice123 --ws-url ws://127.0.0.1:9944
@@ -1236,7 +1236,7 @@ The Merkle root "anchor" is a proof commitment that tells the verifier "I'm prov
 
 ## Concrete Steps
 
-All commands run from the repository root: `/Users/pldd/Documents/Reflexivity/synthetic-hegemonic-currency`
+All commands run from the repository root.
 
 ### Step 1: Stop any running node
 
@@ -1494,8 +1494,7 @@ grep -i "nullifier\|duplicate\|already" /tmp/node.log | tail -20
 # This test requires modifying wallet code or using a custom RPC call
 # to submit an extrinsic with the same nullifier appearing twice.
 # 
-# For now, verify via pallet unit tests:
-cd /Users/pldd/Documents/Reflexivity/synthetic-hegemonic-currency
+# For now, verify via pallet unit tests (run from repo root):
 cargo test -p pallet-shielded-pool -- duplicate_nullifier --nocapture
 ```
 
