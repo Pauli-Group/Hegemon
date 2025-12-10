@@ -3,7 +3,7 @@
 //! This module handles encryption of coinbase notes for shielded mining rewards.
 //! It bridges between the wallet address format and the pallet's on-chain format.
 
-use rand::RngCore;
+use rand::{rngs::OsRng, RngCore};
 use wallet::address::ShieldedAddress;
 
 use crypto::{
@@ -51,9 +51,9 @@ pub fn encrypt_coinbase_note(
     // Create coinbase note plaintext with deterministic rho/r
     let note = NotePlaintext::coinbase(amount, &public_seed);
     
-    // Generate random KEM encapsulation randomness
+    // Generate random KEM encapsulation randomness using OS entropy
     let mut kem_randomness = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut kem_randomness);
+    OsRng.fill_bytes(&mut kem_randomness);
     
     // Debug: log the address_tag being used for encryption
     tracing::info!(

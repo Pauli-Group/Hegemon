@@ -13,6 +13,7 @@ use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use state_merkle::CommitmentTree;
 use transaction_circuit::hashing::Felt;
+use zeroize::Zeroize;
 
 use crate::address::ShieldedAddress;
 use crate::error::WalletError;
@@ -26,12 +27,21 @@ const NONCE_LEN: usize = 12;
 /// Default tree depth - must match CIRCUIT_MERKLE_DEPTH in transaction-circuit.
 const DEFAULT_TREE_DEPTH: u32 = 32;
 
+/// Wallet store - manages encrypted wallet state on disk.
+/// The encryption key is zeroized on drop to prevent key material from persisting in memory.
 #[derive(Debug)]
 pub struct WalletStore {
     path: PathBuf,
     key: [u8; KEY_LEN],
     salt: [u8; SALT_LEN],
     state: Mutex<WalletState>,
+}
+
+/// Zeroize the encryption key when the WalletStore is dropped
+impl Drop for WalletStore {
+    fn drop(&mut self) {
+        self.key.zeroize();
+    }
 }
 
 impl WalletStore {
