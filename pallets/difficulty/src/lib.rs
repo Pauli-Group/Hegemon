@@ -63,23 +63,24 @@ pub mod pallet {
     // These are re-exported here for pallet convenience.
     // =========================================================================
 
-    /// Target block time in milliseconds (5 seconds)
-    pub const TARGET_BLOCK_TIME_MS: u64 = 5_000;
+    /// Target block time in milliseconds (60 seconds / 1 minute)
+    pub const TARGET_BLOCK_TIME_MS: u64 = 60_000;
 
     /// Number of blocks between difficulty adjustments
-    /// At 5s blocks, 120 blocks = 10 minutes between adjustments.
-    pub const RETARGET_INTERVAL: u32 = 120;
+    /// At 60s blocks, 10 blocks = 10 minutes between adjustments.
+    pub const RETARGET_INTERVAL: u32 = 10;
 
     /// Maximum adjustment factor per retarget period (4x up or down)
     pub const MAX_ADJUSTMENT_FACTOR: u64 = 4;
 
-    /// Genesis difficulty: 334 kH/s * 5 seconds = 1,670,000 expected hashes per block.
+    /// Genesis difficulty: 334 kH/s * 60 seconds = 20,040,000 expected hashes per block.
     /// This targets 1 thread on M-series MacBooks (~334 kH/s measured).
-    pub const GENESIS_DIFFICULTY: u128 = 1_670_000;
+    /// (12x increase from 5s blocks to 60s blocks)
+    pub const GENESIS_DIFFICULTY: u128 = 20_040_000;
 
-    /// Genesis compact bits: 0x1e0a0bd6 encodes target = MAX_U256 / 1,670,000.
-    /// Decodes to: exponent=30, mantissa=0x0a0bd6, target ≈ 2^237
-    pub const GENESIS_BITS: u32 = 0x1e0a_0bd6;
+    /// Genesis compact bits: 0x1d007a47 encodes target = MAX_U256 / 20,040,000.
+    /// Decodes to: exponent=29, mantissa=0x007a47, target ≈ 2^233
+    pub const GENESIS_BITS: u32 = 0x1d00_7a47;
 
     /// Minimum difficulty to prevent divide-by-zero
     pub const MIN_DIFFICULTY: u128 = 1;

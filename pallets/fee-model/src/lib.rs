@@ -73,6 +73,7 @@ pub mod pallet {
     use super::*;
     use frame_support::traits::Get;
     use pallet_transaction_payment::OnChargeTransaction;
+    use sp_runtime::Permill;
 
     #[pallet::pallet]
     pub struct Pallet<T>(_);
@@ -93,7 +94,31 @@ pub mod pallet {
         type CredentialWeightCoeff: Get<FixedU128>;
         #[pallet::constant]
         type SettlementWeightCoeff: Get<FixedU128>;
+
+        /// Fraction of transaction fees that are burned (β_burn)
+        /// Default: 0% (all fees go to fee collector/miners)
+        /// Set to e.g. Permill::from_percent(50) for EIP-1559-style burning
+        #[pallet::constant]
+        type BurnShare: Get<Permill>;
     }
+
+    // =========================================================================
+    // STORAGE
+    // =========================================================================
+
+    /// Total fees burned across all transactions
+    #[pallet::storage]
+    #[pallet::getter(fn total_burned)]
+    pub type TotalBurned<T: Config> = StorageValue<_, BalanceOf<T>, ValueQuery>;
+
+    /// Total fees collected (not burned) across all transactions
+    #[pallet::storage]
+    #[pallet::getter(fn total_collected)]
+    pub type TotalCollected<T: Config> = StorageValue<_, BalanceOf<T>, ValueQuery>;
+
+    // =========================================================================
+    // EVENTS
+    // =========================================================================
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -105,6 +130,12 @@ pub mod pallet {
         FeeCorrected {
             who: T::AccountId,
             final_fee: BalanceOf<T>,
+        },
+        /// A portion of transaction fees was burned
+        FeeBurned {
+            who: T::AccountId,
+            burned: BalanceOf<T>,
+            collected: BalanceOf<T>,
         },
     }
 
@@ -231,8 +262,46 @@ pub mod pallet {
                     .offset(refund_imbalance)
                     .same()
                     .map_err(|_| TransactionValidityError::Invalid(InvalidTransaction::Payment))?;
+                
+                // Split fee between burn and collection based on BurnShare (β_burn)
+                let burn_share = T::BurnShare::get();
+                let total_fee = adjusted_paid.peek();
+                let burn_amount = burn_share.mul_floor(total_fee);
+                let collect_amount = total_fee.saturating_sub(burn_amount);
+                
+                // Split the imbalance: burn portion + collection portion
                 let (tip_amt, fee_amt) = adjusted_paid.split(tip);
-                OU::on_unbalanceds(Some(fee_amt).into_iter().chain(Some(tip_amt)));
+                
+                // The fee_amt needs to be further split into burn and collect
+                // For simplicity, we'll burn a portion by not depositing it anywhere
+                // (dropping a NegativeImbalance burns it)
+                if !burn_amount.is_zero() {
+                    // Create a burn portion by splitting from fee_amt
+                    let (burn_portion, remaining_fee) = fee_amt.split(burn_amount);
+                    
+                    // Drop burn_portion to burn it (NegativeImbalance destructor burns)
+                    drop(burn_portion);
+                    
+                    // Update burn tracking
+                    TotalBurned::<T>::mutate(|total| *total = total.saturating_add(burn_amount));
+                    
+                    // Emit burn event
+                    <Pallet<T>>::deposit_event(Event::FeeBurned {
+                        who: who.clone(),
+                        burned: burn_amount,
+                        collected: collect_amount,
+                    });
+                    
+                    // Update collection tracking
+                    TotalCollected::<T>::mutate(|total| *total = total.saturating_add(collect_amount));
+                    
+                    // Send remaining fee + tip to the fee collector
+                    OU::on_unbalanceds(Some(remaining_fee).into_iter().chain(Some(tip_amt)));
+                } else {
+                    // No burning - all fees go to collector
+                    TotalCollected::<T>::mutate(|total| *total = total.saturating_add(total_fee));
+                    OU::on_unbalanceds(Some(fee_amt).into_iter().chain(Some(tip_amt)));
+                }
             }
 
             <Pallet<T>>::deposit_event(Event::FeeCorrected {
