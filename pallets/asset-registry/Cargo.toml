@@ -2,7 +2,7 @@
 name = "pallet-asset-registry"
 version = "0.1.0"
 edition = "2021"
-authors = ["Synthetic Hegemonic Currency Contributors"]
+authors = ["Hegemon Contributors"]
 description = "Asset registry pallet for instrument metadata, regulatory tags, and provenance links."
 license = "Apache-2.0"
 

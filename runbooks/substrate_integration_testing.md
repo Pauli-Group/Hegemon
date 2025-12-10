@@ -57,7 +57,7 @@ which tlc apalache-mc  # TLA+ tools
 ### Build the Node
 
 ```bash
-cd /path/to/synthetic-hegemonic-currency
+cd /path/to/hegemon
 
 # Clean build (recommended after cargo clean)
 cargo build --release -p hegemon-node --features substrate
@@ -187,7 +187,7 @@ These tests require multiple terminals and human observation.
 
 **Terminal 1 - Node A (Miner)**:
 ```bash
-cd /path/to/synthetic-hegemonic-currency
+cd /path/to/hegemon
 
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=2 \
 cargo run --release -p hegemon-node --features substrate -- \
@@ -205,7 +205,7 @@ Wait for: `"Hegemon node started"` and note the peer ID.
 
 **Terminal 2 - Node B (Syncing)**:
 ```bash
-cd /path/to/synthetic-hegemonic-currency
+cd /path/to/hegemon
 
 cargo run --release -p hegemon-node --features substrate -- \
   --dev \

@@ -1,7 +1,7 @@
 # Node service
 
 The node crate bundles the PoW chain state machine, mempool, gossip router, and
-authenticated control plane for the synthetic hegemonic currency network.
+authenticated control plane for the Hegemon network.
 
 ## Running the node
 

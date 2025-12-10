@@ -2,7 +2,7 @@
 name = "pallet-observability"
 version = "0.1.0"
 edition = "2021"
-authors = ["Synthetic Hegemonic Currency Contributors"]
+authors = ["Hegemon Contributors"]
 license = "Apache-2.0"
 description = "Observability pallet tracking per-actor quotas, usage counters, and metrics events."
 

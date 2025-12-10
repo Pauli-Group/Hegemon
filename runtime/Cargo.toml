@@ -2,7 +2,7 @@
 name = "runtime"
 version = "0.1.0"
 edition = "2021"
-authors = ["Synthetic Hegemonic Currency Contributors"]
+authors = ["Hegemon Contributors"]
 
 [build-dependencies]
 substrate-wasm-builder = { workspace = true, optional = true }

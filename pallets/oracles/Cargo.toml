@@ -2,7 +2,7 @@
 name = "pallet-oracles"
 version = "0.1.0"
 edition = "2021"
-authors = ["Synthetic Hegemonic Currency Contributors"]
+authors = ["Hegemon Contributors"]
 description = "Oracle management pallet with feed registry, submission rules, and off-chain ingestion hooks."
 license = "Apache-2.0"
 

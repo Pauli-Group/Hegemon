@@ -2,7 +2,7 @@
 name = "pallet-settlement"
 version = "0.1.0"
 edition = "2021"
-authors = ["Synthetic Hegemonic Currency Contributors"]
+authors = ["Hegemon Contributors"]
 description = "Settlement pallet supporting batching, netting, and dispute flows with off-chain proof generation."
 license = "Apache-2.0"
 

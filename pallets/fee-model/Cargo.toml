@@ -2,7 +2,7 @@
 name = "pallet-fee-model"
 version = "0.1.0"
 edition = "2021"
-authors = ["Synthetic Hegemonic Currency Contributors"]
+authors = ["Hegemon Contributors"]
 description = "Custom fee model integrating identity tags for discounts and freeze checks."
 license = "Apache-2.0"
 

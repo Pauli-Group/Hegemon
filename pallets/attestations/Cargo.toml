@@ -2,7 +2,7 @@
 name = "pallet-attestations"
 version = "0.1.0"
 edition = "2021"
-authors = ["Synthetic Hegemonic Currency Contributors"]
+authors = ["Hegemon Contributors"]
 description = "Attestation lifecycle pallet for commitments, disputes, and settlement batching hooks."
 license = "Apache-2.0"
 

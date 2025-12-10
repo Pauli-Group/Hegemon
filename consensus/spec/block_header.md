@@ -1,6 +1,6 @@
 # Block Header Specification
 
-This document defines the canonical block header layout used by the synthetic hegemonic currency chain. Headers bind STARK proof commitments, Merkle accumulators, and proof-of-work (PoW) seals so that consensus nodes can verify chain progress and state integrity without referencing a validator-set signature scheme.
+This document defines the canonical block header layout used by the Hegemon chain. Headers bind STARK proof commitments, Merkle accumulators, and proof-of-work (PoW) seals so that consensus nodes can verify chain progress and state integrity without referencing a validator-set signature scheme.
 
 ## Rationale
 
