@@ -1,4 +1,4 @@
-# HEGEMON
+# HEGEMON - Alpha Release
 
 Quantum-resistant private payments
 
