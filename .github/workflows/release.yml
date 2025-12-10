@@ -1,0 +1,161 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libclang-dev
+      
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.91.1"
+          targets: wasm32-unknown-unknown
+      
+      - name: Build node binary
+        run: cargo build -p hegemon-node --features substrate --release
+      
+      - name: Package binary
+        run: |
+          mkdir -p release
+          cp target/release/hegemon-node release/hegemon-node-linux-x86_64
+          cd release && sha256sum hegemon-node-linux-x86_64 > hegemon-node-linux-x86_64.sha256
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-binary
+          path: release/
+
+  build-macos-intel:
+    runs-on: macos-13  # Intel runner
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          brew install protobuf llvm
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
+      
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.91.1"
+          targets: wasm32-unknown-unknown
+      
+      - name: Build node binary
+        run: cargo build -p hegemon-node --features substrate --release
+      
+      - name: Package binary
+        run: |
+          mkdir -p release
+          cp target/release/hegemon-node release/hegemon-node-macos-x86_64
+          cd release && shasum -a 256 hegemon-node-macos-x86_64 > hegemon-node-macos-x86_64.sha256
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-intel-binary
+          path: release/
+
+  build-macos-arm:
+    runs-on: macos-14  # Apple Silicon runner
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install dependencies
+        run: |
+          brew install protobuf llvm
+          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
+      
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.91.1"
+          targets: wasm32-unknown-unknown
+      
+      - name: Build node binary
+        run: cargo build -p hegemon-node --features substrate --release
+      
+      - name: Package binary
+        run: |
+          mkdir -p release
+          cp target/release/hegemon-node release/hegemon-node-macos-arm64
+          cd release && shasum -a 256 hegemon-node-macos-arm64 > hegemon-node-macos-arm64.sha256
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm-binary
+          path: release/
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install LLVM
+        run: choco install llvm -y
+      
+      - name: Install Protobuf
+        run: choco install protoc -y
+      
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.91.1"
+          targets: wasm32-unknown-unknown
+      
+      - name: Build node binary
+        run: cargo build -p hegemon-node --features substrate --release
+      
+      - name: Package binary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release
+          Copy-Item target\release\hegemon-node.exe release\hegemon-node-windows-x86_64.exe
+          cd release
+          Get-FileHash hegemon-node-windows-x86_64.exe -Algorithm SHA256 | Format-List > hegemon-node-windows-x86_64.exe.sha256
+      
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-binary
+          path: release/
+
+  create-release:
+    needs: [build-linux, build-macos-intel, build-macos-arm, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          cp artifacts/linux-binary/* release-assets/
+          cp artifacts/macos-intel-binary/* release-assets/
+          cp artifacts/macos-arm-binary/* release-assets/
+          cp artifacts/windows-binary/* release-assets/
+          ls -la release-assets/
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
