@@ -432,6 +432,7 @@ mod tests {
         pub const CredentialCoeff: FixedU128 = FixedU128::from_rational(6u128, 5u128); // 1.2x
         pub const SettlementCoeff: FixedU128 = FixedU128::from_rational(1u128, 1u128);
         pub const OperationalFeeMultiplier: u8 = 5;
+        pub const TestBurnShare: Permill = Permill::zero();
     }
 
     #[derive(Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Debug, TypeInfo)]
@@ -610,6 +611,7 @@ mod tests {
         type AttestationWeightCoeff = AttestationCoeff;
         type CredentialWeightCoeff = CredentialCoeff;
         type SettlementWeightCoeff = SettlementCoeff;
+        type BurnShare = TestBurnShare;
     }
 
     fn new_ext() -> sp_io::TestExternalities {
