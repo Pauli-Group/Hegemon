@@ -92,7 +92,6 @@ mod cli {
         /// Key management cli utilities.
         #[command(subcommand)]
         Key(sc_cli::KeySubcommand),
-
         // Phase 2+ subcommands (require full client):
         // CheckBlock, ExportBlocks, ExportState, ImportBlocks, Revert
     }
@@ -162,7 +161,9 @@ mod cli {
                     // Phase 11.5.1: Use production mode with full Substrate client
                     // This replaces scaffold mode (new_full) with production mode (new_full_with_client)
                     // that uses real state execution, block import, and transaction pool.
-                    service::new_full_with_client(config).await.map_err(sc_cli::Error::Service)
+                    service::new_full_with_client(config)
+                        .await
+                        .map_err(sc_cli::Error::Service)
                 })
             }
         }

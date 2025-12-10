@@ -193,7 +193,7 @@ pub struct TransactionResponse {
 /// Parse a NoteCiphertext from the pallet's on-chain format.
 ///
 /// The pallet stores encrypted notes as:
-/// - ciphertext[611]: version(1) + diversifier_index(4) + note_len(4) + note_payload + 
+/// - ciphertext[611]: version(1) + diversifier_index(4) + note_len(4) + note_payload +
 ///                    memo_len(4) + memo_payload + padding + hint_tag(32)
 /// - kem_ciphertext[1088]: ML-KEM ciphertext
 ///
@@ -202,31 +202,36 @@ fn parse_pallet_encrypted_note(bytes: &[u8]) -> Result<NoteCiphertext, WalletErr
     const CIPHERTEXT_SIZE: usize = 611;
     const KEM_CIPHERTEXT_SIZE: usize = 1088;
     const EXPECTED_SIZE: usize = CIPHERTEXT_SIZE + KEM_CIPHERTEXT_SIZE;
-    
+
     if bytes.len() != EXPECTED_SIZE {
         return Err(WalletError::Serialization(format!(
             "Invalid encrypted note size: expected {}, got {}",
-            EXPECTED_SIZE, bytes.len()
+            EXPECTED_SIZE,
+            bytes.len()
         )));
     }
-    
+
     let ciphertext_bytes = &bytes[..CIPHERTEXT_SIZE];
     let kem_ciphertext = bytes[CIPHERTEXT_SIZE..].to_vec();
-    
+
     // Parse the ciphertext portion
     let version = ciphertext_bytes[0];
     let diversifier_index = u32::from_le_bytes(
-        ciphertext_bytes[1..5].try_into().map_err(|_| WalletError::Serialization("diversifier parse failed".into()))?
+        ciphertext_bytes[1..5]
+            .try_into()
+            .map_err(|_| WalletError::Serialization("diversifier parse failed".into()))?,
     );
-    
+
     let mut offset = 5;
-    
+
     // Note payload length and data
     let note_len = u32::from_le_bytes(
-        ciphertext_bytes[offset..offset + 4].try_into().map_err(|_| WalletError::Serialization("note_len parse failed".into()))?
+        ciphertext_bytes[offset..offset + 4]
+            .try_into()
+            .map_err(|_| WalletError::Serialization("note_len parse failed".into()))?,
     ) as usize;
     offset += 4;
-    
+
     if offset + note_len > CIPHERTEXT_SIZE - 32 {
         return Err(WalletError::Serialization(format!(
             "Note payload too large: {} bytes at offset {}",
@@ -235,24 +240,26 @@ fn parse_pallet_encrypted_note(bytes: &[u8]) -> Result<NoteCiphertext, WalletErr
     }
     let note_payload = ciphertext_bytes[offset..offset + note_len].to_vec();
     offset += note_len;
-    
-    // Memo payload length and data  
+
+    // Memo payload length and data
     let memo_len = u32::from_le_bytes(
-        ciphertext_bytes[offset..offset + 4].try_into().map_err(|_| WalletError::Serialization("memo_len parse failed".into()))?
+        ciphertext_bytes[offset..offset + 4]
+            .try_into()
+            .map_err(|_| WalletError::Serialization("memo_len parse failed".into()))?,
     ) as usize;
     offset += 4;
-    
+
     let memo_payload = if memo_len > 0 && offset + memo_len <= CIPHERTEXT_SIZE - 32 {
         ciphertext_bytes[offset..offset + memo_len].to_vec()
     } else {
         Vec::new()
     };
-    
+
     // Hint tag is at the end of the 611-byte ciphertext
     let hint_tag_start = CIPHERTEXT_SIZE - 32;
     let mut hint_tag = [0u8; 32];
     hint_tag.copy_from_slice(&ciphertext_bytes[hint_tag_start..]);
-    
+
     Ok(NoteCiphertext {
         version,
         diversifier_index,
@@ -319,7 +326,9 @@ impl SubstrateRpcClient {
             .request_timeout(config.request_timeout)
             .build(&config.endpoint)
             .await
-            .map_err(|e| WalletError::Rpc(format!("Failed to connect to {}: {}", config.endpoint, e)))
+            .map_err(|e| {
+                WalletError::Rpc(format!("Failed to connect to {}: {}", config.endpoint, e))
+            })
     }
 
     /// Ensure connection is alive, reconnect if needed
@@ -378,17 +387,17 @@ impl SubstrateRpcClient {
     ) -> Result<Vec<CommitmentEntry>, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
-        
+
         let params = PaginationParams {
             start,
             limit: limit as u64,
         };
-        
+
         let response: CommitmentResponse = client
             .request("hegemon_walletCommitments", rpc_params![params])
             .await
             .map_err(|e| WalletError::Rpc(format!("hegemon_walletCommitments failed: {}", e)))?;
-        
+
         Ok(response.entries)
     }
 
@@ -407,17 +416,17 @@ impl SubstrateRpcClient {
     ) -> Result<Vec<CiphertextEntry>, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
-        
+
         let params = PaginationParams {
             start,
             limit: limit as u64,
         };
-        
+
         let response: CiphertextResponse = client
             .request("hegemon_walletCiphertexts", rpc_params![params])
             .await
             .map_err(|e| WalletError::Rpc(format!("hegemon_walletCiphertexts failed: {}", e)))?;
-        
+
         // Decode base64 ciphertexts and parse pallet format
         let mut entries = Vec::with_capacity(response.entries.len());
         for entry in response.entries {
@@ -426,7 +435,7 @@ impl SubstrateRpcClient {
                 &entry.ciphertext,
             )
             .map_err(|e| WalletError::Serialization(format!("Invalid base64 ciphertext: {}", e)))?;
-            
+
             // Parse the pallet's packed format (ciphertext + kem_ciphertext)
             let ciphertext = parse_pallet_encrypted_note(&bytes)?;
             entries.push(CiphertextEntry {
@@ -434,7 +443,7 @@ impl SubstrateRpcClient {
                 ciphertext,
             });
         }
-        
+
         Ok(entries)
     }
 
@@ -444,18 +453,19 @@ impl SubstrateRpcClient {
     pub async fn nullifiers(&self) -> Result<Vec<[u8; 32]>, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
-        
+
         let response: NullifierResponse = client
             .request("hegemon_walletNullifiers", rpc_params![])
             .await
             .map_err(|e| WalletError::Rpc(format!("hegemon_walletNullifiers failed: {}", e)))?;
-        
+
         response
             .nullifiers
             .iter()
             .map(|hex| {
-                let bytes = hex::decode(hex)
-                    .map_err(|e| WalletError::Serialization(format!("Invalid hex nullifier: {}", e)))?;
+                let bytes = hex::decode(hex).map_err(|e| {
+                    WalletError::Serialization(format!("Invalid hex nullifier: {}", e))
+                })?;
                 if bytes.len() != 32 {
                     return Err(WalletError::Serialization(
                         "invalid nullifier length".into(),
@@ -500,26 +510,30 @@ impl SubstrateRpcClient {
     ) -> Result<[u8; 32], WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
-        
+
         // Convert to ShieldedTransferRequest wire format
         let request = ShieldedTransferRequest::from_bundle(bundle)?;
-        
+
         let response: ShieldedTransferResponse = client
             .request("hegemon_submitShieldedTransfer", rpc_params![request])
             .await
-            .map_err(|e| WalletError::Rpc(format!("hegemon_submitShieldedTransfer failed: {}", e)))?;
-        
+            .map_err(|e| {
+                WalletError::Rpc(format!("hegemon_submitShieldedTransfer failed: {}", e))
+            })?;
+
         if !response.success {
             return Err(WalletError::Http(format!(
                 "Shielded transfer failed: {}",
-                response.error.unwrap_or_else(|| "unknown error".to_string())
+                response
+                    .error
+                    .unwrap_or_else(|| "unknown error".to_string())
             )));
         }
-        
+
         let tx_hash = response
             .tx_hash
             .ok_or_else(|| WalletError::Rpc("Missing tx_hash in response".to_string()))?;
-        
+
         hex_to_array(&tx_hash)
     }
 
@@ -577,46 +591,48 @@ impl SubstrateRpcClient {
     pub async fn get_chain_metadata(&self) -> Result<crate::extrinsic::ChainMetadata, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
-        
+
         // Get genesis hash
         let genesis_hash: String = client
             .request("chain_getBlockHash", rpc_params![0u32])
             .await
             .map_err(|e| WalletError::Rpc(format!("chain_getBlockHash(0) failed: {}", e)))?;
         let genesis_hash = hex_to_array(&genesis_hash.trim_start_matches("0x"))?;
-        
+
         // Get current block header
         let header: serde_json::Value = client
             .request("chain_getHeader", rpc_params![])
             .await
             .map_err(|e| WalletError::Rpc(format!("chain_getHeader failed: {}", e)))?;
-        
+
         let block_number = header["number"]
             .as_str()
             .ok_or_else(|| WalletError::Rpc("Missing block number".into()))?;
         let block_number = u64::from_str_radix(block_number.trim_start_matches("0x"), 16)
             .map_err(|e| WalletError::Rpc(format!("Invalid block number: {}", e)))?;
-        
+
         // Get current block hash
         let block_hash: String = client
             .request("chain_getBlockHash", rpc_params![])
             .await
             .map_err(|e| WalletError::Rpc(format!("chain_getBlockHash failed: {}", e)))?;
         let block_hash = hex_to_array(&block_hash.trim_start_matches("0x"))?;
-        
+
         // Get runtime version
         let version: serde_json::Value = client
             .request("state_getRuntimeVersion", rpc_params![])
             .await
             .map_err(|e| WalletError::Rpc(format!("state_getRuntimeVersion failed: {}", e)))?;
-        
+
         let spec_version = version["specVersion"]
             .as_u64()
-            .ok_or_else(|| WalletError::Rpc("Missing specVersion".into()))? as u32;
+            .ok_or_else(|| WalletError::Rpc("Missing specVersion".into()))?
+            as u32;
         let tx_version = version["transactionVersion"]
             .as_u64()
-            .ok_or_else(|| WalletError::Rpc("Missing transactionVersion".into()))? as u32;
-        
+            .ok_or_else(|| WalletError::Rpc("Missing transactionVersion".into()))?
+            as u32;
+
         Ok(crate::extrinsic::ChainMetadata {
             genesis_hash,
             block_hash,
@@ -627,40 +643,40 @@ impl SubstrateRpcClient {
     }
 
     /// Get account nonce for replay protection
-    /// 
+    ///
     /// Queries the System.Account storage to get the nonce for the account.
     /// Uses state_getStorage RPC with the proper storage key construction.
     pub async fn get_nonce(&self, account_id: &[u8; 32]) -> Result<u32, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
-        
+
         // Build storage key for System.Account(account_id)
         // Key = twox_128("System") ++ twox_128("Account") ++ blake2_128_concat(account_id)
         let storage_key = build_system_account_key(account_id);
         let storage_key_hex = format!("0x{}", hex::encode(&storage_key));
-        
+
         // Query storage
         let result: Option<String> = client
             .request("state_getStorage", rpc_params![storage_key_hex])
             .await
             .map_err(|e| WalletError::Rpc(format!("state_getStorage failed: {}", e)))?;
-        
+
         // If account doesn't exist, nonce is 0
         let Some(data_hex) = result else {
             return Ok(0);
         };
-        
+
         // Decode AccountInfo: { nonce: u32, consumers: u32, providers: u32, sufficients: u32, data: AccountData }
         // Nonce is the first u32 (4 bytes)
         let data = hex::decode(data_hex.trim_start_matches("0x"))
             .map_err(|e| WalletError::Rpc(format!("failed to decode storage: {}", e)))?;
-        
+
         if data.len() < 4 {
             return Err(WalletError::Rpc("invalid AccountInfo data".into()));
         }
-        
+
         let nonce = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-        
+
         Ok(nonce)
     }
 
@@ -679,39 +695,43 @@ impl SubstrateRpcClient {
     pub async fn query_balance(&self, account_id: &[u8; 32]) -> Result<u128, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
-        
+
         // Build storage key for System.Account(account_id)
         // Key = twox_128("System") ++ twox_128("Account") ++ blake2_128_concat(account_id)
         let storage_key = build_system_account_key(account_id);
         let storage_key_hex = format!("0x{}", hex::encode(&storage_key));
-        
+
         // Query storage
         let result: Option<String> = client
             .request("state_getStorage", rpc_params![storage_key_hex])
             .await
             .map_err(|e| WalletError::Rpc(format!("state_getStorage failed: {}", e)))?;
-        
+
         // If account doesn't exist, balance is 0
         let Some(data_hex) = result else {
             return Ok(0);
         };
-        
+
         // Decode AccountInfo: { nonce: u32, consumers: u32, providers: u32, sufficients: u32, data: AccountData }
         // AccountData: { free: u128, reserved: u128, misc_frozen: u128, fee_frozen: u128 }
         // Layout: nonce(4) + consumers(4) + providers(4) + sufficients(4) = 16 bytes, then free(16 bytes)
         let data = hex::decode(data_hex.trim_start_matches("0x"))
             .map_err(|e| WalletError::Rpc(format!("failed to decode storage: {}", e)))?;
-        
+
         if data.len() < 32 {
             // Not enough data for free balance
-            return Err(WalletError::Rpc("invalid AccountInfo data (too short)".into()));
+            return Err(WalletError::Rpc(
+                "invalid AccountInfo data (too short)".into(),
+            ));
         }
-        
+
         // Free balance starts at offset 16 (after nonce, consumers, providers, sufficients)
         let free_balance = u128::from_le_bytes(
-            data[16..32].try_into().map_err(|_| WalletError::Rpc("invalid balance bytes".into()))?
+            data[16..32]
+                .try_into()
+                .map_err(|_| WalletError::Rpc("invalid balance bytes".into()))?,
         );
-        
+
         Ok(free_balance)
     }
 
@@ -730,18 +750,18 @@ impl SubstrateRpcClient {
     pub async fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> Result<bool, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
-        
+
         // Build storage key for ShieldedPool.Nullifiers(nullifier)
         // Key = twox_128("ShieldedPool") ++ twox_128("Nullifiers") ++ blake2_128_concat(nullifier)
         let storage_key = build_nullifier_storage_key(nullifier);
         let storage_key_hex = format!("0x{}", hex::encode(&storage_key));
-        
+
         // Query storage - if key exists, nullifier is spent
         let result: Option<String> = client
             .request("state_getStorage", rpc_params![storage_key_hex])
             .await
             .map_err(|e| WalletError::Rpc(format!("state_getStorage failed: {}", e)))?;
-        
+
         // Nullifiers storage is a map to (), so any non-None result means it exists
         Ok(result.is_some())
     }
@@ -757,7 +777,10 @@ impl SubstrateRpcClient {
     /// # Returns
     ///
     /// Vector of booleans, one per nullifier. `true` means spent.
-    pub async fn check_nullifiers_spent(&self, nullifiers: &[[u8; 32]]) -> Result<Vec<bool>, WalletError> {
+    pub async fn check_nullifiers_spent(
+        &self,
+        nullifiers: &[[u8; 32]],
+    ) -> Result<Vec<bool>, WalletError> {
         let mut results = Vec::with_capacity(nullifiers.len());
         for nullifier in nullifiers {
             results.push(self.is_nullifier_spent(nullifier).await?);
@@ -780,15 +803,15 @@ impl SubstrateRpcClient {
     pub async fn submit_extrinsic(&self, extrinsic: &[u8]) -> Result<[u8; 32], WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
-        
+
         // Encode as hex with 0x prefix
         let extrinsic_hex = format!("0x{}", hex::encode(extrinsic));
-        
+
         let tx_hash: String = client
             .request("author_submitExtrinsic", rpc_params![extrinsic_hex])
             .await
             .map_err(|e| WalletError::Rpc(format!("author_submitExtrinsic failed: {}", e)))?;
-        
+
         hex_to_array(&tx_hash.trim_start_matches("0x"))
     }
 
@@ -815,44 +838,41 @@ impl SubstrateRpcClient {
         signing_seed: &[u8; 32],
     ) -> Result<[u8; 32], WalletError> {
         use crate::extrinsic::{Era, ExtrinsicBuilder, ShieldedTransferCall};
-        
+
         // 1. Create extrinsic builder from seed
         let builder = ExtrinsicBuilder::from_seed(signing_seed);
-        
+
         // 2. Get chain metadata
         let metadata = self.get_chain_metadata().await?;
-        
+
         // 3. Get account nonce
         let nonce = self.get_nonce(&builder.account_id()).await?;
-        
+
         // 4. Build the call
         let call = ShieldedTransferCall::from_bundle(bundle);
-        
+
         // Debug: print encrypted note sizes
         // eprintln!("DEBUG: Number of encrypted notes: {}", call.encrypted_notes.len());
-        for (i, note) in call.encrypted_notes.iter().enumerate() {
-        // eprintln!("DEBUG: Encrypted note {} size: {} bytes", i, note.len());
+        for (_i, _note) in call.encrypted_notes.iter().enumerate() {
+            // eprintln!("DEBUG: Encrypted note {} size: {} bytes", i, note.len());
         }
         // eprintln!("DEBUG: Spec version: {}, TX version: {}", metadata.spec_version, metadata.tx_version);
         // eprintln!("DEBUG: Nonce: {}", nonce);
-        
+
         // 5. Build mortal era (64 block validity)
         // Use current block number directly - block_hash is the hash of this block
         let era = Era::mortal(64, metadata.block_number);
-        
+
         // 6. Build and sign the extrinsic
         let extrinsic = builder.build_shielded_transfer(
-            &call,
-            nonce,
-            era,
-            0, // tip
+            &call, nonce, era, 0, // tip
             &metadata,
         )?;
-        
+
         // Debug: print extrinsic size and first bytes
         // eprintln!("DEBUG: Extrinsic size: {} bytes", extrinsic.len());
         // eprintln!("DEBUG: Extrinsic first 100 bytes: {}", hex::encode(&extrinsic[..100.min(extrinsic.len())]));
-        
+
         // 7. Submit
         self.submit_extrinsic(&extrinsic).await
     }
@@ -878,28 +898,28 @@ impl SubstrateRpcClient {
         bundle: &TransactionBundle,
     ) -> Result<[u8; 32], WalletError> {
         use crate::extrinsic::{build_unsigned_shielded_transfer, ShieldedTransferCall};
-        
+
         // Build the call from the bundle
         let call = ShieldedTransferCall::from_bundle(bundle);
-        
+
         // Verify this is a pure shielded transfer (value_balance = 0)
         if bundle.value_balance != 0 {
             return Err(WalletError::InvalidArgument(
-                "Unsigned shielded transfers require value_balance = 0"
+                "Unsigned shielded transfers require value_balance = 0",
             ));
         }
-        
+
         // Debug output
         // eprintln!("DEBUG: Building unsigned shielded transfer");
         // eprintln!("DEBUG: Number of nullifiers: {}", call.nullifiers.len());
         // eprintln!("DEBUG: Number of commitments: {}", call.commitments.len());
         // eprintln!("DEBUG: Number of encrypted notes: {}", call.encrypted_notes.len());
-        
+
         // Build the unsigned extrinsic
         let extrinsic = build_unsigned_shielded_transfer(&call)?;
-        
+
         // eprintln!("DEBUG: Unsigned extrinsic size: {} bytes", extrinsic.len());
-        
+
         // Submit
         self.submit_extrinsic(&extrinsic).await
     }
@@ -927,10 +947,10 @@ impl SubstrateRpcClient {
         signing_seed: &[u8; 32],
     ) -> Result<[u8; 32], WalletError> {
         use crate::extrinsic::{Era, ExtrinsicBuilder, ShieldCall};
-        
+
         // 1. Create extrinsic builder from seed
         let builder = ExtrinsicBuilder::from_seed(signing_seed);
-        
+
         // 2. Get chain metadata
         let metadata = self.get_chain_metadata().await?;
         // eprintln!("DEBUG: Block number: {}", metadata.block_number);
@@ -938,91 +958,96 @@ impl SubstrateRpcClient {
         // eprintln!("DEBUG: Block hash: 0x{}", hex::encode(&metadata.block_hash));
         // eprintln!("DEBUG: Spec version: {}", metadata.spec_version);
         // eprintln!("DEBUG: Tx version: {}", metadata.tx_version);
-        
+
         // 3. Get account nonce
         let nonce = self.get_nonce(&builder.account_id()).await?;
         // eprintln!("DEBUG: Account nonce: {}", nonce);
-        
+
         // 4. Build the call
         let call = ShieldCall::new(amount, commitment, encrypted_note);
-        
+
         // 5. Build mortal era (64 block validity)
         // Use current block number directly - block_hash is the hash of this block
         let era = Era::mortal(64, metadata.block_number);
         // eprintln!("DEBUG: Era bytes: {:?}", era.encode());
-        
+
         // Calculate expected extra bytes
         let era_bytes = era.encode().len();
-        let nonce_compact_bytes = if nonce < 64 { 1 } else if nonce < 16384 { 2 } else { 4 };
+        let nonce_compact_bytes = if nonce < 64 {
+            1
+        } else if nonce < 16384 {
+            2
+        } else {
+            4
+        };
         let tip_bytes = 1; // tip=0 is always 1 byte
         let _extra_total = era_bytes + nonce_compact_bytes + tip_bytes;
-        // eprintln!("DEBUG: Extra bytes expected: {} (era={}, nonce_compact={}, tip={})", 
+        // eprintln!("DEBUG: Extra bytes expected: {} (era={}, nonce_compact={}, tip={})",
         //     extra_total, era_bytes, nonce_compact_bytes, tip_bytes);
-        
+
         // 6. Build and sign the extrinsic
         let extrinsic = builder.build_shield(
-            &call,
-            nonce,
-            era,
-            0, // tip
+            &call, nonce, era, 0, // tip
             &metadata,
         )?;
-        
+
         // DEBUG: Detailed byte-by-byte analysis
         // eprintln!("DEBUG: Extrinsic total length: {} bytes", extrinsic.len());
-        
+
         // Parse compact length prefix
         let compact_mode = extrinsic[0] & 0b11;
-        let (compact_value, compact_len) = match compact_mode {
+        let (_compact_value, compact_len) = match compact_mode {
             0 => ((extrinsic[0] >> 2) as usize, 1),
             1 => {
                 let v = u16::from_le_bytes([extrinsic[0], extrinsic[1]]) >> 2;
                 (v as usize, 2)
-            },
+            }
             2 => {
-                let v = u32::from_le_bytes([extrinsic[0], extrinsic[1], extrinsic[2], extrinsic[3]]) >> 2;
+                let v =
+                    u32::from_le_bytes([extrinsic[0], extrinsic[1], extrinsic[2], extrinsic[3]])
+                        >> 2;
                 (v as usize, 4)
-            },
+            }
             _ => {
                 let n = (extrinsic[0] >> 2) + 4;
                 (0usize, 1 + n as usize) // simplified
             }
         };
         // eprintln!("DEBUG: Compact length: {} (encoded in {} bytes)", compact_value, compact_len);
-        
+
         let pos = compact_len;
         // eprintln!("DEBUG: Version byte at {}: 0x{:02x} (expected 0x84)", pos, extrinsic[pos]);
-        
+
         let pos = pos + 1;
         // eprintln!("DEBUG: MultiAddress variant at {}: 0x{:02x} (expected 0x00)", pos, extrinsic[pos]);
-        
+
         let pos = pos + 1;
         // eprintln!("DEBUG: AccountId at {}: {}", pos, hex::encode(&extrinsic[pos..pos+32]));
-        
+
         let pos = pos + 32;
         // eprintln!("DEBUG: Signature variant at {}: 0x{:02x} (expected 0x00 for MlDsa)", pos, extrinsic[pos]);
-        
+
         let pos = pos + 1;
         // eprintln!("DEBUG: Signature (3309 bytes) starts at {}", pos);
-        
+
         let pos = pos + 3309;
         // eprintln!("DEBUG: Public variant at {}: 0x{:02x} (expected 0x00)", pos, extrinsic[pos]);
-        
+
         let pos = pos + 1;
         // eprintln!("DEBUG: Public key (1952 bytes) starts at {}", pos);
-        
+
         let pos = pos + 1952;
         // eprintln!("DEBUG: Extra starts at {}", pos);
         // eprintln!("DEBUG: Extra bytes: {}", hex::encode(&extrinsic[pos..pos+_extra_total]));
-        
+
         let pos = pos + _extra_total;
         // eprintln!("DEBUG: Call starts at {}", pos);
         // eprintln!("DEBUG: First 50 bytes of call: {}", hex::encode(&extrinsic[pos..pos+50.min(extrinsic.len()-pos)]));
-        
+
         // Verify call structure
         // eprintln!("DEBUG: Pallet index: {} (expected 19)", extrinsic[pos]);
         // eprintln!("DEBUG: Call index: {} (expected 1)", extrinsic[pos+1]);
-        
+
         // Calculate where kem_ciphertext should start
         // Call: pallet(1) + call(1) + amount(16) + commitment(32) + ciphertext(611) = 661
         let kem_start_in_call = 1 + 1 + 16 + 32 + 611;
@@ -1030,13 +1055,13 @@ impl SubstrateRpcClient {
         let kem_end = kem_start_absolute + 1088;
         // eprintln!("DEBUG: kem_ciphertext should be at bytes {}-{}", kem_start_absolute, kem_end);
         // eprintln!("DEBUG: Extrinsic ends at byte {}", extrinsic.len());
-        
+
         if kem_end > extrinsic.len() {
-        // eprintln!("DEBUG: ERROR! kem_ciphertext would extend {} bytes beyond extrinsic!", kem_end - extrinsic.len());
+            // eprintln!("DEBUG: ERROR! kem_ciphertext would extend {} bytes beyond extrinsic!", kem_end - extrinsic.len());
         } else {
-        // eprintln!("DEBUG: kem_ciphertext fits within extrinsic ✓");
+            // eprintln!("DEBUG: kem_ciphertext fits within extrinsic ✓");
         }
-        
+
         // 7. Submit
         self.submit_extrinsic(&extrinsic).await
     }
@@ -1064,37 +1089,33 @@ struct ShieldedTransferRequest {
 impl ShieldedTransferRequest {
     fn from_bundle(bundle: &TransactionBundle) -> Result<Self, WalletError> {
         use base64::Engine;
-        
+
         // Proof bytes are already serialized, just base64 encode
         let proof = base64::engine::general_purpose::STANDARD.encode(&bundle.proof_bytes);
-        
+
         // Encode nullifiers as hex
-        let nullifiers = bundle
-            .nullifiers
-            .iter()
-            .map(|nf| hex::encode(nf))
-            .collect();
-        
+        let nullifiers = bundle.nullifiers.iter().map(|nf| hex::encode(nf)).collect();
+
         // Encode commitments as hex
         let commitments = bundle
             .commitments
             .iter()
             .map(|cm| hex::encode(cm))
             .collect();
-        
+
         // Encode each ciphertext as base64
         let encrypted_notes = bundle
             .ciphertexts
             .iter()
             .map(|ct| base64::engine::general_purpose::STANDARD.encode(ct))
             .collect();
-        
+
         // Encode anchor and binding sig
         let anchor = hex::encode(bundle.anchor);
         let binding_sig = hex::encode(bundle.binding_sig);
-        
-        Ok(Self { 
-            proof, 
+
+        Ok(Self {
+            proof,
             nullifiers,
             commitments,
             encrypted_notes,
@@ -1144,9 +1165,9 @@ impl BlockingSubstrateRpcClient {
     pub fn connect(endpoint: &str) -> Result<Self, WalletError> {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| WalletError::Rpc(format!("Failed to create runtime: {}", e)))?;
-        
+
         let inner = runtime.block_on(SubstrateRpcClient::connect(endpoint))?;
-        
+
         Ok(Self {
             inner: Arc::new(inner),
             runtime: Arc::new(runtime),
@@ -1157,9 +1178,9 @@ impl BlockingSubstrateRpcClient {
     pub fn connect_with_config(config: SubstrateRpcConfig) -> Result<Self, WalletError> {
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| WalletError::Rpc(format!("Failed to create runtime: {}", e)))?;
-        
+
         let inner = runtime.block_on(SubstrateRpcClient::connect_with_config(config))?;
-        
+
         Ok(Self {
             inner: Arc::new(inner),
             runtime: Arc::new(runtime),
@@ -1177,12 +1198,20 @@ impl BlockingSubstrateRpcClient {
     }
 
     /// Get commitment entries
-    pub fn commitments(&self, start: u64, limit: usize) -> Result<Vec<CommitmentEntry>, WalletError> {
+    pub fn commitments(
+        &self,
+        start: u64,
+        limit: usize,
+    ) -> Result<Vec<CommitmentEntry>, WalletError> {
         self.runtime.block_on(self.inner.commitments(start, limit))
     }
 
     /// Get ciphertext entries
-    pub fn ciphertexts(&self, start: u64, limit: usize) -> Result<Vec<CiphertextEntry>, WalletError> {
+    pub fn ciphertexts(
+        &self,
+        start: u64,
+        limit: usize,
+    ) -> Result<Vec<CiphertextEntry>, WalletError> {
         self.runtime.block_on(self.inner.ciphertexts(start, limit))
     }
 
@@ -1213,20 +1242,20 @@ impl BlockingSubstrateRpcClient {
 fn build_system_account_key(account_id: &[u8; 32]) -> Vec<u8> {
     // twox_128("System")
     let system_hash = twox_128(b"System");
-    
+
     // twox_128("Account")
     let account_hash = twox_128(b"Account");
-    
+
     // blake2_128_concat(account_id) = blake2_128(account_id) ++ account_id
     let blake2_hash = blake2_128(account_id);
-    
+
     // Concatenate all parts
     let mut key = Vec::with_capacity(16 + 16 + 16 + 32);
     key.extend_from_slice(&system_hash);
     key.extend_from_slice(&account_hash);
     key.extend_from_slice(&blake2_hash);
     key.extend_from_slice(account_id);
-    
+
     key
 }
 
@@ -1236,36 +1265,36 @@ fn build_system_account_key(account_id: &[u8; 32]) -> Vec<u8> {
 fn build_nullifier_storage_key(nullifier: &[u8; 32]) -> Vec<u8> {
     // twox_128("ShieldedPool")
     let pallet_hash = twox_128(b"ShieldedPool");
-    
+
     // twox_128("Nullifiers")
     let storage_hash = twox_128(b"Nullifiers");
-    
+
     // blake2_128_concat(nullifier) = blake2_128(nullifier) ++ nullifier
     let blake2_hash = blake2_128(nullifier);
-    
+
     // Concatenate all parts
     let mut key = Vec::with_capacity(16 + 16 + 16 + 32);
     key.extend_from_slice(&pallet_hash);
     key.extend_from_slice(&storage_hash);
     key.extend_from_slice(&blake2_hash);
     key.extend_from_slice(nullifier);
-    
+
     key
 }
 
 /// xxHash 128-bit (two rounds of xxHash64)
 fn twox_128(data: &[u8]) -> [u8; 16] {
-    use twox_hash::XxHash64;
     use std::hash::Hasher;
-    
+    use twox_hash::XxHash64;
+
     let mut h0 = XxHash64::with_seed(0);
     let mut h1 = XxHash64::with_seed(1);
     h0.write(data);
     h1.write(data);
-    
+
     let r0 = h0.finish();
     let r1 = h1.finish();
-    
+
     let mut result = [0u8; 16];
     result[..8].copy_from_slice(&r0.to_le_bytes());
     result[8..].copy_from_slice(&r1.to_le_bytes());
@@ -1274,9 +1303,9 @@ fn twox_128(data: &[u8]) -> [u8; 16] {
 
 /// Blake2b-128 hash
 fn blake2_128(data: &[u8]) -> [u8; 16] {
-    use blake2::{Blake2b, Digest};
     use blake2::digest::consts::U16;
-    
+    use blake2::{Blake2b, Digest};
+
     type Blake2b128 = Blake2b<U16>;
     let hash = Blake2b128::digest(data);
     let mut result = [0u8; 16];

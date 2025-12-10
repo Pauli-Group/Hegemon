@@ -251,9 +251,11 @@ async fn handle_transaction(
     Json(bundle): Json<TransactionBundle>,
 ) -> Result<Json<TxResponse>, StatusCode> {
     require_auth(&headers, &state.token)?;
-    
+
     // Commitments are now already in the correct format
-    let commitments: Vec<u64> = bundle.commitments.iter()
+    let commitments: Vec<u64> = bundle
+        .commitments
+        .iter()
         .filter(|cm| *cm != &[0u8; 32])
         .map(|cm| {
             // Extract u64 from last 8 bytes
@@ -262,13 +264,15 @@ async fn handle_transaction(
             u64::from_be_bytes(bytes)
         })
         .collect();
-    
+
     // Nullifiers are now already in the correct format
-    let nullifiers: Vec<[u8; 32]> = bundle.nullifiers.iter()
+    let nullifiers: Vec<[u8; 32]> = bundle
+        .nullifiers
+        .iter()
         .filter(|nf| *nf != &[0u8; 32])
         .cloned()
         .collect();
-    
+
     let wire = PendingTx {
         commitments,
         ciphertexts: bundle.ciphertexts.clone(),

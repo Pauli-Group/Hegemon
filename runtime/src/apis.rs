@@ -117,6 +117,7 @@ decl_runtime_apis! {
         /// - siblings: 32 sibling hashes from leaf to root
         /// - indices: position bits (true = right child)
         /// - root: current Merkle root
+        #[allow(clippy::type_complexity, clippy::result_unit_err)]
         fn get_merkle_witness(
             position: u64,
         ) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), ()>;

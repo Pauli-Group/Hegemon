@@ -26,3 +26,6 @@ std = [
     "codec/std",
     "scale-info/std",
 ]
+
+[lints]
+workspace = true

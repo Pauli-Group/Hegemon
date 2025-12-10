@@ -34,9 +34,10 @@ const FIELD_MODULUS: u128 = (1u128 << 64) - (1u128 << 32) + 1;
 /// Compute round constant for Poseidon (deterministic, matching circuit).
 #[inline]
 fn round_constant(round: usize, position: usize) -> u64 {
-    let seed = ((round as u64).wrapping_add(1).wrapping_mul(0x9e37_79b9u64))
-        ^ ((position as u64).wrapping_add(1).wrapping_mul(0x7f4a_7c15u64));
-    seed
+    ((round as u64).wrapping_add(1).wrapping_mul(0x9e37_79b9u64))
+        ^ ((position as u64)
+            .wrapping_add(1)
+            .wrapping_mul(0x7f4a_7c15u64))
 }
 
 /// Reduce a u128 value to field element.
@@ -129,8 +130,7 @@ fn merkle_node_felt(left: u64, right: u64) -> u64 {
 /// This matches the circuit's representation where Felt is stored in last 8 bytes.
 fn bytes32_to_felt(bytes: &[u8; 32]) -> u64 {
     u64::from_be_bytes([
-        bytes[24], bytes[25], bytes[26], bytes[27],
-        bytes[28], bytes[29], bytes[30], bytes[31],
+        bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31],
     ])
 }
 

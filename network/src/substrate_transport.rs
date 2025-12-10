@@ -283,7 +283,7 @@ impl SubstratePqConnection {
         self.session
             .send(data)
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+            .map_err(|e| io::Error::other(e.to_string()))
     }
 
     /// Receive raw data from the secure channel
@@ -291,7 +291,7 @@ impl SubstratePqConnection {
         self.session
             .recv()
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+            .map_err(|e| io::Error::other(e.to_string()))
     }
 }
 
@@ -307,27 +307,27 @@ impl AsyncRead for SubstratePqConnection {
             let to_copy = std::cmp::min(remaining.len(), buf.remaining());
             buf.put_slice(&remaining[..to_copy]);
             self.read_pos += to_copy;
-            
+
             // Clear buffer if fully consumed
             if self.read_pos >= self.read_buffer.len() {
                 self.read_buffer.clear();
                 self.read_pos = 0;
             }
-            
+
             return Poll::Ready(Ok(()));
         }
 
         // For now, return Pending since we can't poll async methods in poll_read
         // The caller should use the async recv() method directly for receiving data,
         // then this can read from the buffer.
-        // 
+        //
         // In practice, higher-level code should:
         // 1. Call recv() to get data
         // 2. Use AsyncRead to read from the buffer
         //
         // This is a limitation of the current design - the SecureSession recv() is async
         // and can't be easily polled in a non-async context without restructuring.
-        // 
+        //
         // For full integration, consider:
         // - Using a background task to recv() and fill the buffer
         // - Or restructuring SecureSession to support poll-based IO
@@ -453,7 +453,10 @@ mod tests {
         });
 
         let initiator_socket = TcpStream::connect(addr).await.unwrap();
-        let initiator_conn = initiator.upgrade_outbound(initiator_socket, addr).await.unwrap();
+        let initiator_conn = initiator
+            .upgrade_outbound(initiator_socket, addr)
+            .await
+            .unwrap();
         let responder_conn = responder_handle.await.unwrap().unwrap();
 
         // Verify peer IDs match
@@ -492,7 +495,10 @@ mod tests {
         });
 
         let initiator_socket = TcpStream::connect(addr).await.unwrap();
-        let mut initiator_conn = initiator.upgrade_outbound(initiator_socket, addr).await.unwrap();
+        let mut initiator_conn = initiator
+            .upgrade_outbound(initiator_socket, addr)
+            .await
+            .unwrap();
         let mut responder_conn = responder_handle.await.unwrap().unwrap();
 
         // Test messaging
@@ -516,7 +522,7 @@ mod tests {
             bytes_received: 2000,
             protocol: "/hegemon/pq/1".to_string(),
         };
-        
+
         assert!(info.is_outbound);
         assert_eq!(info.bytes_sent, 1000);
     }

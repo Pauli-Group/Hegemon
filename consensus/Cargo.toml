@@ -38,3 +38,6 @@ tokio = { version = "1", features = ["macros", "rt", "time", "sync"] }
 default = []
 # Enable full Substrate PowAlgorithm implementation
 substrate = ["sc-consensus-pow", "sp-consensus-pow", "sp-api", "runtime"]
+
+[lints]
+workspace = true

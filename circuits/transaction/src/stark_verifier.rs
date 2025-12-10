@@ -2,12 +2,12 @@
 //!
 //! Actually calls winterfell::verify() to verify proofs.
 
+use winter_crypto::hashers::Blake3_256;
 use winterfell::{
     crypto::{DefaultRandomCoin, MerkleTree},
     math::{fields::f64::BaseElement, FieldElement},
     verify, AcceptableOptions, Proof, VerifierError,
 };
-use winter_crypto::hashers::Blake3_256;
 
 use crate::stark_air::{TransactionAirStark, TransactionPublicInputsStark};
 
@@ -18,13 +18,15 @@ type Blake3 = Blake3_256<BaseElement>;
 // ================================================================================================
 
 /// Check that the balance equation holds: total_input = total_output + fee
-pub fn check_balance(pub_inputs: &TransactionPublicInputsStark) -> Result<(), TransactionVerifyError> {
+pub fn check_balance(
+    pub_inputs: &TransactionPublicInputsStark,
+) -> Result<(), TransactionVerifyError> {
     let expected_input = pub_inputs.total_output + pub_inputs.fee;
     if pub_inputs.total_input != expected_input {
-        return Err(TransactionVerifyError::InvalidPublicInputs(
-            format!("Balance mismatch: total_input ({:?}) != total_output ({:?}) + fee ({:?})",
-                pub_inputs.total_input, pub_inputs.total_output, pub_inputs.fee)
-        ));
+        return Err(TransactionVerifyError::InvalidPublicInputs(format!(
+            "Balance mismatch: total_input ({:?}) != total_output ({:?}) + fee ({:?})",
+            pub_inputs.total_input, pub_inputs.total_output, pub_inputs.fee
+        )));
     }
     Ok(())
 }
@@ -45,7 +47,7 @@ pub fn verify_transaction_proof(
         // Return a verification error - the proof can't be valid with mismatched balance
         return Err(VerifierError::InconsistentOodConstraintEvaluations);
     }
-    
+
     let acceptable = AcceptableOptions::OptionSet(vec![
         default_acceptable_options(),
         fast_acceptable_options(),
@@ -63,11 +65,10 @@ pub fn verify_transaction_proof_bytes(
     proof_bytes: &[u8],
     pub_inputs: &TransactionPublicInputsStark,
 ) -> Result<(), TransactionVerifyError> {
-    let proof = Proof::from_bytes(proof_bytes)
-        .map_err(|_| TransactionVerifyError::InvalidProofFormat)?;
+    let proof =
+        Proof::from_bytes(proof_bytes).map_err(|_| TransactionVerifyError::InvalidProofFormat)?;
 
-    verify_transaction_proof(&proof, pub_inputs)
-        .map_err(TransactionVerifyError::VerificationFailed)
+    verify_transaction_proof(&proof, pub_inputs).map_err(TransactionVerifyError::VerificationFailed)
 }
 
 // ================================================================================================
@@ -97,9 +98,12 @@ impl core::fmt::Display for TransactionVerifyError {
 
 fn default_acceptable_options() -> winterfell::ProofOptions {
     winterfell::ProofOptions::new(
-        32, 8, 0,
+        32,
+        8,
+        0,
         winterfell::FieldExtension::None,
-        4, 31,
+        4,
+        31,
         winterfell::BatchingMethod::Linear,
         winterfell::BatchingMethod::Linear,
     )
@@ -109,9 +113,12 @@ fn fast_acceptable_options() -> winterfell::ProofOptions {
     // Blowup factor must be at least 2 * constraint_degree = 2 * 5 = 10
     // Use 16 to be safe (power of 2)
     winterfell::ProofOptions::new(
-        8, 16, 0,
+        8,
+        16,
+        0,
         winterfell::FieldExtension::None,
-        2, 15,
+        2,
+        15,
         winterfell::BatchingMethod::Linear,
         winterfell::BatchingMethod::Linear,
     )
@@ -127,7 +134,7 @@ impl TransactionPublicInputsStark {
         // Check that balance equation holds
         if self.total_input != self.total_output + self.fee {
             return Err(TransactionVerifyError::InvalidPublicInputs(
-                "Balance equation violated: input != output + fee".into()
+                "Balance equation violated: input != output + fee".into(),
             ));
         }
 
@@ -135,7 +142,7 @@ impl TransactionPublicInputsStark {
         let has_input = self.nullifiers.iter().any(|nf| *nf != BaseElement::ZERO);
         if !has_input {
             return Err(TransactionVerifyError::InvalidPublicInputs(
-                "No non-zero nullifiers found".into()
+                "No non-zero nullifiers found".into(),
             ));
         }
 
@@ -151,15 +158,19 @@ impl TransactionPublicInputsStark {
 mod tests {
     use super::*;
     use crate::{
-        note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness, MERKLE_TREE_DEPTH},
-        stark_prover::{TransactionProverStark, fast_proof_options},
-        witness::TransactionWitness,
         hashing::merkle_node,
+        note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness, MERKLE_TREE_DEPTH},
+        stark_prover::{fast_proof_options, TransactionProverStark},
+        witness::TransactionWitness,
     };
     use winterfell::Prover;
-    
+
     /// Compute the Merkle root from a leaf and a path of siblings
-    fn compute_merkle_root_from_path(leaf: BaseElement, position: u64, path: &MerklePath) -> BaseElement {
+    fn compute_merkle_root_from_path(
+        leaf: BaseElement,
+        position: u64,
+        path: &MerklePath,
+    ) -> BaseElement {
         let mut current = leaf;
         let mut pos = position;
         for sibling in &path.siblings {
@@ -237,7 +248,10 @@ mod tests {
         pub_inputs.nullifiers[0] = BaseElement::new(99999);
 
         let result = verify_transaction_proof(&proof, &pub_inputs);
-        assert!(result.is_err(), "Verification should fail with wrong public inputs");
+        assert!(
+            result.is_err(),
+            "Verification should fail with wrong public inputs"
+        );
     }
 
     #[test]
@@ -252,7 +266,11 @@ mod tests {
         let proof_bytes = proof.to_bytes();
 
         let result = verify_transaction_proof_bytes(&proof_bytes, &pub_inputs);
-        assert!(result.is_ok(), "Verification from bytes should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Verification from bytes should succeed: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -269,7 +287,10 @@ mod tests {
         pub_inputs.fee = pub_inputs.fee + BaseElement::new(1);
 
         let result = verify_transaction_proof(&proof, &pub_inputs);
-        assert!(result.is_err(), "Verification should fail with wrong balance");
+        assert!(
+            result.is_err(),
+            "Verification should fail with wrong balance"
+        );
     }
 
     #[test]

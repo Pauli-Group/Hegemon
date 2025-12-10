@@ -1,5 +1,5 @@
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
-use transaction_circuit::hashing::{Felt, merkle_node};
+use transaction_circuit::hashing::{merkle_node, Felt};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
 use transaction_circuit::proof::{prove, verify};
@@ -28,22 +28,26 @@ fn compute_merkle_root(leaf: Felt, position: u64, path: &[Felt]) -> Felt {
 /// Returns paths and root consistent with CIRCUIT_MERKLE_DEPTH.
 fn build_two_leaf_merkle_tree(leaf0: Felt, leaf1: Felt) -> (MerklePath, MerklePath, Felt) {
     // At level 0: leaf0 at position 0, leaf1 at position 1 (siblings of each other)
-    let mut siblings0 = vec![leaf1];  // For position 0, sibling is leaf1
-    let mut siblings1 = vec![leaf0];  // For position 1, sibling is leaf0
-    
+    let mut siblings0 = vec![leaf1]; // For position 0, sibling is leaf1
+    let mut siblings1 = vec![leaf0]; // For position 1, sibling is leaf0
+
     // Compute parent and continue up the tree with zero siblings
     let mut current = merkle_node(leaf0, leaf1);
-    
+
     // Fill remaining levels up to CIRCUIT_MERKLE_DEPTH with zeros
     for _ in 1..CIRCUIT_MERKLE_DEPTH {
         siblings0.push(Felt::ZERO);
         siblings1.push(Felt::ZERO);
         current = merkle_node(current, Felt::ZERO);
     }
-    
-    let path0 = MerklePath { siblings: siblings0 };
-    let path1 = MerklePath { siblings: siblings1 };
-    
+
+    let path0 = MerklePath {
+        siblings: siblings0,
+    };
+    let path1 = MerklePath {
+        siblings: siblings1,
+    };
+
     (path0, path1, current)
 }
 
@@ -62,16 +66,22 @@ fn sample_witness() -> TransactionWitness {
         rho: [6u8; 32],
         r: [7u8; 32],
     };
-    
+
     // Build proper Merkle tree with both input notes using CIRCUIT_MERKLE_DEPTH
     let leaf0 = input_note_native.commitment();
     let leaf1 = input_note_asset.commitment();
     let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
-    
+
     // Verify paths compute to root correctly
-    assert_eq!(compute_merkle_root(leaf0, 0, &merkle_path0.siblings), merkle_root);
-    assert_eq!(compute_merkle_root(leaf1, 1, &merkle_path1.siblings), merkle_root);
-    
+    assert_eq!(
+        compute_merkle_root(leaf0, 0, &merkle_path0.siblings),
+        merkle_root
+    );
+    assert_eq!(
+        compute_merkle_root(leaf1, 1, &merkle_path1.siblings),
+        merkle_root
+    );
+
     let output_native = OutputNoteWitness {
         note: NoteData {
             value: 3,
@@ -118,7 +128,10 @@ fn proving_and_verification_succeeds() -> Result<(), TransactionCircuitError> {
     let witness = sample_witness();
     let (proving_key, verifying_key) = generate_keys();
     let proof = prove(&witness, &proving_key)?;
-    assert!(proof.has_stark_proof(), "Proof should have real STARK proof bytes");
+    assert!(
+        proof.has_stark_proof(),
+        "Proof should have real STARK proof bytes"
+    );
     let report = verify(&proof, &verifying_key)?;
     assert!(report.verified);
     Ok(())
@@ -140,11 +153,12 @@ fn verification_fails_for_nullifier_mutation() {
     let (proving_key, verifying_key) = generate_keys();
     let mut proof = prove(&witness, &proving_key).expect("proof generation");
     proof.nullifiers[0] += Felt::ONE; // tamper with nullifier
-    // With real STARK proofs, tampering with public inputs causes verification failure.
+                                      // With real STARK proofs, tampering with public inputs causes verification failure.
     let err = verify(&proof, &verifying_key).expect_err("expected failure");
     // STARK proofs return generic constraint violation for any tampering
     assert!(
         matches!(err, TransactionCircuitError::ConstraintViolation(_)),
-        "Expected STARK verification failure, got: {:?}", err
+        "Expected STARK verification failure, got: {:?}",
+        err
     );
 }

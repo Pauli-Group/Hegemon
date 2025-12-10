@@ -12,7 +12,9 @@ mod pallet_poseidon {
     #[inline]
     fn round_constant(round: usize, position: usize) -> u64 {
         let seed = ((round as u64).wrapping_add(1).wrapping_mul(0x9e37_79b9u64))
-            ^ ((position as u64).wrapping_add(1).wrapping_mul(0x7f4a_7c15u64));
+            ^ ((position as u64)
+                .wrapping_add(1)
+                .wrapping_mul(0x7f4a_7c15u64));
         seed
     }
 
@@ -124,23 +126,32 @@ fn poseidon_empty_tree_root_matches() {
     // Compute the empty tree root for depth 32
     // Empty leaf = 0, then hash(empty, empty) recursively
     let depth = 32;
-    
+
     let mut circuit_current = Felt::new(0);
     let mut pallet_current = 0u64;
-    
+
     for level in 0..depth {
         circuit_current = merkle_node(circuit_current, circuit_current);
         pallet_current = pallet_poseidon::merkle_node(pallet_current, pallet_current);
-        
+
         if level < 5 || level == depth - 1 {
             println!("Level {level} default:");
             println!("  circuit: {}", circuit_current.as_int());
             println!("  pallet:  {}", pallet_current);
         }
-        assert_eq!(circuit_current.as_int(), pallet_current, "Level {} mismatch", level);
+        assert_eq!(
+            circuit_current.as_int(),
+            pallet_current,
+            "Level {} mismatch",
+            level
+        );
     }
-    
+
     println!("Empty tree root (depth {}):", depth);
-    println!("  circuit: {} (0x{:016x})", circuit_current.as_int(), circuit_current.as_int());
+    println!(
+        "  circuit: {} (0x{:016x})",
+        circuit_current.as_int(),
+        circuit_current.as_int()
+    );
     println!("  pallet:  {} (0x{:016x})", pallet_current, pallet_current);
 }

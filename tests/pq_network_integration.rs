@@ -9,12 +9,12 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use network::{
-    PqNetworkBackend, PqNetworkBackendConfig,
-    PqPeerIdentity, PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
     protocol::{
-        is_pq_protocol, negotiate_protocol, supported_protocols,
-        NegotiationResult, ProtocolSecurityLevel, PQ_PROTOCOL_V1, HYBRID_PROTOCOL_V1,
+        is_pq_protocol, negotiate_protocol, supported_protocols, NegotiationResult,
+        ProtocolSecurityLevel, HYBRID_PROTOCOL_V1, PQ_PROTOCOL_V1,
     },
+    PqNetworkBackend, PqNetworkBackendConfig, PqPeerIdentity, PqTransportConfig,
+    SubstratePqTransport, SubstratePqTransportConfig,
 };
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
@@ -190,7 +190,10 @@ fn test_protocol_negotiation_pq_required_fails() {
     let remote = vec!["/hegemon/legacy/1"]; // Only supports legacy
 
     let result = negotiate_protocol(&local, &remote, true);
-    assert_eq!(result, None, "Should fail when PQ required but not supported");
+    assert_eq!(
+        result, None,
+        "Should fail when PQ required but not supported"
+    );
 }
 
 /// Test: is_pq_protocol correctly identifies protocols
@@ -285,7 +288,8 @@ async fn test_network_backend_peer_connection() -> TestResult<()> {
     let started = timeout(Duration::from_secs(5), async {
         // Backend started
         true
-    }).await?;
+    })
+    .await?;
     assert!(started);
 
     // Verify both backends have no peers initially
@@ -318,7 +322,7 @@ fn test_pq_peer_identity_deterministic() {
 fn test_pq_peer_identity_size() {
     let identity = PqPeerIdentity::new(b"size-test", PqTransportConfig::default());
     let peer_id = identity.peer_id();
-    
+
     assert_eq!(peer_id.len(), 32, "Peer ID should be 32 bytes");
 }
 

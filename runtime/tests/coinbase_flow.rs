@@ -19,9 +19,9 @@
 //!
 //! This test verifies the Substrate equivalent works the same way.
 
+use frame_support::assert_ok;
 use frame_support::sp_runtime::BuildStorage;
 use frame_support::traits::Hooks;
-use frame_support::assert_ok;
 use runtime::{Balances, Coinbase, RuntimeOrigin, System, Timestamp};
 use sp_io::TestExternalities;
 
@@ -118,7 +118,7 @@ fn mining_block_credits_coinbase_reward_to_miner() {
 
         // Call the coinbase mint_reward extrinsic with None origin (inherent)
         assert_ok!(Coinbase::mint_reward(
-            RuntimeOrigin::none(),  // Inherent origin
+            RuntimeOrigin::none(), // Inherent origin
             miner.clone(),
             expected_reward,
         ));

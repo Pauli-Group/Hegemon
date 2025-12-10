@@ -1,11 +1,11 @@
 //! Real SLH-DSA (FIPS 205) implementation using the slh-dsa crate.
 //! Uses Shake128f parameter set: 32-byte public key, 64-byte secret key, 17088-byte signatures.
 
-use alloc::vec::Vec;
 use crate::error::CryptoError;
 use crate::traits::{Signature, SigningKey, VerifyKey};
-use slh_dsa::Shake128f;
+use alloc::vec::Vec;
 use slh_dsa::signature::{Keypair, Signer, Verifier};
+use slh_dsa::Shake128f;
 
 // Re-export rand_core from slh-dsa for compatible RNG traits
 use slh_dsa::signature::rand_core as slh_rand_core;
@@ -26,7 +26,7 @@ struct SlhCompatibleRng {
 
 impl SlhCompatibleRng {
     fn from_seed(seed: &[u8]) -> Self {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(b"slh-dsa-deterministic-rng");
         hasher.update(seed);
@@ -37,12 +37,12 @@ impl SlhCompatibleRng {
     }
 
     fn fill_bytes_internal(&mut self, dest: &mut [u8]) {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut offset = 0;
         while offset < dest.len() {
             let mut hasher = Sha256::new();
-            hasher.update(&self.state);
-            hasher.update(&self.counter.to_le_bytes());
+            hasher.update(self.state);
+            hasher.update(self.counter.to_le_bytes());
             let block = hasher.finalize();
             let to_copy = core::cmp::min(dest.len() - offset, 32);
             dest[offset..offset + to_copy].copy_from_slice(&block[..to_copy]);
@@ -91,12 +91,13 @@ impl SlhDsaSignature {
             });
         }
         // slh_dsa::Signature implements TryFrom<&[u8]>
-        let inner = slh_dsa::Signature::<Shake128f>::try_from(bytes)
-            .map_err(|_| CryptoError::InvalidLength {
+        let inner = slh_dsa::Signature::<Shake128f>::try_from(bytes).map_err(|_| {
+            CryptoError::InvalidLength {
                 expected: SLH_DSA_SIGNATURE_LEN,
                 actual: bytes.len(),
-            })?;
-        Ok(Self { 
+            }
+        })?;
+        Ok(Self {
             inner,
             bytes: bytes.to_vec(),
         })

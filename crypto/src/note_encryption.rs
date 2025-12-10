@@ -203,9 +203,7 @@ impl NoteCiphertext {
     ) -> Result<NotePlaintext, CryptoError> {
         // Verify hint tag matches
         if self.hint_tag != expected_tag {
-            return Err(CryptoError::DecryptionFailed(
-                "address tag mismatch".into(),
-            ));
+            return Err(CryptoError::DecryptionFailed("address tag mismatch".into()));
         }
 
         // Verify diversifier index
@@ -393,13 +391,7 @@ mod tests {
         let diversifier_index = 0u32;
         let address_tag = [7u8; 32];
 
-        let note = NotePlaintext::new(
-            1000,
-            0,
-            [1u8; 32],
-            [2u8; 32],
-            b"test memo".to_vec(),
-        );
+        let note = NotePlaintext::new(1000, 0, [1u8; 32], [2u8; 32], b"test memo".to_vec());
 
         let kem_randomness = [99u8; 32];
 
@@ -444,16 +436,9 @@ mod tests {
 
         let note = NotePlaintext::new(500, 1, [3u8; 32], [4u8; 32], b"memo".to_vec());
 
-        let ciphertext = NoteCiphertext::encrypt(
-            &pk_enc,
-            [5u8; 32],
-            1,
-            0,
-            [6u8; 32],
-            &note,
-            &[7u8; 32],
-        )
-        .unwrap();
+        let ciphertext =
+            NoteCiphertext::encrypt(&pk_enc, [5u8; 32], 1, 0, [6u8; 32], &note, &[7u8; 32])
+                .unwrap();
 
         let bytes = ciphertext.to_bytes();
         let recovered = NoteCiphertext::from_bytes(&bytes).unwrap();

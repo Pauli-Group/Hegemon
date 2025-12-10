@@ -22,7 +22,9 @@ use winterfell::{
     TransitionConstraintDegree,
 };
 
-use crate::constants::{MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS, POSEIDON_WIDTH, CIRCUIT_MERKLE_DEPTH};
+use crate::constants::{
+    CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS, POSEIDON_WIDTH,
+};
 
 // ================================================================================================
 // TRACE CONFIGURATION
@@ -82,7 +84,7 @@ pub fn round_constant(round: usize, position: usize) -> BaseElement {
 /// Generate all periodic columns: [hash_mask, rc0, rc1, rc2]
 fn get_periodic_columns() -> Vec<Vec<BaseElement>> {
     let mut result = vec![HASH_MASK.to_vec()];
-    
+
     // Round constants for each position, extended to CYCLE_LENGTH
     for pos in 0..POSEIDON_WIDTH {
         let mut column = Vec::with_capacity(CYCLE_LENGTH);
@@ -96,7 +98,7 @@ fn get_periodic_columns() -> Vec<Vec<BaseElement>> {
         }
         result.push(column);
     }
-    
+
     result
 }
 
@@ -198,12 +200,12 @@ impl Air for TransactionAirStark {
             TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
         ];
 
-        // Count assertions: 
+        // Count assertions:
         // - One for each non-zero nullifier
         // - One for each Merkle root (must match public merkle_root)
         // - One for each non-zero commitment
         let mut num_assertions = 0;
-        
+
         for (i, &nf) in pub_inputs.nullifiers.iter().enumerate() {
             let row = nullifier_output_row(i);
             if nf != BaseElement::ZERO && row < trace_info.length() {
@@ -215,7 +217,7 @@ impl Air for TransactionAirStark {
                 }
             }
         }
-        
+
         for (i, &cm) in pub_inputs.commitments.iter().enumerate() {
             let row = commitment_output_row(i);
             if cm != BaseElement::ZERO && row < trace_info.length() {
@@ -280,7 +282,7 @@ impl Air for TransactionAirStark {
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
         let mut assertions = Vec::new();
-        
+
         // Assertions for all non-zero nullifiers and their Merkle roots
         for (i, &nf) in self.pub_inputs.nullifiers.iter().enumerate() {
             if nf != BaseElement::ZERO {
@@ -289,11 +291,15 @@ impl Air for TransactionAirStark {
                 if row < self.context.trace_len() {
                     assertions.push(Assertion::single(COL_S0, row, nf));
                 }
-                
+
                 // Merkle root output (must match public merkle_root)
                 let merkle_row = merkle_root_output_row(i);
                 if merkle_row < self.context.trace_len() {
-                    assertions.push(Assertion::single(COL_S0, merkle_row, self.pub_inputs.merkle_root));
+                    assertions.push(Assertion::single(
+                        COL_S0,
+                        merkle_row,
+                        self.pub_inputs.merkle_root,
+                    ));
                 }
             }
         }
@@ -351,7 +357,11 @@ pub fn poseidon_permutation(state: &mut [BaseElement; 3]) {
 }
 
 pub fn poseidon_hash(domain_tag: u64, inputs: &[BaseElement]) -> BaseElement {
-    let mut state = [BaseElement::new(domain_tag), BaseElement::ZERO, BaseElement::ONE];
+    let mut state = [
+        BaseElement::new(domain_tag),
+        BaseElement::ZERO,
+        BaseElement::ONE,
+    ];
     let rate = POSEIDON_WIDTH - 1;
     let mut cursor = 0;
     while cursor < inputs.len() {
@@ -401,9 +411,12 @@ mod tests {
             ..Default::default()
         };
         let options = ProofOptions::new(
-            32, 8, 0,
+            32,
+            8,
+            0,
             FieldExtension::None,
-            4, 31,
+            4,
+            31,
             winterfell::BatchingMethod::Linear,
             winterfell::BatchingMethod::Linear,
         );
@@ -445,40 +458,48 @@ mod tests {
     #[test]
     fn test_constraint_evaluation() {
         // Start with some state
-        let state = [BaseElement::new(100), BaseElement::new(200), BaseElement::new(300)];
+        let state = [
+            BaseElement::new(100),
+            BaseElement::new(200),
+            BaseElement::new(300),
+        ];
         let round = 0;
-        
+
         // Get round constants
         let rc0 = round_constant(round, 0);
         let rc1 = round_constant(round, 1);
         let rc2 = round_constant(round, 2);
-        
+
         // Compute expected next state
         let t0 = state[0] + rc0;
         let t1 = state[1] + rc1;
         let t2 = state[2] + rc2;
-        
+
         let s0 = sbox(t0);
         let s1 = sbox(t1);
         let s2 = sbox(t2);
-        
+
         let expected = mds_mix(&[s0, s1, s2]);
-        
+
         // The constraint should be: hash_flag * (next - expected) = 0
         // With hash_flag = 1 and next = expected, result should be 0
         let next = expected;
         let hash_flag = BaseElement::ONE;
-        
+
         let constraint0 = hash_flag * (next[0] - expected[0]);
         let constraint1 = hash_flag * (next[1] - expected[1]);
         let constraint2 = hash_flag * (next[2] - expected[2]);
-        
+
         assert_eq!(constraint0, BaseElement::ZERO);
         assert_eq!(constraint1, BaseElement::ZERO);
         assert_eq!(constraint2, BaseElement::ZERO);
-        
+
         // Also verify our round function matches
-        let mut verify_state = [BaseElement::new(100), BaseElement::new(200), BaseElement::new(300)];
+        let mut verify_state = [
+            BaseElement::new(100),
+            BaseElement::new(200),
+            BaseElement::new(300),
+        ];
         poseidon_round(&mut verify_state, 0);
         assert_eq!(verify_state, expected);
     }
@@ -486,11 +507,11 @@ mod tests {
     /// Test constraint evaluation against actual trace data
     #[test]
     fn test_constraint_on_trace() {
+        use crate::hashing::merkle_node;
+        use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
         use crate::stark_prover::TransactionProverStark;
         use crate::witness::TransactionWitness;
-        use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
-        use crate::hashing::merkle_node;
-        
+
         let input_note = NoteData {
             value: 1000,
             asset_id: 0,
@@ -505,7 +526,7 @@ mod tests {
             rho: [4u8; 32],
             r: [5u8; 32],
         };
-        
+
         // Compute correct merkle root from default path
         let merkle_path = MerklePath::default();
         let leaf = input_note.commitment();
@@ -520,7 +541,7 @@ mod tests {
             pos >>= 1;
         }
         let merkle_root = current;
-        
+
         let witness = TransactionWitness {
             inputs: vec![InputNoteWitness {
                 note: input_note,
@@ -534,13 +555,13 @@ mod tests {
             fee: 100,
             version: protocol_versioning::DEFAULT_VERSION_BINDING,
         };
-        
+
         let prover = TransactionProverStark::with_default_options();
         let trace = prover.build_trace(&witness).unwrap();
-        
+
         // Get periodic columns
         let periodic_cols = get_periodic_columns();
-        
+
         // Check constraint at step 0 (should be hash round)
         for step in 0..7 {
             let current = [
@@ -553,32 +574,47 @@ mod tests {
                 trace.get(COL_S1, step + 1),
                 trace.get(COL_S2, step + 1),
             ];
-            
+
             let hash_flag = periodic_cols[0][step % CYCLE_LENGTH];
             let rc0 = periodic_cols[1][step % CYCLE_LENGTH];
             let rc1 = periodic_cols[2][step % CYCLE_LENGTH];
             let rc2 = periodic_cols[3][step % CYCLE_LENGTH];
-            
+
             // Compute constraint
             let t0 = current[0] + rc0;
             let t1 = current[1] + rc1;
             let t2 = current[2] + rc2;
-            
+
             let s0 = sbox(t0);
             let s1 = sbox(t1);
             let s2 = sbox(t2);
-            
+
             let expected = mds_mix(&[s0, s1, s2]);
-            
+
             let c0 = hash_flag * (next[0] - expected[0]);
             let c1 = hash_flag * (next[1] - expected[1]);
             let c2 = hash_flag * (next[2] - expected[2]);
-            
-            assert_eq!(c0, BaseElement::ZERO, "Constraint 0 failed at step {}", step);
-            assert_eq!(c1, BaseElement::ZERO, "Constraint 1 failed at step {}", step);
-            assert_eq!(c2, BaseElement::ZERO, "Constraint 2 failed at step {}", step);
+
+            assert_eq!(
+                c0,
+                BaseElement::ZERO,
+                "Constraint 0 failed at step {}",
+                step
+            );
+            assert_eq!(
+                c1,
+                BaseElement::ZERO,
+                "Constraint 1 failed at step {}",
+                step
+            );
+            assert_eq!(
+                c2,
+                BaseElement::ZERO,
+                "Constraint 2 failed at step {}",
+                step
+            );
         }
-        
+
         println!("All constraints satisfied for steps 0-6");
     }
 }

@@ -12,3 +12,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 wallet = { path = ".." }
 synthetic-crypto = { path = "../../crypto" }
+
+[lints]
+workspace = true

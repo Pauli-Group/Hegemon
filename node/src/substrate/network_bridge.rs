@@ -32,10 +32,8 @@
 
 use codec::{Decode, Encode};
 use network::{
-    PqNetworkEvent, PeerId,
-    BLOCK_ANNOUNCES_PQ, BLOCK_ANNOUNCES_LEGACY,
-    TRANSACTIONS_PQ, TRANSACTIONS_LEGACY,
-    SYNC_PQ, SYNC_LEGACY,
+    PeerId, PqNetworkEvent, BLOCK_ANNOUNCES_LEGACY, BLOCK_ANNOUNCES_PQ, SYNC_LEGACY, SYNC_PQ,
+    TRANSACTIONS_LEGACY, TRANSACTIONS_PQ,
 };
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
@@ -116,12 +114,12 @@ impl TransactionMessage {
     pub fn new(transactions: Vec<Vec<u8>>) -> Self {
         Self { transactions }
     }
-    
+
     /// Number of transactions in this message
     pub fn len(&self) -> usize {
         self.transactions.len()
     }
-    
+
     /// Check if empty
     pub fn is_empty(&self) -> bool {
         self.transactions.is_empty()
@@ -312,10 +310,18 @@ impl NetworkBridge {
     /// This is the main entry point called from the PQ network event loop.
     pub async fn handle_event(&mut self, event: PqNetworkEvent) {
         match event {
-            PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
+            PqNetworkEvent::MessageReceived {
+                peer_id,
+                protocol,
+                data,
+            } => {
                 self.handle_message(&peer_id, &protocol, &data).await;
             }
-            PqNetworkEvent::PeerConnected { peer_id, addr, is_outbound } => {
+            PqNetworkEvent::PeerConnected {
+                peer_id,
+                addr,
+                is_outbound,
+            } => {
                 if self.verbose {
                     tracing::debug!(
                         peer_id = %hex::encode(peer_id),
@@ -371,7 +377,7 @@ impl NetworkBridge {
         match BlockAnnounce::decode(&mut &data[..]) {
             Ok(announce) => {
                 self.stats.block_announces_received += 1;
-                
+
                 tracing::info!(
                     peer_id = %hex::encode(peer_id),
                     block_number = announce.number,
@@ -382,7 +388,8 @@ impl NetworkBridge {
                 );
 
                 // Queue for processing
-                self.pending_announces.push_back((*peer_id, announce.clone()));
+                self.pending_announces
+                    .push_back((*peer_id, announce.clone()));
 
                 // Send to channel if configured
                 if let Some(ref tx) = self.message_tx {
@@ -416,7 +423,7 @@ impl NetworkBridge {
             Ok(msg) => {
                 let tx_count = msg.len();
                 self.stats.transactions_received += tx_count as u64;
-                
+
                 tracing::debug!(
                     peer_id = %hex::encode(peer_id),
                     tx_count = tx_count,
@@ -459,7 +466,7 @@ impl NetworkBridge {
         // Try to decode as request first
         if let Ok(request) = SyncRequest::decode(&mut &data[..]) {
             self.stats.sync_requests_received += 1;
-            
+
             tracing::debug!(
                 peer_id = %hex::encode(peer_id),
                 request = ?request,
@@ -610,10 +617,10 @@ mod tests {
             [42u8; 32],       // hash
             BlockState::Best,
         );
-        
+
         let encoded = announce.encode();
         let decoded = BlockAnnounce::decode(&mut &encoded[..]).unwrap();
-        
+
         assert_eq!(decoded.header, vec![1, 2, 3, 4]);
         assert_eq!(decoded.number, 100);
         assert_eq!(decoded.hash, [42u8; 32]);
@@ -623,33 +630,26 @@ mod tests {
 
     #[test]
     fn test_block_announce_with_body() {
-        let announce = BlockAnnounce::new(
-            vec![1, 2, 3, 4],
-            100,
-            [42u8; 32],
-            BlockState::Best,
-        ).with_body(vec![vec![5, 6], vec![7, 8]]);
-        
+        let announce = BlockAnnounce::new(vec![1, 2, 3, 4], 100, [42u8; 32], BlockState::Best)
+            .with_body(vec![vec![5, 6], vec![7, 8]]);
+
         let encoded = announce.encode();
         let decoded = BlockAnnounce::decode(&mut &encoded[..]).unwrap();
-        
+
         assert!(decoded.body.is_some());
         assert_eq!(decoded.body.unwrap(), vec![vec![5, 6], vec![7, 8]]);
     }
 
     #[test]
     fn test_transaction_message_encoding() {
-        let msg = TransactionMessage::new(vec![
-            vec![1, 2, 3],
-            vec![4, 5, 6],
-        ]);
-        
+        let msg = TransactionMessage::new(vec![vec![1, 2, 3], vec![4, 5, 6]]);
+
         assert_eq!(msg.len(), 2);
         assert!(!msg.is_empty());
-        
+
         let encoded = msg.encode();
         let decoded = TransactionMessage::decode(&mut &encoded[..]).unwrap();
-        
+
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded.transactions[0], vec![1, 2, 3]);
         assert_eq!(decoded.transactions[1], vec![4, 5, 6]);
@@ -662,12 +662,16 @@ mod tests {
             max_headers: 100,
             ascending: true,
         };
-        
+
         let encoded = request.encode();
         let decoded = SyncRequest::decode(&mut &encoded[..]).unwrap();
-        
+
         match decoded {
-            SyncRequest::BlockHeaders { start_hash, max_headers, ascending } => {
+            SyncRequest::BlockHeaders {
+                start_hash,
+                max_headers,
+                ascending,
+            } => {
                 assert_eq!(start_hash, [1u8; 32]);
                 assert_eq!(max_headers, 100);
                 assert!(ascending);
@@ -680,7 +684,7 @@ mod tests {
     fn test_network_bridge_stats() {
         let bridge = NetworkBridge::new();
         let stats = bridge.stats();
-        
+
         assert_eq!(stats.block_announces_received, 0);
         assert_eq!(stats.transactions_received, 0);
         assert_eq!(stats.decode_errors, 0);
@@ -689,25 +693,27 @@ mod tests {
     #[tokio::test]
     async fn test_network_bridge_drain() {
         let mut bridge = NetworkBridge::new();
-        
+
         // Simulate receiving a block announcement
         let announce = BlockAnnounce::new(vec![1, 2, 3], 1, [0u8; 32], BlockState::Best);
         let data = announce.encode();
         let peer_id = [99u8; 32];
-        
+
         // Process the message
-        bridge.handle_message(&peer_id, BLOCK_ANNOUNCE_PROTOCOL, &data).await;
-        
+        bridge
+            .handle_message(&peer_id, BLOCK_ANNOUNCE_PROTOCOL, &data)
+            .await;
+
         // Check stats
         assert_eq!(bridge.stats().block_announces_received, 1);
         assert_eq!(bridge.pending_announce_count(), 1);
-        
+
         // Drain and verify
         let announces = bridge.drain_announces();
         assert_eq!(announces.len(), 1);
         assert_eq!(announces[0].0, peer_id);
         assert_eq!(announces[0].1.number, 1);
-        
+
         // Should be empty now
         assert_eq!(bridge.pending_announce_count(), 0);
     }

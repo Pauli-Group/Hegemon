@@ -112,3 +112,6 @@ name = "poseidon_compat"
 path = "poseidon_compat.rs"
 # Verify pallet and circuit Poseidon implementations match
 
+
+[lints]
+workspace = true

@@ -106,7 +106,7 @@ pub enum CommitmentHash {
 }
 
 pub fn blake2_256(data: &[u8]) -> [u8; 32] {
-    use blake2::{Blake2b, Digest, digest::consts::U32};
+    use blake2::{digest::consts::U32, Blake2b, Digest};
     let mut hasher = Blake2b::<U32>::new();
     hasher.update(data);
     hasher.finalize().into()

@@ -116,8 +116,8 @@ where
 /// Simplified version for initial testing without full service
 pub fn create_minimal() -> Result<RpcModule<()>, Box<dyn std::error::Error + Send + Sync>> {
     let module = RpcModule::new(());
-    
+
     tracing::info!("RPC module initialized (minimal mode)");
-    
+
     Ok(module)
 }

@@ -123,7 +123,7 @@ impl PqNoiseConfigBuilder {
     /// Build the configuration
     pub fn build(self) -> Result<PqNoiseConfig, &'static str> {
         let identity = self.identity.ok_or("identity is required")?;
-        
+
         Ok(PqNoiseConfig {
             identity,
             require_pq: self.require_pq,

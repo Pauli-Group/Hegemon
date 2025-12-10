@@ -6,9 +6,7 @@
 use rand::{rngs::OsRng, RngCore};
 use wallet::address::ShieldedAddress;
 
-use crypto::{
-    note_encryption::{NoteCiphertext, NotePlaintext},
-};
+use crypto::note_encryption::{NoteCiphertext, NotePlaintext};
 
 use pallet_shielded_pool::{
     commitment::coinbase_commitment as pallet_coinbase_commitment,
@@ -47,14 +45,14 @@ pub fn encrypt_coinbase_note(
 ) -> Result<CoinbaseNoteData, CoinbaseEncryptionError> {
     // Generate deterministic public seed from block data
     let public_seed = derive_public_seed(block_hash, block_number);
-    
+
     // Create coinbase note plaintext with deterministic rho/r
     let note = NotePlaintext::coinbase(amount, &public_seed);
-    
+
     // Generate random KEM encapsulation randomness using OS entropy
     let mut kem_randomness = [0u8; 32];
     OsRng.fill_bytes(&mut kem_randomness);
-    
+
     // Debug: log the address_tag being used for encryption
     tracing::info!(
         address_tag = %hex::encode(&address.address_tag),
@@ -62,7 +60,7 @@ pub fn encrypt_coinbase_note(
         diversifier_index = address.diversifier_index,
         "Encrypting coinbase with address_tag"
     );
-    
+
     // Encrypt the note
     let ciphertext = NoteCiphertext::encrypt(
         &address.pk_enc,
@@ -74,16 +72,16 @@ pub fn encrypt_coinbase_note(
         &kem_randomness,
     )
     .map_err(|e| CoinbaseEncryptionError::EncryptionFailed(format!("{:?}", e)))?;
-    
+
     // Convert to pallet format
     let encrypted_note = convert_to_pallet_format(&ciphertext)?;
-    
+
     // Extract recipient address in the format the pallet expects
     let recipient_address = extract_recipient_address(address)?;
-    
+
     // Compute commitment using pallet's commitment function
     let commitment = compute_coinbase_commitment(&recipient_address, amount, &public_seed);
-    
+
     Ok(CoinbaseNoteData {
         commitment,
         encrypted_note,
@@ -116,20 +114,21 @@ fn convert_to_pallet_format(
     // The pallet format is:
     // ciphertext: [u8; 611] - concatenation of note_payload + memo_payload + metadata
     // kem_ciphertext: [u8; 1088] - ML-KEM ciphertext
-    
+
     // Build the main ciphertext field
     let mut ciphertext_bytes = [0u8; ENCRYPTED_NOTE_SIZE];
-    
-    // Layout: version(1) + diversifier_index(4) + note_payload_len(4) + note_payload + 
+
+    // Layout: version(1) + diversifier_index(4) + note_payload_len(4) + note_payload +
     //         memo_payload_len(4) + memo_payload + hint_tag(32)
     let mut offset = 0;
-    
+
     ciphertext_bytes[offset] = ciphertext.version;
     offset += 1;
-    
-    ciphertext_bytes[offset..offset + 4].copy_from_slice(&ciphertext.diversifier_index.to_le_bytes());
+
+    ciphertext_bytes[offset..offset + 4]
+        .copy_from_slice(&ciphertext.diversifier_index.to_le_bytes());
     offset += 4;
-    
+
     // Note payload length and data
     let note_len = ciphertext.note_payload.len().min(400) as u32;
     ciphertext_bytes[offset..offset + 4].copy_from_slice(&note_len.to_le_bytes());
@@ -137,7 +136,7 @@ fn convert_to_pallet_format(
     ciphertext_bytes[offset..offset + note_len as usize]
         .copy_from_slice(&ciphertext.note_payload[..note_len as usize]);
     offset += note_len as usize;
-    
+
     // Memo payload length and data
     let memo_len = ciphertext.memo_payload.len().min(100) as u32;
     ciphertext_bytes[offset..offset + 4].copy_from_slice(&memo_len.to_le_bytes());
@@ -146,11 +145,11 @@ fn convert_to_pallet_format(
         ciphertext_bytes[offset..offset + memo_len as usize]
             .copy_from_slice(&ciphertext.memo_payload[..memo_len as usize]);
     }
-    
+
     // Hint tag at the end
     let hint_start = ENCRYPTED_NOTE_SIZE - 32;
     ciphertext_bytes[hint_start..].copy_from_slice(&ciphertext.hint_tag);
-    
+
     // KEM ciphertext
     let mut kem_ciphertext = [0u8; ML_KEM_CIPHERTEXT_LEN];
     if ciphertext.kem_ciphertext.len() != ML_KEM_CIPHERTEXT_LEN {
@@ -161,7 +160,7 @@ fn convert_to_pallet_format(
         )));
     }
     kem_ciphertext.copy_from_slice(&ciphertext.kem_ciphertext);
-    
+
     Ok(EncryptedNote {
         ciphertext: ciphertext_bytes,
         kem_ciphertext,
@@ -171,15 +170,17 @@ fn convert_to_pallet_format(
 /// Extract the recipient address in the format the pallet expects
 ///
 /// This is a 43-byte diversified address format used in the commitment
-fn extract_recipient_address(address: &ShieldedAddress) -> Result<[u8; DIVERSIFIED_ADDRESS_SIZE], CoinbaseEncryptionError> {
+fn extract_recipient_address(
+    address: &ShieldedAddress,
+) -> Result<[u8; DIVERSIFIED_ADDRESS_SIZE], CoinbaseEncryptionError> {
     let mut recipient = [0u8; DIVERSIFIED_ADDRESS_SIZE];
-    
+
     // Layout: version(1) + diversifier_index(4) + pk_recipient(32) + first 6 bytes of address_tag
     recipient[0] = address.version;
     recipient[1..5].copy_from_slice(&address.diversifier_index.to_le_bytes());
     recipient[5..37].copy_from_slice(&address.pk_recipient);
     recipient[37..43].copy_from_slice(&address.address_tag[0..6]);
-    
+
     Ok(recipient)
 }
 
@@ -197,7 +198,9 @@ fn compute_coinbase_commitment(
 }
 
 /// Parse a shielded address from Bech32m string
-pub fn parse_shielded_address(address_str: &str) -> Result<ShieldedAddress, CoinbaseEncryptionError> {
+pub fn parse_shielded_address(
+    address_str: &str,
+) -> Result<ShieldedAddress, CoinbaseEncryptionError> {
     ShieldedAddress::decode(address_str)
         .map_err(|e| CoinbaseEncryptionError::InvalidAddress(format!("{:?}", e)))
 }
@@ -215,9 +218,12 @@ mod tests {
         let seed1 = derive_public_seed(&block_hash, block_number);
         let seed2 = derive_public_seed(&block_hash, block_number);
         assert_eq!(seed1, seed2, "Seed derivation should be deterministic");
-        
+
         let seed3 = derive_public_seed(&block_hash, 101);
-        assert_ne!(seed1, seed3, "Different block numbers should give different seeds");
+        assert_ne!(
+            seed1, seed3,
+            "Different block numbers should give different seeds"
+        );
     }
 
     #[test]
@@ -231,14 +237,18 @@ mod tests {
             pk_enc: keypair.public_key(),
             address_tag: [0u8; 32],
         };
-        
+
         let block_hash = [1u8; 32];
         let block_number = 100;
         let amount = 50 * 100_000_000; // 50 coins
-        
+
         let result = encrypt_coinbase_note(&address, amount, &block_hash, block_number);
-        assert!(result.is_ok(), "Encryption should succeed: {:?}", result.err());
-        
+        assert!(
+            result.is_ok(),
+            "Encryption should succeed: {:?}",
+            result.err()
+        );
+
         let note_data = result.unwrap();
         assert_eq!(note_data.amount, amount);
         assert_eq!(note_data.commitment.len(), 32);

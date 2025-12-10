@@ -6,7 +6,7 @@ use url::Url;
 use crate::{error::WalletError, notes::NoteCiphertext};
 
 /// Transaction bundle for submission to the node.
-/// 
+///
 /// This contains all data needed to submit a shielded transfer to the chain.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionBundle {
@@ -341,9 +341,10 @@ mod serde_bytes_64 {
         let buf: serde_bytes::ByteBuf = serde_bytes::ByteBuf::deserialize(deserializer)?;
         let vec = buf.into_vec();
         if vec.len() != 64 {
-            return Err(serde::de::Error::custom(
-                format!("expected 64 bytes, got {}", vec.len())
-            ));
+            return Err(serde::de::Error::custom(format!(
+                "expected 64 bytes, got {}",
+                vec.len()
+            )));
         }
         let mut arr = [0u8; 64];
         arr.copy_from_slice(&vec);

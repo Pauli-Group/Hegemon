@@ -116,19 +116,11 @@ impl Default for EncryptedNote {
 ///
 /// Uses a transparent proving system (FRI-based IOP) with no trusted setup.
 /// Security relies only on hash functions.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
 pub struct StarkProof {
     /// Variable-length proof data.
     /// Contains FRI layers, query responses, and auxiliary data.
     pub data: Vec<u8>,
-}
-
-impl Default for StarkProof {
-    fn default() -> Self {
-        Self {
-            data: Vec::new(),
-        }
-    }
 }
 
 impl StarkProof {
@@ -237,20 +229,15 @@ pub struct ShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
 }
 
 /// Transfer direction for shielding/unshielding.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
 pub enum TransferType {
     /// Transparent to shielded (shielding).
     Shield,
     /// Shielded to shielded (private transfer).
+    #[default]
     ShieldedToShielded,
     /// Shielded to transparent (unshielding).
     Unshield,
-}
-
-impl Default for TransferType {
-    fn default() -> Self {
-        Self::ShieldedToShielded
-    }
 }
 
 impl DecodeWithMemTracking for TransferType {}
@@ -332,7 +319,7 @@ mod tests {
 
         // Encode it
         let encoded = note.encode();
-        
+
         // Verify exact size - fixed arrays encode without length prefix
         assert_eq!(
             encoded.len(),
@@ -342,9 +329,8 @@ mod tests {
         );
 
         // Decode it back
-        let decoded = EncryptedNote::decode(&mut &encoded[..])
-            .expect("Should decode successfully");
-        
+        let decoded = EncryptedNote::decode(&mut &encoded[..]).expect("Should decode successfully");
+
         assert_eq!(decoded.ciphertext[0], 0xAB);
         assert_eq!(decoded.ciphertext[610], 0xCD);
         assert_eq!(decoded.kem_ciphertext[0], 0xEF);
@@ -355,13 +341,13 @@ mod tests {
     fn encrypted_note_raw_bytes_decode() {
         // Simulate wallet-style encoding (just concatenating raw bytes)
         let mut raw_bytes = vec![0u8; ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN];
-        raw_bytes[0] = 0x42;  // first byte of ciphertext
-        raw_bytes[ENCRYPTED_NOTE_SIZE] = 0x43;  // first byte of kem_ciphertext
-        
+        raw_bytes[0] = 0x42; // first byte of ciphertext
+        raw_bytes[ENCRYPTED_NOTE_SIZE] = 0x43; // first byte of kem_ciphertext
+
         // This should decode correctly
         let decoded = EncryptedNote::decode(&mut raw_bytes.as_slice())
             .expect("Should decode raw concatenated bytes");
-        
+
         assert_eq!(decoded.ciphertext[0], 0x42);
         assert_eq!(decoded.kem_ciphertext[0], 0x43);
     }

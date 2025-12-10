@@ -27,6 +27,20 @@ members = [
 ]
 resolver = "2"
 
+[workspace.lints.clippy]
+# Allow these lints workspace-wide - they're stylistic, not correctness issues
+needless_borrows_for_generic_args = "allow"
+redundant_closure = "allow"
+manual_div_ceil = "allow"
+unnecessary_sort_by = "allow"
+useless_conversion = "allow"
+doc_overindented_list_items = "allow"
+field_reassign_with_default = "allow"
+explicit_auto_deref = "allow"
+needless_borrow = "allow"
+unused_enumerate_index = "allow"
+let_and_return = "allow"
+
 [workspace.package]
 authors = ["Pauli Group Inc."]
 license = "MIT"

@@ -32,9 +32,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
-    TransactionProverStark, default_proof_options, fast_proof_options,
-    witness::TransactionWitness,
-    hashing::felt_to_bytes32,
+    default_proof_options, fast_proof_options, hashing::felt_to_bytes32,
+    witness::TransactionWitness, TransactionProverStark,
 };
 
 use crate::error::WalletError;
@@ -158,21 +157,22 @@ impl StarkProver {
 
         // Get public inputs from witness
         let pub_inputs = self.inner.get_public_inputs(witness);
-        
+
         // DEBUG: Print balance info
         let total_input: u64 = witness.inputs.iter().map(|i| i.note.value).sum();
         let total_output: u64 = witness.outputs.iter().map(|o| o.note.value).sum();
         // eprintln!("DEBUG prover: inputs.len()={} outputs.len()={}", witness.inputs.len(), witness.outputs.len());
         // eprintln!("DEBUG prover: total_input={} total_output={} fee={}", total_input, total_output, witness.fee);
-        // eprintln!("DEBUG prover: balance check: total_input ({}) = total_output ({}) + fee ({})?", 
+        // eprintln!("DEBUG prover: balance check: total_input ({}) = total_output ({}) + fee ({})?",
         //     total_input, total_output, witness.fee);
         if total_input != total_output + witness.fee {
             // eprintln!("DEBUG prover: BALANCE MISMATCH! {} != {} + {}", total_input, total_output, witness.fee);
         }
-        
+
         // Generate the real STARK proof
-        let proof = self.inner.prove_transaction(witness)
-            .map_err(|e| WalletError::Serialization(format!("STARK proof generation failed: {}", e)))?;
+        let proof = self.inner.prove_transaction(witness).map_err(|e| {
+            WalletError::Serialization(format!("STARK proof generation failed: {}", e))
+        })?;
 
         let proving_time = start.elapsed();
 
@@ -183,7 +183,7 @@ impl StarkProver {
 
         // Serialize the proof for transmission
         let proof_bytes = proof.to_bytes();
-        
+
         // Verify proof locally before returning (development check)
         match transaction_circuit::verify_transaction_proof_bytes(&proof_bytes, &pub_inputs) {
             Ok(()) => {
@@ -193,18 +193,25 @@ impl StarkProver {
             Err(e) => {
                 #[cfg(debug_assertions)]
                 eprintln!("DEBUG prover: Local verification FAILED: {:?}", e);
-                return Err(WalletError::Serialization(format!("Proof verification failed: {:?}", e)));
+                return Err(WalletError::Serialization(format!(
+                    "Proof verification failed: {:?}",
+                    e
+                )));
             }
         }
-        
+
         // Convert field elements to 32-byte arrays
         // IMPORTANT: Do NOT filter out zeros - the STARK proof was generated with
         // exactly MAX_INPUTS nullifiers and MAX_OUTPUTS commitments (with zero padding).
         // The verifier must receive the same public inputs to verify correctly.
-        let nullifiers: Vec<[u8; 32]> = pub_inputs.nullifiers.iter()
+        let nullifiers: Vec<[u8; 32]> = pub_inputs
+            .nullifiers
+            .iter()
             .map(|f| felt_to_bytes32(*f))
             .collect();
-        let commitments: Vec<[u8; 32]> = pub_inputs.commitments.iter()
+        let commitments: Vec<[u8; 32]> = pub_inputs
+            .commitments
+            .iter()
             .map(|f| felt_to_bytes32(*f))
             .collect();
         let anchor = felt_to_bytes32(pub_inputs.merkle_root);
@@ -222,9 +229,13 @@ impl StarkProver {
     /// Verify a STARK proof locally.
     ///
     /// This is useful for testing and validation before submission.
-    pub fn verify(&self, proof_bytes: &[u8], witness: &TransactionWitness) -> Result<bool, WalletError> {
+    pub fn verify(
+        &self,
+        proof_bytes: &[u8],
+        witness: &TransactionWitness,
+    ) -> Result<bool, WalletError> {
         use transaction_circuit::verify_transaction_proof_bytes;
-        
+
         let pub_inputs = self.inner.get_public_inputs(witness);
         match verify_transaction_proof_bytes(proof_bytes, &pub_inputs) {
             Ok(()) => Ok(true),
@@ -296,8 +307,7 @@ impl ProverStats {
         self.total_proof_bytes += result.proof_size() as u64;
 
         if self.proofs_generated > 0 {
-            self.average_proving_time =
-                self.total_proving_time / self.proofs_generated as u32;
+            self.average_proving_time = self.total_proving_time / self.proofs_generated as u32;
             self.average_proof_size = self.total_proof_bytes / self.proofs_generated;
         }
     }

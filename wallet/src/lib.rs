@@ -18,8 +18,11 @@ pub mod viewing;
 
 pub use address::ShieldedAddress;
 pub use async_sync::{AsyncWalletSyncEngine, SharedSyncEngine};
+pub use consolidate::{execute_consolidation, ConsolidationPlan, MAX_INPUTS};
 pub use error::WalletError;
-pub use extrinsic::{ChainMetadata, Era, ExtrinsicBuilder, ShieldedTransferCall, SlhDsaExtrinsicBuilder};
+pub use extrinsic::{
+    ChainMetadata, Era, ExtrinsicBuilder, ShieldedTransferCall, SlhDsaExtrinsicBuilder,
+};
 pub use keys::{AddressKeyMaterial, DerivedKeys, RootSecret, SpendKey, ViewKey};
 pub use notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 pub use prover::{ProofResult, ProverStats, StarkProver, StarkProverConfig};
@@ -29,8 +32,7 @@ pub use scanner::{
     SharedScanner,
 };
 pub use shielded_tx::{
-    build_shielding_tx, BuiltShieldedTx, ProofStats, ShieldedOutput, ShieldedTxBuilder,
-    ShieldingTx,
+    build_shielding_tx, BuiltShieldedTx, ProofStats, ShieldedOutput, ShieldedTxBuilder, ShieldingTx,
 };
 pub use store::{
     PendingStatus, PendingTransaction, SpendableNote, TransferRecipient, WalletMode, WalletStore,
@@ -39,4 +41,3 @@ pub use substrate_rpc::{BlockingSubstrateRpcClient, SubstrateRpcClient, Substrat
 pub use sync::{SyncOutcome, WalletSyncEngine};
 pub use tx_builder::{build_transaction, precheck_nullifiers, BuiltTransaction, Recipient};
 pub use viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};
-pub use consolidate::{ConsolidationPlan, execute_consolidation, MAX_INPUTS};

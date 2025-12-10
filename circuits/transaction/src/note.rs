@@ -59,12 +59,17 @@ impl Default for MerklePath {
 
 impl MerklePath {
     /// Verify this path connects leaf_hash at position to the given root.
-    pub fn verify(&self, leaf_hash: crate::hashing::Felt, position: u64, root: crate::hashing::Felt) -> bool {
+    pub fn verify(
+        &self,
+        leaf_hash: crate::hashing::Felt,
+        position: u64,
+        root: crate::hashing::Felt,
+    ) -> bool {
         use crate::hashing::merkle_node;
-        
+
         let mut current = leaf_hash;
         let mut pos = position;
-        
+
         for sibling in &self.siblings {
             current = if pos & 1 == 0 {
                 merkle_node(current, *sibling)
@@ -73,16 +78,16 @@ impl MerklePath {
             };
             pos >>= 1;
         }
-        
+
         current == root
     }
 }
 
 pub(crate) mod serde_merkle_path {
-    use serde::{Deserializer, Serializer, ser::SerializeSeq, de::SeqAccess, de::Visitor};
+    use serde::{de::SeqAccess, de::Visitor, ser::SerializeSeq, Deserializer, Serializer};
     #[allow(unused_imports)] // FieldElement trait is used for .as_int() method
     use winterfell::math::FieldElement;
-    
+
     pub fn serialize<S>(value: &Vec<crate::hashing::Felt>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -93,7 +98,7 @@ pub(crate) mod serde_merkle_path {
         }
         seq.end()
     }
-    
+
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<crate::hashing::Felt>, D::Error>
     where
         D: Deserializer<'de>,
@@ -101,11 +106,11 @@ pub(crate) mod serde_merkle_path {
         struct FeltVecVisitor;
         impl<'de> Visitor<'de> for FeltVecVisitor {
             type Value = Vec<crate::hashing::Felt>;
-            
+
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
                 formatter.write_str("a sequence of u64 field elements")
             }
-            
+
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
             where
                 A: SeqAccess<'de>,

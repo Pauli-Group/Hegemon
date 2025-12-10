@@ -30,7 +30,7 @@ impl ExportGenesisCmd {
 
 // TODO: Phase 4 - Additional custom commands:
 // - ImportPeersCmd: Import peers from a peer bundle
-// - ExportPeersCmd: Export peers to a peer bundle  
+// - ExportPeersCmd: Export peers to a peer bundle
 // - GenerateNodeKeyCmd: Generate a new node key
 // - BenchmarkPowCmd: Benchmark PoW performance
 // - ValidateCircuitCmd: Validate a ZK circuit

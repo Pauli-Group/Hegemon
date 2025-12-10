@@ -14,3 +14,6 @@ transaction-circuit = { path = "../transaction" }
 block-circuit = { path = "../block" }
 protocol-versioning = { path = "../../protocol/versioning" }
 winterfell = "0.13"
+
+[lints]
+workspace = true

@@ -61,15 +61,15 @@ impl<C> Clone for Blake3Algorithm<C> {
 pub fn compact_to_target(bits: u32) -> Option<U256> {
     let exponent = bits >> 24;
     let mantissa = bits & 0x00ff_ffff;
-    
+
     if mantissa == 0 {
         return None;
     }
-    
+
     if exponent > 32 {
         return Some(U256::MAX);
     }
-    
+
     let mut target = U256::from(mantissa);
     if exponent > 3 {
         target <<= 8 * (exponent as usize - 3);
@@ -84,23 +84,23 @@ pub fn target_to_compact(target: U256) -> u32 {
     if target.is_zero() {
         return 0;
     }
-    
+
     // Convert to big-endian bytes
     let bytes = u256_to_be_bytes(target);
     let mut exponent = 32u32;
-    
+
     for (i, &byte) in bytes.iter().enumerate() {
         if byte != 0 {
             exponent = (32 - i) as u32;
             break;
         }
     }
-    
+
     let start = 32 - exponent as usize;
     let mantissa = ((bytes[start] as u32) << 16)
         | ((bytes.get(start + 1).copied().unwrap_or(0) as u32) << 8)
         | (bytes.get(start + 2).copied().unwrap_or(0) as u32);
-    
+
     (exponent << 24) | (mantissa & 0x00ff_ffff)
 }
 
@@ -122,7 +122,7 @@ pub fn compute_work(pre_hash: &H256, nonce: u64) -> H256 {
     hasher.update(pre_hash.as_bytes());
     hasher.update(&nonce.to_le_bytes());
     let result = H256::from_slice(hasher.finalize().as_bytes());
-    
+
     // Debug: log the computation
     tracing::trace!(
         pre_hash_bytes = ?pre_hash.as_bytes(),
@@ -131,7 +131,7 @@ pub fn compute_work(pre_hash: &H256, nonce: u64) -> H256 {
         result = ?result,
         "compute_work inputs and output"
     );
-    
+
     result
 }
 
@@ -148,12 +148,12 @@ pub fn seal_meets_target(work: &H256, pow_bits: u32) -> bool {
 /// Verify a seal is valid for the given pre-hash and difficulty
 pub fn verify_seal(pre_hash: &H256, seal: &Blake3Seal) -> bool {
     let computed_work = compute_work(pre_hash, seal.nonce);
-    
+
     // Verify the work matches what's in the seal
     if computed_work != seal.work {
         return false;
     }
-    
+
     // Verify the work meets the difficulty target
     seal_meets_target(&seal.work, seal.difficulty)
 }
@@ -182,7 +182,7 @@ pub fn mine_round(
     let target = compact_to_target(pow_bits)?;
     let start_nonce = (round as u64).saturating_mul(nonces_per_round);
     let end_nonce = start_nonce.saturating_add(nonces_per_round);
-    
+
     // Debug: Log target and first work value on first round
     if round == 0 {
         let first_work = compute_work(pre_hash, start_nonce);
@@ -195,11 +195,11 @@ pub fn mine_round(
             "mine_round: checking difficulty"
         );
     }
-    
+
     for nonce in start_nonce..end_nonce {
         let work = compute_work(pre_hash, nonce);
         let work_value = U256::from_big_endian(work.as_bytes());
-        
+
         if work_value <= target {
             return Some(Blake3Seal {
                 nonce,
@@ -208,17 +208,17 @@ pub fn mine_round(
             });
         }
     }
-    
+
     None
 }
 
 // ============================================================================
 // Substrate PowAlgorithm Implementation
 // ============================================================================
-// 
+//
 // The following implementation is gated behind the "substrate" feature flag
 // as it requires sc-consensus-pow which has complex dependency requirements.
-// 
+//
 // To enable, add to consensus/Cargo.toml:
 // [features]
 // substrate = ["sc-consensus-pow", "sp-consensus-pow", "sp-api", "runtime"]
@@ -231,7 +231,7 @@ mod substrate_impl {
     use sp_consensus_pow::Seal;
     use sp_runtime::generic::BlockId;
     use sp_runtime::traits::Block as BlockT;
-    
+
     // Use the DifficultyApi from the runtime crate
     // This ensures we use the same trait that the runtime implements
     use runtime::apis::DifficultyApi;
@@ -259,12 +259,11 @@ mod substrate_impl {
             seal: &Seal,
             difficulty: Self::Difficulty,
         ) -> Result<bool, PowError<B>> {
-            let blake3_seal = Blake3Seal::decode(&mut &seal[..])
-                .map_err(|e| PowError::Codec(e))?;
-            
+            let blake3_seal = Blake3Seal::decode(&mut &seal[..]).map_err(|e| PowError::Codec(e))?;
+
             // Convert difficulty to compact bits for comparison
             let expected_bits = target_to_compact(U256::MAX / difficulty);
-            
+
             // Debug logging for seal verification
             tracing::debug!(
                 seal_nonce = blake3_seal.nonce,
@@ -272,20 +271,20 @@ mod substrate_impl {
                 expected_difficulty_bits = expected_bits,
                 "Verifying PoW seal"
             );
-            
+
             // Verify the difficulty matches (with some tolerance for rounding)
             if blake3_seal.difficulty != expected_bits {
                 // Allow small differences due to compact representation precision
                 let seal_target = compact_to_target(blake3_seal.difficulty).unwrap_or(U256::zero());
                 let expected_target = U256::MAX / difficulty;
-                
+
                 // If the targets differ by more than 0.1%, reject
                 let diff = if seal_target > expected_target {
                     seal_target - expected_target
                 } else {
                     expected_target - seal_target
                 };
-                
+
                 if diff > expected_target / U256::from(1000u32) {
                     tracing::warn!(
                         seal_difficulty = blake3_seal.difficulty,
@@ -295,7 +294,7 @@ mod substrate_impl {
                     return Ok(false);
                 }
             }
-            
+
             // Verify the seal work meets the target
             // First compute the expected work hash
             // Convert pre_hash to H256 - it's already 32 bytes
@@ -303,7 +302,7 @@ mod substrate_impl {
             let pre_hash_h256: H256 = H256::from(pre_hash_bytes);
             let computed_work = compute_work(&pre_hash_h256, blake3_seal.nonce);
             let work_matches = computed_work == blake3_seal.work;
-            
+
             // Detailed debug logging to compare computed vs stored work
             tracing::info!(
                 pre_hash = ?pre_hash,
@@ -313,7 +312,7 @@ mod substrate_impl {
                 work_matches = work_matches,
                 "🔍 PoW seal verification details"
             );
-            
+
             let result = verify_seal(&pre_hash_h256, &blake3_seal);
             if !result {
                 tracing::warn!(
@@ -359,7 +358,7 @@ mod tests {
         let original_bits = 0x1d00ffff;
         let target = compact_to_target(original_bits).unwrap();
         let recovered_bits = target_to_compact(target);
-        
+
         // May not be exactly equal due to precision, but should be close
         let recovered_target = compact_to_target(recovered_bits).unwrap();
         assert_eq!(target, recovered_target);
@@ -369,20 +368,20 @@ mod tests {
     fn test_compute_work_deterministic() {
         let pre_hash = H256::repeat_byte(0x42);
         let nonce = 12345u64;
-        
+
         let work1 = compute_work(&pre_hash, nonce);
         let work2 = compute_work(&pre_hash, nonce);
-        
+
         assert_eq!(work1, work2);
     }
 
     #[test]
     fn test_compute_work_different_nonces() {
         let pre_hash = H256::repeat_byte(0x42);
-        
+
         let work1 = compute_work(&pre_hash, 1);
         let work2 = compute_work(&pre_hash, 2);
-        
+
         assert_ne!(work1, work2);
     }
 
@@ -407,11 +406,11 @@ mod tests {
         let pre_hash = H256::repeat_byte(0x01);
         // Very easy difficulty for testing
         let pow_bits = 0x2100ffff;
-        
+
         // Find a valid seal
         let seal = mine_round(&pre_hash, pow_bits, 0, 100_000)
             .expect("should find seal with easy difficulty");
-        
+
         assert!(verify_seal(&pre_hash, &seal));
     }
 
@@ -419,17 +418,16 @@ mod tests {
     fn test_verify_seal_wrong_nonce() {
         let pre_hash = H256::repeat_byte(0x01);
         let pow_bits = 0x2100ffff;
-        
-        let valid_seal = mine_round(&pre_hash, pow_bits, 0, 100_000)
-            .expect("should find seal");
-        
+
+        let valid_seal = mine_round(&pre_hash, pow_bits, 0, 100_000).expect("should find seal");
+
         // Modify the nonce but keep the same work (should fail)
         let invalid_seal = Blake3Seal {
             nonce: valid_seal.nonce.wrapping_add(1),
             difficulty: valid_seal.difficulty,
             work: valid_seal.work, // Work won't match new nonce
         };
-        
+
         assert!(!verify_seal(&pre_hash, &invalid_seal));
     }
 
@@ -438,7 +436,7 @@ mod tests {
         let pre_hash = H256::repeat_byte(0xab);
         // Easy difficulty
         let pow_bits = 0x2100ffff;
-        
+
         // Should find a solution within reasonable rounds
         let mut found = false;
         for round in 0..100 {
@@ -457,10 +455,10 @@ mod tests {
             difficulty: 0x1d00ffff,
             work: H256::repeat_byte(0x55),
         };
-        
+
         let encoded = seal.encode();
         let decoded = Blake3Seal::decode(&mut &encoded[..]).unwrap();
-        
+
         assert_eq!(seal, decoded);
     }
 }

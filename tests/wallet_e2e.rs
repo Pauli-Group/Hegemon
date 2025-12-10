@@ -565,7 +565,15 @@ fn test_spent_notes_marked() {
     engine.sync_once().unwrap();
 
     // Verify initial balance
-    assert_eq!(store.balances().unwrap().get(&NATIVE_ASSET_ID).copied().unwrap_or(0), 100);
+    assert_eq!(
+        store
+            .balances()
+            .unwrap()
+            .get(&NATIVE_ASSET_ID)
+            .copied()
+            .unwrap_or(0),
+        100
+    );
 
     // Create a recipient and build transaction
     let other_root = RootSecret::from_bytes([99u8; 32]);
@@ -591,7 +599,7 @@ fn test_spent_notes_marked() {
 
     // Original note should be spent, change note should exist
     let _spendable = store.spendable_notes(NATIVE_ASSET_ID).unwrap();
-    
+
     // Check the change is correct (100 - 50 = 50 change)
     let balances = store.balances().unwrap();
     assert_eq!(
@@ -651,11 +659,11 @@ fn test_view_only_wallet_tracking() {
 async fn test_substrate_wallet_sync() {
     // These tests require the substrate feature and a running node.
     // They are marked as ignored and serve as documentation for E2E testing.
-    // 
+    //
     // To run:
     // 1. Start a Substrate node: `cargo run -p hegemon-node -- --dev --tmp`
     // 2. Run tests: `cargo test -p security-tests --test wallet_e2e -- --ignored`
-    
+
     // Placeholder for actual substrate integration test
     // When substrate feature is enabled, this would use:
     //   let client = Arc::new(SubstrateRpcClient::connect("ws://127.0.0.1:9944").await.unwrap());

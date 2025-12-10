@@ -57,9 +57,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
-use crate::substrate::network_bridge::{
-    SyncRequest, SyncResponse, BlockAnnounce,
-};
+use crate::substrate::network_bridge::{BlockAnnounce, SyncRequest, SyncResponse};
 
 /// Maximum number of headers to return in a single response
 pub const MAX_HEADERS_PER_RESPONSE: u32 = 128;
@@ -219,9 +217,15 @@ struct PendingRequest {
 #[allow(dead_code)] // Reserved for future sync protocol implementation
 enum PendingRequestType {
     /// Requesting blocks starting from a height
-    GetBlocks { from_height: u64 },
-    Headers { from_height: u64 },
-    Bodies { hashes: Vec<[u8; 32]> },
+    GetBlocks {
+        from_height: u64,
+    },
+    Headers {
+        from_height: u64,
+    },
+    Bodies {
+        hashes: Vec<[u8; 32]>,
+    },
 }
 
 impl<Block, Client> ChainSyncService<Block, Client>
@@ -325,7 +329,9 @@ where
 
         // Check if we should start syncing
         let our_best = self.best_number();
-        if announce.number > our_best + 1 && matches!(self.state, SyncState::Idle | SyncState::Synced) {
+        if announce.number > our_best + 1
+            && matches!(self.state, SyncState::Idle | SyncState::Synced)
+        {
             tracing::info!(
                 our_best = our_best,
                 peer_best = announce.number,
@@ -347,19 +353,22 @@ where
 
     /// Handle peer connection
     pub fn on_peer_connected(&mut self, peer_id: PeerId) {
-        self.peers.insert(peer_id, PeerSyncState {
-            best_height: 0,
-            best_hash: [0u8; 32],
-            last_seen: std::time::Instant::now(),
-            failed_requests: 0,
-        });
+        self.peers.insert(
+            peer_id,
+            PeerSyncState {
+                best_height: 0,
+                best_hash: [0u8; 32],
+                last_seen: std::time::Instant::now(),
+                failed_requests: 0,
+            },
+        );
         tracing::debug!(peer = %hex::encode(peer_id), "Sync: peer connected");
     }
 
     /// Handle peer disconnection
     pub fn on_peer_disconnected(&mut self, peer_id: &PeerId) {
         self.peers.remove(peer_id);
-        
+
         // If we were syncing from this peer, reset to idle
         if let SyncState::Downloading { peer, .. } = &self.state {
             if peer == peer_id {
@@ -382,22 +391,27 @@ where
     /// Handle an incoming sync request from a peer (Task 11.6.1)
     ///
     /// This is called when another node requests blocks/headers from us.
-    pub fn handle_sync_request(&mut self, peer_id: PeerId, request: SyncRequest) -> Option<SyncResponse> {
+    pub fn handle_sync_request(
+        &mut self,
+        peer_id: PeerId,
+        request: SyncRequest,
+    ) -> Option<SyncResponse> {
         self.stats.requests_handled += 1;
 
         match request {
-            SyncRequest::BlockHeaders { start_hash, max_headers, ascending } => {
-                self.handle_headers_request(peer_id, start_hash, max_headers, ascending)
-            }
-            SyncRequest::BlockBodies { hashes } => {
-                self.handle_bodies_request(peer_id, hashes)
-            }
+            SyncRequest::BlockHeaders {
+                start_hash,
+                max_headers,
+                ascending,
+            } => self.handle_headers_request(peer_id, start_hash, max_headers, ascending),
+            SyncRequest::BlockBodies { hashes } => self.handle_bodies_request(peer_id, hashes),
             SyncRequest::StateRequest { block_hash, keys } => {
                 self.handle_state_request(peer_id, block_hash, keys)
             }
-            SyncRequest::GetBlocks { start_height, max_blocks } => {
-                self.handle_get_blocks_request(peer_id, start_height, max_blocks)
-            }
+            SyncRequest::GetBlocks {
+                start_height,
+                max_blocks,
+            } => self.handle_get_blocks_request(peer_id, start_height, max_blocks),
         }
     }
 
@@ -411,10 +425,10 @@ where
         max_blocks: u32,
     ) -> Option<SyncResponse> {
         use crate::substrate::network_bridge::SyncBlock;
-        
+
         let max_blocks = max_blocks.min(MAX_BLOCKS_PER_REQUEST);
         let our_best = self.best_number();
-        
+
         tracing::info!(
             peer = %hex::encode(peer_id),
             start_height = start_height,
@@ -422,7 +436,7 @@ where
             our_best = our_best,
             "🔄 SYNC SERVER: Handling GetBlocks request"
         );
-        
+
         // Can't provide blocks we don't have
         if start_height > our_best {
             tracing::warn!(
@@ -438,17 +452,14 @@ where
         }
 
         let mut blocks = Vec::new();
-        
+
         for height in start_height..=(start_height + max_blocks as u64 - 1).min(our_best) {
             // Get block hash at height
             let height_num: NumberFor<Block> = height.try_into().ok()?;
             let block_hash = match self.client.hash(height_num) {
                 Ok(Some(h)) => h,
                 Ok(None) => {
-                    tracing::debug!(
-                        height = height,
-                        "GetBlocks: no block at height"
-                    );
+                    tracing::debug!(height = height, "GetBlocks: no block at height");
                     break;
                 }
                 Err(e) => {
@@ -671,13 +682,19 @@ where
     /// This is the core of the sync protocol - process blocks and queue for import.
     pub fn handle_sync_response(&mut self, peer_id: PeerId, response: SyncResponse) {
         match response {
-            SyncResponse::BlockHeaders { request_id, headers } => {
+            SyncResponse::BlockHeaders {
+                request_id,
+                headers,
+            } => {
                 self.handle_headers_response(peer_id, request_id, headers);
             }
             SyncResponse::BlockBodies { request_id, bodies } => {
                 self.handle_bodies_response(peer_id, request_id, bodies);
             }
-            SyncResponse::StateResponse { request_id, entries } => {
+            SyncResponse::StateResponse {
+                request_id,
+                entries,
+            } => {
                 tracing::debug!(
                     peer = %hex::encode(peer_id),
                     request_id = request_id,
@@ -692,7 +709,12 @@ where
     }
 
     /// Handle a Blocks response (full blocks for PoW sync)
-    fn handle_blocks_response(&mut self, peer_id: PeerId, request_id: u64, blocks: Vec<crate::substrate::network_bridge::SyncBlock>) {
+    fn handle_blocks_response(
+        &mut self,
+        peer_id: PeerId,
+        request_id: u64,
+        blocks: Vec<crate::substrate::network_bridge::SyncBlock>,
+    ) {
         tracing::info!(
             peer = %hex::encode(peer_id),
             request_id = request_id,
@@ -700,12 +722,16 @@ where
             state = ?self.state,
             "🔄 SYNC: handle_blocks_response CALLED"
         );
-        
+
         // Remove from pending
         let _pending = self.pending_requests.remove(&request_id);
-        
+
         // Clear request pending flag
-        if let SyncState::Downloading { ref mut request_pending, .. } = &mut self.state {
+        if let SyncState::Downloading {
+            ref mut request_pending,
+            ..
+        } = &mut self.state
+        {
             *request_pending = false;
         }
 
@@ -715,7 +741,7 @@ where
                 request_id = request_id,
                 "🔄 SYNC: Received EMPTY blocks response - peer has no blocks?"
             );
-            
+
             // Mark peer failure
             if let Some(peer_state) = self.peers.get_mut(&peer_id) {
                 peer_state.failed_requests += 1;
@@ -748,7 +774,7 @@ where
                 sync_block.body,
             );
         }
-        
+
         tracing::info!(
             queue_after = self.downloaded_blocks.len(),
             "🔄 SYNC: Blocks queued, queue size now {}",
@@ -759,12 +785,16 @@ where
     /// Handle a headers response
     fn handle_headers_response(&mut self, peer_id: PeerId, request_id: u64, headers: Vec<Vec<u8>>) {
         self.stats.headers_received += headers.len() as u64;
-        
+
         // Find the corresponding pending request
         let _pending = self.pending_requests.remove(&request_id);
-        
+
         // Clear request pending flag in state
-        if let SyncState::Downloading { ref mut request_pending, .. } = &mut self.state {
+        if let SyncState::Downloading {
+            ref mut request_pending,
+            ..
+        } = &mut self.state
+        {
             *request_pending = false;
         }
 
@@ -774,7 +804,7 @@ where
                 request_id = request_id,
                 "Received empty headers response"
             );
-            
+
             // Mark peer failure if we expected blocks
             if let Some(peer_state) = self.peers.get_mut(&peer_id) {
                 peer_state.failed_requests += 1;
@@ -796,15 +826,24 @@ where
     }
 
     /// Handle a bodies response
-    fn handle_bodies_response(&mut self, peer_id: PeerId, request_id: u64, bodies: Vec<Option<Vec<Vec<u8>>>>) {
+    fn handle_bodies_response(
+        &mut self,
+        peer_id: PeerId,
+        request_id: u64,
+        bodies: Vec<Option<Vec<Vec<u8>>>>,
+    ) {
         let found = bodies.iter().filter(|b| b.is_some()).count();
         self.stats.bodies_received += found as u64;
-        
+
         // Find the corresponding pending request
         let _pending = self.pending_requests.remove(&request_id);
-        
+
         // Clear request pending flag in state
-        if let SyncState::Downloading { ref mut request_pending, .. } = &mut self.state {
+        if let SyncState::Downloading {
+            ref mut request_pending,
+            ..
+        } = &mut self.state
+        {
             *request_pending = false;
         }
 
@@ -814,7 +853,7 @@ where
                 request_id = request_id,
                 "Received empty bodies response"
             );
-            
+
             // Mark peer failure
             if let Some(peer_state) = self.peers.get_mut(&peer_id) {
                 peer_state.failed_requests += 1;
@@ -867,7 +906,11 @@ where
         self.stats.blocks_downloaded += 1;
 
         // Update sync state progress
-        if let SyncState::Downloading { ref mut current_height, .. } = &mut self.state {
+        if let SyncState::Downloading {
+            ref mut current_height,
+            ..
+        } = &mut self.state
+        {
             if number > *current_height {
                 *current_height = number;
             }
@@ -886,16 +929,17 @@ where
         self.stats.blocks_imported += 1;
 
         // Update state
-        if let SyncState::Downloading { target_height, ref mut current_height, .. } = &mut self.state {
+        if let SyncState::Downloading {
+            target_height,
+            ref mut current_height,
+            ..
+        } = &mut self.state
+        {
             *current_height = number;
-            
+
             // Check if we're synced
             if number >= *target_height {
-                tracing::info!(
-                    height = number,
-                    target = target_height,
-                    "Sync complete!"
-                );
+                tracing::info!(height = number, target = target_height, "Sync complete!");
                 self.state = SyncState::Synced;
             }
         }
@@ -933,7 +977,7 @@ where
     pub fn tick(&mut self) -> Option<(PeerId, SyncRequest)> {
         let our_best = self.best_number();
         let now = Instant::now();
-        
+
         // DEBUG: Log every tick to trace state machine
         tracing::debug!(
             our_best = our_best,
@@ -945,7 +989,12 @@ where
         // Log sync status periodically
         if now.duration_since(self.last_log_time) > Duration::from_secs(10) {
             self.last_log_time = now;
-            if let SyncState::Downloading { target_height, current_height: _, .. } = &self.state {
+            if let SyncState::Downloading {
+                target_height,
+                current_height: _,
+                ..
+            } = &self.state
+            {
                 let remaining = target_height.saturating_sub(our_best);
                 let progress = if *target_height > 0 {
                     (our_best as f64 / *target_height as f64 * 100.0).min(100.0)
@@ -983,17 +1032,17 @@ where
                             request_pending: false,
                             last_request_time: None,
                         };
-                        
+
                         // Request blocks starting from our best
                         return self.create_block_request(peer_id, our_best + 1);
                     }
                 }
                 None
             }
-            SyncState::Downloading { 
-                target_height, 
-                peer, 
-                current_height, 
+            SyncState::Downloading {
+                target_height,
+                peer,
+                current_height,
                 requested_height,
                 request_pending,
                 last_request_time,
@@ -1007,7 +1056,7 @@ where
                     queue_len = self.downloaded_blocks.len(),
                     "🔄 TICK: In Downloading state"
                 );
-                
+
                 // Check if we've caught up
                 if our_best >= target_height {
                     tracing::info!(
@@ -1022,20 +1071,25 @@ where
                 // Check for request timeout
                 if request_pending {
                     if let Some(last_time) = last_request_time {
-                        if now.duration_since(last_time) > Duration::from_secs(SYNC_REQUEST_TIMEOUT) {
+                        if now.duration_since(last_time) > Duration::from_secs(SYNC_REQUEST_TIMEOUT)
+                        {
                             tracing::warn!(
                                 peer = %hex::encode(peer),
                                 "Sync request timed out, retrying"
                             );
-                            
+
                             // Mark peer as having failed
                             if let Some(peer_state) = self.peers.get_mut(&peer) {
                                 peer_state.failed_requests += 1;
                             }
                             self.stats.failed_requests += 1;
-                            
+
                             // Clear pending and try again
-                            if let SyncState::Downloading { ref mut request_pending, .. } = &mut self.state {
+                            if let SyncState::Downloading {
+                                ref mut request_pending,
+                                ..
+                            } = &mut self.state
+                            {
                                 *request_pending = false;
                             }
                         } else {
@@ -1090,9 +1144,13 @@ where
     }
 
     /// Create a block request for the sync protocol (PoW-style GetBlocks)
-    fn create_block_request(&mut self, peer_id: PeerId, from_height: u64) -> Option<(PeerId, SyncRequest)> {
+    fn create_block_request(
+        &mut self,
+        peer_id: PeerId,
+        from_height: u64,
+    ) -> Option<(PeerId, SyncRequest)> {
         let request_id = self.next_request_id();
-        
+
         // Use the new GetBlocks request type for PoW-style sync
         let request = SyncRequest::GetBlocks {
             start_height: from_height,
@@ -1100,20 +1158,24 @@ where
         };
 
         // Track the pending request
-        self.pending_requests.insert(request_id, PendingRequest {
-            request_type: PendingRequestType::GetBlocks { from_height },
-            peer: peer_id,
-            sent_at: Instant::now(),
+        self.pending_requests.insert(
             request_id,
-        });
+            PendingRequest {
+                request_type: PendingRequestType::GetBlocks { from_height },
+                peer: peer_id,
+                sent_at: Instant::now(),
+                request_id,
+            },
+        );
 
         // Update state to show request is pending
-        if let SyncState::Downloading { 
-            ref mut requested_height, 
+        if let SyncState::Downloading {
+            ref mut requested_height,
             ref mut request_pending,
             ref mut last_request_time,
-            .. 
-        } = &mut self.state {
+            ..
+        } = &mut self.state
+        {
             *requested_height = from_height + MAX_BLOCKS_PER_REQUEST as u64;
             *request_pending = true;
             *last_request_time = Some(Instant::now());
@@ -1148,14 +1210,18 @@ impl SyncHandle {
     /// Send a sync request to a peer
     pub async fn send_request(&self, peer: PeerId, request: SyncRequest) -> Result<(), String> {
         let encoded = request.encode();
-        self.tx.send((peer, encoded)).await
+        self.tx
+            .send((peer, encoded))
+            .await
             .map_err(|e| format!("Failed to send sync request: {}", e))
     }
 
     /// Send a sync response to a peer
     pub async fn send_response(&self, peer: PeerId, response: SyncResponse) -> Result<(), String> {
         let encoded = response.encode();
-        self.tx.send((peer, encoded)).await
+        self.tx
+            .send((peer, encoded))
+            .await
             .map_err(|e| format!("Failed to send sync response: {}", e))
     }
 }

@@ -3,12 +3,12 @@
 
 pub use pallet::*;
 
+use codec::{Decode, DecodeWithMemTracking};
 use frame_support::dispatch::DispatchResult;
 use frame_support::pallet_prelude::*;
 use frame_support::traits::EnsureOrigin;
 use frame_support::weights::Weight;
 use frame_system::ensure_signed;
-use codec::{Decode, DecodeWithMemTracking};
 use sp_runtime::traits::MaybeSerializeDeserialize;
 use sp_runtime::RuntimeDebug;
 use sp_std::convert::TryInto;

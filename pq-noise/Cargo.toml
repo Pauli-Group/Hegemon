@@ -44,3 +44,6 @@ hex = "0.4"
 [features]
 default = ["std"]
 std = ["rand/std", "sha2/std"]
+
+[lints]
+workspace = true

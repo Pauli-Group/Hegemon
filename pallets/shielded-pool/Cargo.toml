@@ -60,3 +60,6 @@ stark-verify = ["winterfell", "winter-verifier", "winter-air", "winter-math", "w
 # Production mode: disables AcceptAllProofs and other test-only verifiers
 # Enable this feature for mainnet/production builds to ensure only real verification is available
 production = []
+
+[lints]
+workspace = true

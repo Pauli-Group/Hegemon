@@ -32,8 +32,8 @@ pub const MAX_SUPPLY: u64 = 21_000_000 * COIN;
 /// Initial block reward R0 = (S_MAX × t_block) / (2 × Y_EPOCH × T_YEAR)
 /// For 60s blocks: R0 = (21,000,000 × 60) / (2 × 4 × 31,536,000) ≈ 4.98 HEG
 /// In base units: ~498,287,671 (~4.98 coins)
-pub const INITIAL_SUBSIDY: u64 = (MAX_SUPPLY as u128 * T_BLOCK_SECONDS as u128
-    / (2 * Y_EPOCH as u128 * T_YEAR as u128)) as u64;
+pub const INITIAL_SUBSIDY: u64 =
+    (MAX_SUPPLY as u128 * T_BLOCK_SECONDS as u128 / (2 * Y_EPOCH as u128 * T_YEAR as u128)) as u64;
 
 /// Legacy halving interval - now derived from BLOCKS_PER_EPOCH
 pub const HALVING_INTERVAL: u64 = BLOCKS_PER_EPOCH;

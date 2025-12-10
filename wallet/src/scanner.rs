@@ -225,9 +225,10 @@ impl NoteScanner {
         match self.incoming_key.decrypt_note(&note.ciphertext) {
             Ok(recovered) => {
                 // Compute nullifier if we have full viewing key
-                let nullifier = self.full_viewing_key.as_ref().map(|fvk| {
-                    fvk.compute_nullifier(&recovered.note.rho, note.position)
-                });
+                let nullifier = self
+                    .full_viewing_key
+                    .as_ref()
+                    .map(|fvk| fvk.compute_nullifier(&recovered.note.rho, note.position));
 
                 Some(ScannedNote {
                     recovered,
@@ -269,11 +270,7 @@ impl NoteScanner {
     /// Scan notes incrementally, starting from a given position.
     ///
     /// This is useful for syncing only new notes since the last scan.
-    pub fn scan_incremental(
-        &self,
-        notes: &[PositionedNote],
-        start_position: u64,
-    ) -> ScanResult {
+    pub fn scan_incremental(&self, notes: &[PositionedNote], start_position: u64) -> ScanResult {
         let filtered: Vec<_> = notes
             .iter()
             .filter(|n| n.position >= start_position)
@@ -341,8 +338,7 @@ impl ScannerStats {
 
         if self.total_scanned > 0 {
             self.avg_time_per_note = self.total_time / self.total_scanned as u32;
-            self.notes_per_second =
-                self.total_scanned as f64 / self.total_time.as_secs_f64();
+            self.notes_per_second = self.total_scanned as f64 / self.total_time.as_secs_f64();
         }
     }
 }

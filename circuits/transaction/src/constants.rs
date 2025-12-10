@@ -58,33 +58,33 @@ pub const AIR_DOMAIN_TAG: &[u8] = b"SHPC-TRANSACTION-AIR-V1";
 /// This MUST be checked by verifiers to ensure proofs were generated for the correct circuit.
 pub fn compute_air_hash() -> [u8; 32] {
     use blake3::Hasher;
-    
+
     let mut hasher = Hasher::new();
-    
+
     // Domain separator
     hasher.update(AIR_DOMAIN_TAG);
-    
+
     // Circuit version
     hasher.update(&CIRCUIT_VERSION.to_le_bytes());
-    
+
     // Trace configuration
     hasher.update(&(crate::stark_air::TRACE_WIDTH as u32).to_le_bytes());
     hasher.update(&(crate::stark_air::CYCLE_LENGTH as u32).to_le_bytes());
     hasher.update(&(crate::stark_air::MIN_TRACE_LENGTH as u32).to_le_bytes());
-    
+
     // Circuit parameters
     hasher.update(&(MAX_INPUTS as u32).to_le_bytes());
     hasher.update(&(MAX_OUTPUTS as u32).to_le_bytes());
     hasher.update(&(CIRCUIT_MERKLE_DEPTH as u32).to_le_bytes());
-    
+
     // Poseidon configuration
     hasher.update(&(POSEIDON_WIDTH as u32).to_le_bytes());
     hasher.update(&(POSEIDON_ROUNDS as u32).to_le_bytes());
-    
+
     // Constraint structure: max degree 6 (x^5 * flag)
     hasher.update(&6u32.to_le_bytes()); // Max constraint degree
     hasher.update(&3u32.to_le_bytes()); // Number of transition constraints
-    
+
     let hash = hasher.finalize();
     let mut result = [0u8; 32];
     result.copy_from_slice(hash.as_bytes());

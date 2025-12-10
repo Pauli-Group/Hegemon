@@ -5,7 +5,7 @@ use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use crypto::ml_dsa::MlDsaSecretKey;
 use crypto::traits::SigningKey;
 use network::{GossipRouter, NatTraversalConfig, RelayConfig};
-use protocol_versioning::{DEFAULT_VERSION_BINDING, VersionBinding};
+use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
 use serde::{Deserialize, Serialize};
 use wallet::address::ShieldedAddress;
 use wallet::keys::RootSecret;

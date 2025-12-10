@@ -105,7 +105,10 @@ mod pq_crypto {
                 1 => {
                     let signature = <[u8; SLH_DSA_SIGNATURE_LEN]>::decode(input)?;
                     let public = Public::decode(input)?;
-                    Ok(Signature::SlhDsa { signature: alloc::boxed::Box::new(signature), public })
+                    Ok(Signature::SlhDsa {
+                        signature: alloc::boxed::Box::new(signature),
+                        public,
+                    })
                 }
                 _ => Err(codec::Error::from("Invalid Signature variant")),
             }
@@ -325,7 +328,10 @@ mod pq_crypto {
                     let secret = SlhDsaSecretKey::from_bytes(&bytes).ok()?;
                     let signature_vec = secret.sign(msg.as_ref()).to_bytes();
                     let signature: [u8; SLH_DSA_SIGNATURE_LEN] = signature_vec.try_into().ok()?;
-                    Some(Signature::SlhDsa { signature: alloc::boxed::Box::new(signature), public })
+                    Some(Signature::SlhDsa {
+                        signature: alloc::boxed::Box::new(signature),
+                        public,
+                    })
                 }
             }
         }
@@ -335,14 +341,21 @@ mod pq_crypto {
             signature.verify(msg.as_ref(), &account)
         }
 
-        fn generate_proof_of_possession(&mut self, context: &[u8]) -> Option<Self::ProofOfPossession> {
+        fn generate_proof_of_possession(
+            &mut self,
+            context: &[u8],
+        ) -> Option<Self::ProofOfPossession> {
             // Proof of possession: sign the public key bytes concatenated with context
             let mut msg = self.0.as_bytes().to_vec();
             msg.extend_from_slice(context);
             self.sign(&msg)
         }
 
-        fn verify_proof_of_possession(&self, context: &[u8], pop: &Self::ProofOfPossession) -> bool {
+        fn verify_proof_of_possession(
+            &self,
+            context: &[u8],
+            pop: &Self::ProofOfPossession,
+        ) -> bool {
             let mut msg = self.0.as_bytes().to_vec();
             msg.extend_from_slice(context);
             self.verify(&msg, pop)
@@ -506,7 +519,19 @@ impl Convert<AccountId, Option<AccountId>> for AccountIdAsValidatorId {
 }
 
 // serde impls are unconditional because polkadot-sdk crates require it
-#[derive(Clone, Default, Encode, Decode, PartialEq, Eq, RuntimeDebug, MaxEncodedLen, TypeInfo, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Default,
+    Encode,
+    Decode,
+    PartialEq,
+    Eq,
+    RuntimeDebug,
+    MaxEncodedLen,
+    TypeInfo,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct DummySessionKeys;
 
 impl sp_runtime::traits::OpaqueKeys for DummySessionKeys {
@@ -1633,7 +1658,7 @@ sp_api::impl_runtime_apis! {
             // Fetch encrypted notes from ShieldedPool pallet storage
             let mut notes = sp_std::vec::Vec::new();
             let end = start.saturating_add(limit as u64);
-            
+
             for index in start..end {
                 if let Some(encrypted_note) = pallet_shielded_pool::EncryptedNotes::<Runtime>::get(index) {
                     if let Some(commitment) = pallet_shielded_pool::Commitments::<Runtime>::get(index) {
@@ -1649,7 +1674,7 @@ sp_api::impl_runtime_apis! {
                         notes.push((
                             index,
                             full_note,
-                            block.into(),
+                            block,
                             commitment,
                         ));
                     }
@@ -1667,44 +1692,44 @@ sp_api::impl_runtime_apis! {
         ) -> Result<(sp_std::vec::Vec<[u8; 32]>, sp_std::vec::Vec<bool>, [u8; 32]), ()> {
             // Get the Merkle tree from storage
             let tree = pallet_shielded_pool::MerkleTree::<Runtime>::get();
-            
+
             // CompactMerkleTree stores frontier only, not full witness data.
             // For now, return a witness using the frontier.
             // A full implementation would reconstruct from stored leaves.
             let root = tree.root();
             let depth = pallet_shielded_pool::types::MERKLE_TREE_DEPTH;
-            
+
             // Check position is valid
             if position >= tree.len() {
                 return Err(());
             }
-            
+
             // Generate authentication path from frontier
             // This is simplified - a full impl would store more intermediate nodes
             let defaults = pallet_shielded_pool::merkle::DefaultHashes::new(depth);
             let mut siblings = sp_std::vec::Vec::with_capacity(depth as usize);
             let mut indices = sp_std::vec::Vec::with_capacity(depth as usize);
-            
+
             let mut level_position = position;
             for level in 0..depth {
                 let is_left = level_position & 1 == 0;
                 let sibling_position = level_position ^ 1;
-                
+
                 // Get sibling from frontier if available, otherwise use default
-                let sibling = if (level as usize) < tree.frontier.len() 
-                    && sibling_position * (1u64 << level) < tree.len() 
+                let sibling = if (level as usize) < tree.frontier.len()
+                    && sibling_position * (1u64 << level) < tree.len()
                 {
                     tree.frontier[level as usize]
                 } else {
                     defaults.at_level(level)
                 };
-                
+
                 siblings.push(sibling);
                 indices.push(!is_left); // true if we're the right child
-                
+
                 level_position >>= 1;
             }
-            
+
             Ok((siblings, indices, root))
         }
 

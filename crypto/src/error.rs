@@ -6,7 +6,10 @@ use alloc::string::String;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "std", derive(Error))]
 pub enum CryptoError {
-    #[cfg_attr(feature = "std", error("invalid length: expected {expected} bytes, found {actual}"))]
+    #[cfg_attr(
+        feature = "std",
+        error("invalid length: expected {expected} bytes, found {actual}")
+    )]
     InvalidLength { expected: usize, actual: usize },
 
     #[cfg_attr(feature = "std", error("verification failed"))]
@@ -33,7 +36,11 @@ impl core::fmt::Display for CryptoError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             CryptoError::InvalidLength { expected, actual } => {
-                write!(f, "invalid length: expected {} bytes, found {}", expected, actual)
+                write!(
+                    f,
+                    "invalid length: expected {} bytes, found {}",
+                    expected, actual
+                )
             }
             CryptoError::VerificationFailed => write!(f, "verification failed"),
             CryptoError::DecapsulationFailed => write!(f, "decapsulation failed"),

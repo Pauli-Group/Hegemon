@@ -58,8 +58,8 @@
 
 extern crate alloc;
 
-pub use pallet::*;
 pub use inherent::*;
+pub use pallet::*;
 
 mod inherent;
 
@@ -105,8 +105,8 @@ pub mod pallet {
     /// Initial block reward R0 = (S_MAX × t_block) / (2 × Y_EPOCH × T_YEAR)
     /// For 60s blocks: R0 = (21,000,000 × 60) / (2 × 4 × 31,536,000) ≈ 4.98 HEG
     /// In base units: ~498,287,671 (~4.98 coins)
-    pub const INITIAL_REWARD: u64 = (S_MAX as u128 * T_BLOCK_SECONDS as u128
-        / (2 * Y_EPOCH as u128 * T_YEAR as u128)) as u64;
+    pub const INITIAL_REWARD: u64 =
+        (S_MAX as u128 * T_BLOCK_SECONDS as u128 / (2 * Y_EPOCH as u128 * T_YEAR as u128)) as u64;
 
     /// Legacy constant for backwards compatibility
     pub const INITIAL_SUBSIDY: u64 = INITIAL_REWARD;
@@ -132,25 +132,27 @@ pub mod pallet {
     pub const R_TAIL: u64 = 0;
 
     /// Calculate block subsidy for a given epoch index (time-based halving)
-    /// 
+    ///
     /// # Arguments
     /// * `epoch` - The epoch index (0, 1, 2, ...)
-    /// 
+    ///
     /// # Returns
     /// The block reward for that epoch: R0 / 2^epoch, or R_TAIL after K_TAIL
     pub fn epoch_subsidy(epoch: u64) -> u64 {
         // After K_TAIL epochs, switch to constant tail emission
+        // Note: K_TAIL=0 disables tail emission (comparison always false by design)
+        #[allow(clippy::absurd_extreme_comparisons)]
         if K_TAIL > 0 && epoch >= K_TAIL {
             return R_TAIL;
         }
-        
+
         // Standard halving: R(k) = R0 / 2^k
         let shift = epoch.min(63); // Prevent overflow
         INITIAL_REWARD >> shift
     }
 
     /// Calculate block subsidy for a given height (height-based epoch selection)
-    /// 
+    ///
     /// This is the primary interface for block reward calculation.
     /// Uses height to determine epoch, then returns the epoch subsidy.
     pub fn block_subsidy(height: u64) -> u64 {
@@ -162,11 +164,11 @@ pub mod pallet {
     }
 
     /// Calculate epoch index from a block timestamp (time-based epoch selection)
-    /// 
+    ///
     /// # Arguments
     /// * `genesis_time` - Genesis block timestamp (UNIX seconds)
     /// * `block_timestamp` - Current block timestamp (UNIX seconds)
-    /// 
+    ///
     /// # Returns
     /// The epoch index based on elapsed time since genesis
     pub fn epoch_from_timestamp(genesis_time: u64, block_timestamp: u64) -> u64 {
@@ -356,28 +358,39 @@ pub mod pallet {
             // Get current block number and epoch
             let block_number = frame_system::Pallet::<T>::block_number();
             let height: u64 = block_number.try_into().unwrap_or(0);
-            let epoch = if height == 0 { 0 } else { (height - 1) / BLOCKS_PER_EPOCH };
+            let epoch = if height == 0 {
+                0
+            } else {
+                (height - 1) / BLOCKS_PER_EPOCH
+            };
 
             // Validate subsidy amount
             let max_subsidy = block_subsidy(height);
             ensure!(amount <= max_subsidy, Error::<T>::SubsidyExceedsLimit);
-            ensure!(amount <= T::MaxSubsidy::get(), Error::<T>::SubsidyExceedsLimit);
+            ensure!(
+                amount <= T::MaxSubsidy::get(),
+                Error::<T>::SubsidyExceedsLimit
+            );
 
             // Calculate reward splits
             let miner_share = T::MinerShare::get();
             let treasury_share = T::TreasuryShare::get();
-            let community_share = T::CommunityShare::get();
+            let _community_share = T::CommunityShare::get();
 
             let miner_amount = miner_share.mul_floor(amount);
             let treasury_amount = treasury_share.mul_floor(amount);
             // Community gets the remainder to avoid rounding losses
-            let community_amount = amount.saturating_sub(miner_amount).saturating_sub(treasury_amount);
+            let community_amount = amount
+                .saturating_sub(miner_amount)
+                .saturating_sub(treasury_amount);
 
             // Mint to miner
             if miner_amount > 0 {
                 let miner_balance = miner_amount.saturated_into();
                 let _imbalance = T::Currency::deposit_creating(&recipient, miner_balance);
-                TotalMintedToMiners::<T>::mutate(|total| *total = total.saturating_add(miner_amount));
+                TotalMintedToMiners::<T>::mutate(|total| {
+                    *total = total.saturating_add(miner_amount)
+                });
             }
 
             // Mint to treasury
@@ -385,15 +398,20 @@ pub mod pallet {
                 let treasury_balance = treasury_amount.saturated_into();
                 let treasury_account = T::TreasuryAccount::get();
                 let _imbalance = T::Currency::deposit_creating(&treasury_account, treasury_balance);
-                TotalMintedToTreasury::<T>::mutate(|total| *total = total.saturating_add(treasury_amount));
+                TotalMintedToTreasury::<T>::mutate(|total| {
+                    *total = total.saturating_add(treasury_amount)
+                });
             }
 
             // Mint to community pool
             if community_amount > 0 {
                 let community_balance = community_amount.saturated_into();
                 let community_account = T::CommunityAccount::get();
-                let _imbalance = T::Currency::deposit_creating(&community_account, community_balance);
-                TotalMintedToCommunity::<T>::mutate(|total| *total = total.saturating_add(community_amount));
+                let _imbalance =
+                    T::Currency::deposit_creating(&community_account, community_balance);
+                TotalMintedToCommunity::<T>::mutate(|total| {
+                    *total = total.saturating_add(community_amount)
+                });
             }
 
             // Update total state
@@ -439,16 +457,14 @@ pub mod pallet {
 
         fn create_inherent(data: &sp_inherents::InherentData) -> Option<Self::Call> {
             // Extract coinbase data from inherent data
-            let coinbase_data: Option<crate::inherent::CoinbaseInherentData> = data
-                .get_data(&Self::INHERENT_IDENTIFIER)
-                .ok()
-                .flatten();
+            let coinbase_data: Option<crate::inherent::CoinbaseInherentData> =
+                data.get_data(&Self::INHERENT_IDENTIFIER).ok().flatten();
 
             coinbase_data.map(|cb| {
                 // Decode recipient from bytes
                 let recipient = T::AccountId::decode(&mut &cb.recipient[..])
                     .expect("Invalid recipient encoding in coinbase inherent");
-                
+
                 Call::mint_reward {
                     recipient,
                     amount: cb.amount,
@@ -460,7 +476,10 @@ pub mod pallet {
             matches!(call, Call::mint_reward { .. })
         }
 
-        fn check_inherent(call: &Self::Call, _data: &sp_inherents::InherentData) -> Result<(), Self::Error> {
+        fn check_inherent(
+            call: &Self::Call,
+            _data: &sp_inherents::InherentData,
+        ) -> Result<(), Self::Error> {
             // Validate the inherent call
             if let Call::mint_reward { amount, .. } = call {
                 // Ensure amount is reasonable (within 2x initial reward)
@@ -471,7 +490,9 @@ pub mod pallet {
             Ok(())
         }
 
-        fn is_inherent_required(_data: &sp_inherents::InherentData) -> Result<Option<Self::Error>, Self::Error> {
+        fn is_inherent_required(
+            _data: &sp_inherents::InherentData,
+        ) -> Result<Option<Self::Error>, Self::Error> {
             // Coinbase is NOT strictly required - blocks without rewards are valid
             // (though economically pointless for miners)
             // This allows for flexibility in testing and edge cases
@@ -488,16 +509,15 @@ pub mod pallet {
 mod tests {
     use super::*;
     use crate::pallet::{
-        block_subsidy, epoch_subsidy, epoch_from_timestamp,
-        COIN, BLOCKS_PER_EPOCH, INITIAL_REWARD, S_MAX, T_EPOCH_SECONDS,
-        K_TAIL, R_TAIL,
+        block_subsidy, epoch_from_timestamp, epoch_subsidy, BLOCKS_PER_EPOCH, COIN, INITIAL_REWARD,
+        K_TAIL, R_TAIL, S_MAX, T_EPOCH_SECONDS,
     };
 
     #[test]
     fn initial_reward_is_correct() {
         // R0 = (S_MAX × T_BLOCK_SECONDS) / (2 × Y_EPOCH × T_YEAR)
         // For 60s blocks: R0 ≈ 4.98 HEG ≈ 498,287,671 base units
-        // 
+        //
         // Calculation: (21_000_000 × 100_000_000 × 60) / (2 × 4 × 31_536_000)
         //            = 126,000,000,000,000,000 / 252,288,000
         //            = 499,429,223 (approximately)
@@ -505,7 +525,7 @@ mod tests {
         // Note: Integer division may cause slight variance
         assert!(INITIAL_REWARD > 490_000_000, "R0 should be ~4.9 coins");
         assert!(INITIAL_REWARD < 510_000_000, "R0 should be ~5 coins");
-        
+
         // Verify it's approximately 4.98 coins
         let coins = INITIAL_REWARD / COIN;
         assert!(coins >= 4 && coins <= 5, "Should be ~4-5 coins per block");
@@ -522,22 +542,22 @@ mod tests {
     fn subsidy_schedule_is_correct() {
         // Genesis has no reward
         assert_eq!(block_subsidy(0), 0);
-        
+
         // First block starts at initial reward
         assert_eq!(block_subsidy(1), INITIAL_REWARD);
-        
+
         // Last block of first epoch still gets initial reward
         assert_eq!(block_subsidy(BLOCKS_PER_EPOCH), INITIAL_REWARD);
-        
+
         // First block of second epoch gets halved reward
         assert_eq!(block_subsidy(BLOCKS_PER_EPOCH + 1), INITIAL_REWARD / 2);
-        
+
         // After second halving
         assert_eq!(block_subsidy(2 * BLOCKS_PER_EPOCH + 1), INITIAL_REWARD / 4);
-        
+
         // After third halving
         assert_eq!(block_subsidy(3 * BLOCKS_PER_EPOCH + 1), INITIAL_REWARD / 8);
-        
+
         // Eventually goes to zero (or tail emission)
         if K_TAIL == 0 || R_TAIL == 0 {
             assert_eq!(block_subsidy(64 * BLOCKS_PER_EPOCH + 1), 0);
@@ -556,22 +576,22 @@ mod tests {
     #[test]
     fn time_based_epoch_calculation() {
         let genesis_time: u64 = 1_700_000_000; // Some UNIX timestamp
-        
+
         // At genesis, epoch is 0
         assert_eq!(epoch_from_timestamp(genesis_time, genesis_time), 0);
-        
+
         // Just before first halving, still epoch 0
         let just_before_halving = genesis_time + T_EPOCH_SECONDS - 1;
         assert_eq!(epoch_from_timestamp(genesis_time, just_before_halving), 0);
-        
+
         // At first halving boundary, epoch 1
         let at_halving = genesis_time + T_EPOCH_SECONDS;
         assert_eq!(epoch_from_timestamp(genesis_time, at_halving), 1);
-        
+
         // Well into second epoch
         let in_second_epoch = genesis_time + T_EPOCH_SECONDS + 1_000_000;
         assert_eq!(epoch_from_timestamp(genesis_time, in_second_epoch), 1);
-        
+
         // Third epoch
         let in_third_epoch = genesis_time + 2 * T_EPOCH_SECONDS + 1;
         assert_eq!(epoch_from_timestamp(genesis_time, in_third_epoch), 2);
@@ -581,7 +601,7 @@ mod tests {
     fn total_supply_converges_to_max() {
         let mut total: u128 = 0;
         let mut epoch: u64 = 0;
-        
+
         // Sum up all possible rewards across epochs
         loop {
             let subsidy = epoch_subsidy(epoch) as u128;
@@ -591,17 +611,23 @@ mod tests {
             // Each epoch has BLOCKS_PER_EPOCH blocks
             total = total.saturating_add(subsidy * BLOCKS_PER_EPOCH as u128);
             epoch += 1;
-            
+
             // Safety: prevent infinite loop
             if epoch > 100 {
                 break;
             }
         }
-        
+
         // Total should be very close to S_MAX (21 million coins)
         // The formula is designed so that: S_total = 2 × R0 × blocks_per_epoch = S_MAX
         let tolerance = S_MAX as u128 / 100; // 1% tolerance for integer rounding
-        assert!(total <= S_MAX as u128 + tolerance, "Should not exceed max supply");
-        assert!(total >= S_MAX as u128 - tolerance, "Should be close to max supply");
+        assert!(
+            total <= S_MAX as u128 + tolerance,
+            "Should not exceed max supply"
+        );
+        assert!(
+            total >= S_MAX as u128 - tolerance,
+            "Should be close to max supply"
+        );
     }
 }

@@ -136,7 +136,10 @@ pub trait HegemonApi {
     /// # Parameters
     /// - `params`: Optional parameters including thread count
     #[method(name = "startMining")]
-    async fn start_mining(&self, params: Option<StartMiningParams>) -> RpcResult<MiningControlResponse>;
+    async fn start_mining(
+        &self,
+        params: Option<StartMiningParams>,
+    ) -> RpcResult<MiningControlResponse>;
 
     /// Stop mining
     ///
@@ -215,7 +218,10 @@ where
 {
     /// Create a new Hegemon RPC handler
     pub fn new(service: Arc<S>, pow_handle: P) -> Self {
-        Self { service, pow_handle }
+        Self {
+            service,
+            pow_handle,
+        }
     }
 }
 
@@ -236,11 +242,14 @@ where
         })
     }
 
-    async fn start_mining(&self, params: Option<StartMiningParams>) -> RpcResult<MiningControlResponse> {
+    async fn start_mining(
+        &self,
+        params: Option<StartMiningParams>,
+    ) -> RpcResult<MiningControlResponse> {
         let threads = params.map(|p| p.threads).unwrap_or(1);
-        
+
         self.pow_handle.start_mining(threads);
-        
+
         let status = MiningStatus {
             is_mining: self.pow_handle.is_mining(),
             threads: self.pow_handle.thread_count(),
@@ -249,7 +258,7 @@ where
             difficulty: self.service.current_difficulty(),
             block_height: self.service.current_height(),
         };
-        
+
         Ok(MiningControlResponse {
             success: true,
             message: format!("Mining started with {} thread(s)", threads),
@@ -259,7 +268,7 @@ where
 
     async fn stop_mining(&self) -> RpcResult<MiningControlResponse> {
         self.pow_handle.stop_mining();
-        
+
         let status = MiningStatus {
             is_mining: self.pow_handle.is_mining(),
             threads: self.pow_handle.thread_count(),
@@ -268,7 +277,7 @@ where
             difficulty: self.service.current_difficulty(),
             block_height: self.service.current_height(),
         };
-        
+
         Ok(MiningControlResponse {
             success: true,
             message: "Mining stopped".to_string(),
@@ -286,11 +295,7 @@ where
 
     async fn storage_footprint(&self) -> RpcResult<StorageFootprint> {
         self.service.storage_footprint().map_err(|e| {
-            ErrorObjectOwned::owned(
-                jsonrpsee::types::error::INTERNAL_ERROR_CODE,
-                e,
-                None::<()>,
-            )
+            ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
         })
     }
 }
@@ -324,11 +329,16 @@ mod tests {
         }
 
         fn stop_mining(&self) {
-            self.mining.store(false, std::sync::atomic::Ordering::SeqCst);
+            self.mining
+                .store(false, std::sync::atomic::Ordering::SeqCst);
         }
 
         fn hashrate(&self) -> f64 {
-            if self.is_mining() { 1000.0 } else { 0.0 }
+            if self.is_mining() {
+                1000.0
+            } else {
+                0.0
+            }
         }
 
         fn blocks_found(&self) -> u64 {
@@ -404,7 +414,10 @@ mod tests {
         let rpc = HegemonRpc::new(service, handle);
 
         // Start mining
-        let result = rpc.start_mining(Some(StartMiningParams { threads: 2 })).await.unwrap();
+        let result = rpc
+            .start_mining(Some(StartMiningParams { threads: 2 }))
+            .await
+            .unwrap();
         assert!(result.success);
         assert!(result.status.is_mining);
 
@@ -467,7 +480,10 @@ mod tests {
         assert_eq!(status.hash_rate, 0.0);
 
         // Start mining
-        let start_result = rpc.start_mining(Some(StartMiningParams { threads: 4 })).await.unwrap();
+        let start_result = rpc
+            .start_mining(Some(StartMiningParams { threads: 4 }))
+            .await
+            .unwrap();
         assert!(start_result.success);
         assert!(start_result.status.is_mining);
 
@@ -493,7 +509,7 @@ mod tests {
         let rpc = HegemonRpc::new(service, handle);
 
         let status = rpc.consensus_status().await.unwrap();
-        
+
         // Verify all fields are populated
         assert_eq!(status.height, 100);
         assert_eq!(status.best_hash, "0x1234");
@@ -511,7 +527,7 @@ mod tests {
         let rpc = HegemonRpc::new(service, handle);
 
         let snapshot = rpc.telemetry().await.unwrap();
-        
+
         // Verify all telemetry fields
         assert_eq!(snapshot.uptime_secs, 3600);
         assert_eq!(snapshot.tx_count, 1000);

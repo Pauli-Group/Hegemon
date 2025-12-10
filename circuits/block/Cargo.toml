@@ -12,3 +12,6 @@ protocol-versioning = { path = "../../protocol/versioning" }
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }
+
+[lints]
+workspace = true

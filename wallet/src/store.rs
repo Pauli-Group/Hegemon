@@ -233,26 +233,22 @@ impl WalletStore {
     /// Set the genesis hash. Only succeeds if not already set, or if matches.
     /// Returns Err(ChainMismatch) if already set to a different value.
     pub fn set_genesis_hash(&self, hash: [u8; 32]) -> Result<(), WalletError> {
-        self.with_mut(|state| {
-            match state.genesis_hash {
-                None => {
-                    state.genesis_hash = Some(hash);
-                    Ok(())
-                }
-                Some(existing) if existing == hash => Ok(()),
-                Some(existing) => Err(WalletError::ChainMismatch {
-                    expected: hex::encode(existing),
-                    actual: hex::encode(hash),
-                }),
+        self.with_mut(|state| match state.genesis_hash {
+            None => {
+                state.genesis_hash = Some(hash);
+                Ok(())
             }
+            Some(existing) if existing == hash => Ok(()),
+            Some(existing) => Err(WalletError::ChainMismatch {
+                expected: hex::encode(existing),
+                actual: hex::encode(hash),
+            }),
         })
     }
 
     /// Check if genesis hash matches. Returns true if no genesis hash stored yet.
     pub fn check_genesis_hash(&self, hash: &[u8; 32]) -> Result<bool, WalletError> {
-        self.with_state(|state| {
-            Ok(state.genesis_hash.map(|h| h == *hash).unwrap_or(true))
-        })
+        self.with_state(|state| Ok(state.genesis_hash.map(|h| h == *hash).unwrap_or(true)))
     }
 
     /// Reset all sync state (notes, commitments, pending, cursors).
@@ -453,7 +449,10 @@ impl WalletStore {
 
             // Debug: print chain nullifiers
             if std::env::var("WALLET_DEBUG_PENDING").is_ok() {
-                eprintln!("[DEBUG refresh_pending] chain nullifiers ({}):", nullifiers.len());
+                eprintln!(
+                    "[DEBUG refresh_pending] chain nullifiers ({}):",
+                    nullifiers.len()
+                );
                 for nf in nullifiers.iter() {
                     eprintln!("  chain: {}", hex::encode(nf));
                 }
@@ -463,22 +462,30 @@ impl WalletStore {
                 if matches!(tx.status, PendingStatus::Mined { .. }) {
                     continue;
                 }
-                
+
                 // Debug: print pending tx nullifiers
                 if std::env::var("WALLET_DEBUG_PENDING").is_ok() {
-                    eprintln!("[DEBUG refresh_pending] tx {} nullifiers ({}):", hex::encode(&tx.tx_id[..8]), tx.nullifiers.len());
+                    eprintln!(
+                        "[DEBUG refresh_pending] tx {} nullifiers ({}):",
+                        hex::encode(&tx.tx_id[..8]),
+                        tx.nullifiers.len()
+                    );
                     for nf in &tx.nullifiers {
                         let found = nullifiers.contains(nf);
                         eprintln!("  pending: {} (found: {})", hex::encode(nf), found);
                     }
                 }
-                
+
                 // Check if transaction was mined (nullifiers on-chain)
                 // Skip zero-padded nullifiers when checking
-                let real_nullifiers: Vec<&[u8; 32]> = tx.nullifiers.iter()
+                let real_nullifiers: Vec<&[u8; 32]> = tx
+                    .nullifiers
+                    .iter()
                     .filter(|nf| **nf != [0u8; 32])
                     .collect();
-                if !real_nullifiers.is_empty() && real_nullifiers.iter().all(|nf| nullifiers.contains(*nf)) {
+                if !real_nullifiers.is_empty()
+                    && real_nullifiers.iter().all(|nf| nullifiers.contains(*nf))
+                {
                     tx.status = PendingStatus::Mined {
                         height: latest_height,
                     };

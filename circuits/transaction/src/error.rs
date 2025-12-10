@@ -26,7 +26,9 @@ pub enum TransactionCircuitError {
     #[error("commitment mismatch at index {0}")]
     CommitmentMismatch(usize),
 
-    #[error("zero nullifier produced at index {0} - this indicates malicious witness construction")]
+    #[error(
+        "zero nullifier produced at index {0} - this indicates malicious witness construction"
+    )]
     ZeroNullifier(usize),
 
     #[error("constraint system violated: {0}")]

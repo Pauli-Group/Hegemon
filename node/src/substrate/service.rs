@@ -10,11 +10,11 @@
 //! - Network bridge for block/tx routing
 //!
 //! This module now supports full Substrate client integration:
-//! - `new_partial_with_client()`: Creates full client with TFullClient 
+//! - `new_partial_with_client()`: Creates full client with TFullClient
 //! - `ProductionChainStateProvider`: Real chain state for mining
 //! - Runtime API callbacks for difficulty and block queries
-//! - Transaction pool integration with sc-transaction-pool 
-//! - BlockBuilder API for real state execution 
+//! - Transaction pool integration with sc-transaction-pool
+//! - BlockBuilder API for real state execution
 //!
 //! # Architecture
 //!
@@ -114,24 +114,26 @@
 use crate::pow::{PowConfig, PowHandle};
 use crate::substrate::client::{
     FullBackend, HegemonFullClient, HegemonPowBlockImport, HegemonSelectChain,
-    HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig,
-    StateExecutionResult, DEFAULT_DIFFICULTY_BITS,
+    HegemonTransactionPool, ProductionChainStateProvider, ProductionConfig, StateExecutionResult,
+    DEFAULT_DIFFICULTY_BITS,
 };
 use crate::substrate::mining_worker::{
-    create_production_mining_worker, create_scaffold_mining_worker,
-    ChainStateProvider, MiningWorkerConfig,
+    create_production_mining_worker, create_scaffold_mining_worker, ChainStateProvider,
+    MiningWorkerConfig,
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
 use crate::substrate::rpc::{
-    HegemonApiServer, HegemonRpc,
-    ProductionRpcService, ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
+    HegemonApiServer, HegemonRpc, ProductionRpcService, ShieldedApiServer, ShieldedRpc,
+    WalletApiServer, WalletRpc,
 };
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
 use codec::Decode;
+use codec::Encode;
 use consensus::{Blake3Algorithm, Blake3Seal};
+use futures::StreamExt;
 use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
@@ -143,16 +145,14 @@ use sp_api::{ProvideRuntimeApi, StorageChanges};
 use sp_core::H256;
 use sp_inherents::{InherentData, InherentDataProvider};
 use sp_runtime::traits::Header as HeaderT;
-use codec::Encode;
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::Mutex;
-use futures::StreamExt;
 
 // Import runtime APIs for difficulty queries
 use runtime::apis::ConsensusApi;
 
-// Import jsonrpsee for RPC server 
+// Import jsonrpsee for RPC server
 use jsonrpsee::server::ServerBuilder;
 
 // Import sync service
@@ -172,45 +172,34 @@ use crate::substrate::sync::ChainSyncService;
 pub type HegemonStorageChanges = StorageChanges<runtime::Block>;
 
 /// Global storage changes cache
-/// 
+///
 /// This cache stores StorageChanges indexed by a unique key (block number + timestamp).
 /// The changes are inserted during block building and retrieved during block import.
-/// 
+///
 /// Thread-safe via parking_lot::RwLock for concurrent access.
 static STORAGE_CHANGES_CACHE: once_cell::sync::Lazy<
-    parking_lot::RwLock<HashMap<u64, HegemonStorageChanges>>
-> = once_cell::sync::Lazy::new(|| {
-    parking_lot::RwLock::new(HashMap::new())
-});
+    parking_lot::RwLock<HashMap<u64, HegemonStorageChanges>>,
+> = once_cell::sync::Lazy::new(|| parking_lot::RwLock::new(HashMap::new()));
 
 /// Counter for generating unique cache keys
-static STORAGE_CHANGES_KEY_COUNTER: std::sync::atomic::AtomicU64 = 
+static STORAGE_CHANGES_KEY_COUNTER: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
 /// Store storage changes in the cache and return the key
 pub fn cache_storage_changes(changes: HegemonStorageChanges) -> u64 {
     let key = STORAGE_CHANGES_KEY_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     STORAGE_CHANGES_CACHE.write().insert(key, changes);
-    tracing::debug!(
-        key,
-        "Cached storage changes for block import"
-    );
+    tracing::debug!(key, "Cached storage changes for block import");
     key
 }
 
-/// Retrieve and remove storage changes from the cache 
+/// Retrieve and remove storage changes from the cache
 pub fn take_storage_changes(key: u64) -> Option<HegemonStorageChanges> {
     let changes = STORAGE_CHANGES_CACHE.write().remove(&key);
     if changes.is_some() {
-        tracing::debug!(
-            key,
-            "Retrieved storage changes from cache"
-        );
+        tracing::debug!(key, "Retrieved storage changes from cache");
     } else {
-        tracing::warn!(
-            key,
-            "Storage changes not found in cache"
-        );
+        tracing::warn!(key, "Storage changes not found in cache");
     }
     changes
 }
@@ -249,7 +238,12 @@ where
 type NoOpInherentDataProviders = fn(
     <runtime::Block as sp_runtime::traits::Block>::Hash,
     (),
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send>>;
+) -> std::pin::Pin<
+    Box<
+        dyn std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>
+            + Send,
+    >,
+>;
 
 /// Concrete type for the PoW block import with no-op inherent providers
 pub type ConcretePowBlockImport = HegemonPowBlockImport<NoOpInherentDataProviders>;
@@ -268,7 +262,7 @@ pub fn check_wasm() -> Result<(), String> {
                 "WASM binary not available. Build with `cargo build -p runtime --features std`."
                     .to_string(),
             );
-        } 
+        }
     }
     Ok(())
 }
@@ -303,7 +297,7 @@ pub fn check_wasm() -> Result<(), String> {
 /// # Flow
 ///
 /// ```text
-/// execute_extrinsics_fn() 
+/// execute_extrinsics_fn()
 ///   → BlockBuilder::new(client)
 ///   → builder.create_inherents(inherent_data)
 ///   → builder.push(extrinsic) for each tx
@@ -321,13 +315,13 @@ pub fn wire_block_builder_api(
     client: Arc<HegemonFullClient>,
 ) {
     use sc_block_builder::BlockBuilderBuilder;
-    
+
     let client_for_exec = client;
-    
+
     // Capture the miner's shielded address (preferred) or transparent account (deprecated)
     let miner_shielded_address = chain_state.miner_shielded_address();
     let miner_account = chain_state.miner_account();
-    
+
     // Log coinbase configuration
     if let Some(ref address) = miner_shielded_address {
         tracing::info!(
@@ -342,7 +336,7 @@ pub fn wire_block_builder_api(
     } else {
         tracing::warn!("No miner address configured - coinbase rewards disabled");
     }
-    
+
     // Parse shielded address once outside the closure
     let parsed_shielded_address = miner_shielded_address.as_ref().and_then(|addr| {
         match crate::shielded_coinbase::parse_shielded_address(addr) {
@@ -357,18 +351,18 @@ pub fn wire_block_builder_api(
             }
         }
     });
-    
+
     chain_state.set_execute_extrinsics_fn(move |parent_hash, block_number, extrinsics| {
         // Convert our H256 to the runtime's Hash type
         let parent_substrate_hash: sp_core::H256 = (*parent_hash).into();
-        
+
         tracing::info!(
             block_number,
             parent = %hex::encode(parent_hash.as_bytes()),
             tx_count = extrinsics.len(),
             "Building block with sc_block_builder"
         );
-        
+
         // Create inherent data for timestamp
         let mut inherent_data = InherentData::new();
         let timestamp_provider = sp_timestamp::InherentDataProvider::from_system_time();
@@ -377,19 +371,19 @@ pub fn wire_block_builder_api(
         ) {
             tracing::warn!(error = ?e, "Failed to provide timestamp inherent data");
         }
-        
+
         // Add coinbase inherent data
         // Prefer shielded coinbase if address is configured
         if let Some(ref address) = parsed_shielded_address {
             // Calculate block subsidy for this height using Bitcoin-style halving
             let subsidy = pallet_coinbase::block_subsidy(block_number);
-            
+
             // Derive block hash for seed (use parent hash + block number)
             let mut block_hash_input = [0u8; 40];
             block_hash_input[..32].copy_from_slice(parent_hash.as_bytes());
             block_hash_input[32..40].copy_from_slice(&block_number.to_le_bytes());
             let block_hash: [u8; 32] = blake3::hash(&block_hash_input).into();
-            
+
             // Encrypt the coinbase note
             match crate::shielded_coinbase::encrypt_coinbase_note(
                 address,
@@ -428,7 +422,7 @@ pub fn wire_block_builder_api(
         } else if let Some(ref miner) = miner_account {
             // Fall back to deprecated transparent coinbase
             let subsidy = pallet_coinbase::block_subsidy(block_number);
-            
+
             let coinbase_provider = pallet_coinbase::CoinbaseInherentDataProvider::new(
                 miner.clone(),
                 subsidy,
@@ -446,7 +440,7 @@ pub fn wire_block_builder_api(
                 );
             }
         }
-        
+
         // Create BlockBuilder using the builder pattern
         // This is the sc_block_builder::BlockBuilder, not the runtime API
         let mut block_builder = match BlockBuilderBuilder::new(&*client_for_exec)
@@ -463,7 +457,7 @@ pub fn wire_block_builder_api(
                 return Err(format!("Failed to fetch parent block number: {:?}", e));
             }
         };
-        
+
         // Create inherent extrinsics (timestamp, coinbase, etc.)
         let inherent_extrinsics = match block_builder.create_inherents(inherent_data.clone()) {
             Ok(exts) => {
@@ -488,7 +482,7 @@ pub fn wire_block_builder_api(
                 Vec::new()
             }
         };
-        
+
         // Push inherent extrinsics
         let mut applied = Vec::new();
         for inherent_ext in inherent_extrinsics {
@@ -501,7 +495,7 @@ pub fn wire_block_builder_api(
                 }
             }
         }
-        
+
         // Push user extrinsics
         let mut failed = 0usize;
         for ext_bytes in extrinsics {
@@ -523,7 +517,7 @@ pub fn wire_block_builder_api(
                 }
             }
         }
-        
+
         // Build the block - this returns BuiltBlock with StorageChanges!
         let built_block = match block_builder.build() {
             Ok(built) => built,
@@ -531,17 +525,17 @@ pub fn wire_block_builder_api(
                 return Err(format!("Failed to build block: {:?}", e));
             }
         };
-        
+
         // Extract the block and header
         // Use the block's header field directly (it's a field, not a method)
         let block = built_block.block;
         let header = &block.header;
         let state_root = *header.state_root();
         let extrinsics_root = *header.extrinsics_root();
-        
+
         // Cache the StorageChanges for use during import
         let storage_changes_key = cache_storage_changes(built_block.storage_changes);
-        
+
         tracing::info!(
             block_number,
             applied = applied.len(),
@@ -551,7 +545,7 @@ pub fn wire_block_builder_api(
             storage_changes_key,
             "Block built with StorageChanges cached"
         );
-        
+
         Ok(StateExecutionResult {
             applied_extrinsics: applied,
             state_root,
@@ -560,10 +554,8 @@ pub fn wire_block_builder_api(
             storage_changes_key: Some(storage_changes_key),
         })
     });
-    
-    tracing::info!(
-        "BlockBuilder API wired with StorageChanges capture"
-    );
+
+    tracing::info!("BlockBuilder API wired with StorageChanges capture");
 }
 
 // =============================================================================
@@ -627,22 +619,24 @@ pub fn wire_pow_block_import(
 ) {
     use codec::Encode;
     use sp_runtime::traits::Block as BlockT;
-    
+
     // Use the client directly for block import
     // The mining worker already verified the PoW, so we don't need PowBlockImport
     // to re-verify (which would fail due to pre_hash computation differences)
     let block_import = client;
-    
+
     chain_state.set_import_fn(move |template: &BlockTemplate, seal: &Blake3Seal| {
         // Construct the block header from the template
         let parent_hash: sp_core::H256 = template.parent_hash.into();
-        
+
         // Include the seal in the header's digest for storage
         // Use our custom engine ID "bpow" for Blake3 PoW
         let seal_bytes = seal.encode();
         let seal_digest = DigestItem::Seal(*b"pow_", seal_bytes);
-        let digest = Digest { logs: vec![seal_digest] };
-        
+        let digest = Digest {
+            logs: vec![seal_digest],
+        };
+
         let header = <runtime::Header as HeaderT>::new(
             template.number,
             template.extrinsics_root,
@@ -650,36 +644,34 @@ pub fn wire_pow_block_import(
             parent_hash,
             digest,
         );
-        
+
         // Get header hash (this is the final block hash including seal)
         let header_hash = header.hash();
-        
+
         tracing::debug!(
             block_number = template.number,
             block_hash = %hex::encode(header_hash.as_bytes()),
             parent_hash = %hex::encode(parent_hash.as_bytes()),
             "Block import: constructing block"
         );
-        
+
         // Decode the extrinsics from template
         let encoded_extrinsics: Vec<runtime::UncheckedExtrinsic> = template
             .extrinsics
             .iter()
-            .filter_map(|tx_bytes| {
-                runtime::UncheckedExtrinsic::decode(&mut &tx_bytes[..]).ok()
-            })
+            .filter_map(|tx_bytes| runtime::UncheckedExtrinsic::decode(&mut &tx_bytes[..]).ok())
             .collect();
-        
+
         // Construct the block with seal in header
         let block = runtime::Block::new(header.clone(), encoded_extrinsics);
         let block_hash = block.hash();
-        
+
         // Construct BlockImportParams for direct client import
         // No post_digests needed since seal is already in header
         let mut import_params = BlockImportParams::new(BlockOrigin::Own, header);
         import_params.body = Some(block.extrinsics().to_vec());
         import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
-        
+
         // Apply StorageChanges if available
         // The block building phase caches StorageChanges with a key stored in the template.
         // We retrieve and apply them here so state persists after import.
@@ -691,7 +683,7 @@ pub fn wire_pow_block_import(
                     "Applying cached StorageChanges during import"
                 );
                 import_params.state_action = sc_consensus::StateAction::ApplyChanges(
-                    sc_consensus::StorageChanges::Changes(storage_changes)
+                    sc_consensus::StorageChanges::Changes(storage_changes),
                 );
             } else {
                 tracing::warn!(
@@ -709,14 +701,14 @@ pub fn wire_pow_block_import(
             );
             import_params.state_action = sc_consensus::StateAction::Skip;
         }
-        
+
         // Import the block directly through the client
         // This bypasses PowBlockImport verification since we already verified locally
         let import_result = futures::executor::block_on(async {
             let import = block_import.clone();
             import.import_block(import_params).await
         });
-        
+
         match import_result {
             Ok(ImportResult::Imported(_aux)) => {
                 tracing::info!(
@@ -733,37 +725,26 @@ pub fn wire_pow_block_import(
                 );
                 Ok(block_hash)
             }
-            Ok(ImportResult::KnownBad) => {
-                Err(format!("Block {} is known bad", hex::encode(block_hash.as_bytes())))
-            }
-            Ok(ImportResult::UnknownParent) => {
-                Err(format!(
-                    "Unknown parent {} for block {}",
-                    hex::encode(template.parent_hash.as_bytes()),
-                    hex::encode(block_hash.as_bytes())
-                ))
-            }
-            Ok(ImportResult::MissingState) => {
-                Err(format!(
-                    "Missing state for parent {}",
-                    hex::encode(template.parent_hash.as_bytes())
-                ))
-            }
-            Err(e) => {
-                Err(format!("Block import failed: {:?}", e))
-            }
+            Ok(ImportResult::KnownBad) => Err(format!(
+                "Block {} is known bad",
+                hex::encode(block_hash.as_bytes())
+            )),
+            Ok(ImportResult::UnknownParent) => Err(format!(
+                "Unknown parent {} for block {}",
+                hex::encode(template.parent_hash.as_bytes()),
+                hex::encode(block_hash.as_bytes())
+            )),
+            Ok(ImportResult::MissingState) => Err(format!(
+                "Missing state for parent {}",
+                hex::encode(template.parent_hash.as_bytes())
+            )),
+            Err(e) => Err(format!("Block import failed: {:?}", e)),
         }
     });
-    
-    tracing::info!(
-        "Block import wired with StorageChanges application"
-    );
-    tracing::debug!(
-        "  - Mined blocks imported with state persistence"
-    );
-    tracing::debug!(
-        "  - Blake3 seals validated before commit"
-    );
+
+    tracing::info!("Block import wired with StorageChanges application");
+    tracing::debug!("  - Mined blocks imported with state persistence");
+    tracing::debug!("  - Blake3 seals validated before commit");
 }
 
 /// PQ network configuration for the node service
@@ -848,42 +829,50 @@ impl PqServiceConfig {
             .or_else(|| {
                 // Extract port from Substrate network config listen addresses
                 // Multiaddr format: /ip4/0.0.0.0/tcp/30333
-                config.network.listen_addresses.first().and_then(|multiaddr| {
-                    let s = multiaddr.to_string();
-                    // Parse /ip4/X.X.X.X/tcp/PORT or /ip6/.../tcp/PORT
-                    let mut ip: std::net::IpAddr = std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
-                    let mut port = 30333u16;
-                    
-                    let parts: Vec<&str> = s.split('/').collect();
-                    for i in 0..parts.len() {
-                        match parts[i] {
-                            "ip4" if i + 1 < parts.len() => {
-                                if let Ok(addr) = parts[i + 1].parse::<std::net::Ipv4Addr>() {
-                                    ip = std::net::IpAddr::V4(addr);
+                config
+                    .network
+                    .listen_addresses
+                    .first()
+                    .and_then(|multiaddr| {
+                        let s = multiaddr.to_string();
+                        // Parse /ip4/X.X.X.X/tcp/PORT or /ip6/.../tcp/PORT
+                        let mut ip: std::net::IpAddr =
+                            std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
+                        let mut port = 30333u16;
+
+                        let parts: Vec<&str> = s.split('/').collect();
+                        for i in 0..parts.len() {
+                            match parts[i] {
+                                "ip4" if i + 1 < parts.len() => {
+                                    if let Ok(addr) = parts[i + 1].parse::<std::net::Ipv4Addr>() {
+                                        ip = std::net::IpAddr::V4(addr);
+                                    }
                                 }
-                            }
-                            "ip6" if i + 1 < parts.len() => {
-                                if let Ok(addr) = parts[i + 1].parse::<std::net::Ipv6Addr>() {
-                                    ip = std::net::IpAddr::V6(addr);
+                                "ip6" if i + 1 < parts.len() => {
+                                    if let Ok(addr) = parts[i + 1].parse::<std::net::Ipv6Addr>() {
+                                        ip = std::net::IpAddr::V6(addr);
+                                    }
                                 }
-                            }
-                            "tcp" if i + 1 < parts.len() => {
-                                if let Ok(p) = parts[i + 1].parse::<u16>() {
-                                    port = p;
+                                "tcp" if i + 1 < parts.len() => {
+                                    if let Ok(p) = parts[i + 1].parse::<u16>() {
+                                        port = p;
+                                    }
                                 }
+                                _ => {}
                             }
-                            _ => {}
                         }
-                    }
-                    Some(std::net::SocketAddr::new(ip, port))
-                })
+                        Some(std::net::SocketAddr::new(ip, port))
+                    })
             })
             .unwrap_or_else(|| "0.0.0.0:30333".parse().unwrap());
 
         let max_peers = std::env::var("HEGEMON_MAX_PEERS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| config.network.default_peers_set.in_peers as usize + config.network.default_peers_set.out_peers as usize);
+            .unwrap_or_else(|| {
+                config.network.default_peers_set.in_peers as usize
+                    + config.network.default_peers_set.out_peers as usize
+            });
 
         if !bootstrap_nodes.is_empty() {
             tracing::info!(
@@ -1013,7 +1002,7 @@ pub struct PartialComponentsWithClient {
     pub network_config: PqNetworkConfig,
     /// PQ peer identity for transport layer
     pub pq_identity: Option<PqPeerIdentity>,
-    /// Substrate PQ transport 
+    /// Substrate PQ transport
     pub pq_transport: Option<SubstratePqTransport>,
     /// PQ service configuration
     pub pq_service_config: PqServiceConfig,
@@ -1092,8 +1081,7 @@ pub fn new_partial_with_client(
     // - TaskManager for async coordination
     let (client, backend, keystore_container, task_manager) =
         sc_service::new_full_parts::<runtime::Block, runtime::RuntimeApi, _>(
-            config,
-            None, // telemetry - None for now, can add later
+            config, None, // telemetry - None for now, can add later
             executor,
         )?;
 
@@ -1124,9 +1112,7 @@ pub fn new_partial_with_client(
         .build(),
     );
 
-    tracing::info!(
-        "Full Substrate transaction pool created"
-    );
+    tracing::info!("Full Substrate transaction pool created");
 
     // Initialize PoW mining coordinator
     let pow_config = if std::env::var("HEGEMON_MINE").is_ok() {
@@ -1165,7 +1151,12 @@ pub fn new_partial_with_client(
     fn create_inherent_data_providers(
         _parent_hash: <runtime::Block as sp_runtime::traits::Block>::Hash,
         _: (),
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send>> {
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>
+                + Send,
+        >,
+    > {
         Box::pin(async { Ok(()) })
     }
 
@@ -1177,26 +1168,18 @@ pub fn new_partial_with_client(
     // which fails for historical blocks being synced. Since PoW blocks are already validated
     // by their proof-of-work seal, timestamp manipulation is constrained by the PoW difficulty.
     let pow_block_import = sc_consensus_pow::PowBlockImport::new(
-        client.clone(),                         // Inner block import (client implements BlockImport)
-        client.clone(),                         // Client for runtime API queries
-        pow_algorithm.clone(),                  // PoW algorithm for verification
-        u64::MAX,                               // check_inherents_after: u64::MAX = never check (required for sync)
-        select_chain.clone(),                   // Chain selection rule
+        client.clone(),        // Inner block import (client implements BlockImport)
+        client.clone(),        // Client for runtime API queries
+        pow_algorithm.clone(), // PoW algorithm for verification
+        u64::MAX,              // check_inherents_after: u64::MAX = never check (required for sync)
+        select_chain.clone(),  // Chain selection rule
         create_inherent_data_providers as NoOpInherentDataProviders, // Inherent data providers creator
     );
 
-    tracing::info!(
-        "PoW block import pipeline created"
-    );
-    tracing::debug!(
-        "  - Blake3Algorithm for PoW verification"
-    );
-    tracing::debug!(
-        "  - LongestChain for chain selection"
-    );
-    tracing::debug!(
-        "  - PowBlockImport wrapping full client"
-    );
+    tracing::info!("PoW block import pipeline created");
+    tracing::debug!("  - Blake3Algorithm for PoW verification");
+    tracing::debug!("  - LongestChain for chain selection");
+    tracing::debug!("  - PowBlockImport wrapping full client");
 
     // Initialize PQ service configuration
     // Uses Substrate config for ports with env var overrides
@@ -1393,7 +1376,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // =========================================================================
     // Create a wrapper around the Substrate transaction pool that
     // implements our TransactionPool trait. This enables the TransactionPoolBridge
-    // to submit transactions to the pool (with runtime validation) 
+    // to submit transactions to the pool (with runtime validation)
     let pool_config = TransactionPoolConfig::from_env();
     let real_pool_wrapper = Arc::new(SubstrateTransactionPoolWrapper::new(
         transaction_pool.clone(),
@@ -1444,9 +1427,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 .finality_notification_stream()
                 .map(Into::into)
                 .fuse();
-            
+
             tracing::info!("Transaction pool maintenance task started");
-            
+
             futures::stream::select(import_stream, finality_stream)
                 .for_each(|evt| {
                     let pool = transaction_pool_for_maint.clone();
@@ -1455,7 +1438,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     }
                 })
                 .await;
-            
+
             tracing::info!("Transaction pool maintenance task stopped");
         },
     );
@@ -1479,8 +1462,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
         let mut pq_backend = PqNetworkBackend::new(identity, backend_config);
         let local_peer_id = pq_backend.local_peer_id();
-        rpc_peer_id = Some(local_peer_id);  // Capture for RPC handler
-        
+        rpc_peer_id = Some(local_peer_id); // Capture for RPC handler
+
         // Start the PQ network backend and get the event receiver
         match pq_backend.start().await {
             Ok(mut event_rx) => {
@@ -1499,7 +1482,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let network_bridge = Arc::new(Mutex::new(
                     NetworkBridgeBuilder::new()
                         .verbose(pq_service_config.verbose_logging)
-                        .build()
+                        .build(),
                 ));
                 let bridge_clone = Arc::clone(&network_bridge);
 
@@ -1510,12 +1493,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 // - Responding to sync requests from peers
                 // - Managing the sync state machine
                 // - Downloading blocks from peers when behind
-                let sync_service = Arc::new(Mutex::new(
-                    ChainSyncService::new(client.clone())
-                ));
+                let sync_service = Arc::new(Mutex::new(ChainSyncService::new(client.clone())));
                 let sync_service_clone = Arc::clone(&sync_service);
                 let _sync_service_for_handler = Arc::clone(&sync_service);
-                
+
                 tracing::info!("Chain sync service created");
 
                 // Clone pool_bridge for use in network event handler
@@ -1530,8 +1511,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 // NOTE: Get all handles before pq_backend is moved into the task
                 let pq_handle_for_sync = pq_backend.handle();
                 let sync_handle_for_tick = pq_backend.handle();
-                let pq_handle_for_status = pq_backend.handle();  // For sending best block on connect
-                
+                let pq_handle_for_status = pq_backend.handle(); // For sending best block on connect
+
                 // Clone client for the network event handler to send our best block
                 let client_for_network = client.clone();
 
@@ -1542,20 +1523,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     async move {
                         let _pq_backend = pq_backend;
                         tracing::info!("PQ network event handler started (Full Client Mode + Sync)");
-                        
+
                         while let Some(event) = event_rx.recv().await {
                             {
                                 let mut bridge = bridge_clone.lock().await;
                                 bridge.handle_event(event.clone()).await;
-                                
+
                                 // Process transactions
                                 let pending_txs = bridge.drain_transactions();
                                 if !pending_txs.is_empty() {
                                     pool_bridge_clone.queue_from_bridge(pending_txs).await;
                                 }
-                                
+
                                 // Note: Block announcements are NOT drained here.
-                                // They are drained by the block-import-handler task 
+                                // They are drained by the block-import-handler task
                                 // which handles both sync state updates and block import.
                             }
 
@@ -1573,29 +1554,29 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         direction = if is_outbound { "outbound" } else { "inbound" },
                                         "EVENT HANDLER: Processing PeerConnected event"
                                     );
-                                    
+
                                     // Update sync service with new peer
                                     {
                                         let mut sync = sync_service_clone.lock().await;
                                         sync.on_peer_connected(peer_id);
                                     }
-                                    
+
                                     // Send our best block to the new peer so they know our chain tip
                                     // This enables the peer to initiate sync if they're behind us
                                     {
                                         use crate::substrate::network_bridge::{BlockAnnounce, BlockState, BLOCK_ANNOUNCE_PROTOCOL};
-                                        
+
                                         let info = client_for_network.chain_info();
                                         let best_number: u64 = info.best_number.try_into().unwrap_or(0);
                                         let mut hash_bytes = [0u8; 32];
                                         hash_bytes.copy_from_slice(info.best_hash.as_ref());
-                                        
+
                                         tracing::info!(
                                             peer = %hex::encode(peer_id),
                                             best_number = best_number,
                                             "Attempting to send best block to new peer"
                                         );
-                                        
+
                                         // Get the best block header
                                         match client_for_network.header(info.best_hash) {
                                             Ok(Some(header)) => {
@@ -1606,7 +1587,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                     hash_bytes,
                                                     BlockState::Best,
                                                 );
-                                                
+
                                                 let encoded = announce.encode();
                                                 if let Err(e) = pq_handle_for_status.send_message(
                                                     peer_id,
@@ -1642,7 +1623,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             }
                                         }
                                     }
-                                    
+
                                     tracing::info!(
                                         peer_id = %hex::encode(peer_id),
                                         addr = %addr,
@@ -1667,7 +1648,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     use crate::substrate::network_bridge::{SYNC_PROTOCOL, SYNC_PROTOCOL_LEGACY};
                                     use crate::substrate::network_bridge::SyncMessage;
                                     use crate::substrate::network_bridge::{BLOCK_ANNOUNCE_PROTOCOL, BLOCK_ANNOUNCE_PROTOCOL_LEGACY, BlockAnnounce};
-                                    
+
                                     // Handle sync protocol messages
                                     if protocol == SYNC_PROTOCOL || protocol == SYNC_PROTOCOL_LEGACY {
                                         // Decode using SyncMessage wrapper for unambiguous request/response distinction
@@ -1732,7 +1713,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                 peer_hash = %hex::encode(&announce.hash),
                                                 "Received block announce from peer"
                                             );
-                                            
+
                                             // Update peer's best height in sync service
                                             let mut sync = sync_service_clone.lock().await;
                                             sync.on_block_announce(peer_id, &announce);
@@ -1753,31 +1734,30 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 // Spawn sync state machine tick task
                 // =======================================================================
                 let sync_service_for_tick = Arc::clone(&sync_service);
-                
-                task_manager.spawn_handle().spawn(
-                    "chain-sync-tick",
-                    Some("sync"),
-                    async move {
-                        use crate::substrate::network_bridge::{SYNC_PROTOCOL, SyncMessage};
-                        
-                        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+
+                task_manager
+                    .spawn_handle()
+                    .spawn("chain-sync-tick", Some("sync"), async move {
+                        use crate::substrate::network_bridge::{SyncMessage, SYNC_PROTOCOL};
+
+                        let mut interval =
+                            tokio::time::interval(tokio::time::Duration::from_secs(1));
                         tracing::info!("Chain sync tick task started");
-                        
+
                         loop {
                             interval.tick().await;
-                            
+
                             let mut sync = sync_service_for_tick.lock().await;
-                            
+
                             // Tick the sync state machine
                             if let Some((peer_id, request)) = sync.tick() {
                                 // Wrap request in SyncMessage for unambiguous encoding
                                 let msg = SyncMessage::Request(request);
                                 let encoded = msg.encode();
-                                if let Err(e) = sync_handle_for_tick.send_message(
-                                    peer_id,
-                                    SYNC_PROTOCOL.to_string(),
-                                    encoded,
-                                ).await {
+                                if let Err(e) = sync_handle_for_tick
+                                    .send_message(peer_id, SYNC_PROTOCOL.to_string(), encoded)
+                                    .await
+                                {
                                     tracing::warn!(
                                         peer = %hex::encode(peer_id),
                                         error = %e,
@@ -1785,7 +1765,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     );
                                 }
                             }
-                            
+
                             // Log sync status periodically
                             let state = sync.state();
                             if sync.is_syncing() {
@@ -1796,8 +1776,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 );
                             }
                         }
-                    },
-                );
+                    });
 
                 // Spawn the transaction pool processing task
                 task_manager.spawn_handle().spawn(
@@ -1806,11 +1785,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     async move {
                         let interval = tokio::time::Duration::from_millis(process_interval);
                         let mut process_timer = tokio::time::interval(interval);
-                        
+
                         loop {
                             process_timer.tick().await;
                             let submitted = pool_bridge_for_processor.process_pending().await;
-                            
+
                             if submitted > 0 && pool_verbose {
                                 tracing::debug!(
                                     submitted = submitted,
@@ -1840,20 +1819,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         use sc_consensus::{BlockImport, BlockImportParams, ForkChoiceStrategy};
                         use sp_consensus::BlockOrigin;
                         use sp_runtime::traits::Block as BlockT;
-                        
+
                         tracing::info!("Block import handler started (syncs blocks from network + historical sync)");
-                        
+
                         let import_interval = tokio::time::Duration::from_millis(100);
                         let mut import_timer = tokio::time::interval(import_interval);
-                        
+
                         let mut blocks_imported: u64 = 0;
                         #[allow(unused_variables, unused_assignments)] // Counter for metrics/monitoring
                         let mut blocks_failed: u64 = 0;
                         let mut sync_blocks_imported: u64 = 0;
-                        
+
                         loop {
                             import_timer.tick().await;
-                            
+
                             // ============================================================
                             // Part 1: Process downloaded blocks from sync service
                             // ============================================================
@@ -1869,7 +1848,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 }
                                 blocks
                             };
-                            
+
                             for downloaded in downloaded_blocks {
                                 // Decode the header
                                 let mut header = match runtime::Header::decode(&mut &downloaded.header[..]) {
@@ -1885,7 +1864,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         continue;
                                     }
                                 };
-                                
+
                                 // Decode extrinsics
                                 let extrinsics: Vec<runtime::UncheckedExtrinsic> = downloaded.body
                                     .iter()
@@ -1893,17 +1872,17 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]).ok()
                                     })
                                     .collect();
-                                
+
                                 let block_number = *header.number();
                                 let parent_hash = *header.parent_hash();
-                                
+
                                 // CRITICAL: Extract the seal from header digest and move to post_digests
                                 // PowBlockImport expects the seal in post_digests.last(), not in header.digest()
                                 // The seal should be the last digest item with engine ID "pow_"
                                 use sp_runtime::traits::Header as HeaderT;
                                 let post_hash = header.hash(); // Hash before removing seal (this is the final block hash)
                                 let seal = header.digest_mut().pop();
-                                
+
                                 let seal_item = match seal {
                                     Some(item) => {
                                         tracing::debug!(
@@ -1921,7 +1900,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         continue;
                                     }
                                 };
-                                
+
                                 // Compute pre_hash (hash of header WITHOUT seal)
                                 // This is what Blake3Algorithm::verify will use to validate the PoW
                                 let pre_hash = header.hash();
@@ -1932,14 +1911,14 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     digest_logs_after_pop = header.digest().logs().len(),
                                     "🔍 DEBUG: Pre-hash computed after stripping seal"
                                 );
-                                
+
                                 // Construct BlockImportParams with seal in post_digests
                                 let mut import_params = BlockImportParams::new(BlockOrigin::NetworkInitialSync, header);
                                 import_params.body = Some(extrinsics);
                                 import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
                                 import_params.post_digests.push(seal_item);
                                 import_params.post_hash = Some(post_hash);
-                                
+
                                 // Add PowIntermediate - difficulty will be computed from parent
                                 // PowBlockImport::import_block requires this intermediate with key "pow1"
                                 // Setting difficulty to None causes it to be queried from the algorithm
@@ -1948,21 +1927,21 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     difficulty: None, // Will be computed by algorithm.difficulty(parent_hash)
                                 };
                                 import_params.insert_intermediate(INTERMEDIATE_KEY, intermediate);
-                                
+
                                 // Import through PowBlockImport (verifies PoW seal)
                                 let import_result = block_import_pow.clone().import_block(import_params).await;
-                                
+
                                 match import_result {
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
                                         blocks_imported += 1;
                                         sync_blocks_imported += 1;
-                                        
+
                                         // Notify sync service of successful import
                                         {
                                             let mut sync = sync_service_for_import.lock().await;
                                             sync.on_block_imported(block_number as u64);
                                         }
-                                        
+
                                         if sync_blocks_imported % 100 == 0 {
                                             tracing::info!(
                                                 block_number,
@@ -2018,7 +1997,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
                                 }
                             }
-                            
+
                             // ============================================================
                             // Part 2: Process block announcements (new blocks from mining)
                             // ============================================================
@@ -2027,7 +2006,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let mut bridge = block_import_bridge.lock().await;
                                 bridge.drain_announces()
                             };
-                            
+
                             for (peer_id, announce) in pending_announces {
                                 // Update sync service with block announcement to track peer's best height
                                 // This is critical for triggering historical sync when we're behind
@@ -2035,7 +2014,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     let mut sync = sync_service_for_import.lock().await;
                                     sync.on_block_announce(peer_id, &announce);
                                 }
-                                
+
                                 // Only process blocks that have a body (full blocks)
                                 let body = match &announce.body {
                                     Some(body) => body.clone(),
@@ -2050,7 +2029,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         continue;
                                     }
                                 };
-                                
+
                                 // Decode the header
                                 let header = match runtime::Header::decode(&mut &announce.header[..]) {
                                     Ok(h) => h,
@@ -2064,7 +2043,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         continue;
                                     }
                                 };
-                                
+
                                 // Decode extrinsics
                                 let extrinsics: Vec<runtime::UncheckedExtrinsic> = body
                                     .iter()
@@ -2072,13 +2051,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]).ok()
                                     })
                                     .collect();
-                                
+
                                 // Create the block
                                 let block = runtime::Block::new(header.clone(), extrinsics.clone());
                                 let block_hash = block.hash();
                                 let block_number = *header.number();
                                 let parent_hash = *header.parent_hash();
-                                
+
                                 // Check if we already have this block
                                 if block_import_client.chain_info().best_number >= block_number {
                                     // We might already have this block or a better one
@@ -2087,7 +2066,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         "Block at or below our best, checking if duplicate"
                                     );
                                 }
-                                
+
                                 // CRITICAL: Extract the seal from header digest and move to post_digests
                                 // PowBlockImport expects the seal in post_digests.last(), not in header.digest()
                                 // The seal should be the last digest item with engine ID "pow_"
@@ -2095,7 +2074,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let mut header_mut = header.clone();
                                 let post_hash = header_mut.hash(); // Hash before removing seal (this is the final block hash)
                                 let seal = header_mut.digest_mut().pop();
-                                
+
                                 let seal_item = match seal {
                                     Some(item) => item,
                                     None => {
@@ -2107,24 +2086,24 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         continue;
                                     }
                                 };
-                                
+
                                 // Construct BlockImportParams with seal in post_digests
                                 let mut import_params = BlockImportParams::new(BlockOrigin::NetworkBroadcast, header_mut);
                                 import_params.body = Some(extrinsics);
                                 import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
                                 import_params.post_digests.push(seal_item);
                                 import_params.post_hash = Some(post_hash);
-                                
+
                                 // Add PowIntermediate - difficulty will be computed from parent
                                 use sc_consensus_pow::{PowIntermediate, INTERMEDIATE_KEY};
                                 let intermediate = PowIntermediate::<sp_core::U256> {
                                     difficulty: None, // Will be computed by algorithm.difficulty(parent_hash)
                                 };
                                 import_params.insert_intermediate(INTERMEDIATE_KEY, intermediate);
-                                
+
                                 // Import through PowBlockImport (verifies PoW seal)
                                 let import_result = block_import_pow.clone().import_block(import_params).await;
-                                
+
                                 match import_result {
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
                                         blocks_imported += 1;
@@ -2179,10 +2158,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         }
                     },
                 );
-                
-                tracing::info!(
-                    "Block import handler wired to PowBlockImport for network sync"
-                );
+
+                tracing::info!("Block import handler wired to PowBlockImport for network sync");
             }
             Err(e) => {
                 tracing::error!(
@@ -2196,7 +2173,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // ==========================================================================
     // Wire client to ProductionChainStateProvider
     // ==========================================================================
-    
+
     let mining_config = MiningConfig::from_env();
     if mining_config.enabled {
         let worker_config = MiningWorkerConfig::from_env();
@@ -2215,10 +2192,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             // Convert sp_core::H256 to our H256 (they're the same type)
             (info.best_hash, info.best_number)
         });
-        
-        tracing::info!(
-            "best_block_fn wired to client.chain_info()"
-        );
+
+        tracing::info!("best_block_fn wired to client.chain_info()");
 
         // =======================================================================
         // Wire difficulty_fn to runtime API
@@ -2228,12 +2203,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         chain_state.set_difficulty_fn(move || {
             let best_hash = client_for_difficulty.chain_info().best_hash;
             let api = client_for_difficulty.runtime_api();
-            
+
             // Try to query difficulty from runtime's ConsensusApi
             match api.difficulty_bits(best_hash) {
-                Ok(difficulty_bits) => {
-                    difficulty_bits
-                }
+                Ok(difficulty_bits) => difficulty_bits,
                 Err(e) => {
                     tracing::warn!(
                         error = ?e,
@@ -2243,10 +2216,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 }
             }
         });
-        
-        tracing::info!(
-            "difficulty_fn wired to runtime ConsensusApi::difficulty_bits()"
-        );
+
+        tracing::info!("difficulty_fn wired to runtime ConsensusApi::difficulty_bits()");
 
         // =======================================================================
         // Wire pending_txs_fn to transaction pool
@@ -2255,9 +2226,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         // Full integration would use transaction_pool.ready() directly
         let pool_for_mining = Arc::clone(&pool_bridge);
         let max_block_txs = production_config.max_block_transactions;
-        chain_state.set_pending_txs_fn(move || {
-            pool_for_mining.ready_for_block(max_block_txs)
-        });
+        chain_state.set_pending_txs_fn(move || pool_for_mining.ready_for_block(max_block_txs));
 
         // Wire post-import callback to clear mined transactions
         let pool_for_import = Arc::clone(&pool_bridge);
@@ -2274,19 +2243,15 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         // Wire BlockBuilder API for real state execution
         // =======================================================================
         wire_block_builder_api(&chain_state, client.clone());
-        
-        tracing::info!(
-            "BlockBuilder API wired for real state execution"
-        );
+
+        tracing::info!("BlockBuilder API wired for real state execution");
 
         // =======================================================================
         // Wire PowBlockImport for real block import
         // =======================================================================
         wire_pow_block_import(&chain_state, pow_block_import, client.clone());
-        
-        tracing::info!(
-            "PowBlockImport wired for real block import"
-        );
+
+        tracing::info!("PowBlockImport wired for real block import");
 
         // Log full configuration
         tracing::info!(
@@ -2296,7 +2261,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             best_hash = %hex::encode(chain_state.best_hash().as_bytes()),
             "FULL PRODUCTION PIPELINE CONFIGURED"
         );
-        
+
         // Check if we have a PQ network handle for live broadcasting
         if let Some(pq_handle) = pq_network_handle.clone() {
             tracing::info!(
@@ -2315,7 +2280,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         pq_handle,
                         worker_config,
                     );
-                    
+
                     worker.run().await;
                 },
             );
@@ -2331,11 +2296,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 "hegemon-mining-worker",
                 Some("mining"),
                 async move {
-                    let worker = create_scaffold_mining_worker(
-                        pow_handle_for_worker,
-                        worker_config,
-                    );
-                    
+                    let worker =
+                        create_scaffold_mining_worker(pow_handle_for_worker, worker_config);
+
                     worker.run().await;
                 },
             );
@@ -2349,115 +2312,118 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // =========================================================================
     //
     // The RPC server provides HTTP and WebSocket access to:
-    // - Chain state queries (chain_*, state_*)  
+    // - Chain state queries (chain_*, state_*)
     // - Transaction submission (author_*)
     // - Hegemon-specific RPCs (hegemon_*, wallet RPCs)
     // - Shielded pool RPCs (STARK proofs, encrypted notes)
-    
+
     // Debug: dump what Substrate actually parsed
     eprintln!("=== RPC CONFIG DEBUG ===");
     eprintln!("config.rpc.addr: {:?}", config.rpc.addr);
     eprintln!("config.rpc.port: {}", config.rpc.port);
     eprintln!("========================");
-    
+
     // Get RPC port from CLI config. The --rpc-port flag populates config.rpc.addr,
     // falling back to config.rpc.port (default 9944) if no explicit endpoints specified.
-    let rpc_port = config.rpc.addr
+    let rpc_port = config
+        .rpc
+        .addr
         .as_ref()
         .and_then(|endpoints| endpoints.first())
         .map(|e| e.listen_addr.port())
         .unwrap_or(config.rpc.port);
-    
+
     // Create production RPC service with client access
     let rpc_service = Arc::new(ProductionRpcService::new(client.clone()));
-    
+
     // Create RPC module with all extensions
     let rpc_module = {
         use jsonrpsee::RpcModule;
-        use sc_rpc::SubscriptionTaskExecutor;
         use sc_rpc::chain::ChainApiServer;
-        use sc_rpc::state::{StateApiServer, ChildStateApiServer};
+        use sc_rpc::state::{ChildStateApiServer, StateApiServer};
         use sc_rpc::system::{System, SystemApiServer};
+        use sc_rpc::SubscriptionTaskExecutor;
         use sc_utils::mpsc::tracing_unbounded;
-        
+
         let mut module = RpcModule::new(());
-        
+
         // Register rpc_methods endpoint (required by Polkadot.js Apps)
         // This returns the list of available RPC methods
-        module.register_method("rpc_methods", |_, _, _| {
-            // Return a static list of methods we support
-            // Polkadot.js Apps uses this to discover available methods
-            let result: Result<serde_json::Value, jsonrpsee::types::ErrorObjectOwned> = Ok(serde_json::json!({
-                "methods": [
-                    "chain_getBlock",
-                    "chain_getBlockHash", 
-                    "chain_getHeader",
-                    "chain_getFinalizedHead",
-                    "chain_subscribeNewHead",
-                    "chain_subscribeFinalizedHeads",
-                    "chain_unsubscribeNewHead",
-                    "chain_unsubscribeFinalizedHeads",
-                    "state_call",
-                    "state_getKeys",
-                    "state_getKeysPaged",
-                    "state_getMetadata",
-                    "state_getPairs",
-                    "state_getReadProof",
-                    "state_getRuntimeVersion",
-                    "state_getStorage",
-                    "state_getStorageAt",
-                    "state_getStorageHash",
-                    "state_getStorageHashAt",
-                    "state_getStorageSize",
-                    "state_getStorageSizeAt",
-                    "state_queryStorage",
-                    "state_queryStorageAt",
-                    "state_subscribeRuntimeVersion",
-                    "state_subscribeStorage",
-                    "state_unsubscribeRuntimeVersion",
-                    "state_unsubscribeStorage",
-                    "system_chain",
-                    "system_chainType",
-                    "system_health",
-                    "system_localListenAddresses",
-                    "system_localPeerId",
-                    "system_name",
-                    "system_nodeRoles",
-                    "system_peers",
-                    "system_properties",
-                    "system_version",
-                    "author_hasKey",
-                    "author_hasSessionKeys",
-                    "author_insertKey",
-                    "author_pendingExtrinsics",
-                    "author_rotateKeys",
-                    "author_submitAndWatchExtrinsic",
-                    "author_submitExtrinsic",
-                    "author_unwatchExtrinsic",
-                    "rpc_methods"
-                ]
-            }));
-            result
-        }).expect("rpc_methods registration should not fail");
-        
+        module
+            .register_method("rpc_methods", |_, _, _| {
+                // Return a static list of methods we support
+                // Polkadot.js Apps uses this to discover available methods
+                let result: Result<serde_json::Value, jsonrpsee::types::ErrorObjectOwned> =
+                    Ok(serde_json::json!({
+                        "methods": [
+                            "chain_getBlock",
+                            "chain_getBlockHash",
+                            "chain_getHeader",
+                            "chain_getFinalizedHead",
+                            "chain_subscribeNewHead",
+                            "chain_subscribeFinalizedHeads",
+                            "chain_unsubscribeNewHead",
+                            "chain_unsubscribeFinalizedHeads",
+                            "state_call",
+                            "state_getKeys",
+                            "state_getKeysPaged",
+                            "state_getMetadata",
+                            "state_getPairs",
+                            "state_getReadProof",
+                            "state_getRuntimeVersion",
+                            "state_getStorage",
+                            "state_getStorageAt",
+                            "state_getStorageHash",
+                            "state_getStorageHashAt",
+                            "state_getStorageSize",
+                            "state_getStorageSizeAt",
+                            "state_queryStorage",
+                            "state_queryStorageAt",
+                            "state_subscribeRuntimeVersion",
+                            "state_subscribeStorage",
+                            "state_unsubscribeRuntimeVersion",
+                            "state_unsubscribeStorage",
+                            "system_chain",
+                            "system_chainType",
+                            "system_health",
+                            "system_localListenAddresses",
+                            "system_localPeerId",
+                            "system_name",
+                            "system_nodeRoles",
+                            "system_peers",
+                            "system_properties",
+                            "system_version",
+                            "author_hasKey",
+                            "author_hasSessionKeys",
+                            "author_insertKey",
+                            "author_pendingExtrinsics",
+                            "author_rotateKeys",
+                            "author_submitAndWatchExtrinsic",
+                            "author_submitExtrinsic",
+                            "author_unwatchExtrinsic",
+                            "rpc_methods"
+                        ]
+                    }));
+                result
+            })
+            .expect("rpc_methods registration should not fail");
+
         // Create subscription task executor for RPC subscriptions
         let executor: SubscriptionTaskExecutor = Arc::new(task_manager.spawn_handle());
-        
+
         // =====================================================================
         // Standard Substrate RPCs (chain_*, state_*, system_*)
         // =====================================================================
-        
+
         // Add Chain RPC (chain_getBlock, chain_getHeader, chain_getBlockHash, etc.)
-        let chain_rpc = sc_rpc::chain::new_full::<runtime::Block, _>(
-            client.clone(),
-            executor.clone(),
-        );
+        let chain_rpc =
+            sc_rpc::chain::new_full::<runtime::Block, _>(client.clone(), executor.clone());
         if let Err(e) = module.merge(chain_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Chain RPC");
         } else {
             tracing::info!("Chain RPC wired (chain_getBlock, chain_getHeader, etc.)");
         }
-        
+
         // Add State RPC (state_getStorage, state_getRuntimeVersion, state_call, etc.)
         // This requires the backend for storage queries
         let (state_rpc, child_state_rpc) = sc_rpc::state::new_full::<FullBackend, _, _>(
@@ -2473,14 +2439,14 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         if let Err(e) = module.merge(child_state_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Child State RPC");
         }
-        
+
         // =====================================================================
         // Author RPC (author_submitExtrinsic, author_pendingExtrinsics)
         // =====================================================================
-        
+
         // Add Author RPC for transaction submission
         use sc_rpc::author::{Author, AuthorApiServer};
-        
+
         let author_rpc = Author::new(
             client.clone(),
             transaction_pool.clone(),
@@ -2490,9 +2456,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         if let Err(e) = module.merge(author_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Author RPC");
         } else {
-            tracing::info!("Author RPC wired (author_submitExtrinsic, author_pendingExtrinsics, etc.)");
+            tracing::info!(
+                "Author RPC wired (author_submitExtrinsic, author_pendingExtrinsics, etc.)"
+            );
         }
-        
+
         // Add System RPC (system_name, system_version, system_chain, system_health, etc.)
         // SystemInfo provides static node metadata
         let system_info = sc_rpc::system::SystemInfo {
@@ -2504,28 +2472,26 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         };
         // Create a channel for network-dependent system RPC methods
         // Network requests will be handled by a background task
-        let (system_rpc_tx, mut system_rpc_rx) = tracing_unbounded::<sc_rpc::system::Request<runtime::Block>>(
-            "system-rpc-requests",
-            10_000,
-        );
+        let (system_rpc_tx, mut system_rpc_rx) = tracing_unbounded::<
+            sc_rpc::system::Request<runtime::Block>,
+        >("system-rpc-requests", 10_000);
         let system_rpc = System::new(system_info, system_rpc_tx);
         if let Err(e) = module.merge(system_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge System RPC");
         } else {
             tracing::info!("System RPC wired (system_name, system_version, system_chain, etc.)");
         }
-        
+
         // Spawn a task to handle system RPC network requests
         // Captures the real peer ID and PQ network handle for peer count
         let peer_id_for_rpc = rpc_peer_id;
         let p2p_port = pq_service_config.listen_addr.port();
         let pq_handle_for_rpc = pq_network_handle.clone();
-        task_manager.spawn_handle().spawn(
-            "system-rpc-handler",
-            Some("rpc"),
-            async move {
-                use sc_rpc::system::{Request, Health};
-                
+        task_manager
+            .spawn_handle()
+            .spawn("system-rpc-handler", Some("rpc"), async move {
+                use sc_rpc::system::{Health, Request};
+
                 // Convert 32-byte PQ peer ID to libp2p-compatible multihash PeerId
                 // Format: 0x00 (identity) + 0x24 (36 bytes: 4-byte prefix + 32-byte key) + data
                 // The ed25519 public key multihash prefix is 0x08 0x01 0x12 0x20
@@ -2536,12 +2502,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                     // Simpler: use identity multihash with raw 32 bytes
                     // 0x00 = identity hash, 0x20 = 32 bytes length
                     let mut multihash = vec![0x00, 0x24]; // identity + 36 bytes
-                    // Add ed25519 public key protobuf prefix (type=1, length=32)
+                                                          // Add ed25519 public key protobuf prefix (type=1, length=32)
                     multihash.extend_from_slice(&[0x08, 0x01, 0x12, 0x20]);
                     multihash.extend_from_slice(id);
                     bs58::encode(&multihash).into_string()
                 }
-                
+
                 while let Some(request) = system_rpc_rx.next().await {
                     match request {
                         Request::Health(sender) => {
@@ -2578,7 +2544,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         }
                         Request::NetworkState(sender) => {
                             // DEPRECATED: libp2p network state - not used in PQ network
-                            let _ = sender.send(serde_json::json!({"note": "PQ network - use system_health"}));
+                            let _ = sender.send(
+                                serde_json::json!({"note": "PQ network - use system_health"}),
+                            );
                         }
                         Request::NetworkAddReservedPeer(_, sender) => {
                             let _ = sender.send(Ok(()));
@@ -2603,21 +2571,22 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         }
                     }
                 }
-            },
-        );
-        
+            });
+
         // =====================================================================
         // Hegemon Custom RPCs
         // =====================================================================
-        
+
         // Add Hegemon RPC (mining, consensus, telemetry)
         let hegemon_rpc = HegemonRpc::new(rpc_service.clone(), pow_handle.clone());
         if let Err(e) = module.merge(hegemon_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Hegemon RPC");
         } else {
-            tracing::info!("Hegemon RPC wired (hegemon_miningStatus, hegemon_consensusStatus, etc.)");
+            tracing::info!(
+                "Hegemon RPC wired (hegemon_miningStatus, hegemon_consensusStatus, etc.)"
+            );
         }
-        
+
         // Add Wallet RPC (notes, commitments, proofs)
         let wallet_rpc = WalletRpc::new(rpc_service.clone());
         if let Err(e) = module.merge(wallet_rpc.into_rpc()) {
@@ -2625,7 +2594,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         } else {
             tracing::info!("Wallet RPC wired (wallet_notes, wallet_commitments, etc.)");
         }
-        
+
         // Add Shielded Pool RPC (STARK proofs, encrypted notes)
         let shielded_rpc = ShieldedRpc::new(rpc_service);
         if let Err(e) = module.merge(shielded_rpc.into_rpc()) {
@@ -2633,64 +2602,61 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         } else {
             tracing::info!("Shielded RPC wired (shielded_submitTransfer, etc.)");
         }
-        
+
         module
     };
-    
+
     // Spawn RPC server task
     let rpc_handle = task_manager.spawn_handle();
-    rpc_handle.spawn(
-        "hegemon-rpc-server",
-        Some("rpc"),
-        async move {
-            use sc_rpc::DenyUnsafe;
-            
-            let addr = format!("127.0.0.1:{}", rpc_port);
-            
-            // Create HTTP middleware 
-            // Note: DenyUnsafe is injected via extension middleware below
-            let http_middleware = tower::ServiceBuilder::new();
-            
-            // For dev mode, allow all methods; for production, we'd deny unsafe
-            let deny_unsafe = DenyUnsafe::No;
-            
-            // Create a custom RPC middleware that injects DenyUnsafe
-            use jsonrpsee::server::middleware::rpc::RpcServiceBuilder;
-            let rpc_middleware = RpcServiceBuilder::new().layer_fn(move |svc| {
-                DenyUnsafeMiddleware { inner: svc, deny_unsafe }
-            });
-            
-            let server = match ServerBuilder::default()
-                .set_http_middleware(http_middleware)
-                .set_rpc_middleware(rpc_middleware)
-                .build(&addr)
-                .await
-            {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!(
-                        error = %e,
-                        addr = %addr,
-                        "Failed to build RPC server"
-                    );
-                    return;
-                }
-            };
-            
-            tracing::info!(
-                addr = %addr,
-                "RPC server started"
-            );
-            
-            let handle = server.start(rpc_module);
-            
-            // Keep the server running
-            handle.stopped().await;
-            
-            tracing::info!("RPC server stopped");
-        },
-    );
-    
+    rpc_handle.spawn("hegemon-rpc-server", Some("rpc"), async move {
+        use sc_rpc::DenyUnsafe;
+
+        let addr = format!("127.0.0.1:{}", rpc_port);
+
+        // Create HTTP middleware
+        // Note: DenyUnsafe is injected via extension middleware below
+        let http_middleware = tower::ServiceBuilder::new();
+
+        // For dev mode, allow all methods; for production, we'd deny unsafe
+        let deny_unsafe = DenyUnsafe::No;
+
+        // Create a custom RPC middleware that injects DenyUnsafe
+        use jsonrpsee::server::middleware::rpc::RpcServiceBuilder;
+        let rpc_middleware = RpcServiceBuilder::new().layer_fn(move |svc| DenyUnsafeMiddleware {
+            inner: svc,
+            deny_unsafe,
+        });
+
+        let server = match ServerBuilder::default()
+            .set_http_middleware(http_middleware)
+            .set_rpc_middleware(rpc_middleware)
+            .build(&addr)
+            .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    addr = %addr,
+                    "Failed to build RPC server"
+                );
+                return;
+            }
+        };
+
+        tracing::info!(
+            addr = %addr,
+            "RPC server started"
+        );
+
+        let handle = server.start(rpc_module);
+
+        // Keep the server running
+        handle.stopped().await;
+
+        tracing::info!("RPC server stopped");
+    });
+
     tracing::info!(
         rpc_port = rpc_port,
         "RPC server spawned with production service"
@@ -2736,7 +2702,7 @@ impl MiningConfig {
         let enabled = std::env::var("HEGEMON_MINE")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
-        
+
         let threads = std::env::var("HEGEMON_MINE_THREADS")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -2793,7 +2759,7 @@ mod tests {
 // =============================================================================
 //
 // This module provides the real block import pipeline integration.
-// 
+//
 // Due to Substrate's complex type system with deeply nested generics,
 // we provide:
 // 1. A simplified import callback that tracks state
@@ -2924,8 +2890,10 @@ impl BlockImportTracker {
     /// This returns a closure that can be passed to `set_import_fn()`.
     pub fn create_import_callback(
         &self,
-    ) -> impl Fn(&crate::substrate::mining_worker::BlockTemplate, &Blake3Seal) -> Result<H256, String> + Send + Sync + 'static
-    {
+    ) -> impl Fn(&crate::substrate::mining_worker::BlockTemplate, &Blake3Seal) -> Result<H256, String>
+           + Send
+           + Sync
+           + 'static {
         let stats = self.stats.clone();
         let best_number = self.best_number.clone();
         let best_hash = self.best_hash.clone();
@@ -2944,7 +2912,7 @@ impl BlockImportTracker {
 
             // Compute block hash from the seal work
             let block_hash = H256::from_slice(seal.work.as_bytes());
-            
+
             // Update best block
             best_number.store(template.number, std::sync::atomic::Ordering::SeqCst);
             *best_hash.write() = block_hash;
@@ -3043,7 +3011,7 @@ mod import_tests {
         let tracker = BlockImportTracker::with_defaults();
         assert_eq!(tracker.best_number(), 0);
         assert_eq!(tracker.best_hash(), H256::zero());
-        
+
         let stats = tracker.stats();
         assert_eq!(stats.blocks_imported, 0);
     }
@@ -3057,7 +3025,7 @@ mod import_tests {
         });
 
         let callback = tracker.create_import_callback();
-        
+
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
         let seal = Blake3Seal {
             nonce: 12345,
@@ -3082,12 +3050,12 @@ mod import_tests {
         });
 
         let callback = tracker.create_import_callback();
-        
+
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
         // Create invalid seal (work doesn't meet target)
         let seal = Blake3Seal {
             nonce: 0,
-            difficulty: 0x0300ffff, // Very hard
+            difficulty: 0x0300ffff,        // Very hard
             work: H256::repeat_byte(0xff), // Max value won't meet target
         };
 
@@ -3102,7 +3070,9 @@ mod import_tests {
     #[test]
     fn test_wire_import_tracker() {
         let tracker = BlockImportTracker::with_defaults();
-        let provider = Arc::new(ProductionChainStateProvider::new(ProductionConfig::default()));
+        let provider = Arc::new(ProductionChainStateProvider::new(
+            ProductionConfig::default(),
+        ));
 
         wire_import_tracker(&provider, &tracker);
 
@@ -3112,4 +3082,3 @@ mod import_tests {
         assert_eq!(provider.best_hash(), H256::zero());
     }
 }
-

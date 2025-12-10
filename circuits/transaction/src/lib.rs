@@ -40,12 +40,16 @@ pub use public_inputs::TransactionPublicInputs;
 pub use witness::TransactionWitness;
 
 // Re-export real STARK types (preferred API)
-pub use stark_air::{TransactionAirStark, TransactionPublicInputsStark, TRACE_WIDTH, MIN_TRACE_LENGTH};
-pub use stark_prover::{TransactionProverStark, default_proof_options, fast_proof_options};
-pub use stark_verifier::{verify_transaction_proof, verify_transaction_proof_bytes, TransactionVerifyError};
+pub use stark_air::{
+    TransactionAirStark, TransactionPublicInputsStark, MIN_TRACE_LENGTH, TRACE_WIDTH,
+};
+pub use stark_prover::{default_proof_options, fast_proof_options, TransactionProverStark};
+pub use stark_verifier::{
+    verify_transaction_proof, verify_transaction_proof_bytes, TransactionVerifyError,
+};
 
 // Re-export circuit versioning and AIR identification
-pub use constants::{CIRCUIT_VERSION, compute_air_hash, expected_air_hash};
+pub use constants::{compute_air_hash, expected_air_hash, CIRCUIT_VERSION};
 
 // Legacy re-exports (deprecated)
 #[deprecated(since = "0.2.0", note = "Use stark_air::TransactionAirStark instead")]
