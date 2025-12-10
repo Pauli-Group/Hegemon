@@ -110,8 +110,8 @@ NODE_ARGS=(
 
 # Handle bootnode connection
 # BOOTNODE can be either:
-#   - Simple IP:port format: "75.155.93.185:30333"
-#   - Multiaddr format: "/ip4/75.155.93.185/tcp/30333/p2p/..." (peer ID ignored)
+#   - Simple host:port format: "hegemon.pauli.group:30333"
+#   - Multiaddr format: "/ip4/1.2.3.4/tcp/30333/p2p/..." (peer ID ignored)
 if [[ -n "$BOOTNODE" ]]; then
     # Extract IP:port from multiaddr if needed
     if [[ "$BOOTNODE" == /ip4/* ]]; then

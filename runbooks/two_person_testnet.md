@@ -10,7 +10,7 @@ Both participants need:
 
 ## Network Info
 
-- **Boot Node (Pierre-Luc):** `75.155.93.185:30333`
+- **Boot Node (Pierre-Luc):** `hegemon.pauli.group:30333`
 - **Chain:** Shared chainspec file (see below)
 - **Block time:** ~5 seconds
 - **Coinbase reward:** 50 HGM per block (halves every 210,000 blocks)
@@ -80,7 +80,7 @@ The script will:
 To connect to the boot node, set `BOOTNODE` before running:
 
 ```bash
-BOOTNODE="75.155.93.185:30333" ./scripts/start-mining.sh
+BOOTNODE="hegemon.pauli.group:30333" ./scripts/start-mining.sh
 ```
 
 ---
@@ -106,7 +106,7 @@ The command below extracts your shielded address (offline) and starts mining:
 
 ```bash
 HEGEMON_MINE=1 \
-HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
+HEGEMON_MINER_ADDRESS=shca1qyqqqqqq2ms03xy2asa494tehe23ynxt4ldfvrpqmjmk8asdcfswng6scresfx5u654np7anvj3trpmz7qwslfaplpdfn2hze6q2sna9p2frg7twlefvcurmh72usukxxfzeyvanvlqvqlk8ra0xrztjmxujryuu593n975hd34pedgkrx642g3mrj3qwn5ccxed2lugqysnrqeraxyp3089vg3acdnr59rmn4ealcttepmxwepny578zf5265s9hepvlqm43xl2p2f0fgzp33ntz9m54f65wg9gsexgdxkcwueyf8jkvy8c3h3392u5qe452npga0r4tk3203r8fru3ns3plvuvxdzj74n45aa9kzqrlt9pgzvrt8d2phcp4st3c2yfnyycphzz89m4uttn87syfp5ss6t55xxzr5uf4qwznj0vxffmu64a37u62zrzp0x99tvgsf9jga3tggy0mf4q5kw8d6s8vk4lkaxw9ymper6y5jvfxcl0nykknd0a64gnppveezwrwmy0ff6vcqmca52wmwp3xrr92gxexmftzwyxdzrtmrjkshfvzta52rrampssfg24jqpg0sggdfqkq0hyyur5q3ctr3z4gp2g3fcsjthssafsnafuezgsdztxxlhjx6dlpzueykm3gnatqe8z4xhyccswyzrrx3edjdrgtmtx9ut5sv3s7psyl4mprd6yj3u8tvpxcydt3y7g4dqqz694r0ex497y9weqqgghkytdat23rrxewjhky8pedtp9rhzcatr8mrmccgecprz46q9tv5ncj5dcw684d92kgd7ps0z8mt9sx8redytrrg9lkzskuf3m5gy9tlu6757szzm9qt5mtd7apf3ruwtvxa0ydmxnnyypj5xdkfr8lcs2rcn64yxx30d68vpwr2azsgdyfnlpd22hgmxfje6px9qs7ewqrs3mf6n3s5d4t2nlxxdra0m6kc89cen7yate4ph49g55eg93fdqu4e2wxn5mujrfnv9s57cck7f6eq6kw8nt4zd2wjd6lhj99ng3pql0tpp6wzqfaxp298usdksrem8f5kk4wrz83sd9ukvpqpwnvyvmspvgdtx8egqz5yre6n9stzwlwyl7evzusmx9lkf9en6yfa5a50zh2k74w35vq8tzyhfrgta5z0ae2f6ke3jt9a3xw5l30kwc0pqeuzh8euamx5vyahychld6yr2hjn8mvuvh8ayr9k74vs3dqa92ga20jufw284rhvqyfhl23q7hkgmdfx5qgca2dy6e9jpm5jwdppe00y34czv2r2ketse3yq7ly8plnqykk4dk2d6j8mvgqcefrqvm6zqvjlufkpux53ja5vfgqlyyq4mmza6hue8ekq0njzxtd3mk359cx24qah66dwrcke7uev4fwj7ff5ghj4z5ev8ehsuj54t82nyuy2uq8yz4fwluw23pkkd5q8zuyj9jd7kvv3p78jl7sh8jm5al30dvrjy8n9ayjujx6q8yapwgnx5r8zq2h85tppuxfr98axkzxa4mf6dr94smw9hfxsv97wrzz8jmee8cnd73gv4xyfgl36t6kx9jcydvsmfzktc8y3tda523zxpcjs8ted7sw9vrlvh3n5fvcdnyyp68r7ygqqyaejkpnw2rt7kr4ndhcc6dsjph27wc7fvv59q5tpmse2l2ymh2sjfr85fvytf6975u4h405jxyhj33zeg6mrcqvq5jda7wc6k7xp0nfw54tm5jvcx6fh7dglhvp09esxey68mj9nu65yqac4jhvcc50hzg4j5p289njc7jxnk7gusp6eusaa29unzm33regdp52p7t47j3xkghr2ksh3pdfprkmqke88qcquq96lv4gcv53s6mldsygu57ky2nrfrpy3zvxr2mqlhnhapsvazuth7zl4hkgay82x5regguyrazrscdkr200pd67hrrsy2d79ugc3s0h64dex8awy7fclvrxjj \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
@@ -129,7 +129,7 @@ Look for the line starting with `Shielded Address: shca1...` and your balance.
 
 William just needs your public IP and port. No peer ID is required (the network uses PQ-Noise, not libp2p).
 
-Your bootnode address: `75.155.93.185:30333`
+Your bootnode address: `hegemon.pauli.group:30333`
 
 ### 5. Monitor Mining
 
@@ -166,7 +166,7 @@ cargo build -p hegemon-node -p wallet --release
 mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
-HEGEMON_SEEDS="75.155.93.185:30333" \
+HEGEMON_SEEDS="hegemon.pauli.group:30333" \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "WILL_CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
@@ -281,7 +281,7 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 ### William can't connect
 - Verify port 30333 is forwarded on Pierre-Luc's router
 - Check firewall allows inbound TCP 30333 (macOS: add hegemon-node to allowed apps)
-- Ensure `HEGEMON_SEEDS` is set correctly (IP:port format, e.g., `75.155.93.185:30333`)
+- Ensure `HEGEMON_SEEDS` is set correctly (e.g., `hegemon.pauli.group:30333`)
 
 ### Blocks not syncing
 - **Genesis mismatch:** Ensure all nodes use the same `config/dev-chainspec.json` file from the boot node
