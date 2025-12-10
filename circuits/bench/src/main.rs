@@ -144,7 +144,7 @@ fn build_merkle_tree(leaves: &[Felt]) -> (Vec<MerklePath>, Felt) {
 
     // Pad leaves to next power of 2
     let n = leaves.len().next_power_of_two().max(2);
-    let mut level: Vec<Felt> = leaves.iter().copied().collect();
+    let mut level: Vec<Felt> = leaves.to_vec();
     level.resize(n, Felt::ZERO);
 
     // Store all levels for path reconstruction

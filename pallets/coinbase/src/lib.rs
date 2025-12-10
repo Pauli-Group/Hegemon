@@ -507,6 +507,7 @@ pub mod pallet {
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
     use crate::pallet::{
         block_subsidy, epoch_from_timestamp, epoch_subsidy, BLOCKS_PER_EPOCH, COIN, INITIAL_REWARD,
@@ -523,12 +524,15 @@ mod tests {
         //            = 499,429,223 (approximately)
         //
         // Note: Integer division may cause slight variance
-        assert!(INITIAL_REWARD > 490_000_000, "R0 should be ~4.9 coins");
-        assert!(INITIAL_REWARD < 510_000_000, "R0 should be ~5 coins");
+        #[allow(clippy::assertions_on_constants)]
+        {
+            assert!(INITIAL_REWARD > 490_000_000, "R0 should be ~4.9 coins");
+            assert!(INITIAL_REWARD < 510_000_000, "R0 should be ~5 coins");
+        }
 
         // Verify it's approximately 4.98 coins
         let coins = INITIAL_REWARD / COIN;
-        assert!(coins >= 4 && coins <= 5, "Should be ~4-5 coins per block");
+        assert!((4..=5).contains(&coins), "Should be ~4-5 coins per block");
     }
 
     #[test]

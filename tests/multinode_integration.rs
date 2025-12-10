@@ -101,6 +101,12 @@ pub struct LiveNodeManager {
     base_paths: Vec<String>,
 }
 
+impl Default for LiveNodeManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LiveNodeManager {
     pub fn new() -> Self {
         Self {
@@ -460,11 +466,7 @@ mod live_node_tests {
         // Bob should have synced to Alice's chain (or close to it)
         // NOTE: PQ network peering is separate from libp2p - nodes mine independently
         // until PQ peering is fully integrated with block propagation
-        let diff = if alice_block > bob_block {
-            alice_block - bob_block
-        } else {
-            bob_block - alice_block
-        };
+        let diff = alice_block.abs_diff(bob_block);
         println!("[9] Block difference: {}", diff);
 
         // For now, just verify both nodes are mining
@@ -656,11 +658,7 @@ mod live_node_tests {
         assert!(bob_end >= 1, "Bob should have synced blocks");
 
         // They should be roughly in sync
-        let diff = if alice_end > bob_end {
-            alice_end - bob_end
-        } else {
-            bob_end - alice_end
-        };
+        let diff = alice_end.abs_diff(bob_end);
         println!("[5] Final difference: {}", diff);
         assert!(diff <= 5, "Nodes should be synced within 5 blocks");
 
@@ -808,11 +806,7 @@ mod live_node_tests {
         );
         assert!(bob_block_after > bob_block_before, "Bob should advance");
 
-        let diff = if alice_block_after > bob_block_after {
-            alice_block_after - bob_block_after
-        } else {
-            bob_block_after - alice_block_after
-        };
+        let diff = alice_block_after.abs_diff(bob_block_after);
         assert!(diff <= 2, "Should be in sync");
 
         println!("\n=== ✅ Reconnection Test PASSED ===");

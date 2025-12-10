@@ -13,7 +13,7 @@ use sp_core::{H256, U256};
 #[test]
 fn test_difficulty_unchanged_at_target() {
     // Given: genesis difficulty
-    let genesis_difficulty = compact_to_target(0x1d00ffff).unwrap();
+    let _genesis_difficulty = compact_to_target(0x1d00ffff).unwrap();
 
     // When: 2016 blocks mined in 20160 seconds (target)
     let actual_time: u64 = 20160;

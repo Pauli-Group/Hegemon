@@ -412,7 +412,7 @@ pub mod pallet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use frame_support::{assert_ok, derive_impl, traits::Hooks};
+    use frame_support::{assert_ok, derive_impl};
     use sp_core::{H256, U256};
     use sp_runtime::{
         traits::{BlakeTwo256, IdentityLookup},

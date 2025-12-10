@@ -829,40 +829,36 @@ impl PqServiceConfig {
             .or_else(|| {
                 // Extract port from Substrate network config listen addresses
                 // Multiaddr format: /ip4/0.0.0.0/tcp/30333
-                config
-                    .network
-                    .listen_addresses
-                    .first()
-                    .and_then(|multiaddr| {
-                        let s = multiaddr.to_string();
-                        // Parse /ip4/X.X.X.X/tcp/PORT or /ip6/.../tcp/PORT
-                        let mut ip: std::net::IpAddr =
-                            std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
-                        let mut port = 30333u16;
+                config.network.listen_addresses.first().map(|multiaddr| {
+                    let s = multiaddr.to_string();
+                    // Parse /ip4/X.X.X.X/tcp/PORT or /ip6/.../tcp/PORT
+                    let mut ip: std::net::IpAddr =
+                        std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
+                    let mut port = 30333u16;
 
-                        let parts: Vec<&str> = s.split('/').collect();
-                        for i in 0..parts.len() {
-                            match parts[i] {
-                                "ip4" if i + 1 < parts.len() => {
-                                    if let Ok(addr) = parts[i + 1].parse::<std::net::Ipv4Addr>() {
-                                        ip = std::net::IpAddr::V4(addr);
-                                    }
+                    let parts: Vec<&str> = s.split('/').collect();
+                    for i in 0..parts.len() {
+                        match parts[i] {
+                            "ip4" if i + 1 < parts.len() => {
+                                if let Ok(addr) = parts[i + 1].parse::<std::net::Ipv4Addr>() {
+                                    ip = std::net::IpAddr::V4(addr);
                                 }
-                                "ip6" if i + 1 < parts.len() => {
-                                    if let Ok(addr) = parts[i + 1].parse::<std::net::Ipv6Addr>() {
-                                        ip = std::net::IpAddr::V6(addr);
-                                    }
-                                }
-                                "tcp" if i + 1 < parts.len() => {
-                                    if let Ok(p) = parts[i + 1].parse::<u16>() {
-                                        port = p;
-                                    }
-                                }
-                                _ => {}
                             }
+                            "ip6" if i + 1 < parts.len() => {
+                                if let Ok(addr) = parts[i + 1].parse::<std::net::Ipv6Addr>() {
+                                    ip = std::net::IpAddr::V6(addr);
+                                }
+                            }
+                            "tcp" if i + 1 < parts.len() => {
+                                if let Ok(p) = parts[i + 1].parse::<u16>() {
+                                    port = p;
+                                }
+                            }
+                            _ => {}
                         }
-                        Some(std::net::SocketAddr::new(ip, port))
-                    })
+                    }
+                    std::net::SocketAddr::new(ip, port)
+                })
             })
             .unwrap_or_else(|| "0.0.0.0:30333".parse().unwrap());
 
@@ -1942,7 +1938,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             sync.on_block_imported(block_number as u64);
                                         }
 
-                                        if sync_blocks_imported % 100 == 0 {
+                                        if sync_blocks_imported.is_multiple_of(100) {
                                             tracing::info!(
                                                 block_number,
                                                 sync_imported = sync_blocks_imported,
@@ -2902,12 +2898,10 @@ impl BlockImportTracker {
 
         move |template, seal| {
             // Verify the seal if configured
-            if verify_pow {
-                if !consensus::seal_meets_target(&seal.work, seal.difficulty) {
-                    let mut s = stats.write();
-                    s.invalid_seals += 1;
-                    return Err("Seal does not meet difficulty target".to_string());
-                }
+            if verify_pow && !consensus::seal_meets_target(&seal.work, seal.difficulty) {
+                let mut s = stats.write();
+                s.invalid_seals += 1;
+                return Err("Seal does not meet difficulty target".to_string());
             }
 
             // Compute block hash from the seal work

@@ -4,8 +4,7 @@
 //! Tests marked with #[ignore] require a running Substrate node.
 
 use wallet::substrate_rpc::{
-    BlockingSubstrateRpcClient, LatestBlock, NoteStatus, PaginationParams, SubstrateRpcClient,
-    SubstrateRpcConfig,
+    LatestBlock, NoteStatus, PaginationParams, SubstrateRpcClient, SubstrateRpcConfig,
 };
 use wallet::WalletError;
 
@@ -169,6 +168,7 @@ async fn test_substrate_client_nullifiers() {
 #[tokio::test]
 #[ignore]
 async fn test_substrate_client_block_subscription() {
+    #[allow(unused_imports)]
     use futures::StreamExt;
     use std::time::Duration;
 

@@ -159,7 +159,7 @@ mod tests {
     use super::*;
     use crate::{
         hashing::merkle_node,
-        note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness, MERKLE_TREE_DEPTH},
+        note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
         stark_prover::{fast_proof_options, TransactionProverStark},
         witness::TransactionWitness,
     };
@@ -284,7 +284,7 @@ mod tests {
         let proof = prover.prove(trace).expect("proving should succeed");
 
         // Tamper with fee to break balance equation
-        pub_inputs.fee = pub_inputs.fee + BaseElement::new(1);
+        pub_inputs.fee += BaseElement::new(1);
 
         let result = verify_transaction_proof(&proof, &pub_inputs);
         assert!(
