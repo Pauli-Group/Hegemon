@@ -276,9 +276,7 @@ mod substrate_tests {
         let provider = ProductionChainStateProvider::new(config);
 
         // Return 10 transactions
-        provider.set_pending_txs_fn(|| {
-            (0..10).map(|i| vec![i as u8]).collect()
-        });
+        provider.set_pending_txs_fn(|| (0..10).map(|i| vec![i as u8]).collect());
 
         let txs = provider.pending_transactions();
         assert_eq!(txs.len(), 3); // Limited by config

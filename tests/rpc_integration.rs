@@ -61,9 +61,19 @@ pub struct MockTransaction {
 
 #[derive(Clone, Debug)]
 pub enum MockTxType {
-    Shield { amount: u128, commitment: [u8; 32] },
-    ShieldedTransfer { nullifiers: Vec<[u8; 32]>, commitments: Vec<[u8; 32]> },
-    Unshield { nullifier: [u8; 32], amount: u128, recipient: [u8; 32] },
+    Shield {
+        amount: u128,
+        commitment: [u8; 32],
+    },
+    ShieldedTransfer {
+        nullifiers: Vec<[u8; 32]>,
+        commitments: Vec<[u8; 32]>,
+    },
+    Unshield {
+        nullifier: [u8; 32],
+        amount: u128,
+        recipient: [u8; 32],
+    },
 }
 
 impl Default for MockRpcService {
@@ -114,11 +124,11 @@ impl MockRpcService {
         encrypted_note: Vec<u8>,
     ) -> Result<[u8; 32], String> {
         let index = self.add_note(encrypted_note, commitment).await;
-        
+
         // Update balance
         let mut bal = self.balance.write().await;
         *bal = bal.saturating_add(amount);
-        
+
         // Generate tx hash
         let mut hasher = Sha256::new();
         hasher.update(b"shield");
@@ -127,19 +137,21 @@ impl MockRpcService {
         let hash_bytes = hasher.finalize();
         let mut tx_hash = [0u8; 32];
         tx_hash.copy_from_slice(&hash_bytes);
-        
+
         // Record transaction
         self.transactions.write().await.push(MockTransaction {
             tx_hash,
             block_number: Some(*self.height.read().await),
             tx_type: MockTxType::Shield { amount, commitment },
         });
-        
+
         eprintln!(
             "Mock shield executed: amount={}, index={}, tx_hash={}",
-            amount, index, hex::encode(tx_hash)
+            amount,
+            index,
+            hex::encode(tx_hash)
         );
-        
+
         Ok(tx_hash)
     }
 
@@ -158,7 +170,7 @@ impl MockRpcService {
         if !self.is_valid_anchor(&anchor).await {
             return Err("Invalid anchor".to_string());
         }
-        
+
         // Check nullifiers not already spent
         {
             let spent = self.nullifiers.read().await;
@@ -168,7 +180,7 @@ impl MockRpcService {
                 }
             }
         }
-        
+
         // Add nullifiers to spent set
         {
             let mut spent = self.nullifiers.write().await;
@@ -176,12 +188,12 @@ impl MockRpcService {
                 spent.push(*nf);
             }
         }
-        
+
         // Add new notes
         for (commitment, encrypted_note) in commitments.iter().zip(encrypted_notes.iter()) {
             self.add_note(encrypted_note.clone(), *commitment).await;
         }
-        
+
         // Update balance
         {
             let mut bal = self.balance.write().await;
@@ -191,7 +203,7 @@ impl MockRpcService {
                 *bal = bal.saturating_sub((-value_balance) as u128);
             }
         }
-        
+
         // Generate tx hash
         let mut hasher = Sha256::new();
         hasher.update(b"shielded_transfer");
@@ -204,7 +216,7 @@ impl MockRpcService {
         let hash_bytes = hasher.finalize();
         let mut tx_hash = [0u8; 32];
         tx_hash.copy_from_slice(&hash_bytes);
-        
+
         // Record transaction
         self.transactions.write().await.push(MockTransaction {
             tx_hash,
@@ -214,7 +226,7 @@ impl MockRpcService {
                 commitments: commitments.clone(),
             },
         });
-        
+
         Ok(tx_hash)
     }
 
@@ -241,10 +253,7 @@ impl MockRpcService {
     }
 
     /// Get Merkle witness for a position
-    pub async fn get_merkle_witness(
-        &self,
-        _position: u64,
-    ) -> (Vec<[u8; 32]>, Vec<bool>, [u8; 32]) {
+    pub async fn get_merkle_witness(&self, _position: u64) -> (Vec<[u8; 32]>, Vec<bool>, [u8; 32]) {
         // Mock witness with 32 levels
         let siblings: Vec<[u8; 32]> = (0..32).map(|i| [i; 32]).collect();
         let indices: Vec<bool> = (0..32).map(|_| false).collect();
@@ -259,7 +268,7 @@ impl MockRpcService {
         let bal = *self.balance.read().await;
         let root = *self.merkle_root.read().await;
         let height = *self.height.read().await;
-        
+
         MockPoolStatus {
             total_notes: notes.len() as u64,
             total_nullifiers: nfs.len() as u64,
@@ -390,10 +399,7 @@ impl TestRpcClient {
     }
 
     /// Get Merkle witness
-    pub async fn get_merkle_witness(
-        &self,
-        position: u64,
-    ) -> (Vec<[u8; 32]>, Vec<bool>, [u8; 32]) {
+    pub async fn get_merkle_witness(&self, position: u64) -> (Vec<[u8; 32]>, Vec<bool>, [u8; 32]) {
         if let Some(mock) = &self.mock {
             mock.get_merkle_witness(position).await
         } else {
@@ -447,7 +453,7 @@ mod basic_rpc_tests {
     #[tokio::test]
     async fn test_mock_service_creation() {
         let service = MockRpcService::new();
-        
+
         // Check initial state
         let status = service.get_pool_status().await;
         assert_eq!(status.total_notes, 0);
@@ -459,19 +465,22 @@ mod basic_rpc_tests {
     #[tokio::test]
     async fn test_shield_operation() {
         let service = MockRpcService::new();
-        
+
         let commitment = [0xaa; 32];
         let encrypted_note = vec![1, 2, 3, 4];
         let amount = 1_000_000u128;
-        
+
         // Shield funds
-        let tx_hash = service.shield(amount, commitment, encrypted_note).await.unwrap();
-        
+        let tx_hash = service
+            .shield(amount, commitment, encrypted_note)
+            .await
+            .unwrap();
+
         // Verify state
         let status = service.get_pool_status().await;
         assert_eq!(status.total_notes, 1);
         assert_eq!(status.pool_balance, amount);
-        
+
         // Verify transaction recorded
         let tx = service.get_transaction(&tx_hash).await;
         assert!(tx.is_some());
@@ -480,16 +489,16 @@ mod basic_rpc_tests {
     #[tokio::test]
     async fn test_get_encrypted_notes() {
         let service = MockRpcService::new();
-        
+
         // Add some notes
         for i in 0..5 {
             service.add_note(vec![i as u8], [i; 32]).await;
         }
-        
+
         // Get all notes
         let notes = service.get_encrypted_notes(0, 10, None, None).await;
         assert_eq!(notes.len(), 5);
-        
+
         // Get with pagination
         let notes = service.get_encrypted_notes(2, 2, None, None).await;
         assert_eq!(notes.len(), 2);
@@ -499,9 +508,9 @@ mod basic_rpc_tests {
     #[tokio::test]
     async fn test_merkle_witness() {
         let service = MockRpcService::new();
-        
+
         let (siblings, indices, _root) = service.get_merkle_witness(0).await;
-        
+
         // Should have 32 levels
         assert_eq!(siblings.len(), 32);
         assert_eq!(indices.len(), 32);
@@ -511,12 +520,12 @@ mod basic_rpc_tests {
     async fn test_nullifier_tracking() {
         let service = MockRpcService::new();
         service.add_anchor([0; 32]).await; // Add valid anchor
-        
+
         let nullifier = [0xcc; 32];
-        
+
         // Not spent initially
         assert!(!service.is_nullifier_spent(&nullifier).await);
-        
+
         // Submit transfer with this nullifier
         service
             .submit_shielded_transfer(
@@ -530,7 +539,7 @@ mod basic_rpc_tests {
             )
             .await
             .unwrap();
-        
+
         // Now spent
         assert!(service.is_nullifier_spent(&nullifier).await);
     }
@@ -538,13 +547,13 @@ mod basic_rpc_tests {
     #[tokio::test]
     async fn test_anchor_validation() {
         let service = MockRpcService::new();
-        
+
         // Initial anchor (zero) is valid
         assert!(service.is_valid_anchor(&[0; 32]).await);
-        
+
         // Unknown anchor is invalid
         assert!(!service.is_valid_anchor(&[0xff; 32]).await);
-        
+
         // Add custom anchor
         service.add_anchor([0xab; 32]).await;
         assert!(service.is_valid_anchor(&[0xab; 32]).await);
@@ -563,27 +572,27 @@ mod shielded_transfer_tests {
     async fn test_shielded_transfer_success() {
         let (client, service) = TestRpcClient::mock();
         service.add_anchor([0; 32]).await;
-        
+
         // Shield initial funds
         client.shield(1_000_000, [0xaa; 32], vec![1]).await.unwrap();
-        
+
         // Submit shielded transfer
         let tx_hash = client
             .submit_shielded_transfer(
-                vec![0u8; 15000], // fake proof
-                vec![[0x11; 32]], // nullifier
-                vec![[0x22; 32]], // new commitment
+                vec![0u8; 15000],    // fake proof
+                vec![[0x11; 32]],    // nullifier
+                vec![[0x22; 32]],    // new commitment
                 vec![vec![2, 3, 4]], // encrypted note
-                [0; 32], // anchor
-                [0; 64], // binding sig
-                0, // value balance
+                [0; 32],             // anchor
+                [0; 64],             // binding sig
+                0,                   // value balance
             )
             .await
             .unwrap();
-        
+
         // Verify
         assert_ne!(tx_hash, [0u8; 32]);
-        
+
         let status = client.get_pool_status().await;
         assert_eq!(status.total_notes, 2); // original + new
         assert_eq!(status.total_nullifiers, 1);
@@ -593,12 +602,12 @@ mod shielded_transfer_tests {
     async fn test_double_spend_rejected() {
         let (client, service) = TestRpcClient::mock();
         service.add_anchor([0; 32]).await;
-        
+
         // Shield funds
         client.shield(1_000_000, [0xaa; 32], vec![1]).await.unwrap();
-        
+
         let nullifier = [0x99; 32];
-        
+
         // First transfer succeeds
         let result = client
             .submit_shielded_transfer(
@@ -612,7 +621,7 @@ mod shielded_transfer_tests {
             )
             .await;
         assert!(result.is_ok());
-        
+
         // Second transfer with same nullifier fails
         let result = client
             .submit_shielded_transfer(
@@ -631,10 +640,10 @@ mod shielded_transfer_tests {
     #[tokio::test]
     async fn test_invalid_anchor_rejected() {
         let (client, service) = TestRpcClient::mock();
-        
+
         // Shield funds
         client.shield(1_000_000, [0xaa; 32], vec![1]).await.unwrap();
-        
+
         // Try transfer with invalid anchor
         let result = client
             .submit_shielded_transfer(
@@ -647,7 +656,7 @@ mod shielded_transfer_tests {
                 0,
             )
             .await;
-        
+
         assert!(result.is_err());
     }
 }
@@ -665,7 +674,7 @@ mod concurrent_tests {
     async fn test_concurrent_shields() {
         let service = Arc::new(MockRpcService::new());
         let mut tasks = JoinSet::new();
-        
+
         // Spawn 10 concurrent shield operations
         for i in 0..10 {
             let svc = service.clone();
@@ -674,12 +683,12 @@ mod concurrent_tests {
                 svc.shield(100_000, commitment, vec![i]).await
             });
         }
-        
+
         // Wait for all to complete
         while let Some(result) = tasks.join_next().await {
             assert!(result.unwrap().is_ok());
         }
-        
+
         // Verify all notes added
         let status = service.get_pool_status().await;
         assert_eq!(status.total_notes, 10);
@@ -689,27 +698,25 @@ mod concurrent_tests {
     #[tokio::test]
     async fn test_concurrent_note_fetching() {
         let service = Arc::new(MockRpcService::new());
-        
+
         // Add notes
         for i in 0..100 {
             service.add_note(vec![i as u8], [i; 32]).await;
         }
-        
+
         let mut tasks = JoinSet::new();
-        
+
         // Spawn concurrent reads
         for start in (0..100).step_by(10) {
             let svc = service.clone();
-            tasks.spawn(async move {
-                svc.get_encrypted_notes(start, 10, None, None).await
-            });
+            tasks.spawn(async move { svc.get_encrypted_notes(start, 10, None, None).await });
         }
-        
+
         let mut total_fetched = 0;
         while let Some(result) = tasks.join_next().await {
             total_fetched += result.unwrap().len();
         }
-        
+
         assert_eq!(total_fetched, 100);
     }
 
@@ -717,7 +724,7 @@ mod concurrent_tests {
     async fn test_concurrent_nullifier_checks() {
         let service = Arc::new(MockRpcService::new());
         service.add_anchor([0; 32]).await;
-        
+
         // Add some spent nullifiers
         for i in 0..50 {
             service
@@ -733,9 +740,9 @@ mod concurrent_tests {
                 .await
                 .unwrap();
         }
-        
+
         let mut tasks = JoinSet::new();
-        
+
         // Check nullifiers concurrently
         for i in 0..100 {
             let svc = service.clone();
@@ -744,7 +751,7 @@ mod concurrent_tests {
                 (i, svc.is_nullifier_spent(&nf).await)
             });
         }
-        
+
         let mut spent_count = 0;
         let mut unspent_count = 0;
         while let Some(result) = tasks.join_next().await {
@@ -757,7 +764,7 @@ mod concurrent_tests {
                 unspent_count += 1;
             }
         }
-        
+
         assert_eq!(spent_count, 50);
         assert_eq!(unspent_count, 50);
     }
@@ -775,12 +782,12 @@ mod full_flow_tests {
     async fn test_full_rpc_shielded_flow() {
         let (client, service) = TestRpcClient::mock();
         service.add_anchor([0; 32]).await;
-        
+
         // 1. Check initial pool status
         let status = client.get_pool_status().await;
         assert_eq!(status.pool_balance, 0);
         assert_eq!(status.total_notes, 0);
-        
+
         // 2. Shield funds
         let shield_amount = 1_000_000u128;
         let shield_commitment = [0xaa; 32];
@@ -788,25 +795,25 @@ mod full_flow_tests {
             .shield(shield_amount, shield_commitment, vec![1, 2, 3, 4])
             .await
             .unwrap();
-        
+
         // 3. Verify shield
         let status = client.get_pool_status().await;
         assert_eq!(status.pool_balance, shield_amount);
         assert_eq!(status.total_notes, 1);
-        
+
         // 4. Fetch encrypted notes
         let notes = client.get_encrypted_notes(0, 100, None, None).await;
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].3, shield_commitment); // commitment matches
-        
+
         // 5. Get Merkle witness
         let (siblings, indices, root) = client.get_merkle_witness(0).await;
         assert_eq!(siblings.len(), 32);
         assert_eq!(indices.len(), 32);
-        
+
         // Add the root as a valid anchor for the transfer
         service.add_anchor(root).await;
-        
+
         // 6. Build and submit shielded transfer
         let nullifier = [0xbb; 32];
         let new_commitment = [0xcc; 32];
@@ -822,10 +829,10 @@ mod full_flow_tests {
             )
             .await
             .unwrap();
-        
+
         // 7. Verify nullifier is spent
         assert!(client.is_nullifier_spent(&nullifier).await);
-        
+
         // 8. Verify new note added
         let final_status = client.get_pool_status().await;
         assert_eq!(final_status.total_notes, 2); // original + new
@@ -837,20 +844,26 @@ mod full_flow_tests {
     async fn test_multi_party_rpc_flow() {
         let (client, service) = TestRpcClient::mock();
         service.add_anchor([0; 32]).await;
-        
+
         // Alice shields
         let alice_amount = 500_000u128;
-        client.shield(alice_amount, [0xa0; 32], vec![1]).await.unwrap();
-        
+        client
+            .shield(alice_amount, [0xa0; 32], vec![1])
+            .await
+            .unwrap();
+
         // Bob shields
         let bob_amount = 300_000u128;
-        client.shield(bob_amount, [0xb0; 32], vec![2]).await.unwrap();
-        
+        client
+            .shield(bob_amount, [0xb0; 32], vec![2])
+            .await
+            .unwrap();
+
         // Verify pool has both amounts
         let status = client.get_pool_status().await;
         assert_eq!(status.pool_balance, alice_amount + bob_amount);
         assert_eq!(status.total_notes, 2);
-        
+
         // Alice transfers to Charlie (simulated)
         let transfer_result = client
             .submit_shielded_transfer(
@@ -864,7 +877,7 @@ mod full_flow_tests {
             )
             .await;
         assert!(transfer_result.is_ok());
-        
+
         // Final state check
         let final_status = client.get_pool_status().await;
         assert_eq!(final_status.total_notes, 3); // Alice's original + Bob's + Charlie's new
@@ -886,25 +899,27 @@ mod integration_tests {
     #[tokio::test]
     #[ignore = "Requires running Substrate node - run with cargo test --ignored"]
     async fn test_real_node_connection() {
-        let endpoint = std::env::var("HEGEMON_RPC_URL")
-            .unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
-        
+        let endpoint =
+            std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
+
         eprintln!("Testing connection to: {}", endpoint);
-        
+
         // Try to connect
         let client = wallet::SubstrateRpcClient::connect(&endpoint).await;
-        
+
         if client.is_err() {
             eprintln!("❌ Connection failed: {:?}", client.err());
             eprintln!("\nTo run this test:");
-            eprintln!("  1. Start a node: HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp");
+            eprintln!(
+                "  1. Start a node: HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp"
+            );
             eprintln!("  2. Run: cargo test -p security-tests --test rpc_integration test_real_node_connection --ignored");
             panic!("Node not available at {}", endpoint);
         }
-        
+
         let client = client.unwrap();
         eprintln!("✅ Connected to node");
-        
+
         // Get chain metadata
         let metadata = client.get_chain_metadata().await;
         match metadata {
@@ -920,7 +935,7 @@ mod integration_tests {
                 panic!("Metadata retrieval failed");
             }
         }
-        
+
         let status = client.note_status().await;
         match status {
             Ok(s) => {
@@ -933,7 +948,7 @@ mod integration_tests {
                 // This is OK - might not have shielded pool RPC enabled
             }
         }
-        
+
         let latest = client.latest_block().await;
         match latest {
             Ok(block) => {
@@ -945,7 +960,7 @@ mod integration_tests {
                 eprintln!("⚠️  Latest block query failed: {:?}", e);
             }
         }
-        
+
         eprintln!("\n✅ Real node connection test passed");
     }
 
@@ -953,11 +968,11 @@ mod integration_tests {
     #[tokio::test]
     #[ignore = "Requires running Substrate node - run with cargo test --ignored"]
     async fn test_real_shield_transaction() {
-        let endpoint = std::env::var("HEGEMON_RPC_URL")
-            .unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
-        
+        let endpoint =
+            std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
+
         eprintln!("Shield infrastructure test on: {}", endpoint);
-        
+
         // Connect to node
         let client = match wallet::SubstrateRpcClient::connect(&endpoint).await {
             Ok(c) => c,
@@ -966,7 +981,7 @@ mod integration_tests {
                 panic!("Start node with: HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp");
             }
         };
-        
+
         // Get note status first
         let status = client.note_status().await;
         match &status {
@@ -980,7 +995,7 @@ mod integration_tests {
                 eprintln!("Note status unavailable: {:?}", e);
             }
         }
-        
+
         // Try to get commitments
         let commitments = client.commitments(0, 100).await;
         match commitments {
@@ -994,21 +1009,26 @@ mod integration_tests {
                 eprintln!("Commitments query failed: {:?}", e);
             }
         }
-        
+
         // Try to get ciphertexts
         let ciphertexts = client.ciphertexts(0, 100).await;
         match ciphertexts {
             Ok(cts) => {
                 eprintln!("Retrieved {} ciphertexts", cts.len());
                 for (i, ct) in cts.iter().enumerate().take(3) {
-                    eprintln!("  [{}]: index={}, payload_len={}", i, ct.index, ct.ciphertext.note_payload.len());
+                    eprintln!(
+                        "  [{}]: index={}, payload_len={}",
+                        i,
+                        ct.index,
+                        ct.ciphertext.note_payload.len()
+                    );
                 }
             }
             Err(e) => {
                 eprintln!("Ciphertexts query failed: {:?}", e);
             }
         }
-        
+
         eprintln!("\n✅ Shield infrastructure test completed");
     }
 
@@ -1016,11 +1036,11 @@ mod integration_tests {
     #[tokio::test]
     #[ignore = "Requires running Substrate node - run with cargo test --ignored"]
     async fn test_real_shielded_transfer() {
-        let endpoint = std::env::var("HEGEMON_RPC_URL")
-            .unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
-        
+        let endpoint =
+            std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
+
         eprintln!("Nullifier query test on: {}", endpoint);
-        
+
         // Connect
         let client = match wallet::SubstrateRpcClient::connect(&endpoint).await {
             Ok(c) => c,
@@ -1029,7 +1049,7 @@ mod integration_tests {
                 panic!("Start node with: HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp");
             }
         };
-        
+
         // Get all nullifiers
         let nullifiers = client.nullifiers().await;
         match nullifiers {
@@ -1043,7 +1063,7 @@ mod integration_tests {
                 eprintln!("Nullifiers query failed: {:?}", e);
             }
         }
-        
+
         eprintln!("\n✅ Nullifier query test completed");
     }
 
@@ -1051,31 +1071,35 @@ mod integration_tests {
     #[tokio::test]
     #[ignore = "Requires running Substrate node - run with cargo test --ignored"]
     async fn test_real_block_subscription() {
-        let endpoint = std::env::var("HEGEMON_RPC_URL")
-            .unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
-        
+        let endpoint =
+            std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
+
         eprintln!("Block subscription test on: {}", endpoint);
-        
+
         let client = match wallet::SubstrateRpcClient::connect(&endpoint).await {
             Ok(c) => c,
             Err(e) => {
                 panic!("Connection failed: {:?}", e);
             }
         };
-        
+
         // Instead of subscription (which requires more complex setup),
         // test by polling latest_block multiple times
         eprintln!("Polling for blocks (5s test)...");
-        
+
         let start = std::time::Instant::now();
         let mut last_block = 0u64;
         let mut block_count = 0;
-        
+
         while start.elapsed() < Duration::from_secs(5) {
             match client.latest_block().await {
                 Ok(block) => {
                     if block.height > last_block {
-                        eprintln!("  Block {}: 0x{}...", block.height, hex::encode(&block.hash[..8]));
+                        eprintln!(
+                            "  Block {}: 0x{}...",
+                            block.height,
+                            hex::encode(&block.hash[..8])
+                        );
                         last_block = block.height;
                         block_count += 1;
                     }
@@ -1087,30 +1111,33 @@ mod integration_tests {
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        
-        eprintln!("\n✅ Block poll test completed (saw {} new blocks)", block_count);
+
+        eprintln!(
+            "\n✅ Block poll test completed (saw {} new blocks)",
+            block_count
+        );
     }
 
     /// Test nonce retrieval
     #[tokio::test]
     #[ignore = "Requires running Substrate node - run with cargo test --ignored"]
     async fn test_real_nonce_query() {
-        let endpoint = std::env::var("HEGEMON_RPC_URL")
-            .unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
-        
+        let endpoint =
+            std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
+
         eprintln!("Nonce query test on: {}", endpoint);
-        
+
         let client = match wallet::SubstrateRpcClient::connect(&endpoint).await {
             Ok(c) => c,
             Err(e) => {
                 panic!("Connection failed: {:?}", e);
             }
         };
-        
+
         // Query nonce for a test account
         let test_account = [0x42u8; 32];
         let nonce = client.get_nonce(&test_account).await;
-        
+
         match nonce {
             Ok(n) => {
                 eprintln!("Nonce for 0x42...: {}", n);
@@ -1121,8 +1148,7 @@ mod integration_tests {
                 eprintln!("Nonce query failed: {:?}", e);
             }
         }
-        
+
         eprintln!("\n✅ Nonce query test completed");
     }
 }
-

@@ -1,5 +1,5 @@
-use alloc::vec::Vec;
 use crate::error::CryptoError;
+use alloc::vec::Vec;
 
 pub trait Signature: Sized + Clone {
     fn as_bytes(&self) -> &[u8];

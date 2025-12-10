@@ -25,8 +25,8 @@
 
 #![allow(dead_code)]
 
-use std::time::Duration;
 use std::process::{Child, Command, Stdio};
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
@@ -111,14 +111,18 @@ impl LiveNodeManager {
 
     /// Spawn a node with deterministic identity
     /// seed_addr: IP:port of seed node for PQ network (e.g. "127.0.0.1:19333")
-    pub fn spawn_node(&mut self, identity: &TestIdentity, seed_addr: Option<&str>) -> Result<(), String> {
+    pub fn spawn_node(
+        &mut self,
+        identity: &TestIdentity,
+        seed_addr: Option<&str>,
+    ) -> Result<(), String> {
         let base_path = format!("/tmp/hegemon-test-{}", identity.name.to_lowercase());
-        
+
         // Clean previous data
         let _ = std::fs::remove_dir_all(&base_path);
-        
+
         let node_key = identity.node_key();
-        
+
         // Use CARGO_MANIFEST_DIR to get absolute path to binary
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let workspace_root = std::path::Path::new(manifest_dir).parent().unwrap();
@@ -128,21 +132,30 @@ impl LiveNodeManager {
 
         let mut cmd = Command::new(&binary);
         cmd.arg("--dev")
-            .arg("--base-path").arg(&base_path)
-            .arg("--rpc-port").arg(identity.rpc_port.to_string())
-            .arg("--port").arg(identity.p2p_port.to_string())
-            .arg("--node-key").arg(&node_key)
-            .arg("--rpc-cors").arg("all")
+            .arg("--base-path")
+            .arg(&base_path)
+            .arg("--rpc-port")
+            .arg(identity.rpc_port.to_string())
+            .arg("--port")
+            .arg(identity.p2p_port.to_string())
+            .arg("--node-key")
+            .arg(&node_key)
+            .arg("--rpc-cors")
+            .arg("all")
             .env("HEGEMON_MINE", "1")
             .stdout(Stdio::null())
-            .stderr(std::fs::File::create(format!("/tmp/{}.log", identity.name.to_lowercase())).unwrap());
+            .stderr(
+                std::fs::File::create(format!("/tmp/{}.log", identity.name.to_lowercase()))
+                    .unwrap(),
+            );
 
         // PQ network uses HEGEMON_SEEDS env var (IP:port format)
         if let Some(seed_addr) = seed_addr {
             cmd.env("HEGEMON_SEEDS", seed_addr);
         }
 
-        let child = cmd.spawn()
+        let child = cmd
+            .spawn()
             .map_err(|e| format!("Failed to spawn node {}: {}", identity.name, e))?;
 
         self.processes.push(child);
@@ -152,7 +165,11 @@ impl LiveNodeManager {
     }
 
     /// Wait for a node to be ready (RPC responding)
-    pub async fn wait_for_node(&self, identity: &TestIdentity, timeout_secs: u64) -> Result<(), String> {
+    pub async fn wait_for_node(
+        &self,
+        identity: &TestIdentity,
+        timeout_secs: u64,
+    ) -> Result<(), String> {
         let client = reqwest::Client::new();
         let url = identity.rpc_url();
         let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
@@ -165,7 +182,8 @@ impl LiveNodeManager {
                 "params": []
             });
 
-            match client.post(&url)
+            match client
+                .post(&url)
                 .header("Content-Type", "application/json")
                 .body(body.to_string())
                 .timeout(Duration::from_secs(2))
@@ -181,7 +199,10 @@ impl LiveNodeManager {
             }
         }
 
-        Err(format!("Node {} did not become ready within {}s", identity.name, timeout_secs))
+        Err(format!(
+            "Node {} did not become ready within {}s",
+            identity.name, timeout_secs
+        ))
     }
 
     // NOTE: libp2p peer IDs are NOT used. PQ network uses HEGEMON_SEEDS env var.
@@ -226,7 +247,11 @@ impl LiveRpcClient {
     }
 
     /// Make JSON-RPC call
-    pub async fn call(&self, method: &str, params: serde_json::Value) -> Result<serde_json::Value, String> {
+    pub async fn call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
         let body = serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -234,7 +259,8 @@ impl LiveRpcClient {
             "params": params
         });
 
-        let response = self.client
+        let response = self
+            .client
             .post(&self.url)
             .header("Content-Type", "application/json")
             .body(body.to_string())
@@ -243,7 +269,9 @@ impl LiveRpcClient {
             .await
             .map_err(|e| format!("Request failed: {}", e))?;
 
-        let json: serde_json::Value = response.json().await
+        let json: serde_json::Value = response
+            .json()
+            .await
             .map_err(|e| format!("Invalid JSON: {}", e))?;
 
         if let Some(error) = json.get("error") {
@@ -261,7 +289,8 @@ impl LiveRpcClient {
 
     pub async fn get_block_number(&self) -> Result<u64, String> {
         let result = self.call("chain_getHeader", serde_json::json!([])).await?;
-        let number_hex = result.get("number")
+        let number_hex = result
+            .get("number")
             .and_then(|n| n.as_str())
             .ok_or("No number field")?;
         u64::from_str_radix(number_hex.trim_start_matches("0x"), 16)
@@ -270,24 +299,27 @@ impl LiveRpcClient {
 
     pub async fn get_peer_count(&self) -> Result<u64, String> {
         let health = self.system_health().await?;
-        health.get("peers")
+        health
+            .get("peers")
             .and_then(|p| p.as_u64())
             .ok_or_else(|| "No peers field".to_string())
     }
 
     pub async fn get_pool_status(&self) -> Result<serde_json::Value, String> {
-        self.call("hegemon_getShieldedPoolStatus", serde_json::json!([])).await
+        self.call("hegemon_getShieldedPoolStatus", serde_json::json!([]))
+            .await
     }
 
     pub async fn get_mining_status(&self) -> Result<serde_json::Value, String> {
-        self.call("hegemon_miningStatus", serde_json::json!([])).await
+        self.call("hegemon_miningStatus", serde_json::json!([]))
+            .await
     }
 
     pub async fn get_consensus_status(&self) -> Result<serde_json::Value, String> {
-        self.call("hegemon_consensusStatus", serde_json::json!([])).await
+        self.call("hegemon_consensusStatus", serde_json::json!([]))
+            .await
     }
 }
-
 
 // ============================================================================
 // Phase 11.8.5: REAL Live Node Integration Tests
@@ -306,19 +338,24 @@ mod live_node_tests {
         println!("Alice's deterministic key: {}", ALICE.node_key());
 
         let mut manager = LiveNodeManager::new();
-        
+
         // Spawn Alice
         println!("\n[1] Spawning Alice...");
-        manager.spawn_node(&ALICE, None).expect("Failed to spawn Alice");
-        
+        manager
+            .spawn_node(&ALICE, None)
+            .expect("Failed to spawn Alice");
+
         // Wait for ready
         println!("[2] Waiting for Alice to be ready...");
-        manager.wait_for_node(&ALICE, 30).await.expect("Alice did not become ready");
+        manager
+            .wait_for_node(&ALICE, 30)
+            .await
+            .expect("Alice did not become ready");
         println!("    ✓ Alice is ready at {}", ALICE.rpc_url());
 
         // Connect and verify
         let client = LiveRpcClient::for_identity(&ALICE);
-        
+
         let health = client.system_health().await.expect("Failed to get health");
         println!("[3] Alice health: {}", health);
 
@@ -326,11 +363,20 @@ mod live_node_tests {
         // Seed address format: IP:port (e.g., 127.0.0.1:19333)
         println!("[4] Alice PQ network on port: {}", ALICE.p2p_port);
 
-        let block = client.get_block_number().await.expect("Failed to get block");
+        let block = client
+            .get_block_number()
+            .await
+            .expect("Failed to get block");
         println!("[5] Alice best block: {}", block);
 
-        let mining = client.get_mining_status().await.expect("Failed to get mining");
-        let is_mining = mining.get("is_mining").and_then(|m| m.as_bool()).unwrap_or(false);
+        let mining = client
+            .get_mining_status()
+            .await
+            .expect("Failed to get mining");
+        let is_mining = mining
+            .get("is_mining")
+            .and_then(|m| m.as_bool())
+            .unwrap_or(false);
         println!("[6] Alice mining: {}", is_mining);
         assert!(is_mining, "Alice should be mining");
 
@@ -338,7 +384,10 @@ mod live_node_tests {
         println!("[7] Waiting 8s for blocks...");
         tokio::time::sleep(Duration::from_secs(8)).await;
 
-        let block2 = client.get_block_number().await.expect("Failed to get block");
+        let block2 = client
+            .get_block_number()
+            .await
+            .expect("Failed to get block");
         println!("[8] Alice new block: {} (was {})", block2, block);
         assert!(block2 > block, "Alice should produce blocks");
 
@@ -354,11 +403,16 @@ mod live_node_tests {
         println!("Bob key:   {}", BOB.node_key());
 
         let mut manager = LiveNodeManager::new();
-        
+
         // Spawn Alice first (she's the bootnode)
         println!("\n[1] Spawning Alice (bootnode)...");
-        manager.spawn_node(&ALICE, None).expect("Failed to spawn Alice");
-        manager.wait_for_node(&ALICE, 30).await.expect("Alice not ready");
+        manager
+            .spawn_node(&ALICE, None)
+            .expect("Failed to spawn Alice");
+        manager
+            .wait_for_node(&ALICE, 30)
+            .await
+            .expect("Alice not ready");
         println!("    ✓ Alice ready at {}", ALICE.rpc_url());
 
         // Get Alice's seed address for PQ network (IP:port format)
@@ -367,8 +421,13 @@ mod live_node_tests {
 
         // Spawn Bob connecting to Alice
         println!("[3] Spawning Bob (connecting to Alice)...");
-        manager.spawn_node(&BOB, Some(&seed_addr)).expect("Failed to spawn Bob");
-        manager.wait_for_node(&BOB, 30).await.expect("Bob not ready");
+        manager
+            .spawn_node(&BOB, Some(&seed_addr))
+            .expect("Failed to spawn Bob");
+        manager
+            .wait_for_node(&BOB, 30)
+            .await
+            .expect("Bob not ready");
         println!("    ✓ Bob ready at {}", BOB.rpc_url());
 
         // Wait for peer connection
@@ -379,8 +438,14 @@ mod live_node_tests {
         let bob_client = LiveRpcClient::for_identity(&BOB);
 
         // Check peer counts
-        let alice_peers = alice_client.get_peer_count().await.expect("Failed to get Alice peers");
-        let bob_peers = bob_client.get_peer_count().await.expect("Failed to get Bob peers");
+        let alice_peers = alice_client
+            .get_peer_count()
+            .await
+            .expect("Failed to get Alice peers");
+        let bob_peers = bob_client
+            .get_peer_count()
+            .await
+            .expect("Failed to get Bob peers");
         println!("[6] Alice peers: {}, Bob peers: {}", alice_peers, bob_peers);
 
         // Wait for sync
@@ -395,9 +460,13 @@ mod live_node_tests {
         // Bob should have synced to Alice's chain (or close to it)
         // NOTE: PQ network peering is separate from libp2p - nodes mine independently
         // until PQ peering is fully integrated with block propagation
-        let diff = if alice_block > bob_block { alice_block - bob_block } else { bob_block - alice_block };
+        let diff = if alice_block > bob_block {
+            alice_block - bob_block
+        } else {
+            bob_block - alice_block
+        };
         println!("[9] Block difference: {}", diff);
-        
+
         // For now, just verify both nodes are mining
         // TODO: Fix PQ peer discovery to propagate blocks between nodes
         assert!(alice_block > 0, "Alice should be mining");
@@ -414,20 +483,30 @@ mod live_node_tests {
         println!("=== Three Node Network Test: Alice + Bob + Charlie ===");
 
         let mut manager = LiveNodeManager::new();
-        
+
         // Spawn Alice first - she's the seed node
         println!("\n[1] Spawning Alice...");
-        manager.spawn_node(&ALICE, None).expect("Failed to spawn Alice");
-        manager.wait_for_node(&ALICE, 30).await.expect("Alice not ready");
+        manager
+            .spawn_node(&ALICE, None)
+            .expect("Failed to spawn Alice");
+        manager
+            .wait_for_node(&ALICE, 30)
+            .await
+            .expect("Alice not ready");
 
         let alice_seed = format!("127.0.0.1:{}", ALICE.p2p_port);
         println!("    Alice seed: {}", alice_seed);
 
         // Spawn Bob connecting to Alice
         println!("[2] Spawning Bob...");
-        manager.spawn_node(&BOB, Some(&alice_seed)).expect("Failed to spawn Bob");
-        manager.wait_for_node(&BOB, 30).await.expect("Bob not ready");
-        
+        manager
+            .spawn_node(&BOB, Some(&alice_seed))
+            .expect("Failed to spawn Bob");
+        manager
+            .wait_for_node(&BOB, 30)
+            .await
+            .expect("Bob not ready");
+
         // Give Bob time to connect to Alice before spawning Charlie
         tokio::time::sleep(Duration::from_secs(2)).await;
 
@@ -435,8 +514,13 @@ mod live_node_tests {
         let seeds = format!("127.0.0.1:{},127.0.0.1:{}", ALICE.p2p_port, BOB.p2p_port);
         println!("[3] Spawning Charlie (connecting to Alice and Bob)...");
         println!("    Seeds: {}", seeds);
-        manager.spawn_node(&CHARLIE, Some(&seeds)).expect("Failed to spawn Charlie");
-        manager.wait_for_node(&CHARLIE, 30).await.expect("Charlie not ready");
+        manager
+            .spawn_node(&CHARLIE, Some(&seeds))
+            .expect("Failed to spawn Charlie");
+        manager
+            .wait_for_node(&CHARLIE, 30)
+            .await
+            .expect("Charlie not ready");
 
         // Wait for mesh - give more time for 3-node network
         println!("[4] Waiting for peer mesh to form...");
@@ -450,7 +534,10 @@ mod live_node_tests {
         let alice_peers = alice_client.get_peer_count().await.unwrap_or(0);
         let bob_peers = bob_client.get_peer_count().await.unwrap_or(0);
         let charlie_peers = charlie_client.get_peer_count().await.unwrap_or(0);
-        println!("[5] Peers - Alice: {}, Bob: {}, Charlie: {}", alice_peers, bob_peers, charlie_peers);
+        println!(
+            "[5] Peers - Alice: {}, Bob: {}, Charlie: {}",
+            alice_peers, bob_peers, charlie_peers
+        );
 
         // Wait for sync - 3 nodes need more time
         println!("[6] Waiting 20s for full sync...");
@@ -459,25 +546,52 @@ mod live_node_tests {
         // Check all blocks are synced
         let alice_block = alice_client.get_block_number().await.expect("Alice block");
         let bob_block = bob_client.get_block_number().await.expect("Bob block");
-        let charlie_block = charlie_client.get_block_number().await.expect("Charlie block");
-        println!("[7] Blocks - Alice: {}, Bob: {}, Charlie: {}", alice_block, bob_block, charlie_block);
+        let charlie_block = charlie_client
+            .get_block_number()
+            .await
+            .expect("Charlie block");
+        println!(
+            "[7] Blocks - Alice: {}, Bob: {}, Charlie: {}",
+            alice_block, bob_block, charlie_block
+        );
 
         let max_block = alice_block.max(bob_block).max(charlie_block);
         let min_block = alice_block.min(bob_block).min(charlie_block);
         let diff = max_block - min_block;
-        println!("[8] Block spread: {} (max={}, min={})", diff, max_block, min_block);
+        println!(
+            "[8] Block spread: {} (max={}, min={})",
+            diff, max_block, min_block
+        );
         // Allow up to 10 blocks spread for 3-node network (sync takes longer)
         assert!(diff <= 10, "All nodes should be synced within 10 blocks");
 
         // Check consensus state matches
-        let alice_consensus = alice_client.get_consensus_status().await.expect("Alice consensus");
-        let bob_consensus = bob_client.get_consensus_status().await.expect("Bob consensus");
-        let charlie_consensus = charlie_client.get_consensus_status().await.expect("Charlie consensus");
+        let alice_consensus = alice_client
+            .get_consensus_status()
+            .await
+            .expect("Alice consensus");
+        let bob_consensus = bob_client
+            .get_consensus_status()
+            .await
+            .expect("Bob consensus");
+        let charlie_consensus = charlie_client
+            .get_consensus_status()
+            .await
+            .expect("Charlie consensus");
 
-        let alice_state = alice_consensus.get("state_root").and_then(|r| r.as_str()).unwrap_or("");
-        let bob_state = bob_consensus.get("state_root").and_then(|r| r.as_str()).unwrap_or("");
-        let charlie_state = charlie_consensus.get("state_root").and_then(|r| r.as_str()).unwrap_or("");
-        
+        let alice_state = alice_consensus
+            .get("state_root")
+            .and_then(|r| r.as_str())
+            .unwrap_or("");
+        let bob_state = bob_consensus
+            .get("state_root")
+            .and_then(|r| r.as_str())
+            .unwrap_or("");
+        let charlie_state = charlie_consensus
+            .get("state_root")
+            .and_then(|r| r.as_str())
+            .unwrap_or("");
+
         println!("[9] State roots:");
         println!("    Alice:   {}", alice_state);
         println!("    Bob:     {}", bob_state);
@@ -487,7 +601,10 @@ mod live_node_tests {
         let alice_bob_match = alice_state == bob_state;
         let bob_charlie_match = bob_state == charlie_state;
         let alice_charlie_match = alice_state == charlie_state;
-        let matches = [alice_bob_match, bob_charlie_match, alice_charlie_match].iter().filter(|&&x| x).count();
+        let matches = [alice_bob_match, bob_charlie_match, alice_charlie_match]
+            .iter()
+            .filter(|&&x| x)
+            .count();
         println!("[10] State root matches: {}/3", matches);
 
         println!("\n=== ✅ Three Node Network Test PASSED ===");
@@ -500,13 +617,16 @@ mod live_node_tests {
         println!("=== Live Block Propagation Test ===");
 
         let mut manager = LiveNodeManager::new();
-        
+
         // Spawn Alice and Bob using PQ network (HEGEMON_SEEDS format: IP:port)
         manager.spawn_node(&ALICE, None).expect("Alice");
-        manager.wait_for_node(&ALICE, 30).await.expect("Alice ready");
-        
+        manager
+            .wait_for_node(&ALICE, 30)
+            .await
+            .expect("Alice ready");
+
         let seed_addr = format!("127.0.0.1:{}", ALICE.p2p_port);
-        
+
         manager.spawn_node(&BOB, Some(&seed_addr)).expect("Bob");
         manager.wait_for_node(&BOB, 30).await.expect("Bob ready");
 
@@ -531,32 +651,39 @@ mod live_node_tests {
         // Alice should have produced blocks (either before or during test)
         // With low genesis difficulty, blocks are mined very fast initially
         assert!(alice_end >= 1, "Alice should have produced blocks");
-        
+
         // Bob should have synced with Alice
         assert!(bob_end >= 1, "Bob should have synced blocks");
 
         // They should be roughly in sync
-        let diff = if alice_end > bob_end { alice_end - bob_end } else { bob_end - alice_end };
+        let diff = if alice_end > bob_end {
+            alice_end - bob_end
+        } else {
+            bob_end - alice_end
+        };
         println!("[5] Final difference: {}", diff);
         assert!(diff <= 5, "Nodes should be synced within 5 blocks");
 
         println!("\n=== ✅ Block Propagation Test PASSED ===");
     }
 
-    /// Test shielded pool state sync between nodes  
+    /// Test shielded pool state sync between nodes
     #[tokio::test]
     #[ignore = "Spawns real nodes - run with: cargo test live_shielded_sync -- --ignored --nocapture"]
     async fn test_live_shielded_pool_sync() {
         println!("=== Live Shielded Pool Sync Test ===");
 
         let mut manager = LiveNodeManager::new();
-        
+
         // Spawn two nodes
         manager.spawn_node(&ALICE, None).expect("Alice");
-        manager.wait_for_node(&ALICE, 30).await.expect("Alice ready");
-        
+        manager
+            .wait_for_node(&ALICE, 30)
+            .await
+            .expect("Alice ready");
+
         let seed_addr = format!("127.0.0.1:{}", ALICE.p2p_port);
-        
+
         manager.spawn_node(&BOB, Some(&seed_addr)).expect("Bob");
         manager.wait_for_node(&BOB, 30).await.expect("Bob ready");
 
@@ -570,26 +697,56 @@ mod live_node_tests {
         let alice_pool = alice_client.get_pool_status().await.expect("Alice pool");
         let bob_pool = bob_client.get_pool_status().await.expect("Bob pool");
 
-        println!("[1] Alice pool: {}", serde_json::to_string_pretty(&alice_pool).unwrap_or_default());
-        println!("[2] Bob pool:   {}", serde_json::to_string_pretty(&bob_pool).unwrap_or_default());
+        println!(
+            "[1] Alice pool: {}",
+            serde_json::to_string_pretty(&alice_pool).unwrap_or_default()
+        );
+        println!(
+            "[2] Bob pool:   {}",
+            serde_json::to_string_pretty(&bob_pool).unwrap_or_default()
+        );
 
         // Verify critical fields match
-        let alice_root = alice_pool.get("merkle_root").and_then(|r| r.as_str()).unwrap_or("");
-        let bob_root = bob_pool.get("merkle_root").and_then(|r| r.as_str()).unwrap_or("");
-        
-        let alice_notes = alice_pool.get("total_notes").and_then(|n| n.as_u64()).unwrap_or(0);
-        let bob_notes = bob_pool.get("total_notes").and_then(|n| n.as_u64()).unwrap_or(0);
+        let alice_root = alice_pool
+            .get("merkle_root")
+            .and_then(|r| r.as_str())
+            .unwrap_or("");
+        let bob_root = bob_pool
+            .get("merkle_root")
+            .and_then(|r| r.as_str())
+            .unwrap_or("");
 
-        let alice_nullifiers = alice_pool.get("total_nullifiers").and_then(|n| n.as_u64()).unwrap_or(0);
-        let bob_nullifiers = bob_pool.get("total_nullifiers").and_then(|n| n.as_u64()).unwrap_or(0);
+        let alice_notes = alice_pool
+            .get("total_notes")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0);
+        let bob_notes = bob_pool
+            .get("total_notes")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0);
+
+        let alice_nullifiers = alice_pool
+            .get("total_nullifiers")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0);
+        let bob_nullifiers = bob_pool
+            .get("total_nullifiers")
+            .and_then(|n| n.as_u64())
+            .unwrap_or(0);
 
         println!("[3] Merkle roots match: {}", alice_root == bob_root);
         println!("[4] Notes - Alice: {}, Bob: {}", alice_notes, bob_notes);
-        println!("[5] Nullifiers - Alice: {}, Bob: {}", alice_nullifiers, bob_nullifiers);
+        println!(
+            "[5] Nullifiers - Alice: {}, Bob: {}",
+            alice_nullifiers, bob_nullifiers
+        );
 
         assert_eq!(alice_root, bob_root, "Merkle roots must match");
         assert_eq!(alice_notes, bob_notes, "Note counts must match");
-        assert_eq!(alice_nullifiers, bob_nullifiers, "Nullifier counts must match");
+        assert_eq!(
+            alice_nullifiers, bob_nullifiers,
+            "Nullifier counts must match"
+        );
 
         println!("\n=== ✅ Shielded Pool Sync Test PASSED ===");
     }
@@ -602,13 +759,16 @@ mod live_node_tests {
         println!("This test verifies nodes can reconnect after disconnect");
 
         let mut manager = LiveNodeManager::new();
-        
+
         // Spawn Alice
         manager.spawn_node(&ALICE, None).expect("Alice");
-        manager.wait_for_node(&ALICE, 30).await.expect("Alice ready");
-        
+        manager
+            .wait_for_node(&ALICE, 30)
+            .await
+            .expect("Alice ready");
+
         let seed_addr = format!("127.0.0.1:{}", ALICE.p2p_port);
-        
+
         // Spawn Bob
         manager.spawn_node(&BOB, Some(&seed_addr)).expect("Bob");
         manager.wait_for_node(&BOB, 30).await.expect("Bob ready");
@@ -618,14 +778,17 @@ mod live_node_tests {
 
         // Wait for connection
         tokio::time::sleep(Duration::from_secs(5)).await;
-        
+
         let peers_before = alice_client.get_peer_count().await.unwrap_or(0);
         println!("[1] Alice peers before: {}", peers_before);
 
         // Record block heights
         let alice_block_before = alice_client.get_block_number().await.expect("Alice block");
         let bob_block_before = bob_client.get_block_number().await.expect("Bob block");
-        println!("[2] Blocks before - Alice: {}, Bob: {}", alice_block_before, bob_block_before);
+        println!(
+            "[2] Blocks before - Alice: {}, Bob: {}",
+            alice_block_before, bob_block_before
+        );
 
         // Let them run together
         println!("[3] Running connected for 10s...");
@@ -634,15 +797,21 @@ mod live_node_tests {
         // Check final sync
         let alice_block_after = alice_client.get_block_number().await.expect("Alice block");
         let bob_block_after = bob_client.get_block_number().await.expect("Bob block");
-        println!("[4] Blocks after - Alice: {}, Bob: {}", alice_block_after, bob_block_after);
+        println!(
+            "[4] Blocks after - Alice: {}, Bob: {}",
+            alice_block_after, bob_block_after
+        );
 
-        assert!(alice_block_after > alice_block_before, "Alice should advance");
+        assert!(
+            alice_block_after > alice_block_before,
+            "Alice should advance"
+        );
         assert!(bob_block_after > bob_block_before, "Bob should advance");
 
-        let diff = if alice_block_after > bob_block_after { 
-            alice_block_after - bob_block_after 
-        } else { 
-            bob_block_after - alice_block_after 
+        let diff = if alice_block_after > bob_block_after {
+            alice_block_after - bob_block_after
+        } else {
+            bob_block_after - alice_block_after
         };
         assert!(diff <= 2, "Should be in sync");
 
@@ -671,11 +840,14 @@ mod single_node_tests {
         println!("Testing connection to: {}", url);
 
         let client = LiveRpcClient::new(&url);
-        
+
         let health = client.system_health().await.expect("Failed to get health");
         println!("System health: {}", health);
-        
-        let block = client.get_block_number().await.expect("Failed to get block");
+
+        let block = client
+            .get_block_number()
+            .await
+            .expect("Failed to get block");
         println!("Best block: {}", block);
 
         let pool = client.get_pool_status().await.expect("Failed to get pool");

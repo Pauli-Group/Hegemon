@@ -96,11 +96,7 @@ pub struct SessionKeys {
 
 impl SessionKeys {
     /// Create session keys from the combined ML-KEM key material
-    pub fn derive(
-        transcript: &[u8],
-        mlkem_shared_1: &[u8; 32],
-        mlkem_shared_2: &[u8; 32],
-    ) -> Self {
+    pub fn derive(transcript: &[u8], mlkem_shared_1: &[u8; 32], mlkem_shared_2: &[u8; 32]) -> Self {
         use hkdf::Hkdf;
         use sha2::Sha256;
 

@@ -305,8 +305,8 @@ fn get_passphrase(passphrase: Option<String>, prompt: &str) -> Result<String> {
         Some(p) => Ok(p),
         None => {
             eprint!("{}", prompt);
-            let pass = rpassword::read_password()
-                .context("Failed to read passphrase from terminal")?;
+            let pass =
+                rpassword::read_password().context("Failed to read passphrase from terminal")?;
             if pass.is_empty() {
                 anyhow::bail!("Passphrase cannot be empty");
             }
@@ -321,14 +321,14 @@ fn get_new_passphrase(passphrase: Option<String>) -> Result<String> {
         Some(p) => Ok(p),
         None => {
             eprint!("Enter new wallet passphrase: ");
-            let pass1 = rpassword::read_password()
-                .context("Failed to read passphrase from terminal")?;
+            let pass1 =
+                rpassword::read_password().context("Failed to read passphrase from terminal")?;
             if pass1.is_empty() {
                 anyhow::bail!("Passphrase cannot be empty");
             }
             eprint!("Confirm passphrase: ");
-            let pass2 = rpassword::read_password()
-                .context("Failed to read passphrase confirmation")?;
+            let pass2 =
+                rpassword::read_password().context("Failed to read passphrase confirmation")?;
             if pass1 != pass2 {
                 anyhow::bail!("Passphrases do not match");
             }
@@ -535,23 +535,26 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
             .enable_all()
             .build()
             .context("failed to create tokio runtime")?;
-        
+
         runtime.block_on(async {
             println!("Syncing with {}...", args.ws_url);
             let client = Arc::new(
                 SubstrateRpcClient::connect(&args.ws_url)
                     .await
-                    .map_err(|e| anyhow!("Failed to connect: {}", e))?
+                    .map_err(|e| anyhow!("Failed to connect: {}", e))?,
             );
-            
+
             let store = WalletStore::open(&args.store, &passphrase)?;
             let store_arc = Arc::new(store);
             let engine = AsyncWalletSyncEngine::new(client.clone(), store_arc.clone());
-            engine.sync_once().await.map_err(|e| anyhow!("Sync failed: {}", e))?;
+            engine
+                .sync_once()
+                .await
+                .map_err(|e| anyhow!("Sync failed: {}", e))?;
             Ok::<_, anyhow::Error>(())
         })?;
     }
-    
+
     // Re-open to get synced state
     let store = WalletStore::open(&args.store, &passphrase)?;
     show_status(&store)
@@ -559,33 +562,33 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
 
 fn show_status(store: &WalletStore) -> Result<()> {
     use wallet::extrinsic::ExtrinsicBuilder;
-    
+
     println!("\n═══════════════════════════════════════");
     println!("            WALLET STATUS");
     println!("═══════════════════════════════════════\n");
-    
+
     // Show miner account ID (for HEGEMON_MINER_ACCOUNT)
     if let Ok(Some(derived)) = store.derived_keys() {
         let signing_seed = derived.spend.to_bytes();
         let builder = ExtrinsicBuilder::from_seed(&signing_seed);
         let account_id = builder.account_id();
-        println!("Miner Account ID: {}", hex::encode(&account_id));
+        println!("Miner Account ID: {}", hex::encode(account_id));
     }
-    
+
     // Show primary shielded address (stable, for mining)
     if let Ok(addr) = store.primary_address() {
         println!("Shielded Address: {}", addr.encode().unwrap_or_default());
     }
-    
+
     println!();
-    
+
     // Show note counts and balances
     let notes = store.spendable_notes(0)?; // 0 = native asset
     let total_value: u64 = notes.iter().map(|n| n.recovered.note.value).sum();
-    
+
     println!("Balance: {} HGM", total_value as f64 / 100_000_000.0);
     println!("Unspent notes: {}", notes.len());
-    
+
     if notes.len() > wallet::MAX_INPUTS {
         println!(
             "  ⚠ Note consolidation needed: {} notes exceeds {} max inputs",
@@ -595,11 +598,10 @@ fn show_status(store: &WalletStore) -> Result<()> {
         let plan = wallet::ConsolidationPlan::estimate(notes.len());
         println!(
             "    Consolidation would take {} blocks and {} txs",
-            plan.blocks_needed,
-            plan.txs_needed
+            plan.blocks_needed, plan.txs_needed
         );
     }
-    
+
     if !notes.is_empty() && notes.len() <= 10 {
         println!("\nNote breakdown:");
         for (i, note) in notes.iter().enumerate() {
@@ -611,18 +613,18 @@ fn show_status(store: &WalletStore) -> Result<()> {
             );
         }
     }
-    
+
     println!();
-    
+
     // Show sync status
     let synced_height = store.last_synced_height()?;
     println!("Last synced: block #{}", synced_height);
-    
+
     // Show genesis hash (chain identity)
     if let Some(genesis) = store.genesis_hash()? {
         println!("Genesis: 0x{}", hex::encode(&genesis[..8]));
     }
-    
+
     // Show pending transactions
     let pending = store.pending_transactions()?;
     if !pending.is_empty() {
@@ -636,7 +638,7 @@ fn show_status(store: &WalletStore) -> Result<()> {
             );
         }
     }
-    
+
     println!();
     Ok(())
 }
@@ -644,16 +646,16 @@ fn show_status(store: &WalletStore) -> Result<()> {
 /// Print just the hex account ID (for use in shell command substitution)
 fn cmd_account_id(args: StoreArgs) -> Result<()> {
     use wallet::extrinsic::ExtrinsicBuilder;
-    
+
     let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
-    
+
     if let Ok(Some(derived)) = store.derived_keys() {
         let signing_seed = derived.spend.to_bytes();
         let builder = ExtrinsicBuilder::from_seed(&signing_seed);
         let account_id = builder.account_id();
         // Print ONLY the hex, no label, no newline decorations - for shell substitution
-        println!("{}", hex::encode(&account_id));
+        println!("{}", hex::encode(account_id));
         Ok(())
     } else {
         anyhow::bail!("No derived keys found in wallet")
@@ -711,36 +713,36 @@ fn cmd_export_viewing_key(args: ExportArgs) -> Result<()> {
 fn cmd_substrate_sync(args: SubstrateSyncArgs) -> Result<()> {
     let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
     let store = Arc::new(WalletStore::open(&args.store, &passphrase)?);
-    
+
     // Build async runtime
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
         .build()
         .context("failed to create tokio runtime")?;
-    
+
     runtime.block_on(async {
         // Connect to Substrate node
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
             SubstrateRpcClient::connect(&args.ws_url)
                 .await
-                .map_err(|e| anyhow!("Failed to connect: {}", e))?
+                .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
         println!("Connected!");
-        
+
         // Create sync engine with force-rescan if requested
-        let engine = AsyncWalletSyncEngine::new(client, store)
-            .with_skip_genesis_check(args.force_rescan);
-        
+        let engine =
+            AsyncWalletSyncEngine::new(client, store).with_skip_genesis_check(args.force_rescan);
+
         if args.force_rescan {
             println!("Force rescan enabled - will reset wallet state if chain has changed");
         }
-        
+
         let outcome = engine
             .sync_once()
             .await
             .map_err(|e| anyhow!("Sync failed: {}", e))?;
-        
+
         print_sync_outcome(&outcome);
         Ok(())
     })
@@ -750,22 +752,22 @@ fn cmd_substrate_sync(args: SubstrateSyncArgs) -> Result<()> {
 fn cmd_substrate_daemon(args: SubstrateDaemonArgs) -> Result<()> {
     let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
     let store = Arc::new(WalletStore::open(&args.store, &passphrase)?);
-    
+
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
         .build()
         .context("failed to create tokio runtime")?;
-    
+
     runtime.block_on(async {
         // Connect to Substrate node
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
             SubstrateRpcClient::connect(&args.ws_url)
                 .await
-                .map_err(|e| anyhow!("Failed to connect: {}", e))?
+                .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
         println!("Connected to Substrate node!");
-        
+
         // Optionally spawn HTTP API
         if let Some(addr) = args.http_listen {
             let store_clone = store.clone();
@@ -777,10 +779,10 @@ fn cmd_substrate_daemon(args: SubstrateDaemonArgs) -> Result<()> {
             });
             println!("Wallet HTTP API listening on http://{}", addr);
         }
-        
+
         // Create sync engine
         let engine = AsyncWalletSyncEngine::new(client, store);
-        
+
         if args.subscribe {
             println!("Starting continuous sync with block subscriptions...");
             if args.finalized_only {
@@ -809,7 +811,7 @@ fn cmd_substrate_daemon(args: SubstrateDaemonArgs) -> Result<()> {
                 tokio::time::sleep(Duration::from_secs(10)).await;
             }
         }
-        
+
         Ok(())
     })
 }
@@ -821,37 +823,42 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
     if store.mode()? == WalletMode::WatchOnly {
         anyhow::bail!("watch-only wallets cannot send");
     }
-    
+
     // Get the spend key for ML-DSA signing (only needed for signed extrinsics)
-    let derived = store.derived_keys()?.ok_or_else(|| anyhow!("watch-only wallet has no spend key"))?;
+    let derived = store
+        .derived_keys()?
+        .ok_or_else(|| anyhow!("watch-only wallet has no spend key"))?;
     let signing_seed = derived.spend.to_bytes();
-    
+
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
         .build()
         .context("failed to create tokio runtime")?;
-    
+
     runtime.block_on(async {
         // Connect and sync first
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
             SubstrateRpcClient::connect(&args.ws_url)
                 .await
-                .map_err(|e| anyhow!("Failed to connect: {}", e))?
+                .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
-        
+
         let store_arc = Arc::new(store);
         let engine = AsyncWalletSyncEngine::new(client.clone(), store_arc.clone());
-        
+
         println!("Syncing wallet...");
-        engine.sync_once().await.map_err(|e| anyhow!("Sync failed: {}", e))?;
-        
+        engine
+            .sync_once()
+            .await
+            .map_err(|e| anyhow!("Sync failed: {}", e))?;
+
         // Parse recipients (use store_arc for read operations)
         let specs: Vec<RecipientSpec> = read_json(&args.recipients)?;
         let randomized_specs = randomize_recipient_specs(&specs, args.randomize_memo_order);
         let recipients = parse_recipients(&randomized_specs).map_err(|e| anyhow!(e.to_string()))?;
         let metadata = transfer_recipients_from_specs(&randomized_specs);
-        
+
         // Check if consolidation is needed
         // Sort by value descending to match tx_builder behavior
         let mut notes = store_arc.spendable_notes(0)?; // 0 = native asset
@@ -866,46 +873,69 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
             selected_value += note.recovered.note.value;
             selected_count += 1;
         }
-        
+
         let plan = wallet::ConsolidationPlan::estimate(selected_count);
-        
+
         if !plan.is_empty() {
             if args.dry_run {
                 println!("\n=== DRY RUN ===");
-                println!("Would need to consolidate {} notes to {} inputs", selected_count, wallet::MAX_INPUTS);
+                println!(
+                    "Would need to consolidate {} notes to {} inputs",
+                    selected_count,
+                    wallet::MAX_INPUTS
+                );
                 println!("Consolidation plan:");
                 println!("  ~{} transactions needed", plan.txs_needed);
                 println!("\nRe-run with --auto-consolidate to execute.");
                 return Ok(());
             }
-            
+
             if !args.auto_consolidate {
-                eprintln!("Error: Need {} notes but max is {} per transaction", selected_count, wallet::MAX_INPUTS);
-                eprintln!("Suggestion: Add --auto-consolidate flag to automatically merge notes first");
-                eprintln!("  Consolidation would take ~{} transactions", plan.txs_needed);
+                eprintln!(
+                    "Error: Need {} notes but max is {} per transaction",
+                    selected_count,
+                    wallet::MAX_INPUTS
+                );
+                eprintln!(
+                    "Suggestion: Add --auto-consolidate flag to automatically merge notes first"
+                );
+                eprintln!(
+                    "  Consolidation would take ~{} transactions",
+                    plan.txs_needed
+                );
                 return Err(anyhow!(wallet::WalletError::TooManyInputs {
                     needed: selected_count,
                     max: wallet::MAX_INPUTS,
                 }));
             }
-            
+
             // Execute targeted consolidation - only consolidate notes needed for this send
-            println!("\nConsolidating {} notes to cover {} HGM...", selected_count, total_needed as f64 / 100_000_000.0);
-            wallet::execute_consolidation(store_arc.clone(), &client, total_needed, args.fee, true).await
+            println!(
+                "\nConsolidating {} notes to cover {} HGM...",
+                selected_count,
+                total_needed as f64 / 100_000_000.0
+            );
+            wallet::execute_consolidation(store_arc.clone(), &client, total_needed, args.fee, true)
+                .await
                 .map_err(|e| anyhow!("Consolidation failed: {}", e))?;
-            
+
             println!("\nProceeding with original transfer...");
         } else if args.dry_run {
             println!("\n=== DRY RUN ===");
-            println!("No consolidation needed. Would send {} HGM to {} recipient(s).", 
-                total_needed as f64 / 100_000_000.0, 
-                recipients.len());
+            println!(
+                "No consolidation needed. Would send {} HGM to {} recipient(s).",
+                total_needed as f64 / 100_000_000.0,
+                recipients.len()
+            );
             return Ok(());
         }
-        
+
         // Pre-flight nullifier check (fast - avoids wasted proof generation)
         println!("Checking note status...");
-        if let Err(e) = wallet::tx_builder::precheck_nullifiers(&*store_arc, &client, &recipients, args.fee).await {
+        if let Err(e) =
+            wallet::tx_builder::precheck_nullifiers(&store_arc, &client, &recipients, args.fee)
+                .await
+        {
             // Show user-friendly error with suggested action
             eprintln!("Error: {}", e.user_message());
             if let Some(action) = e.suggested_action() {
@@ -913,28 +943,32 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
             }
             return Err(anyhow!(e));
         }
-        
+
         // Build transaction (creates STARK proof)
         println!("Building shielded transaction with STARK proof...");
-        let built = build_transaction(&*store_arc, &recipients, args.fee)?;
+        let built = build_transaction(&store_arc, &recipients, args.fee)?;
         store_arc.mark_notes_pending(&built.spent_note_indexes, true)?;
-        
+
         // Check if this is a pure shielded-to-shielded transfer (value_balance = 0)
         // If so, submit as unsigned - no transparent account needed!
         let is_pure_shielded = built.bundle.value_balance == 0;
-        
+
         let result = if is_pure_shielded {
             // Pure shielded transfer: submit unsigned
             // The ZK proof authenticates the spend, no signature needed
             println!("Submitting unsigned shielded-to-shielded transfer...");
             println!("  (No transparent account required - ZK proof authenticates the spend)");
-            client.submit_shielded_transfer_unsigned(&built.bundle).await
+            client
+                .submit_shielded_transfer_unsigned(&built.bundle)
+                .await
         } else {
             // Value entering/leaving shielded pool: need signed extrinsic
             println!("Signing extrinsic with ML-DSA and submitting...");
-            client.submit_shielded_transfer_signed(&built.bundle, &signing_seed).await
+            client
+                .submit_shielded_transfer_signed(&built.bundle, &signing_seed)
+                .await
         };
-        
+
         match result {
             Ok(tx_hash) => {
                 store_arc.record_pending_submission(
@@ -969,43 +1003,52 @@ fn cmd_substrate_shield(args: SubstrateShieldArgs) -> Result<()> {
         if store.mode()? == WalletMode::WatchOnly {
             anyhow::bail!("watch-only wallets cannot shield");
         }
-        let derived = store.derived_keys()?.ok_or_else(|| anyhow!("watch-only wallet has no spend key"))?;
+        let derived = store
+            .derived_keys()?
+            .ok_or_else(|| anyhow!("watch-only wallet has no spend key"))?;
         derived.spend.to_bytes()
     };
-    
+
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
         .build()
         .context("failed to create tokio runtime")?;
-    
+
     runtime.block_on(async {
-        use wallet::extrinsic::{EncryptedNote, ExtrinsicBuilder};
         use blake2::{Blake2s256, Digest};
-        
+        use wallet::extrinsic::{EncryptedNote, ExtrinsicBuilder};
+
         println!("Connecting to {}...", args.ws_url);
         let client = SubstrateRpcClient::connect(&args.ws_url)
             .await
             .map_err(|e| anyhow!("Failed to connect: {}", e))?;
-        
+
         // Get account info
         let builder = ExtrinsicBuilder::from_seed(&signing_seed);
         let account_id = builder.account_id();
-        println!("Using account: 0x{}", hex::encode(&account_id));
-        
+        println!("Using account: 0x{}", hex::encode(account_id));
+
         // Generate note commitment
         // In a real implementation, this would be properly encrypted using ML-KEM
         let mut hasher = Blake2s256::new();
-        hasher.update(&args.amount.to_le_bytes());
-        hasher.update(&account_id);
+        hasher.update(args.amount.to_le_bytes());
+        hasher.update(account_id);
         hasher.update(b"shield_commitment_v1");
         let commitment: [u8; 32] = hasher.finalize().into();
-        
+
         // Create encrypted note (in practice, use ML-KEM to encrypt)
         let encrypted_note = EncryptedNote::default();
-        
-        println!("Shielding {} units to commitment 0x{}...", args.amount, hex::encode(&commitment[..8]));
-        
-        match client.submit_shield_signed(args.amount, commitment, encrypted_note, &signing_seed).await {
+
+        println!(
+            "Shielding {} units to commitment 0x{}...",
+            args.amount,
+            hex::encode(&commitment[..8])
+        );
+
+        match client
+            .submit_shield_signed(args.amount, commitment, encrypted_note, &signing_seed)
+            .await
+        {
             Ok(tx_hash) => {
                 println!("✓ Shield transaction submitted successfully!");
                 println!("  TX Hash: 0x{}", hex::encode(tx_hash));
@@ -1013,9 +1056,7 @@ fn cmd_substrate_shield(args: SubstrateShieldArgs) -> Result<()> {
                 println!("  Commitment: 0x{}", hex::encode(commitment));
                 Ok(())
             }
-            Err(e) => {
-                Err(anyhow!("Shield transaction failed: {}", e))
-            }
+            Err(e) => Err(anyhow!("Shield transaction failed: {}", e)),
         }
     })
 }
@@ -1028,12 +1069,11 @@ async fn spawn_substrate_wallet_api(
 ) -> Result<()> {
     // For now, just bind and serve a minimal health endpoint
     // Full API integration would require updating the api module
-    let app = axum::Router::new()
-        .route("/health", axum::routing::get(|| async { "ok" }));
-    
+    let app = axum::Router::new().route("/health", axum::routing::get(|| async { "ok" }));
+
     let listener = TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
-    
+
     Ok(())
 }
 

@@ -68,10 +68,7 @@ impl WalletError {
                 )
             }
             Self::TooManyInputs { needed, max } => {
-                format!(
-                    "Need {} notes but max is {} per transaction",
-                    needed, max
-                )
+                format!("Need {} notes but max is {} per transaction", needed, max)
             }
             Self::ChainMismatch { .. } => {
                 "Wallet was synced to a different chain (genesis hash mismatch)".to_string()
@@ -83,11 +80,12 @@ impl WalletError {
     /// Returns a suggested action for the user
     pub fn suggested_action(&self) -> Option<String> {
         match self {
-            Self::NullifierSpent { .. } => Some(
-                "Run: wallet substrate-sync --force-rescan to resync wallet state".to_string(),
-            ),
+            Self::NullifierSpent { .. } => {
+                Some("Run: wallet substrate-sync --force-rescan to resync wallet state".to_string())
+            }
             Self::ChainMismatch { .. } => Some(
-                "Run: wallet substrate-sync --force-rescan to reset wallet for new chain".to_string(),
+                "Run: wallet substrate-sync --force-rescan to reset wallet for new chain"
+                    .to_string(),
             ),
             Self::TooManyInputs { .. } => {
                 Some("Add --auto-consolidate flag to automatically merge notes first".to_string())

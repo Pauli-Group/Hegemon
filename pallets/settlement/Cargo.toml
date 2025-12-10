@@ -50,3 +50,6 @@ std = [
 ]
 runtime-benchmarks = ["frame-benchmarking/runtime-benchmarks"]
 stark-verify = ["winterfell", "winter-verifier", "winter-air", "winter-math"]
+
+[lints]
+workspace = true

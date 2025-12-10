@@ -41,7 +41,7 @@ use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use std::sync::{Arc, RwLock};
 
 /// Mock implementation for testing without a real client
-/// 
+///
 /// Uses std::sync::RwLock instead of tokio::sync::RwLock to avoid
 /// nested runtime issues when called from synchronous trait methods.
 pub struct MockShieldedPoolService {
@@ -112,7 +112,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
     ) -> Result<[u8; 32], String> {
         let nullifier_count = nullifiers.len();
         let commitment_count = commitments.len();
-        
+
         // Add nullifiers to spent set
         {
             let mut nfs = self.nullifiers.write().expect("nullifiers lock poisoned");
@@ -120,7 +120,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
                 nfs.push(nf);
             }
         }
-        
+
         // Add new notes
         {
             let mut notes = self.notes.write().expect("notes lock poisoned");
@@ -130,7 +130,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
                 notes.push((index, encrypted_note.clone(), height, *commitment));
             }
         }
-        
+
         // Update balance
         {
             let mut bal = self.balance.write().expect("balance lock poisoned");
@@ -140,12 +140,12 @@ impl ShieldedPoolService for MockShieldedPoolService {
                 *bal = bal.saturating_sub((-value_balance) as u128);
             }
         }
-        
+
         // Return mock tx hash
         let mut tx_hash = [0u8; 32];
         tx_hash[0] = 0xab;
         tx_hash[31] = (commitment_count as u8).wrapping_add(nullifier_count as u8);
-        
+
         tracing::info!(
             nullifiers = nullifier_count,
             commitments = commitment_count,
@@ -153,7 +153,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
             tx_hash = %hex::encode(tx_hash),
             "Mock shielded transfer submitted"
         );
-        
+
         Ok(tx_hash)
     }
 
@@ -190,7 +190,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
         let siblings: Vec<[u8; 32]> = (0..32).map(|i| [i; 32]).collect();
         let indices: Vec<bool> = (0..32).map(|_| false).collect();
         let root = *self.merkle_root.read().expect("merkle_root lock poisoned");
-        
+
         Ok((siblings, indices, root))
     }
 
@@ -221,26 +221,26 @@ impl ShieldedPoolService for MockShieldedPoolService {
             let mut notes = self.notes.write().expect("notes lock poisoned");
             let mut bal = self.balance.write().expect("balance lock poisoned");
             let height = *self.height.read().expect("height lock poisoned");
-            
+
             let index = notes.len() as u64;
             notes.push((index, encrypted_note, height, commitment));
             *bal = bal.saturating_add(amount);
-            
+
             index
         };
-        
+
         // Mock tx hash
         let mut tx_hash = [0u8; 32];
         tx_hash[0] = 0xcd;
         tx_hash[1..17].copy_from_slice(&amount.to_le_bytes());
-        
+
         tracing::info!(
             amount = amount,
             commitment = %hex::encode(commitment),
             note_index = note_index,
             "Mock shield operation"
         );
-        
+
         Ok((tx_hash, note_index))
     }
 
@@ -346,7 +346,7 @@ where
     ) -> Result<Vec<(u64, Vec<u8>, u64, [u8; 32])>, String> {
         let api = self.client.runtime_api();
         let hash = self.best_hash();
-        
+
         api.get_encrypted_notes(hash, start, limit as u32)
             .map_err(|e| format!("Runtime API error: {:?}", e))
     }
@@ -354,7 +354,7 @@ where
     fn encrypted_note_count(&self) -> u64 {
         let api = self.client.runtime_api();
         let hash = self.best_hash();
-        
+
         api.encrypted_note_count(hash).unwrap_or(0)
     }
 
@@ -364,7 +364,7 @@ where
     ) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), String> {
         let api = self.client.runtime_api();
         let hash = self.best_hash();
-        
+
         api.get_merkle_witness(hash, position)
             .map_err(|e| format!("Runtime API error: {:?}", e))?
             .map_err(|_| "Invalid position".to_string())
@@ -373,14 +373,14 @@ where
     fn get_pool_status(&self) -> ShieldedPoolStatus {
         let api = self.client.runtime_api();
         let hash = self.best_hash();
-        
+
         let total_notes = api.encrypted_note_count(hash).unwrap_or(0);
         let total_nullifiers = api.nullifier_count(hash).unwrap_or(0);
         let merkle_root = api.merkle_root(hash).unwrap_or([0u8; 32]);
         let tree_depth = api.tree_depth(hash).unwrap_or(32);
         let pool_balance = api.pool_balance(hash).unwrap_or(0);
         let last_update_block = self.client.info().best_number.try_into().unwrap_or(0);
-        
+
         ShieldedPoolStatus {
             total_notes,
             total_nullifiers,
@@ -398,20 +398,23 @@ where
         _encrypted_note: Vec<u8>,
     ) -> Result<([u8; 32], u64), String> {
         // Shield requires submitting an extrinsic to pallet_shielded_pool::shield()
-        Err("Production shield not yet implemented. Use RPC `author_submitExtrinsic` directly.".to_string())
+        Err(
+            "Production shield not yet implemented. Use RPC `author_submitExtrinsic` directly."
+                .to_string(),
+        )
     }
 
     fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
         let api = self.client.runtime_api();
         let hash = self.best_hash();
-        
+
         api.is_nullifier_spent(hash, *nullifier).unwrap_or(false)
     }
 
     fn is_valid_anchor(&self, anchor: &[u8; 32]) -> bool {
         let api = self.client.runtime_api();
         let hash = self.best_hash();
-        
+
         api.is_valid_anchor(hash, *anchor).unwrap_or(false)
     }
 
@@ -427,12 +430,12 @@ mod tests {
     #[test]
     fn test_mock_service_notes() {
         let service = MockShieldedPoolService::new();
-        
+
         // Add a note
         service.add_note(vec![1, 2, 3], [0xaa; 32]);
-        
+
         assert_eq!(service.encrypted_note_count(), 1);
-        
+
         let notes = service.get_encrypted_notes(0, 10, None, None).unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].0, 0); // index
@@ -442,16 +445,16 @@ mod tests {
     #[test]
     fn test_mock_service_shield() {
         let service = MockShieldedPoolService::new();
-        
+
         let result = service.shield(1000, [0xbb; 32], vec![4, 5, 6]);
         assert!(result.is_ok());
-        
+
         let (_, index) = result.unwrap();
         assert_eq!(index, 0);
-        
+
         // Check note was added
         assert_eq!(service.encrypted_note_count(), 1);
-        
+
         // Check balance updated
         let status = service.get_pool_status();
         assert_eq!(status.pool_balance, 1000);
@@ -460,26 +463,28 @@ mod tests {
     #[test]
     fn test_mock_service_nullifiers() {
         let service = MockShieldedPoolService::new();
-        
+
         let nf = [0xcc; 32];
-        
+
         // Not spent initially
         assert!(!service.is_nullifier_spent(&nf));
-        
+
         // Add initial anchor for the transfer
         service.add_anchor([0; 32]);
-        
+
         // Submit transfer with nullifier
-        service.submit_shielded_transfer(
-            vec![],
-            vec![nf],
-            vec![],
-            vec![],
-            [0; 32], // Use valid anchor
-            [0; 64],
-            0,
-        ).unwrap();
-        
+        service
+            .submit_shielded_transfer(
+                vec![],
+                vec![nf],
+                vec![],
+                vec![],
+                [0; 32], // Use valid anchor
+                [0; 64],
+                0,
+            )
+            .unwrap();
+
         // Now spent
         assert!(service.is_nullifier_spent(&nf));
     }
@@ -488,7 +493,7 @@ mod tests {
     fn test_mock_service_pool_status() {
         let service = MockShieldedPoolService::new();
         service.set_height(100);
-        
+
         let status = service.get_pool_status();
         assert_eq!(status.total_notes, 0);
         assert_eq!(status.last_update_block, 100);
@@ -498,22 +503,22 @@ mod tests {
     #[test]
     fn test_mock_service_anchors() {
         let service = MockShieldedPoolService::new();
-        
+
         let anchor1 = [0x11; 32];
         let anchor2 = [0x22; 32];
-        
+
         // Initial anchor is valid (zero root)
         assert!(service.is_valid_anchor(&[0; 32]));
-        
+
         // Unknown anchor is invalid
         assert!(!service.is_valid_anchor(&anchor1));
-        
+
         // Add anchor
         service.add_anchor(anchor1);
-        
+
         // Now valid
         assert!(service.is_valid_anchor(&anchor1));
-        
+
         // Still invalid
         assert!(!service.is_valid_anchor(&anchor2));
     }
@@ -521,28 +526,29 @@ mod tests {
     #[test]
     fn test_mock_service_transfer_updates_balance() {
         let service = MockShieldedPoolService::new();
-        
+
         // Add initial anchor
         service.add_anchor([0; 32]);
-        
+
         // Shield some funds first
         service.shield(10000, [0xaa; 32], vec![1]).unwrap();
-        
+
         // Transfer with negative value balance (unshield)
-        service.submit_shielded_transfer(
-            vec![],
-            vec![[0xbb; 32]],
-            vec![[0xcc; 32]],
-            vec![vec![2]],
-            [0; 32],
-            [0; 64],
-            -5000,
-        ).unwrap();
-        
+        service
+            .submit_shielded_transfer(
+                vec![],
+                vec![[0xbb; 32]],
+                vec![[0xcc; 32]],
+                vec![vec![2]],
+                [0; 32],
+                [0; 64],
+                -5000,
+            )
+            .unwrap();
+
         let status = service.get_pool_status();
         assert_eq!(status.pool_balance, 5000); // 10000 - 5000
         assert_eq!(status.total_notes, 2); // original + new
         assert_eq!(status.total_nullifiers, 1);
     }
 }
-

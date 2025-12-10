@@ -33,8 +33,8 @@
 
 use crate::substrate_pow::{Blake3Seal, mine_round};
 use sp_core::H256;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -135,7 +135,7 @@ impl MiningWorker {
     /// Create a new mining worker with the specified number of threads
     pub fn new(thread_count: usize) -> Self {
         let (solution_tx, solution_rx) = crossbeam_channel::unbounded();
-        
+
         Self {
             thread_count,
             threads: Vec::new(),
@@ -150,44 +150,35 @@ impl MiningWorker {
     /// Start mining threads
     pub fn start(&mut self) {
         self.stop_flag.store(false, Ordering::SeqCst);
-        
+
         for thread_id in 0..self.thread_count {
             let stop_flag = Arc::clone(&self.stop_flag);
             let current_work = Arc::clone(&self.current_work);
             let solution_tx = self.solution_tx.clone();
             let stats = Arc::clone(&self.stats);
-            
+
             let handle = thread::Builder::new()
                 .name(format!("hegemon-miner-{}", thread_id))
                 .spawn(move || {
-                    mining_thread_loop(
-                        thread_id,
-                        stop_flag,
-                        current_work,
-                        solution_tx,
-                        stats,
-                    );
+                    mining_thread_loop(thread_id, stop_flag, current_work, solution_tx, stats);
                 })
                 .expect("failed to spawn mining thread");
-            
+
             self.threads.push(handle);
         }
-        
-        tracing::info!(
-            "Started {} mining thread(s)",
-            self.thread_count
-        );
+
+        tracing::info!("Started {} mining thread(s)", self.thread_count);
     }
 
     /// Stop all mining threads
     pub fn stop(&mut self) {
         self.stop_flag.store(true, Ordering::SeqCst);
-        
+
         // Wait for all threads to finish
         while let Some(handle) = self.threads.pop() {
             let _ = handle.join();
         }
-        
+
         tracing::info!("Stopped mining threads");
     }
 
@@ -240,18 +231,18 @@ fn mining_thread_loop(
 ) {
     const NONCES_PER_ROUND: u64 = 10_000;
     const ROUNDS_PER_THREAD: u32 = 100;
-    
+
     let mut round_offset = 0u32;
-    
+
     tracing::debug!(thread_id, "Mining thread starting");
-    
+
     while !stop_flag.load(Ordering::Relaxed) {
         // Get current work
         let work = {
             let lock = current_work.read();
             lock.clone()
         };
-        
+
         let Some(work) = work else {
             // No work available, sleep briefly
             if round_offset == 0 {
@@ -260,7 +251,7 @@ fn mining_thread_loop(
             thread::sleep(Duration::from_millis(100));
             continue;
         };
-        
+
         if round_offset == 0 {
             tracing::info!(
                 thread_id,
@@ -270,12 +261,12 @@ fn mining_thread_loop(
                 "Mining thread got work, starting to mine"
             );
         }
-        
+
         // Calculate round number for this thread
         // Distribute work: thread 0 does rounds 0, N, 2N, ...
         //                  thread 1 does rounds 1, N+1, 2N+1, ...
         let round = (round_offset * ROUNDS_PER_THREAD) + thread_id as u32;
-        
+
         // Try to find a solution
         if let Some(seal) = mine_round(&work.pre_hash, work.pow_bits, round, NONCES_PER_ROUND) {
             // Found a solution!
@@ -285,23 +276,23 @@ fn mining_thread_loop(
                 round,
                 "🎯 Mining thread found solution!"
             );
-            
+
             let solution = MiningSolution {
                 seal,
                 work: work.clone(),
             };
-            
+
             stats.add_block();
-            
+
             if solution_tx.send(solution).is_err() {
                 // Receiver dropped, stop mining
                 break;
             }
         }
-        
+
         // Update stats
         stats.add_hashes(NONCES_PER_ROUND);
-        
+
         // Move to next round
         round_offset = round_offset.wrapping_add(1);
     }
@@ -330,7 +321,7 @@ impl MiningCoordinator {
         if self.worker.is_some() {
             return; // Already running
         }
-        
+
         let mut worker = MiningWorker::new(self.thread_count);
         worker.start();
         self.worker = Some(worker);
@@ -364,7 +355,7 @@ impl MiningCoordinator {
 
     /// Check if mining is active
     pub fn is_mining(&self) -> bool {
-        self.worker.as_ref().map_or(false, |w| w.is_mining())
+        self.worker.as_ref().is_some_and(|w| w.is_mining())
     }
 
     /// Get hashrate
@@ -391,13 +382,13 @@ mod tests {
     #[test]
     fn test_mining_stats() {
         let stats = MiningStats::new();
-        
+
         stats.add_hashes(1000);
         assert_eq!(stats.total(), 1000);
-        
+
         stats.add_hashes(500);
         assert_eq!(stats.total(), 1500);
-        
+
         stats.add_block();
         assert_eq!(stats.blocks(), 1);
     }
@@ -410,7 +401,7 @@ mod tests {
             height: 100,
             parent_hash: H256::repeat_byte(0x01),
         };
-        
+
         let cloned = work.clone();
         assert_eq!(work.pre_hash, cloned.pre_hash);
         assert_eq!(work.pow_bits, cloned.pow_bits);
@@ -420,12 +411,12 @@ mod tests {
     #[test]
     fn test_mining_coordinator_lifecycle() {
         let mut coordinator = MiningCoordinator::new(1);
-        
+
         assert!(!coordinator.is_mining());
-        
+
         coordinator.start();
         assert!(coordinator.is_mining());
-        
+
         coordinator.stop();
         assert!(!coordinator.is_mining());
     }
@@ -434,7 +425,7 @@ mod tests {
     fn test_mining_finds_solution_with_easy_difficulty() {
         let mut worker = MiningWorker::new(1);
         worker.start();
-        
+
         // Very easy difficulty
         let work = MiningWork {
             pre_hash: H256::repeat_byte(0xab),
@@ -442,14 +433,17 @@ mod tests {
             height: 1,
             parent_hash: H256::zero(),
         };
-        
+
         worker.update_work(work.clone());
-        
+
         // Should find solution quickly
         let solution = worker.recv_solution_timeout(Duration::from_secs(10));
         worker.stop();
-        
-        assert!(solution.is_some(), "should find solution with easy difficulty");
+
+        assert!(
+            solution.is_some(),
+            "should find solution with easy difficulty"
+        );
         let solution = solution.unwrap();
         assert_eq!(solution.work.height, 1);
     }

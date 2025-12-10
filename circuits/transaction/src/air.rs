@@ -2,7 +2,7 @@
 //!
 //! **WARNING**: This module does NOT provide cryptographic security.
 //! It only performs equality checks on public inputs.
-//! 
+//!
 //! For real STARK proving/verification, use the `stark_air`, `stark_prover`,
 //! and `stark_verifier` modules instead.
 //!
@@ -21,7 +21,7 @@ use crate::{
 };
 
 /// Legacy AIR that only checks public input consistency.
-/// 
+///
 /// **WARNING**: This does NOT verify cryptographic proofs!
 /// Use `stark_verifier::verify_transaction_proof` for real verification.
 #[deprecated(
@@ -136,7 +136,7 @@ impl BalanceSlot {
 }
 
 /// Legacy constraint checking function.
-/// 
+///
 /// **WARNING**: This only validates consistency, NOT cryptographic proofs!
 #[deprecated(
     since = "0.2.0",

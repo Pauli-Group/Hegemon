@@ -51,16 +51,16 @@
 //!
 //! Full sc-network integration requires aligned Polkadot SDK dependencies.
 
-use std::time::Duration;
-use crypto::ml_kem::MlKemKeyPair;
 use crypto::ml_dsa::MlDsaSecretKey;
-use crypto::traits::{KemKeyPair, KemPublicKey, SigningKey, VerifyKey, Signature};
+use crypto::ml_kem::MlKemKeyPair;
+use crypto::traits::{KemKeyPair, KemPublicKey, Signature, SigningKey, VerifyKey};
+use std::time::Duration;
 
 /// Network protocol identifiers for Hegemon
 pub mod protocols {
     /// Block announcement protocol
     pub const BLOCK_ANNOUNCES: &str = "/hegemon/block-announces/1";
-    /// Transaction propagation protocol  
+    /// Transaction propagation protocol
     pub const TRANSACTIONS: &str = "/hegemon/transactions/1";
     /// PQ handshake negotiation protocol
     pub const PQ_HANDSHAKE: &str = "/hegemon/pq-handshake/1";
@@ -166,7 +166,7 @@ impl PqNetworkConfig {
 }
 
 /// PQ-secure network keypair
-/// 
+///
 /// Contains the cryptographic material for PQ-secure peer communication:
 /// - ML-KEM-768 keypair for post-quantum key encapsulation
 /// - ML-DSA-65 keypair for post-quantum signatures
@@ -184,44 +184,44 @@ impl PqNetworkKeypair {
     /// Generate a new keypair using OS entropy
     pub fn generate() -> Result<Self, String> {
         use rand::{rngs::OsRng, RngCore};
-        
+
         // Generate random seed using OS entropy
         let mut seed = [0u8; 32];
         OsRng.fill_bytes(&mut seed);
-        
+
         Self::from_seed(&seed)
     }
 
     /// Generate a keypair from a seed (deterministic)
     pub fn from_seed(seed: &[u8]) -> Result<Self, String> {
-        use sha2::{Sha256, Digest};
-        
+        use sha2::{Digest, Sha256};
+
         // Derive key material from seed
         let mut kem_seed_hasher = Sha256::new();
         kem_seed_hasher.update(b"hegemon-kem");
         kem_seed_hasher.update(seed);
         let kem_seed: [u8; 32] = kem_seed_hasher.finalize().into();
-        
+
         let mut dsa_seed_hasher = Sha256::new();
         dsa_seed_hasher.update(b"hegemon-dsa");
         dsa_seed_hasher.update(seed);
         let dsa_seed: [u8; 32] = dsa_seed_hasher.finalize().into();
-        
+
         // Generate ML-KEM-768 keypair from seed
         let kem_keypair = MlKemKeyPair::generate_deterministic(&kem_seed);
-        
+
         // Generate ML-DSA-65 signing key from seed
         let dsa_signing_key = MlDsaSecretKey::generate_deterministic(&dsa_seed);
-        
+
         // Derive peer ID from public keys
         let kem_pk = kem_keypair.public_key();
         let dsa_pk = dsa_signing_key.verify_key();
-        
+
         let mut hasher = Sha256::new();
         hasher.update(&kem_pk.to_bytes());
         hasher.update(&dsa_pk.to_bytes());
         let peer_id_bytes: [u8; 32] = hasher.finalize().into();
-        
+
         Ok(Self {
             kem_keypair,
             dsa_signing_key,
@@ -233,7 +233,7 @@ impl PqNetworkKeypair {
     pub fn peer_id_bytes(&self) -> &[u8; 32] {
         &self.peer_id_bytes
     }
-    
+
     /// Get the peer ID as a hex string
     pub fn peer_id(&self) -> String {
         hex::encode(self.peer_id_bytes)
@@ -257,13 +257,15 @@ impl PqNetworkKeypair {
     /// Decapsulate a ciphertext to recover the shared secret
     pub fn decapsulate(&self, ciphertext: &[u8]) -> Result<Vec<u8>, String> {
         use crypto::ml_kem::MlKemCiphertext;
-        
+
         let ct = MlKemCiphertext::from_bytes(ciphertext)
             .map_err(|e| format!("Invalid ciphertext: {:?}", e))?;
-        
-        let shared_secret = self.kem_keypair.decapsulate(&ct)
+
+        let shared_secret = self
+            .kem_keypair
+            .decapsulate(&ct)
             .map_err(|e| format!("Decapsulation failed: {:?}", e))?;
-        
+
         Ok(shared_secret.as_bytes().to_vec())
     }
 
@@ -338,11 +340,11 @@ mod tests {
     #[test]
     fn test_pq_network_keypair() {
         let keypair = PqNetworkKeypair::from_seed(b"test-seed").unwrap();
-        
+
         // Peer ID should be deterministic
         let keypair2 = PqNetworkKeypair::from_seed(b"test-seed").unwrap();
         assert_eq!(keypair.peer_id_bytes, keypair2.peer_id_bytes);
-        
+
         // Different seed should produce different peer ID
         let keypair3 = PqNetworkKeypair::from_seed(b"different-seed").unwrap();
         assert_ne!(keypair.peer_id_bytes, keypair3.peer_id_bytes);
@@ -351,12 +353,12 @@ mod tests {
     #[test]
     fn test_keypair_operations() {
         let keypair = PqNetworkKeypair::from_seed(b"test-seed-123").unwrap();
-        
+
         // Test signing
         let message = b"test message";
         let signature = keypair.sign(message);
         assert!(!signature.is_empty());
-        
+
         // Test peer ID format
         let peer_id = keypair.peer_id();
         assert_eq!(peer_id.len(), 64); // 32 bytes as hex
@@ -366,10 +368,10 @@ mod tests {
     fn test_notification_configs() {
         let configs = build_notification_protocols();
         assert_eq!(configs.len(), 2);
-        
+
         let block_config = &configs[0];
         assert_eq!(block_config.name, protocols::BLOCK_ANNOUNCES);
-        
+
         let tx_config = &configs[1];
         assert_eq!(tx_config.name, protocols::TRANSACTIONS);
     }

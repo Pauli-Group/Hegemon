@@ -159,22 +159,22 @@ pub struct StarkVerifier;
 mod settlement_proof_structure {
     /// Minimum number of FRI layers for 128-bit security
     pub const MIN_FRI_LAYERS: usize = 4;
-    
+
     /// Each FRI layer commitment is 32 bytes (hash output)
     pub const FRI_LAYER_COMMITMENT_SIZE: usize = 32;
-    
+
     /// Proof header size: version (1) + num_fri_layers (1) + trace_length (4) + options (2)
     pub const PROOF_HEADER_SIZE: usize = 8;
-    
+
     /// Minimum query response size per query
     pub const MIN_QUERY_SIZE: usize = 64;
-    
+
     /// Calculate minimum valid proof size for given parameters
     pub fn min_proof_size(fri_queries: usize, fri_layers: usize) -> usize {
-        PROOF_HEADER_SIZE 
+        PROOF_HEADER_SIZE
             + (fri_layers * FRI_LAYER_COMMITMENT_SIZE) // FRI layer commitments
             + (fri_queries * MIN_QUERY_SIZE)           // Query responses
-            + 32                                        // Final polynomial commitment
+            + 32 // Final polynomial commitment
     }
 }
 
@@ -185,49 +185,47 @@ impl StarkVerifier {
         if proof.len() < settlement_proof_structure::PROOF_HEADER_SIZE {
             return false;
         }
-        
+
         // Parse header
         let version = proof[0];
         let num_fri_layers = proof[1] as usize;
-        
+
         // Validate version (currently only version 1 supported)
         if version != 1 {
             return false;
         }
-        
+
         // Validate FRI layer count
         if num_fri_layers < settlement_proof_structure::MIN_FRI_LAYERS {
             return false;
         }
-        
+
         // Check proof has enough data for structure based on params
-        let min_size = settlement_proof_structure::min_proof_size(
-            params.fri_queries as usize, 
-            num_fri_layers
-        );
+        let min_size =
+            settlement_proof_structure::min_proof_size(params.fri_queries as usize, num_fri_layers);
         if proof.len() < min_size {
             return false;
         }
-        
+
         true
     }
-    
+
     /// Compute a challenge hash binding proof to commitment.
     fn compute_challenge(commitment: &[u8], proof: &[u8]) -> [u8; 32] {
         use sp_core::hashing::blake2_256;
-        
+
         let mut data = Vec::new();
-        
+
         // Domain separator
         data.extend_from_slice(b"SETTLEMENT-STARK-V1");
-        
+
         // Commitment
         data.extend_from_slice(commitment);
-        
+
         // Proof commitment (first 64 bytes)
         let commitment_size = core::cmp::min(64, proof.len());
         data.extend_from_slice(&proof[..commitment_size]);
-        
+
         blake2_256(&data)
     }
 }
@@ -244,26 +242,26 @@ impl<Hash: AsRef<[u8]>> ProofVerifier<Hash> for StarkVerifier {
         if proof.is_empty() {
             return false;
         }
-        
+
         // Reject empty verification keys
         if verification_key.is_empty() {
             return false;
         }
-        
+
         // Check commitment is non-zero
         let commitment_bytes = commitment.as_ref();
         if commitment_bytes.iter().all(|&b| b == 0) {
             return false;
         }
-        
+
         // Validate proof structure
         if !Self::validate_proof_structure(proof, params) {
             return false;
         }
-        
+
         // Compute and verify challenge binding
         let _challenge = Self::compute_challenge(commitment_bytes, proof);
-        
+
         // Without the stark-verify feature, we perform structural validation only.
         // This validates:
         // 1. Proof is non-empty and properly formatted
@@ -272,7 +270,7 @@ impl<Hash: AsRef<[u8]>> ProofVerifier<Hash> for StarkVerifier {
         //
         // SECURITY WARNING: Enable `stark-verify` feature for production use.
         // Without it, proofs are not cryptographically verified.
-        
+
         true
     }
 }
@@ -287,28 +285,28 @@ impl<Hash: AsRef<[u8]>> ProofVerifier<Hash> for StarkVerifier {
     ) -> bool {
         use sp_core::hashing::blake2_256;
         use winterfell::Proof;
-        
+
         // Reject empty proofs
         if proof.is_empty() {
             return false;
         }
-        
+
         // Reject empty verification keys
         if verification_key.is_empty() {
             return false;
         }
-        
+
         // Check commitment is non-zero
         let commitment_bytes = commitment.as_ref();
         if commitment_bytes.iter().all(|&b| b == 0) {
             return false;
         }
-        
+
         // Validate basic proof structure first
         if !Self::validate_proof_structure(proof, params) {
             return false;
         }
-        
+
         // Try to deserialize the winterfell proof
         let winterfell_proof = match Proof::from_bytes(proof) {
             Ok(p) => p,
@@ -318,57 +316,57 @@ impl<Hash: AsRef<[u8]>> ProofVerifier<Hash> for StarkVerifier {
                 return true; // Structural validation passed
             }
         };
-        
+
         // Verify the proof context matches our expectations
         let trace_info = winterfell_proof.context.trace_info();
         let options = winterfell_proof.context.options();
-        
+
         // Check trace width is reasonable for settlement (2 columns minimum)
         if trace_info.width() < 2 {
             return false;
         }
-        
+
         // Check blowup factor is sufficient for security
         if options.blowup_factor() < params.blowup_factor as usize {
             return false;
         }
-        
+
         // Check number of queries is sufficient
         if options.num_queries() < params.fri_queries as usize {
             return false;
         }
-        
+
         // Verify FRI proof exists and has expected structure
         let fri_proof = &winterfell_proof.fri_proof;
         if fri_proof.num_layers() < settlement_proof_structure::MIN_FRI_LAYERS {
             return false;
         }
-        
+
         // Verify query count matches
         let num_queries = winterfell_proof.num_unique_queries as usize;
         if num_queries < params.fri_queries as usize {
             return false;
         }
-        
+
         // Compute commitment binding
         let mut binding_data = Vec::new();
         binding_data.extend_from_slice(b"SETTLEMENT-BINDING-V1");
         binding_data.extend_from_slice(commitment_bytes);
         let input_binding = blake2_256(&binding_data);
-        
+
         // Hash verification data with input binding
         let mut verification_data = Vec::new();
         verification_data.extend_from_slice(b"SETTLEMENT-VERIFY-V1");
         verification_data.extend_from_slice(&input_binding);
         verification_data.extend_from_slice(&winterfell_proof.pow_nonce.to_le_bytes());
-        
+
         let verification_hash = blake2_256(&verification_data);
-        
+
         // The verification hash must have sufficient entropy (not all zeros)
         if verification_hash.iter().all(|&b| b == 0) {
             return false;
         }
-        
+
         // Full winterfell verification would require matching AIR and hash types.
         // Since we've verified:
         // 1. Proof deserializes correctly (winterfell format)
@@ -378,7 +376,7 @@ impl<Hash: AsRef<[u8]>> ProofVerifier<Hash> for StarkVerifier {
         // 5. Commitment is bound to verification
         //
         // This provides meaningful verification for winterfell-format proofs.
-        
+
         true
     }
 }

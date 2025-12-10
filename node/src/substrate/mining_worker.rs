@@ -172,11 +172,7 @@ pub struct BlockTemplate {
 
 impl BlockTemplate {
     /// Create a new block template
-    pub fn new(
-        parent_hash: H256,
-        number: u64,
-        difficulty_bits: u32,
-    ) -> Self {
+    pub fn new(parent_hash: H256, number: u64, difficulty_bits: u32) -> Self {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -195,12 +191,12 @@ impl BlockTemplate {
             pre_hash,
             difficulty_bits,
             extrinsics: Vec::new(),
-            storage_changes_key: None,     // Task 11.5.5: Set during block building
+            storage_changes_key: None, // Task 11.5.5: Set during block building
         }
     }
 
     /// Add extrinsics to the template (without state execution)
-    /// 
+    ///
     /// Note: This sets state_root to zero. For production use with real
     /// state execution, use `with_executed_extrinsics` instead.
     pub fn with_extrinsics(mut self, extrinsics: Vec<Vec<u8>>) -> Self {
@@ -230,9 +226,9 @@ impl BlockTemplate {
     /// * `extrinsics_root` - Merkle root of applied extrinsics
     /// * `storage_changes_key` - Optional key to retrieve cached StorageChanges (Task 11.5.5)
     pub fn with_executed_state(
-        mut self, 
-        extrinsics: Vec<Vec<u8>>, 
-        state_root: H256, 
+        mut self,
+        extrinsics: Vec<Vec<u8>>,
+        state_root: H256,
         extrinsics_root: H256,
         storage_changes_key: Option<u64>,
     ) -> Self {
@@ -267,7 +263,7 @@ impl BlockTemplate {
     }
 
     /// Create encoded header bytes (for block announcement)
-    /// 
+    ///
     /// Creates a proper SCALE-encoded Substrate header that includes:
     /// - Parent hash
     /// - Block number
@@ -278,8 +274,10 @@ impl BlockTemplate {
         // Create seal digest item with our engine ID "bpow"
         let seal_bytes = seal.encode();
         let seal_digest = DigestItem::Seal(*b"pow_", seal_bytes);
-        let digest = Digest { logs: vec![seal_digest] };
-        
+        let digest = Digest {
+            logs: vec![seal_digest],
+        };
+
         // Create a proper Substrate header
         let header = <runtime::Header as HeaderT>::new(
             self.number,
@@ -288,7 +286,7 @@ impl BlockTemplate {
             self.parent_hash.into(),
             digest,
         );
-        
+
         // SCALE-encode the header
         header.encode()
     }
@@ -304,7 +302,7 @@ fn compute_pre_hash(parent_hash: &H256, number: u64, timestamp: u64) -> H256 {
 }
 
 /// Compute pre-hash including extrinsics root and state root (Task 11.4)
-/// 
+///
 /// NOTE: This is a FALLBACK function that uses Blake3.
 /// For production, use `compute_substrate_pre_hash` which computes
 /// the actual Substrate header hash.
@@ -333,9 +331,9 @@ pub fn compute_substrate_pre_hash(
     state_root: &H256,
 ) -> H256 {
     use runtime::Header;
-    use sp_runtime::Digest;
     use sp_runtime::traits::Header as HeaderT;
-    
+    use sp_runtime::Digest;
+
     // Create a header without any digest items (no seal yet)
     let header = Header::new(
         number,
@@ -344,7 +342,7 @@ pub fn compute_substrate_pre_hash(
         *parent_hash,
         Digest::default(),
     );
-    
+
     // Compute the hash the same way Substrate does
     header.hash()
 }
@@ -425,14 +423,14 @@ pub struct MockChainState {
 }
 
 /// Default difficulty for ~1 minute block time at 1 MH/s
-/// 
+///
 /// Compact bits format: 0xEEMMMMMM where target = mantissa × 256^(exponent-3)
-/// 
+///
 /// 0x1f00ffff = 0x00ffff × 256^28 ≈ 2^240 (very easy, ~instant blocks)
 /// 0x1e00ffff = 0x00ffff × 256^27 ≈ 2^232 (~1-10 sec blocks at 4 threads)
 /// 0x1d00ffff = 0x00ffff × 256^26 ≈ 2^224 (~minutes to hours per block)
 /// 0x1800ffff = 0x00ffff × 256^21 ≈ 2^184 (difficulty ~2^20, ~10-30 sec blocks)
-/// 
+///
 /// For development/testing: 0x1800ffff gives ~10-30 second blocks to avoid log spam
 pub const DEFAULT_DIFFICULTY_BITS: u32 = 0x1800ffff;
 
@@ -470,19 +468,19 @@ impl MockChainState {
 pub trait ChainStateProvider: Send + Sync {
     /// Get the current best block hash
     fn best_hash(&self) -> H256;
-    
+
     /// Get the current best block number
     fn best_number(&self) -> u64;
-    
+
     /// Get the current difficulty in compact bits
     fn difficulty_bits(&self) -> u32;
-    
+
     /// Get pending transactions from the pool
     fn pending_transactions(&self) -> Vec<Vec<u8>>;
-    
+
     /// Import a mined block
     fn import_block(&self, template: &BlockTemplate, seal: &Blake3Seal) -> Result<H256, String>;
-    
+
     /// Notify that chain state may have changed (e.g., new block from network)
     fn on_new_block(&self, block_hash: &H256, block_number: u64);
 
@@ -501,9 +499,9 @@ pub trait ChainStateProvider: Send + Sync {
         let block_number = self.best_number() + 1;
         let difficulty_bits = self.difficulty_bits();
         let pending = self.pending_transactions();
-        
+
         let template = BlockTemplate::new(parent_hash, block_number, difficulty_bits);
-        
+
         if pending.is_empty() {
             template
         } else {
@@ -552,12 +550,12 @@ impl ChainStateProvider for MockChainStateProvider {
     fn import_block(&self, template: &BlockTemplate, seal: &Blake3Seal) -> Result<H256, String> {
         // Compute block hash from seal
         let block_hash = H256::from_slice(seal.work.as_bytes());
-        
+
         // Update state
         let mut state = self.state.write();
         state.best_hash = block_hash;
         state.best_number = template.number;
-        
+
         Ok(block_hash)
     }
 
@@ -621,7 +619,10 @@ impl NetworkBridgeBroadcaster {
 
     /// Create with a custom protocol
     pub fn with_protocol(pq_handle: network::PqNetworkHandle, protocol: String) -> Self {
-        Self { pq_handle, protocol }
+        Self {
+            pq_handle,
+            protocol,
+        }
     }
 }
 
@@ -630,7 +631,7 @@ impl BlockBroadcaster for NetworkBridgeBroadcaster {
         let data = announce.encode();
         let protocol = self.protocol.clone();
         let handle = self.pq_handle.clone();
-        
+
         tracing::info!(
             block_number = announce.number,
             block_hash = %hex::encode(announce.hash),
@@ -642,7 +643,7 @@ impl BlockBroadcaster for NetworkBridgeBroadcaster {
         // Spawn async broadcast task
         tokio::spawn(async move {
             let failed = handle.broadcast_to_all(&protocol, data).await;
-            
+
             if failed.is_empty() {
                 tracing::debug!("Block broadcast completed successfully to all peers");
             } else {
@@ -739,7 +740,7 @@ where
 
                 // Update mining work
                 let work = template.to_mining_work();
-                
+
                 // DEBUG: Log the pre_hash being used for mining
                 tracing::info!(
                     height = template.number,
@@ -750,7 +751,7 @@ where
                     extrinsics_root = %hex::encode(template.extrinsics_root.as_bytes()),
                     "🔍 DEBUG: Mining work pre_hash (verifier must match this)"
                 );
-                
+
                 self.pow_handle.update_work(
                     work.pre_hash,
                     work.pow_bits,
@@ -776,11 +777,13 @@ where
             // Check for solutions
             if let Some(solution) = self.pow_handle.try_get_solution() {
                 let template = current_template.as_ref().expect("must have template");
-                
+
                 // CRITICAL: Verify the solution is for the current template
                 // The mining threads may have found a solution for an old template
                 // after we've already moved to a new template
-                if solution.work.height != template.number || solution.work.pre_hash != template.pre_hash {
+                if solution.work.height != template.number
+                    || solution.work.pre_hash != template.pre_hash
+                {
                     tracing::warn!(
                         solution_height = solution.work.height,
                         template_height = template.number,
@@ -791,7 +794,7 @@ where
                     // Discard this stale solution and continue
                     continue;
                 }
-                
+
                 // Update stats
                 {
                     let mut stats = self.stats.write();
@@ -801,9 +804,7 @@ where
                 // Import the block
                 match self.chain_state.import_block(template, &solution.seal) {
                     Ok(block_hash) => {
-                        tracing::info!(
-                            "🎉 Block mined!"
-                        );
+                        tracing::info!("🎉 Block mined!");
                         tracing::info!(
                             block_number = template.number,
                             block_hash = %hex::encode(block_hash.as_bytes()),
@@ -822,7 +823,8 @@ where
                             template.number,
                             block_hash.0,
                             BlockState::Best,
-                        ).with_body(template.extrinsics.clone());
+                        )
+                        .with_body(template.extrinsics.clone());
 
                         self.broadcaster.broadcast_block(announce);
 
@@ -872,7 +874,7 @@ pub fn create_scaffold_mining_worker(
 ) -> MiningWorker<MockChainStateProvider, MockBlockBroadcaster> {
     let chain_state = Arc::new(MockChainStateProvider::new(config.test_mode));
     let broadcaster = Arc::new(MockBlockBroadcaster::new(config.verbose));
-    
+
     MiningWorker::new(pow_handle, chain_state, broadcaster, config)
 }
 
@@ -887,7 +889,7 @@ pub fn create_network_mining_worker(
 ) -> MiningWorker<MockChainStateProvider, NetworkBridgeBroadcaster> {
     let chain_state = Arc::new(MockChainStateProvider::new(config.test_mode));
     let broadcaster = Arc::new(NetworkBridgeBroadcaster::new(pq_handle));
-    
+
     MiningWorker::new(pow_handle, chain_state, broadcaster, config)
 }
 
@@ -915,7 +917,7 @@ use crate::substrate::client::{ProductionChainStateProvider, ProductionConfig};
 ///
 /// ```ignore
 /// let chain_state = ProductionChainStateProvider::with_defaults();
-/// 
+///
 /// // Configure callbacks to query real Substrate client
 /// chain_state.set_best_block_fn(|| {
 ///     let info = client.info();
@@ -946,14 +948,14 @@ pub fn create_production_mining_worker(
     config: MiningWorkerConfig,
 ) -> MiningWorker<ProductionChainStateProvider, NetworkBridgeBroadcaster> {
     let broadcaster = Arc::new(NetworkBridgeBroadcaster::new(pq_handle));
-    
+
     tracing::info!(
         threads = config.threads,
         is_production = true,
         verbose = config.verbose,
         "Creating production mining worker (Task 10.5)"
     );
-    
+
     MiningWorker::new(pow_handle, chain_state, broadcaster, config)
 }
 
@@ -967,7 +969,7 @@ pub fn create_production_mining_worker_mock_broadcast(
     config: MiningWorkerConfig,
 ) -> MiningWorker<ProductionChainStateProvider, MockBlockBroadcaster> {
     let broadcaster = Arc::new(MockBlockBroadcaster::new(config.verbose));
-    
+
     MiningWorker::new(pow_handle, chain_state, broadcaster, config)
 }
 
@@ -1020,7 +1022,9 @@ impl ProductionMiningWorkerBuilder {
     /// Build the production mining worker
     ///
     /// Returns the worker and the chain state provider (so callbacks can be configured).
-    pub fn build(self) -> Result<
+    pub fn build(
+        self,
+    ) -> Result<
         (
             MiningWorker<ProductionChainStateProvider, NetworkBridgeBroadcaster>,
             Arc<ProductionChainStateProvider>,
@@ -1042,7 +1046,9 @@ impl ProductionMiningWorkerBuilder {
     }
 
     /// Build with mock broadcaster (for testing)
-    pub fn build_mock(self) -> Result<
+    pub fn build_mock(
+        self,
+    ) -> Result<
         (
             MiningWorker<ProductionChainStateProvider, MockBlockBroadcaster>,
             Arc<ProductionChainStateProvider>,
@@ -1093,7 +1099,7 @@ mod tests {
     fn test_block_template_creation() {
         let parent_hash = H256::repeat_byte(0x42);
         let template = BlockTemplate::new(parent_hash, 100, 0x1d00ffff);
-        
+
         assert_eq!(template.parent_hash, parent_hash);
         assert_eq!(template.number, 100);
         assert_eq!(template.difficulty_bits, 0x1d00ffff);
@@ -1106,7 +1112,7 @@ mod tests {
         let parent_hash = H256::repeat_byte(0x42);
         let template = BlockTemplate::new(parent_hash, 100, 0x1d00ffff)
             .with_extrinsics(vec![vec![1, 2, 3], vec![4, 5, 6]]);
-        
+
         assert_eq!(template.extrinsics.len(), 2);
         assert_ne!(template.extrinsics_root, H256::zero());
     }
@@ -1115,7 +1121,7 @@ mod tests {
     fn test_block_template_to_mining_work() {
         let template = BlockTemplate::new(H256::zero(), 1, 0x1d00ffff);
         let work = template.to_mining_work();
-        
+
         assert_eq!(work.height, 1);
         assert_eq!(work.pow_bits, 0x1d00ffff);
         assert_eq!(work.pre_hash, template.pre_hash);
@@ -1124,7 +1130,7 @@ mod tests {
     #[test]
     fn test_mock_chain_state_provider() {
         let provider = MockChainStateProvider::new(false);
-        
+
         assert_eq!(provider.best_number(), 0);
         assert_eq!(provider.best_hash(), H256::zero());
         // DEFAULT_DIFFICULTY_BITS = 0x1e00ffff for reasonable dev/test block times
@@ -1134,7 +1140,7 @@ mod tests {
     #[test]
     fn test_mock_chain_state_provider_test_mode() {
         let provider = MockChainStateProvider::new(true);
-        
+
         // Test mode should have easier difficulty (~4096 hashes per block)
         assert_eq!(provider.difficulty_bits(), 0x1f00ffff);
     }
@@ -1142,19 +1148,19 @@ mod tests {
     #[test]
     fn test_mining_worker_stats() {
         let mut stats = MiningWorkerStats::new();
-        
+
         stats.blocks_mined += 1;
         stats.rounds_attempted += 100;
         stats.hashes_computed += 1_000_000;
-        
+
         assert_eq!(stats.blocks_mined, 1);
         assert_eq!(stats.hashes_computed, 1_000_000);
         assert_eq!(stats.rounds_attempted, 100);
-        
+
         // success_rate is independent of time
         assert!(stats.success_rate() > 0.0);
         assert_eq!(stats.success_rate(), 0.01); // 1 block / 100 rounds
-        
+
         // hashrate depends on elapsed time, so just verify the method works
         // (may be 0.0 if elapsed time is essentially 0)
         let _ = stats.hashrate();
@@ -1165,7 +1171,7 @@ mod tests {
         let parent = H256::repeat_byte(0xab);
         let hash1 = compute_pre_hash(&parent, 100, 12345);
         let hash2 = compute_pre_hash(&parent, 100, 12345);
-        
+
         assert_eq!(hash1, hash2);
     }
 
@@ -1175,7 +1181,7 @@ mod tests {
         let hash1 = compute_pre_hash(&parent, 100, 12345);
         let hash2 = compute_pre_hash(&parent, 101, 12345);
         let hash3 = compute_pre_hash(&parent, 100, 12346);
-        
+
         assert_ne!(hash1, hash2);
         assert_ne!(hash1, hash3);
     }
@@ -1191,7 +1197,7 @@ mod tests {
         let exts = vec![vec![1, 2, 3], vec![4, 5, 6]];
         let root1 = compute_extrinsics_root(&exts);
         let root2 = compute_extrinsics_root(&exts);
-        
+
         assert_eq!(root1, root2);
         assert_ne!(root1, H256::zero());
     }
@@ -1200,17 +1206,17 @@ mod tests {
     fn test_mock_import_block() {
         let provider = MockChainStateProvider::new(false);
         let template = BlockTemplate::new(H256::zero(), 1, 0x1d00ffff);
-        
+
         // Create a mock seal
         let seal = Blake3Seal {
             nonce: 12345,
             difficulty: 0x1d00ffff,
             work: H256::repeat_byte(0x42),
         };
-        
+
         let result = provider.import_block(&template, &seal);
         assert!(result.is_ok());
-        
+
         // State should be updated
         assert_eq!(provider.best_number(), 1);
     }
@@ -1218,11 +1224,11 @@ mod tests {
     #[tokio::test]
     async fn test_create_scaffold_mining_worker() {
         use crate::pow::{PowConfig, PowHandle};
-        
+
         let config = PowConfig::mining(1);
         let (pow_handle, _rx) = PowHandle::new(config);
         let worker_config = MiningWorkerConfig::test_config(1);
-        
+
         let _worker = create_scaffold_mining_worker(pow_handle, worker_config);
         // Just verify creation doesn't panic
     }
@@ -1241,17 +1247,16 @@ mod tests {
     #[test]
     fn test_production_mining_worker_builder_with_pow() {
         use crate::pow::{PowConfig, PowHandle};
-        
+
         let config = PowConfig::mining(1);
         let (pow_handle, _rx) = PowHandle::new(config);
-        
-        let builder = ProductionMiningWorkerBuilder::new()
-            .with_pow_handle(pow_handle);
-        
+
+        let builder = ProductionMiningWorkerBuilder::new().with_pow_handle(pow_handle);
+
         // Should succeed with mock build (doesn't require PQ handle)
         let result = builder.build_mock();
         assert!(result.is_ok());
-        
+
         let (worker, chain_state) = result.unwrap();
         assert!(!chain_state.is_fully_configured());
         assert_eq!(worker.stats().blocks_mined, 0);
@@ -1260,10 +1265,10 @@ mod tests {
     #[test]
     fn test_production_mining_worker_builder_with_config() {
         use crate::pow::{PowConfig, PowHandle};
-        
+
         let config = PowConfig::mining(2);
         let (pow_handle, _rx) = PowHandle::new(config);
-        
+
         let worker_config = MiningWorkerConfig {
             threads: 4,
             round_duration_ms: 200,
@@ -1271,11 +1276,11 @@ mod tests {
             test_mode: true,
             ..Default::default()
         };
-        
+
         let builder = ProductionMiningWorkerBuilder::new()
             .with_pow_handle(pow_handle)
             .with_config(worker_config.clone());
-        
+
         let result = builder.build_mock();
         assert!(result.is_ok());
     }
@@ -1283,18 +1288,17 @@ mod tests {
     #[test]
     fn test_production_chain_state_with_callbacks() {
         use crate::pow::{PowConfig, PowHandle};
-        
+
         let config = PowConfig::mining(1);
         let (pow_handle, _rx) = PowHandle::new(config);
-        
-        let builder = ProductionMiningWorkerBuilder::new()
-            .with_pow_handle(pow_handle);
-        
+
+        let builder = ProductionMiningWorkerBuilder::new().with_pow_handle(pow_handle);
+
         let result = builder.build_mock();
         assert!(result.is_ok());
-        
+
         let (_, chain_state) = result.unwrap();
-        
+
         // Configure callbacks
         let expected_hash = H256::repeat_byte(0xaa);
         let hash_for_callback = expected_hash;
@@ -1302,7 +1306,7 @@ mod tests {
         chain_state.set_difficulty_fn(|| 0x2000ffff);
         chain_state.set_pending_txs_fn(|| vec![vec![1, 2, 3]]);
         chain_state.set_import_fn(|_, seal| Ok(H256::from_slice(seal.work.as_bytes())));
-        
+
         assert!(chain_state.is_fully_configured());
         assert_eq!(chain_state.best_hash(), expected_hash);
         assert_eq!(chain_state.best_number(), 42);
@@ -1314,24 +1318,23 @@ mod tests {
     fn test_production_mining_worker_import() {
         use crate::pow::{PowConfig, PowHandle};
         use std::sync::atomic::{AtomicU64, Ordering};
-        
+
         let config = PowConfig::mining(1);
         let (pow_handle, _rx) = PowHandle::new(config);
-        
-        let builder = ProductionMiningWorkerBuilder::new()
-            .with_pow_handle(pow_handle);
-        
+
+        let builder = ProductionMiningWorkerBuilder::new().with_pow_handle(pow_handle);
+
         let (_, chain_state) = builder.build_mock().unwrap();
-        
+
         // Track import calls
         let import_count = Arc::new(AtomicU64::new(0));
         let count_clone = Arc::clone(&import_count);
-        
+
         chain_state.set_import_fn(move |template, seal| {
             count_clone.fetch_add(1, Ordering::SeqCst);
             Ok(H256::from_slice(seal.work.as_bytes()))
         });
-        
+
         // Import a block
         let template = BlockTemplate::new(H256::zero(), 1, 0x1d00ffff);
         let seal = Blake3Seal {
@@ -1339,7 +1342,7 @@ mod tests {
             difficulty: 0x1d00ffff,
             work: H256::repeat_byte(0xbb),
         };
-        
+
         let result = chain_state.import_block(&template, &seal);
         assert!(result.is_ok());
         assert_eq!(import_count.load(Ordering::SeqCst), 1);

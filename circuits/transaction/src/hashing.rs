@@ -112,7 +112,13 @@ pub fn nullifier_bytes(prf_key: Felt, rho: &[u8], position: u64) -> [u8; 32] {
 }
 
 /// Compute note commitment and return it as 32 bytes.
-pub fn note_commitment_bytes(value: u64, asset_id: u64, pk: &[u8], rho: &[u8], r: &[u8]) -> [u8; 32] {
+pub fn note_commitment_bytes(
+    value: u64,
+    asset_id: u64,
+    pk: &[u8],
+    rho: &[u8],
+    r: &[u8],
+) -> [u8; 32] {
     felt_to_bytes32(note_commitment(value, asset_id, pk, rho, r))
 }
 
@@ -147,7 +153,9 @@ mod poseidon_compat_tests {
         #[inline]
         fn round_constant(round: usize, position: usize) -> u64 {
             let seed = ((round as u64).wrapping_add(1).wrapping_mul(0x9e37_79b9u64))
-                ^ ((position as u64).wrapping_add(1).wrapping_mul(0x7f4a_7c15u64));
+                ^ ((position as u64)
+                    .wrapping_add(1)
+                    .wrapping_mul(0x7f4a_7c15u64));
             seed
         }
 
@@ -258,24 +266,33 @@ mod poseidon_compat_tests {
     fn poseidon_empty_tree_root_matches_pallet() {
         // Compute the empty tree root for depth 32
         let depth = 32;
-        
+
         let mut circuit_current = Felt::new(0);
         let mut pallet_current = 0u64;
-        
+
         for level in 0..depth {
             circuit_current = super::merkle_node(circuit_current, circuit_current);
             pallet_current = pallet_poseidon::merkle_node(pallet_current, pallet_current);
-            
+
             if level < 5 || level == depth - 1 {
                 println!("Level {} default:", level + 1);
                 println!("  circuit: {}", circuit_current.as_int());
                 println!("  pallet:  {}", pallet_current);
             }
-            assert_eq!(circuit_current.as_int(), pallet_current, "Level {} mismatch", level);
+            assert_eq!(
+                circuit_current.as_int(),
+                pallet_current,
+                "Level {} mismatch",
+                level
+            );
         }
-        
+
         println!("Empty tree root (depth {}):", depth);
-        println!("  circuit: {} (0x{:016x})", circuit_current.as_int(), circuit_current.as_int());
+        println!(
+            "  circuit: {} (0x{:016x})",
+            circuit_current.as_int(),
+            circuit_current.as_int()
+        );
         println!("  pallet:  {} (0x{:016x})", pallet_current, pallet_current);
     }
 }

@@ -62,19 +62,13 @@ use std::sync::Arc;
 pub type FullBackend = sc_service::TFullBackend<runtime::Block>;
 
 /// Type alias for the WASM executor with standard host functions
-pub type WasmExecutor = sc_executor::WasmExecutor<
-    sp_io::SubstrateHostFunctions
->;
+pub type WasmExecutor = sc_executor::WasmExecutor<sp_io::SubstrateHostFunctions>;
 
 /// Type alias for the full Substrate client
-/// 
+///
 /// RuntimeApi is the generated API type from impl_runtime_apis!
 /// For hegemon, this includes DifficultyApi and ConsensusApi.
-pub type FullClient<RuntimeApi> = sc_service::TFullClient<
-    runtime::Block,
-    RuntimeApi,
-    WasmExecutor,
->;
+pub type FullClient<RuntimeApi> = sc_service::TFullClient<runtime::Block, RuntimeApi, WasmExecutor>;
 
 /// Concrete type alias for the Hegemon full client (Task 11.4.1)
 ///
@@ -84,7 +78,7 @@ pub type FullClient<RuntimeApi> = sc_service::TFullClient<
 pub type HegemonFullClient = FullClient<runtime::RuntimeApi>;
 
 /// Type alias for the basic transaction pool
-/// 
+///
 /// Uses the basic authorship pool which validates transactions
 /// against the runtime.
 pub type FullTransactionPool<Client> = sc_transaction_pool::BasicPool<
@@ -101,10 +95,8 @@ pub type FullTransactionPool<Client> = sc_transaction_pool::BasicPool<
 ///
 /// The pool validates transactions against the runtime and maintains
 /// ready (valid) and future (pending) queues.
-pub type HegemonTransactionPool = sc_transaction_pool::TransactionPoolHandle<
-    runtime::Block,
-    HegemonFullClient,
->;
+pub type HegemonTransactionPool =
+    sc_transaction_pool::TransactionPoolHandle<runtime::Block, HegemonFullClient>;
 
 /// Type alias for the chain selection rule (Task 11.4.5)
 ///
@@ -316,18 +308,18 @@ impl ChainStateProvider for SubstrateChainStateProvider {
     fn import_block(&self, template: &BlockTemplate, seal: &Blake3Seal) -> Result<H256, String> {
         // Compute block hash from seal work
         let block_hash = H256::from_slice(seal.work.as_bytes());
-        
+
         // Update our state
         self.update_best(block_hash, template.number);
         self.clear_pending_txs();
-        
+
         tracing::info!(
             block_number = template.number,
             block_hash = %hex::encode(block_hash.as_bytes()),
             nonce = seal.nonce,
             "Block imported to SubstrateChainStateProvider (full import via PowBlockImport pending - Task 10.3)"
         );
-        
+
         Ok(block_hash)
     }
 
@@ -359,7 +351,9 @@ pub fn create_chain_state_provider_with_state(
     number: u64,
     difficulty: u32,
 ) -> Arc<SubstrateChainStateProvider> {
-    Arc::new(SubstrateChainStateProvider::with_state(hash, number, difficulty))
+    Arc::new(SubstrateChainStateProvider::with_state(
+        hash, number, difficulty,
+    ))
 }
 
 // =============================================================================
@@ -415,12 +409,10 @@ impl ProductionConfig {
 
         // Parse miner account from environment (hex-encoded SS58 or raw bytes)
         // DEPRECATED: Use HEGEMON_MINER_ADDRESS for shielded coinbase
-        let miner_account = std::env::var("HEGEMON_MINER_ACCOUNT")
-            .ok()
-            .and_then(|s| {
-                // Try to decode as hex first
-                hex::decode(s.trim_start_matches("0x")).ok()
-            });
+        let miner_account = std::env::var("HEGEMON_MINER_ACCOUNT").ok().and_then(|s| {
+            // Try to decode as hex first
+            hex::decode(s.trim_start_matches("0x")).ok()
+        });
 
         // Parse shielded miner address from environment (Bech32m encoded)
         // If set, coinbase rewards go directly to shielded pool
@@ -473,13 +465,23 @@ pub struct ProductionChainStateProvider {
     /// Callback to get pending transactions
     pending_txs_fn: parking_lot::RwLock<Option<Box<dyn Fn() -> Vec<Vec<u8>> + Send + Sync>>>,
     /// Callback to import a block
-    import_fn: parking_lot::RwLock<Option<Box<dyn Fn(&BlockTemplate, &Blake3Seal) -> Result<H256, String> + Send + Sync>>>,
+    import_fn: parking_lot::RwLock<
+        Option<Box<dyn Fn(&BlockTemplate, &Blake3Seal) -> Result<H256, String> + Send + Sync>>,
+    >,
     /// Callback called after successful block import (Task 11.3)
     /// Used to clear included transactions from the pool
     on_import_success_fn: parking_lot::RwLock<Option<Box<dyn Fn(&[Vec<u8>]) + Send + Sync>>>,
     /// Callback to execute extrinsics and compute state root (Task 11.4)
     /// Takes parent hash and extrinsics, returns execution result with state root
-    execute_extrinsics_fn: parking_lot::RwLock<Option<Box<dyn Fn(&H256, u64, &[Vec<u8>]) -> Result<StateExecutionResult, String> + Send + Sync>>>,
+    execute_extrinsics_fn: parking_lot::RwLock<
+        Option<
+            Box<
+                dyn Fn(&H256, u64, &[Vec<u8>]) -> Result<StateExecutionResult, String>
+                    + Send
+                    + Sync,
+            >,
+        >,
+    >,
     /// Fallback state for when callbacks aren't set
     pub fallback_state: SubstrateChainStateProvider,
     /// Configuration
@@ -514,8 +516,14 @@ impl std::fmt::Debug for ProductionChainStateProvider {
             .field("has_difficulty_fn", &self.difficulty_fn.read().is_some())
             .field("has_pending_txs_fn", &self.pending_txs_fn.read().is_some())
             .field("has_import_fn", &self.import_fn.read().is_some())
-            .field("has_on_import_success_fn", &self.on_import_success_fn.read().is_some())
-            .field("has_execute_extrinsics_fn", &self.execute_extrinsics_fn.read().is_some())
+            .field(
+                "has_on_import_success_fn",
+                &self.on_import_success_fn.read().is_some(),
+            )
+            .field(
+                "has_execute_extrinsics_fn",
+                &self.execute_extrinsics_fn.read().is_some(),
+            )
             .field("fallback_state", &"<SubstrateChainStateProvider>")
             .field("config", &self.config)
             .finish()
@@ -639,7 +647,10 @@ impl ProductionChainStateProvider {
     /// ```
     pub fn set_execute_extrinsics_fn<F>(&self, f: F)
     where
-        F: Fn(&H256, u64, &[Vec<u8>]) -> Result<StateExecutionResult, String> + Send + Sync + 'static,
+        F: Fn(&H256, u64, &[Vec<u8>]) -> Result<StateExecutionResult, String>
+            + Send
+            + Sync
+            + 'static,
     {
         *self.execute_extrinsics_fn.write() = Some(Box::new(f));
     }
@@ -648,7 +659,12 @@ impl ProductionChainStateProvider {
     ///
     /// If execute_extrinsics_fn is set, uses it to execute against real runtime.
     /// Otherwise, falls back to mock execution with zero state root.
-    pub fn execute_extrinsics(&self, parent_hash: &H256, block_number: u64, extrinsics: &[Vec<u8>]) -> Result<StateExecutionResult, String> {
+    pub fn execute_extrinsics(
+        &self,
+        parent_hash: &H256,
+        block_number: u64,
+        extrinsics: &[Vec<u8>],
+    ) -> Result<StateExecutionResult, String> {
         if let Some(ref f) = *self.execute_extrinsics_fn.read() {
             tracing::info!(
                 parent = %hex::encode(parent_hash.as_bytes()),
@@ -677,19 +693,17 @@ impl ProductionChainStateProvider {
             }
             result
         } else {
-            tracing::warn!(
-                block_number,
-                "execute_extrinsics_fn NOT SET - using mock"
-            );
+            tracing::warn!(block_number, "execute_extrinsics_fn NOT SET - using mock");
             // Fallback: mock execution with zero state root
             // This allows mining to work in scaffold mode without full runtime
-            let extrinsics_root = crate::substrate::mining_worker::compute_extrinsics_root(extrinsics);
+            let extrinsics_root =
+                crate::substrate::mining_worker::compute_extrinsics_root(extrinsics);
             Ok(StateExecutionResult {
                 applied_extrinsics: extrinsics.to_vec(),
                 state_root: H256::zero(),
                 extrinsics_root,
                 failed_count: 0,
-                storage_changes_key: None,  // No storage changes in mock mode
+                storage_changes_key: None, // No storage changes in mock mode
             })
         }
     }
@@ -700,8 +714,8 @@ impl ProductionChainStateProvider {
             && self.difficulty_fn.read().is_some()
             && self.pending_txs_fn.read().is_some()
             && self.import_fn.read().is_some()
-            // on_import_success_fn is optional
-            // execute_extrinsics_fn is optional (fallback to mock)
+        // on_import_success_fn is optional
+        // execute_extrinsics_fn is optional (fallback to mock)
     }
 
     /// Check if state execution is configured (Task 11.4)
@@ -771,7 +785,7 @@ impl ChainStateProvider for ProductionChainStateProvider {
                     ),
                 }
             }
-            
+
             // Task 11.3: Call on_import_success_fn to clear included transactions
             if result.is_ok() {
                 if let Some(ref on_success) = *self.on_import_success_fn.read() {
@@ -784,7 +798,7 @@ impl ChainStateProvider for ProductionChainStateProvider {
                     }
                 }
             }
-            
+
             result
         } else {
             self.fallback_state.import_block(template, seal)
@@ -794,7 +808,7 @@ impl ChainStateProvider for ProductionChainStateProvider {
     fn on_new_block(&self, block_hash: &H256, block_number: u64) {
         // Update fallback state
         self.fallback_state.on_new_block(block_hash, block_number);
-        
+
         if self.config.verbose {
             tracing::debug!(
                 block_hash = %hex::encode(block_hash.as_bytes()),
@@ -809,11 +823,11 @@ impl ChainStateProvider for ProductionChainStateProvider {
         let block_number = self.best_number() + 1;
         let difficulty_bits = self.difficulty_bits();
         let pending = self.pending_transactions();
-        
+
         let template = BlockTemplate::new(parent_hash, block_number, difficulty_bits);
-        
+
         // Task 11.4: Execute extrinsics against runtime state
-        // Always call execute_extrinsics even if pending is empty, 
+        // Always call execute_extrinsics even if pending is empty,
         // because inherents (like timestamp) need to be injected
         match self.execute_extrinsics(&parent_hash, block_number, &pending) {
             Ok(result) => {
@@ -856,7 +870,9 @@ pub fn create_production_chain_state_provider(
 
 /// Create a production provider from environment configuration
 pub fn create_production_provider_from_env() -> Arc<ProductionChainStateProvider> {
-    Arc::new(ProductionChainStateProvider::new(ProductionConfig::from_env()))
+    Arc::new(ProductionChainStateProvider::new(
+        ProductionConfig::from_env(),
+    ))
 }
 
 #[cfg(test)]
@@ -923,11 +939,11 @@ mod tests {
     #[test]
     fn test_chain_state_provider_update() {
         let provider = SubstrateChainStateProvider::new();
-        
+
         let hash = H256::repeat_byte(0xab);
         let pending = vec![vec![1, 2, 3], vec![4, 5, 6]];
         provider.update_state(hash, 50, 0x1f00ffff, pending.clone());
-        
+
         assert_eq!(provider.best_hash(), hash);
         assert_eq!(provider.best_number(), 50);
         assert_eq!(provider.difficulty_bits(), 0x1f00ffff);
@@ -936,14 +952,15 @@ mod tests {
 
     #[test]
     fn test_chain_state_provider_on_new_block() {
-        let provider = SubstrateChainStateProvider::with_state(H256::zero(), 10, DEFAULT_DIFFICULTY_BITS);
-        
+        let provider =
+            SubstrateChainStateProvider::with_state(H256::zero(), 10, DEFAULT_DIFFICULTY_BITS);
+
         // Newer block should update
         let hash = H256::repeat_byte(0x11);
         provider.on_new_block(&hash, 15);
         assert_eq!(provider.best_hash(), hash);
         assert_eq!(provider.best_number(), 15);
-        
+
         // Older block should not update
         let old_hash = H256::repeat_byte(0x22);
         provider.on_new_block(&old_hash, 5);
@@ -955,17 +972,17 @@ mod tests {
     fn test_chain_state_provider_import_block() {
         let provider = SubstrateChainStateProvider::new();
         provider.add_pending_tx(vec![1, 2, 3]);
-        
+
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
         let seal = Blake3Seal {
             nonce: 12345,
             difficulty: DEFAULT_DIFFICULTY_BITS,
             work: H256::repeat_byte(0xaa),
         };
-        
+
         let result = provider.import_block(&template, &seal);
         assert!(result.is_ok());
-        
+
         // State should be updated
         assert_eq!(provider.best_number(), 1);
         assert!(provider.pending_transactions().is_empty()); // Cleared
@@ -999,16 +1016,16 @@ mod tests {
     #[test]
     fn test_production_provider_with_callbacks() {
         let provider = ProductionChainStateProvider::with_defaults();
-        
+
         let expected_hash = H256::repeat_byte(0x42);
         let expected_number = 100u64;
         let hash_for_callback = expected_hash;
-        
+
         provider.set_best_block_fn(move || (hash_for_callback, expected_number));
         provider.set_difficulty_fn(|| 0x2000ffff);
         provider.set_pending_txs_fn(|| vec![vec![1, 2, 3]]);
         provider.set_import_fn(|_, seal| Ok(H256::from_slice(seal.work.as_bytes())));
-        
+
         assert!(provider.is_fully_configured());
         assert_eq!(provider.best_hash(), expected_hash);
         assert_eq!(provider.best_number(), expected_number);
@@ -1019,11 +1036,11 @@ mod tests {
     #[test]
     fn test_production_provider_fallback() {
         let provider = ProductionChainStateProvider::with_defaults();
-        
+
         // Update fallback state
         let hash = H256::repeat_byte(0xab);
         provider.update_fallback(hash, 50, 0x1f00ffff);
-        
+
         // Without callbacks, should use fallback
         assert_eq!(provider.best_hash(), hash);
         assert_eq!(provider.best_number(), 50);
@@ -1033,18 +1050,18 @@ mod tests {
     #[test]
     fn test_production_provider_import() {
         let provider = ProductionChainStateProvider::with_defaults();
-        
+
         let import_result = H256::repeat_byte(0xcc);
         let import_hash = import_result;
         provider.set_import_fn(move |_, _| Ok(import_hash));
-        
+
         let template = BlockTemplate::new(H256::zero(), 1, DEFAULT_DIFFICULTY_BITS);
         let seal = Blake3Seal {
             nonce: 12345,
             difficulty: DEFAULT_DIFFICULTY_BITS,
             work: H256::repeat_byte(0xaa),
         };
-        
+
         let result = provider.import_block(&template, &seal);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), import_result);
@@ -1057,12 +1074,10 @@ mod tests {
             ..Default::default()
         };
         let provider = ProductionChainStateProvider::new(config);
-        
+
         // Return 5 transactions, but config limits to 2
-        provider.set_pending_txs_fn(|| {
-            vec![vec![1], vec![2], vec![3], vec![4], vec![5]]
-        });
-        
+        provider.set_pending_txs_fn(|| vec![vec![1], vec![2], vec![3], vec![4], vec![5]]);
+
         let txs = provider.pending_transactions();
         assert_eq!(txs.len(), 2); // Limited by config
     }
@@ -1070,62 +1085,67 @@ mod tests {
     #[test]
     fn test_production_provider_on_new_block() {
         let provider = ProductionChainStateProvider::with_defaults();
-        
+
         let hash = H256::repeat_byte(0x11);
         provider.on_new_block(&hash, 10);
-        
+
         // Should update fallback state
         assert_eq!(provider.fallback_state.best_hash(), hash);
         assert_eq!(provider.fallback_state.best_number(), 10);
     }
-    
+
     #[test]
     fn test_production_provider_on_import_success() {
         use crate::substrate::mining_worker::BlockTemplate;
         use consensus::Blake3Seal;
-        
+
         let provider = ProductionChainStateProvider::new(ProductionConfig::default());
-        
+
         // Track callback invocations
         let callback_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let callback_called_clone = callback_called.clone();
         let cleared_txs = Arc::new(std::sync::Mutex::new(Vec::<Vec<u8>>::new()));
         let cleared_txs_clone = cleared_txs.clone();
-        
+
         provider.set_on_import_success_fn(move |included_txs: &[Vec<u8>]| {
             callback_called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
-            cleared_txs_clone.lock().unwrap().extend(included_txs.iter().cloned());
+            cleared_txs_clone
+                .lock()
+                .unwrap()
+                .extend(included_txs.iter().cloned());
         });
-        
+
         // Set up import callback (fallback path)
         provider.set_import_fn(|_template, _seal| {
             // Simulate successful import
             Ok(H256::random())
         });
-        
+
         // Create a simple template with some transactions
         let parent = H256::from([1u8; 32]);
         provider.on_new_block(&parent, 5);
-        
+
         let tx1 = vec![1, 2, 3];
         let tx2 = vec![4, 5, 6];
         let template = BlockTemplate::new(parent, 6, 0x1f_00_ff_ff)
             .with_extrinsics(vec![tx1.clone(), tx2.clone()]);
-        
+
         let seal = Blake3Seal {
             nonce: 1,
             difficulty: 0x1f_00_ff_ff,
             work: H256::zero(),
         };
-        
-        // Import the block 
+
+        // Import the block
         let result = provider.import_block(&template, &seal);
-        
+
         // Should succeed and callback should have been called
         assert!(result.is_ok());
-        assert!(callback_called.load(std::sync::atomic::Ordering::SeqCst), 
-            "on_import_success callback should be called after successful import");
-        
+        assert!(
+            callback_called.load(std::sync::atomic::Ordering::SeqCst),
+            "on_import_success callback should be called after successful import"
+        );
+
         // Verify the included transactions were passed to the callback
         let cleared = cleared_txs.lock().unwrap();
         assert_eq!(cleared.len(), 2);
@@ -1136,10 +1156,10 @@ mod tests {
     #[test]
     fn test_production_provider_execute_extrinsics() {
         let provider = ProductionChainStateProvider::new(ProductionConfig::default());
-        
+
         let parent = H256::from([1u8; 32]);
         let extrinsics = vec![vec![1, 2, 3], vec![4, 5, 6]];
-        
+
         // Without callback, should return mock execution
         let result = provider.execute_extrinsics(&parent, 1, &extrinsics);
         assert!(result.is_ok());
@@ -1153,11 +1173,11 @@ mod tests {
     #[test]
     fn test_production_provider_execute_extrinsics_with_callback() {
         let provider = ProductionChainStateProvider::new(ProductionConfig::default());
-        
+
         // Set up custom state execution callback
         let custom_state_root = H256::repeat_byte(0xab);
         let custom_extrinsics_root = H256::repeat_byte(0xcd);
-        
+
         provider.set_execute_extrinsics_fn(move |_parent, _number, extrinsics| {
             Ok(StateExecutionResult {
                 applied_extrinsics: extrinsics.to_vec(),
@@ -1167,10 +1187,10 @@ mod tests {
                 storage_changes_key: None,
             })
         });
-        
+
         let parent = H256::from([1u8; 32]);
         let extrinsics = vec![vec![1, 2, 3]];
-        
+
         let result = provider.execute_extrinsics(&parent, 1, &extrinsics);
         assert!(result.is_ok());
         let exec_result = result.unwrap();
@@ -1181,15 +1201,15 @@ mod tests {
     #[test]
     fn test_production_provider_build_block_template_with_state() {
         use crate::substrate::mining_worker::BlockTemplate;
-        
+
         let provider = ProductionChainStateProvider::new(ProductionConfig::default());
-        
+
         // Set up callbacks
         let parent = H256::repeat_byte(0x11);
         provider.set_best_block_fn(move || (parent, 5));
         provider.set_difficulty_fn(|| 0x1f_00_ff_ff);
         provider.set_pending_txs_fn(|| vec![vec![1, 2, 3], vec![4, 5, 6]]);
-        
+
         let custom_state_root = H256::repeat_byte(0xab);
         provider.set_execute_extrinsics_fn(move |_parent, _number, extrinsics| {
             Ok(StateExecutionResult {
@@ -1200,10 +1220,10 @@ mod tests {
                 storage_changes_key: None,
             })
         });
-        
+
         // Build template
         let template = provider.build_block_template();
-        
+
         assert_eq!(template.number, 6);
         assert_eq!(template.parent_hash, parent);
         assert_eq!(template.difficulty_bits, 0x1f_00_ff_ff);
@@ -1214,10 +1234,10 @@ mod tests {
     #[test]
     fn test_has_state_execution() {
         let provider = ProductionChainStateProvider::new(ProductionConfig::default());
-        
+
         // Initially no state execution
         assert!(!provider.has_state_execution());
-        
+
         // After setting callback
         provider.set_execute_extrinsics_fn(|_, _, _| {
             Ok(StateExecutionResult {
@@ -1228,7 +1248,7 @@ mod tests {
                 storage_changes_key: None,
             })
         });
-        
+
         assert!(provider.has_state_execution());
     }
 }

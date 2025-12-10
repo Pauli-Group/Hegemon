@@ -5,14 +5,14 @@
 //!
 //! Security: This is REAL lattice-based cryptography, not a placeholder.
 
-use alloc::vec::Vec;
 use crate::error::CryptoError;
 use crate::traits::{KemKeyPair, KemPublicKey};
+use alloc::vec::Vec;
 
 // Re-export the real ML-KEM-768 types from the ml-kem crate
-use ml_kem::kem::{Decapsulate, DecapsulationKey, EncapsulationKey};
-use ml_kem::{MlKem768Params, EncodedSizeUser};
 use ml_kem::array::Array;
+use ml_kem::kem::{Decapsulate, DecapsulationKey, EncapsulationKey};
+use ml_kem::{EncodedSizeUser, MlKem768Params};
 
 /// ML-KEM-768 parameter sizes (FIPS 203)
 pub const ML_KEM_PUBLIC_KEY_LEN: usize = 1184;
@@ -86,7 +86,7 @@ impl MlKemPublicKey {
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
-    
+
     fn to_inner(&self) -> EncapsulationKey<MlKem768Params> {
         let arr: Array<u8, _> = Array::try_from(self.bytes.as_slice()).expect("size mismatch");
         EncapsulationKey::<MlKem768Params>::from_bytes(&arr)
@@ -100,25 +100,27 @@ impl KemPublicKey for MlKemPublicKey {
     fn encapsulate(&self, seed: &[u8]) -> (Self::Ciphertext, Self::SharedSecret) {
         // REAL ML-KEM encapsulation using lattice operations
         // Use deterministic encapsulation with the provided seed
-        use sha2::{Sha256, Digest};
         use ml_kem::EncapsulateDeterministic;
-        
+        use sha2::{Digest, Sha256};
+
         // Derive 32-byte randomness from the seed
         let mut hasher = Sha256::new();
         hasher.update(b"ml-kem-768-encapsulate");
         hasher.update(seed);
         let m: [u8; 32] = hasher.finalize().into();
         let m_array: Array<u8, _> = Array::try_from(m.as_slice()).expect("size mismatch");
-        
+
         let ek = self.to_inner();
-        let (ct, ss) = ek.encapsulate_deterministic(&m_array).expect("encapsulation failed");
-        
+        let (ct, ss) = ek
+            .encapsulate_deterministic(&m_array)
+            .expect("encapsulation failed");
+
         let mut ct_bytes = [0u8; ML_KEM_CIPHERTEXT_LEN];
         ct_bytes.copy_from_slice(ct.as_ref());
-        
+
         let mut ss_bytes = [0u8; ML_KEM_SHARED_SECRET_LEN];
         ss_bytes.copy_from_slice(ss.as_ref());
-        
+
         (
             MlKemCiphertext { bytes: ct_bytes },
             MlKemSharedSecret { bytes: ss_bytes },
@@ -173,18 +175,23 @@ impl MlKemSecretKey {
         arr.copy_from_slice(bytes);
         Ok(Self { bytes: arr })
     }
-    
+
     fn to_inner(&self) -> DecapsulationKey<MlKem768Params> {
         let arr: Array<u8, _> = Array::try_from(self.bytes.as_slice()).expect("size mismatch");
         DecapsulationKey::<MlKem768Params>::from_bytes(&arr)
     }
 
     /// REAL ML-KEM decapsulation using lattice operations
-    pub fn decapsulate(&self, ciphertext: &MlKemCiphertext) -> Result<MlKemSharedSecret, CryptoError> {
+    pub fn decapsulate(
+        &self,
+        ciphertext: &MlKemCiphertext,
+    ) -> Result<MlKemSharedSecret, CryptoError> {
         let dk = self.to_inner();
         let ct: Array<u8, _> = Array::try_from(ciphertext.bytes.as_slice()).expect("size mismatch");
-        let ss = dk.decapsulate(&ct).map_err(|_| CryptoError::DecapsulationFailed)?;
-        
+        let ss = dk
+            .decapsulate(&ct)
+            .map_err(|_| CryptoError::DecapsulationFailed)?;
+
         let mut ss_bytes = [0u8; ML_KEM_SHARED_SECRET_LEN];
         ss_bytes.copy_from_slice(ss.as_ref());
         Ok(MlKemSharedSecret { bytes: ss_bytes })
@@ -240,37 +247,40 @@ impl KemKeyPair for MlKemKeyPair {
 
     fn generate_deterministic(seed: &[u8]) -> Self {
         // Use seed to create deterministic key generation
-        use sha2::{Sha256, Digest};
-        
+        use sha2::{Digest, Sha256};
+
         // Create 64-byte seed for ML-KEM (d || z)
         let mut d = [0u8; 32];
         let mut z = [0u8; 32];
-        
+
         let mut hasher = Sha256::new();
         hasher.update(b"ml-kem-768-d");
         hasher.update(seed);
         d.copy_from_slice(&hasher.finalize());
-        
+
         let mut hasher = Sha256::new();
         hasher.update(b"ml-kem-768-z");
         hasher.update(seed);
         z.copy_from_slice(&hasher.finalize());
-        
+
         // Construct the 64-byte seed
         let mut full_seed = [0u8; 64];
         full_seed[..32].copy_from_slice(&d);
         full_seed[32..].copy_from_slice(&z);
-        let seed_array: ml_kem::Seed = Array::try_from(full_seed.as_slice()).expect("size mismatch");
-        
+        let seed_array: ml_kem::Seed =
+            Array::try_from(full_seed.as_slice()).expect("size mismatch");
+
         // REAL ML-KEM key generation using lattice operations
         let dk = DecapsulationKey::<MlKem768Params>::from(seed_array);
         let dk_bytes = dk.as_bytes();
-        
+
         let mut secret_bytes = [0u8; ML_KEM_SECRET_KEY_LEN];
         secret_bytes.copy_from_slice(dk_bytes.as_ref());
-        
+
         Self {
-            secret: MlKemSecretKey { bytes: secret_bytes },
+            secret: MlKemSecretKey {
+                bytes: secret_bytes,
+            },
         }
     }
 
@@ -319,14 +329,14 @@ mod tests {
         // Generate keypair
         let seed = b"test seed for ml-kem key generation";
         let keypair = MlKemKeyPair::generate_deterministic(seed);
-        
+
         // Encapsulate
         let encap_seed = b"encapsulation randomness";
         let (ciphertext, shared_secret_enc) = keypair.encapsulate(encap_seed);
-        
+
         // Decapsulate
         let shared_secret_dec = keypair.decapsulate(&ciphertext).expect("decapsulation");
-        
+
         // Shared secrets must match - THIS IS REAL CRYPTO
         assert_eq!(shared_secret_enc.as_bytes(), shared_secret_dec.as_bytes());
     }
@@ -339,7 +349,7 @@ mod tests {
         assert_eq!(ML_KEM_CIPHERTEXT_LEN, 1088);
         assert_eq!(ML_KEM_SHARED_SECRET_LEN, 32);
     }
-    
+
     #[test]
     fn test_deterministic_keygen() {
         // Same seed should produce same keypair

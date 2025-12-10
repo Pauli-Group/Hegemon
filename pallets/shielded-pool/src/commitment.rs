@@ -40,6 +40,7 @@ const CIRCUIT_NOTE_DOMAIN_TAG: u64 = 1;
 const CIRCUIT_NULLIFIER_DOMAIN_TAG: u64 = 2;
 
 /// Domain separation tag for Merkle tree nodes (circuit-compatible).
+#[allow(dead_code)]
 const CIRCUIT_MERKLE_DOMAIN_TAG: u64 = 4;
 
 /// Field modulus for simplified Poseidon (Goldilocks-like).
@@ -106,9 +107,10 @@ impl FieldElement {
 /// Compute round constant matching the circuit implementation.
 #[inline]
 fn circuit_round_constant(round: usize, position: usize) -> u64 {
-    let seed = ((round as u64).wrapping_add(1).wrapping_mul(0x9e37_79b9u64))
-        ^ ((position as u64).wrapping_add(1).wrapping_mul(0x7f4a_7c15u64));
-    seed
+    ((round as u64).wrapping_add(1).wrapping_mul(0x9e37_79b9u64))
+        ^ ((position as u64)
+            .wrapping_add(1)
+            .wrapping_mul(0x7f4a_7c15u64))
 }
 
 /// Mix function matching the circuit implementation.
@@ -156,7 +158,7 @@ fn circuit_absorb(state: &mut [u64; POSEIDON_WIDTH], chunk: &[u64]) {
 }
 
 /// Sponge hash function matching the circuit implementation exactly.
-/// 
+///
 /// This is the canonical hash used by the ZK circuits.
 /// Initial state: [domain_tag, 0, 1]
 /// Rate: 2 (POSEIDON_WIDTH - 1)
@@ -167,9 +169,7 @@ pub fn circuit_sponge(domain_tag: u64, inputs: &[u64]) -> u64 {
     while cursor < inputs.len() {
         let take = core::cmp::min(rate, inputs.len() - cursor);
         let mut chunk = [0u64; 2]; // rate = 2
-        for i in 0..take {
-            chunk[i] = inputs[cursor + i];
-        }
+        chunk[..take].copy_from_slice(&inputs[cursor..cursor + take]);
         circuit_absorb(&mut state, &chunk);
         cursor += take;
     }
@@ -253,8 +253,14 @@ pub fn felt_to_commitment(felt: u64) -> [u8; 32] {
 /// The Felt is stored in the last 8 bytes as big-endian.
 pub fn commitment_to_felt(commitment: &[u8; 32]) -> u64 {
     u64::from_be_bytes([
-        commitment[24], commitment[25], commitment[26], commitment[27],
-        commitment[28], commitment[29], commitment[30], commitment[31],
+        commitment[24],
+        commitment[25],
+        commitment[26],
+        commitment[27],
+        commitment[28],
+        commitment[29],
+        commitment[30],
+        commitment[31],
     ])
 }
 
@@ -388,7 +394,7 @@ const COINBASE_R_DOMAIN: &[u8] = b"coinbase-r";
 /// the nullifier requiring the secret nullifier key (nk).
 pub fn derive_coinbase_rho(public_seed: &[u8; 32]) -> [u8; 32] {
     // Match crypto::deterministic::expand_to_length with counter=0
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(COINBASE_RHO_DOMAIN);
     hasher.update(0u32.to_be_bytes());
@@ -405,7 +411,7 @@ pub fn derive_coinbase_rho(public_seed: &[u8; 32]) -> [u8; 32] {
 /// Uses SHA256 for compatibility with the crypto library.
 pub fn derive_coinbase_r(public_seed: &[u8; 32]) -> [u8; 32] {
     // Match crypto::deterministic::expand_to_length with counter=0
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(COINBASE_R_DOMAIN);
     hasher.update(0u32.to_be_bytes());
@@ -423,7 +429,10 @@ pub fn derive_coinbase_r(public_seed: &[u8; 32]) -> [u8; 32] {
 ///
 /// commitment = note_commitment(recipient, value, r)
 /// where r = derive_coinbase_r(public_seed)
-#[deprecated(since = "0.2.0", note = "Use circuit_coinbase_commitment for ZK-compatible commitments")]
+#[deprecated(
+    since = "0.2.0",
+    note = "Use circuit_coinbase_commitment for ZK-compatible commitments"
+)]
 pub fn coinbase_commitment(
     recipient: &[u8; DIVERSIFIED_ADDRESS_SIZE],
     value: u64,
@@ -433,7 +442,7 @@ pub fn coinbase_commitment(
     // Layout: version(1) + diversifier_index(4) + pk_recipient(32) + tag(6)
     let mut pk_recipient = [0u8; 32];
     pk_recipient.copy_from_slice(&recipient[5..37]);
-    
+
     // Use circuit-compatible commitment
     circuit_coinbase_commitment(&pk_recipient, value, public_seed, 0)
 }
@@ -459,7 +468,7 @@ pub fn circuit_coinbase_commitment(
     // Derive rho and r from public seed
     let rho = derive_coinbase_rho(public_seed);
     let r = derive_coinbase_r(public_seed);
-    
+
     // Compute circuit-compatible commitment
     let felt = circuit_note_commitment(value, asset_id, pk_recipient, &rho, &r);
     felt_to_commitment(felt)

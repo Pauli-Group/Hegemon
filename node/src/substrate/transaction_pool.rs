@@ -154,19 +154,19 @@ pub enum PoolError {
     /// Transaction decode failed
     #[error("Failed to decode transaction: {0}")]
     DecodeError(String),
-    
+
     /// Transaction validation failed
     #[error("Transaction invalid: {0}")]
     InvalidTransaction(String),
-    
+
     /// Duplicate transaction
     #[error("Transaction already in pool: {0}")]
     AlreadyInPool(String),
-    
+
     /// Pool is full
     #[error("Transaction pool is full")]
     PoolFull,
-    
+
     /// Unknown error
     #[error("Unknown error: {0}")]
     Unknown(String),
@@ -193,27 +193,31 @@ pub struct PendingTransaction {
 #[async_trait::async_trait]
 pub trait TransactionPool: Send + Sync {
     /// Submit a transaction to the pool
-    async fn submit(&self, tx: &[u8], source: TransactionSource) -> Result<SubmissionResult, PoolError>;
-    
+    async fn submit(
+        &self,
+        tx: &[u8],
+        source: TransactionSource,
+    ) -> Result<SubmissionResult, PoolError>;
+
     /// Check if a transaction is already in the pool
     fn contains(&self, hash: &[u8; 32]) -> bool;
-    
+
     /// Get the current pool size
     fn pool_size(&self) -> usize;
-    
+
     /// Get the pool capacity
     fn pool_capacity(&self) -> usize;
-    
+
     /// Remove a transaction by hash (for reorgs/invalidation)
     fn remove(&self, hash: &[u8; 32]) -> bool;
-    
+
     /// Get all ready transactions for block production (Task 11.3)
     ///
     /// Returns encoded transactions that are ready to be included in a block.
     /// For MockTransactionPool, this returns all pooled transactions.
     /// For a real pool, this would return transactions from the "ready" queue.
     fn ready_transactions(&self) -> Vec<Vec<u8>>;
-    
+
     /// Clear transactions that were included in a block (Task 11.3)
     ///
     /// Called after a block is mined to remove included transactions.
@@ -258,40 +262,50 @@ impl MockTransactionPool {
 
 #[async_trait::async_trait]
 impl TransactionPool for MockTransactionPool {
-    async fn submit(&self, tx: &[u8], _source: TransactionSource) -> Result<SubmissionResult, PoolError> {
+    async fn submit(
+        &self,
+        tx: &[u8],
+        _source: TransactionSource,
+    ) -> Result<SubmissionResult, PoolError> {
         let hash = Self::compute_hash(tx);
-        
+
         // Basic validation: non-empty, reasonable size
         if tx.is_empty() {
             return Err(PoolError::InvalidTransaction("Empty transaction".into()));
         }
         if tx.len() > 1024 * 1024 {
-            return Err(PoolError::InvalidTransaction("Transaction too large".into()));
+            return Err(PoolError::InvalidTransaction(
+                "Transaction too large".into(),
+            ));
         }
 
         let mut pool = self.transactions.lock().await;
-        
+
         // Check if already present
         if pool.contains_key(&hash) {
             return Err(PoolError::AlreadyInPool(hex::encode(hash)));
         }
-        
+
         // Check capacity
         if pool.len() >= self.capacity {
-            self.stats.pool_full_rejections.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .pool_full_rejections
+                .fetch_add(1, Ordering::Relaxed);
             return Err(PoolError::PoolFull);
         }
-        
+
         // Add to pool
         pool.insert(hash, tx.to_vec());
-        self.stats.transactions_submitted.fetch_add(1, Ordering::Relaxed);
-        
+        self.stats
+            .transactions_submitted
+            .fetch_add(1, Ordering::Relaxed);
+
         tracing::debug!(
             tx_hash = %hex::encode(hash),
             pool_size = pool.len(),
             "Transaction added to mock pool"
         );
-        
+
         Ok(SubmissionResult::success(hash, Some(0)))
     }
 
@@ -346,9 +360,9 @@ impl TransactionPool for MockTransactionPool {
 // MockTransactionPool (for testing) or the real pool (for production).
 
 use crate::substrate::client::{HegemonFullClient, HegemonTransactionPool};
-use sc_transaction_pool_api::{TransactionPool as ScTransactionPool, InPoolTransaction};
-use sc_client_api::HeaderBackend;
 use codec::{Decode, Encode};
+use sc_client_api::HeaderBackend;
+use sc_transaction_pool_api::{InPoolTransaction, TransactionPool as ScTransactionPool};
 
 /// Wrapper around the real Substrate transaction pool (Task 11.5.2)
 ///
@@ -366,8 +380,16 @@ pub struct SubstrateTransactionPoolWrapper {
 
 impl SubstrateTransactionPoolWrapper {
     /// Create a new wrapper around the real Substrate pool
-    pub fn new(pool: Arc<HegemonTransactionPool>, client: Arc<HegemonFullClient>, capacity: usize) -> Self {
-        Self { pool, client, capacity }
+    pub fn new(
+        pool: Arc<HegemonTransactionPool>,
+        client: Arc<HegemonFullClient>,
+        capacity: usize,
+    ) -> Self {
+        Self {
+            pool,
+            client,
+            capacity,
+        }
     }
 
     /// Get a reference to the underlying Substrate pool
@@ -384,35 +406,44 @@ impl SubstrateTransactionPoolWrapper {
 
 #[async_trait::async_trait]
 impl TransactionPool for SubstrateTransactionPoolWrapper {
-    async fn submit(&self, tx: &[u8], source: TransactionSource) -> Result<SubmissionResult, PoolError> {
+    async fn submit(
+        &self,
+        tx: &[u8],
+        source: TransactionSource,
+    ) -> Result<SubmissionResult, PoolError> {
         let hash = Self::compute_hash(tx);
-        
+
         // Basic validation
         if tx.is_empty() {
             return Err(PoolError::InvalidTransaction("Empty transaction".into()));
         }
         if tx.len() > 5 * 1024 * 1024 {
-            return Err(PoolError::InvalidTransaction("Transaction too large (>5MB)".into()));
+            return Err(PoolError::InvalidTransaction(
+                "Transaction too large (>5MB)".into(),
+            ));
         }
-        
+
         // Decode the transaction bytes into an UncheckedExtrinsic
         let extrinsic = match <runtime::UncheckedExtrinsic as Decode>::decode(&mut &tx[..]) {
             Ok(ext) => ext,
             Err(e) => {
-                return Err(PoolError::InvalidTransaction(format!("Failed to decode extrinsic: {:?}", e)));
+                return Err(PoolError::InvalidTransaction(format!(
+                    "Failed to decode extrinsic: {:?}",
+                    e
+                )));
             }
         };
-        
+
         // Convert our TransactionSource to Substrate's
         let sc_source = match source {
             TransactionSource::External => sc_transaction_pool_api::TransactionSource::External,
             TransactionSource::Local => sc_transaction_pool_api::TransactionSource::Local,
             TransactionSource::InBlock => sc_transaction_pool_api::TransactionSource::InBlock,
         };
-        
+
         // Get the best block hash from the client
         let at = self.client.info().best_hash;
-        
+
         // Submit to the real Substrate pool
         // The pool will validate against the runtime
         match self.pool.submit_one(at, sc_source, extrinsic).await {
@@ -429,7 +460,7 @@ impl TransactionPool for SubstrateTransactionPoolWrapper {
                     error = %error_msg,
                     "Transaction rejected by Substrate pool"
                 );
-                
+
                 // Map Substrate pool errors to our PoolError
                 if error_msg.contains("already in pool") || error_msg.contains("Already imported") {
                     Err(PoolError::AlreadyInPool(hex::encode(hash)))
@@ -537,16 +568,18 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
 
     /// Queue a transaction for submission
     pub async fn queue_transaction(&self, data: Vec<u8>, peer_id: Option<PeerId>) {
-        self.stats.transactions_received.fetch_add(1, Ordering::Relaxed);
-        
+        self.stats
+            .transactions_received
+            .fetch_add(1, Ordering::Relaxed);
+
         let mut pending = self.pending.lock().await;
-        
+
         // Drop oldest if queue is full
         if pending.len() >= self.max_pending {
             pending.pop_front();
             tracing::warn!("Pending transaction queue full, dropping oldest");
         }
-        
+
         pending.push_back(PendingTransaction {
             data,
             peer_id,
@@ -568,11 +601,15 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
         data: &[u8],
         peer_id: Option<&PeerId>,
     ) -> Result<SubmissionResult, PoolError> {
-        self.stats.transactions_received.fetch_add(1, Ordering::Relaxed);
-        
+        self.stats
+            .transactions_received
+            .fetch_add(1, Ordering::Relaxed);
+
         match self.pool.submit(data, TransactionSource::External).await {
             Ok(result) => {
-                self.stats.transactions_submitted.fetch_add(1, Ordering::Relaxed);
+                self.stats
+                    .transactions_submitted
+                    .fetch_add(1, Ordering::Relaxed);
                 tracing::debug!(
                     tx_hash = %hex::encode(result.hash),
                     peer = peer_id.map(|p| hex::encode(p)).unwrap_or_else(|| "local".to_string()),
@@ -581,7 +618,9 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
                 Ok(result)
             }
             Err(e) => {
-                self.stats.transactions_rejected.fetch_add(1, Ordering::Relaxed);
+                self.stats
+                    .transactions_rejected
+                    .fetch_add(1, Ordering::Relaxed);
                 tracing::debug!(
                     error = %e,
                     peer = peer_id.map(|p| hex::encode(p)).unwrap_or_else(|| "local".to_string()),
@@ -598,7 +637,7 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
     pub async fn process_pending(&self) -> usize {
         let mut pending = self.pending.lock().await;
         let mut submitted = 0;
-        
+
         while let Some(tx) = pending.pop_front() {
             match self.pool.submit(&tx.data, tx.source).await {
                 Ok(result) if result.accepted => {
@@ -615,18 +654,22 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
                         error = result.error.as_deref().unwrap_or("unknown"),
                         "Pending transaction rejected"
                     );
-                    self.stats.transactions_rejected.fetch_add(1, Ordering::Relaxed);
+                    self.stats
+                        .transactions_rejected
+                        .fetch_add(1, Ordering::Relaxed);
                 }
                 Err(e) => {
                     tracing::debug!(
                         error = %e,
                         "Failed to submit pending transaction"
                     );
-                    self.stats.transactions_rejected.fetch_add(1, Ordering::Relaxed);
+                    self.stats
+                        .transactions_rejected
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
-        
+
         submitted
     }
 
@@ -669,11 +712,12 @@ impl<P: TransactionPool> TransactionPoolBridge<P> {
     /// Removes transactions that were included in a mined block.
     /// Called by the mining worker after successful block import.
     pub fn clear_included(&self, txs: &[Vec<u8>]) {
-        let hashes: Vec<[u8; 32]> = txs.iter()
+        let hashes: Vec<[u8; 32]> = txs
+            .iter()
             .map(|tx| sp_core::hashing::blake2_256(tx))
             .collect();
         self.pool.clear_transactions(&hashes);
-        
+
         tracing::debug!(
             cleared_count = hashes.len(),
             pool_size = self.pool_size(),
@@ -718,21 +762,21 @@ impl TransactionPoolConfig {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(4096);
-        
+
         let max_pending = std::env::var("HEGEMON_POOL_MAX_PENDING")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(1000);
-        
+
         let process_interval_ms = std::env::var("HEGEMON_POOL_INTERVAL_MS")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(100);
-        
+
         let verbose = std::env::var("HEGEMON_POOL_VERBOSE")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
-        
+
         Self {
             capacity,
             max_pending,
@@ -755,20 +799,20 @@ pub async fn spawn_pool_processor<P: TransactionPool + 'static>(
 ) {
     let interval = tokio::time::Duration::from_millis(config.process_interval_ms);
     let mut process_timer = tokio::time::interval(interval);
-    
+
     tracing::info!(
         capacity = config.capacity,
         max_pending = config.max_pending,
         interval_ms = config.process_interval_ms,
         "Transaction pool processor started"
     );
-    
+
     loop {
         tokio::select! {
             // Receive transactions from network bridge
             Some(transactions) = rx.recv() => {
                 pool_bridge.queue_from_bridge(transactions).await;
-                
+
                 if config.verbose {
                     tracing::debug!(
                         pending = pool_bridge.pending_count().await,
@@ -776,11 +820,11 @@ pub async fn spawn_pool_processor<P: TransactionPool + 'static>(
                     );
                 }
             }
-            
+
             // Periodic processing
             _ = process_timer.tick() => {
                 let submitted = pool_bridge.process_pending().await;
-                
+
                 if submitted > 0 && config.verbose {
                     let stats = pool_bridge.stats().snapshot();
                     tracing::debug!(
@@ -804,10 +848,10 @@ mod tests {
     #[tokio::test]
     async fn test_mock_pool_submit() {
         let pool = MockTransactionPool::new(100);
-        
+
         let tx = vec![1, 2, 3, 4, 5];
         let result = pool.submit(&tx, TransactionSource::External).await.unwrap();
-        
+
         assert!(result.accepted);
         assert_eq!(pool.pool_size(), 1);
     }
@@ -815,10 +859,10 @@ mod tests {
     #[tokio::test]
     async fn test_mock_pool_duplicate() {
         let pool = MockTransactionPool::new(100);
-        
+
         let tx = vec![1, 2, 3, 4, 5];
         pool.submit(&tx, TransactionSource::External).await.unwrap();
-        
+
         // Submit same transaction again
         let result = pool.submit(&tx, TransactionSource::External).await;
         assert!(matches!(result, Err(PoolError::AlreadyInPool(_))));
@@ -827,10 +871,14 @@ mod tests {
     #[tokio::test]
     async fn test_mock_pool_capacity() {
         let pool = MockTransactionPool::new(2);
-        
-        pool.submit(&[1, 2, 3], TransactionSource::External).await.unwrap();
-        pool.submit(&[4, 5, 6], TransactionSource::External).await.unwrap();
-        
+
+        pool.submit(&[1, 2, 3], TransactionSource::External)
+            .await
+            .unwrap();
+        pool.submit(&[4, 5, 6], TransactionSource::External)
+            .await
+            .unwrap();
+
         // Third should fail
         let result = pool.submit(&[7, 8, 9], TransactionSource::External).await;
         assert!(matches!(result, Err(PoolError::PoolFull)));
@@ -839,7 +887,7 @@ mod tests {
     #[tokio::test]
     async fn test_mock_pool_empty_tx() {
         let pool = MockTransactionPool::new(100);
-        
+
         let result = pool.submit(&[], TransactionSource::External).await;
         assert!(matches!(result, Err(PoolError::InvalidTransaction(_))));
     }
@@ -848,12 +896,12 @@ mod tests {
     async fn test_pool_bridge_queue() {
         let pool = Arc::new(MockTransactionPool::new(100));
         let bridge = TransactionPoolBridge::new(pool);
-        
+
         bridge.queue_transaction(vec![1, 2, 3], None).await;
         bridge.queue_transaction(vec![4, 5, 6], None).await;
-        
+
         assert_eq!(bridge.pending_count().await, 2);
-        
+
         let submitted = bridge.process_pending().await;
         assert_eq!(submitted, 2);
         assert_eq!(bridge.pending_count().await, 0);
@@ -864,7 +912,7 @@ mod tests {
     async fn test_pool_bridge_submit_direct() {
         let pool = Arc::new(MockTransactionPool::new(100));
         let bridge = TransactionPoolBridge::new(pool);
-        
+
         let result = bridge.submit_transaction(&[1, 2, 3], None).await.unwrap();
         assert!(result.accepted);
         assert_eq!(bridge.pool_size(), 1);
@@ -874,13 +922,13 @@ mod tests {
     async fn test_pool_bridge_stats() {
         let pool = Arc::new(MockTransactionPool::new(100));
         let bridge = TransactionPoolBridge::new(pool);
-        
+
         bridge.submit_transaction(&[1, 2, 3], None).await.unwrap();
         bridge.submit_transaction(&[4, 5, 6], None).await.unwrap();
-        
+
         // Submit duplicate
         let _ = bridge.submit_transaction(&[1, 2, 3], None).await;
-        
+
         let stats = bridge.stats().snapshot();
         assert_eq!(stats.transactions_received, 3);
         assert_eq!(stats.transactions_submitted, 2);
@@ -890,12 +938,12 @@ mod tests {
     #[test]
     fn test_submission_result() {
         let hash = [42u8; 32];
-        
+
         let success = SubmissionResult::success(hash, Some(100));
         assert!(success.accepted);
         assert!(success.error.is_none());
         assert_eq!(success.priority, Some(100));
-        
+
         let failure = SubmissionResult::failure(hash, "invalid nonce");
         assert!(!failure.accepted);
         assert_eq!(failure.error, Some("invalid nonce".to_string()));
@@ -915,16 +963,22 @@ mod tests {
     #[tokio::test]
     async fn test_pool_ready_transactions() {
         let pool = MockTransactionPool::new(100);
-        
+
         // Submit transactions
-        pool.submit(&[1, 2, 3], TransactionSource::External).await.unwrap();
-        pool.submit(&[4, 5, 6], TransactionSource::External).await.unwrap();
-        pool.submit(&[7, 8, 9], TransactionSource::External).await.unwrap();
-        
+        pool.submit(&[1, 2, 3], TransactionSource::External)
+            .await
+            .unwrap();
+        pool.submit(&[4, 5, 6], TransactionSource::External)
+            .await
+            .unwrap();
+        pool.submit(&[7, 8, 9], TransactionSource::External)
+            .await
+            .unwrap();
+
         // Get ready transactions
         let ready = pool.ready_transactions();
         assert_eq!(ready.len(), 3);
-        
+
         // All submitted transactions should be ready
         assert!(ready.iter().any(|tx| tx == &[1, 2, 3]));
         assert!(ready.iter().any(|tx| tx == &[4, 5, 6]));
@@ -934,21 +988,27 @@ mod tests {
     #[tokio::test]
     async fn test_pool_clear_transactions() {
         let pool = MockTransactionPool::new(100);
-        
+
         // Submit transactions
-        pool.submit(&[1, 2, 3], TransactionSource::External).await.unwrap();
-        pool.submit(&[4, 5, 6], TransactionSource::External).await.unwrap();
-        pool.submit(&[7, 8, 9], TransactionSource::External).await.unwrap();
-        
+        pool.submit(&[1, 2, 3], TransactionSource::External)
+            .await
+            .unwrap();
+        pool.submit(&[4, 5, 6], TransactionSource::External)
+            .await
+            .unwrap();
+        pool.submit(&[7, 8, 9], TransactionSource::External)
+            .await
+            .unwrap();
+
         assert_eq!(pool.pool_size(), 3);
-        
+
         // Clear some transactions
         let hash1 = sp_core::hashing::blake2_256(&[1, 2, 3]);
         let hash2 = sp_core::hashing::blake2_256(&[4, 5, 6]);
         pool.clear_transactions(&[hash1, hash2]);
-        
+
         assert_eq!(pool.pool_size(), 1);
-        
+
         // Only the third transaction should remain
         let ready = pool.ready_transactions();
         assert_eq!(ready.len(), 1);
@@ -959,16 +1019,16 @@ mod tests {
     async fn test_bridge_ready_for_block() {
         let pool = Arc::new(MockTransactionPool::new(100));
         let bridge = TransactionPoolBridge::new(pool);
-        
+
         // Submit transactions directly to pool
         bridge.submit_transaction(&[1, 2, 3], None).await.unwrap();
         bridge.submit_transaction(&[4, 5, 6], None).await.unwrap();
         bridge.submit_transaction(&[7, 8, 9], None).await.unwrap();
-        
+
         // Get ready transactions with limit
         let ready = bridge.ready_for_block(2);
         assert_eq!(ready.len(), 2);
-        
+
         // Get all ready
         let ready_all = bridge.ready_for_block(100);
         assert_eq!(ready_all.len(), 3);
@@ -978,23 +1038,23 @@ mod tests {
     async fn test_bridge_clear_included() {
         let pool = Arc::new(MockTransactionPool::new(100));
         let bridge = TransactionPoolBridge::new(pool);
-        
+
         // Submit transactions
         let tx1 = vec![1, 2, 3];
         let tx2 = vec![4, 5, 6];
         let tx3 = vec![7, 8, 9];
-        
+
         bridge.submit_transaction(&tx1, None).await.unwrap();
         bridge.submit_transaction(&tx2, None).await.unwrap();
         bridge.submit_transaction(&tx3, None).await.unwrap();
-        
+
         assert_eq!(bridge.pool_size(), 3);
-        
+
         // Simulate mining: clear included transactions
         bridge.clear_included(&[tx1.clone(), tx2.clone()]);
-        
+
         assert_eq!(bridge.pool_size(), 1);
-        
+
         // Only tx3 should remain
         let ready = bridge.ready_for_block(100);
         assert_eq!(ready.len(), 1);
@@ -1006,21 +1066,27 @@ mod tests {
         // Simulate the full mining flow with transaction pool
         let pool = Arc::new(MockTransactionPool::new(100));
         let bridge = TransactionPoolBridge::new(pool);
-        
+
         // 1. Submit transactions (simulating RPC submission)
-        bridge.submit_transaction(&[0xaa, 0xbb, 0xcc], None).await.unwrap();
-        bridge.submit_transaction(&[0xdd, 0xee, 0xff], None).await.unwrap();
-        
+        bridge
+            .submit_transaction(&[0xaa, 0xbb, 0xcc], None)
+            .await
+            .unwrap();
+        bridge
+            .submit_transaction(&[0xdd, 0xee, 0xff], None)
+            .await
+            .unwrap();
+
         // 2. Mining worker gets ready transactions
         let ready = bridge.ready_for_block(100);
         assert_eq!(ready.len(), 2);
-        
+
         // 3. Mining worker would create block template with these transactions
         // and mine a block...
-        
+
         // 4. After successful mining, clear included transactions
         bridge.clear_included(&ready);
-        
+
         // 5. Pool should now be empty
         assert_eq!(bridge.pool_size(), 0);
         assert_eq!(bridge.ready_for_block(100).len(), 0);

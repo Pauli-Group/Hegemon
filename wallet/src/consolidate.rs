@@ -37,14 +37,14 @@ impl ConsolidationPlan {
                 blocks_needed: 0,
             };
         }
-        
+
         let txs_needed = note_count - MAX_INPUTS;
         // Each tx needs ~1 block to confirm before next can use its output
         // But we can submit multiple txs spending different notes in same block
         // Worst case: txs_needed blocks. Best case with parallelism: log2(N) blocks
         // For simplicity, estimate 1 tx per block (sequential submission)
         let blocks_needed = txs_needed;
-        
+
         Self {
             note_count,
             txs_needed,
@@ -74,17 +74,17 @@ pub async fn execute_consolidation(
     verbose: bool,
 ) -> Result<(), WalletError> {
     let mut iteration = 0;
-    
+
     loop {
         // Step 1: Fresh sync each iteration
         let engine = AsyncWalletSyncEngine::new(rpc.clone(), store.clone());
         engine.sync_once().await?;
-        
+
         // Step 2: Select only notes needed for target_value
         // Sort by value descending - prefer larger notes (including consolidated ones)
         let mut notes = store.spendable_notes(NATIVE_ASSET_ID)?;
         notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
-        
+
         let mut selected = Vec::new();
         let mut selected_value = 0u64;
         for note in &notes {
@@ -94,24 +94,26 @@ pub async fn execute_consolidation(
                 break;
             }
         }
-        
+
         if selected_value < target_value {
             return Err(WalletError::InsufficientFunds {
                 needed: target_value,
                 available: selected_value,
             });
         }
-        
+
         // Check if done - only need to consolidate selected notes
         if selected.len() <= MAX_INPUTS {
             if verbose && iteration > 0 {
-                println!("Consolidation complete. {} notes cover {} HGM.", 
+                println!(
+                    "Consolidation complete. {} notes cover {} HGM.",
                     selected.len(),
-                    target_value as f64 / 100_000_000.0);
+                    target_value as f64 / 100_000_000.0
+                );
             }
             return Ok(());
         }
-        
+
         iteration += 1;
         if verbose && iteration == 1 {
             let txs_needed = selected.len() - MAX_INPUTS;
@@ -122,11 +124,11 @@ pub async fn execute_consolidation(
                 txs_needed
             );
         }
-        
+
         // Step 3: Merge first two selected notes
         let note_0 = &selected[0];
         let note_1 = &selected[1];
-        
+
         let total = note_0.recovered.note.value + note_1.recovered.note.value;
         if total <= fee_per_tx {
             return Err(WalletError::InsufficientFunds {
@@ -134,7 +136,7 @@ pub async fn execute_consolidation(
                 available: total,
             });
         }
-        
+
         let self_address = store.primary_address()?;
         let recipient = Recipient {
             address: self_address,
@@ -142,7 +144,7 @@ pub async fn execute_consolidation(
             asset_id: NATIVE_ASSET_ID,
             memo: MemoPlaintext::default(),
         };
-        
+
         if verbose {
             println!(
                 "[{}/~{}] Merging {} HGM + {} HGM -> {} HGM",
@@ -153,15 +155,15 @@ pub async fn execute_consolidation(
                 (total - fee_per_tx) as f64 / 100_000_000.0
             );
         }
-        
+
         // Build and submit
         let tx = build_transaction(&*store, &[recipient], fee_per_tx)?;
         let hash = rpc.submit_shielded_transfer_unsigned(&tx.bundle).await?;
-        
+
         if verbose {
             println!("  Submitted: 0x{}", hex::encode(&hash[..8]));
         }
-        
+
         // Step 4: Wait for confirmation
         let start_height = rpc.latest_block().await?.height;
         loop {
@@ -174,11 +176,11 @@ pub async fn execute_consolidation(
                 break;
             }
         }
-        
+
         // Small delay after confirmation to avoid mempool priority collisions
         // (coinbase tx may still be in pool right after block)
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-        
+
         // Step 5: Loop back to sync and check again
     }
 }
@@ -213,7 +215,7 @@ mod tests {
         let plan = ConsolidationPlan::estimate(10);
         assert_eq!(plan.txs_needed, 8);
     }
-    
+
     #[test]
     fn test_estimate_65_notes() {
         // 65 notes -> 2 notes: 63 txs

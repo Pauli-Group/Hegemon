@@ -128,3 +128,6 @@ runtime-benchmarks = [
     "pallet-fee-model/runtime-benchmarks",
     "pallet-difficulty/runtime-benchmarks",
 ]
+
+[lints]
+workspace = true

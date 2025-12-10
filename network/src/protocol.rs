@@ -250,10 +250,7 @@ pub struct NotificationProtocolConfig {
 
 /// Build notification protocol configurations for the node (PQ-only)
 pub fn build_notification_configs() -> Vec<NotificationProtocolConfig> {
-    vec![
-        block_announces_config(),
-        transactions_config(),
-    ]
+    vec![block_announces_config(), transactions_config()]
 }
 
 #[cfg(test)]
@@ -262,7 +259,10 @@ mod tests {
 
     #[test]
     fn test_protocol_security_levels() {
-        assert!(ProtocolSecurityLevel::PostQuantum.meets_requirement(ProtocolSecurityLevel::PostQuantum));
+        assert!(
+            ProtocolSecurityLevel::PostQuantum
+                .meets_requirement(ProtocolSecurityLevel::PostQuantum)
+        );
     }
 
     #[test]
@@ -274,7 +274,10 @@ mod tests {
 
     #[test]
     fn test_protocol_type() {
-        assert_eq!(protocol_type(BLOCK_ANNOUNCES_PQ), ProtocolType::BlockAnnounces);
+        assert_eq!(
+            protocol_type(BLOCK_ANNOUNCES_PQ),
+            ProtocolType::BlockAnnounces
+        );
         assert_eq!(protocol_type(TRANSACTIONS_PQ), ProtocolType::Transactions);
         assert_eq!(protocol_type(SYNC_PQ), ProtocolType::Sync);
         assert_eq!(protocol_type(PQ_PROTOCOL_V1), ProtocolType::Handshake);
@@ -313,6 +316,9 @@ mod tests {
     #[test]
     fn test_protocol_negotiation_config() {
         let pq_required = ProtocolNegotiationConfig::pq_required();
-        assert_eq!(pq_required.preferred_level, ProtocolSecurityLevel::PostQuantum);
+        assert_eq!(
+            pq_required.preferred_level,
+            ProtocolSecurityLevel::PostQuantum
+        );
     }
 }

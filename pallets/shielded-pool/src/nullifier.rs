@@ -103,7 +103,11 @@ pub fn validate_nullifiers<S: NullifierStore>(
     }
 
     // Check if any are already spent
-    let already_spent: Vec<_> = nullifiers.iter().filter(|nf| store.contains(nf)).copied().collect();
+    let already_spent: Vec<_> = nullifiers
+        .iter()
+        .filter(|nf| store.contains(nf))
+        .copied()
+        .collect();
 
     if !already_spent.is_empty() {
         return NullifierValidation::AlreadySpent(already_spent);

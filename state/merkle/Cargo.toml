@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 thiserror = "1"
 transaction-circuit = { path = "../../circuits/transaction" }
+
+[lints]
+workspace = true

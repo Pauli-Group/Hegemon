@@ -256,7 +256,10 @@ pub trait ShieldedPoolService: Send + Sync {
     fn encrypted_note_count(&self) -> u64;
 
     /// Get Merkle witness for a position
-    fn get_merkle_witness(&self, position: u64) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), String>;
+    fn get_merkle_witness(
+        &self,
+        position: u64,
+    ) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), String>;
 
     /// Get shielded pool status
     fn get_pool_status(&self) -> ShieldedPoolStatus;
@@ -438,11 +441,7 @@ where
             .service
             .get_encrypted_notes(params.start, limit, params.from_block, params.to_block)
             .map_err(|e| {
-                ErrorObjectOwned::owned(
-                    jsonrpsee::types::error::INTERNAL_ERROR_CODE,
-                    e,
-                    None::<()>,
-                )
+                ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
             })?;
 
         let total = self.service.encrypted_note_count();
@@ -451,15 +450,17 @@ where
         Ok(EncryptedNotesResponse {
             notes: notes
                 .into_iter()
-                .map(|(index, ciphertext, block, commitment)| EncryptedNoteEntry {
-                    index,
-                    ciphertext: base64::Engine::encode(
-                        &base64::engine::general_purpose::STANDARD,
-                        &ciphertext,
-                    ),
-                    block_number: block,
-                    commitment: hex::encode(commitment),
-                })
+                .map(
+                    |(index, ciphertext, block, commitment)| EncryptedNoteEntry {
+                        index,
+                        ciphertext: base64::Engine::encode(
+                            &base64::engine::general_purpose::STANDARD,
+                            &ciphertext,
+                        ),
+                        block_number: block,
+                        commitment: hex::encode(commitment),
+                    },
+                )
                 .collect(),
             total,
             has_more,
@@ -469,11 +470,7 @@ where
 
     async fn get_merkle_witness(&self, position: u64) -> RpcResult<MerkleWitnessResponse> {
         let (siblings, indices, root) = self.service.get_merkle_witness(position).map_err(|e| {
-            ErrorObjectOwned::owned(
-                jsonrpsee::types::error::INTERNAL_ERROR_CODE,
-                e,
-                None::<()>,
-            )
+            ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
         })?;
 
         Ok(MerkleWitnessResponse {
@@ -518,7 +515,10 @@ where
             }
         };
 
-        match self.service.shield(request.amount, commitment, encrypted_note) {
+        match self
+            .service
+            .shield(request.amount, commitment, encrypted_note)
+        {
             Ok((tx_hash, note_index)) => Ok(ShieldResponse {
                 success: true,
                 tx_hash: Some(hex::encode(tx_hash)),
@@ -615,7 +615,10 @@ mod tests {
             1000
         }
 
-        fn get_merkle_witness(&self, position: u64) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), String> {
+        fn get_merkle_witness(
+            &self,
+            position: u64,
+        ) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), String> {
             let siblings: Vec<[u8; 32]> = (0..32).map(|i| [i; 32]).collect();
             let indices: Vec<bool> = (0..32).map(|i| i % 2 == 0).collect();
             let root = [0x12; 32];
@@ -718,10 +721,8 @@ mod tests {
 
         // Create a valid request with base64-encoded proof
         let proof_bytes = vec![0u8; 100]; // Mock proof
-        let proof_base64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &proof_bytes,
-        );
+        let proof_base64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &proof_bytes);
 
         let request = ShieldedTransferRequest {
             proof: proof_base64,
@@ -771,10 +772,8 @@ mod tests {
         let rpc = ShieldedRpc::new(service);
 
         let proof_bytes = vec![0u8; 100];
-        let proof_base64 = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &proof_bytes,
-        );
+        let proof_base64 =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &proof_bytes);
 
         // Nullifier with wrong length
         let request = ShieldedTransferRequest {
@@ -837,10 +836,8 @@ mod tests {
         let service = Arc::new(MockShieldedService);
         let rpc = ShieldedRpc::new(service);
 
-        let encrypted_note = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &[1, 2, 3, 4],
-        );
+        let encrypted_note =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &[1, 2, 3, 4]);
 
         let request = ShieldRequest {
             amount: 1_000_000,
@@ -861,10 +858,8 @@ mod tests {
         let service = Arc::new(MockShieldedService);
         let rpc = ShieldedRpc::new(service);
 
-        let encrypted_note = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            &[1, 2, 3, 4],
-        );
+        let encrypted_note =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &[1, 2, 3, 4]);
 
         // Invalid hex commitment
         let request = ShieldRequest {

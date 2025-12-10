@@ -10,3 +10,6 @@ sha2 = { version = "0.10", default-features = false }
 [features]
 default = ["std"]
 std = ["serde/std", "sha2/std"]
+
+[lints]
+workspace = true

@@ -27,23 +27,20 @@ pub use network_backend::{
 };
 pub use peer_store::{PeerStore, PeerStoreConfig};
 pub use pq_transport::{
-    ConnectionMode, PqPeerIdentity, PqSecureConnection, PqTransportConfig,
-    upgrade_inbound, upgrade_outbound,
+    ConnectionMode, PqPeerIdentity, PqSecureConnection, PqTransportConfig, upgrade_inbound,
+    upgrade_outbound,
 };
 pub use protocol::{
-    is_pq_protocol, negotiate_protocol,
+    BLOCK_ANNOUNCES_LEGACY, BLOCK_ANNOUNCES_PQ, NegotiationResult, NotificationProtocolConfig,
+    PQ_PROTOCOL_V1, ProtocolNegotiationConfig, ProtocolSecurityLevel, ProtocolType, SYNC_LEGACY,
+    SYNC_PQ, TRANSACTIONS_LEGACY, TRANSACTIONS_PQ, is_pq_protocol, negotiate_protocol,
     protocol_security_level, protocol_type, supported_protocols,
-    NegotiationResult, NotificationProtocolConfig, ProtocolNegotiationConfig,
-    ProtocolSecurityLevel, ProtocolType,
-    BLOCK_ANNOUNCES_PQ, BLOCK_ANNOUNCES_LEGACY,
-    PQ_PROTOCOL_V1, SYNC_PQ, SYNC_LEGACY,
-    TRANSACTIONS_PQ, TRANSACTIONS_LEGACY,
 };
 pub use service::RelayConfig;
 pub use service::{P2PService, ProtocolHandle};
 pub use substrate_transport::{
-    PqConnectionInfo, PqUpgradeOutput, SubstratePqConnection,
-    SubstratePqTransport, SubstratePqTransportConfig, SubstrateTransportError,
+    PqConnectionInfo, PqUpgradeOutput, SubstratePqConnection, SubstratePqTransport,
+    SubstratePqTransportConfig, SubstrateTransportError,
 };
 
 pub type PeerId = [u8; 32];

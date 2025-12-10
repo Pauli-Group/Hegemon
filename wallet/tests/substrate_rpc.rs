@@ -4,8 +4,8 @@
 //! Tests marked with #[ignore] require a running Substrate node.
 
 use wallet::substrate_rpc::{
-    SubstrateRpcClient, SubstrateRpcConfig, BlockingSubstrateRpcClient,
-    PaginationParams, NoteStatus, LatestBlock,
+    BlockingSubstrateRpcClient, LatestBlock, NoteStatus, PaginationParams, SubstrateRpcClient,
+    SubstrateRpcConfig,
 };
 use wallet::WalletError;
 
@@ -35,11 +35,14 @@ fn test_pagination_params_defaults() {
 
 #[test]
 fn test_pagination_params_serialization() {
-    let params = PaginationParams { start: 10, limit: 50 };
+    let params = PaginationParams {
+        start: 10,
+        limit: 50,
+    };
     let json = serde_json::to_string(&params).unwrap();
     assert!(json.contains("\"start\":10"));
     assert!(json.contains("\"limit\":50"));
-    
+
     let deserialized: PaginationParams = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.start, 10);
     assert_eq!(deserialized.limit, 50);
@@ -53,7 +56,7 @@ fn test_note_status_deserialization() {
         "root": "0x1234567890abcdef",
         "next_index": 1001
     }"#;
-    
+
     let status: NoteStatus = serde_json::from_str(json).unwrap();
     assert_eq!(status.leaf_count, 1000);
     assert_eq!(status.depth, 32);
@@ -71,7 +74,7 @@ fn test_latest_block_deserialization() {
         "supply_digest": 1000000000,
         "timestamp": 1700000000
     }"#;
-    
+
     let block: LatestBlock = serde_json::from_str(json).unwrap();
     assert_eq!(block.height, 12345);
     assert_eq!(block.hash, "0xabcdef");
@@ -91,7 +94,7 @@ fn test_latest_block_without_timestamp() {
         "nullifier_root": "0x456",
         "supply_digest": 500
     }"#;
-    
+
     let block: LatestBlock = serde_json::from_str(json).unwrap();
     assert_eq!(block.height, 100);
     assert_eq!(block.timestamp, 0);
@@ -103,7 +106,7 @@ fn test_latest_block_without_timestamp() {
 async fn test_substrate_client_connect() {
     let client = SubstrateRpcClient::connect("ws://127.0.0.1:9944").await;
     assert!(client.is_ok(), "Should connect to local Substrate node");
-    
+
     let client = client.unwrap();
     assert!(client.is_connected().await);
 }
@@ -115,10 +118,10 @@ async fn test_substrate_client_note_status() {
     let client = SubstrateRpcClient::connect("ws://127.0.0.1:9944")
         .await
         .expect("Failed to connect");
-    
+
     let status = client.note_status().await;
     assert!(status.is_ok(), "hegemon_walletNotes should work");
-    
+
     let status = status.unwrap();
     assert!(status.depth > 0, "Tree should have depth > 0");
 }
@@ -130,10 +133,10 @@ async fn test_substrate_client_latest_block() {
     let client = SubstrateRpcClient::connect("ws://127.0.0.1:9944")
         .await
         .expect("Failed to connect");
-    
+
     let block = client.latest_block().await;
     assert!(block.is_ok(), "hegemon_latestBlock should work");
-    
+
     let block = block.unwrap();
     assert!(!block.hash.is_empty(), "Block hash should not be empty");
 }
@@ -145,7 +148,7 @@ async fn test_substrate_client_commitments() {
     let client = SubstrateRpcClient::connect("ws://127.0.0.1:9944")
         .await
         .expect("Failed to connect");
-    
+
     let entries = client.commitments(0, 10).await;
     assert!(entries.is_ok(), "hegemon_walletCommitments should work");
 }
@@ -157,7 +160,7 @@ async fn test_substrate_client_nullifiers() {
     let client = SubstrateRpcClient::connect("ws://127.0.0.1:9944")
         .await
         .expect("Failed to connect");
-    
+
     let nullifiers = client.nullifiers().await;
     assert!(nullifiers.is_ok(), "hegemon_walletNullifiers should work");
 }
@@ -168,22 +171,19 @@ async fn test_substrate_client_nullifiers() {
 async fn test_substrate_client_block_subscription() {
     use futures::StreamExt;
     use std::time::Duration;
-    
+
     let client = SubstrateRpcClient::connect("ws://127.0.0.1:9944")
         .await
         .expect("Failed to connect");
-    
+
     let mut subscription = client
         .subscribe_new_heads()
         .await
         .expect("Should subscribe to new heads");
-    
+
     // Wait for at least one block
-    let result = tokio::time::timeout(
-        Duration::from_secs(30),
-        subscription.next()
-    ).await;
-    
+    let result = tokio::time::timeout(Duration::from_secs(30), subscription.next()).await;
+
     assert!(result.is_ok(), "Should receive block within 30 seconds");
 }
 
@@ -192,10 +192,16 @@ async fn test_substrate_client_block_subscription() {
 async fn test_substrate_client_connection_failure() {
     // Try to connect to a port that doesn't have a node
     let result = SubstrateRpcClient::connect("ws://127.0.0.1:59999").await;
-    
-    assert!(result.is_err(), "Should fail to connect to non-existent node");
+
+    assert!(
+        result.is_err(),
+        "Should fail to connect to non-existent node"
+    );
     if let Err(WalletError::Rpc(msg)) = result {
-        assert!(msg.contains("Failed to connect"), "Error should mention connection failure");
+        assert!(
+            msg.contains("Failed to connect"),
+            "Error should mention connection failure"
+        );
     }
 }
 
@@ -209,24 +215,24 @@ fn test_blocking_client_config() {
 
 /// Test shield transaction submission with ML-DSA signature
 /// Requires a running Substrate node (run with: cargo test test_shield_e2e -- --ignored)
-/// 
+///
 /// Note: Running this test multiple times against the same node without mining
 /// will cause "Priority too low" errors because the nonce is reserved in the pool.
 /// This is expected behavior - restart the node with `--tmp` for a fresh state.
 #[tokio::test]
 #[ignore]
 async fn test_shield_e2e() {
-    use synthetic_crypto::hashes::blake2_256;
     use std::time::{SystemTime, UNIX_EPOCH};
-    
+    use synthetic_crypto::hashes::blake2_256;
+
     // Connect to local node
     let client = SubstrateRpcClient::connect("ws://127.0.0.1:9944")
         .await
         .expect("Should connect to node");
-    
+
     // Alice dev seed: blake2_256("//Alice")
     let alice_seed = blake2_256(b"//Alice");
-    
+
     // Create unique commitment using current timestamp so each test run is different
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -234,24 +240,23 @@ async fn test_shield_e2e() {
         .as_nanos() as u64;
     let mut commitment = [0u8; 32];
     commitment[0..8].copy_from_slice(&nonce.to_le_bytes());
-    
+
     let encrypted_note = wallet::extrinsic::EncryptedNote::default(); // dummy encrypted note
-    
+
     // Submit shield transaction for 1000 units
     println!("Submitting shield transaction...");
-    let result = client.submit_shield_signed(
-        1000,
-        commitment,
-        encrypted_note,
-        &alice_seed,
-    ).await;
-    
+    let result = client
+        .submit_shield_signed(1000, commitment, encrypted_note, &alice_seed)
+        .await;
+
     match &result {
         Ok(tx_hash) => {
             println!("SUCCESS! Transaction hash: 0x{}", hex::encode(tx_hash));
             // Test passed - transaction was submitted
         }
-        Err(WalletError::Rpc(msg)) if msg.contains("Already Imported") || msg.contains("Priority is too low") => {
+        Err(WalletError::Rpc(msg))
+            if msg.contains("Already Imported") || msg.contains("Priority is too low") =>
+        {
             // This is OK - means a prior transaction was submitted successfully
             // and the pool has the nonce reserved. Restart node with --tmp for fresh state.
             println!("NOTE: Transaction rejected due to nonce conflict (prior tx in pool)");

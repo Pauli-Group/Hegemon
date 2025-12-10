@@ -93,7 +93,10 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::config]
-    pub trait Config: frame_system::Config<RuntimeEvent: From<Event<Self>>> + pallet_timestamp::Config<Moment = Moment> {
+    pub trait Config:
+        frame_system::Config<RuntimeEvent: From<Event<Self>>>
+        + pallet_timestamp::Config<Moment = Moment>
+    {
         // No additional config required - RuntimeEvent bound is in the frame_system::Config bound above
     }
 
@@ -240,7 +243,9 @@ pub mod pallet {
                 .unwrap_or(u32::MAX);
 
             // First block after genesis: initialize retarget tracking
-            if last_retarget == BlockNumberFor::<T>::default() && current_block > BlockNumberFor::<T>::default() {
+            if last_retarget == BlockNumberFor::<T>::default()
+                && current_block > BlockNumberFor::<T>::default()
+            {
                 LastRetargetBlock::<T>::put(current_block);
                 LastRetargetTime::<T>::put(current_time);
                 Self::deposit_event(Event::RetargetInitialized {
@@ -266,11 +271,8 @@ pub mod pallet {
             let expected_time = (RETARGET_INTERVAL as u64) * TARGET_BLOCK_TIME_MS;
 
             // Calculate new difficulty with bounds
-            let new_difficulty = Self::calculate_new_difficulty(
-                old_difficulty,
-                actual_time,
-                expected_time,
-            );
+            let new_difficulty =
+                Self::calculate_new_difficulty(old_difficulty, actual_time, expected_time);
 
             // Convert difficulty to target, then to compact bits format
             // target = MAX_U256 / difficulty
@@ -396,10 +398,7 @@ pub mod pallet {
         pub fn blocks_until_retarget() -> u32 {
             let current = frame_system::Pallet::<T>::block_number();
             let last = Self::last_retarget_block();
-            let since: u32 = current
-                .saturating_sub(last)
-                .try_into()
-                .unwrap_or(0);
+            let since: u32 = current.saturating_sub(last).try_into().unwrap_or(0);
             RETARGET_INTERVAL.saturating_sub(since)
         }
 
@@ -506,7 +505,7 @@ mod tests {
             let original = U256::from(1_000_000u64);
             let compact = Difficulty::target_to_compact(original);
             let recovered = Difficulty::compact_to_target(compact);
-            
+
             // Due to precision loss in compact format, recovered may differ slightly
             assert!(recovered.is_some());
         });
@@ -519,11 +518,8 @@ mod tests {
             let actual_time = 5_000u64; // 5 seconds (should be 10)
             let expected_time = 10_000u64;
 
-            let new_difficulty = Difficulty::calculate_new_difficulty(
-                old_difficulty,
-                actual_time,
-                expected_time,
-            );
+            let new_difficulty =
+                Difficulty::calculate_new_difficulty(old_difficulty, actual_time, expected_time);
 
             // Difficulty should increase when blocks are too fast
             assert!(new_difficulty > old_difficulty);
@@ -537,11 +533,8 @@ mod tests {
             let actual_time = 20_000u64; // 20 seconds (should be 10)
             let expected_time = 10_000u64;
 
-            let new_difficulty = Difficulty::calculate_new_difficulty(
-                old_difficulty,
-                actual_time,
-                expected_time,
-            );
+            let new_difficulty =
+                Difficulty::calculate_new_difficulty(old_difficulty, actual_time, expected_time);
 
             // Difficulty should decrease when blocks are too slow
             assert!(new_difficulty < old_difficulty);
@@ -555,11 +548,8 @@ mod tests {
             let actual_time = 1u64; // Extremely fast
             let expected_time = 10_000u64;
 
-            let new_difficulty = Difficulty::calculate_new_difficulty(
-                old_difficulty,
-                actual_time,
-                expected_time,
-            );
+            let new_difficulty =
+                Difficulty::calculate_new_difficulty(old_difficulty, actual_time, expected_time);
 
             // Should be clamped to 4x max increase
             assert_eq!(

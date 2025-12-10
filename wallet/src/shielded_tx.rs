@@ -394,12 +394,8 @@ impl<'a> ShieldedTxBuilder<'a> {
 
         // Build explicit outputs
         for output in &self.outputs {
-            let note = NotePlaintext::random(
-                output.value,
-                output.asset_id,
-                output.memo_plaintext(),
-                rng,
-            );
+            let note =
+                NotePlaintext::random(output.value, output.asset_id, output.memo_plaintext(), rng);
             let ciphertext = NoteCiphertext::encrypt(&output.address, &note, rng)?;
 
             witnesses.push(OutputNoteWitness {
@@ -416,9 +412,7 @@ impl<'a> ShieldedTxBuilder<'a> {
 
             if change > 0 {
                 if witnesses.len() >= MAX_OUTPUTS {
-                    return Err(WalletError::InvalidArgument(
-                        "no room for change output",
-                    ));
+                    return Err(WalletError::InvalidArgument("no room for change output"));
                 }
 
                 // Create change address
@@ -453,19 +447,24 @@ impl<'a> ShieldedTxBuilder<'a> {
     ) -> Result<TransactionWitness, WalletError> {
         // Get Merkle tree for authentication paths
         let tree = self.store.commitment_tree()?;
-        
+
         // Build input witnesses with Merkle paths
         let mut inputs = Vec::with_capacity(selection.len());
         for note in selection {
             // Get the Merkle authentication path for this note's position
-            let auth_path = tree.authentication_path(note.position as usize)
-                .map_err(|e| WalletError::InvalidState(Box::leak(format!("merkle path error: {}", e).into_boxed_str())))?;
-            
+            let auth_path = tree
+                .authentication_path(note.position as usize)
+                .map_err(|e| {
+                    WalletError::InvalidState(Box::leak(
+                        format!("merkle path error: {}", e).into_boxed_str(),
+                    ))
+                })?;
+
             // Convert Felt path to MerklePath
             let merkle_path = transaction_circuit::note::MerklePath {
                 siblings: auth_path,
             };
-            
+
             // Create input witness with the merkle path
             let mut input_witness = note.recovered.to_input_witness(note.position);
             input_witness.merkle_path = merkle_path;
@@ -483,7 +482,7 @@ impl<'a> ShieldedTxBuilder<'a> {
     }
 
     /// Compute binding signature hash for transaction commitment.
-    /// 
+    ///
     /// Returns the 32-byte Blake2-256 hash of the public inputs:
     /// Blake2_256(anchor || nullifiers || commitments || value_balance)
     fn compute_binding_hash(
@@ -560,8 +559,8 @@ pub fn build_shielding_tx(
     commitment[24..32].copy_from_slice(&commitment_felt.as_int().to_be_bytes());
 
     // Serialize ciphertext
-    let encrypted_note = bincode::serialize(&ciphertext)
-        .map_err(|e| WalletError::Serialization(e.to_string()))?;
+    let encrypted_note =
+        bincode::serialize(&ciphertext).map_err(|e| WalletError::Serialization(e.to_string()))?;
 
     Ok(ShieldingTx {
         commitment,

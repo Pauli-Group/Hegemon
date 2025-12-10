@@ -204,7 +204,10 @@ pub trait WalletApi {
     /// # Parameters
     /// - `params`: Pagination parameters (start, limit)
     #[method(name = "walletCommitments")]
-    async fn wallet_commitments(&self, params: Option<PaginationParams>) -> RpcResult<CommitmentResponse>;
+    async fn wallet_commitments(
+        &self,
+        params: Option<PaginationParams>,
+    ) -> RpcResult<CommitmentResponse>;
 
     /// Get wallet ciphertexts
     ///
@@ -213,7 +216,10 @@ pub trait WalletApi {
     /// # Parameters
     /// - `params`: Pagination parameters (start, limit)
     #[method(name = "walletCiphertexts")]
-    async fn wallet_ciphertexts(&self, params: Option<PaginationParams>) -> RpcResult<CiphertextResponse>;
+    async fn wallet_ciphertexts(
+        &self,
+        params: Option<PaginationParams>,
+    ) -> RpcResult<CiphertextResponse>;
 
     /// Get wallet nullifiers
     ///
@@ -239,7 +245,8 @@ pub trait WalletApi {
     /// # Parameters
     /// - `bundle`: Transaction bundle with proof and ciphertexts
     #[method(name = "submitTransaction")]
-    async fn submit_transaction(&self, bundle: TransactionBundle) -> RpcResult<TransactionResponse>;
+    async fn submit_transaction(&self, bundle: TransactionBundle)
+        -> RpcResult<TransactionResponse>;
 
     /// Get latest block info
     ///
@@ -252,28 +259,36 @@ pub trait WalletApi {
 pub trait WalletService: Send + Sync {
     /// Get note status
     fn note_status(&self) -> NoteStatus;
-    
+
     /// Get commitment entries
     fn commitment_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, u64)>, String>;
-    
+
     /// Get ciphertext entries
     fn ciphertext_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, Vec<u8>)>, String>;
-    
+
     /// Get all nullifiers
     fn nullifier_list(&self) -> Result<Vec<[u8; 32]>, String>;
-    
+
     /// Get latest block metadata
     fn latest_meta(&self) -> LatestBlock;
-    
+
     /// Submit transaction
-    fn submit_transaction(&self, proof: Vec<u8>, ciphertexts: Vec<Vec<u8>>) -> Result<[u8; 32], String>;
-    
+    fn submit_transaction(
+        &self,
+        proof: Vec<u8>,
+        ciphertexts: Vec<Vec<u8>>,
+    ) -> Result<[u8; 32], String>;
+
     /// Generate proof (async)
-    fn generate_proof(&self, inputs: Vec<u64>, outputs: Vec<(Vec<u8>, u64)>) -> Result<(Vec<u8>, Vec<String>), String>;
-    
+    fn generate_proof(
+        &self,
+        inputs: Vec<u64>,
+        outputs: Vec<(Vec<u8>, u64)>,
+    ) -> Result<(Vec<u8>, Vec<String>), String>;
+
     /// Get total commitment count
     fn commitment_count(&self) -> u64;
-    
+
     /// Get total ciphertext count
     fn ciphertext_count(&self) -> u64;
 }
@@ -302,67 +317,71 @@ where
         Ok(self.service.note_status())
     }
 
-    async fn wallet_commitments(&self, params: Option<PaginationParams>) -> RpcResult<CommitmentResponse> {
+    async fn wallet_commitments(
+        &self,
+        params: Option<PaginationParams>,
+    ) -> RpcResult<CommitmentResponse> {
         let params = params.unwrap_or_default();
         let limit = params.limit.min(1024) as usize;
-        
-        let entries = self.service.commitment_slice(params.start, limit)
+
+        let entries = self
+            .service
+            .commitment_slice(params.start, limit)
             .map_err(|e| {
-                ErrorObjectOwned::owned(
-                    jsonrpsee::types::error::INTERNAL_ERROR_CODE,
-                    e,
-                    None::<()>,
-                )
+                ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
             })?;
-        
+
         let total = self.service.commitment_count();
         let has_more = (params.start + entries.len() as u64) < total;
-        
+
         Ok(CommitmentResponse {
-            entries: entries.into_iter().map(|(index, value)| CommitmentEntry { index, value }).collect(),
+            entries: entries
+                .into_iter()
+                .map(|(index, value)| CommitmentEntry { index, value })
+                .collect(),
             total,
             has_more,
         })
     }
 
-    async fn wallet_ciphertexts(&self, params: Option<PaginationParams>) -> RpcResult<CiphertextResponse> {
+    async fn wallet_ciphertexts(
+        &self,
+        params: Option<PaginationParams>,
+    ) -> RpcResult<CiphertextResponse> {
         let params = params.unwrap_or_default();
         let limit = params.limit.min(1024) as usize;
-        
-        let entries = self.service.ciphertext_slice(params.start, limit)
+
+        let entries = self
+            .service
+            .ciphertext_slice(params.start, limit)
             .map_err(|e| {
-                ErrorObjectOwned::owned(
-                    jsonrpsee::types::error::INTERNAL_ERROR_CODE,
-                    e,
-                    None::<()>,
-                )
+                ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
             })?;
-        
+
         let total = self.service.ciphertext_count();
         let has_more = (params.start + entries.len() as u64) < total;
-        
+
         Ok(CiphertextResponse {
-            entries: entries.into_iter().map(|(index, ct)| {
-                CiphertextEntry {
+            entries: entries
+                .into_iter()
+                .map(|(index, ct)| CiphertextEntry {
                     index,
-                    ciphertext: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &ct),
-                }
-            }).collect(),
+                    ciphertext: base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &ct,
+                    ),
+                })
+                .collect(),
             total,
             has_more,
         })
     }
 
     async fn wallet_nullifiers(&self) -> RpcResult<NullifierResponse> {
-        let nullifiers = self.service.nullifier_list()
-            .map_err(|e| {
-                ErrorObjectOwned::owned(
-                    jsonrpsee::types::error::INTERNAL_ERROR_CODE,
-                    e,
-                    None::<()>,
-                )
-            })?;
-        
+        let nullifiers = self.service.nullifier_list().map_err(|e| {
+            ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
+        })?;
+
         Ok(NullifierResponse {
             count: nullifiers.len() as u64,
             nullifiers: nullifiers.into_iter().map(hex::encode).collect(),
@@ -371,16 +390,18 @@ where
 
     async fn generate_proof(&self, request: ProofRequest) -> RpcResult<ProofResponse> {
         let start = std::time::Instant::now();
-        
+
         // Parse outputs
-        let outputs: Result<Vec<_>, _> = request.outputs.iter()
+        let outputs: Result<Vec<_>, _> = request
+            .outputs
+            .iter()
             .map(|o| {
                 hex::decode(&o.recipient)
                     .map(|pk| (pk, o.amount))
                     .map_err(|e| e.to_string())
             })
             .collect();
-        
+
         let outputs = match outputs {
             Ok(o) => o,
             Err(e) => {
@@ -393,47 +414,53 @@ where
                 });
             }
         };
-        
+
         match self.service.generate_proof(request.inputs, outputs) {
-            Ok((proof, public_inputs)) => {
-                Ok(ProofResponse {
-                    success: true,
-                    proof: Some(base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &proof)),
-                    public_inputs: Some(public_inputs),
-                    error: None,
-                    generation_time_ms: start.elapsed().as_millis() as u64,
-                })
-            }
-            Err(e) => {
-                Ok(ProofResponse {
-                    success: false,
-                    proof: None,
-                    public_inputs: None,
-                    error: Some(e),
-                    generation_time_ms: start.elapsed().as_millis() as u64,
-                })
-            }
+            Ok((proof, public_inputs)) => Ok(ProofResponse {
+                success: true,
+                proof: Some(base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    &proof,
+                )),
+                public_inputs: Some(public_inputs),
+                error: None,
+                generation_time_ms: start.elapsed().as_millis() as u64,
+            }),
+            Err(e) => Ok(ProofResponse {
+                success: false,
+                proof: None,
+                public_inputs: None,
+                error: Some(e),
+                generation_time_ms: start.elapsed().as_millis() as u64,
+            }),
         }
     }
 
-    async fn submit_transaction(&self, bundle: TransactionBundle) -> RpcResult<TransactionResponse> {
+    async fn submit_transaction(
+        &self,
+        bundle: TransactionBundle,
+    ) -> RpcResult<TransactionResponse> {
         // Decode proof
-        let proof = match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &bundle.proof) {
-            Ok(p) => p,
-            Err(e) => {
-                return Ok(TransactionResponse {
-                    success: false,
-                    tx_id: None,
-                    error: Some(format!("Invalid proof encoding: {}", e)),
-                });
-            }
-        };
-        
+        let proof =
+            match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &bundle.proof)
+            {
+                Ok(p) => p,
+                Err(e) => {
+                    return Ok(TransactionResponse {
+                        success: false,
+                        tx_id: None,
+                        error: Some(format!("Invalid proof encoding: {}", e)),
+                    });
+                }
+            };
+
         // Decode ciphertexts
-        let ciphertexts: Result<Vec<_>, _> = bundle.ciphertexts.iter()
+        let ciphertexts: Result<Vec<_>, _> = bundle
+            .ciphertexts
+            .iter()
             .map(|ct| base64::Engine::decode(&base64::engine::general_purpose::STANDARD, ct))
             .collect();
-        
+
         let ciphertexts = match ciphertexts {
             Ok(c) => c,
             Err(e) => {
@@ -444,22 +471,18 @@ where
                 });
             }
         };
-        
+
         match self.service.submit_transaction(proof, ciphertexts) {
-            Ok(tx_id) => {
-                Ok(TransactionResponse {
-                    success: true,
-                    tx_id: Some(hex::encode(tx_id)),
-                    error: None,
-                })
-            }
-            Err(e) => {
-                Ok(TransactionResponse {
-                    success: false,
-                    tx_id: None,
-                    error: Some(e),
-                })
-            }
+            Ok(tx_id) => Ok(TransactionResponse {
+                success: true,
+                tx_id: Some(hex::encode(tx_id)),
+                error: None,
+            }),
+            Err(e) => Ok(TransactionResponse {
+                success: false,
+                tx_id: None,
+                error: Some(e),
+            }),
         }
     }
 
@@ -492,7 +515,11 @@ mod tests {
             Ok(entries)
         }
 
-        fn ciphertext_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, Vec<u8>)>, String> {
+        fn ciphertext_slice(
+            &self,
+            start: u64,
+            limit: usize,
+        ) -> Result<Vec<(u64, Vec<u8>)>, String> {
             let entries: Vec<_> = (start..start + limit as u64)
                 .take(100)
                 .map(|i| (i, vec![i as u8; 32]))
@@ -515,11 +542,19 @@ mod tests {
             }
         }
 
-        fn submit_transaction(&self, _proof: Vec<u8>, _ciphertexts: Vec<Vec<u8>>) -> Result<[u8; 32], String> {
+        fn submit_transaction(
+            &self,
+            _proof: Vec<u8>,
+            _ciphertexts: Vec<Vec<u8>>,
+        ) -> Result<[u8; 32], String> {
             Ok([0xab; 32])
         }
 
-        fn generate_proof(&self, _inputs: Vec<u64>, _outputs: Vec<(Vec<u8>, u64)>) -> Result<(Vec<u8>, Vec<String>), String> {
+        fn generate_proof(
+            &self,
+            _inputs: Vec<u64>,
+            _outputs: Vec<(Vec<u8>, u64)>,
+        ) -> Result<(Vec<u8>, Vec<String>), String> {
             Ok((vec![0u8; 128], vec!["0x1234".to_string()]))
         }
 
@@ -547,7 +582,13 @@ mod tests {
         let service = Arc::new(MockWalletService);
         let rpc = WalletRpc::new(service);
 
-        let response = rpc.wallet_commitments(Some(PaginationParams { start: 0, limit: 10 })).await.unwrap();
+        let response = rpc
+            .wallet_commitments(Some(PaginationParams {
+                start: 0,
+                limit: 10,
+            }))
+            .await
+            .unwrap();
         assert_eq!(response.entries.len(), 10);
         assert!(response.has_more);
     }
@@ -574,7 +615,7 @@ mod tests {
     #[tokio::test]
     async fn test_submit_transaction() {
         use base64::Engine;
-        
+
         let service = Arc::new(MockWalletService);
         let rpc = WalletRpc::new(service);
 

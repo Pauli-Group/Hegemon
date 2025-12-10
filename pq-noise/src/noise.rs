@@ -31,10 +31,12 @@ impl NoiseCipher {
             (keys.responder_to_initiator, keys.initiator_to_responder)
         };
 
-        let send_cipher = Aes256Gcm::new_from_slice(&send_key)
-            .map_err(|e| PqNoiseError::Encryption(format!("failed to create send cipher: {}", e)))?;
-        let recv_cipher = Aes256Gcm::new_from_slice(&recv_key)
-            .map_err(|e| PqNoiseError::Encryption(format!("failed to create recv cipher: {}", e)))?;
+        let send_cipher = Aes256Gcm::new_from_slice(&send_key).map_err(|e| {
+            PqNoiseError::Encryption(format!("failed to create send cipher: {}", e))
+        })?;
+        let recv_cipher = Aes256Gcm::new_from_slice(&recv_key).map_err(|e| {
+            PqNoiseError::Encryption(format!("failed to create recv cipher: {}", e))
+        })?;
 
         Ok(Self {
             send_cipher,
@@ -172,10 +174,10 @@ mod tests {
         let hash1 = transcript.hash();
         transcript.update(b"world");
         let hash2 = transcript.hash();
-        
+
         // Hashes should be different
         assert_ne!(hash1, hash2);
-        
+
         // Finalize should match hash
         assert_eq!(hash2, transcript.finalize());
     }

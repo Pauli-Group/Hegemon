@@ -11,8 +11,8 @@ use crate::config::PqNoiseConfig;
 use crate::error::{HandshakeError, Result};
 use crate::noise::Transcript;
 use crate::types::{
-    FinishMessage, HandshakeMessage, InitHelloMessage, PeerId, RemotePeer,
-    RespHelloMessage, SessionKeys, PROTOCOL_VERSION,
+    FinishMessage, HandshakeMessage, InitHelloMessage, PeerId, RemotePeer, RespHelloMessage,
+    SessionKeys, PROTOCOL_VERSION,
 };
 
 /// Handshake state machine
@@ -108,7 +108,8 @@ impl PqHandshake {
         self.transcript.update(&serialized);
 
         // Store remote peer info
-        let remote_peer = RemotePeer::from_handshake(&init_hello.identity_key, &init_hello.mlkem_public_key)?;
+        let remote_peer =
+            RemotePeer::from_handshake(&init_hello.identity_key, &init_hello.mlkem_public_key)?;
         self.remote_peer = Some(remote_peer.clone());
 
         let mut rng = rand::thread_rng();
@@ -188,7 +189,8 @@ impl PqHandshake {
         self.transcript.update(&serialized);
 
         // Store remote peer info
-        let remote_peer = RemotePeer::from_handshake(&resp_hello.identity_key, &resp_hello.mlkem_public_key)?;
+        let remote_peer =
+            RemotePeer::from_handshake(&resp_hello.identity_key, &resp_hello.mlkem_public_key)?;
         self.remote_peer = Some(remote_peer.clone());
 
         // Decapsulate the ciphertext from responder
@@ -242,13 +244,16 @@ impl PqHandshake {
     /// Process the finish message and complete the handshake (responder side)
     pub fn responder_process_finish(&mut self, finish: FinishMessage) -> Result<SessionKeys> {
         // Get stored remote peer (from init hello)
-        let remote_peer = self.remote_peer.as_ref()
+        let remote_peer = self
+            .remote_peer
+            .as_ref()
             .ok_or(HandshakeError::InvalidState)?;
 
         // Verify initiator's signature
         let signing_data = self.compute_finish_signing_data(&finish);
         let signature = MlDsaSignature::from_bytes(&finish.signature)?;
-        remote_peer.identity_key
+        remote_peer
+            .identity_key
             .verify(&signing_data, &signature)
             .map_err(|_| HandshakeError::InvalidSignature)?;
 
@@ -272,9 +277,13 @@ impl PqHandshake {
 
     /// Derive session keys from handshake state
     fn derive_session_keys(&self) -> Result<SessionKeys> {
-        let mlkem_shared_1 = self.mlkem_shared_1.as_ref()
+        let mlkem_shared_1 = self
+            .mlkem_shared_1
+            .as_ref()
             .ok_or(HandshakeError::KeyDerivation)?;
-        let mlkem_shared_2 = self.mlkem_shared_2.as_ref()
+        let mlkem_shared_2 = self
+            .mlkem_shared_2
+            .as_ref()
             .ok_or(HandshakeError::KeyDerivation)?;
 
         // Convert MlKemSharedSecret to [u8; 32]
@@ -323,7 +332,7 @@ impl PqHandshake {
         hasher.update(&msg.mlkem_ciphertext);
         hasher.update(&msg.identity_key);
         hasher.update(msg.nonce.to_be_bytes());
-        hasher.update(&self.transcript.hash());
+        hasher.update(self.transcript.hash());
         hasher.finalize().to_vec()
     }
 
@@ -332,7 +341,7 @@ impl PqHandshake {
         hasher.update(b"finish");
         hasher.update(&msg.mlkem_ciphertext);
         hasher.update(msg.nonce.to_be_bytes());
-        hasher.update(&self.transcript.hash());
+        hasher.update(self.transcript.hash());
         hasher.finalize().to_vec()
     }
 }
@@ -362,14 +371,18 @@ mod tests {
 
         // Step 2: Responder processes InitHello, creates RespHello
         let mut responder = PqHandshake::new(responder_config);
-        let resp_hello = responder.responder_process_init_hello(init_hello_msg).unwrap();
+        let resp_hello = responder
+            .responder_process_init_hello(init_hello_msg)
+            .unwrap();
         let resp_hello_msg = match resp_hello {
             HandshakeMessage::RespHello(msg) => msg,
             _ => panic!("Expected RespHello"),
         };
 
         // Step 3: Initiator processes RespHello, creates Finish
-        let finish = initiator.initiator_process_resp_hello(resp_hello_msg).unwrap();
+        let finish = initiator
+            .initiator_process_resp_hello(resp_hello_msg)
+            .unwrap();
         let finish_msg = match finish {
             HandshakeMessage::Finish(msg) => msg,
             _ => panic!("Expected Finish"),
@@ -423,7 +436,7 @@ mod tests {
 
         let mut responder = PqHandshake::new(responder_config);
         let result = responder.responder_process_init_hello(init_hello_msg);
-        
+
         assert!(matches!(
             result,
             Err(PqNoiseError::Handshake(HandshakeError::InvalidSignature))
@@ -450,10 +463,12 @@ mod tests {
 
         let mut responder = PqHandshake::new(responder_config);
         let result = responder.responder_process_init_hello(init_hello_msg);
-        
+
         assert!(matches!(
             result,
-            Err(PqNoiseError::Handshake(HandshakeError::VersionMismatch { .. }))
+            Err(PqNoiseError::Handshake(
+                HandshakeError::VersionMismatch { .. }
+            ))
         ));
     }
 }

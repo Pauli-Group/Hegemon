@@ -5,13 +5,13 @@
 //!
 //! Security: This is REAL lattice-based cryptography, not a placeholder.
 
-use alloc::vec::Vec;
 use crate::error::CryptoError;
 use crate::traits::{Signature as SigTrait, SigningKey as SigningKeyTrait, VerifyKey};
+use alloc::vec::Vec;
 
 // Re-export the real ML-DSA-65 types from the ml-dsa crate
-use ml_dsa::{MlDsa65, B32};
 use ml_dsa::signature::{Signer, Verifier};
+use ml_dsa::{MlDsa65, B32};
 
 /// ML-DSA-65 parameter sizes (FIPS 204)
 pub const ML_DSA_PUBLIC_KEY_LEN: usize = 1952;
@@ -32,7 +32,9 @@ impl MlDsaSignature {
                 actual: bytes.len(),
             });
         }
-        Ok(Self { bytes: bytes.to_vec() })
+        Ok(Self {
+            bytes: bytes.to_vec(),
+        })
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -79,14 +81,16 @@ impl VerifyKey for MlDsaPublicKey {
 
     fn verify(&self, message: &[u8], signature: &Self::Signature) -> Result<(), CryptoError> {
         let vk = self.to_inner();
-        
+
         // Decode signature
-        let sig_bytes: [u8; ML_DSA_SIGNATURE_LEN] = signature.bytes.as_slice()
+        let sig_bytes: [u8; ML_DSA_SIGNATURE_LEN] = signature
+            .bytes
+            .as_slice()
             .try_into()
             .map_err(|_| CryptoError::InvalidSignature)?;
         let sig = ml_dsa::Signature::<MlDsa65>::decode(&sig_bytes.into())
             .ok_or(CryptoError::InvalidSignature)?;
-        
+
         // REAL ML-DSA verification using lattice operations
         vk.verify(message, &sig)
             .map_err(|_| CryptoError::VerificationFailed)
@@ -105,10 +109,10 @@ impl VerifyKey for MlDsaPublicKey {
         }
         let mut arr = [0u8; ML_DSA_PUBLIC_KEY_LEN];
         arr.copy_from_slice(bytes);
-        
+
         // Validate it can be decoded
         let _ = ml_dsa::VerifyingKey::<MlDsa65>::decode(&arr.into());
-        
+
         Ok(Self { bytes: arr })
     }
 }
@@ -145,31 +149,33 @@ impl SigningKeyTrait for MlDsaSecretKey {
 
     fn generate_deterministic(seed: &[u8]) -> Self {
         // Use seed to create deterministic key generation
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut xi = [0u8; 32];
         let mut hasher = Sha256::new();
         hasher.update(b"ml-dsa-65-xi");
         hasher.update(seed);
         xi.copy_from_slice(&hasher.finalize());
-        
+
         let seed_b32: B32 = xi.into();
-        
+
         // REAL ML-DSA key generation using lattice operations
         let sk = ml_dsa::SigningKey::<MlDsa65>::from_seed(&seed_b32);
         let sk_bytes = sk.encode();
-        
+
         let mut bytes = [0u8; ML_DSA_SECRET_KEY_LEN];
         bytes.copy_from_slice(sk_bytes.as_ref());
-        
+
         Self { bytes }
     }
 
     fn sign(&self, message: &[u8]) -> Self::Signature {
         let sk = self.to_inner();
-        // REAL ML-DSA signing using lattice operations  
+        // REAL ML-DSA signing using lattice operations
         let sig = sk.sign(message);
         let sig_bytes = sig.encode();
-        MlDsaSignature { bytes: sig_bytes.to_vec() }
+        MlDsaSignature {
+            bytes: sig_bytes.to_vec(),
+        }
     }
 
     fn to_bytes(&self) -> Vec<u8> {
@@ -185,10 +191,10 @@ impl SigningKeyTrait for MlDsaSecretKey {
         }
         let mut arr = [0u8; ML_DSA_SECRET_KEY_LEN];
         arr.copy_from_slice(bytes);
-        
+
         // Validate it can be decoded
         let _ = ml_dsa::SigningKey::<MlDsa65>::decode(&arr.into());
-        
+
         Ok(Self { bytes: arr })
     }
 
@@ -196,10 +202,10 @@ impl SigningKeyTrait for MlDsaSecretKey {
         let sk = self.to_inner();
         let vk = sk.verifying_key();
         let vk_bytes = vk.encode();
-        
+
         let mut bytes = [0u8; ML_DSA_PUBLIC_KEY_LEN];
         bytes.copy_from_slice(vk_bytes.as_ref());
-        
+
         MlDsaPublicKey { bytes }
     }
 }
@@ -214,14 +220,14 @@ mod tests {
         let seed = b"test seed for ml-dsa key generation";
         let signing_key = MlDsaSecretKey::generate_deterministic(seed);
         let verify_key = signing_key.verify_key();
-        
+
         // Sign a message
         let message = b"Hello, post-quantum world!";
         let signature = signing_key.sign(message);
-        
+
         // Verify the signature - THIS IS REAL CRYPTO
         assert!(verify_key.verify(message, &signature).is_ok());
-        
+
         // Verify with wrong message fails
         let wrong_message = b"Wrong message";
         assert!(verify_key.verify(wrong_message, &signature).is_err());
@@ -234,7 +240,7 @@ mod tests {
         assert_eq!(ML_DSA_SECRET_KEY_LEN, 4032);
         assert_eq!(ML_DSA_SIGNATURE_LEN, 3309);
     }
-    
+
     #[test]
     fn test_deterministic_keygen() {
         // Same seed should produce same keypair

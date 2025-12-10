@@ -2,11 +2,10 @@
 //!
 //! Tests for the post-quantum secure peer-to-peer communication layer.
 
-use network::{
-    ConnectionMode, PqPeerIdentity, PqTransportConfig,
-    upgrade_inbound, upgrade_outbound,
-};
 use network::p2p::WireMessage;
+use network::{
+    ConnectionMode, PqPeerIdentity, PqTransportConfig, upgrade_inbound, upgrade_outbound,
+};
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 
@@ -16,14 +15,8 @@ async fn test_pq_handshake_succeeds() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
-    let node1_identity = PqPeerIdentity::new(
-        b"test-node-1-seed",
-        PqTransportConfig::development(),
-    );
-    let node2_identity = PqPeerIdentity::new(
-        b"test-node-2-seed",
-        PqTransportConfig::development(),
-    );
+    let node1_identity = PqPeerIdentity::new(b"test-node-1-seed", PqTransportConfig::development());
+    let node2_identity = PqPeerIdentity::new(b"test-node-2-seed", PqTransportConfig::development());
 
     // Record expected peer IDs
     let expected_node1_peer_id = node1_identity.peer_id();
@@ -164,7 +157,10 @@ async fn test_pq_concurrent_connections() {
     // Collect all client connections
     let mut client_connections = Vec::new();
     for handle in client_handles {
-        let conn = handle.await.unwrap().expect("client handshake should succeed");
+        let conn = handle
+            .await
+            .unwrap()
+            .expect("client handshake should succeed");
         assert_eq!(conn.peer_id(), server_peer_id);
         client_connections.push(conn);
     }
@@ -178,13 +174,13 @@ async fn test_pq_concurrent_connections() {
 #[test]
 fn test_peer_id_deterministic() {
     let seed = b"deterministic-seed";
-    
+
     let identity1 = PqPeerIdentity::new(seed, PqTransportConfig::default());
     let identity2 = PqPeerIdentity::new(seed, PqTransportConfig::default());
-    
+
     // Same seed should produce same peer ID
     assert_eq!(identity1.peer_id(), identity2.peer_id());
-    
+
     // Different seed should produce different peer ID
     let identity3 = PqPeerIdentity::new(b"different-seed", PqTransportConfig::default());
     assert_ne!(identity1.peer_id(), identity3.peer_id());
@@ -210,7 +206,7 @@ fn test_transport_config_options() {
 #[test]
 fn test_connection_mode() {
     assert_eq!(ConnectionMode::default(), ConnectionMode::Hybrid);
-    
+
     // Verify all modes exist
     let _legacy = ConnectionMode::Legacy;
     let _pq = ConnectionMode::PqSecure;
@@ -223,7 +219,7 @@ fn test_connection_mode() {
 #[tokio::test]
 async fn test_pq_handshake_latency() {
     use std::time::Instant;
-    
+
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -236,12 +232,12 @@ async fn test_pq_handshake_latency() {
     });
 
     let socket = TcpStream::connect(addr).await.unwrap();
-    
+
     // Measure handshake latency
     let start = Instant::now();
     let conn1 = upgrade_outbound(&node1, socket, addr).await;
     let elapsed = start.elapsed();
-    
+
     // Wait for responder
     let conn2 = responder_handle.await.unwrap();
 
@@ -258,13 +254,16 @@ async fn test_pq_handshake_latency() {
         elapsed,
         max_latency
     );
-    
+
     // Log actual latency for monitoring
     println!("PQ handshake latency: {:?} (target: <100ms)", elapsed);
-    
+
     // Soft warning if above ideal target
     if elapsed > Duration::from_millis(100) {
-        println!("WARNING: Handshake latency {:?} exceeds ideal 100ms target", elapsed);
+        println!(
+            "WARNING: Handshake latency {:?} exceeds ideal 100ms target",
+            elapsed
+        );
     }
 }
 
@@ -272,7 +271,7 @@ async fn test_pq_handshake_latency() {
 #[tokio::test]
 async fn test_pq_handshake_latency_average() {
     use std::time::Instant;
-    
+
     const ITERATIONS: usize = 5;
     let mut latencies = Vec::with_capacity(ITERATIONS);
 
@@ -291,11 +290,11 @@ async fn test_pq_handshake_latency_average() {
         });
 
         let socket = TcpStream::connect(addr).await.unwrap();
-        
+
         let start = Instant::now();
         let _ = upgrade_outbound(&node1, socket, addr).await.unwrap();
         let elapsed = start.elapsed();
-        
+
         let _ = responder_handle.await.unwrap().unwrap();
         latencies.push(elapsed);
     }

@@ -27,8 +27,8 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-pub use pallet::*;
 pub use inherent::*;
+pub use pallet::*;
 
 pub mod commitment;
 pub mod inherent;
@@ -50,7 +50,8 @@ use frame_system::pallet_prelude::*;
 use log::{info, warn};
 use sp_runtime::traits::AccountIdConversion;
 use sp_runtime::transaction_validity::{
-    InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity, ValidTransaction,
+    InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity,
+    ValidTransaction,
 };
 use sp_std::vec;
 use sp_std::vec::Vec;
@@ -59,9 +60,9 @@ use sp_std::vec::Vec;
 const PALLET_ID: PalletId = PalletId(*b"shld/pol");
 
 /// Zero nullifier constant.
-/// 
+///
 /// SECURITY: Zero nullifiers are INVALID and must be rejected.
-/// 
+///
 /// Background: STARK proofs use fixed-size traces, which historically led to
 /// designs where unused slots were padded with zeros. However, this creates a
 /// security vulnerability: if an attacker could craft a witness that produces
@@ -114,6 +115,7 @@ impl WeightInfo for DefaultWeightInfo {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[frame_support::pallet]
 pub mod pallet {
     use super::*;
@@ -201,8 +203,7 @@ pub mod pallet {
     /// Current verifying key parameters.
     #[pallet::storage]
     #[pallet::getter(fn verifying_key_params)]
-    pub type VerifyingKeyParamsStorage<T: Config> =
-        StorageValue<_, VerifyingKeyParams, ValueQuery>;
+    pub type VerifyingKeyParamsStorage<T: Config> = StorageValue<_, VerifyingKeyParams, ValueQuery>;
 
     /// Verifying key data (stored separately due to size).
     #[pallet::storage]
@@ -459,7 +460,7 @@ pub mod pallet {
                     return Err(Error::<T>::ZeroNullifierSubmitted.into());
                 }
             }
-            
+
             // For unshielding (value_balance < 0) or pure transfers (value_balance == 0 with outputs),
             // there must be at least one input nullifier to spend from
             if value_balance <= 0 && !commitments.is_empty() && nullifiers.is_empty() {
@@ -630,10 +631,7 @@ pub mod pallet {
         /// Can only be called by AdminOrigin (governance).
         #[pallet::call_index(2)]
         #[pallet::weight(T::WeightInfo::update_verifying_key())]
-        pub fn update_verifying_key(
-            origin: OriginFor<T>,
-            new_key: VerifyingKey,
-        ) -> DispatchResult {
+        pub fn update_verifying_key(origin: OriginFor<T>, new_key: VerifyingKey) -> DispatchResult {
             T::AdminOrigin::ensure_origin(origin)?;
 
             let block = <frame_system::Pallet<T>>::block_number();
@@ -680,6 +678,7 @@ pub mod pallet {
 
             // Verify the commitment matches the plaintext data
             // This ensures the miner can't claim more than stated
+            #[allow(deprecated)]
             let expected_commitment = commitment::coinbase_commitment(
                 &coinbase_data.recipient_address,
                 coinbase_data.amount,
@@ -971,10 +970,8 @@ pub mod pallet {
 
         fn create_inherent(data: &sp_inherents::InherentData) -> Option<Self::Call> {
             // Extract shielded coinbase data from inherent data
-            let coinbase_data: Option<crate::inherent::ShieldedCoinbaseInherentData> = data
-                .get_data(&Self::INHERENT_IDENTIFIER)
-                .ok()
-                .flatten();
+            let coinbase_data: Option<crate::inherent::ShieldedCoinbaseInherentData> =
+                data.get_data(&Self::INHERENT_IDENTIFIER).ok().flatten();
 
             coinbase_data.map(|cb| Call::mint_coinbase {
                 coinbase_data: cb.note_data,
@@ -992,6 +989,7 @@ pub mod pallet {
             // Validate the inherent call
             if let Call::mint_coinbase { coinbase_data } = call {
                 // Verify commitment matches plaintext data
+                #[allow(deprecated)]
                 let expected = commitment::coinbase_commitment(
                     &coinbase_data.recipient_address,
                     coinbase_data.amount,
@@ -1047,7 +1045,7 @@ pub mod pallet {
                     log::info!(target: "shielded-pool", "  ciphertexts.len = {}", ciphertexts.len());
                     log::info!(target: "shielded-pool", "  anchor = {:02x?}", &anchor[..8]);
                     log::info!(target: "shielded-pool", "  binding_sig[0..8] = {:02x?}", &binding_sig.data[..8]);
-                    
+
                     // Basic validation before accepting into pool
 
                     // Check counts are valid

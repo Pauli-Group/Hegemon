@@ -102,7 +102,9 @@ impl PqTransport {
 
         // Step 4: Complete handshake
         let session_keys = handshake.initiator_complete()?;
-        let remote_peer = handshake.remote_peer().cloned()
+        let remote_peer = handshake
+            .remote_peer()
+            .cloned()
             .ok_or(HandshakeError::InvalidState)?;
         let peer_id = remote_peer.peer_id;
 
@@ -180,7 +182,9 @@ impl PqTransport {
 
         // Step 4: Complete handshake
         let session_keys = handshake.responder_process_finish(finish_msg)?;
-        let remote_peer = handshake.remote_peer().cloned()
+        let remote_peer = handshake
+            .remote_peer()
+            .cloned()
             .ok_or(HandshakeError::InvalidState)?;
         let peer_id = remote_peer.peer_id;
 
@@ -250,9 +254,9 @@ impl PqTransportBuilder {
 
     /// Build the transport
     pub fn build(self) -> Result<PqTransport> {
-        let seed = self.identity_seed.ok_or_else(|| {
-            PqNoiseError::InvalidConfig("identity seed is required".to_string())
-        })?;
+        let seed = self
+            .identity_seed
+            .ok_or_else(|| PqNoiseError::InvalidConfig("identity seed is required".to_string()))?;
 
         let identity = crate::types::LocalIdentity::generate(&seed);
         let config = PqNoiseConfig {
@@ -301,11 +305,9 @@ mod tests {
 
         // Test communication
         let message = b"Test message via transport";
-        
-        let (send_result, recv_result) = tokio::join!(
-            initiator_session.send(message),
-            responder_session.recv()
-        );
+
+        let (send_result, recv_result) =
+            tokio::join!(initiator_session.send(message), responder_session.recv());
 
         send_result.unwrap();
         let received = recv_result.unwrap().unwrap();
@@ -364,9 +366,9 @@ mod tests {
     #[tokio::test]
     async fn test_transport_timeout() {
         use std::io;
-        use tokio::io::{AsyncRead, AsyncWrite};
         use std::pin::Pin;
         use std::task::{Context, Poll};
+        use tokio::io::{AsyncRead, AsyncWrite};
 
         // A stream that never completes reads or writes (simulates network hang)
         struct HangingStream;
@@ -401,14 +403,13 @@ mod tests {
         }
 
         let identity = LocalIdentity::generate(b"timeout-test");
-        let config = PqNoiseConfig::new(identity, false)
-            .with_timeout(Duration::from_millis(50));
+        let config = PqNoiseConfig::new(identity, false).with_timeout(Duration::from_millis(50));
 
         let transport = PqTransport::new(config);
 
         // Use hanging stream that never returns reads
         let result = transport.upgrade_outbound(HangingStream).await;
-        
+
         assert!(matches!(result, Err(PqNoiseError::Timeout)));
     }
 }

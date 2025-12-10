@@ -11,8 +11,8 @@ use std::time::Duration;
 
 use hegemon_node::{config::NodeConfig, NodeService};
 use network::{
-    NatTraversalConfig, P2PService, PeerIdentity, PeerStore, PeerStoreConfig, 
-    PqPeerIdentity, PqTransportConfig, RelayConfig,
+    NatTraversalConfig, P2PService, PeerIdentity, PeerStore, PeerStoreConfig, PqPeerIdentity,
+    PqTransportConfig, RelayConfig,
 };
 use tokio::time::{sleep, timeout};
 
@@ -137,12 +137,18 @@ async fn test_pq_transport_config_variants() {
     // Development config (PQ optional)
     let dev_config = PqTransportConfig::development();
     assert!(!dev_config.require_pq, "Dev config should not require PQ");
-    assert!(dev_config.verbose_logging, "Dev config should have verbose logging");
+    assert!(
+        dev_config.verbose_logging,
+        "Dev config should have verbose logging"
+    );
 
     // Production config (PQ required)
     let prod_config = PqTransportConfig::production();
     assert!(prod_config.require_pq, "Prod config should require PQ");
-    assert!(!prod_config.verbose_logging, "Prod config should not have verbose logging");
+    assert!(
+        !prod_config.verbose_logging,
+        "Prod config should not have verbose logging"
+    );
 
     // Custom config
     let mut custom_config = PqTransportConfig::default();
@@ -298,7 +304,7 @@ fn test_pq_identity_has_peer_id() {
 
     let peer_id = identity.peer_id();
     assert!(!peer_id.is_empty(), "Should have a peer ID");
-    
+
     // Peer ID should be 32 bytes (SHA256 hash)
     assert_eq!(peer_id.len(), 32, "Peer ID should be 32 bytes");
 }
@@ -380,7 +386,10 @@ async fn test_pq_verbose_logging_mode() -> TestResult<()> {
     })
     .await?;
 
-    assert!(synced, "Block should propagate with verbose logging enabled");
+    assert!(
+        synced,
+        "Block should propagate with verbose logging enabled"
+    );
 
     // Cleanup
     node_a.shutdown().await?;

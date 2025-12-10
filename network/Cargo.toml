@@ -26,3 +26,6 @@ natpmp = { version = "0.5", default-features = true }
 proptest = "1"
 bincode = "1"
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
+
+[lints]
+workspace = true

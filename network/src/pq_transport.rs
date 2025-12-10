@@ -66,7 +66,7 @@ impl PqPeerIdentity {
     pub fn new(seed: &[u8], transport_config: PqTransportConfig) -> Self {
         let legacy = PeerIdentity::generate(seed);
         let local_identity = pq_noise::types::LocalIdentity::generate(seed);
-        
+
         let pq_config = PqNoiseConfig::new(local_identity, transport_config.require_pq)
             .with_timeout(transport_config.handshake_timeout);
 
@@ -109,7 +109,7 @@ pub async fn upgrade_outbound(
     addr: SocketAddr,
 ) -> Result<PqSecureConnection, NetworkError> {
     let transport = identity.transport();
-    
+
     match transport.upgrade_outbound(socket).await {
         Ok((session, peer_id)) => {
             tracing::info!(
@@ -137,7 +137,7 @@ pub async fn upgrade_inbound(
     addr: SocketAddr,
 ) -> Result<PqSecureConnection, NetworkError> {
     let transport = identity.transport();
-    
+
     match transport.upgrade_inbound(socket).await {
         Ok((session, peer_id)) => {
             tracing::info!(
@@ -195,12 +195,10 @@ impl PqSecureConnection {
     /// Send a wire message
     pub async fn send(&mut self, msg: WireMessage) -> Result<(), NetworkError> {
         let bytes = bincode::serialize(&msg)?;
-        self.session.send(&bytes).await.map_err(|e| {
-            NetworkError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ))
-        })
+        self.session
+            .send(&bytes)
+            .await
+            .map_err(|e| NetworkError::Io(std::io::Error::other(e.to_string())))
     }
 
     /// Receive a wire message
@@ -211,10 +209,7 @@ impl PqSecureConnection {
                 Ok(Some(msg))
             }
             Ok(None) => Ok(None),
-            Err(e) => Err(NetworkError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ))),
+            Err(e) => Err(NetworkError::Io(std::io::Error::other(e.to_string()))),
         }
     }
 
@@ -230,21 +225,15 @@ impl PqSecureConnection {
 }
 
 /// Connection mode: Legacy (current implementation) or PQ-secure
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ConnectionMode {
     /// Use legacy handshake (current implementation)
     Legacy,
     /// Use PQ-secure handshake with ML-KEM-768
     PqSecure,
     /// Try PQ first, fall back to legacy if not supported
+    #[default]
     Hybrid,
-}
-
-impl Default for ConnectionMode {
-    fn default() -> Self {
-        // Default to hybrid for gradual rollout
-        Self::Hybrid
-    }
 }
 
 #[cfg(test)]
@@ -257,8 +246,10 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let initiator_identity = PqPeerIdentity::new(b"test-initiator", PqTransportConfig::development());
-        let responder_identity = PqPeerIdentity::new(b"test-responder", PqTransportConfig::development());
+        let initiator_identity =
+            PqPeerIdentity::new(b"test-initiator", PqTransportConfig::development());
+        let responder_identity =
+            PqPeerIdentity::new(b"test-responder", PqTransportConfig::development());
 
         let responder_handle = tokio::spawn(async move {
             let (socket, peer_addr) = listener.accept().await.unwrap();
@@ -274,14 +265,14 @@ mod tests {
 
         // Test message exchange
         initiator_conn.send(WireMessage::Ping).await.unwrap();
-        
+
         match responder_conn.recv().await.unwrap() {
             Some(WireMessage::Ping) => {}
             other => panic!("Expected Ping, got {:?}", other),
         }
 
         responder_conn.send(WireMessage::Pong).await.unwrap();
-        
+
         match initiator_conn.recv().await.unwrap() {
             Some(WireMessage::Pong) => {}
             other => panic!("Expected Pong, got {:?}", other),
@@ -291,7 +282,7 @@ mod tests {
     #[test]
     fn test_pq_peer_identity() {
         let identity = PqPeerIdentity::new(b"test-seed", PqTransportConfig::default());
-        
+
         // Peer ID should be consistent
         let id1 = identity.peer_id();
         let id2 = identity.peer_id();

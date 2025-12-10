@@ -39,18 +39,16 @@ use std::time::Duration;
 
 use rand::rngs::OsRng;
 use rand::RngCore;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 // Wallet imports
 use wallet::{
-    DerivedKeys, RootSecret, ShieldedAddress,
-    StarkProver, StarkProverConfig,
-    WalletStore,
-    NoteScanner, ScannerConfig, PositionedNote, ScannedNote,
+    DerivedKeys, NoteScanner, PositionedNote, RootSecret, ScannedNote, ScannerConfig,
+    ShieldedAddress, StarkProver, StarkProverConfig, WalletStore,
 };
 
 // Crypto imports
-use crypto::ml_dsa::{MlDsaSecretKey, MlDsaPublicKey};
+use crypto::ml_dsa::{MlDsaPublicKey, MlDsaSecretKey};
 use crypto::traits::SigningKey;
 
 // Substrate-specific imports (only when feature enabled)
@@ -115,7 +113,7 @@ impl MinerAccount {
         // Generate random seed
         let mut seed = [0u8; 32];
         OsRng.fill_bytes(&mut seed);
-        
+
         let secret_key = MlDsaSecretKey::generate_deterministic(&seed);
         let public_key = secret_key.verify_key();
         let account_id = Self::derive_account_id(&public_key);
@@ -427,7 +425,7 @@ impl MockChainState {
             return [0u8; 32];
         }
         // Simplified: just hash all commitments together
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         for c in &self.commitments {
             hasher.update(c);
@@ -689,12 +687,8 @@ mod shield_tests {
         state.mine_block(miner.account_id());
 
         // Try to shield more than available
-        let result = state.process_shield(
-            miner.account_id(),
-            TEST_BLOCK_REWARD * 2,
-            [0; 32],
-            vec![],
-        );
+        let result =
+            state.process_shield(miner.account_id(), TEST_BLOCK_REWARD * 2, [0; 32], vec![]);
         assert!(result.is_err());
 
         // Balance should be unchanged
@@ -714,7 +708,11 @@ mod shield_tests {
         let initial_balance = state.balance_of(miner.account_id());
 
         // Shield in three transactions
-        let amounts = [TEST_BLOCK_REWARD, TEST_BLOCK_REWARD / 2, TEST_BLOCK_REWARD / 4];
+        let amounts = [
+            TEST_BLOCK_REWARD,
+            TEST_BLOCK_REWARD / 2,
+            TEST_BLOCK_REWARD / 4,
+        ];
         for (i, &amount) in amounts.iter().enumerate() {
             let commitment = [(i + 1) as u8; 32];
             let result = state.process_shield(miner.account_id(), amount, commitment, vec![]);
@@ -888,31 +886,17 @@ mod full_flow_tests {
 
         // Alice shields
         state
-            .process_shield(
-                alice.account_id(),
-                TEST_BLOCK_REWARD,
-                [0xaa; 32],
-                vec![],
-            )
+            .process_shield(alice.account_id(), TEST_BLOCK_REWARD, [0xaa; 32], vec![])
             .unwrap();
 
         // Bob shields
         state
-            .process_shield(
-                bob.account_id(),
-                TEST_BLOCK_REWARD / 2,
-                [0xbb; 32],
-                vec![],
-            )
+            .process_shield(bob.account_id(), TEST_BLOCK_REWARD / 2, [0xbb; 32], vec![])
             .unwrap();
 
         // Charlie receives unshield
         state
-            .process_unshield(
-                charlie.account_id(),
-                TEST_BLOCK_REWARD / 4,
-                [0x01; 32],
-            )
+            .process_unshield(charlie.account_id(), TEST_BLOCK_REWARD / 4, [0x01; 32])
             .unwrap();
 
         // Verify final state
@@ -950,11 +934,11 @@ mod integration_tests {
     #[ignore = "Requires full Substrate node - run with cargo test --ignored"]
     async fn test_full_substrate_integration() {
         // Test configuration
-        let endpoint = std::env::var("HEGEMON_RPC_URL")
-            .unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
-        
+        let endpoint =
+            std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
+
         eprintln!("Connecting to node at: {}", endpoint);
-        
+
         // 1. Connect to node
         let client = wallet::SubstrateRpcClient::connect(&endpoint).await;
         if client.is_err() {
@@ -963,12 +947,12 @@ mod integration_tests {
             panic!("Node connection failed: {:?}", client.err());
         }
         let client = client.unwrap();
-        
+
         // 2. Create a test wallet
         let wallet = TestWallet::new_random().unwrap();
         let shield_address = wallet.default_address().unwrap();
         eprintln!("Created test wallet with address");
-        
+
         // 3. Get chain metadata
         let metadata = client.get_chain_metadata().await;
         if metadata.is_err() {
@@ -976,8 +960,11 @@ mod integration_tests {
             return;
         }
         let metadata = metadata.unwrap();
-        eprintln!("Chain at block {} (spec v{})", metadata.block_number, metadata.spec_version);
-        
+        eprintln!(
+            "Chain at block {} (spec v{})",
+            metadata.block_number, metadata.spec_version
+        );
+
         // 4. For full integration, we would:
         //    - Mine blocks to fund a test account
         //    - Submit a shield transaction
@@ -987,7 +974,7 @@ mod integration_tests {
         //
         // This requires implementing proper test account funding via mining.
         // For now, verify we can query basic chain state.
-        
+
         eprintln!("Integration test: Chain connection verified");
         eprintln!("TODO: Complete full transaction flow when test harness is ready");
     }
@@ -1006,14 +993,14 @@ mod integration_tests {
     async fn test_mining_reward_flow_integration() {
         use std::time::Duration;
         use tokio::time::sleep;
-        
+
         // Test configuration
-        let endpoint = std::env::var("HEGEMON_RPC_URL")
-            .unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
-        
+        let endpoint =
+            std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
+
         eprintln!("=== Protocol 14.2.0: Mining Reward Bootstrap Test ===");
         eprintln!("Connecting to node at: {}", endpoint);
-        
+
         // 1. Connect to node
         let client = wallet::SubstrateRpcClient::connect(&endpoint).await;
         if client.is_err() {
@@ -1022,54 +1009,68 @@ mod integration_tests {
             panic!("Node connection failed: {:?}", client.err());
         }
         let client = client.unwrap();
-        
+
         // 2. Generate fresh ML-DSA keypair for a miner account
         let miner = MinerAccount::generate();
         eprintln!("Generated fresh ML-DSA miner keypair");
         eprintln!("  Account ID: 0x{}", hex::encode(miner.account_id()));
-        
+
         // 3. Query initial balance (should be 0 for fresh account)
-        let initial_balance = client.query_balance(miner.account_id()).await
+        let initial_balance = client
+            .query_balance(miner.account_id())
+            .await
             .expect("Failed to query initial balance");
         eprintln!("  Initial balance: {} (expected 0)", initial_balance);
-        
+
         // For a fresh account, balance should be 0
         // NOTE: In dev mode with pre-funded accounts, Alice's balance won't be 0.
         // This test specifically uses a fresh keypair that has never been funded.
-        assert_eq!(initial_balance, 0, "Fresh miner account should have zero balance");
-        
+        assert_eq!(
+            initial_balance, 0,
+            "Fresh miner account should have zero balance"
+        );
+
         // 4. Get current block number to track mining progress
-        let metadata = client.get_chain_metadata().await
+        let metadata = client
+            .get_chain_metadata()
+            .await
             .expect("Failed to get chain metadata");
         let start_block = metadata.block_number;
         eprintln!("  Current block: #{}", start_block);
-        
+
         // 5. Wait for mining to produce blocks
         // In a real test harness, we would:
         //   a) Set this miner as the coinbase recipient
         //   b) Mine blocks directly
         // For now, we demonstrate the balance query flow works
-        
+
         eprintln!("\n  Mining verification requires:");
         eprintln!("    - Node configured with miner as coinbase recipient");
         eprintln!("    - Mining enabled (HEGEMON_MINE=1)");
         eprintln!("    - Waiting for blocks to be produced");
-        
+
         // Wait a bit for potential block production
         sleep(Duration::from_secs(3)).await;
-        
+
         // 6. Query final balance
-        let final_balance = client.query_balance(miner.account_id()).await
+        let final_balance = client
+            .query_balance(miner.account_id())
+            .await
             .expect("Failed to query final balance");
-        let final_metadata = client.get_chain_metadata().await
+        let final_metadata = client
+            .get_chain_metadata()
+            .await
             .expect("Failed to get final chain metadata");
-        
-        eprintln!("\n  Block progression: #{} → #{}", start_block, final_metadata.block_number);
+
+        eprintln!(
+            "\n  Block progression: #{} → #{}",
+            start_block, final_metadata.block_number
+        );
         eprintln!("  Final balance: {}", final_balance);
-        
+
         // In a full test with mining to this account, we would verify:
         // assert!(final_balance > 0, "Miner should receive block rewards");
-        
+
         // For now, verify the balance query mechanism works correctly
         eprintln!("\n✅ Balance query mechanism verified");
         eprintln!("   Protocol 14.2.0: Infrastructure for mining bootstrap is functional");
@@ -1088,10 +1089,10 @@ mod integration_tests {
 #[cfg(test)]
 mod slh_dsa_tests {
     use crypto::slh_dsa::{
-        SlhDsaSecretKey, SlhDsaPublicKey, SlhDsaSignature,
-        SLH_DSA_PUBLIC_KEY_LEN, SLH_DSA_SECRET_KEY_LEN, SLH_DSA_SIGNATURE_LEN,
+        SlhDsaPublicKey, SlhDsaSecretKey, SlhDsaSignature, SLH_DSA_PUBLIC_KEY_LEN,
+        SLH_DSA_SECRET_KEY_LEN, SLH_DSA_SIGNATURE_LEN,
     };
-    use crypto::traits::{SigningKey, VerifyKey, Signature};
+    use crypto::traits::{Signature, SigningKey, VerifyKey};
     use rand::rngs::OsRng;
     use rand::RngCore;
 
@@ -1099,59 +1100,83 @@ mod slh_dsa_tests {
     #[tokio::test]
     async fn test_slh_dsa_keypair_generation() {
         eprintln!("Generating SLH-DSA keypair (SPHINCS+-SHAKE-128f)...");
-        
+
         // Generate deterministic keypair
         let mut seed = [0u8; 32];
         OsRng.fill_bytes(&mut seed);
-        
+
         let start = std::time::Instant::now();
         let secret_key = SlhDsaSecretKey::generate_deterministic(&seed);
         let keygen_time = start.elapsed();
         eprintln!("  Keypair generated in {:?}", keygen_time);
-        
+
         let public_key = secret_key.verify_key();
-        
+
         // Verify key sizes
         let sk_bytes = secret_key.to_bytes();
         let pk_bytes = public_key.to_bytes();
-        
-        eprintln!("  Secret key size: {} bytes (expected {})", sk_bytes.len(), SLH_DSA_SECRET_KEY_LEN);
-        eprintln!("  Public key size: {} bytes (expected {})", pk_bytes.len(), SLH_DSA_PUBLIC_KEY_LEN);
-        
-        assert_eq!(sk_bytes.len(), SLH_DSA_SECRET_KEY_LEN, "SLH-DSA secret key should be 64 bytes");
-        assert_eq!(pk_bytes.len(), SLH_DSA_PUBLIC_KEY_LEN, "SLH-DSA public key should be 32 bytes");
+
+        eprintln!(
+            "  Secret key size: {} bytes (expected {})",
+            sk_bytes.len(),
+            SLH_DSA_SECRET_KEY_LEN
+        );
+        eprintln!(
+            "  Public key size: {} bytes (expected {})",
+            pk_bytes.len(),
+            SLH_DSA_PUBLIC_KEY_LEN
+        );
+
+        assert_eq!(
+            sk_bytes.len(),
+            SLH_DSA_SECRET_KEY_LEN,
+            "SLH-DSA secret key should be 64 bytes"
+        );
+        assert_eq!(
+            pk_bytes.len(),
+            SLH_DSA_PUBLIC_KEY_LEN,
+            "SLH-DSA public key should be 32 bytes"
+        );
     }
 
     /// Test SLH-DSA signature generation and verification.
     #[tokio::test]
     async fn test_slh_dsa_sign_verify() {
         eprintln!("Testing SLH-DSA sign/verify...");
-        
+
         // Generate keypair
         let mut seed = [0u8; 32];
         OsRng.fill_bytes(&mut seed);
         let secret_key = SlhDsaSecretKey::generate_deterministic(&seed);
         let public_key = secret_key.verify_key();
-        
+
         // Sign a message
         let message = b"Hello, post-quantum world! This tests SLH-DSA (FIPS 205).";
-        
+
         let start = std::time::Instant::now();
         let signature = secret_key.sign(message);
         let sign_time = start.elapsed();
         eprintln!("  Signature generated in {:?}", sign_time);
-        
+
         // Verify signature size
         let sig_bytes = signature.as_bytes();
-        eprintln!("  Signature size: {} bytes (expected {})", sig_bytes.len(), SLH_DSA_SIGNATURE_LEN);
-        assert_eq!(sig_bytes.len(), SLH_DSA_SIGNATURE_LEN, "SLH-DSA signature should be 17088 bytes");
-        
+        eprintln!(
+            "  Signature size: {} bytes (expected {})",
+            sig_bytes.len(),
+            SLH_DSA_SIGNATURE_LEN
+        );
+        assert_eq!(
+            sig_bytes.len(),
+            SLH_DSA_SIGNATURE_LEN,
+            "SLH-DSA signature should be 17088 bytes"
+        );
+
         // Verify signature
         let start = std::time::Instant::now();
         let result = public_key.verify(message, &signature);
         let verify_time = start.elapsed();
         eprintln!("  Signature verified in {:?}", verify_time);
-        
+
         assert!(result.is_ok(), "Valid signature should verify");
     }
 
@@ -1159,31 +1184,34 @@ mod slh_dsa_tests {
     #[tokio::test]
     async fn test_slh_dsa_rejects_invalid_signature() {
         eprintln!("Testing SLH-DSA invalid signature rejection...");
-        
+
         // Generate keypair
         let mut seed = [0u8; 32];
         OsRng.fill_bytes(&mut seed);
         let secret_key = SlhDsaSecretKey::generate_deterministic(&seed);
         let public_key = secret_key.verify_key();
-        
+
         // Sign a message
         let message = b"Original message";
         let signature = secret_key.sign(message);
-        
+
         // Try to verify with different message
         let wrong_message = b"Different message";
         let result = public_key.verify(wrong_message, &signature);
-        assert!(result.is_err(), "Signature should not verify for wrong message");
-        
+        assert!(
+            result.is_err(),
+            "Signature should not verify for wrong message"
+        );
+
         // Create corrupted signature
         let mut corrupted_sig_bytes = signature.as_bytes().to_vec();
         corrupted_sig_bytes[1000] ^= 0xff; // Flip some bits
-        
+
         if let Ok(corrupted_sig) = SlhDsaSignature::from_bytes(&corrupted_sig_bytes) {
             let result = public_key.verify(message, &corrupted_sig);
             assert!(result.is_err(), "Corrupted signature should not verify");
         }
-        
+
         eprintln!("  Invalid signature correctly rejected");
     }
 
@@ -1191,29 +1219,32 @@ mod slh_dsa_tests {
     #[tokio::test]
     async fn test_slh_dsa_key_serialization() {
         eprintln!("Testing SLH-DSA key serialization...");
-        
+
         // Generate keypair
         let mut seed = [0u8; 32];
         OsRng.fill_bytes(&mut seed);
         let original_sk = SlhDsaSecretKey::generate_deterministic(&seed);
         let original_pk = original_sk.verify_key();
-        
+
         // Serialize and deserialize secret key
         let sk_bytes = original_sk.to_bytes();
-        let restored_sk = SlhDsaSecretKey::from_bytes(&sk_bytes)
-            .expect("Secret key deserialization should work");
-        
+        let restored_sk =
+            SlhDsaSecretKey::from_bytes(&sk_bytes).expect("Secret key deserialization should work");
+
         // Serialize and deserialize public key
         let pk_bytes = original_pk.to_bytes();
-        let restored_pk = SlhDsaPublicKey::from_bytes(&pk_bytes)
-            .expect("Public key deserialization should work");
-        
+        let restored_pk =
+            SlhDsaPublicKey::from_bytes(&pk_bytes).expect("Public key deserialization should work");
+
         // Verify restored keys work
         let message = b"Test serialization roundtrip";
         let signature = restored_sk.sign(message);
         let result = restored_pk.verify(message, &signature);
-        assert!(result.is_ok(), "Restored keys should work for signing/verification");
-        
+        assert!(
+            result.is_ok(),
+            "Restored keys should work for signing/verification"
+        );
+
         eprintln!("  Key serialization roundtrip successful");
     }
 
@@ -1222,49 +1253,61 @@ mod slh_dsa_tests {
     /// Compares key sizes and signature sizes between the two PQ signature schemes.
     #[tokio::test]
     async fn test_slh_dsa_vs_ml_dsa_comparison() {
-        use crypto::ml_dsa::{MlDsaSecretKey as MlSk, ML_DSA_SECRET_KEY_LEN, ML_DSA_PUBLIC_KEY_LEN, ML_DSA_SIGNATURE_LEN};
+        use crypto::ml_dsa::{
+            MlDsaSecretKey as MlSk, ML_DSA_PUBLIC_KEY_LEN, ML_DSA_SECRET_KEY_LEN,
+            ML_DSA_SIGNATURE_LEN,
+        };
         use crypto::traits::Signature as SigTrait;
-        
+
         eprintln!("Comparing SLH-DSA vs ML-DSA...");
-        
+
         let mut seed = [0u8; 32];
         OsRng.fill_bytes(&mut seed);
-        
+
         // Generate both keypairs
         let slh_sk = SlhDsaSecretKey::generate_deterministic(&seed);
         let ml_sk = MlSk::generate_deterministic(&seed);
-        
+
         let slh_pk = slh_sk.verify_key();
         let ml_pk = ml_sk.verify_key();
-        
+
         // Sign same message
         let message = b"Compare PQ signature schemes";
         let slh_sig = slh_sk.sign(message);
         let ml_sig = ml_sk.sign(message);
-        
+
         let slh_sig_len = SigTrait::as_bytes(&slh_sig).len();
         let ml_sig_len = SigTrait::as_bytes(&ml_sig).len();
-        
+
         eprintln!("\n  Algorithm Comparison:");
         eprintln!("  ┌─────────────────┬────────────┬────────────┐");
         eprintln!("  │ Metric          │ SLH-DSA    │ ML-DSA-65  │");
         eprintln!("  ├─────────────────┼────────────┼────────────┤");
-        eprintln!("  │ Secret Key      │ {:>6} B   │ {:>6} B   │", 
-            SLH_DSA_SECRET_KEY_LEN, ML_DSA_SECRET_KEY_LEN);
-        eprintln!("  │ Public Key      │ {:>6} B   │ {:>6} B   │", 
-            SLH_DSA_PUBLIC_KEY_LEN, ML_DSA_PUBLIC_KEY_LEN);
-        eprintln!("  │ Signature       │ {:>6} B   │ {:>6} B   │", 
-            slh_sig_len, ml_sig_len);
+        eprintln!(
+            "  │ Secret Key      │ {:>6} B   │ {:>6} B   │",
+            SLH_DSA_SECRET_KEY_LEN, ML_DSA_SECRET_KEY_LEN
+        );
+        eprintln!(
+            "  │ Public Key      │ {:>6} B   │ {:>6} B   │",
+            SLH_DSA_PUBLIC_KEY_LEN, ML_DSA_PUBLIC_KEY_LEN
+        );
+        eprintln!(
+            "  │ Signature       │ {:>6} B   │ {:>6} B   │",
+            slh_sig_len, ml_sig_len
+        );
         eprintln!("  └─────────────────┴────────────┴────────────┘");
-        
+
         // SLH-DSA signatures are ~5x larger than ML-DSA
         let size_ratio = slh_sig_len as f64 / ml_sig_len as f64;
-        eprintln!("\n  SLH-DSA signatures are {:.1}x larger than ML-DSA", size_ratio);
-        
+        eprintln!(
+            "\n  SLH-DSA signatures are {:.1}x larger than ML-DSA",
+            size_ratio
+        );
+
         // Verify both work
         assert!(slh_pk.verify(message, &slh_sig).is_ok());
         assert!(ml_pk.verify(message, &ml_sig).is_ok());
-        
+
         eprintln!("  Both signature schemes verified successfully");
     }
 
@@ -1273,9 +1316,9 @@ mod slh_dsa_tests {
     async fn test_signature_algorithm_identification() {
         use crypto::ml_dsa::ML_DSA_SIGNATURE_LEN;
         use crypto::traits::Signature as SigTrait;
-        
+
         eprintln!("Testing signature algorithm identification...");
-        
+
         /// Identify PQ signature algorithm by size
         fn identify_pq_signature(sig_bytes: &[u8]) -> &'static str {
             match sig_bytes.len() {
@@ -1284,31 +1327,31 @@ mod slh_dsa_tests {
                 _ => "Unknown",
             }
         }
-        
+
         // Generate test signatures
         let mut seed = [0u8; 32];
         OsRng.fill_bytes(&mut seed);
-        
+
         let slh_sk = SlhDsaSecretKey::generate_deterministic(&seed);
         let ml_sk = crypto::ml_dsa::MlDsaSecretKey::generate_deterministic(&seed);
-        
+
         let message = b"Test";
         let slh_sig = slh_sk.sign(message);
         let ml_sig = ml_sk.sign(message);
-        
+
         let slh_bytes = SigTrait::as_bytes(&slh_sig);
         let ml_bytes = SigTrait::as_bytes(&ml_sig);
-        
+
         // Identify by size
         let slh_id = identify_pq_signature(slh_bytes);
         let ml_id = identify_pq_signature(ml_bytes);
-        
+
         eprintln!("  {} byte signature -> {}", slh_bytes.len(), slh_id);
         eprintln!("  {} byte signature -> {}", ml_bytes.len(), ml_id);
-        
+
         assert_eq!(slh_id, "SLH-DSA-SHAKE-128f (SPHINCS+)");
         assert_eq!(ml_id, "ML-DSA-65 (Dilithium)");
-        
+
         // Test invalid size
         let unknown_sig = vec![0u8; 1000];
         assert_eq!(identify_pq_signature(&unknown_sig), "Unknown");
@@ -1318,21 +1361,29 @@ mod slh_dsa_tests {
     #[tokio::test]
     async fn test_slh_dsa_deterministic_keygen() {
         eprintln!("Testing SLH-DSA deterministic key generation...");
-        
+
         let seed = [0x42u8; 32];
-        
+
         // Generate twice from same seed
         let sk1 = SlhDsaSecretKey::generate_deterministic(&seed);
         let sk2 = SlhDsaSecretKey::generate_deterministic(&seed);
-        
+
         // Should produce identical keys
-        assert_eq!(sk1.to_bytes(), sk2.to_bytes(), "Same seed should produce same key");
-        
+        assert_eq!(
+            sk1.to_bytes(),
+            sk2.to_bytes(),
+            "Same seed should produce same key"
+        );
+
         // Different seed should produce different key
         let different_seed = [0x43u8; 32];
         let sk3 = SlhDsaSecretKey::generate_deterministic(&different_seed);
-        assert_ne!(sk1.to_bytes(), sk3.to_bytes(), "Different seeds should produce different keys");
-        
+        assert_ne!(
+            sk1.to_bytes(),
+            sk3.to_bytes(),
+            "Different seeds should produce different keys"
+        );
+
         eprintln!("  Deterministic key generation verified");
     }
 
@@ -1340,23 +1391,23 @@ mod slh_dsa_tests {
     #[tokio::test]
     async fn test_slh_dsa_extrinsic_builder() {
         use wallet::extrinsic::{ChainMetadata, Era, SlhDsaExtrinsicBuilder};
-        
+
         eprintln!("Testing SLH-DSA extrinsic builder...");
-        
+
         // Generate keypair using extrinsic builder
         let seed = [0x55u8; 32];
         let builder = SlhDsaExtrinsicBuilder::from_seed(&seed);
-        
+
         // Verify account ID is 32 bytes
         let account_id = builder.account_id();
         assert_eq!(account_id.len(), 32);
         eprintln!("  Account ID: 0x{}", hex::encode(&account_id));
-        
+
         // Verify public key size
         let pk_bytes = builder.public_key_bytes();
         assert_eq!(pk_bytes.len(), SLH_DSA_PUBLIC_KEY_LEN);
         eprintln!("  Public key size: {} bytes", pk_bytes.len());
-        
+
         // Build a test transfer extrinsic
         let metadata = ChainMetadata {
             genesis_hash: [0u8; 32],
@@ -1365,25 +1416,30 @@ mod slh_dsa_tests {
             spec_version: 2,
             tx_version: 1,
         };
-        
+
         let recipient = [0xaa; 32];
         let amount = 1_000_000u128;
-        
-        let extrinsic = builder.build_transfer(
-            &recipient,
-            amount,
-            0, // nonce
-            Era::Immortal,
-            0, // tip
-            &metadata,
-        ).expect("Should build SLH-DSA signed extrinsic");
-        
+
+        let extrinsic = builder
+            .build_transfer(
+                &recipient,
+                amount,
+                0, // nonce
+                Era::Immortal,
+                0, // tip
+                &metadata,
+            )
+            .expect("Should build SLH-DSA signed extrinsic");
+
         eprintln!("  Built SLH-DSA extrinsic: {} bytes", extrinsic.len());
-        
+
         // SLH-DSA extrinsic should be much larger than ML-DSA due to signature size
         // Expected size: compact_len + version(1) + address(33) + sig(17088+1+32+1) + extra(3) + call(~40)
         // ~17200 bytes
-        assert!(extrinsic.len() > 17000, "SLH-DSA extrinsic should be >17KB due to signature");
+        assert!(
+            extrinsic.len() > 17000,
+            "SLH-DSA extrinsic should be >17KB due to signature"
+        );
         eprintln!("  ✅ SLH-DSA extrinsic builder working correctly");
     }
 
@@ -1397,15 +1453,15 @@ mod slh_dsa_tests {
     #[ignore = "Requires full Substrate node - run with cargo test --ignored"]
     async fn test_slh_dsa_extrinsic_integration() {
         use wallet::extrinsic::{ChainMetadata, Era, SlhDsaExtrinsicBuilder};
-        
+
         eprintln!("=== Protocol 14.2.7: SLH-DSA Signature Integration Test ===");
-        
+
         // Test configuration
-        let endpoint = std::env::var("HEGEMON_RPC_URL")
-            .unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
-        
+        let endpoint =
+            std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
+
         eprintln!("Connecting to node at: {}", endpoint);
-        
+
         // 1. Connect to node
         let client = wallet::SubstrateRpcClient::connect(&endpoint).await;
         if client.is_err() {
@@ -1414,17 +1470,20 @@ mod slh_dsa_tests {
             panic!("Node connection failed: {:?}", client.err());
         }
         let client = client.unwrap();
-        
+
         // 2. Generate SLH-DSA keypair
         let mut seed = [0u8; 32];
         OsRng.fill_bytes(&mut seed);
         let builder = SlhDsaExtrinsicBuilder::from_seed(&seed);
         let slh_account_id = builder.account_id();
-        
+
         eprintln!("\nSLH-DSA Account:");
         eprintln!("  Account ID: 0x{}", hex::encode(&slh_account_id));
-        eprintln!("  Public key size: {} bytes (SPHINCS+-SHAKE-128f)", builder.public_key_bytes().len());
-        
+        eprintln!(
+            "  Public key size: {} bytes (SPHINCS+-SHAKE-128f)",
+            builder.public_key_bytes().len()
+        );
+
         // 3. Get chain metadata
         let metadata_result = client.get_chain_metadata().await;
         if metadata_result.is_err() {
@@ -1435,7 +1494,7 @@ mod slh_dsa_tests {
         eprintln!("\nChain State:");
         eprintln!("  Block #: {}", chain_metadata.block_number);
         eprintln!("  Spec version: {}", chain_metadata.spec_version);
-        
+
         // Convert to extrinsic metadata format
         let metadata = ChainMetadata {
             genesis_hash: chain_metadata.genesis_hash,
@@ -1444,40 +1503,50 @@ mod slh_dsa_tests {
             spec_version: chain_metadata.spec_version,
             tx_version: chain_metadata.tx_version,
         };
-        
+
         // 4. Query initial balance (should be 0 for fresh SLH-DSA account)
-        let initial_balance = client.query_balance(&slh_account_id).await
+        let initial_balance = client
+            .query_balance(&slh_account_id)
+            .await
             .expect("Failed to query initial balance");
         eprintln!("\n  Initial SLH-DSA account balance: {}", initial_balance);
-        
+
         // Fresh account should have zero balance
-        assert_eq!(initial_balance, 0, "Fresh SLH-DSA account should have zero balance");
-        
+        assert_eq!(
+            initial_balance, 0,
+            "Fresh SLH-DSA account should have zero balance"
+        );
+
         // 5. For full integration with funded account, we would:
         //    - First fund the SLH-DSA account from a funded account
         //    - Then submit a transfer signed with SLH-DSA
         //    - Verify the transaction executes successfully
         //
         // For now, verify we can construct the extrinsic and query chain state
-        
+
         // Build a test transfer (won't succeed without funds, but validates construction)
         let recipient = [0xbb; 32];
-        let extrinsic = builder.build_transfer(
-            &recipient,
-            1_000, // amount
-            0,     // nonce
-            Era::mortal(64, chain_metadata.block_number),
-            0,     // tip
-            &metadata,
-        ).expect("Should build SLH-DSA signed extrinsic");
-        
+        let extrinsic = builder
+            .build_transfer(
+                &recipient,
+                1_000, // amount
+                0,     // nonce
+                Era::mortal(64, chain_metadata.block_number),
+                0, // tip
+                &metadata,
+            )
+            .expect("Should build SLH-DSA signed extrinsic");
+
         eprintln!("\nSLH-DSA Extrinsic:");
         eprintln!("  Size: {} bytes", extrinsic.len());
         eprintln!("  Signature type: SPHINCS+-SHAKE-128f (17088 byte signature)");
-        
+
         // Validate extrinsic structure (large due to SLH-DSA signature)
-        assert!(extrinsic.len() > 17000, "SLH-DSA extrinsic should include ~17KB signature");
-        
+        assert!(
+            extrinsic.len() > 17000,
+            "SLH-DSA extrinsic should include ~17KB signature"
+        );
+
         // 6. Algorithm identification test
         let sig_offset = 34; // compact_len + version + address
         let sig_variant = extrinsic.get(sig_offset).copied();
@@ -1491,7 +1560,7 @@ mod slh_dsa_tests {
             eprintln!("  Signature variant byte: 0x{:02x} -> {}", variant, algo);
             assert_eq!(variant, 1, "Should be SLH-DSA variant (1)");
         }
-        
+
         eprintln!("\n✅ Protocol 14.2.7: SLH-DSA extrinsic construction verified");
         eprintln!("   Runtime accepts SLH-DSA Signature variant");
         eprintln!("   Full transaction submission requires funded SLH-DSA account");

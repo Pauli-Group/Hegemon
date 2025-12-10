@@ -1,10 +1,10 @@
 use std::net::{SocketAddr, TcpListener};
 use std::time::Duration;
 
+use hegemon_node::{config::NodeConfig, NodeService};
 use network::{
     NatTraversalConfig, P2PService, PeerIdentity, PeerStore, PeerStoreConfig, RelayConfig,
 };
-use hegemon_node::{config::NodeConfig, NodeService};
 use tokio::time::{sleep, timeout};
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error>>;

@@ -14,7 +14,7 @@ pub enum ChainProfile {
 
 /// Network profile tuned for PQ signing defaults (ML-DSA pk = 1,952 B, sig = 3,293 B)
 /// and the SS58 prefix used by the runtime's AccountId32 derivation from PQ public keys.
-/// 
+///
 /// NOTE: This chain uses PQ-Noise networking exclusively. There is NO libp2p.
 /// Seed nodes are specified as IP:port (e.g., "127.0.0.1:30333") NOT multiaddrs.
 /// Use HEGEMON_SEEDS environment variable for runtime seed configuration.

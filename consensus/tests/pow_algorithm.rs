@@ -4,8 +4,8 @@
 //! as specified in Phase 2 of the Substrate migration plan.
 
 use consensus::{
-    Blake3Seal, compact_to_target, compute_work, mine_round, seal_meets_target,
-    target_to_compact, verify_seal,
+    Blake3Seal, compact_to_target, compute_work, mine_round, seal_meets_target, target_to_compact,
+    verify_seal,
 };
 use sp_core::{H256, U256};
 
@@ -42,7 +42,10 @@ fn test_difficulty_increases_when_fast() {
     let new_bits = target_to_compact(new_target);
     let new_target_reconstructed = compact_to_target(new_bits).unwrap();
 
-    assert!(new_target_reconstructed < target, "Target should decrease (harder)");
+    assert!(
+        new_target_reconstructed < target,
+        "Target should decrease (harder)"
+    );
 }
 
 /// Test difficulty decreases when blocks are mined too slow
@@ -82,8 +85,7 @@ fn test_verify_rejects_invalid_seal() {
     let difficulty = 0x2100ffff;
 
     // Get a valid seal first
-    let valid_seal = mine_round(&pre_hash, difficulty, 0, 100_000)
-        .expect("should find seal");
+    let valid_seal = mine_round(&pre_hash, difficulty, 0, 100_000).expect("should find seal");
 
     // Create invalid seal with wrong nonce
     let invalid_seal = Blake3Seal {
@@ -101,8 +103,7 @@ fn test_verify_rejects_wrong_work() {
     let pre_hash = H256::repeat_byte(0x42);
     let difficulty = 0x2100ffff;
 
-    let valid_seal = mine_round(&pre_hash, difficulty, 0, 100_000)
-        .expect("should find seal");
+    let valid_seal = mine_round(&pre_hash, difficulty, 0, 100_000).expect("should find seal");
 
     // Create invalid seal with wrong work hash
     let invalid_seal = Blake3Seal {
@@ -220,8 +221,7 @@ fn test_mined_solution_is_valid() {
     let pre_hash = H256::repeat_byte(0xef);
     let pow_bits = 0x2100ffff;
 
-    let seal = mine_round(&pre_hash, pow_bits, 0, 100_000)
-        .expect("should find seal");
+    let seal = mine_round(&pre_hash, pow_bits, 0, 100_000).expect("should find seal");
 
     // Verify the seal
     assert!(verify_seal(&pre_hash, &seal));
@@ -280,10 +280,10 @@ fn test_compact_min_difficulty() {
 fn test_mining_different_prehashes() {
     let pow_bits = 0x2100ffff;
 
-    let seal1 = mine_round(&H256::repeat_byte(0x01), pow_bits, 0, 100_000)
-        .expect("should find seal");
-    let seal2 = mine_round(&H256::repeat_byte(0x02), pow_bits, 0, 100_000)
-        .expect("should find seal");
+    let seal1 =
+        mine_round(&H256::repeat_byte(0x01), pow_bits, 0, 100_000).expect("should find seal");
+    let seal2 =
+        mine_round(&H256::repeat_byte(0x02), pow_bits, 0, 100_000).expect("should find seal");
 
     // They could have the same nonce by chance, but very unlikely
     // More importantly, the works should be different
@@ -316,8 +316,7 @@ fn test_verify_boundary_conditions() {
     let target = compact_to_target(pow_bits).unwrap();
 
     // Find a valid seal
-    let seal = mine_round(&pre_hash, pow_bits, 0, 100_000)
-        .expect("should find seal");
+    let seal = mine_round(&pre_hash, pow_bits, 0, 100_000).expect("should find seal");
 
     // The work value should be <= target
     let work_value = U256::from_big_endian(seal.work.as_bytes());

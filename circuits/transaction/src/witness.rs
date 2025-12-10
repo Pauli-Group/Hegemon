@@ -41,7 +41,7 @@ impl TransactionWitness {
         for note in &self.outputs {
             note.validate()?;
         }
-        
+
         // SECURITY: Validate that no nullifier is zero.
         // Zero nullifiers are used as padding and skipped during double-spend checks.
         // A malicious witness could attempt to produce a zero nullifier for a real note,
@@ -52,7 +52,7 @@ impl TransactionWitness {
                 return Err(TransactionCircuitError::ZeroNullifier(i));
             }
         }
-        
+
         Ok(())
     }
 

@@ -170,7 +170,9 @@ async fn test_three_node_network_mines_blocks() -> TestResult<()> {
     );
 
     // Cleanup
-    node_1.service.control_miner(MinerAction::Stop, None, None)?;
+    node_1
+        .service
+        .control_miner(MinerAction::Stop, None, None)?;
     node_1.shutdown().await?;
     node_2.shutdown().await?;
     node_3.shutdown().await?;
@@ -284,8 +286,12 @@ async fn test_chain_reorganization() -> TestResult<()> {
     );
 
     // Cleanup
-    node_1.service.control_miner(MinerAction::Stop, None, None)?;
-    node_2.service.control_miner(MinerAction::Stop, None, None)?;
+    node_1
+        .service
+        .control_miner(MinerAction::Stop, None, None)?;
+    node_2
+        .service
+        .control_miner(MinerAction::Stop, None, None)?;
     node_1.shutdown().await?;
     node_2.shutdown().await?;
     task_1.abort();
@@ -314,12 +320,13 @@ async fn test_mining_control_endpoints() -> TestResult<()> {
         .control_miner(MinerAction::Start, Some(1_000_000), Some(2))?;
     assert!(status.is_running, "Mining should be running after start");
     assert_eq!(status.thread_count, 2, "Thread count should be 2");
-    assert_eq!(status.target_hash_rate, 1_000_000, "Target hash rate should be set");
+    assert_eq!(
+        status.target_hash_rate, 1_000_000,
+        "Target hash rate should be set"
+    );
 
     // Stop mining
-    let status = node
-        .service
-        .control_miner(MinerAction::Stop, None, None)?;
+    let status = node.service.control_miner(MinerAction::Stop, None, None)?;
     assert!(!status.is_running, "Mining should be stopped after stop");
 
     node.shutdown().await?;
@@ -345,7 +352,10 @@ async fn test_block_production_with_pow_seal() -> TestResult<()> {
     assert!(block.is_some(), "Should produce a block");
 
     let status = node.service.consensus_status();
-    assert_eq!(status.height, 1, "Height should be 1 after mining one block");
+    assert_eq!(
+        status.height, 1,
+        "Height should be 1 after mining one block"
+    );
 
     // Verify the block has a valid PoW seal
     // (The seal_pending_block already validates internally, but we verify state)
@@ -399,10 +409,7 @@ async fn test_difficulty_retarget() -> TestResult<()> {
     // Note: With easy difficulty for testing, retarget may not trigger
     // This test verifies the infrastructure exists; actual retarget
     // thresholds depend on runtime configuration
-    assert!(
-        status_10.pow_bits > 0,
-        "PoW bits should be set"
-    );
+    assert!(status_10.pow_bits > 0, "PoW bits should be set");
 
     node.service.control_miner(MinerAction::Stop, None, None)?;
     node.shutdown().await?;
@@ -499,8 +506,12 @@ async fn test_multiple_miners_compete() -> TestResult<()> {
     );
 
     // Cleanup
-    node_1.service.control_miner(MinerAction::Stop, None, None)?;
-    node_2.service.control_miner(MinerAction::Stop, None, None)?;
+    node_1
+        .service
+        .control_miner(MinerAction::Stop, None, None)?;
+    node_2
+        .service
+        .control_miner(MinerAction::Stop, None, None)?;
     node_1.shutdown().await?;
     node_2.shutdown().await?;
     p2p_1.abort();

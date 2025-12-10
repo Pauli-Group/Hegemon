@@ -32,3 +32,6 @@ std = [
     "scale-info/std",
 ]
 runtime-benchmarks = ["frame-benchmarking"]
+
+[lints]
+workspace = true

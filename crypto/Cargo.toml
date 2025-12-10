@@ -50,3 +50,6 @@ std = [
     "slh-dsa/default",
     "thiserror",
 ]
+
+[lints]
+workspace = true

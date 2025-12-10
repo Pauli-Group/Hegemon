@@ -129,7 +129,7 @@ pub fn new_test_ext() -> TestExternalities {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pallet::{Pallet, MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage};
+    use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{BindingSignature, EncryptedNote, StarkProof};
     use frame_support::{assert_noop, assert_ok, BoundedVec};
 
@@ -565,7 +565,7 @@ mod tests {
         // This is by design - the nullifier prevents double-spending, not the commitment
         new_test_ext().execute_with(|| {
             let commitment = [42u8; 32];
-            
+
             // Shield same commitment twice - should succeed
             assert_ok!(Pallet::<Test>::shield(
                 RuntimeOrigin::signed(1),
@@ -597,7 +597,7 @@ mod tests {
                 [42u8; 32],
                 valid_encrypted_note(),
             );
-            
+
             // Document behavior: is zero-value shielding allowed?
             // For privacy, it might be useful to allow dummy transactions
             // For now, just ensure it doesn't panic
@@ -631,15 +631,14 @@ mod tests {
                 vec![[5u8; 32], [6u8; 32], [7u8; 32], [8u8; 32]]
                     .try_into()
                     .unwrap();
-            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
-                vec![
-                    valid_encrypted_note(),
-                    valid_encrypted_note(),
-                    valid_encrypted_note(),
-                    valid_encrypted_note(),
-                ]
-                .try_into()
-                .unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> = vec![
+                valid_encrypted_note(),
+                valid_encrypted_note(),
+                valid_encrypted_note(),
+                valid_encrypted_note(),
+            ]
+            .try_into()
+            .unwrap();
 
             assert_ok!(Pallet::<Test>::shielded_transfer(
                 RuntimeOrigin::signed(1),
@@ -684,4 +683,3 @@ mod tests {
         });
     }
 }
-

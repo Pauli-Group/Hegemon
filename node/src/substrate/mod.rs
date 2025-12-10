@@ -77,38 +77,38 @@ pub mod transaction_pool;
 
 // Re-export common types
 pub use block_import::{
-    BlockImportConfig, ExtractedSeal, HegemonBlockImport, ImportError, ImportResult, ImportStats,
-    MockBlockImport, create_mock_block_import, create_mock_block_import_from_env,
-    extract_seal_from_header, verify_pow_seal,
+    create_mock_block_import, create_mock_block_import_from_env, extract_seal_from_header,
+    verify_pow_seal, BlockImportConfig, ExtractedSeal, HegemonBlockImport, ImportError,
+    ImportResult, ImportStats, MockBlockImport,
 };
 pub use chain_spec::ChainSpec;
 pub use client::{
-    FullBackend, FullClient, FullClientConfig, FullTransactionPool, SubstrateChainStateProvider,
-    WasmExecutor, create_chain_state_provider, create_chain_state_provider_with_state,
-    DEFAULT_DIFFICULTY_BITS, StateExecutionResult,
+    create_chain_state_provider, create_chain_state_provider_with_state, FullBackend, FullClient,
+    FullClientConfig, FullTransactionPool, StateExecutionResult, SubstrateChainStateProvider,
+    WasmExecutor, DEFAULT_DIFFICULTY_BITS,
 };
 pub use mining_worker::{
+    compute_extrinsics_root, create_network_mining_worker, create_scaffold_mining_worker,
     BlockBroadcaster, BlockTemplate, ChainStateProvider, MiningWorker, MiningWorkerConfig,
     MiningWorkerStats, MockBlockBroadcaster, MockChainStateProvider, NetworkBridgeBroadcaster,
-    create_network_mining_worker, create_scaffold_mining_worker, compute_extrinsics_root,
 };
 pub use network::{PqNetworkConfig, PqNetworkKeypair};
 pub use network_bridge::{
     BlockAnnounce, BlockState, IncomingMessage, NetworkBridge, NetworkBridgeBuilder,
-    NetworkBridgeStats, SyncRequest, SyncResponse, TransactionMessage,
-    BLOCK_ANNOUNCE_PROTOCOL, SYNC_PROTOCOL, TRANSACTIONS_PROTOCOL,
+    NetworkBridgeStats, SyncRequest, SyncResponse, TransactionMessage, BLOCK_ANNOUNCE_PROTOCOL,
+    SYNC_PROTOCOL, TRANSACTIONS_PROTOCOL,
 };
-pub use rpc::{HegemonApiServer, WalletApiServer, HegemonService, MiningHandle, WalletService};
+pub use rpc::{HegemonApiServer, HegemonService, MiningHandle, WalletApiServer, WalletService};
 pub use service::{
-    new_full_with_client, MiningConfig,
-    BlockImportStats, BlockImportTracker, FullBlockImportConfig, wire_import_tracker,
+    new_full_with_client, wire_import_tracker, BlockImportStats, BlockImportTracker,
+    FullBlockImportConfig, MiningConfig,
+};
+pub use sync::{
+    ChainSyncService, PeerSyncState, SyncHandle, SyncState, SyncStats, HEADER_BATCH,
+    MAX_BODIES_PER_RESPONSE, MAX_HEADERS_PER_RESPONSE,
 };
 pub use transaction_pool::{
     MockTransactionPool, PoolBridgeStats, PoolError, SubmissionResult,
     TransactionPool as TransactionPoolTrait, TransactionPoolBridge, TransactionPoolConfig,
     TransactionSource,
-};
-pub use sync::{
-    ChainSyncService, SyncHandle, SyncState, SyncStats, PeerSyncState,
-    MAX_HEADERS_PER_RESPONSE, MAX_BODIES_PER_RESPONSE, HEADER_BATCH,
 };

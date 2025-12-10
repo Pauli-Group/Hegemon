@@ -166,3 +166,6 @@ tokio-tungstenite = "0.21"
 name = "hegemon-node"
 path = "src/bin/substrate_node.rs"
 required-features = ["substrate"]
+
+[lints]
+workspace = true

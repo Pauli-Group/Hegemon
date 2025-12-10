@@ -50,3 +50,6 @@ runtime-benchmarks = [
     "pallet-balances/runtime-benchmarks",
     "pallet-transaction-payment/runtime-benchmarks",
 ]
+
+[lints]
+workspace = true

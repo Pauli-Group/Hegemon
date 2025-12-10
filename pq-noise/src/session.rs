@@ -167,12 +167,18 @@ mod tests {
             _ => panic!("Expected InitHello"),
         };
 
-        let resp_hello = match responder_hs.responder_process_init_hello(init_hello).unwrap() {
+        let resp_hello = match responder_hs
+            .responder_process_init_hello(init_hello)
+            .unwrap()
+        {
             crate::types::HandshakeMessage::RespHello(msg) => msg,
             _ => panic!("Expected RespHello"),
         };
 
-        let finish = match initiator_hs.initiator_process_resp_hello(resp_hello).unwrap() {
+        let finish = match initiator_hs
+            .initiator_process_resp_hello(resp_hello)
+            .unwrap()
+        {
             crate::types::HandshakeMessage::Finish(msg) => msg,
             _ => panic!("Expected Finish"),
         };
@@ -193,7 +199,7 @@ mod tests {
 
         // Test message exchange
         let test_message = b"Hello, quantum-secure world!";
-        
+
         let (send_result, recv_result) = tokio::join!(
             initiator_session.send(test_message),
             responder_session.recv()
@@ -205,11 +211,9 @@ mod tests {
 
         // Test reverse direction
         let response = b"Response from responder";
-        
-        let (send_result, recv_result) = tokio::join!(
-            responder_session.send(response),
-            initiator_session.recv()
-        );
+
+        let (send_result, recv_result) =
+            tokio::join!(responder_session.send(response), initiator_session.recv());
 
         send_result.unwrap();
         let received = recv_result.unwrap().unwrap();

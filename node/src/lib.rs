@@ -40,4 +40,3 @@ pub mod shielded_coinbase;
 pub mod substrate;
 
 pub use pow::{PowConfig, PowEvent, PowHandle, PowVerifier, PowVerifyError};
-

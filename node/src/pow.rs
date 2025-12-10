@@ -12,7 +12,7 @@
 //! This module is used by the node service to set up the PoW block import
 //! pipeline and manage mining operations.
 
-use consensus::{Blake3Seal, MiningCoordinator, MiningWork, MiningSolution};
+use consensus::{Blake3Seal, MiningCoordinator, MiningSolution, MiningWork};
 use sp_core::H256;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -84,13 +84,13 @@ impl PowHandle {
     pub fn new(config: PowConfig) -> (Self, mpsc::UnboundedReceiver<PowEvent>) {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let coordinator = MiningCoordinator::new(config.threads);
-        
+
         let handle = Self {
             coordinator: Arc::new(parking_lot::Mutex::new(coordinator)),
             config,
             event_tx,
         };
-        
+
         (handle, event_rx)
     }
 
@@ -109,7 +109,7 @@ impl PowHandle {
 
         coordinator.start();
         info!(threads = self.config.threads, "Mining started");
-        
+
         let _ = self.event_tx.send(PowEvent::MiningStarted {
             threads: self.config.threads,
         });
@@ -125,7 +125,7 @@ impl PowHandle {
 
         coordinator.stop();
         info!("Mining stopped");
-        
+
         let _ = self.event_tx.send(PowEvent::MiningStopped);
     }
 
@@ -142,7 +142,7 @@ impl PowHandle {
         coordinator.update_work(work);
 
         debug!(height, difficulty = pow_bits, "New mining work");
-        
+
         let _ = self.event_tx.send(PowEvent::NewWork {
             height,
             difficulty: pow_bits,
@@ -159,20 +159,20 @@ impl PowHandle {
     pub fn try_get_solution(&self) -> Option<MiningSolution> {
         let coordinator = self.coordinator.lock();
         let solution = coordinator.try_recv_solution();
-        
+
         if let Some(ref sol) = solution {
             info!(
                 height = sol.work.height,
                 nonce = sol.seal.nonce,
                 "Found PoW solution"
             );
-            
+
             let _ = self.event_tx.send(PowEvent::SolutionFound {
                 height: sol.work.height,
                 nonce: sol.seal.nonce,
             });
         }
-        
+
         solution
     }
 
@@ -258,7 +258,9 @@ pub struct PowVerifier {
 impl PowVerifier {
     /// Create a new PoW verifier
     pub fn new(expected_difficulty: u32) -> Self {
-        Self { expected_difficulty }
+        Self {
+            expected_difficulty,
+        }
     }
 
     /// Verify a PoW seal
@@ -356,17 +358,20 @@ pub mod rpc {
         /// Start mining
         pub fn start(&self, _threads: Option<usize>) -> StartMiningResponse {
             self.handle.start_mining();
-            
+
             StartMiningResponse {
                 success: true,
-                message: format!("Mining started with {} thread(s)", self.handle.config.threads),
+                message: format!(
+                    "Mining started with {} thread(s)",
+                    self.handle.config.threads
+                ),
             }
         }
 
         /// Stop mining
         pub fn stop(&self) -> StopMiningResponse {
             self.handle.stop_mining();
-            
+
             StopMiningResponse {
                 success: true,
                 message: "Mining stopped".to_string(),
@@ -417,13 +422,16 @@ mod tests {
     fn test_pow_verifier_wrong_difficulty() {
         let verifier = PowVerifier::new(0x1d00ffff);
         let pre_hash = H256::repeat_byte(0xab);
-        
+
         // Create seal with different difficulty
-        let seal = consensus::mine_round(&pre_hash, 0x2100ffff, 0, 100_000)
-            .expect("should find seal");
+        let seal =
+            consensus::mine_round(&pre_hash, 0x2100ffff, 0, 100_000).expect("should find seal");
 
         let result = verifier.verify(&pre_hash, &seal);
-        assert!(matches!(result, Err(PowVerifyError::DifficultyMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(PowVerifyError::DifficultyMismatch { .. })
+        ));
     }
 
     #[tokio::test]
@@ -432,10 +440,10 @@ mod tests {
         let (handle, _rx) = PowHandle::new(config);
 
         assert!(!handle.is_mining());
-        
+
         handle.start_mining();
         assert!(handle.is_mining());
-        
+
         handle.stop_mining();
         assert!(!handle.is_mining());
     }

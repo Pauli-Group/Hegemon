@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use consensus::reward::INITIAL_SUBSIDY;
-use network::GossipRouter;
 use hegemon_node::{api, config::NodeConfig, NodeHandle, NodeService};
+use network::GossipRouter;
 use rand::{rngs::StdRng, SeedableRng};
 use tempfile::tempdir;
 use tokio::task::spawn_blocking;

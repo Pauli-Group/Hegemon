@@ -12,7 +12,7 @@ use crate::{
     hashing::Felt,
     keys::{ProvingKey, VerifyingKey},
     public_inputs::{BalanceSlot, TransactionPublicInputs},
-    stark_prover::{TransactionProverStark, fast_proof_options},
+    stark_prover::{fast_proof_options, TransactionProverStark},
     stark_verifier::verify_transaction_proof_bytes,
     trace::TransactionTrace,
     witness::TransactionWitness,
@@ -62,7 +62,7 @@ impl TransactionProof {
     pub fn version_binding(&self) -> VersionBinding {
         self.public_inputs.version_binding()
     }
-    
+
     /// Check if this proof has a real STARK proof attached.
     pub fn has_stark_proof(&self) -> bool {
         !self.stark_proof.is_empty()
@@ -81,36 +81,38 @@ pub fn prove(
     _proving_key: &ProvingKey,
 ) -> Result<TransactionProof, TransactionCircuitError> {
     use winterfell::Prover;
-    
+
     // Validate witness first
     witness.validate()?;
-    
+
     // Build trace for public inputs extraction (legacy format)
     let legacy_trace = TransactionTrace::from_witness(witness)?;
     let public_inputs = witness.public_inputs()?;
-    
+
     // Build the STARK execution trace
     let prover = TransactionProverStark::new(fast_proof_options());
-    let stark_trace = prover.build_trace(witness)
-        .map_err(|e| TransactionCircuitError::ConstraintViolation(
-            Box::leak(format!("Trace building failed: {}", e).into_boxed_str())
-        ))?;
-    
+    let stark_trace = prover.build_trace(witness).map_err(|e| {
+        TransactionCircuitError::ConstraintViolation(Box::leak(
+            format!("Trace building failed: {}", e).into_boxed_str(),
+        ))
+    })?;
+
     // Extract STARK public inputs from the trace - this MUST match what the AIR expects
     let stark_pub_inputs = prover.get_pub_inputs(&stark_trace);
-    
+
     // Generate proof using the trace
-    let stark_proof = prover.prove(stark_trace)
-        .map_err(|e| TransactionCircuitError::ConstraintViolation(
-            Box::leak(format!("STARK proving failed: {:?}", e).into_boxed_str())
-        ))?;
-    
+    let stark_proof = prover.prove(stark_trace).map_err(|e| {
+        TransactionCircuitError::ConstraintViolation(Box::leak(
+            format!("STARK proving failed: {:?}", e).into_boxed_str(),
+        ))
+    })?;
+
     // Serialize the STARK public inputs
     // Use as_int() to convert BaseElement to u64
     let total_input = stark_pub_inputs.total_input.as_int();
     let total_output = stark_pub_inputs.total_output.as_int();
     let fee = stark_pub_inputs.fee.as_int();
-    
+
     Ok(TransactionProof {
         // Use nullifiers/commitments from STARK public inputs to ensure consistency
         nullifiers: stark_pub_inputs.nullifiers.clone(),
@@ -167,19 +169,19 @@ pub fn verify(
                 fee: Felt::new(stark_inputs.fee),
                 merkle_root: stark_inputs.merkle_root,
             };
-            
+
             match verify_transaction_proof_bytes(&proof.stark_proof, &stark_pub_inputs) {
                 Ok(()) => return Ok(VerificationReport { verified: true }),
                 Err(e) => {
                     // STARK verification failure - public inputs don't match what was proven
-                    return Err(TransactionCircuitError::ConstraintViolation(
-                        Box::leak(format!("STARK verification failed: {}", e).into_boxed_str())
-                    ));
-                },
+                    return Err(TransactionCircuitError::ConstraintViolation(Box::leak(
+                        format!("STARK verification failed: {}", e).into_boxed_str(),
+                    )));
+                }
             }
         }
     }
-    
+
     // Legacy fallback: check public input consistency only
     // WARNING: This does NOT provide cryptographic security!
     // It's only here for backwards compatibility with old test fixtures.
@@ -201,7 +203,7 @@ pub fn verify(
     let air = crate::air::TransactionAir::new(trace);
     #[allow(deprecated)]
     air.check(&proof.public_inputs)?;
-    
+
     Ok(VerificationReport { verified: true })
 }
 
@@ -209,23 +211,27 @@ pub fn verify(
 fn verify_balance_slots(proof: &TransactionProof) -> Result<(), TransactionCircuitError> {
     use crate::constants::NATIVE_ASSET_ID;
     use crate::public_inputs::BalanceSlot;
-    
+
     if proof.public_inputs.balance_slots.len() != proof.balance_slots.len() {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "balance slot count mismatch"
+            "balance slot count mismatch",
         ));
     }
-    
+
     for (idx, expected) in proof.public_inputs.balance_slots.iter().enumerate() {
-        let actual = proof.balance_slots
+        let actual = proof
+            .balance_slots
             .get(idx)
             .cloned()
-            .unwrap_or(BalanceSlot { asset_id: u64::MAX, delta: 0 });
-            
+            .unwrap_or(BalanceSlot {
+                asset_id: u64::MAX,
+                delta: 0,
+            });
+
         if actual.asset_id != expected.asset_id || actual.delta != expected.delta {
             return Err(TransactionCircuitError::BalanceMismatch(expected.asset_id));
         }
-        
+
         // For native asset, verify delta equals fee
         if expected.asset_id == NATIVE_ASSET_ID {
             if expected.delta != proof.public_inputs.native_fee as i128 {
@@ -236,6 +242,6 @@ fn verify_balance_slots(proof: &TransactionProof) -> Result<(), TransactionCircu
             return Err(TransactionCircuitError::BalanceMismatch(expected.asset_id));
         }
     }
-    
+
     Ok(())
 }

@@ -53,8 +53,8 @@
 //! )?;
 //! ```
 
-use consensus::{Blake3Seal, compute_work, seal_meets_target, compact_to_target};
 use codec::Decode;
+use consensus::{compact_to_target, compute_work, seal_meets_target, Blake3Seal};
 use sp_core::{H256, U256};
 use sp_runtime::traits::Block as BlockT;
 use std::marker::PhantomData;
@@ -158,17 +158,22 @@ pub struct ImportStats {
 
 impl ImportStats {
     /// Record a successful import
-    pub fn record_import(&mut self, block_number: u64, block_hash: H256, verification_time_ms: u64) {
+    pub fn record_import(
+        &mut self,
+        block_number: u64,
+        block_hash: H256,
+        verification_time_ms: u64,
+    ) {
         self.blocks_imported += 1;
         self.last_block_number = block_number;
         self.last_block_hash = block_hash;
-        
+
         // Update rolling average
         if self.blocks_imported == 1 {
             self.avg_verification_time_ms = verification_time_ms;
         } else {
             // Simple exponential moving average
-            self.avg_verification_time_ms = 
+            self.avg_verification_time_ms =
                 (self.avg_verification_time_ms * 9 + verification_time_ms) / 10;
         }
     }
@@ -226,7 +231,7 @@ pub fn extract_seal_from_header<Block: BlockT<Hash = H256>>(
 
     // Compute pre-hash (header hash without the seal)
     let header_hash = header.hash();
-    
+
     // For pre-hash, we need to remove the seal and hash the remaining header
     // This is a simplified approach - in production, the seal should be properly stripped
     let pre_hash = header_hash; // TODO: Proper pre-hash calculation
@@ -250,7 +255,7 @@ pub fn verify_pow_seal(
     tolerance: u32,
 ) -> ImportResult<bool> {
     let seal = &extracted.seal;
-    
+
     // 1. Verify work computation
     let computed_work = compute_work(&extracted.pre_hash, seal.nonce);
     if computed_work != seal.work {
@@ -273,13 +278,13 @@ pub fn verify_pow_seal(
         // Allow some tolerance for rounding in compact bits representation
         let seal_target = compact_to_target(seal.difficulty).unwrap_or(U256::zero());
         let expected_target = compact_to_target(expected_difficulty_bits).unwrap_or(U256::MAX);
-        
+
         let diff = if seal_target > expected_target {
             seal_target - expected_target
         } else {
             expected_target - seal_target
         };
-        
+
         // Allow tolerance% difference
         let tolerance_threshold = expected_target / U256::from(1000u32 / tolerance.max(1));
         diff <= tolerance_threshold
@@ -411,17 +416,19 @@ impl MockBlockImport {
 
         // "Import" the block by updating state
         let block_hash = seal.work; // Use work as block hash for simplicity
-        
+
         {
             let mut best_num = self.best_number.write();
             let mut best_hash = self.best_hash.write();
-            
+
             *best_num = block_number;
             *best_hash = block_hash;
         }
 
         let verification_time = start.elapsed().as_millis() as u64;
-        self.stats.write().record_import(block_number, block_hash, verification_time);
+        self.stats
+            .write()
+            .record_import(block_number, block_hash, verification_time);
 
         tracing::info!(
             block_number = block_number,
@@ -613,7 +620,7 @@ mod tests {
     #[test]
     fn test_import_stats_record() {
         let mut stats = ImportStats::default();
-        
+
         stats.record_import(1, H256::repeat_byte(0x01), 100);
         assert_eq!(stats.blocks_imported, 1);
         assert_eq!(stats.last_block_number, 1);
@@ -629,7 +636,7 @@ mod tests {
     #[test]
     fn test_import_stats_rejection() {
         let mut stats = ImportStats::default();
-        
+
         stats.record_rejection(true, false);
         assert_eq!(stats.invalid_seals, 1);
         assert_eq!(stats.difficulty_mismatches, 0);
@@ -660,16 +667,16 @@ mod tests {
         // Create a valid seal (easy difficulty for testing)
         let pre_hash = H256::repeat_byte(0x42);
         let pow_bits = 0x2100ffff; // Very easy
-        
+
         // Find a valid nonce
         let seal = consensus::mine_round(&pre_hash, pow_bits, 0, 100_000)
             .expect("Should find valid seal with easy difficulty");
 
         let result = import.import_block(1, H256::zero(), &seal);
         assert!(result.is_ok());
-        
+
         assert_eq!(import.best_number(), 1);
-        
+
         let stats = import.stats();
         assert_eq!(stats.blocks_imported, 1);
     }
@@ -684,13 +691,13 @@ mod tests {
         // Create an invalid seal (work doesn't meet target)
         let invalid_seal = Blake3Seal {
             nonce: 0,
-            difficulty: 0x0300ffff, // Very hard
+            difficulty: 0x0300ffff,        // Very hard
             work: H256::repeat_byte(0xff), // Max value won't meet hard target
         };
 
         let result = import.import_block(1, H256::zero(), &invalid_seal);
         assert!(result.is_err());
-        
+
         let stats = import.stats();
         assert_eq!(stats.blocks_imported, 0);
         assert_eq!(stats.invalid_seals, 1);
@@ -720,8 +727,8 @@ mod tests {
         let pow_bits = 0x2100ffff;
 
         // Mine a valid seal
-        let seal = consensus::mine_round(&pre_hash, pow_bits, 0, 100_000)
-            .expect("Should find seal");
+        let seal =
+            consensus::mine_round(&pre_hash, pow_bits, 0, 100_000).expect("Should find seal");
 
         let extracted = ExtractedSeal {
             seal,
@@ -739,8 +746,8 @@ mod tests {
         let pre_hash = H256::repeat_byte(0x22);
         let pow_bits = 0x2100ffff;
 
-        let seal = consensus::mine_round(&pre_hash, pow_bits, 0, 100_000)
-            .expect("Should find seal");
+        let seal =
+            consensus::mine_round(&pre_hash, pow_bits, 0, 100_000).expect("Should find seal");
 
         let extracted = ExtractedSeal {
             seal,
