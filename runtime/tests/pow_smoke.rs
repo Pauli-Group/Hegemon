@@ -60,7 +60,8 @@ fn chain_specs_cover_pow_and_telemetry_defaults() {
         .telemetry_endpoints
         .iter()
         .any(|url| url.contains("telemetry")));
-    assert!(dev.genesis.balances.balances.len() >= 2);
+    // No pre-mine in development config - all issuance from mining rewards
+    assert!(dev.genesis.balances.balances.is_empty());
 
     let testnet = chain_spec::testnet_config();
     assert_eq!(testnet.pow_bits, PowDifficulty::get());
