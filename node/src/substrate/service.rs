@@ -1529,6 +1529,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let pq_handle_for_sync = pq_backend.handle();
                 let sync_handle_for_tick = pq_backend.handle();
                 let pq_handle_for_status = pq_backend.handle(); // For sending best block on connect
+                let pq_handle_for_tx_prop = pq_backend.handle(); // For transaction propagation
 
                 // Clone client for the network event handler to send our best block
                 let client_for_network = client.clone();
@@ -1816,6 +1817,88 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         }
                     },
                 );
+
+                // =======================================================================
+                // Spawn transaction propagation task
+                // =======================================================================
+                // This task broadcasts locally submitted transactions to all connected peers.
+                // It polls the transaction pool for new ready transactions and broadcasts
+                // any that haven't been broadcast yet.
+                let transaction_pool_for_prop = transaction_pool.clone();
+
+                task_manager.spawn_handle().spawn(
+                    "tx-propagation",
+                    Some("txpool"),
+                    async move {
+                        use crate::substrate::network_bridge::{TransactionMessage, TRANSACTIONS_PROTOCOL};
+                        use sc_transaction_pool_api::{InPoolTransaction, TransactionPool as ScTransactionPool};
+                        use std::collections::HashSet;
+
+                        // Track transactions we've already broadcast
+                        let mut broadcast_txs: HashSet<sp_core::H256> = HashSet::new();
+                        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
+
+                        tracing::info!("Transaction propagation task started");
+
+                        loop {
+                            interval.tick().await;
+
+                            // Get ready transactions from pool
+                            let ready_txs: Vec<_> = transaction_pool_for_prop
+                                .ready()
+                                .map(|tx| {
+                                    let hash: sp_core::H256 = *InPoolTransaction::hash(&*tx);
+                                    let data = InPoolTransaction::data(&*tx).encode();
+                                    (hash, data)
+                                })
+                                .collect();
+
+                            // Find transactions we haven't broadcast yet
+                            let new_tx_pairs: Vec<(sp_core::H256, Vec<u8>)> = ready_txs
+                                .into_iter()
+                                .filter(|(hash, _)| !broadcast_txs.contains(hash))
+                                .collect();
+
+                            // Extract data for broadcast and mark as broadcast
+                            let new_txs: Vec<Vec<u8>> = new_tx_pairs
+                                .iter()
+                                .map(|(hash, data)| {
+                                    broadcast_txs.insert(*hash);
+                                    data.clone()
+                                })
+                                .collect();
+
+                            // Broadcast new transactions
+                            if !new_txs.is_empty() {
+                                let msg = TransactionMessage::new(new_txs.clone());
+                                let encoded = msg.encode();
+
+                                let failed = pq_handle_for_tx_prop
+                                    .broadcast_to_all(TRANSACTIONS_PROTOCOL, encoded)
+                                    .await;
+
+                                tracing::info!(
+                                    tx_count = new_txs.len(),
+                                    failed_peers = failed.len(),
+                                    "📡 Broadcast transactions to peers"
+                                );
+                            }
+
+                            // Prune old broadcast hashes to prevent memory growth
+                            // Just remove entries older than a threshold since the pool
+                            // will evict transactions after a while anyway
+                            if broadcast_txs.len() > 10000 {
+                                // Simple strategy: clear half the set
+                                let to_remove: Vec<_> = broadcast_txs.iter().take(5000).copied().collect();
+                                for h in to_remove {
+                                    broadcast_txs.remove(&h);
+                                }
+                            }
+                        }
+                    },
+                );
+
+                tracing::info!("Transaction propagation task spawned");
 
                 // =======================================================================
                 // Spawn block import task for network blocks
