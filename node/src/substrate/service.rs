@@ -798,6 +798,7 @@ impl PqServiceConfig {
             .unwrap_or(false);
 
         // Parse bootstrap/seed nodes from environment
+        // Supports both IP:port and hostname:port formats
         let bootstrap_nodes: Vec<std::net::SocketAddr> = std::env::var("HEGEMON_SEEDS")
             .map(|s| {
                 s.split(',')
@@ -806,13 +807,33 @@ impl PqServiceConfig {
                         if addr.is_empty() {
                             return None;
                         }
-                        match addr.parse() {
-                            Ok(sock_addr) => Some(sock_addr),
+                        // First try direct parse (for IP:port)
+                        if let Ok(sock_addr) = addr.parse() {
+                            return Some(sock_addr);
+                        }
+                        // If that fails, try DNS resolution (for hostname:port)
+                        match std::net::ToSocketAddrs::to_socket_addrs(&addr) {
+                            Ok(mut addrs) => {
+                                if let Some(resolved) = addrs.next() {
+                                    tracing::info!(
+                                        addr = %addr,
+                                        resolved = %resolved,
+                                        "Resolved seed hostname"
+                                    );
+                                    Some(resolved)
+                                } else {
+                                    tracing::warn!(
+                                        addr = %addr,
+                                        "DNS resolved but no addresses returned"
+                                    );
+                                    None
+                                }
+                            }
                             Err(e) => {
                                 tracing::warn!(
                                     addr = %addr,
                                     error = %e,
-                                    "Failed to parse seed address"
+                                    "Failed to resolve seed address"
                                 );
                                 None
                             }
