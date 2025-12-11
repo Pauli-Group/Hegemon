@@ -18,6 +18,11 @@ thiserror = "1"
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }
 proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "batch_vs_individual"
+harness = false
 
 [features]
 default = []
