@@ -172,7 +172,8 @@ impl TestNode {
                 .commitment()
                 .as_int(),
         );
-        ciphertexts.push(bincode::serialize(&ciphertext).unwrap());
+        // Use to_pallet_bytes() to match the format expected by from_pallet_bytes()
+        ciphertexts.push(ciphertext.to_pallet_bytes().expect("pallet bytes"));
         drop(commitments);
         drop(ciphertexts);
         *self.state.height.lock().unwrap() += 1;
