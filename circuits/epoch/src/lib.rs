@@ -72,6 +72,11 @@ pub use prover::{
     EpochProverError, MockEpochProver,
 };
 
+// Recursive proof generation (RPO-based for STARK recursion)
+pub use recursion::{
+    RecursiveEpochProof, RecursiveEpochProver, RpoAir, RpoProofOptions,
+};
+
 // Light client
 pub use light_client::{LightClient, VerifyResult};
 

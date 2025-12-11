@@ -134,3 +134,114 @@ fn test_rpo_proof_options() {
     assert!(prod.num_queries > fast.num_queries);
     assert!(prod.grinding_factor > fast.grinding_factor);
 }
+
+#[test]
+fn test_rpo_stark_proof_generation_and_verification() {
+    use super::rpo_air::{RpoAir, RpoPublicInputs};
+    use winterfell::AcceptableOptions;
+    use winter_crypto::{hashers::Blake3_256, MerkleTree};
+    use winterfell::crypto::DefaultRandomCoin;
+    use winterfell::Prover;
+    
+    type Blake3 = Blake3_256<BaseElement>;
+    
+    // Create prover with fast options
+    let opts = RpoProofOptions::fast().to_winter_options();
+    let prover = RpoProver::new(opts.clone());
+    
+    // Test input: some non-zero state
+    let input_state: [BaseElement; STATE_WIDTH] = core::array::from_fn(|i| {
+        BaseElement::new((i as u64 + 1) * 12345)
+    });
+    
+    // Build trace
+    let trace = prover.build_trace(input_state);
+    
+    // Compute expected output
+    let output_state = prover.compute_output(input_state);
+    
+    // Create public inputs
+    let pub_inputs = RpoPublicInputs::new(input_state, output_state);
+    
+    // Generate proof using winterfell's Prover trait
+    let proof = prover.prove(trace).expect("proof generation should succeed");
+    
+    // Create acceptable options for verification
+    let acceptable_options = AcceptableOptions::OptionSet(vec![opts.clone()]);
+    
+    // Verify the proof
+    let verified = winterfell::verify::<RpoAir, Blake3, DefaultRandomCoin<Blake3>, MerkleTree<Blake3>>(
+        proof,
+        pub_inputs,
+        &acceptable_options,
+    );
+    assert!(verified.is_ok(), "proof verification should succeed: {:?}", verified.err());
+}
+
+#[test]
+fn test_rpo_proof_with_zero_input() {
+    use super::rpo_air::{RpoAir, RpoPublicInputs};
+    use winterfell::AcceptableOptions;
+    use winter_crypto::{hashers::Blake3_256, MerkleTree};
+    use winterfell::crypto::DefaultRandomCoin;
+    use winterfell::Prover;
+    
+    type Blake3 = Blake3_256<BaseElement>;
+    
+    let opts = RpoProofOptions::fast().to_winter_options();
+    let prover = RpoProver::new(opts.clone());
+    
+    // Zero input
+    let input_state = [BaseElement::ZERO; STATE_WIDTH];
+    let trace = prover.build_trace(input_state);
+    let output_state = prover.compute_output(input_state);
+    let pub_inputs = RpoPublicInputs::new(input_state, output_state);
+    
+    let proof = prover.prove(trace).expect("proof generation should succeed");
+    
+    let acceptable_options = AcceptableOptions::OptionSet(vec![opts.clone()]);
+    let verified = winterfell::verify::<RpoAir, Blake3, DefaultRandomCoin<Blake3>, MerkleTree<Blake3>>(
+        proof,
+        pub_inputs,
+        &acceptable_options,
+    );
+    assert!(verified.is_ok(), "zero input proof should verify");
+}
+
+#[test]
+fn test_rpo_proof_invalid_output_fails() {
+    use super::rpo_air::{RpoAir, RpoPublicInputs};
+    use winterfell::AcceptableOptions;
+    use winter_crypto::{hashers::Blake3_256, MerkleTree};
+    use winterfell::crypto::DefaultRandomCoin;
+    use winterfell::Prover;
+    
+    type Blake3 = Blake3_256<BaseElement>;
+    
+    let opts = RpoProofOptions::fast().to_winter_options();
+    let prover = RpoProver::new(opts.clone());
+    
+    let input_state: [BaseElement; STATE_WIDTH] = core::array::from_fn(|i| {
+        BaseElement::new(i as u64 + 1)
+    });
+    
+    let trace = prover.build_trace(input_state);
+    let correct_output = prover.compute_output(input_state);
+    
+    // Tamper with output - change first element
+    let mut wrong_output = correct_output;
+    wrong_output[0] = wrong_output[0] + BaseElement::ONE;
+    
+    let wrong_pub_inputs = RpoPublicInputs::new(input_state, wrong_output);
+    
+    let proof = prover.prove(trace).expect("proof generation should succeed");
+    
+    // Verification should fail with wrong public inputs
+    let acceptable_options = AcceptableOptions::OptionSet(vec![opts.clone()]);
+    let verified = winterfell::verify::<RpoAir, Blake3, DefaultRandomCoin<Blake3>, MerkleTree<Blake3>>(
+        proof,
+        wrong_pub_inputs,
+        &acceptable_options,
+    );
+    assert!(verified.is_err(), "verification with wrong output should fail");
+}
