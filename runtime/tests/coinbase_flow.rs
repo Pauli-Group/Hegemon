@@ -9,46 +9,26 @@
 //!
 //! If any test fails, it indicates missing infrastructure for production mining.
 //!
-//! ## Bitcoin-style Model
+//! ## Hegemon Tokenomics Model
 //!
-//! In Bitcoin, the coinbase transaction:
+//! Unlike Bitcoin's 50 BTC → 210,000 block halving, Hegemon uses:
+//! - 21 million HEG max supply (same as Bitcoin in coins)
+//! - ~4.99 HEG initial block reward
+//! - 4-year epochs (~2.1 million blocks at 60s)
+//! - Halving each epoch
+//!
+//! The coinbase inherent:
 //! - Is constructed by the miner with their address as recipient
 //! - Is committed to via merkle root in the block header
 //! - Is covered by the PoW hash (changing recipient invalidates proof)
 //! - Is executed when the block is processed, minting new coins
-//!
-//! This test verifies the Substrate equivalent works the same way.
 
 use frame_support::assert_ok;
 use frame_support::sp_runtime::BuildStorage;
 use frame_support::traits::Hooks;
+use pallet_coinbase::{block_subsidy, BLOCKS_PER_EPOCH, INITIAL_REWARD};
 use runtime::{Balances, Coinbase, RuntimeOrigin, System, Timestamp};
 use sp_io::TestExternalities;
-
-// ============================================================================
-// Block Subsidy Constants (mirrored from consensus/src/reward.rs)
-// ============================================================================
-
-/// One coin = 100 million base units (like satoshis)
-const COIN: u64 = 100_000_000;
-
-/// Initial block subsidy: 50 coins
-const INITIAL_SUBSIDY: u64 = 50 * COIN;
-
-/// Halving interval: every 210,000 blocks
-const HALVING_INTERVAL: u64 = 210_000;
-
-/// Calculate block subsidy for a given height (Bitcoin-style halving)
-fn block_subsidy(height: u64) -> u64 {
-    if height == 0 {
-        return 0;
-    }
-    let halvings = height / HALVING_INTERVAL;
-    if halvings >= 64 {
-        return 0;
-    }
-    INITIAL_SUBSIDY >> halvings
-}
 
 // ============================================================================
 // Test Infrastructure
@@ -114,20 +94,25 @@ fn mining_block_credits_coinbase_reward_to_miner() {
 
         // Step 3: Execute the coinbase inherent directly
         // This is what happens when the block is imported - the inherent is executed
-        let expected_reward = block_subsidy(1);
+        let block_reward = block_subsidy(1);
 
         // Call the coinbase mint_reward extrinsic with None origin (inherent)
         assert_ok!(Coinbase::mint_reward(
             RuntimeOrigin::none(), // Inherent origin
             miner.clone(),
-            expected_reward,
+            block_reward,
         ));
 
-        // Step 4: CRITICAL CHECK - Miner should now have block reward
+        // Step 4: CRITICAL CHECK - Miner should receive their share of the reward
+        // The coinbase pallet splits rewards: 80% miner, 10% treasury, 10% community
         let final_balance = Balances::free_balance(&miner);
         let final_issuance = Balances::total_issuance();
 
-        println!("Expected block reward: {} (50 HGM)", expected_reward);
+        // Miner gets 80% of block reward (MinerShare = Permill::from_percent(80))
+        let expected_miner_reward = (block_reward as u128 * 80) / 100;
+
+        println!("Block reward: {} (~{:.2} HEG)", block_reward, block_reward as f64 / 100_000_000.0);
+        println!("Expected miner share (80%): {} (~{:.2} HEG)", expected_miner_reward, expected_miner_reward as f64 / 100_000_000.0);
         println!("Miner final balance: {}", final_balance);
         println!("Final total issuance: {}", final_issuance);
 
@@ -137,20 +122,20 @@ fn mining_block_credits_coinbase_reward_to_miner() {
 
         // If this fails, mining rewards are not implemented!
         assert_eq!(
-            balance_increase, expected_reward as u128,
-            "CRITICAL: Mining did not credit block reward to miner! \
-             Balance increased by {} but expected {}. \
-             This means coinbase reward execution is missing.",
-            balance_increase, expected_reward
+            balance_increase, expected_miner_reward,
+            "CRITICAL: Mining did not credit correct reward to miner! \
+             Balance increased by {} but expected {} (80% of {}). \
+             This means coinbase reward execution is missing or incorrect.",
+            balance_increase, expected_miner_reward, block_reward
         );
 
-        // Total issuance should also increase
+        // Total issuance should increase by full block reward (miner + treasury + community)
         assert_eq!(
-            issuance_increase, expected_reward as u128,
+            issuance_increase, block_reward as u128,
             "CRITICAL: Total issuance did not increase by block reward! \
              Issuance increased by {} but expected {}. \
              This means new coins were not minted.",
-            issuance_increase, expected_reward
+            issuance_increase, block_reward
         );
 
         println!("SUCCESS: Coinbase reward successfully minted!");
@@ -161,27 +146,26 @@ fn mining_block_credits_coinbase_reward_to_miner() {
 // Halving Tests
 // ============================================================================
 
-/// Verify block subsidy follows Bitcoin halving schedule
+/// Verify block subsidy follows Hegemon halving schedule
 #[test]
 fn block_subsidy_follows_halving_schedule() {
     // Genesis block has no subsidy
     assert_eq!(block_subsidy(0), 0);
 
-    // First halving epoch: 50 coins
-    assert_eq!(block_subsidy(1), 50 * COIN);
-    assert_eq!(block_subsidy(100_000), 50 * COIN);
-    assert_eq!(block_subsidy(209_999), 50 * COIN);
+    // First epoch: INITIAL_REWARD (~4.99 HEG)
+    assert_eq!(block_subsidy(1), INITIAL_REWARD);
+    assert_eq!(block_subsidy(1_000_000), INITIAL_REWARD);
+    assert_eq!(block_subsidy(BLOCKS_PER_EPOCH), INITIAL_REWARD);
 
-    // Second halving epoch: 25 coins
-    assert_eq!(block_subsidy(210_000), 25 * COIN);
-    assert_eq!(block_subsidy(300_000), 25 * COIN);
-    assert_eq!(block_subsidy(419_999), 25 * COIN);
+    // Second epoch: half of initial
+    assert_eq!(block_subsidy(BLOCKS_PER_EPOCH + 1), INITIAL_REWARD / 2);
+    assert_eq!(block_subsidy(BLOCKS_PER_EPOCH * 2), INITIAL_REWARD / 2);
 
-    // Third halving epoch: 12.5 coins
-    assert_eq!(block_subsidy(420_000), 12 * COIN + 50_000_000); // 12.5 COIN
+    // Third epoch: quarter of initial
+    assert_eq!(block_subsidy(BLOCKS_PER_EPOCH * 2 + 1), INITIAL_REWARD / 4);
 
-    // Eventually subsidy goes to zero
-    assert_eq!(block_subsidy(210_000 * 64), 0);
+    // Eventually subsidy goes to zero (after 64 halvings)
+    assert_eq!(block_subsidy(BLOCKS_PER_EPOCH * 64 + 1), 0);
 }
 
 // ============================================================================
@@ -196,7 +180,7 @@ fn rewards_accumulate_over_multiple_blocks() {
     ext.execute_with(|| {
         let miner = account(42);
 
-        let mut total_expected: u128 = 0;
+        let mut total_miner_expected: u128 = 0;
         let blocks_to_mine = 5;
 
         for block_num in 1..=blocks_to_mine {
@@ -207,7 +191,8 @@ fn rewards_accumulate_over_multiple_blocks() {
             Coinbase::on_initialize(block_num.into());
 
             let reward = block_subsidy(block_num);
-            total_expected += reward as u128;
+            // Miner gets 80% of each block reward
+            total_miner_expected += (reward as u128 * 80) / 100;
 
             // Execute coinbase inherent
             assert_ok!(Coinbase::mint_reward(
@@ -219,14 +204,16 @@ fn rewards_accumulate_over_multiple_blocks() {
 
         let balance = Balances::free_balance(&miner);
         assert_eq!(
-            balance, total_expected,
-            "Miner should have accumulated {} over {} blocks, but has {}",
-            total_expected, blocks_to_mine, balance
+            balance, total_miner_expected,
+            "Miner should have accumulated {} (80% of rewards) over {} blocks, but has {}",
+            total_miner_expected, blocks_to_mine, balance
         );
 
         println!(
-            "SUCCESS: Miner accumulated {} over {} blocks",
-            balance, blocks_to_mine
+            "SUCCESS: Miner accumulated {} (~{:.2} HEG) over {} blocks",
+            balance,
+            balance as f64 / 100_000_000.0,
+            blocks_to_mine
         );
     });
 }

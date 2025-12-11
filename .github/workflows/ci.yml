@@ -26,11 +26,22 @@ jobs:
     runs-on: ubuntu-latest
     needs: rust-lints
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          df -h
       - uses: actions/checkout@v4
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-tests"
       - name: Cargo test (workspace)
         run: cargo test --workspace
 
@@ -38,11 +49,21 @@ jobs:
     runs-on: ubuntu-latest
     needs: rust-lints
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
       - uses: actions/checkout@v4
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "network-tests"
       - name: Cargo test (network)
         run: cargo test -p network
 
@@ -62,11 +83,21 @@ jobs:
     runs-on: ubuntu-latest
     needs: runtime-lints
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
       - uses: actions/checkout@v4
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "runtime-build"
       - name: Cargo build (runtime)
         run: cargo build -p runtime
 
@@ -74,23 +105,45 @@ jobs:
     runs-on: ubuntu-latest
     needs: runtime-build
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
       - uses: actions/checkout@v4
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
         run: rustup show
-      - name: Build runtime wasm
-        run: cargo build -p runtime --release --target wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "runtime-build"
+      - name: Build node (includes WASM runtime)
+        # Building the node triggers substrate-wasm-builder which properly
+        # compiles the runtime for WASM with correct feature flags
+        run: cargo build -p hegemon-node --release
 
   runtime-benchmarks:
     runs-on: ubuntu-latest
     needs: runtime-build
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
       - uses: actions/checkout@v4
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "runtime-build"
       - name: Runtime benchmarks (smoke)
         run: cargo test -p runtime --features runtime-benchmarks -- --nocapture
 
@@ -98,11 +151,21 @@ jobs:
     runs-on: ubuntu-latest
     needs: runtime-build
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
       - uses: actions/checkout@v4
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "runtime-build"
       - name: Pallet migration tests
         run: cargo test -p runtime migration
 
@@ -148,11 +211,21 @@ jobs:
     env:
       PROPTEST_MAX_CASES: 64
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
       - uses: actions/checkout@v4
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-tests"
       - name: Transaction circuit security fuzzing
         run: cargo test -p transaction-circuit --test security_fuzz -- --nocapture
       - name: Network adversarial tests
@@ -178,11 +251,21 @@ jobs:
     runs-on: ubuntu-latest
     needs: rust-tests
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
       - uses: actions/checkout@v4
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-tests"
       - name: Node + wallet integration test
         run: cargo test --test node_wallet_daemon -- --nocapture
 
@@ -205,11 +288,21 @@ jobs:
     needs: [rust-tests, wallet, go-net]
     continue-on-error: true
     steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
       - uses: actions/checkout@v4
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
         run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "rust-tests"
       - uses: actions/setup-go@v5
         with:
           go-version: '1.21'
