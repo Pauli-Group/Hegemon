@@ -77,6 +77,9 @@ pub use recursion::{
     RecursiveEpochProof, RecursiveEpochProver, RpoAir, RpoProofOptions,
 };
 
+// Re-export winterfell Proof type for pallet usage
+pub use winterfell::Proof;
+
 // Light client
 pub use light_client::{LightClient, VerifyResult};
 
