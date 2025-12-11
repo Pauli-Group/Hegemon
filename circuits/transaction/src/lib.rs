@@ -8,12 +8,18 @@
 //! - [`stark_verifier::verify_transaction_proof`] - Verify STARK proofs
 //! - [`stark_air::TransactionAirStark`] - The AIR (Algebraic Intermediate Representation)
 //!
+//! ## Batch Proofs
+//!
+//! For batching multiple transactions into a single proof, see the `batch-circuit` crate.
+//! The `dimensions` module provides shared trace layout calculations.
+//!
 //! ## Legacy API (Deprecated)
 //!
 //! The `air` module and `check_constraints` function are deprecated.
 //! They only perform equality checks, not cryptographic verification.
 
 pub mod constants;
+pub mod dimensions;
 pub mod error;
 pub mod hashing;
 pub mod keys;

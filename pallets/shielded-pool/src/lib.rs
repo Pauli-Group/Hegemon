@@ -39,7 +39,9 @@ pub mod verifier;
 
 use merkle::CompactMerkleTree;
 use types::{BindingSignature, EncryptedNote, StarkProof, VerifyingKeyParams, MERKLE_TREE_DEPTH};
-use verifier::{ProofVerifier, ShieldedTransferInputs, VerificationResult, VerifyingKey};
+use verifier::{
+    BatchVerifier, ProofVerifier, ShieldedTransferInputs, VerificationResult, VerifyingKey,
+};
 
 use frame_support::dispatch::DispatchResult;
 use frame_support::pallet_prelude::*;
@@ -142,6 +144,9 @@ pub mod pallet {
         /// Proof verifier implementation.
         type ProofVerifier: ProofVerifier + Default;
 
+        /// Batch proof verifier implementation.
+        type BatchProofVerifier: verifier::BatchVerifier + Default;
+
         /// Maximum nullifiers per transaction.
         #[pallet::constant]
         type MaxNullifiersPerTx: Get<u32>;
@@ -153,6 +158,14 @@ pub mod pallet {
         /// Maximum encrypted notes per transaction.
         #[pallet::constant]
         type MaxEncryptedNotesPerTx: Get<u32>;
+
+        /// Maximum nullifiers per batch (batch_size * MaxNullifiersPerTx).
+        #[pallet::constant]
+        type MaxNullifiersPerBatch: Get<u32>;
+
+        /// Maximum commitments per batch (batch_size * MaxCommitmentsPerTx).
+        #[pallet::constant]
+        type MaxCommitmentsPerBatch: Get<u32>;
 
         /// Number of historical Merkle roots to keep.
         #[pallet::constant]
@@ -291,6 +304,18 @@ pub mod pallet {
             /// Block height.
             block_number: BlockNumberFor<T>,
         },
+
+        /// A batch shielded transfer was executed.
+        BatchShieldedTransfer {
+            /// Number of transactions in the batch.
+            batch_size: u32,
+            /// Total number of nullifiers across all transactions.
+            nullifier_count: u32,
+            /// Total number of new commitments.
+            commitment_count: u32,
+            /// Total fee across all transactions.
+            total_fee: u128,
+        },
     }
 
     #[pallet::error]
@@ -333,6 +358,8 @@ pub mod pallet {
         /// Proof exceeds maximum allowed size.
         /// This prevents DoS attacks via oversized proofs that consume verification resources.
         ProofTooLarge,
+        /// Invalid batch size (must be power of 2: 2, 4, 8, or 16).
+        InvalidBatchSize,
     }
 
     #[pallet::genesis_config]
@@ -875,6 +902,164 @@ pub mod pallet {
 
             Ok(())
         }
+
+        /// Submit a batch of shielded transfers with a single aggregated proof.
+        ///
+        /// This extrinsic allows multiple shielded transfers to be submitted together
+        /// with a single STARK proof that covers all transactions. This significantly
+        /// reduces verification costs from O(N) to O(1).
+        ///
+        /// # Arguments
+        /// * `proof` - The batch STARK proof covering all transactions
+        /// * `nullifiers` - All nullifiers from all transactions in the batch
+        /// * `commitments` - All new note commitments from all transactions
+        /// * `ciphertexts` - Encrypted notes for all recipients
+        /// * `anchor` - Shared Merkle root all transactions were proven against
+        /// * `total_fee` - Total fee across all transactions
+        ///
+        /// # Security
+        /// - All transactions must use the same Merkle anchor
+        /// - Single batch proof verifies all transactions together
+        /// - Each nullifier is checked for double-spend
+        /// - Batch size must be a power of 2 (2, 4, 8, or 16)
+        #[pallet::call_index(5)]
+        #[pallet::weight(T::WeightInfo::shielded_transfer(
+            nullifiers.len() as u32,
+            commitments.len() as u32
+        ))]
+        pub fn batch_shielded_transfer(
+            origin: OriginFor<T>,
+            proof: types::BatchStarkProof,
+            nullifiers: BoundedVec<[u8; 32], T::MaxNullifiersPerBatch>,
+            commitments: BoundedVec<[u8; 32], T::MaxCommitmentsPerBatch>,
+            ciphertexts: BoundedVec<EncryptedNote, T::MaxCommitmentsPerBatch>,
+            anchor: [u8; 32],
+            total_fee: u128,
+        ) -> DispatchResult {
+            // This is an unsigned extrinsic for batch transfers
+            ensure_none(origin)?;
+
+            // Validate batch proof structure
+            ensure!(proof.is_valid_batch_size(), Error::<T>::InvalidBatchSize);
+
+            // Validate we have some data
+            ensure!(
+                !nullifiers.is_empty() || !commitments.is_empty(),
+                Error::<T>::InvalidNullifierCount
+            );
+
+            // Check that ciphertexts match commitments
+            ensure!(
+                ciphertexts.len() == commitments.len(),
+                Error::<T>::EncryptedNotesMismatch
+            );
+
+            // Check anchor is a valid historical Merkle root
+            ensure!(
+                MerkleRoots::<T>::contains_key(anchor),
+                Error::<T>::InvalidAnchor
+            );
+
+            // Check for duplicate nullifiers in batch (skip zero padding)
+            let mut seen_nullifiers = sp_std::vec::Vec::new();
+            for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    continue;
+                }
+                if seen_nullifiers.contains(nf) {
+                    return Err(Error::<T>::DuplicateNullifierInTx.into());
+                }
+                seen_nullifiers.push(*nf);
+            }
+
+            // Check nullifiers not already spent (skip zero padding)
+            for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    continue;
+                }
+                ensure!(
+                    !Nullifiers::<T>::contains_key(nf),
+                    Error::<T>::NullifierAlreadyExists
+                );
+            }
+
+            // Build batch verification inputs
+            let batch_inputs = verifier::BatchPublicInputs {
+                anchor,
+                nullifiers: nullifiers.clone().into_inner(),
+                commitments: commitments.clone().into_inner(),
+                batch_size: proof.batch_size,
+            };
+
+            // Get verifying key
+            let vk = VerifyingKeyStorage::<T>::get();
+            ensure!(vk.enabled, Error::<T>::VerifyingKeyNotFound);
+
+            // Verify batch ZK proof (STARK-based, no trusted setup)
+            let batch_verifier = T::BatchProofVerifier::default();
+            match batch_verifier.verify_batch(&proof, &batch_inputs, &vk) {
+                verifier::BatchVerificationResult::Valid => {}
+                verifier::BatchVerificationResult::InvalidProofFormat => {
+                    warn!(target: "shielded-pool", "Invalid batch proof format");
+                    return Err(Error::<T>::InvalidProofFormat.into());
+                }
+                verifier::BatchVerificationResult::InvalidBatchSize => {
+                    warn!(target: "shielded-pool", "Invalid batch size");
+                    return Err(Error::<T>::InvalidBatchSize.into());
+                }
+                verifier::BatchVerificationResult::VerificationFailed => {
+                    warn!(target: "shielded-pool", "Batch proof verification failed");
+                    return Err(Error::<T>::ProofVerificationFailed.into());
+                }
+                verifier::BatchVerificationResult::KeyNotFound => {
+                    return Err(Error::<T>::VerifyingKeyNotFound.into());
+                }
+                _ => return Err(Error::<T>::ProofVerificationFailed.into()),
+            }
+
+            // Add nullifiers to spent set (skip zero padding)
+            for nf in nullifiers.iter() {
+                if is_zero_nullifier(nf) {
+                    continue;
+                }
+                Nullifiers::<T>::insert(nf, ());
+                Self::deposit_event(Event::NullifierAdded { nullifier: *nf });
+            }
+
+            // Add commitments to Merkle tree
+            let mut current_index = CommitmentIndex::<T>::get();
+            for (cm, enc) in commitments.iter().zip(ciphertexts.iter()) {
+                Commitments::<T>::insert(current_index, *cm);
+                EncryptedNotes::<T>::insert(current_index, enc.clone());
+                Self::deposit_event(Event::CommitmentAdded {
+                    index: current_index,
+                    commitment: *cm,
+                });
+                current_index += 1;
+            }
+            CommitmentIndex::<T>::put(current_index);
+
+            // Update Merkle tree root
+            Self::update_merkle_tree_batch(&commitments)?;
+
+            // Emit batch transfer event
+            Self::deposit_event(Event::BatchShieldedTransfer {
+                batch_size: proof.batch_size,
+                nullifier_count: nullifiers.len() as u32,
+                commitment_count: commitments.len() as u32,
+                total_fee,
+            });
+
+            info!(
+                target: "shielded-pool",
+                "🔐 Batch shielded transfer: {} txs, {} nullifiers, {} commitments",
+                proof.batch_size,
+                nullifiers.len(),
+                commitments.len()
+            );
+
+            Ok(())
+        }
     }
 
     impl<T: Config> Pallet<T> {
@@ -886,6 +1071,31 @@ pub mod pallet {
         /// Update the Merkle tree with new commitments.
         fn update_merkle_tree(
             new_commitments: &BoundedVec<[u8; 32], T::MaxCommitmentsPerTx>,
+        ) -> DispatchResult {
+            // Get current compact tree state and mutate it
+            let mut tree = MerkleTree::<T>::get();
+
+            // Append each new commitment
+            for cm in new_commitments.iter() {
+                tree.append(*cm).map_err(|_| Error::<T>::MerkleTreeFull)?;
+            }
+
+            // Store updated tree
+            let new_root = tree.root();
+            MerkleTree::<T>::put(tree);
+
+            // Store root in history
+            let block = <frame_system::Pallet<T>>::block_number();
+            MerkleRoots::<T>::insert(new_root, block);
+
+            Self::deposit_event(Event::MerkleRootUpdated { root: new_root });
+
+            Ok(())
+        }
+
+        /// Update the Merkle tree with new batch commitments.
+        fn update_merkle_tree_batch(
+            new_commitments: &BoundedVec<[u8; 32], T::MaxCommitmentsPerBatch>,
         ) -> DispatchResult {
             // Get current compact tree state and mutate it
             let mut tree = MerkleTree::<T>::get();
