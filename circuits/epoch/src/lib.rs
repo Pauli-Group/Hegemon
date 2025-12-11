@@ -51,6 +51,7 @@ pub mod light_client;
 pub mod merkle;
 pub mod prover;
 pub mod types;
+pub mod verifier_spike;
 
 // Dimension calculations (for testing/validation)
 pub use dimensions::{
