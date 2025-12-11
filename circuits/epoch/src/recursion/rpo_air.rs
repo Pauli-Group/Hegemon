@@ -232,10 +232,20 @@ impl Air for RpoAir {
     type PublicInputs = RpoPublicInputs;
 
     fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
-        // One transition constraint per state column, enforcing the round function
-        let degrees = vec![TransitionConstraintDegree::new(7); STATE_WIDTH];
+        // Constraint degree calculation:
+        // - S-box constraint: x^7 or y^7 = degree 7
+        // - Selector multiplication adds degree 2 from periodic values
+        // - Total: 7 + 2 - 1 = 8 (periodic degree is multiplied, not added)
+        // Periodic column cycles: length 16 (same as trace)
+        let degrees = vec![
+            TransitionConstraintDegree::with_cycles(8, vec![ROWS_PER_PERMUTATION]); 
+            STATE_WIDTH
+        ];
 
-        let context = AirContext::new(trace_info, degrees, 2 * STATE_WIDTH, options);
+        // Assertions: 12 input + 12 output = 24
+        let num_assertions = 2 * STATE_WIDTH;
+
+        let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
         Self { context, pub_inputs }
     }
@@ -247,29 +257,82 @@ impl Air for RpoAir {
     fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
         &self,
         frame: &EvaluationFrame<E>,
-        _periodic_values: &[E],
+        periodic_values: &[E],
         result: &mut [E],
     ) {
         let current = frame.current();
         let next = frame.next();
 
         // Get round index from the trace (column 12)
-        let _round_idx = current[ROUND_COL];
-
-        // Constraint: MDS mixing - linear combination check
-        // next[i] should equal sum_j(MDS[i][j] * current[j]) after appropriate transforms
+        let round_idx = current[ROUND_COL];
         
+        // Periodic values layout:
+        // [0]: half_round_selector (0 = padding/input, 1 = forward sbox, 2 = inverse sbox)
+        // [1..13]: ARK constants for this row (12 values)
+        let half_round_type = periodic_values[0];
+        
+        // Extract per-element round constants
+        let ark: [E; STATE_WIDTH] = core::array::from_fn(|i| periodic_values[1 + i]);
+
+        // Build MDS result: MDS(current)
+        let mut mds_result: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
         for i in 0..STATE_WIDTH {
-            // MDS mixing constraint (degree 1)
-            let mut mds_result = E::ZERO;
             for j in 0..STATE_WIDTH {
                 let mds_coeff = E::from(BaseElement::new(MDS[i][j]));
-                mds_result += mds_coeff * current[j];
+                mds_result[i] += mds_coeff * current[j];
             }
-            
-            // Simplified constraint: state transitions follow MDS pattern
-            // Full implementation would include S-box verification
-            result[i] = next[i] - mds_result;
+        }
+
+        // Add round constants: MDS(current) + ARK
+        let mut intermediate: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
+        for i in 0..STATE_WIDTH {
+            intermediate[i] = mds_result[i] + ark[i];
+        }
+
+        // Apply constraints based on half-round type
+        // Type 0: No constraint (input row or padding)
+        // Type 1: Forward S-box constraint: next = (MDS(current) + ARK)^7
+        // Type 2: Inverse S-box constraint: next^7 = MDS(current) + ARK
+        
+        let one = E::ONE;
+        let two = one + one;
+        
+        // Selector for forward S-box (type == 1)
+        let is_forward = half_round_type * (two - half_round_type);
+        
+        // Selector for inverse S-box (type == 2)  
+        let is_inverse = half_round_type * (half_round_type - one);
+        
+        // Selector for no constraint (type == 0)
+        let is_padding = (one - half_round_type) * (two - half_round_type);
+
+        for i in 0..STATE_WIDTH {
+            // Forward S-box: next = intermediate^7
+            // Compute intermediate^7 = intermediate * intermediate^2 * intermediate^4
+            let x = intermediate[i];
+            let x2 = x * x;
+            let x4 = x2 * x2;
+            let x3 = x2 * x;
+            let x7 = x3 * x4;
+            let forward_constraint = next[i] - x7;
+
+            // Inverse S-box: next^7 = intermediate
+            // Compute next^7
+            let y = next[i];
+            let y2 = y * y;
+            let y4 = y2 * y2;
+            let y3 = y2 * y;
+            let y7 = y3 * y4;
+            let inverse_constraint = y7 - intermediate[i];
+
+            // Padding: next = current (state unchanged)
+            let padding_constraint = next[i] - current[i];
+
+            // Combined constraint with selectors
+            // Only one of these will be non-zero based on half_round_type
+            result[i] = is_forward * forward_constraint 
+                      + is_inverse * inverse_constraint
+                      + is_padding * padding_constraint;
         }
     }
 
@@ -288,6 +351,81 @@ impl Air for RpoAir {
         }
 
         assertions
+    }
+
+    fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
+        // Periodic columns for RPO constraints
+        // Column 0: half_round_type selector (0=padding, 1=forward sbox, 2=inverse sbox)
+        // Columns 1-12: ARK constants for each state element
+        //
+        // The periodic value at row r controls the transition r → r+1
+        
+        let trace_len = ROWS_PER_PERMUTATION;
+        
+        // Half-round type selector:
+        // Row 0 → 1: forward sbox (type 1), uses ARK1[0]
+        // Row 1 → 2: inverse sbox (type 2), uses ARK2[0]
+        // Row 2 → 3: forward sbox (type 1), uses ARK1[1]
+        // Row 3 → 4: inverse sbox (type 2), uses ARK2[1]
+        // ...
+        // Row 12 → 13: forward sbox (type 1), uses ARK1[6]
+        // Row 13 → 14: inverse sbox (type 2), uses ARK2[6]
+        // Row 14 → 15: padding (type 0), copy state
+        // Row 15: last row, no outgoing transition checked
+        let mut half_round_type = Vec::with_capacity(trace_len);
+        for row in 0..trace_len {
+            let val = if row >= 14 {
+                0  // Rows 14, 15: padding transition or last row
+            } else if row % 2 == 0 {
+                1  // Even rows (0,2,4,...,12): forward sbox transition
+            } else {
+                2  // Odd rows (1,3,5,...,13): inverse sbox transition
+            };
+            half_round_type.push(BaseElement::new(val));
+        }
+
+        // ARK constants - one column per state element
+        // The constants at row r are used for transition r → r+1
+        // Row 0: ARK1[0] (forward sbox for round 0)
+        // Row 1: ARK2[0] (inverse sbox for round 0)
+        // Row 2: ARK1[1] (forward sbox for round 1)
+        // etc.
+        let mut ark_columns: [Vec<BaseElement>; STATE_WIDTH] = 
+            core::array::from_fn(|_| Vec::with_capacity(trace_len));
+
+        for row in 0..trace_len {
+            let constants = if row >= ROWS_PER_PERMUTATION - 1 {
+                [0u64; STATE_WIDTH] // Padding transition
+            } else if row % 2 == 0 {
+                // Even row: forward sbox uses ARK1
+                let round = row / 2;
+                if round < NUM_ROUNDS {
+                    ARK1[round]
+                } else {
+                    [0u64; STATE_WIDTH]
+                }
+            } else {
+                // Odd row: inverse sbox uses ARK2
+                let round = row / 2;
+                if round < NUM_ROUNDS {
+                    ARK2[round]
+                } else {
+                    [0u64; STATE_WIDTH]
+                }
+            };
+
+            for (i, &c) in constants.iter().enumerate() {
+                ark_columns[i].push(BaseElement::new(c));
+            }
+        }
+
+        // Combine into result: [half_round_type, ark[0], ark[1], ..., ark[11]]
+        let mut result = vec![half_round_type];
+        for col in ark_columns {
+            result.push(col);
+        }
+
+        result
     }
 }
 

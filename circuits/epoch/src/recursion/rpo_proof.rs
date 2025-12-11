@@ -47,10 +47,11 @@ impl Default for RpoProofOptions {
 
 impl RpoProofOptions {
     /// Fast options for development/testing
+    /// Note: blowup_factor must be >= 2 * max_constraint_degree (9) = 18
     pub fn fast() -> Self {
         Self {
             num_queries: 4,
-            blowup_factor: 8,
+            blowup_factor: 32, // Must be power of 2 >= 18
             grinding_factor: 0,
         }
     }
@@ -59,7 +60,7 @@ impl RpoProofOptions {
     pub fn production() -> Self {
         Self {
             num_queries: 32,
-            blowup_factor: 16,
+            blowup_factor: 32,
             grinding_factor: 16,
         }
     }
@@ -325,6 +326,6 @@ mod tests {
         let winter_opts = opts.to_winter_options();
 
         assert_eq!(winter_opts.num_queries(), 4);
-        assert_eq!(winter_opts.blowup_factor(), 8);
+        assert_eq!(winter_opts.blowup_factor(), 32); // Must be >= 2 * max_constraint_degree
     }
 }

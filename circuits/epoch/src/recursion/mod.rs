@@ -7,14 +7,15 @@
 //! ## Why RPO?
 //!
 //! Blake3 requires ~100 columns in AIR (bitwise operations, XOR, rotation).
-//! RPO (Rescue Prime Optimized) requires ~5 columns (x^7 S-box, MDS mixing).
+//! RPO (Rescue Prime Optimized) requires ~13 columns (x^7 S-box, MDS mixing).
 //!
 //! ## Architecture
 //!
-//! - [`RpoAir`] - RPO permutation as AIR constraints (~5 columns)
-//! - [`MerkleVerifierAir`] - Merkle path verification using RPO
-//! - [`FriVerifierAir`] - FRI query verification (folding, interpolation)  
-//! - [`StarkVerifierAir`] - Full STARK verifier combining the above
+//! - [`rpo_air::RpoAir`] - RPO permutation as AIR constraints (~13 columns)
+//! - [`merkle_air::MerkleVerifierAir`] - Merkle path verification using RPO
+//! - [`fri_air::FriVerifierAir`] - FRI query verification (folding, interpolation)  
+//! - [`stark_verifier_air::StarkVerifierAir`] - Full STARK verifier combining the above
+//! - [`recursive_prover::RecursiveEpochProver`] - Epoch prover with RPO-based recursion
 //!
 //! ## Quantum Resistance
 //!
@@ -23,12 +24,20 @@
 //! - STARK soundness (FRI protocol over Goldilocks field)
 //! - RPO collision resistance (hash-based, post-quantum)
 
+pub mod fri_air;
+pub mod merkle_air;
+pub mod recursive_prover;
 pub mod rpo_air;
 pub mod rpo_proof;
+pub mod stark_verifier_air;
+
+// Re-export main types for convenience
+pub use recursive_prover::{InnerProofData, RecursiveEpochProof, RecursiveEpochProver};
+pub use rpo_air::{RpoAir, RpoProver, RpoPublicInputs};
+pub use rpo_proof::{
+    prove_with_rpo, rpo_hash_elements, rpo_merge, verify_with_rpo, RpoProofOptions,
+};
+pub use stark_verifier_air::{StarkVerifierAir, StarkVerifierPublicInputs};
 
 #[cfg(test)]
 mod tests;
-
-// Re-exports for convenience
-pub use rpo_air::{RpoAir, RpoProver, RpoPublicInputs};
-pub use rpo_proof::{prove_with_rpo, verify_with_rpo, RpoProofOptions};
