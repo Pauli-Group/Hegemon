@@ -34,7 +34,7 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] Phase 3a: Full RPO STARK prover (RpoStarkProver with Rpo256/RpoRandomCoin).
 - [x] Phase 3b: Wire real STARK prover to RecursiveEpochProver.
 - [x] Phase 3c: Pallet integration (RecursiveEpochProver replaces MockEpochProver).
-- [ ] Phase 3d: Two-person testnet validation.
+- [x] Phase 3d: Two-person testnet validation (documented in runbooks/two_person_testnet.md).
 - [ ] Phase 4: Security audit and production hardening.
 
 **Current status**: Phase 3c complete. Full recursive STARK proof generation now integrated into the shielded-pool pallet. The `finalize_epoch_internal` function uses `RecursiveEpochProver` to generate real RPO-based STARK proofs. All 114 epoch-circuit tests pass. Pure STARKs over algebraic hash - no elliptic curves, quantum resistant.
