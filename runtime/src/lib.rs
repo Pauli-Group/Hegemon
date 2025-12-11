@@ -1477,6 +1477,10 @@ parameter_types! {
     pub const MaxCommitmentsPerTx: u32 = 4;
     /// Maximum encrypted notes per transaction.
     pub const MaxEncryptedNotesPerTx: u32 = 4;
+    /// Maximum nullifiers per batch (16 txs * 4 nullifiers each).
+    pub const MaxNullifiersPerBatch: u32 = 64;
+    /// Maximum commitments per batch (16 txs * 4 commitments each).
+    pub const MaxCommitmentsPerBatch: u32 = 64;
     /// Number of historical Merkle roots to keep for anchor validation.
     pub const MerkleRootHistorySize: u32 = 100;
 }
@@ -1486,9 +1490,12 @@ impl pallet_shielded_pool::Config for Runtime {
     type Currency = Balances;
     type AdminOrigin = frame_system::EnsureRoot<AccountId>;
     type ProofVerifier = pallet_shielded_pool::verifier::StarkVerifier;
+    type BatchProofVerifier = pallet_shielded_pool::verifier::StarkBatchVerifier;
     type MaxNullifiersPerTx = MaxNullifiersPerTx;
     type MaxCommitmentsPerTx = MaxCommitmentsPerTx;
     type MaxEncryptedNotesPerTx = MaxEncryptedNotesPerTx;
+    type MaxNullifiersPerBatch = MaxNullifiersPerBatch;
+    type MaxCommitmentsPerBatch = MaxCommitmentsPerBatch;
     type MerkleRootHistorySize = MerkleRootHistorySize;
     type WeightInfo = pallet_shielded_pool::DefaultWeightInfo;
 }

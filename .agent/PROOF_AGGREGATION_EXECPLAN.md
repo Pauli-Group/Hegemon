@@ -14,19 +14,21 @@ Implement STARK transaction batching to prove multiple transactions in a single 
 
 ## Progress
 
-- [ ] Draft plan: capture scope, context, and work breakdown.
-- [ ] Create `circuits/batch/` crate with BatchTransactionAir.
-- [ ] Implement BatchTransactionProver that builds multi-transaction traces.
-- [ ] Define BatchProof type with serialization.
-- [ ] Add `verify_batch_stark()` to pallet-shielded-pool verifier.
-- [ ] Add `submit_shielded_batch` extrinsic.
-- [ ] Integration tests: batch of 2, 4, 8, 16 transactions.
+- [x] Draft plan: capture scope, context, and work breakdown.
+- [x] Create `circuits/batch/` crate with BatchTransactionAir.
+- [x] Implement BatchTransactionProver that builds multi-transaction traces.
+- [x] Define BatchProof type with serialization.
+- [x] Add `verify_batch_stark()` to pallet-shielded-pool verifier.
+- [x] Add `submit_shielded_batch` extrinsic (implemented as `batch_shielded_transfer`).
+- [x] Integration tests: batch of 2, 4, 8, 16 transactions.
 - [ ] Benchmarks comparing batch vs individual verification.
 
 ## Surprises & Discoveries
 
-- Observation: _None yet._
-  Evidence: _Pending implementation._
+- Observation: The pallet types.rs already had BatchShieldedTransfer and BatchStarkProof types partially defined.
+  Evidence: Found in types.rs lines 270-330.
+- Observation: Using individual parameters in extrinsic is cleaner than a combined struct due to FRAME derive trait requirements.
+  Evidence: BatchShieldedTransfer struct requires Debug/Clone/TypeInfo on generic parameters which are not available on `Get<u32>` type bounds.
 
 ## Decision Log
 
@@ -34,9 +36,26 @@ Implement STARK transaction batching to prove multiple transactions in a single 
   Rationale: Winterfell does not support in-circuit STARK verification. Recursive aggregation would require building a verifier circuit (~10K LOC, months of work). Transaction batching extends the existing AIR pattern (similar to winterfell's `LamportAggregateAir` example) and can ship in days. Recursive aggregation is deferred to `RECURSIVE_PROOFS_EXECPLAN.md`.
   Date/Author: 2025-12-10.
 
+- Decision: Implement batch extrinsic with individual parameters rather than a combined struct.
+  Rationale: FRAME's pallet macros require all extrinsic parameters to implement Clone, Debug, TypeInfo, etc. Using a combined struct with generic type parameters (MaxNullifiers, MaxCommitments) introduces complex trait bound requirements. Individual parameters (proof, nullifiers, commitments, etc.) are simpler and match the pattern of existing `shielded_transfer` extrinsic.
+  Date/Author: 2025-12-10.
+
 ## Outcomes & Retrospective
 
-_Pending execution._
+Phase 0-4 complete. Implemented:
+1. `circuits/transaction/src/dimensions.rs` - Trace dimension calculations for batching
+2. `circuits/batch/` crate with air.rs, prover.rs, verifier.rs, public_inputs.rs, error.rs
+3. `pallets/shielded-pool/src/types.rs` - BatchStarkProof type
+4. `pallets/shielded-pool/src/verifier.rs` - BatchVerifier trait, BatchPublicInputs, AcceptAllBatchProofs, StarkBatchVerifier
+5. `pallets/shielded-pool/src/lib.rs` - batch_shielded_transfer extrinsic (call_index 5)
+6. Mock tests for batch transfer validation
+
+Test results:
+- batch-circuit: 10 tests passing
+- transaction-circuit: 34 tests passing  
+- pallet-shielded-pool: 76 tests passing (including 3 new batch tests)
+
+Remaining: Benchmarks for verification time comparison.
 
 ## Context and Orientation
 
