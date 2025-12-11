@@ -5,6 +5,7 @@ members = [
     "circuits/batch",
     "circuits/block",
     "circuits/bench",
+    "circuits/epoch",
     "state/merkle",
     "consensus",
     "protocol/versioning",

@@ -1,0 +1,32 @@
+[package]
+name = "epoch-circuit"
+version = "0.1.0"
+edition = "2021"
+authors = ["Pauli Group Inc."]
+license = "MIT"
+description = "Epoch proofs for light client verification - STARK proof aggregation by epoch"
+repository = "https://github.com/Pauli-Group/Hegemon"
+
+[dependencies]
+winterfell = "0.13"
+winter-air = "0.13"
+winter-prover = "0.13"
+winter-crypto = "0.13"
+winter-math = "0.13"
+thiserror = "1"
+log = "0.4"
+blake3 = "1"
+
+# Reuse Poseidon constants and helpers from transaction circuit
+transaction-circuit = { path = "../transaction" }
+
+[dev-dependencies]
+rand = { version = "0.8", features = ["std"] }
+proptest = "1"
+
+[features]
+default = ["std"]
+std = []
+
+[lints]
+workspace = true
