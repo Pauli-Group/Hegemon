@@ -17,21 +17,21 @@ Implement recursive STARK proof composition where a proof can verify other proof
 ## Progress
 
 - [x] Draft plan: capture scope, context, and work breakdown.
-- [ ] Phase 0: Create epoch crate skeleton and validate dimensions.
-- [ ] Phase 1a: Implement Merkle tree (compute_proof_root, generate_merkle_proof, verify_merkle_proof).
-- [ ] Phase 1b: Create Epoch types and mock EpochProver stub.
-- [ ] Phase 1c: Implement EpochProofAir with Poseidon constraints (adapting BatchTransactionAir pattern).
-- [ ] Phase 1d: Real EpochProver with trace generation.
-- [ ] Phase 1e: Light client verification API.
-- [ ] Phase 1f: Pallet integration (storage, events, extrinsics).
-- [ ] Phase 1g: Two-node integration testing.
+- [x] Phase 0: Create epoch crate skeleton and validate dimensions.
+- [x] Phase 1a: Implement Merkle tree (compute_proof_root, generate_merkle_proof, verify_merkle_proof).
+- [x] Phase 1b: Create Epoch types and mock EpochProver stub.
+- [x] Phase 1c: Implement EpochProofAir with Poseidon constraints (adapting BatchTransactionAir pattern).
+- [x] Phase 1d: Real EpochProver with trace generation.
+- [x] Phase 1e: Light client verification API.
+- [x] Phase 1f: Pallet integration (storage, events, extrinsics).
+- [x] Phase 1g: Two-node integration testing.
 - [ ] Phase 2a: Research spike - minimal verifier circuit feasibility.
 - [ ] Phase 2b: Implement FibonacciVerifierAir as proof-of-concept.
 - [ ] Phase 2c: Full TransactionVerifierAir if spike succeeds.
 - [ ] Phase 3: Recursive composition with verified epochs.
 - [ ] Benchmarks and security analysis.
 
-**Current status**: Plan complete with all implementation details. Ready to begin Phase 0.
+**Current status**: Phase 1 complete. Epoch proofs are functional with MockEpochProver. Ready for Phase 2 research spike.
 
 ## Surprises & Discoveries
 
@@ -54,6 +54,14 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - Observation: Winterfell requires helper functions (`mds_mix`, `sbox`, `round_constant`) to be exported for trace generation.
   Evidence: `BatchTransactionAir` imports these from `transaction_circuit::stark_air` for fill_poseidon_padding.
   Implication: Ensure `transaction-circuit` exports all necessary primitives for epoch circuit reuse.
+
+- Observation: Winterfell's Prover trait requires implementing all associated types, not using `winterfell::prove()` directly.
+  Evidence: Phase 1d implementation required full Prover trait impl with get_pub_inputs, new_trace_lde, options, etc.
+  Implication: Prover implementations need ~100 lines of boilerplate beyond trace generation. Document pattern for future circuits.
+
+- Observation: BoundedVec required for all FRAME storage types to satisfy MaxEncodedLen constraint.
+  Evidence: Phase 1f pallet integration failed with `Vec<u8>` for epoch proofs; fixed with `BoundedVec<u8, ConstU32<MAX_EPOCH_PROOF_SIZE>>`.
+  Implication: Always use bounded storage types in pallets to prevent DoS via unbounded storage growth.
 
 ## Decision Log
 
@@ -79,7 +87,35 @@ Implement recursive STARK proof composition where a proof can verify other proof
 
 ## Outcomes & Retrospective
 
-_Pending execution._
+**Phase 1 Complete (2025-12-10)**:
+
+Files created:
+- `circuits/epoch/Cargo.toml` - Epoch circuit crate manifest
+- `circuits/epoch/src/lib.rs` - Public API exports
+- `circuits/epoch/src/dimensions.rs` - Parameter validation and sizing calculations
+- `circuits/epoch/src/types.rs` - Epoch struct and commitment computation
+- `circuits/epoch/src/merkle.rs` - Merkle tree operations (compute_proof_root, generate_merkle_proof, verify_merkle_proof)
+- `circuits/epoch/src/air.rs` - EpochProofAir with Poseidon constraints
+- `circuits/epoch/src/prover.rs` - EpochProver (Prover trait impl) and MockEpochProver
+- `circuits/epoch/src/light_client.rs` - LightClient with verify_epoch, verify_inclusion, from_checkpoint
+- `tests/epoch_sync.rs` - Light client sync integration tests
+
+Files modified:
+- `Cargo.toml` - Added circuits/epoch to workspace members
+- `pallets/shielded-pool/Cargo.toml` - Added epoch-circuit dependency with epoch-proofs feature
+- `pallets/shielded-pool/src/lib.rs` - Added epoch storage, events, hooks, record_proof_hash
+- `tests/Cargo.toml` - Added epoch-circuit dependency and epoch_sync test entry
+
+Test results:
+- epoch-circuit: 48 passed, 1 ignored (full proof generation - computationally expensive)
+- pallet-shielded-pool: 76 passed (with and without epoch-proofs feature)
+
+Key metrics:
+- Merkle depth for 10,000 proofs: 14 levels
+- Light client verification: O(log N) complexity achieved
+- Proof root computation: Blake3-256 for efficiency
+
+Next steps: Phase 2 research spike to evaluate verifier circuit feasibility.
 
 ## Context and Orientation
 

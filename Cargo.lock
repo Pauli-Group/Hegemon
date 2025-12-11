@@ -2654,6 +2654,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e48c92028aaa870e83d51c64e5d4e0b6981b360c522198c23959f219a4e1b15b"
 
 [[package]]
+name = "epoch-circuit"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "log",
+ "proptest",
+ "rand 0.8.5",
+ "thiserror 1.0.69",
+ "transaction-circuit",
+ "winter-air",
+ "winter-crypto",
+ "winter-math",
+ "winter-prover",
+ "winterfell",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6484,6 +6501,8 @@ name = "pallet-shielded-pool"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "blake3",
+ "epoch-circuit",
  "frame-benchmarking",
  "frame-support",
  "frame-system",
@@ -9169,6 +9188,7 @@ dependencies = [
  "bincode",
  "block-circuit",
  "consensus",
+ "epoch-circuit",
  "futures",
  "hegemon-node",
  "hex",
