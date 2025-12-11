@@ -111,8 +111,16 @@ fn mining_block_credits_coinbase_reward_to_miner() {
         // Miner gets 80% of block reward (MinerShare = Permill::from_percent(80))
         let expected_miner_reward = (block_reward as u128 * 80) / 100;
 
-        println!("Block reward: {} (~{:.2} HEG)", block_reward, block_reward as f64 / 100_000_000.0);
-        println!("Expected miner share (80%): {} (~{:.2} HEG)", expected_miner_reward, expected_miner_reward as f64 / 100_000_000.0);
+        println!(
+            "Block reward: {} (~{:.2} HEG)",
+            block_reward,
+            block_reward as f64 / 100_000_000.0
+        );
+        println!(
+            "Expected miner share (80%): {} (~{:.2} HEG)",
+            expected_miner_reward,
+            expected_miner_reward as f64 / 100_000_000.0
+        );
         println!("Miner final balance: {}", final_balance);
         println!("Final total issuance: {}", final_issuance);
 
