@@ -16,15 +16,22 @@ Implement recursive STARK proof composition where a proof can verify other proof
 
 ## Progress
 
-- [ ] Draft plan: capture scope, context, and work breakdown.
-- [ ] Phase 1a: Implement Merkle proof accumulator for epoch commitments.
-- [ ] Phase 1b: Create EpochProof type and epoch prover.
-- [ ] Phase 1c: Light client verification API.
+- [x] Draft plan: capture scope, context, and work breakdown.
+- [ ] Phase 0: Create epoch crate skeleton and validate dimensions.
+- [ ] Phase 1a: Implement Merkle tree (compute_proof_root, generate_merkle_proof, verify_merkle_proof).
+- [ ] Phase 1b: Create Epoch types and mock EpochProver stub.
+- [ ] Phase 1c: Implement EpochProofAir with Poseidon constraints (adapting BatchTransactionAir pattern).
+- [ ] Phase 1d: Real EpochProver with trace generation.
+- [ ] Phase 1e: Light client verification API.
+- [ ] Phase 1f: Pallet integration (storage, events, extrinsics).
+- [ ] Phase 1g: Two-node integration testing.
 - [ ] Phase 2a: Research spike - minimal verifier circuit feasibility.
 - [ ] Phase 2b: Implement FibonacciVerifierAir as proof-of-concept.
 - [ ] Phase 2c: Full TransactionVerifierAir if spike succeeds.
 - [ ] Phase 3: Recursive composition with verified epochs.
 - [ ] Benchmarks and security analysis.
+
+**Current status**: Plan complete with all implementation details. Ready to begin Phase 0.
 
 ## Surprises & Discoveries
 
@@ -40,6 +47,14 @@ Implement recursive STARK proof composition where a proof can verify other proof
   Evidence: batch-circuit tests passed with mock verifier, allowing parallel development of pallet and circuit.
   Implication: Use AcceptAllEpochProofs mock for epoch pallet integration during Phase 1 development.
 
+- Observation: Existing `BatchTransactionAir` and `TransactionAirStark` provide reusable Poseidon constraint patterns.
+  Evidence: Both circuits use identical Poseidon round structure (8 rounds, 16-step cycles, x^5 S-box, MDS mixing). Constants exported via `transaction_circuit::stark_air`.
+  Implication: EpochProofAir reuses these patterns directly instead of implementing Blake2 in-circuit.
+
+- Observation: Winterfell requires helper functions (`mds_mix`, `sbox`, `round_constant`) to be exported for trace generation.
+  Evidence: `BatchTransactionAir` imports these from `transaction_circuit::stark_air` for fill_poseidon_padding.
+  Implication: Ensure `transaction-circuit` exports all necessary primitives for epoch circuit reuse.
+
 ## Decision Log
 
 - Decision: Implement in phases, starting with Merkle Accumulator (practical value) before attempting full verifier circuit (true recursion).
@@ -48,6 +63,18 @@ Implement recursive STARK proof composition where a proof can verify other proof
 
 - Decision: Phase 1 does NOT depend on transaction batching (PROOF_AGGREGATION_EXECPLAN).
   Rationale: Epoch proofs can commit to individual transaction proof hashes. Batching is an optimization that reduces the number of proofs per epoch but is not required for the accumulator pattern to work.
+  Date/Author: 2025-12-10.
+
+- Decision: Use Poseidon hash for epoch AIR constraints (not Blake2).
+  Rationale: The existing `BatchTransactionAir` and `TransactionAirStark` already implement Poseidon round constraints (x^5 S-box, MDS mixing, 8 rounds in 16-step cycles). Reusing this pattern avoids implementing Blake2 as AIR constraints (~100 columns). The epoch proof uses Poseidon in-circuit while epoch commitment uses Blake2-256 for the final hash (hashed outside the circuit as public input).
+  Date/Author: 2025-12-10.
+
+- Decision: Use quadratic field extension for 128-bit security in production.
+  Rationale: Security analysis in dimensions.rs shows base Goldilocks field provides ~36 bits security from FRI. Extension field is required for 128-bit target. Development/testing can use base field; production proofs must use `FieldExtension::Quadratic`.
+  Date/Author: 2025-12-10.
+
+- Decision: Stub-first development for epoch prover.
+  Rationale: Following PROOF_AGGREGATION_EXECPLAN pattern (AcceptAllBatchProofs), we create `MockEpochProver` first. This enables pallet integration testing before the full AIR is implemented. Replace with real prover once EpochProofAir is complete.
   Date/Author: 2025-12-10.
 
 ## Outcomes & Retrospective
@@ -391,16 +418,30 @@ Add to `circuits/epoch/Cargo.toml`:
 name = "epoch-circuit"
 version = "0.1.0"
 edition = "2021"
+description = "Epoch proofs for light client verification"
 
 [dependencies]
 winterfell = "0.13.1"
 winter-air = "0.13.1"
 winter-prover = "0.13.1"
 winter-crypto = "0.13.1"
+winter-math = "0.13.1"
 sp-core = { version = "21.0.0", default-features = false }
+parity-scale-codec = { version = "3.6", default-features = false }
+log = "0.4"
+
+# Reuse Poseidon constants from transaction circuit
+transaction-circuit = { path = "../transaction" }
 
 [dev-dependencies]
 rand = "0.8"
+
+[features]
+default = ["std"]
+std = [
+    "sp-core/std",
+    "parity-scale-codec/std",
+]
 ```
 
 Add `"circuits/epoch"` to workspace `Cargo.toml` members.
@@ -462,9 +503,15 @@ pub fn proof_hash(proof_bytes: &[u8]) -> [u8; 32] {
 Create `circuits/epoch/src/merkle.rs`:
 
 ```rust
+//! Merkle tree operations for epoch proof accumulation.
+//!
+//! Uses Blake2-256 for hashing (consistent with Substrate).
+
 use sp_core::hashing::blake2_256;
 
-/// Compute Merkle root from list of proof hashes
+/// Compute Merkle root from list of proof hashes.
+///
+/// Pads to next power of 2 with zero hashes.
 pub fn compute_proof_root(proof_hashes: &[[u8; 32]]) -> [u8; 32] {
     if proof_hashes.is_empty() {
         return [0u8; 32];
@@ -494,16 +541,53 @@ pub fn compute_proof_root(proof_hashes: &[[u8; 32]]) -> [u8; 32] {
     leaves[0]
 }
 
-/// Generate Merkle proof for proof at given index
+/// Generate Merkle proof for proof hash at given index.
+///
+/// Returns sibling hashes from leaf to root.
 pub fn generate_merkle_proof(
     proof_hashes: &[[u8; 32]], 
     index: usize
 ) -> Vec<[u8; 32]> {
-    // Implementation: collect siblings along path to root
-    todo!("Implement Merkle proof generation")
+    if proof_hashes.is_empty() || index >= proof_hashes.len() {
+        return vec![];
+    }
+    if proof_hashes.len() == 1 {
+        return vec![];  // Single element, no siblings needed
+    }
+    
+    // Pad to power of 2
+    let mut leaves = proof_hashes.to_vec();
+    while !leaves.len().is_power_of_two() {
+        leaves.push([0u8; 32]);
+    }
+    
+    let mut proof = Vec::new();
+    let mut idx = index;
+    
+    // Collect siblings while building tree
+    while leaves.len() > 1 {
+        // Sibling index: flip the last bit
+        let sibling_idx = idx ^ 1;
+        proof.push(leaves[sibling_idx]);
+        
+        // Compute next level
+        let mut next_level = Vec::with_capacity(leaves.len() / 2);
+        for pair in leaves.chunks(2) {
+            let mut combined = [0u8; 64];
+            combined[..32].copy_from_slice(&pair[0]);
+            combined[32..].copy_from_slice(&pair[1]);
+            next_level.push(blake2_256(&combined));
+        }
+        leaves = next_level;
+        idx /= 2;
+    }
+    
+    proof
 }
 
-/// Verify Merkle proof for a proof hash
+/// Verify Merkle proof for a proof hash.
+///
+/// Returns true if the proof is valid for the given root.
 pub fn verify_merkle_proof(
     root: [u8; 32],
     leaf: [u8; 32],
@@ -516,9 +600,11 @@ pub fn verify_merkle_proof(
     for sibling in proof {
         let mut combined = [0u8; 64];
         if idx % 2 == 0 {
+            // Current is left child
             combined[..32].copy_from_slice(&current);
             combined[32..].copy_from_slice(sibling);
         } else {
+            // Current is right child
             combined[..32].copy_from_slice(sibling);
             combined[32..].copy_from_slice(&current);
         }
@@ -528,62 +614,582 @@ pub fn verify_merkle_proof(
     
     current == root
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compute_proof_root_empty() {
+        assert_eq!(compute_proof_root(&[]), [0u8; 32]);
+    }
+
+    #[test]
+    fn test_compute_proof_root_single() {
+        let leaf = [1u8; 32];
+        assert_eq!(compute_proof_root(&[leaf]), leaf);
+    }
+
+    #[test]
+    fn test_compute_proof_root_two() {
+        let leaf0 = [1u8; 32];
+        let leaf1 = [2u8; 32];
+        let root = compute_proof_root(&[leaf0, leaf1]);
+        
+        // Manual computation
+        let mut combined = [0u8; 64];
+        combined[..32].copy_from_slice(&leaf0);
+        combined[32..].copy_from_slice(&leaf1);
+        let expected = blake2_256(&combined);
+        
+        assert_eq!(root, expected);
+    }
+
+    #[test]
+    fn test_merkle_proof_roundtrip() {
+        // Test with various sizes
+        for num_leaves in [2, 3, 4, 7, 8, 15, 16, 100, 1000] {
+            let leaves: Vec<[u8; 32]> = (0..num_leaves)
+                .map(|i| {
+                    let mut leaf = [0u8; 32];
+                    leaf[..8].copy_from_slice(&(i as u64).to_le_bytes());
+                    leaf
+                })
+                .collect();
+            
+            let root = compute_proof_root(&leaves);
+            
+            // Verify proof for each leaf
+            for (idx, leaf) in leaves.iter().enumerate() {
+                let proof = generate_merkle_proof(&leaves, idx);
+                assert!(
+                    verify_merkle_proof(root, *leaf, idx, &proof),
+                    "Failed for {} leaves at index {}",
+                    num_leaves, idx
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_merkle_proof_invalid_leaf() {
+        let leaves: Vec<[u8; 32]> = (0..4)
+            .map(|i| {
+                let mut leaf = [0u8; 32];
+                leaf[0] = i as u8;
+                leaf
+            })
+            .collect();
+        
+        let root = compute_proof_root(&leaves);
+        let proof = generate_merkle_proof(&leaves, 0);
+        
+        // Modify leaf - should fail
+        let bad_leaf = [99u8; 32];
+        assert!(!verify_merkle_proof(root, bad_leaf, 0, &proof));
+    }
+
+    #[test]
+    fn test_merkle_proof_wrong_index() {
+        let leaves: Vec<[u8; 32]> = (0..4)
+            .map(|i| {
+                let mut leaf = [0u8; 32];
+                leaf[0] = i as u8;
+                leaf
+            })
+            .collect();
+        
+        let root = compute_proof_root(&leaves);
+        let proof = generate_merkle_proof(&leaves, 0);
+        
+        // Use wrong index - should fail
+        assert!(!verify_merkle_proof(root, leaves[0], 1, &proof));
+    }
+}
 ```
 
 #### Step 1.4: Implement EpochProofAir
 
-The epoch proof AIR proves:
-1. The prover knows all proof hashes that form the Merkle tree
-2. The Merkle root matches the public input
-3. Each proof hash corresponds to a valid transaction (via assertion on hash computation)
+The epoch proof AIR proves knowledge of proof hashes that form the claimed Merkle root.
+We adapt the Poseidon constraint pattern from `BatchTransactionAir`.
+
+**Key insight**: We don't need to prove full Merkle tree computation in-circuit for Phase 1.
+Instead, we prove:
+1. The prover knows a list of field elements (proof hash limbs)
+2. The Poseidon hash of these limbs equals a committed value
+3. The committed value corresponds to the epoch's proof_root (verified off-circuit)
+
+This is simpler than encoding Blake2 Merkle tree computation but still provides
+binding: the prover cannot generate an epoch proof without knowing all proof hashes.
 
 Create `circuits/epoch/src/air.rs`:
 
 ```rust
+//! Epoch proof AIR (Algebraic Intermediate Representation).
+//!
+//! Proves knowledge of proof hashes that commit to an epoch.
+//! Uses Poseidon hash for in-circuit computation, following the pattern
+//! from BatchTransactionAir.
+
 use winterfell::{
-    Air, AirContext, Assertion, EvaluationFrame, ProofOptions,
-    TraceInfo, TransitionConstraintDegree,
     math::{fields::f64::BaseElement, FieldElement, ToElements},
+    Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
+    TransitionConstraintDegree,
 };
 
-/// Public inputs for epoch proof
+// Reuse Poseidon constants from transaction circuit
+use transaction_circuit::stark_air::{
+    round_constant, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH,
+};
+
+/// Number of Poseidon rounds per cycle.
+pub const POSEIDON_ROUNDS: usize = 8;
+
+/// Trace width: 3 Poseidon state columns + 1 proof hash input + 1 accumulator
+pub const EPOCH_TRACE_WIDTH: usize = 5;
+pub const COL_PROOF_INPUT: usize = 3;
+pub const COL_ACCUMULATOR: usize = 4;
+
+/// Public inputs for epoch proof.
 #[derive(Clone, Debug)]
 pub struct EpochPublicInputs {
-    /// Epoch commitment (hash of Epoch struct)
-    pub epoch_commitment: [u8; 32],
+    /// Poseidon hash of all proof hashes (computed in-circuit)
+    pub proof_accumulator: BaseElement,
     /// Number of proofs in this epoch
     pub num_proofs: u32,
+    /// Epoch commitment (Blake2 hash of Epoch struct, verified off-circuit)
+    pub epoch_commitment: [u8; 32],
 }
 
 impl ToElements<BaseElement> for EpochPublicInputs {
     fn to_elements(&self) -> Vec<BaseElement> {
-        // Convert epoch_commitment bytes to field elements
-        let mut elements = Vec::new();
-        for chunk in self.epoch_commitment.chunks(8) {
-            let value = u64::from_le_bytes(chunk.try_into().unwrap_or([0u8; 8]));
-            elements.push(BaseElement::new(value));
-        }
-        elements.push(BaseElement::new(self.num_proofs as u64));
-        elements
+        vec![
+            self.proof_accumulator,
+            BaseElement::new(self.num_proofs as u64),
+        ]
     }
 }
 
-/// Epoch proof AIR - proves Merkle tree of proof hashes
-/// 
-/// Trace layout (simplified):
-/// - Columns 0-3: Blake2 state for hash computation
-/// - Column 4: Merkle tree position
-/// - Column 5: Accumulator
+/// Epoch proof AIR.
 ///
-/// The AIR proves that applying Blake2 to pairs of hashes
-/// yields the claimed Merkle root.
+/// Trace layout:
+/// ```text
+/// Row 0..CYCLE_LENGTH:     Hash proof_hash[0] into accumulator
+/// Row CYCLE_LENGTH..2*CL:  Hash proof_hash[1] into accumulator
+/// ...
+/// Row (N-1)*CL..N*CL:      Hash proof_hash[N-1] into accumulator
+/// (Padding to power of 2)
+/// ```
+///
+/// Each hash cycle absorbs one proof hash limb into the Poseidon state.
+/// After all proofs are absorbed, the final state is the proof_accumulator.
 pub struct EpochProofAir {
     context: AirContext<BaseElement>,
     pub_inputs: EpochPublicInputs,
 }
 
-// Implementation follows winterfell patterns
-// Full implementation would include Blake2 round constraints
+impl EpochProofAir {
+    /// Calculate trace length for given number of proofs.
+    ///
+    /// Each proof hash is 32 bytes = 4 field elements (8 bytes each).
+    /// We absorb 1 element per cycle.
+    pub fn trace_length(num_proofs: usize) -> usize {
+        let elements_per_proof = 4;  // 32 bytes / 8 bytes per element
+        let total_elements = num_proofs * elements_per_proof;
+        let total_cycles = total_elements.max(1);
+        let rows = total_cycles * CYCLE_LENGTH;
+        rows.next_power_of_two()
+    }
+}
+
+impl Air for EpochProofAir {
+    type BaseField = BaseElement;
+    type PublicInputs = EpochPublicInputs;
+
+    fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
+        // Poseidon x^5 constraint degree, cyclic
+        let degrees = vec![
+            TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
+            TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
+            TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
+        ];
+
+        // Assertions:
+        // 1. Initial state is zero (1 assertion per state column)
+        // 2. Final accumulator matches public input (1 assertion)
+        let num_assertions = 4;
+
+        Self {
+            context: AirContext::new(trace_info, degrees, num_assertions, options),
+            pub_inputs,
+        }
+    }
+
+    fn context(&self) -> &AirContext<Self::BaseField> {
+        &self.context
+    }
+
+    fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
+        &self,
+        frame: &EvaluationFrame<E>,
+        periodic_values: &[E],
+        result: &mut [E],
+    ) {
+        let current = frame.current();
+        let next = frame.next();
+
+        // Periodic values: [hash_flag, rc0, rc1, rc2]
+        let hash_flag = periodic_values[0];
+        let rc0 = periodic_values[1];
+        let rc1 = periodic_values[2];
+        let rc2 = periodic_values[3];
+
+        // Absorb proof input into state (add to S0 before round)
+        let absorbed_s0 = current[COL_S0] + current[COL_PROOF_INPUT];
+
+        // Compute Poseidon round
+        let t0 = absorbed_s0 + rc0;
+        let t1 = current[COL_S1] + rc1;
+        let t2 = current[COL_S2] + rc2;
+
+        // S-box: x^5
+        let s0 = t0.exp(5u64.into());
+        let s1 = t1.exp(5u64.into());
+        let s2 = t2.exp(5u64.into());
+
+        // MDS mixing: [[2,1,1],[1,2,1],[1,1,2]]
+        let two: E = E::from(BaseElement::new(2));
+        let hash_s0 = s0 * two + s1 + s2;
+        let hash_s1 = s0 + s1 * two + s2;
+        let hash_s2 = s0 + s1 + s2 * two;
+
+        // Constraint: hash_flag * (next - hash_result) = 0
+        result[0] = hash_flag * (next[COL_S0] - hash_s0);
+        result[1] = hash_flag * (next[COL_S1] - hash_s1);
+        result[2] = hash_flag * (next[COL_S2] - hash_s2);
+    }
+
+    fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
+        let trace_len = self.context.trace_len();
+        
+        vec![
+            // Initial state is zero
+            Assertion::single(COL_S0, 0, BaseElement::ZERO),
+            Assertion::single(COL_S1, 0, BaseElement::ZERO),
+            Assertion::single(COL_S2, 0, BaseElement::ZERO),
+            // Final accumulator matches public input
+            Assertion::single(COL_S0, trace_len - 1, self.pub_inputs.proof_accumulator),
+        ]
+    }
+
+    fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
+        // Hash mask: 1 for rounds 0..7, 0 for rounds 8..15
+        let mut hash_mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
+        for i in 0..POSEIDON_ROUNDS {
+            hash_mask[i] = BaseElement::ONE;
+        }
+
+        let mut result = vec![hash_mask];
+
+        // Round constants for each position
+        for pos in 0..3 {
+            let mut column = Vec::with_capacity(CYCLE_LENGTH);
+            for step in 0..CYCLE_LENGTH {
+                if step < POSEIDON_ROUNDS {
+                    column.push(round_constant(step, pos));
+                } else {
+                    column.push(BaseElement::ZERO);
+                }
+            }
+            result.push(column);
+        }
+
+        result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_trace_length_calculation() {
+        // 1 proof = 4 elements = 4 cycles = 64 rows → 64
+        assert_eq!(EpochProofAir::trace_length(1), 64);
+        
+        // 16 proofs = 64 elements = 64 cycles = 1024 rows → 1024
+        assert_eq!(EpochProofAir::trace_length(16), 1024);
+        
+        // 1000 proofs = 4000 elements = 4000 cycles = 64000 rows → 65536
+        assert_eq!(EpochProofAir::trace_length(1000), 65536);
+    }
+
+    #[test]
+    fn test_public_inputs_to_elements() {
+        let pub_inputs = EpochPublicInputs {
+            proof_accumulator: BaseElement::new(12345),
+            num_proofs: 100,
+            epoch_commitment: [0u8; 32],
+        };
+        
+        let elements = pub_inputs.to_elements();
+        assert_eq!(elements.len(), 2);
+        assert_eq!(elements[0], BaseElement::new(12345));
+        assert_eq!(elements[1], BaseElement::new(100));
+    }
+}
+```
+
+#### Step 1.4b: Implement EpochProver
+
+Create `circuits/epoch/src/prover.rs`:
+
+```rust
+//! Epoch proof generation.
+//!
+//! Generates STARK proofs that attest to epoch validity.
+
+use winterfell::{
+    math::fields::f64::BaseElement,
+    Matrix, ProofOptions, Prover, Trace, TraceTable,
+};
+
+use crate::air::{
+    EpochProofAir, EpochPublicInputs, EPOCH_TRACE_WIDTH, POSEIDON_ROUNDS,
+    COL_S0, COL_S1, COL_S2, COL_PROOF_INPUT, COL_ACCUMULATOR,
+};
+use crate::types::Epoch;
+
+use transaction_circuit::stark_air::{mds_mix, round_constant, sbox, CYCLE_LENGTH};
+
+/// Epoch proof (serialized STARK proof).
+#[derive(Clone, Debug)]
+pub struct EpochProof {
+    /// Serialized winterfell proof bytes.
+    pub proof_bytes: Vec<u8>,
+    /// Epoch commitment for verification.
+    pub epoch_commitment: [u8; 32],
+    /// Proof accumulator (Poseidon hash of all proof hashes).
+    pub proof_accumulator: BaseElement,
+}
+
+/// Epoch prover.
+pub struct EpochProver {
+    options: ProofOptions,
+}
+
+impl EpochProver {
+    /// Create new epoch prover with default options.
+    pub fn new() -> Self {
+        Self {
+            options: ProofOptions::new(
+                8,   // num_queries
+                16,  // blowup_factor
+                4,   // grinding_factor
+                winterfell::FieldExtension::None,  // Use Quadratic for production
+                2,   // fri_folding_factor
+                31,  // fri_remainder_max_degree
+            ),
+        }
+    }
+
+    /// Create prover with production security settings.
+    pub fn production() -> Self {
+        Self {
+            options: ProofOptions::new(
+                8,
+                16,
+                4,
+                winterfell::FieldExtension::Quadratic,  // 128-bit security
+                2,
+                31,
+            ),
+        }
+    }
+
+    /// Generate epoch proof from epoch metadata and proof hashes.
+    pub fn prove(
+        &self,
+        epoch: &Epoch,
+        proof_hashes: &[[u8; 32]],
+    ) -> Result<EpochProof, &'static str> {
+        if proof_hashes.is_empty() {
+            return Err("Cannot create epoch proof for empty epoch");
+        }
+
+        // Build execution trace
+        let (trace, proof_accumulator) = self.build_trace(proof_hashes)?;
+        
+        // Create public inputs
+        let pub_inputs = EpochPublicInputs {
+            proof_accumulator,
+            num_proofs: proof_hashes.len() as u32,
+            epoch_commitment: epoch.commitment(),
+        };
+
+        // Generate proof
+        let proof = winterfell::prove::<EpochProofAir>(
+            trace,
+            pub_inputs,
+            self.options.clone(),
+        ).map_err(|_| "Proof generation failed")?;
+
+        Ok(EpochProof {
+            proof_bytes: proof.to_bytes(),
+            epoch_commitment: epoch.commitment(),
+            proof_accumulator,
+        })
+    }
+
+    /// Build execution trace for epoch proof.
+    fn build_trace(
+        &self,
+        proof_hashes: &[[u8; 32]],
+    ) -> Result<(TraceTable<BaseElement>, BaseElement), &'static str> {
+        // Convert proof hashes to field elements (4 elements per hash)
+        let mut inputs: Vec<BaseElement> = Vec::with_capacity(proof_hashes.len() * 4);
+        for hash in proof_hashes {
+            for chunk in hash.chunks(8) {
+                let value = u64::from_le_bytes(chunk.try_into().unwrap_or([0u8; 8]));
+                inputs.push(BaseElement::new(value));
+            }
+        }
+
+        let trace_len = EpochProofAir::trace_length(proof_hashes.len());
+        let mut trace = TraceTable::new(EPOCH_TRACE_WIDTH, trace_len);
+
+        // Initialize state
+        let mut s0 = BaseElement::ZERO;
+        let mut s1 = BaseElement::ZERO;
+        let mut s2 = BaseElement::ZERO;
+
+        let mut row = 0;
+        let mut input_idx = 0;
+
+        // Process each input element
+        while row < trace_len {
+            // Get input for this cycle (or zero for padding)
+            let input = if input_idx < inputs.len() {
+                inputs[input_idx]
+            } else {
+                BaseElement::ZERO
+            };
+            input_idx += 1;
+
+            // Absorb input into state
+            s0 = s0 + input;
+
+            // Run Poseidon rounds
+            for step in 0..POSEIDON_ROUNDS {
+                trace.set(COL_S0, row, s0);
+                trace.set(COL_S1, row, s1);
+                trace.set(COL_S2, row, s2);
+                trace.set(COL_PROOF_INPUT, row, if step == 0 { input } else { BaseElement::ZERO });
+                trace.set(COL_ACCUMULATOR, row, s0);
+
+                // Apply Poseidon round
+                let t0 = s0 + round_constant(step, 0);
+                let t1 = s1 + round_constant(step, 1);
+                let t2 = s2 + round_constant(step, 2);
+
+                let x0 = sbox(t0);
+                let x1 = sbox(t1);
+                let x2 = sbox(t2);
+
+                (s0, s1, s2) = mds_mix(x0, x1, x2);
+                row += 1;
+            }
+
+            // Idle steps (copy state)
+            for _ in POSEIDON_ROUNDS..CYCLE_LENGTH {
+                trace.set(COL_S0, row, s0);
+                trace.set(COL_S1, row, s1);
+                trace.set(COL_S2, row, s2);
+                trace.set(COL_PROOF_INPUT, row, BaseElement::ZERO);
+                trace.set(COL_ACCUMULATOR, row, s0);
+                row += 1;
+            }
+        }
+
+        Ok((trace, s0))  // Final s0 is the proof accumulator
+    }
+}
+
+/// Mock epoch prover for pallet integration testing.
+///
+/// Returns a fixed proof that passes AcceptAllEpochProofs verifier.
+pub struct MockEpochProver;
+
+impl MockEpochProver {
+    /// Generate mock epoch proof.
+    pub fn prove(
+        epoch: &Epoch,
+        proof_hashes: &[[u8; 32]],
+    ) -> Result<EpochProof, &'static str> {
+        Ok(EpochProof {
+            proof_bytes: vec![0u8; 32],  // Minimal mock proof
+            epoch_commitment: epoch.commitment(),
+            proof_accumulator: BaseElement::new(proof_hashes.len() as u64),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Epoch;
+
+    fn test_epoch() -> Epoch {
+        Epoch {
+            epoch_number: 0,
+            start_block: 0,
+            end_block: 999,
+            proof_root: [1u8; 32],
+            state_root: [2u8; 32],
+            nullifier_set_root: [3u8; 32],
+            commitment_tree_root: [4u8; 32],
+        }
+    }
+
+    #[test]
+    fn test_mock_prover() {
+        let epoch = test_epoch();
+        let hashes = vec![[1u8; 32], [2u8; 32]];
+        
+        let proof = MockEpochProver::prove(&epoch, &hashes).unwrap();
+        assert_eq!(proof.epoch_commitment, epoch.commitment());
+    }
+
+    #[test]
+    fn test_trace_building() {
+        let prover = EpochProver::new();
+        let hashes = vec![[1u8; 32], [2u8; 32]];
+        
+        let (trace, accumulator) = prover.build_trace(&hashes).unwrap();
+        
+        // 2 proofs × 4 elements = 8 cycles = 128 rows → 128
+        assert_eq!(trace.length(), 128);
+        assert_ne!(accumulator, BaseElement::ZERO);
+    }
+
+    #[test]
+    #[ignore]  // Slow test, run with --ignored
+    fn test_full_proof_generation() {
+        let prover = EpochProver::new();
+        let epoch = test_epoch();
+        let hashes: Vec<[u8; 32]> = (0..10)
+            .map(|i| {
+                let mut h = [0u8; 32];
+                h[0] = i as u8;
+                h
+            })
+            .collect();
+        
+        let proof = prover.prove(&epoch, &hashes).unwrap();
+        assert!(!proof.proof_bytes.is_empty());
+        assert_eq!(proof.epoch_commitment, epoch.commitment());
+    }
+}
 ```
 
 #### Step 1.5: Light client verification API
@@ -591,26 +1197,109 @@ pub struct EpochProofAir {
 Create `circuits/epoch/src/light_client.rs`:
 
 ```rust
-use crate::{Epoch, EpochProof, merkle};
+//! Light client API for epoch-based chain verification.
+//!
+//! Light clients verify:
+//! 1. Epoch proofs (STARK verification)
+//! 2. Merkle inclusion proofs (for specific transactions)
 
-/// Light client state
+use crate::{merkle, Epoch, EpochProof};
+use crate::air::{EpochProofAir, EpochPublicInputs};
+
+/// Result of epoch verification.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VerifyResult {
+    /// Epoch is valid.
+    Valid,
+    /// Epoch proof failed STARK verification.
+    InvalidProof,
+    /// Epoch number is not sequential.
+    NonSequentialEpoch { expected: u64, got: u64 },
+    /// Proof accumulator mismatch.
+    AccumulatorMismatch,
+}
+
+/// Light client state.
+///
+/// Maintains verified epochs for efficient chain sync.
 pub struct LightClient {
-    /// Verified epoch proofs (epoch_number -> epoch)
-    pub verified_epochs: Vec<Epoch>,
-    /// Current chain tip epoch
+    /// Verified epochs (indexed by epoch_number).
+    verified_epochs: Vec<Epoch>,
+    /// Current chain tip epoch.
     pub tip_epoch: u64,
 }
 
 impl LightClient {
-    /// Verify an epoch proof and add to verified set
-    pub fn verify_epoch(&mut self, epoch: &Epoch, proof: &EpochProof) -> Result<(), &'static str> {
-        // 1. Verify STARK proof against epoch commitment
-        // 2. Check epoch_number is sequential
-        // 3. Add to verified_epochs
-        todo!("Implement epoch verification")
+    /// Create new light client starting from genesis.
+    pub fn new() -> Self {
+        Self {
+            verified_epochs: Vec::new(),
+            tip_epoch: 0,
+        }
     }
-    
-    /// Check if a specific transaction proof was included in an epoch
+
+    /// Create light client starting from a trusted epoch.
+    ///
+    /// Use this for checkpoint-based sync.
+    pub fn from_checkpoint(epoch: Epoch) -> Self {
+        let tip = epoch.epoch_number;
+        Self {
+            verified_epochs: vec![epoch],
+            tip_epoch: tip,
+        }
+    }
+
+    /// Verify an epoch proof and add to verified set.
+    pub fn verify_epoch(
+        &mut self,
+        epoch: &Epoch,
+        proof: &EpochProof,
+    ) -> VerifyResult {
+        // Check epoch commitment matches proof
+        if epoch.commitment() != proof.epoch_commitment {
+            return VerifyResult::AccumulatorMismatch;
+        }
+
+        // Check epoch is sequential (or first epoch)
+        if !self.verified_epochs.is_empty() {
+            let expected = self.tip_epoch + 1;
+            if epoch.epoch_number != expected {
+                return VerifyResult::NonSequentialEpoch {
+                    expected,
+                    got: epoch.epoch_number,
+                };
+            }
+        }
+
+        // Verify STARK proof
+        let pub_inputs = EpochPublicInputs {
+            proof_accumulator: proof.proof_accumulator,
+            num_proofs: 0,  // Not checked in verification
+            epoch_commitment: epoch.commitment(),
+        };
+
+        match winterfell::verify::<EpochProofAir>(
+            winterfell::Proof::from_bytes(&proof.proof_bytes).ok()?,
+            pub_inputs,
+        ) {
+            Ok(_) => {
+                self.verified_epochs.push(epoch.clone());
+                self.tip_epoch = epoch.epoch_number;
+                VerifyResult::Valid
+            }
+            Err(_) => VerifyResult::InvalidProof,
+        }
+    }
+
+    /// Verify epoch without STARK proof (for mock/testing).
+    pub fn accept_epoch(&mut self, epoch: Epoch) {
+        self.tip_epoch = epoch.epoch_number;
+        self.verified_epochs.push(epoch);
+    }
+
+    /// Check if a specific transaction proof was included in an epoch.
+    ///
+    /// Returns true if the Merkle proof is valid.
     pub fn verify_inclusion(
         &self,
         epoch_number: u64,
@@ -618,11 +1307,102 @@ impl LightClient {
         merkle_proof: &[[u8; 32]],
         index: usize,
     ) -> bool {
-        if let Some(epoch) = self.verified_epochs.iter().find(|e| e.epoch_number == epoch_number) {
+        if let Some(epoch) = self.get_epoch(epoch_number) {
             merkle::verify_merkle_proof(epoch.proof_root, proof_hash, index, merkle_proof)
         } else {
             false
         }
+    }
+
+    /// Get verified epoch by number.
+    pub fn get_epoch(&self, epoch_number: u64) -> Option<&Epoch> {
+        self.verified_epochs
+            .iter()
+            .find(|e| e.epoch_number == epoch_number)
+    }
+
+    /// Get all verified epochs.
+    pub fn verified_epochs(&self) -> &[Epoch] {
+        &self.verified_epochs
+    }
+
+    /// Get number of verified epochs.
+    pub fn num_verified(&self) -> usize {
+        self.verified_epochs.len()
+    }
+}
+
+impl Default for LightClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Epoch;
+    use crate::merkle::{compute_proof_root, generate_merkle_proof};
+
+    fn make_epoch(n: u64, proof_root: [u8; 32]) -> Epoch {
+        Epoch {
+            epoch_number: n,
+            start_block: n * 1000,
+            end_block: (n + 1) * 1000 - 1,
+            proof_root,
+            state_root: [0u8; 32],
+            nullifier_set_root: [0u8; 32],
+            commitment_tree_root: [0u8; 32],
+        }
+    }
+
+    #[test]
+    fn test_light_client_inclusion() {
+        let mut client = LightClient::new();
+
+        // Create epoch with known proof hashes
+        let proof_hashes: Vec<[u8; 32]> = (0..10)
+            .map(|i| {
+                let mut h = [0u8; 32];
+                h[0] = i as u8;
+                h
+            })
+            .collect();
+
+        let proof_root = compute_proof_root(&proof_hashes);
+        let epoch = make_epoch(0, proof_root);
+        client.accept_epoch(epoch);
+
+        // Verify valid inclusion
+        for (idx, hash) in proof_hashes.iter().enumerate() {
+            let merkle_proof = generate_merkle_proof(&proof_hashes, idx);
+            assert!(
+                client.verify_inclusion(0, *hash, &merkle_proof, idx),
+                "Failed for index {}",
+                idx
+            );
+        }
+
+        // Verify invalid inclusion (wrong hash)
+        let bad_hash = [99u8; 32];
+        let merkle_proof = generate_merkle_proof(&proof_hashes, 0);
+        assert!(!client.verify_inclusion(0, bad_hash, &merkle_proof, 0));
+    }
+
+    #[test]
+    fn test_light_client_epoch_chain() {
+        let mut client = LightClient::new();
+
+        // Add epochs 0, 1, 2
+        for i in 0..3 {
+            let epoch = make_epoch(i, [i as u8; 32]);
+            client.accept_epoch(epoch);
+        }
+
+        assert_eq!(client.tip_epoch, 2);
+        assert_eq!(client.num_verified(), 3);
+        assert!(client.get_epoch(1).is_some());
+        assert!(client.get_epoch(99).is_none());
     }
 }
 ```
@@ -782,12 +1562,20 @@ Success criteria:
 
 | Criterion | Validation Command | Expected Result |
 |-----------|-------------------|-----------------|
-| Epoch types compile | `cargo check -p epoch-circuit` | No errors |
-| Merkle tree tests pass | `cargo test -p epoch-circuit merkle` | All tests pass |
-| Epoch proof generation | `cargo test -p epoch-circuit epoch_proof` | Proof generated in <10s |
-| Epoch proof verification | `cargo test -p epoch-circuit verify_epoch` | Verification <100ms |
+| Epoch crate compiles | `cargo check -p epoch-circuit` | No errors |
+| Dimensions tests pass | `cargo test -p epoch-circuit dimensions -- --nocapture` | All 5 tests pass with output |
+| Merkle tree tests pass | `cargo test -p epoch-circuit merkle` | 5 tests pass (roundtrip verified) |
+| Types tests pass | `cargo test -p epoch-circuit types` | Epoch commitment deterministic |
+| Mock prover works | `cargo test -p epoch-circuit mock_prover` | MockEpochProver returns proof |
+| AIR constraints compile | `cargo check -p epoch-circuit` | No errors on air.rs |
+| Trace generation | `cargo test -p epoch-circuit trace_building` | Correct trace dimensions |
+| Full proof generation | `cargo test -p epoch-circuit full_proof -- --ignored` | Proof generated in <10s |
 | Light client inclusion | `cargo test -p epoch-circuit light_client` | Merkle proof verified |
-| Integration test | `cargo test -p pallet-shielded-pool epoch` | Epoch finalization works |
+| Pallet compiles | `cargo check -p pallet-shielded-pool` | No errors with epoch storage |
+| Pallet epoch hook | `cargo test -p pallet-shielded-pool epoch_finalize` | EpochFinalized event emitted |
+| Two-node epoch sync | `cargo test --test multinode_integration epoch_sync -- --ignored` | Both nodes have matching epoch |
+| Light client sync test | `cargo test --test multinode_integration light_client_epoch -- --ignored` | All epochs verified |
+| Integration test | `cargo test -p hegemon-node epoch_sync` | Light client syncs epochs |
 
 ### Phase 2 Acceptance Criteria
 
@@ -835,20 +1623,44 @@ circuits/epoch/
 
 ```rust
 //! Epoch proofs for light client verification.
+//!
+//! This crate provides:
+//! - Merkle tree operations for proof accumulation
+//! - STARK proofs attesting to epoch validity
+//! - Light client API for efficient chain sync
 
+mod dimensions;
 mod types;
 mod merkle;
 mod air;
 mod prover;
 mod light_client;
 
-pub use types::{Epoch, EPOCH_SIZE, proof_hash};
-pub use merkle::{compute_proof_root, verify_merkle_proof, generate_merkle_proof};
-pub use prover::{EpochProver, EpochProof};
-pub use light_client::LightClient;
+// Dimension calculations (for testing/validation)
+pub use dimensions::{
+    merkle_depth, merkle_proof_size, padded_leaf_count,
+    EPOCH_SIZE, MAX_PROOFS_PER_EPOCH,
+};
+pub use dimensions::security;
+pub use dimensions::trace;
 
-// Re-export for pallet integration
+// Core types
+pub use types::{Epoch, proof_hash};
+
+// Merkle tree operations
+pub use merkle::{compute_proof_root, verify_merkle_proof, generate_merkle_proof};
+
+// Proof generation
+pub use prover::{EpochProver, EpochProof, MockEpochProver};
+
+// Light client
+pub use light_client::{LightClient, VerifyResult};
+
+// AIR (for advanced use / pallet integration)
 pub use air::{EpochProofAir, EpochPublicInputs};
+
+#[cfg(test)]
+mod integration_tests;
 ```
 
 ### Dependencies
@@ -866,35 +1678,246 @@ pub use air::{EpochProofAir, EpochPublicInputs};
 
 ### Integration Points
 
-**pallet-shielded-pool integration**:
+#### Step 1.6: Pallet integration (storage, events, extrinsics)
+
+Add the following to `pallets/shielded-pool/src/lib.rs`:
+
 ```rust
-// In pallet-shielded-pool/src/lib.rs
-use epoch_circuit::{EpochProver, Epoch, compute_proof_root};
+// ================================================================================================
+// EPOCH STORAGE
+// ================================================================================================
+
+/// Epoch size in blocks.
+pub const EPOCH_SIZE: u64 = 1000;
+
+#[pallet::storage]
+#[pallet::getter(fn current_epoch)]
+pub type CurrentEpoch<T: Config> = StorageValue<_, u64, ValueQuery>;
+
+#[pallet::storage]
+#[pallet::getter(fn epoch_proof_hashes)]
+/// Proof hashes collected during current epoch.
+pub type EpochProofHashes<T: Config> = StorageValue<_, Vec<[u8; 32]>, ValueQuery>;
+
+#[pallet::storage]
+#[pallet::getter(fn epoch_proofs)]
+/// Finalized epoch proofs (epoch_number -> serialized proof).
+pub type EpochProofs<T: Config> = StorageMap<_, Blake2_128Concat, u64, Vec<u8>>;
+
+#[pallet::storage]
+#[pallet::getter(fn epoch_commitments)]
+/// Epoch commitments for light client sync.
+pub type EpochCommitments<T: Config> = StorageMap<_, Blake2_128Concat, u64, [u8; 32]>;
+
+// ================================================================================================
+// EPOCH EVENTS
+// ================================================================================================
+
+#[pallet::event]
+#[pallet::generate_deposit(pub(super) fn deposit_event)]
+pub enum Event<T: Config> {
+    // ... existing events ...
+
+    /// An epoch has been finalized with a proof.
+    EpochFinalized {
+        epoch_number: u64,
+        proof_root: [u8; 32],
+        num_proofs: u32,
+    },
+
+    /// Light client sync data available.
+    EpochSyncAvailable {
+        epoch_number: u64,
+        commitment: [u8; 32],
+    },
+}
+
+// ================================================================================================
+// EPOCH HOOKS
+// ================================================================================================
+
+#[pallet::hooks]
+impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+    fn on_finalize(block_number: BlockNumberFor<T>) {
+        let block_num: u64 = block_number.try_into().unwrap_or(0);
+        
+        // Check if this block ends an epoch
+        if block_num > 0 && block_num % EPOCH_SIZE == 0 {
+            let epoch_number = (block_num / EPOCH_SIZE) - 1;
+            if let Err(e) = Self::finalize_epoch_internal(epoch_number) {
+                log::error!("Failed to finalize epoch {}: {:?}", epoch_number, e);
+            }
+        }
+    }
+}
+
+// ================================================================================================
+// EPOCH IMPLEMENTATION
+// ================================================================================================
 
 impl<T: Config> Pallet<T> {
-    /// Called at epoch boundary
-    fn finalize_epoch(epoch_number: u64) -> DispatchResult {
-        let proofs = Self::epoch_proofs(epoch_number);
-        let proof_hashes: Vec<_> = proofs.iter()
-            .map(|p| epoch_circuit::proof_hash(&p.encode()))
-            .collect();
-        
+    /// Record a proof hash for the current epoch.
+    ///
+    /// Called after each successful shielded transfer.
+    pub fn record_proof_hash(proof_hash: [u8; 32]) {
+        EpochProofHashes::<T>::mutate(|hashes| {
+            hashes.push(proof_hash);
+        });
+    }
+
+    /// Finalize an epoch and generate its proof.
+    fn finalize_epoch_internal(epoch_number: u64) -> DispatchResult {
+        use epoch_circuit::{Epoch, MockEpochProver, compute_proof_root};
+        use sp_core::hashing::blake2_256;
+
+        let proof_hashes = EpochProofHashes::<T>::take();
+        if proof_hashes.is_empty() {
+            // Empty epoch - no proof needed
+            return Ok(());
+        }
+
+        let proof_root = compute_proof_root(&proof_hashes);
+
         let epoch = Epoch {
             epoch_number,
             start_block: epoch_number * EPOCH_SIZE,
             end_block: (epoch_number + 1) * EPOCH_SIZE - 1,
-            proof_root: compute_proof_root(&proof_hashes),
-            state_root: Self::state_root(),
-            nullifier_set_root: Self::nullifier_root(),
-            commitment_tree_root: Self::commitment_root(),
+            proof_root,
+            state_root: Self::state_root().unwrap_or([0u8; 32]),
+            nullifier_set_root: Self::nullifier_root().unwrap_or([0u8; 32]),
+            commitment_tree_root: Self::commitment_root().unwrap_or([0u8; 32]),
         };
-        
-        // Generate and store epoch proof
-        let epoch_proof = EpochProver::prove(&epoch, &proof_hashes)?;
-        EpochProofs::<T>::insert(epoch_number, epoch_proof);
+
+        // Generate epoch proof (use MockEpochProver until real prover is ready)
+        let epoch_proof = MockEpochProver::prove(&epoch, &proof_hashes)
+            .map_err(|_| Error::<T>::EpochProofFailed)?;
+
+        // Store epoch data
+        EpochProofs::<T>::insert(epoch_number, epoch_proof.proof_bytes);
+        EpochCommitments::<T>::insert(epoch_number, epoch.commitment());
+
+        // Update current epoch
+        CurrentEpoch::<T>::put(epoch_number + 1);
+
+        // Emit events
+        Self::deposit_event(Event::EpochFinalized {
+            epoch_number,
+            proof_root,
+            num_proofs: proof_hashes.len() as u32,
+        });
+
+        Self::deposit_event(Event::EpochSyncAvailable {
+            epoch_number,
+            commitment: epoch.commitment(),
+        });
+
+        Ok(())
+    }
+
+    /// Get epoch proof for light client sync.
+    pub fn get_epoch_sync_data(epoch_number: u64) -> Option<(Vec<u8>, [u8; 32])> {
+        let proof = EpochProofs::<T>::get(epoch_number)?;
+        let commitment = EpochCommitments::<T>::get(epoch_number)?;
+        Some((proof, commitment))
+    }
+}
+
+// ================================================================================================
+// EPOCH ERRORS
+// ================================================================================================
+
+#[pallet::error]
+pub enum Error<T> {
+    // ... existing errors ...
+
+    /// Epoch proof generation failed.
+    EpochProofFailed,
+
+    /// Invalid epoch number.
+    InvalidEpoch,
+}
+```
+
+**Integration with shielded_transfer**:
+
+In the `shielded_transfer` extrinsic, after successful verification:
+
+```rust
+#[pallet::call]
+impl<T: Config> Pallet<T> {
+    #[pallet::weight(/* ... */)]
+    pub fn shielded_transfer(
+        origin: OriginFor<T>,
+        proof: Vec<u8>,
+        nullifiers: Vec<T::Nullifier>,
+        commitments: Vec<T::Commitment>,
+        // ... other params
+    ) -> DispatchResult {
+        // ... existing verification logic ...
+
+        // Record proof hash for epoch accumulation
+        let proof_hash = sp_core::hashing::blake2_256(&proof);
+        Self::record_proof_hash(proof_hash);
+
+        // ... rest of existing logic ...
         
         Ok(())
     }
+}
+```
+
+#### RPC Endpoints for Light Clients
+
+Add to `pallets/shielded-pool/src/rpc.rs`:
+
+```rust
+//! RPC endpoints for light client epoch sync.
+
+use jsonrpsee::{core::RpcResult, proc_macros::rpc};
+use sp_api::ProvideRuntimeApi;
+use sp_blockchain::HeaderBackend;
+use sp_runtime::traits::Block as BlockT;
+
+/// Epoch sync RPC API.
+#[rpc(client, server)]
+pub trait EpochApi<BlockHash> {
+    /// Get epoch proof and commitment for light client sync.
+    #[method(name = "epoch_getSyncData")]
+    fn get_epoch_sync_data(
+        &self,
+        epoch_number: u64,
+        at: Option<BlockHash>,
+    ) -> RpcResult<Option<EpochSyncData>>;
+
+    /// Get Merkle proof for transaction inclusion.
+    #[method(name = "epoch_getInclusionProof")]
+    fn get_inclusion_proof(
+        &self,
+        epoch_number: u64,
+        tx_index: u32,
+        at: Option<BlockHash>,
+    ) -> RpcResult<Option<InclusionProof>>;
+
+    /// Get current epoch number.
+    #[method(name = "epoch_current")]
+    fn current_epoch(&self, at: Option<BlockHash>) -> RpcResult<u64>;
+}
+
+/// Epoch sync data returned by RPC.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct EpochSyncData {
+    pub epoch_number: u64,
+    pub proof_bytes: Vec<u8>,
+    pub commitment: [u8; 32],
+}
+
+/// Merkle inclusion proof for a transaction.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct InclusionProof {
+    pub epoch_number: u64,
+    pub tx_index: u32,
+    pub proof_hash: [u8; 32],
+    pub merkle_path: Vec<[u8; 32]>,
 }
 ```
 
@@ -940,15 +1963,37 @@ impl<T: Config> Pallet<T> {
 
 | Phase | Effort | Deliverable |
 |-------|--------|-------------|
-| Phase 1: Epoch types + Merkle | 1 day | types.rs, merkle.rs with tests |
-| Phase 1: EpochProofAir | 2 days | air.rs, prover.rs with tests |
-| Phase 1: Light client API | 1 day | light_client.rs, integration tests |
-| Phase 1: Pallet integration | 1 day | Epoch finalization in pallet |
-| **Phase 1 Total** | **5 days** | **Shippable epoch proofs** |
+| Phase 0: Crate skeleton + dimensions | 0.5 days | Validated sizing assumptions |
+| Phase 1a: Merkle tree implementation | 0.5 days | Complete merkle.rs with tests |
+| Phase 1b: Epoch types + mock prover | 0.5 days | types.rs, MockEpochProver |
+| Phase 1c: EpochProofAir | 1.5 days | Full AIR with Poseidon constraints |
+| Phase 1d: Real EpochProver | 1 day | Trace generation, proof production |
+| Phase 1e: Light client API | 0.5 days | LightClient with inclusion verification |
+| Phase 1f: Pallet integration | 1 day | Storage, events, hooks, RPC |
+| **Phase 1 Total** | **5.5 days** | **Shippable epoch proofs** |
 | Phase 2: Verifier spike | 3-5 days | Go/no-go decision on recursion |
 | Phase 3: Full recursion | 10+ days | If spike succeeds |
 
 **Phase 1 ships independently**. Phase 2 is research that may or may not succeed. Do not block Phase 1 on Phase 2 outcome.
+
+**Work Order** (dependencies shown):
+```
+Phase 0: dimensions.rs
+    │
+    ├─→ Phase 1a: merkle.rs (no deps on 0)
+    │       │
+    │       └─→ Phase 1e: light_client.rs
+    │
+    └─→ Phase 1b: types.rs + MockEpochProver
+            │
+            ├─→ Phase 1f: Pallet integration (can start with mock)
+            │
+            └─→ Phase 1c: EpochProofAir
+                    │
+                    └─→ Phase 1d: Real EpochProver
+                            │
+                            └─→ Replace MockEpochProver in pallet
+```
 
 ## Idempotence and Recovery
 
@@ -1011,7 +2056,312 @@ SPIKE RESULT: EVALUATE ALTERNATIVES
 
 ---
 
+## Two-Node Integration Testing
+
+This section describes how to validate epoch proofs work correctly in a multi-node network.
+
+### Test Configuration
+
+For faster testing, use a smaller epoch size:
+
+```bash
+# Set test epoch size (10 blocks instead of 1000)
+export HEGEMON_EPOCH_SIZE=10
+```
+
+Add runtime support in `pallets/shielded-pool/src/lib.rs`:
+
+```rust
+/// Epoch size - configurable for testing
+pub fn epoch_size() -> u64 {
+    std::env::var("HEGEMON_EPOCH_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1000)
+}
+```
+
+### Automated Integration Tests
+
+Add to `tests/multinode_integration.rs`:
+
+```rust
+// ============================================================================
+// Epoch Sync Tests
+// ============================================================================
+
+/// Test epoch finalization and sync between two nodes
+#[tokio::test]
+#[ignore] // Run with: cargo test -p security-tests --test multinode_integration epoch_sync -- --ignored
+async fn test_epoch_sync_two_nodes() {
+    let mut manager = LiveNodeManager::new();
+    
+    // Spawn Alice (boot node)
+    manager.spawn_node(&ALICE, None).unwrap();
+    manager.wait_for_node(&ALICE, 30).await.unwrap();
+    
+    // Spawn Bob (connects to Alice)
+    let alice_addr = format!("127.0.0.1:{}", ALICE.p2p_port);
+    manager.spawn_node(&BOB, Some(&alice_addr)).unwrap();
+    manager.wait_for_node(&BOB, 30).await.unwrap();
+    
+    // Wait for nodes to sync
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    
+    // Generate transactions to accumulate proof hashes
+    for _ in 0..15 {
+        submit_test_transaction(&ALICE).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    
+    // Wait for epoch boundary
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    
+    // Verify epoch was finalized on Alice
+    let alice_epoch = get_current_epoch(&ALICE).await.unwrap();
+    assert!(alice_epoch >= 1, "Alice should have finalized epoch 0");
+    
+    // Verify epoch proof exists
+    let alice_proof = get_epoch_proof(&ALICE, 0).await.unwrap();
+    assert!(alice_proof.is_some(), "Alice should have epoch 0 proof");
+    
+    // Wait for sync
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    
+    // Verify Bob received the epoch proof
+    let bob_epoch = get_current_epoch(&BOB).await.unwrap();
+    let bob_proof = get_epoch_proof(&BOB, 0).await.unwrap();
+    
+    assert_eq!(alice_epoch, bob_epoch, "Epochs should match");
+    assert_eq!(alice_proof, bob_proof, "Epoch proofs should match");
+}
+
+/// Test light client sync using epoch proofs
+#[tokio::test]
+#[ignore]
+async fn test_light_client_epoch_sync() {
+    let mut manager = LiveNodeManager::new();
+    manager.spawn_node(&ALICE, None).unwrap();
+    manager.wait_for_node(&ALICE, 30).await.unwrap();
+    
+    // Generate enough blocks for multiple epochs
+    for _ in 0..35 {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    
+    // Verify light client can sync all epochs
+    let current_epoch = get_current_epoch(&ALICE).await.unwrap();
+    let mut light_client = epoch_circuit::LightClient::new();
+    
+    for epoch_num in 0..current_epoch {
+        let sync_data = get_epoch_sync_data(&ALICE, epoch_num).await.unwrap();
+        let result = light_client.verify_epoch(&sync_data.epoch, &sync_data.proof);
+        assert_eq!(result, epoch_circuit::VerifyResult::Valid,
+            "Light client should verify epoch {}", epoch_num);
+    }
+    
+    println!("Light client synced {} epochs", light_client.num_verified());
+}
+
+// RPC helper functions
+async fn get_current_epoch(identity: &TestIdentity) -> Result<u64, String> {
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "epoch_current",
+        "params": []
+    });
+    
+    let resp = client.post(identity.rpc_url())
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(json["result"].as_u64().unwrap_or(0))
+}
+
+async fn get_epoch_proof(identity: &TestIdentity, epoch: u64) -> Result<Option<Vec<u8>>, String> {
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "epoch_getSyncData",
+        "params": [epoch]
+    });
+    
+    let resp = client.post(identity.rpc_url())
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    
+    if json["result"].is_null() {
+        return Ok(None);
+    }
+    
+    let proof_hex = json["result"]["proof_bytes"].as_str().unwrap_or("");
+    Ok(Some(hex::decode(proof_hex).unwrap_or_default()))
+}
+```
+
+### Manual Two-Node Testing
+
+#### Step 1: Start Alice (Boot Node)
+
+```bash
+# Terminal 1
+HEGEMON_EPOCH_SIZE=10 ./target/release/hegemon-node \
+    --dev \
+    --base-path /tmp/alice \
+    --rpc-port 9944 \
+    --port 30333 \
+    --rpc-cors all \
+    --rpc-methods unsafe \
+    2>&1 | tee /tmp/alice.log
+```
+
+#### Step 2: Start Bob (Peer)
+
+```bash
+# Terminal 2 - Get Alice's peer ID first
+ALICE_PEER_ID=$(curl -s http://127.0.0.1:9944 -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"system_localPeerId","params":[]}' | jq -r '.result')
+
+HEGEMON_EPOCH_SIZE=10 ./target/release/hegemon-node \
+    --dev \
+    --base-path /tmp/bob \
+    --rpc-port 9945 \
+    --port 30334 \
+    --bootnodes /ip4/127.0.0.1/tcp/30333/p2p/$ALICE_PEER_ID \
+    2>&1 | tee /tmp/bob.log
+```
+
+#### Step 3: Generate Transactions
+
+```bash
+# Terminal 3 - Submit transactions to trigger epoch accumulation
+for i in {1..15}; do
+    echo "Submitting transaction $i..."
+    ./target/release/wallet send \
+        --amount 0.1 \
+        --rpc http://127.0.0.1:9944 \
+        2>/dev/null || echo "  (mock tx for testing)"
+    sleep 5
+done
+```
+
+#### Step 4: Verify Epoch Finalization
+
+```bash
+# Check Alice's current epoch
+echo "Alice epoch:"
+curl -s http://127.0.0.1:9944 -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"epoch_current","params":[]}' | jq '.result'
+
+# Check Bob's current epoch
+echo "Bob epoch:"
+curl -s http://127.0.0.1:9945 -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"epoch_current","params":[]}' | jq '.result'
+
+# Get epoch 0 sync data from both
+echo "Alice epoch 0 commitment:"
+curl -s http://127.0.0.1:9944 -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"epoch_getSyncData","params":[0]}' | jq '.result.commitment'
+
+echo "Bob epoch 0 commitment:"
+curl -s http://127.0.0.1:9945 -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"epoch_getSyncData","params":[0]}' | jq '.result.commitment'
+```
+
+#### Step 5: Verify Merkle Inclusion
+
+```bash
+# Get inclusion proof for first transaction in epoch 0
+curl -s http://127.0.0.1:9944 -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"epoch_getInclusionProof","params":[0,0]}' | jq
+```
+
+### Verification Checklist
+
+| Test Case | Command | Expected Result |
+|-----------|---------|-----------------|
+| Epoch finalized | Check logs for `EpochFinalized` | Event with epoch_number, proof_root |
+| Epoch proof stored | `epoch_getSyncData(0)` | Non-null proof_bytes |
+| Nodes sync epoch | Compare both nodes | Same epoch number |
+| Commitments match | Compare commitments | Identical 32-byte hex |
+| Proof bytes match | Compare proof_bytes | Identical hex strings |
+| Inclusion proof works | `epoch_getInclusionProof(0,0)` | Valid merkle_path array |
+| Light client verifies | Run test code | `VerifyResult::Valid` |
+| Invalid proof rejected | Tamper and verify | `VerifyResult::InvalidProof` |
+
+### Docker Compose Testing
+
+Add to `docker-compose.testnet.yml`:
+
+```yaml
+services:
+  alice:
+    build: .
+    command: >
+      hegemon-node --dev --rpc-port 9944 --port 30333 --rpc-cors all
+    environment:
+      - HEGEMON_MINE=1
+      - HEGEMON_EPOCH_SIZE=10
+    ports:
+      - "9944:9944"
+      - "30333:30333"
+
+  bob:
+    build: .
+    command: >
+      hegemon-node --dev --rpc-port 9944 --port 30333
+        --bootnodes /dns4/alice/tcp/30333/p2p/12D3KooW...
+    environment:
+      - HEGEMON_EPOCH_SIZE=10
+    depends_on:
+      - alice
+    ports:
+      - "9945:9944"
+
+  epoch-test:
+    build: .
+    command: >
+      sh -c "sleep 120 && cargo test -p security-tests 
+             --test multinode_integration epoch_sync -- --ignored"
+    depends_on:
+      - alice
+      - bob
+```
+
+Run:
+```bash
+docker-compose -f docker-compose.testnet.yml up --abort-on-container-exit
+```
+
+---
+
 ## Revision History
 
 - **2025-12-10**: Initial draft
 - **2025-12-10**: Major revision - restructured into Phase 1 (Merkle Accumulator, ships independently) and Phase 2 (Verifier Circuit, research-dependent). Removed dependency on PROOF_AGGREGATION_EXECPLAN. Added concrete steps, validation criteria, interfaces, and code examples per PLANS.md requirements. Clarified that winterfell does NOT support in-circuit STARK verification natively—this requires building a verifier circuit from scratch.
+- **2025-12-10**: Gap analysis and completion:
+  - Added complete `generate_merkle_proof` implementation with tests
+  - Added complete `EpochProofAir` implementation reusing Poseidon patterns from BatchTransactionAir
+  - Added `EpochProver` and `MockEpochProver` with trace generation
+  - Added complete `LightClient` implementation with VerifyResult enum
+  - Added pallet integration section with storage, events, hooks, and RPC endpoints
+  - Added Decision Log entries for Poseidon hash choice, extension field requirement, stub-first development
+  - Updated Progress to 6-phase granularity with explicit dependencies
+  - Updated Timeline with work order showing parallelizable tasks
+  - Updated Cargo.toml with transaction-circuit dependency for Poseidon reuse
+- **2025-12-10**: Added Two-Node Integration Testing section:
+  - Automated integration tests for `multinode_integration.rs`
+  - Manual two-node testing steps with shell commands
+  - Verification checklist for epoch sync validation
+  - Docker Compose configuration for containerized testing
+  - Added Phase 1g to Progress tracker
