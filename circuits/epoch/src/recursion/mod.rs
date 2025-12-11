@@ -29,6 +29,7 @@ pub mod merkle_air;
 pub mod recursive_prover;
 pub mod rpo_air;
 pub mod rpo_proof;
+pub mod rpo_stark_prover;
 pub mod stark_verifier_air;
 
 // Re-export main types for convenience
@@ -37,6 +38,7 @@ pub use rpo_air::{RpoAir, RpoProver, RpoPublicInputs};
 pub use rpo_proof::{
     prove_with_rpo, rpo_hash_elements, rpo_merge, verify_with_rpo, RpoProofOptions,
 };
+pub use rpo_stark_prover::{prove_epoch_with_rpo, verify_epoch_with_rpo, RpoStarkProver};
 pub use stark_verifier_air::{StarkVerifierAir, StarkVerifierPublicInputs};
 
 #[cfg(test)]

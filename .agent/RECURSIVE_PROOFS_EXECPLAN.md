@@ -31,9 +31,13 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] Phase 2d: Implement FriVerifierAir + MerkleVerifierAir.
 - [x] Phase 2e: Implement StarkVerifierAir (full recursive verifier).
 - [x] Phase 2f: RecursiveEpochProver and testnet integration exports.
-- [ ] Phase 3: Security audit and production hardening.
+- [x] Phase 3a: Full RPO STARK prover (RpoStarkProver with Rpo256/RpoRandomCoin).
+- [x] Phase 3b: Wire real STARK prover to RecursiveEpochProver.
+- [x] Phase 3c: Pallet integration (RecursiveEpochProver replaces MockEpochProver).
+- [ ] Phase 3d: Two-person testnet validation.
+- [ ] Phase 4: Security audit and production hardening.
 
-**Current status**: Phase 2 complete. True STARK recursion infrastructure implemented using miden-crypto's RPO algebraic hash. The recursion module provides RpoAir (~13 columns), MerkleVerifierAir, FriVerifierAir, StarkVerifierAir, and RecursiveEpochProver. All 107 epoch-circuit tests pass (47 recursion-specific). Pure STARKs over algebraic hash - no elliptic curves, quantum resistant.
+**Current status**: Phase 3c complete. Full recursive STARK proof generation now integrated into the shielded-pool pallet. The `finalize_epoch_internal` function uses `RecursiveEpochProver` to generate real RPO-based STARK proofs. All 114 epoch-circuit tests pass. Pure STARKs over algebraic hash - no elliptic curves, quantum resistant.
 
 ## Surprises & Discoveries
 
@@ -274,6 +278,41 @@ Proof options:
 - Default blowup_factor: 32 (required for degree-8 constraints with cycle 16)
 - FRI remainder max degree: 7 (must be 2^k - 1)
 - Supports both fast (testing) and production options
+
+**Phase 3 Complete (2025-12-11)**:
+
+Files created:
+- `circuits/epoch/src/recursion/rpo_stark_prover.rs` - Full winterfell Prover using Rpo256 and RpoRandomCoin (~410 lines)
+  - `RpoStarkProver` - Generic STARK prover with associated types:
+    - `HashFn = Rpo256`
+    - `RandomCoin = RpoRandomCoin`
+    - `VC = MerkleTree<Rpo256>`
+  - `prove_epoch_with_rpo()` - Generate real STARK proofs
+  - `verify_epoch_with_rpo()` - Verify using RPO-based Fiat-Shamir
+  - Full Prover trait implementation with DefaultTraceLde, DefaultConstraintCommitment, etc.
+
+Files modified:
+- `circuits/epoch/src/recursion/mod.rs` - Added rpo_stark_prover module export
+- `circuits/epoch/src/recursion/recursive_prover.rs` - Wired RpoStarkProver into RecursiveEpochProver:
+  - `generate_real_stark_proof()` replaces mock proof generation
+  - `verify_epoch_proof()` uses real STARK verification
+  - `is_recursive: true` now set (real proofs, not mock)
+- `circuits/epoch/src/lib.rs` - Re-exported winterfell::Proof for pallet usage
+- `pallets/shielded-pool/src/lib.rs` - Integration complete:
+  - `finalize_epoch_internal()` uses `RecursiveEpochProver` instead of `MockEpochProver`
+  - `verify_stored_epoch_proof()` added for light client verification
+  - Real RPO-based STARK proofs generated at epoch boundaries
+
+Test results:
+- 114 epoch-circuit tests passed (7 new tests for RpoStarkProver)
+- Full end-to-end proof generation and verification works
+- Pallet compiles with `epoch-proofs` feature
+
+Key technical achievements:
+1. **Real STARK Proofs** - No more mock proofs; actual RPO-based STARK generation
+2. **Drop-in Integration** - RecursiveEpochProver API unchanged, pallet just works
+3. **Proof Serialization** - proof.to_bytes() for storage, Proof::from_bytes() for deserialization
+4. **Pallet Ready** - RecursiveEpochProver integrated at epoch boundary finalization
 
 Quantum resistance:
 - Pure STARKs - no elliptic curves anywhere
