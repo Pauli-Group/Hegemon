@@ -50,6 +50,7 @@ pub mod dimensions;
 pub mod light_client;
 pub mod merkle;
 pub mod prover;
+pub mod recursion;
 pub mod types;
 pub mod verifier_spike;
 
