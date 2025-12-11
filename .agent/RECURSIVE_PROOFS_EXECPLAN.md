@@ -28,8 +28,17 @@ Implement recursive STARK proof composition where a proof can verify other proof
 
 ## Surprises & Discoveries
 
-- Observation: _None yet._
-  Evidence: _Pending implementation._
+- Observation: (From PROOF_AGGREGATION_EXECPLAN) FRAME pallet extrinsics work better with individual parameters than combined structs.
+  Evidence: BatchShieldedTransfer in proof aggregation required Debug/Clone/TypeInfo on generic parameters, which complicated the implementation. Using individual parameters for `batch_shielded_transfer(proof, nullifiers, commitments, ...)` was cleaner.
+  Implication: When adding epoch-related extrinsics, use individual parameters (epoch_number, proof_bytes, commitment, etc.) rather than an Epoch struct.
+
+- Observation: (From PROOF_AGGREGATION_EXECPLAN) Transaction batching achieves ~12x proof size savings and ~12x verification speedup for batch of 16.
+  Evidence: Benchmark results showed 8.4 KB batch proof vs 102 KB for 16 individual proofs (12.1x), and 4.1ms vs 48ms verification (11.7x).
+  Implication: Phase 2 verifier circuit must have <12x overhead to be worthwhile over batching. If recursive proof size is >12x inner proof size, batching is the better approach.
+
+- Observation: (From PROOF_AGGREGATION_EXECPLAN) AcceptAllBatchProofs mock verifier pattern enables rapid pallet development before circuit is complete.
+  Evidence: batch-circuit tests passed with mock verifier, allowing parallel development of pallet and circuit.
+  Implication: Use AcceptAllEpochProofs mock for epoch pallet integration during Phase 1 development.
 
 ## Decision Log
 
@@ -652,6 +661,11 @@ pub mod benchmark;
 - Outer proof verifies successfully
 - Outer proof size < 10× inner proof size
 - Outer prover time < 100× inner prover time
+
+**Comparison to batching baseline** (from PROOF_AGGREGATION_EXECPLAN benchmarks):
+- Batching achieves 12.1x proof size savings for batch of 16
+- If recursive overhead exceeds 12x, batching is more efficient for aggregating 16 proofs
+- Recursion becomes valuable when aggregating >16 proofs or when O(log N) composition is needed
 
 **If spike fails**: Document findings in Decision Log and evaluate alternatives:
 - Plonky2 (native recursion support)
