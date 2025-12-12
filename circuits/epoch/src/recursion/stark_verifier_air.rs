@@ -33,12 +33,19 @@ use winter_air::{
     Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
     TransitionConstraintDegree,
 };
+use miden_crypto::rand::RpoRandomCoin;
+use miden_crypto::Word;
+use winter_crypto::RandomCoin;
 use winter_math::{FieldElement, ToElements};
 use winterfell::math::fields::f64::BaseElement;
 
 use super::rpo_air::{STATE_WIDTH, ROWS_PER_PERMUTATION, NUM_ROUNDS, MDS, ARK1, ARK2};
 use super::merkle_air::DIGEST_WIDTH;
-use super::fri_air::FriFoldingVerifier;
+use winter_air::DeepCompositionCoefficients;
+
+const CAPACITY_WIDTH: usize = 4;
+const RATE_WIDTH: usize = 8;
+const RATE_START: usize = CAPACITY_WIDTH;
 
 // CONSTANTS
 // ================================================================================================
@@ -156,16 +163,37 @@ impl Air for StarkVerifierAir {
         // - FRI folding (degree 2)
         // - Constraint evaluation checks (varies)
         
-        // Total constraints depend on verification complexity
-        // For now, use RPO state width as baseline
-        let num_constraints = STATE_WIDTH + 1;
-        let degrees = vec![
-            TransitionConstraintDegree::with_cycles(8, vec![ROWS_PER_PERMUTATION]);
-            num_constraints
-        ];
+        // For the initial minimal verifier we only enforce:
+        // - RPO permutation constraints for hashing inner public inputs
+        // - Capacity carryover between sponge blocks
+        let num_constraints = STATE_WIDTH + DIGEST_WIDTH;
+        let mut degrees = Vec::with_capacity(num_constraints);
 
-        // Assertions verify commitments match
-        let num_assertions = 3 * DIGEST_WIDTH; // trace + constraint + first FRI
+        // RPO transition constraints are gated by two periodic selectors:
+        // - half_round_type (permutation schedule)
+        // - perm_mask (disable boundary transitions)
+        for _ in 0..STATE_WIDTH {
+            degrees.push(TransitionConstraintDegree::with_cycles(
+                7,
+                vec![
+                    ROWS_PER_PERMUTATION,
+                    ROWS_PER_PERMUTATION,
+                    ROWS_PER_PERMUTATION,
+                ],
+            ));
+        }
+
+        // Capacity carryover is linear in trace columns and gated by one periodic selector.
+        for _ in 0..DIGEST_WIDTH {
+            degrees.push(TransitionConstraintDegree::with_cycles(
+                1,
+                vec![ROWS_PER_PERMUTATION],
+            ));
+        }
+
+        // Assertions bind sponge inputs and output digest.
+        let num_blocks = (pub_inputs.inner_public_inputs.len() + RATE_WIDTH - 1) / RATE_WIDTH;
+        let num_assertions = CAPACITY_WIDTH + num_blocks * RATE_WIDTH + DIGEST_WIDTH;
 
         let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
@@ -185,15 +213,18 @@ impl Air for StarkVerifierAir {
         let current = frame.current();
         let next = frame.next();
 
-        // RPO constraints (reused from other modules)
+        // Periodic values layout:
+        // [half_round_type, ark[0..STATE_WIDTH], perm_mask]
         let half_round_type = periodic_values[0];
         let ark: [E; STATE_WIDTH] = core::array::from_fn(|i| periodic_values[1 + i]);
+        let perm_mask = periodic_values[1 + STATE_WIDTH];
+        let boundary_mask = E::ONE - perm_mask;
 
         // MDS result
         let mut mds_result: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
         for i in 0..STATE_WIDTH {
             for j in 0..STATE_WIDTH {
-                let mds_coeff = E::from(BaseElement::new(MDS[i][j]));
+                let mds_coeff = E::from(MDS[i][j]);
                 mds_result[i] += mds_coeff * current[j];
             }
         }
@@ -229,36 +260,69 @@ impl Air for StarkVerifierAir {
 
             let padding_constraint = next[i] - current[i];
 
-            result[i] = is_forward * forward_constraint 
-                      + is_inverse * inverse_constraint
-                      + is_padding * padding_constraint;
+            let rpo_constraint = is_forward * forward_constraint
+                + is_inverse * inverse_constraint
+                + is_padding * padding_constraint;
+            // Disable RPO constraints at permutation boundaries to allow sponge reloading.
+            result[i] = perm_mask * rpo_constraint;
         }
 
-        // Additional constraint slot (for future use)
-        result[STATE_WIDTH] = E::ZERO;
+        // Capacity carryover constraints at boundaries between sponge blocks.
+        for i in 0..DIGEST_WIDTH {
+            result[STATE_WIDTH + i] = boundary_mask * (next[i] - current[i]);
+        }
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
         let mut assertions = Vec::new();
 
-        // Assert trace commitment at designated row
-        // (In full implementation, this would be at the end of RPO permutation
-        // that computes the commitment)
+        // Sponge initialization.
+        let input_len = self.pub_inputs.inner_public_inputs.len();
+        let len_mod_rate = (input_len % RATE_WIDTH) as u64;
+        assertions.push(Assertion::single(
+            0,
+            0,
+            BaseElement::new(len_mod_rate),
+        ));
+        for i in 1..CAPACITY_WIDTH {
+            assertions.push(Assertion::single(i, 0, BaseElement::ZERO));
+        }
+
+        // Bind each absorbed block to the corresponding public inputs.
+        let num_blocks = (input_len + RATE_WIDTH - 1) / RATE_WIDTH;
+        for block in 0..num_blocks {
+            let row = block * ROWS_PER_PERMUTATION;
+            let start = block * RATE_WIDTH;
+            for j in 0..RATE_WIDTH {
+                let val = if start + j < input_len {
+                    self.pub_inputs.inner_public_inputs[start + j]
+                } else {
+                    BaseElement::ZERO
+                };
+                assertions.push(Assertion::single(RATE_START + j, row, val));
+            }
+        }
+
+        // Bind digest after the final permutation.
+        let last_row = num_blocks * ROWS_PER_PERMUTATION - 1;
         for i in 0..DIGEST_WIDTH {
-            assertions.push(Assertion::single(i, 0, self.pub_inputs.trace_commitment[i]));
+            assertions.push(Assertion::single(
+                RATE_START + i,
+                last_row,
+                self.pub_inputs.inner_pub_inputs_hash[i],
+            ));
         }
 
         assertions
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
-        // Estimate trace size based on verification complexity
-        let num_rpo_perms = self.pub_inputs.num_queries * (self.pub_inputs.fri_commitments.len() + 2);
-        let total_rows = num_rpo_perms * ROWS_PER_PERMUTATION;
-        
+        let total_rows = self.trace_length();
+
         let mut half_round_type = Vec::with_capacity(total_rows);
         let mut ark_columns: [Vec<BaseElement>; STATE_WIDTH] = 
             core::array::from_fn(|_| Vec::with_capacity(total_rows));
+        let mut perm_mask = Vec::with_capacity(total_rows);
 
         for row in 0..total_rows {
             let local_row = row % ROWS_PER_PERMUTATION;
@@ -272,24 +336,29 @@ impl Air for StarkVerifierAir {
             half_round_type.push(BaseElement::new(val));
 
             let constants = if local_row >= 14 {
-                [0u64; STATE_WIDTH]
+                [BaseElement::ZERO; STATE_WIDTH]
             } else if local_row % 2 == 0 {
                 let round = local_row / 2;
-                if round < NUM_ROUNDS { ARK1[round] } else { [0u64; STATE_WIDTH] }
+                if round < NUM_ROUNDS { ARK1[round] } else { [BaseElement::ZERO; STATE_WIDTH] }
             } else {
                 let round = local_row / 2;
-                if round < NUM_ROUNDS { ARK2[round] } else { [0u64; STATE_WIDTH] }
+                if round < NUM_ROUNDS { ARK2[round] } else { [BaseElement::ZERO; STATE_WIDTH] }
             };
 
             for (i, &c) in constants.iter().enumerate() {
-                ark_columns[i].push(BaseElement::new(c));
+                ark_columns[i].push(c);
             }
+
+            // Apply RPO constraints on all transitions except boundaries between permutations.
+            let mask = (local_row < ROWS_PER_PERMUTATION - 1) as u64;
+            perm_mask.push(BaseElement::new(mask));
         }
 
         let mut result = vec![half_round_type];
         for col in ark_columns {
             result.push(col);
         }
+        result.push(perm_mask);
         result
     }
 }
@@ -297,54 +366,64 @@ impl Air for StarkVerifierAir {
 // VERIFICATION HELPERS
 // ================================================================================================
 
-/// Helper to extract query positions from transcript hash.
+/// Helper to extract query positions from an RPO transcript seed.
 pub fn extract_query_positions(
-    transcript_hash: [BaseElement; DIGEST_WIDTH],
+    transcript_seed: [BaseElement; DIGEST_WIDTH],
     num_queries: usize,
     domain_size: usize,
+    pow_nonce: u64,
 ) -> Vec<usize> {
-    // Use transcript hash to derive query positions
-    // This is deterministic given the transcript state
-    let mut positions = Vec::with_capacity(num_queries);
-    
-    // Simple derivation (in practice would use more robust method)
-    for i in 0..num_queries {
-        let seed = transcript_hash[i % DIGEST_WIDTH].as_int();
-        let position = (seed as usize + i * 7919) % domain_size;
-        positions.push(position);
-    }
-    
+    let word = Word::new(transcript_seed);
+    let mut coin = RpoRandomCoin::new(word);
+    let mut positions = coin
+        .draw_integers(num_queries, domain_size, pow_nonce)
+        .expect("failed to draw query positions");
+    positions.sort_unstable();
+    positions.dedup();
     positions
 }
 
-/// Verify DEEP composition polynomial at OOD point.
+/// Compute a single DEEP composition evaluation for a query.
 ///
-/// The DEEP method samples an out-of-domain point z and verifies:
-/// - Trace polynomials at z match claimed values
-/// - Constraint polynomial at z evaluates correctly
-pub fn verify_deep_composition(
+/// This matches `winter-verifier`'s `DeepComposer::compose_columns` for the
+/// base-field, single-trace-segment case.
+pub fn compute_deep_evaluation(
+    x: BaseElement,
+    trace_row: &[BaseElement],
+    constraint_row: &[BaseElement],
+    ood_trace_z: &[BaseElement],
+    ood_trace_zg: &[BaseElement],
+    ood_constraints_z: &[BaseElement],
+    ood_constraints_zg: &[BaseElement],
+    deep_coeffs: &DeepCompositionCoefficients<BaseElement>,
     z: BaseElement,
-    trace_at_z: &[BaseElement],
-    constraints_at_z: BaseElement,
-    composition_at_z: BaseElement,
-    alphas: &[BaseElement],
-) -> bool {
-    // Compute expected composition from trace and constraints
-    // C(z) = sum_i(alpha_i * T_i(z)) + alpha_last * constraints(z)
-    let mut expected = BaseElement::ZERO;
-    
-    for (i, &t) in trace_at_z.iter().enumerate() {
-        if i < alphas.len() - 1 {
-            expected += alphas[i] * t;
-        }
+    g_trace: BaseElement,
+) -> BaseElement {
+    let z1 = z * g_trace;
+    let x_minus_z0 = x - z;
+    let x_minus_z1 = x - z1;
+
+    assert_eq!(trace_row.len(), deep_coeffs.trace.len());
+    assert_eq!(constraint_row.len(), deep_coeffs.constraints.len());
+
+    let mut t1_num = BaseElement::ZERO;
+    let mut t2_num = BaseElement::ZERO;
+    for i in 0..trace_row.len() {
+        t1_num += deep_coeffs.trace[i] * (trace_row[i] - ood_trace_z[i]);
+        t2_num += deep_coeffs.trace[i] * (trace_row[i] - ood_trace_zg[i]);
     }
-    
-    if let Some(&alpha_last) = alphas.last() {
-        expected += alpha_last * constraints_at_z;
+    let num_trace = t1_num * x_minus_z1 + t2_num * x_minus_z0;
+
+    let mut c1_num = BaseElement::ZERO;
+    let mut c2_num = BaseElement::ZERO;
+    for j in 0..constraint_row.len() {
+        c1_num += deep_coeffs.constraints[j] * (constraint_row[j] - ood_constraints_z[j]);
+        c2_num += deep_coeffs.constraints[j] * (constraint_row[j] - ood_constraints_zg[j]);
     }
-    
-    // Compare with claimed composition
-    composition_at_z == expected
+    let num_constraints = c1_num * x_minus_z1 + c2_num * x_minus_z0;
+
+    let den = x_minus_z0 * x_minus_z1;
+    (num_trace + num_constraints) / den
 }
 
 // TESTS
@@ -386,7 +465,7 @@ mod tests {
             BaseElement::new(22222),
         ];
         
-        let positions = extract_query_positions(hash, 8, 1024);
+        let positions = extract_query_positions(hash, 8, 1024, 0);
         
         assert_eq!(positions.len(), 8);
         for &pos in &positions {
@@ -394,38 +473,59 @@ mod tests {
         }
         
         // Verify determinism
-        let positions2 = extract_query_positions(hash, 8, 1024);
+        let positions2 = extract_query_positions(hash, 8, 1024, 0);
         assert_eq!(positions, positions2);
     }
 
     #[test]
-    fn test_deep_composition_verification() {
-        let z = BaseElement::new(7);
-        let trace_at_z = vec![
-            BaseElement::new(10),
-            BaseElement::new(20),
-            BaseElement::new(30),
-        ];
-        let constraints_at_z = BaseElement::new(5);
-        
-        let alphas = vec![
-            BaseElement::new(1),
-            BaseElement::new(2),
-            BaseElement::new(3),
-            BaseElement::new(4),
-        ];
-        
-        // Compute expected composition
-        let expected = BaseElement::new(1) * BaseElement::new(10)
-            + BaseElement::new(2) * BaseElement::new(20)
-            + BaseElement::new(3) * BaseElement::new(30)
-            + BaseElement::new(4) * BaseElement::new(5);
-        
-        assert!(verify_deep_composition(z, &trace_at_z, constraints_at_z, expected, &alphas));
-        
-        // Wrong composition should fail
-        let wrong = expected + BaseElement::ONE;
-        assert!(!verify_deep_composition(z, &trace_at_z, constraints_at_z, wrong, &alphas));
+    fn test_deep_evaluation_matches_manual() {
+        let z = BaseElement::new(10);
+        let g_trace = BaseElement::new(2);
+        let x = BaseElement::new(11);
+
+        let trace_row = vec![BaseElement::new(5)];
+        let constraint_row = vec![BaseElement::new(7)];
+
+        let ood_trace_z = vec![BaseElement::new(3)];
+        let ood_trace_zg = vec![BaseElement::new(4)];
+        let ood_constraints_z = vec![BaseElement::new(2)];
+        let ood_constraints_zg = vec![BaseElement::new(1)];
+
+        let deep_coeffs = DeepCompositionCoefficients {
+            trace: vec![BaseElement::ONE],
+            constraints: vec![BaseElement::ONE],
+        };
+
+        // Manual computation per DeepComposer formula.
+        let z1 = z * g_trace;
+        let x_minus_z0 = x - z;
+        let x_minus_z1 = x - z1;
+
+        let t1_num = trace_row[0] - ood_trace_z[0];
+        let t2_num = trace_row[0] - ood_trace_zg[0];
+        let num_trace = t1_num * x_minus_z1 + t2_num * x_minus_z0;
+
+        let c1_num = constraint_row[0] - ood_constraints_z[0];
+        let c2_num = constraint_row[0] - ood_constraints_zg[0];
+        let num_constraints = c1_num * x_minus_z1 + c2_num * x_minus_z0;
+
+        let den = x_minus_z0 * x_minus_z1;
+        let expected = (num_trace + num_constraints) / den;
+
+        let computed = compute_deep_evaluation(
+            x,
+            &trace_row,
+            &constraint_row,
+            &ood_trace_z,
+            &ood_trace_zg,
+            &ood_constraints_z,
+            &ood_constraints_zg,
+            &deep_coeffs,
+            z,
+            g_trace,
+        );
+
+        assert_eq!(computed, expected);
     }
 
     #[test]

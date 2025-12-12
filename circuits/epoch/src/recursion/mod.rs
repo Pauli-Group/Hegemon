@@ -31,6 +31,7 @@ pub mod rpo_air;
 pub mod rpo_proof;
 pub mod rpo_stark_prover;
 pub mod stark_verifier_air;
+pub mod stark_verifier_prover;
 
 // Re-export main types for convenience
 pub use recursive_prover::{InnerProofData, RecursiveEpochProof, RecursiveEpochProver};
@@ -40,6 +41,7 @@ pub use rpo_proof::{
 };
 pub use rpo_stark_prover::{prove_epoch_with_rpo, verify_epoch_with_rpo, RpoStarkProver};
 pub use stark_verifier_air::{StarkVerifierAir, StarkVerifierPublicInputs};
+pub use stark_verifier_prover::StarkVerifierProver;
 
 #[cfg(test)]
 mod tests;
