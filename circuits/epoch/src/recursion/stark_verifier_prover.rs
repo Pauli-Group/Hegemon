@@ -19,14 +19,18 @@ use super::rpo_air::{
     STATE_WIDTH, ROWS_PER_PERMUTATION, NUM_ROUNDS, MDS, ARK1, ARK2,
     TRACE_WIDTH as RPO_TRACE_WIDTH,
 };
-use super::rpo_proof::rpo_hash_elements;
+use super::merkle_air::DIGEST_WIDTH;
+use super::rpo_proof::{rpo_hash_elements, rpo_merge};
 use super::stark_verifier_air::{
     build_context_prefix, StarkVerifierAir, StarkVerifierPublicInputs, VERIFIER_TRACE_WIDTH,
     COL_CARRY_MASK, COL_FULL_CARRY_MASK, COL_RESEED_MASK, COL_COIN_INIT_MASK,
     COL_RESEED_WORD_START, COL_COEFF_MASK, COL_Z_MASK, COL_COEFF_START, COL_Z_VALUE,
     COL_DEEP_MASK, COL_DEEP_START, COL_FRI_MASK, COL_FRI_ALPHA_VALUE,
-    COL_POS_MASK, COL_POS_START,
+    COL_POS_MASK, COL_POS_START, COL_MERKLE_PATH_BIT,
 };
+use super::recursive_prover::InnerProofData;
+use winter_fri::folding::fold_positions;
+use winter_fri::utils::map_positions_to_indexes;
 
 type Blake3 = Blake3_256<BaseElement>;
 type Blake3MerkleTree = MerkleTree<Blake3>;
@@ -48,18 +52,58 @@ impl StarkVerifierProver {
         options: ProofOptions,
     ) -> Result<(Proof, StarkVerifierPublicInputs), String> {
         let digest = rpo_hash_elements(&inner_public_inputs);
-        let num_blocks = inner_public_inputs.len().div_ceil(8).max(1);
-        let _active_rows = num_blocks * ROWS_PER_PERMUTATION;
+        let trace_length = ROWS_PER_PERMUTATION;
+        let blowup_factor = options.blowup_factor();
+        let lde_domain_size = trace_length * blowup_factor;
+        let depth_trace = if lde_domain_size == 0 {
+            0
+        } else {
+            lde_domain_size.trailing_zeros() as usize
+        };
+
+        let zero_digest = [BaseElement::ZERO; DIGEST_WIDTH];
+        // Use a non‑trivial dummy index so that Merkle path bits are not constant in
+        // transcript‑only verifier proofs; this avoids zero‑degree quotients in debug mode.
+        let dummy_index: u64 = 0x55;
+
+        let compute_dummy_root =
+            |leaf: [BaseElement; DIGEST_WIDTH], depth: usize| -> [BaseElement; DIGEST_WIDTH] {
+                let mut current = leaf;
+                for level in 0..depth {
+                    let bit = (dummy_index >> level) & 1;
+                    current = if bit == 1 {
+                        rpo_merge(&zero_digest, &current)
+                    } else {
+                        rpo_merge(&current, &zero_digest)
+                    };
+                }
+                current
+            };
+
+        // Dummy trace commitment.
+        let dummy_trace_leaf = vec![BaseElement::ZERO; RPO_TRACE_WIDTH];
+        let trace_leaf = rpo_hash_elements(&dummy_trace_leaf);
+        let trace_root = compute_dummy_root(trace_leaf, depth_trace);
+
+        // Dummy constraint commitment.
+        let dummy_constraint_leaf = vec![BaseElement::ZERO; 8];
+        let constraint_leaf = rpo_hash_elements(&dummy_constraint_leaf);
+        let constraint_root = compute_dummy_root(constraint_leaf, depth_trace);
+
+        // Dummy single FRI layer commitment + remainder commitment.
+        let dummy_fri_leaf = vec![BaseElement::ZERO; 2];
+        let fri_leaf = rpo_hash_elements(&dummy_fri_leaf);
+        let fri_root0 = compute_dummy_root(fri_leaf, depth_trace.saturating_sub(1));
 
         let pub_inputs = StarkVerifierPublicInputs::new(
             inner_public_inputs.clone(),
             digest,
-            [BaseElement::ZERO; 4],
-            [BaseElement::ZERO; 4],
-            vec![[BaseElement::ZERO; 4], [BaseElement::ZERO; 4]],
+            trace_root,
+            constraint_root,
+            vec![fri_root0, [BaseElement::ZERO; DIGEST_WIDTH]],
             options.num_queries(),
-            options.blowup_factor(),
-            ROWS_PER_PERMUTATION,
+            blowup_factor,
+            trace_length,
         );
 
         let prover = StarkVerifierProver::new(options.clone(), pub_inputs.clone());
@@ -93,7 +137,7 @@ impl StarkVerifierProver {
         } else {
             (self.pub_inputs.num_queries + 1).div_ceil(8)
         };
-        let active_perms = num_pi_blocks
+        let transcript_perms = num_pi_blocks
             + num_seed_blocks
             + num_coeff_perms
             + num_deep_perms
@@ -101,6 +145,24 @@ impl StarkVerifierProver {
             + num_remainder_perms
             + num_pos_perms
             + 2;
+
+        let lde_domain_size = self.pub_inputs.trace_length * self.pub_inputs.blowup_factor;
+        let depth_trace = if lde_domain_size == 0 {
+            0
+        } else {
+            lde_domain_size.trailing_zeros() as usize
+        };
+        let trace_leaf_blocks = RPO_TRACE_WIDTH.div_ceil(8).max(1);
+        let constraint_leaf_blocks = 1usize;
+        let fri_leaf_blocks = 1usize;
+        let mut merkle_perms_per_query =
+            trace_leaf_blocks + depth_trace + constraint_leaf_blocks + depth_trace;
+        for layer_idx in 0..num_fri_layers {
+            merkle_perms_per_query +=
+                fri_leaf_blocks + depth_trace.saturating_sub(layer_idx + 1);
+        }
+        let merkle_perms_total = self.pub_inputs.num_queries * merkle_perms_per_query;
+        let active_perms = transcript_perms + merkle_perms_total;
         let active_rows = active_perms * ROWS_PER_PERMUTATION;
         let total_rows = active_rows.next_power_of_two();
 
@@ -562,6 +624,64 @@ impl StarkVerifierProver {
             }
         }
 
+        // --- Dummy Merkle authentication segment -------------------------------------------
+        // For transcript-only proofs we still need to satisfy Merkle constraints and degrees.
+        assert_eq!(perm_idx, transcript_perms, "transcript perm count mismatch");
+
+        let dummy_trace_row = vec![BaseElement::ZERO; RPO_TRACE_WIDTH];
+        let dummy_constraint_row = vec![BaseElement::ZERO; 8];
+        let dummy_fri_row = vec![BaseElement::ZERO; 2];
+
+        let trace_siblings = vec![[BaseElement::ZERO; DIGEST_WIDTH]; depth_trace];
+        let constraint_siblings = vec![[BaseElement::ZERO; DIGEST_WIDTH]; depth_trace];
+        let mut fri_siblings_by_layer: Vec<Vec<[BaseElement; DIGEST_WIDTH]>> =
+            Vec::with_capacity(num_fri_layers);
+        for layer_idx in 0..num_fri_layers {
+            fri_siblings_by_layer.push(vec![
+                [BaseElement::ZERO; DIGEST_WIDTH];
+                depth_trace.saturating_sub(layer_idx + 1)
+            ]);
+        }
+
+        let dummy_index: u64 = 0x55;
+        for _q in 0..self.pub_inputs.num_queries {
+            let trace_leaf =
+                hash_leaf_perms(self, &mut trace, &mut perm_idx, &dummy_trace_row);
+            authenticate_merkle_path(
+                self,
+                &mut trace,
+                &mut perm_idx,
+                trace_leaf,
+                dummy_index,
+                &trace_siblings,
+            );
+
+            let constraint_leaf =
+                hash_leaf_perms(self, &mut trace, &mut perm_idx, &dummy_constraint_row);
+            authenticate_merkle_path(
+                self,
+                &mut trace,
+                &mut perm_idx,
+                constraint_leaf,
+                dummy_index,
+                &constraint_siblings,
+            );
+
+            for layer_idx in 0..num_fri_layers {
+                let fri_leaf =
+                    hash_leaf_perms(self, &mut trace, &mut perm_idx, &dummy_fri_row);
+                let sibs = &fri_siblings_by_layer[layer_idx];
+                authenticate_merkle_path(
+                    self,
+                    &mut trace,
+                    &mut perm_idx,
+                    fri_leaf,
+                    dummy_index,
+                    sibs,
+                );
+            }
+        }
+
         // --- Padding permutations -----------------------------------------------------------
         let total_perms = total_rows / ROWS_PER_PERMUTATION;
         for _ in perm_idx..total_perms {
@@ -588,6 +708,616 @@ impl StarkVerifierProver {
             let last = row_offset + ROWS_PER_PERMUTATION - 1;
             for i in 0..STATE_WIDTH {
                 coin_state[i] = trace.get(i, last);
+            }
+            perm_idx += 1;
+        }
+
+        trace
+    }
+
+    /// Build a full verifier trace for a concrete inner proof.
+    ///
+    /// This extends the transcript segment with in‑circuit hashing of all queried
+    /// leaves and Merkle authentication paths for trace, constraint, and FRI layers.
+    pub fn build_trace_from_inner(&self, inner: &InnerProofData) -> TraceTable<BaseElement> {
+        let inputs = &self.pub_inputs.inner_public_inputs;
+        let input_len = inputs.len();
+        let num_pi_blocks = input_len.div_ceil(8).max(1);
+
+        let seed_prefix = build_context_prefix(&self.pub_inputs);
+        let seed_len = seed_prefix.len() + input_len;
+        let num_seed_blocks = seed_len.div_ceil(8).max(1);
+
+        let num_coeff_perms = 36usize.div_ceil(8);
+        let num_deep_coeffs = RPO_TRACE_WIDTH + 8;
+        let num_deep_perms = num_deep_coeffs.div_ceil(8);
+        let num_fri_commitments = self.pub_inputs.fri_commitments.len();
+        let num_fri_layers = num_fri_commitments.saturating_sub(1);
+        let num_fri_alpha_perms = num_fri_layers;
+        let num_remainder_perms = (num_fri_commitments > 0) as usize;
+        let num_pos_perms = if self.pub_inputs.num_queries == 0 {
+            0
+        } else {
+            (self.pub_inputs.num_queries + 1).div_ceil(8)
+        };
+
+        let transcript_perms = num_pi_blocks
+            + num_seed_blocks
+            + num_coeff_perms
+            + num_deep_perms
+            + num_fri_alpha_perms
+            + num_remainder_perms
+            + num_pos_perms
+            + 2;
+
+        // Merkle permutations count (must match AIR periodic schedule).
+        let lde_domain_size = self.pub_inputs.trace_length * self.pub_inputs.blowup_factor;
+        let depth_trace = if lde_domain_size == 0 {
+            0
+        } else {
+            lde_domain_size.trailing_zeros() as usize
+        };
+        let trace_leaf_blocks = RPO_TRACE_WIDTH.div_ceil(8).max(1);
+        let constraint_leaf_blocks = 1usize; // 8‑element constraint leaves
+        let fri_leaf_blocks = 1usize; // 2‑element FRI leaves
+        let mut merkle_perms_per_query =
+            trace_leaf_blocks + depth_trace + constraint_leaf_blocks + depth_trace;
+        for layer_idx in 0..num_fri_layers {
+            merkle_perms_per_query +=
+                fri_leaf_blocks + depth_trace.saturating_sub(layer_idx + 1);
+        }
+        let merkle_perms_total = self.pub_inputs.num_queries * merkle_perms_per_query;
+
+        let active_perms = transcript_perms + merkle_perms_total;
+        let active_rows = active_perms * ROWS_PER_PERMUTATION;
+        let total_rows = active_rows.next_power_of_two();
+
+        let mut trace = TraceTable::new(VERIFIER_TRACE_WIDTH, total_rows);
+
+        let mut perm_idx = 0usize;
+
+        // --- Segment A: RPO hash of inner public inputs ------------------------------------
+        let mut state = [BaseElement::ZERO; STATE_WIDTH];
+        state[0] = BaseElement::new((input_len % 8) as u64);
+
+        for block in 0..num_pi_blocks {
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+
+            let start = block * 8;
+            for i in 0..8 {
+                state[4 + i] = if start + i < input_len {
+                    inputs[start + i]
+                } else {
+                    BaseElement::ZERO
+                };
+            }
+
+            self.fill_rpo_trace(&mut trace, row_offset, state);
+
+            let (carry, full_carry, reseed, coin_init) = if block + 1 < num_pi_blocks {
+                (BaseElement::ONE, BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO)
+            } else {
+                (BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO)
+            };
+            set_masks(
+                &mut trace,
+                perm_idx,
+                carry,
+                full_carry,
+                reseed,
+                coin_init,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+            );
+            set_path_bit(&mut trace, perm_idx, 0);
+
+            let last = row_offset + ROWS_PER_PERMUTATION - 1;
+            for i in 0..STATE_WIDTH {
+                state[i] = trace.get(i, last);
+            }
+
+            perm_idx += 1;
+        }
+
+        // --- Segment B: RPO hash of transcript seed ----------------------------------------
+        let mut seed_state = [BaseElement::ZERO; STATE_WIDTH];
+        seed_state[0] = BaseElement::new((seed_len % 8) as u64);
+
+        for block in 0..num_seed_blocks {
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+
+            let start = block * 8;
+            for j in 0..8 {
+                let idx = start + j;
+                let val = if idx < seed_prefix.len() {
+                    seed_prefix[idx]
+                } else {
+                    let pi_idx = idx - seed_prefix.len();
+                    if pi_idx < input_len {
+                        inputs[pi_idx]
+                    } else {
+                        BaseElement::ZERO
+                    }
+                };
+                seed_state[4 + j] = val;
+            }
+
+            self.fill_rpo_trace(&mut trace, row_offset, seed_state);
+
+            let (carry, full_carry, reseed, coin_init) = if block + 1 < num_seed_blocks {
+                (BaseElement::ONE, BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO)
+            } else {
+                (BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO, BaseElement::ONE)
+            };
+            set_masks(
+                &mut trace,
+                perm_idx,
+                carry,
+                full_carry,
+                reseed,
+                coin_init,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+            );
+            set_path_bit(&mut trace, perm_idx, 0);
+
+            let last = row_offset + ROWS_PER_PERMUTATION - 1;
+            for i in 0..STATE_WIDTH {
+                seed_state[i] = trace.get(i, last);
+            }
+
+            perm_idx += 1;
+        }
+
+        // --- Segment C: coin.init(digest(seed)) ---------------------------------------------
+        let digest = [seed_state[4], seed_state[5], seed_state[6], seed_state[7]];
+        let mut coin_state = [BaseElement::ZERO; STATE_WIDTH];
+        for i in 0..4 {
+            coin_state[4 + i] = digest[i];
+        }
+
+        let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+        self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+        set_masks(
+            &mut trace,
+            perm_idx,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ONE,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            self.pub_inputs.trace_commitment,
+        );
+        set_path_bit(&mut trace, perm_idx, 0);
+
+        let last = row_offset + ROWS_PER_PERMUTATION - 1;
+        for i in 0..STATE_WIDTH {
+            coin_state[i] = trace.get(i, last);
+        }
+        perm_idx += 1;
+
+        // --- Segment D: reseed with trace commitment (coefficient perm 0) -------------------
+        for i in 0..4 {
+            coin_state[4 + i] += self.pub_inputs.trace_commitment[i];
+        }
+        let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+        self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+        let last_coeff_here = num_coeff_perms == 1;
+        if last_coeff_here {
+            set_masks(
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                self.pub_inputs.constraint_commitment,
+            );
+        } else {
+            set_masks(
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+            );
+        }
+        set_path_bit(&mut trace, perm_idx, 0);
+
+        let last = row_offset + ROWS_PER_PERMUTATION - 1;
+        for i in 0..STATE_WIDTH {
+            coin_state[i] = trace.get(i, last);
+        }
+        set_coeff_witness(&mut trace, perm_idx, &coin_state);
+        perm_idx += 1;
+
+        // --- Additional coefficient permutations (permute-only, full-carry) ----------------
+        for coeff_idx in 1..num_coeff_perms {
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+            self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+
+            let is_last = coeff_idx + 1 == num_coeff_perms;
+            if is_last {
+                set_masks(
+                    &mut trace,
+                    perm_idx,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    self.pub_inputs.constraint_commitment,
+                );
+            } else {
+                set_masks(
+                    &mut trace,
+                    perm_idx,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    [BaseElement::ZERO; 4],
+                );
+            }
+            set_path_bit(&mut trace, perm_idx, 0);
+
+            let last = row_offset + ROWS_PER_PERMUTATION - 1;
+            for i in 0..STATE_WIDTH {
+                coin_state[i] = trace.get(i, last);
+            }
+            set_coeff_witness(&mut trace, perm_idx, &coin_state);
+            perm_idx += 1;
+        }
+
+        // --- Reseed with constraint commitment ---------------------------------------------
+        for i in 0..4 {
+            coin_state[4 + i] += self.pub_inputs.constraint_commitment[i];
+        }
+        let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+        self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+        let ood_digest = [BaseElement::ZERO; 4];
+        set_masks(
+            &mut trace,
+            perm_idx,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ONE,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ONE,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            ood_digest,
+        );
+        set_path_bit(&mut trace, perm_idx, 0);
+
+        let last = row_offset + ROWS_PER_PERMUTATION - 1;
+        for i in 0..STATE_WIDTH {
+            coin_state[i] = trace.get(i, last);
+        }
+        set_z_witness(&mut trace, perm_idx, coin_state[4]);
+        perm_idx += 1;
+
+        // Apply OOD reseed before drawing DEEP composition coefficients.
+        for i in 0..4 {
+            coin_state[4 + i] += ood_digest[i];
+        }
+
+        // --- Segment E: DEEP composition coefficient draws (permute-only, full-carry) -------
+        for deep_idx in 0..num_deep_perms {
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+            self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+
+            let is_last = deep_idx + 1 == num_deep_perms;
+            if is_last {
+                let has_fri_commitments = num_fri_commitments > 0;
+                let reseed_word = if has_fri_commitments {
+                    self.pub_inputs.fri_commitments[0]
+                } else {
+                    [BaseElement::ZERO; 4]
+                };
+                set_masks(
+                    &mut trace,
+                    perm_idx,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    if has_fri_commitments {
+                        BaseElement::ONE
+                    } else {
+                        BaseElement::ZERO
+                    },
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    reseed_word,
+                );
+            } else {
+                set_masks(
+                    &mut trace,
+                    perm_idx,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    [BaseElement::ZERO; 4],
+                );
+            }
+            set_path_bit(&mut trace, perm_idx, 0);
+
+            let last = row_offset + ROWS_PER_PERMUTATION - 1;
+            for i in 0..STATE_WIDTH {
+                coin_state[i] = trace.get(i, last);
+            }
+            set_deep_witness(&mut trace, perm_idx, &coin_state);
+            perm_idx += 1;
+        }
+
+        // --- Segment F: reseed with first FRI commitment before alpha draws -----------------
+        if num_fri_commitments > 0 {
+            for i in 0..4 {
+                coin_state[4 + i] += self.pub_inputs.fri_commitments[0][i];
+            }
+        }
+
+        // --- FRI alpha stage ----------------------------------------------------------------
+        for layer_idx in 0..num_fri_layers {
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+            self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+
+            let next_commitment = if layer_idx + 1 < num_fri_layers {
+                self.pub_inputs.fri_commitments[layer_idx + 1]
+            } else {
+                // Reseed remainder commitment after last alpha.
+                self.pub_inputs.fri_commitments[num_fri_layers]
+            };
+            set_masks(
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                next_commitment,
+            );
+            set_path_bit(&mut trace, perm_idx, 0);
+
+            let last = row_offset + ROWS_PER_PERMUTATION - 1;
+            for i in 0..STATE_WIDTH {
+                coin_state[i] = trace.get(i, last);
+            }
+            set_fri_alpha_witness(&mut trace, perm_idx, coin_state[4]);
+            perm_idx += 1;
+
+            for i in 0..4 {
+                coin_state[4 + i] += next_commitment[i];
+            }
+        }
+
+        // Placeholder proof-of-work nonce for query grinding.
+        let pow_nonce_elem = BaseElement::new(inner.pow_nonce);
+        let nonce_word = [
+            pow_nonce_elem,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+        ];
+        let remainder_reseed = if num_pos_perms > 0 {
+            BaseElement::ONE
+        } else {
+            BaseElement::ZERO
+        };
+
+        if num_fri_commitments > 0 {
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+            self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+            set_masks(
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                remainder_reseed,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                nonce_word,
+            );
+            set_path_bit(&mut trace, perm_idx, 0);
+
+            let last = row_offset + ROWS_PER_PERMUTATION - 1;
+            for i in 0..STATE_WIDTH {
+                coin_state[i] = trace.get(i, last);
+            }
+            perm_idx += 1;
+        }
+
+        // --- Query position draw permutations ----------------------------------------------
+        if num_pos_perms > 0 {
+            coin_state[4] += pow_nonce_elem;
+
+            for pos_idx in 0..num_pos_perms {
+                let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+                self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+
+                let is_last = pos_idx + 1 == num_pos_perms;
+                set_masks(
+                    &mut trace,
+                    perm_idx,
+                    BaseElement::ZERO,
+                    if is_last { BaseElement::ZERO } else { BaseElement::ONE },
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    [BaseElement::ZERO; 4],
+                );
+                set_path_bit(&mut trace, perm_idx, 0);
+
+                let last = row_offset + ROWS_PER_PERMUTATION - 1;
+                for i in 0..STATE_WIDTH {
+                    coin_state[i] = trace.get(i, last);
+                }
+                set_pos_witness(&mut trace, perm_idx, &coin_state);
+                perm_idx += 1;
+            }
+        }
+
+        // --- Merkle authentication segment -------------------------------------------------
+        assert_eq!(perm_idx, transcript_perms, "transcript perm count mismatch");
+
+        // Pre-compute FRI leaf indexes per layer.
+        let folding_factor = 2usize;
+        let fri_num_partitions = 1usize;
+        let mut positions = inner.query_positions.clone();
+        let mut domain_size = lde_domain_size;
+        let mut fri_indexes: Vec<Vec<usize>> = Vec::with_capacity(num_fri_layers);
+        for _layer_idx in 0..num_fri_layers {
+            let folded_positions = fold_positions(&positions, domain_size, folding_factor);
+            let position_indexes = map_positions_to_indexes(
+                &folded_positions,
+                domain_size,
+                folding_factor,
+                fri_num_partitions,
+            );
+            fri_indexes.push(position_indexes);
+            positions = folded_positions;
+            domain_size /= folding_factor;
+        }
+
+        for q in 0..self.pub_inputs.num_queries {
+            // Trace leaf + path.
+            let trace_row = &inner.trace_evaluations[q];
+            let leaf_digest =
+                hash_leaf_perms(self, &mut trace, &mut perm_idx, trace_row);
+            let trace_index = inner.query_positions[q] as u64;
+            let trace_siblings = &inner.trace_auth_paths[q];
+            authenticate_merkle_path(
+                self,
+                &mut trace,
+                &mut perm_idx,
+                leaf_digest,
+                trace_index,
+                trace_siblings,
+            );
+
+            // Constraint leaf + path.
+            let constraint_row = &inner.constraint_evaluations[q];
+            let constraint_digest =
+                hash_leaf_perms(self, &mut trace, &mut perm_idx, constraint_row);
+            let constraint_index = inner.query_positions[q] as u64;
+            let constraint_siblings = &inner.constraint_auth_paths[q];
+            authenticate_merkle_path(
+                self,
+                &mut trace,
+                &mut perm_idx,
+                constraint_digest,
+                constraint_index,
+                constraint_siblings,
+            );
+
+            // FRI layers.
+            for layer_idx in 0..num_fri_layers {
+                let layer = &inner.fri_layers[layer_idx];
+                let start = q * folding_factor;
+                let end = start + folding_factor;
+                let leaf_vals = &layer.evaluations[start..end];
+                let fri_digest =
+                    hash_leaf_perms(self, &mut trace, &mut perm_idx, leaf_vals);
+
+                let fri_index = fri_indexes
+                    .get(layer_idx)
+                    .and_then(|idxs| idxs.get(q))
+                    .copied()
+                    .unwrap_or(0) as u64;
+                let fri_siblings = &layer.auth_paths[q];
+                authenticate_merkle_path(
+                    self,
+                    &mut trace,
+                    &mut perm_idx,
+                    fri_digest,
+                    fri_index,
+                    fri_siblings,
+                );
+            }
+        }
+
+        // --- Padding permutations -----------------------------------------------------------
+        let total_perms = total_rows / ROWS_PER_PERMUTATION;
+        let mut pad_state = [BaseElement::ZERO; STATE_WIDTH];
+        for _ in perm_idx..total_perms {
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+            self.fill_rpo_trace(&mut trace, row_offset, pad_state);
+            set_masks(
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+            );
+            set_path_bit(&mut trace, perm_idx, 0);
+
+            let last = row_offset + ROWS_PER_PERMUTATION - 1;
+            for i in 0..STATE_WIDTH {
+                pad_state[i] = trace.get(i, last);
             }
             perm_idx += 1;
         }
@@ -736,6 +1466,132 @@ fn set_pos_witness(
     }
 }
 
+fn set_path_bit(trace: &mut TraceTable<BaseElement>, perm_idx: usize, bit: u64) {
+    let row_start = perm_idx * ROWS_PER_PERMUTATION;
+    let val = BaseElement::new(bit);
+    for r in 0..ROWS_PER_PERMUTATION {
+        trace.set(COL_MERKLE_PATH_BIT, row_start + r, val);
+    }
+}
+
+fn hash_leaf_perms(
+    prover: &StarkVerifierProver,
+    trace: &mut TraceTable<BaseElement>,
+    perm_idx: &mut usize,
+    leaf_elems: &[BaseElement],
+) -> [BaseElement; DIGEST_WIDTH] {
+    let leaf_len = leaf_elems.len();
+    let num_blocks = leaf_len.div_ceil(8).max(1);
+
+    let mut leaf_state = [BaseElement::ZERO; STATE_WIDTH];
+    leaf_state[0] = BaseElement::new((leaf_len % 8) as u64);
+
+    for block in 0..num_blocks {
+        let row_offset = *perm_idx * ROWS_PER_PERMUTATION;
+        let start = block * 8;
+        for i in 0..8 {
+            leaf_state[4 + i] = if start + i < leaf_len {
+                leaf_elems[start + i]
+            } else {
+                BaseElement::ZERO
+            };
+        }
+
+        prover.fill_rpo_trace(trace, row_offset, leaf_state);
+
+        let carry = if block + 1 < num_blocks {
+            BaseElement::ONE
+        } else {
+            BaseElement::ZERO
+        };
+        set_masks(
+            trace,
+            *perm_idx,
+            carry,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            [BaseElement::ZERO; 4],
+        );
+        set_path_bit(trace, *perm_idx, 0);
+
+        let last = row_offset + ROWS_PER_PERMUTATION - 1;
+        for i in 0..STATE_WIDTH {
+            leaf_state[i] = trace.get(i, last);
+        }
+
+        *perm_idx += 1;
+    }
+
+    [leaf_state[4], leaf_state[5], leaf_state[6], leaf_state[7]]
+}
+
+fn authenticate_merkle_path(
+    prover: &StarkVerifierProver,
+    trace: &mut TraceTable<BaseElement>,
+    perm_idx: &mut usize,
+    leaf_digest: [BaseElement; DIGEST_WIDTH],
+    index: u64,
+    siblings: &Vec<[BaseElement; DIGEST_WIDTH]>,
+) -> [BaseElement; DIGEST_WIDTH] {
+    let mut current_hash = leaf_digest;
+    let depth = siblings.len();
+
+    for level in 0..depth {
+        let sibling = siblings[level];
+        let bit = (index >> level) & 1;
+        let (left, right) = if bit == 1 {
+            (sibling, current_hash)
+        } else {
+            (current_hash, sibling)
+        };
+
+        let mut merge_state = [BaseElement::ZERO; STATE_WIDTH];
+        for i in 0..DIGEST_WIDTH {
+            merge_state[4 + i] = left[i];
+            merge_state[4 + DIGEST_WIDTH + i] = right[i];
+        }
+
+        let row_offset = *perm_idx * ROWS_PER_PERMUTATION;
+        prover.fill_rpo_trace(trace, row_offset, merge_state);
+        set_masks(
+            trace,
+            *perm_idx,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            [BaseElement::ZERO; 4],
+        );
+
+        let next_bit = if level + 1 < depth {
+            (index >> (level + 1)) & 1
+        } else {
+            0
+        };
+        set_path_bit(trace, *perm_idx, next_bit);
+
+        let last = row_offset + ROWS_PER_PERMUTATION - 1;
+        for i in 0..DIGEST_WIDTH {
+            current_hash[i] = trace.get(4 + i, last);
+        }
+
+        *perm_idx += 1;
+    }
+
+    current_hash
+}
+
 impl Prover for StarkVerifierProver {
     type BaseField = BaseElement;
     type Air = StarkVerifierAir;
@@ -834,6 +1690,8 @@ mod tests {
     use super::*;
     use winterfell::verify;
     use winterfell::Trace;
+    use super::super::{RpoAir, RpoStarkProver};
+    use super::super::rpo_air::STATE_WIDTH as INNER_STATE_WIDTH;
 
     #[test]
     fn test_pub_inputs_hash_proof_roundtrip() {
@@ -918,6 +1776,66 @@ mod tests {
             }
         }
         assert!(tampered, "expected at least one query-position permutation");
+
+        let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prover.prove(trace)
+        }));
+        assert!(prove_result.is_err());
+    }
+
+    #[test]
+    fn test_trace_from_inner_merkle_roundtrip() {
+        let options = super::super::rpo_proof::RpoProofOptions::fast().to_winter_options();
+
+        // Generate a small inner RPO proof and extract recursion data.
+        let inner_prover = RpoStarkProver::fast();
+        let input_state = [BaseElement::new(9); INNER_STATE_WIDTH];
+        let (inner_proof, inner_pub_inputs) = inner_prover
+            .prove_rpo_permutation(input_state)
+            .expect("inner proof generation should succeed");
+
+        let inner_data =
+            InnerProofData::from_proof::<RpoAir>(&inner_proof.to_bytes(), inner_pub_inputs)
+                .unwrap();
+        let pub_inputs = inner_data.to_stark_verifier_inputs();
+
+        let prover = StarkVerifierProver::new(options.clone(), pub_inputs.clone());
+        let trace = prover.build_trace_from_inner(&inner_data);
+        let proof = prover.prove(trace).unwrap();
+
+        let acceptable = AcceptableOptions::OptionSet(vec![options]);
+        let result = verify::<StarkVerifierAir, Blake3, DefaultRandomCoin<Blake3>, Blake3MerkleTree>(
+            proof,
+            pub_inputs,
+            &acceptable,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_merkle_sibling_tamper_fails() {
+        let options = super::super::rpo_proof::RpoProofOptions::fast().to_winter_options();
+
+        let inner_prover = RpoStarkProver::fast();
+        let input_state = [BaseElement::new(11); INNER_STATE_WIDTH];
+        let (inner_proof, inner_pub_inputs) = inner_prover
+            .prove_rpo_permutation(input_state)
+            .expect("inner proof generation should succeed");
+
+        let mut inner_data =
+            InnerProofData::from_proof::<RpoAir>(&inner_proof.to_bytes(), inner_pub_inputs)
+                .unwrap();
+
+        // Tamper with the first trace sibling.
+        if let Some(path) = inner_data.trace_auth_paths.get_mut(0) {
+            if let Some(sib) = path.get_mut(0) {
+                sib[0] += BaseElement::ONE;
+            }
+        }
+
+        let pub_inputs = inner_data.to_stark_verifier_inputs();
+        let prover = StarkVerifierProver::new(options.clone(), pub_inputs.clone());
+        let trace = prover.build_trace_from_inner(&inner_data);
 
         let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             prover.prove(trace)
