@@ -364,6 +364,14 @@ pub struct InnerProofData {
     pub trace_length: usize,
     /// Blowup factor used by the inner proof.
     pub blowup_factor: usize,
+    /// Partition size used for main-trace Merkle leaves.
+    pub trace_partition_size: usize,
+    /// Partition size used for constraint-evaluation Merkle leaves.
+    pub constraint_partition_size: usize,
+    /// Number of partitions used by the inner FRI proof.
+    pub fri_num_partitions: usize,
+    /// Number of query draws requested by the inner proof options (before dedup).
+    pub num_draws: usize,
     /// Query positions for FRI verification.
     pub query_positions: Vec<usize>,
     /// Trace evaluations at query positions (main trace segment).
@@ -411,6 +419,10 @@ impl InnerProofData {
             pow_nonce: 0,
             trace_length: 0,
             blowup_factor: 0,
+            trace_partition_size: 0,
+            constraint_partition_size: 0,
+            fri_num_partitions: 0,
+            num_draws: 0,
             query_positions: vec![],
             trace_evaluations: vec![],
             trace_auth_paths: vec![],
@@ -464,6 +476,7 @@ impl InnerProofData {
 
         // Instantiate inner AIR to compute protocol parameters.
         let air = A::new(trace_info.clone(), pub_inputs, options.clone());
+        let num_draws = air.options().num_queries();
 
         let lde_domain_size = air.lde_domain_size();
         let fri_options = air.options().to_fri_options();
@@ -603,7 +616,7 @@ impl InnerProofData {
         // draw query positions
         let pow_nonce = proof.pow_nonce;
         let mut query_positions = coin
-            .draw_integers(air.options().num_queries(), lde_domain_size, pow_nonce)
+            .draw_integers(num_draws, lde_domain_size, pow_nonce)
             .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
         query_positions.sort_unstable();
         query_positions.dedup();
@@ -700,6 +713,10 @@ impl InnerProofData {
             pow_nonce,
             trace_length: trace_info.length(),
             blowup_factor: options.blowup_factor(),
+            trace_partition_size: partition_size_main,
+            constraint_partition_size: partition_size_constraint,
+            fri_num_partitions,
+            num_draws,
             query_positions,
             trace_evaluations,
             trace_auth_paths,
@@ -739,6 +756,9 @@ impl InnerProofData {
             self.constraint_commitment,
             fri_commitments,
             self.query_positions.len(),
+            self.num_draws,
+            self.trace_partition_size,
+            self.constraint_partition_size,
             self.blowup_factor,
             self.trace_length,
         )
