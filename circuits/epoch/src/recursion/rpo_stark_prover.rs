@@ -233,7 +233,7 @@ fn apply_mds(state: &mut [BaseElement; STATE_WIDTH]) {
 
     for i in 0..STATE_WIDTH {
         for j in 0..STATE_WIDTH {
-            result[i] += BaseElement::new(MDS[i][j]) * state[j];
+            result[i] += MDS[i][j] * state[j];
         }
     }
 
@@ -244,7 +244,7 @@ fn apply_mds(state: &mut [BaseElement; STATE_WIDTH]) {
 fn add_constants(state: &mut [BaseElement; STATE_WIDTH], round: usize, first_half: bool) {
     let constants = if first_half { &ARK1[round] } else { &ARK2[round] };
     for i in 0..STATE_WIDTH {
-        state[i] += BaseElement::new(constants[i]);
+        state[i] += constants[i];
     }
 }
 

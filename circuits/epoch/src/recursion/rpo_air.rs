@@ -22,6 +22,7 @@
 //! - Blake3: ~100 columns, degree ~8 (via decomposition)
 //! - RPO: ~13 columns, degree 7 (native x^7 S-box)
 
+use miden_crypto::hash::rpo::Rpo256;
 use winter_air::{
     Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
     TransitionConstraintDegree,
@@ -41,11 +42,11 @@ use winterfell::{
 // RPO CONSTANTS
 // ================================================================================================
 
-/// Number of field elements in RPO state
-pub const STATE_WIDTH: usize = 12;
+/// Number of field elements in RPO state.
+pub const STATE_WIDTH: usize = Rpo256::STATE_WIDTH;
 
-/// Number of rounds in RPO permutation
-pub const NUM_ROUNDS: usize = 7;
+/// Number of rounds in RPO permutation.
+pub const NUM_ROUNDS: usize = Rpo256::NUM_ROUNDS;
 
 /// S-box exponent (x^7)
 pub const ALPHA: u64 = 7;
@@ -71,109 +72,17 @@ const ROUND_COL: usize = STATE_WIDTH;
 // MDS MATRIX
 // ================================================================================================
 
-/// RPO MDS matrix (from miden-crypto)
-/// This is a 12x12 circulant matrix for efficient mixing.
-#[rustfmt::skip]
-pub const MDS: [[u64; STATE_WIDTH]; STATE_WIDTH] = [
-    [7, 23, 8, 26, 13, 10, 9, 7, 6, 22, 21, 8],
-    [8, 7, 23, 8, 26, 13, 10, 9, 7, 6, 22, 21],
-    [21, 8, 7, 23, 8, 26, 13, 10, 9, 7, 6, 22],
-    [22, 21, 8, 7, 23, 8, 26, 13, 10, 9, 7, 6],
-    [6, 22, 21, 8, 7, 23, 8, 26, 13, 10, 9, 7],
-    [7, 6, 22, 21, 8, 7, 23, 8, 26, 13, 10, 9],
-    [9, 7, 6, 22, 21, 8, 7, 23, 8, 26, 13, 10],
-    [10, 9, 7, 6, 22, 21, 8, 7, 23, 8, 26, 13],
-    [13, 10, 9, 7, 6, 22, 21, 8, 7, 23, 8, 26],
-    [26, 13, 10, 9, 7, 6, 22, 21, 8, 7, 23, 8],
-    [8, 26, 13, 10, 9, 7, 6, 22, 21, 8, 7, 23],
-    [23, 8, 26, 13, 10, 9, 7, 6, 22, 21, 8, 7],
-];
+/// RPO MDS matrix (from miden-crypto).
+pub const MDS: [[BaseElement; STATE_WIDTH]; STATE_WIDTH] = Rpo256::MDS;
 
 // ROUND CONSTANTS (ARK1 - first half of each round)
 // ================================================================================================
 
-/// Round constants for the first half of each RPO round (from miden-crypto)
-#[rustfmt::skip]
-pub const ARK1: [[u64; STATE_WIDTH]; NUM_ROUNDS] = [
-    [
-        5789762306288267392, 6522564764413701866, 17809893479458208203, 107145243989736508,
-        6388978042437517382, 15844067734406016715, 9975000513555218239, 3344984123768313364,
-        9959189626657347191, 12960773468763563665, 9602914297752488475, 16657542370200465908,
-    ],
-    [
-        12987190162843096997, 653957632802705281, 4441654670647621225, 4038207883745915761,
-        5613464648874830118, 13222989726778338773, 3037761201230264149, 16683759727265100309,
-        11660831626355608137, 11861227655926516898, 16058473695898828812, 2316354225506915918,
-    ],
-    [
-        1817697588547834526, 11356270732029664941, 3418096095302572024, 8233822652282793235,
-        2207535101819625904, 11675681076022349509, 14699823756322104372, 5749256230425212448,
-        6516685214797181880, 4127428352893769308, 10956499679736923127, 3222921340466298561,
-    ],
-    [
-        6915716612576324604, 16422426913751725017, 11328574407515073390, 1851764836280403412,
-        9671475069305181521, 11994327038182529587, 11262759852485677749, 7374545975837584549,
-        4685774140117377944, 7346797529097099248, 10210901726772027011, 12020154515993977619,
-    ],
-    [
-        5313907093853638112, 13051552820188012519, 9027121269110392952, 11138685421541543618,
-        1072570095884711819, 6052770977403214032, 11377325366215474106, 3946355976555274757,
-        2672723263110959505, 13954495920368920196, 12892715194395846093, 11221222949966288916,
-    ],
-    [
-        15845623229592988906, 14296675568675792117, 10953765792747612316, 438907155901095188,
-        7543125695578376653, 4562774328626135450, 7961572951946116915, 4920594515098297093,
-        14529028192085263721, 17009546653066817138, 4140678209032619428, 4593900212145209168,
-    ],
-    [
-        8070477269655815400, 8155529025980485985, 10300257580936374045, 6847509680777924717,
-        11619919180111592287, 11273675113805209663, 15591975693611232495, 11200503902117228076,
-        17606544856203996931, 9110956848049246391, 4957310937879837584, 10093049625063538583,
-    ],
-];
+/// Round constants for the first half of each RPO round (from miden-crypto).
+pub const ARK1: [[BaseElement; STATE_WIDTH]; NUM_ROUNDS] = Rpo256::ARK1;
 
-// ROUND CONSTANTS (ARK2 - second half of each round)
-// ================================================================================================
-
-/// Round constants for the second half of each RPO round (from miden-crypto)
-#[rustfmt::skip]
-pub const ARK2: [[u64; STATE_WIDTH]; NUM_ROUNDS] = [
-    [
-        6077062762357204287, 15277620170502011191, 5358738125714196705, 14233283787297595718,
-        13792579614346651365, 11614812331536767105, 14871063686742261166, 10148237148793043499,
-        4457428952329675767, 15590786458219172475, 10063319113072092615, 14200078843431360086,
-    ],
-    [
-        6202948458916099932, 4596850209470105668, 10530726987461989618, 16253627305735999855,
-        8886549837639356676, 11452106746408216728, 11573448093401424536, 9586843345088587644,
-        2578654096648189449, 14247649239095040948, 14033411218476003068, 12757588034892063764,
-    ],
-    [
-        12992040691389262372, 16200820091976573532, 10104464591547345512, 4184936628436115979,
-        8713617047915032823, 7096183450436399778, 11439952506233477738, 6381227083834619053,
-        17186966758022127555, 5765282498666549647, 3609530207645468518, 11539213902205355095,
-    ],
-    [
-        1258479977433893795, 6025012366978287565, 2770766854132427217, 7862141208737627584,
-        15874907549313267534, 6606203210581398331, 17911738911646938933, 13492194724635509327,
-        10556615044579797244, 15083166368596206095, 10929150549269386810, 17718924273640003306,
-    ],
-    [
-        7342781710799996733, 8227449696129498920, 7717446809073379631, 11495022419372722724,
-        3912258587143883347, 11119016288414421283, 8100469685750354371, 6549167855955098748,
-        2505193930471706902, 16987361306918941775, 18344836611398750484, 18392198888038376099,
-    ],
-    [
-        10859027181664254262, 11899729649501224838, 17968653419909009226, 9399803875270570764,
-        8963210641498989653, 14383063628846883578, 1653449287853648936, 6077062762357204287,
-        15277620170502011191, 5358738125714196705, 14233283787297595718, 13792579614346651365,
-    ],
-    [
-        11614812331536767105, 14871063686742261166, 10148237148793043499, 4457428952329675767,
-        15590786458219172475, 10063319113072092615, 14200078843431360086, 6202948458916099932,
-        4596850209470105668, 10530726987461989618, 16253627305735999855, 8886549837639356676,
-    ],
-];
+/// Round constants for the second half of each RPO round (from miden-crypto).
+pub const ARK2: [[BaseElement; STATE_WIDTH]; NUM_ROUNDS] = Rpo256::ARK2;
 
 // PUBLIC INPUTS
 // ================================================================================================
@@ -278,7 +187,7 @@ impl Air for RpoAir {
         let mut mds_result: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
         for i in 0..STATE_WIDTH {
             for j in 0..STATE_WIDTH {
-                let mds_coeff = E::from(BaseElement::new(MDS[i][j]));
+                let mds_coeff = E::from(MDS[i][j]);
                 mds_result[i] += mds_coeff * current[j];
             }
         }
@@ -395,14 +304,14 @@ impl Air for RpoAir {
 
         for row in 0..trace_len {
             let constants = if row >= ROWS_PER_PERMUTATION - 1 {
-                [0u64; STATE_WIDTH] // Padding transition
+                [BaseElement::ZERO; STATE_WIDTH] // Padding transition
             } else if row % 2 == 0 {
                 // Even row: forward sbox uses ARK1
                 let round = row / 2;
                 if round < NUM_ROUNDS {
                     ARK1[round]
                 } else {
-                    [0u64; STATE_WIDTH]
+                    [BaseElement::ZERO; STATE_WIDTH]
                 }
             } else {
                 // Odd row: inverse sbox uses ARK2
@@ -410,12 +319,12 @@ impl Air for RpoAir {
                 if round < NUM_ROUNDS {
                     ARK2[round]
                 } else {
-                    [0u64; STATE_WIDTH]
+                    [BaseElement::ZERO; STATE_WIDTH]
                 }
             };
 
             for (i, &c) in constants.iter().enumerate() {
-                ark_columns[i].push(BaseElement::new(c));
+                ark_columns[i].push(c);
             }
         }
 
@@ -590,7 +499,7 @@ fn apply_mds(state: &mut [BaseElement; STATE_WIDTH]) {
 
     for i in 0..STATE_WIDTH {
         for j in 0..STATE_WIDTH {
-            result[i] += BaseElement::new(MDS[i][j]) * state[j];
+            result[i] += MDS[i][j] * state[j];
         }
     }
 
@@ -602,7 +511,7 @@ fn add_constants(state: &mut [BaseElement; STATE_WIDTH], round: usize, first_hal
     let constants = if first_half { &ARK1[round] } else { &ARK2[round] };
 
     for i in 0..STATE_WIDTH {
-        state[i] += BaseElement::new(constants[i]);
+        state[i] += constants[i];
     }
 }
 
@@ -682,5 +591,21 @@ mod tests {
 
         assert_eq!(trace.width(), TRACE_WIDTH);
         assert_eq!(trace.length(), ROWS_PER_PERMUTATION);
+    }
+
+    #[test]
+    fn test_permutation_matches_miden_crypto() {
+        use miden_crypto::hash::rpo::Rpo256;
+
+        let prover = RpoProver::new(crate::prover::fast_epoch_options());
+        let input: [BaseElement; STATE_WIDTH] =
+            core::array::from_fn(|i| BaseElement::new((i as u64 + 1) * 1234567));
+
+        let actual = prover.compute_output(input);
+
+        let mut expected = input;
+        Rpo256::apply_permutation(&mut expected);
+
+        assert_eq!(actual, expected);
     }
 }

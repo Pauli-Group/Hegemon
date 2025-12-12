@@ -155,17 +155,18 @@ impl Air for MerkleVerifierAir {
         // We reuse the RPO constraints from rpo_air
         
         // Periodic values control which RPO round we're in.
-        // Layout: [half_round_type, ark[0..STATE_WIDTH], boundary_mask, path_bit]
+        // Layout: [half_round_type, ark[0..STATE_WIDTH], perm_mask, boundary_mask, path_bit]
         let half_round_type = periodic_values[0];
         let ark: [E; STATE_WIDTH] = core::array::from_fn(|i| periodic_values[1 + i]);
-        let boundary_mask = periodic_values[1 + STATE_WIDTH];
-        let path_bit = periodic_values[1 + STATE_WIDTH + 1];
+        let perm_mask = periodic_values[1 + STATE_WIDTH];
+        let boundary_mask = periodic_values[1 + STATE_WIDTH + 1];
+        let path_bit = periodic_values[1 + STATE_WIDTH + 2];
 
         // Build MDS result
         let mut mds_result: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
         for i in 0..STATE_WIDTH {
             for j in 0..STATE_WIDTH {
-                let mds_coeff = E::from(BaseElement::new(MDS[i][j]));
+                let mds_coeff = E::from(MDS[i][j]);
                 mds_result[i] += mds_coeff * current[j];
             }
         }
@@ -203,9 +204,11 @@ impl Air for MerkleVerifierAir {
             // Padding: next = current
             let padding_constraint = next[i] - current[i];
 
-            result[i] = is_forward * forward_constraint
-                      + is_inverse * inverse_constraint
-                      + is_padding * padding_constraint;
+            let rpo_constraint = is_forward * forward_constraint
+                + is_inverse * inverse_constraint
+                + is_padding * padding_constraint;
+            // Disable RPO constraints on boundary transitions between permutations.
+            result[i] = perm_mask * rpo_constraint;
         }
 
         // Chaining constraints at permutation boundaries.
@@ -264,6 +267,7 @@ impl Air for MerkleVerifierAir {
         let mut half_round_type = Vec::with_capacity(total_rows);
         let mut ark_columns: [Vec<BaseElement>; STATE_WIDTH] = 
             core::array::from_fn(|_| Vec::with_capacity(total_rows));
+        let mut perm_mask = Vec::with_capacity(total_rows);
         let mut boundary_mask = Vec::with_capacity(total_rows);
         let mut path_bit = Vec::with_capacity(total_rows);
 
@@ -280,18 +284,22 @@ impl Air for MerkleVerifierAir {
                 half_round_type.push(BaseElement::new(val));
 
                 let constants = if row >= 14 {
-                    [0u64; STATE_WIDTH]
+                    [BaseElement::ZERO; STATE_WIDTH]
                 } else if row % 2 == 0 {
                     let round = row / 2;
-                    if round < NUM_ROUNDS { ARK1[round] } else { [0u64; STATE_WIDTH] }
+                    if round < NUM_ROUNDS { ARK1[round] } else { [BaseElement::ZERO; STATE_WIDTH] }
                 } else {
                     let round = row / 2;
-                    if round < NUM_ROUNDS { ARK2[round] } else { [0u64; STATE_WIDTH] }
+                    if round < NUM_ROUNDS { ARK2[round] } else { [BaseElement::ZERO; STATE_WIDTH] }
                 };
 
                 for (i, &c) in constants.iter().enumerate() {
-                    ark_columns[i].push(BaseElement::new(c));
+                    ark_columns[i].push(c);
                 }
+
+                // Apply RPO constraints on all transitions except boundaries between permutations.
+                let mask = (row < ROWS_PER_PERMUTATION - 1) as u64;
+                perm_mask.push(BaseElement::new(mask));
 
                 // Boundary mask is 1 only on the last row of a permutation,
                 // and only if there is a following permutation.
@@ -308,6 +316,7 @@ impl Air for MerkleVerifierAir {
         for col in ark_columns {
             result.push(col);
         }
+        result.push(perm_mask);
         result.push(boundary_mask);
         result.push(path_bit);
         result
@@ -442,7 +451,7 @@ fn apply_mds(state: &mut [BaseElement; STATE_WIDTH]) {
     let mut result = [BaseElement::ZERO; STATE_WIDTH];
     for i in 0..STATE_WIDTH {
         for j in 0..STATE_WIDTH {
-            result[i] += BaseElement::new(MDS[i][j]) * state[j];
+            result[i] += MDS[i][j] * state[j];
         }
     }
     *state = result;
@@ -451,7 +460,7 @@ fn apply_mds(state: &mut [BaseElement; STATE_WIDTH]) {
 fn add_constants(state: &mut [BaseElement; STATE_WIDTH], round: usize, first_half: bool) {
     let constants = if first_half { &ARK1[round] } else { &ARK2[round] };
     for i in 0..STATE_WIDTH {
-        state[i] += BaseElement::new(constants[i]);
+        state[i] += constants[i];
     }
 }
 
