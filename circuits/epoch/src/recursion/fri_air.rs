@@ -27,7 +27,7 @@ use winter_air::{
 use winter_math::{FieldElement, ToElements};
 use winterfell::math::fields::f64::BaseElement;
 
-use super::rpo_air::{STATE_WIDTH, ROWS_PER_PERMUTATION};
+use super::rpo_air::{STATE_WIDTH, ROWS_PER_PERMUTATION, NUM_ROUNDS, MDS, ARK1, ARK2};
 use super::merkle_air::DIGEST_WIDTH;
 
 // CONSTANTS
@@ -187,11 +187,11 @@ pub struct FriVerifierAir {
 // Trace column layout.
 // Columns 0..STATE_WIDTH-1 are reserved for RPO state when Merkle authentication
 // is integrated. Folding checks use extra columns after the RPO state.
-const COL_F_X: usize = STATE_WIDTH;
-const COL_F_NEG_X: usize = STATE_WIDTH + 1;
-const COL_ALPHA: usize = STATE_WIDTH + 2;
-const COL_X: usize = STATE_WIDTH + 3;
-const COL_F_NEXT: usize = STATE_WIDTH + 4;
+pub(crate) const COL_F_X: usize = STATE_WIDTH;
+pub(crate) const COL_F_NEG_X: usize = STATE_WIDTH + 1;
+pub(crate) const COL_ALPHA: usize = STATE_WIDTH + 2;
+pub(crate) const COL_X: usize = STATE_WIDTH + 3;
+pub(crate) const COL_F_NEXT: usize = STATE_WIDTH + 4;
 
 impl Air for FriVerifierAir {
     type BaseField = BaseElement;
@@ -202,10 +202,24 @@ impl Air for FriVerifierAir {
         // - RPO constraints for Merkle verification (degree 8)
         // - Folding constraints (degree 2)
         let num_constraints = STATE_WIDTH + 1; // RPO state + 1 folding
-        let degrees = vec![
-            TransitionConstraintDegree::with_cycles(8, vec![ROWS_PER_PERMUTATION]);
-            num_constraints
-        ];
+        let mut degrees = Vec::with_capacity(num_constraints);
+
+        // RPO transition constraints are gated by:
+        // - half_round_type (quadratic selector, two periodic multiplications)
+        // - perm_mask (disable boundary transitions, one periodic multiplication)
+        for _ in 0..STATE_WIDTH {
+            degrees.push(TransitionConstraintDegree::with_cycles(
+                7,
+                vec![
+                    ROWS_PER_PERMUTATION,
+                    ROWS_PER_PERMUTATION,
+                    ROWS_PER_PERMUTATION,
+                ],
+            ));
+        }
+
+        // Folding constraint degree will be refined once full FRI layout lands.
+        degrees.push(TransitionConstraintDegree::new(1));
 
         // Assertions: bind the first layer commitment at row 0.
         // Full per-layer binding will be added once Merkle auth is wired in.
@@ -230,37 +244,60 @@ impl Air for FriVerifierAir {
         let next = frame.next();
 
         // Periodic values layout:
-        // [half_round_type, ark[0..STATE_WIDTH], folding_mask]
+        // [half_round_type, ark[0..STATE_WIDTH], perm_mask, folding_mask]
         let half_round_type = periodic_values[0];
         let ark: [E; STATE_WIDTH] = core::array::from_fn(|i| periodic_values[1 + i]);
-        let folding_mask = periodic_values[1 + STATE_WIDTH];
+        let perm_mask = periodic_values[1 + STATE_WIDTH];
+        let folding_mask = periodic_values[1 + STATE_WIDTH + 1];
 
-        // RPO constraints are currently disabled by setting half_round_type=0
-        // in periodic columns. This keeps the RPO state constant while we focus
-        // on folding correctness. When Merkle authentication is added, these
-        // constraints will enforce real RPO permutations.
+        // Build MDS result: MDS(current)
+        let mut mds_result: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
+        for i in 0..STATE_WIDTH {
+            for j in 0..STATE_WIDTH {
+                let mds_coeff = E::from(MDS[i][j]);
+                mds_result[i] += mds_coeff * current[j];
+            }
+        }
+
+        // Add round constants: MDS(current) + ARK
+        let mut intermediate: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
+        for i in 0..STATE_WIDTH {
+            intermediate[i] = mds_result[i] + ark[i];
+        }
+
+        // Selectors (same as rpo_air)
         let one = E::ONE;
         let two = one + one;
         let is_forward = half_round_type * (two - half_round_type);
         let is_inverse = half_round_type * (half_round_type - one);
         let is_padding = (one - half_round_type) * (two - half_round_type);
+
         for i in 0..STATE_WIDTH {
-            let intermediate = current[i] + ark[i];
-            let x2 = intermediate * intermediate;
+            // Forward S-box: next = intermediate^7
+            let x = intermediate[i];
+            let x2 = x * x;
             let x4 = x2 * x2;
-            let x3 = x2 * intermediate;
+            let x3 = x2 * x;
             let x7 = x3 * x4;
             let forward_constraint = next[i] - x7;
 
-            let y2 = next[i] * next[i];
+            // Inverse S-box: next^7 = intermediate
+            let y = next[i];
+            let y2 = y * y;
             let y4 = y2 * y2;
-            let y3 = y2 * next[i];
+            let y3 = y2 * y;
             let y7 = y3 * y4;
-            let inverse_constraint = y7 - intermediate;
+            let inverse_constraint = y7 - intermediate[i];
 
+            // Padding: next = current (state unchanged)
             let padding_constraint = next[i] - current[i];
-            result[i] =
-                is_forward * forward_constraint + is_inverse * inverse_constraint + is_padding * padding_constraint;
+
+            let rpo_constraint = is_forward * forward_constraint
+                + is_inverse * inverse_constraint
+                + is_padding * padding_constraint;
+
+            // Disable RPO constraints on boundary transitions between stacked permutations.
+            result[i] = perm_mask * rpo_constraint;
         }
 
         // Folding constraint for folding factor 2 (matches winter-fri verify_generic::<2>):
@@ -290,15 +327,53 @@ impl Air for FriVerifierAir {
         // Periodic columns:
         // - Disable RPO transitions for now (half_round_type=0, ark=0)
         // - Folding mask always on.
-        let half_round_type = vec![BaseElement::ZERO; ROWS_PER_PERMUTATION];
-        let ark_columns: [Vec<BaseElement>; STATE_WIDTH] =
-            core::array::from_fn(|_| vec![BaseElement::ZERO; ROWS_PER_PERMUTATION]);
-        let folding_mask = vec![BaseElement::ONE; ROWS_PER_PERMUTATION];
+        let total_rows = self.trace_length();
+
+        let mut half_round_type = Vec::with_capacity(total_rows);
+        let mut ark_columns: [Vec<BaseElement>; STATE_WIDTH] =
+            core::array::from_fn(|_| Vec::with_capacity(total_rows));
+        let mut perm_mask = Vec::with_capacity(total_rows);
+        let mut folding_mask = Vec::with_capacity(total_rows);
+
+        for row in 0..total_rows {
+            let local_row = row % ROWS_PER_PERMUTATION;
+
+            let val = if local_row >= 14 {
+                0
+            } else if local_row % 2 == 0 {
+                1
+            } else {
+                2
+            };
+            half_round_type.push(BaseElement::new(val));
+
+            let constants = if local_row >= 14 {
+                [BaseElement::ZERO; STATE_WIDTH]
+            } else if local_row % 2 == 0 {
+                let round = local_row / 2;
+                if round < NUM_ROUNDS { ARK1[round] } else { [BaseElement::ZERO; STATE_WIDTH] }
+            } else {
+                let round = local_row / 2;
+                if round < NUM_ROUNDS { ARK2[round] } else { [BaseElement::ZERO; STATE_WIDTH] }
+            };
+
+            for (i, &c) in constants.iter().enumerate() {
+                ark_columns[i].push(c);
+            }
+
+            // Apply RPO constraints on all transitions except boundaries between permutations.
+            let mask = (local_row < ROWS_PER_PERMUTATION - 1) as u64;
+            perm_mask.push(BaseElement::new(mask));
+
+            // Folding checks are currently applied on every row.
+            folding_mask.push(BaseElement::ONE);
+        }
 
         let mut result = vec![half_round_type];
         for col in ark_columns {
             result.push(col);
         }
+        result.push(perm_mask);
         result.push(folding_mask);
         result
     }

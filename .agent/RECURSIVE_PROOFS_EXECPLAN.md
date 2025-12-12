@@ -30,7 +30,7 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] (2025-12-11) Phase 2c: Implement RpoAir + RpoStarkProver (RPO permutation proofs).
 - [x] (2025-12-11) Phase 2g: Make inner proofs RPO-friendly (completed: epoch + transaction + batch RPO provers + verifiers).
 - [ ] (2025-12-11) Phase 2d: MerkleVerifierAir + FriVerifierAir (completed: trace layouts, Merkle chaining, FRI folding constraints for folding factor 2, and host-side `InnerProofData::from_proof` extraction with transcript reconstruction; remaining: Merkle commitment authentication for trace/constraint/FRI layers, re‑enable RPO transitions in FRI AIR, and in‑circuit transcript‑derived alphas/positions).
-- [ ] (2025-12-12) Phase 2e: StarkVerifierAir (completed: RPO transcript skeleton + minimal in‑circuit RPO sponge check of inner public inputs; remaining: full winterfell verifier logic + tamper‑reject tests).
+- [ ] (2025-12-12) Phase 2e: StarkVerifierAir (completed: in‑circuit RPO sponge for inner public inputs **and** transcript seed hashing + coin.init + trace‑commitment reseed, full‑carry coefficient‑draw permutations, and constraint‑commitment reseed boundary enforcement; remaining: explicit in‑circuit checks of derived `constraint_coeffs`, `z`, `deep_coeffs`, `fri_alphas`, and `query_positions`, plus Merkle authentication, full FRI folding + remainder, DEEP composition checks, and tamper‑reject tests).
 - [ ] (2025-12-11) Phase 2f: RecursiveEpochProver verifies inner proofs in‑circuit via StarkVerifierAir.
 - [ ] (2025-12-11) Phase 3: Two‑person testnet recursive sync + light client recursive mode.
 - [ ] Phase 4: Security audit and production hardening.

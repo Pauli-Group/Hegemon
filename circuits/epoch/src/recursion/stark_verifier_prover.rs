@@ -15,9 +15,12 @@ use winterfell::{
     TracePolyTable, TraceTable, CompositionPoly, CompositionPolyTrace, Proof, AcceptableOptions,
 };
 
-use super::rpo_air::{STATE_WIDTH, ROWS_PER_PERMUTATION, NUM_ROUNDS, MDS, ARK1, ARK2, TRACE_WIDTH};
+use super::rpo_air::{STATE_WIDTH, ROWS_PER_PERMUTATION, NUM_ROUNDS, MDS, ARK1, ARK2};
 use super::rpo_proof::rpo_hash_elements;
-use super::stark_verifier_air::{StarkVerifierAir, StarkVerifierPublicInputs};
+use super::stark_verifier_air::{
+    build_context_prefix, StarkVerifierAir, StarkVerifierPublicInputs, VERIFIER_TRACE_WIDTH,
+    COL_CARRY_MASK, COL_FULL_CARRY_MASK, COL_RESEED_MASK, COL_COIN_INIT_MASK, COL_RESEED_WORD_START,
+};
 
 type Blake3 = Blake3_256<BaseElement>;
 type Blake3MerkleTree = MerkleTree<Blake3>;
@@ -39,9 +42,8 @@ impl StarkVerifierProver {
         options: ProofOptions,
     ) -> Result<(Proof, StarkVerifierPublicInputs), String> {
         let digest = rpo_hash_elements(&inner_public_inputs);
-        let num_blocks = (inner_public_inputs.len() + 7) / 8;
-        let active_rows = num_blocks * ROWS_PER_PERMUTATION;
-        let trace_length = active_rows.next_power_of_two();
+        let num_blocks = inner_public_inputs.len().div_ceil(8).max(1);
+        let _active_rows = num_blocks * ROWS_PER_PERMUTATION;
 
         let pub_inputs = StarkVerifierPublicInputs::new(
             inner_public_inputs.clone(),
@@ -49,9 +51,9 @@ impl StarkVerifierProver {
             [BaseElement::ZERO; 4],
             [BaseElement::ZERO; 4],
             vec![],
-            0,
+            options.num_queries(),
             options.blowup_factor(),
-            trace_length,
+            ROWS_PER_PERMUTATION,
         );
 
         let prover = StarkVerifierProver::new(options.clone(), pub_inputs.clone());
@@ -66,23 +68,32 @@ impl StarkVerifierProver {
     /// Build a trace which hashes `inner_public_inputs` using the RPO sponge.
     pub fn build_trace_for_pub_inputs_hash(&self) -> TraceTable<BaseElement> {
         let inputs = &self.pub_inputs.inner_public_inputs;
-        let num_blocks = (inputs.len() + 7) / 8;
-        let active_rows = num_blocks * ROWS_PER_PERMUTATION;
+        let input_len = inputs.len();
+        let num_pi_blocks = input_len.div_ceil(8).max(1);
+
+        let seed_prefix = build_context_prefix(&self.pub_inputs);
+        let seed_len = seed_prefix.len() + input_len;
+        let num_seed_blocks = seed_len.div_ceil(8).max(1);
+
+        let num_coeff_perms = 36usize.div_ceil(8);
+        let active_perms = num_pi_blocks + num_seed_blocks + num_coeff_perms + 2;
+        let active_rows = active_perms * ROWS_PER_PERMUTATION;
         let total_rows = active_rows.next_power_of_two();
 
-        let mut trace = TraceTable::new(TRACE_WIDTH, total_rows);
+        let mut trace = TraceTable::new(VERIFIER_TRACE_WIDTH, total_rows);
 
-        // Initialize sponge state.
+        let mut perm_idx = 0usize;
+
+        // --- Segment A: RPO hash of inner public inputs ------------------------------------
         let mut state = [BaseElement::ZERO; STATE_WIDTH];
-        state[0] = BaseElement::new((inputs.len() % 8) as u64);
+        state[0] = BaseElement::new((input_len % 8) as u64);
 
-        for block in 0..num_blocks {
-            let row_offset = block * ROWS_PER_PERMUTATION;
+        for block in 0..num_pi_blocks {
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
 
-            // Overwrite rate with the next block.
             let start = block * 8;
             for i in 0..8 {
-                state[4 + i] = if start + i < inputs.len() {
+                state[4 + i] = if start + i < input_len {
                     inputs[start + i]
                 } else {
                     BaseElement::ZERO
@@ -91,28 +102,239 @@ impl StarkVerifierProver {
 
             self.fill_rpo_trace(&mut trace, row_offset, state);
 
-            // Read full state from the last row to carry capacity forward.
+            // Boundary masks for this permutation.
+            let (carry, full_carry, reseed, coin_init) = if block + 1 < num_pi_blocks {
+                (
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                )
+            } else {
+                (
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                )
+            };
+            set_masks(
+                &mut trace,
+                perm_idx,
+                carry,
+                full_carry,
+                reseed,
+                coin_init,
+                [BaseElement::ZERO; 4],
+            );
+
+            // Carry full state forward.
             let last = row_offset + ROWS_PER_PERMUTATION - 1;
             for i in 0..STATE_WIDTH {
                 state[i] = trace.get(i, last);
             }
+
+            perm_idx += 1;
         }
 
-        // Fill remaining permutations (if any) with dummy zero blocks so periodic columns
-        // remain truly periodic over the full trace length.
-        let total_perms = total_rows / ROWS_PER_PERMUTATION;
-        for block in num_blocks..total_perms {
-            let row_offset = block * ROWS_PER_PERMUTATION;
-            for i in 0..8 {
-                state[4 + i] = BaseElement::ZERO;
+        // --- Segment B: RPO hash of transcript seed ----------------------------------------
+        let mut seed_state = [BaseElement::ZERO; STATE_WIDTH];
+        seed_state[0] = BaseElement::new((seed_len % 8) as u64);
+
+        for block in 0..num_seed_blocks {
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+
+            let start = block * 8;
+            for j in 0..8 {
+                let idx = start + j;
+                let val = if idx < seed_prefix.len() {
+                    seed_prefix[idx]
+                } else {
+                    let pi_idx = idx - seed_prefix.len();
+                    if pi_idx < input_len {
+                        inputs[pi_idx]
+                    } else {
+                        BaseElement::ZERO
+                    }
+                };
+                seed_state[4 + j] = val;
             }
 
-            self.fill_rpo_trace(&mut trace, row_offset, state);
+            self.fill_rpo_trace(&mut trace, row_offset, seed_state);
+
+            let (carry, full_carry, reseed, coin_init) = if block + 1 < num_seed_blocks {
+                (
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                )
+            } else {
+                (
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                )
+            };
+            set_masks(
+                &mut trace,
+                perm_idx,
+                carry,
+                full_carry,
+                reseed,
+                coin_init,
+                [BaseElement::ZERO; 4],
+            );
 
             let last = row_offset + ROWS_PER_PERMUTATION - 1;
             for i in 0..STATE_WIDTH {
-                state[i] = trace.get(i, last);
+                seed_state[i] = trace.get(i, last);
             }
+
+            perm_idx += 1;
+        }
+
+        // --- Segment C: coin.init(digest(seed)) ---------------------------------------------
+        let digest = [seed_state[4], seed_state[5], seed_state[6], seed_state[7]];
+        let mut coin_state = [BaseElement::ZERO; STATE_WIDTH];
+        for i in 0..4 {
+            coin_state[4 + i] = digest[i];
+        }
+
+        let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+        self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+        set_masks(
+            &mut trace,
+            perm_idx,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ONE,
+            BaseElement::ZERO,
+            self.pub_inputs.trace_commitment,
+        );
+
+        let last = row_offset + ROWS_PER_PERMUTATION - 1;
+        for i in 0..STATE_WIDTH {
+            coin_state[i] = trace.get(i, last);
+        }
+        perm_idx += 1;
+
+        // --- Segment D: reseed with trace commitment (coefficient perm 0) -------------------
+        for i in 0..4 {
+            coin_state[4 + i] += self.pub_inputs.trace_commitment[i];
+        }
+        let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+        self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+        let last_coeff_here = num_coeff_perms == 1;
+        if last_coeff_here {
+            set_masks(
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                self.pub_inputs.constraint_commitment,
+            );
+        } else {
+            set_masks(
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+            );
+        }
+
+        let last = row_offset + ROWS_PER_PERMUTATION - 1;
+        for i in 0..STATE_WIDTH {
+            coin_state[i] = trace.get(i, last);
+        }
+        perm_idx += 1;
+
+        // --- Additional coefficient permutations (permute-only, full-carry) ----------------
+        for coeff_idx in 1..num_coeff_perms {
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+            self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+
+            let is_last = coeff_idx + 1 == num_coeff_perms;
+            if is_last {
+                set_masks(
+                    &mut trace,
+                    perm_idx,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
+                    self.pub_inputs.constraint_commitment,
+                );
+            } else {
+                set_masks(
+                    &mut trace,
+                    perm_idx,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    [BaseElement::ZERO; 4],
+                );
+            }
+
+            let last = row_offset + ROWS_PER_PERMUTATION - 1;
+            for i in 0..STATE_WIDTH {
+                coin_state[i] = trace.get(i, last);
+            }
+            perm_idx += 1;
+        }
+
+        // --- Reseed with constraint commitment ---------------------------------------------
+        for i in 0..4 {
+            coin_state[4 + i] += self.pub_inputs.constraint_commitment[i];
+        }
+        let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+        self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+        set_masks(
+            &mut trace,
+            perm_idx,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            [BaseElement::ZERO; 4],
+        );
+
+        let last = row_offset + ROWS_PER_PERMUTATION - 1;
+        for i in 0..STATE_WIDTH {
+            coin_state[i] = trace.get(i, last);
+        }
+        perm_idx += 1;
+
+        // --- Padding permutations -----------------------------------------------------------
+        let total_perms = total_rows / ROWS_PER_PERMUTATION;
+        for _ in perm_idx..total_perms {
+            for i in 0..8 {
+                coin_state[4 + i] = BaseElement::ZERO;
+            }
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+            self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+            set_masks(
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+            );
+
+            let last = row_offset + ROWS_PER_PERMUTATION - 1;
+            for i in 0..STATE_WIDTH {
+                coin_state[i] = trace.get(i, last);
+            }
+            perm_idx += 1;
         }
 
         trace
@@ -164,6 +386,28 @@ impl StarkVerifierProver {
             trace.set(col, padding_row, val);
         }
         trace.set(STATE_WIDTH, padding_row, BaseElement::new(15));
+    }
+}
+
+fn set_masks(
+    trace: &mut TraceTable<BaseElement>,
+    perm_idx: usize,
+    carry: BaseElement,
+    full_carry: BaseElement,
+    reseed: BaseElement,
+    coin_init: BaseElement,
+    reseed_word: [BaseElement; 4],
+) {
+    let row_start = perm_idx * ROWS_PER_PERMUTATION;
+    for r in 0..ROWS_PER_PERMUTATION {
+        let row = row_start + r;
+        trace.set(COL_CARRY_MASK, row, carry);
+        trace.set(COL_FULL_CARRY_MASK, row, full_carry);
+        trace.set(COL_RESEED_MASK, row, reseed);
+        trace.set(COL_COIN_INIT_MASK, row, coin_init);
+        for i in 0..4 {
+            trace.set(COL_RESEED_WORD_START + i, row, reseed_word[i]);
+        }
     }
 }
 
@@ -283,5 +527,34 @@ mod tests {
         );
 
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_transcript_reseed_binding_tamper_fails() {
+        let options = super::super::rpo_proof::RpoProofOptions::fast().to_winter_options();
+        let inner_public_inputs: Vec<BaseElement> =
+            (0..16).map(|i| BaseElement::new(i as u64 + 1)).collect();
+
+        let (proof, mut pub_inputs) =
+            StarkVerifierProver::prove_pub_inputs_hash(inner_public_inputs, options.clone())
+                .unwrap();
+
+        let acceptable = AcceptableOptions::OptionSet(vec![options]);
+        let ok = verify::<StarkVerifierAir, Blake3, DefaultRandomCoin<Blake3>, Blake3MerkleTree>(
+            proof.clone(),
+            pub_inputs.clone(),
+            &acceptable,
+        );
+        assert!(ok.is_ok());
+
+        // Tamper with trace commitment; should invalidate reseed boundary assertions.
+        pub_inputs.trace_commitment[0] += BaseElement::ONE;
+        let bad =
+            verify::<StarkVerifierAir, Blake3, DefaultRandomCoin<Blake3>, Blake3MerkleTree>(
+                proof,
+                pub_inputs,
+                &acceptable,
+            );
+        assert!(bad.is_err());
     }
 }

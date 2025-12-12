@@ -39,13 +39,31 @@ use winter_crypto::RandomCoin;
 use winter_math::{FieldElement, ToElements};
 use winterfell::math::fields::f64::BaseElement;
 
-use super::rpo_air::{STATE_WIDTH, ROWS_PER_PERMUTATION, NUM_ROUNDS, MDS, ARK1, ARK2};
+use super::rpo_air::{
+    STATE_WIDTH, ROWS_PER_PERMUTATION, NUM_ROUNDS, MDS, ARK1, ARK2,
+    TRACE_WIDTH as RPO_TRACE_WIDTH,
+};
 use super::merkle_air::DIGEST_WIDTH;
 use winter_air::DeepCompositionCoefficients;
 
 const CAPACITY_WIDTH: usize = 4;
 const RATE_WIDTH: usize = 8;
 const RATE_START: usize = CAPACITY_WIDTH;
+
+// Trace layout for StarkVerifierAir.
+// Columns 0..STATE_WIDTH-1 hold the RPO sponge state, and column STATE_WIDTH is an unused
+// round counter (kept for compatibility with shared trace builders).
+const ROUND_COL: usize = STATE_WIDTH;
+pub(crate) const COL_CARRY_MASK: usize = RPO_TRACE_WIDTH;
+pub(crate) const COL_FULL_CARRY_MASK: usize = RPO_TRACE_WIDTH + 1;
+pub(crate) const COL_RESEED_MASK: usize = RPO_TRACE_WIDTH + 2;
+pub(crate) const COL_COIN_INIT_MASK: usize = RPO_TRACE_WIDTH + 3;
+pub(crate) const COL_RESEED_WORD_START: usize = RPO_TRACE_WIDTH + 4;
+pub(crate) const VERIFIER_TRACE_WIDTH: usize = COL_RESEED_WORD_START + DIGEST_WIDTH;
+
+// Fixed context prefix for inner RPO-friendly proofs.
+// This currently matches RpoAir proofs with RpoProofOptions::fast().
+const CONTEXT_PREFIX_LEN: usize = 8;
 
 // CONSTANTS
 // ================================================================================================
@@ -163,10 +181,13 @@ impl Air for StarkVerifierAir {
         // - FRI folding (degree 2)
         // - Constraint evaluation checks (varies)
         
-        // For the initial minimal verifier we only enforce:
-        // - RPO permutation constraints for hashing inner public inputs
-        // - Capacity carryover between sponge blocks
-        let num_constraints = STATE_WIDTH + DIGEST_WIDTH;
+        // Constraints:
+        // - RPO permutation constraints for sponge permutations (STATE_WIDTH)
+        // - Boundary relations between stacked permutations:
+        //   * capacity carryover (4)
+        //   * reseed additions / coin-init resets (8)
+        //   * mask validity + exclusivity (6)
+        let num_constraints = STATE_WIDTH + 3 * DIGEST_WIDTH + 10;
         let mut degrees = Vec::with_capacity(num_constraints);
 
         // RPO transition constraints are gated by two periodic selectors:
@@ -183,17 +204,58 @@ impl Air for StarkVerifierAir {
             ));
         }
 
-        // Capacity carryover is linear in trace columns and gated by one periodic selector.
-        for _ in 0..DIGEST_WIDTH {
+        // Boundary relation constraints are quadratic in trace columns (mask * linear diff)
+        // and gated by the periodic boundary mask.
+        for _ in 0..(3 * DIGEST_WIDTH + 10) {
             degrees.push(TransitionConstraintDegree::with_cycles(
-                1,
+                2,
                 vec![ROWS_PER_PERMUTATION],
             ));
         }
 
-        // Assertions bind sponge inputs and output digest.
-        let num_blocks = (pub_inputs.inner_public_inputs.len() + RATE_WIDTH - 1) / RATE_WIDTH;
-        let num_assertions = CAPACITY_WIDTH + num_blocks * RATE_WIDTH + DIGEST_WIDTH;
+        // Assertions bind:
+        // - public-input hash sponge inputs + digest
+        // - transcript seed sponge inputs (context prefix + public inputs)
+        // - boundary masks and reseed words for the transcript skeleton
+        let input_len = pub_inputs.inner_public_inputs.len();
+        let num_pi_blocks = input_len.div_ceil(RATE_WIDTH).max(1);
+
+        let seed_len = CONTEXT_PREFIX_LEN + input_len;
+        let num_seed_blocks = seed_len.div_ceil(RATE_WIDTH).max(1);
+
+        let mut num_assertions = 0usize;
+        // public-input hash sponge
+        num_assertions += CAPACITY_WIDTH;
+        num_assertions += num_pi_blocks * RATE_WIDTH;
+        num_assertions += DIGEST_WIDTH;
+
+        // seed sponge
+        num_assertions += CAPACITY_WIDTH;
+        num_assertions += num_seed_blocks * RATE_WIDTH;
+
+        // boundary masks for pi blocks (between blocks + reset boundary)
+        if num_pi_blocks > 1 {
+            num_assertions += (num_pi_blocks - 1) * 4;
+        }
+        num_assertions += 4; // reset boundary between pi-hash and seed-hash
+
+        // boundary masks for seed blocks (between blocks + coin-init boundary)
+        if num_seed_blocks > 1 {
+            num_assertions += (num_seed_blocks - 1) * 4;
+        }
+        num_assertions += 4; // coin-init boundary
+
+        // reseed(trace_commitment) boundary masks + reseed word
+        num_assertions += 4 + DIGEST_WIDTH;
+
+        // full-carry boundaries between coefficient draw permutations
+        let num_coeff_perms = 36usize.div_ceil(RATE_WIDTH);
+        if num_coeff_perms > 1 {
+            num_assertions += (num_coeff_perms - 1) * 4;
+        }
+
+        // reseed(constraint_commitment) boundary masks + reseed word
+        num_assertions += 4 + DIGEST_WIDTH;
 
         let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
@@ -267,30 +329,82 @@ impl Air for StarkVerifierAir {
             result[i] = perm_mask * rpo_constraint;
         }
 
-        // Capacity carryover constraints at boundaries between sponge blocks.
+        // Boundary relations between stacked permutations.
+        let carry_mask = current[COL_CARRY_MASK];
+        let full_carry_mask = current[COL_FULL_CARRY_MASK];
+        let reseed_mask = current[COL_RESEED_MASK];
+        let coin_init_mask = current[COL_COIN_INIT_MASK];
+        let reseed_word: [E; DIGEST_WIDTH] =
+            core::array::from_fn(|i| current[COL_RESEED_WORD_START + i]);
+
+        let mut idx = STATE_WIDTH;
         for i in 0..DIGEST_WIDTH {
-            result[STATE_WIDTH + i] = boundary_mask * (next[i] - current[i]);
+            // Capacity carryover for carry/full-carry/reseed; zero for coin-init.
+            let carry_sum = carry_mask + full_carry_mask + reseed_mask;
+            let cap_rel = carry_sum * (next[i] - current[i]) + coin_init_mask * next[i];
+            result[idx + i] = boundary_mask * cap_rel;
         }
+        idx += DIGEST_WIDTH;
+
+        for i in 0..DIGEST_WIDTH {
+            // First half of rate:
+            // - full-carry copies full state
+            // - reseed adds a word
+            // - coin-init copies digest range
+            // - carry/free boundaries impose no constraint
+            let cur_rate = current[RATE_START + i];
+            let next_rate = next[RATE_START + i];
+            let rate_rel = (full_carry_mask + coin_init_mask) * (next_rate - cur_rate)
+                + reseed_mask * (next_rate - (cur_rate + reseed_word[i]));
+            result[idx + i] = boundary_mask * rate_rel;
+        }
+        idx += DIGEST_WIDTH;
+
+        for i in 0..DIGEST_WIDTH {
+            // Second half of rate:
+            // - full-carry/reseed copy
+            // - coin-init zeros
+            // - carry/free boundaries impose no constraint
+            let cur_rate = current[RATE_START + DIGEST_WIDTH + i];
+            let next_rate = next[RATE_START + DIGEST_WIDTH + i];
+            let rate_rel = (full_carry_mask + reseed_mask) * (next_rate - cur_rate)
+                + coin_init_mask * next_rate;
+            result[idx + i] = boundary_mask * rate_rel;
+        }
+        idx += DIGEST_WIDTH;
+
+        // Mask validity (binary on boundaries).
+        result[idx] = boundary_mask * carry_mask * (carry_mask - one);
+        result[idx + 1] = boundary_mask * full_carry_mask * (full_carry_mask - one);
+        result[idx + 2] = boundary_mask * reseed_mask * (reseed_mask - one);
+        result[idx + 3] = boundary_mask * coin_init_mask * (coin_init_mask - one);
+        idx += 4;
+
+        // Exclusivity of masks on boundaries.
+        result[idx] = boundary_mask * carry_mask * full_carry_mask;
+        result[idx + 1] = boundary_mask * carry_mask * reseed_mask;
+        result[idx + 2] = boundary_mask * carry_mask * coin_init_mask;
+        result[idx + 3] = boundary_mask * full_carry_mask * reseed_mask;
+        result[idx + 4] = boundary_mask * full_carry_mask * coin_init_mask;
+        result[idx + 5] = boundary_mask * reseed_mask * coin_init_mask;
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
         let mut assertions = Vec::new();
 
-        // Sponge initialization.
+        // --- Segment A: Hash inner public inputs ---------------------------------------------
         let input_len = self.pub_inputs.inner_public_inputs.len();
+        let num_pi_blocks = input_len.div_ceil(RATE_WIDTH).max(1);
+
+        // Sponge initialization (public input hash).
         let len_mod_rate = (input_len % RATE_WIDTH) as u64;
-        assertions.push(Assertion::single(
-            0,
-            0,
-            BaseElement::new(len_mod_rate),
-        ));
+        assertions.push(Assertion::single(0, 0, BaseElement::new(len_mod_rate)));
         for i in 1..CAPACITY_WIDTH {
             assertions.push(Assertion::single(i, 0, BaseElement::ZERO));
         }
 
-        // Bind each absorbed block to the corresponding public inputs.
-        let num_blocks = (input_len + RATE_WIDTH - 1) / RATE_WIDTH;
-        for block in 0..num_blocks {
+        // Bind absorbed public-input blocks.
+        for block in 0..num_pi_blocks {
             let row = block * ROWS_PER_PERMUTATION;
             let start = block * RATE_WIDTH;
             for j in 0..RATE_WIDTH {
@@ -303,13 +417,164 @@ impl Air for StarkVerifierAir {
             }
         }
 
-        // Bind digest after the final permutation.
-        let last_row = num_blocks * ROWS_PER_PERMUTATION - 1;
+        // Bind digest after final public-input hash permutation.
+        let pi_last_row = num_pi_blocks * ROWS_PER_PERMUTATION - 1;
         for i in 0..DIGEST_WIDTH {
             assertions.push(Assertion::single(
                 RATE_START + i,
-                last_row,
+                pi_last_row,
                 self.pub_inputs.inner_pub_inputs_hash[i],
+            ));
+        }
+
+        // Boundary masks between public-input hash blocks.
+        for block in 0..num_pi_blocks {
+            let boundary_row = (block + 1) * ROWS_PER_PERMUTATION - 1;
+            if block + 1 < num_pi_blocks {
+                assertions.push(Assertion::single(COL_CARRY_MASK, boundary_row, BaseElement::ONE));
+                assertions.push(Assertion::single(
+                    COL_FULL_CARRY_MASK,
+                    boundary_row,
+                    BaseElement::ZERO,
+                ));
+                assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
+                assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ZERO));
+            } else {
+                // Reset to a new sponge for transcript seeding.
+                assertions.push(Assertion::single(COL_CARRY_MASK, boundary_row, BaseElement::ZERO));
+                assertions.push(Assertion::single(
+                    COL_FULL_CARRY_MASK,
+                    boundary_row,
+                    BaseElement::ZERO,
+                ));
+                assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
+                assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ZERO));
+            }
+        }
+
+        // --- Segment B: Hash transcript seed (context prefix + public inputs) ----------------
+        let seed_prefix = build_context_prefix(&self.pub_inputs);
+        let seed_len = seed_prefix.len() + input_len;
+        let num_seed_blocks = seed_len.div_ceil(RATE_WIDTH).max(1);
+        let seed_start = num_pi_blocks * ROWS_PER_PERMUTATION;
+
+        // Sponge initialization (transcript seed).
+        let seed_mod_rate = (seed_len % RATE_WIDTH) as u64;
+        assertions.push(Assertion::single(0, seed_start, BaseElement::new(seed_mod_rate)));
+        for i in 1..CAPACITY_WIDTH {
+            assertions.push(Assertion::single(i, seed_start, BaseElement::ZERO));
+        }
+
+        // Bind absorbed seed blocks.
+        for block in 0..num_seed_blocks {
+            let row = seed_start + block * ROWS_PER_PERMUTATION;
+            let start = block * RATE_WIDTH;
+            for j in 0..RATE_WIDTH {
+                let idx = start + j;
+                let val = if idx < seed_prefix.len() {
+                    seed_prefix[idx]
+                } else {
+                    let pi_idx = idx - seed_prefix.len();
+                    if pi_idx < input_len {
+                        self.pub_inputs.inner_public_inputs[pi_idx]
+                    } else {
+                        BaseElement::ZERO
+                    }
+                };
+                assertions.push(Assertion::single(RATE_START + j, row, val));
+            }
+        }
+
+        // Boundary masks between seed blocks and into coin-init.
+        for block in 0..num_seed_blocks {
+            let boundary_row = seed_start + (block + 1) * ROWS_PER_PERMUTATION - 1;
+            if block + 1 < num_seed_blocks {
+                assertions.push(Assertion::single(COL_CARRY_MASK, boundary_row, BaseElement::ONE));
+                assertions.push(Assertion::single(
+                    COL_FULL_CARRY_MASK,
+                    boundary_row,
+                    BaseElement::ZERO,
+                ));
+                assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
+                assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ZERO));
+            } else {
+                assertions.push(Assertion::single(COL_CARRY_MASK, boundary_row, BaseElement::ZERO));
+                assertions.push(Assertion::single(
+                    COL_FULL_CARRY_MASK,
+                    boundary_row,
+                    BaseElement::ZERO,
+                ));
+                assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
+                assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ONE));
+            }
+        }
+
+        // --- Segment C: coin-init boundary into reseed(trace_commitment) ----------------------
+        let coin_start = seed_start + num_seed_blocks * ROWS_PER_PERMUTATION;
+        let coin_boundary_row = coin_start + ROWS_PER_PERMUTATION - 1;
+        assertions.push(Assertion::single(COL_CARRY_MASK, coin_boundary_row, BaseElement::ZERO));
+        assertions.push(Assertion::single(
+            COL_FULL_CARRY_MASK,
+            coin_boundary_row,
+            BaseElement::ZERO,
+        ));
+        assertions.push(Assertion::single(COL_RESEED_MASK, coin_boundary_row, BaseElement::ONE));
+        assertions.push(Assertion::single(COL_COIN_INIT_MASK, coin_boundary_row, BaseElement::ZERO));
+        for i in 0..DIGEST_WIDTH {
+            assertions.push(Assertion::single(
+                COL_RESEED_WORD_START + i,
+                coin_boundary_row,
+                self.pub_inputs.trace_commitment[i],
+            ));
+        }
+
+        // --- Coefficient draw full-carry boundaries and reseed(constraint_commitment) ---------
+        let num_coeff_perms = 36usize.div_ceil(RATE_WIDTH);
+        let trace_reseed_perm_idx = num_pi_blocks + num_seed_blocks + 1;
+        let coeff_start_perm_idx = trace_reseed_perm_idx;
+
+        // Boundaries between coefficient permutations use full-carry.
+        for k in 0..(num_coeff_perms - 1) {
+            let perm_idx = coeff_start_perm_idx + k;
+            let boundary_row = (perm_idx + 1) * ROWS_PER_PERMUTATION - 1;
+            assertions.push(Assertion::single(COL_CARRY_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_FULL_CARRY_MASK,
+                boundary_row,
+                BaseElement::ONE,
+            ));
+            assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ZERO));
+        }
+
+        // Boundary into constraint commitment reseed after last coefficient permutation.
+        let last_coeff_perm_idx = coeff_start_perm_idx + num_coeff_perms - 1;
+        let constraint_boundary_row = (last_coeff_perm_idx + 1) * ROWS_PER_PERMUTATION - 1;
+        assertions.push(Assertion::single(
+            COL_CARRY_MASK,
+            constraint_boundary_row,
+            BaseElement::ZERO,
+        ));
+        assertions.push(Assertion::single(
+            COL_FULL_CARRY_MASK,
+            constraint_boundary_row,
+            BaseElement::ZERO,
+        ));
+        assertions.push(Assertion::single(
+            COL_RESEED_MASK,
+            constraint_boundary_row,
+            BaseElement::ONE,
+        ));
+        assertions.push(Assertion::single(
+            COL_COIN_INIT_MASK,
+            constraint_boundary_row,
+            BaseElement::ZERO,
+        ));
+        for i in 0..DIGEST_WIDTH {
+            assertions.push(Assertion::single(
+                COL_RESEED_WORD_START + i,
+                constraint_boundary_row,
+                self.pub_inputs.constraint_commitment[i],
             ));
         }
 
@@ -424,6 +689,45 @@ pub fn compute_deep_evaluation(
 
     let den = x_minus_z0 * x_minus_z1;
     (num_trace + num_constraints) / den
+}
+
+// CONTEXT PREFIX
+// ================================================================================================
+
+pub(crate) fn build_context_prefix(pub_inputs: &StarkVerifierPublicInputs) -> Vec<BaseElement> {
+    // TraceInfo element 0 encodes: main_width << 8 | num_aux_segments (0).
+    let trace_info0 = BaseElement::new(((RPO_TRACE_WIDTH as u32) << 8) as u64);
+    let trace_info1 = BaseElement::new(pub_inputs.trace_length as u64);
+
+    // Goldilocks modulus bytes split into 2 elements:
+    // low half = 1, high half = 2^32 - 1.
+    let modulus0 = BaseElement::ONE;
+    let modulus1 = BaseElement::new(u64::from(u32::MAX));
+
+    // Inner proof constraints count (transition + boundary) for RpoAir.
+    let num_constraints = BaseElement::new(36);
+
+    // ProofOptions packed element:
+    // field_extension=0, fri_folding_factor=2, fri_remainder_max_degree=7, blowup_factor=pub_inputs.blowup_factor.
+    let options0 = BaseElement::new(
+        pub_inputs.blowup_factor as u64
+            + (7u64 << 8)
+            + (2u64 << 16),
+    );
+
+    let grinding_factor = BaseElement::ZERO;
+    let num_queries = BaseElement::new(pub_inputs.num_queries as u64);
+
+    vec![
+        trace_info0,
+        trace_info1,
+        modulus0,
+        modulus1,
+        num_constraints,
+        options0,
+        grinding_factor,
+        num_queries,
+    ]
 }
 
 // TESTS
