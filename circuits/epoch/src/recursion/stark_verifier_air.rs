@@ -59,7 +59,14 @@ pub(crate) const COL_FULL_CARRY_MASK: usize = RPO_TRACE_WIDTH + 1;
 pub(crate) const COL_RESEED_MASK: usize = RPO_TRACE_WIDTH + 2;
 pub(crate) const COL_COIN_INIT_MASK: usize = RPO_TRACE_WIDTH + 3;
 pub(crate) const COL_RESEED_WORD_START: usize = RPO_TRACE_WIDTH + 4;
-pub(crate) const VERIFIER_TRACE_WIDTH: usize = COL_RESEED_WORD_START + DIGEST_WIDTH;
+pub(crate) const BASE_VERIFIER_TRACE_WIDTH: usize = COL_RESEED_WORD_START + DIGEST_WIDTH;
+pub(crate) const COL_COEFF_MASK: usize = BASE_VERIFIER_TRACE_WIDTH;
+pub(crate) const COL_Z_MASK: usize = BASE_VERIFIER_TRACE_WIDTH + 1;
+pub(crate) const COL_COEFF_START: usize = BASE_VERIFIER_TRACE_WIDTH + 2;
+pub(crate) const COL_Z_VALUE: usize = COL_COEFF_START + RATE_WIDTH;
+pub(crate) const COL_DEEP_MASK: usize = COL_Z_VALUE + 1;
+pub(crate) const COL_DEEP_START: usize = COL_DEEP_MASK + 1;
+pub(crate) const VERIFIER_TRACE_WIDTH: usize = COL_DEEP_START + RATE_WIDTH;
 
 // Fixed context prefix for inner RPO-friendly proofs.
 // This currently matches RpoAir proofs with RpoProofOptions::fast().
@@ -186,8 +193,11 @@ impl Air for StarkVerifierAir {
         // - Boundary relations between stacked permutations:
         //   * capacity carryover (4)
         //   * reseed additions / coin-init resets (8)
-        //   * mask validity + exclusivity (6)
-        let num_constraints = STATE_WIDTH + 3 * DIGEST_WIDTH + 10;
+        //   * mask validity + exclusivity (10)
+        //   * constraint coefficient equality checks (8)
+        //   * z equality check (1)
+        //   * deep composition coefficient equality checks (8)
+        let num_constraints = STATE_WIDTH + 3 * DIGEST_WIDTH + 10 + 2 * RATE_WIDTH + 1;
         let mut degrees = Vec::with_capacity(num_constraints);
 
         // RPO transition constraints are gated by two periodic selectors:
@@ -206,7 +216,7 @@ impl Air for StarkVerifierAir {
 
         // Boundary relation constraints are quadratic in trace columns (mask * linear diff)
         // and gated by the periodic boundary mask.
-        for _ in 0..(3 * DIGEST_WIDTH + 10) {
+        for _ in 0..(3 * DIGEST_WIDTH + 10 + 2 * RATE_WIDTH + 1) {
             degrees.push(TransitionConstraintDegree::with_cycles(
                 2,
                 vec![ROWS_PER_PERMUTATION],
@@ -256,6 +266,26 @@ impl Air for StarkVerifierAir {
 
         // reseed(constraint_commitment) boundary masks + reseed word
         num_assertions += 4 + DIGEST_WIDTH;
+
+        // z-draw boundary masks after constraint reseed permutation
+        num_assertions += 4;
+
+        // Deep coefficient draw boundaries after OOD reseed.
+        let num_deep_coeffs = RPO_TRACE_WIDTH + 8; // trace_width + num_constraint_comp_cols (8)
+        let num_deep_perms = num_deep_coeffs.div_ceil(RATE_WIDTH);
+        num_assertions += num_deep_perms * 4;
+
+        // Stage mask assertions (coeff_mask, z_mask, and deep_mask) on every boundary we fix.
+        // Boundaries:
+        // - pi hash blocks: num_pi_blocks
+        // - seed hash blocks: num_seed_blocks
+        // - trace reseed boundary: 1
+        // - coefficient boundaries: num_coeff_perms
+        // - z-draw + OOD-reseed boundary: 1
+        // - deep coefficient boundaries: num_deep_perms
+        let stage_boundaries =
+            num_pi_blocks + num_seed_blocks + num_coeff_perms + num_deep_perms + 2;
+        num_assertions += stage_boundaries * 3;
 
         let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
@@ -387,6 +417,30 @@ impl Air for StarkVerifierAir {
         result[idx + 3] = boundary_mask * full_carry_mask * reseed_mask;
         result[idx + 4] = boundary_mask * full_carry_mask * coin_init_mask;
         result[idx + 5] = boundary_mask * reseed_mask * coin_init_mask;
+
+        idx += 6;
+
+        // Transcript-derived value checks.
+        let coeff_mask = current[COL_COEFF_MASK];
+        let z_mask = current[COL_Z_MASK];
+
+        for i in 0..RATE_WIDTH {
+            let expected = current[COL_COEFF_START + i];
+            result[idx + i] =
+                boundary_mask * coeff_mask * (current[RATE_START + i] - expected);
+        }
+        idx += RATE_WIDTH;
+
+        let expected_z = current[COL_Z_VALUE];
+        result[idx] = boundary_mask * z_mask * (current[RATE_START] - expected_z);
+        idx += 1;
+
+        let deep_mask = current[COL_DEEP_MASK];
+        for i in 0..RATE_WIDTH {
+            let expected = current[COL_DEEP_START + i];
+            result[idx + i] =
+                boundary_mask * deep_mask * (current[RATE_START + i] - expected);
+        }
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
@@ -450,6 +504,17 @@ impl Air for StarkVerifierAir {
                 assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
                 assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ZERO));
             }
+            assertions.push(Assertion::single(
+                COL_COEFF_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
+            assertions.push(Assertion::single(COL_Z_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_DEEP_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
         }
 
         // --- Segment B: Hash transcript seed (context prefix + public inputs) ----------------
@@ -507,6 +572,17 @@ impl Air for StarkVerifierAir {
                 assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
                 assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ONE));
             }
+            assertions.push(Assertion::single(
+                COL_COEFF_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
+            assertions.push(Assertion::single(COL_Z_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_DEEP_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
         }
 
         // --- Segment C: coin-init boundary into reseed(trace_commitment) ----------------------
@@ -520,6 +596,17 @@ impl Air for StarkVerifierAir {
         ));
         assertions.push(Assertion::single(COL_RESEED_MASK, coin_boundary_row, BaseElement::ONE));
         assertions.push(Assertion::single(COL_COIN_INIT_MASK, coin_boundary_row, BaseElement::ZERO));
+        assertions.push(Assertion::single(
+            COL_COEFF_MASK,
+            coin_boundary_row,
+            BaseElement::ZERO,
+        ));
+        assertions.push(Assertion::single(COL_Z_MASK, coin_boundary_row, BaseElement::ZERO));
+        assertions.push(Assertion::single(
+            COL_DEEP_MASK,
+            coin_boundary_row,
+            BaseElement::ZERO,
+        ));
         for i in 0..DIGEST_WIDTH {
             assertions.push(Assertion::single(
                 COL_RESEED_WORD_START + i,
@@ -545,6 +632,17 @@ impl Air for StarkVerifierAir {
             ));
             assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
             assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_COEFF_MASK,
+                boundary_row,
+                BaseElement::ONE,
+            ));
+            assertions.push(Assertion::single(COL_Z_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_DEEP_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
         }
 
         // Boundary into constraint commitment reseed after last coefficient permutation.
@@ -570,11 +668,79 @@ impl Air for StarkVerifierAir {
             constraint_boundary_row,
             BaseElement::ZERO,
         ));
+        assertions.push(Assertion::single(
+            COL_COEFF_MASK,
+            constraint_boundary_row,
+            BaseElement::ONE,
+        ));
+        assertions.push(Assertion::single(
+            COL_Z_MASK,
+            constraint_boundary_row,
+            BaseElement::ZERO,
+        ));
+        assertions.push(Assertion::single(
+            COL_DEEP_MASK,
+            constraint_boundary_row,
+            BaseElement::ZERO,
+        ));
         for i in 0..DIGEST_WIDTH {
             assertions.push(Assertion::single(
                 COL_RESEED_WORD_START + i,
                 constraint_boundary_row,
                 self.pub_inputs.constraint_commitment[i],
+            ));
+        }
+
+        // Boundary after constraint reseed permutation: draw z and reseed with OOD digest.
+        let constraint_reseed_perm_idx = last_coeff_perm_idx + 1;
+        let z_boundary_row = (constraint_reseed_perm_idx + 1) * ROWS_PER_PERMUTATION - 1;
+        assertions.push(Assertion::single(COL_CARRY_MASK, z_boundary_row, BaseElement::ZERO));
+        assertions.push(Assertion::single(
+            COL_FULL_CARRY_MASK,
+            z_boundary_row,
+            BaseElement::ZERO,
+        ));
+        assertions.push(Assertion::single(COL_RESEED_MASK, z_boundary_row, BaseElement::ONE));
+        assertions.push(Assertion::single(COL_COIN_INIT_MASK, z_boundary_row, BaseElement::ZERO));
+        assertions.push(Assertion::single(
+            COL_COEFF_MASK,
+            z_boundary_row,
+            BaseElement::ZERO,
+        ));
+        assertions.push(Assertion::single(COL_Z_MASK, z_boundary_row, BaseElement::ONE));
+        assertions.push(Assertion::single(
+            COL_DEEP_MASK,
+            z_boundary_row,
+            BaseElement::ZERO,
+        ));
+
+        // --- Deep coefficient draw boundaries (permute-only, full-carry) ----------------------
+        let num_deep_coeffs = RPO_TRACE_WIDTH + 8; // trace_width + num_constraint_comp_cols
+        let num_deep_perms = num_deep_coeffs.div_ceil(RATE_WIDTH);
+        let deep_start_perm_idx = constraint_reseed_perm_idx + 1;
+        for k in 0..num_deep_perms {
+            let perm_idx = deep_start_perm_idx + k;
+            let boundary_row = (perm_idx + 1) * ROWS_PER_PERMUTATION - 1;
+            let is_last = k + 1 == num_deep_perms;
+
+            assertions.push(Assertion::single(COL_CARRY_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_FULL_CARRY_MASK,
+                boundary_row,
+                if is_last { BaseElement::ZERO } else { BaseElement::ONE },
+            ));
+            assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_COEFF_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
+            assertions.push(Assertion::single(COL_Z_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_DEEP_MASK,
+                boundary_row,
+                BaseElement::ONE,
             ));
         }
 

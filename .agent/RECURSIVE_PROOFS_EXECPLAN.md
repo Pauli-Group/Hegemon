@@ -29,8 +29,8 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] (2025-12-11) Phase 2b: Integrate miden-crypto RPO hash into winterfell.
 - [x] (2025-12-11) Phase 2c: Implement RpoAir + RpoStarkProver (RPO permutation proofs).
 - [x] (2025-12-11) Phase 2g: Make inner proofs RPO-friendly (completed: epoch + transaction + batch RPO provers + verifiers).
-- [ ] (2025-12-11) Phase 2d: MerkleVerifierAir + FriVerifierAir (completed: trace layouts, Merkle chaining, FRI folding constraints for folding factor 2, and host-side `InnerProofData::from_proof` extraction with transcript reconstruction; remaining: Merkle commitment authentication for trace/constraint/FRI layers, re‑enable RPO transitions in FRI AIR, and in‑circuit transcript‑derived alphas/positions).
-- [ ] (2025-12-12) Phase 2e: StarkVerifierAir (completed: in‑circuit RPO sponge for inner public inputs **and** transcript seed hashing + coin.init + trace‑commitment reseed, full‑carry coefficient‑draw permutations, and constraint‑commitment reseed boundary enforcement; remaining: explicit in‑circuit checks of derived `constraint_coeffs`, `z`, `deep_coeffs`, `fri_alphas`, and `query_positions`, plus Merkle authentication, full FRI folding + remainder, DEEP composition checks, and tamper‑reject tests).
+- [ ] (2025-12-11) Phase 2d: MerkleVerifierAir + FriVerifierAir (completed: trace layouts, Merkle chaining, FRI folding constraints for folding factor 2, re‑enabled RPO transitions in FRI AIR, minimal FriVerifierProver roundtrip tests, and host-side `InnerProofData::from_proof` extraction with transcript reconstruction; remaining: Merkle commitment authentication for trace/constraint/FRI layers and in‑circuit transcript‑derived alphas/query positions/FRI challenges).
+- [ ] (2025-12-12) Phase 2e: StarkVerifierAir (completed: in‑circuit RPO sponge for inner public inputs + transcript seed hashing, coin.init, trace‑commitment reseed, full‑carry constraint‑composition coefficient draws with witness checks, constraint‑commitment reseed boundary, z draw check, OOD‑reseed boundary, and DEEP‑coefficient draw permutations with witness checks; remaining: in‑circuit checks of `fri_alphas` and `query_positions`, Merkle authentication, full FRI folding + remainder, DEEP composition checks, and tamper‑reject tests).
 - [ ] (2025-12-11) Phase 2f: RecursiveEpochProver verifies inner proofs in‑circuit via StarkVerifierAir.
 - [ ] (2025-12-11) Phase 3: Two‑person testnet recursive sync + light client recursive mode.
 - [ ] Phase 4: Security audit and production hardening.
@@ -46,6 +46,14 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - Observation (2025-12-12): Verifier AIR periodic columns must remain truly periodic over the full power-of-two trace length.
   Evidence: Zeroing periodic columns on padded rows caused winterfell to infer max-degree transition polynomials. Fix was to fill padding with dummy RPO permutations and update TransitionConstraintDegree to account for all periodic multiplications.
   Implication: Any future verifier sub-AIR that stacks permutations must either (a) keep periodic columns periodic and add dummy work, or (b) introduce explicit masking columns and update degrees accordingly.
+
+- Observation (2025-12-12): DEEP composer can panic if stacked permutations are exactly 16‑periodic.
+  Evidence: `FriVerifierProver` hit a DEEP composition assert until stacked RPO inputs were made non‑periodic.
+  Implication: Any verifier trace that stacks permute‑only steps must vary inputs to avoid accidental self‑consistency assumptions in winterfell’s DEEP layer.
+
+- Observation (2025-12-12): Transcript phase ordering needs explicit in‑circuit binding.
+  Evidence: Without fixed stage masks, a malicious prover could shift “draw” boundaries while still satisfying local RPO constraints.
+  Implication: We enforce coeff/z/deep transcript stages via dedicated mask columns asserted at known boundary rows.
 
 - Observation: (From PROOF_AGGREGATION_EXECPLAN) FRAME pallet extrinsics work better with individual parameters than combined structs.
   Evidence: BatchShieldedTransfer in proof aggregation required Debug/Clone/TypeInfo on generic parameters, which complicated the implementation. Using individual parameters for `batch_shielded_transfer(proof, nullifiers, commitments, ...)` was cleaner.
@@ -155,6 +163,14 @@ Implement recursive STARK proof composition where a proof can verify other proof
 
 - Decision (2025-12-12): Keep StarkVerifierAir’s RPO schedule periodic by padding with dummy permutations.
   Rationale: Winterfell assumes periodic columns repeat with the declared cycle. Dummy permutations preserve this assumption without weakening soundness, and degree descriptors were updated to match the actual periodic multiplications (base 7 with three 16-cycles for RPO constraints; base 1 with one 16-cycle for carryover).
+  Date/Author: 2025-12-12.
+
+- Decision (2025-12-12): Bind transcript stages with explicit stage masks and witness equality checks.
+  Rationale: The random‑coin transcript is the security spine of recursion; fixing coeff/z/deep boundaries prevents prover‑chosen reordering while keeping constraints local.
+  Date/Author: 2025-12-12.
+
+- Decision (2025-12-12): Hardcode StarkVerifierAir to RpoAir context and fixed deep‑coeff counts for now.
+  Rationale: We need a working end‑to‑end transcript before generalizing to arbitrary AIR contexts. OOD digest is treated as a private witness until Merkle/DEEP value binding is implemented.
   Date/Author: 2025-12-12.
 
 ## Outcomes & Retrospective
@@ -2947,3 +2963,9 @@ docker-compose -f docker-compose.testnet.yml up --abort-on-container-exit
   - Fixed `RpoAir` constants to exactly match `miden_crypto::hash::rpo::Rpo256` and added a permutation match test.
   - Implemented a minimal `StarkVerifierAir` that proves the RPO sponge hash of inner public inputs, with periodic padding and corrected transition degrees.
   - Added `perm_mask` gating to `MerkleVerifierAir` to disable boundary RPO transitions between stacked permutations.
+- **2025-12-12**: FRI verifier RPO + roundtrip milestone:
+  - Re‑enabled RPO transitions in `FriVerifierAir`, fixed stacked‑perm periodicity, and restored static degree cycles.
+  - Added minimal `FriVerifierProver` with proof roundtrip and tamper‑reject tests.
+- **2025-12-12**: StarkVerifierAir transcript milestones:
+  - Implemented in‑circuit RPO transcript through trace‑commitment reseed, coefficient draws, constraint‑commitment reseed, z draw, OOD reseed (OOD digest as witness), and DEEP coefficient draws.
+  - Added stage masks (`coeff_mask`, `z_mask`, `deep_mask`) and witness equality checks for transcript‑derived challenges.

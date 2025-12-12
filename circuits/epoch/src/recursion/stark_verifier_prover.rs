@@ -15,11 +15,16 @@ use winterfell::{
     TracePolyTable, TraceTable, CompositionPoly, CompositionPolyTrace, Proof, AcceptableOptions,
 };
 
-use super::rpo_air::{STATE_WIDTH, ROWS_PER_PERMUTATION, NUM_ROUNDS, MDS, ARK1, ARK2};
+use super::rpo_air::{
+    STATE_WIDTH, ROWS_PER_PERMUTATION, NUM_ROUNDS, MDS, ARK1, ARK2,
+    TRACE_WIDTH as RPO_TRACE_WIDTH,
+};
 use super::rpo_proof::rpo_hash_elements;
 use super::stark_verifier_air::{
     build_context_prefix, StarkVerifierAir, StarkVerifierPublicInputs, VERIFIER_TRACE_WIDTH,
-    COL_CARRY_MASK, COL_FULL_CARRY_MASK, COL_RESEED_MASK, COL_COIN_INIT_MASK, COL_RESEED_WORD_START,
+    COL_CARRY_MASK, COL_FULL_CARRY_MASK, COL_RESEED_MASK, COL_COIN_INIT_MASK,
+    COL_RESEED_WORD_START, COL_COEFF_MASK, COL_Z_MASK, COL_COEFF_START, COL_Z_VALUE,
+    COL_DEEP_MASK, COL_DEEP_START,
 };
 
 type Blake3 = Blake3_256<BaseElement>;
@@ -76,7 +81,10 @@ impl StarkVerifierProver {
         let num_seed_blocks = seed_len.div_ceil(8).max(1);
 
         let num_coeff_perms = 36usize.div_ceil(8);
-        let active_perms = num_pi_blocks + num_seed_blocks + num_coeff_perms + 2;
+        let num_deep_coeffs = RPO_TRACE_WIDTH + 8;
+        let num_deep_perms = num_deep_coeffs.div_ceil(8);
+        let active_perms =
+            num_pi_blocks + num_seed_blocks + num_coeff_perms + num_deep_perms + 2;
         let active_rows = active_perms * ROWS_PER_PERMUTATION;
         let total_rows = active_rows.next_power_of_two();
 
@@ -125,6 +133,9 @@ impl StarkVerifierProver {
                 full_carry,
                 reseed,
                 coin_init,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
             );
 
@@ -184,6 +195,9 @@ impl StarkVerifierProver {
                 full_carry,
                 reseed,
                 coin_init,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
             );
 
@@ -211,6 +225,9 @@ impl StarkVerifierProver {
             BaseElement::ZERO,
             BaseElement::ONE,
             BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
             self.pub_inputs.trace_commitment,
         );
 
@@ -235,12 +252,18 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ONE,
                 BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 self.pub_inputs.constraint_commitment,
             );
         } else {
             set_masks(
                 &mut trace,
                 perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ONE,
                 BaseElement::ZERO,
@@ -253,6 +276,7 @@ impl StarkVerifierProver {
         for i in 0..STATE_WIDTH {
             coin_state[i] = trace.get(i, last);
         }
+        set_coeff_witness(&mut trace, perm_idx, &coin_state);
         perm_idx += 1;
 
         // --- Additional coefficient permutations (permute-only, full-carry) ----------------
@@ -269,12 +293,18 @@ impl StarkVerifierProver {
                     BaseElement::ZERO,
                     BaseElement::ONE,
                     BaseElement::ZERO,
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
                     self.pub_inputs.constraint_commitment,
                 );
             } else {
                 set_masks(
                     &mut trace,
                     perm_idx,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ONE,
                     BaseElement::ZERO,
@@ -287,6 +317,7 @@ impl StarkVerifierProver {
             for i in 0..STATE_WIDTH {
                 coin_state[i] = trace.get(i, last);
             }
+            set_coeff_witness(&mut trace, perm_idx, &coin_state);
             perm_idx += 1;
         }
 
@@ -296,21 +327,74 @@ impl StarkVerifierProver {
         }
         let row_offset = perm_idx * ROWS_PER_PERMUTATION;
         self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+        // Out-of-domain digest is treated as a private witness for now.
+        let ood_digest = [BaseElement::ZERO; 4];
         set_masks(
             &mut trace,
             perm_idx,
             BaseElement::ZERO,
             BaseElement::ZERO,
+            BaseElement::ONE,
             BaseElement::ZERO,
             BaseElement::ZERO,
-            [BaseElement::ZERO; 4],
+            BaseElement::ONE,
+            BaseElement::ZERO,
+            ood_digest,
         );
 
         let last = row_offset + ROWS_PER_PERMUTATION - 1;
         for i in 0..STATE_WIDTH {
             coin_state[i] = trace.get(i, last);
         }
+        set_z_witness(&mut trace, perm_idx, coin_state[4]);
         perm_idx += 1;
+
+        // Apply OOD reseed before drawing DEEP composition coefficients.
+        for i in 0..4 {
+            coin_state[4 + i] += ood_digest[i];
+        }
+
+        // --- Segment E: DEEP composition coefficient draws (permute-only, full-carry) --------
+        for deep_idx in 0..num_deep_perms {
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+            self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+
+            let is_last = deep_idx + 1 == num_deep_perms;
+            if is_last {
+                set_masks(
+                    &mut trace,
+                    perm_idx,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    [BaseElement::ZERO; 4],
+                );
+            } else {
+                set_masks(
+                    &mut trace,
+                    perm_idx,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    [BaseElement::ZERO; 4],
+                );
+            }
+
+            let last = row_offset + ROWS_PER_PERMUTATION - 1;
+            for i in 0..STATE_WIDTH {
+                coin_state[i] = trace.get(i, last);
+            }
+            set_deep_witness(&mut trace, perm_idx, &coin_state);
+            perm_idx += 1;
+        }
 
         // --- Padding permutations -----------------------------------------------------------
         let total_perms = total_rows / ROWS_PER_PERMUTATION;
@@ -323,6 +407,9 @@ impl StarkVerifierProver {
             set_masks(
                 &mut trace,
                 perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
@@ -396,6 +483,9 @@ fn set_masks(
     full_carry: BaseElement,
     reseed: BaseElement,
     coin_init: BaseElement,
+    coeff_mask: BaseElement,
+    z_mask: BaseElement,
+    deep_mask: BaseElement,
     reseed_word: [BaseElement; 4],
 ) {
     let row_start = perm_idx * ROWS_PER_PERMUTATION;
@@ -405,8 +495,46 @@ fn set_masks(
         trace.set(COL_FULL_CARRY_MASK, row, full_carry);
         trace.set(COL_RESEED_MASK, row, reseed);
         trace.set(COL_COIN_INIT_MASK, row, coin_init);
+        trace.set(COL_COEFF_MASK, row, coeff_mask);
+        trace.set(COL_Z_MASK, row, z_mask);
+        trace.set(COL_DEEP_MASK, row, deep_mask);
         for i in 0..4 {
             trace.set(COL_RESEED_WORD_START + i, row, reseed_word[i]);
+        }
+    }
+}
+
+fn set_coeff_witness(
+    trace: &mut TraceTable<BaseElement>,
+    perm_idx: usize,
+    state: &[BaseElement; STATE_WIDTH],
+) {
+    let row_start = perm_idx * ROWS_PER_PERMUTATION;
+    for r in 0..ROWS_PER_PERMUTATION {
+        let row = row_start + r;
+        for i in 0..8 {
+            trace.set(COL_COEFF_START + i, row, state[4 + i]);
+        }
+    }
+}
+
+fn set_z_witness(trace: &mut TraceTable<BaseElement>, perm_idx: usize, z: BaseElement) {
+    let row_start = perm_idx * ROWS_PER_PERMUTATION;
+    for r in 0..ROWS_PER_PERMUTATION {
+        trace.set(COL_Z_VALUE, row_start + r, z);
+    }
+}
+
+fn set_deep_witness(
+    trace: &mut TraceTable<BaseElement>,
+    perm_idx: usize,
+    state: &[BaseElement; STATE_WIDTH],
+) {
+    let row_start = perm_idx * ROWS_PER_PERMUTATION;
+    for r in 0..ROWS_PER_PERMUTATION {
+        let row = row_start + r;
+        for i in 0..8 {
+            trace.set(COL_DEEP_START + i, row, state[4 + i]);
         }
     }
 }
