@@ -25,6 +25,7 @@
 //! - RPO collision resistance (hash-based, post-quantum)
 
 pub mod fri_air;
+pub mod fri_verifier_prover;
 pub mod merkle_air;
 pub mod recursive_prover;
 pub mod rpo_air;
