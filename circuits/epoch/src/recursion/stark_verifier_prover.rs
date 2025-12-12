@@ -24,7 +24,8 @@ use super::stark_verifier_air::{
     build_context_prefix, StarkVerifierAir, StarkVerifierPublicInputs, VERIFIER_TRACE_WIDTH,
     COL_CARRY_MASK, COL_FULL_CARRY_MASK, COL_RESEED_MASK, COL_COIN_INIT_MASK,
     COL_RESEED_WORD_START, COL_COEFF_MASK, COL_Z_MASK, COL_COEFF_START, COL_Z_VALUE,
-    COL_DEEP_MASK, COL_DEEP_START,
+    COL_DEEP_MASK, COL_DEEP_START, COL_FRI_MASK, COL_FRI_ALPHA_VALUE,
+    COL_POS_MASK, COL_POS_START,
 };
 
 type Blake3 = Blake3_256<BaseElement>;
@@ -55,7 +56,7 @@ impl StarkVerifierProver {
             digest,
             [BaseElement::ZERO; 4],
             [BaseElement::ZERO; 4],
-            vec![],
+            vec![[BaseElement::ZERO; 4], [BaseElement::ZERO; 4]],
             options.num_queries(),
             options.blowup_factor(),
             ROWS_PER_PERMUTATION,
@@ -83,8 +84,23 @@ impl StarkVerifierProver {
         let num_coeff_perms = 36usize.div_ceil(8);
         let num_deep_coeffs = RPO_TRACE_WIDTH + 8;
         let num_deep_perms = num_deep_coeffs.div_ceil(8);
-        let active_perms =
-            num_pi_blocks + num_seed_blocks + num_coeff_perms + num_deep_perms + 2;
+        let num_fri_commitments = self.pub_inputs.fri_commitments.len();
+        let num_fri_layers = num_fri_commitments.saturating_sub(1);
+        let num_fri_alpha_perms = num_fri_layers;
+        let num_remainder_perms = (num_fri_commitments > 0) as usize;
+        let num_pos_perms = if self.pub_inputs.num_queries == 0 {
+            0
+        } else {
+            (self.pub_inputs.num_queries + 1).div_ceil(8)
+        };
+        let active_perms = num_pi_blocks
+            + num_seed_blocks
+            + num_coeff_perms
+            + num_deep_perms
+            + num_fri_alpha_perms
+            + num_remainder_perms
+            + num_pos_perms
+            + 2;
         let active_rows = active_perms * ROWS_PER_PERMUTATION;
         let total_rows = active_rows.next_power_of_two();
 
@@ -133,6 +149,8 @@ impl StarkVerifierProver {
                 full_carry,
                 reseed,
                 coin_init,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
@@ -198,6 +216,8 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
             );
 
@@ -224,6 +244,8 @@ impl StarkVerifierProver {
             BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ONE,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
@@ -255,6 +277,8 @@ impl StarkVerifierProver {
                 BaseElement::ONE,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 self.pub_inputs.constraint_commitment,
             );
         } else {
@@ -266,6 +290,8 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
@@ -296,6 +322,8 @@ impl StarkVerifierProver {
                     BaseElement::ONE,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
                     self.pub_inputs.constraint_commitment,
                 );
             } else {
@@ -307,6 +335,8 @@ impl StarkVerifierProver {
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     [BaseElement::ZERO; 4],
@@ -339,6 +369,8 @@ impl StarkVerifierProver {
             BaseElement::ZERO,
             BaseElement::ONE,
             BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
             ood_digest,
         );
 
@@ -361,17 +393,25 @@ impl StarkVerifierProver {
 
             let is_last = deep_idx + 1 == num_deep_perms;
             if is_last {
+                let has_fri_commitments = num_fri_commitments > 0;
+                let reseed_word = if has_fri_commitments {
+                    self.pub_inputs.fri_commitments[0]
+                } else {
+                    [BaseElement::ZERO; 4]
+                };
                 set_masks(
                     &mut trace,
                     perm_idx,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
-                    BaseElement::ZERO,
+                    if has_fri_commitments { BaseElement::ONE } else { BaseElement::ZERO },
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ONE,
-                    [BaseElement::ZERO; 4],
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    reseed_word,
                 );
             } else {
                 set_masks(
@@ -384,6 +424,8 @@ impl StarkVerifierProver {
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ONE,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
                     [BaseElement::ZERO; 4],
                 );
             }
@@ -394,6 +436,130 @@ impl StarkVerifierProver {
             }
             set_deep_witness(&mut trace, perm_idx, &coin_state);
             perm_idx += 1;
+        }
+
+        // --- Segment F: FRI alpha draws and remainder reseed --------------------------------
+        if num_fri_commitments > 0 {
+            for i in 0..4 {
+                coin_state[4 + i] += self.pub_inputs.fri_commitments[0][i];
+            }
+        }
+
+        for layer_idx in 0..num_fri_layers {
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+            self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+
+            let next_commitment = if layer_idx + 1 < num_fri_layers {
+                self.pub_inputs.fri_commitments[layer_idx + 1]
+            } else {
+                // Reseed with remainder commitment after last alpha.
+                self.pub_inputs.fri_commitments[num_fri_layers]
+            };
+
+            set_masks(
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                next_commitment,
+            );
+
+            let last = row_offset + ROWS_PER_PERMUTATION - 1;
+            for i in 0..STATE_WIDTH {
+                coin_state[i] = trace.get(i, last);
+            }
+            set_fri_alpha_witness(&mut trace, perm_idx, coin_state[4]);
+            perm_idx += 1;
+
+            for i in 0..4 {
+                coin_state[4 + i] += next_commitment[i];
+            }
+        }
+
+        // Placeholder proof-of-work nonce for query grinding.
+        // Full recursion will bind this to the inner proof's pow_nonce.
+        let pow_nonce_elem = BaseElement::ZERO;
+        let nonce_word = [
+            pow_nonce_elem,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+        ];
+        let remainder_reseed = if num_pos_perms > 0 {
+            BaseElement::ONE
+        } else {
+            BaseElement::ZERO
+        };
+
+        if num_fri_commitments > 0 {
+            // Remainder permutation (no alpha draw).
+            let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+            self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+            set_masks(
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                remainder_reseed,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                nonce_word,
+            );
+
+            let last = row_offset + ROWS_PER_PERMUTATION - 1;
+            for i in 0..STATE_WIDTH {
+                coin_state[i] = trace.get(i, last);
+            }
+            perm_idx += 1;
+        }
+
+        // --- Query position draw permutations ----------------------------------------------
+        if num_pos_perms > 0 {
+            // Absorb nonce into the coin before the first draw permutation.
+            coin_state[4] += pow_nonce_elem;
+
+            for pos_idx in 0..num_pos_perms {
+                let row_offset = perm_idx * ROWS_PER_PERMUTATION;
+                self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+
+                let is_last = pos_idx + 1 == num_pos_perms;
+                set_masks(
+                    &mut trace,
+                    perm_idx,
+                    BaseElement::ZERO,
+                    if is_last {
+                        BaseElement::ZERO
+                    } else {
+                        BaseElement::ONE
+                    },
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ONE,
+                    [BaseElement::ZERO; 4],
+                );
+
+                let last = row_offset + ROWS_PER_PERMUTATION - 1;
+                for i in 0..STATE_WIDTH {
+                    coin_state[i] = trace.get(i, last);
+                }
+                set_pos_witness(&mut trace, perm_idx, &coin_state);
+                perm_idx += 1;
+            }
         }
 
         // --- Padding permutations -----------------------------------------------------------
@@ -407,6 +573,8 @@ impl StarkVerifierProver {
             set_masks(
                 &mut trace,
                 perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
@@ -486,6 +654,8 @@ fn set_masks(
     coeff_mask: BaseElement,
     z_mask: BaseElement,
     deep_mask: BaseElement,
+    fri_mask: BaseElement,
+    pos_mask: BaseElement,
     reseed_word: [BaseElement; 4],
 ) {
     let row_start = perm_idx * ROWS_PER_PERMUTATION;
@@ -498,6 +668,8 @@ fn set_masks(
         trace.set(COL_COEFF_MASK, row, coeff_mask);
         trace.set(COL_Z_MASK, row, z_mask);
         trace.set(COL_DEEP_MASK, row, deep_mask);
+        trace.set(COL_FRI_MASK, row, fri_mask);
+        trace.set(COL_POS_MASK, row, pos_mask);
         for i in 0..4 {
             trace.set(COL_RESEED_WORD_START + i, row, reseed_word[i]);
         }
@@ -525,6 +697,17 @@ fn set_z_witness(trace: &mut TraceTable<BaseElement>, perm_idx: usize, z: BaseEl
     }
 }
 
+fn set_fri_alpha_witness(
+    trace: &mut TraceTable<BaseElement>,
+    perm_idx: usize,
+    alpha: BaseElement,
+) {
+    let row_start = perm_idx * ROWS_PER_PERMUTATION;
+    for r in 0..ROWS_PER_PERMUTATION {
+        trace.set(COL_FRI_ALPHA_VALUE, row_start + r, alpha);
+    }
+}
+
 fn set_deep_witness(
     trace: &mut TraceTable<BaseElement>,
     perm_idx: usize,
@@ -535,6 +718,20 @@ fn set_deep_witness(
         let row = row_start + r;
         for i in 0..8 {
             trace.set(COL_DEEP_START + i, row, state[4 + i]);
+        }
+    }
+}
+
+fn set_pos_witness(
+    trace: &mut TraceTable<BaseElement>,
+    perm_idx: usize,
+    state: &[BaseElement; STATE_WIDTH],
+) {
+    let row_start = perm_idx * ROWS_PER_PERMUTATION;
+    for r in 0..ROWS_PER_PERMUTATION {
+        let row = row_start + r;
+        for i in 0..8 {
+            trace.set(COL_POS_START + i, row, state[4 + i]);
         }
     }
 }
@@ -636,6 +833,7 @@ fn apply_inv_sbox(state: &mut [BaseElement; STATE_WIDTH]) {
 mod tests {
     use super::*;
     use winterfell::verify;
+    use winterfell::Trace;
 
     #[test]
     fn test_pub_inputs_hash_proof_roundtrip() {
@@ -684,5 +882,46 @@ mod tests {
                 &acceptable,
             );
         assert!(bad.is_err());
+    }
+
+    #[test]
+    fn test_query_position_witness_tamper_fails() {
+        let options = super::super::rpo_proof::RpoProofOptions::fast().to_winter_options();
+        let inner_public_inputs: Vec<BaseElement> =
+            (0..24).map(|i| BaseElement::new(i as u64 + 1)).collect();
+
+        let digest = rpo_hash_elements(&inner_public_inputs);
+        let pub_inputs = StarkVerifierPublicInputs::new(
+            inner_public_inputs.clone(),
+            digest,
+            [BaseElement::ZERO; 4],
+            [BaseElement::ZERO; 4],
+            vec![[BaseElement::ZERO; 4], [BaseElement::ZERO; 4]],
+            options.num_queries(),
+            options.blowup_factor(),
+            ROWS_PER_PERMUTATION,
+        );
+
+        let prover = StarkVerifierProver::new(options.clone(), pub_inputs.clone());
+        let mut trace = prover.build_trace_for_pub_inputs_hash();
+
+        // Find a row in a query-position permutation and tamper with its witness.
+        let mut tampered = false;
+        for row in 0..trace.length() {
+            if trace.get(COL_POS_MASK, row) == BaseElement::ONE
+                && row % ROWS_PER_PERMUTATION == ROWS_PER_PERMUTATION - 1
+            {
+                let val = trace.get(COL_POS_START, row);
+                trace.set(COL_POS_START, row, val + BaseElement::ONE);
+                tampered = true;
+                break;
+            }
+        }
+        assert!(tampered, "expected at least one query-position permutation");
+
+        let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prover.prove(trace)
+        }));
+        assert!(prove_result.is_err());
     }
 }

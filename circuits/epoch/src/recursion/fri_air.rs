@@ -192,6 +192,11 @@ pub(crate) const COL_F_NEG_X: usize = STATE_WIDTH + 1;
 pub(crate) const COL_ALPHA: usize = STATE_WIDTH + 2;
 pub(crate) const COL_X: usize = STATE_WIDTH + 3;
 pub(crate) const COL_F_NEXT: usize = STATE_WIDTH + 4;
+pub(crate) const COL_FOLD_MASK: usize = STATE_WIDTH + 5;
+pub(crate) const COL_REM_MASK: usize = STATE_WIDTH + 6;
+pub(crate) const COL_X_REM: usize = STATE_WIDTH + 7;
+pub(crate) const COL_REM_COEFF: usize = STATE_WIDTH + 8;
+pub(crate) const COL_REM_ACC: usize = STATE_WIDTH + 9;
 
 impl Air for FriVerifierAir {
     type BaseField = BaseElement;
@@ -199,9 +204,10 @@ impl Air for FriVerifierAir {
 
     fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
         // Constraints:
-        // - RPO constraints for Merkle verification (degree 8)
-        // - Folding constraints (degree 2)
-        let num_constraints = STATE_WIDTH + 1; // RPO state + 1 folding
+        // - RPO constraints for Merkle verification (degree 7, periodic)
+        // - Folding constraints gated on permutation boundaries
+        // - Remainder polynomial Horner checks (gated by rem_mask + periodic masks)
+        let num_constraints = STATE_WIDTH + 5; // RPO state + folding + 4 remainder constraints
         let mut degrees = Vec::with_capacity(num_constraints);
 
         // RPO transition constraints are gated by:
@@ -218,8 +224,40 @@ impl Air for FriVerifierAir {
             ));
         }
 
-        // Folding constraint degree will be refined once full FRI layout lands.
-        degrees.push(TransitionConstraintDegree::new(1));
+        // Folding constraint is quadratic in trace columns, multiplied by a trace mask and a
+        // periodic boundary selector.
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            3,
+            vec![ROWS_PER_PERMUTATION],
+        ));
+
+        // Remainder Horner update constraint:
+        // rem_mask * horner_mask * perm_mask * (acc_next - (acc * x_rem + coeff))
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            3,
+            vec![ROWS_PER_PERMUTATION, ROWS_PER_PERMUTATION],
+        ));
+
+        // Remainder accumulator freeze constraint for rows >= 8:
+        // rem_mask * (1-horner_mask) * perm_mask * (acc_next - acc)
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            2,
+            vec![ROWS_PER_PERMUTATION, ROWS_PER_PERMUTATION],
+        ));
+
+        // Remainder accumulator initialization at local_row == 0:
+        // rem_mask * first_row_mask * acc_current
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            2,
+            vec![ROWS_PER_PERMUTATION],
+        ));
+
+        // Boundary equality between Horner result and folded remainder evaluation:
+        // rem_mask * boundary_mask * (acc_current - f_next)
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            2,
+            vec![ROWS_PER_PERMUTATION],
+        ));
 
         // Assertions: bind the first layer commitment at row 0.
         // Full per-layer binding will be added once Merkle auth is wired in.
@@ -244,11 +282,13 @@ impl Air for FriVerifierAir {
         let next = frame.next();
 
         // Periodic values layout:
-        // [half_round_type, ark[0..STATE_WIDTH], perm_mask, folding_mask]
+        // [half_round_type, ark[0..STATE_WIDTH], perm_mask, horner_mask, first_row_mask]
         let half_round_type = periodic_values[0];
         let ark: [E; STATE_WIDTH] = core::array::from_fn(|i| periodic_values[1 + i]);
         let perm_mask = periodic_values[1 + STATE_WIDTH];
-        let folding_mask = periodic_values[1 + STATE_WIDTH + 1];
+        let horner_mask = periodic_values[2 + STATE_WIDTH];
+        let first_row_mask = periodic_values[3 + STATE_WIDTH];
+        let boundary_mask = E::ONE - perm_mask;
 
         // Build MDS result: MDS(current)
         let mut mds_result: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
@@ -305,12 +345,35 @@ impl Air for FriVerifierAir {
         let f_x = current[COL_F_X];
         let f_neg_x = current[COL_F_NEG_X];
         let alpha = current[COL_ALPHA];
+        // x must include the FRI domain offset (BaseElement::GENERATOR).
         let x = current[COL_X];
         let f_next = current[COL_F_NEXT];
 
         let lhs = two * x * f_next;
         let rhs = (x + alpha) * f_x + (x - alpha) * f_neg_x;
-        result[STATE_WIDTH] = folding_mask * (lhs - rhs);
+        let fold_mask = current[COL_FOLD_MASK];
+        result[STATE_WIDTH] = boundary_mask * fold_mask * (lhs - rhs);
+
+        // Remainder polynomial Horner evaluation (coefficients provided in reverse order).
+        let rem_mask = current[COL_REM_MASK];
+        let x_rem = current[COL_X_REM];
+        let coeff = current[COL_REM_COEFF];
+        let acc = current[COL_REM_ACC];
+        let acc_next = next[COL_REM_ACC];
+
+        // Horner update on local_row 0..7
+        let horner_update = acc_next - (acc * x_rem + coeff);
+        result[STATE_WIDTH + 1] = rem_mask * horner_mask * perm_mask * horner_update;
+
+        // Freeze accumulator on local_row 8..14
+        let freeze_update = acc_next - acc;
+        result[STATE_WIDTH + 2] = rem_mask * (E::ONE - horner_mask) * perm_mask * freeze_update;
+
+        // Initialize accumulator to zero on local_row 0
+        result[STATE_WIDTH + 3] = rem_mask * first_row_mask * acc;
+
+        // Final Horner result must match folded remainder evaluation on boundary row.
+        result[STATE_WIDTH + 4] = rem_mask * boundary_mask * (acc - f_next);
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
@@ -325,15 +388,16 @@ impl Air for FriVerifierAir {
 
     fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
         // Periodic columns:
-        // - Disable RPO transitions for now (half_round_type=0, ark=0)
-        // - Folding mask always on.
+        // - RPO permutation schedule (half_round_type + ark)
+        // - perm_mask disables boundary transitions.
         let total_rows = self.trace_length();
 
         let mut half_round_type = Vec::with_capacity(total_rows);
         let mut ark_columns: [Vec<BaseElement>; STATE_WIDTH] =
             core::array::from_fn(|_| Vec::with_capacity(total_rows));
         let mut perm_mask = Vec::with_capacity(total_rows);
-        let mut folding_mask = Vec::with_capacity(total_rows);
+        let mut horner_mask = Vec::with_capacity(total_rows);
+        let mut first_row_mask = Vec::with_capacity(total_rows);
 
         for row in 0..total_rows {
             let local_row = row % ROWS_PER_PERMUTATION;
@@ -365,8 +429,12 @@ impl Air for FriVerifierAir {
             let mask = (local_row < ROWS_PER_PERMUTATION - 1) as u64;
             perm_mask.push(BaseElement::new(mask));
 
-            // Folding checks are currently applied on every row.
-            folding_mask.push(BaseElement::ONE);
+            // Horner runs on the first 8 rows of a remainder permutation.
+            let hmask = (local_row < 8) as u64;
+            horner_mask.push(BaseElement::new(hmask));
+
+            let fmask = (local_row == 0) as u64;
+            first_row_mask.push(BaseElement::new(fmask));
         }
 
         let mut result = vec![half_round_type];
@@ -374,7 +442,8 @@ impl Air for FriVerifierAir {
             result.push(col);
         }
         result.push(perm_mask);
-        result.push(folding_mask);
+        result.push(horner_mask);
+        result.push(first_row_mask);
         result
     }
 }

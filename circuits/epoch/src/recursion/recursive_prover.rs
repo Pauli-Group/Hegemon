@@ -573,7 +573,7 @@ impl InnerProofData {
             .draw()
             .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
 
-        // reseed with OOD evaluations digest
+        // reseed with OOD evaluations digest (trace frame + quotient frame)
         let ood_evals = merge_ood_evaluations(&ood_trace_frame, &ood_constraint_frame);
         let ood_digest = Rpo256::hash_elements(&ood_evals);
         coin.reseed(ood_digest);
@@ -583,13 +583,21 @@ impl InnerProofData {
             .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
 
         // FRI commit phase: reseed with each layer commitment and draw alpha.
-        let mut fri_alphas = Vec::with_capacity(fri_roots.len());
-        for commitment in fri_roots.iter() {
+        // The final FRI commitment is the remainder commitment; it is reseeded
+        // but does not have an associated alpha draw.
+        let num_fri_layers = fri_roots.len().saturating_sub(1);
+        let mut fri_alphas = Vec::with_capacity(num_fri_layers);
+        for commitment in fri_roots.iter().take(num_fri_layers) {
             coin.reseed(*commitment);
             let alpha: BaseElement = coin
                 .draw()
                 .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
             fri_alphas.push(alpha);
+        }
+
+        // Reseed with remainder commitment before drawing query positions.
+        if let Some(remainder_commitment) = fri_roots.last() {
+            coin.reseed(*remainder_commitment);
         }
 
         // draw query positions
@@ -914,6 +922,7 @@ mod tests {
         assert_eq!(data.blowup_factor, proof.options().blowup_factor());
         assert_eq!(data.trace_length, proof.trace_info().length());
         assert_eq!(data.query_positions.len(), proof.num_unique_queries as usize);
+        assert_eq!(data.fri_alphas.len(), data.fri_layers.len());
     }
 
     #[test]
