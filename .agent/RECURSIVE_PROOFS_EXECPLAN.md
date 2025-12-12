@@ -1875,17 +1875,25 @@ This step builds the two sub‑verifiers that `StarkVerifierAir` composes.
 
 **Work remaining**:
 1. **MerkleVerifierAir**
-   - Hash queried leaves in‑circuit exactly as winterfell does (including partitioned row hashing for trace and constraint composition columns).
-   - For each query position, verify Merkle authentication paths for:
-     - trace LDE leaves against `trace_commitment`,
-     - constraint composition leaves against `constraint_commitment`,
-     - each FRI layer’s leaves against `fri_commitments[layer]`.
-   - Bind roots to public inputs and add tamper‑reject tests (flip a sibling, swap a path, change a root → outer proof fails).
+   - **Model winterfell leaf hashing in‑circuit**.
+     - Trace leaves: hash the full trace row with the RPO sponge exactly as `hash_row_rpo()` / `Rpo256::hash_elements()` do. For RpoAir inner proofs this is a 13‑element row ⇒ 2 sponge blocks. Add fixed periodic selectors in the outer AIR so the capacity carries across the intra‑leaf boundary while the rate is overwritten by the next block.
+     - Constraint leaves: hash the constraint‑composition row (currently 8 elements) as a single sponge block.
+     - FRI leaves: hash each folded pair (2 elements) as a single sponge block.
+     - Enforce correct sponge initialization per leaf: capacity[0]=len%8, capacity[1..3]=0 on each leaf start, and capacity carry between blocks.
+   - **Model winterfell Merkle path chaining in‑circuit**.
+     - After leaf hashing, run one RPO permutation per Merkle level, matching `Rpo256::merge(left,right)` (capacity=0, rate=left||right, digest in rate[0..3]).
+     - Add a trace column `path_bit` per permutation to choose left/right order, and enforce `path_bit ∈ {0,1}` on every Merkle boundary.
+     - Add a full‑length periodic `merkle_chain_mask` so the digest‑to‑next‑level binding is non‑optional.
+   - **Deterministic stacking order**.
+     - Fix the order of all authenticated openings in the outer trace: for each query do trace leaf→trace path→constraint leaf→constraint path→FRI layer 0 leaf→path→… for every committed FRI layer. This order must be reflected both in `StarkVerifierAir::get_periodic_column_values()` and in the prover trace builder.
+   - **Root binding + tests**.
+     - At the end of each authenticated path, enforce equality to the corresponding public‑input root (`trace_commitment`, `constraint_commitment`, and each `fri_commitments[layer]` excluding the remainder).
+     - Add tamper‑reject tests: flip a leaf element, flip a sibling, swap path order, or change a root ⇒ outer proof fails.
 
 2. **FriVerifierAir**
    - For each query and each FRI layer, enforce degree‑respecting projection (DRP) folding using the `fri_alphas` challenges derived in `StarkVerifierAir`.
    - Recompute folded positions per layer (folding factor 2) and bind them to the Merkle openings used above.
-   - Verify the remainder polynomial by Horner evaluation at the final folded positions (matches `winter-fri` remainder handling).
+   - Verify the remainder polynomial by Horner evaluation at the final folded positions (matches `winter-fri` remainder handling). **Horner checks are implemented; remaining is binding the final DRP fold output into the remainder evaluation once Merkle/transcript wiring is complete.**
    - Add a prover trace builder that consumes `InnerProofData.fri_layers` / `fri_remainder`, plus tamper‑reject tests (wrong layer value, wrong alpha, wrong remainder).
 
 **Success criteria**:
@@ -1907,7 +1915,15 @@ This step builds the two sub‑verifiers that `StarkVerifierAir` composes.
    - Add witness columns for query positions (or a commitment to them) and check against the drawn values; then enforce sort/dedup to match `num_unique_queries`.
 
 2. **Integrate MerkleVerifierAir**
-   - For each query position, authenticate trace/constraint/FRI leaves against commitments using the Merkle sub‑AIR.
+   - Append a Merkle authentication segment after the transcript segment in `stark_verifier_air.rs`.
+   - Reuse RPO state columns for leaf hashing and Merkle merges.
+   - Add fixed periodic selectors for:
+     - leaf sponge init (`len%8` in capacity[0]) and intra‑leaf capacity carry,
+     - Merkle merge init (capacity zero),
+     - digest‑chaining between Merkle levels,
+     - one‑hot root checks per tree type/layer.
+   - Add a trace column for per‑level `path_bit` and enforce binary + correct left/right chaining.
+   - **Note**: binding Merkle indexes to transcript‑drawn query positions is deferred until full `draw_integers` modeling (step 1) is in place; current Merkle work assumes provided positions/bits are correct and focuses on hashing/path soundness.
 
 3. **Integrate FriVerifierAir**
    - Use bound `fri_alphas` + query positions to verify all FRI layers and the remainder polynomial in‑circuit.
@@ -2982,3 +2998,6 @@ docker-compose -f docker-compose.testnet.yml up --abort-on-container-exit
 - **2025-12-12**: FRI alpha stage + remainder ordering fix:
   - Fixed host‑side transcript reconstruction to reseed (but not draw alpha) for the remainder commitment.
   - Added FRI commitment reseeds and alpha draw stage to `StarkVerifierAir`/`StarkVerifierProver` with `fri_mask` and alpha witness checks.
+- **2025-12-12**: Expanded Phase 2d/2e Merkle tasks:
+  - Broke out leaf sponge initialization/chaining, Merkle merge chaining, and deterministic stacking order required for true recursion.
+  - Documented periodic selector approach and noted deferral of binding Merkle indexes to transcript‑drawn query positions until full `draw_integers` modeling lands.
