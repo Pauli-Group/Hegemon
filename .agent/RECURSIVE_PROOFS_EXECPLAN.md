@@ -16,28 +16,26 @@ Implement recursive STARK proof composition where a proof can verify other proof
 
 ## Progress
 
-- [x] Draft plan: capture scope, context, and work breakdown.
-- [x] Phase 0: Create epoch crate skeleton and validate dimensions.
-- [x] Phase 1a: Implement Merkle tree (compute_proof_root, generate_merkle_proof, verify_merkle_proof).
-- [x] Phase 1b: Create Epoch types and mock EpochProver stub.
-- [x] Phase 1c: Implement EpochProofAir with Poseidon constraints (adapting BatchTransactionAir pattern).
-- [x] Phase 1d: Real EpochProver with trace generation.
-- [x] Phase 1e: Light client verification API.
-- [x] Phase 1f: Pallet integration (storage, events, extrinsics).
-- [x] Phase 1g: Two-node integration testing.
-- [x] Phase 2a: Research spike - minimal verifier circuit feasibility.
-- [x] Phase 2b: Integrate miden-crypto RPO hash into winterfell.
-- [x] Phase 2c: Implement RpoAir (RPO permutation as AIR constraints).
-- [x] Phase 2d: Implement FriVerifierAir + MerkleVerifierAir.
-- [x] Phase 2e: Implement StarkVerifierAir (full recursive verifier).
-- [x] Phase 2f: RecursiveEpochProver and testnet integration exports.
-- [x] Phase 3a: Full RPO STARK prover (RpoStarkProver with Rpo256/RpoRandomCoin).
-- [x] Phase 3b: Wire real STARK prover to RecursiveEpochProver.
-- [x] Phase 3c: Pallet integration (RecursiveEpochProver replaces MockEpochProver).
-- [x] Phase 3d: Two-person testnet validation (documented in runbooks/two_person_testnet.md).
+- [x] (2025-12-10) Draft plan: capture scope, context, and work breakdown.
+- [x] (2025-12-10) Phase 0: Create epoch crate skeleton and validate dimensions.
+- [x] (2025-12-10) Phase 1a: Implement Merkle tree (compute_proof_root, generate_merkle_proof, verify_merkle_proof).
+- [x] (2025-12-10) Phase 1b: Create Epoch types and mock EpochProver stub.
+- [x] (2025-12-10) Phase 1c: Implement EpochProofAir with Poseidon constraints (adapting BatchTransactionAir pattern).
+- [x] (2025-12-10) Phase 1d: Real EpochProver with trace generation.
+- [x] (2025-12-10) Phase 1e: Light client verification API.
+- [x] (2025-12-10) Phase 1f: Pallet integration (storage, events, extrinsics).
+- [x] (2025-12-10) Phase 1g: Two-node integration testing.
+- [x] (2025-12-10) Phase 2a: Research spike - minimal verifier circuit feasibility.
+- [x] (2025-12-11) Phase 2b: Integrate miden-crypto RPO hash into winterfell.
+- [x] (2025-12-11) Phase 2c: Implement RpoAir + RpoStarkProver (RPO permutation proofs).
+- [x] (2025-12-11) Phase 2g: Make inner proofs RPO-friendly (completed: epoch + transaction + batch RPO provers + verifiers).
+- [ ] (2025-12-11) Phase 2d: MerkleVerifierAir + FriVerifierAir (completed: trace layouts, Merkle chaining, FRI folding constraints for folding factor 2, and host-side `InnerProofData::from_proof` extraction with transcript reconstruction; remaining: Merkle commitment authentication for trace/constraint/FRI layers, re‑enable RPO transitions in FRI AIR, and in‑circuit transcript‑derived alphas/positions).
+- [ ] (2025-12-11) Phase 2e: StarkVerifierAir (completed: RPO transcript skeleton; remaining: full winterfell verifier logic + tamper‑reject tests).
+- [ ] (2025-12-11) Phase 2f: RecursiveEpochProver verifies inner proofs in‑circuit via StarkVerifierAir.
+- [ ] (2025-12-11) Phase 3: Two‑person testnet recursive sync + light client recursive mode.
 - [ ] Phase 4: Security audit and production hardening.
 
-**Current status**: Phase 3c complete. Full recursive STARK proof generation now integrated into the shielded-pool pallet. The `finalize_epoch_internal` function uses `RecursiveEpochProver` to generate real RPO-based STARK proofs. All 114 epoch-circuit tests pass. Pure STARKs over algebraic hash - no elliptic curves, quantum resistant.
+**Current status (2025-12-12)**: Phase 1 shipped and is live in the pallet. RPO groundwork exists (`RpoAir`, `RpoStarkProver`, and skeleton verifier AIRs). Epoch, transaction, and batch proofs now support RPO Fiat‑Shamir, and inner RPO proofs can be parsed into recursion witness via `InnerProofData::from_proof`. True recursion is **not** yet implemented: verifier AIRs still enforce only partial winterfell logic (Merkle auth and FRI folding are incomplete, transcript challenges are not checked in‑circuit), and `RecursiveEpochProver` does not yet verify inner proofs. Work is now focused on Phase 2d → 2e → 2f to deliver proof‑of‑proof recursion.
 
 ## Surprises & Discoveries
 
@@ -101,6 +99,10 @@ Implement recursive STARK proof composition where a proof can verify other proof
   Evidence: RpoProofOptions with blowup_factor=8 failed; required blowup_factor=32 for degree-8 constraints with cycle length 16.
   Implication: For RPO constraints: blowup >= 2 * 16 = 32 (cycle length determines minimum blowup).
 
+- Observation (2025-12-11): BatchTransactionProver needed real public inputs during proving.
+  Evidence: With get_pub_inputs returning `BatchPublicInputs::default()`, winterfell panicked (`at least one assertion must be specified`) when proving batch traces.
+  Implication: Batch provers now store extracted `BatchPublicInputs` during `prove_batch` so AIR assertions are satisfied for both Blake3 and RPO paths.
+
 - Observation: miden-crypto 0.19.2 uses winter-crypto 0.13, which is compatible with winterfell 0.13.1.
   Evidence: Both use identical BaseElement (Goldilocks field) and the same Hasher/RandomCoin traits.
   Implication: Direct dependency works without version conflicts. RPO and Blake3 can coexist in the same project.
@@ -134,6 +136,10 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - Decision: Dual-mode proof system (Blake3 for native, RPO for recursion).
   Rationale: Native proofs (transaction, epoch) continue using Blake3 for maximum verification speed. Recursive proofs use RPO Fiat-Shamir, accepting slightly higher native verification cost in exchange for 20x cheaper in-circuit verification. The inner proof is committed to via RPO hash, verified via StarkVerifierAir.
   Date/Author: 2025-12-10.
+
+- Decision: Pursue full proof‑of‑proof recursion now, starting with RPO inner proofs.
+  Rationale: Groundwork for RPO Fiat‑Shamir exists, but true recursion requires (1) inner transaction/batch proofs to use RPO and (2) verifier AIRs to enforce the full winterfell STARK verifier. User priority is O(1) recursive sync, so we will complete Phase 2g → 2d/2e → 2f rather than treating recursion as a future research item.
+  Date/Author: 2025-12-11.
 
 ## Outcomes & Retrospective
 
@@ -227,7 +233,7 @@ Architecture for true recursion:
 
 This is pure STARKs over algebraic hash - no elliptic curves anywhere in the proof system.
 
-**Phase 2 Complete (2025-12-11)**:
+**Phase 2 Groundwork Complete (2025-12-11)**:
 
 Files created (~3,100 lines total):
 - `circuits/epoch/src/recursion/mod.rs` - Module exports and documentation (43 lines)
@@ -246,7 +252,7 @@ Files modified:
 Test results:
 - 107 epoch-circuit tests passed
 - 47 recursion-specific tests passed
-- End-to-end RPO STARK proof generation and verification works
+- End‑to‑end RPO permutation proof generation and native verification works
 
 Key technical achievements:
 1. **RPO Algebraic Hash** (~13 columns vs ~100+ for Blake3)
@@ -255,31 +261,28 @@ Key technical achievements:
    - Full S-box constraints (forward x^7, inverse verification)
    - ROWS_PER_PERMUTATION=16 (power of 2 for FRI)
 
-2. **Merkle Verification in AIR**
-   - MerkleVerifierAir can verify Merkle authentication paths using RPO
-   - Digest width of 4 field elements (256 bits)
+2. **Merkle Verification in AIR (skeleton)**
+   - MerkleVerifierAir stacks RPO permutations and asserts leaf/root shapes
+   - Full cross‑level chaining and path‑bit enforcement still TODO
 
-3. **FRI Folding Verification**
-   - FriFoldingAir for polynomial commitment verification in-circuit
-   - Query position verification with algebraic constraints
+3. **FRI Folding Verification (skeleton)**
+   - FriFoldingVerifier utility is correct and tested
+   - FriVerifierAir trace + RPO constraints exist, but real folding/authentication constraints still TODO
 
-4. **StarkVerifierAir**
-   - Composes RPO, Merkle, and FRI into complete verification circuit
-   - Phases: COMMIT → QUERY → FOLD → FINAL
-   - Deep composition polynomial evaluation
+4. **StarkVerifierAir (skeleton)**
+   - RPO transcript / periodic columns are wired
+   - Full winterfell verifier logic (queries, DEEP, FRI, Merkle auth) still TODO
 
-5. **RecursiveEpochProver**
-   - Uses RPO-based proof accumulator (rpo_merge for Merkle-like accumulation)
-   - Exported at `epoch_circuit::RecursiveEpochProver`
-   - Mock recursive proof generation (foundation for full recursion)
-   - verify_epoch_proof() for proof validation
+5. **RecursiveEpochProver (groundwork)**
+   - Uses RPO‑based proof accumulator and proves an RPO permutation over it
+   - Does **not** yet verify inner STARK proofs in‑circuit
 
 Proof options:
 - Default blowup_factor: 32 (required for degree-8 constraints with cycle 16)
 - FRI remainder max degree: 7 (must be 2^k - 1)
 - Supports both fast (testing) and production options
 
-**Phase 3 Complete (2025-12-11)**:
+**Phase 3 Groundwork Complete (2025-12-11)**:
 
 Files created:
 - `circuits/epoch/src/recursion/rpo_stark_prover.rs` - Full winterfell Prover using Rpo256 and RpoRandomCoin (~410 lines)
@@ -309,10 +312,10 @@ Test results:
 - Pallet compiles with `epoch-proofs` feature
 
 Key technical achievements:
-1. **Real STARK Proofs** - No more mock proofs; actual RPO-based STARK generation
-2. **Drop-in Integration** - RecursiveEpochProver API unchanged, pallet just works
+1. **Real RPO STARK Proofs** - No more mock epoch proofs; actual RPO‑based permutation proofs
+2. **Drop‑in Integration** - RecursiveEpochProver API unchanged; pallet emits RPO epoch proofs
 3. **Proof Serialization** - proof.to_bytes() for storage, Proof::from_bytes() for deserialization
-4. **Pallet Ready** - RecursiveEpochProver integrated at epoch boundary finalization
+4. **Groundwork for Recursion** - proof‑of‑proof verification still pending (Phase 2d/2e/2f)
 
 Quantum resistance:
 - Pure STARKs - no elliptic curves anywhere
@@ -1792,6 +1795,28 @@ Create `circuits/epoch/src/recursion/rpo_air.rs`:
 - RpoAir proof verifies
 - Output matches miden_crypto::hash::rpo::Rpo256::hash()
 
+#### Step 2g: Make Inner Proofs RPO‑Friendly (2 weeks)
+
+**Goal**: Ensure all *inner* proofs that will be verified recursively (transaction proofs and batch transaction proofs) are generated using RPO‑based Fiat‑Shamir instead of Blake3. Without this, the outer verifier AIR cannot cheaply reconstruct the Fiat‑Shamir transcript.
+
+Work required:
+1. Add `miden-crypto` to `circuits/transaction` and `circuits/batch` crates.
+2. Create RPO variants of the existing winterfell provers:
+   - `TransactionProverStarkRpo` in `circuits/transaction/src/rpo_prover.rs`
+   - `BatchTransactionProverRpo` in `circuits/batch/src/rpo_prover.rs`
+   Each should:
+   - Reuse the existing AIR and trace builders.
+   - Set `HashFn = Rpo256`, `RandomCoin = RpoRandomCoin`, and `VC = MerkleTree<Rpo256>`.
+3. Add matching native verifiers:
+   - `verify_transaction_proof_rpo()` in `circuits/transaction/src/rpo_verifier.rs`
+   - `verify_batch_proof_rpo()` in `circuits/batch/src/rpo_verifier.rs`
+4. Export these from the crates behind a `rpo-fiat-shamir` (or `recursion`) feature flag so we can switch epoch finalization to RPO proofs without breaking the Blake3 default.
+
+**Success criteria**:
+- `cargo test -p transaction-circuit rpo_proofs` passes: RPO transaction proofs verify, and a tampered proof fails.
+- `cargo test -p batch-circuit rpo_proofs` passes: RPO batch proofs verify, and a tampered proof fails.
+- Proof bytes remain stable and round‑trip via `Proof::to_bytes()` / `Proof::from_bytes()`.
+
 #### Step 2d: Implement FriVerifierAir + MerkleVerifierAir (2 weeks)
 
 **MerkleVerifierAir**: Verify Merkle authentication paths using RpoAir
@@ -2101,6 +2126,7 @@ Expected: Bob syncs via single recursive proof
 | miden-crypto added | `cargo check -p epoch-circuit` | No errors |
 | RpoRandomCoin compat | `cargo test rpo_random_coin_compat` | Works with winterfell 0.13.1 |
 | RpoAir correctness | `cargo test rpo_air` | Output matches miden-crypto |
+| Inner RPO proofs (tx + batch) | `cargo test -p transaction-circuit rpo_proofs` and `cargo test -p batch-circuit rpo_proofs` | Inner proofs verify natively and reject tampering |
 | MerkleVerifierAir | `cargo test merkle_verifier_air` | Correct paths verified |
 | FriVerifierAir | `cargo test fri_verifier_air` | Correct folding verified |
 | StarkVerifierAir | `cargo test stark_verifier_air` | Inner proofs verified |
@@ -2889,3 +2915,12 @@ docker-compose -f docker-compose.testnet.yml up --abort-on-container-exit
   - Verification checklist for epoch sync validation
   - Docker Compose configuration for containerized testing
   - Added Phase 1g to Progress tracker
+- **2025-12-11**: Truth‑aligned Phase 2/3 status and re‑planned for true recursion:
+  - Corrected Progress/Current status to reflect groundwork vs. full recursion
+  - Renamed Phase 2/3 outcomes to “Groundwork”
+  - Added Step 2g and acceptance criteria for RPO inner proofs
+  - Added Decision Log entry to pursue proof‑of‑proof recursion now
+- **2025-12-12**: Phase 2g completed and recursion witness plumbing:
+  - Marked Phase 2g complete (transaction + batch RPO provers/verifiers shipped)
+  - Implemented `InnerProofData::from_proof` host-side extraction with exact RPO transcript reconstruction
+  - Extended recursion public inputs to include full inner public inputs and FRI remainder commitment

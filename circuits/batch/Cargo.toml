@@ -14,6 +14,7 @@ winter-air = "0.13"
 winter-prover = "0.13"
 transaction-circuit = { path = "../transaction" }
 thiserror = "1"
+miden-crypto = { version = "0.19", default-features = false, optional = true }
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }
@@ -26,6 +27,7 @@ harness = false
 
 [features]
 default = []
+rpo-fiat-shamir = ["miden-crypto", "transaction-circuit/rpo-fiat-shamir"]
 
 [lints]
 workspace = true

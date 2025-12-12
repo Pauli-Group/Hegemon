@@ -907,6 +907,7 @@ name = "batch-circuit"
 version = "0.1.0"
 dependencies = [
  "criterion",
+ "miden-crypto",
  "proptest",
  "rand 0.8.5",
  "thiserror 1.0.69",
@@ -2667,6 +2668,7 @@ dependencies = [
  "transaction-circuit",
  "winter-air",
  "winter-crypto",
+ "winter-fri",
  "winter-math",
  "winter-prover",
  "winterfell",
@@ -11265,6 +11267,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "hex",
+ "miden-crypto",
  "proptest",
  "protocol-versioning",
  "rand 0.8.5",

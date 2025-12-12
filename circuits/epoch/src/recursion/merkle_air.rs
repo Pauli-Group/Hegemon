@@ -114,9 +114,13 @@ impl Air for MerkleVerifierAir {
     type PublicInputs = MerklePublicInputs;
 
     fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
-        // Each RPO permutation has degree 8 constraints (from rpo_air)
-        // We have `depth` permutations, each contributes STATE_WIDTH constraints
-        let num_constraints = pub_inputs.depth * STATE_WIDTH;
+        // Constraints:
+        // - RPO transition constraints for the permutation (STATE_WIDTH)
+        // - Chaining constraints between permutations (DIGEST_WIDTH)
+        //
+        // The RPO constraints apply on every row; we don't need a separate
+        // constraint slot per permutation.
+        let num_constraints = STATE_WIDTH + DIGEST_WIDTH;
         let degrees = vec![
             TransitionConstraintDegree::with_cycles(8, vec![ROWS_PER_PERMUTATION]);
             num_constraints
@@ -150,11 +154,12 @@ impl Air for MerkleVerifierAir {
         // Each permutation is ROWS_PER_PERMUTATION rows
         // We reuse the RPO constraints from rpo_air
         
-        // Periodic values control which RPO round we're in
+        // Periodic values control which RPO round we're in.
+        // Layout: [half_round_type, ark[0..STATE_WIDTH], boundary_mask, path_bit]
         let half_round_type = periodic_values[0];
-        
-        // Extract per-element round constants
         let ark: [E; STATE_WIDTH] = core::array::from_fn(|i| periodic_values[1 + i]);
+        let boundary_mask = periodic_values[1 + STATE_WIDTH];
+        let path_bit = periodic_values[1 + STATE_WIDTH + 1];
 
         // Build MDS result
         let mut mds_result: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
@@ -198,9 +203,31 @@ impl Air for MerkleVerifierAir {
             // Padding: next = current
             let padding_constraint = next[i] - current[i];
 
-            result[i] = is_forward * forward_constraint 
+            result[i] = is_forward * forward_constraint
                       + is_inverse * inverse_constraint
                       + is_padding * padding_constraint;
+        }
+
+        // Chaining constraints at permutation boundaries.
+        // When boundary_mask=1, we are transitioning from the last row of one
+        // permutation to the first row of the next permutation. The next
+        // permutation must take the previous digest as either the left or right
+        // sibling depending on the public index bit for that level.
+        //
+        // path_bit=0 => previous digest is on the left
+        // path_bit=1 => previous digest is on the right
+        let one = E::ONE;
+        for i in 0..DIGEST_WIDTH {
+            let prev_digest = current[i]; // digest lives in capacity columns 0..3
+            let next_left = next[CAPACITY_WIDTH + i];
+            let next_right = next[CAPACITY_WIDTH + DIGEST_WIDTH + i];
+
+            let left_constraint = next_left - prev_digest;
+            let right_constraint = next_right - prev_digest;
+
+            // Select which side must match prev_digest.
+            result[STATE_WIDTH + i] =
+                boundary_mask * ((one - path_bit) * left_constraint + path_bit * right_constraint);
         }
     }
 
@@ -232,12 +259,15 @@ impl Air for MerkleVerifierAir {
     fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
         let total_rows = self.pub_inputs.depth * ROWS_PER_PERMUTATION;
         
-        // Replicate the RPO periodic columns for each permutation
+        // Replicate the RPO periodic columns for each permutation and add
+        // boundary/path-bit masks for chaining.
         let mut half_round_type = Vec::with_capacity(total_rows);
         let mut ark_columns: [Vec<BaseElement>; STATE_WIDTH] = 
             core::array::from_fn(|_| Vec::with_capacity(total_rows));
+        let mut boundary_mask = Vec::with_capacity(total_rows);
+        let mut path_bit = Vec::with_capacity(total_rows);
 
-        for _perm in 0..self.pub_inputs.depth {
+        for perm in 0..self.pub_inputs.depth {
             // Each permutation has the same periodic pattern
             for row in 0..ROWS_PER_PERMUTATION {
                 let val = if row >= 14 {
@@ -262,6 +292,15 @@ impl Air for MerkleVerifierAir {
                 for (i, &c) in constants.iter().enumerate() {
                     ark_columns[i].push(BaseElement::new(c));
                 }
+
+                // Boundary mask is 1 only on the last row of a permutation,
+                // and only if there is a following permutation.
+                let is_boundary = row == ROWS_PER_PERMUTATION - 1 && perm + 1 < self.pub_inputs.depth;
+                boundary_mask.push(BaseElement::new(is_boundary as u64));
+
+                // Path bit for this permutation level (0 = left, 1 = right).
+                let bit = (self.pub_inputs.index >> perm) & 1;
+                path_bit.push(BaseElement::new(bit));
             }
         }
 
@@ -269,6 +308,8 @@ impl Air for MerkleVerifierAir {
         for col in ark_columns {
             result.push(col);
         }
+        result.push(boundary_mask);
+        result.push(path_bit);
         result
     }
 }

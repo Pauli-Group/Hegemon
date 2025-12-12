@@ -34,6 +34,12 @@ pub mod stark_air;
 pub mod stark_prover;
 pub mod stark_verifier;
 
+// Recursion-friendly RPO Fiat‑Shamir path (feature‑gated)
+#[cfg(feature = "rpo-fiat-shamir")]
+pub mod rpo_prover;
+#[cfg(feature = "rpo-fiat-shamir")]
+pub mod rpo_verifier;
+
 // Legacy module (deprecated)
 #[deprecated(since = "0.2.0", note = "Use stark_air module for real STARK proofs")]
 pub mod air;
@@ -53,6 +59,11 @@ pub use stark_prover::{default_proof_options, fast_proof_options, TransactionPro
 pub use stark_verifier::{
     verify_transaction_proof, verify_transaction_proof_bytes, TransactionVerifyError,
 };
+
+#[cfg(feature = "rpo-fiat-shamir")]
+pub use rpo_prover::TransactionProverStarkRpo;
+#[cfg(feature = "rpo-fiat-shamir")]
+pub use rpo_verifier::{verify_transaction_proof_rpo, verify_transaction_proof_bytes_rpo};
 
 // Re-export circuit versioning and AIR identification
 pub use constants::{compute_air_hash, expected_air_hash, CIRCUIT_VERSION};
