@@ -29,15 +29,43 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] (2025-12-11) Phase 2b: Integrate miden-crypto RPO hash into winterfell.
 - [x] (2025-12-11) Phase 2c: Implement RpoAir + RpoStarkProver (RPO permutation proofs).
 - [x] (2025-12-11) Phase 2g: Make inner proofs RPO-friendly (completed: epoch + transaction + batch RPO provers + verifiers).
-- [ ] (2025-12-11) Phase 2d: MerkleVerifierAir + FriVerifierAir (completed: trace layouts, Merkle chaining, corrected Merkle digest placement to match `Rpo256::merge` (digest in rate[0..3]), power‑of‑two padding for standalone Merkle traces, MerkleVerifierProver proof roundtrip + tamper‑reject tests, FRI folding constraints for folding factor 2, boundary‑gated folding mask + `COL_FOLD_MASK` in FriVerifierAir, FriVerifierProver `build_trace_from_inner()` for real layer‑to‑layer folds, **remainder polynomial Horner checks in FriVerifierAir** with new trace columns + tests, and re‑enabled RPO transitions in FRI AIR; remaining: in‑circuit hashing of trace/constraint/FRI leaves, batch authentication for all inner openings, final DRP fold‑to‑remainder binding once transcript/Merkle wiring is in place, and wiring these sub‑AIRs into StarkVerifierAir).
-- [ ] (2025-12-12) Phase 2e: StarkVerifierAir (completed: in‑circuit RPO sponge for inner public inputs + transcript seed hashing, coin.init, trace‑commitment reseed, full‑carry constraint‑composition coefficient draws with witness checks, constraint‑commitment reseed boundary, z draw check, OOD‑reseed boundary, DEEP‑coefficient draw permutations with witness checks, FRI commitment reseeds and alpha draws with witness checks, nonce‑absorption boundary after FRI remainder, and raw query‑draw permutations with witness equality checks + tamper‑reject test; remaining: full `draw_integers` modeling (skip‑first rate element, bitmask/mod‑domain enforcement, uniqueness/dedup), Merkle authentication, full FRI folding + remainder, DEEP composition checks, and end‑to‑end tamper‑reject coverage).
+- [ ] (2025-12-11) Phase 2d: MerkleVerifierAir + FriVerifierAir.
+- [x] (2025-12-11) Phase 2d.1: MerkleVerifierAir roundtrip + tamper-reject coverage (Merkle chaining, `Rpo256::merge` digest placement in rate[0..3], power-of-two padding for standalone Merkle traces).
+- [x] (2025-12-11) Phase 2d.2: FriVerifierAir folding factor 2 + remainder Horner checks (boundary-gated folding mask, re-enabled RPO transitions) with prover roundtrip + tamper-reject tests.
+- [ ] (2025-12-12) Phase 2d.3: In-circuit hashing of trace/constraint/FRI leaf contents and bind those digests to the authentication-path inputs used during Merkle verification.
+- [ ] (2025-12-12) Phase 2d.4: Finalize FRI verification by binding the folded DRP value to the remainder polynomial commitment (and wire this into StarkVerifierAir).
+- [ ] (2025-12-12) Phase 2e: StarkVerifierAir.
+- [x] (2025-12-12) Phase 2e.1: Transcript reconstruction + stage masks + witness checks (coeff/z/deep/alpha/reseed/query draws).
+- [x] (2025-12-12) Phase 2e.2: Merkle index shift wiring + query-position binding accumulator + per-draw query schedule expansion.
+- [x] (2025-12-12) Phase 2e.3: Store transcript challenges in constant columns (constraint coeffs, DEEP coeffs, FRI alphas) and enforce capture at draw boundaries with periodic end masks.
+- [x] (2025-12-12) Phase 2e.3a: Store OOD evaluation frame elements (trace+quotient at z and z*g) in constant columns and enforce capture at OOD-hash input rows.
+- [ ] (2025-12-12) Phase 2e.4: Bind inner openings by hashing leaf contents in-circuit (trace/constraint/FRI) and asserting those digests are consistent with the inner proof’s committed roots.
+- [ ] (2025-12-12) Phase 2e.5: Implement DEEP composition checks using stored challenges, OOD evaluations, and authenticated trace/constraint openings.
+- [ ] (2025-12-12) Phase 2e.6: Implement full FRI folding, remainder evaluation, and DRP binding using stored alphas and authenticated FRI openings.
+- [ ] (2025-12-12) Phase 2e.7: End-to-end recursion: generate inner RPO proof, generate outer proof verifying it, and demonstrate tamper-reject of the inner proof.
 - [ ] (2025-12-11) Phase 2f: RecursiveEpochProver verifies inner proofs in‑circuit via StarkVerifierAir.
 - [ ] (2025-12-11) Phase 3: Two‑person testnet recursive sync + light client recursive mode.
 - [ ] Phase 4: Security audit and production hardening.
 
-**Current status (2025-12-12)**: Phase 1 shipped and is live in the pallet. RPO groundwork exists (`RpoAir`, `RpoStarkProver`, and skeleton verifier AIRs). Epoch, transaction, and batch proofs now support RPO Fiat‑Shamir, and inner RPO proofs can be parsed into recursion witness via `InnerProofData::from_proof`. True recursion is **not** yet implemented: verifier AIRs still enforce only partial winterfell logic (Merkle auth and FRI folding are incomplete, transcript challenges are not checked in‑circuit), and `RecursiveEpochProver` does not yet verify inner proofs. Work is now focused on Phase 2d → 2e → 2f to deliver proof‑of‑proof recursion.
+**Current status (2025-12-12)**: Phase 1 shipped and is live in the pallet. RPO groundwork exists (`RpoAir`, `RpoStarkProver`, and skeleton verifier AIRs). Epoch, transaction, and batch proofs now support RPO Fiat‑Shamir, and inner RPO proofs can be parsed into recursion witness via `InnerProofData::from_proof`. True recursion is **not** yet implemented end‑to‑end: transcript reconstruction and query-position binding exist; transcript challenges and OOD frame elements are now captured into constant trace columns; and Merkle authentication is structurally sound. Remaining work is to fully bind leaf contents to inner openings, implement DEEP composition checks, and complete FRI folding/remainder/DRP binding. Work remains focused on Phase 2d → 2e → 2f to deliver proof‑of‑proof recursion.
 
 ## Surprises & Discoveries
+
+- Observation (2025-12-12): Winterfell’s `FieldExtension` is 1-based (`None = 1`, `Quadratic = 2`, `Cubic = 3`), not 0-based.
+  Evidence: `winter-air-0.13.1/src/options.rs` uses `#[repr(u8)]` with `None = 1`. In a real inner proof, `proof.context.to_elements()` packed options element is `0x01020720` (high byte `0x01`) for `FieldExtension::None`, not `0x00020720`.
+  Implication: Any host-side reconstruction of the inner `Context::to_elements()` (used for transcript seeding) must encode `FieldExtension::None` as `1`, or transcript-derived values (notably `z`) will drift and in-circuit checks will fail.
+
+- Observation (2025-12-12): Winterfell’s FRI layer count depends on blowup factor, not just domain size.
+  Evidence: `winter-fri-0.13.1/src/options.rs` computes `max_remainder_size = (remainder_max_degree + 1) * blowup_factor` and folds until `domain_size <= max_remainder_size`. For `trace_len=16`, `blowup=32`, `remainder_max_degree=7`, `lde_domain_size=512` gives `num_fri_layers=1` (since `512 -> 256` and stop).
+  Implication: Transcript scheduling (commitment reseeds / alpha draws), Merkle auth depth per layer, and periodic selector layout must use this definition of “number of FRI layers”.
+
+- Observation (2025-12-12): `RpoRandomCoin::draw_integers` does not enforce uniqueness; duplicates can occur and Winterfell relies on caller-side `sort+dedup` to define `num_unique_queries`.
+  Evidence: `miden-crypto-0.19.2/src/rand/rpo.rs` pushes masked values into `values` and stops at `num_values` without dedup; our `InnerProofData::from_proof` explicitly `sort_unstable()` + `dedup()`.
+  Implication: “True recursion” must either (a) model `sort+dedup` in-circuit and bind the unique query list to the Merkle index bits, or (b) otherwise prove that the unique query list used by Merkle authentication is consistent with the raw draws.
+
+- Observation (2025-12-12): Query draws drift if the OOD reseed digest is not wired into the transcript used for DEEP/FRI/query stages.
+  Evidence: `StarkVerifierProver::build_trace_from_inner()` previously used a zero OOD digest placeholder; this caused transcript-derived query positions to diverge from `InnerProofData::from_proof` and broke Merkle/query binding. Fix was to store `InnerProofData.ood_digest` and feed it into the prover trace.
+  Implication: Even if the OOD digest remains a “private witness” (not publicly asserted yet), the prover must use the exact digest from the inner proof to keep transcript challenges aligned.
 
 - Observation (2025-12-12): Our RPO permutation constants drifted from miden-crypto, breaking recursion correctness.
   Evidence: `recursion::rpo_air::tests::test_permutation_matches_miden_crypto` failed until MDS/ARK constants were sourced directly from `miden_crypto::hash::rpo::Rpo256`.
@@ -54,6 +82,10 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - Observation (2025-12-12): Transcript phase ordering needs explicit in‑circuit binding.
   Evidence: Without fixed stage masks, a malicious prover could shift “draw” boundaries while still satisfying local RPO constraints.
   Implication: We enforce coeff/z/deep transcript stages via dedicated mask columns asserted at known boundary rows.
+
+- Observation (2025-12-12): Transcript-derived challenges must be available after they are drawn (for DEEP + FRI verification), so the verifier trace must persist them.
+  Evidence: The winterfell verifier draws constraint-composition coefficients, DEEP coefficients, and FRI alphas early, then uses them later when checking DEEP composition and FRI folding; without storing them, StarkVerifierAir cannot reference the correct challenge values outside the draw permutations.
+  Implication: Store these values in constant trace columns and enforce “capture at draw boundaries” with periodic selector masks.
 
 - Observation (2025-12-12): FRI remainder commitment is reseeded but has no alpha draw.
   Evidence: `winter-fri` calls `commit_fri_layer(remainder)` without `draw_fri_alpha()`. Our initial transcript reconstruction incorrectly drew an alpha for the remainder, shifting query positions.
@@ -183,6 +215,38 @@ Implement recursive STARK proof composition where a proof can verify other proof
 
 - Decision (2025-12-12): Hardcode StarkVerifierAir to RpoAir context and fixed deep‑coeff counts for now.
   Rationale: We need a working end‑to‑end transcript before generalizing to arbitrary AIR contexts. OOD digest is treated as a private witness until Merkle/DEEP value binding is implemented.
+  Date/Author: 2025-12-12.
+
+- Decision (2025-12-12): Encode `FieldExtension::None` as `1` when reconstructing the inner `Context::to_elements()` prefix.
+  Rationale: Winterfell’s `FieldExtension` is `#[repr(u8)]` with `None = 1`; using `0` produces a different seed and breaks transcript-derived challenges (notably `z`), causing the verifier AIR to reject valid inner proofs.
+  Date/Author: 2025-12-12.
+
+- Decision (2025-12-12): Temporarily set the query-position multiset witness (`COL_POS_SORTED_VALUE`) to the masked draw itself for end-to-end trace correctness in the presence of duplicate draws.
+  Rationale: `draw_integers` can emit duplicates but `query_positions` are deduped before queries are built; until we model `sort+dedup` and bind Merkle index bits to the deduped list, using the masked draw as `q_val` keeps the grand-product accumulator from falsely rejecting valid proofs and unblocks other verifier milestones.
+  Date/Author: 2025-12-12.
+
+- Decision (2025-12-12): Bind transcript-drawn query positions to authenticated trace indices with a grand-product accumulator.
+  Rationale: If the verifier circuit can authenticate arbitrary Merkle leaves, the prover could open leaves at prover-chosen indices unless those indices are cryptographically bound to transcript randomness. We avoid an in-circuit `sort+dedup` gadget by maintaining a global accumulator `acc` such that `acc <- acc * (draw + gamma)` at each `draw_integers` decomp boundary and `acc <- acc / (trace_index + gamma)` at the end of each trace-leaf hashing segment, and then asserting `acc == 1` at the end. This enforces multiset equality between transcript draws and the Merkle indices actually opened.
+  Date/Author: 2025-12-12.
+
+- Decision (2025-12-12): Treat recursion query openings as “per draw” and expand the proof’s unique openings by replication.
+  Rationale: Winterfell’s proof format provides unique query openings (base positions are `sort+dedup`ed, and FRI folded positions are deduped at each layer). StarkVerifierAir’s trace schedule stays fixed-size if we treat queries as “per draw” and expand `InnerProofData` so each draw has a corresponding trace/constraint/FRI opening by reusing the unique opening when duplicates occur (including FRI fold collisions). This keeps the verifier AIR local and avoids expensive in-circuit sorting/deduping.
+  Date/Author: 2025-12-12.
+
+- Decision (2025-12-12): Store the inner proof’s OOD digest and feed it as a private witness in the verifier trace.
+  Rationale: The transcript must be identical to the inner verifier’s transcript to reproduce DEEP coefficients, FRI alphas, and query draws. Using a placeholder OOD digest causes challenge drift and breaks recursion correctness. Until in-circuit leaf-content binding is implemented, the OOD digest is not publicly asserted, but it must still match the inner proof to keep transcript evolution correct.
+  Date/Author: 2025-12-12.
+
+- Decision (2025-12-12): Enforce Merkle leaf→merge wiring and index-bit binding inside StarkVerifierAir.
+  Rationale: Without an in-AIR constraint that copies the leaf hash digest into the first merge permutation (and then shifts the index consistently with the `path_bit` stream), a prover can “inject” arbitrary digests or reorder left/right inputs without being cryptographically tied to the leaf index bits. Adding `COL_MERKLE_INDEX` with shift relation (`idx_cur = 2*idx_next + bit`) and root index zero checks makes Merkle authentication structurally sound, and unlocks the next milestone: binding that index to transcript-derived query positions.
+  Date/Author: 2025-12-12.
+
+- Decision (2025-12-12): Persist transcript challenges in constant columns and constrain them to match the RPO sponge outputs at each draw boundary.
+  Rationale: Later verifier steps (DEEP composition and FRI folding) need stable access to the exact challenge values drawn earlier from the transcript. Capturing these values once (and enforcing constantness + boundary capture) keeps later constraints local and avoids duplicating transcript logic.
+  Date/Author: 2025-12-12.
+
+- Decision (2025-12-12): Persist OOD evaluation frame elements in constant columns and constrain them to match the OOD-hash input permutations.
+  Rationale: The DEEP composition check needs trace/quotient OOD evaluations later, but the transcript only commits to them via the OOD digest. Storing them in constant columns and enforcing “capture at OOD input rows” makes the later DEEP constraints local while keeping the transcript binding sound.
   Date/Author: 2025-12-12.
 
 ## Outcomes & Retrospective
@@ -2112,26 +2176,93 @@ cargo test -p epoch-circuit rpo_air
 ```
 Expected: RPO permutation matches miden-crypto reference
 
-**Step 2d.1: Implement MerkleVerifierAir**
-```bash
-touch circuits/epoch/src/recursion/merkle_verifier_air.rs
-cargo test -p epoch-circuit merkle_verifier_air
-```
-Expected: Correct paths accepted, incorrect rejected
+**Step 2d.1: Implement MerkleVerifierAir (Merkle authentication sub-AIR)**
 
-**Step 2d.2: Implement FriVerifierAir**
-```bash
-touch circuits/epoch/src/recursion/fri_verifier_air.rs
-cargo test -p epoch-circuit fri_verifier_air
-```
-Expected: Correct folding accepted, incorrect rejected
+This step is about making Merkle authentication *real* inside recursion, not “plausible-looking”.
+In this repo the Merkle verifier AIR lives in `circuits/epoch/src/recursion/merkle_air.rs` and is
+used as a building block inside `StarkVerifierAir`.
 
-**Step 2e.1: Implement StarkVerifierAir**
+Implementation tasks for this step:
+- Make the Merkle path constraints enforce the exact `Rpo256::merge` semantics (digest in
+  rate[0..3] == trace columns 4..7, and left/right ordering is index-bit dependent).
+- Make chaining complete: the leaf hash output must be *wired* into the first merge permutation
+  (leaf → level0), not “recomputed in Rust” with no in-AIR linkage.
+- Add index-bit binding: the `path_bit` column used for chaining must be proven to match the leaf
+  index bits (via shift relation `idx_cur = 2*idx_next + bit`), and the final index at the root
+  must be zero.
+- Add tamper tests: mutate a sibling digest, a `path_bit`, or the index witness and ensure outer
+  proving fails.
+
+Validation:
 ```bash
-touch circuits/epoch/src/recursion/stark_verifier_air.rs
-cargo test -p epoch-circuit stark_verifier_air
+cargo test -p epoch-circuit merkle_air -- --nocapture
 ```
-Expected: Valid inner proofs accepted, invalid rejected
+Expected: correct paths accepted, incorrect rejected, and tampering is detected.
+
+**Step 2d.2: Implement FriVerifierAir (FRI sub-AIR)**
+
+This step makes the low-degree proof (FRI) verifiable in-circuit.
+In this repo the FRI AIR lives in `circuits/epoch/src/recursion/fri_air.rs` and includes:
+folding checks, remainder-polynomial checks, and (eventually) the “fold-to-remainder” binding.
+
+Implementation tasks for this step:
+- Enforce folding for each committed layer (factor 2 for now), gated by a folding mask so the
+  trace can include non-FRI permutations without violating degrees.
+- Enforce remainder evaluation (Horner) and its binding to the final fold (“DRP” binding).
+- Wire FRI Merkle openings into the Merkle sub-AIR (leaf hashing + path authentication).
+- Add tamper tests: mutate an alpha, a layer evaluation, or a remainder coefficient and ensure the
+  outer prover fails.
+
+Validation:
+```bash
+cargo test -p epoch-circuit fri_air -- --nocapture
+```
+Expected: correct folding accepted, incorrect rejected, remainder checks enforced.
+
+**Step 2e.1: Implement StarkVerifierAir (full in-circuit verifier)**
+
+`StarkVerifierAir` in `circuits/epoch/src/recursion/stark_verifier_air.rs` is the “true recursion”
+core: it must enforce the *same* verification logic as `winter-verifier`, including Fiat–Shamir
+transcript evolution, query-position derivation, Merkle authentication, DEEP composition, and FRI.
+
+The work for this step is split into concrete milestones so we can ship incrementally while
+preserving soundness at each milestone:
+
+- Milestone 2e.1a (Transcript correctness): RPO transcript seeding, reseeds, and challenge draws
+  are checked in-AIR with boundary assertions and witness equality checks. (In progress: the
+  transcript skeleton works, but OOD binding still needs to be made sound.)
+- Milestone 2e.1b (OOD correctness): make the OOD step “real” so the prover can’t pick an
+  arbitrary transcript fork.
+  - Hash the OOD frames in-circuit: compute `Rpo256::hash_elements(merge_ood_evaluations(...))`
+    and require the result equals the digest used to reseed the coin before DEEP coefficient draws.
+  - Implement the OOD consistency check from `winter-verifier`:
+    - Compute `evaluate_constraints(ood_trace_frame, constraint_coeffs, z)` in-circuit.
+    - Compute `ood_constraint_evaluation_2 = Σ z^(i * trace_length) * quotient_frame.current[i]`.
+    - Constrain `ood_constraint_evaluation_1 == ood_constraint_evaluation_2`.
+- Milestone 2e.1c (Merkle correctness): leaf hashing is wired into merges (leaf→merge chaining),
+  `path_bit` is bound to the shifting index, and root checks are applied at the correct boundaries.
+- Milestone 2e.1d (Query-position correctness): model `draw_integers` output *with duplicates* and
+  bind transcript-derived query positions to the authenticated indices used for trace/constraint/FRI
+  openings (either via an in-circuit sort+dedup, or via a per-draw schedule plus explicit binding
+  checks that prevent cross-query mix-and-match).
+- Milestone 2e.1e (DEEP correctness): implement the DEEP composer checks tying queried trace/constraint
+  evaluations and OOD frames to the DEEP composition polynomial.
+- Milestone 2e.1f (FRI correctness): integrate the FriVerifierAir logic into StarkVerifierAir so
+  that the authenticated DEEP evaluations satisfy FRI folding and remainder checks.
+
+**Definition of “true recursion” success for this plan**:
+- Given a valid inner RPO proof, `StarkVerifierProver::build_trace_from_inner()` produces a trace
+  that can be proven/verified with `StarkVerifierAir`, and this outer proof is accepted.
+- If we tamper any of: the OOD trace/quotient frames, the OOD digest, a Merkle index/path bit, a
+  queried trace/constraint value, a FRI layer value/path, or a remainder coefficient, then the
+  outer prover must fail (or the outer verifier must reject), matching the inner verifier’s reject.
+
+Validation:
+```bash
+cargo test -p epoch-circuit stark_verifier_prover -- --nocapture
+```
+Expected: valid inner proofs produce a verifier trace that can be proven/verified, and targeted
+tampering causes proof generation to fail.
 
 **Step 2e.2: Test recursion depth**
 ```bash
@@ -3001,3 +3132,8 @@ docker-compose -f docker-compose.testnet.yml up --abort-on-container-exit
 - **2025-12-12**: Expanded Phase 2d/2e Merkle tasks:
   - Broke out leaf sponge initialization/chaining, Merkle merge chaining, and deterministic stacking order required for true recursion.
   - Documented periodic selector approach and noted deferral of binding Merkle indexes to transcript‑drawn query positions until full `draw_integers` modeling lands.
+- **2025-12-12**: Transcript-seed parity + end-to-end verifier trace unblocked:
+  - Fixed `build_context_prefix` to encode `FieldExtension::None` as `1` (Winterfell is 1-based), restoring parity with `proof.context.to_elements()` and preventing transcript `z` drift.
+  - Documented that FRI layer count depends on `(remainder_max_degree + 1) * blowup_factor`, not just LDE domain size.
+  - Unblocked `test_trace_from_inner_merkle_roundtrip` for real inner proofs (`cargo test -p epoch-circuit test_trace_from_inner_merkle_roundtrip -- --nocapture` now passes).
+  - Added explicit TODO to model query-position `sort+dedup` and bind Merkle index bits to transcript-derived query positions (a requirement for “true recursion” beyond the current milestone).

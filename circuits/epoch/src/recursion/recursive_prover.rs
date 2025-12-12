@@ -372,8 +372,10 @@ pub struct InnerProofData {
     pub fri_num_partitions: usize,
     /// Number of query draws requested by the inner proof options (before dedup).
     pub num_draws: usize,
-    /// Query positions for FRI verification.
+    /// Query positions drawn from the transcript (per draw; may contain duplicates).
     pub query_positions: Vec<usize>,
+    /// Unique query positions used by the inner proof (sorted + deduped).
+    pub unique_query_positions: Vec<usize>,
     /// Trace evaluations at query positions (main trace segment).
     pub trace_evaluations: Vec<Vec<BaseElement>>,
     /// Merkle authentication paths for trace queries (one path per query).
@@ -388,6 +390,16 @@ pub struct InnerProofData {
     pub fri_remainder: Vec<BaseElement>,
     /// Commitment to the remainder polynomial (last FRI commitment).
     pub fri_remainder_commitment: [BaseElement; 4],
+    /// Out-of-domain trace evaluations at z (current row; main+aux concatenated).
+    pub ood_trace_current: Vec<BaseElement>,
+    /// Out-of-domain trace evaluations at z*g (next row; main+aux concatenated).
+    pub ood_trace_next: Vec<BaseElement>,
+    /// Out-of-domain quotient (constraint composition) evaluations at z (current row).
+    pub ood_quotient_current: Vec<BaseElement>,
+    /// Out-of-domain quotient (constraint composition) evaluations at z*g (next row).
+    pub ood_quotient_next: Vec<BaseElement>,
+    /// Digest of the merged OOD frame evaluations (used to reseed the transcript before DEEP).
+    pub ood_digest: [BaseElement; 4],
     /// Out-of-domain point z drawn from the public coin.
     pub z: BaseElement,
     /// Constraint composition coefficients drawn from the public coin.
@@ -424,6 +436,7 @@ impl InnerProofData {
             fri_num_partitions: 0,
             num_draws: 0,
             query_positions: vec![],
+            unique_query_positions: vec![],
             trace_evaluations: vec![],
             trace_auth_paths: vec![],
             constraint_evaluations: vec![],
@@ -431,6 +444,11 @@ impl InnerProofData {
             fri_layers: vec![],
             fri_remainder: vec![],
             fri_remainder_commitment: [BaseElement::ZERO; 4],
+            ood_trace_current: vec![],
+            ood_trace_next: vec![],
+            ood_quotient_current: vec![],
+            ood_quotient_next: vec![],
+            ood_digest: [BaseElement::ZERO; 4],
             z: BaseElement::ZERO,
             constraint_coeffs: ConstraintCompositionCoefficients {
                 transition: vec![],
@@ -546,6 +564,10 @@ impl InnerProofData {
             .clone()
             .parse::<BaseElement>(main_trace_width, aux_trace_width, constraint_frame_width)
             .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+        let ood_trace_current = ood_trace_frame.current_row().to_vec();
+        let ood_trace_next = ood_trace_frame.next_row().to_vec();
+        let ood_quotient_current = ood_constraint_frame.current_row().to_vec();
+        let ood_quotient_next = ood_constraint_frame.next_row().to_vec();
 
         // --- parse FRI proof -------------------------------------------------------------------
         let fri_num_partitions = proof.fri_proof.num_partitions();
@@ -588,8 +610,9 @@ impl InnerProofData {
 
         // reseed with OOD evaluations digest (trace frame + quotient frame)
         let ood_evals = merge_ood_evaluations(&ood_trace_frame, &ood_constraint_frame);
-        let ood_digest = Rpo256::hash_elements(&ood_evals);
-        coin.reseed(ood_digest);
+        let ood_digest_word = Rpo256::hash_elements(&ood_evals);
+        let ood_digest = word_to_digest(ood_digest_word);
+        coin.reseed(ood_digest_word);
 
         let deep_coeffs: DeepCompositionCoefficients<BaseElement> = air
             .get_deep_composition_coefficients::<BaseElement, RpoRandomCoin>(&mut coin)
@@ -613,25 +636,27 @@ impl InnerProofData {
             coin.reseed(*remainder_commitment);
         }
 
-        // draw query positions
+        // Draw query positions. Winterfell draws `num_draws` positions, then sorts+dedups them
+        // before building Merkle queries.
         let pow_nonce = proof.pow_nonce;
-        let mut query_positions = coin
+        let query_positions = coin
             .draw_integers(num_draws, lde_domain_size, pow_nonce)
             .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
-        query_positions.sort_unstable();
-        query_positions.dedup();
+        let mut unique_query_positions = query_positions.clone();
+        unique_query_positions.sort_unstable();
+        unique_query_positions.dedup();
 
-        if query_positions.len() != num_unique_queries {
+        if unique_query_positions.len() != num_unique_queries {
             return Err(EpochProverError::TraceBuildError(format!(
                 "derived {} unique query positions but proof expects {}",
-                query_positions.len(),
+                unique_query_positions.len(),
                 num_unique_queries
             )));
         }
 
         // --- decompress trace Merkle proofs ---------------------------------------------------
-        let mut trace_evaluations = Vec::new();
-        let mut trace_auth_paths = Vec::new();
+        let mut trace_evaluations: Vec<Vec<BaseElement>> = Vec::new();
+        let mut trace_auth_paths: Vec<Vec<[BaseElement; 4]>> = Vec::new();
         for (seg_idx, (mp, table, seg_partition)) in trace_segment_data.into_iter().enumerate() {
             if seg_idx > 0 {
                 // Auxiliary trace segments are not yet supported in recursion data model.
@@ -643,7 +668,7 @@ impl InnerProofData {
                 .map(|row| hash_row_rpo(row, seg_partition))
                 .collect();
             let openings = mp
-                .into_openings(&leaves, &query_positions)
+                .into_openings(&leaves, &unique_query_positions)
                 .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
             trace_auth_paths = openings
                 .into_iter()
@@ -659,7 +684,7 @@ impl InnerProofData {
             .map(|row| hash_row_rpo(row, partition_size_constraint))
             .collect();
         let constraint_openings = constraint_mp
-            .into_openings(&constraint_leaves, &query_positions)
+            .into_openings(&constraint_leaves, &unique_query_positions)
             .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
         let constraint_auth_paths: Vec<Vec<[BaseElement; 4]>> = constraint_openings
             .into_iter()
@@ -667,17 +692,26 @@ impl InnerProofData {
             .collect();
 
         // --- build FRI layer data --------------------------------------------------------------
+        //
+        // The Winterfell verifier de-duplicates query positions at every fold step. In-circuit,
+        // we keep a fixed per-draw query schedule, and expand the proof's unique openings by
+        // replicating them for duplicate positions.
         let mut fri_layers = Vec::with_capacity(fri_layer_queries.len());
-        let mut positions = query_positions.clone();
+        let mut unique_positions = unique_query_positions.clone();
+        let mut draw_positions = query_positions.clone();
         let mut domain_size = lde_domain_size;
+
         for (layer_idx, (layer_values, layer_mp)) in fri_layer_queries
             .into_iter()
             .zip(fri_layer_proofs.into_iter())
             .enumerate()
         {
-            let folded_positions = fold_positions(&positions, domain_size, folding_factor);
-            let position_indexes = map_positions_to_indexes(
-                &folded_positions,
+            let target_domain_size = domain_size / folding_factor;
+
+            let folded_unique_positions =
+                fold_positions(&unique_positions, domain_size, folding_factor);
+            let unique_indexes = map_positions_to_indexes(
+                &folded_unique_positions,
                 domain_size,
                 folding_factor,
                 fri_num_partitions,
@@ -688,22 +722,64 @@ impl InnerProofData {
                 .map(|chunk| Rpo256::hash_elements(chunk))
                 .collect();
             let openings = layer_mp
-                .into_openings(&leaves, &position_indexes)
+                .into_openings(&leaves, &unique_indexes)
                 .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
-            let auth_paths: Vec<Vec<[BaseElement; 4]>> = openings
+            let auth_paths_unique: Vec<Vec<[BaseElement; 4]>> = openings
                 .into_iter()
                 .map(|(_, path)| path.into_iter().map(word_to_digest).collect())
                 .collect();
 
+            // Expand unique openings to per-draw openings.
+            let draw_folded_positions: Vec<usize> = draw_positions
+                .iter()
+                .map(|p| p % target_domain_size)
+                .collect();
+
+            let mut evaluations = Vec::with_capacity(query_positions.len() * folding_factor);
+            let mut auth_paths = Vec::with_capacity(query_positions.len());
+            for pos in &draw_folded_positions {
+                let unique_idx = folded_unique_positions
+                    .iter()
+                    .position(|p| p == pos)
+                    .ok_or_else(|| {
+                        EpochProverError::TraceBuildError(format!(
+                            "FRI layer {layer_idx}: folded position {pos} not found in unique set"
+                        ))
+                    })?;
+
+                let start = unique_idx * folding_factor;
+                let end = start + folding_factor;
+                evaluations.extend_from_slice(&layer_values[start..end]);
+                auth_paths.push(auth_paths_unique[unique_idx].clone());
+            }
+
             let commitment = word_to_digest(fri_roots[layer_idx]);
             fri_layers.push(FriLayerData {
                 commitment,
-                evaluations: layer_values,
+                evaluations,
                 auth_paths,
             });
 
-            positions = folded_positions;
-            domain_size /= folding_factor;
+            unique_positions = folded_unique_positions;
+            draw_positions = draw_folded_positions;
+            domain_size = target_domain_size;
+        }
+
+        // Expand trace/constraint openings from unique positions to per-draw positions.
+        let mut trace_evaluations_expanded = Vec::with_capacity(query_positions.len());
+        let mut trace_auth_paths_expanded = Vec::with_capacity(query_positions.len());
+        let mut constraint_evaluations_expanded = Vec::with_capacity(query_positions.len());
+        let mut constraint_auth_paths_expanded = Vec::with_capacity(query_positions.len());
+        for &pos in &query_positions {
+            let unique_idx = unique_query_positions.binary_search(&pos).map_err(|_| {
+                EpochProverError::TraceBuildError(format!(
+                    "draw position {pos} not present in unique query positions"
+                ))
+            })?;
+            trace_evaluations_expanded.push(trace_evaluations[unique_idx].clone());
+            trace_auth_paths_expanded.push(trace_auth_paths[unique_idx].clone());
+            constraint_evaluations_expanded.push(constraint_evaluations[unique_idx].clone());
+            constraint_auth_paths_expanded.push(constraint_auth_paths[unique_idx].clone());
         }
 
         Ok(Self {
@@ -718,13 +794,19 @@ impl InnerProofData {
             fri_num_partitions,
             num_draws,
             query_positions,
-            trace_evaluations,
-            trace_auth_paths,
-            constraint_evaluations,
-            constraint_auth_paths,
+            unique_query_positions,
+            trace_evaluations: trace_evaluations_expanded,
+            trace_auth_paths: trace_auth_paths_expanded,
+            constraint_evaluations: constraint_evaluations_expanded,
+            constraint_auth_paths: constraint_auth_paths_expanded,
             fri_layers,
             fri_remainder,
             fri_remainder_commitment,
+            ood_trace_current,
+            ood_trace_next,
+            ood_quotient_current,
+            ood_quotient_next,
+            ood_digest,
             z,
             constraint_coeffs,
             deep_coeffs,
@@ -941,7 +1023,8 @@ mod tests {
         assert_eq!(data.public_inputs, pub_inputs.to_elements());
         assert_eq!(data.blowup_factor, proof.options().blowup_factor());
         assert_eq!(data.trace_length, proof.trace_info().length());
-        assert_eq!(data.query_positions.len(), proof.num_unique_queries as usize);
+        assert_eq!(data.unique_query_positions.len(), proof.num_unique_queries as usize);
+        assert_eq!(data.query_positions.len(), data.num_draws);
         assert_eq!(data.fri_alphas.len(), data.fri_layers.len());
     }
 
