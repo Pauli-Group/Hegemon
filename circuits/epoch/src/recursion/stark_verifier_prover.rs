@@ -22,11 +22,16 @@ use super::rpo_air::{
 use super::merkle_air::DIGEST_WIDTH;
 use super::rpo_proof::{rpo_hash_elements, rpo_merge};
 use super::stark_verifier_air::{
-    build_context_prefix, StarkVerifierAir, StarkVerifierPublicInputs, VERIFIER_TRACE_WIDTH,
+    build_context_prefix, compute_expected_z, StarkVerifierAir, StarkVerifierPublicInputs,
+    VERIFIER_TRACE_WIDTH,
+    RATE_WIDTH,
     COL_CARRY_MASK, COL_FULL_CARRY_MASK, COL_RESEED_MASK, COL_COIN_INIT_MASK,
     COL_RESEED_WORD_START, COL_COEFF_MASK, COL_Z_MASK, COL_COEFF_START, COL_Z_VALUE,
     COL_DEEP_MASK, COL_DEEP_START, COL_FRI_MASK, COL_FRI_ALPHA_VALUE,
     COL_POS_MASK, COL_POS_START, COL_MERKLE_PATH_BIT,
+    COL_POS_DECOMP_MASK, COL_POS_RAW, COL_POS_BIT0, COL_POS_BIT1, COL_POS_BIT2, COL_POS_BIT3,
+    COL_POS_ACC, COL_POS_LO_ACC, COL_POS_MASKED_ACC, COL_POS_HI_AND, COL_POS_SORTED_VALUE,
+    COL_POS_PERM_ACC,
 };
 use super::recursive_prover::InnerProofData;
 use winter_fri::folding::fold_positions;
@@ -102,6 +107,9 @@ impl StarkVerifierProver {
             constraint_root,
             vec![fri_root0, [BaseElement::ZERO; DIGEST_WIDTH]],
             options.num_queries(),
+            options.num_queries(),
+            RPO_TRACE_WIDTH,
+            8,
             blowup_factor,
             trace_length,
         );
@@ -132,10 +140,10 @@ impl StarkVerifierProver {
         let num_fri_layers = num_fri_commitments.saturating_sub(1);
         let num_fri_alpha_perms = num_fri_layers;
         let num_remainder_perms = (num_fri_commitments > 0) as usize;
-        let num_pos_perms = if self.pub_inputs.num_queries == 0 {
+        let num_pos_perms = if self.pub_inputs.num_draws == 0 {
             0
         } else {
-            (self.pub_inputs.num_queries + 1).div_ceil(8)
+            (self.pub_inputs.num_draws + 1).div_ceil(8)
         };
         let transcript_perms = num_pi_blocks
             + num_seed_blocks
@@ -145,6 +153,8 @@ impl StarkVerifierProver {
             + num_remainder_perms
             + num_pos_perms
             + 2;
+        let num_pos_decomp_perms = self.pub_inputs.num_draws;
+        let pre_merkle_perms = transcript_perms + num_pos_decomp_perms;
 
         let lde_domain_size = self.pub_inputs.trace_length * self.pub_inputs.blowup_factor;
         let depth_trace = if lde_domain_size == 0 {
@@ -152,17 +162,19 @@ impl StarkVerifierProver {
         } else {
             lde_domain_size.trailing_zeros() as usize
         };
-        let trace_leaf_blocks = RPO_TRACE_WIDTH.div_ceil(8).max(1);
-        let constraint_leaf_blocks = 1usize;
-        let fri_leaf_blocks = 1usize;
+        let trace_leaf_perms =
+            leaf_perm_count(RPO_TRACE_WIDTH, self.pub_inputs.trace_partition_size);
+        let constraint_leaf_perms =
+            leaf_perm_count(8, self.pub_inputs.constraint_partition_size);
+        let fri_leaf_perms = 1usize;
         let mut merkle_perms_per_query =
-            trace_leaf_blocks + depth_trace + constraint_leaf_blocks + depth_trace;
+            trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
         for layer_idx in 0..num_fri_layers {
             merkle_perms_per_query +=
-                fri_leaf_blocks + depth_trace.saturating_sub(layer_idx + 1);
+                fri_leaf_perms + depth_trace.saturating_sub(layer_idx + 1);
         }
         let merkle_perms_total = self.pub_inputs.num_queries * merkle_perms_per_query;
-        let active_perms = transcript_perms + merkle_perms_total;
+        let active_perms = pre_merkle_perms + merkle_perms_total;
         let active_rows = active_perms * ROWS_PER_PERMUTATION;
         let total_rows = active_rows.next_power_of_two();
 
@@ -211,6 +223,7 @@ impl StarkVerifierProver {
                 full_carry,
                 reseed,
                 coin_init,
+                BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
@@ -280,6 +293,7 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
             );
 
@@ -306,6 +320,7 @@ impl StarkVerifierProver {
             BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ONE,
+            BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
@@ -341,6 +356,7 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
                 self.pub_inputs.constraint_commitment,
             );
         } else {
@@ -352,6 +368,7 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ONE,
+                BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
@@ -386,6 +403,7 @@ impl StarkVerifierProver {
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
+                    BaseElement::ZERO,
                     self.pub_inputs.constraint_commitment,
                 );
             } else {
@@ -397,6 +415,7 @@ impl StarkVerifierProver {
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ONE,
+                    BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
@@ -430,6 +449,7 @@ impl StarkVerifierProver {
             BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ONE,
+            BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
@@ -470,11 +490,12 @@ impl StarkVerifierProver {
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    reseed_word,
-                );
+	                    BaseElement::ONE,
+	                    BaseElement::ZERO,
+	                    BaseElement::ZERO,
+	                    BaseElement::ZERO,
+	                    reseed_word,
+	                );
             } else {
                 set_masks(
                     &mut trace,
@@ -485,11 +506,12 @@ impl StarkVerifierProver {
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    [BaseElement::ZERO; 4],
-                );
+	                    BaseElement::ONE,
+	                    BaseElement::ZERO,
+	                    BaseElement::ZERO,
+	                    BaseElement::ZERO,
+	                    [BaseElement::ZERO; 4],
+	                );
             }
 
             let last = row_offset + ROWS_PER_PERMUTATION - 1;
@@ -529,6 +551,7 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ONE,
+                BaseElement::ZERO,
                 BaseElement::ZERO,
                 next_commitment,
             );
@@ -576,6 +599,7 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
                 nonce_word,
             );
 
@@ -586,25 +610,37 @@ impl StarkVerifierProver {
             perm_idx += 1;
         }
 
-        // --- Query position draw permutations ----------------------------------------------
+        // --- Query position draw permutations + decomposition -------------------------------
         if num_pos_perms > 0 {
             // Absorb nonce into the coin before the first draw permutation.
             coin_state[4] += pow_nonce_elem;
+
+            let mut remaining_draws = self.pub_inputs.num_draws;
+            let domain_size = lde_domain_size.max(1);
+            let depth_trace_bits = domain_size.trailing_zeros() as usize;
+            let v_mask = (domain_size - 1) as u64;
+
+            let expected_z = compute_expected_z(&self.pub_inputs);
+
+            // Permutation accumulator for multiset equality. Transcript-only uses q=p so acc stays 1.
+            let mut perm_acc_val = BaseElement::ONE;
 
             for pos_idx in 0..num_pos_perms {
                 let row_offset = perm_idx * ROWS_PER_PERMUTATION;
                 self.fill_rpo_trace(&mut trace, row_offset, coin_state);
 
-                let is_last = pos_idx + 1 == num_pos_perms;
+                let pos_full_carry = if pos_idx + 1 == num_pos_perms {
+                    BaseElement::ZERO
+                } else {
+                    BaseElement::ONE
+                };
+
+                // Carry full state into the following pos permutation (if any).
                 set_masks(
                     &mut trace,
                     perm_idx,
                     BaseElement::ZERO,
-                    if is_last {
-                        BaseElement::ZERO
-                    } else {
-                        BaseElement::ONE
-                    },
+                    pos_full_carry,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
@@ -612,6 +648,7 @@ impl StarkVerifierProver {
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ONE,
+                    BaseElement::ZERO,
                     [BaseElement::ZERO; 4],
                 );
 
@@ -620,13 +657,134 @@ impl StarkVerifierProver {
                     coin_state[i] = trace.get(i, last);
                 }
                 set_pos_witness(&mut trace, perm_idx, &coin_state);
+                let rate_outputs: [BaseElement; RATE_WIDTH] =
+                    core::array::from_fn(|i| coin_state[4 + i]);
                 perm_idx += 1;
+
+                let draws_here = if pos_idx == 0 {
+                    remaining_draws.min(RATE_WIDTH - 1)
+                } else {
+                    remaining_draws.min(RATE_WIDTH)
+                };
+                let start_rate = if pos_idx == 0 { 1 } else { 0 };
+
+                for d in 0..draws_here {
+                    let raw_val = rate_outputs[start_rate + d];
+                    let raw_u64 = raw_val.as_int();
+
+                    // Decomp perm: freeze RPO state, carry buffer, and decompose raw into bits.
+                    let row0 = perm_idx * ROWS_PER_PERMUTATION;
+                    for r in 0..ROWS_PER_PERMUTATION {
+                        let row = row0 + r;
+                        for i in 0..STATE_WIDTH {
+                            trace.set(i, row, coin_state[i]);
+                        }
+                        trace.set(COL_POS_DECOMP_MASK, row, BaseElement::ONE);
+                        trace.set(COL_POS_RAW, row, raw_val);
+                        for j in 0..RATE_WIDTH {
+                            trace.set(COL_POS_START + j, row, rate_outputs[j]);
+                        }
+                        trace.set(COL_Z_VALUE, row, expected_z);
+                    }
+
+                    // Fill nibble bits and accumulators row-by-row.
+                    let mut acc = 0u64;
+                    let mut lo_acc = 0u64;
+                    let mut masked_acc = 0u64;
+                    let mut hi_and = 0u64;
+
+                    for local_row in 0..ROWS_PER_PERMUTATION {
+                        let row = row0 + local_row;
+                        let nibble = (raw_u64 >> (4 * local_row)) & 0xF;
+                        let bits = [
+                            (nibble & 1) as u64,
+                            ((nibble >> 1) & 1) as u64,
+                            ((nibble >> 2) & 1) as u64,
+                            ((nibble >> 3) & 1) as u64,
+                        ];
+                        trace.set(COL_POS_BIT0, row, BaseElement::new(bits[0]));
+                        trace.set(COL_POS_BIT1, row, BaseElement::new(bits[1]));
+                        trace.set(COL_POS_BIT2, row, BaseElement::new(bits[2]));
+                        trace.set(COL_POS_BIT3, row, BaseElement::new(bits[3]));
+
+                        trace.set(COL_POS_ACC, row, BaseElement::new(acc));
+                        trace.set(COL_POS_LO_ACC, row, BaseElement::new(lo_acc));
+                        trace.set(COL_POS_MASKED_ACC, row, BaseElement::new(masked_acc));
+
+                        if local_row == 8 {
+                            hi_and = 1;
+                        }
+                        trace.set(COL_POS_HI_AND, row, BaseElement::new(hi_and));
+
+                        // Update accumulators for next row.
+                        let base_exp = 4 * local_row;
+                        for j in 0..4 {
+                            if bits[j] == 1 {
+                                acc = acc.wrapping_add(1u64 << (base_exp + j));
+                                if base_exp + j < 32 {
+                                    lo_acc = lo_acc.wrapping_add(1u64 << (base_exp + j));
+                                }
+                                if base_exp + j < depth_trace_bits {
+                                    masked_acc = masked_acc.wrapping_add(1u64 << (base_exp + j));
+                                }
+                            }
+                        }
+                        if local_row >= 8 {
+                            let nibble_prod = bits.iter().product::<u64>();
+                            hi_and *= nibble_prod;
+                        }
+                    }
+
+                    let masked_pos = (raw_u64 & v_mask) as u64;
+                    let p_elem = BaseElement::new(masked_pos);
+                    for r in 0..ROWS_PER_PERMUTATION {
+                        let row = row0 + r;
+                        trace.set(COL_POS_SORTED_VALUE, row, p_elem);
+                        trace.set(COL_POS_PERM_ACC, row, perm_acc_val);
+                    }
+
+                    let full_carry = if remaining_draws == 1 {
+                        BaseElement::ZERO
+                    } else {
+                        BaseElement::ONE
+                    };
+
+                    // Masks on this perm boundary: carry transcript state unless this is the final decomp.
+                    set_masks(
+                        &mut trace,
+                        perm_idx,
+                        BaseElement::ZERO,
+                        full_carry,
+                        BaseElement::ZERO,
+                        BaseElement::ZERO,
+                        BaseElement::ZERO,
+                        BaseElement::ZERO,
+                        BaseElement::ZERO,
+                        BaseElement::ZERO,
+                        BaseElement::ZERO,
+                        BaseElement::ONE,
+                        [BaseElement::ZERO; 4],
+                    );
+
+                    // Update permutation accumulator (stays 1 since q=p).
+                    // perm_acc_val remains 1 since q=p in transcript-only traces.
+
+                    perm_idx += 1;
+                    remaining_draws -= 1;
+                    if remaining_draws == 0 {
+                        break;
+                    }
+                }
+
+                if remaining_draws == 0 {
+                    break;
+                }
             }
         }
 
         // --- Dummy Merkle authentication segment -------------------------------------------
         // For transcript-only proofs we still need to satisfy Merkle constraints and degrees.
-        assert_eq!(perm_idx, transcript_perms, "transcript perm count mismatch");
+        assert_eq!(perm_idx, pre_merkle_perms, "pre-merkle perm count mismatch");
 
         let dummy_trace_row = vec![BaseElement::ZERO; RPO_TRACE_WIDTH];
         let dummy_constraint_row = vec![BaseElement::ZERO; 8];
@@ -645,8 +803,13 @@ impl StarkVerifierProver {
 
         let dummy_index: u64 = 0x55;
         for _q in 0..self.pub_inputs.num_queries {
-            let trace_leaf =
-                hash_leaf_perms(self, &mut trace, &mut perm_idx, &dummy_trace_row);
+            let trace_leaf = hash_row_partitioned_perms(
+                self,
+                &mut trace,
+                &mut perm_idx,
+                &dummy_trace_row,
+                self.pub_inputs.trace_partition_size,
+            );
             authenticate_merkle_path(
                 self,
                 &mut trace,
@@ -656,8 +819,13 @@ impl StarkVerifierProver {
                 &trace_siblings,
             );
 
-            let constraint_leaf =
-                hash_leaf_perms(self, &mut trace, &mut perm_idx, &dummy_constraint_row);
+            let constraint_leaf = hash_row_partitioned_perms(
+                self,
+                &mut trace,
+                &mut perm_idx,
+                &dummy_constraint_row,
+                self.pub_inputs.constraint_partition_size,
+            );
             authenticate_merkle_path(
                 self,
                 &mut trace,
@@ -702,6 +870,7 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
             );
 
@@ -735,10 +904,10 @@ impl StarkVerifierProver {
         let num_fri_layers = num_fri_commitments.saturating_sub(1);
         let num_fri_alpha_perms = num_fri_layers;
         let num_remainder_perms = (num_fri_commitments > 0) as usize;
-        let num_pos_perms = if self.pub_inputs.num_queries == 0 {
+        let num_pos_perms = if self.pub_inputs.num_draws == 0 {
             0
         } else {
-            (self.pub_inputs.num_queries + 1).div_ceil(8)
+            (self.pub_inputs.num_draws + 1).div_ceil(8)
         };
 
         let transcript_perms = num_pi_blocks
@@ -749,6 +918,8 @@ impl StarkVerifierProver {
             + num_remainder_perms
             + num_pos_perms
             + 2;
+        let num_pos_decomp_perms = self.pub_inputs.num_draws;
+        let pre_merkle_perms = transcript_perms + num_pos_decomp_perms;
 
         // Merkle permutations count (must match AIR periodic schedule).
         let lde_domain_size = self.pub_inputs.trace_length * self.pub_inputs.blowup_factor;
@@ -757,18 +928,20 @@ impl StarkVerifierProver {
         } else {
             lde_domain_size.trailing_zeros() as usize
         };
-        let trace_leaf_blocks = RPO_TRACE_WIDTH.div_ceil(8).max(1);
-        let constraint_leaf_blocks = 1usize; // 8‑element constraint leaves
-        let fri_leaf_blocks = 1usize; // 2‑element FRI leaves
+        let trace_leaf_perms =
+            leaf_perm_count(RPO_TRACE_WIDTH, self.pub_inputs.trace_partition_size);
+        let constraint_leaf_perms =
+            leaf_perm_count(8, self.pub_inputs.constraint_partition_size);
+        let fri_leaf_perms = 1usize; // 2‑element FRI leaves
         let mut merkle_perms_per_query =
-            trace_leaf_blocks + depth_trace + constraint_leaf_blocks + depth_trace;
+            trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
         for layer_idx in 0..num_fri_layers {
             merkle_perms_per_query +=
-                fri_leaf_blocks + depth_trace.saturating_sub(layer_idx + 1);
+                fri_leaf_perms + depth_trace.saturating_sub(layer_idx + 1);
         }
         let merkle_perms_total = self.pub_inputs.num_queries * merkle_perms_per_query;
 
-        let active_perms = transcript_perms + merkle_perms_total;
+        let active_perms = pre_merkle_perms + merkle_perms_total;
         let active_rows = active_perms * ROWS_PER_PERMUTATION;
         let total_rows = active_rows.next_power_of_two();
 
@@ -806,6 +979,7 @@ impl StarkVerifierProver {
                 full_carry,
                 reseed,
                 coin_init,
+                BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
@@ -865,6 +1039,7 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
             );
             set_path_bit(&mut trace, perm_idx, 0);
@@ -892,6 +1067,7 @@ impl StarkVerifierProver {
             BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ONE,
+            BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
@@ -928,6 +1104,7 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
                 self.pub_inputs.constraint_commitment,
             );
         } else {
@@ -939,6 +1116,7 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ONE,
+                BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
@@ -974,6 +1152,7 @@ impl StarkVerifierProver {
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
+                    BaseElement::ZERO,
                     self.pub_inputs.constraint_commitment,
                 );
             } else {
@@ -985,6 +1164,7 @@ impl StarkVerifierProver {
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ONE,
+                    BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
@@ -1018,6 +1198,7 @@ impl StarkVerifierProver {
             BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ONE,
+            BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
@@ -1066,6 +1247,7 @@ impl StarkVerifierProver {
                     BaseElement::ONE,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
+                    BaseElement::ZERO,
                     reseed_word,
                 );
             } else {
@@ -1079,6 +1261,7 @@ impl StarkVerifierProver {
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ONE,
+                    BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     [BaseElement::ZERO; 4],
@@ -1123,6 +1306,7 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ONE,
+                BaseElement::ZERO,
                 BaseElement::ZERO,
                 next_commitment,
             );
@@ -1169,6 +1353,7 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
                 nonce_word,
             );
             set_path_bit(&mut trace, perm_idx, 0);
@@ -1180,20 +1365,34 @@ impl StarkVerifierProver {
             perm_idx += 1;
         }
 
-        // --- Query position draw permutations ----------------------------------------------
+        // --- Query position draw permutations + decomposition -------------------------------
         if num_pos_perms > 0 {
             coin_state[4] += pow_nonce_elem;
+
+            let mut remaining_draws = self.pub_inputs.num_draws;
+            let domain_size = lde_domain_size.max(1);
+            let depth_trace_bits = domain_size.trailing_zeros() as usize;
+            let v_mask = (domain_size - 1) as u64;
+
+            let gamma = inner.z;
+            let mut perm_acc_val = BaseElement::ONE;
+            let mut sorted_iter = inner.query_positions.iter();
 
             for pos_idx in 0..num_pos_perms {
                 let row_offset = perm_idx * ROWS_PER_PERMUTATION;
                 self.fill_rpo_trace(&mut trace, row_offset, coin_state);
 
-                let is_last = pos_idx + 1 == num_pos_perms;
+                let pos_full_carry = if pos_idx + 1 == num_pos_perms {
+                    BaseElement::ZERO
+                } else {
+                    BaseElement::ONE
+                };
+
                 set_masks(
                     &mut trace,
                     perm_idx,
                     BaseElement::ZERO,
-                    if is_last { BaseElement::ZERO } else { BaseElement::ONE },
+                    pos_full_carry,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ZERO,
@@ -1201,6 +1400,7 @@ impl StarkVerifierProver {
                     BaseElement::ZERO,
                     BaseElement::ZERO,
                     BaseElement::ONE,
+                    BaseElement::ZERO,
                     [BaseElement::ZERO; 4],
                 );
                 set_path_bit(&mut trace, perm_idx, 0);
@@ -1210,16 +1410,138 @@ impl StarkVerifierProver {
                     coin_state[i] = trace.get(i, last);
                 }
                 set_pos_witness(&mut trace, perm_idx, &coin_state);
+                let rate_outputs: [BaseElement; RATE_WIDTH] =
+                    core::array::from_fn(|i| coin_state[4 + i]);
                 perm_idx += 1;
+
+                let draws_here = if pos_idx == 0 {
+                    remaining_draws.min(RATE_WIDTH - 1)
+                } else {
+                    remaining_draws.min(RATE_WIDTH)
+                };
+                let start_rate = if pos_idx == 0 { 1 } else { 0 };
+
+                for d in 0..draws_here {
+                    let raw_val = rate_outputs[start_rate + d];
+                    let raw_u64 = raw_val.as_int();
+                    let masked_pos = (raw_u64 & v_mask) as u64;
+                    let p_elem = BaseElement::new(masked_pos);
+
+                    let q_idx = sorted_iter.next().copied().unwrap_or(0) as u64;
+                    let q_elem = BaseElement::new(q_idx);
+
+                    // Decomp perm: freeze RPO state and carry buffer.
+                    let row0 = perm_idx * ROWS_PER_PERMUTATION;
+                    for r in 0..ROWS_PER_PERMUTATION {
+                        let row = row0 + r;
+                        for i in 0..STATE_WIDTH {
+                            trace.set(i, row, coin_state[i]);
+                        }
+                        trace.set(COL_POS_DECOMP_MASK, row, BaseElement::ONE);
+                        trace.set(COL_POS_RAW, row, raw_val);
+                        for j in 0..RATE_WIDTH {
+                            trace.set(COL_POS_START + j, row, rate_outputs[j]);
+                        }
+                        trace.set(COL_Z_VALUE, row, gamma);
+                    }
+
+                    let mut acc = 0u64;
+                    let mut lo_acc = 0u64;
+                    let mut masked_acc = 0u64;
+                    let mut hi_and = 0u64;
+
+                    for local_row in 0..ROWS_PER_PERMUTATION {
+                        let row = row0 + local_row;
+                        let nibble = (raw_u64 >> (4 * local_row)) & 0xF;
+                        let bits = [
+                            (nibble & 1) as u64,
+                            ((nibble >> 1) & 1) as u64,
+                            ((nibble >> 2) & 1) as u64,
+                            ((nibble >> 3) & 1) as u64,
+                        ];
+                        trace.set(COL_POS_BIT0, row, BaseElement::new(bits[0]));
+                        trace.set(COL_POS_BIT1, row, BaseElement::new(bits[1]));
+                        trace.set(COL_POS_BIT2, row, BaseElement::new(bits[2]));
+                        trace.set(COL_POS_BIT3, row, BaseElement::new(bits[3]));
+
+                        trace.set(COL_POS_ACC, row, BaseElement::new(acc));
+                        trace.set(COL_POS_LO_ACC, row, BaseElement::new(lo_acc));
+                        trace.set(COL_POS_MASKED_ACC, row, BaseElement::new(masked_acc));
+
+                        if local_row == 8 {
+                            hi_and = 1;
+                        }
+                        trace.set(COL_POS_HI_AND, row, BaseElement::new(hi_and));
+
+                        let base_exp = 4 * local_row;
+                        for j in 0..4 {
+                            if bits[j] == 1 {
+                                acc = acc.wrapping_add(1u64 << (base_exp + j));
+                                if base_exp + j < 32 {
+                                    lo_acc = lo_acc.wrapping_add(1u64 << (base_exp + j));
+                                }
+                                if base_exp + j < depth_trace_bits {
+                                    masked_acc =
+                                        masked_acc.wrapping_add(1u64 << (base_exp + j));
+                                }
+                            }
+                        }
+                        if local_row >= 8 {
+                            let nibble_prod = bits.iter().product::<u64>();
+                            hi_and *= nibble_prod;
+                        }
+                    }
+
+                    for r in 0..ROWS_PER_PERMUTATION {
+                        let row = row0 + r;
+                        trace.set(COL_POS_SORTED_VALUE, row, q_elem);
+                        trace.set(COL_POS_PERM_ACC, row, perm_acc_val);
+                    }
+
+                    let full_carry = if remaining_draws == 1 {
+                        BaseElement::ZERO
+                    } else {
+                        BaseElement::ONE
+                    };
+
+                    set_masks(
+                        &mut trace,
+                        perm_idx,
+                        BaseElement::ZERO,
+                        full_carry,
+                        BaseElement::ZERO,
+                        BaseElement::ZERO,
+                        BaseElement::ZERO,
+                        BaseElement::ZERO,
+                        BaseElement::ZERO,
+                        BaseElement::ZERO,
+                        BaseElement::ZERO,
+                        BaseElement::ONE,
+                        [BaseElement::ZERO; 4],
+                    );
+                    set_path_bit(&mut trace, perm_idx, 0);
+
+                    perm_acc_val *= (p_elem + gamma) / (q_elem + gamma);
+
+                    perm_idx += 1;
+                    remaining_draws -= 1;
+                    if remaining_draws == 0 {
+                        break;
+                    }
+                }
+
+                if remaining_draws == 0 {
+                    break;
+                }
             }
         }
 
         // --- Merkle authentication segment -------------------------------------------------
-        assert_eq!(perm_idx, transcript_perms, "transcript perm count mismatch");
+        assert_eq!(perm_idx, pre_merkle_perms, "pre-merkle perm count mismatch");
 
         // Pre-compute FRI leaf indexes per layer.
         let folding_factor = 2usize;
-        let fri_num_partitions = 1usize;
+        let fri_num_partitions = inner.fri_num_partitions;
         let mut positions = inner.query_positions.clone();
         let mut domain_size = lde_domain_size;
         let mut fri_indexes: Vec<Vec<usize>> = Vec::with_capacity(num_fri_layers);
@@ -1239,8 +1561,13 @@ impl StarkVerifierProver {
         for q in 0..self.pub_inputs.num_queries {
             // Trace leaf + path.
             let trace_row = &inner.trace_evaluations[q];
-            let leaf_digest =
-                hash_leaf_perms(self, &mut trace, &mut perm_idx, trace_row);
+            let leaf_digest = hash_row_partitioned_perms(
+                self,
+                &mut trace,
+                &mut perm_idx,
+                trace_row,
+                self.pub_inputs.trace_partition_size,
+            );
             let trace_index = inner.query_positions[q] as u64;
             let trace_siblings = &inner.trace_auth_paths[q];
             authenticate_merkle_path(
@@ -1254,8 +1581,13 @@ impl StarkVerifierProver {
 
             // Constraint leaf + path.
             let constraint_row = &inner.constraint_evaluations[q];
-            let constraint_digest =
-                hash_leaf_perms(self, &mut trace, &mut perm_idx, constraint_row);
+            let constraint_digest = hash_row_partitioned_perms(
+                self,
+                &mut trace,
+                &mut perm_idx,
+                constraint_row,
+                self.pub_inputs.constraint_partition_size,
+            );
             let constraint_index = inner.query_positions[q] as u64;
             let constraint_siblings = &inner.constraint_auth_paths[q];
             authenticate_merkle_path(
@@ -1302,6 +1634,7 @@ impl StarkVerifierProver {
             set_masks(
                 &mut trace,
                 perm_idx,
+                BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
@@ -1386,6 +1719,7 @@ fn set_masks(
     deep_mask: BaseElement,
     fri_mask: BaseElement,
     pos_mask: BaseElement,
+    decomp_mask: BaseElement,
     reseed_word: [BaseElement; 4],
 ) {
     let row_start = perm_idx * ROWS_PER_PERMUTATION;
@@ -1400,6 +1734,7 @@ fn set_masks(
         trace.set(COL_DEEP_MASK, row, deep_mask);
         trace.set(COL_FRI_MASK, row, fri_mask);
         trace.set(COL_POS_MASK, row, pos_mask);
+        trace.set(COL_POS_DECOMP_MASK, row, decomp_mask);
         for i in 0..4 {
             trace.set(COL_RESEED_WORD_START + i, row, reseed_word[i]);
         }
@@ -1474,6 +1809,47 @@ fn set_path_bit(trace: &mut TraceTable<BaseElement>, perm_idx: usize, bit: u64) 
     }
 }
 
+fn leaf_perm_count(leaf_len: usize, partition_size: usize) -> usize {
+    let hash_perms = |input_len: usize| input_len.div_ceil(RATE_WIDTH).max(1);
+
+    if partition_size >= leaf_len {
+        return hash_perms(leaf_len);
+    }
+
+    let mut perms = 0usize;
+    let mut remaining = leaf_len;
+    while remaining > 0 {
+        let part_len = remaining.min(partition_size);
+        perms += hash_perms(part_len);
+        remaining -= part_len;
+    }
+
+    let num_partitions = leaf_len.div_ceil(partition_size);
+    let merged_len = num_partitions * DIGEST_WIDTH;
+    perms + hash_perms(merged_len)
+}
+
+fn hash_row_partitioned_perms(
+    prover: &StarkVerifierProver,
+    trace: &mut TraceTable<BaseElement>,
+    perm_idx: &mut usize,
+    row: &[BaseElement],
+    partition_size: usize,
+) -> [BaseElement; DIGEST_WIDTH] {
+    if partition_size >= row.len() {
+        return hash_leaf_perms(prover, trace, perm_idx, row);
+    }
+
+    let num_partitions = row.len().div_ceil(partition_size);
+    let mut merged_elements = Vec::with_capacity(num_partitions * DIGEST_WIDTH);
+    for chunk in row.chunks(partition_size) {
+        let digest = hash_leaf_perms(prover, trace, perm_idx, chunk);
+        merged_elements.extend_from_slice(&digest);
+    }
+
+    hash_leaf_perms(prover, trace, perm_idx, &merged_elements)
+}
+
 fn hash_leaf_perms(
     prover: &StarkVerifierProver,
     trace: &mut TraceTable<BaseElement>,
@@ -1508,6 +1884,7 @@ fn hash_leaf_perms(
             trace,
             *perm_idx,
             carry,
+            BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
@@ -1562,6 +1939,7 @@ fn authenticate_merkle_path(
         set_masks(
             trace,
             *perm_idx,
+            BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
             BaseElement::ZERO,
@@ -1688,6 +2066,7 @@ fn apply_inv_sbox(state: &mut [BaseElement; STATE_WIDTH]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use winterfell::Air;
     use winterfell::verify;
     use winterfell::Trace;
     use super::super::{RpoAir, RpoStarkProver};
@@ -1756,6 +2135,9 @@ mod tests {
             [BaseElement::ZERO; 4],
             vec![[BaseElement::ZERO; 4], [BaseElement::ZERO; 4]],
             options.num_queries(),
+            options.num_queries(),
+            RPO_TRACE_WIDTH,
+            8,
             options.blowup_factor(),
             ROWS_PER_PERMUTATION,
         );
@@ -1798,9 +2180,110 @@ mod tests {
             InnerProofData::from_proof::<RpoAir>(&inner_proof.to_bytes(), inner_pub_inputs)
                 .unwrap();
         let pub_inputs = inner_data.to_stark_verifier_inputs();
+        let lde_domain_size = pub_inputs.trace_length * pub_inputs.blowup_factor;
+        let depth_trace = lde_domain_size.trailing_zeros() as usize;
+        assert!(inner_data
+            .trace_auth_paths
+            .iter()
+            .all(|p| p.len() == depth_trace));
+        assert!(inner_data
+            .constraint_auth_paths
+            .iter()
+            .all(|p| p.len() == depth_trace));
+        for (layer_idx, layer) in inner_data.fri_layers.iter().enumerate() {
+            let expected_depth = depth_trace.saturating_sub(layer_idx + 1);
+            assert!(layer.auth_paths.iter().all(|p| p.len() == expected_depth));
+        }
 
         let prover = StarkVerifierProver::new(options.clone(), pub_inputs.clone());
         let trace = prover.build_trace_from_inner(&inner_data);
+
+        // Sanity-check Merkle root locations in the constructed trace.
+        let input_len = pub_inputs.inner_public_inputs.len();
+        let num_pi_blocks = input_len.div_ceil(8).max(1);
+        let seed_prefix = build_context_prefix(&pub_inputs);
+        let seed_len = seed_prefix.len() + input_len;
+        let num_seed_blocks = seed_len.div_ceil(8).max(1);
+        let num_coeff_perms = 36usize.div_ceil(8);
+        let num_deep_coeffs = RPO_TRACE_WIDTH + 8;
+        let num_deep_perms = num_deep_coeffs.div_ceil(8);
+        let num_fri_layers = pub_inputs.fri_commitments.len().saturating_sub(1);
+        let num_remainder_perms = (pub_inputs.fri_commitments.len() > 0) as usize;
+        let num_pos_perms = (pub_inputs.num_draws + 1).div_ceil(8);
+        let transcript_perms = num_pi_blocks
+            + num_seed_blocks
+            + num_coeff_perms
+            + num_deep_perms
+            + num_fri_layers
+            + num_remainder_perms
+            + num_pos_perms
+            + 2;
+        let pre_merkle_perms = transcript_perms + pub_inputs.num_draws;
+        let trace_leaf_perms = leaf_perm_count(RPO_TRACE_WIDTH, pub_inputs.trace_partition_size);
+        let constraint_leaf_perms = leaf_perm_count(8, pub_inputs.constraint_partition_size);
+        let depth_trace = (pub_inputs.trace_length * pub_inputs.blowup_factor).trailing_zeros() as usize;
+
+        let mut perm_idx = pre_merkle_perms;
+        for q in 0..pub_inputs.num_queries {
+            perm_idx += trace_leaf_perms;
+            if depth_trace > 0 {
+                let trace_root_perm = perm_idx + depth_trace - 1;
+                let row = trace_root_perm * ROWS_PER_PERMUTATION + (ROWS_PER_PERMUTATION - 1);
+                let digest: [BaseElement; 4] = core::array::from_fn(|i| trace.get(4 + i, row));
+                assert_eq!(digest, pub_inputs.trace_commitment, "trace root mismatch q={q}");
+            }
+            perm_idx += depth_trace;
+
+            perm_idx += constraint_leaf_perms;
+            if depth_trace > 0 {
+                let constraint_root_perm = perm_idx + depth_trace - 1;
+                let row =
+                    constraint_root_perm * ROWS_PER_PERMUTATION + (ROWS_PER_PERMUTATION - 1);
+                let digest: [BaseElement; 4] = core::array::from_fn(|i| trace.get(4 + i, row));
+                assert_eq!(
+                    digest,
+                    pub_inputs.constraint_commitment,
+                    "constraint root mismatch q={q}"
+                );
+            }
+            perm_idx += depth_trace;
+
+            for layer_idx in 0..num_fri_layers {
+                perm_idx += 1; // FRI leaf perm
+                let layer_depth = depth_trace.saturating_sub(layer_idx + 1);
+                if layer_depth > 0 {
+                    let root_perm = perm_idx + layer_depth - 1;
+                    let row = root_perm * ROWS_PER_PERMUTATION + (ROWS_PER_PERMUTATION - 1);
+                    let digest: [BaseElement; 4] = core::array::from_fn(|i| trace.get(4 + i, row));
+                    assert_eq!(
+                        digest,
+                        pub_inputs.fri_commitments[layer_idx],
+                        "fri root mismatch q={q} layer={layer_idx}"
+                    );
+                }
+                perm_idx += layer_depth;
+            }
+        }
+
+        // Ensure the AIR's periodic FRI root mask for layer 1 only fires on rows
+        // where the trace digest equals the expected commitment.
+        if num_fri_layers > 1 {
+            let air = StarkVerifierAir::new(trace.get_info(), pub_inputs.clone(), options.clone());
+            let periodic = air.get_periodic_column_values();
+            let fri_root_mask_1 = &periodic[periodic.len() - num_fri_layers + 1];
+            for (row, &mask) in fri_root_mask_1.iter().enumerate() {
+                if mask != BaseElement::ONE {
+                    continue;
+                }
+                let digest: [BaseElement; 4] = core::array::from_fn(|i| trace.get(4 + i, row));
+                assert_eq!(
+                    digest,
+                    pub_inputs.fri_commitments[1],
+                    "fri root mask(1) mismatch at row={row}",
+                );
+            }
+        }
+
         let proof = prover.prove(trace).unwrap();
 
         let acceptable = AcceptableOptions::OptionSet(vec![options]);
