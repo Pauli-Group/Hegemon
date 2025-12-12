@@ -32,12 +32,16 @@ type Blake3 = Blake3_256<BaseElement>;
 /// STARK proof covering all transactions.
 pub struct BatchTransactionProver {
     options: ProofOptions,
+    pub_inputs: Option<BatchPublicInputs>,
 }
 
 impl BatchTransactionProver {
     /// Create a new batch prover with the given options.
     pub fn new(options: ProofOptions) -> Self {
-        Self { options }
+        Self {
+            options,
+            pub_inputs: None,
+        }
     }
 
     /// Create a new batch prover with default options.
@@ -179,15 +183,18 @@ impl BatchTransactionProver {
 
     /// Generate a batch proof for multiple transactions.
     pub fn prove_batch(
-        &self,
+        &mut self,
         witnesses: &[TransactionWitness],
     ) -> Result<(Proof, BatchPublicInputs), BatchCircuitError> {
         let trace = self.build_trace(witnesses)?;
         let pub_inputs = self.extract_public_inputs(witnesses)?;
 
+        // Store pub inputs so Prover::get_pub_inputs can feed AirContext assertions.
+        self.pub_inputs = Some(pub_inputs.clone());
         let proof = self
             .prove(trace)
             .map_err(|e| BatchCircuitError::ProofGenerationError(format!("{:?}", e)))?;
+        self.pub_inputs = None;
 
         Ok((proof, pub_inputs))
     }
@@ -257,13 +264,7 @@ impl Prover for BatchTransactionProver {
         DefaultConstraintEvaluator<'a, Self::Air, E>;
 
     fn get_pub_inputs(&self, _trace: &Self::Trace) -> BatchPublicInputs {
-        // This is called during proving to ensure consistency.
-        // We read back the nullifiers, commitments, and anchor from the trace.
-        // However, the prover should already have set up pub_inputs via extract_public_inputs.
-        
-        // For now, return a default. The actual pub_inputs are passed separately.
-        // This could be improved by storing pub_inputs in the prover.
-        BatchPublicInputs::default()
+        self.pub_inputs.clone().unwrap_or_default()
     }
 
     fn options(&self) -> &ProofOptions {

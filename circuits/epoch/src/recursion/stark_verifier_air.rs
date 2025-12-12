@@ -62,6 +62,8 @@ pub const MAX_ASSERTIONS: usize = 128;
 /// - The commitment structure (Merkle roots)
 #[derive(Clone, Debug)]
 pub struct StarkVerifierPublicInputs {
+    /// Full public inputs of the inner proof (as field elements).
+    pub inner_public_inputs: Vec<BaseElement>,
     /// Hash of the inner proof's public inputs
     pub inner_pub_inputs_hash: [BaseElement; DIGEST_WIDTH],
     
@@ -82,6 +84,7 @@ pub struct StarkVerifierPublicInputs {
 
 impl StarkVerifierPublicInputs {
     pub fn new(
+        inner_public_inputs: Vec<BaseElement>,
         inner_pub_inputs_hash: [BaseElement; DIGEST_WIDTH],
         trace_commitment: [BaseElement; DIGEST_WIDTH],
         constraint_commitment: [BaseElement; DIGEST_WIDTH],
@@ -91,6 +94,7 @@ impl StarkVerifierPublicInputs {
         trace_length: usize,
     ) -> Self {
         Self {
+            inner_public_inputs,
             inner_pub_inputs_hash,
             trace_commitment,
             constraint_commitment,
@@ -106,6 +110,7 @@ impl ToElements<BaseElement> for StarkVerifierPublicInputs {
     fn to_elements(&self) -> Vec<BaseElement> {
         let mut elements = Vec::new();
         
+        elements.extend_from_slice(&self.inner_public_inputs);
         elements.extend_from_slice(&self.inner_pub_inputs_hash);
         elements.extend_from_slice(&self.trace_commitment);
         elements.extend_from_slice(&self.constraint_commitment);
@@ -351,12 +356,14 @@ mod tests {
 
     #[test]
     fn test_stark_verifier_public_inputs() {
+        let inner_inputs = vec![BaseElement::new(9); 3];
         let inner_hash = [BaseElement::new(1); DIGEST_WIDTH];
         let trace_commit = [BaseElement::new(2); DIGEST_WIDTH];
         let constraint_commit = [BaseElement::new(3); DIGEST_WIDTH];
         let fri_commits = vec![[BaseElement::new(4); DIGEST_WIDTH]; 5];
         
         let pub_inputs = StarkVerifierPublicInputs::new(
+            inner_inputs,
             inner_hash,
             trace_commit,
             constraint_commit,
@@ -424,6 +431,7 @@ mod tests {
     #[test]
     fn test_to_elements() {
         let pub_inputs = StarkVerifierPublicInputs::new(
+            vec![BaseElement::ONE; 2],
             [BaseElement::ONE; DIGEST_WIDTH],
             [BaseElement::new(2); DIGEST_WIDTH],
             [BaseElement::new(3); DIGEST_WIDTH],
@@ -435,7 +443,7 @@ mod tests {
         
         let elements = pub_inputs.to_elements();
         
-        // 4 (inner) + 4 (trace) + 4 (constraint) + 3*4 (fri) + 3 (params) = 27
-        assert_eq!(elements.len(), 4 + 4 + 4 + 12 + 3);
+        // inner_public_inputs (2) + 4 (inner hash) + 4 (trace) + 4 (constraint) + 3*4 (fri) + 3 (params)
+        assert_eq!(elements.len(), 2 + 4 + 4 + 4 + 12 + 3);
     }
 }

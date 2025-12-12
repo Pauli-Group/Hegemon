@@ -38,13 +38,19 @@
 //! - FRI soundness over Goldilocks field
 //! - No reliance on discrete log or factoring
 
-use winter_math::{fields::f64::BaseElement, FieldElement};
-use winterfell::{
-    BatchingMethod, FieldExtension, ProofOptions, Prover,
-};
+use miden_crypto::hash::rpo::Rpo256;
+use miden_crypto::rand::RpoRandomCoin;
+use miden_crypto::Word;
+use winter_air::proof::{merge_ood_evaluations, Proof};
+use winter_air::{Air, ConstraintCompositionCoefficients, DeepCompositionCoefficients};
+use winter_crypto::{Hasher, MerkleTree, RandomCoin};
+use winter_fri::folding::fold_positions;
+use winter_fri::utils::map_positions_to_indexes;
+use winter_math::{fields::f64::BaseElement, FieldElement, ToElements};
+use winterfell::{BatchingMethod, FieldExtension, ProofOptions, Prover};
 
 use super::rpo_air::STATE_WIDTH;
-use super::rpo_proof::{RpoProofOptions, rpo_merge};
+use super::rpo_proof::{rpo_hash_elements, RpoProofOptions, rpo_merge};
 use super::rpo_stark_prover::{RpoStarkProver, verify_epoch_with_rpo};
 use super::stark_verifier_air::StarkVerifierPublicInputs;
 use crate::types::Epoch;
@@ -352,12 +358,36 @@ pub struct InnerProofData {
     pub constraint_commitment: [BaseElement; 4],
     /// Public inputs of the inner proof.
     pub public_inputs: Vec<BaseElement>,
+    /// Proof-of-work nonce used for query seed grinding.
+    pub pow_nonce: u64,
+    /// Trace length of the inner proof.
+    pub trace_length: usize,
+    /// Blowup factor used by the inner proof.
+    pub blowup_factor: usize,
     /// Query positions for FRI verification.
     pub query_positions: Vec<usize>,
-    /// Trace evaluations at query positions.
+    /// Trace evaluations at query positions (main trace segment).
     pub trace_evaluations: Vec<Vec<BaseElement>>,
+    /// Merkle authentication paths for trace queries (one path per query).
+    pub trace_auth_paths: Vec<Vec<[BaseElement; 4]>>,
+    /// Constraint composition polynomial evaluations at query positions.
+    pub constraint_evaluations: Vec<Vec<BaseElement>>,
+    /// Merkle authentication paths for constraint queries.
+    pub constraint_auth_paths: Vec<Vec<[BaseElement; 4]>>,
     /// FRI layers for polynomial commitment verification.
     pub fri_layers: Vec<FriLayerData>,
+    /// Remainder polynomial coefficients for the last FRI layer.
+    pub fri_remainder: Vec<BaseElement>,
+    /// Commitment to the remainder polynomial (last FRI commitment).
+    pub fri_remainder_commitment: [BaseElement; 4],
+    /// Out-of-domain point z drawn from the public coin.
+    pub z: BaseElement,
+    /// Constraint composition coefficients drawn from the public coin.
+    pub constraint_coeffs: ConstraintCompositionCoefficients<BaseElement>,
+    /// DEEP composition coefficients drawn from the public coin.
+    pub deep_coeffs: DeepCompositionCoefficients<BaseElement>,
+    /// FRI folding factors (alphas) drawn during the commit phase.
+    pub fri_alphas: Vec<BaseElement>,
 }
 
 /// FRI layer data for recursive verification.
@@ -378,41 +408,353 @@ impl InnerProofData {
             trace_commitment: [BaseElement::ZERO; 4],
             constraint_commitment: [BaseElement::ZERO; 4],
             public_inputs: vec![],
+            pow_nonce: 0,
+            trace_length: 0,
+            blowup_factor: 0,
             query_positions: vec![],
             trace_evaluations: vec![],
+            trace_auth_paths: vec![],
+            constraint_evaluations: vec![],
+            constraint_auth_paths: vec![],
             fri_layers: vec![],
+            fri_remainder: vec![],
+            fri_remainder_commitment: [BaseElement::ZERO; 4],
+            z: BaseElement::ZERO,
+            constraint_coeffs: ConstraintCompositionCoefficients {
+                transition: vec![],
+                boundary: vec![],
+            },
+            deep_coeffs: DeepCompositionCoefficients {
+                trace: vec![],
+                constraints: vec![],
+            },
+            fri_alphas: vec![],
         }
+    }
+
+    /// Parse an inner RPO‑Fiat‑Shamir STARK proof into data usable by the recursive verifier.
+    ///
+    /// This reconstructs the Winterfell verifier transcript using `RpoRandomCoin`
+    /// and extracts commitments, queries, Merkle openings, and FRI layer data.
+    pub fn from_proof<A>(
+        proof_bytes: &[u8],
+        pub_inputs: A::PublicInputs,
+    ) -> Result<Self, EpochProverError>
+    where
+        A: Air<BaseField = BaseElement>,
+    {
+        type RpoMerkleTree = MerkleTree<Rpo256>;
+
+        let proof = Proof::from_bytes(proof_bytes)
+            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+
+        // Only base field recursion is supported for now.
+        if proof.options().field_extension() != FieldExtension::None {
+            return Err(EpochProverError::TraceBuildError(
+                "inner proof uses unsupported field extension".to_string(),
+            ));
+        }
+
+        // Extract trace/options info from the proof context.
+        let trace_info = proof.trace_info().clone();
+        let options = proof.options().clone();
+
+        // Capture public inputs as elements before moving into AIR.
+        let public_inputs = pub_inputs.to_elements();
+
+        // Instantiate inner AIR to compute protocol parameters.
+        let air = A::new(trace_info.clone(), pub_inputs, options.clone());
+
+        let lde_domain_size = air.lde_domain_size();
+        let fri_options = air.options().to_fri_options();
+        let num_fri_layers = fri_options.num_fri_layers(lde_domain_size);
+        let folding_factor = fri_options.folding_factor();
+        let num_trace_segments = air.trace_info().num_segments();
+        let main_trace_width = air.trace_info().main_trace_width();
+        let aux_trace_width = air.trace_info().aux_segment_width();
+        let constraint_frame_width = air.context().num_constraint_composition_columns();
+
+        let partition_options = air.options().partition_options();
+        let partition_size_main =
+            partition_options.partition_size::<BaseElement>(main_trace_width);
+        let partition_size_aux =
+            partition_options.partition_size::<BaseElement>(aux_trace_width);
+        let partition_size_constraint =
+            partition_options.partition_size::<BaseElement>(constraint_frame_width);
+
+        // --- parse commitments ----------------------------------------------------------------
+        let (trace_roots, constraint_root, fri_roots) = proof
+            .commitments
+            .clone()
+            .parse::<Rpo256>(num_trace_segments, num_fri_layers)
+            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+
+        let trace_commitment = word_to_digest(trace_roots[0]);
+        let constraint_commitment = word_to_digest(constraint_root);
+
+        // --- parse trace queries ---------------------------------------------------------------
+        let num_unique_queries = proof.num_unique_queries as usize;
+        let mut trace_segment_data = Vec::with_capacity(num_trace_segments);
+        for (seg_idx, queries) in proof.trace_queries.clone().into_iter().enumerate() {
+            let seg_width = if seg_idx == 0 {
+                main_trace_width
+            } else {
+                aux_trace_width
+            };
+            let seg_partition = if seg_idx == 0 {
+                partition_size_main
+            } else {
+                partition_size_aux
+            };
+            let (mp, table) = queries
+                .parse::<BaseElement, Rpo256, RpoMerkleTree>(
+                    lde_domain_size,
+                    num_unique_queries,
+                    seg_width,
+                )
+                .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+            trace_segment_data.push((mp, table, seg_partition));
+        }
+
+        // --- parse constraint queries ----------------------------------------------------------
+        let (constraint_mp, constraint_table) = proof
+            .constraint_queries
+            .clone()
+            .parse::<BaseElement, Rpo256, RpoMerkleTree>(
+                lde_domain_size,
+                num_unique_queries,
+                constraint_frame_width,
+            )
+            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+
+        // --- parse OOD frame -------------------------------------------------------------------
+        let (ood_trace_frame, ood_constraint_frame) = proof
+            .ood_frame
+            .clone()
+            .parse::<BaseElement>(main_trace_width, aux_trace_width, constraint_frame_width)
+            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+
+        // --- parse FRI proof -------------------------------------------------------------------
+        let fri_num_partitions = proof.fri_proof.num_partitions();
+        let fri_remainder_commitment = word_to_digest(*fri_roots.last().unwrap());
+        let fri_remainder = proof
+            .fri_proof
+            .parse_remainder::<BaseElement>()
+            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+
+        let (fri_layer_queries, fri_layer_proofs) = proof
+            .fri_proof
+            .clone()
+            .parse_layers::<BaseElement, Rpo256, RpoMerkleTree>(lde_domain_size, folding_factor)
+            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+
+        // --- reconstruct Fiat‑Shamir transcript -----------------------------------------------
+        let mut seed = proof.context.to_elements();
+        let mut pub_input_seed = public_inputs.clone();
+        seed.append(&mut pub_input_seed);
+        let mut coin = <RpoRandomCoin as RandomCoin>::new(&seed);
+
+        // reseed with trace commitments
+        coin.reseed(trace_roots[0]);
+
+        // handle auxiliary trace (advance coin state if needed)
+        if air.trace_info().is_multi_segment() {
+            air.get_aux_rand_elements::<BaseElement, RpoRandomCoin>(&mut coin)
+                .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+            coin.reseed(trace_roots[1]);
+        }
+
+        let constraint_coeffs: ConstraintCompositionCoefficients<BaseElement> = air
+            .get_constraint_composition_coefficients::<BaseElement, RpoRandomCoin>(&mut coin)
+            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+
+        coin.reseed(constraint_root);
+        let z: BaseElement = coin
+            .draw()
+            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+
+        // reseed with OOD evaluations digest
+        let ood_evals = merge_ood_evaluations(&ood_trace_frame, &ood_constraint_frame);
+        let ood_digest = Rpo256::hash_elements(&ood_evals);
+        coin.reseed(ood_digest);
+
+        let deep_coeffs: DeepCompositionCoefficients<BaseElement> = air
+            .get_deep_composition_coefficients::<BaseElement, RpoRandomCoin>(&mut coin)
+            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+
+        // FRI commit phase: reseed with each layer commitment and draw alpha.
+        let mut fri_alphas = Vec::with_capacity(fri_roots.len());
+        for commitment in fri_roots.iter() {
+            coin.reseed(*commitment);
+            let alpha: BaseElement = coin
+                .draw()
+                .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+            fri_alphas.push(alpha);
+        }
+
+        // draw query positions
+        let pow_nonce = proof.pow_nonce;
+        let mut query_positions = coin
+            .draw_integers(air.options().num_queries(), lde_domain_size, pow_nonce)
+            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+        query_positions.sort_unstable();
+        query_positions.dedup();
+
+        if query_positions.len() != num_unique_queries {
+            return Err(EpochProverError::TraceBuildError(format!(
+                "derived {} unique query positions but proof expects {}",
+                query_positions.len(),
+                num_unique_queries
+            )));
+        }
+
+        // --- decompress trace Merkle proofs ---------------------------------------------------
+        let mut trace_evaluations = Vec::new();
+        let mut trace_auth_paths = Vec::new();
+        for (seg_idx, (mp, table, seg_partition)) in trace_segment_data.into_iter().enumerate() {
+            if seg_idx > 0 {
+                // Auxiliary trace segments are not yet supported in recursion data model.
+                continue;
+            }
+            trace_evaluations = table.rows().map(|r| r.to_vec()).collect();
+            let leaves: Vec<Word> = trace_evaluations
+                .iter()
+                .map(|row| hash_row_rpo(row, seg_partition))
+                .collect();
+            let openings = mp
+                .into_openings(&leaves, &query_positions)
+                .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+            trace_auth_paths = openings
+                .into_iter()
+                .map(|(_, path)| path.into_iter().map(word_to_digest).collect())
+                .collect();
+        }
+
+        // --- decompress constraint Merkle proofs -----------------------------------------------
+        let constraint_evaluations: Vec<Vec<BaseElement>> =
+            constraint_table.rows().map(|r| r.to_vec()).collect();
+        let constraint_leaves: Vec<Word> = constraint_evaluations
+            .iter()
+            .map(|row| hash_row_rpo(row, partition_size_constraint))
+            .collect();
+        let constraint_openings = constraint_mp
+            .into_openings(&constraint_leaves, &query_positions)
+            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+        let constraint_auth_paths: Vec<Vec<[BaseElement; 4]>> = constraint_openings
+            .into_iter()
+            .map(|(_, path)| path.into_iter().map(word_to_digest).collect())
+            .collect();
+
+        // --- build FRI layer data --------------------------------------------------------------
+        let mut fri_layers = Vec::with_capacity(fri_layer_queries.len());
+        let mut positions = query_positions.clone();
+        let mut domain_size = lde_domain_size;
+        for (layer_idx, (layer_values, layer_mp)) in fri_layer_queries
+            .into_iter()
+            .zip(fri_layer_proofs.into_iter())
+            .enumerate()
+        {
+            let folded_positions = fold_positions(&positions, domain_size, folding_factor);
+            let position_indexes = map_positions_to_indexes(
+                &folded_positions,
+                domain_size,
+                folding_factor,
+                fri_num_partitions,
+            );
+
+            let leaves: Vec<Word> = layer_values
+                .chunks(folding_factor)
+                .map(|chunk| Rpo256::hash_elements(chunk))
+                .collect();
+            let openings = layer_mp
+                .into_openings(&leaves, &position_indexes)
+                .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+            let auth_paths: Vec<Vec<[BaseElement; 4]>> = openings
+                .into_iter()
+                .map(|(_, path)| path.into_iter().map(word_to_digest).collect())
+                .collect();
+
+            let commitment = word_to_digest(fri_roots[layer_idx]);
+            fri_layers.push(FriLayerData {
+                commitment,
+                evaluations: layer_values,
+                auth_paths,
+            });
+
+            positions = folded_positions;
+            domain_size /= folding_factor;
+        }
+
+        Ok(Self {
+            trace_commitment,
+            constraint_commitment,
+            public_inputs,
+            pow_nonce,
+            trace_length: trace_info.length(),
+            blowup_factor: options.blowup_factor(),
+            query_positions,
+            trace_evaluations,
+            trace_auth_paths,
+            constraint_evaluations,
+            constraint_auth_paths,
+            fri_layers,
+            fri_remainder,
+            fri_remainder_commitment,
+            z,
+            constraint_coeffs,
+            deep_coeffs,
+            fri_alphas,
+        })
     }
     
     /// Convert to public inputs for StarkVerifierAir.
     pub fn to_stark_verifier_inputs(&self) -> StarkVerifierPublicInputs {
-        // Hash the public inputs to get inner_pub_inputs_hash
+        // Hash the public inputs to get inner_pub_inputs_hash.
         let inner_pub_inputs_hash = if self.public_inputs.is_empty() {
             [BaseElement::ZERO; 4]
         } else {
-            let mut hash = [BaseElement::ZERO; 4];
-            for (i, elem) in self.public_inputs.iter().take(4).enumerate() {
-                hash[i] = *elem;
-            }
-            hash
+            rpo_hash_elements(&self.public_inputs)
         };
         
         // Collect FRI commitments
-        let fri_commitments: Vec<[BaseElement; 4]> = self
+        let mut fri_commitments: Vec<[BaseElement; 4]> = self
             .fri_layers
             .iter()
             .map(|layer| layer.commitment)
             .collect();
+        fri_commitments.push(self.fri_remainder_commitment);
         
         StarkVerifierPublicInputs::new(
+            self.public_inputs.clone(),
             inner_pub_inputs_hash,
             self.trace_commitment,
             self.constraint_commitment,
             fri_commitments,
             self.query_positions.len(),
-            32, // Default blowup factor
-            1024, // Default trace length
+            self.blowup_factor,
+            self.trace_length,
         )
+    }
+}
+
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+fn word_to_digest(word: Word) -> [BaseElement; 4] {
+    [word[0], word[1], word[2], word[3]]
+}
+
+fn hash_row_rpo(row: &[BaseElement], partition_size: usize) -> Word {
+    if partition_size == row.len() {
+        Rpo256::hash_elements(row)
+    } else {
+        let num_partitions = row.len().div_ceil(partition_size);
+        let mut buffer = vec![Word::default(); num_partitions];
+        for (chunk, buf) in row.chunks(partition_size).zip(buffer.iter_mut()) {
+            *buf = Rpo256::hash_elements(chunk);
+        }
+        Rpo256::merge_many(&buffer)
     }
 }
 
@@ -421,6 +763,8 @@ mod tests {
     use super::*;
     use crate::types::Epoch;
     use winter_math::FieldElement;
+    use crate::recursion::rpo_air::{RpoAir, STATE_WIDTH};
+    use crate::recursion::rpo_stark_prover::RpoStarkProver;
 
     fn test_epoch() -> Epoch {
         let mut epoch = Epoch::new(0);
@@ -552,6 +896,24 @@ mod tests {
         
         assert_eq!(inputs.trace_commitment, [BaseElement::ZERO; 4]);
         assert_eq!(inputs.inner_pub_inputs_hash, [BaseElement::ZERO; 4]);
+    }
+
+    #[test]
+    fn test_inner_proof_data_from_rpo_proof() {
+        // Generate an inner RPO proof and ensure we can extract recursion data.
+        let prover = RpoStarkProver::fast();
+        let input_state = [BaseElement::new(7); STATE_WIDTH];
+        let (proof, pub_inputs) = prover
+            .prove_rpo_permutation(input_state)
+            .expect("inner proof generation should succeed");
+
+        let data =
+            InnerProofData::from_proof::<RpoAir>(&proof.to_bytes(), pub_inputs.clone()).unwrap();
+
+        assert_eq!(data.public_inputs, pub_inputs.to_elements());
+        assert_eq!(data.blowup_factor, proof.options().blowup_factor());
+        assert_eq!(data.trace_length, proof.trace_info().length());
+        assert_eq!(data.query_positions.len(), proof.num_unique_queries as usize);
     }
 
     #[test]
