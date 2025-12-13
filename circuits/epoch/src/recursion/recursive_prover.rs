@@ -55,6 +55,7 @@ use winterfell::{
 use super::rpo_air::STATE_WIDTH;
 use super::rpo_proof::{rpo_hash_elements, rpo_merge, RpoProofOptions};
 use super::rpo_stark_prover::{verify_epoch_with_rpo, RpoStarkProver};
+use super::rpo_stark_verifier_prover::RpoStarkVerifierProver;
 use super::stark_verifier_air::StarkVerifierAir;
 use super::stark_verifier_air::StarkVerifierPublicInputs;
 use super::stark_verifier_prover::StarkVerifierProver;
@@ -212,6 +213,38 @@ impl RecursiveEpochProver {
         Ok(proof)
     }
 
+    /// Generate a recursive epoch proof (proof-of-proof) with an **RPO-backed outer proof**.
+    ///
+    /// This matches `prove_epoch_recursive()` but switches the outer proof’s Fiat–Shamir and
+    /// vector commitments to RPO so the resulting outer proof can itself be verified in-circuit.
+    ///
+    /// This is the Phase 3b.1 prerequisite for recursion depth 2+.
+    pub fn prove_epoch_recursive_rpo_outer(
+        &self,
+        epoch: &Epoch,
+        proof_hashes: &[[u8; 32]],
+    ) -> Result<RecursiveEpochProof, EpochProverError> {
+        let mut proof = self.prove_epoch(epoch, proof_hashes)?;
+
+        let inner_pub_inputs = self.build_inner_pub_inputs(&proof.proof_accumulator);
+        let inner_data = InnerProofData::from_proof::<super::rpo_air::RpoAir>(
+            &proof.inner_proof_bytes,
+            inner_pub_inputs,
+        )?;
+        let outer_pub_inputs = inner_data.to_stark_verifier_inputs();
+
+        let outer_options = self.options.to_winter_options();
+        let outer_prover = RpoStarkVerifierProver::new(outer_options, outer_pub_inputs);
+        let outer_trace = outer_prover.build_trace_from_inner(&inner_data);
+        let outer_proof = outer_prover
+            .prove(outer_trace)
+            .map_err(|e| EpochProverError::ProofGenerationError(format!("{e:?}")))?;
+
+        proof.proof_bytes = outer_proof.to_bytes();
+        proof.is_recursive = true;
+        Ok(proof)
+    }
+
     /// Compute proof accumulator using RPO hash.
     ///
     /// Hashes all proof hashes together into a 4-element digest.
@@ -339,13 +372,25 @@ impl RecursiveEpochProver {
             Err(_) => return false,
         };
 
-        type Blake3 = Blake3_256<BaseElement>;
-        type Blake3MerkleTree = MerkleTree<Blake3>;
+        // Prefer verifying the outer proof with RPO (self-recursive-friendly), and fall back to
+        // the legacy Blake3 outer-proof path for backwards compatibility.
+        type RpoMerkleTree = MerkleTree<Rpo256>;
         let acceptable = AcceptableOptions::OptionSet(vec![
             RpoProofOptions::fast().to_winter_options(),
             RpoProofOptions::production().to_winter_options(),
         ]);
+        if verify::<StarkVerifierAir, Rpo256, RpoRandomCoin, RpoMerkleTree>(
+            outer_proof.clone(),
+            outer_pub_inputs.clone(),
+            &acceptable,
+        )
+        .is_ok()
+        {
+            return true;
+        }
 
+        type Blake3 = Blake3_256<BaseElement>;
+        type Blake3MerkleTree = MerkleTree<Blake3>;
         verify::<StarkVerifierAir, Blake3, DefaultRandomCoin<Blake3>, Blake3MerkleTree>(
             outer_proof,
             outer_pub_inputs,
@@ -956,6 +1001,7 @@ mod tests {
     use super::*;
     use crate::recursion::rpo_air::{RpoAir, STATE_WIDTH};
     use crate::recursion::rpo_stark_prover::RpoStarkProver;
+    use crate::recursion::stark_verifier_air::StarkVerifierAir;
     use crate::types::Epoch;
     use std::time::Instant;
     use winter_math::FieldElement;
@@ -1205,5 +1251,192 @@ mod tests {
         let opts = fast_recursive_proof_options();
 
         assert!(opts.blowup_factor() >= 32);
+    }
+
+    #[test]
+    #[ignore = "heavy: generates an outer RPO verifier proof and parses it as an inner proof (depth-2 feasibility)"]
+    fn test_outer_rpo_verifier_proof_parses_as_inner_stark_verifier_proof() {
+        // Keep queries minimal so this test remains usable when run manually.
+        let prover = RecursiveEpochProver {
+            options: RpoProofOptions {
+                num_queries: 1,
+                blowup_factor: 32,
+                grinding_factor: 0,
+            },
+        };
+        let epoch = test_epoch();
+        let hashes = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
+
+        let proof = prover
+            .prove_epoch_recursive_rpo_outer(&epoch, &hashes)
+            .expect("outer RPO verifier proof generation should succeed");
+
+        let inner_pub_inputs = prover.build_inner_pub_inputs(&proof.proof_accumulator);
+        let inner_data = InnerProofData::from_proof::<RpoAir>(&proof.inner_proof_bytes, inner_pub_inputs)
+            .expect("inner proof parsing should succeed");
+        let outer_pub_inputs = inner_data.to_stark_verifier_inputs();
+
+        let outer_as_inner = InnerProofData::from_proof::<StarkVerifierAir>(
+            &proof.proof_bytes,
+            outer_pub_inputs.clone(),
+        )
+        .expect("outer proof should parse as an RPO-friendly StarkVerifierAir proof");
+
+        assert_eq!(
+            outer_as_inner.public_inputs,
+            outer_pub_inputs.to_elements(),
+            "parsed public inputs must match supplied StarkVerifierPublicInputs"
+        );
+
+        let outer_proof = winterfell::Proof::from_bytes(&proof.proof_bytes)
+            .expect("outer proof should deserialize");
+        let inner_air = StarkVerifierAir::new(
+            outer_proof.trace_info().clone(),
+            outer_pub_inputs,
+            outer_proof.options().clone(),
+        );
+
+        let num_transition = inner_air.context().num_transition_constraints();
+        let num_assertions = inner_air.get_assertions().len();
+        let num_constraint_cols = inner_air.context().num_constraint_composition_columns();
+        let trace_width = inner_air.trace_info().main_trace_width();
+
+        println!(
+            "depth-2 inner StarkVerifierAir params: trace_width={} constraint_cols={} transition_constraints={} assertions={} coeffs_total={} deep_coeffs={} ood_evals={} trace_len={} blowup={} num_queries={} num_draws={}",
+            trace_width,
+            num_constraint_cols,
+            num_transition,
+            num_assertions,
+            outer_as_inner.constraint_coeffs.transition.len()
+                + outer_as_inner.constraint_coeffs.boundary.len(),
+            outer_as_inner.deep_coeffs.trace.len() + outer_as_inner.deep_coeffs.constraints.len(),
+            outer_as_inner.ood_trace_current.len()
+                + outer_as_inner.ood_quotient_current.len()
+                + outer_as_inner.ood_trace_next.len()
+                + outer_as_inner.ood_quotient_next.len(),
+            outer_as_inner.trace_length,
+            outer_as_inner.blowup_factor,
+            outer_as_inner.unique_query_positions.len(),
+            outer_as_inner.num_draws
+        );
+
+        assert_eq!(
+            outer_as_inner.constraint_coeffs.transition.len(),
+            num_transition,
+            "transition coefficient count must match inner AIR"
+        );
+        assert_eq!(
+            outer_as_inner.constraint_coeffs.boundary.len(),
+            num_assertions,
+            "boundary coefficient count must match inner AIR assertions"
+        );
+        assert_eq!(
+            outer_as_inner.deep_coeffs.trace.len(),
+            trace_width,
+            "deep trace coefficient count must match inner trace width"
+        );
+        assert_eq!(
+            outer_as_inner.deep_coeffs.constraints.len(),
+            num_constraint_cols,
+            "deep constraint coefficient count must match inner constraint composition width"
+        );
+
+        // Context-prefix seeding for verifier proofs must reproduce the same z.
+        let verifier_pub_inputs = outer_as_inner.to_stark_verifier_inputs();
+        let recomputed_z =
+            crate::recursion::stark_verifier_air::compute_expected_z(&verifier_pub_inputs);
+        assert_eq!(
+            recomputed_z, outer_as_inner.z,
+            "expected_z must match transcript-derived z for StarkVerifierAir proofs"
+        );
+    }
+
+    #[test]
+    #[ignore = "heavy: validates Winterfell verifier step-3 (OOD constraint consistency) for a StarkVerifierAir proof"]
+    fn test_outer_verifier_proof_ood_constraint_consistency_holds() {
+        use winter_air::EvaluationFrame;
+        use winter_math::{polynom, FieldElement};
+
+        // Keep queries minimal so this test remains usable when run manually.
+        let prover = RecursiveEpochProver {
+            options: RpoProofOptions {
+                num_queries: 1,
+                blowup_factor: 32,
+                grinding_factor: 0,
+            },
+        };
+        let epoch = test_epoch();
+        let hashes = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
+
+        // Build: inner (RpoAir epoch proof) -> outer (StarkVerifierAir proof with RPO transcript).
+        let proof = prover
+            .prove_epoch_recursive_rpo_outer(&epoch, &hashes)
+            .expect("outer RPO verifier proof generation should succeed");
+
+        // Parse outer proof as an inner proof of StarkVerifierAir (depth-2).
+        let inner_pub_inputs = prover.build_inner_pub_inputs(&proof.proof_accumulator);
+        let inner_data =
+            InnerProofData::from_proof::<RpoAir>(&proof.inner_proof_bytes, inner_pub_inputs)
+                .expect("inner proof parsing should succeed");
+        let outer_pub_inputs = inner_data.to_stark_verifier_inputs();
+        let outer_as_inner = InnerProofData::from_proof::<StarkVerifierAir>(
+            &proof.proof_bytes,
+            outer_pub_inputs.clone(),
+        )
+        .expect("outer proof should parse as an RPO-friendly StarkVerifierAir proof");
+
+        // Instantiate the AIR for the inner proof (StarkVerifierAir) so we can evaluate its
+        // transition constraints at z.
+        let outer_proof = winterfell::Proof::from_bytes(&proof.proof_bytes)
+            .expect("outer proof should deserialize");
+        let inner_air = StarkVerifierAir::new(
+            outer_proof.trace_info().clone(),
+            outer_pub_inputs,
+            outer_proof.options().clone(),
+        );
+
+        // Evaluate periodic columns at the OOD point z using Winterfell’s periodic-column
+        // polynomial semantics (cycle-length aware).
+        let z = outer_as_inner.z;
+        let periodic_at_z = inner_air
+            .get_periodic_column_polys()
+            .iter()
+            .map(|poly| {
+                let num_cycles = inner_air.trace_length() / poly.len();
+                let x = z.exp_vartime((num_cycles as u32).into());
+                polynom::eval(poly, x)
+            })
+            .collect::<Vec<_>>();
+
+        let t_constraints = inner_air.get_transition_constraints(&outer_as_inner.constraint_coeffs.transition);
+        let b_constraints = inner_air.get_boundary_constraints::<BaseElement>(
+            None,
+            &outer_as_inner.constraint_coeffs.boundary,
+        );
+
+        // Evaluate constraints at z over the out-of-domain trace frame and merge them exactly as
+        // Winterfell’s verifier does.
+        let frame = EvaluationFrame::from_rows(
+            outer_as_inner.ood_trace_current.clone(),
+            outer_as_inner.ood_trace_next.clone(),
+        );
+        let mut t_evals = vec![BaseElement::ZERO; t_constraints.num_main_constraints()];
+        inner_air.evaluate_transition(&frame, &periodic_at_z, &mut t_evals);
+        let mut expected_h_at_z = t_constraints.combine_evaluations::<BaseElement>(&t_evals, &[], z);
+        for group in b_constraints.main_constraints().iter() {
+            expected_h_at_z += group.evaluate_at(frame.current(), z);
+        }
+
+        // Reduce the inner proof’s constraint-composition columns at z to a single value:
+        // H(z) = Σ_{i=0}^{m-1} z^{i * n} * H_i(z), where m = constraint composition width.
+        let mut h_from_quotients = BaseElement::ZERO;
+        for (i, value) in outer_as_inner.ood_quotient_current.iter().enumerate() {
+            h_from_quotients += z.exp_vartime(((i * outer_as_inner.trace_length) as u32).into()) * *value;
+        }
+
+        assert_eq!(
+            expected_h_at_z, h_from_quotients,
+            "OOD constraint consistency check must hold for valid StarkVerifierAir proofs"
+        );
     }
 }

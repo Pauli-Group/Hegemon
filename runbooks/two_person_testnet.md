@@ -446,6 +446,7 @@ The proofs, commitments, and roots should be identical on both nodes.
 
 **Recursive epoch proof propagation (Phase 2f, node-side):**
 - Start nodes with `HEGEMON_RECURSIVE_EPOCH_PROOFS=1`
+- Optional: generate recursion-friendly outer proofs with `HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1`
 - Logs to expect:
   - `Generating recursive epoch proof`
   - `📡 Broadcast recursive epoch proof to peers`

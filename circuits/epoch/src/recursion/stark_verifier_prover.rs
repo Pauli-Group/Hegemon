@@ -2819,15 +2819,20 @@ fn apply_inv_sbox(state: &mut [BaseElement; STATE_WIDTH]) {
 
 #[cfg(test)]
 mod tests {
+    use miden_crypto::hash::rpo::Rpo256;
+    use miden_crypto::rand::RpoRandomCoin;
     use super::super::rpo_air::STATE_WIDTH as INNER_STATE_WIDTH;
     use super::super::{RpoAir, RpoStarkProver};
     use super::*;
     use winter_air::{BatchingMethod, EvaluationFrame, FieldExtension};
+    use winter_crypto::MerkleTree;
     use winter_math::ToElements;
     use winterfell::verify;
     use winterfell::AcceptableOptions;
     use winterfell::Air;
     use winterfell::Trace;
+    use winter_air::{AirContext, Assertion, TraceInfo, TransitionConstraintDegree};
+    use winter_math::FieldElement;
 
     fn test_options(num_queries: usize) -> ProofOptions {
         ProofOptions::new(
@@ -2861,6 +2866,363 @@ mod tests {
         let mut result = vec![BaseElement::ZERO; air.context().num_transition_constraints()];
         air.evaluate_transition(&frame, &periodic_values_row, &mut result);
         result
+    }
+
+    type RpoMerkleTree = MerkleTree<Rpo256>;
+
+    /// A "different AIR with the same proof context" used to catch missing OOD constraint checks.
+    ///
+    /// This AIR uses the same trace width/length, the same periodic columns, and the same number
+    /// of constraints/assertions as `RpoAir`, but its transition constraints implement a different
+    /// permutation (no MDS mixing). A proof for this AIR must not be accepted by `StarkVerifierAir`
+    /// when interpreted as an `RpoAir` proof.
+    struct NoMdsAir {
+        context: AirContext<BaseElement>,
+        pub_inputs: super::super::rpo_air::RpoPublicInputs,
+    }
+
+    impl Air for NoMdsAir {
+        type BaseField = BaseElement;
+        type PublicInputs = super::super::rpo_air::RpoPublicInputs;
+
+        fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
+            let degrees = vec![
+                TransitionConstraintDegree::with_cycles(8, vec![ROWS_PER_PERMUTATION]);
+                INNER_STATE_WIDTH
+            ];
+            let num_assertions = 2 * INNER_STATE_WIDTH;
+            let context = AirContext::new(trace_info, degrees, num_assertions, options);
+            Self { context, pub_inputs }
+        }
+
+        fn context(&self) -> &AirContext<Self::BaseField> {
+            &self.context
+        }
+
+        fn evaluate_transition<E: FieldElement<BaseField = Self::BaseField>>(
+            &self,
+            frame: &EvaluationFrame<E>,
+            periodic_values: &[E],
+            result: &mut [E],
+        ) {
+            let current = frame.current();
+            let next = frame.next();
+
+            let half_round_type = periodic_values[0];
+            let ark: [E; INNER_STATE_WIDTH] = core::array::from_fn(|i| periodic_values[1 + i]);
+
+            let one = E::ONE;
+            let two = one + one;
+            let is_forward = half_round_type * (two - half_round_type);
+            let is_inverse = half_round_type * (half_round_type - one);
+            let is_padding = (one - half_round_type) * (two - half_round_type);
+
+            for i in 0..INNER_STATE_WIDTH {
+                let intermediate = current[i] + ark[i];
+
+                let x2 = intermediate * intermediate;
+                let x4 = x2 * x2;
+                let x3 = x2 * intermediate;
+                let x7 = x3 * x4;
+                let forward_constraint = next[i] - x7;
+
+                let y = next[i];
+                let y2 = y * y;
+                let y4 = y2 * y2;
+                let y3 = y2 * y;
+                let y7 = y3 * y4;
+                let inverse_constraint = y7 - intermediate;
+
+                let padding_constraint = next[i] - current[i];
+                result[i] = is_forward * forward_constraint
+                    + is_inverse * inverse_constraint
+                    + is_padding * padding_constraint;
+            }
+        }
+
+        fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
+            let mut assertions = Vec::new();
+
+            for i in 0..INNER_STATE_WIDTH {
+                assertions.push(Assertion::single(i, 0, self.pub_inputs.input_state[i]));
+            }
+
+            let last_row = ROWS_PER_PERMUTATION - 1;
+            for i in 0..INNER_STATE_WIDTH {
+                assertions.push(Assertion::single(
+                    i,
+                    last_row,
+                    self.pub_inputs.output_state[i],
+                ));
+            }
+
+            assertions
+        }
+
+        fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
+            // Mirror `RpoAir`'s periodic columns so the proof context stays identical.
+            let trace_len = ROWS_PER_PERMUTATION;
+
+            let mut half_round_type = Vec::with_capacity(trace_len);
+            for row in 0..trace_len {
+                let val = if row >= 14 {
+                    0
+                } else if row % 2 == 0 {
+                    1
+                } else {
+                    2
+                };
+                half_round_type.push(BaseElement::new(val));
+            }
+
+            let mut ark_columns: [Vec<BaseElement>; INNER_STATE_WIDTH] =
+                core::array::from_fn(|_| Vec::with_capacity(trace_len));
+
+            for row in 0..trace_len {
+                let constants = if row >= trace_len - 1 {
+                    [BaseElement::ZERO; INNER_STATE_WIDTH]
+                } else if row % 2 == 0 {
+                    let round = row / 2;
+                    if round < NUM_ROUNDS {
+                        ARK1[round]
+                    } else {
+                        [BaseElement::ZERO; INNER_STATE_WIDTH]
+                    }
+                } else {
+                    let round = row / 2;
+                    if round < NUM_ROUNDS {
+                        ARK2[round]
+                    } else {
+                        [BaseElement::ZERO; INNER_STATE_WIDTH]
+                    }
+                };
+
+                for (i, &c) in constants.iter().enumerate() {
+                    ark_columns[i].push(c);
+                }
+            }
+
+            let mut result = vec![half_round_type];
+            for col in ark_columns {
+                result.push(col);
+            }
+            result
+        }
+    }
+
+    struct NoMdsProver {
+        options: ProofOptions,
+        pub_inputs: super::super::rpo_air::RpoPublicInputs,
+    }
+
+    impl NoMdsProver {
+        fn new(options: ProofOptions, pub_inputs: super::super::rpo_air::RpoPublicInputs) -> Self {
+            Self { options, pub_inputs }
+        }
+
+        fn compute_output(
+            mut state: [BaseElement; INNER_STATE_WIDTH],
+        ) -> [BaseElement; INNER_STATE_WIDTH] {
+            for row in 0..(ROWS_PER_PERMUTATION - 1) {
+                let constants = if row >= ROWS_PER_PERMUTATION - 1 {
+                    [BaseElement::ZERO; INNER_STATE_WIDTH]
+                } else if row % 2 == 0 {
+                    let round = row / 2;
+                    if round < NUM_ROUNDS {
+                        ARK1[round]
+                    } else {
+                        [BaseElement::ZERO; INNER_STATE_WIDTH]
+                    }
+                } else {
+                    let round = row / 2;
+                    if round < NUM_ROUNDS {
+                        ARK2[round]
+                    } else {
+                        [BaseElement::ZERO; INNER_STATE_WIDTH]
+                    }
+                };
+
+                for i in 0..INNER_STATE_WIDTH {
+                    state[i] += constants[i];
+                }
+
+                if row >= 14 {
+                    continue;
+                }
+                if row % 2 == 0 {
+                    apply_sbox(&mut state);
+                } else {
+                    apply_inv_sbox(&mut state);
+                }
+            }
+            state
+        }
+
+        fn build_trace(&self) -> TraceTable<BaseElement> {
+            let mut trace = TraceTable::new(RPO_TRACE_WIDTH, ROWS_PER_PERMUTATION);
+
+            let mut state = self.pub_inputs.input_state;
+            for i in 0..INNER_STATE_WIDTH {
+                trace.set(i, 0, state[i]);
+            }
+            trace.set(INNER_STATE_WIDTH, 0, BaseElement::ZERO);
+
+            for row in 0..(ROWS_PER_PERMUTATION - 1) {
+                let constants = if row >= ROWS_PER_PERMUTATION - 1 {
+                    [BaseElement::ZERO; INNER_STATE_WIDTH]
+                } else if row % 2 == 0 {
+                    let round = row / 2;
+                    if round < NUM_ROUNDS {
+                        ARK1[round]
+                    } else {
+                        [BaseElement::ZERO; INNER_STATE_WIDTH]
+                    }
+                } else {
+                    let round = row / 2;
+                    if round < NUM_ROUNDS {
+                        ARK2[round]
+                    } else {
+                        [BaseElement::ZERO; INNER_STATE_WIDTH]
+                    }
+                };
+
+                for i in 0..INNER_STATE_WIDTH {
+                    state[i] += constants[i];
+                }
+
+                if row < 14 {
+                    if row % 2 == 0 {
+                        apply_sbox(&mut state);
+                    } else {
+                        apply_inv_sbox(&mut state);
+                    }
+                }
+
+                let next_row = row + 1;
+                for i in 0..INNER_STATE_WIDTH {
+                    trace.set(i, next_row, state[i]);
+                }
+                trace.set(INNER_STATE_WIDTH, next_row, BaseElement::new(next_row as u64));
+            }
+
+            trace
+        }
+    }
+
+    impl Prover for NoMdsProver {
+        type BaseField = BaseElement;
+        type Air = NoMdsAir;
+        type Trace = TraceTable<BaseElement>;
+        type HashFn = Rpo256;
+        type VC = RpoMerkleTree;
+        type RandomCoin = RpoRandomCoin;
+        type TraceLde<E: FieldElement<BaseField = Self::BaseField>> =
+            DefaultTraceLde<E, Self::HashFn, Self::VC>;
+        type ConstraintCommitment<E: FieldElement<BaseField = Self::BaseField>> =
+            DefaultConstraintCommitment<E, Self::HashFn, Self::VC>;
+        type ConstraintEvaluator<'a, E: FieldElement<BaseField = Self::BaseField>> =
+            DefaultConstraintEvaluator<'a, Self::Air, E>;
+
+        fn get_pub_inputs(&self, _trace: &Self::Trace) -> super::super::rpo_air::RpoPublicInputs {
+            self.pub_inputs.clone()
+        }
+
+        fn options(&self) -> &ProofOptions {
+            &self.options
+        }
+
+        fn new_trace_lde<E: FieldElement<BaseField = Self::BaseField>>(
+            &self,
+            trace_info: &winter_air::TraceInfo,
+            main_trace: &ColMatrix<Self::BaseField>,
+            domain: &StarkDomain<Self::BaseField>,
+            partition_options: PartitionOptions,
+        ) -> (Self::TraceLde<E>, TracePolyTable<E>) {
+            DefaultTraceLde::new(trace_info, main_trace, domain, partition_options)
+        }
+
+        fn new_evaluator<'a, E: FieldElement<BaseField = Self::BaseField>>(
+            &self,
+            air: &'a Self::Air,
+            aux_rand_elements: Option<AuxRandElements<E>>,
+            composition_coefficients: ConstraintCompositionCoefficients<E>,
+        ) -> Self::ConstraintEvaluator<'a, E> {
+            DefaultConstraintEvaluator::new(air, aux_rand_elements, composition_coefficients)
+        }
+
+        fn build_constraint_commitment<E: FieldElement<BaseField = Self::BaseField>>(
+            &self,
+            composition_poly_trace: CompositionPolyTrace<E>,
+            num_trace_poly_columns: usize,
+            domain: &StarkDomain<Self::BaseField>,
+            partition_options: PartitionOptions,
+        ) -> (Self::ConstraintCommitment<E>, CompositionPoly<E>) {
+            DefaultConstraintCommitment::new(
+                composition_poly_trace,
+                num_trace_poly_columns,
+                domain,
+                partition_options,
+            )
+        }
+    }
+
+    #[test]
+    fn test_ood_consistency_check_rejects_wrong_inner_air() {
+        let inner_options = test_options(1);
+        let outer_options = test_options(1);
+
+        // Compute a "different" output state under NoMdsAir so the proof is valid for NoMdsAir.
+        let input_state = core::array::from_fn(|i| BaseElement::new((i as u64) + 1));
+        let output_state = NoMdsProver::compute_output(input_state);
+
+        let real_output = RpoStarkProver::new(inner_options.clone()).compute_output(input_state);
+        assert_ne!(
+            output_state, real_output,
+            "no-mds output unexpectedly matched real RPO output"
+        );
+
+        let inner_pub_inputs =
+            super::super::rpo_air::RpoPublicInputs::new(input_state, output_state);
+
+        let no_mds_prover = NoMdsProver::new(inner_options.clone(), inner_pub_inputs.clone());
+        let inner_trace = no_mds_prover.build_trace();
+        let inner_proof = no_mds_prover.prove(inner_trace).expect("NoMds proof should build");
+
+        let acceptable = AcceptableOptions::OptionSet(vec![inner_options.clone()]);
+
+        // Sanity: proof verifies for NoMdsAir.
+        assert!(verify::<NoMdsAir, Rpo256, RpoRandomCoin, RpoMerkleTree>(
+            inner_proof.clone(),
+            inner_pub_inputs.clone(),
+            &acceptable,
+        )
+        .is_ok());
+
+        // Sanity: same proof must fail for RpoAir.
+        assert!(verify::<RpoAir, Rpo256, RpoRandomCoin, RpoMerkleTree>(
+            inner_proof.clone(),
+            inner_pub_inputs.clone(),
+            &acceptable,
+        )
+        .is_err());
+
+        // Build a recursive verifier trace as-if the inner proof were an RpoAir proof.
+        let inner_data =
+            InnerProofData::from_proof::<RpoAir>(&inner_proof.to_bytes(), inner_pub_inputs)
+                .expect("proof should parse under RpoAir structure");
+        let pub_inputs = inner_data.to_stark_verifier_inputs();
+        let prover = StarkVerifierProver::new(outer_options.clone(), pub_inputs.clone());
+        let trace = prover.build_trace_from_inner(&inner_data);
+
+        let air = StarkVerifierAir::new(trace.info().clone(), pub_inputs, outer_options);
+        let periodic = air.get_periodic_column_values();
+
+        // The OOD consistency constraint should be violated on any row (it only depends on constant columns).
+        let result = eval_transition_row(&air, &trace, &periodic, 0);
+        assert!(
+            result.iter().any(|v| *v != BaseElement::ZERO),
+            "expected verifier constraints to detect an inner proof for the wrong AIR"
+        );
     }
 
     #[test]

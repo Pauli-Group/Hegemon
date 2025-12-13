@@ -44,7 +44,7 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] (2025-12-13) Phase 2e.6: Implement full FRI folding, remainder evaluation, and DRP binding using stored alphas and authenticated FRI openings.
 - [x] (2025-12-13) Phase 2e.7: End-to-end recursion: generate inner RPO proof, generate outer proof verifying it, and demonstrate tamper-reject of the inner proof.
 - [x] (2025-12-13) Phase 2f: Wire `StarkVerifierAir` into `RecursiveEpochProver` (proof-of-proof) and propagate recursive epoch proofs over the PQ network.
-- [ ] (2025-12-13) Phase 3a: Query-position binding soundness hardening (bind transcript draws → opened Merkle/FRI indices; duplicates/collisions).
+- [x] (2025-12-13) Phase 3a: Query-position binding soundness hardening (bind transcript draws → opened Merkle/FRI indices; duplicates/collisions).
 - [ ] (2025-12-13) Phase 3b: Self-recursive outer proofs (switch outer Fiat–Shamir + commitments to RPO; verify `StarkVerifierAir` proofs in-circuit).
 - [ ] (2025-12-13) Phase 3c: Epoch range aggregation (combine proofs with adjacency + chain-hash public inputs).
 - [x] (2025-12-13) Phase 3d: Testnet proof retrieval + persistence (request/serve protocol, local storage, receipt validation, RPC/CLI).
@@ -53,9 +53,9 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] (2025-12-13) Phase 3a.1: Formalize query binding: transcript draws must bind to opened indices (Merkle + FRI).
 - [x] (2025-12-13) Phase 3a.2: Bind `COL_POS_SORTED_VALUE` (or replacement) to transcript-derived masked draw, not a prover-chosen witness.
 - [x] (2025-12-13) Phase 3a.3: Add adversarial test: duplicate draws mapping to the same unique position.
-- [ ] (2025-12-13) Phase 3a.4: Remove query-dedup limitation from `SECURITY.md` once hardening ships.
-- [ ] (2025-12-13) Phase 3b.1: Add `RpoStarkVerifierProver` (RPO Fiat–Shamir + RPO commitments) for outer proofs.
-- [ ] (2025-12-13) Phase 3b.2: Parameterize recursive verification for `StarkVerifierAir` as an inner proof (trace/FRI sizing expectations).
+- [x] (2025-12-13) Phase 3a.4: Remove query-dedup limitation from `SECURITY.md` once hardening ships.
+- [x] (2025-12-13) Phase 3b.1: Add `RpoStarkVerifierProver` (RPO Fiat–Shamir + RPO commitments) for outer proofs.
+- [ ] (2025-12-13) Phase 3b.2: Parameterize recursive verification for `StarkVerifierAir` as an inner proof (trace/FRI sizing expectations) (completed: quantify inner `StarkVerifierAir` size + Winterfell 255-column hard cap; add `StarkVerifierPublicInputs::try_from_elements` + generalized context-prefix/z computation for verifier proofs; add an ignored test validating Winterfell verifier step-3 OOD consistency for a `StarkVerifierAir` proof; remaining: streaming/replay trace layout + full in-circuit verification for verifier proofs).
 - [ ] (2025-12-13) Phase 3b.3: Add depth-2 recursion test: inner → outer → outer₂.
 - [ ] (2025-12-13) Phase 3c.1: Define aggregation public inputs: `(epoch_start, epoch_end, commitment_chain_hash)`.
 - [ ] (2025-12-13) Phase 3c.2: Implement `AggregatorAir` verifying two child proofs + adjacency constraint.
@@ -88,6 +88,22 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - Observation (2025-12-13): Winterfell debug proving asserts *exact* transition constraint evaluation degrees; degree descriptors must match the effective degrees of real traces, not just an upper bound.
   Evidence: `winter-prover` panicked with `transition constraint degrees didn't match` until `StarkVerifierAir::new()` degree descriptors were updated for the DEEP/FRI constraints and the prover filled the new state columns deterministically.
   Implication: Any future verifier-AIR constraints must be accompanied by updated `TransitionConstraintDegree` descriptors and validated against at least one real proof roundtrip in debug builds.
+
+- Observation (2025-12-13): Winterfell verification includes an OOD “constraint consistency” check comparing `evaluate_constraints(z)` against the reduced quotient columns at `z`; omitting it makes recursive verification unsound.
+  Evidence: An inner proof for a different AIR with the same context (same trace info/options/assertions/periodic columns) could satisfy all Merkle/FRI/transcript checks but still be invalid under the intended AIR until the OOD consistency check was added.
+  Implication: `StarkVerifierAir` must enforce `ood_constraint_eval_1 == ood_constraint_eval_2` (winter-verifier step 3) and the prover must include the correct OOD frame digest in transcript reseeding.
+
+- Observation (2025-12-13): Periodic columns must be evaluated at the OOD point using Winterfell’s cycle-length semantics (`x ↦ x^{num_cycles}`), not by naïvely interpolating a full-length repeated value vector.
+  Evidence: A native check of verifier-proof OOD consistency initially failed until the periodic values at `z` were computed via `air.get_periodic_column_polys()` and evaluated at `z.exp_vartime(num_cycles)` (matching `winter-verifier::evaluate_constraints`).
+  Implication: Any depth-2 verifier-of-verifier OOD consistency check must compute periodic values at `z` exactly the way Winterfell does, or the constraint composition evaluation will drift and valid proofs will be rejected.
+
+- Observation (2025-12-13): `StarkVerifierAir`-as-inner is much larger than the `RpoAir` inner case; naive “store everything in constant columns” scaling makes depth-2 recursion impractical without a more compact verifier trace layout.
+  Evidence: With minimal security parameters (`num_queries=1`, `num_draws=1`), parsing an RPO-backed `StarkVerifierAir` proof yields: `trace_width=236`, `constraint_cols=10`, `transition_constraints=406`, `assertions=447`, `constraint_coeffs=853`, `deep_coeffs=246`, `ood_evals=492`.
+  Implication: Phase 3b.2 must either (a) redesign the verifier trace to *replay* transcript draws (coeffs/deep) and *stream* OOD/DEEP data into accumulators (trading width for length), or (b) accept a much larger verifier AIR specialized for verifier proofs.
+
+- Observation (2025-12-13): Winterfell hard-caps execution trace width at 255 columns, making the “store everything in constant columns” approach impossible for depth-2 verifier-of-verifier proofs.
+  Evidence: `winter-air::TraceInfo::MAX_TRACE_WIDTH = 255` and the inner `StarkVerifierAir` sizing above implies hundreds of additional constant columns would be required (e.g. 853 coeffs + 492 OOD evals + 246 DEEP coeffs), far exceeding 255.
+  Implication: Phase 3b.2 must pursue option (a): streaming/replay (width stays ≤255; length grows), or switch to a different proving stack which supports wider traces.
 
 - Observation (2025-12-12): Winterfell’s `FieldExtension` is 1-based (`None = 1`, `Quadratic = 2`, `Cubic = 3`), not 0-based.
   Evidence: `winter-air-0.13.1/src/options.rs` uses `#[repr(u8)]` with `None = 1`. In a real inner proof, `proof.context.to_elements()` packed options element is `0x01020720` (high byte `0x01`) for `FieldExtension::None`, not `0x00020720`.
@@ -239,6 +255,14 @@ Implement recursive STARK proof composition where a proof can verify other proof
   Rationale: Groundwork for RPO Fiat‑Shamir exists, but true recursion requires (1) inner transaction/batch proofs to use RPO and (2) verifier AIRs to enforce the full winterfell STARK verifier. User priority is O(1) recursive sync, so we will complete Phase 2g → 2d/2e → 2f rather than treating recursion as a future research item.
   Date/Author: 2025-12-11.
 
+- Decision (2025-12-13): Implement depth-2 recursion via streaming/replay (not wider traces).
+  Rationale: Winterfell’s 255-column trace width cap makes “store all challenges/OOD/DEEP in constant columns” infeasible for verifier-as-inner proofs. Streaming transcript draws and OOD/DEEP values trades trace length for width while preserving soundness.
+  Date/Author: 2025-12-13.
+
+- Decision (2025-12-13): Decode verifier-proof public inputs from `StarkVerifierPublicInputs::to_elements()`.
+  Rationale: Depth-2 recursion requires reconstructing the inner verifier proof’s context (trace info, commitments, query parameters) from its public inputs. Reusing the existing `to_elements()` layout avoids inventing a second serialization format and keeps proof statements stable.
+  Date/Author: 2025-12-13.
+
 - Decision (2025-12-12): Source RPO constants directly from miden-crypto.
   Rationale: A single-bit mismatch in ARK constants makes in-circuit hashing unverifiable. Aliasing `MDS`, `ARK1`, and `ARK2` to `Rpo256` prevents future divergence.
   Date/Author: 2025-12-12.
@@ -270,6 +294,10 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - Decision (2025-12-12): Treat recursion query openings as “per draw” and expand the proof’s unique openings by replication.
   Rationale: Winterfell’s proof format provides unique query openings (base positions are `sort+dedup`ed, and FRI folded positions are deduped at each layer). StarkVerifierAir’s trace schedule stays fixed-size if we treat queries as “per draw” and expand `InnerProofData` so each draw has a corresponding trace/constraint/FRI opening by reusing the unique opening when duplicates occur (including FRI fold collisions). This keeps the verifier AIR local and avoids expensive in-circuit sorting/deduping.
   Date/Author: 2025-12-12.
+
+- Decision (2025-12-13): Add an RPO-backed outer prover for `StarkVerifierAir` and keep verification compatible with both RPO and legacy Blake3 outer proofs.
+  Rationale: RPO commitments + RPO Fiat–Shamir are a prerequisite for recursion depth 2+; however, existing node/testnet flows already produce Blake3 outer proofs. We ship `RpoStarkVerifierProver` and prefer verifying RPO outer proofs first, falling back to Blake3 for backwards compatibility. Node-side proof generation can opt into RPO outer proofs via `HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1`.
+  Date/Author: 2025-12-13.
 
 - Decision (2025-12-12): Store the inner proof’s OOD digest and feed it as a private witness in the verifier trace.
   Rationale: The transcript must be identical to the inner verifier’s transcript to reproduce DEEP coefficients, FRI alphas, and query draws. Using a placeholder OOD digest causes challenge drift and breaks recursion correctness. Until in-circuit leaf-content binding is implemented, the OOD digest is not publicly asserted, but it must still match the inner proof to keep transcript evolution correct.

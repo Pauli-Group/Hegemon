@@ -15,13 +15,11 @@ as a hardened consensus-critical trust boundary until Phase 4 audit/hardening is
 
 Current known limitations:
 
-- **Query-position sort+dedup modeling**: `StarkVerifierAir` does not yet fully model Winterfell’s
-  `draw_integers` sort+dedup semantics for query positions. This is a known soundness hardening
-  item tracked in `.agent/RECURSIVE_PROOFS_EXECPLAN.md` and should be treated as a potential risk
-  if recursive verification is used adversarially.
 - **Inner-proof specialization**: `StarkVerifierAir` is currently specialized to RPO-friendly
   inner proofs with `RpoAir`-like assumptions (e.g. trace width/partition sizing expectations).
   Generalizing recursion to verify epoch/transaction proofs inside other proofs is not yet
   supported.
-- **Non-self-recursive outer proofs**: Outer proofs are generated with native Blake3
-  Fiat–Shamir and are not yet recursively verifiable themselves.
+- **Depth-2 recursion not shipped**: Outer verifier proofs can be generated with either native
+  Blake3 Fiat–Shamir (default) or RPO commitments + RPO Fiat–Shamir (set
+  `HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1`), but we do not yet ship an in-circuit verifier for
+  `StarkVerifierAir` proofs.

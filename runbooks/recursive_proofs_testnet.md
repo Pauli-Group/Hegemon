@@ -18,6 +18,12 @@ Recursive epoch proofs are **generated** only when:
 
 - `HEGEMON_RECURSIVE_EPOCH_PROOFS=1`
 
+By default, the **outer** verifier proof uses native Blake3 Fiat–Shamir (fast for node-side
+verification, not recursively verifiable). To generate an outer proof using RPO commitments +
+RPO Fiat–Shamir (recursion-friendly), set:
+
+- `HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1`
+
 Received proofs are validated (STARK verification) before storage by default. To disable receipt verification:
 
 - `HEGEMON_VALIDATE_RECURSIVE_EPOCH_PROOFS=0`
@@ -34,6 +40,7 @@ Start mining + recursive epoch proofs:
 ```bash
 HEGEMON_MINE=1 \
 HEGEMON_RECURSIVE_EPOCH_PROOFS=1 \
+HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1 \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
@@ -106,4 +113,3 @@ curl -s -d '{"id":1,"jsonrpc":"2.0","method":"epoch_requestRecursiveProof","para
 ```
 
 Then re-run `epoch_getRecursiveProof` to confirm it arrived and was stored.
-

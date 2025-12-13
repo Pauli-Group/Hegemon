@@ -53,7 +53,7 @@ use winter_air::{
     TransitionConstraintDegree,
 };
 use winter_crypto::RandomCoin;
-use winter_math::{FieldElement, StarkField, ToElements};
+use winter_math::{fft, polynom, FieldElement, StarkField, ToElements};
 use winterfell::math::fields::f64::BaseElement;
 
 use super::fri_air::MAX_FRI_LAYERS;
@@ -219,6 +219,81 @@ impl StarkVerifierPublicInputs {
             trace_length,
         }
     }
+
+    /// Parse a `StarkVerifierPublicInputs` struct from `to_elements()` output.
+    ///
+    /// This is used for recursion depth 2+, where the inner proof is itself a `StarkVerifierAir`
+    /// proof and its public inputs arrive as an opaque element vector.
+    pub(crate) fn try_from_elements(
+        elements: &[BaseElement],
+        inner_public_inputs_len: usize,
+    ) -> Result<Self, String> {
+        // Layout:
+        // [inner_public_inputs..., inner_pub_inputs_hash(4), trace_root(4), constraint_root(4),
+        //  fri_commitments(4*k), num_queries, num_draws, trace_partition_size, constraint_partition_size,
+        //  blowup_factor, trace_length]
+        const DIGESTS_FIXED: usize = 3 * DIGEST_WIDTH; // pub_inputs_hash + trace + constraint
+        const NUM_PARAMS: usize = 6;
+
+        let min_len = inner_public_inputs_len + DIGESTS_FIXED + NUM_PARAMS;
+        if elements.len() < min_len {
+            return Err(format!(
+                "StarkVerifierPublicInputs elements too short: got {}, need at least {}",
+                elements.len(),
+                min_len
+            ));
+        }
+
+        let mut idx = 0usize;
+        let inner_public_inputs = elements[idx..idx + inner_public_inputs_len].to_vec();
+        idx += inner_public_inputs_len;
+
+        let slice_to_digest = |s: &[BaseElement]| -> [BaseElement; DIGEST_WIDTH] {
+            [s[0], s[1], s[2], s[3]]
+        };
+
+        let inner_pub_inputs_hash = slice_to_digest(&elements[idx..idx + DIGEST_WIDTH]);
+        idx += DIGEST_WIDTH;
+        let trace_commitment = slice_to_digest(&elements[idx..idx + DIGEST_WIDTH]);
+        idx += DIGEST_WIDTH;
+        let constraint_commitment = slice_to_digest(&elements[idx..idx + DIGEST_WIDTH]);
+        idx += DIGEST_WIDTH;
+
+        let params_start = elements.len() - NUM_PARAMS;
+        let fri_elems = &elements[idx..params_start];
+        if fri_elems.len() % DIGEST_WIDTH != 0 {
+            return Err(format!(
+                "invalid FRI commitments length: {} is not a multiple of {}",
+                fri_elems.len(),
+                DIGEST_WIDTH
+            ));
+        }
+        let fri_commitments = fri_elems
+            .chunks_exact(DIGEST_WIDTH)
+            .map(|chunk| slice_to_digest(chunk))
+            .collect::<Vec<_>>();
+
+        let num_queries = elements[params_start].as_int() as usize;
+        let num_draws = elements[params_start + 1].as_int() as usize;
+        let trace_partition_size = elements[params_start + 2].as_int() as usize;
+        let constraint_partition_size = elements[params_start + 3].as_int() as usize;
+        let blowup_factor = elements[params_start + 4].as_int() as usize;
+        let trace_length = elements[params_start + 5].as_int() as usize;
+
+        Ok(Self::new(
+            inner_public_inputs,
+            inner_pub_inputs_hash,
+            trace_commitment,
+            constraint_commitment,
+            fri_commitments,
+            num_queries,
+            num_draws,
+            trace_partition_size,
+            constraint_partition_size,
+            blowup_factor,
+            trace_length,
+        ))
+    }
 }
 
 impl ToElements<BaseElement> for StarkVerifierPublicInputs {
@@ -262,6 +337,10 @@ pub struct StarkVerifierAir {
     context: AirContext<BaseElement>,
     pub_inputs: StarkVerifierPublicInputs,
     expected_z: BaseElement,
+    inner_rpo_periodic_at_z: [BaseElement; 1 + STATE_WIDTH],
+    inner_transition_divisor_inv_at_z: BaseElement,
+    inner_boundary_divisor_inv_at_z: [BaseElement; 2],
+    inner_ood_constraint_weights: [BaseElement; 8],
     g_trace: BaseElement,
     g_lde: BaseElement,
     domain_offset: BaseElement,
@@ -352,7 +431,8 @@ impl Air for StarkVerifierAir {
             + OOD_EVAL_LEN // capture OOD evaluation elements at OOD-hash input rows
             + DIGEST_WIDTH // capture digest at end of OOD hash segment
             + STATE_WIDTH // capture coin state at z boundary
-            + STATE_WIDTH; // restore coin state (+digest) at deep-start row
+            + STATE_WIDTH // restore coin state (+digest) at deep-start row
+            + 1; // OOD constraint consistency check (winter-verifier step 3)
                            // Store transcript-drawn coefficients (for later DEEP/FRI checks).
         let transcript_store_constraints = NUM_CONSTRAINT_COEFFS // stored constraint coeffs
             + NUM_DEEP_COEFFS // stored deep coeffs
@@ -596,6 +676,12 @@ impl Air for StarkVerifierAir {
         for _ in 0..STATE_WIDTH {
             degrees.push(TransitionConstraintDegree::with_cycles(1, vec![full_cycle]));
         }
+        // (h) OOD constraint consistency check (evaluate inner constraints at z).
+        //
+        // This constraint is expressed entirely in terms of constant columns (OOD frame + drawn
+        // coefficients), so its quotient polynomial is constant (degree 0) once other
+        // constant-column constraints hold.
+        degrees.push(TransitionConstraintDegree::new(1));
 
         // --- Transcript store degrees -------------------------------------------------------
         // (a) Stored constraint composition coefficients are constant across the trace.
@@ -845,12 +931,28 @@ impl Air for StarkVerifierAir {
         num_assertions += 1;
 
         let expected_z = compute_expected_z(&pub_inputs);
+
+        let (inner_rpo_periodic_at_z, inner_transition_divisor_inv_at_z, inner_boundary_divisor_inv_at_z, inner_ood_constraint_weights) =
+            if inner_proof_kind(&pub_inputs) == InnerProofKind::RpoAir {
+                compute_inner_ood_constants(&pub_inputs, expected_z, g_trace)
+            } else {
+                (
+                    [BaseElement::ZERO; 1 + STATE_WIDTH],
+                    BaseElement::ZERO,
+                    [BaseElement::ZERO; 2],
+                    [BaseElement::ZERO; 8],
+                )
+            };
         let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
         Self {
             context,
             pub_inputs,
             expected_z,
+            inner_rpo_periodic_at_z,
+            inner_transition_divisor_inv_at_z,
+            inner_boundary_divisor_inv_at_z,
+            inner_ood_constraint_weights,
             g_trace,
             g_lde,
             domain_offset,
@@ -1423,6 +1525,112 @@ impl Air for StarkVerifierAir {
                 deep_start_row_mask * (current[RATE_START + DIGEST_WIDTH + i] - saved);
         }
         idx += STATE_WIDTH;
+
+        // --------------------------------------------------------------------
+        // OOD consistency check (winter-verifier step 3)
+        // --------------------------------------------------------------------
+        //
+        // Enforce that the inner proof's OOD constraint frame at z (quotient composition columns)
+        // is consistent with evaluating the inner AIR constraints at z using transcript-drawn
+        // constraint composition coefficients.
+        //
+        // This is required for soundness; without it, a prover could commit to an arbitrary low
+        // degree constraint-composition polynomial unrelated to the trace.
+        if inner_proof_kind(&self.pub_inputs) == InnerProofKind::RpoAir {
+            // --- (1) Evaluate RpoAir transition constraints at z --------------------------------
+        let half_round_type = E::from(self.inner_rpo_periodic_at_z[0]);
+        let ark: [E; STATE_WIDTH] =
+            core::array::from_fn(|i| E::from(self.inner_rpo_periodic_at_z[1 + i]));
+
+        // OOD trace frame (current at z, next at z*g).
+        let ood_trace_z: [E; RPO_TRACE_WIDTH] =
+            core::array::from_fn(|i| current[COL_OOD_EVALS_START + i]);
+        let ood_trace_zg: [E; RPO_TRACE_WIDTH] = core::array::from_fn(|i| {
+            current[COL_OOD_EVALS_START + (RPO_TRACE_WIDTH + 8) + i]
+        });
+
+        let one = E::ONE;
+        let two = one + one;
+        let is_forward = half_round_type * (two - half_round_type);
+        let is_inverse = half_round_type * (half_round_type - one);
+        let is_padding = (one - half_round_type) * (two - half_round_type);
+
+        let mut t_combined = E::ZERO;
+        for i in 0..STATE_WIDTH {
+            let mut mds_res = E::ZERO;
+            for j in 0..STATE_WIDTH {
+                mds_res += E::from(MDS[i][j]) * ood_trace_z[j];
+            }
+            let intermediate = mds_res + ark[i];
+
+            let x2 = intermediate * intermediate;
+            let x4 = x2 * x2;
+            let x3 = x2 * intermediate;
+            let x7 = x3 * x4;
+            let forward_constraint = ood_trace_zg[i] - x7;
+
+            let y = ood_trace_zg[i];
+            let y2 = y * y;
+            let y4 = y2 * y2;
+            let y3 = y2 * y;
+            let y7 = y3 * y4;
+            let inverse_constraint = y7 - intermediate;
+
+            let padding_constraint = ood_trace_zg[i] - ood_trace_z[i];
+            let t_eval = is_forward * forward_constraint
+                + is_inverse * inverse_constraint
+                + is_padding * padding_constraint;
+
+            let coeff = current[COL_CONSTRAINT_COEFFS_START + i];
+            t_combined += coeff * t_eval;
+        }
+
+        // Divide by the transition divisor z(x) = (x^n - 1) / (x - g^{n-1}), evaluated at z.
+        let transition_eval = t_combined * E::from(self.inner_transition_divisor_inv_at_z);
+
+        // --- (2) Boundary constraints at z (single-step assertions) --------------------------
+        //
+        // RpoAir asserts:
+        // - row 0 state == input_state (12 assertions)
+        // - row 15 state == output_state (12 assertions)
+        //
+        // These two divisor groups are (x - 1) and (x - g^{n-1}).
+        let mut boundary_row0 = E::ZERO;
+        let mut boundary_row_last = E::ZERO;
+        for i in 0..STATE_WIDTH {
+            let coeff_row0 = current[COL_CONSTRAINT_COEFFS_START + STATE_WIDTH + i];
+            let coeff_last = current[COL_CONSTRAINT_COEFFS_START + STATE_WIDTH + STATE_WIDTH + i];
+
+            let input = E::from(self.pub_inputs.inner_public_inputs[i]);
+            let output = E::from(self.pub_inputs.inner_public_inputs[STATE_WIDTH + i]);
+
+            boundary_row0 += coeff_row0 * (ood_trace_z[i] - input);
+            boundary_row_last += coeff_last * (ood_trace_z[i] - output);
+        }
+        let boundary_eval = boundary_row0 * E::from(self.inner_boundary_divisor_inv_at_z[0])
+            + boundary_row_last * E::from(self.inner_boundary_divisor_inv_at_z[1]);
+
+        let ood_constraint_eval_1 = transition_eval + boundary_eval;
+
+        // --- (3) Reduce inner quotient columns at z to a single value -----------------------
+        //
+        // H(z) = Σ_{i=0}^{m-1} z^{i * trace_length} * H_i(z)
+        //
+        // where m = 8 for RpoAir's constraint composition columns.
+        let mut ood_constraint_eval_2 = E::ZERO;
+        for i in 0..8usize {
+            let weight = E::from(self.inner_ood_constraint_weights[i]);
+            let value = current[COL_OOD_EVALS_START + RPO_TRACE_WIDTH + i];
+            ood_constraint_eval_2 += weight * value;
+        }
+
+        result[idx] = ood_constraint_eval_1 - ood_constraint_eval_2;
+        idx += 1;
+        } else {
+            // TODO (Phase 3b.2): implement OOD consistency check for inner StarkVerifierAir proofs.
+            result[idx] = E::ZERO;
+            idx += 1;
+        }
 
         // --------------------------------------------------------------------
         // Transcript store: persist coeffs / deep coeffs / alphas
@@ -3146,6 +3354,116 @@ impl Air for StarkVerifierAir {
 // VERIFICATION HELPERS
 // ================================================================================================
 
+fn compute_inner_ood_constants(
+    pub_inputs: &StarkVerifierPublicInputs,
+    expected_z: BaseElement,
+    g_trace: BaseElement,
+) -> (
+    [BaseElement; 1 + STATE_WIDTH],
+    BaseElement,
+    [BaseElement; 2],
+    [BaseElement; 8],
+) {
+    assert_eq!(
+        pub_inputs.trace_length, ROWS_PER_PERMUTATION,
+        "StarkVerifierAir currently assumes RpoAir trace length {} (got {})",
+        ROWS_PER_PERMUTATION, pub_inputs.trace_length
+    );
+    assert_eq!(
+        pub_inputs.inner_public_inputs.len(),
+        2 * STATE_WIDTH,
+        "StarkVerifierAir currently assumes RpoAir public inputs length {} (got {})",
+        2 * STATE_WIDTH,
+        pub_inputs.inner_public_inputs.len()
+    );
+
+    let z = expected_z;
+    let n = pub_inputs.trace_length;
+    let g_last = g_trace.exp(((n - 1) as u64).into());
+
+    let z_to_n = z.exp((n as u64).into());
+    let transition_divisor = (z_to_n - BaseElement::ONE) / (z - g_last);
+    let transition_divisor_inv_at_z = transition_divisor.inv();
+
+    let boundary_inv_at_z = [(z - BaseElement::ONE).inv(), (z - g_last).inv()];
+
+    let mut ood_constraint_weights = [BaseElement::ZERO; 8];
+    ood_constraint_weights[0] = BaseElement::ONE;
+    for i in 1..ood_constraint_weights.len() {
+        ood_constraint_weights[i] = ood_constraint_weights[i - 1] * z_to_n;
+    }
+
+    let rpo_periodic_at_z = compute_rpo_periodic_at_point(z);
+
+    (
+        rpo_periodic_at_z,
+        transition_divisor_inv_at_z,
+        boundary_inv_at_z,
+        ood_constraint_weights,
+    )
+}
+
+fn compute_rpo_periodic_at_point(x: BaseElement) -> [BaseElement; 1 + STATE_WIDTH] {
+    let cycle_len = ROWS_PER_PERMUTATION;
+    let inv_twiddles = fft::get_inv_twiddles::<BaseElement>(cycle_len);
+    let eval_column = |values: Vec<BaseElement>| -> BaseElement {
+        let mut poly = values;
+        fft::interpolate_poly(&mut poly, &inv_twiddles);
+        polynom::eval(&poly, x)
+    };
+
+    let mut half_round_type_values = Vec::with_capacity(cycle_len);
+    for row in 0..cycle_len {
+        let val = if row >= 14 { 0 } else if row % 2 == 0 { 1 } else { 2 };
+        half_round_type_values.push(BaseElement::new(val));
+    }
+
+    let mut result = [BaseElement::ZERO; 1 + STATE_WIDTH];
+    result[0] = eval_column(half_round_type_values);
+
+    for elem_idx in 0..STATE_WIDTH {
+        let mut values = Vec::with_capacity(cycle_len);
+        for row in 0..cycle_len {
+            let val = if row >= cycle_len - 1 {
+                BaseElement::ZERO
+            } else if row % 2 == 0 {
+                let round = row / 2;
+                if round < NUM_ROUNDS {
+                    ARK1[round][elem_idx]
+                } else {
+                    BaseElement::ZERO
+                }
+            } else {
+                let round = row / 2;
+                if round < NUM_ROUNDS {
+                    ARK2[round][elem_idx]
+                } else {
+                    BaseElement::ZERO
+                }
+            };
+            values.push(val);
+        }
+
+        result[1 + elem_idx] = eval_column(values);
+    }
+
+    result
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InnerProofKind {
+    RpoAir,
+    StarkVerifierAir,
+}
+
+fn inner_proof_kind(pub_inputs: &StarkVerifierPublicInputs) -> InnerProofKind {
+    if pub_inputs.inner_public_inputs.len() == 2 * STATE_WIDTH {
+        InnerProofKind::RpoAir
+    } else {
+        InnerProofKind::StarkVerifierAir
+    }
+}
+
 /// Helper to extract query positions from an RPO transcript seed.
 pub fn extract_query_positions(
     transcript_seed: [BaseElement; DIGEST_WIDTH],
@@ -3210,8 +3528,36 @@ pub fn compute_deep_evaluation(
 // ================================================================================================
 
 pub(crate) fn build_context_prefix(pub_inputs: &StarkVerifierPublicInputs) -> Vec<BaseElement> {
+    let (trace_width, num_constraints) = match inner_proof_kind(pub_inputs) {
+        InnerProofKind::RpoAir => (RPO_TRACE_WIDTH, 36usize),
+        InnerProofKind::StarkVerifierAir => {
+            // The inner proof is itself a StarkVerifierAir proof (depth-2+). Its public inputs are
+            // an encoded `StarkVerifierPublicInputs` for an RpoAir inner proof.
+            let inner_verifier_pub_inputs = StarkVerifierPublicInputs::try_from_elements(
+                &pub_inputs.inner_public_inputs,
+                2 * STATE_WIDTH,
+            )
+            .expect("inner StarkVerifierAir public inputs must decode");
+            let trace_info = TraceInfo::new(VERIFIER_TRACE_WIDTH, pub_inputs.trace_length);
+            let options = ProofOptions::new(
+                pub_inputs.num_draws,
+                pub_inputs.blowup_factor,
+                0, // grinding factor (recursion currently assumes 0)
+                winter_air::FieldExtension::None,
+                2, // FRI folding factor
+                7, // remainder max degree
+                winter_air::BatchingMethod::Linear,
+                winter_air::BatchingMethod::Linear,
+            );
+            let air = StarkVerifierAir::new(trace_info, inner_verifier_pub_inputs, options);
+            let num_constraints =
+                air.context().num_transition_constraints() + air.get_assertions().len();
+            (VERIFIER_TRACE_WIDTH, num_constraints)
+        }
+    };
+
     // TraceInfo element 0 encodes: main_width << 8 | num_aux_segments (0).
-    let trace_info0 = BaseElement::new(((RPO_TRACE_WIDTH as u32) << 8) as u64);
+    let trace_info0 = BaseElement::new(((trace_width as u32) << 8) as u64);
     let trace_info1 = BaseElement::new(pub_inputs.trace_length as u64);
 
     // Goldilocks modulus bytes split into 2 elements:
@@ -3219,8 +3565,8 @@ pub(crate) fn build_context_prefix(pub_inputs: &StarkVerifierPublicInputs) -> Ve
     let modulus0 = BaseElement::ONE;
     let modulus1 = BaseElement::new(u64::from(u32::MAX));
 
-    // Inner proof constraints count (transition + boundary) for RpoAir.
-    let num_constraints = BaseElement::new(36);
+    // Inner proof constraints count (transition + boundary).
+    let num_constraints = BaseElement::new(num_constraints as u64);
 
     // ProofOptions packed element (see `winter_air::ProofOptions::to_elements`):
     // [field_extension, fri_folding_factor, fri_remainder_max_degree, blowup_factor]
@@ -3261,8 +3607,9 @@ pub(crate) fn compute_expected_z(pub_inputs: &StarkVerifierPublicInputs) -> Base
     let mut coin = <RpoRandomCoin as RandomCoin>::new(&seed_elems);
     coin.reseed(Word::new(pub_inputs.trace_commitment));
 
-    // Draw 36 constraint composition coefficients.
-    for _ in 0..36 {
+    // Draw constraint composition coefficients (count depends on inner proof AIR).
+    let num_constraints = build_context_prefix(pub_inputs)[4].as_int() as usize;
+    for _ in 0..num_constraints {
         let _: BaseElement = coin.draw().expect("failed to draw coeff");
     }
 
@@ -3396,5 +3743,48 @@ mod tests {
 
         // inner_public_inputs (2) + 4 (inner hash) + 4 (trace) + 4 (constraint) + 3*4 (fri) + 6 (params)
         assert_eq!(elements.len(), 2 + 4 + 4 + 4 + 12 + 6);
+    }
+
+    #[test]
+    fn test_try_from_elements_roundtrip() {
+        let inner_inputs: Vec<BaseElement> =
+            (0..(2 * STATE_WIDTH)).map(|i| BaseElement::new(i as u64 + 1)).collect();
+        let inner_hash = [BaseElement::new(10); DIGEST_WIDTH];
+        let trace_commit = [BaseElement::new(11); DIGEST_WIDTH];
+        let constraint_commit = [BaseElement::new(12); DIGEST_WIDTH];
+        let fri_commits = vec![
+            [BaseElement::new(13); DIGEST_WIDTH],
+            [BaseElement::new(14); DIGEST_WIDTH],
+        ];
+
+        let pub_inputs = StarkVerifierPublicInputs::new(
+            inner_inputs.clone(),
+            inner_hash,
+            trace_commit,
+            constraint_commit,
+            fri_commits.clone(),
+            4,
+            4,
+            RPO_TRACE_WIDTH,
+            8,
+            32,
+            ROWS_PER_PERMUTATION,
+        );
+
+        let elements = pub_inputs.to_elements();
+        let decoded =
+            StarkVerifierPublicInputs::try_from_elements(&elements, inner_inputs.len()).unwrap();
+
+        assert_eq!(decoded.inner_public_inputs, inner_inputs);
+        assert_eq!(decoded.inner_pub_inputs_hash, inner_hash);
+        assert_eq!(decoded.trace_commitment, trace_commit);
+        assert_eq!(decoded.constraint_commitment, constraint_commit);
+        assert_eq!(decoded.fri_commitments, fri_commits);
+        assert_eq!(decoded.num_queries, 4);
+        assert_eq!(decoded.num_draws, 4);
+        assert_eq!(decoded.trace_partition_size, RPO_TRACE_WIDTH);
+        assert_eq!(decoded.constraint_partition_size, 8);
+        assert_eq!(decoded.blowup_factor, 32);
+        assert_eq!(decoded.trace_length, ROWS_PER_PERMUTATION);
     }
 }
