@@ -444,6 +444,14 @@ The proofs, commitments, and roots should be identical on both nodes.
 [shielded-pool] Finalized epoch 0 with 5 proofs
 ```
 
+**Recursive epoch proof propagation (Phase 2f, node-side):**
+- Start nodes with `HEGEMON_RECURSIVE_EPOCH_PROOFS=1`
+- Logs to expect:
+  - `Generating recursive epoch proof`
+  - `📡 Broadcast recursive epoch proof to peers`
+  - `Received recursive epoch proof`
+  - `Sent recursive epoch proof to new peer`
+
 **Events emitted:**
 - `EpochFinalized { epoch_number, proof_root, num_proofs }`
 - `EpochSyncAvailable { epoch_number, commitment }`
@@ -461,7 +469,8 @@ The proofs, commitments, and roots should be identical on both nodes.
 ### Troubleshooting Epoch Proofs
 
 **No epoch proof generated:**
-- Ensure binary built with `--features epoch-proofs`
+- Recursive epoch proof propagation is disabled by default; set `HEGEMON_RECURSIVE_EPOCH_PROOFS=1`
+- (Legacy/on-chain) Ensure binary built with `--features epoch-proofs`
 - Check for errors in node logs around epoch boundary blocks
 - Verify transactions were actually included in blocks
 

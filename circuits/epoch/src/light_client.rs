@@ -17,6 +17,7 @@ use winterfell::{
 use crate::air::{EpochProofAir, EpochPublicInputs};
 use crate::merkle;
 use crate::prover::{default_epoch_options, fast_epoch_options, EpochProof};
+use crate::recursion::{RecursiveEpochProof, RecursiveEpochProver};
 use crate::types::Epoch;
 
 type Blake3 = Blake3_256<BaseElement>;
@@ -154,6 +155,47 @@ impl LightClient {
         }
     }
 
+    /// Verify a recursive epoch proof and add the epoch to the verified set.
+    ///
+    /// This verifies either:
+    /// - a non-recursive RPO proof (inner proof only), or
+    /// - a recursive proof-of-proof (outer StarkVerifierAir proof) which verifies the inner proof
+    ///   in-circuit.
+    ///
+    /// Note: Recursive proofs are currently experimental and intended for node-side propagation.
+    pub fn sync_recursive(&mut self, epoch: &Epoch, proof: &RecursiveEpochProof) -> VerifyResult {
+        // Check epoch commitment matches proof
+        if epoch.commitment() != proof.epoch_commitment {
+            return VerifyResult::CommitmentMismatch;
+        }
+
+        // Check epoch is sequential (or first epoch)
+        if !self.verified_epochs.is_empty() {
+            let expected = self.tip_epoch + 1;
+            if epoch.epoch_number != expected {
+                return VerifyResult::NonSequentialEpoch {
+                    expected,
+                    got: epoch.epoch_number,
+                };
+            }
+        }
+
+        if self.use_mock_verification {
+            self.verified_epochs.push(epoch.clone());
+            self.tip_epoch = epoch.epoch_number;
+            return VerifyResult::Valid;
+        }
+
+        let prover = RecursiveEpochProver::fast();
+        if !prover.verify_epoch_proof(proof, epoch) {
+            return VerifyResult::InvalidProof;
+        }
+
+        self.verified_epochs.push(epoch.clone());
+        self.tip_epoch = epoch.epoch_number;
+        VerifyResult::Valid
+    }
+
     /// Accept epoch without STARK proof verification (for mock/testing).
     ///
     /// This is useful during development before real proofs are generated.
@@ -237,6 +279,32 @@ mod tests {
         let client = LightClient::new();
         assert_eq!(client.tip_epoch, 0);
         assert_eq!(client.num_verified(), 0);
+    }
+
+    #[test]
+    fn test_light_client_sync_recursive_roundtrip() {
+        let proof_hashes: Vec<[u8; 32]> = (0..4)
+            .map(|i| {
+                let mut h = [0u8; 32];
+                h[0] = i as u8;
+                h
+            })
+            .collect();
+
+        let mut epoch = Epoch::new(0);
+        epoch.proof_root = compute_proof_root(&proof_hashes);
+        epoch.state_root = [2u8; 32];
+        epoch.nullifier_set_root = [3u8; 32];
+        epoch.commitment_tree_root = [4u8; 32];
+
+        let prover = RecursiveEpochProver::fast();
+        let proof = prover.prove_epoch(&epoch, &proof_hashes).unwrap();
+
+        let mut client = LightClient::new();
+        let result = client.sync_recursive(&epoch, &proof);
+        assert_eq!(result, VerifyResult::Valid);
+        assert_eq!(client.tip_epoch, 0);
+        assert!(client.is_epoch_verified(0));
     }
 
     #[test]

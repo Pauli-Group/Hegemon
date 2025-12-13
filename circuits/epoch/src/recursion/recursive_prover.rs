@@ -43,15 +43,20 @@ use miden_crypto::rand::RpoRandomCoin;
 use miden_crypto::Word;
 use winter_air::proof::{merge_ood_evaluations, Proof};
 use winter_air::{Air, ConstraintCompositionCoefficients, DeepCompositionCoefficients};
-use winter_crypto::{Hasher, MerkleTree, RandomCoin};
+use winter_crypto::{hashers::Blake3_256, Hasher, MerkleTree, RandomCoin};
 use winter_fri::folding::fold_positions;
 use winter_fri::utils::map_positions_to_indexes;
 use winter_math::{fields::f64::BaseElement, FieldElement, ToElements};
-use winterfell::{BatchingMethod, FieldExtension, ProofOptions, Prover};
+use winterfell::{
+    crypto::DefaultRandomCoin, verify, AcceptableOptions, BatchingMethod, FieldExtension,
+    ProofOptions, Prover,
+};
 
 use super::rpo_air::STATE_WIDTH;
 use super::rpo_proof::{rpo_hash_elements, RpoProofOptions, rpo_merge};
 use super::rpo_stark_prover::{RpoStarkProver, verify_epoch_with_rpo};
+use super::stark_verifier_air::StarkVerifierAir;
+use super::stark_verifier_prover::StarkVerifierProver;
 use super::stark_verifier_air::StarkVerifierPublicInputs;
 use crate::types::Epoch;
 use crate::prover::EpochProverError;
@@ -59,8 +64,15 @@ use crate::prover::EpochProverError;
 /// Recursive epoch proof containing the STARK proof and verification metadata.
 #[derive(Clone, Debug)]
 pub struct RecursiveEpochProof {
-    /// Serialized STARK proof bytes (using RPO for Fiat-Shamir).
+    /// Serialized STARK proof bytes.
+    ///
+    /// - If `is_recursive == false`, this is the *inner* RPO-based proof (RpoAir).
+    /// - If `is_recursive == true`, this is the *outer* recursive proof (StarkVerifierAir),
+    ///   which verifies `inner_proof_bytes` in-circuit.
     pub proof_bytes: Vec<u8>,
+    /// Serialized inner proof bytes (RPO-based), used as the recursion target when
+    /// `is_recursive == true`.
+    pub inner_proof_bytes: Vec<u8>,
     /// Epoch commitment (hash of epoch metadata).
     pub epoch_commitment: [u8; 32],
     /// Proof accumulator (RPO hash of all proof hashes).
@@ -150,12 +162,52 @@ impl RecursiveEpochProver {
         let proof_bytes = self.generate_real_stark_proof(&proof_accumulator)?;
 
         Ok(RecursiveEpochProof {
+            inner_proof_bytes: proof_bytes.clone(),
             proof_bytes,
             epoch_commitment: epoch.commitment(),
             proof_accumulator,
             num_proofs: proof_hashes.len() as u32,
-            is_recursive: true, // Now uses real STARK proof
+            is_recursive: false,
         })
+    }
+
+    /// Generate a recursive epoch proof (proof-of-proof) using StarkVerifierAir.
+    ///
+    /// This produces:
+    /// 1) an inner RPO-based STARK proof (RpoAir) over the epoch accumulator
+    /// 2) an outer STARK proof (StarkVerifierAir) which verifies the inner proof in-circuit
+    ///
+    /// Note: The outer proof currently uses Blake3 Fiat–Shamir (Winterfell default). This is
+    /// sufficient for one-level recursion demonstrations and node-side recursive attestations,
+    /// but not yet self-recursive.
+    pub fn prove_epoch_recursive(
+        &self,
+        epoch: &Epoch,
+        proof_hashes: &[[u8; 32]],
+    ) -> Result<RecursiveEpochProof, EpochProverError> {
+        let mut proof = self.prove_epoch(epoch, proof_hashes)?;
+
+        // Reconstruct the inner public inputs from the accumulator (matches inner prover).
+        let inner_pub_inputs = self.build_inner_pub_inputs(&proof.proof_accumulator);
+
+        // Extract recursion witness data from the inner proof.
+        let inner_data =
+            InnerProofData::from_proof::<super::rpo_air::RpoAir>(&proof.inner_proof_bytes, inner_pub_inputs)?;
+
+        // Build outer public inputs for StarkVerifierAir.
+        let outer_pub_inputs = inner_data.to_stark_verifier_inputs();
+
+        // Generate outer proof verifying the inner proof in-circuit.
+        let outer_options = self.options.to_winter_options();
+        let outer_prover = StarkVerifierProver::new(outer_options, outer_pub_inputs);
+        let outer_trace = outer_prover.build_trace_from_inner(&inner_data);
+        let outer_proof = outer_prover
+            .prove(outer_trace)
+            .map_err(|e| EpochProverError::ProofGenerationError(format!("{e:?}")))?;
+
+        proof.proof_bytes = outer_proof.to_bytes();
+        proof.is_recursive = true;
+        Ok(proof)
     }
 
     /// Compute proof accumulator using RPO hash.
@@ -196,6 +248,18 @@ impl RecursiveEpochProver {
         
         // Serialize proof
         Ok(proof.to_bytes())
+    }
+
+    fn build_inner_pub_inputs(
+        &self,
+        accumulator: &[BaseElement; 4],
+    ) -> super::rpo_air::RpoPublicInputs {
+        let mut input_state = [BaseElement::ZERO; STATE_WIDTH];
+        input_state[..4].copy_from_slice(accumulator);
+
+        let prover = RpoStarkProver::from_rpo_options(&self.options);
+        let trace = prover.build_trace(input_state);
+        prover.get_pub_inputs(&trace)
     }
 
     /// Generate mock recursive proof (for backward compatibility/testing).
@@ -245,24 +309,50 @@ impl RecursiveEpochProver {
         if proof.proof_bytes.is_empty() {
             return false;
         }
-        
-        // Reconstruct input state from accumulator
-        let mut input_state = [BaseElement::ZERO; STATE_WIDTH];
-        input_state[..4].copy_from_slice(&proof.proof_accumulator);
-        
-        // Deserialize proof
-        let stark_proof = match winterfell::Proof::from_bytes(&proof.proof_bytes) {
+
+        if !proof.is_recursive {
+            // Verify the inner RPO proof directly.
+            let inner_pub_inputs = self.build_inner_pub_inputs(&proof.proof_accumulator);
+            let stark_proof = match winterfell::Proof::from_bytes(&proof.proof_bytes) {
+                Ok(p) => p,
+                Err(_) => return false,
+            };
+            return verify_epoch_with_rpo(&stark_proof, &inner_pub_inputs).is_ok();
+        }
+
+        // Recursive mode: verify the outer proof, which in-circuit verifies the inner proof.
+        if proof.inner_proof_bytes.is_empty() {
+            return false;
+        }
+
+        let inner_pub_inputs = self.build_inner_pub_inputs(&proof.proof_accumulator);
+        let inner_data = match InnerProofData::from_proof::<super::rpo_air::RpoAir>(
+            &proof.inner_proof_bytes,
+            inner_pub_inputs,
+        ) {
+            Ok(d) => d,
+            Err(_) => return false,
+        };
+        let outer_pub_inputs = inner_data.to_stark_verifier_inputs();
+
+        let outer_proof = match winterfell::Proof::from_bytes(&proof.proof_bytes) {
             Ok(p) => p,
             Err(_) => return false,
         };
-        
-        // Create public inputs (reconstruct what the prover used)
-        let prover = RpoStarkProver::from_rpo_options(&self.options);
-        let trace = prover.build_trace(input_state);
-        let pub_inputs = prover.get_pub_inputs(&trace);
-        
-        // Verify using real STARK verifier with RPO
-        verify_epoch_with_rpo(&stark_proof, &pub_inputs).is_ok()
+
+        type Blake3 = Blake3_256<BaseElement>;
+        type Blake3MerkleTree = MerkleTree<Blake3>;
+        let acceptable = AcceptableOptions::OptionSet(vec![
+            RpoProofOptions::fast().to_winter_options(),
+            RpoProofOptions::production().to_winter_options(),
+        ]);
+
+        verify::<StarkVerifierAir, Blake3, DefaultRandomCoin<Blake3>, Blake3MerkleTree>(
+            outer_proof,
+            outer_pub_inputs,
+            &acceptable,
+        )
+        .is_ok()
     }
     
     /// Verify a recursive epoch proof (mock version for testing).

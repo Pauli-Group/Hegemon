@@ -43,11 +43,11 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] (2025-12-13) Phase 2e.5: Implement DEEP composition checks using stored challenges, OOD evaluations, and authenticated trace/constraint openings.
 - [x] (2025-12-13) Phase 2e.6: Implement full FRI folding, remainder evaluation, and DRP binding using stored alphas and authenticated FRI openings.
 - [x] (2025-12-13) Phase 2e.7: End-to-end recursion: generate inner RPO proof, generate outer proof verifying it, and demonstrate tamper-reject of the inner proof.
-- [ ] (2025-12-11) Phase 2f: RecursiveEpochProver verifies inner proofs in‑circuit via StarkVerifierAir.
+- [x] (2025-12-13) Phase 2f: Wire `StarkVerifierAir` into `RecursiveEpochProver` (proof-of-proof) and propagate recursive epoch proofs over the PQ network.
 - [ ] (2025-12-11) Phase 3: Two‑person testnet recursive sync + light client recursive mode.
 - [ ] Phase 4: Security audit and production hardening.
 
-**Current status (2025-12-13)**: Phase 1 shipped and is live in the pallet. Phase 2d/2e are now complete end‑to‑end for RPO inner proofs: `StarkVerifierAir` reconstructs the RPO Fiat‑Shamir transcript, verifies Merkle openings for trace/constraint/FRI leaves, performs DEEP composition, completes FRI folding, and binds the final folded value to the remainder polynomial evaluation. The recursion path is exercised by `test_trace_from_inner_merkle_roundtrip` (inner proof → outer proof verifying it), and tamper‑reject coverage exists for Merkle auth path integrity, FRI folding, and remainder binding. The remaining major milestone is Phase 2f: wiring `StarkVerifierAir` into `RecursiveEpochProver` for production recursive epoch proofs and then validating on a two‑person testnet (Phase 3).
+**Current status (2025-12-13)**: Phase 1 shipped and is live in the pallet. Phase 2d/2e are complete end‑to‑end for RPO inner proofs: `StarkVerifierAir` reconstructs the RPO Fiat‑Shamir transcript, verifies Merkle openings for trace/constraint/FRI leaves, performs DEEP composition, completes FRI folding, and binds the final folded value to the remainder polynomial evaluation. Phase 2f is now shipped: `RecursiveEpochProver::prove_epoch_recursive()` generates a proof‑of‑proof for epoch accumulators, `node/src/substrate/service.rs` broadcasts recursive epoch proofs on epoch boundaries (guarded by `HEGEMON_RECURSIVE_EPOCH_PROOFS=1`) and sends the latest proof to new peers on connect, and `LightClient::sync_recursive()` can verify these recursive proofs. Phase 3 remains: validate on a two‑person testnet and harden the recursive sync UX.
 
 ## Surprises & Discoveries
 
@@ -2020,15 +2020,18 @@ Create: `circuits/epoch/src/recursion/stark_verifier_air.rs`
 
 #### Step 2f.1: Integrate recursive epochs into node
 
-Modify `node/src/service.rs`:
+Modify `node/src/substrate/service.rs`:
 ```rust
-// At epoch boundary:
-// 1. Collect all transaction proofs from epoch
-// 2. Generate epoch proof (Merkle accumulator)
-// 3. If previous recursive proof exists:
-//    - Generate StarkVerifierAir proof of previous recursive proof
-//    - New proof attests: "I verified epoch N, which verified epochs 0..N-1"
-// 4. Broadcast recursive proof
+// Guarded by HEGEMON_RECURSIVE_EPOCH_PROOFS=1:
+//
+// On best-chain imports:
+// 1. Extract shielded_transfer proofs from block extrinsics
+// 2. Hash each proof (blake3) -> proof_hashes for the epoch
+// 3. At epoch boundary (block_number % 1000 == 0):
+//    - Build Epoch metadata (proof_root + end-of-epoch state_root from parent header)
+//    - Generate proof-of-proof via epoch_circuit::RecursiveEpochProver::prove_epoch_recursive()
+//    - Broadcast RecursiveEpochProofMessage over RECURSIVE_EPOCH_PROOFS_PROTOCOL
+// 4. On peer connect: send the latest RecursiveEpochProofMessage immediately
 ```
 
 #### Step 2f.2: Light client recursive sync
@@ -2036,13 +2039,11 @@ Modify `node/src/service.rs`:
 Modify `circuits/epoch/src/light_client.rs`:
 ```rust
 impl LightClient {
-    /// Sync from genesis using single recursive proof
-    pub fn sync_recursive(&mut self, proof: RecursiveEpochProof) -> Result<()> {
-        // Verify ONE proof
-        // Now have cryptographic certainty about ALL epochs
-        self.tip_epoch = proof.latest_epoch;
-        self.state_root = proof.state_root;
-        Ok(())
+    /// Verify a recursive epoch proof (proof-of-proof) and advance the tip.
+    pub fn sync_recursive(&mut self, epoch: &Epoch, proof: &RecursiveEpochProof) -> VerifyResult {
+        // Verifies the inner RPO proof directly, or (if is_recursive) verifies the outer proof
+        // which verifies the inner proof in-circuit.
+        // Updates tip_epoch and stores the verified epoch.
     }
 }
 ```
@@ -2053,7 +2054,7 @@ Run testnet with Alice and Bob:
 
 ```bash
 # Terminal 1: Alice starts mining from genesis
-HEGEMON_MINE=1 ./target/release/hegemon-node --chain testnet --alice
+HEGEMON_MINE=1 HEGEMON_RECURSIVE_EPOCH_PROOFS=1 ./target/release/hegemon-node --chain testnet --alice
 
 # Wait for 5 epochs (5000 blocks, ~8 hours at 6s blocks)
 
@@ -2061,9 +2062,9 @@ HEGEMON_MINE=1 ./target/release/hegemon-node --chain testnet --alice
 ./target/release/hegemon-node --chain testnet --bob
 
 # Bob's logs should show:
-# "Received recursive epoch proof covering epochs 0-5"
-# "Verified recursive proof in 2.3ms"
-# "Synced to block 5000"
+# "Received recursive epoch proof"
+# "Sent recursive epoch proof to new peer" (on Alice)
+# "📡 Broadcast recursive epoch proof to peers" (on Alice)
 ```
 
 **Success criteria**:
@@ -3147,3 +3148,7 @@ docker-compose -f docker-compose.testnet.yml up --abort-on-container-exit
   - Fixed DEEP/FRI state columns by deterministically populating them in `StarkVerifierProver` (Winterfell `TraceTable::new()` leaves memory uninitialized).
   - Updated `StarkVerifierAir` transition degree descriptors for DEEP/FRI constraints so debug proofs no longer panic with `transition constraint degrees didn't match`.
   - Added focused tamper-detection tests for FRI folding and remainder binding, and extended the end-to-end recursion roundtrip test to include transcript reseed tamper rejection.
+- **2025-12-13**: Phase 2f shipped (production wiring + propagation):
+  - Added `RecursiveEpochProver::prove_epoch_recursive()` to generate a proof-of-proof (outer `StarkVerifierAir` proof verifying an inner RPO proof).
+  - Wired node-side propagation in `node/src/substrate/service.rs`: collect shielded transfer proof hashes per epoch, generate recursive epoch proofs at boundaries (guarded by `HEGEMON_RECURSIVE_EPOCH_PROOFS=1`), broadcast `RecursiveEpochProofMessage` over `RECURSIVE_EPOCH_PROOFS_PROTOCOL`, and send the latest proof to new peers on connect.
+  - Added `LightClient::sync_recursive()` for verifying recursive epoch proofs, and updated `runbooks/two_person_testnet.md` to document the new env var + log expectations.
