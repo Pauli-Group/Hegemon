@@ -1,11 +1,12 @@
-//! Minimal prover for `StarkVerifierAir`.
+//! Prover for `StarkVerifierAir`.
 //!
-//! For now this prover only builds a trace which hashes the inner public inputs
-//! using the RPO sponge and exposes the resulting digest for checking in-circuit.
+//! This builds verifier traces which reconstruct the inner proof transcript and
+//! verify the inner proof’s Merkle openings, DEEP composition, and FRI folding
+//! checks inside the AIR.
 
 use winter_air::ProofOptions;
 use winter_crypto::{hashers::Blake3_256, MerkleTree};
-use winter_math::FieldElement;
+use winter_math::{FieldElement, StarkField};
 use winterfell::{
     crypto::DefaultRandomCoin,
     math::fields::f64::BaseElement,
@@ -23,7 +24,7 @@ use super::merkle_air::DIGEST_WIDTH;
 use super::rpo_proof::{rpo_hash_elements, rpo_merge};
 use super::fri_air::MAX_FRI_LAYERS;
 use super::stark_verifier_air::{
-    build_context_prefix, compute_expected_z, StarkVerifierAir, StarkVerifierPublicInputs,
+    build_context_prefix, compute_deep_evaluation, compute_expected_z, StarkVerifierAir, StarkVerifierPublicInputs,
     VERIFIER_TRACE_WIDTH,
     RATE_WIDTH,
     COL_CARRY_MASK, COL_FULL_CARRY_MASK, COL_RESEED_MASK, COL_COIN_INIT_MASK,
@@ -35,6 +36,9 @@ use super::stark_verifier_air::{
     COL_POS_PERM_ACC, COL_MERKLE_INDEX, COL_OOD_DIGEST_START, COL_SAVED_COIN_START,
     NUM_CONSTRAINT_COEFFS, NUM_DEEP_COEFFS, COL_CONSTRAINT_COEFFS_START, COL_DEEP_COEFFS_START,
     COL_FRI_ALPHA_START, COL_OOD_EVALS_START, OOD_EVAL_LEN,
+    COL_DEEP_T1_ACC, COL_DEEP_T2_ACC, COL_DEEP_C1_ACC, COL_DEEP_C2_ACC,
+    COL_FRI_EVAL, COL_FRI_X, COL_FRI_POW, COL_FRI_MSB_BITS_START, NUM_FRI_MSB_BITS,
+    COL_REMAINDER_COEFFS_START, NUM_REMAINDER_COEFFS,
 };
 use super::recursive_prover::InnerProofData;
 use winter_fri::utils::map_positions_to_indexes;
@@ -54,6 +58,14 @@ impl StarkVerifierProver {
     }
 
     /// Convenience: build a verifier proof that only checks the RPO hash of public inputs.
+    ///
+    /// This is a legacy “transcript-only” helper and does **not** build a sound recursive
+    /// verifier proof (it uses synthetic Merkle/FRI data). Prefer `build_trace_from_inner()`
+    /// with `InnerProofData` extracted from a real inner proof.
+    #[deprecated(
+        note = "Transcript-only helper; not a sound recursive verifier proof. Use build_trace_from_inner() instead."
+    )]
+    #[allow(deprecated)]
     pub fn prove_pub_inputs_hash(
         inner_public_inputs: Vec<BaseElement>,
         options: ProofOptions,
@@ -91,13 +103,15 @@ impl StarkVerifierProver {
         let dummy_fri_leaf = vec![BaseElement::ZERO; 2];
         let fri_leaf = rpo_hash_elements(&dummy_fri_leaf);
         let fri_root0 = compute_dummy_root(fri_leaf, depth_trace.saturating_sub(1));
+        let dummy_remainder = vec![BaseElement::ZERO; 8];
+        let remainder_commitment = rpo_hash_elements(&dummy_remainder);
 
         let pub_inputs = StarkVerifierPublicInputs::new(
             inner_public_inputs.clone(),
             digest,
             trace_root,
             constraint_root,
-            vec![fri_root0, [BaseElement::ZERO; DIGEST_WIDTH]],
+            vec![fri_root0, remainder_commitment],
             options.num_queries(),
             options.num_queries(),
             RPO_TRACE_WIDTH,
@@ -116,6 +130,10 @@ impl StarkVerifierProver {
     }
 
     /// Build a trace which hashes `inner_public_inputs` using the RPO sponge.
+    ///
+    /// This is a legacy “transcript-only” trace builder and does **not** bind a real inner proof.
+    /// Prefer `build_trace_from_inner()`.
+    #[deprecated(note = "Transcript-only helper; use build_trace_from_inner() instead.")]
     pub fn build_trace_for_pub_inputs_hash(&self) -> TraceTable<BaseElement> {
         let inputs = &self.pub_inputs.inner_public_inputs;
         let input_len = inputs.len();
@@ -170,7 +188,8 @@ impl StarkVerifierProver {
                 fri_leaf_perms + depth_trace.saturating_sub(layer_idx + 1);
         }
         let merkle_perms_total = self.pub_inputs.num_queries * merkle_perms_per_query;
-        let active_perms = pre_merkle_perms + merkle_perms_total;
+        let remainder_hash_perms = (self.pub_inputs.fri_commitments.len() > 0) as usize;
+        let active_perms = pre_merkle_perms + merkle_perms_total + remainder_hash_perms;
         let active_rows = active_perms * ROWS_PER_PERMUTATION;
         let total_rows = active_rows.next_power_of_two();
 
@@ -870,6 +889,7 @@ impl StarkVerifierProver {
         let dummy_trace_row = vec![BaseElement::ZERO; RPO_TRACE_WIDTH];
         let dummy_constraint_row = vec![BaseElement::ZERO; 8];
         let dummy_fri_row = vec![BaseElement::ZERO; 2];
+        let dummy_remainder = vec![BaseElement::ZERO; 8];
 
         let dummy_trace_leaf_digest = rpo_hash_elements(&dummy_trace_row);
         let dummy_constraint_leaf_digest = rpo_hash_elements(&dummy_constraint_row);
@@ -964,6 +984,19 @@ impl StarkVerifierProver {
 	            }
 	        }
 
+        // --- Remainder polynomial commitment hash -----------------------------------------
+        if !self.pub_inputs.fri_commitments.is_empty() {
+            let _ = hash_leaf_perms(
+                self,
+                &mut trace,
+                &mut perm_idx,
+                &dummy_remainder,
+                perm_acc_val,
+                0,
+                0,
+            );
+        }
+
         // --- Padding permutations -----------------------------------------------------------
         let total_perms = total_rows / ROWS_PER_PERMUTATION;
         for _ in perm_idx..total_perms {
@@ -1034,6 +1067,20 @@ impl StarkVerifierProver {
             }
         }
 
+        // Populate DEEP/FRI recursion state columns (TraceTable::new() leaves memory uninitialized).
+        let deep_evals = vec![BaseElement::ZERO; self.pub_inputs.num_queries];
+        let remainder_coeffs = [BaseElement::ZERO; NUM_REMAINDER_COEFFS];
+        self.populate_deep_fri_state(
+            &mut trace,
+            pre_merkle_perms,
+            trace_leaf_perms,
+            constraint_leaf_perms,
+            depth_trace,
+            num_fri_layers,
+            &deep_evals,
+            &remainder_coeffs,
+        );
+
         trace
     }
 
@@ -1098,7 +1145,17 @@ impl StarkVerifierProver {
         }
         let merkle_perms_total = self.pub_inputs.num_queries * merkle_perms_per_query;
 
-        let active_perms = pre_merkle_perms + merkle_perms_total;
+        let remainder_hash_perms = if num_fri_commitments > 0 {
+            assert!(
+                inner.fri_remainder.len() == RATE_WIDTH,
+                "inner remainder has {} coeffs; StarkVerifierAir currently supports exactly {RATE_WIDTH}",
+                inner.fri_remainder.len()
+            );
+            1usize
+        } else {
+            0usize
+        };
+        let active_perms = pre_merkle_perms + merkle_perms_total + remainder_hash_perms;
         let active_rows = active_perms * ROWS_PER_PERMUTATION;
         let total_rows = active_rows.next_power_of_two();
 
@@ -1902,6 +1959,19 @@ impl StarkVerifierProver {
             }
         }
 
+        // --- Remainder polynomial commitment hash -----------------------------------------
+        if num_fri_commitments > 0 {
+            let _ = hash_leaf_perms(
+                self,
+                &mut trace,
+                &mut perm_idx,
+                &inner.fri_remainder,
+                perm_acc_val,
+                0,
+                0,
+            );
+        }
+
         // --- Padding permutations -----------------------------------------------------------
         let total_perms = total_rows / ROWS_PER_PERMUTATION;
         let mut pad_state = [BaseElement::ZERO; STATE_WIDTH];
@@ -1972,8 +2042,328 @@ impl StarkVerifierProver {
 	            }
 	        }
 
+        // Populate DEEP/FRI recursion state columns (TraceTable::new() leaves memory uninitialized).
+        let g_trace = BaseElement::get_root_of_unity(self.pub_inputs.trace_length.ilog2());
+        let g_lde = BaseElement::get_root_of_unity(lde_domain_size.ilog2());
+        let domain_offset = BaseElement::GENERATOR;
+        let deep_evals: Vec<BaseElement> = (0..self.pub_inputs.num_queries)
+            .map(|q| {
+                let pos = draw_positions[q] as u64;
+                let x = domain_offset * g_lde.exp(pos);
+                compute_deep_evaluation(
+                    x,
+                    &inner.trace_evaluations[q],
+                    &inner.constraint_evaluations[q],
+                    &inner.ood_trace_current,
+                    &inner.ood_trace_next,
+                    &inner.ood_quotient_current,
+                    &inner.ood_quotient_next,
+                    &inner.deep_coeffs,
+                    expected_z,
+                    g_trace,
+                )
+            })
+            .collect();
+        self.populate_deep_fri_state(
+            &mut trace,
+            pre_merkle_perms,
+            trace_leaf_perms,
+            constraint_leaf_perms,
+            depth_trace,
+            num_fri_layers,
+            &deep_evals,
+            &inner.fri_remainder,
+        );
+
 	        trace
 	    }
+
+    fn populate_deep_fri_state(
+        &self,
+        trace: &mut TraceTable<BaseElement>,
+        pre_merkle_perms: usize,
+        trace_leaf_perms: usize,
+        constraint_leaf_perms: usize,
+        depth_trace: usize,
+        num_fri_layers: usize,
+        deep_evals: &[BaseElement],
+        remainder_coeffs: &[BaseElement],
+    ) {
+        const RATE_START_COL: usize = 4;
+
+        let total_rows = trace.length();
+        let num_queries = self.pub_inputs.num_queries;
+        debug_assert_eq!(deep_evals.len(), num_queries, "unexpected deep eval count");
+
+        // Fill remainder coefficients (constant across the entire verifier trace).
+        let mut remainder = [BaseElement::ZERO; NUM_REMAINDER_COEFFS];
+        for (i, coeff) in remainder_coeffs.iter().take(NUM_REMAINDER_COEFFS).enumerate() {
+            remainder[i] = *coeff;
+        }
+        for row in 0..total_rows {
+            for i in 0..NUM_REMAINDER_COEFFS {
+                trace.set(COL_REMAINDER_COEFFS_START + i, row, remainder[i]);
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        enum Event {
+            QueryReset { query_idx: usize },
+            TraceLeaf0,
+            TraceLeaf1,
+            ConstraintLeaf,
+            TraceMerkleBit { bit_idx: usize },
+            FriLeaf { layer_idx: usize },
+        }
+
+        let mut events: Vec<Option<Event>> = vec![None; total_rows];
+
+        let mut perm_idx = pre_merkle_perms;
+        for query_idx in 0..num_queries {
+            let query_row0 = perm_idx * ROWS_PER_PERMUTATION;
+            if query_row0 > 0 && query_row0 - 1 < total_rows {
+                debug_assert!(
+                    events[query_row0 - 1].is_none(),
+                    "duplicate event at row {}",
+                    query_row0 - 1
+                );
+                events[query_row0 - 1] = Some(Event::QueryReset { query_idx });
+            }
+
+            // --- Trace leaf hashing -----------------------------------------------------
+            for rel_perm in 0..trace_leaf_perms {
+                let row0 = perm_idx * ROWS_PER_PERMUTATION;
+                let boundary = row0 + ROWS_PER_PERMUTATION - 1;
+
+                if row0 < total_rows {
+                    let ev = match rel_perm {
+                        0 => Some(Event::TraceLeaf0),
+                        1 => Some(Event::TraceLeaf1),
+                        _ => None,
+                    };
+                    if let Some(ev) = ev {
+                        debug_assert!(
+                            events[row0].is_none(),
+                            "duplicate event at row {}",
+                            row0
+                        );
+                        events[row0] = Some(ev);
+                    }
+                }
+
+                if depth_trace > 0 && rel_perm + 1 == trace_leaf_perms && boundary < total_rows {
+                    debug_assert!(
+                        events[boundary].is_none(),
+                        "duplicate event at row {}",
+                        boundary
+                    );
+                    events[boundary] = Some(Event::TraceMerkleBit { bit_idx: 0 });
+                }
+
+                perm_idx += 1;
+            }
+
+            // --- Trace Merkle path ------------------------------------------------------
+            for level in 0..depth_trace {
+                let row0 = perm_idx * ROWS_PER_PERMUTATION;
+                let boundary = row0 + ROWS_PER_PERMUTATION - 1;
+                if level + 1 < depth_trace && boundary < total_rows {
+                    debug_assert!(
+                        events[boundary].is_none(),
+                        "duplicate event at row {}",
+                        boundary
+                    );
+                    events[boundary] = Some(Event::TraceMerkleBit { bit_idx: level + 1 });
+                }
+                perm_idx += 1;
+            }
+
+            // --- Constraint leaf hashing ------------------------------------------------
+            for rel_perm in 0..constraint_leaf_perms {
+                let row0 = perm_idx * ROWS_PER_PERMUTATION;
+                if rel_perm == 0 && row0 < total_rows {
+                    debug_assert!(
+                        events[row0].is_none(),
+                        "duplicate event at row {}",
+                        row0
+                    );
+                    events[row0] = Some(Event::ConstraintLeaf);
+                }
+                perm_idx += 1;
+            }
+
+            // --- Constraint Merkle path -------------------------------------------------
+            perm_idx += depth_trace;
+
+            // --- FRI layers --------------------------------------------------------------
+            for layer_idx in 0..num_fri_layers {
+                let row0 = perm_idx * ROWS_PER_PERMUTATION;
+                if row0 < total_rows {
+                    debug_assert!(
+                        events[row0].is_none(),
+                        "duplicate event at row {}",
+                        row0
+                    );
+                    events[row0] = Some(Event::FriLeaf { layer_idx });
+                }
+                perm_idx += 1; // leaf
+                let layer_depth = depth_trace.saturating_sub(layer_idx + 1);
+                perm_idx += layer_depth;
+            }
+        }
+
+        // Compute verifier-domain parameters (must match StarkVerifierAir::new).
+        let lde_domain_size = self.pub_inputs.trace_length * self.pub_inputs.blowup_factor;
+        let g_lde = BaseElement::get_root_of_unity(lde_domain_size.ilog2());
+        let domain_offset = BaseElement::GENERATOR;
+        let inv_domain_offset = domain_offset.inv();
+
+        #[derive(Clone, Debug)]
+        struct State {
+            t1: BaseElement,
+            t2: BaseElement,
+            c1: BaseElement,
+            c2: BaseElement,
+            eval: BaseElement,
+            x: BaseElement,
+            pow: BaseElement,
+            msb_bits: Vec<BaseElement>,
+        }
+
+        let mut state = State {
+            t1: BaseElement::ZERO,
+            t2: BaseElement::ZERO,
+            c1: BaseElement::ZERO,
+            c2: BaseElement::ZERO,
+            eval: BaseElement::ZERO,
+            x: domain_offset,
+            pow: g_lde,
+            msb_bits: vec![BaseElement::ZERO; num_fri_layers],
+        };
+
+        let write_row = |trace: &mut TraceTable<BaseElement>, row: usize, state: &State| {
+            trace.set(COL_DEEP_T1_ACC, row, state.t1);
+            trace.set(COL_DEEP_T2_ACC, row, state.t2);
+            trace.set(COL_DEEP_C1_ACC, row, state.c1);
+            trace.set(COL_DEEP_C2_ACC, row, state.c2);
+            trace.set(COL_FRI_EVAL, row, state.eval);
+            trace.set(COL_FRI_X, row, state.x);
+            trace.set(COL_FRI_POW, row, state.pow);
+            for i in 0..NUM_FRI_MSB_BITS {
+                let b = state.msb_bits.get(i).copied().unwrap_or(BaseElement::ZERO);
+                trace.set(COL_FRI_MSB_BITS_START + i, row, b);
+            }
+        };
+
+        // Set row 0 deterministically.
+        write_row(trace, 0, &state);
+
+        let one = BaseElement::ONE;
+        let two = BaseElement::new(2);
+
+        for row in 0..total_rows.saturating_sub(1) {
+            let mut next = state.clone();
+
+            if let Some(event) = events[row] {
+                match event {
+                    Event::QueryReset { query_idx } => {
+                        next.t1 = BaseElement::ZERO;
+                        next.t2 = BaseElement::ZERO;
+                        next.c1 = BaseElement::ZERO;
+                        next.c2 = BaseElement::ZERO;
+                        next.eval = deep_evals[query_idx];
+                        next.x = domain_offset;
+                        next.pow = g_lde;
+                        for b in next.msb_bits.iter_mut() {
+                            *b = BaseElement::ZERO;
+                        }
+                    }
+                    Event::TraceLeaf0 => {
+                        let mut t1_delta = BaseElement::ZERO;
+                        let mut t2_delta = BaseElement::ZERO;
+                        for j in 0..RATE_WIDTH {
+                            let coeff = trace.get(COL_DEEP_COEFFS_START + j, row);
+                            let trace_val = trace.get(RATE_START_COL + j, row);
+                            let ood_z = trace.get(COL_OOD_EVALS_START + j, row);
+                            let ood_zg = trace.get(
+                                COL_OOD_EVALS_START + (RPO_TRACE_WIDTH + 8) + j,
+                                row,
+                            );
+                            t1_delta += coeff * (trace_val - ood_z);
+                            t2_delta += coeff * (trace_val - ood_zg);
+                        }
+                        next.t1 += t1_delta;
+                        next.t2 += t2_delta;
+                    }
+                    Event::TraceLeaf1 => {
+                        let mut t1_delta = BaseElement::ZERO;
+                        let mut t2_delta = BaseElement::ZERO;
+                        for j in 0..(RPO_TRACE_WIDTH - RATE_WIDTH) {
+                            let coeff = trace.get(COL_DEEP_COEFFS_START + RATE_WIDTH + j, row);
+                            let trace_val = trace.get(RATE_START_COL + j, row);
+                            let ood_z = trace.get(COL_OOD_EVALS_START + RATE_WIDTH + j, row);
+                            let ood_zg = trace.get(
+                                COL_OOD_EVALS_START + (RPO_TRACE_WIDTH + 8) + RATE_WIDTH + j,
+                                row,
+                            );
+                            t1_delta += coeff * (trace_val - ood_z);
+                            t2_delta += coeff * (trace_val - ood_zg);
+                        }
+                        next.t1 += t1_delta;
+                        next.t2 += t2_delta;
+                    }
+                    Event::ConstraintLeaf => {
+                        let mut c1_delta = BaseElement::ZERO;
+                        let mut c2_delta = BaseElement::ZERO;
+                        for j in 0..8usize {
+                            let coeff = trace.get(COL_DEEP_COEFFS_START + RPO_TRACE_WIDTH + j, row);
+                            let val = trace.get(RATE_START_COL + j, row);
+                            let ood_z = trace.get(COL_OOD_EVALS_START + RPO_TRACE_WIDTH + j, row);
+                            let ood_zg = trace.get(
+                                COL_OOD_EVALS_START + (RPO_TRACE_WIDTH + 8) + RPO_TRACE_WIDTH + j,
+                                row,
+                            );
+                            c1_delta += coeff * (val - ood_z);
+                            c2_delta += coeff * (val - ood_zg);
+                        }
+                        next.c1 += c1_delta;
+                        next.c2 += c2_delta;
+                    }
+                    Event::TraceMerkleBit { bit_idx } => {
+                        let path_bit = trace.get(COL_MERKLE_PATH_BIT, row);
+                        next.x = state.x + state.x * path_bit * (state.pow - one);
+                        next.pow = state.pow * state.pow;
+
+                        let capture_layer = depth_trace.saturating_sub(1 + bit_idx);
+                        if capture_layer < num_fri_layers {
+                            next.msb_bits[capture_layer] = path_bit;
+                        }
+                    }
+                    Event::FriLeaf { layer_idx } => {
+                        let b = state.msb_bits[layer_idx];
+                        let v0 = trace.get(RATE_START_COL, row);
+                        let v1 = trace.get(RATE_START_COL + 1, row);
+                        let alpha = trace.get(COL_FRI_ALPHA_START + layer_idx, row);
+
+                        let selected = v0 + b * (v1 - v0);
+                        debug_assert_eq!(
+                            state.eval, selected,
+                            "FRI layer {layer_idx} eval mismatch at row {row}"
+                        );
+
+                        let sign = one - two * b;
+                        let x_base = state.x * sign;
+                        let rhs = (x_base + alpha) * v0 + (x_base - alpha) * v1;
+                        next.eval = rhs / (two * x_base);
+                        next.x = state.x * state.x * inv_domain_offset;
+                    }
+                }
+            }
+
+            write_row(trace, row + 1, &next);
+            state = next;
+        }
+    }
 
     fn fill_rpo_trace(
         &self,
@@ -2431,169 +2821,40 @@ mod tests {
     use winter_math::ToElements;
     use super::super::{RpoAir, RpoStarkProver};
     use super::super::rpo_air::STATE_WIDTH as INNER_STATE_WIDTH;
+    use winter_air::{BatchingMethod, EvaluationFrame, FieldExtension};
 
-    #[test]
-    fn test_pub_inputs_hash_proof_roundtrip() {
-        let options = super::super::rpo_proof::RpoProofOptions::fast().to_winter_options();
-        let inner_public_inputs: Vec<BaseElement> =
-            (0..24).map(|i| BaseElement::new(i as u64 + 1)).collect();
-
-        let (proof, pub_inputs) =
-            StarkVerifierProver::prove_pub_inputs_hash(inner_public_inputs, options.clone())
-                .unwrap();
-
-        let acceptable = AcceptableOptions::OptionSet(vec![options]);
-        let result = verify::<StarkVerifierAir, Blake3, DefaultRandomCoin<Blake3>, Blake3MerkleTree>(
-            proof,
-            pub_inputs,
-            &acceptable,
-        );
-
-        assert!(result.is_ok());
+    fn test_options(num_queries: usize) -> ProofOptions {
+        ProofOptions::new(
+            num_queries,
+            32, // RPO constraints need blowup >= 32 for cycle length 16.
+            0,
+            FieldExtension::None,
+            2,
+            7,
+            BatchingMethod::Linear,
+            BatchingMethod::Linear,
+        )
     }
 
-    #[test]
-    fn test_transcript_reseed_binding_tamper_fails() {
-        let options = super::super::rpo_proof::RpoProofOptions::fast().to_winter_options();
-        let inner_public_inputs: Vec<BaseElement> =
-            (0..16).map(|i| BaseElement::new(i as u64 + 1)).collect();
-
-        let (proof, mut pub_inputs) =
-            StarkVerifierProver::prove_pub_inputs_hash(inner_public_inputs, options.clone())
-                .unwrap();
-
-        let acceptable = AcceptableOptions::OptionSet(vec![options]);
-        let ok = verify::<StarkVerifierAir, Blake3, DefaultRandomCoin<Blake3>, Blake3MerkleTree>(
-            proof.clone(),
-            pub_inputs.clone(),
-            &acceptable,
-        );
-        assert!(ok.is_ok());
-
-        // Tamper with trace commitment; should invalidate reseed boundary assertions.
-        pub_inputs.trace_commitment[0] += BaseElement::ONE;
-        let bad =
-            verify::<StarkVerifierAir, Blake3, DefaultRandomCoin<Blake3>, Blake3MerkleTree>(
-                proof,
-                pub_inputs,
-                &acceptable,
-            );
-        assert!(bad.is_err());
-    }
-
-    #[test]
-    fn test_query_position_witness_tamper_fails() {
-        let options = super::super::rpo_proof::RpoProofOptions::fast().to_winter_options();
-        let inner_public_inputs: Vec<BaseElement> =
-            (0..24).map(|i| BaseElement::new(i as u64 + 1)).collect();
-
-        let digest = rpo_hash_elements(&inner_public_inputs);
-        let pub_inputs = StarkVerifierPublicInputs::new(
-            inner_public_inputs.clone(),
-            digest,
-            [BaseElement::ZERO; 4],
-            [BaseElement::ZERO; 4],
-            vec![[BaseElement::ZERO; 4], [BaseElement::ZERO; 4]],
-            options.num_queries(),
-            options.num_queries(),
-            RPO_TRACE_WIDTH,
-            8,
-            options.blowup_factor(),
-            ROWS_PER_PERMUTATION,
-        );
-
-        let prover = StarkVerifierProver::new(options.clone(), pub_inputs.clone());
-        let mut trace = prover.build_trace_for_pub_inputs_hash();
-
-        // Find a row in a query-position permutation and tamper with its witness.
-        let mut tampered = false;
-        for row in 0..trace.length() {
-            if trace.get(COL_POS_MASK, row) == BaseElement::ONE
-                && row % ROWS_PER_PERMUTATION == ROWS_PER_PERMUTATION - 1
-            {
-                let val = trace.get(COL_POS_START, row);
-                trace.set(COL_POS_START, row, val + BaseElement::ONE);
-                tampered = true;
-                break;
-            }
-        }
-        assert!(tampered, "expected at least one query-position permutation");
-
-        let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prover.prove(trace)
-        }));
-        assert!(prove_result.is_err());
-    }
-
-    #[test]
-    fn test_query_index_binding_tamper_fails() {
-        let options = super::super::rpo_proof::RpoProofOptions::fast().to_winter_options();
-        let inner_public_inputs: Vec<BaseElement> =
-            (0..24).map(|i| BaseElement::new(i as u64 + 1)).collect();
-
-        let (_proof, pub_inputs) =
-            StarkVerifierProver::prove_pub_inputs_hash(inner_public_inputs, options.clone())
-                .unwrap();
-        let prover = StarkVerifierProver::new(options.clone(), pub_inputs.clone());
-        let mut trace = prover.build_trace_for_pub_inputs_hash();
-
-        // Locate the trace leaf + Merkle path permutations for q=0 and force the index/path-bit
-        // stream to 0. This keeps Merkle root checks valid (dummy siblings are self-siblings), but
-        // must break the draw↔index binding accumulator.
-        let input_len = pub_inputs.inner_public_inputs.len();
-        let num_pi_blocks = input_len.div_ceil(RATE_WIDTH).max(1);
-        let seed_prefix = build_context_prefix(&pub_inputs);
-        let seed_len = seed_prefix.len() + input_len;
-        let num_seed_blocks = seed_len.div_ceil(RATE_WIDTH).max(1);
-        let num_coeff_perms = 36usize.div_ceil(RATE_WIDTH);
-        let num_ood_perms = (2 * (RPO_TRACE_WIDTH + 8)).div_ceil(RATE_WIDTH);
-        let num_deep_coeffs = RPO_TRACE_WIDTH + 8;
-        let num_deep_perms = num_deep_coeffs.div_ceil(RATE_WIDTH);
-        let num_fri_layers = pub_inputs.fri_commitments.len().saturating_sub(1);
-        let num_remainder_perms = (pub_inputs.fri_commitments.len() > 0) as usize;
-        let num_pos_perms = if pub_inputs.num_draws == 0 {
-            0
-        } else {
-            (pub_inputs.num_draws + 1).div_ceil(RATE_WIDTH)
-        };
-        let transcript_perms = num_pi_blocks
-            + num_seed_blocks
-            + num_coeff_perms
-            + num_ood_perms
-            + num_deep_perms
-            + num_fri_layers
-            + num_remainder_perms
-            + num_pos_perms
-            + 2;
-        let pre_merkle_perms = transcript_perms + pub_inputs.num_draws;
-
-        let lde_domain_size = pub_inputs.trace_length * pub_inputs.blowup_factor;
-        let depth_trace = if lde_domain_size == 0 {
-            0
-        } else {
-            lde_domain_size.trailing_zeros() as usize
-        };
-
-        let trace_leaf_perms = leaf_perm_count(RPO_TRACE_WIDTH, pub_inputs.trace_partition_size);
-        let start_perm = pre_merkle_perms;
-        let end_perm = start_perm + trace_leaf_perms + depth_trace;
-
-        for perm_idx in start_perm..end_perm {
-            let row0 = perm_idx * ROWS_PER_PERMUTATION;
-            for r in 0..ROWS_PER_PERMUTATION {
-                let row = row0 + r;
-                trace.set(COL_MERKLE_PATH_BIT, row, BaseElement::ZERO);
-                trace.set(COL_MERKLE_INDEX, row, BaseElement::ZERO);
-            }
+    fn eval_transition_row(
+        air: &StarkVerifierAir,
+        trace: &TraceTable<BaseElement>,
+        periodic_columns: &[Vec<BaseElement>],
+        row: usize,
+    ) -> Vec<BaseElement> {
+        let mut periodic_values_row = Vec::with_capacity(periodic_columns.len());
+        for col in periodic_columns.iter() {
+            periodic_values_row.push(col[row]);
         }
 
-        let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prover.prove(trace)
-        }));
-        match prove_result {
-            Ok(Ok(_)) => panic!("expected proving to fail"),
-            Ok(Err(_)) | Err(_) => {}
-        }
+        let width = trace.width();
+        let current_row: Vec<BaseElement> = (0..width).map(|c| trace.get(c, row)).collect();
+        let next_row: Vec<BaseElement> = (0..width).map(|c| trace.get(c, row + 1)).collect();
+        let frame = EvaluationFrame::from_rows(current_row, next_row);
+
+        let mut result = vec![BaseElement::ZERO; air.context().num_transition_constraints()];
+        air.evaluate_transition(&frame, &periodic_values_row, &mut result);
+        result
     }
 
     #[test]
@@ -2711,7 +2972,9 @@ mod tests {
             let air =
                 StarkVerifierAir::new(trace.info().clone(), pub_inputs.clone(), options.clone());
             let periodic = air.get_periodic_column_values();
-            let fri_root_mask_1 = &periodic[periodic.len() - num_fri_layers + 1];
+            let fri_root_mask_start =
+                1 + STATE_WIDTH + 1 + DIGEST_WIDTH + DIGEST_WIDTH + 7 + RATE_WIDTH + 5;
+            let fri_root_mask_1 = &periodic[fri_root_mask_start + 1];
             for (row, &mask) in fri_root_mask_1.iter().enumerate() {
                 if mask != BaseElement::ONE {
                     continue;
@@ -2750,13 +3013,23 @@ mod tests {
 
         let proof = prover.prove(trace).unwrap();
 
-        let acceptable = AcceptableOptions::OptionSet(vec![options]);
+        let acceptable = AcceptableOptions::OptionSet(vec![options.clone()]);
         let result = verify::<StarkVerifierAir, Blake3, DefaultRandomCoin<Blake3>, Blake3MerkleTree>(
-            proof,
-            pub_inputs,
+            proof.clone(),
+            pub_inputs.clone(),
             &acceptable,
         );
         assert!(result.is_ok());
+
+        // Tamper with trace commitment; should invalidate transcript reseed binding.
+        let mut tampered_inputs = pub_inputs;
+        tampered_inputs.trace_commitment[0] += BaseElement::ONE;
+        let bad = verify::<StarkVerifierAir, Blake3, DefaultRandomCoin<Blake3>, Blake3MerkleTree>(
+            proof,
+            tampered_inputs,
+            &acceptable,
+        );
+        assert!(bad.is_err());
     }
 
     #[test]
@@ -2903,5 +3176,126 @@ mod tests {
             prover.prove(trace)
         }));
         assert!(prove_result.is_err());
+    }
+
+    #[test]
+    fn test_fri_folding_constraint_detects_tamper() {
+        let inner_options = test_options(1);
+        let outer_options = test_options(1);
+
+        let inner_prover = RpoStarkProver::new(inner_options);
+        let input_state = [BaseElement::new(19); INNER_STATE_WIDTH];
+        let (inner_proof, inner_pub_inputs) = inner_prover
+            .prove_rpo_permutation(input_state)
+            .expect("inner proof generation should succeed");
+
+        let inner_data =
+            InnerProofData::from_proof::<RpoAir>(&inner_proof.to_bytes(), inner_pub_inputs)
+                .unwrap();
+        let pub_inputs = inner_data.to_stark_verifier_inputs();
+
+        let prover = StarkVerifierProver::new(outer_options.clone(), pub_inputs.clone());
+        let mut trace = prover.build_trace_from_inner(&inner_data);
+
+        let num_fri_layers = pub_inputs.fri_commitments.len().saturating_sub(1);
+        let air = StarkVerifierAir::new(trace.info().clone(), pub_inputs, outer_options);
+        let periodic = air.get_periodic_column_values();
+        assert!(num_fri_layers > 0, "expected at least one FRI layer");
+
+        // Locate the first FRI leaf row for layer 0.
+        let appended_start = periodic.len() - (7 + 2 * num_fri_layers);
+        let fri_leaf_row_mask_0 = &periodic[appended_start + 5 + num_fri_layers];
+        let row = fri_leaf_row_mask_0
+            .iter()
+            .position(|v| *v == BaseElement::ONE)
+            .expect("expected at least one FRI leaf row");
+        assert!(row + 1 < trace.length(), "FRI leaf row must have a next row");
+
+        // Sanity: original trace satisfies constraints at this row.
+        let result_ok = eval_transition_row(&air, &trace, &periodic, row);
+        assert!(
+            result_ok.iter().all(|v| *v == BaseElement::ZERO),
+            "expected constraints to be satisfied at row {row}"
+        );
+
+        // Tamper with eval_next; this should violate the folding check at `row`.
+        let eval_next = trace.get(COL_FRI_EVAL, row + 1);
+        trace.set(COL_FRI_EVAL, row + 1, eval_next + BaseElement::ONE);
+        let result_bad = eval_transition_row(&air, &trace, &periodic, row);
+        assert!(
+            result_bad.iter().any(|v| *v != BaseElement::ZERO),
+            "expected folding constraints to detect tampering at row {row}"
+        );
+    }
+
+    #[test]
+    fn test_fri_remainder_evaluation_detects_tamper() {
+        let inner_options = test_options(1);
+        let outer_options = test_options(1);
+
+        let inner_prover = RpoStarkProver::new(inner_options);
+        let input_state = [BaseElement::new(23); INNER_STATE_WIDTH];
+        let (inner_proof, inner_pub_inputs) = inner_prover
+            .prove_rpo_permutation(input_state)
+            .expect("inner proof generation should succeed");
+
+        let inner_data =
+            InnerProofData::from_proof::<RpoAir>(&inner_proof.to_bytes(), inner_pub_inputs)
+                .unwrap();
+        let pub_inputs = inner_data.to_stark_verifier_inputs();
+
+        let prover = StarkVerifierProver::new(outer_options.clone(), pub_inputs.clone());
+        let mut trace = prover.build_trace_from_inner(&inner_data);
+
+        let num_fri_layers = pub_inputs.fri_commitments.len().saturating_sub(1);
+        let air = StarkVerifierAir::new(trace.info().clone(), pub_inputs, outer_options);
+        let periodic = air.get_periodic_column_values();
+        assert!(num_fri_layers > 0, "expected at least one FRI layer");
+
+        // Compute the periodic column index for the last FRI root mask (see StarkVerifierAir layout).
+        let fri_root_mask_start = 1 + STATE_WIDTH + 1 + DIGEST_WIDTH + DIGEST_WIDTH + 7 + RATE_WIDTH + 5;
+        let last_root_mask = &periodic[fri_root_mask_start + (num_fri_layers - 1)];
+
+        // Locate a row where the remainder check is gated on (last FRI root boundary).
+        let remainder_row = last_root_mask
+            .iter()
+            .position(|v| *v == BaseElement::ONE)
+            .expect("expected a remainder check row");
+
+        // Find the last FRI leaf row (layer = num_fri_layers - 1) and shift eval after the leaf
+        // permutation ends. This avoids triggering eval-freeze constraints, but should break the
+        // remainder evaluation check at `remainder_row`.
+        let appended_start = periodic.len() - (7 + 2 * num_fri_layers);
+        let fri_leaf_row_mask_last =
+            &periodic[appended_start + 5 + num_fri_layers + (num_fri_layers - 1)];
+        let leaf_row0 = fri_leaf_row_mask_last
+            .iter()
+            .position(|v| *v == BaseElement::ONE)
+            .expect("expected a final-layer FRI leaf row");
+        let shift_start = leaf_row0 + ROWS_PER_PERMUTATION;
+        assert!(shift_start < trace.length(), "shift must start inside trace");
+        assert!(
+            remainder_row >= shift_start,
+            "expected remainder row to occur after final FRI leaf permutation"
+        );
+
+        // Sanity: original trace satisfies constraints at the remainder row.
+        let ok = eval_transition_row(&air, &trace, &periodic, remainder_row);
+        assert!(
+            ok.iter().all(|v| *v == BaseElement::ZERO),
+            "expected constraints to be satisfied at remainder row {remainder_row}"
+        );
+
+        // Apply a constant delta to `eval` after `shift_start`.
+        for row in shift_start..trace.length() {
+            let v = trace.get(COL_FRI_EVAL, row);
+            trace.set(COL_FRI_EVAL, row, v + BaseElement::ONE);
+        }
+
+        let bad = eval_transition_row(&air, &trace, &periodic, remainder_row);
+        assert!(
+            bad.iter().any(|v| *v != BaseElement::ZERO),
+            "expected remainder evaluation check to detect tampering at row {remainder_row}"
+        );
     }
 }
