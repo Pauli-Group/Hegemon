@@ -172,18 +172,13 @@ pub fn verify_with_rpo(_proof: &[u8], _pub_inputs: &[BaseElement]) -> Result<boo
 mod compatibility_tests {
     use super::*;
     use miden_crypto::rand::RpoRandomCoin;
-    use winter_crypto::RandomCoin;
     use miden_crypto::{Felt, Word, ZERO};
+    use winter_crypto::RandomCoin;
 
     #[test]
     fn test_rpo_random_coin_implements_winterfell_trait() {
         // Create an RpoRandomCoin
-        let seed = Word::new([
-            Felt::new(1),
-            Felt::new(2),
-            Felt::new(3),
-            Felt::new(4),
-        ]);
+        let seed = Word::new([Felt::new(1), Felt::new(2), Felt::new(3), Felt::new(4)]);
         let coin = RpoRandomCoin::new(seed);
 
         // Verify it can be used where RandomCoin is expected
@@ -197,12 +192,7 @@ mod compatibility_tests {
 
     #[test]
     fn test_rpo_random_coin_draw() {
-        let seed = Word::new([
-            Felt::new(42),
-            Felt::new(0),
-            Felt::new(0),
-            Felt::new(0),
-        ]);
+        let seed = Word::new([Felt::new(42), Felt::new(0), Felt::new(0), Felt::new(0)]);
         let mut coin = RpoRandomCoin::new(seed);
 
         // Draw some random field elements
@@ -255,10 +245,7 @@ mod compatibility_tests {
 
     #[test]
     fn test_rpo_hash_deterministic() {
-        let elements = [
-            BaseElement::new(12345),
-            BaseElement::new(67890),
-        ];
+        let elements = [BaseElement::new(12345), BaseElement::new(67890)];
 
         let hash1 = super::rpo_hash_elements(&elements);
         let hash2 = super::rpo_hash_elements(&elements);
@@ -295,15 +282,33 @@ mod compatibility_tests {
     #[test]
     fn test_rpo_merge_collision_resistance() {
         // Different inputs should produce different outputs
-        let a = [BaseElement::new(1), BaseElement::new(2), BaseElement::new(3), BaseElement::new(4)];
-        let b = [BaseElement::new(5), BaseElement::new(6), BaseElement::new(7), BaseElement::new(8)];
-        let c = [BaseElement::new(9), BaseElement::new(10), BaseElement::new(11), BaseElement::new(12)];
+        let a = [
+            BaseElement::new(1),
+            BaseElement::new(2),
+            BaseElement::new(3),
+            BaseElement::new(4),
+        ];
+        let b = [
+            BaseElement::new(5),
+            BaseElement::new(6),
+            BaseElement::new(7),
+            BaseElement::new(8),
+        ];
+        let c = [
+            BaseElement::new(9),
+            BaseElement::new(10),
+            BaseElement::new(11),
+            BaseElement::new(12),
+        ];
 
         let ab = super::rpo_merge(&a, &b);
         let ac = super::rpo_merge(&a, &c);
         let ba = super::rpo_merge(&b, &a);
 
-        assert_ne!(ab, ac, "Different right inputs should give different outputs");
+        assert_ne!(
+            ab, ac,
+            "Different right inputs should give different outputs"
+        );
         assert_ne!(ab, ba, "Order should matter in merge");
     }
 }

@@ -9,10 +9,9 @@ use winter_crypto::MerkleTree;
 use winterfell::{
     math::{fields::f64::BaseElement, FieldElement},
     matrix::ColMatrix,
-    AuxRandElements, CompositionPoly, CompositionPolyTrace,
-    ConstraintCompositionCoefficients, DefaultConstraintCommitment, DefaultConstraintEvaluator,
-    DefaultTraceLde, PartitionOptions, Proof, ProofOptions, Prover, StarkDomain, TraceInfo,
-    TracePolyTable, TraceTable,
+    AuxRandElements, CompositionPoly, CompositionPolyTrace, ConstraintCompositionCoefficients,
+    DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions,
+    Proof, ProofOptions, Prover, StarkDomain, TraceInfo, TracePolyTable, TraceTable,
 };
 
 use crate::{
@@ -139,8 +138,8 @@ impl Prover for BatchTransactionProverRpo {
 mod tests {
     use super::*;
     use crate::rpo_verifier::verify_batch_proof_rpo;
-    use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
     use transaction_circuit::hashing::merkle_node;
+    use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 
     fn compute_merkle_root_from_path(
         leaf: BaseElement,
@@ -160,7 +159,11 @@ mod tests {
         current
     }
 
-    fn make_test_witness(tag: u8, merkle_root: BaseElement, input_note: &NoteData) -> TransactionWitness {
+    fn make_test_witness(
+        tag: u8,
+        merkle_root: BaseElement,
+        input_note: &NoteData,
+    ) -> TransactionWitness {
         let input_note = input_note.clone();
 
         let output_note = NoteData {

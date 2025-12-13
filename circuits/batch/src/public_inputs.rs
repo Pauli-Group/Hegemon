@@ -157,8 +157,18 @@ mod tests {
         let inputs = BatchPublicInputs {
             batch_size: 2,
             anchor: BaseElement::new(123),
-            nullifiers: vec![BaseElement::new(1), BaseElement::ZERO, BaseElement::new(2), BaseElement::ZERO],
-            commitments: vec![BaseElement::new(10), BaseElement::ZERO, BaseElement::new(20), BaseElement::ZERO],
+            nullifiers: vec![
+                BaseElement::new(1),
+                BaseElement::ZERO,
+                BaseElement::new(2),
+                BaseElement::ZERO,
+            ],
+            commitments: vec![
+                BaseElement::new(10),
+                BaseElement::ZERO,
+                BaseElement::new(20),
+                BaseElement::ZERO,
+            ],
             total_fee: BaseElement::new(100),
             circuit_version: 1,
         };
@@ -184,7 +194,7 @@ mod tests {
     fn test_to_elements() {
         let inputs = BatchPublicInputs::default();
         let elements = inputs.to_elements();
-        
+
         // batch_size + anchor + nullifiers + commitments + fee + version
         let expected_len = 1 + 1 + (2 * MAX_INPUTS) + (2 * MAX_OUTPUTS) + 1 + 1;
         assert_eq!(elements.len(), expected_len);
@@ -196,12 +206,16 @@ mod tests {
             batch_size: 2,
             anchor: BaseElement::ZERO,
             nullifiers: vec![
-                BaseElement::new(1), BaseElement::new(2), // TX 0
-                BaseElement::new(3), BaseElement::new(4), // TX 1
+                BaseElement::new(1),
+                BaseElement::new(2), // TX 0
+                BaseElement::new(3),
+                BaseElement::new(4), // TX 1
             ],
             commitments: vec![
-                BaseElement::new(10), BaseElement::new(20), // TX 0
-                BaseElement::new(30), BaseElement::new(40), // TX 1
+                BaseElement::new(10),
+                BaseElement::new(20), // TX 0
+                BaseElement::new(30),
+                BaseElement::new(40), // TX 1
             ],
             total_fee: BaseElement::ZERO,
             circuit_version: 1,

@@ -795,17 +795,22 @@ fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
             let tx_value: u64 = recipients.iter().map(|r| r.value).sum();
             total_value += tx_value;
             all_recipients.push(recipients);
-            println!("  TX {}: {} recipients, {} HGM", i, specs.len(), tx_value as f64 / 100_000_000.0);
+            println!(
+                "  TX {}: {} recipients, {} HGM",
+                i,
+                specs.len(),
+                tx_value as f64 / 100_000_000.0
+            );
         }
 
         // Check if consolidation is needed for any transaction
         // We need to estimate notes required for the total value across all transactions
         let fee_per_tx = args.fee / batch_size as u64;
         let total_needed = total_value + args.fee;
-        
+
         let mut notes = store_arc.spendable_notes(0)?; // 0 = native asset
         notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
-        
+
         // Count how many notes we'd need for total value
         let mut selected_count = 0;
         let mut selected_value = 0u64;
@@ -830,9 +835,14 @@ fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
                 println!("Would submit batch of {} transactions", batch_size);
                 println!("Total value: {} HGM", total_value as f64 / 100_000_000.0);
                 println!("\n⚠️  Consolidation needed:");
-                println!("  Need {} notes but batch of {} can use max {} notes", 
-                    selected_count, batch_size, max_notes_for_batch);
-                println!("  ~{} consolidation transactions needed first", plan.txs_needed);
+                println!(
+                    "  Need {} notes but batch of {} can use max {} notes",
+                    selected_count, batch_size, max_notes_for_batch
+                );
+                println!(
+                    "  ~{} consolidation transactions needed first",
+                    plan.txs_needed
+                );
                 println!("\nRe-run with --auto-consolidate to execute.");
                 return Ok(());
             }
@@ -886,7 +896,9 @@ fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
             println!("Would submit batch of {} transactions", batch_size);
             println!("Total value: {} HGM", total_value as f64 / 100_000_000.0);
             println!("Fee: {} HGM", args.fee as f64 / 100_000_000.0);
-            println!("\nNote: Batch proving generates a single STARK proof covering all transactions.");
+            println!(
+                "\nNote: Batch proving generates a single STARK proof covering all transactions."
+            );
             println!("Expected proof size savings: ~{}x", batch_size);
             return Ok(());
         }
@@ -900,7 +912,11 @@ fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
             let built = build_transaction(&store_arc, recipients, fee_per_tx)?;
             all_spent_indexes.extend(built.spent_note_indexes.iter().cloned());
             bundles.push(built);
-            println!("  Built TX {} with {} nullifiers", i, bundles[i].nullifiers.len());
+            println!(
+                "  Built TX {} with {} nullifiers",
+                i,
+                bundles[i].nullifiers.len()
+            );
         }
 
         // Mark notes as pending

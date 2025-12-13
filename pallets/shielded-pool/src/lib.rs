@@ -369,7 +369,6 @@ pub mod pallet {
         // ========================================
         // EPOCH EVENTS (for light client sync)
         // ========================================
-
         /// An epoch has been finalized with a proof.
         EpochFinalized {
             /// Epoch number that was finalized.
@@ -515,9 +514,7 @@ pub mod pallet {
             #[cfg(feature = "epoch-proofs")]
             {
                 // Convert block number to u64
-                let block_num: u64 = block_number
-                    .try_into()
-                    .unwrap_or(0u64);
+                let block_num: u64 = block_number.try_into().unwrap_or(0u64);
 
                 // Check if this block ends an epoch
                 if block_num > 0 && block_num % EPOCH_SIZE == 0 {
@@ -1345,7 +1342,8 @@ pub mod pallet {
 
             // Generate epoch proof using RecursiveEpochProver (real RPO-based STARK)
             let prover = RecursiveEpochProver::fast(); // Use fast settings for now
-            let recursive_proof = prover.prove_epoch(&epoch, &proof_hashes)
+            let recursive_proof = prover
+                .prove_epoch(&epoch, &proof_hashes)
                 .map_err(|_| Error::<T>::EpochProofFailed)?;
 
             // Compute epoch commitment for light client verification
@@ -1402,13 +1400,13 @@ pub mod pallet {
         #[cfg(feature = "epoch-proofs")]
         pub fn verify_stored_epoch_proof(epoch_number: u64) -> bool {
             use epoch_circuit::types::Epoch;
-            
+
             // Get stored proof and commitment
             let proof_bytes = match EpochProofs::<T>::get(epoch_number) {
                 Some(p) => p.into_inner(),
                 None => return false,
             };
-            
+
             let stored_commitment = match EpochCommitments::<T>::get(epoch_number) {
                 Some(c) => c,
                 None => return false,

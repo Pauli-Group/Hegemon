@@ -256,7 +256,7 @@ pub fn default_epoch_options() -> ProofOptions {
         16, // blowup_factor
         4,  // grinding_factor
         winterfell::FieldExtension::None,
-        2, // fri_folding_factor
+        2,  // fri_folding_factor
         31, // fri_remainder_max_degree
         BatchingMethod::Linear,
         BatchingMethod::Linear,

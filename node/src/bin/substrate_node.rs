@@ -57,6 +57,12 @@ mod cli {
         /// Number of mining threads (0 = no mining).
         #[arg(long, default_value = "0")]
         pub mine_threads: usize,
+
+        /// Directory for persisting recursive epoch proofs (one file per epoch).
+        ///
+        /// Defaults to `<base-path>/recursive-epoch-proofs`.
+        #[arg(long, value_name = "PATH")]
+        pub recursive_epoch_proofs_dir: Option<std::path::PathBuf>,
     }
 
     /// PQ network configuration derived from CLI arguments
@@ -135,6 +141,10 @@ mod cli {
 
     pub fn run() -> sc_cli::Result<()> {
         let cli = Cli::parse();
+
+        if let Some(dir) = cli.recursive_epoch_proofs_dir.as_ref() {
+            std::env::set_var("HEGEMON_RECURSIVE_EPOCH_PROOFS_DIR", dir);
+        }
 
         // Log PQ configuration
         let pq_config = cli.pq_config();

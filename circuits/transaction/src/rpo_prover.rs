@@ -11,10 +11,9 @@ use winter_crypto::MerkleTree;
 use winterfell::{
     math::{fields::f64::BaseElement, FieldElement},
     matrix::ColMatrix,
-    AuxRandElements, CompositionPoly, CompositionPolyTrace,
-    ConstraintCompositionCoefficients, DefaultConstraintCommitment, DefaultConstraintEvaluator,
-    DefaultTraceLde, PartitionOptions, Proof, ProofOptions, Prover, StarkDomain, Trace, TraceInfo,
-    TracePolyTable, TraceTable,
+    AuxRandElements, CompositionPoly, CompositionPolyTrace, ConstraintCompositionCoefficients,
+    DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions,
+    Proof, ProofOptions, Prover, StarkDomain, Trace, TraceInfo, TracePolyTable, TraceTable,
 };
 
 use crate::{
@@ -181,8 +180,8 @@ impl Prover for TransactionProverStarkRpo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
     use crate::hashing::merkle_node;
+    use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
     use crate::rpo_verifier::verify_transaction_proof_rpo;
 
     fn compute_merkle_root_from_path(

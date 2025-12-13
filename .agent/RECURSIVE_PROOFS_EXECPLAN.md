@@ -44,10 +44,40 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] (2025-12-13) Phase 2e.6: Implement full FRI folding, remainder evaluation, and DRP binding using stored alphas and authenticated FRI openings.
 - [x] (2025-12-13) Phase 2e.7: End-to-end recursion: generate inner RPO proof, generate outer proof verifying it, and demonstrate tamper-reject of the inner proof.
 - [x] (2025-12-13) Phase 2f: Wire `StarkVerifierAir` into `RecursiveEpochProver` (proof-of-proof) and propagate recursive epoch proofs over the PQ network.
-- [ ] (2025-12-11) Phase 3: Two‑person testnet recursive sync + light client recursive mode.
+- [ ] (2025-12-13) Phase 3a: Query-position binding soundness hardening (bind transcript draws → opened Merkle/FRI indices; duplicates/collisions).
+- [ ] (2025-12-13) Phase 3b: Self-recursive outer proofs (switch outer Fiat–Shamir + commitments to RPO; verify `StarkVerifierAir` proofs in-circuit).
+- [ ] (2025-12-13) Phase 3c: Epoch range aggregation (combine proofs with adjacency + chain-hash public inputs).
+- [x] (2025-12-13) Phase 3d: Testnet proof retrieval + persistence (request/serve protocol, local storage, receipt validation, RPC/CLI).
+- [x] (2025-12-13) Phase 3e: Performance budgets + benchmarks (100/500/1000 epoch sizes, memory; regression thresholds; CI gate).
+- [x] (2025-12-13) Phase 3f: Documentation + cleanup (trace layout diagram, runbook, CI for ignored heavy tests, audit-prep notes).
+- [x] (2025-12-13) Phase 3a.1: Formalize query binding: transcript draws must bind to opened indices (Merkle + FRI).
+- [x] (2025-12-13) Phase 3a.2: Bind `COL_POS_SORTED_VALUE` (or replacement) to transcript-derived masked draw, not a prover-chosen witness.
+- [x] (2025-12-13) Phase 3a.3: Add adversarial test: duplicate draws mapping to the same unique position.
+- [ ] (2025-12-13) Phase 3a.4: Remove query-dedup limitation from `SECURITY.md` once hardening ships.
+- [ ] (2025-12-13) Phase 3b.1: Add `RpoStarkVerifierProver` (RPO Fiat–Shamir + RPO commitments) for outer proofs.
+- [ ] (2025-12-13) Phase 3b.2: Parameterize recursive verification for `StarkVerifierAir` as an inner proof (trace/FRI sizing expectations).
+- [ ] (2025-12-13) Phase 3b.3: Add depth-2 recursion test: inner → outer → outer₂.
+- [ ] (2025-12-13) Phase 3c.1: Define aggregation public inputs: `(epoch_start, epoch_end, commitment_chain_hash)`.
+- [ ] (2025-12-13) Phase 3c.2: Implement `AggregatorAir` verifying two child proofs + adjacency constraint.
+- [ ] (2025-12-13) Phase 3c.3: Implement `aggregate_epoch_range(left, right) -> aggregated_proof`.
+- [ ] (2025-12-13) Phase 3c.4: Add test: aggregate 4 epochs into one proof via a binary tree.
+- [x] (2025-12-13) Phase 3d.1: Extend network protocol: request/serve epoch proofs by number (and later range).
+- [x] (2025-12-13) Phase 3d.2: Persist epoch proofs locally on receipt/generation (configurable directory).
+- [x] (2025-12-13) Phase 3d.3: Validate received proofs before storing/forwarding (commitment checks; optional full STARK verify).
+- [x] (2025-12-13) Phase 3d.4: Add RPC surface for querying recursive epoch proofs.
+- [x] (2025-12-13) Phase 3d.5: Add CLI flag for persistence location (e.g. `--recursive-epoch-proofs-dir <path>`).
+- [x] (2025-12-13) Phase 3e.1: Add recursion benchmark harness (proof size/time/memory).
+- [x] (2025-12-13) Phase 3e.2: Benchmark with realistic epoch sizes (100/500/1000 proof hashes).
+- [x] (2025-12-13) Phase 3e.3: Define regression thresholds (size ratio, prover time ratio, memory ceiling).
+- [x] (2025-12-13) Phase 3e.4: Add CI job to alert/fail on threshold violations (nightly/optional gate acceptable).
+- [x] (2025-12-13) Phase 3f.1: Remove or `#[cfg(test)]`-gate `StarkVerifierProver::prove_pub_inputs_hash`.
+- [x] (2025-12-13) Phase 3f.2: Add trace-column layout diagram to `circuits/epoch/src/recursion/stark_verifier_air.rs` module docs.
+- [x] (2025-12-13) Phase 3f.3: Create `runbooks/recursive_proofs_testnet.md` and keep it current.
+- [x] (2025-12-13) Phase 3f.4: Run ignored proof-of-proof tests in CI (nightly/weekly job).
+- [x] (2025-12-13) Phase 3f.5: Add `LightClient::sync_recursive()` tamper-reject test coverage.
 - [ ] Phase 4: Security audit and production hardening.
 
-**Current status (2025-12-13)**: Phase 1 shipped and is live in the pallet. Phase 2d/2e are complete end‑to‑end for RPO inner proofs: `StarkVerifierAir` reconstructs the RPO Fiat‑Shamir transcript, verifies Merkle openings for trace/constraint/FRI leaves, performs DEEP composition, completes FRI folding, and binds the final folded value to the remainder polynomial evaluation. Phase 2f is now shipped: `RecursiveEpochProver::prove_epoch_recursive()` generates a proof‑of‑proof for epoch accumulators, `node/src/substrate/service.rs` broadcasts recursive epoch proofs on epoch boundaries (guarded by `HEGEMON_RECURSIVE_EPOCH_PROOFS=1`) and sends the latest proof to new peers on connect, and `LightClient::sync_recursive()` can verify these recursive proofs. Phase 3 remains: validate on a two‑person testnet and harden the recursive sync UX.
+**Current status (2025-12-13)**: Phase 1 shipped and is live in the pallet. Phase 2d/2e are complete end‑to‑end for RPO inner proofs: `StarkVerifierAir` reconstructs the RPO Fiat‑Shamir transcript, verifies Merkle openings for trace/constraint/FRI leaves, performs DEEP composition, completes FRI folding, and binds the final folded value to the remainder polynomial evaluation. Phase 2f is now shipped: `RecursiveEpochProver::prove_epoch_recursive()` generates a proof‑of‑proof for epoch accumulators, `node/src/substrate/service.rs` broadcasts recursive epoch proofs on epoch boundaries (guarded by `HEGEMON_RECURSIVE_EPOCH_PROOFS=1`) and sends the latest proof to new peers on connect, and `LightClient::sync_recursive()` can verify these recursive proofs. Phase 3 remains: (a) finish soundness binding for query draws → opened Merkle/FRI indices (including duplicates/collisions), (b) make outer proofs self‑recursive by switching their Fiat–Shamir + commitments to RPO, (c) add epoch‑range aggregation, and (d) ship testnet UX (retrieval/persistence/receipt validation) plus benchmarks and audit‑prep docs.
 
 ## Surprises & Discoveries
 
@@ -2072,20 +2102,87 @@ HEGEMON_MINE=1 HEGEMON_RECURSIVE_EPOCH_PROOFS=1 ./target/release/hegemon-node --
 - Bob can immediately submit transactions
 - Bob can verify historical transactions via Merkle proofs
 
-### Phase 3: Recursive Composition and Production
+### Phase 3: Testnet Validation + Recursive Composition
 
-Final O(log N) composition for unbounded recursion:
+Phase 2 shipped **one-level recursion**: an inner RPO proof (RpoAir) can be verified inside an outer verifier proof (StarkVerifierAir), and the node can propagate these proofs (guarded by `HEGEMON_RECURSIVE_EPOCH_PROOFS=1`). Phase 3 closes the remaining **soundness**, **operational UX**, and **composition** gaps so a light client can realistically sync long chains with a small number of proofs (eventually one).
 
-```
-EpochProof(E1) + EpochProof(E2) → CombinedProof(E1, E2)
-CombinedProof(E1,E2) + CombinedProof(E3,E4) → CombinedProof(E1-E4)
-...
-```
+Phase 3 work is split into six milestones:
 
-This enables:
-- O(1) sync time regardless of chain length
-- Trustless bridges to other chains (verify Hegemon state with single proof)
-- Privacy-preserving audits (prove aggregate properties without revealing transactions)
+#### Phase 3a: Query-position binding soundness hardening
+
+Goal: ensure the indices used for Merkle and FRI openings are **cryptographically bound** to the transcript-derived query draws, matching Winterfell’s `draw_integers` behavior (draw → mask → sort+dedup → open).
+
+Key requirements:
+- Make the “draw value” used by the grand-product accumulator transcript-derived, not a free witness (today `COL_POS_SORTED_VALUE` is set by the prover).
+- Bind transcript query draws to the **actual Merkle indices opened** (trace + constraints) in a way that remains sound when `draw_integers` emits duplicate draws.
+- Extend the same binding to FRI: folded positions / partition indexes used for each layer’s Merkle openings must be derived from the base query positions and must handle fold collisions correctly.
+
+Formal binding (current approach):
+- Let `γ` be a transcript-derived challenge (we use `γ = z`).
+- Let `draw_i` be the masked query position drawn from the transcript for each draw `i`.
+- Let `idx_i` be the Merkle index actually opened in the verifier trace for draw `i`.
+- Enforce multiset equality via a grand-product accumulator:
+  - `acc <- acc * (draw_i + γ)` at each draw boundary
+  - `acc <- acc / (idx_i + γ)` at each trace-leaf end boundary
+  - Assert `acc == 1` at the end of the verifier trace
+This is sound only if `draw_i` is transcript-derived in-circuit (not prover-chosen).
+
+Validation:
+- Add an adversarial test case where `draw_integers` emits duplicate draws mapping to the same unique query position; show that (a) correct openings verify and (b) tampering the opened index/paths is rejected.
+- Once shipped, remove the “query-dedup soundness gap” note from `SECURITY.md`.
+
+#### Phase 3b: Self-recursive outer proofs
+
+Goal: make outer proofs verifiable in-circuit by switching outer proof generation away from Blake3. This enables recursion depth 2+.
+
+Key requirements:
+- Introduce an RPO-backed prover for `StarkVerifierAir` (RPO Fiat–Shamir + RPO Merkle commitments), analogous to `RpoStarkProver`.
+- Ensure the verifier can handle inner proofs whose sizes differ from `RpoAir` (trace width, number of constraints, Merkle depths, FRI layer count). Decide whether `StarkVerifierAir` is parameterized for arbitrary inner AIRs or whether we ship a specialized “verifier-of-verifier” for the `StarkVerifierAir` inner case.
+
+Validation:
+- Add a depth-2 recursion test: inner RPO proof → outer RPO verifier proof → outer₂ proof verifying outer.
+
+#### Phase 3c: Epoch range aggregation
+
+Goal: produce a single proof that attests to a contiguous range of epochs so a light client can sync with O(log N) proofs (and later O(1)).
+
+Key requirements:
+- Define public inputs for an aggregated proof: `(epoch_start, epoch_end, commitment_chain_hash)`.
+- Enforce adjacency in-circuit: `child_left.epoch_end + 1 == child_right.epoch_start`.
+- Bind the chain hash: `commitment_chain_hash = H(child_left.chain_hash, child_right.chain_hash)` with a clearly defined base case (single-epoch leaf).
+- Implement an `AggregatorAir` / prover which verifies two child proofs (each either a base epoch proof or an already-aggregated proof).
+
+Validation:
+- Add a test which aggregates 4 epochs into a single proof via a binary tree and verifies the final proof.
+
+#### Phase 3d: Testnet proof retrieval + persistence
+
+Goal: make two-person testnet validation real without manual log scraping/copying.
+
+Key requirements:
+- Extend the PQ network protocol with request/response messages to fetch epoch proofs by number (and later by range).
+- Persist generated and received recursive epoch proofs to local storage (configurable directory).
+- **Validate on receipt before storing/forwarding** to mitigate DoS: at minimum parse + epoch-commitment checks; optionally full STARK verification (policy must be explicit and safe).
+- Add an RPC surface and/or CLI tooling to query the latest stored proof and fetch a specific epoch proof.
+
+#### Phase 3e: Performance budgets + benchmarks
+
+Goal: track real recursion overhead and prevent regressions.
+
+Key requirements:
+- Add benchmarks which exercise realistic epoch sizes (e.g. 100/500/1000 proof hashes) and record proof sizes, prover time, verifier time, and peak memory during outer proof generation.
+- Define regression thresholds (e.g. outer/inner size ratio, outer prover time ratio, memory ceiling) and wire a CI job to fail when exceeded (nightly/optional gate is acceptable if runtime is heavy).
+
+#### Phase 3f: Documentation + cleanup
+
+Goal: make maintenance and audit feasible.
+
+Key requirements:
+- Remove or `#[cfg(test)]`-gate the deprecated transcript-only helper `StarkVerifierProver::prove_pub_inputs_hash`.
+- Add a trace-column layout diagram to the module docs in `circuits/epoch/src/recursion/stark_verifier_air.rs`.
+- Create a dedicated testnet runbook (e.g. `runbooks/recursive_proofs_testnet.md`) for Phase 3 validation.
+- Run ignored “heavy” end-to-end recursion tests in a nightly/weekly CI job.
+- Produce an audit-prep document summarizing soundness-critical constraints, the grand-product binding argument, and all assumptions about inner proof structure.
 
 ## Concrete Steps
 

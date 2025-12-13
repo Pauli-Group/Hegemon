@@ -63,7 +63,7 @@ pub use stark_verifier::{
 #[cfg(feature = "rpo-fiat-shamir")]
 pub use rpo_prover::TransactionProverStarkRpo;
 #[cfg(feature = "rpo-fiat-shamir")]
-pub use rpo_verifier::{verify_transaction_proof_rpo, verify_transaction_proof_bytes_rpo};
+pub use rpo_verifier::{verify_transaction_proof_bytes_rpo, verify_transaction_proof_rpo};
 
 // Re-export circuit versioning and AIR identification
 pub use constants::{compute_air_hash, expected_air_hash, CIRCUIT_VERSION};

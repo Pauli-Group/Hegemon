@@ -6,24 +6,22 @@
 
 use winter_air::ProofOptions;
 use winter_crypto::{hashers::Blake3_256, MerkleTree};
-use winter_math::{FieldElement, StarkField};
 use winter_fri::folding::fold_positions;
+use winter_math::{FieldElement, StarkField};
 use winterfell::{
-    crypto::DefaultRandomCoin,
-    math::fields::f64::BaseElement,
-    matrix::ColMatrix,
-    AuxRandElements, ConstraintCompositionCoefficients, DefaultConstraintCommitment,
-    DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions, Prover, StarkDomain,
-    TraceInfo, TracePolyTable, TraceTable, CompositionPoly, CompositionPolyTrace, Proof,
-    AcceptableOptions,
+    crypto::DefaultRandomCoin, math::fields::f64::BaseElement, matrix::ColMatrix,
+    AcceptableOptions, AuxRandElements, CompositionPoly, CompositionPolyTrace,
+    ConstraintCompositionCoefficients, DefaultConstraintCommitment, DefaultConstraintEvaluator,
+    DefaultTraceLde, PartitionOptions, Proof, Prover, StarkDomain, TraceInfo, TracePolyTable,
+    TraceTable,
 };
 
 use super::fri_air::{
-    FriPublicInputs, FriVerifierAir, FriFoldingVerifier, COL_ALPHA, COL_F_NEG_X, COL_F_NEXT, COL_F_X,
-    COL_X, COL_FOLD_MASK, COL_REM_MASK, COL_X_REM, COL_REM_COEFF, COL_REM_ACC,
+    FriFoldingVerifier, FriPublicInputs, FriVerifierAir, COL_ALPHA, COL_FOLD_MASK, COL_F_NEG_X,
+    COL_F_NEXT, COL_F_X, COL_REM_ACC, COL_REM_COEFF, COL_REM_MASK, COL_X, COL_X_REM,
 };
 use super::recursive_prover::InnerProofData;
-use super::rpo_air::{STATE_WIDTH, NUM_ROUNDS, ROWS_PER_PERMUTATION, MDS, ARK1, ARK2, INV_ALPHA};
+use super::rpo_air::{ARK1, ARK2, INV_ALPHA, MDS, NUM_ROUNDS, ROWS_PER_PERMUTATION, STATE_WIDTH};
 
 type Blake3 = Blake3_256<BaseElement>;
 type Blake3MerkleTree = MerkleTree<Blake3>;
@@ -36,7 +34,10 @@ pub struct FriVerifierProver {
 
 impl FriVerifierProver {
     pub fn new(options: ProofOptions, pub_inputs: FriPublicInputs) -> Self {
-        Self { options, pub_inputs }
+        Self {
+            options,
+            pub_inputs,
+        }
     }
 
     /// Build a minimal trace containing one RPO permutation and one folding check.
@@ -116,15 +117,18 @@ impl FriVerifierProver {
 
             // Provide one non-trivial remainder permutation so declared degrees match.
             let x_rem = BaseElement::new(5 * (perm as u64 + 11));
-            let rem_coeffs: [BaseElement; 8] = core::array::from_fn(|i| {
-                BaseElement::new((perm as u64 + 2) * (i as u64 + 3))
-            });
+            let rem_coeffs: [BaseElement; 8] =
+                core::array::from_fn(|i| BaseElement::new((perm as u64 + 2) * (i as u64 + 3)));
             let mut rem_acc_eval = BaseElement::ZERO;
             for coeff in rem_coeffs.iter() {
                 rem_acc_eval = rem_acc_eval * x_rem + *coeff;
             }
 
-            let f_next = if is_remainder { rem_acc_eval } else { folded_next };
+            let f_next = if is_remainder {
+                rem_acc_eval
+            } else {
+                folded_next
+            };
 
             let row_start = perm * ROWS_PER_PERMUTATION;
             let mut acc = BaseElement::ZERO;
@@ -472,7 +476,11 @@ fn apply_mds(state: &mut [BaseElement; STATE_WIDTH]) {
 }
 
 fn add_constants(state: &mut [BaseElement; STATE_WIDTH], round: usize, first_half: bool) {
-    let constants = if first_half { &ARK1[round] } else { &ARK2[round] };
+    let constants = if first_half {
+        &ARK1[round]
+    } else {
+        &ARK2[round]
+    };
     for i in 0..STATE_WIDTH {
         state[i] += constants[i];
     }
@@ -495,12 +503,12 @@ fn apply_inv_sbox(state: &mut [BaseElement; STATE_WIDTH]) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use winterfell::verify;
-    use winter_air::{Air, EvaluationFrame};
-    use winterfell::Trace;
-    use super::super::{RpoAir, RpoStarkProver};
     use super::super::rpo_air::STATE_WIDTH as INNER_STATE_WIDTH;
+    use super::super::{RpoAir, RpoStarkProver};
+    use super::*;
+    use winter_air::{Air, EvaluationFrame};
+    use winterfell::verify;
+    use winterfell::Trace;
 
     #[test]
     fn test_fri_verifier_proof_roundtrip() {
@@ -541,10 +549,8 @@ mod tests {
             for col in periodic_columns.iter() {
                 periodic_values_row.push(col[row]);
             }
-            let current_row: Vec<BaseElement> =
-                (0..width).map(|c| trace.get(c, row)).collect();
-            let next_row: Vec<BaseElement> =
-                (0..width).map(|c| trace.get(c, row + 1)).collect();
+            let current_row: Vec<BaseElement> = (0..width).map(|c| trace.get(c, row)).collect();
+            let next_row: Vec<BaseElement> = (0..width).map(|c| trace.get(c, row + 1)).collect();
             let frame = EvaluationFrame::from_rows(current_row, next_row);
             air.evaluate_transition(&frame, &periodic_values_row, &mut result);
             assert!(
@@ -569,11 +575,8 @@ mod tests {
             InnerProofData::from_proof::<RpoAir>(&inner_proof.to_bytes(), inner_pub_inputs)
                 .unwrap();
 
-        let layer_commitments: Vec<[BaseElement; 4]> = inner_data
-            .fri_layers
-            .iter()
-            .map(|l| l.commitment)
-            .collect();
+        let layer_commitments: Vec<[BaseElement; 4]> =
+            inner_data.fri_layers.iter().map(|l| l.commitment).collect();
 
         let pub_inputs = FriPublicInputs::new(
             layer_commitments,
@@ -608,11 +611,8 @@ mod tests {
             InnerProofData::from_proof::<RpoAir>(&inner_proof.to_bytes(), inner_pub_inputs)
                 .unwrap();
 
-        let layer_commitments: Vec<[BaseElement; 4]> = inner_data
-            .fri_layers
-            .iter()
-            .map(|l| l.commitment)
-            .collect();
+        let layer_commitments: Vec<[BaseElement; 4]> =
+            inner_data.fri_layers.iter().map(|l| l.commitment).collect();
 
         let pub_inputs = FriPublicInputs::new(
             layer_commitments,
@@ -638,9 +638,7 @@ mod tests {
         }
         assert!(tampered);
 
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prover.prove(trace)
-        }));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prover.prove(trace)));
         assert!(result.is_err());
     }
 
@@ -657,11 +655,8 @@ mod tests {
             InnerProofData::from_proof::<RpoAir>(&inner_proof.to_bytes(), inner_pub_inputs)
                 .unwrap();
 
-        let layer_commitments: Vec<[BaseElement; 4]> = inner_data
-            .fri_layers
-            .iter()
-            .map(|l| l.commitment)
-            .collect();
+        let layer_commitments: Vec<[BaseElement; 4]> =
+            inner_data.fri_layers.iter().map(|l| l.commitment).collect();
 
         let pub_inputs = FriPublicInputs::new(
             layer_commitments,
@@ -676,9 +671,7 @@ mod tests {
         // Tamper with a remainder coefficient in the first remainder permutation.
         let mut tampered = false;
         for row in 0..trace.length() {
-            if trace.get(COL_REM_MASK, row) == BaseElement::ONE
-                && row % ROWS_PER_PERMUTATION == 0
-            {
+            if trace.get(COL_REM_MASK, row) == BaseElement::ONE && row % ROWS_PER_PERMUTATION == 0 {
                 let val = trace.get(COL_REM_COEFF, row);
                 trace.set(COL_REM_COEFF, row, val + BaseElement::ONE);
                 tampered = true;
@@ -687,9 +680,7 @@ mod tests {
         }
         assert!(tampered);
 
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prover.prove(trace)
-        }));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prover.prove(trace)));
         assert!(result.is_err());
     }
 }

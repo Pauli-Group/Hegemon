@@ -6,9 +6,7 @@
 use miden_crypto::hash::rpo::Rpo256;
 use miden_crypto::rand::RpoRandomCoin;
 use winter_crypto::MerkleTree;
-use winterfell::{
-    verify, AcceptableOptions, Proof, VerifierError,
-};
+use winterfell::{verify, AcceptableOptions, Proof, VerifierError};
 
 use crate::stark_air::{TransactionAirStark, TransactionPublicInputsStark};
 use crate::stark_verifier::TransactionVerifyError;

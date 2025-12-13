@@ -14,9 +14,7 @@ use crate::public_inputs::BatchPublicInputs;
 use transaction_circuit::dimensions::{
     batch_trace_rows, commitment_output_row, merkle_root_output_row, nullifier_output_row,
 };
-use transaction_circuit::stark_air::{
-    round_constant, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH,
-};
+use transaction_circuit::stark_air::{round_constant, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH};
 
 /// Number of Poseidon rounds per cycle.
 pub const POSEIDON_ROUNDS: usize = 8;
@@ -260,8 +258,18 @@ mod tests {
         let pub_inputs = BatchPublicInputs::new(
             2,
             BaseElement::new(12345),
-            vec![BaseElement::new(1), BaseElement::new(2), BaseElement::new(3), BaseElement::new(4)],
-            vec![BaseElement::new(10), BaseElement::new(20), BaseElement::new(30), BaseElement::new(40)],
+            vec![
+                BaseElement::new(1),
+                BaseElement::new(2),
+                BaseElement::new(3),
+                BaseElement::new(4),
+            ],
+            vec![
+                BaseElement::new(10),
+                BaseElement::new(20),
+                BaseElement::new(30),
+                BaseElement::new(40),
+            ],
             BaseElement::new(100),
         );
 

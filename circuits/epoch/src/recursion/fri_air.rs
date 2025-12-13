@@ -27,8 +27,8 @@ use winter_air::{
 use winter_math::{FieldElement, ToElements};
 use winterfell::math::fields::f64::BaseElement;
 
-use super::rpo_air::{STATE_WIDTH, ROWS_PER_PERMUTATION, NUM_ROUNDS, MDS, ARK1, ARK2};
 use super::merkle_air::DIGEST_WIDTH;
+use super::rpo_air::{ARK1, ARK2, MDS, NUM_ROUNDS, ROWS_PER_PERMUTATION, STATE_WIDTH};
 
 // CONSTANTS
 // ================================================================================================
@@ -103,20 +103,20 @@ impl FriPublicInputs {
 impl ToElements<BaseElement> for FriPublicInputs {
     fn to_elements(&self) -> Vec<BaseElement> {
         let mut elements = Vec::new();
-        
+
         // Flatten layer commitments
         for commitment in &self.layer_commitments {
             elements.extend_from_slice(commitment);
         }
-        
+
         // Folding factors
         elements.extend_from_slice(&self.folding_factors);
-        
+
         // Domain size and degree bound
         elements.push(BaseElement::new(self.initial_domain_size as u64));
         elements.push(BaseElement::new(self.degree_bound as u64));
         elements.push(BaseElement::new(self.num_layers as u64));
-        
+
         elements
     }
 }
@@ -265,7 +265,10 @@ impl Air for FriVerifierAir {
 
         let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
-        Self { context, pub_inputs }
+        Self {
+            context,
+            pub_inputs,
+        }
     }
 
     fn context(&self) -> &AirContext<Self::BaseField> {
@@ -415,10 +418,18 @@ impl Air for FriVerifierAir {
                 [BaseElement::ZERO; STATE_WIDTH]
             } else if local_row % 2 == 0 {
                 let round = local_row / 2;
-                if round < NUM_ROUNDS { ARK1[round] } else { [BaseElement::ZERO; STATE_WIDTH] }
+                if round < NUM_ROUNDS {
+                    ARK1[round]
+                } else {
+                    [BaseElement::ZERO; STATE_WIDTH]
+                }
             } else {
                 let round = local_row / 2;
-                if round < NUM_ROUNDS { ARK2[round] } else { [BaseElement::ZERO; STATE_WIDTH] }
+                if round < NUM_ROUNDS {
+                    ARK2[round]
+                } else {
+                    [BaseElement::ZERO; STATE_WIDTH]
+                }
             };
 
             for (i, &c) in constants.iter().enumerate() {
@@ -460,18 +471,20 @@ mod tests {
         // Test folding with known values
         let x = BaseElement::new(7);
         let alpha = BaseElement::new(3);
-        
+
         // Construct f(x) and f(-x) for a simple polynomial
         // Let f(y) = y^2 + 2y + 3
         let f_x = x * x + BaseElement::new(2) * x + BaseElement::new(3);
         let neg_x = BaseElement::ZERO - x;
         let f_neg_x = neg_x * neg_x + BaseElement::new(2) * neg_x + BaseElement::new(3);
-        
+
         // Compute expected folded value
         let f_next = FriFoldingVerifier::compute_folded(x, f_x, f_neg_x, alpha);
-        
+
         // Verify
-        assert!(FriFoldingVerifier::verify_folding(x, f_x, f_neg_x, f_next, alpha));
+        assert!(FriFoldingVerifier::verify_folding(
+            x, f_x, f_neg_x, f_next, alpha
+        ));
     }
 
     #[test]
@@ -480,26 +493,27 @@ mod tests {
         let alpha = BaseElement::new(3);
         let f_x = BaseElement::new(100);
         let f_neg_x = BaseElement::new(50);
-        
+
         let f_next = FriFoldingVerifier::compute_folded(x, f_x, f_neg_x, alpha);
-        
+
         // Wrong value should fail
         let wrong_f_next = f_next + BaseElement::ONE;
-        assert!(!FriFoldingVerifier::verify_folding(x, f_x, f_neg_x, wrong_f_next, alpha));
+        assert!(!FriFoldingVerifier::verify_folding(
+            x,
+            f_x,
+            f_neg_x,
+            wrong_f_next,
+            alpha
+        ));
     }
 
     #[test]
     fn test_fri_public_inputs() {
         let commitments = vec![[BaseElement::new(1); DIGEST_WIDTH]; 3];
         let factors = vec![BaseElement::new(2); 3];
-        
-        let pub_inputs = FriPublicInputs::new(
-            commitments.clone(),
-            factors.clone(),
-            1024,
-            32,
-        );
-        
+
+        let pub_inputs = FriPublicInputs::new(commitments.clone(), factors.clone(), 1024, 32);
+
         assert_eq!(pub_inputs.num_layers, 3);
         assert_eq!(pub_inputs.initial_domain_size, 1024);
         assert_eq!(pub_inputs.degree_bound, 32);

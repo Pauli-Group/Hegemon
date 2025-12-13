@@ -822,24 +822,18 @@ mod tests {
 
             // Duplicate nullifier
             let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerBatch> = vec![
-                [1u8; 32],
-                [1u8; 32], // duplicate!
+                [1u8; 32], [1u8; 32], // duplicate!
             ]
             .try_into()
             .unwrap();
 
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerBatch> = vec![
-                [2u8; 32], [3u8; 32],
-            ]
-            .try_into()
-            .unwrap();
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerBatch> =
+                vec![[2u8; 32], [3u8; 32]].try_into().unwrap();
 
-            let ciphertexts: BoundedVec<EncryptedNote, MaxCommitmentsPerBatch> = vec![
-                valid_encrypted_note(),
-                valid_encrypted_note(),
-            ]
-            .try_into()
-            .unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxCommitmentsPerBatch> =
+                vec![valid_encrypted_note(), valid_encrypted_note()]
+                    .try_into()
+                    .unwrap();
 
             assert_noop!(
                 Pallet::<Test>::batch_shielded_transfer(
