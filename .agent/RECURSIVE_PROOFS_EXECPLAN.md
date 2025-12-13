@@ -29,27 +29,35 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] (2025-12-11) Phase 2b: Integrate miden-crypto RPO hash into winterfell.
 - [x] (2025-12-11) Phase 2c: Implement RpoAir + RpoStarkProver (RPO permutation proofs).
 - [x] (2025-12-11) Phase 2g: Make inner proofs RPO-friendly (completed: epoch + transaction + batch RPO provers + verifiers).
-- [ ] (2025-12-11) Phase 2d: MerkleVerifierAir + FriVerifierAir.
+- [x] (2025-12-13) Phase 2d: MerkleVerifierAir + FriVerifierAir.
 - [x] (2025-12-11) Phase 2d.1: MerkleVerifierAir roundtrip + tamper-reject coverage (Merkle chaining, `Rpo256::merge` digest placement in rate[0..3], power-of-two padding for standalone Merkle traces).
 - [x] (2025-12-11) Phase 2d.2: FriVerifierAir folding factor 2 + remainder Horner checks (boundary-gated folding mask, re-enabled RPO transitions) with prover roundtrip + tamper-reject tests.
-- [ ] (2025-12-12) Phase 2d.3: In-circuit hashing of trace/constraint/FRI leaf contents and bind those digests to the authentication-path inputs used during Merkle verification.
-- [ ] (2025-12-12) Phase 2d.4: Finalize FRI verification by binding the folded DRP value to the remainder polynomial commitment (and wire this into StarkVerifierAir).
-- [ ] (2025-12-12) Phase 2e: StarkVerifierAir.
+- [x] (2025-12-13) Phase 2d.3: In-circuit hashing of trace/constraint/FRI leaf contents and bind those digests to the authentication-path inputs used during Merkle verification.
+- [x] (2025-12-13) Phase 2d.4: Finalize FRI verification by binding the folded DRP value to the remainder polynomial commitment (and wire this into StarkVerifierAir).
+- [x] (2025-12-13) Phase 2e: StarkVerifierAir.
 - [x] (2025-12-12) Phase 2e.1: Transcript reconstruction + stage masks + witness checks (coeff/z/deep/alpha/reseed/query draws).
 - [x] (2025-12-12) Phase 2e.2: Merkle index shift wiring + query-position binding accumulator + per-draw query schedule expansion.
 - [x] (2025-12-12) Phase 2e.3: Store transcript challenges in constant columns (constraint coeffs, DEEP coeffs, FRI alphas) and enforce capture at draw boundaries with periodic end masks.
 - [x] (2025-12-12) Phase 2e.3a: Store OOD evaluation frame elements (trace+quotient at z and z*g) in constant columns and enforce capture at OOD-hash input rows.
-- [ ] (2025-12-12) Phase 2e.4: Bind inner openings by hashing leaf contents in-circuit (trace/constraint/FRI) and asserting those digests are consistent with the inner proof’s committed roots.
-- [ ] (2025-12-12) Phase 2e.5: Implement DEEP composition checks using stored challenges, OOD evaluations, and authenticated trace/constraint openings.
-- [ ] (2025-12-12) Phase 2e.6: Implement full FRI folding, remainder evaluation, and DRP binding using stored alphas and authenticated FRI openings.
-- [ ] (2025-12-12) Phase 2e.7: End-to-end recursion: generate inner RPO proof, generate outer proof verifying it, and demonstrate tamper-reject of the inner proof.
+- [x] (2025-12-13) Phase 2e.4: Bind inner openings by hashing leaf contents in-circuit (trace/constraint/FRI) and asserting those digests are consistent with the inner proof’s committed roots.
+- [x] (2025-12-13) Phase 2e.5: Implement DEEP composition checks using stored challenges, OOD evaluations, and authenticated trace/constraint openings.
+- [x] (2025-12-13) Phase 2e.6: Implement full FRI folding, remainder evaluation, and DRP binding using stored alphas and authenticated FRI openings.
+- [x] (2025-12-13) Phase 2e.7: End-to-end recursion: generate inner RPO proof, generate outer proof verifying it, and demonstrate tamper-reject of the inner proof.
 - [ ] (2025-12-11) Phase 2f: RecursiveEpochProver verifies inner proofs in‑circuit via StarkVerifierAir.
 - [ ] (2025-12-11) Phase 3: Two‑person testnet recursive sync + light client recursive mode.
 - [ ] Phase 4: Security audit and production hardening.
 
-**Current status (2025-12-12)**: Phase 1 shipped and is live in the pallet. RPO groundwork exists (`RpoAir`, `RpoStarkProver`, and skeleton verifier AIRs). Epoch, transaction, and batch proofs now support RPO Fiat‑Shamir, and inner RPO proofs can be parsed into recursion witness via `InnerProofData::from_proof`. True recursion is **not** yet implemented end‑to‑end: transcript reconstruction and query-position binding exist; transcript challenges and OOD frame elements are now captured into constant trace columns; and Merkle authentication is structurally sound. Remaining work is to fully bind leaf contents to inner openings, implement DEEP composition checks, and complete FRI folding/remainder/DRP binding. Work remains focused on Phase 2d → 2e → 2f to deliver proof‑of‑proof recursion.
+**Current status (2025-12-13)**: Phase 1 shipped and is live in the pallet. Phase 2d/2e are now complete end‑to‑end for RPO inner proofs: `StarkVerifierAir` reconstructs the RPO Fiat‑Shamir transcript, verifies Merkle openings for trace/constraint/FRI leaves, performs DEEP composition, completes FRI folding, and binds the final folded value to the remainder polynomial evaluation. The recursion path is exercised by `test_trace_from_inner_merkle_roundtrip` (inner proof → outer proof verifying it), and tamper‑reject coverage exists for Merkle auth path integrity, FRI folding, and remainder binding. The remaining major milestone is Phase 2f: wiring `StarkVerifierAir` into `RecursiveEpochProver` for production recursive epoch proofs and then validating on a two‑person testnet (Phase 3).
 
 ## Surprises & Discoveries
+
+- Observation (2025-12-13): `winterfell::TraceTable::new()` does not initialize memory; any newly added trace columns must be explicitly populated for every row.
+  Evidence: Adding DEEP/FRI state columns without writing them produced nondeterministic failures (garbage field elements) and invalid proofs, even when all other witness data was correct.
+  Implication: Every trace builder must write every column for all rows (even constant columns), or you must use a constructor that zero-initializes memory.
+
+- Observation (2025-12-13): Winterfell debug proving asserts *exact* transition constraint evaluation degrees; degree descriptors must match the effective degrees of real traces, not just an upper bound.
+  Evidence: `winter-prover` panicked with `transition constraint degrees didn't match` until `StarkVerifierAir::new()` degree descriptors were updated for the DEEP/FRI constraints and the prover filled the new state columns deterministically.
+  Implication: Any future verifier-AIR constraints must be accompanied by updated `TransitionConstraintDegree` descriptors and validated against at least one real proof roundtrip in debug builds.
 
 - Observation (2025-12-12): Winterfell’s `FieldExtension` is 1-based (`None = 1`, `Quadratic = 2`, `Cubic = 3`), not 0-based.
   Evidence: `winter-air-0.13.1/src/options.rs` uses `#[repr(u8)]` with `None = 1`. In a real inner proof, `proof.context.to_elements()` packed options element is `0x01020720` (high byte `0x01`) for `FieldExtension::None`, not `0x00020720`.
@@ -369,17 +377,17 @@ Key technical achievements:
    - Full S-box constraints (forward x^7, inverse verification)
    - ROWS_PER_PERMUTATION=16 (power of 2 for FRI)
 
-2. **Merkle Verification in AIR (skeleton)**
-   - MerkleVerifierAir stacks RPO permutations and asserts leaf/root shapes
-   - Full cross‑level chaining and path‑bit enforcement still TODO
+2. **Merkle Verification in AIR**
+   - MerkleVerifierAir enforces Merkle authentication paths (leaf hashing + path-bit chaining + index shifts + root binding) with tamper‑reject coverage.
+   - StarkVerifierAir reuses the same stacking order to bind queried trace/constraint/FRI leaf openings to the inner proof’s commitments.
 
-3. **FRI Folding Verification (skeleton)**
-   - FriFoldingVerifier utility is correct and tested
-   - FriVerifierAir trace + RPO constraints exist, but real folding/authentication constraints still TODO
+3. **FRI Folding Verification**
+   - FriVerifierAir validates folding‑factor‑2 transitions and remainder Horner checks (and is exercised via prover roundtrip tests).
+   - StarkVerifierAir completes FRI by selecting per-layer evaluations, folding with stored alphas, and binding the folded value to the remainder polynomial evaluation.
 
-4. **StarkVerifierAir (skeleton)**
-   - RPO transcript / periodic columns are wired
-   - Full winterfell verifier logic (queries, DEEP, FRI, Merkle auth) still TODO
+4. **StarkVerifierAir**
+   - Implements full winterfell verifier logic in-circuit: transcript reconstruction, Merkle openings for trace/constraint/FRI, DEEP composition, FRI folding, and remainder binding.
+   - Exercised end‑to‑end by `test_trace_from_inner_merkle_roundtrip` and supported by focused tamper-detection tests for folding and remainder binding.
 
 5. **RecursiveEpochProver (groundwork)**
    - Uses RPO‑based proof accumulator and proves an RPO permutation over it
@@ -423,7 +431,7 @@ Key technical achievements:
 1. **Real RPO STARK Proofs** - No more mock epoch proofs; actual RPO‑based permutation proofs
 2. **Drop‑in Integration** - RecursiveEpochProver API unchanged; pallet emits RPO epoch proofs
 3. **Proof Serialization** - proof.to_bytes() for storage, Proof::from_bytes() for deserialization
-4. **Groundwork for Recursion** - proof‑of‑proof verification still pending (Phase 2d/2e/2f)
+4. **Proof‑of‑Proof Recursion (Phase 2d/2e)** - verifier circuit shipped end‑to‑end for RPO inner proofs; production wiring into `RecursiveEpochProver` is still pending (Phase 2f).
 
 Quantum resistance:
 - Pure STARKs - no elliptic curves anywhere
@@ -477,7 +485,7 @@ We implement recursion in three phases:
 - Generate an "epoch proof" that proves knowledge of the Merkle root and attests to the epoch's validity
 - Light clients verify epoch proofs + Merkle inclusion proofs for specific transactions
 
-**Phase 2: True Recursion with miden-crypto RPO (In progress)**  
+**Phase 2: True Recursion with miden-crypto RPO (Phase 2d/2e complete; Phase 2f pending)**  
 
 Completed groundwork:
 - Replaced Blake3 Fiat‑Shamir with RPO for recursion (algebraic hash, ~13 columns vs ~100).
@@ -485,13 +493,11 @@ Completed groundwork:
 - Inner epoch/transaction/batch proofs now support RPO Fiat‑Shamir.
 
 In progress / remaining:
-- `MerkleVerifierAir` and `FriVerifierAir` are skeletons; must add full Merkle authentication and FRI folding checks.
-- `StarkVerifierAir` currently proves only the RPO sponge hash of inner public inputs; must grow to full winterfell verifier logic.
-- `RecursiveEpochProver` still does not verify inner STARK proofs in‑circuit.
+- `RecursiveEpochProver` still does not verify inner STARK proofs in‑circuit (Phase 2f). The verifier circuit exists; it now needs to be wired into epoch proving so epoch proofs can recursively attest to prior epoch proofs.
+- Phase 3 remains: two-person testnet recursive sync + light client recursive mode, followed by security review/hardening.
 
 **Phase 3: Production and Security Audit (Pending)**
-- Full end-to-end recursive proof generation and verification
-- Two-person testnet validation with O(1) sync
+- Two-person testnet validation with recursive sync + light client recursive mode
 - Security audit and production hardening
 
 ### Two-Person Testnet Scenario
@@ -3137,3 +3143,7 @@ docker-compose -f docker-compose.testnet.yml up --abort-on-container-exit
   - Documented that FRI layer count depends on `(remainder_max_degree + 1) * blowup_factor`, not just LDE domain size.
   - Unblocked `test_trace_from_inner_merkle_roundtrip` for real inner proofs (`cargo test -p epoch-circuit test_trace_from_inner_merkle_roundtrip -- --nocapture` now passes).
   - Added explicit TODO to model query-position `sort+dedup` and bind Merkle index bits to transcript-derived query positions (a requirement for “true recursion” beyond the current milestone).
+- **2025-12-13**: Phase 2d.3–2e.7 shipped (true recursion end-to-end for RPO inner proofs):
+  - Fixed DEEP/FRI state columns by deterministically populating them in `StarkVerifierProver` (Winterfell `TraceTable::new()` leaves memory uninitialized).
+  - Updated `StarkVerifierAir` transition degree descriptors for DEEP/FRI constraints so debug proofs no longer panic with `transition constraint degrees didn't match`.
+  - Added focused tamper-detection tests for FRI folding and remainder binding, and extended the end-to-end recursion roundtrip test to include transcript reseed tamper rejection.
