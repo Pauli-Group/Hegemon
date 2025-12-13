@@ -2404,9 +2404,19 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     );
 
                                     let epoch_for_prover = epoch.clone();
+                                    let use_rpo_outer = std::env::var("HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO")
+                                        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                                        .unwrap_or(false);
                                     let proof_result = tokio::task::spawn_blocking(move || {
                                         let prover = EpochRecursiveProver::fast();
-                                        prover.prove_epoch_recursive(&epoch_for_prover, &proof_hashes)
+                                        if use_rpo_outer {
+                                            prover.prove_epoch_recursive_rpo_outer(
+                                                &epoch_for_prover,
+                                                &proof_hashes,
+                                            )
+                                        } else {
+                                            prover.prove_epoch_recursive(&epoch_for_prover, &proof_hashes)
+                                        }
                                     })
                                     .await;
 
