@@ -22,21 +22,18 @@ use winter_air::{
     Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
     TransitionConstraintDegree,
 };
-use winter_math::{FieldElement, ToElements};
 use winter_crypto::{hashers::Blake3_256, MerkleTree};
+use winter_math::{FieldElement, ToElements};
 use winterfell::{
-    crypto::DefaultRandomCoin,
-    math::fields::f64::BaseElement,
-    matrix::ColMatrix,
-    AuxRandElements, ConstraintCompositionCoefficients, PartitionOptions,
-    DefaultConstraintEvaluator, DefaultTraceLde, Prover, StarkDomain,
-    TracePolyTable, TraceTable, DefaultConstraintCommitment,
-    CompositionPoly, CompositionPolyTrace,
+    crypto::DefaultRandomCoin, math::fields::f64::BaseElement, matrix::ColMatrix, AuxRandElements,
+    CompositionPoly, CompositionPolyTrace, ConstraintCompositionCoefficients,
+    DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions,
+    Prover, StarkDomain, TracePolyTable, TraceTable,
 };
 
 use super::rpo_air::{
-    STATE_WIDTH, NUM_ROUNDS, ALPHA, INV_ALPHA, MDS, ARK1, ARK2,
-    ROWS_PER_PERMUTATION, TRACE_WIDTH as RPO_TRACE_WIDTH,
+    ALPHA, ARK1, ARK2, INV_ALPHA, MDS, NUM_ROUNDS, ROWS_PER_PERMUTATION, STATE_WIDTH,
+    TRACE_WIDTH as RPO_TRACE_WIDTH,
 };
 
 type Blake3 = Blake3_256<BaseElement>;
@@ -48,7 +45,7 @@ type Blake3MerkleTree = MerkleTree<Blake3>;
 /// Capacity portion of RPO state (indices 0-3)
 pub const CAPACITY_WIDTH: usize = 4;
 
-/// Rate portion of RPO state (indices 4-11) 
+/// Rate portion of RPO state (indices 4-11)
 pub const RATE_WIDTH: usize = 8;
 
 /// Digest is stored in capacity after permutation (4 field elements)
@@ -81,7 +78,12 @@ impl MerklePublicInputs {
         depth: usize,
     ) -> Self {
         assert!(depth > 0 && depth <= MAX_TREE_DEPTH);
-        Self { leaf, root, index, depth }
+        Self {
+            leaf,
+            root,
+            index,
+            depth,
+        }
     }
 }
 
@@ -144,7 +146,7 @@ impl Air for MerkleVerifierAir {
             degrees.push(TransitionConstraintDegree::with_cycles(2, vec![full_cycle]));
         }
 
-        // Assertions: 
+        // Assertions:
         // - Leaf matches at row 0 (4 elements)
         // - Root matches at final row (4 elements)
         // - Intermediate hashes chain correctly
@@ -152,7 +154,10 @@ impl Air for MerkleVerifierAir {
 
         let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
-        Self { context, pub_inputs }
+        Self {
+            context,
+            pub_inputs,
+        }
     }
 
     fn context(&self) -> &AirContext<Self::BaseField> {
@@ -171,7 +176,7 @@ impl Air for MerkleVerifierAir {
         // The trace contains multiple RPO permutations stacked
         // Each permutation is ROWS_PER_PERMUTATION rows
         // We reuse the RPO constraints from rpo_air
-        
+
         // Periodic values control which RPO round we're in.
         // Layout: [half_round_type, ark[0..STATE_WIDTH], perm_mask, boundary_mask, path_bit]
         let half_round_type = periodic_values[0];
@@ -266,14 +271,18 @@ impl Air for MerkleVerifierAir {
             CAPACITY_WIDTH
         };
         for i in 0..DIGEST_WIDTH {
-            assertions.push(Assertion::single(leaf_start + i, 0, self.pub_inputs.leaf[i]));
+            assertions.push(Assertion::single(
+                leaf_start + i,
+                0,
+                self.pub_inputs.leaf[i],
+            ));
         }
 
         // Assert root at final permutation output (digest range of the rate).
         let final_row = self.pub_inputs.depth * ROWS_PER_PERMUTATION - 1;
         for i in 0..DIGEST_WIDTH {
             assertions.push(Assertion::single(
-                CAPACITY_WIDTH + i,  // Digest is in rate (columns 4-7)
+                CAPACITY_WIDTH + i, // Digest is in rate (columns 4-7)
                 final_row,
                 self.pub_inputs.root[i],
             ));
@@ -285,11 +294,11 @@ impl Air for MerkleVerifierAir {
     fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
         let total_rows = self.trace_length();
         let total_perms = total_rows / ROWS_PER_PERMUTATION;
-        
+
         // Replicate the RPO periodic columns for each permutation and add
         // boundary/path-bit masks for chaining.
         let mut half_round_type = Vec::with_capacity(total_rows);
-        let mut ark_columns: [Vec<BaseElement>; STATE_WIDTH] = 
+        let mut ark_columns: [Vec<BaseElement>; STATE_WIDTH] =
             core::array::from_fn(|_| Vec::with_capacity(total_rows));
         let mut perm_mask = Vec::with_capacity(total_rows);
         let mut boundary_mask = Vec::with_capacity(total_rows);
@@ -300,11 +309,11 @@ impl Air for MerkleVerifierAir {
             // Each permutation has the same periodic pattern
             for row in 0..ROWS_PER_PERMUTATION {
                 let val = if row >= 14 {
-                    0  // Padding
+                    0 // Padding
                 } else if row % 2 == 0 {
-                    1  // Forward sbox
+                    1 // Forward sbox
                 } else {
-                    2  // Inverse sbox
+                    2 // Inverse sbox
                 };
                 half_round_type.push(BaseElement::new(val));
 
@@ -312,10 +321,18 @@ impl Air for MerkleVerifierAir {
                     [BaseElement::ZERO; STATE_WIDTH]
                 } else if row % 2 == 0 {
                     let round = row / 2;
-                    if round < NUM_ROUNDS { ARK1[round] } else { [BaseElement::ZERO; STATE_WIDTH] }
+                    if round < NUM_ROUNDS {
+                        ARK1[round]
+                    } else {
+                        [BaseElement::ZERO; STATE_WIDTH]
+                    }
                 } else {
                     let round = row / 2;
-                    if round < NUM_ROUNDS { ARK2[round] } else { [BaseElement::ZERO; STATE_WIDTH] }
+                    if round < NUM_ROUNDS {
+                        ARK2[round]
+                    } else {
+                        [BaseElement::ZERO; STATE_WIDTH]
+                    }
                 };
 
                 for (i, &c) in constants.iter().enumerate() {
@@ -375,7 +392,11 @@ impl MerkleVerifierProver {
     ) -> Self {
         let depth = siblings.len();
         let pub_inputs = MerklePublicInputs::new(leaf, root, index, depth);
-        Self { options, pub_inputs, siblings }
+        Self {
+            options,
+            pub_inputs,
+            siblings,
+        }
     }
 
     /// Build the execution trace for Merkle path verification
@@ -502,7 +523,11 @@ fn apply_mds(state: &mut [BaseElement; STATE_WIDTH]) {
 }
 
 fn add_constants(state: &mut [BaseElement; STATE_WIDTH], round: usize, first_half: bool) {
-    let constants = if first_half { &ARK1[round] } else { &ARK2[round] };
+    let constants = if first_half {
+        &ARK1[round]
+    } else {
+        &ARK2[round]
+    };
     for i in 0..STATE_WIDTH {
         state[i] += constants[i];
     }
@@ -586,11 +611,11 @@ impl Prover for MerkleVerifierProver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winterfell::Trace;
-    use winterfell::verify;
-    use winterfell::AcceptableOptions;
     use miden_crypto::hash::rpo::Rpo256;
     use miden_crypto::{Felt, Word};
+    use winterfell::verify;
+    use winterfell::AcceptableOptions;
+    use winterfell::Trace;
 
     fn word_to_digest(word: Word) -> [BaseElement; 4] {
         [
@@ -616,7 +641,7 @@ mod tests {
         let leaf = [BaseElement::new(1); DIGEST_WIDTH];
         let root = [BaseElement::new(2); DIGEST_WIDTH];
         let siblings = vec![[BaseElement::new(3); DIGEST_WIDTH]; 4];
-        
+
         let prover = MerkleVerifierProver::new(
             super::super::rpo_proof::RpoProofOptions::fast().to_winter_options(),
             leaf,
@@ -640,7 +665,12 @@ mod tests {
         // Build a small RPO Merkle tree of 8 leaves.
         let leaves: Vec<Word> = (0..8)
             .map(|i| {
-                let felts = [Felt::new(i as u64 + 1), Felt::new(7), Felt::new(9), Felt::new(11)];
+                let felts = [
+                    Felt::new(i as u64 + 1),
+                    Felt::new(7),
+                    Felt::new(9),
+                    Felt::new(11),
+                ];
                 Rpo256::hash_elements(&felts)
             })
             .collect();
@@ -651,16 +681,9 @@ mod tests {
 
         let leaf = word_to_digest(leaf_word);
         let root = word_to_digest(*tree.root());
-        let siblings: Vec<[BaseElement; 4]> =
-            proof_words.into_iter().map(word_to_digest).collect();
+        let siblings: Vec<[BaseElement; 4]> = proof_words.into_iter().map(word_to_digest).collect();
 
-        let prover = MerkleVerifierProver::new(
-            options.clone(),
-            leaf,
-            root,
-            index as u64,
-            siblings,
-        );
+        let prover = MerkleVerifierProver::new(options.clone(), leaf, root, index as u64, siblings);
         let trace = prover.build_trace();
         let proof = prover.prove(trace).unwrap();
 
@@ -678,7 +701,12 @@ mod tests {
         let options = super::super::rpo_proof::RpoProofOptions::fast().to_winter_options();
         let leaves: Vec<Word> = (0..8)
             .map(|i| {
-                let felts = [Felt::new(i as u64 + 1), Felt::new(7), Felt::new(9), Felt::new(11)];
+                let felts = [
+                    Felt::new(i as u64 + 1),
+                    Felt::new(7),
+                    Felt::new(9),
+                    Felt::new(11),
+                ];
                 Rpo256::hash_elements(&felts)
             })
             .collect();
@@ -688,25 +716,16 @@ mod tests {
 
         let leaf = word_to_digest(leaf_word);
         let root = word_to_digest(*tree.root());
-        let siblings: Vec<[BaseElement; 4]> =
-            proof_words.into_iter().map(word_to_digest).collect();
+        let siblings: Vec<[BaseElement; 4]> = proof_words.into_iter().map(word_to_digest).collect();
 
-        let prover = MerkleVerifierProver::new(
-            options.clone(),
-            leaf,
-            root,
-            index as u64,
-            siblings,
-        );
+        let prover = MerkleVerifierProver::new(options.clone(), leaf, root, index as u64, siblings);
         let mut trace = prover.build_trace();
 
         // Flip a sibling element in the first permutation input.
         let val = trace.get(CAPACITY_WIDTH, 0);
         trace.set(CAPACITY_WIDTH, 0, val + BaseElement::ONE);
 
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prover.prove(trace)
-        }));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prover.prove(trace)));
         assert!(result.is_err());
     }
 }

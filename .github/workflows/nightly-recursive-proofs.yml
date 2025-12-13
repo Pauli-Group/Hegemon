@@ -1,0 +1,36 @@
+name: Nightly Recursive Proofs
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  recursive-proof-ignored:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          df -h
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
+      - name: Setup Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "nightly-recursive-proofs"
+      - name: Recursive proof-of-proof tamper test
+        run: cargo test -p epoch-circuit recursion::recursive_prover::tests::test_prove_epoch_recursive_roundtrip_and_tamper_reject -- --ignored --nocapture
+      - name: Recursive proof overhead budget
+        run: cargo test -p epoch-circuit recursion::recursive_prover::tests::test_recursive_proof_overhead_budget -- --ignored --nocapture
+      - name: Light client recursive sync tamper test
+        run: cargo test -p epoch-circuit light_client::tests::test_light_client_sync_recursive_outer_roundtrip_and_tamper_reject -- --ignored --nocapture

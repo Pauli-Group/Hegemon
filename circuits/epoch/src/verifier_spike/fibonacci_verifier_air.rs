@@ -225,7 +225,7 @@ impl Air for FibonacciVerifierAir {
         // Simplified Poseidon-like state transition for columns 0-2
         // In a real implementation, this would be proper Poseidon rounds
         // Here we just enforce some non-trivial algebraic relation
-        
+
         // Column 0: S-box constraint (x^5 relation)
         let x0 = current[0];
         let x0_5 = x0 * x0 * x0 * x0 * x0;
@@ -282,9 +282,9 @@ impl FibonacciVerifierProver {
     pub fn new() -> Self {
         Self {
             options: ProofOptions::new(
-                8,  // num_queries
-                4,  // blowup_factor_log2
-                0,  // grinding_factor
+                8, // num_queries
+                4, // blowup_factor_log2
+                0, // grinding_factor
                 FieldExtension::None,
                 2,  // fri_folding_factor
                 31, // fri_max_remainder_size
@@ -319,7 +319,7 @@ impl FibonacciVerifierProver {
                 state[1] = init_state[1];
                 state[2] = init_state[2];
                 state[3] = BaseElement::ZERO; // proof element counter
-                state[4] = BaseElement::ONE;  // verification flag (starts valid)
+                state[4] = BaseElement::ONE; // verification flag (starts valid)
             },
             |_step, state| {
                 // Simplified Poseidon-like round
@@ -507,15 +507,16 @@ pub fn verify_verifier_proof(
 
 #[cfg(test)]
 mod tests {
+    use super::super::fibonacci_air::{verify_fibonacci_proof, FibonacciProver};
     use super::*;
-    use super::super::fibonacci_air::{FibonacciProver, verify_fibonacci_proof};
     use winterfell::Trace;
 
     #[test]
     fn test_verifier_trace_building() {
         // First, generate an inner Fibonacci proof
         let fib_prover = FibonacciProver::new();
-        let (inner_proof, inner_pub_inputs) = fib_prover.prove(64)
+        let (inner_proof, inner_pub_inputs) = fib_prover
+            .prove(64)
             .expect("Inner proof generation should succeed");
 
         // Build verifier trace
@@ -538,28 +539,39 @@ mod tests {
     fn test_verifier_proof_generation() {
         // Generate inner proof
         let fib_prover = FibonacciProver::new();
-        let (inner_proof, inner_pub_inputs) = fib_prover.prove(64)
+        let (inner_proof, inner_pub_inputs) = fib_prover
+            .prove(64)
             .expect("Inner proof generation should succeed");
 
         // Verify inner proof first
         let inner_result = verify_fibonacci_proof(&inner_proof, &inner_pub_inputs);
-        assert!(inner_result.is_ok(), "Inner verification failed: {:?}", inner_result);
+        assert!(
+            inner_result.is_ok(),
+            "Inner verification failed: {:?}",
+            inner_result
+        );
 
         // Generate outer (verifier) proof
         let verifier_prover = FibonacciVerifierProver::new();
-        let (outer_proof, outer_pub_inputs) = verifier_prover.prove(&inner_proof, &inner_pub_inputs)
+        let (outer_proof, outer_pub_inputs) = verifier_prover
+            .prove(&inner_proof, &inner_pub_inputs)
             .expect("Outer proof generation should succeed");
 
         // Verify outer proof
         let outer_result = verify_verifier_proof(&outer_proof, &outer_pub_inputs);
-        assert!(outer_result.is_ok(), "Outer verification failed: {:?}", outer_result);
+        assert!(
+            outer_result.is_ok(),
+            "Outer verification failed: {:?}",
+            outer_result
+        );
     }
 
     #[test]
     fn test_proof_size_comparison() {
         // Generate inner proof
         let fib_prover = FibonacciProver::new();
-        let (inner_proof, inner_pub_inputs) = fib_prover.prove(64)
+        let (inner_proof, inner_pub_inputs) = fib_prover
+            .prove(64)
             .expect("Inner proof generation should succeed");
 
         let inner_size = inner_proof.to_bytes().len();
@@ -567,7 +579,8 @@ mod tests {
 
         // Generate outer proof
         let verifier_prover = FibonacciVerifierProver::new();
-        let (outer_proof, _) = verifier_prover.prove(&inner_proof, &inner_pub_inputs)
+        let (outer_proof, _) = verifier_prover
+            .prove(&inner_proof, &inner_pub_inputs)
             .expect("Outer proof generation should succeed");
 
         let outer_size = outer_proof.to_bytes().len();

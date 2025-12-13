@@ -65,7 +65,8 @@ impl BatchTransactionProver {
         witnesses: &[TransactionWitness],
     ) -> Result<TraceTable<BaseElement>, BatchCircuitError> {
         let batch_size = witnesses.len();
-        validate_batch_size(batch_size).map_err(|_| BatchCircuitError::InvalidBatchSize(batch_size))?;
+        validate_batch_size(batch_size)
+            .map_err(|_| BatchCircuitError::InvalidBatchSize(batch_size))?;
 
         if batch_size == 0 {
             return Err(BatchCircuitError::EmptyBatch);
@@ -81,10 +82,12 @@ impl BatchTransactionProver {
 
         // Validate all witnesses
         for (idx, witness) in witnesses.iter().enumerate() {
-            witness.validate().map_err(|e| BatchCircuitError::InvalidWitness {
-                index: idx,
-                reason: e.to_string(),
-            })?;
+            witness
+                .validate()
+                .map_err(|e| BatchCircuitError::InvalidWitness {
+                    index: idx,
+                    reason: e.to_string(),
+                })?;
         }
 
         let trace_len = batch_trace_rows(batch_size);
@@ -125,7 +128,8 @@ impl BatchTransactionProver {
         witnesses: &[TransactionWitness],
     ) -> Result<BatchPublicInputs, BatchCircuitError> {
         let batch_size = witnesses.len();
-        validate_batch_size(batch_size).map_err(|_| BatchCircuitError::InvalidBatchSize(batch_size))?;
+        validate_batch_size(batch_size)
+            .map_err(|_| BatchCircuitError::InvalidBatchSize(batch_size))?;
 
         if batch_size == 0 {
             return Err(BatchCircuitError::EmptyBatch);
@@ -205,7 +209,9 @@ impl BatchTransactionProver {
 /// This ensures the entire trace satisfies the AIR constraints,
 /// even in the padding region.
 fn fill_padding_rows(trace: &mut [Vec<BaseElement>], start_row: usize, end_row: usize) {
-    use transaction_circuit::stark_air::{mds_mix, round_constant, sbox, COL_S1, COL_S2, CYCLE_LENGTH};
+    use transaction_circuit::stark_air::{
+        mds_mix, round_constant, sbox, COL_S1, COL_S2, CYCLE_LENGTH,
+    };
 
     const POSEIDON_ROUNDS: usize = 8;
 

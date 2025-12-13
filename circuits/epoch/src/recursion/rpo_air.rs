@@ -27,16 +27,13 @@ use winter_air::{
     Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
     TransitionConstraintDegree,
 };
-use winter_math::{FieldElement, ToElements};
 use winter_crypto::{hashers::Blake3_256, MerkleTree};
+use winter_math::{FieldElement, ToElements};
 use winterfell::{
-    crypto::DefaultRandomCoin,
-    math::fields::f64::BaseElement,
-    matrix::ColMatrix,
-    AuxRandElements, ConstraintCompositionCoefficients, PartitionOptions,
-    DefaultConstraintEvaluator, DefaultTraceLde, Prover, StarkDomain,
-    TracePolyTable, TraceTable, DefaultConstraintCommitment,
-    CompositionPoly, CompositionPolyTrace,
+    crypto::DefaultRandomCoin, math::fields::f64::BaseElement, matrix::ColMatrix, AuxRandElements,
+    CompositionPoly, CompositionPolyTrace, ConstraintCompositionCoefficients,
+    DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions,
+    Prover, StarkDomain, TracePolyTable, TraceTable,
 };
 
 // RPO CONSTANTS
@@ -147,7 +144,7 @@ impl Air for RpoAir {
         // - Total: 7 + 2 - 1 = 8 (periodic degree is multiplied, not added)
         // Periodic column cycles: length 16 (same as trace)
         let degrees = vec![
-            TransitionConstraintDegree::with_cycles(8, vec![ROWS_PER_PERMUTATION]); 
+            TransitionConstraintDegree::with_cycles(8, vec![ROWS_PER_PERMUTATION]);
             STATE_WIDTH
         ];
 
@@ -156,7 +153,10 @@ impl Air for RpoAir {
 
         let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
-        Self { context, pub_inputs }
+        Self {
+            context,
+            pub_inputs,
+        }
     }
 
     fn context(&self) -> &AirContext<Self::BaseField> {
@@ -174,12 +174,12 @@ impl Air for RpoAir {
 
         // Get round index from the trace (column 12)
         let round_idx = current[ROUND_COL];
-        
+
         // Periodic values layout:
         // [0]: half_round_selector (0 = padding/input, 1 = forward sbox, 2 = inverse sbox)
         // [1..13]: ARK constants for this row (12 values)
         let half_round_type = periodic_values[0];
-        
+
         // Extract per-element round constants
         let ark: [E; STATE_WIDTH] = core::array::from_fn(|i| periodic_values[1 + i]);
 
@@ -202,16 +202,16 @@ impl Air for RpoAir {
         // Type 0: No constraint (input row or padding)
         // Type 1: Forward S-box constraint: next = (MDS(current) + ARK)^7
         // Type 2: Inverse S-box constraint: next^7 = MDS(current) + ARK
-        
+
         let one = E::ONE;
         let two = one + one;
-        
+
         // Selector for forward S-box (type == 1)
         let is_forward = half_round_type * (two - half_round_type);
-        
-        // Selector for inverse S-box (type == 2)  
+
+        // Selector for inverse S-box (type == 2)
         let is_inverse = half_round_type * (half_round_type - one);
-        
+
         // Selector for no constraint (type == 0)
         let is_padding = (one - half_round_type) * (two - half_round_type);
 
@@ -239,9 +239,9 @@ impl Air for RpoAir {
 
             // Combined constraint with selectors
             // Only one of these will be non-zero based on half_round_type
-            result[i] = is_forward * forward_constraint 
-                      + is_inverse * inverse_constraint
-                      + is_padding * padding_constraint;
+            result[i] = is_forward * forward_constraint
+                + is_inverse * inverse_constraint
+                + is_padding * padding_constraint;
         }
     }
 
@@ -256,7 +256,11 @@ impl Air for RpoAir {
         // Assert final state at last row
         let last_row = ROWS_PER_PERMUTATION - 1;
         for i in 0..STATE_WIDTH {
-            assertions.push(Assertion::single(i, last_row, self.pub_inputs.output_state[i]));
+            assertions.push(Assertion::single(
+                i,
+                last_row,
+                self.pub_inputs.output_state[i],
+            ));
         }
 
         assertions
@@ -268,9 +272,9 @@ impl Air for RpoAir {
         // Columns 1-12: ARK constants for each state element
         //
         // The periodic value at row r controls the transition r → r+1
-        
+
         let trace_len = ROWS_PER_PERMUTATION;
-        
+
         // Half-round type selector:
         // Row 0 → 1: forward sbox (type 1), uses ARK1[0]
         // Row 1 → 2: inverse sbox (type 2), uses ARK2[0]
@@ -284,11 +288,11 @@ impl Air for RpoAir {
         let mut half_round_type = Vec::with_capacity(trace_len);
         for row in 0..trace_len {
             let val = if row >= 14 {
-                0  // Rows 14, 15: padding transition or last row
+                0 // Rows 14, 15: padding transition or last row
             } else if row % 2 == 0 {
-                1  // Even rows (0,2,4,...,12): forward sbox transition
+                1 // Even rows (0,2,4,...,12): forward sbox transition
             } else {
-                2  // Odd rows (1,3,5,...,13): inverse sbox transition
+                2 // Odd rows (1,3,5,...,13): inverse sbox transition
             };
             half_round_type.push(BaseElement::new(val));
         }
@@ -299,7 +303,7 @@ impl Air for RpoAir {
         // Row 1: ARK2[0] (inverse sbox for round 0)
         // Row 2: ARK1[1] (forward sbox for round 1)
         // etc.
-        let mut ark_columns: [Vec<BaseElement>; STATE_WIDTH] = 
+        let mut ark_columns: [Vec<BaseElement>; STATE_WIDTH] =
             core::array::from_fn(|_| Vec::with_capacity(trace_len));
 
         for row in 0..trace_len {
@@ -405,7 +409,10 @@ impl RpoProver {
     }
 
     /// Get the output state after permutation
-    pub fn compute_output(&self, input_state: [BaseElement; STATE_WIDTH]) -> [BaseElement; STATE_WIDTH] {
+    pub fn compute_output(
+        &self,
+        input_state: [BaseElement; STATE_WIDTH],
+    ) -> [BaseElement; STATE_WIDTH] {
         let mut state = input_state;
 
         for round in 0..NUM_ROUNDS {
@@ -508,7 +515,11 @@ fn apply_mds(state: &mut [BaseElement; STATE_WIDTH]) {
 
 /// Add round constants to state
 fn add_constants(state: &mut [BaseElement; STATE_WIDTH], round: usize, first_half: bool) {
-    let constants = if first_half { &ARK1[round] } else { &ARK2[round] };
+    let constants = if first_half {
+        &ARK1[round]
+    } else {
+        &ARK2[round]
+    };
 
     for i in 0..STATE_WIDTH {
         state[i] += constants[i];

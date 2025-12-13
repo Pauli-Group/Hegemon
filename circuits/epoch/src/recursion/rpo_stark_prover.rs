@@ -25,15 +25,15 @@ use winter_air::{ProofOptions, TraceInfo};
 use winter_crypto::MerkleTree;
 use winter_math::FieldElement;
 use winterfell::{
-    matrix::ColMatrix,
-    math::fields::f64::BaseElement,
-    AuxRandElements, ConstraintCompositionCoefficients, DefaultConstraintCommitment,
-    DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions, Prover, StarkDomain,
-    TracePolyTable, TraceTable, CompositionPoly, CompositionPolyTrace,
-    Proof, AcceptableOptions, verify,
+    math::fields::f64::BaseElement, matrix::ColMatrix, verify, AcceptableOptions, AuxRandElements,
+    CompositionPoly, CompositionPolyTrace, ConstraintCompositionCoefficients,
+    DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions,
+    Proof, Prover, StarkDomain, TracePolyTable, TraceTable,
 };
 
-use super::rpo_air::{RpoAir, RpoPublicInputs, STATE_WIDTH, NUM_ROUNDS, TRACE_WIDTH, ROWS_PER_PERMUTATION};
+use super::rpo_air::{
+    RpoAir, RpoPublicInputs, NUM_ROUNDS, ROWS_PER_PERMUTATION, STATE_WIDTH, TRACE_WIDTH,
+};
 use super::rpo_proof::RpoProofOptions;
 
 // Type aliases for RPO-based STARK components
@@ -120,7 +120,10 @@ impl RpoStarkProver {
     }
 
     /// Compute the output state after RPO permutation.
-    pub fn compute_output(&self, input_state: [BaseElement; STATE_WIDTH]) -> [BaseElement; STATE_WIDTH] {
+    pub fn compute_output(
+        &self,
+        input_state: [BaseElement; STATE_WIDTH],
+    ) -> [BaseElement; STATE_WIDTH] {
         let mut state = input_state;
 
         for round in 0..NUM_ROUNDS {
@@ -147,10 +150,11 @@ impl RpoStarkProver {
     ) -> Result<(Proof, RpoPublicInputs), String> {
         let trace = self.build_trace(input_state);
         let pub_inputs = self.get_pub_inputs(&trace);
-        
-        let proof = self.prove(trace)
+
+        let proof = self
+            .prove(trace)
             .map_err(|e| format!("Proof generation failed: {:?}", e))?;
-        
+
         Ok((proof, pub_inputs))
     }
 }
@@ -225,7 +229,7 @@ impl Prover for RpoStarkProver {
 // HELPER FUNCTIONS (duplicated from rpo_air.rs to avoid circular deps)
 // ============================================================================
 
-use super::rpo_air::{MDS, ARK1, ARK2, ALPHA, INV_ALPHA};
+use super::rpo_air::{ALPHA, ARK1, ARK2, INV_ALPHA, MDS};
 
 /// Apply MDS matrix multiplication to state
 fn apply_mds(state: &mut [BaseElement; STATE_WIDTH]) {
@@ -242,7 +246,11 @@ fn apply_mds(state: &mut [BaseElement; STATE_WIDTH]) {
 
 /// Add round constants to state
 fn add_constants(state: &mut [BaseElement; STATE_WIDTH], round: usize, first_half: bool) {
-    let constants = if first_half { &ARK1[round] } else { &ARK2[round] };
+    let constants = if first_half {
+        &ARK1[round]
+    } else {
+        &ARK2[round]
+    };
     for i in 0..STATE_WIDTH {
         state[i] += constants[i];
     }
@@ -296,18 +304,16 @@ pub fn prove_epoch_with_rpo(
     let prover = RpoStarkProver::from_rpo_options(options);
     let trace = prover.build_trace(input_state);
     let pub_inputs = prover.get_pub_inputs(&trace);
-    
-    let proof = prover.prove(trace)
+
+    let proof = prover
+        .prove(trace)
         .map_err(|e| format!("Proof generation failed: {:?}", e))?;
-    
+
     Ok((proof, pub_inputs))
 }
 
 /// Verify an RPO STARK proof.
-pub fn verify_epoch_with_rpo(
-    proof: &Proof,
-    pub_inputs: &RpoPublicInputs,
-) -> Result<(), String> {
+pub fn verify_epoch_with_rpo(proof: &Proof, pub_inputs: &RpoPublicInputs) -> Result<(), String> {
     let acceptable = default_acceptable_options();
     verify_rpo_proof(proof, pub_inputs, &acceptable)
 }
@@ -327,9 +333,9 @@ mod tests {
     fn test_rpo_trace_generation() {
         let prover = RpoStarkProver::fast();
         let input = [BaseElement::new(1); STATE_WIDTH];
-        
+
         let trace = prover.build_trace(input);
-        
+
         assert_eq!(trace.length(), ROWS_PER_PERMUTATION);
         assert_eq!(trace.width(), TRACE_WIDTH);
     }
@@ -338,10 +344,10 @@ mod tests {
     fn test_rpo_compute_output_deterministic() {
         let prover = RpoStarkProver::fast();
         let input = [BaseElement::new(42); STATE_WIDTH];
-        
+
         let output1 = prover.compute_output(input);
         let output2 = prover.compute_output(input);
-        
+
         assert_eq!(output1, output2);
     }
 
@@ -349,13 +355,14 @@ mod tests {
     fn test_rpo_stark_proof_generation() {
         let prover = RpoStarkProver::fast();
         let input = [BaseElement::new(1); STATE_WIDTH];
-        
-        let (proof, pub_inputs) = prover.prove_rpo_permutation(input)
+
+        let (proof, pub_inputs) = prover
+            .prove_rpo_permutation(input)
             .expect("Proof generation should succeed");
-        
+
         // Verify proof is non-empty
         assert!(!proof.to_bytes().is_empty());
-        
+
         // Verify public inputs are correct
         assert_eq!(pub_inputs.input_state, input);
     }
@@ -364,45 +371,49 @@ mod tests {
     fn test_rpo_stark_proof_verification() {
         let prover = RpoStarkProver::fast();
         let input = [BaseElement::new(123); STATE_WIDTH];
-        
-        let (proof, pub_inputs) = prover.prove_rpo_permutation(input)
+
+        let (proof, pub_inputs) = prover
+            .prove_rpo_permutation(input)
             .expect("Proof generation should succeed");
-        
+
         // Verify the proof
-        verify_epoch_with_rpo(&proof, &pub_inputs)
-            .expect("Proof verification should succeed");
+        verify_epoch_with_rpo(&proof, &pub_inputs).expect("Proof verification should succeed");
     }
 
     #[test]
     fn test_rpo_stark_proof_fails_with_wrong_inputs() {
         let prover = RpoStarkProver::fast();
         let input = [BaseElement::new(1); STATE_WIDTH];
-        
-        let (proof, mut pub_inputs) = prover.prove_rpo_permutation(input)
+
+        let (proof, mut pub_inputs) = prover
+            .prove_rpo_permutation(input)
             .expect("Proof generation should succeed");
-        
+
         // Corrupt the public inputs
         pub_inputs.output_state[0] += BaseElement::ONE;
-        
+
         // Verification should fail
         let result = verify_epoch_with_rpo(&proof, &pub_inputs);
-        assert!(result.is_err(), "Verification should fail with corrupted inputs");
+        assert!(
+            result.is_err(),
+            "Verification should fail with corrupted inputs"
+        );
     }
 
     #[test]
     fn test_rpo_stark_multiple_proofs() {
         let prover = RpoStarkProver::fast();
-        
+
         // Generate proofs for different inputs
         for i in 0..3 {
             let mut input = [BaseElement::ZERO; STATE_WIDTH];
             input[0] = BaseElement::new(i as u64);
-            
-            let (proof, pub_inputs) = prover.prove_rpo_permutation(input)
+
+            let (proof, pub_inputs) = prover
+                .prove_rpo_permutation(input)
                 .expect("Proof generation should succeed");
-            
-            verify_epoch_with_rpo(&proof, &pub_inputs)
-                .expect("Proof verification should succeed");
+
+            verify_epoch_with_rpo(&proof, &pub_inputs).expect("Proof verification should succeed");
         }
     }
 }

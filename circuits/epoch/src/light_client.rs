@@ -135,10 +135,8 @@ impl LightClient {
         };
 
         // Create acceptable options set for verification
-        let acceptable = AcceptableOptions::OptionSet(vec![
-            default_epoch_options(),
-            fast_epoch_options(),
-        ]);
+        let acceptable =
+            AcceptableOptions::OptionSet(vec![default_epoch_options(), fast_epoch_options()]);
 
         // Verify the proof
         match verify::<EpochProofAir, Blake3, DefaultRandomCoin<Blake3>, MerkleTree<Blake3>>(
@@ -305,6 +303,71 @@ mod tests {
         assert_eq!(result, VerifyResult::Valid);
         assert_eq!(client.tip_epoch, 0);
         assert!(client.is_epoch_verified(0));
+    }
+
+    #[test]
+    fn test_light_client_sync_recursive_tampered_proof_rejected() {
+        let proof_hashes: Vec<[u8; 32]> = (0..4)
+            .map(|i| {
+                let mut h = [0u8; 32];
+                h[0] = i as u8;
+                h
+            })
+            .collect();
+
+        let mut epoch = Epoch::new(0);
+        epoch.proof_root = compute_proof_root(&proof_hashes);
+        epoch.state_root = [2u8; 32];
+        epoch.nullifier_set_root = [3u8; 32];
+        epoch.commitment_tree_root = [4u8; 32];
+
+        let prover = RecursiveEpochProver::fast();
+        let mut proof = prover.prove_epoch(&epoch, &proof_hashes).unwrap();
+        proof.proof_bytes[0] ^= 1;
+
+        let mut client = LightClient::new();
+        let result = client.sync_recursive(&epoch, &proof);
+        assert_eq!(result, VerifyResult::InvalidProof);
+        assert_eq!(client.num_verified(), 0);
+    }
+
+    #[test]
+    #[ignore = "heavy: generates proof-of-proof (outer StarkVerifierAir proof)"]
+    fn test_light_client_sync_recursive_outer_roundtrip_and_tamper_reject() {
+        let proof_hashes: Vec<[u8; 32]> = (0..4)
+            .map(|i| {
+                let mut h = [0u8; 32];
+                h[0] = i as u8;
+                h
+            })
+            .collect();
+
+        let mut epoch = Epoch::new(0);
+        epoch.proof_root = compute_proof_root(&proof_hashes);
+        epoch.state_root = [2u8; 32];
+        epoch.nullifier_set_root = [3u8; 32];
+        epoch.commitment_tree_root = [4u8; 32];
+
+        let prover = RecursiveEpochProver::fast();
+        let proof = prover.prove_epoch_recursive(&epoch, &proof_hashes).unwrap();
+
+        let mut client = LightClient::new();
+        let result = client.sync_recursive(&epoch, &proof);
+        assert_eq!(result, VerifyResult::Valid);
+
+        // Tamper inner proof bytes: should invalidate outer verification.
+        let mut tampered_inner = proof.clone();
+        tampered_inner.inner_proof_bytes[0] ^= 1;
+        let mut client = LightClient::new();
+        let result = client.sync_recursive(&epoch, &tampered_inner);
+        assert_eq!(result, VerifyResult::InvalidProof);
+
+        // Tamper outer proof bytes: should invalidate verification.
+        let mut tampered_outer = proof;
+        tampered_outer.proof_bytes[0] ^= 1;
+        let mut client = LightClient::new();
+        let result = client.sync_recursive(&epoch, &tampered_outer);
+        assert_eq!(result, VerifyResult::InvalidProof);
     }
 
     #[test]

@@ -57,4 +57,4 @@ pub use verifier::{verify_batch_proof, verify_batch_proof_bytes};
 #[cfg(feature = "rpo-fiat-shamir")]
 pub use rpo_prover::BatchTransactionProverRpo;
 #[cfg(feature = "rpo-fiat-shamir")]
-pub use rpo_verifier::{verify_batch_proof_rpo, verify_batch_proof_bytes_rpo};
+pub use rpo_verifier::{verify_batch_proof_bytes_rpo, verify_batch_proof_rpo};

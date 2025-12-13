@@ -124,8 +124,8 @@ use crate::substrate::mining_worker::{
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
 use crate::substrate::rpc::{
-    HegemonApiServer, HegemonRpc, ProductionRpcService, ShieldedApiServer, ShieldedRpc,
-    WalletApiServer, WalletRpc,
+    EpochApiServer, EpochRpc, HegemonApiServer, HegemonRpc, ProductionRpcService,
+    ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
 };
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
@@ -138,7 +138,7 @@ use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
-use sc_client_api::BlockchainEvents;
+use sc_client_api::{BlockBackend, BlockchainEvents};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sp_api::{ProvideRuntimeApi, StorageChanges};
@@ -146,10 +146,14 @@ use sp_core::H256;
 use sp_inherents::{InherentData, InherentDataProvider};
 use sp_runtime::traits::Header as HeaderT;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 
-use epoch_circuit::{compute_proof_root, Epoch as EpochCircuit, RecursiveEpochProver as EpochRecursiveProver, EPOCH_SIZE as EPOCH_SIZE_BLOCKS};
+use epoch_circuit::{
+    compute_proof_root, Epoch as EpochCircuit, RecursiveEpochProver as EpochRecursiveProver,
+    EPOCH_SIZE as EPOCH_SIZE_BLOCKS,
+};
 
 // Import runtime APIs for difficulty queries
 use runtime::apis::ConsensusApi;
@@ -204,6 +208,21 @@ pub fn take_storage_changes(key: u64) -> Option<HegemonStorageChanges> {
         tracing::warn!(key, "Storage changes not found in cache");
     }
     changes
+}
+
+fn parse_accumulator(bytes: [u8; 32]) -> Result<[epoch_circuit::BaseElement; 4], String> {
+    let mut elements = [epoch_circuit::BaseElement::new(0); 4];
+    for i in 0..4 {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&bytes[i * 8..(i + 1) * 8]);
+        let raw = u64::from_le_bytes(buf);
+        let elem = epoch_circuit::BaseElement::new(raw);
+        if elem.inner() != raw {
+            return Err(format!("non-canonical field element at limb {i}"));
+        }
+        elements[i] = elem;
+    }
+    Ok(elements)
 }
 
 // =============================================================================
@@ -1419,6 +1438,37 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     );
 
     // =========================================================================
+    // Recursive Epoch Proof Store (Phase 3d.2)
+    // =========================================================================
+    //
+    // Proofs are persisted by epoch number so peers can serve historical proofs on request.
+    let recursive_epoch_proofs_dir = std::env::var("HEGEMON_RECURSIVE_EPOCH_PROOFS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| config.base_path.path().join("recursive-epoch-proofs"));
+    let recursive_epoch_proof_store: Arc<
+        Mutex<crate::substrate::epoch_proofs::RecursiveEpochProofStore>,
+    > = Arc::new(Mutex::new(
+        crate::substrate::epoch_proofs::RecursiveEpochProofStore::open(
+            recursive_epoch_proofs_dir.clone(),
+        )
+        .unwrap_or_else(|e| {
+            tracing::warn!(
+                dir = %recursive_epoch_proofs_dir.display(),
+                error = %e,
+                "Failed to open recursive epoch proof store; continuing with empty store"
+            );
+            crate::substrate::epoch_proofs::RecursiveEpochProofStore::empty(
+                recursive_epoch_proofs_dir.clone(),
+            )
+        }),
+    ));
+    tracing::info!(
+        dir = %recursive_epoch_proofs_dir.display(),
+        stored = recursive_epoch_proof_store.lock().await.len(),
+        "Recursive epoch proof store initialized"
+    );
+
+    // =========================================================================
     // CRITICAL: Spawn Transaction Pool Maintenance Task
     // =========================================================================
     // The transaction pool's internal ForkAwareTxPool spawns background tasks
@@ -1523,12 +1573,21 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 // =======================================================================
                 // Controlled by HEGEMON_RECURSIVE_EPOCH_PROOFS=1 because proof generation is
                 // CPU-intensive.
-                let recursive_epoch_proofs_enabled = std::env::var("HEGEMON_RECURSIVE_EPOCH_PROOFS")
-                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                    .unwrap_or(false);
-                let latest_recursive_epoch_proof: Arc<
-                    Mutex<Option<crate::substrate::network_bridge::RecursiveEpochProofMessage>>,
-                > = Arc::new(Mutex::new(None));
+                let recursive_epoch_proofs_enabled =
+                    std::env::var("HEGEMON_RECURSIVE_EPOCH_PROOFS")
+                        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                        .unwrap_or(false);
+
+                let validate_recursive_epoch_proofs =
+                    std::env::var("HEGEMON_VALIDATE_RECURSIVE_EPOCH_PROOFS")
+                        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                        .unwrap_or(true);
+
+                // Verify/store incoming proofs asynchronously to avoid blocking the network event loop.
+                let (epoch_proof_rx_tx, mut epoch_proof_rx_rx) = mpsc::channel::<(
+                    [u8; 32],
+                    crate::substrate::network_bridge::RecursiveEpochProofMessage,
+                )>(64);
 
                 // Clone pool_bridge for use in network event handler
                 let pool_bridge_clone = Arc::clone(&pool_bridge);
@@ -1548,8 +1607,178 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                 // Clone client for the network event handler to send our best block
                 let client_for_network = client.clone();
-                let latest_recursive_epoch_proof_for_handler =
-                    Arc::clone(&latest_recursive_epoch_proof);
+                let recursive_epoch_proof_store_for_handler =
+                    Arc::clone(&recursive_epoch_proof_store);
+
+                // Spawn a single verifier worker for incoming recursive epoch proofs.
+                let recursive_epoch_proof_store_for_worker =
+                    Arc::clone(&recursive_epoch_proof_store);
+                let client_for_epoch_proof_worker = client.clone();
+                let task_handle_for_epoch_proof_worker = task_manager.spawn_handle();
+                task_handle_for_epoch_proof_worker.spawn(
+                    "recursive-epoch-proof-receiver",
+                    Some("network"),
+                    async move {
+                        const MAX_OUTER_PROOF_BYTES: usize = 1024 * 1024;
+                        const MAX_INNER_PROOF_BYTES: usize = 1024 * 1024;
+
+                        while let Some((peer_id, msg)) = epoch_proof_rx_rx.recv().await {
+                            if msg.proof_bytes.len() > MAX_OUTER_PROOF_BYTES
+                                || msg.inner_proof_bytes.len() > MAX_INNER_PROOF_BYTES
+                            {
+                                tracing::warn!(
+                                    peer = %hex::encode(peer_id),
+                                    epoch_number = msg.epoch_number,
+                                    proof_bytes = msg.proof_bytes.len(),
+                                    inner_bytes = msg.inner_proof_bytes.len(),
+                                    "Dropping recursive epoch proof (exceeds size limit)"
+                                );
+                                continue;
+                            }
+
+                            // Basic epoch consistency checks to avoid wasting cycles on junk.
+                            let expected_start = msg.epoch_number.saturating_mul(EPOCH_SIZE_BLOCKS);
+                            let expected_end = expected_start + (EPOCH_SIZE_BLOCKS - 1);
+                            if msg.start_block != expected_start || msg.end_block != expected_end {
+                                tracing::warn!(
+                                    peer = %hex::encode(peer_id),
+                                    epoch_number = msg.epoch_number,
+                                    start_block = msg.start_block,
+                                    end_block = msg.end_block,
+                                    expected_start,
+                                    expected_end,
+                                    "Dropping recursive epoch proof (epoch range mismatch)"
+                                );
+                                continue;
+                            }
+
+                            let epoch = EpochCircuit {
+                                epoch_number: msg.epoch_number,
+                                start_block: msg.start_block,
+                                end_block: msg.end_block,
+                                proof_root: msg.proof_root,
+                                state_root: msg.state_root,
+                                nullifier_set_root: msg.nullifier_set_root,
+                                commitment_tree_root: msg.commitment_tree_root,
+                            };
+                            let expected_commitment = epoch.commitment();
+                            if msg.epoch_commitment != expected_commitment {
+                                tracing::warn!(
+                                    peer = %hex::encode(peer_id),
+                                    epoch_number = msg.epoch_number,
+                                    "Dropping recursive epoch proof (epoch commitment mismatch)"
+                                );
+                                continue;
+                            }
+
+                            // Avoid re-verifying proofs we already have.
+                            {
+                                let store = recursive_epoch_proof_store_for_worker.lock().await;
+                                if store.get(msg.epoch_number).is_some() {
+                                    continue;
+                                }
+                            }
+
+                            // Reject proofs for epochs ahead of our current tip (helps avoid spam).
+                            let best_number: u64 = client_for_epoch_proof_worker
+                                .chain_info()
+                                .best_number
+                                .try_into()
+                                .unwrap_or(0);
+                            let best_epoch = best_number / EPOCH_SIZE_BLOCKS;
+                            if msg.epoch_number > best_epoch.saturating_add(1) {
+                                tracing::warn!(
+                                    peer = %hex::encode(peer_id),
+                                    epoch_number = msg.epoch_number,
+                                    best_epoch,
+                                    "Dropping recursive epoch proof (epoch too far ahead)"
+                                );
+                                continue;
+                            }
+
+                            let proof_accumulator = match parse_accumulator(msg.proof_accumulator) {
+                                Ok(a) => a,
+                                Err(e) => {
+                                    tracing::warn!(
+                                        peer = %hex::encode(peer_id),
+                                        epoch_number = msg.epoch_number,
+                                        error = %e,
+                                        "Dropping recursive epoch proof (bad accumulator encoding)"
+                                    );
+                                    continue;
+                                }
+                            };
+
+                            let proof = epoch_circuit::recursion::RecursiveEpochProof {
+                                proof_bytes: msg.proof_bytes.clone(),
+                                inner_proof_bytes: msg.inner_proof_bytes.clone(),
+                                epoch_commitment: msg.epoch_commitment,
+                                proof_accumulator,
+                                num_proofs: msg.num_proofs,
+                                is_recursive: msg.is_recursive,
+                            };
+
+                            if validate_recursive_epoch_proofs {
+                                let epoch_clone = epoch.clone();
+                                let proof_clone = proof.clone();
+                                let ok = tokio::task::spawn_blocking(move || {
+                                    EpochRecursiveProver::fast()
+                                        .verify_epoch_proof(&proof_clone, &epoch_clone)
+                                })
+                                .await
+                                .unwrap_or(false);
+
+                                if !ok {
+                                    tracing::warn!(
+                                        peer = %hex::encode(peer_id),
+                                        epoch_number = msg.epoch_number,
+                                        "Rejected recursive epoch proof (verification failed)"
+                                    );
+                                    continue;
+                                }
+                            }
+
+                            let (inserted, store_dir) = {
+                                let mut store = recursive_epoch_proof_store_for_worker.lock().await;
+                                let store_dir = store.dir().to_path_buf();
+                                let inserted = matches!(
+                                    store.insert(msg.clone()),
+                                    crate::substrate::epoch_proofs::InsertOutcome::Inserted
+                                );
+                                (inserted, store_dir)
+                            };
+                            if !inserted {
+                                continue;
+                            }
+
+                            let msg_for_persist = msg.clone();
+                            tokio::task::spawn_blocking(move || {
+                                let store =
+                                    crate::substrate::epoch_proofs::RecursiveEpochProofStore::empty(
+                                        store_dir,
+                                    );
+                                if let Err(e) = store.persist(&msg_for_persist) {
+                                    tracing::warn!(
+                                        epoch_number = msg_for_persist.epoch_number,
+                                        error = %e,
+                                        "Failed to persist recursive epoch proof to disk"
+                                    );
+                                }
+                            })
+                            .await
+                            .ok();
+
+                            tracing::info!(
+                                peer = %hex::encode(peer_id),
+                                epoch_number = msg.epoch_number,
+                                proof_bytes = msg.proof_bytes.len(),
+                                inner_bytes = msg.inner_proof_bytes.len(),
+                                is_recursive = msg.is_recursive,
+                                "Stored recursive epoch proof"
+                            );
+                        }
+                    },
+                );
 
                 // Spawn the PQ network event handler task with sync integration
                 task_manager.spawn_handle().spawn(
@@ -1661,25 +1890,47 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                                     // If we have a recursive epoch proof available, send it immediately so late joiners
                                     // can validate epochs without waiting for the next epoch boundary broadcast.
-                                    if let Some(msg) = latest_recursive_epoch_proof_for_handler
+                                    if let Some(msg) = recursive_epoch_proof_store_for_handler
                                         .lock()
                                         .await
-                                        .clone()
+                                        .latest()
+                                        .cloned()
                                     {
-                                        use crate::substrate::network_bridge::RECURSIVE_EPOCH_PROOFS_PROTOCOL;
-                                        let encoded = msg.encode();
+                                        use crate::substrate::network_bridge::{
+                                            RecursiveEpochProofProtocolMessage,
+                                            RECURSIVE_EPOCH_PROOFS_PROTOCOL,
+                                            RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2,
+                                        };
+
+                                        let v1 = msg.encode();
+                                        let v2 = RecursiveEpochProofProtocolMessage::Proof(msg.clone()).encode();
+
                                         if let Err(e) = pq_handle_for_status
                                             .send_message(
                                                 peer_id,
                                                 RECURSIVE_EPOCH_PROOFS_PROTOCOL.to_string(),
-                                                encoded,
+                                                v1,
                                             )
                                             .await
                                         {
                                             tracing::warn!(
                                                 peer = %hex::encode(peer_id),
                                                 error = %e,
-                                                "Failed to send recursive epoch proof to new peer"
+                                                "Failed to send v1 recursive epoch proof to new peer"
+                                            );
+                                        }
+                                        if let Err(e) = pq_handle_for_status
+                                            .send_message(
+                                                peer_id,
+                                                RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2.to_string(),
+                                                v2,
+                                            )
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                peer = %hex::encode(peer_id),
+                                                error = %e,
+                                                "Failed to send v2 recursive epoch proof to new peer"
                                             );
                                         } else {
                                             tracing::info!(
@@ -1789,9 +2040,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                 "Received recursive epoch proof"
                                             );
 
-                                            *latest_recursive_epoch_proof_for_handler
-                                                .lock()
-                                                .await = Some(msg);
+                                            let _ = epoch_proof_rx_tx.try_send((peer_id, msg));
                                         } else {
                                             tracing::warn!(
                                                 peer = %hex::encode(peer_id),
@@ -1799,6 +2048,60 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                 data_len = data.len(),
                                                 "Failed to decode recursive epoch proof message"
                                             );
+                                        }
+                                    }
+                                    // Handle recursive epoch proofs (v2 request/response)
+                                    else if protocol == crate::substrate::network_bridge::RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2 {
+                                        use crate::substrate::network_bridge::{
+                                            RecursiveEpochProofProtocolMessage,
+                                            RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2,
+                                        };
+
+                                        match RecursiveEpochProofProtocolMessage::decode(&mut &data[..]) {
+                                            Ok(RecursiveEpochProofProtocolMessage::Request { epoch_number }) => {
+                                                let msg_opt = recursive_epoch_proof_store_for_handler
+                                                    .lock()
+                                                    .await
+                                                    .get(epoch_number)
+                                                    .cloned();
+                                                let response = match msg_opt {
+                                                    Some(msg) => RecursiveEpochProofProtocolMessage::Proof(msg),
+                                                    None => RecursiveEpochProofProtocolMessage::NotFound { epoch_number },
+                                                };
+                                                if let Err(e) = pq_handle_for_sync
+                                                    .send_message(
+                                                        peer_id,
+                                                        RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2.to_string(),
+                                                        response.encode(),
+                                                    )
+                                                    .await
+                                                {
+                                                    tracing::warn!(
+                                                        peer = %hex::encode(peer_id),
+                                                        error = %e,
+                                                        "Failed to respond to recursive epoch proof request"
+                                                    );
+                                                }
+                                            }
+                                            Ok(RecursiveEpochProofProtocolMessage::Proof(msg)) => {
+                                                let _ = epoch_proof_rx_tx.try_send((peer_id, msg));
+                                            }
+                                            Ok(RecursiveEpochProofProtocolMessage::NotFound { epoch_number }) => {
+                                                tracing::info!(
+                                                    peer = %hex::encode(peer_id),
+                                                    epoch_number,
+                                                    "Peer reported recursive epoch proof not found"
+                                                );
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(peer_id),
+                                                    protocol = %protocol,
+                                                    error = %e,
+                                                    data_len = data.len(),
+                                                    "Failed to decode v2 recursive epoch proof message"
+                                                );
+                                            }
                                         }
                                     }
                                     // Handle block announce messages - update peer's best height
@@ -1906,17 +2209,21 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 // any that haven't been broadcast yet.
                 let transaction_pool_for_prop = transaction_pool.clone();
 
-                task_manager.spawn_handle().spawn(
-                    "tx-propagation",
-                    Some("txpool"),
-                    async move {
-                        use crate::substrate::network_bridge::{TransactionMessage, TRANSACTIONS_PROTOCOL};
-                        use sc_transaction_pool_api::{InPoolTransaction, TransactionPool as ScTransactionPool};
+                task_manager
+                    .spawn_handle()
+                    .spawn("tx-propagation", Some("txpool"), async move {
+                        use crate::substrate::network_bridge::{
+                            TransactionMessage, TRANSACTIONS_PROTOCOL,
+                        };
+                        use sc_transaction_pool_api::{
+                            InPoolTransaction, TransactionPool as ScTransactionPool,
+                        };
                         use std::collections::HashSet;
 
                         // Track transactions we've already broadcast
                         let mut broadcast_txs: HashSet<sp_core::H256> = HashSet::new();
-                        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
+                        let mut interval =
+                            tokio::time::interval(tokio::time::Duration::from_millis(500));
 
                         tracing::info!("Transaction propagation task started");
 
@@ -1969,14 +2276,14 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             // will evict transactions after a while anyway
                             if broadcast_txs.len() > 10000 {
                                 // Simple strategy: clear half the set
-                                let to_remove: Vec<_> = broadcast_txs.iter().take(5000).copied().collect();
+                                let to_remove: Vec<_> =
+                                    broadcast_txs.iter().take(5000).copied().collect();
                                 for h in to_remove {
                                     broadcast_txs.remove(&h);
                                 }
                             }
                         }
-                    },
-                );
+                    });
 
                 tracing::info!("Transaction propagation task spawned");
 
@@ -1986,15 +2293,17 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 if recursive_epoch_proofs_enabled {
                     let client_for_epoch_proofs = client.clone();
                     let pq_handle_for_epoch_broadcast = pq_handle_for_epoch_proofs.clone();
-                    let latest_recursive_epoch_proof_for_generator =
-                        Arc::clone(&latest_recursive_epoch_proof);
+                    let recursive_epoch_proof_store_for_generator =
+                        Arc::clone(&recursive_epoch_proof_store);
 
                     task_manager.spawn_handle().spawn(
                         "recursive-epoch-proofs",
                         Some("epoch"),
                         async move {
                             use crate::substrate::network_bridge::{
-                                RecursiveEpochProofMessage, RECURSIVE_EPOCH_PROOFS_PROTOCOL,
+                                RecursiveEpochProofMessage, RecursiveEpochProofProtocolMessage,
+                                RECURSIVE_EPOCH_PROOFS_PROTOCOL,
+                                RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2,
                             };
                             use futures::StreamExt;
 
@@ -2137,14 +2446,45 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         is_recursive: recursive_proof.is_recursive,
                                     };
 
-                                    *latest_recursive_epoch_proof_for_generator.lock().await =
-                                        Some(msg.clone());
+                                    let (inserted, store_dir) = {
+                                        let mut store =
+                                            recursive_epoch_proof_store_for_generator.lock().await;
+                                        let store_dir = store.dir().to_path_buf();
+                                        let inserted = matches!(
+                                            store.insert(msg.clone()),
+                                            crate::substrate::epoch_proofs::InsertOutcome::Inserted
+                                        );
+                                        (inserted, store_dir)
+                                    };
 
-                                    let encoded = msg.encode();
-                                    let failed = pq_handle_for_epoch_broadcast
+                                    if inserted {
+                                        let msg_for_persist = msg.clone();
+                                        tokio::task::spawn_blocking(move || {
+                                            let store = crate::substrate::epoch_proofs::RecursiveEpochProofStore::empty(store_dir);
+                                            if let Err(e) = store.persist(&msg_for_persist) {
+                                                tracing::warn!(
+                                                    epoch_number = msg_for_persist.epoch_number,
+                                                    error = %e,
+                                                    "Failed to persist generated recursive epoch proof to disk"
+                                                );
+                                            }
+                                        })
+                                        .await
+                                        .ok();
+                                    }
+
+                                    let encoded_v1 = msg.encode();
+                                    let encoded_v2 = RecursiveEpochProofProtocolMessage::Proof(msg.clone()).encode();
+                                    let failed_v1 = pq_handle_for_epoch_broadcast
                                         .broadcast_to_all(
                                             RECURSIVE_EPOCH_PROOFS_PROTOCOL,
-                                            encoded,
+                                            encoded_v1,
+                                        )
+                                        .await;
+                                    let failed_v2 = pq_handle_for_epoch_broadcast
+                                        .broadcast_to_all(
+                                            RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2,
+                                            encoded_v2,
                                         )
                                         .await;
 
@@ -2152,8 +2492,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         finished_epoch,
                                         proof_bytes = msg.proof_bytes.len(),
                                         inner_bytes = msg.inner_proof_bytes.len(),
-                                        failed_peers = failed.len(),
-                                        "📡 Broadcast recursive epoch proof to peers"
+                                        failed_peers_v1 = failed_v1.len(),
+                                        failed_peers_v2 = failed_v2.len(),
+                                        "📡 Broadcast recursive epoch proof to peers (v1+v2)"
                                     );
                                 }
                             }
@@ -2968,6 +3309,17 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             tracing::warn!(error = %e, "Failed to merge Shielded RPC");
         } else {
             tracing::info!("Shielded RPC wired (shielded_submitTransfer, etc.)");
+        }
+
+        // Add Epoch RPC (recursive epoch proofs)
+        let epoch_rpc = EpochRpc::new(
+            recursive_epoch_proof_store.clone(),
+            pq_network_handle.clone(),
+        );
+        if let Err(e) = module.merge(epoch_rpc.into_rpc()) {
+            tracing::warn!(error = %e, "Failed to merge Epoch RPC");
+        } else {
+            tracing::info!("Epoch RPC wired (epoch_getRecursiveProof, etc.)");
         }
 
         module

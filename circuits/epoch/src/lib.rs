@@ -73,12 +73,13 @@ pub use prover::{
 };
 
 // Recursive proof generation (RPO-based for STARK recursion)
-pub use recursion::{
-    RecursiveEpochProof, RecursiveEpochProver, RpoAir, RpoProofOptions,
-};
+pub use recursion::{RecursiveEpochProof, RecursiveEpochProver, RpoAir, RpoProofOptions};
 
 // Re-export winterfell Proof type for pallet usage
 pub use winterfell::Proof;
+
+// Re-export BaseElement for consumers that need to construct recursion metadata.
+pub use winter_math::fields::f64::BaseElement;
 
 // Light client
 pub use light_client::{LightClient, VerifyResult};

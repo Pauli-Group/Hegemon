@@ -28,24 +28,40 @@
 //! - Merkle path verifications for query authentication
 //! - FRI folding verifications
 //! - Constraint evaluation checks
+//!
+//! ### Column Map (High-Level)
+//!
+//! The trace is a single wide table where column ranges are allocated contiguously:
+//!
+//! ```text
+//! 0 .. RPO_TRACE_WIDTH-1                       RPO sponge state (+ round counter)
+//! RPO_TRACE_WIDTH .. BASE_VERIFIER_TRACE_WIDTH-1   carry/reseed masks + reseed word
+//! BASE_VERIFIER_TRACE_WIDTH .. BASE_TRANSCRIPT_TRACE_WIDTH-1
+//!     transcript staging (coeff/z/deep/fri/query draws)
+//! BASE_TRANSCRIPT_TRACE_WIDTH .. BASE_RECURSION_TRACE_WIDTH-1
+//!     query-position decomp + Merkle index + OOD/coeff snapshots
+//! BASE_RECURSION_TRACE_WIDTH .. VERIFIER_TRACE_WIDTH-1
+//!     DEEP accumulators + FRI remainder checks
+//! ```
+//!
+//! For exact offsets, see the `COL_*` constants below.
 
+use miden_crypto::rand::RpoRandomCoin;
+use miden_crypto::Word;
 use winter_air::{
     Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
     TransitionConstraintDegree,
 };
-use miden_crypto::rand::RpoRandomCoin;
-use miden_crypto::Word;
 use winter_crypto::RandomCoin;
 use winter_math::{FieldElement, StarkField, ToElements};
 use winterfell::math::fields::f64::BaseElement;
 
-use super::rpo_air::{
-    STATE_WIDTH, ROWS_PER_PERMUTATION, NUM_ROUNDS, MDS, ARK1, ARK2,
-    TRACE_WIDTH as RPO_TRACE_WIDTH,
-};
-use super::merkle_air::DIGEST_WIDTH;
-use winter_air::DeepCompositionCoefficients;
 use super::fri_air::MAX_FRI_LAYERS;
+use super::merkle_air::DIGEST_WIDTH;
+use super::rpo_air::{
+    ARK1, ARK2, MDS, NUM_ROUNDS, ROWS_PER_PERMUTATION, STATE_WIDTH, TRACE_WIDTH as RPO_TRACE_WIDTH,
+};
+use winter_air::DeepCompositionCoefficients;
 
 const CAPACITY_WIDTH: usize = 4;
 pub(crate) const RATE_WIDTH: usize = 8;
@@ -153,16 +169,16 @@ pub struct StarkVerifierPublicInputs {
     pub inner_public_inputs: Vec<BaseElement>,
     /// Hash of the inner proof's public inputs
     pub inner_pub_inputs_hash: [BaseElement; DIGEST_WIDTH],
-    
+
     /// Trace commitment (Merkle root of trace polynomial evaluations)
     pub trace_commitment: [BaseElement; DIGEST_WIDTH],
-    
+
     /// Constraint commitment (Merkle root of constraint evaluations)
     pub constraint_commitment: [BaseElement; DIGEST_WIDTH],
-    
+
     /// FRI layer commitments (Merkle roots)
     pub fri_commitments: Vec<[BaseElement; DIGEST_WIDTH]>,
-    
+
     /// Security parameters
     pub num_queries: usize,
     /// Number of query draws in the inner proof options (before dedup).
@@ -208,23 +224,23 @@ impl StarkVerifierPublicInputs {
 impl ToElements<BaseElement> for StarkVerifierPublicInputs {
     fn to_elements(&self) -> Vec<BaseElement> {
         let mut elements = Vec::new();
-        
+
         elements.extend_from_slice(&self.inner_public_inputs);
         elements.extend_from_slice(&self.inner_pub_inputs_hash);
         elements.extend_from_slice(&self.trace_commitment);
         elements.extend_from_slice(&self.constraint_commitment);
-        
+
         for commitment in &self.fri_commitments {
             elements.extend_from_slice(commitment);
         }
-        
+
         elements.push(BaseElement::new(self.num_queries as u64));
         elements.push(BaseElement::new(self.num_draws as u64));
         elements.push(BaseElement::new(self.trace_partition_size as u64));
         elements.push(BaseElement::new(self.constraint_partition_size as u64));
         elements.push(BaseElement::new(self.blowup_factor as u64));
         elements.push(BaseElement::new(self.trace_length as u64));
-        
+
         elements
     }
 }
@@ -262,7 +278,7 @@ impl Air for StarkVerifierAir {
         // - Merkle path verification (degree 8 from RPO)
         // - FRI folding (degree 2)
         // - Constraint evaluation checks (varies)
-        
+
         // Constraints:
         // - RPO permutation constraints for sponge permutations (STATE_WIDTH)
         // - Boundary relations between stacked permutations:
@@ -321,15 +337,14 @@ impl Air for StarkVerifierAir {
 
         let base_boundary_constraints = 3 * DIGEST_WIDTH + 10 + 3 * RATE_WIDTH + 2;
         let num_root_masks = 2 + num_fri_layers; // trace, constraint, and each committed FRI layer
-        let merkle_constraints =
-            1 // intra-leaf chaining
+        let merkle_constraints = 1 // intra-leaf chaining
             + 1 // path-bit binary
             + DIGEST_WIDTH // digest carryover into next permutation
             + 1 // index shift relation (idx_cur = 2*idx_next + bit)
             + num_root_masks // index must be 0 at each root boundary
             + num_root_masks * DIGEST_WIDTH; // root digest checks
-        // Query-position draw_integers + binding-check constraints.
-        const POS_DECOMP_CONSTRAINTS: usize = 31;
+                                             // Query-position draw_integers + binding-check constraints.
+        const POS_DECOMP_CONSTRAINTS: usize = 32;
         // OOD digest + coin-state save/restore constraints.
         const OOD_STATE_CONSTRAINTS: usize = DIGEST_WIDTH // ood digest constant columns
             + STATE_WIDTH // saved coin-state constant columns
@@ -338,7 +353,7 @@ impl Air for StarkVerifierAir {
             + DIGEST_WIDTH // capture digest at end of OOD hash segment
             + STATE_WIDTH // capture coin state at z boundary
             + STATE_WIDTH; // restore coin state (+digest) at deep-start row
-        // Store transcript-drawn coefficients (for later DEEP/FRI checks).
+                           // Store transcript-drawn coefficients (for later DEEP/FRI checks).
         let transcript_store_constraints = NUM_CONSTRAINT_COEFFS // stored constraint coeffs
             + NUM_DEEP_COEFFS // stored deep coeffs
             + MAX_FRI_LAYERS // stored alphas (max slots)
@@ -358,14 +373,13 @@ impl Air for StarkVerifierAir {
             + num_fri_layers // FRI folding checks
             + (num_fri_layers > 0) as usize; // remainder evaluation check
 
-        let num_constraints =
-            STATE_WIDTH
-                + base_boundary_constraints
-                + merkle_constraints
-                + POS_DECOMP_CONSTRAINTS
-                + OOD_STATE_CONSTRAINTS
-                + transcript_store_constraints
-                + deep_fri_constraints;
+        let num_constraints = STATE_WIDTH
+            + base_boundary_constraints
+            + merkle_constraints
+            + POS_DECOMP_CONSTRAINTS
+            + OOD_STATE_CONSTRAINTS
+            + transcript_store_constraints
+            + deep_fri_constraints;
         let mut degrees = Vec::with_capacity(num_constraints);
 
         // RPO transition constraints are gated by two periodic selectors:
@@ -385,7 +399,10 @@ impl Air for StarkVerifierAir {
         // Boundary relation constraints are quadratic in trace columns (mask * linear diff)
         // and gated by the periodic boundary mask.
         for _ in 0..base_boundary_constraints {
-            degrees.push(TransitionConstraintDegree::with_cycles(2, vec![ROWS_PER_PERMUTATION]));
+            degrees.push(TransitionConstraintDegree::with_cycles(
+                2,
+                vec![ROWS_PER_PERMUTATION],
+            ));
         }
 
         // Merkle authentication constraints.
@@ -457,7 +474,10 @@ impl Air for StarkVerifierAir {
             ));
         }
         // 4) Select raw value from buffer on decomp first row.
-        degrees.push(TransitionConstraintDegree::with_cycles(3, boundary_only.clone()));
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            3,
+            boundary_only.clone(),
+        ));
 
         // 5) Bit boolean constraints (4 bits per row).
         for _ in 0..4 {
@@ -465,7 +485,10 @@ impl Air for StarkVerifierAir {
         }
 
         // 6) Accumulator init + update + boundary equality.
-        degrees.push(TransitionConstraintDegree::with_cycles(2, boundary_only.clone())); // acc init
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            2,
+            boundary_only.clone(),
+        )); // acc init
         degrees.push(TransitionConstraintDegree::with_cycles(
             2,
             vec![ROWS_PER_PERMUTATION, ROWS_PER_PERMUTATION],
@@ -476,7 +499,10 @@ impl Air for StarkVerifierAir {
         )); // acc = raw
 
         // 7) Low-limb init + update + freeze.
-        degrees.push(TransitionConstraintDegree::with_cycles(2, boundary_only.clone())); // lo init
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            2,
+            boundary_only.clone(),
+        )); // lo init
         degrees.push(TransitionConstraintDegree::with_cycles(
             2,
             vec![
@@ -491,14 +517,27 @@ impl Air for StarkVerifierAir {
         )); // lo freeze
 
         // 8) Masked accumulator init + update.
-        degrees.push(TransitionConstraintDegree::with_cycles(2, boundary_only.clone())); // masked init
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            2,
+            boundary_only.clone(),
+        )); // masked init
         degrees.push(TransitionConstraintDegree::with_cycles(
             2,
             vec![ROWS_PER_PERMUTATION, ROWS_PER_PERMUTATION],
         )); // masked update (perm_mask * wmask)
 
+        // 8b) Bind the draw value used by the multiset accumulator to the transcript-derived
+        // masked position (low depth bits of the raw draw).
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            2,
+            vec![ROWS_PER_PERMUTATION, ROWS_PER_PERMUTATION],
+        ));
+
         // 9) High-limb AND init + update.
-        degrees.push(TransitionConstraintDegree::with_cycles(2, boundary_only.clone())); // hi init (row8)
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            2,
+            boundary_only.clone(),
+        )); // hi init (row8)
         degrees.push(TransitionConstraintDegree::with_cycles(
             6,
             vec![ROWS_PER_PERMUTATION, ROWS_PER_PERMUTATION],
@@ -511,10 +550,7 @@ impl Air for StarkVerifierAir {
         ));
 
         // 11) Binding accumulator init + freeze + updates.
-        degrees.push(TransitionConstraintDegree::with_cycles(
-            2,
-            vec![full_cycle],
-        )); // acc init (pos_first_decomp_mask has full-cycle support)
+        degrees.push(TransitionConstraintDegree::with_cycles(2, vec![full_cycle])); // acc init (pos_first_decomp_mask has full-cycle support)
         degrees.push(TransitionConstraintDegree::with_cycles(
             2,
             boundary_and_full.clone(),
@@ -606,10 +642,7 @@ impl Air for StarkVerifierAir {
         }
 
         // (d) x and pow state-machine updates (query reset + trace-index exponentiation + FRI x).
-        degrees.push(TransitionConstraintDegree::with_cycles(
-            3,
-            vec![full_cycle],
-        ));
+        degrees.push(TransitionConstraintDegree::with_cycles(3, vec![full_cycle]));
         degrees.push(TransitionConstraintDegree::with_cycles(2, vec![full_cycle]));
 
         // (e) Evaluation freeze between FRI leaves (disabled on query resets and leaf starts).
@@ -783,16 +816,14 @@ impl Air for StarkVerifierAir {
         let mut merkle_perms_per_query =
             trace_leaf_blocks + depth_trace + constraint_leaf_blocks + depth_trace;
         for layer_idx in 0..num_fri_layers {
-            merkle_perms_per_query +=
-                fri_leaf_blocks + depth_trace.saturating_sub(layer_idx + 1);
+            merkle_perms_per_query += fri_leaf_blocks + depth_trace.saturating_sub(layer_idx + 1);
         }
         let expected_active_perms =
             pre_merkle_perms + pub_inputs.num_queries * merkle_perms_per_query;
 
         if expected_active_perms <= total_perms {
             let leaf_starts_per_query = 2 + num_fri_layers;
-            num_assertions +=
-                pub_inputs.num_queries * leaf_starts_per_query * CAPACITY_WIDTH;
+            num_assertions += pub_inputs.num_queries * leaf_starts_per_query * CAPACITY_WIDTH;
 
             let mut merges_per_query = 2 * depth_trace;
             for layer_idx in 0..num_fri_layers {
@@ -805,8 +836,7 @@ impl Air for StarkVerifierAir {
         // For RpoAir inner proofs with `fri_remainder_max_degree=7`, the remainder polynomial has
         // 8 coefficients and is hashed in a single RPO permutation.
         let remainder_hash_perms = (pub_inputs.fri_commitments.len() > 0) as usize;
-        if remainder_hash_perms > 0 && expected_active_perms + remainder_hash_perms <= total_perms
-        {
+        if remainder_hash_perms > 0 && expected_active_perms + remainder_hash_perms <= total_perms {
             num_assertions += CAPACITY_WIDTH; // sponge init
             num_assertions += DIGEST_WIDTH; // digest == remainder commitment
         }
@@ -983,8 +1013,7 @@ impl Air for StarkVerifierAir {
             // Disable RPO constraints at permutation boundaries; switch to freeze constraints
             // when decomp_mask_rpo = 1.
             result[i] = perm_mask
-                * ((one - decomp_mask_rpo) * rpo_constraint
-                    + decomp_mask_rpo * freeze_constraint);
+                * ((one - decomp_mask_rpo) * rpo_constraint + decomp_mask_rpo * freeze_constraint);
         }
 
         // Boundary relations between stacked permutations.
@@ -1054,8 +1083,7 @@ impl Air for StarkVerifierAir {
 
         for i in 0..RATE_WIDTH {
             let expected = current[COL_COEFF_START + i];
-            result[idx + i] =
-                boundary_mask * coeff_mask * (current[RATE_START + i] - expected);
+            result[idx + i] = boundary_mask * coeff_mask * (current[RATE_START + i] - expected);
         }
         idx += RATE_WIDTH;
 
@@ -1066,8 +1094,7 @@ impl Air for StarkVerifierAir {
         let deep_mask = current[COL_DEEP_MASK];
         for i in 0..RATE_WIDTH {
             let expected = current[COL_DEEP_START + i];
-            result[idx + i] =
-                boundary_mask * deep_mask * (current[RATE_START + i] - expected);
+            result[idx + i] = boundary_mask * deep_mask * (current[RATE_START + i] - expected);
         }
         idx += RATE_WIDTH;
 
@@ -1079,8 +1106,7 @@ impl Air for StarkVerifierAir {
         let pos_mask = current[COL_POS_MASK];
         for i in 0..RATE_WIDTH {
             let expected = current[COL_POS_START + i];
-            result[idx + i] =
-                boundary_mask * pos_mask * (current[RATE_START + i] - expected);
+            result[idx + i] = boundary_mask * pos_mask * (current[RATE_START + i] - expected);
         }
         idx += RATE_WIDTH;
 
@@ -1116,9 +1142,8 @@ impl Air for StarkVerifierAir {
         // idx_cur = 2*idx_next + bit (bit is the least-significant bit of idx_cur).
         let merkle_idx = current[COL_MERKLE_INDEX];
         let merkle_idx_next = next[COL_MERKLE_INDEX];
-        result[idx] = boundary_mask
-            * merkle_chain_mask
-            * (merkle_idx - (merkle_idx_next * two + path_bit));
+        result[idx] =
+            boundary_mask * merkle_chain_mask * (merkle_idx - (merkle_idx_next * two + path_bit));
         idx += 1;
 
         // The index must be fully shifted out (== 0) at each root boundary.
@@ -1145,8 +1170,7 @@ impl Air for StarkVerifierAir {
         for i in 0..DIGEST_WIDTH {
             let digest = current[CAPACITY_WIDTH + i];
             let constraint_root = E::from(self.pub_inputs.constraint_commitment[i]);
-            result[idx + i] =
-                boundary_mask * constraint_root_mask * (digest - constraint_root);
+            result[idx + i] = boundary_mask * constraint_root_mask * (digest - constraint_root);
         }
         idx += DIGEST_WIDTH;
 
@@ -1230,11 +1254,8 @@ impl Air for StarkVerifierAir {
 
         // At the boundary row, `acc` has not yet absorbed the last nibble (row 15),
         // so compare `acc_final` against `raw`.
-        let acc_final = acc
-            + b0 * pos_w_full[0]
-            + b1 * pos_w_full[1]
-            + b2 * pos_w_full[2]
-            + b3 * pos_w_full[3];
+        let acc_final =
+            acc + b0 * pos_w_full[0] + b1 * pos_w_full[1] + b2 * pos_w_full[2] + b3 * pos_w_full[3];
         result[idx] = decomp_mask * boundary_mask * (acc_final - raw);
         idx += 1;
 
@@ -1252,8 +1273,7 @@ impl Air for StarkVerifierAir {
                 + b3 * pos_w_full[3]);
         result[idx] = decomp_mask * pos_lo_mask * perm_mask * lo_update;
         idx += 1;
-        result[idx] =
-            decomp_mask * (one - pos_lo_mask) * perm_mask * (lo_next - lo);
+        result[idx] = decomp_mask * (one - pos_lo_mask) * perm_mask * (lo_next - lo);
         idx += 1;
 
         // (5) Masked accumulator (low `depth_trace` bits).
@@ -1269,6 +1289,18 @@ impl Air for StarkVerifierAir {
                 + b2 * pos_w_masked[2]
                 + b3 * pos_w_masked[3]);
         result[idx] = decomp_mask * perm_mask * masked_update;
+        idx += 1;
+
+        // (5b) Bind the multiset-draw value to the masked raw draw at the decomp boundary.
+        // This prevents the prover from choosing `COL_POS_SORTED_VALUE` independently from the
+        // transcript-derived query draw.
+        let draw_val = current[COL_POS_SORTED_VALUE];
+        let masked_final = masked
+            + b0 * pos_w_masked[0]
+            + b1 * pos_w_masked[1]
+            + b2 * pos_w_masked[2]
+            + b3 * pos_w_masked[3];
+        result[idx] = decomp_mask * boundary_mask * (draw_val - masked_final);
         idx += 1;
 
         // (6) High-limb AND (hi == 2^32-1).
@@ -1297,7 +1329,6 @@ impl Air for StarkVerifierAir {
         let perm_acc = current[COL_POS_PERM_ACC];
         let perm_acc_next = next[COL_POS_PERM_ACC];
         let gamma = expected_gamma;
-        let draw_val = current[COL_POS_SORTED_VALUE];
         let trace_idx = current[COL_MERKLE_INDEX];
 
         // Initialize accumulator at the first decomp row.
@@ -1326,22 +1357,19 @@ impl Air for StarkVerifierAir {
 
         // OOD digest columns are constant across the trace.
         for i in 0..DIGEST_WIDTH {
-            result[idx + i] =
-                next[COL_OOD_DIGEST_START + i] - current[COL_OOD_DIGEST_START + i];
+            result[idx + i] = next[COL_OOD_DIGEST_START + i] - current[COL_OOD_DIGEST_START + i];
         }
         idx += DIGEST_WIDTH;
 
         // Saved coin-state columns are constant across the trace.
         for i in 0..STATE_WIDTH {
-            result[idx + i] =
-                next[COL_SAVED_COIN_START + i] - current[COL_SAVED_COIN_START + i];
+            result[idx + i] = next[COL_SAVED_COIN_START + i] - current[COL_SAVED_COIN_START + i];
         }
         idx += STATE_WIDTH;
 
         // OOD evaluation columns are constant across the trace.
         for i in 0..OOD_EVAL_LEN {
-            result[idx + i] =
-                next[COL_OOD_EVALS_START + i] - current[COL_OOD_EVALS_START + i];
+            result[idx + i] = next[COL_OOD_EVALS_START + i] - current[COL_OOD_EVALS_START + i];
         }
         idx += OOD_EVAL_LEN;
 
@@ -1402,22 +1430,20 @@ impl Air for StarkVerifierAir {
 
         // Stored constraint composition coefficients are constant across the trace.
         for i in 0..NUM_CONSTRAINT_COEFFS {
-            result[idx + i] = next[COL_CONSTRAINT_COEFFS_START + i]
-                - current[COL_CONSTRAINT_COEFFS_START + i];
+            result[idx + i] =
+                next[COL_CONSTRAINT_COEFFS_START + i] - current[COL_CONSTRAINT_COEFFS_START + i];
         }
         idx += NUM_CONSTRAINT_COEFFS;
 
         // Stored DEEP coefficients are constant across the trace.
         for i in 0..NUM_DEEP_COEFFS {
-            result[idx + i] =
-                next[COL_DEEP_COEFFS_START + i] - current[COL_DEEP_COEFFS_START + i];
+            result[idx + i] = next[COL_DEEP_COEFFS_START + i] - current[COL_DEEP_COEFFS_START + i];
         }
         idx += NUM_DEEP_COEFFS;
 
         // Stored FRI alphas are constant across the trace (unused slots are ignored).
         for i in 0..MAX_FRI_LAYERS {
-            result[idx + i] =
-                next[COL_FRI_ALPHA_START + i] - current[COL_FRI_ALPHA_START + i];
+            result[idx + i] = next[COL_FRI_ALPHA_START + i] - current[COL_FRI_ALPHA_START + i];
         }
         idx += MAX_FRI_LAYERS;
 
@@ -1458,8 +1484,8 @@ impl Air for StarkVerifierAir {
 
         // Remainder coefficients are constant across the trace.
         for i in 0..NUM_REMAINDER_COEFFS {
-            result[idx + i] = next[COL_REMAINDER_COEFFS_START + i]
-                - current[COL_REMAINDER_COEFFS_START + i];
+            result[idx + i] =
+                next[COL_REMAINDER_COEFFS_START + i] - current[COL_REMAINDER_COEFFS_START + i];
         }
         idx += NUM_REMAINDER_COEFFS;
 
@@ -1529,10 +1555,8 @@ impl Air for StarkVerifierAir {
             - reset_term_t2
             - trace_leaf0_row_mask * t2_delta0
             - trace_leaf1_row_mask * t2_delta1;
-        result[idx + 2] =
-            c1_next - c1 - reset_term_c1 - constraint_leaf_row_mask * c1_delta;
-        result[idx + 3] =
-            c2_next - c2 - reset_term_c2 - constraint_leaf_row_mask * c2_delta;
+        result[idx + 2] = c1_next - c1 - reset_term_c1 - constraint_leaf_row_mask * c1_delta;
+        result[idx + 3] = c2_next - c2 - reset_term_c2 - constraint_leaf_row_mask * c2_delta;
         idx += 4;
 
         // --- x / pow state machine ---------------------------------------------------------
@@ -1621,9 +1645,7 @@ impl Air for StarkVerifierAir {
 
         // --- Remainder evaluation check ---------------------------------------------------
         if num_fri_layers > 0 {
-            let remainder_mask = *fri_root_masks
-                .last()
-                .unwrap_or(&E::ZERO);
+            let remainder_mask = *fri_root_masks.last().unwrap_or(&E::ZERO);
             let mut acc = E::ZERO;
             for i in 0..NUM_REMAINDER_COEFFS {
                 acc = acc * x + current[COL_REMAINDER_COEFFS_START + i];
@@ -1677,31 +1699,59 @@ impl Air for StarkVerifierAir {
         for block in 0..num_pi_blocks {
             let boundary_row = (block + 1) * ROWS_PER_PERMUTATION - 1;
             if block + 1 < num_pi_blocks {
-                assertions.push(Assertion::single(COL_CARRY_MASK, boundary_row, BaseElement::ONE));
+                assertions.push(Assertion::single(
+                    COL_CARRY_MASK,
+                    boundary_row,
+                    BaseElement::ONE,
+                ));
                 assertions.push(Assertion::single(
                     COL_FULL_CARRY_MASK,
                     boundary_row,
                     BaseElement::ZERO,
                 ));
-                assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
-                assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ZERO));
+                assertions.push(Assertion::single(
+                    COL_RESEED_MASK,
+                    boundary_row,
+                    BaseElement::ZERO,
+                ));
+                assertions.push(Assertion::single(
+                    COL_COIN_INIT_MASK,
+                    boundary_row,
+                    BaseElement::ZERO,
+                ));
             } else {
                 // Reset to a new sponge for transcript seeding.
-                assertions.push(Assertion::single(COL_CARRY_MASK, boundary_row, BaseElement::ZERO));
+                assertions.push(Assertion::single(
+                    COL_CARRY_MASK,
+                    boundary_row,
+                    BaseElement::ZERO,
+                ));
                 assertions.push(Assertion::single(
                     COL_FULL_CARRY_MASK,
                     boundary_row,
                     BaseElement::ZERO,
                 ));
-                assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
-                assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ZERO));
+                assertions.push(Assertion::single(
+                    COL_RESEED_MASK,
+                    boundary_row,
+                    BaseElement::ZERO,
+                ));
+                assertions.push(Assertion::single(
+                    COL_COIN_INIT_MASK,
+                    boundary_row,
+                    BaseElement::ZERO,
+                ));
             }
             assertions.push(Assertion::single(
                 COL_COEFF_MASK,
                 boundary_row,
                 BaseElement::ZERO,
             ));
-            assertions.push(Assertion::single(COL_Z_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_Z_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
             assertions.push(Assertion::single(
                 COL_DEEP_MASK,
                 boundary_row,
@@ -1727,7 +1777,11 @@ impl Air for StarkVerifierAir {
 
         // Sponge initialization (transcript seed).
         let seed_mod_rate = (seed_len % RATE_WIDTH) as u64;
-        assertions.push(Assertion::single(0, seed_start, BaseElement::new(seed_mod_rate)));
+        assertions.push(Assertion::single(
+            0,
+            seed_start,
+            BaseElement::new(seed_mod_rate),
+        ));
         for i in 1..CAPACITY_WIDTH {
             assertions.push(Assertion::single(i, seed_start, BaseElement::ZERO));
         }
@@ -1756,30 +1810,58 @@ impl Air for StarkVerifierAir {
         for block in 0..num_seed_blocks {
             let boundary_row = seed_start + (block + 1) * ROWS_PER_PERMUTATION - 1;
             if block + 1 < num_seed_blocks {
-                assertions.push(Assertion::single(COL_CARRY_MASK, boundary_row, BaseElement::ONE));
+                assertions.push(Assertion::single(
+                    COL_CARRY_MASK,
+                    boundary_row,
+                    BaseElement::ONE,
+                ));
                 assertions.push(Assertion::single(
                     COL_FULL_CARRY_MASK,
                     boundary_row,
                     BaseElement::ZERO,
                 ));
-                assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
-                assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ZERO));
+                assertions.push(Assertion::single(
+                    COL_RESEED_MASK,
+                    boundary_row,
+                    BaseElement::ZERO,
+                ));
+                assertions.push(Assertion::single(
+                    COL_COIN_INIT_MASK,
+                    boundary_row,
+                    BaseElement::ZERO,
+                ));
             } else {
-                assertions.push(Assertion::single(COL_CARRY_MASK, boundary_row, BaseElement::ZERO));
+                assertions.push(Assertion::single(
+                    COL_CARRY_MASK,
+                    boundary_row,
+                    BaseElement::ZERO,
+                ));
                 assertions.push(Assertion::single(
                     COL_FULL_CARRY_MASK,
                     boundary_row,
                     BaseElement::ZERO,
                 ));
-                assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
-                assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ONE));
+                assertions.push(Assertion::single(
+                    COL_RESEED_MASK,
+                    boundary_row,
+                    BaseElement::ZERO,
+                ));
+                assertions.push(Assertion::single(
+                    COL_COIN_INIT_MASK,
+                    boundary_row,
+                    BaseElement::ONE,
+                ));
             }
             assertions.push(Assertion::single(
                 COL_COEFF_MASK,
                 boundary_row,
                 BaseElement::ZERO,
             ));
-            assertions.push(Assertion::single(COL_Z_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_Z_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
             assertions.push(Assertion::single(
                 COL_DEEP_MASK,
                 boundary_row,
@@ -1800,20 +1882,36 @@ impl Air for StarkVerifierAir {
         // --- Segment C: coin-init boundary into reseed(trace_commitment) ----------------------
         let coin_start = seed_start + num_seed_blocks * ROWS_PER_PERMUTATION;
         let coin_boundary_row = coin_start + ROWS_PER_PERMUTATION - 1;
-        assertions.push(Assertion::single(COL_CARRY_MASK, coin_boundary_row, BaseElement::ZERO));
+        assertions.push(Assertion::single(
+            COL_CARRY_MASK,
+            coin_boundary_row,
+            BaseElement::ZERO,
+        ));
         assertions.push(Assertion::single(
             COL_FULL_CARRY_MASK,
             coin_boundary_row,
             BaseElement::ZERO,
         ));
-        assertions.push(Assertion::single(COL_RESEED_MASK, coin_boundary_row, BaseElement::ONE));
-        assertions.push(Assertion::single(COL_COIN_INIT_MASK, coin_boundary_row, BaseElement::ZERO));
+        assertions.push(Assertion::single(
+            COL_RESEED_MASK,
+            coin_boundary_row,
+            BaseElement::ONE,
+        ));
+        assertions.push(Assertion::single(
+            COL_COIN_INIT_MASK,
+            coin_boundary_row,
+            BaseElement::ZERO,
+        ));
         assertions.push(Assertion::single(
             COL_COEFF_MASK,
             coin_boundary_row,
             BaseElement::ZERO,
         ));
-        assertions.push(Assertion::single(COL_Z_MASK, coin_boundary_row, BaseElement::ZERO));
+        assertions.push(Assertion::single(
+            COL_Z_MASK,
+            coin_boundary_row,
+            BaseElement::ZERO,
+        ));
         assertions.push(Assertion::single(
             COL_DEEP_MASK,
             coin_boundary_row,
@@ -1846,20 +1944,36 @@ impl Air for StarkVerifierAir {
         for k in 0..(num_coeff_perms - 1) {
             let perm_idx = coeff_start_perm_idx + k;
             let boundary_row = (perm_idx + 1) * ROWS_PER_PERMUTATION - 1;
-            assertions.push(Assertion::single(COL_CARRY_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_CARRY_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
             assertions.push(Assertion::single(
                 COL_FULL_CARRY_MASK,
                 boundary_row,
                 BaseElement::ONE,
             ));
-            assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ZERO));
-            assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_RESEED_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
+            assertions.push(Assertion::single(
+                COL_COIN_INIT_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
             assertions.push(Assertion::single(
                 COL_COEFF_MASK,
                 boundary_row,
                 BaseElement::ONE,
             ));
-            assertions.push(Assertion::single(COL_Z_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_Z_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
             assertions.push(Assertion::single(
                 COL_DEEP_MASK,
                 boundary_row,
@@ -1936,20 +2050,36 @@ impl Air for StarkVerifierAir {
         // Boundary after constraint reseed permutation: draw z (OOD digest is hashed next).
         let constraint_reseed_perm_idx = last_coeff_perm_idx + 1;
         let z_boundary_row = (constraint_reseed_perm_idx + 1) * ROWS_PER_PERMUTATION - 1;
-        assertions.push(Assertion::single(COL_CARRY_MASK, z_boundary_row, BaseElement::ZERO));
+        assertions.push(Assertion::single(
+            COL_CARRY_MASK,
+            z_boundary_row,
+            BaseElement::ZERO,
+        ));
         assertions.push(Assertion::single(
             COL_FULL_CARRY_MASK,
             z_boundary_row,
             BaseElement::ZERO,
         ));
-        assertions.push(Assertion::single(COL_RESEED_MASK, z_boundary_row, BaseElement::ZERO));
-        assertions.push(Assertion::single(COL_COIN_INIT_MASK, z_boundary_row, BaseElement::ZERO));
+        assertions.push(Assertion::single(
+            COL_RESEED_MASK,
+            z_boundary_row,
+            BaseElement::ZERO,
+        ));
+        assertions.push(Assertion::single(
+            COL_COIN_INIT_MASK,
+            z_boundary_row,
+            BaseElement::ZERO,
+        ));
         assertions.push(Assertion::single(
             COL_COEFF_MASK,
             z_boundary_row,
             BaseElement::ZERO,
         ));
-        assertions.push(Assertion::single(COL_Z_MASK, z_boundary_row, BaseElement::ONE));
+        assertions.push(Assertion::single(
+            COL_Z_MASK,
+            z_boundary_row,
+            BaseElement::ONE,
+        ));
         assertions.push(Assertion::single(
             COL_DEEP_MASK,
             z_boundary_row,
@@ -1994,7 +2124,11 @@ impl Air for StarkVerifierAir {
             assertions.push(Assertion::single(
                 COL_CARRY_MASK,
                 boundary_row,
-                if is_last { BaseElement::ZERO } else { BaseElement::ONE },
+                if is_last {
+                    BaseElement::ZERO
+                } else {
+                    BaseElement::ONE
+                },
             ));
             assertions.push(Assertion::single(
                 COL_FULL_CARRY_MASK,
@@ -2016,7 +2150,11 @@ impl Air for StarkVerifierAir {
                 boundary_row,
                 BaseElement::ZERO,
             ));
-            assertions.push(Assertion::single(COL_Z_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_Z_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
             assertions.push(Assertion::single(
                 COL_DEEP_MASK,
                 boundary_row,
@@ -2045,25 +2183,45 @@ impl Air for StarkVerifierAir {
             let boundary_row = (perm_idx + 1) * ROWS_PER_PERMUTATION - 1;
             let is_last = k + 1 == num_deep_perms;
 
-            assertions.push(Assertion::single(COL_CARRY_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_CARRY_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
             assertions.push(Assertion::single(
                 COL_FULL_CARRY_MASK,
                 boundary_row,
-                if is_last { BaseElement::ZERO } else { BaseElement::ONE },
+                if is_last {
+                    BaseElement::ZERO
+                } else {
+                    BaseElement::ONE
+                },
             ));
             let reseed_here = is_last && has_fri_commitments;
             assertions.push(Assertion::single(
                 COL_RESEED_MASK,
                 boundary_row,
-                if reseed_here { BaseElement::ONE } else { BaseElement::ZERO },
+                if reseed_here {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                },
             ));
-            assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_COIN_INIT_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
             assertions.push(Assertion::single(
                 COL_COEFF_MASK,
                 boundary_row,
                 BaseElement::ZERO,
             ));
-            assertions.push(Assertion::single(COL_Z_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_Z_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
             assertions.push(Assertion::single(
                 COL_DEEP_MASK,
                 boundary_row,
@@ -2101,20 +2259,36 @@ impl Air for StarkVerifierAir {
             let perm_idx = fri_start_perm_idx + k;
             let boundary_row = (perm_idx + 1) * ROWS_PER_PERMUTATION - 1;
 
-            assertions.push(Assertion::single(COL_CARRY_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_CARRY_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
             assertions.push(Assertion::single(
                 COL_FULL_CARRY_MASK,
                 boundary_row,
                 BaseElement::ZERO,
             ));
-            assertions.push(Assertion::single(COL_RESEED_MASK, boundary_row, BaseElement::ONE));
-            assertions.push(Assertion::single(COL_COIN_INIT_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_RESEED_MASK,
+                boundary_row,
+                BaseElement::ONE,
+            ));
+            assertions.push(Assertion::single(
+                COL_COIN_INIT_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
             assertions.push(Assertion::single(
                 COL_COEFF_MASK,
                 boundary_row,
                 BaseElement::ZERO,
             ));
-            assertions.push(Assertion::single(COL_Z_MASK, boundary_row, BaseElement::ZERO));
+            assertions.push(Assertion::single(
+                COL_Z_MASK,
+                boundary_row,
+                BaseElement::ZERO,
+            ));
             assertions.push(Assertion::single(
                 COL_DEEP_MASK,
                 boundary_row,
@@ -2149,8 +2323,7 @@ impl Air for StarkVerifierAir {
         // Remainder permutation boundary (no alpha draw).
         if has_remainder {
             let remainder_perm_idx = fri_start_perm_idx + num_fri_layers;
-            let remainder_boundary_row =
-                (remainder_perm_idx + 1) * ROWS_PER_PERMUTATION - 1;
+            let remainder_boundary_row = (remainder_perm_idx + 1) * ROWS_PER_PERMUTATION - 1;
             assertions.push(Assertion::single(
                 COL_CARRY_MASK,
                 remainder_boundary_row,
@@ -2210,8 +2383,7 @@ impl Air for StarkVerifierAir {
         };
 
         if num_pos_perms > 0 {
-            let pos_start_perm_idx =
-                fri_start_perm_idx + num_fri_layers + has_remainder as usize;
+            let pos_start_perm_idx = fri_start_perm_idx + num_fri_layers + has_remainder as usize;
 
             for k in 0..num_pos_perms {
                 let perm_idx = pos_start_perm_idx + k;
@@ -2314,15 +2486,16 @@ impl Air for StarkVerifierAir {
 
         let trace_leaf_perms =
             compute_leaf_perms(trace_leaf_len, self.pub_inputs.trace_partition_size);
-        let constraint_leaf_perms =
-            compute_leaf_perms(constraint_leaf_len, self.pub_inputs.constraint_partition_size);
+        let constraint_leaf_perms = compute_leaf_perms(
+            constraint_leaf_len,
+            self.pub_inputs.constraint_partition_size,
+        );
         let fri_leaf_perms = fri_leaf_len.div_ceil(RATE_WIDTH).max(1);
 
         let mut merkle_perms_per_query =
             trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
         for layer_idx in 0..num_fri_layers {
-            merkle_perms_per_query +=
-                fri_leaf_perms + depth_trace.saturating_sub(layer_idx + 1);
+            merkle_perms_per_query += fri_leaf_perms + depth_trace.saturating_sub(layer_idx + 1);
         }
         let expected_active_perms =
             pre_merkle_perms + self.pub_inputs.num_queries * merkle_perms_per_query;
@@ -2335,54 +2508,42 @@ impl Air for StarkVerifierAir {
                                        len: usize,
                                        partition_size: usize|
              -> usize {
-                    if partition_size >= len {
-                        let len_mod = (len % RATE_WIDTH) as u64;
-                        let row0 = perm_idx * ROWS_PER_PERMUTATION;
-                        assertions.push(Assertion::single(
-                            0,
-                            row0,
-                            BaseElement::new(len_mod),
-                        ));
-                        for i in 1..CAPACITY_WIDTH {
-                            assertions.push(Assertion::single(i, row0, BaseElement::ZERO));
-                        }
-                        perm_idx += len.div_ceil(RATE_WIDTH).max(1);
-                        return perm_idx;
-                    }
-
-                    let mut remaining = len;
-                    while remaining > 0 {
-                        let part_len = remaining.min(partition_size);
-                        let len_mod = (part_len % RATE_WIDTH) as u64;
-                        let row0 = perm_idx * ROWS_PER_PERMUTATION;
-                        assertions.push(Assertion::single(
-                            0,
-                            row0,
-                            BaseElement::new(len_mod),
-                        ));
-                        for i in 1..CAPACITY_WIDTH {
-                            assertions.push(Assertion::single(i, row0, BaseElement::ZERO));
-                        }
-                        perm_idx += part_len.div_ceil(RATE_WIDTH).max(1);
-                        remaining -= part_len;
-                    }
-
-                    let num_partitions = len.div_ceil(partition_size);
-                    let merged_len = num_partitions * DIGEST_WIDTH;
-                    let merged_mod = (merged_len % RATE_WIDTH) as u64;
+                if partition_size >= len {
+                    let len_mod = (len % RATE_WIDTH) as u64;
                     let row0 = perm_idx * ROWS_PER_PERMUTATION;
-                    assertions.push(Assertion::single(
-                        0,
-                        row0,
-                        BaseElement::new(merged_mod),
-                    ));
+                    assertions.push(Assertion::single(0, row0, BaseElement::new(len_mod)));
                     for i in 1..CAPACITY_WIDTH {
                         assertions.push(Assertion::single(i, row0, BaseElement::ZERO));
                     }
-                    perm_idx += merged_len.div_ceil(RATE_WIDTH).max(1);
+                    perm_idx += len.div_ceil(RATE_WIDTH).max(1);
+                    return perm_idx;
+                }
 
-                    perm_idx
-                };
+                let mut remaining = len;
+                while remaining > 0 {
+                    let part_len = remaining.min(partition_size);
+                    let len_mod = (part_len % RATE_WIDTH) as u64;
+                    let row0 = perm_idx * ROWS_PER_PERMUTATION;
+                    assertions.push(Assertion::single(0, row0, BaseElement::new(len_mod)));
+                    for i in 1..CAPACITY_WIDTH {
+                        assertions.push(Assertion::single(i, row0, BaseElement::ZERO));
+                    }
+                    perm_idx += part_len.div_ceil(RATE_WIDTH).max(1);
+                    remaining -= part_len;
+                }
+
+                let num_partitions = len.div_ceil(partition_size);
+                let merged_len = num_partitions * DIGEST_WIDTH;
+                let merged_mod = (merged_len % RATE_WIDTH) as u64;
+                let row0 = perm_idx * ROWS_PER_PERMUTATION;
+                assertions.push(Assertion::single(0, row0, BaseElement::new(merged_mod)));
+                for i in 1..CAPACITY_WIDTH {
+                    assertions.push(Assertion::single(i, row0, BaseElement::ZERO));
+                }
+                perm_idx += merged_len.div_ceil(RATE_WIDTH).max(1);
+
+                perm_idx
+            };
 
             let mut perm_idx = pre_merkle_perms;
             for _q in 0..self.pub_inputs.num_queries {
@@ -2422,11 +2583,7 @@ impl Air for StarkVerifierAir {
                 for layer_idx in 0..num_fri_layers {
                     // FRI leaf start.
                     let row0 = perm_idx * ROWS_PER_PERMUTATION;
-                    assertions.push(Assertion::single(
-                        0,
-                        row0,
-                        BaseElement::new(fri_len_mod),
-                    ));
+                    assertions.push(Assertion::single(0, row0, BaseElement::new(fri_len_mod)));
                     for i in 1..CAPACITY_WIDTH {
                         assertions.push(Assertion::single(i, row0, BaseElement::ZERO));
                     }
@@ -2447,8 +2604,7 @@ impl Air for StarkVerifierAir {
 
         // --- Remainder polynomial commitment hash -----------------------------------------
         let remainder_hash_perms = (self.pub_inputs.fri_commitments.len() > 0) as usize;
-        if remainder_hash_perms > 0 && expected_active_perms + remainder_hash_perms <= total_perms
-        {
+        if remainder_hash_perms > 0 && expected_active_perms + remainder_hash_perms <= total_perms {
             let rem_start_perm_idx = expected_active_perms;
             let row0 = rem_start_perm_idx * ROWS_PER_PERMUTATION;
 
@@ -2460,8 +2616,8 @@ impl Air for StarkVerifierAir {
                 assertions.push(Assertion::single(i, row0, BaseElement::ZERO));
             }
 
-            let boundary_row = (rem_start_perm_idx + remainder_hash_perms) * ROWS_PER_PERMUTATION
-                - 1;
+            let boundary_row =
+                (rem_start_perm_idx + remainder_hash_perms) * ROWS_PER_PERMUTATION - 1;
             let commitment = self
                 .pub_inputs
                 .fri_commitments
@@ -2581,10 +2737,8 @@ impl Air for StarkVerifierAir {
             (chain.len(), chain)
         };
 
-        let (trace_leaf_perms, trace_leaf_chain) = compute_leaf_layout(
-            trace_leaf_len,
-            self.pub_inputs.trace_partition_size,
-        );
+        let (trace_leaf_perms, trace_leaf_chain) =
+            compute_leaf_layout(trace_leaf_len, self.pub_inputs.trace_partition_size);
         let (constraint_leaf_perms, constraint_leaf_chain) = compute_leaf_layout(
             constraint_leaf_len,
             self.pub_inputs.constraint_partition_size,
@@ -2601,8 +2755,7 @@ impl Air for StarkVerifierAir {
         let mut merkle_perms_per_query =
             trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
         for layer_idx in 0..num_fri_layers {
-            merkle_perms_per_query +=
-                fri_leaf_perms + depth_trace.saturating_sub(layer_idx + 1);
+            merkle_perms_per_query += fri_leaf_perms + depth_trace.saturating_sub(layer_idx + 1);
         }
         let expected_active_perms =
             pre_merkle_perms + self.pub_inputs.num_queries * merkle_perms_per_query;
@@ -2629,11 +2782,7 @@ impl Air for StarkVerifierAir {
                     if rel_perm == 1 && row0 < total_rows {
                         trace_leaf1_row_mask[row0] = BaseElement::ONE;
                     }
-                    if trace_leaf_chain
-                        .get(rel_perm)
-                        .copied()
-                        .unwrap_or(false)
-                    {
+                    if trace_leaf_chain.get(rel_perm).copied().unwrap_or(false) {
                         leaf_chain_mask[boundary] = BaseElement::ONE;
                     }
                     if rel_perm + 1 == trace_leaf_perms {
@@ -2858,41 +3007,40 @@ impl Air for StarkVerifierAir {
             }
         }
 
-	        // Sparse, full-length masks for capturing transcript-derived coefficients.
-	        let coeff_start_perm_idx = num_pi_blocks + num_seed_blocks + 1;
-	        let mut coeff_end_masks = vec![vec![BaseElement::ZERO; total_rows]; num_coeff_perms];
-	        for k in 0..num_coeff_perms {
-	            let perm_idx = coeff_start_perm_idx + k;
-	            let boundary = perm_idx * ROWS_PER_PERMUTATION + (ROWS_PER_PERMUTATION - 1);
-	            if boundary < total_rows {
-	                coeff_end_masks[k][boundary] = BaseElement::ONE;
-	            }
-	        }
+        // Sparse, full-length masks for capturing transcript-derived coefficients.
+        let coeff_start_perm_idx = num_pi_blocks + num_seed_blocks + 1;
+        let mut coeff_end_masks = vec![vec![BaseElement::ZERO; total_rows]; num_coeff_perms];
+        for k in 0..num_coeff_perms {
+            let perm_idx = coeff_start_perm_idx + k;
+            let boundary = perm_idx * ROWS_PER_PERMUTATION + (ROWS_PER_PERMUTATION - 1);
+            if boundary < total_rows {
+                coeff_end_masks[k][boundary] = BaseElement::ONE;
+            }
+        }
 
-	        let mut deep_end_masks = vec![vec![BaseElement::ZERO; total_rows]; num_deep_perms];
-	        for k in 0..num_deep_perms {
-	            let perm_idx = deep_start_perm_idx + k;
-	            let boundary = perm_idx * ROWS_PER_PERMUTATION + (ROWS_PER_PERMUTATION - 1);
-	            if boundary < total_rows {
-	                deep_end_masks[k][boundary] = BaseElement::ONE;
-	            }
-	        }
+        let mut deep_end_masks = vec![vec![BaseElement::ZERO; total_rows]; num_deep_perms];
+        for k in 0..num_deep_perms {
+            let perm_idx = deep_start_perm_idx + k;
+            let boundary = perm_idx * ROWS_PER_PERMUTATION + (ROWS_PER_PERMUTATION - 1);
+            if boundary < total_rows {
+                deep_end_masks[k][boundary] = BaseElement::ONE;
+            }
+        }
 
-	        let fri_start_perm_idx = deep_start_perm_idx + num_deep_perms;
-	        let mut fri_alpha_end_masks =
-	            vec![vec![BaseElement::ZERO; total_rows]; num_fri_layers];
-	        for layer_idx in 0..num_fri_layers {
-	            let perm_idx = fri_start_perm_idx + layer_idx;
-	            let boundary = perm_idx * ROWS_PER_PERMUTATION + (ROWS_PER_PERMUTATION - 1);
-	            if boundary < total_rows {
-	                fri_alpha_end_masks[layer_idx][boundary] = BaseElement::ONE;
-	            }
-	        }
+        let fri_start_perm_idx = deep_start_perm_idx + num_deep_perms;
+        let mut fri_alpha_end_masks = vec![vec![BaseElement::ZERO; total_rows]; num_fri_layers];
+        for layer_idx in 0..num_fri_layers {
+            let perm_idx = fri_start_perm_idx + layer_idx;
+            let boundary = perm_idx * ROWS_PER_PERMUTATION + (ROWS_PER_PERMUTATION - 1);
+            if boundary < total_rows {
+                fri_alpha_end_masks[layer_idx][boundary] = BaseElement::ONE;
+            }
+        }
 
-	        let mut half_round_type = Vec::with_capacity(total_rows);
-	        let mut ark_columns: [Vec<BaseElement>; STATE_WIDTH] =
-	            core::array::from_fn(|_| Vec::with_capacity(total_rows));
-	        let mut perm_mask = Vec::with_capacity(total_rows);
+        let mut half_round_type = Vec::with_capacity(total_rows);
+        let mut ark_columns: [Vec<BaseElement>; STATE_WIDTH] =
+            core::array::from_fn(|_| Vec::with_capacity(total_rows));
+        let mut perm_mask = Vec::with_capacity(total_rows);
 
         for row in 0..total_rows {
             let local_row = row % ROWS_PER_PERMUTATION;
@@ -3137,7 +3285,7 @@ mod tests {
         let trace_commit = [BaseElement::new(2); DIGEST_WIDTH];
         let constraint_commit = [BaseElement::new(3); DIGEST_WIDTH];
         let fri_commits = vec![[BaseElement::new(4); DIGEST_WIDTH]; 5];
-        
+
         let pub_inputs = StarkVerifierPublicInputs::new(
             inner_inputs,
             inner_hash,
@@ -3151,7 +3299,7 @@ mod tests {
             16,
             1024,
         );
-        
+
         assert_eq!(pub_inputs.num_queries, 32);
         assert_eq!(pub_inputs.fri_commitments.len(), 5);
     }
@@ -3164,14 +3312,14 @@ mod tests {
             BaseElement::new(11111),
             BaseElement::new(22222),
         ];
-        
+
         let positions = extract_query_positions(hash, 8, 1024, 0);
-        
+
         assert_eq!(positions.len(), 8);
         for &pos in &positions {
             assert!(pos < 1024);
         }
-        
+
         // Verify determinism
         let positions2 = extract_query_positions(hash, 8, 1024, 0);
         assert_eq!(positions, positions2);
@@ -3243,9 +3391,9 @@ mod tests {
             16,
             1024,
         );
-        
+
         let elements = pub_inputs.to_elements();
-        
+
         // inner_public_inputs (2) + 4 (inner hash) + 4 (trace) + 4 (constraint) + 3*4 (fri) + 6 (params)
         assert_eq!(elements.len(), 2 + 4 + 4 + 4 + 12 + 6);
     }

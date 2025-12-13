@@ -53,13 +53,13 @@ use winterfell::{
 };
 
 use super::rpo_air::STATE_WIDTH;
-use super::rpo_proof::{rpo_hash_elements, RpoProofOptions, rpo_merge};
-use super::rpo_stark_prover::{RpoStarkProver, verify_epoch_with_rpo};
+use super::rpo_proof::{rpo_hash_elements, rpo_merge, RpoProofOptions};
+use super::rpo_stark_prover::{verify_epoch_with_rpo, RpoStarkProver};
 use super::stark_verifier_air::StarkVerifierAir;
-use super::stark_verifier_prover::StarkVerifierProver;
 use super::stark_verifier_air::StarkVerifierPublicInputs;
-use crate::types::Epoch;
+use super::stark_verifier_prover::StarkVerifierProver;
 use crate::prover::EpochProverError;
+use crate::types::Epoch;
 
 /// Recursive epoch proof containing the STARK proof and verification metadata.
 #[derive(Clone, Debug)]
@@ -88,7 +88,7 @@ impl RecursiveEpochProof {
     pub fn is_recursive(&self) -> bool {
         self.is_recursive
     }
-    
+
     /// Get the proof accumulator as bytes.
     pub fn accumulator_bytes(&self) -> [u8; 32] {
         let mut bytes = [0u8; 32];
@@ -115,14 +115,14 @@ impl RecursiveEpochProver {
             options: RpoProofOptions::default(),
         }
     }
-    
+
     /// Create prover with fast (test) options.
     pub fn fast() -> Self {
         Self {
             options: RpoProofOptions::fast(),
         }
     }
-    
+
     /// Create prover with production options.
     pub fn production() -> Self {
         Self {
@@ -157,7 +157,7 @@ impl RecursiveEpochProver {
 
         // Convert proof hashes to field elements and compute accumulator
         let proof_accumulator = self.compute_proof_accumulator(proof_hashes);
-        
+
         // Generate real STARK proof using RpoStarkProver
         let proof_bytes = self.generate_real_stark_proof(&proof_accumulator)?;
 
@@ -191,8 +191,10 @@ impl RecursiveEpochProver {
         let inner_pub_inputs = self.build_inner_pub_inputs(&proof.proof_accumulator);
 
         // Extract recursion witness data from the inner proof.
-        let inner_data =
-            InnerProofData::from_proof::<super::rpo_air::RpoAir>(&proof.inner_proof_bytes, inner_pub_inputs)?;
+        let inner_data = InnerProofData::from_proof::<super::rpo_air::RpoAir>(
+            &proof.inner_proof_bytes,
+            inner_pub_inputs,
+        )?;
 
         // Build outer public inputs for StarkVerifierAir.
         let outer_pub_inputs = inner_data.to_stark_verifier_inputs();
@@ -215,15 +217,15 @@ impl RecursiveEpochProver {
     /// Hashes all proof hashes together into a 4-element digest.
     fn compute_proof_accumulator(&self, proof_hashes: &[[u8; 32]]) -> [BaseElement; 4] {
         let mut accumulator = [BaseElement::ZERO; 4];
-        
+
         for hash in proof_hashes {
             // Convert hash to field elements
             let elements = hash_to_elements(hash);
-            
+
             // Merge into accumulator using RPO
             accumulator = rpo_merge(&accumulator, &elements);
         }
-        
+
         accumulator
     }
 
@@ -238,14 +240,15 @@ impl RecursiveEpochProver {
         // Pad accumulator to full RPO state width (12 elements)
         let mut input_state = [BaseElement::ZERO; STATE_WIDTH];
         input_state[..4].copy_from_slice(accumulator);
-        
+
         // Create prover with our options
         let prover = RpoStarkProver::from_rpo_options(&self.options);
-        
+
         // Generate proof
-        let (proof, _pub_inputs) = prover.prove_rpo_permutation(input_state)
+        let (proof, _pub_inputs) = prover
+            .prove_rpo_permutation(input_state)
             .map_err(|e| EpochProverError::ProofGenerationError(e))?;
-        
+
         // Serialize proof
         Ok(proof.to_bytes())
     }
@@ -271,40 +274,36 @@ impl RecursiveEpochProver {
     ) -> Result<Vec<u8>, EpochProverError> {
         // Encode proof metadata
         let mut proof = Vec::with_capacity(128);
-        
+
         // Magic bytes for recursive proof identification
         proof.extend_from_slice(b"RPROOF01");
-        
+
         // Epoch commitment
         proof.extend_from_slice(&epoch.commitment());
-        
+
         // Accumulator (32 bytes)
         for elem in accumulator {
             proof.extend_from_slice(&elem.inner().to_le_bytes());
         }
-        
+
         // Epoch number
         proof.extend_from_slice(&epoch.epoch_number.to_le_bytes());
-        
+
         // Padding to fixed size
         proof.resize(128, 0);
-        
+
         Ok(proof)
     }
-    
+
     /// Verify a recursive epoch proof using real STARK verification.
     ///
     /// Uses the winterfell verifier with RPO-based Fiat-Shamir.
-    pub fn verify_epoch_proof(
-        &self,
-        proof: &RecursiveEpochProof,
-        epoch: &Epoch,
-    ) -> bool {
+    pub fn verify_epoch_proof(&self, proof: &RecursiveEpochProof, epoch: &Epoch) -> bool {
         // Basic sanity checks
         if proof.epoch_commitment != epoch.commitment() {
             return false;
         }
-        
+
         // Check we have proof bytes
         if proof.proof_bytes.is_empty() {
             return false;
@@ -354,35 +353,31 @@ impl RecursiveEpochProver {
         )
         .is_ok()
     }
-    
+
     /// Verify a recursive epoch proof (mock version for testing).
     #[allow(dead_code)]
-    pub fn verify_epoch_proof_mock(
-        &self,
-        proof: &RecursiveEpochProof,
-        epoch: &Epoch,
-    ) -> bool {
+    pub fn verify_epoch_proof_mock(&self, proof: &RecursiveEpochProof, epoch: &Epoch) -> bool {
         // Basic sanity checks
         if proof.epoch_commitment != epoch.commitment() {
             return false;
         }
-        
+
         // Check proof format
         if proof.proof_bytes.len() < 8 {
             return false;
         }
-        
+
         // Check magic bytes
         if &proof.proof_bytes[0..8] != b"RPROOF01" {
             return false;
         }
-        
+
         // Verify epoch commitment in proof matches
         let commitment_in_proof = &proof.proof_bytes[8..40];
         if commitment_in_proof != &epoch.commitment() {
             return false;
         }
-        
+
         true
     }
 }
@@ -407,12 +402,12 @@ fn hash_to_elements(hash: &[u8; 32]) -> [BaseElement; 4] {
 /// Uses higher blowup factor for recursive verification soundness.
 pub fn recursive_proof_options() -> ProofOptions {
     ProofOptions::new(
-        16,  // num_queries (higher for recursion)
-        32,  // blowup_factor (32 for degree-8 constraints with cycle 16)
-        4,   // grinding_factor
+        16, // num_queries (higher for recursion)
+        32, // blowup_factor (32 for degree-8 constraints with cycle 16)
+        4,  // grinding_factor
         FieldExtension::None,
-        2,   // fri_folding_factor
-        7,   // fri_remainder_max_degree (must be 2^k - 1)
+        2, // fri_folding_factor
+        7, // fri_remainder_max_degree (must be 2^k - 1)
         BatchingMethod::Linear,
         BatchingMethod::Linear,
     )
@@ -422,7 +417,7 @@ pub fn recursive_proof_options() -> ProofOptions {
 pub fn fast_recursive_proof_options() -> ProofOptions {
     ProofOptions::new(
         8,
-        32,  // Must be at least 32 for RPO constraints
+        32, // Must be at least 32 for RPO constraints
         0,
         FieldExtension::None,
         2,
@@ -596,10 +591,8 @@ impl InnerProofData {
         let constraint_frame_width = air.context().num_constraint_composition_columns();
 
         let partition_options = air.options().partition_options();
-        let partition_size_main =
-            partition_options.partition_size::<BaseElement>(main_trace_width);
-        let partition_size_aux =
-            partition_options.partition_size::<BaseElement>(aux_trace_width);
+        let partition_size_main = partition_options.partition_size::<BaseElement>(main_trace_width);
+        let partition_size_aux = partition_options.partition_size::<BaseElement>(aux_trace_width);
         let partition_size_constraint =
             partition_options.partition_size::<BaseElement>(constraint_frame_width);
 
@@ -903,7 +896,7 @@ impl InnerProofData {
             fri_alphas,
         })
     }
-    
+
     /// Convert to public inputs for StarkVerifierAir.
     pub fn to_stark_verifier_inputs(&self) -> StarkVerifierPublicInputs {
         // Hash the public inputs to get inner_pub_inputs_hash.
@@ -912,7 +905,7 @@ impl InnerProofData {
         } else {
             rpo_hash_elements(&self.public_inputs)
         };
-        
+
         // Collect FRI commitments
         let mut fri_commitments: Vec<[BaseElement; 4]> = self
             .fri_layers
@@ -920,7 +913,7 @@ impl InnerProofData {
             .map(|layer| layer.commitment)
             .collect();
         fri_commitments.push(self.fri_remainder_commitment);
-        
+
         StarkVerifierPublicInputs::new(
             self.public_inputs.clone(),
             inner_pub_inputs_hash,
@@ -961,10 +954,11 @@ fn hash_row_rpo(row: &[BaseElement], partition_size: usize) -> Word {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Epoch;
-    use winter_math::FieldElement;
     use crate::recursion::rpo_air::{RpoAir, STATE_WIDTH};
     use crate::recursion::rpo_stark_prover::RpoStarkProver;
+    use crate::types::Epoch;
+    use std::time::Instant;
+    use winter_math::FieldElement;
 
     fn test_epoch() -> Epoch {
         let mut epoch = Epoch::new(0);
@@ -993,9 +987,9 @@ mod tests {
     fn test_compute_proof_accumulator() {
         let prover = RecursiveEpochProver::new();
         let hashes = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
-        
+
         let acc = prover.compute_proof_accumulator(&hashes);
-        
+
         // Accumulator should be non-zero
         assert!(acc.iter().any(|e| *e != BaseElement::ZERO));
     }
@@ -1004,10 +998,10 @@ mod tests {
     fn test_accumulator_deterministic() {
         let prover = RecursiveEpochProver::new();
         let hashes = vec![[42u8; 32], [99u8; 32]];
-        
+
         let acc1 = prover.compute_proof_accumulator(&hashes);
         let acc2 = prover.compute_proof_accumulator(&hashes);
-        
+
         assert_eq!(acc1, acc2);
     }
 
@@ -1016,9 +1010,9 @@ mod tests {
         let prover = RecursiveEpochProver::fast();
         let epoch = test_epoch();
         let hashes = vec![[1u8; 32], [2u8; 32]];
-        
+
         let proof = prover.prove_epoch(&epoch, &hashes).unwrap();
-        
+
         assert_eq!(proof.epoch_commitment, epoch.commitment());
         assert_eq!(proof.num_proofs, 2);
         assert!(!proof.proof_bytes.is_empty());
@@ -1028,9 +1022,86 @@ mod tests {
     fn test_prove_epoch_empty_fails() {
         let prover = RecursiveEpochProver::fast();
         let epoch = test_epoch();
-        
+
         let result = prover.prove_epoch(&epoch, &[]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    #[ignore = "heavy: measures recursive proof overhead"]
+    fn test_recursive_proof_overhead_budget() {
+        let prover = RecursiveEpochProver::fast();
+
+        let proof_hashes: Vec<[u8; 32]> = (0..1000)
+            .map(|i| {
+                let mut h = [0u8; 32];
+                h[0..8].copy_from_slice(&(i as u64).to_le_bytes());
+                h
+            })
+            .collect();
+
+        let mut epoch = test_epoch();
+        epoch.proof_root = crate::compute_proof_root(&proof_hashes);
+
+        let start = Instant::now();
+        let _inner = prover.prove_epoch(&epoch, &proof_hashes).unwrap();
+        let inner_time = start.elapsed();
+
+        let start = Instant::now();
+        let recursive = prover.prove_epoch_recursive(&epoch, &proof_hashes).unwrap();
+        let recursive_time = start.elapsed();
+
+        let inner_size = recursive.inner_proof_bytes.len().max(1) as f64;
+        let outer_size = recursive.proof_bytes.len() as f64;
+        let size_ratio = outer_size / inner_size;
+
+        let inner_secs = inner_time.as_secs_f64().max(1e-9);
+        let time_ratio = recursive_time.as_secs_f64() / inner_secs;
+
+        println!(
+            "recursive overhead: inner_bytes={} outer_bytes={} size_ratio={:.2} inner_time_ms={:.2} recursive_time_ms={:.2} time_ratio={:.2}",
+            recursive.inner_proof_bytes.len(),
+            recursive.proof_bytes.len(),
+            size_ratio,
+            inner_time.as_secs_f64() * 1000.0,
+            recursive_time.as_secs_f64() * 1000.0,
+            time_ratio
+        );
+
+        assert!(
+            size_ratio < 3.0,
+            "outer/inner proof size ratio too high: {size_ratio:.2} (target < 3.0)"
+        );
+        assert!(
+            time_ratio < 100.0,
+            "recursive/inner prover time ratio too high: {time_ratio:.2} (target < 100.0)"
+        );
+    }
+
+    #[test]
+    #[ignore = "heavy: generates proof-of-proof (outer StarkVerifierAir proof)"]
+    fn test_prove_epoch_recursive_roundtrip_and_tamper_reject() {
+        let prover = RecursiveEpochProver::fast();
+        let epoch = test_epoch();
+        let hashes = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
+
+        let proof = prover.prove_epoch_recursive(&epoch, &hashes).unwrap();
+        assert!(proof.is_recursive());
+        assert!(!proof.proof_bytes.is_empty());
+        assert!(!proof.inner_proof_bytes.is_empty());
+
+        assert!(prover.verify_epoch_proof(&proof, &epoch));
+
+        // Tamper with the packaged inner proof bytes after outer proof generation: verification
+        // should fail because the verifier reconstructs outer public inputs from the inner proof.
+        let mut tampered_inner = proof.clone();
+        tampered_inner.inner_proof_bytes[0] ^= 1;
+        assert!(!prover.verify_epoch_proof(&tampered_inner, &epoch));
+
+        // Tamper with the outer proof itself: verification should fail.
+        let mut tampered_outer = proof;
+        tampered_outer.proof_bytes[0] ^= 1;
+        assert!(!prover.verify_epoch_proof(&tampered_outer, &epoch));
     }
 
     #[test]
@@ -1038,9 +1109,9 @@ mod tests {
         let prover = RecursiveEpochProver::fast();
         let epoch = test_epoch();
         let hashes = vec![[1u8; 32], [2u8; 32], [3u8; 32]];
-        
+
         let proof = prover.prove_epoch(&epoch, &hashes).unwrap();
-        
+
         assert!(prover.verify_epoch_proof(&proof, &epoch));
     }
 
@@ -1050,10 +1121,10 @@ mod tests {
         let epoch1 = test_epoch();
         let mut epoch2 = test_epoch();
         epoch2.epoch_number = 999;
-        
+
         let hashes = vec![[1u8; 32]];
         let proof = prover.prove_epoch(&epoch1, &hashes).unwrap();
-        
+
         // Verification with wrong epoch should fail
         assert!(!prover.verify_epoch_proof(&proof, &epoch2));
     }
@@ -1063,10 +1134,10 @@ mod tests {
         let prover = RecursiveEpochProver::new();
         let epoch = test_epoch();
         let hashes = vec![[1u8; 32]];
-        
+
         let proof = prover.prove_epoch(&epoch, &hashes).unwrap();
         let bytes = proof.accumulator_bytes();
-        
+
         // Should be 32 bytes
         assert_eq!(bytes.len(), 32);
         // Should be non-zero
@@ -1077,14 +1148,14 @@ mod tests {
     fn test_hash_to_elements() {
         let hash = [0x42u8; 32];
         let elements = hash_to_elements(&hash);
-        
+
         assert_eq!(elements.len(), 4);
-        
+
         // Verify all elements are identical (each 8-byte chunk is the same)
         for i in 1..elements.len() {
             assert_eq!(elements[i], elements[0], "Elements should all be equal");
         }
-        
+
         // Verify elements are non-zero
         assert_ne!(elements[0], BaseElement::ZERO);
     }
@@ -1093,7 +1164,7 @@ mod tests {
     fn test_inner_proof_data_mock() {
         let data = InnerProofData::mock();
         let inputs = data.to_stark_verifier_inputs();
-        
+
         assert_eq!(inputs.trace_commitment, [BaseElement::ZERO; 4]);
         assert_eq!(inputs.inner_pub_inputs_hash, [BaseElement::ZERO; 4]);
     }
@@ -1113,7 +1184,10 @@ mod tests {
         assert_eq!(data.public_inputs, pub_inputs.to_elements());
         assert_eq!(data.blowup_factor, proof.options().blowup_factor());
         assert_eq!(data.trace_length, proof.trace_info().length());
-        assert_eq!(data.unique_query_positions.len(), proof.num_unique_queries as usize);
+        assert_eq!(
+            data.unique_query_positions.len(),
+            proof.num_unique_queries as usize
+        );
         assert_eq!(data.query_positions.len(), data.num_draws);
         assert_eq!(data.fri_alphas.len(), data.fri_layers.len());
     }
@@ -1121,7 +1195,7 @@ mod tests {
     #[test]
     fn test_recursive_proof_options() {
         let opts = recursive_proof_options();
-        
+
         assert!(opts.blowup_factor() >= 32);
         assert!(opts.num_queries() >= 16);
     }
@@ -1129,7 +1203,7 @@ mod tests {
     #[test]
     fn test_fast_recursive_proof_options() {
         let opts = fast_recursive_proof_options();
-        
+
         assert!(opts.blowup_factor() >= 32);
     }
 }

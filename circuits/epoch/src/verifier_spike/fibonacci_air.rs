@@ -93,7 +93,11 @@ pub struct FibonacciAir {
 
 impl FibonacciAir {
     /// Create a new Fibonacci AIR for the given trace length and result.
-    pub fn new(trace_info: TraceInfo, pub_inputs: FibonacciPublicInputs, options: ProofOptions) -> Self {
+    pub fn new(
+        trace_info: TraceInfo,
+        pub_inputs: FibonacciPublicInputs,
+        options: ProofOptions,
+    ) -> Self {
         // Two transition constraints: one for each column
         let degrees = vec![
             TransitionConstraintDegree::new(1), // next_prev = curr
@@ -162,9 +166,9 @@ impl FibonacciProver {
     pub fn new() -> Self {
         Self {
             options: ProofOptions::new(
-                8,  // num_queries
-                4,  // blowup_factor_log2
-                0,  // grinding_factor
+                8, // num_queries
+                4, // blowup_factor_log2
+                0, // grinding_factor
                 FieldExtension::None,
                 2,  // fri_folding_factor
                 31, // fri_max_remainder_size
@@ -227,7 +231,10 @@ impl FibonacciProver {
     }
 
     /// Generate a proof for computing fib(n).
-    pub fn prove(&self, n: usize) -> Result<(winterfell::Proof, FibonacciPublicInputs), ProverError> {
+    pub fn prove(
+        &self,
+        n: usize,
+    ) -> Result<(winterfell::Proof, FibonacciPublicInputs), ProverError> {
         let trace = self.build_trace(n);
         let trace_len = winterfell::Trace::length(&trace);
 
@@ -367,10 +374,10 @@ mod tests {
         assert_eq!(trace.get(1, 0), BaseElement::ONE);
 
         // Check a few Fibonacci values
-        assert_eq!(trace.get(1, 1), BaseElement::ONE);  // fib(2)
-        assert_eq!(trace.get(1, 2), BaseElement::new(2));  // fib(3)
-        assert_eq!(trace.get(1, 3), BaseElement::new(3));  // fib(4)
-        assert_eq!(trace.get(1, 4), BaseElement::new(5));  // fib(5)
+        assert_eq!(trace.get(1, 1), BaseElement::ONE); // fib(2)
+        assert_eq!(trace.get(1, 2), BaseElement::new(2)); // fib(3)
+        assert_eq!(trace.get(1, 3), BaseElement::new(3)); // fib(4)
+        assert_eq!(trace.get(1, 4), BaseElement::new(5)); // fib(5)
     }
 
     #[test]
@@ -397,6 +404,10 @@ mod tests {
         println!("Fibonacci proof size: {} bytes", proof_bytes.len());
 
         // Proof should be reasonably small for this simple AIR
-        assert!(proof_bytes.len() < 50_000, "Proof unexpectedly large: {} bytes", proof_bytes.len());
+        assert!(
+            proof_bytes.len() < 50_000,
+            "Proof unexpectedly large: {} bytes",
+            proof_bytes.len()
+        );
     }
 }
