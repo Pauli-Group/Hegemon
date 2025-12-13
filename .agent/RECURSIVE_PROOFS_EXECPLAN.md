@@ -55,7 +55,7 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] (2025-12-13) Phase 3a.3: Add adversarial test: duplicate draws mapping to the same unique position.
 - [x] (2025-12-13) Phase 3a.4: Remove query-dedup limitation from `SECURITY.md` once hardening ships.
 - [x] (2025-12-13) Phase 3b.1: Add `RpoStarkVerifierProver` (RPO Fiat–Shamir + RPO commitments) for outer proofs.
-- [ ] (2025-12-13) Phase 3b.2: Parameterize recursive verification for `StarkVerifierAir` as an inner proof (trace/FRI sizing expectations) (completed: quantify inner `StarkVerifierAir` size + Winterfell 255-column hard cap; add `StarkVerifierPublicInputs::try_from_elements` + generalized context-prefix/z computation for verifier proofs; add an ignored test validating Winterfell verifier step-3 OOD consistency for a `StarkVerifierAir` proof; remaining: streaming/replay trace layout + full in-circuit verification for verifier proofs).
+- [ ] (2025-12-13) Phase 3b.2: Parameterize recursive verification for `StarkVerifierAir` as an inner proof (trace/FRI sizing expectations) (completed: quantify inner `StarkVerifierAir` size + Winterfell 255-column hard cap; add `StarkVerifierPublicInputs::try_from_elements` + generalized context-prefix/z computation for verifier proofs; compute inner constraint-composition coefficients deterministically from public inputs (no longer depends on stored coeff columns for OOD step-3); add an ignored test validating Winterfell verifier step-3 OOD consistency for a `StarkVerifierAir` proof; remaining: streaming/replay trace layout + full in-circuit verification for verifier proofs).
 - [ ] (2025-12-13) Phase 3b.3: Add depth-2 recursion test: inner → outer → outer₂.
 - [ ] (2025-12-13) Phase 3c.1: Define aggregation public inputs: `(epoch_start, epoch_end, commitment_chain_hash)`.
 - [ ] (2025-12-13) Phase 3c.2: Implement `AggregatorAir` verifying two child proofs + adjacency constraint.
@@ -100,6 +100,10 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - Observation (2025-12-13): `StarkVerifierAir`-as-inner is much larger than the `RpoAir` inner case; naive “store everything in constant columns” scaling makes depth-2 recursion impractical without a more compact verifier trace layout.
   Evidence: With minimal security parameters (`num_queries=1`, `num_draws=1`), parsing an RPO-backed `StarkVerifierAir` proof yields: `trace_width=236`, `constraint_cols=10`, `transition_constraints=406`, `assertions=447`, `constraint_coeffs=853`, `deep_coeffs=246`, `ood_evals=492`.
   Implication: Phase 3b.2 must either (a) redesign the verifier trace to *replay* transcript draws (coeffs/deep) and *stream* OOD/DEEP data into accumulators (trading width for length), or (b) accept a much larger verifier AIR specialized for verifier proofs.
+
+- Observation (2025-12-13): Constraint-composition coefficients (for winter-verifier step-3) are fully determined by the inner proof’s public inputs + commitments (pre-OOD), so they can be recomputed in the outer AIR and don’t need to be stored in constant columns.
+  Evidence: `circuits/epoch/src/recursion/stark_verifier_air.rs` now derives `inner_constraint_coeffs` alongside `expected_z` from the same RPO transcript seed and uses them directly in the RpoAir OOD consistency check.
+  Implication: Phase 3b.2 streaming/replay must still handle large OOD evaluation vectors and DEEP coefficients, but coefficient storage is no longer on the critical path for depth-2.
 
 - Observation (2025-12-13): Winterfell hard-caps execution trace width at 255 columns, making the “store everything in constant columns” approach impossible for depth-2 verifier-of-verifier proofs.
   Evidence: `winter-air::TraceInfo::MAX_TRACE_WIDTH = 255` and the inner `StarkVerifierAir` sizing above implies hundreds of additional constant columns would be required (e.g. 853 coeffs + 492 OOD evals + 246 DEEP coeffs), far exceeding 255.

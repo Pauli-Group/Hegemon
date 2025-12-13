@@ -61,7 +61,7 @@ use super::merkle_air::DIGEST_WIDTH;
 use super::rpo_air::{
     ARK1, ARK2, MDS, NUM_ROUNDS, ROWS_PER_PERMUTATION, STATE_WIDTH, TRACE_WIDTH as RPO_TRACE_WIDTH,
 };
-use winter_air::DeepCompositionCoefficients;
+use winter_air::{ConstraintCompositionCoefficients, DeepCompositionCoefficients};
 
 const CAPACITY_WIDTH: usize = 4;
 pub(crate) const RATE_WIDTH: usize = 8;
@@ -337,6 +337,7 @@ pub struct StarkVerifierAir {
     context: AirContext<BaseElement>,
     pub_inputs: StarkVerifierPublicInputs,
     expected_z: BaseElement,
+    inner_constraint_coeffs: ConstraintCompositionCoefficients<BaseElement>,
     inner_rpo_periodic_at_z: [BaseElement; 1 + STATE_WIDTH],
     inner_transition_divisor_inv_at_z: BaseElement,
     inner_boundary_divisor_inv_at_z: [BaseElement; 2],
@@ -930,7 +931,8 @@ impl Air for StarkVerifierAir {
         // Binding accumulator must end at 1.
         num_assertions += 1;
 
-        let expected_z = compute_expected_z(&pub_inputs);
+        let (inner_constraint_coeffs, expected_z) =
+            compute_expected_constraint_coeffs_and_z(&pub_inputs);
 
         let (inner_rpo_periodic_at_z, inner_transition_divisor_inv_at_z, inner_boundary_divisor_inv_at_z, inner_ood_constraint_weights) =
             if inner_proof_kind(&pub_inputs) == InnerProofKind::RpoAir {
@@ -949,6 +951,7 @@ impl Air for StarkVerifierAir {
             context,
             pub_inputs,
             expected_z,
+            inner_constraint_coeffs,
             inner_rpo_periodic_at_z,
             inner_transition_divisor_inv_at_z,
             inner_boundary_divisor_inv_at_z,
@@ -1581,7 +1584,7 @@ impl Air for StarkVerifierAir {
                 + is_inverse * inverse_constraint
                 + is_padding * padding_constraint;
 
-            let coeff = current[COL_CONSTRAINT_COEFFS_START + i];
+            let coeff = E::from(self.inner_constraint_coeffs.transition[i]);
             t_combined += coeff * t_eval;
         }
 
@@ -1598,8 +1601,8 @@ impl Air for StarkVerifierAir {
         let mut boundary_row0 = E::ZERO;
         let mut boundary_row_last = E::ZERO;
         for i in 0..STATE_WIDTH {
-            let coeff_row0 = current[COL_CONSTRAINT_COEFFS_START + STATE_WIDTH + i];
-            let coeff_last = current[COL_CONSTRAINT_COEFFS_START + STATE_WIDTH + STATE_WIDTH + i];
+            let coeff_row0 = E::from(self.inner_constraint_coeffs.boundary[i]);
+            let coeff_last = E::from(self.inner_constraint_coeffs.boundary[STATE_WIDTH + i]);
 
             let input = E::from(self.pub_inputs.inner_public_inputs[i]);
             let output = E::from(self.pub_inputs.inner_public_inputs[STATE_WIDTH + i]);
@@ -3598,6 +3601,12 @@ pub(crate) fn build_context_prefix(pub_inputs: &StarkVerifierPublicInputs) -> Ve
 /// Recompute the z challenge from public inputs using the same RPO Fiat–Shamir
 /// transcript as the verifier trace.
 pub(crate) fn compute_expected_z(pub_inputs: &StarkVerifierPublicInputs) -> BaseElement {
+    compute_expected_constraint_coeffs_and_z(pub_inputs).1
+}
+
+fn compute_expected_constraint_coeffs_and_z(
+    pub_inputs: &StarkVerifierPublicInputs,
+) -> (ConstraintCompositionCoefficients<BaseElement>, BaseElement) {
     // Transcript seed = hash(context_prefix || inner_public_inputs).
     //
     // This must match Winterfell's `ProverChannel` seeding:
@@ -3607,15 +3616,44 @@ pub(crate) fn compute_expected_z(pub_inputs: &StarkVerifierPublicInputs) -> Base
     let mut coin = <RpoRandomCoin as RandomCoin>::new(&seed_elems);
     coin.reseed(Word::new(pub_inputs.trace_commitment));
 
-    // Draw constraint composition coefficients (count depends on inner proof AIR).
-    let num_constraints = build_context_prefix(pub_inputs)[4].as_int() as usize;
-    for _ in 0..num_constraints {
-        let _: BaseElement = coin.draw().expect("failed to draw coeff");
-    }
+    let (num_transition_constraints, num_assertions) = match inner_proof_kind(pub_inputs) {
+        InnerProofKind::RpoAir => (STATE_WIDTH, 2 * STATE_WIDTH),
+        InnerProofKind::StarkVerifierAir => {
+            let inner_verifier_pub_inputs = StarkVerifierPublicInputs::try_from_elements(
+                &pub_inputs.inner_public_inputs,
+                2 * STATE_WIDTH,
+            )
+            .expect("inner StarkVerifierAir public inputs must decode");
+            let trace_info = TraceInfo::new(VERIFIER_TRACE_WIDTH, pub_inputs.trace_length);
+            let options = ProofOptions::new(
+                pub_inputs.num_draws,
+                pub_inputs.blowup_factor,
+                0, // grinding factor (recursion currently assumes 0)
+                winter_air::FieldExtension::None,
+                2, // FRI folding factor
+                7, // remainder max degree
+                winter_air::BatchingMethod::Linear,
+                winter_air::BatchingMethod::Linear,
+            );
+            let air = StarkVerifierAir::new(trace_info, inner_verifier_pub_inputs, options);
+            (
+                air.context().num_transition_constraints(),
+                air.get_assertions().len(),
+            )
+        }
+    };
+
+    let coeffs = ConstraintCompositionCoefficients::draw_linear(
+        &mut coin,
+        num_transition_constraints,
+        num_assertions,
+    )
+    .expect("failed to draw constraint composition coefficients");
 
     // Reseed with constraint commitment and draw z.
     coin.reseed(Word::new(pub_inputs.constraint_commitment));
-    coin.draw().expect("failed to draw z")
+    let z = coin.draw().expect("failed to draw z");
+    (coeffs, z)
 }
 
 // TESTS
