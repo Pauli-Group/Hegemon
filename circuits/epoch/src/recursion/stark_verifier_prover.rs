@@ -107,6 +107,10 @@ impl StarkVerifierProver {
             8,
             blowup_factor,
             trace_length,
+            RPO_TRACE_WIDTH,
+            8,
+            STATE_WIDTH,
+            2 * STATE_WIDTH,
         );
 
         let prover = StarkVerifierProver::new(options.clone(), pub_inputs.clone());
@@ -132,12 +136,15 @@ impl StarkVerifierProver {
         let seed_len = seed_prefix.len() + input_len;
         let num_seed_blocks = seed_len.div_ceil(8).max(1);
 
-        let ood_eval_len = 2 * (RPO_TRACE_WIDTH + 8);
-        let num_ood_perms = ood_eval_len.div_ceil(RATE_WIDTH);
+        let num_coeffs_total =
+            self.pub_inputs.num_transition_constraints + self.pub_inputs.num_assertions;
+        let num_coeff_perms = num_coeffs_total.div_ceil(RATE_WIDTH).max(1);
 
-        let num_coeff_perms = 36usize.div_ceil(8);
-        let num_deep_coeffs = RPO_TRACE_WIDTH + 8;
-        let num_deep_perms = num_deep_coeffs.div_ceil(8);
+        let num_deep_coeffs = self.pub_inputs.trace_width + self.pub_inputs.constraint_frame_width;
+        let num_deep_perms = num_deep_coeffs.div_ceil(RATE_WIDTH);
+
+        let ood_eval_len = 2 * num_deep_coeffs;
+        let num_ood_perms = ood_eval_len.div_ceil(RATE_WIDTH);
         let num_fri_commitments = self.pub_inputs.fri_commitments.len();
         let num_fri_layers = num_fri_commitments.saturating_sub(1);
         let num_fri_alpha_perms = num_fri_layers;
@@ -166,8 +173,11 @@ impl StarkVerifierProver {
             lde_domain_size.trailing_zeros() as usize
         };
         let trace_leaf_perms =
-            leaf_perm_count(RPO_TRACE_WIDTH, self.pub_inputs.trace_partition_size);
-        let constraint_leaf_perms = leaf_perm_count(8, self.pub_inputs.constraint_partition_size);
+            leaf_perm_count(self.pub_inputs.trace_width, self.pub_inputs.trace_partition_size);
+        let constraint_leaf_perms = leaf_perm_count(
+            self.pub_inputs.constraint_frame_width,
+            self.pub_inputs.constraint_partition_size,
+        );
         let fri_leaf_perms = 1usize;
         let mut merkle_perms_per_query =
             trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
@@ -494,8 +504,6 @@ impl StarkVerifierProver {
         let saved_coin_state = coin_state;
 
         // --- Segment E: Hash merged OOD evaluations (dummy zeros in this minimal trace) -----
-        let ood_eval_len = 2 * (RPO_TRACE_WIDTH + 8);
-        let num_ood_perms = ood_eval_len.div_ceil(RATE_WIDTH);
         let ood_evals = vec![BaseElement::ZERO; ood_eval_len];
 
         let mut ood_state = [BaseElement::ZERO; STATE_WIDTH];
@@ -1092,12 +1100,15 @@ impl StarkVerifierProver {
         let seed_len = seed_prefix.len() + input_len;
         let num_seed_blocks = seed_len.div_ceil(8).max(1);
 
-        let ood_eval_len = 2 * (RPO_TRACE_WIDTH + 8);
-        let num_ood_perms = ood_eval_len.div_ceil(RATE_WIDTH);
+        let num_coeffs_total =
+            self.pub_inputs.num_transition_constraints + self.pub_inputs.num_assertions;
+        let num_coeff_perms = num_coeffs_total.div_ceil(RATE_WIDTH).max(1);
 
-        let num_coeff_perms = 36usize.div_ceil(8);
-        let num_deep_coeffs = RPO_TRACE_WIDTH + 8;
-        let num_deep_perms = num_deep_coeffs.div_ceil(8);
+        let num_deep_coeffs = self.pub_inputs.trace_width + self.pub_inputs.constraint_frame_width;
+        let num_deep_perms = num_deep_coeffs.div_ceil(RATE_WIDTH);
+
+        let ood_eval_len = 2 * num_deep_coeffs;
+        let num_ood_perms = ood_eval_len.div_ceil(RATE_WIDTH);
         let num_fri_commitments = self.pub_inputs.fri_commitments.len();
         let num_fri_layers = num_fri_commitments.saturating_sub(1);
         let num_fri_alpha_perms = num_fri_layers;
@@ -1128,8 +1139,11 @@ impl StarkVerifierProver {
             lde_domain_size.trailing_zeros() as usize
         };
         let trace_leaf_perms =
-            leaf_perm_count(RPO_TRACE_WIDTH, self.pub_inputs.trace_partition_size);
-        let constraint_leaf_perms = leaf_perm_count(8, self.pub_inputs.constraint_partition_size);
+            leaf_perm_count(self.pub_inputs.trace_width, self.pub_inputs.trace_partition_size);
+        let constraint_leaf_perms = leaf_perm_count(
+            self.pub_inputs.constraint_frame_width,
+            self.pub_inputs.constraint_partition_size,
+        );
         let fri_leaf_perms = 1usize; // 2‑element FRI leaves
         let mut merkle_perms_per_query =
             trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
@@ -2059,37 +2073,62 @@ impl StarkVerifierProver {
         }
 
         // Populate DEEP/FRI recursion state columns (TraceTable::new() leaves memory uninitialized).
-        let g_trace = BaseElement::get_root_of_unity(self.pub_inputs.trace_length.ilog2());
-        let g_lde = BaseElement::get_root_of_unity(lde_domain_size.ilog2());
-        let domain_offset = BaseElement::GENERATOR;
-        let deep_evals: Vec<BaseElement> = (0..self.pub_inputs.num_queries)
-            .map(|q| {
-                let pos = draw_positions[q] as u64;
-                let x = domain_offset * g_lde.exp(pos);
-                compute_deep_evaluation(
-                    x,
-                    &inner.trace_evaluations[q],
-                    &inner.constraint_evaluations[q],
-                    &inner.ood_trace_current,
-                    &inner.ood_trace_next,
-                    &inner.ood_quotient_current,
-                    &inner.ood_quotient_next,
-                    &inner.deep_coeffs,
-                    expected_z,
-                    g_trace,
-                )
-            })
-            .collect();
-        self.populate_deep_fri_state(
-            &mut trace,
-            pre_merkle_perms,
-            trace_leaf_perms,
-            constraint_leaf_perms,
-            depth_trace,
-            num_fri_layers,
-            &deep_evals,
-            &inner.fri_remainder,
-        );
+        //
+        // For verifier-as-inner proofs (depth-2+), StarkVerifierAir's DEEP/FRI logic is currently
+        // gated off (Phase 3b.2 streaming/replay pending). Avoid expensive native DEEP evaluation
+        // work and just initialize the state columns to zero so traces are deterministic.
+        let inner_is_rpo_air = self.pub_inputs.inner_public_inputs.len() == 2 * STATE_WIDTH;
+        if inner_is_rpo_air {
+            let g_trace = BaseElement::get_root_of_unity(self.pub_inputs.trace_length.ilog2());
+            let g_lde = BaseElement::get_root_of_unity(lde_domain_size.ilog2());
+            let domain_offset = BaseElement::GENERATOR;
+            let deep_evals: Vec<BaseElement> = (0..self.pub_inputs.num_queries)
+                .map(|q| {
+                    let pos = draw_positions[q] as u64;
+                    let x = domain_offset * g_lde.exp(pos);
+                    compute_deep_evaluation(
+                        x,
+                        &inner.trace_evaluations[q],
+                        &inner.constraint_evaluations[q],
+                        &inner.ood_trace_current,
+                        &inner.ood_trace_next,
+                        &inner.ood_quotient_current,
+                        &inner.ood_quotient_next,
+                        &inner.deep_coeffs,
+                        expected_z,
+                        g_trace,
+                    )
+                })
+                .collect();
+            self.populate_deep_fri_state(
+                &mut trace,
+                pre_merkle_perms,
+                trace_leaf_perms,
+                constraint_leaf_perms,
+                depth_trace,
+                num_fri_layers,
+                &deep_evals,
+                &inner.fri_remainder,
+            );
+        } else {
+            for row in 0..trace.length() {
+                trace.set(COL_DEEP_T1_ACC, row, BaseElement::ZERO);
+                trace.set(COL_DEEP_T2_ACC, row, BaseElement::ZERO);
+                trace.set(COL_DEEP_C1_ACC, row, BaseElement::ZERO);
+                trace.set(COL_DEEP_C2_ACC, row, BaseElement::ZERO);
+
+                trace.set(COL_FRI_EVAL, row, BaseElement::ZERO);
+                trace.set(COL_FRI_X, row, BaseElement::ZERO);
+                trace.set(COL_FRI_POW, row, BaseElement::ZERO);
+
+                for i in 0..NUM_FRI_MSB_BITS {
+                    trace.set(COL_FRI_MSB_BITS_START + i, row, BaseElement::ZERO);
+                }
+                for i in 0..NUM_REMAINDER_COEFFS {
+                    trace.set(COL_REMAINDER_COEFFS_START + i, row, BaseElement::ZERO);
+                }
+            }
+        }
 
         trace
     }
