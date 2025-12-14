@@ -7,21 +7,16 @@
 //! The actual AIR/prover implementation lives in `stark_verifier_batch_prover.rs` and will be
 //! built to keep trace width flat (≤255) by growing trace length with `N`.
 
-use miden_crypto::rand::RpoRandomCoin;
-use miden_crypto::Word;
 use winter_air::{
     Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo, TransitionConstraintDegree,
 };
-use winter_crypto::RandomCoin;
 use winter_math::fields::f64::BaseElement;
-use winter_math::{fft, polynom, FieldElement, StarkField, ToElements};
+use winter_math::{FieldElement, StarkField, ToElements};
 
 use super::merkle_air::DIGEST_WIDTH;
-use super::rpo_air::{ARK1, ARK2, MDS, NUM_ROUNDS, ROWS_PER_PERMUTATION, STATE_WIDTH};
-use super::rpo_proof::rpo_hash_elements;
+use super::rpo_air::{MDS, ROWS_PER_PERMUTATION, STATE_WIDTH};
 use super::stark_verifier_air::{
-    build_context_prefix, compute_deep_evaluation, compute_expected_z,
-    extract_query_positions, StarkVerifierAir,
+    compute_expected_z, StarkVerifierAir,
     COL_CARRY_MASK, COL_COEFF_MASK, COL_COEFF_START, COL_COIN_INIT_MASK, COL_CONSTRAINT_COEFFS_START, COL_DEEP_C1_ACC, COL_DEEP_C2_ACC,
     COL_DEEP_COEFFS_START, COL_DEEP_MASK, COL_DEEP_START, COL_DEEP_T1_ACC, COL_DEEP_T2_ACC,
     COL_FRI_ALPHA_START, COL_FRI_ALPHA_VALUE, COL_FRI_EVAL, COL_FRI_MASK, COL_FRI_MSB_BITS_START,
@@ -31,10 +26,13 @@ use super::stark_verifier_air::{
     COL_POS_MASK, COL_POS_MASKED_ACC, COL_POS_PERM_ACC, COL_POS_RAW, COL_POS_SORTED_VALUE,
     COL_POS_START, COL_REMAINDER_COEFFS_START, COL_RESEED_MASK, COL_RESEED_WORD_START,
     COL_SAVED_COIN_START, COL_Z_MASK, COL_Z_VALUE, NUM_CONSTRAINT_COEFFS, NUM_DEEP_COEFFS,
-    NUM_FRI_MSB_BITS, NUM_REMAINDER_COEFFS, OOD_EVAL_LEN, RATE_WIDTH, VERIFIER_TRACE_WIDTH,
+    NUM_REMAINDER_COEFFS, OOD_EVAL_LEN, RATE_WIDTH, VERIFIER_TRACE_WIDTH,
 };
 
 use super::stark_verifier_air::StarkVerifierPublicInputs;
+
+#[cfg(test)]
+use winter_math::{fft, polynom};
 
 const CAPACITY_WIDTH: usize = 4;
 const RATE_START: usize = CAPACITY_WIDTH;
@@ -1475,9 +1473,8 @@ impl Air for StarkVerifierBatchAir {
 
 #[cfg(test)]
 mod tests {
-    use super::{fft, polynom};
+    use super::*;
     use winter_math::fields::f64::BaseElement;
-    use winter_math::FieldElement;
 
     #[test]
     fn test_segment_transition_mask_degree() {

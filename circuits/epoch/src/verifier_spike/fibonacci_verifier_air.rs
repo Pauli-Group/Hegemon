@@ -74,6 +74,7 @@ type Blake3 = Blake3_256<BaseElement>;
 const VERIFIER_TRACE_WIDTH: usize = 5;
 
 /// Poseidon parameters (matching existing codebase).
+#[allow(dead_code)]
 const POSEIDON_STATE_WIDTH: usize = 3;
 #[allow(dead_code)]
 const POSEIDON_ROUNDS: usize = 8;
@@ -155,6 +156,7 @@ impl ToElements<BaseElement> for VerifierPublicInputs {
 /// which is significantly more complex.
 pub struct FibonacciVerifierAir {
     context: AirContext<BaseElement>,
+    #[allow(dead_code)]
     inner_commitment: [BaseElement; 4],
     #[allow(dead_code)]
     inner_result: BaseElement,

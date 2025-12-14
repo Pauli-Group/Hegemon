@@ -11,8 +11,10 @@ use winterfell::{
     crypto::DefaultRandomCoin, math::fields::f64::BaseElement, matrix::ColMatrix, AuxRandElements,
     CompositionPoly, CompositionPolyTrace, ConstraintCompositionCoefficients,
     DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions,
-    Proof, Prover, StarkDomain, Trace, TracePolyTable, TraceTable,
+    Prover, StarkDomain, Trace, TracePolyTable, TraceTable,
 };
+#[cfg(test)]
+use winterfell::Proof;
 
 use super::fri_air::MAX_FRI_LAYERS;
 use super::merkle_air::DIGEST_WIDTH;

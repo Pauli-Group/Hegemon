@@ -70,6 +70,7 @@ const RATE_START: usize = CAPACITY_WIDTH;
 // Trace layout for StarkVerifierAir.
 // Columns 0..STATE_WIDTH-1 hold the RPO sponge state, and column STATE_WIDTH is an unused
 // round counter (kept for compatibility with shared trace builders).
+#[allow(dead_code)] // Used in OOD consistency check for inner proofs
 const ROUND_COL: usize = STATE_WIDTH;
 pub(crate) const COL_CARRY_MASK: usize = RPO_TRACE_WIDTH;
 pub(crate) const COL_FULL_CARRY_MASK: usize = RPO_TRACE_WIDTH + 1;
@@ -237,6 +238,7 @@ impl StarkVerifierPublicInputs {
     ///
     /// This is used for recursion depth 2+, where the inner proof is itself a `StarkVerifierAir`
     /// proof and its public inputs arrive as an opaque element vector.
+    #[allow(dead_code)]
     pub(crate) fn try_from_elements(
         elements: &[BaseElement],
         inner_public_inputs_len: usize,
@@ -1127,7 +1129,7 @@ impl Air for StarkVerifierAir {
         let fri_leaf_any_row_mask = periodic_values[p];
         p += 1;
         let remainder_hash_row0_mask = periodic_values[p];
-        p += 1;
+        // Note: final p += 1 omitted since p is not used after this point
 
         // MDS result
         let mut mds_result: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
@@ -1950,7 +1952,7 @@ impl Air for StarkVerifierAir {
         } else {
             result[idx] = E::ZERO;
         }
-        idx += 1;
+        // idx is intentionally not incremented here: this is the final constraint slot.
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
