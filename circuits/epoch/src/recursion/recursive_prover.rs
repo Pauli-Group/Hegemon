@@ -62,6 +62,8 @@ use super::stark_verifier_prover::StarkVerifierProver;
 use crate::prover::EpochProverError;
 use crate::types::Epoch;
 
+const EPOCH_BATCH_TAG: u64 = u64::from_le_bytes(*b"EPOCHBAT");
+
 /// Recursive epoch proof containing the STARK proof and verification metadata.
 #[derive(Clone, Debug)]
 pub struct RecursiveEpochProof {
@@ -98,6 +100,31 @@ impl RecursiveEpochProof {
             bytes[i * 8..(i + 1) * 8].copy_from_slice(&val.to_le_bytes());
         }
         bytes
+    }
+}
+
+/// A batched proof which commits to multiple epoch accumulators.
+///
+/// This is the "epochs → batched inner" stage for single-proof sync: we take `K` epoch
+/// accumulators (each a 4-element RPO digest, serialized as 32 bytes) and merge them into a
+/// single 4-element digest, then prove a small `RpoAir` STARK over that digest.
+#[derive(Clone, Debug)]
+pub struct EpochBatchProof {
+    /// Serialized STARK proof bytes for an `RpoAir` proof.
+    pub proof_bytes: Vec<u8>,
+    /// The merged accumulator digest committed to by this proof.
+    pub batch_accumulator: [BaseElement; 4],
+    /// Inclusive epoch range covered by this batch (bound into the inner proof’s public inputs).
+    pub epoch_start: u64,
+    /// Inclusive epoch range covered by this batch (bound into the inner proof’s public inputs).
+    pub epoch_end: u64,
+    /// Number of epochs committed to by this batch.
+    pub num_epochs: u32,
+}
+
+impl EpochBatchProof {
+    pub fn epoch_range(&self) -> (u64, u64) {
+        (self.epoch_start, self.epoch_end)
     }
 }
 
@@ -170,6 +197,73 @@ impl RecursiveEpochProver {
             num_proofs: proof_hashes.len() as u32,
             is_recursive: false,
         })
+    }
+
+    /// Generate a batched inner proof which commits to `K` epoch accumulators.
+    ///
+    /// This is a depth-0 batch: it does **not** verify each epoch proof; it commits to the
+    /// provided epoch accumulators by hashing them into a single digest and proving an `RpoAir`
+    /// permutation over that digest.
+    ///
+    /// The intent is to feed these batched-inner proofs into an outer batch verifier proof
+    /// (Phase 3b) so a light client can verify a constant number of proofs.
+    pub fn prove_epoch_batch(
+        &self,
+        epoch_start: u64,
+        epoch_end: u64,
+        epoch_accumulators: &[[u8; 32]],
+    ) -> Result<EpochBatchProof, EpochProverError> {
+        if epoch_accumulators.is_empty() {
+            return Err(EpochProverError::EmptyEpoch);
+        }
+        if epoch_end < epoch_start {
+            return Err(EpochProverError::TraceBuildError(
+                "epoch_end must be >= epoch_start".to_string(),
+            ));
+        }
+        let expected = (epoch_end - epoch_start + 1) as usize;
+        if epoch_accumulators.len() != expected {
+            return Err(EpochProverError::TraceBuildError(format!(
+                "epoch accumulator count mismatch: expected {expected}, got {}",
+                epoch_accumulators.len()
+            )));
+        }
+
+        let batch_accumulator = self.compute_proof_accumulator(epoch_accumulators);
+        let input_state = build_epoch_batch_input_state(
+            &batch_accumulator,
+            epoch_start,
+            epoch_end,
+            epoch_accumulators.len() as u32,
+        );
+        let proof_bytes = self.generate_real_stark_proof_for_state(input_state)?;
+
+        Ok(EpochBatchProof {
+            proof_bytes,
+            batch_accumulator,
+            epoch_start,
+            epoch_end,
+            num_epochs: epoch_accumulators.len() as u32,
+        })
+    }
+
+    /// Verify a batched inner proof (native verification of the contained `RpoAir` proof).
+    pub fn verify_epoch_batch_proof(&self, proof: &EpochBatchProof) -> bool {
+        if proof.proof_bytes.is_empty() {
+            return false;
+        }
+        let input_state = build_epoch_batch_input_state(
+            &proof.batch_accumulator,
+            proof.epoch_start,
+            proof.epoch_end,
+            proof.num_epochs,
+        );
+        let inner_pub_inputs = self.build_rpo_pub_inputs_for_state(input_state);
+        let stark_proof = match winterfell::Proof::from_bytes(&proof.proof_bytes) {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+        verify_epoch_with_rpo(&stark_proof, &inner_pub_inputs).is_ok()
     }
 
     /// Generate a recursive epoch proof (proof-of-proof) using StarkVerifierAir.
@@ -270,9 +364,16 @@ impl RecursiveEpochProver {
         &self,
         accumulator: &[BaseElement; 4],
     ) -> Result<Vec<u8>, EpochProverError> {
-        // Pad accumulator to full RPO state width (12 elements)
+        // Pad accumulator to full RPO state width (12 elements).
         let mut input_state = [BaseElement::ZERO; STATE_WIDTH];
         input_state[..4].copy_from_slice(accumulator);
+        self.generate_real_stark_proof_for_state(input_state)
+    }
+
+    fn generate_real_stark_proof_for_state(
+        &self,
+        input_state: [BaseElement; STATE_WIDTH],
+    ) -> Result<Vec<u8>, EpochProverError> {
 
         // Create prover with our options
         let prover = RpoStarkProver::from_rpo_options(&self.options);
@@ -292,7 +393,13 @@ impl RecursiveEpochProver {
     ) -> super::rpo_air::RpoPublicInputs {
         let mut input_state = [BaseElement::ZERO; STATE_WIDTH];
         input_state[..4].copy_from_slice(accumulator);
+        self.build_rpo_pub_inputs_for_state(input_state)
+    }
 
+    fn build_rpo_pub_inputs_for_state(
+        &self,
+        input_state: [BaseElement; STATE_WIDTH],
+    ) -> super::rpo_air::RpoPublicInputs {
         let prover = RpoStarkProver::from_rpo_options(&self.options);
         let trace = prover.build_trace(input_state);
         prover.get_pub_inputs(&trace)
@@ -438,6 +545,28 @@ fn hash_to_elements(hash: &[u8; 32]) -> [BaseElement; 4] {
     elements
 }
 
+fn build_epoch_batch_input_state(
+    batch_accumulator: &[BaseElement; 4],
+    epoch_start: u64,
+    epoch_end: u64,
+    num_epochs: u32,
+) -> [BaseElement; STATE_WIDTH] {
+    let start_lo = epoch_start as u32;
+    let start_hi = (epoch_start >> 32) as u32;
+    let end_lo = epoch_end as u32;
+    let end_hi = (epoch_end >> 32) as u32;
+
+    let mut input_state = [BaseElement::ZERO; STATE_WIDTH];
+    input_state[..4].copy_from_slice(batch_accumulator);
+    input_state[4] = BaseElement::new(start_lo as u64);
+    input_state[5] = BaseElement::new(start_hi as u64);
+    input_state[6] = BaseElement::new(end_lo as u64);
+    input_state[7] = BaseElement::new(end_hi as u64);
+    input_state[8] = BaseElement::new(EPOCH_BATCH_TAG);
+    input_state[9] = BaseElement::new(num_epochs as u64);
+    input_state
+}
+
 // ============================================================================
 // Proof Options for Recursive Verification
 // ============================================================================
@@ -492,6 +621,8 @@ pub struct InnerProofData {
     pub pow_nonce: u64,
     /// Trace length of the inner proof.
     pub trace_length: usize,
+    /// Trace width (main trace segment) of the inner proof.
+    pub trace_width: usize,
     /// Blowup factor used by the inner proof.
     pub blowup_factor: usize,
     /// Partition size used for main-trace Merkle leaves.
@@ -500,6 +631,12 @@ pub struct InnerProofData {
     pub constraint_partition_size: usize,
     /// Number of partitions used by the inner FRI proof.
     pub fri_num_partitions: usize,
+    /// Constraint composition frame width (number of quotient columns).
+    pub constraint_frame_width: usize,
+    /// Number of transition constraints in the inner AIR.
+    pub num_transition_constraints: usize,
+    /// Number of boundary assertions in the inner AIR.
+    pub num_assertions: usize,
     /// Number of query draws requested by the inner proof options (before dedup).
     pub num_draws: usize,
     /// Query positions drawn from the transcript (per draw; may contain duplicates).
@@ -560,10 +697,14 @@ impl InnerProofData {
             public_inputs: vec![],
             pow_nonce: 0,
             trace_length: 0,
+            trace_width: 0,
             blowup_factor: 0,
             trace_partition_size: 0,
             constraint_partition_size: 0,
             fri_num_partitions: 0,
+            constraint_frame_width: 0,
+            num_transition_constraints: 0,
+            num_assertions: 0,
             num_draws: 0,
             query_positions: vec![],
             unique_query_positions: vec![],
@@ -634,6 +775,8 @@ impl InnerProofData {
         let main_trace_width = air.trace_info().main_trace_width();
         let aux_trace_width = air.trace_info().aux_segment_width();
         let constraint_frame_width = air.context().num_constraint_composition_columns();
+        let num_transition_constraints = air.context().num_transition_constraints();
+        let num_assertions = air.get_assertions().len();
 
         let partition_options = air.options().partition_options();
         let partition_size_main = partition_options.partition_size::<BaseElement>(main_trace_width);
@@ -916,10 +1059,14 @@ impl InnerProofData {
             public_inputs,
             pow_nonce,
             trace_length: trace_info.length(),
+            trace_width: main_trace_width,
             blowup_factor: options.blowup_factor(),
             trace_partition_size: partition_size_main,
             constraint_partition_size: partition_size_constraint,
             fri_num_partitions,
+            constraint_frame_width,
+            num_transition_constraints,
+            num_assertions,
             num_draws,
             query_positions,
             unique_query_positions,
@@ -971,6 +1118,10 @@ impl InnerProofData {
             self.constraint_partition_size,
             self.blowup_factor,
             self.trace_length,
+            self.trace_width,
+            self.constraint_frame_width,
+            self.num_transition_constraints,
+            self.num_assertions,
         )
     }
 }
@@ -1001,10 +1152,12 @@ mod tests {
     use super::*;
     use crate::recursion::rpo_air::{RpoAir, STATE_WIDTH};
     use crate::recursion::rpo_stark_prover::RpoStarkProver;
+    use crate::recursion::stark_verifier_batch_prover::{prove_batch, verify_batch};
     use crate::recursion::stark_verifier_air::StarkVerifierAir;
     use crate::types::Epoch;
     use std::time::Instant;
     use winter_math::FieldElement;
+    use winterfell::AcceptableOptions;
 
     fn test_epoch() -> Epoch {
         let mut epoch = Epoch::new(0);
@@ -1071,6 +1224,214 @@ mod tests {
 
         let result = prover.prove_epoch(&epoch, &[]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_prove_epoch_batch_roundtrip_and_tamper_reject() {
+        let prover = RecursiveEpochProver::fast();
+
+        // Generate a handful of per-epoch accumulators.
+        let mut epoch_accumulators = Vec::new();
+        for i in 0..4u64 {
+            let mut epoch = test_epoch();
+            epoch.epoch_number = i;
+            let proof_hashes = vec![[i as u8; 32], [(i as u8).wrapping_add(1); 32]];
+            let epoch_proof = prover.prove_epoch(&epoch, &proof_hashes).unwrap();
+            epoch_accumulators.push(epoch_proof.accumulator_bytes());
+        }
+
+        let batch = prover
+            .prove_epoch_batch(10, 13, &epoch_accumulators)
+            .expect("batch proof generation should succeed");
+        assert_eq!(batch.epoch_range(), (10, 13));
+        assert_eq!(batch.num_epochs, 4);
+        assert!(prover.verify_epoch_batch_proof(&batch));
+
+        // Tamper with proof bytes.
+        let mut tampered = batch.clone();
+        tampered.proof_bytes[0] ^= 1;
+        assert!(!prover.verify_epoch_batch_proof(&tampered));
+
+        // Tamper with metadata that is bound into the inner proof's public inputs.
+        let mut tampered_meta = batch;
+        tampered_meta.epoch_end ^= 1;
+        assert!(!prover.verify_epoch_batch_proof(&tampered_meta));
+    }
+
+    fn epoch_batch_as_inner(
+        prover: &RecursiveEpochProver,
+        batch: &EpochBatchProof,
+    ) -> Result<(InnerProofData, StarkVerifierPublicInputs), EpochProverError> {
+        let input_state = build_epoch_batch_input_state(
+            &batch.batch_accumulator,
+            batch.epoch_start,
+            batch.epoch_end,
+            batch.num_epochs,
+        );
+        let inner_pub_inputs = prover.build_rpo_pub_inputs_for_state(input_state);
+        let inner_data = InnerProofData::from_proof::<RpoAir>(&batch.proof_bytes, inner_pub_inputs)?;
+        let verifier_pub_inputs = inner_data.to_stark_verifier_inputs();
+        Ok((inner_data, verifier_pub_inputs))
+    }
+
+    #[test]
+    #[ignore = "heavy: proves an outer batch verifier over epoch batches"]
+    fn test_two_stage_epoch_batch_pipeline_roundtrip_and_tamper_reject() {
+        let prover = RecursiveEpochProver::fast();
+
+        // K=4 epochs per batch, N=2 batched inners.
+        let mut epoch_accumulators = Vec::new();
+        for i in 0..8u64 {
+            let mut epoch = test_epoch();
+            epoch.epoch_number = i;
+            let proof_hashes = vec![[i as u8; 32], [(i as u8).wrapping_add(1); 32]];
+            let epoch_proof = prover.prove_epoch(&epoch, &proof_hashes).unwrap();
+            epoch_accumulators.push(epoch_proof.accumulator_bytes());
+        }
+
+        let batch1 = prover
+            .prove_epoch_batch(10, 13, &epoch_accumulators[0..4])
+            .expect("batch1");
+        let batch2 = prover
+            .prove_epoch_batch(14, 17, &epoch_accumulators[4..8])
+            .expect("batch2");
+        assert!(prover.verify_epoch_batch_proof(&batch1));
+        assert!(prover.verify_epoch_batch_proof(&batch2));
+
+        // Convert batched-inner proofs into recursion witness data + public inputs.
+        let (inner1, pub_inputs1) = epoch_batch_as_inner(&prover, &batch1).expect("inner1");
+        let (inner2, pub_inputs2) = epoch_batch_as_inner(&prover, &batch2).expect("inner2");
+
+        // Outer batch proof: verify the two batched-inner proofs in-circuit.
+        let outer_options = prover.options.to_winter_options();
+        let outer = prove_batch(&[inner1, inner2], vec![pub_inputs1.clone(), pub_inputs2.clone()], outer_options.clone())
+            .expect("outer batch proof");
+
+        let acceptable = || AcceptableOptions::OptionSet(vec![outer_options.clone()]);
+        verify_batch(&outer, vec![pub_inputs1.clone(), pub_inputs2.clone()], acceptable())
+            .expect("outer batch verification");
+
+        // Tamper reject: swapping per-inner public inputs must fail.
+        assert!(
+            verify_batch(&outer, vec![pub_inputs2.clone(), pub_inputs1.clone()], acceptable())
+                .is_err()
+        );
+
+        // Tamper reject: mutating an inner batch proof must change its derived verifier public inputs.
+        let mut tampered_bytes = batch2.clone();
+        tampered_bytes.proof_bytes[0] ^= 1;
+        match epoch_batch_as_inner(&prover, &tampered_bytes) {
+            Ok((_inner2_t, pub_inputs2_t)) => {
+                assert!(
+                    verify_batch(&outer, vec![pub_inputs1.clone(), pub_inputs2_t], acceptable())
+                        .is_err()
+                );
+            }
+            Err(_) => {
+                // If the tampered bytes can't even be parsed as a proof, treat as rejection.
+            }
+        }
+
+        // Tamper reject: metadata bound into the inner proof's public inputs must be consistent.
+        let mut tampered_meta = batch2;
+        tampered_meta.epoch_end ^= 1;
+        match epoch_batch_as_inner(&prover, &tampered_meta) {
+            Ok((_inner2_t, pub_inputs2_t)) => {
+                assert!(
+                    verify_batch(&outer, vec![pub_inputs1, pub_inputs2_t], acceptable()).is_err()
+                );
+            }
+            Err(_) => {}
+        }
+    }
+
+    #[test]
+    fn test_two_stage_epoch_batch_pipeline_small_options() {
+        let prover = RecursiveEpochProver {
+            options: RpoProofOptions {
+                num_queries: 1,
+                blowup_factor: 16,
+                grinding_factor: 0,
+            },
+        };
+
+        // K=4 epochs per batch, N=2 batched inners.
+        let mut epoch_accumulators = Vec::new();
+        for i in 0..8u8 {
+            let mut acc = [0u8; 32];
+            acc[0] = i;
+            epoch_accumulators.push(acc);
+        }
+
+        let batch1 = prover
+            .prove_epoch_batch(10, 13, &epoch_accumulators[0..4])
+            .expect("batch1");
+        let batch2 = prover
+            .prove_epoch_batch(14, 17, &epoch_accumulators[4..8])
+            .expect("batch2");
+        let acceptable_inner = AcceptableOptions::OptionSet(vec![prover.options.to_winter_options()]);
+        for batch in [&batch1, &batch2] {
+            let input_state = build_epoch_batch_input_state(
+                &batch.batch_accumulator,
+                batch.epoch_start,
+                batch.epoch_end,
+                batch.num_epochs,
+            );
+            let inner_pub_inputs = prover.build_rpo_pub_inputs_for_state(input_state);
+            let inner_proof = Proof::from_bytes(&batch.proof_bytes).expect("inner proof parse");
+            crate::recursion::rpo_stark_prover::verify_rpo_proof(
+                &inner_proof,
+                &inner_pub_inputs,
+                &acceptable_inner,
+            )
+            .expect("inner batch proof verify");
+        }
+
+        let (inner1, pub_inputs1) = epoch_batch_as_inner(&prover, &batch1).expect("inner1");
+        let (inner2, pub_inputs2) = epoch_batch_as_inner(&prover, &batch2).expect("inner2");
+
+        let outer_options = prover.options.to_winter_options();
+        let outer = prove_batch(
+            &[inner1, inner2],
+            vec![pub_inputs1.clone(), pub_inputs2.clone()],
+            outer_options.clone(),
+        )
+        .expect("outer batch proof");
+
+        let acceptable = || AcceptableOptions::OptionSet(vec![outer_options.clone()]);
+        verify_batch(&outer, vec![pub_inputs1.clone(), pub_inputs2.clone()], acceptable())
+            .expect("outer batch verification");
+
+        // Tamper reject: swapping per-inner public inputs must fail.
+        assert!(
+            verify_batch(&outer, vec![pub_inputs2.clone(), pub_inputs1.clone()], acceptable())
+                .is_err()
+        );
+
+        // Tamper reject: mutating an inner batch proof must change its derived verifier public inputs.
+        let mut tampered_bytes = batch2.clone();
+        tampered_bytes.proof_bytes[0] ^= 1;
+        match epoch_batch_as_inner(&prover, &tampered_bytes) {
+            Ok((_inner2_t, pub_inputs2_t)) => {
+                assert!(
+                    verify_batch(&outer, vec![pub_inputs1.clone(), pub_inputs2_t], acceptable())
+                        .is_err()
+                );
+            }
+            Err(_) => {}
+        }
+
+        // Tamper reject: metadata bound into the inner proof's public inputs must be consistent.
+        let mut tampered_meta = batch2;
+        tampered_meta.epoch_end ^= 1;
+        match epoch_batch_as_inner(&prover, &tampered_meta) {
+            Ok((_inner2_t, pub_inputs2_t)) => {
+                assert!(
+                    verify_batch(&outer, vec![pub_inputs1, pub_inputs2_t], acceptable()).is_err()
+                );
+            }
+            Err(_) => {}
+        }
     }
 
     #[test]
@@ -1302,7 +1663,7 @@ mod tests {
         let trace_width = inner_air.trace_info().main_trace_width();
 
         println!(
-            "depth-2 inner StarkVerifierAir params: trace_width={} constraint_cols={} transition_constraints={} assertions={} coeffs_total={} deep_coeffs={} ood_evals={} trace_len={} blowup={} num_queries={} num_draws={}",
+            "depth-2 inner StarkVerifierAir params: trace_width={} constraint_cols={} transition_constraints={} assertions={} coeffs_total={} deep_coeffs={} ood_evals={} trace_len={} blowup={} trace_part={} constraint_part={} num_queries={} num_draws={}",
             trace_width,
             num_constraint_cols,
             num_transition,
@@ -1316,6 +1677,8 @@ mod tests {
                 + outer_as_inner.ood_quotient_next.len(),
             outer_as_inner.trace_length,
             outer_as_inner.blowup_factor,
+            outer_as_inner.trace_partition_size,
+            outer_as_inner.constraint_partition_size,
             outer_as_inner.unique_query_positions.len(),
             outer_as_inner.num_draws
         );

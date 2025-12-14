@@ -33,10 +33,12 @@ pub mod rpo_proof;
 pub mod rpo_stark_prover;
 pub mod rpo_stark_verifier_prover;
 pub mod stark_verifier_air;
+pub mod stark_verifier_batch_air;
+pub mod stark_verifier_batch_prover;
 pub mod stark_verifier_prover;
 
 // Re-export main types for convenience
-pub use recursive_prover::{InnerProofData, RecursiveEpochProof, RecursiveEpochProver};
+pub use recursive_prover::{EpochBatchProof, InnerProofData, RecursiveEpochProof, RecursiveEpochProver};
 pub use rpo_air::{RpoAir, RpoProver, RpoPublicInputs};
 pub use rpo_proof::{
     prove_with_rpo, rpo_hash_elements, rpo_merge, verify_with_rpo, RpoProofOptions,
@@ -44,6 +46,8 @@ pub use rpo_proof::{
 pub use rpo_stark_prover::{prove_epoch_with_rpo, verify_epoch_with_rpo, RpoStarkProver};
 pub use rpo_stark_verifier_prover::RpoStarkVerifierProver;
 pub use stark_verifier_air::{StarkVerifierAir, StarkVerifierPublicInputs};
+pub use stark_verifier_batch_air::StarkVerifierBatchPublicInputs;
+pub use stark_verifier_batch_prover::{prove_batch, verify_batch, StarkVerifierBatchProver};
 pub use stark_verifier_prover::StarkVerifierProver;
 
 #[cfg(test)]
