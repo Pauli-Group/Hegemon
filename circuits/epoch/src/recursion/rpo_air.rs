@@ -61,9 +61,11 @@ pub const TRACE_WIDTH: usize = STATE_WIDTH + 1;
 pub const ROWS_PER_PERMUTATION: usize = 16;
 
 /// Actual computation rows (before padding)
+#[allow(dead_code)]
 const COMPUTATION_ROWS: usize = NUM_ROUNDS * 2; // 14 rows
 
 /// Column index for round counter
+#[allow(dead_code)]
 const ROUND_COL: usize = STATE_WIDTH;
 
 // MDS MATRIX
@@ -173,7 +175,7 @@ impl Air for RpoAir {
         let next = frame.next();
 
         // Get round index from the trace (column 12)
-        let round_idx = current[ROUND_COL];
+        let _round_idx = current[ROUND_COL];
 
         // Periodic values layout:
         // [0]: half_round_selector (0 = padding/input, 1 = forward sbox, 2 = inverse sbox)

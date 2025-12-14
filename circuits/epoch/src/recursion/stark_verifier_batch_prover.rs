@@ -57,7 +57,7 @@ impl StarkVerifierBatchProver {
 
         // Build each segment trace using the per-proof prover.
         let mut segment_traces: Vec<TraceTable<BaseElement>> = Vec::with_capacity(inners.len());
-        for (idx, (inner_data, inner_pub)) in
+        for (_idx, (inner_data, inner_pub)) in
             inners.iter().zip(self.pub_inputs.inner.iter()).enumerate()
         {
             let segment_prover =

@@ -172,7 +172,7 @@ pub fn verify_with_rpo(_proof: &[u8], _pub_inputs: &[BaseElement]) -> Result<boo
 mod compatibility_tests {
     use super::*;
     use miden_crypto::rand::RpoRandomCoin;
-    use miden_crypto::{Felt, Word, ZERO};
+    use miden_crypto::{Felt, Word};
     use winter_crypto::RandomCoin;
 
     #[test]

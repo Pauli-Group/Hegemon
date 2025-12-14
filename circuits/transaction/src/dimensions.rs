@@ -3,7 +3,9 @@
 //! This module validates sizing assumptions and computes trace layouts.
 //! It is designed to be used by both single-transaction and batch circuits.
 
-use crate::constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS};
+use crate::constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS};
+#[cfg(test)]
+use crate::constants::MAX_OUTPUTS;
 use crate::stark_air::{CYCLE_LENGTH, MIN_TRACE_LENGTH};
 
 /// Trace width (re-exported for convenience).

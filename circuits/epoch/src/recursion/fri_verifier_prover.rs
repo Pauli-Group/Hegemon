@@ -10,11 +10,13 @@ use winter_fri::folding::fold_positions;
 use winter_math::{FieldElement, StarkField};
 use winterfell::{
     crypto::DefaultRandomCoin, math::fields::f64::BaseElement, matrix::ColMatrix,
-    AcceptableOptions, AuxRandElements, CompositionPoly, CompositionPolyTrace,
+    AuxRandElements, CompositionPoly, CompositionPolyTrace,
     ConstraintCompositionCoefficients, DefaultConstraintCommitment, DefaultConstraintEvaluator,
     DefaultTraceLde, PartitionOptions, Proof, Prover, StarkDomain, TraceInfo, TracePolyTable,
     TraceTable,
 };
+#[cfg(test)]
+use winterfell::AcceptableOptions;
 
 use super::fri_air::{
     FriFoldingVerifier, FriPublicInputs, FriVerifierAir, COL_ALPHA, COL_FOLD_MASK, COL_F_NEG_X,

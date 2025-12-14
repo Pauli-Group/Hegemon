@@ -46,8 +46,8 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] (2025-12-13) Phase 2f: Wire `StarkVerifierAir` into `RecursiveEpochProver` (proof-of-proof) and propagate recursive epoch proofs over the PQ network.
 - [x] (2025-12-13) Phase 3a: Query-position binding soundness hardening (bind transcript draws → opened Merkle/FRI indices; duplicates/collisions).
 - [x] (2025-12-13) Phase 3b: Batch inner verification (outer proof verifies N inner `RpoAir` proofs sequentially; no depth-2 self-recursion).
-- [x] (2025-12-14) Phase 3b: Fix batch segment-boundary masking + transition-degree alignment; ignored batch tests now pass (`test_batch_prover_two_proofs`, `test_batch_prover_tamper_reject`).
-- [x] (2025-12-14) Phase 3c: Two-stage epoch aggregation (epochs → batched inner → single outer).
+- [x] (2025-12-13) Phase 3b: Fix batch segment-boundary masking + transition-degree alignment; ignored batch tests now pass (`test_batch_prover_two_proofs`, `test_batch_prover_tamper_reject`).
+- [x] (2025-12-13) Phase 3c: Two-stage epoch aggregation (epochs → batched inner → single outer).
 - [x] (2025-12-13) Phase 3d: Testnet proof retrieval + persistence (request/serve protocol, local storage, receipt validation, RPC/CLI).
 - [x] (2025-12-13) Phase 3e: Performance budgets + benchmarks (100/500/1000 epoch sizes, memory; regression thresholds; CI gate).
 - [x] (2025-12-13) Phase 3f: Documentation + cleanup (trace layout diagram, runbook, CI for ignored heavy tests, audit-prep notes).
@@ -58,9 +58,9 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] (2025-12-13) Phase 3b.1: Define batch-verifier public inputs + trace segmentation (N inner proofs; width-flat).
 - [x] (2025-12-13) Phase 3b.2: Implement `StarkVerifierBatchAir` + prover which verifies N `RpoAir` proofs in one outer proof.
 - [x] (2025-12-13) Phase 3b.3: Add test: N inner proofs → 1 outer batch proof (roundtrip + tamper reject).
-- [x] (2025-12-14) Phase 3c.1: Define batched-inner public inputs: `(epoch_start, epoch_end, batch_chain_digest)` (or equivalent deterministic commitment).
-- [x] (2025-12-14) Phase 3c.2: Implement batched-inner prover: `K` epochs → 1 inner `RpoAir` proof committing to those epochs.
-- [x] (2025-12-14) Phase 3c.3: Add two-stage test: `K` epochs → batched inner; `N` batched inners → 1 outer proof.
+- [x] (2025-12-13) Phase 3c.1: Define batched-inner public inputs: `(epoch_start, epoch_end, batch_chain_digest)` (or equivalent deterministic commitment).
+- [x] (2025-12-13) Phase 3c.2: Implement batched-inner prover: `K` epochs → 1 inner `RpoAir` proof committing to those epochs.
+- [x] (2025-12-13) Phase 3c.3: Add two-stage test: `K` epochs → batched inner; `N` batched inners → 1 outer proof.
 - [ ] (2025-12-13) Phase 3x (deferred): Depth-2 self recursion (verifier-of-verifier) via streaming/replay trace layout.
 - [x] (2025-12-13) Phase 3x.1 (deferred): Add `RpoStarkVerifierProver` (RPO Fiat–Shamir + RPO commitments) for outer proofs.
 - [ ] (2025-12-13) Phase 3x.2 (deferred groundwork): Parameterize recursive verification for `StarkVerifierAir` as an inner proof (trace/FRI sizing expectations) (completed: quantify inner `StarkVerifierAir` size + Winterfell 255-column hard cap; add `StarkVerifierPublicInputs::try_from_elements` + generalized context-prefix/z computation for verifier proofs; propagate inner-proof dimensions/counts (`trace_width`, `constraint_frame_width`, transition/assertion counts) into `StarkVerifierPublicInputs` to avoid recursive AIR instantiation during transcript reconstruction; compute inner constraint-composition coefficients deterministically from public inputs (no longer depends on stored coeff columns for OOD step-3); add an ignored test validating Winterfell verifier step-3 OOD consistency for a `StarkVerifierAir` proof; parameterize transcript/Merkle sizing (coeff/deep/OOD permutation counts + leaf lengths) from inner-proof metadata; gate fixed-size (RpoAir-only) constant-column storage and DEEP/FRI state-machine constraints behind `InnerProofKind::RpoAir` while depth-2 streaming is pending; trace builder now initializes DEEP/FRI state columns to zero for verifier-as-inner traces; remaining: streaming/replay trace layout + full in-circuit verification for verifier proofs).
@@ -81,7 +81,7 @@ Implement recursive STARK proof composition where a proof can verify other proof
 - [x] (2025-12-13) Phase 3f.5: Add `LightClient::sync_recursive()` tamper-reject test coverage.
 - [ ] Phase 4: Security audit and production hardening.
 
-**Current status (2025-12-14)**: Phase 1 shipped and is live in the pallet. Phase 2d/2e are complete end‑to‑end for RPO inner proofs: `StarkVerifierAir` reconstructs the RPO Fiat‑Shamir transcript, verifies Merkle openings for trace/constraint/FRI leaves, performs DEEP composition, completes FRI folding, and binds the final folded value to the remainder polynomial evaluation. Phase 2f is now shipped: `RecursiveEpochProver::prove_epoch_recursive()` generates a proof‑of‑proof for epoch accumulators, `node/src/substrate/service.rs` broadcasts recursive epoch proofs on epoch boundaries (guarded by `HEGEMON_RECURSIVE_EPOCH_PROOFS=1`) and sends the latest proof to new peers on connect, and `LightClient::sync_recursive()` can verify these recursive proofs. Phase 3b is complete and stable in debug builds: `StarkVerifierBatchAir` + `StarkVerifierBatchProver` can verify N inner `RpoAir` proofs in a single outer proof (width-flat, length = segment_len × num_segments), with per-segment transition masking and batch-specific degree descriptors. Phase 3c is now complete: `RecursiveEpochProver::prove_epoch_batch()` generates batched-inner proofs committing to fixed epoch ranges, and the two-stage pipeline is covered by a CI-scale test (`test_two_stage_epoch_batch_pipeline_small_options`) plus a heavier ignored test (`test_two_stage_epoch_batch_pipeline_roundtrip_and_tamper_reject`). Depth‑2 self recursion is deferred behind a streaming/replay trace layout (Phase 3x).
+**Current status (2025-12-13)**: Phase 1 shipped and is live in the pallet. Phase 2d/2e are complete end‑to‑end for RPO inner proofs: `StarkVerifierAir` reconstructs the RPO Fiat‑Shamir transcript, verifies Merkle openings for trace/constraint/FRI leaves, performs DEEP composition, completes FRI folding, and binds the final folded value to the remainder polynomial evaluation. Phase 2f is now shipped: `RecursiveEpochProver::prove_epoch_recursive()` generates a proof‑of‑proof for epoch accumulators, `node/src/substrate/service.rs` broadcasts recursive epoch proofs on epoch boundaries (guarded by `HEGEMON_RECURSIVE_EPOCH_PROOFS=1`) and sends the latest proof to new peers on connect, and `LightClient::sync_recursive()` can verify these recursive proofs. Phase 3b is complete and stable in debug builds: `StarkVerifierBatchAir` + `StarkVerifierBatchProver` can verify N inner `RpoAir` proofs in a single outer proof (width-flat, length = segment_len × num_segments), with per-segment transition masking and batch-specific degree descriptors. Phase 3c is now complete: `RecursiveEpochProver::prove_epoch_batch()` generates batched-inner proofs committing to fixed epoch ranges, and the two-stage pipeline is covered by a CI-scale test (`test_two_stage_epoch_batch_pipeline_small_options`) plus a heavier ignored test (`test_two_stage_epoch_batch_pipeline_roundtrip_and_tamper_reject`). Depth‑2 self recursion is deferred behind a streaming/replay trace layout (Phase 3x).
 
 ## Surprises & Discoveries
 
@@ -93,7 +93,7 @@ Implement recursive STARK proof composition where a proof can verify other proof
   Evidence: `winter-prover` panicked with `transition constraint degrees didn't match` until `StarkVerifierAir::new()` degree descriptors were updated for the DEEP/FRI constraints and the prover filled the new state columns deterministically.
   Implication: Any future verifier-AIR constraints must be accompanied by updated `TransitionConstraintDegree` descriptors and validated against at least one real proof roundtrip in debug builds. This applies equally to the batch verifier: per-segment transition exemptions and per-segment “constant” columns change effective degrees and must be reflected in `StarkVerifierBatchAir::new()`.
 
-- Observation (2025-12-14): Winterfell enforces a minimum blowup factor of 16; smaller blowup factors panic during `AirContext::new()`.
+- Observation (2025-12-13): Winterfell enforces a minimum blowup factor of 16; smaller blowup factors panic during `AirContext::new()`.
   Evidence: `winter-air-0.13.1/src/air/context.rs` panics with `blowup factor too small; expected at least 16, but was 8` when running the two-stage pipeline with a reduced blowup factor.
   Implication: CI-scale recursion tests can reduce `num_queries`, but cannot drop below `blowup_factor=16`. The small two-stage test uses `num_queries=1`, `blowup_factor=16` to keep runtime reasonable while staying within Winterfell’s constraints.
 
@@ -3318,9 +3318,13 @@ docker-compose -f docker-compose.testnet.yml up --abort-on-container-exit
 - **2025-12-13**: Pivot Phase 3b/3c to “batch verifier + two-stage epoch batching”:
   - Replaced the Phase 3b goal of depth-2 self recursion (verifier-of-verifier) with a depth-1 batch verifier which verifies `N` inner `RpoAir` proofs sequentially in one outer proof (keeps trace width ≤255).
   - Reframed Phase 3c from binary-tree epoch range aggregation to a two-stage pipeline: epochs → batched-inner proofs (K epochs per inner) → single outer batch proof verifying N inners.
-- **2025-12-14**: Phase 3b batch verifier debug stabilization:
+- **2025-12-13**: Phase 3b batch verifier debug stabilization:
   - Fixed batch segment-boundary transition masking and aligned `TransitionConstraintDegree` descriptors with Winterfell debug degree checks for concatenated segments.
   - Confirmed passing ignored batch tests: `test_batch_prover_two_proofs`, `test_batch_prover_tamper_reject`.
-- **2025-12-14**: Phase 3c two-stage epoch batching shipped:
+- **2025-12-13**: Phase 3c two-stage epoch batching shipped:
   - Added `EpochBatchProof` + `RecursiveEpochProver::prove_epoch_batch()` / `verify_epoch_batch_proof()` to produce batched-inner `RpoAir` proofs committing to `(epoch_start, epoch_end, batch_accumulator, num_epochs)`.
   - Added a CI-scale end-to-end two-stage test (`test_two_stage_epoch_batch_pipeline_small_options`) and kept a heavier ignored test (`test_two_stage_epoch_batch_pipeline_roundtrip_and_tamper_reject`).
+- **2025-12-13**: Final cleanup pass:
+  - Fixed compiler warnings: removed unused imports (`AcceptableOptions`, `Proof`, `fft`, `polynom`, `ALPHA`, etc.), added `#[cfg(test)]` to test-only imports, prefixed unused variables with underscore.
+  - Added `#[allow(dead_code)]` annotations for constants/functions reserved for future use (Phase 3x depth-2 recursion, spike code).
+  - All 140 epoch-circuit tests pass; crates compile warning-free.
