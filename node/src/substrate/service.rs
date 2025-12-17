@@ -138,7 +138,7 @@ use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
-use sc_client_api::{BlockBackend, BlockchainEvents};
+use sc_client_api::{BlockBackend, BlockchainEvents, HeaderBackend};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sp_api::{ProvideRuntimeApi, StorageChanges};
@@ -2317,6 +2317,246 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 Vec<[u8; 32]>,
                             > = std::collections::BTreeMap::new();
 
+                            // =========================================================
+                            // Backfill: scan historical blocks for proof hashes
+                            // =========================================================
+                            // This ensures we capture transactions from blocks imported
+                            // before the node started (or before a restart).
+                            let best_hash = client_for_epoch_proofs.info().best_hash;
+                            let best_number: u64 = client_for_epoch_proofs
+                                .info()
+                                .best_number
+                                .try_into()
+                                .unwrap_or(0);
+
+                            // Determine which epoch we're currently in
+                            let current_epoch = best_number / EPOCH_SIZE_BLOCKS;
+                            
+                            // Scan from block 1 (genesis has no txs) to capture ALL epochs
+                            // that may have completed while the node was offline.
+                            // TODO: Optimize by checking which epochs already have stored proofs
+                            let scan_start = 1u64;
+
+                            if scan_start < best_number {
+                                tracing::info!(
+                                    scan_start,
+                                    best_number,
+                                    current_epoch,
+                                    "Backfilling proof hashes from historical blocks"
+                                );
+
+                                // Walk backwards from best to find each block
+                                let mut block_hash = best_hash;
+                                let mut block_num = best_number;
+
+                                while block_num >= scan_start && block_num > 0 {
+                                    let body = match client_for_epoch_proofs.block_body(block_hash) {
+                                        Ok(Some(extrinsics)) => extrinsics,
+                                        _ => Vec::new(),
+                                    };
+
+                                    // Log blocks with more than 2 extrinsics (likely has a tx)
+                                    if body.len() > 2 {
+                                        tracing::info!(
+                                            block_num,
+                                            extrinsic_count = body.len(),
+                                            "Scanning block with extra extrinsics"
+                                        );
+                                        // Debug: log all call types
+                                        for (idx, ext) in body.iter().enumerate() {
+                                            tracing::info!(
+                                                block_num,
+                                                idx,
+                                                call = ?std::mem::discriminant(&ext.function),
+                                                "Extrinsic call type"
+                                            );
+                                            // Also try to identify ShieldedPool calls specifically
+                                            if let runtime::RuntimeCall::ShieldedPool(ref inner) = ext.function {
+                                                tracing::info!(
+                                                    block_num,
+                                                    idx,
+                                                    inner_call = ?std::mem::discriminant(inner),
+                                                    "Found ShieldedPool call"
+                                                );
+                                            }
+                                        }
+                                    }
+
+                                    let mut hashes_in_block: Vec<[u8; 32]> = Vec::new();
+                                    for ext in &body {
+                                        // First match on ShieldedPool variant, then match inner call
+                                        if let runtime::RuntimeCall::ShieldedPool(ref inner) = ext.function {
+                                            use pallet_shielded_pool::Call as PoolCall;
+                                            match inner {
+                                                PoolCall::shielded_transfer { proof, .. } => {
+                                                    tracing::info!(block_num, "Found shielded_transfer (backfill)");
+                                                    hashes_in_block.push(blake3::hash(&proof.data).into());
+                                                }
+                                                PoolCall::batch_shielded_transfer { proof, .. } => {
+                                                    tracing::info!(block_num, "Found batch_shielded_transfer (backfill)");
+                                                    hashes_in_block.push(blake3::hash(&proof.data).into());
+                                                }
+                                                PoolCall::shielded_transfer_unsigned { proof, .. } => {
+                                                    tracing::info!(block_num, "Found shielded_transfer_unsigned (backfill)");
+                                                    hashes_in_block.push(blake3::hash(&proof.data).into());
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+
+                                    if !hashes_in_block.is_empty() {
+                                        let epoch_num = block_num / EPOCH_SIZE_BLOCKS;
+                                        tracing::debug!(
+                                            block_num,
+                                            epoch_num,
+                                            count = hashes_in_block.len(),
+                                            "Backfilled proof hashes from block"
+                                        );
+                                        epoch_proof_hashes
+                                            .entry(epoch_num)
+                                            .or_default()
+                                            .extend(hashes_in_block);
+                                    }
+
+                                    // Get parent hash to walk backwards
+                                    let header = match client_for_epoch_proofs.header(block_hash) {
+                                        Ok(Some(h)) => h,
+                                        _ => break,
+                                    };
+
+                                    if block_num == scan_start {
+                                        break;
+                                    }
+
+                                    block_hash = *header.parent_hash();
+                                    block_num = block_num.saturating_sub(1);
+                                }
+
+                                for (epoch, hashes) in &epoch_proof_hashes {
+                                    tracing::info!(
+                                        epoch,
+                                        num_hashes = hashes.len(),
+                                        "Backfilled epoch proof hashes"
+                                    );
+                                }
+
+                                // Generate proofs for any COMPLETED epochs found during backfill
+                                // A completed epoch is one where epoch_num < current_epoch
+                                let use_rpo_outer_backfill = std::env::var("HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO")
+                                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                                    .unwrap_or(false);
+
+                                for completed_epoch in 0..current_epoch {
+                                    if let Some(proof_hashes) = epoch_proof_hashes.get(&completed_epoch) {
+                                        if proof_hashes.is_empty() {
+                                            continue;
+                                        }
+                                        
+                                        // Check if we already have this proof stored
+                                        {
+                                            let store = recursive_epoch_proof_store_for_generator.lock().await;
+                                            if store.get(completed_epoch).is_some() {
+                                                tracing::debug!(
+                                                    epoch = completed_epoch,
+                                                    "Epoch proof already exists in store, skipping"
+                                                );
+                                                continue;
+                                            }
+                                        }
+
+                                        tracing::info!(
+                                            epoch = completed_epoch,
+                                            num_proofs = proof_hashes.len(),
+                                            "Generating epoch proof for backfilled completed epoch"
+                                        );
+
+                                        let proof_root = compute_proof_root(proof_hashes);
+                                        let mut epoch_data = EpochCircuit::new(completed_epoch);
+                                        epoch_data.proof_root = proof_root;
+                                        epoch_data.state_root = [0u8; 32];
+                                        epoch_data.nullifier_set_root = [0u8; 32];
+                                        epoch_data.commitment_tree_root = [0u8; 32];
+                                        let epoch_commitment = epoch_data.commitment();
+
+                                        let proof_hashes_clone = proof_hashes.clone();
+                                        let epoch_for_prover = epoch_data.clone();
+                                        
+                                        let proof_result = if use_rpo_outer_backfill {
+                                            EpochRecursiveProver::fast()
+                                                .prove_epoch_recursive_rpo_outer(&epoch_for_prover, &proof_hashes_clone)
+                                        } else {
+                                            EpochRecursiveProver::fast()
+                                                .prove_epoch_recursive(&epoch_for_prover, &proof_hashes_clone)
+                                        };
+
+                                        match proof_result {
+                                            Ok(recursive_proof) => {
+                                                tracing::info!(
+                                                    epoch = completed_epoch,
+                                                    proof_size = recursive_proof.proof_bytes.len(),
+                                                    proof_root = ?hex::encode(&proof_root),
+                                                    "✅ Generated epoch proof for backfilled epoch"
+                                                );
+
+                                                // Store proof using the same mechanism as live proofs
+                                                let msg = RecursiveEpochProofMessage {
+                                                    epoch_number: epoch_data.epoch_number,
+                                                    start_block: epoch_data.start_block,
+                                                    end_block: epoch_data.end_block,
+                                                    proof_root: epoch_data.proof_root,
+                                                    state_root: epoch_data.state_root,
+                                                    nullifier_set_root: epoch_data.nullifier_set_root,
+                                                    commitment_tree_root: epoch_data.commitment_tree_root,
+                                                    epoch_commitment,
+                                                    num_proofs: recursive_proof.num_proofs,
+                                                    proof_accumulator: recursive_proof.accumulator_bytes(),
+                                                    proof_bytes: recursive_proof.proof_bytes.clone(),
+                                                    inner_proof_bytes: recursive_proof.inner_proof_bytes.clone(),
+                                                    is_recursive: recursive_proof.is_recursive,
+                                                };
+
+                                                let (inserted, store_dir) = {
+                                                    let mut store = recursive_epoch_proof_store_for_generator.lock().await;
+                                                    let store_dir = store.dir().to_path_buf();
+                                                    let inserted = matches!(
+                                                        store.insert(msg.clone()),
+                                                        crate::substrate::epoch_proofs::InsertOutcome::Inserted
+                                                    );
+                                                    (inserted, store_dir)
+                                                };
+
+                                                if inserted {
+                                                    let msg_for_persist = msg;
+                                                    tokio::task::spawn_blocking(move || {
+                                                        let store = crate::substrate::epoch_proofs::RecursiveEpochProofStore::empty(store_dir);
+                                                        if let Err(e) = store.persist(&msg_for_persist) {
+                                                            tracing::warn!(
+                                                                epoch_number = msg_for_persist.epoch_number,
+                                                                error = %e,
+                                                                "Failed to persist backfilled epoch proof to disk"
+                                                            );
+                                                        } else {
+                                                            tracing::info!(
+                                                                epoch = msg_for_persist.epoch_number,
+                                                                "📁 Persisted backfilled epoch proof to disk"
+                                                            );
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::error!(
+                                                    epoch = completed_epoch,
+                                                    error = %e,
+                                                    "Failed to generate epoch proof for backfilled epoch"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             let mut import_stream = client_for_epoch_proofs
                                 .import_notification_stream()
                                 .fuse();
@@ -2340,11 +2580,21 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let mut hashes_in_block: Vec<[u8; 32]> = Vec::new();
                                 for ext in &body {
                                     // UncheckedExtrinsic has public `function` field (the call).
-                                    if let runtime::RuntimeCall::ShieldedPool(
-                                        pallet_shielded_pool::Call::shielded_transfer { proof, .. },
-                                    ) = &ext.function
-                                    {
-                                        hashes_in_block.push(blake3::hash(&proof.data).into());
+                                    // Match both individual and batch shielded transfers.
+                                    if let runtime::RuntimeCall::ShieldedPool(ref inner) = ext.function {
+                                        use pallet_shielded_pool::Call as PoolCall;
+                                        match inner {
+                                            PoolCall::shielded_transfer { proof, .. } => {
+                                                hashes_in_block.push(blake3::hash(&proof.data).into());
+                                            }
+                                            PoolCall::batch_shielded_transfer { proof, .. } => {
+                                                hashes_in_block.push(blake3::hash(&proof.data).into());
+                                            }
+                                            PoolCall::shielded_transfer_unsigned { proof, .. } => {
+                                                hashes_in_block.push(blake3::hash(&proof.data).into());
+                                            }
+                                            _ => {}
+                                        }
                                     }
                                 }
 

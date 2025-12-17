@@ -3,8 +3,8 @@
 //! Validates sizing assumptions and security parameters before implementing
 //! the full epoch proof system.
 
-/// Number of blocks per epoch
-pub const EPOCH_SIZE: u64 = 1000;
+/// Number of blocks per epoch (must match pallet_shielded_pool::EPOCH_SIZE)
+pub const EPOCH_SIZE: u64 = 60;
 
 /// Maximum proofs per epoch (assumes ~10 tx per block average)
 pub const MAX_PROOFS_PER_EPOCH: usize = 10_000;
