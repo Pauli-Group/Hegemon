@@ -106,6 +106,8 @@ The command below extracts your shielded address (offline) and starts mining:
 
 ```bash
 HEGEMON_MINE=1 \
+HEGEMON_RECURSIVE_EPOCH_PROOFS=1 \
+HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1 \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --base-path ~/.hegemon-node \
@@ -166,6 +168,8 @@ cargo build -p hegemon-node -p wallet --release
 mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
+HEGEMON_RECURSIVE_EPOCH_PROOFS=1 \
+HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1 \
 HEGEMON_SEEDS="hegemon.pauli.group:30333" \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "BOB_CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
