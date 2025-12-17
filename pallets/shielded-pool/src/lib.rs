@@ -242,8 +242,8 @@ pub mod pallet {
     // EPOCH STORAGE (for light client sync)
     // ========================================
 
-    /// Epoch size in blocks (1000 blocks per epoch).
-    pub const EPOCH_SIZE: u64 = 1000;
+    /// Epoch size in blocks (60 blocks per epoch for testnet).
+    pub const EPOCH_SIZE: u64 = 60;
 
     /// Maximum proof hashes per epoch (bounded for on-chain storage).
     pub const MAX_EPOCH_PROOF_HASHES: u32 = 10_000;
