@@ -27,8 +27,8 @@
 //! ```
 
 use epoch_circuit::{
-    compute_proof_root, generate_merkle_proof, types::Epoch, verify_merkle_proof, LightClient,
-    EpochProverError, MockEpochProver, VerifyResult,
+    compute_proof_root, generate_merkle_proof, types::Epoch, verify_merkle_proof, EpochProverError,
+    LightClient, MockEpochProver, VerifyResult,
 };
 
 // ============================================================================
@@ -96,7 +96,7 @@ fn test_light_client_from_checkpoint() {
 
 #[test]
 fn test_verify_single_epoch() {
-    let mut client = LightClient::new();
+    let mut client = LightClient::mock();
 
     // Create epoch 0 with some proof hashes
     let proof_hashes = random_proof_hashes(10);
@@ -128,7 +128,7 @@ fn test_verify_epoch_empty_proofs() {
 
 #[test]
 fn test_verify_epoch_with_many_proofs() {
-    let mut client = LightClient::new();
+    let mut client = LightClient::mock();
 
     // Create epoch with many proof hashes
     let proof_hashes = random_proof_hashes(1000);
@@ -149,7 +149,7 @@ fn test_verify_epoch_with_many_proofs() {
 
 #[test]
 fn test_sequential_epoch_sync() {
-    let mut client = LightClient::new();
+    let mut client = LightClient::mock();
 
     // Sync 5 epochs sequentially
     for epoch_num in 0u64..5 {
@@ -175,7 +175,7 @@ fn test_sequential_epoch_sync() {
 
 #[test]
 fn test_non_sequential_epoch_rejected() {
-    let mut client = LightClient::new();
+    let mut client = LightClient::mock();
 
     // First verify epoch 0
     let proof_hashes = random_proof_hashes(5);
@@ -211,7 +211,7 @@ fn test_non_sequential_epoch_rejected() {
 
 #[test]
 fn test_duplicate_epoch_rejected() {
-    let mut client = LightClient::new();
+    let mut client = LightClient::mock();
 
     // Verify epoch 0
     let proof_hashes = random_proof_hashes(5);
@@ -286,7 +286,7 @@ fn test_merkle_inclusion_proof_wrong_hash() {
 
 #[test]
 fn test_light_client_verify_inclusion() {
-    let mut client = LightClient::new();
+    let mut client = LightClient::mock();
 
     // Create and verify epoch 0
     let proof_hashes = random_proof_hashes(10);
@@ -313,7 +313,7 @@ fn test_light_client_verify_inclusion() {
 
 #[test]
 fn test_light_client_verify_inclusion_wrong_epoch() {
-    let mut client = LightClient::new();
+    let mut client = LightClient::mock();
 
     // Create and verify epoch 0
     let proof_hashes = random_proof_hashes(10);
@@ -356,7 +356,8 @@ fn test_epoch_commitment_deterministic() {
 #[test]
 fn test_epoch_commitment_changes_with_data() {
     let proof_hashes1 = random_proof_hashes(5);
-    let proof_hashes2 = random_proof_hashes(5);
+    let mut proof_hashes2 = proof_hashes1.clone();
+    proof_hashes2[0][0] ^= 1;
 
     let epoch1 = create_test_epoch(0, &proof_hashes1);
     let epoch2 = create_test_epoch(0, &proof_hashes2);
@@ -446,7 +447,7 @@ fn test_large_epoch_proof_generation() {
 
 #[test]
 fn test_light_client_epoch_commitments_stored() {
-    let mut client = LightClient::new();
+    let mut client = LightClient::mock();
 
     // Verify several epochs
     let mut commitments = Vec::new();
@@ -479,7 +480,7 @@ fn test_light_client_sync_workflow() {
     // This test documents the expected workflow for a light client
 
     // 1. Initialize client (from genesis or checkpoint)
-    let mut client = LightClient::new();
+    let mut client = LightClient::mock();
     assert_eq!(client.tip_epoch, 0);
     assert_eq!(client.num_verified(), 0);
 

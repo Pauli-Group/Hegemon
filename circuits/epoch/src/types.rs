@@ -1,6 +1,6 @@
 //! Core epoch types and proof hash computation.
 //!
-//! An epoch is a fixed number of blocks (1000 by default). At epoch boundaries,
+//! An epoch is a fixed number of blocks (`EPOCH_SIZE`). At epoch boundaries,
 //! all transaction proof hashes are accumulated into a Merkle tree, and an
 //! epoch proof is generated that attests to the validity of the entire epoch.
 
@@ -101,12 +101,12 @@ mod tests {
         let epoch = Epoch::new(0);
         assert_eq!(epoch.epoch_number, 0);
         assert_eq!(epoch.start_block, 0);
-        assert_eq!(epoch.end_block, 999);
+        assert_eq!(epoch.end_block, EPOCH_SIZE - 1);
 
         let epoch1 = Epoch::new(1);
         assert_eq!(epoch1.epoch_number, 1);
-        assert_eq!(epoch1.start_block, 1000);
-        assert_eq!(epoch1.end_block, 1999);
+        assert_eq!(epoch1.start_block, EPOCH_SIZE);
+        assert_eq!(epoch1.end_block, (2 * EPOCH_SIZE) - 1);
     }
 
     #[test]
@@ -138,19 +138,19 @@ mod tests {
     #[test]
     fn test_contains_block() {
         let epoch = Epoch::new(1);
-        assert!(!epoch.contains_block(999));
-        assert!(epoch.contains_block(1000));
-        assert!(epoch.contains_block(1500));
-        assert!(epoch.contains_block(1999));
-        assert!(!epoch.contains_block(2000));
+        assert!(!epoch.contains_block(EPOCH_SIZE - 1));
+        assert!(epoch.contains_block(EPOCH_SIZE));
+        assert!(epoch.contains_block(EPOCH_SIZE + (EPOCH_SIZE / 2)));
+        assert!(epoch.contains_block((2 * EPOCH_SIZE) - 1));
+        assert!(!epoch.contains_block(2 * EPOCH_SIZE));
     }
 
     #[test]
     fn test_epoch_for_block() {
         assert_eq!(Epoch::epoch_for_block(0), 0);
-        assert_eq!(Epoch::epoch_for_block(999), 0);
-        assert_eq!(Epoch::epoch_for_block(1000), 1);
-        assert_eq!(Epoch::epoch_for_block(2500), 2);
+        assert_eq!(Epoch::epoch_for_block(EPOCH_SIZE - 1), 0);
+        assert_eq!(Epoch::epoch_for_block(EPOCH_SIZE), 1);
+        assert_eq!(Epoch::epoch_for_block(2 * EPOCH_SIZE + 10), 2);
     }
 
     #[test]
