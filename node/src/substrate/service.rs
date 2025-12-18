@@ -1153,12 +1153,13 @@ pub fn new_partial_with_client(
     tracing::info!("Full Substrate transaction pool created");
 
     // Initialize PoW mining coordinator
-    let pow_config = if std::env::var("HEGEMON_MINE").is_ok() {
-        let threads = std::env::var("HEGEMON_MINE_THREADS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1);
-        PowConfig::mining(threads)
+    //
+    // NOTE: Treat HEGEMON_MINE as a boolean flag (HEGEMON_MINE=1/true),
+    // not merely "present in the environment", since many scripts set it
+    // explicitly to "0" to disable mining.
+    let mining_config_for_pow = MiningConfig::from_env();
+    let pow_config = if mining_config_for_pow.enabled {
+        PowConfig::mining(mining_config_for_pow.threads)
     } else {
         PowConfig::non_mining()
     };
@@ -1888,58 +1889,63 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         }
                                     }
 
-                                    // If we have a recursive epoch proof available, send it immediately so late joiners
-                                    // can validate epochs without waiting for the next epoch boundary broadcast.
-                                    if let Some(msg) = recursive_epoch_proof_store_for_handler
-                                        .lock()
-                                        .await
-                                        .latest()
-                                        .cloned()
-                                    {
-                                        use crate::substrate::network_bridge::{
-                                            RecursiveEpochProofProtocolMessage,
-                                            RECURSIVE_EPOCH_PROOFS_PROTOCOL,
-                                            RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2,
-                                        };
-
-                                        let v1 = msg.encode();
-                                        let v2 = RecursiveEpochProofProtocolMessage::Proof(msg.clone()).encode();
-
-                                        if let Err(e) = pq_handle_for_status
-                                            .send_message(
-                                                peer_id,
-                                                RECURSIVE_EPOCH_PROOFS_PROTOCOL.to_string(),
-                                                v1,
-                                            )
+                                    // If we have a recursive epoch proof available, optionally send it immediately so
+                                    // late joiners can validate epochs without waiting for the next epoch boundary.
+                                    //
+                                    // Keep this gated behind HEGEMON_RECURSIVE_EPOCH_PROOFS=1 to avoid surprising
+                                    // users running "sync-only" nodes (and to avoid unnecessary bandwidth).
+                                    if recursive_epoch_proofs_enabled {
+                                        if let Some(msg) = recursive_epoch_proof_store_for_handler
+                                            .lock()
                                             .await
+                                            .latest()
+                                            .cloned()
                                         {
-                                            tracing::warn!(
-                                                peer = %hex::encode(peer_id),
-                                                error = %e,
-                                                "Failed to send v1 recursive epoch proof to new peer"
-                                            );
-                                        }
-                                        if let Err(e) = pq_handle_for_status
-                                            .send_message(
-                                                peer_id,
-                                                RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2.to_string(),
-                                                v2,
-                                            )
-                                            .await
-                                        {
-                                            tracing::warn!(
-                                                peer = %hex::encode(peer_id),
-                                                error = %e,
-                                                "Failed to send v2 recursive epoch proof to new peer"
-                                            );
-                                        } else {
-                                            tracing::info!(
-                                                peer = %hex::encode(peer_id),
-                                                epoch_number = msg.epoch_number,
-                                                proof_bytes = msg.proof_bytes.len(),
-                                                inner_bytes = msg.inner_proof_bytes.len(),
-                                                "Sent recursive epoch proof to new peer"
-                                            );
+                                            use crate::substrate::network_bridge::{
+                                                RecursiveEpochProofProtocolMessage,
+                                                RECURSIVE_EPOCH_PROOFS_PROTOCOL,
+                                                RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2,
+                                            };
+
+                                            let v1 = msg.encode();
+                                            let v2 = RecursiveEpochProofProtocolMessage::Proof(msg.clone()).encode();
+
+                                            if let Err(e) = pq_handle_for_status
+                                                .send_message(
+                                                    peer_id,
+                                                    RECURSIVE_EPOCH_PROOFS_PROTOCOL.to_string(),
+                                                    v1,
+                                                )
+                                                .await
+                                            {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(peer_id),
+                                                    error = %e,
+                                                    "Failed to send v1 recursive epoch proof to new peer"
+                                                );
+                                            }
+                                            if let Err(e) = pq_handle_for_status
+                                                .send_message(
+                                                    peer_id,
+                                                    RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2.to_string(),
+                                                    v2,
+                                                )
+                                                .await
+                                            {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(peer_id),
+                                                    error = %e,
+                                                    "Failed to send v2 recursive epoch proof to new peer"
+                                                );
+                                            } else {
+                                                tracing::info!(
+                                                    peer = %hex::encode(peer_id),
+                                                    epoch_number = msg.epoch_number,
+                                                    proof_bytes = msg.proof_bytes.len(),
+                                                    inner_bytes = msg.inner_proof_bytes.len(),
+                                                    "Sent recursive epoch proof to new peer"
+                                                );
+                                            }
                                         }
                                     }
 
@@ -2027,26 +2033,33 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
                                     // Handle recursive epoch proofs
                                     else if protocol == RECURSIVE_EPOCH_PROOFS_PROTOCOL {
-                                        if let Ok(msg) =
-                                            RecursiveEpochProofMessage::decode(&mut &data[..])
-                                        {
-                                            tracing::info!(
-                                                peer = %hex::encode(peer_id),
-                                                epoch_number = msg.epoch_number,
-                                                num_proofs = msg.num_proofs,
-                                                proof_bytes = msg.proof_bytes.len(),
-                                                inner_bytes = msg.inner_proof_bytes.len(),
-                                                is_recursive = msg.is_recursive,
-                                                "Received recursive epoch proof"
-                                            );
+                                        if recursive_epoch_proofs_enabled {
+                                            if let Ok(msg) =
+                                                RecursiveEpochProofMessage::decode(&mut &data[..])
+                                            {
+                                                tracing::info!(
+                                                    peer = %hex::encode(peer_id),
+                                                    epoch_number = msg.epoch_number,
+                                                    num_proofs = msg.num_proofs,
+                                                    proof_bytes = msg.proof_bytes.len(),
+                                                    inner_bytes = msg.inner_proof_bytes.len(),
+                                                    is_recursive = msg.is_recursive,
+                                                    "Received recursive epoch proof"
+                                                );
 
-                                            let _ = epoch_proof_rx_tx.try_send((peer_id, msg));
+                                                let _ = epoch_proof_rx_tx.try_send((peer_id, msg));
+                                            } else {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(peer_id),
+                                                    protocol = %protocol,
+                                                    data_len = data.len(),
+                                                    "Failed to decode recursive epoch proof message"
+                                                );
+                                            }
                                         } else {
-                                            tracing::warn!(
+                                            tracing::debug!(
                                                 peer = %hex::encode(peer_id),
-                                                protocol = %protocol,
-                                                data_len = data.len(),
-                                                "Failed to decode recursive epoch proof message"
+                                                "Ignoring recursive epoch proof (disabled)"
                                             );
                                         }
                                     }
@@ -2084,7 +2097,16 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                 }
                                             }
                                             Ok(RecursiveEpochProofProtocolMessage::Proof(msg)) => {
-                                                let _ = epoch_proof_rx_tx.try_send((peer_id, msg));
+                                                if recursive_epoch_proofs_enabled {
+                                                    let _ = epoch_proof_rx_tx
+                                                        .try_send((peer_id, msg));
+                                                } else {
+                                                    tracing::debug!(
+                                                        peer = %hex::encode(peer_id),
+                                                        epoch_number = msg.epoch_number,
+                                                        "Ignoring recursive epoch proof v2 Proof message (disabled)"
+                                                    );
+                                                }
                                             }
                                             Ok(RecursiveEpochProofProtocolMessage::NotFound { epoch_number }) => {
                                                 tracing::info!(
@@ -3272,7 +3294,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             );
         }
     } else {
-        tracing::info!("Mining worker not spawned (HEGEMON_MINE not set)");
+        tracing::info!("Mining worker not spawned (mining disabled)");
     }
 
     // =========================================================================
