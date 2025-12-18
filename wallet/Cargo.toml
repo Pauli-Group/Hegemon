@@ -30,6 +30,7 @@ state-merkle = { path = "../state/merkle" }
 thiserror = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 transaction-circuit = { path = "../circuits/transaction" }
+batch-circuit = { path = "../circuits/batch" }
 synthetic-crypto = { path = "../crypto" }
 twox-hash = "1.6"
 url = "2"

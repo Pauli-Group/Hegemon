@@ -306,12 +306,17 @@ where
     ///
     /// Updates peer state and may trigger sync if peer is ahead.
     pub fn on_block_announce(&mut self, peer_id: PeerId, announce: &BlockAnnounce) {
-        let peer_state = self.peers.entry(peer_id).or_insert_with(|| PeerSyncState {
-            best_height: 0,
-            best_hash: [0u8; 32],
-            last_seen: std::time::Instant::now(),
-            failed_requests: 0,
-        });
+        // Ignore announcements from peers we don't currently track as connected.
+        //
+        // This avoids resurrecting a peer in our sync table after a disconnect
+        // (e.g., if a late announce is delivered after PeerDisconnected).
+        let Some(peer_state) = self.peers.get_mut(&peer_id) else {
+            tracing::debug!(
+                peer = %hex::encode(peer_id),
+                "Ignoring block announce from unknown peer"
+            );
+            return;
+        };
 
         // Update peer's best block if this is higher
         if announce.number > peer_state.best_height {
@@ -1047,6 +1052,19 @@ where
                 request_pending,
                 last_request_time,
             } => {
+                // If we lost the sync peer (disconnect, pruning, etc.), reset to idle
+                // so we can wait for a new peer to appear or reconnect.
+                if !self.peers.contains_key(&peer) {
+                    tracing::warn!(
+                        peer = %hex::encode(peer),
+                        target_height = target_height,
+                        our_best = our_best,
+                        "Sync peer no longer tracked; resetting to idle"
+                    );
+                    self.state = SyncState::Idle;
+                    return None;
+                }
+
                 tracing::debug!(
                     target_height = target_height,
                     current_height = current_height,

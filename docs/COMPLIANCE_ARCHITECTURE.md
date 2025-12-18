@@ -77,6 +77,21 @@ Properties:
 
 This mirrors traditional subpoena processes—targeted, documented, and proportionate.
 
+### Payment Proofs (Disclosure on Demand)
+
+In addition to sharing viewing keys, users can generate one-time **payment proofs** that reveal only a specific claim, e.g.:
+
+> "Transaction `T` contains an output note paying exactly `X` of asset `A` to address `Y`."
+
+This supports exchange deposits, invoices/receipts, and dispute resolution without granting broad viewing-key access.
+
+A payment-proof package is verified against on-chain commitments and typically includes:
+- A transaction identifier (or output commitment) plus confirmation data (e.g., inclusion against a known commitment root)
+- A ZK proof that binds the public commitment to the claimed `(value, asset_id, recipient)` without revealing unrelated notes, `rho`, or `r`
+- Optional: memo plaintext and/or Travel Rule payload for the intended counterparty
+
+Payment proofs keep the protocol neutral (no transparent pool) while enabling "warrants, not backdoors" style oversight.
+
 ---
 
 ## 3. Travel Rule Compliance
@@ -310,15 +325,15 @@ Properties:
 Exchanges integrating HEGEMON should implement:
 
 1. **Deposit screening**
-   - Accept deposits from shielded addresses
-   - Require customer to provide viewing key for the deposit address
-   - Scan deposit history for source-of-funds verification
+   - Issue per-customer deposit addresses (diversified shielded addresses)
+   - Credit deposits by scanning incoming notes to those addresses (exchange-controlled incoming viewing keys)
+   - When additional evidence is needed (reconciliation, audits, legal process), request a payment proof and/or a scoped viewing key
    - Apply standard AML/KYC to the customer, not the chain
 
 2. **Withdrawal processing**
-   - Screen destination addresses (if transparent context available)
+   - Screen destination context off-chain (counterparty policy, sanctions program)
    - Attach Travel Rule memo for VASP-to-VASP transfers
-   - Retain transaction records with customer viewing key escrow
+   - Retain transaction records per custody agreement (internal logs, viewing escrow, and/or scoped disclosures)
 
 3. **Internal transfers**
    - Between exchange customers: off-chain ledger (no chain visibility needed)
@@ -339,7 +354,7 @@ Exchanges holding customer funds typically also hold viewing keys:
 | **Spend custody** | Exchange holds spend, customer holds view | Customer controls disclosure |
 | **Viewing escrow** | Customer holds both, escrows view key | Disclosure on demand |
 
-Recommended: **Viewing escrow** — Exchange can fulfill regulatory obligations on request without continuous surveillance of customer activity.
+Recommended (for custodians): **Viewing escrow** — Exchange can fulfill regulatory obligations on request without continuous surveillance of customer activity. For non-custodial use, prefer per-request payment proofs or scoped viewing keys.
 
 ---
 

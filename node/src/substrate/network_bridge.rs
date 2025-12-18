@@ -45,6 +45,10 @@ pub const TRANSACTIONS_PROTOCOL: &str = TRANSACTIONS_PQ;
 pub const TRANSACTIONS_PROTOCOL_LEGACY: &str = TRANSACTIONS_LEGACY;
 pub const SYNC_PROTOCOL: &str = SYNC_PQ;
 pub const SYNC_PROTOCOL_LEGACY: &str = SYNC_LEGACY;
+/// Recursive epoch proof propagation protocol (PQ version).
+pub const RECURSIVE_EPOCH_PROOFS_PROTOCOL: &str = "/hegemon/epoch-proofs/recursive/pq/1";
+/// Recursive epoch proof request/response protocol (PQ version).
+pub const RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2: &str = "/hegemon/epoch-proofs/recursive/pq/2";
 
 /// Block state for announcements
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
@@ -107,6 +111,44 @@ impl BlockAnnounce {
 pub struct TransactionMessage {
     /// The transactions being propagated (SCALE-encoded extrinsics)
     pub transactions: Vec<Vec<u8>>,
+}
+
+/// Recursive epoch proof propagation message.
+///
+/// Contains all metadata a peer needs to (re)construct the epoch commitment and verify the
+/// recursive epoch proof off-chain.
+#[derive(Debug, Clone, Encode, Decode)]
+pub struct RecursiveEpochProofMessage {
+    pub epoch_number: u64,
+    pub start_block: u64,
+    pub end_block: u64,
+    pub proof_root: [u8; 32],
+    pub state_root: [u8; 32],
+    pub nullifier_set_root: [u8; 32],
+    pub commitment_tree_root: [u8; 32],
+    pub epoch_commitment: [u8; 32],
+    pub num_proofs: u32,
+    pub proof_accumulator: [u8; 32],
+    /// The proof bytes:
+    /// - if `is_recursive == false`, this is the inner RPO proof (RpoAir)
+    /// - if `is_recursive == true`, this is the outer recursive proof (StarkVerifierAir)
+    pub proof_bytes: Vec<u8>,
+    /// Inner proof bytes (RPO), required to verify a recursive proof-of-proof.
+    pub inner_proof_bytes: Vec<u8>,
+    pub is_recursive: bool,
+}
+
+/// Recursive epoch proof protocol message.
+///
+/// V2 adds request/response semantics so peers can fetch missing epoch proofs from each other.
+#[derive(Debug, Clone, Encode, Decode)]
+pub enum RecursiveEpochProofProtocolMessage {
+    /// Request a recursive epoch proof by epoch number.
+    Request { epoch_number: u64 },
+    /// Provide a recursive epoch proof (as an announcement or response).
+    Proof(Box<RecursiveEpochProofMessage>),
+    /// Indicate that the requested proof is not available.
+    NotFound { epoch_number: u64 },
 }
 
 impl TransactionMessage {

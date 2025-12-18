@@ -1,0 +1,33 @@
+[package]
+name = "batch-circuit"
+version = "0.1.0"
+edition = "2021"
+authors = ["Pauli Group Inc."]
+license = "MIT"
+description = "STARK batch transaction circuit for proving multiple transactions in a single proof"
+repository = "https://github.com/Pauli-Group/Hegemon"
+
+[dependencies]
+winterfell = "0.13"
+winter-crypto = "0.13"
+winter-air = "0.13"
+winter-prover = "0.13"
+transaction-circuit = { path = "../transaction" }
+thiserror = "1"
+miden-crypto = { version = "0.19", default-features = false, optional = true }
+
+[dev-dependencies]
+rand = { version = "0.8", features = ["std"] }
+proptest = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "batch_vs_individual"
+harness = false
+
+[features]
+default = []
+rpo-fiat-shamir = ["miden-crypto", "transaction-circuit/rpo-fiat-shamir"]
+
+[lints]
+workspace = true

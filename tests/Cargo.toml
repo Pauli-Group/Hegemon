@@ -7,6 +7,7 @@ publish = false
 [dependencies]
 block-circuit = { path = "../circuits/block" }
 transaction-circuit = { path = "../circuits/transaction" }
+epoch-circuit = { path = "../circuits/epoch" }
 state-merkle = { path = "../state/merkle" }
 crypto = { path = "../crypto", package = "synthetic-crypto" }
 network = { path = "../network" }
@@ -111,6 +112,11 @@ path = "pq_params_audit.rs"
 name = "poseidon_compat"
 path = "poseidon_compat.rs"
 # Verify pallet and circuit Poseidon implementations match
+
+[[test]]
+name = "epoch_sync"
+path = "epoch_sync.rs"
+# Light client epoch sync integration tests (Phase 1g: Recursive Proofs)
 
 
 [lints]

@@ -265,6 +265,65 @@ impl Default for VerifyingKeyParams {
 
 impl DecodeWithMemTracking for VerifyingKeyParams {}
 
+// ================================================================================================
+// BATCH PROOF TYPES
+// ================================================================================================
+
+/// Maximum batch size for batch proofs.
+pub const MAX_BATCH_SIZE: u32 = 16;
+
+/// STARK batch proof for proving multiple transactions together.
+///
+/// This reduces verification costs from O(N) to O(1) by proving
+/// N transactions in a single STARK proof.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+pub struct BatchStarkProof {
+    /// Variable-length proof data.
+    /// Contains the combined proof for all transactions in the batch.
+    pub data: Vec<u8>,
+    /// Number of transactions in this batch (2, 4, 8, or 16).
+    pub batch_size: u32,
+}
+
+impl BatchStarkProof {
+    /// Create a batch proof from raw bytes.
+    pub fn from_bytes(data: Vec<u8>, batch_size: u32) -> Self {
+        Self { data, batch_size }
+    }
+
+    /// Check if the proof is empty (invalid).
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
+    /// Validate batch size.
+    pub fn is_valid_batch_size(&self) -> bool {
+        self.batch_size > 0
+            && self.batch_size <= MAX_BATCH_SIZE
+            && self.batch_size.is_power_of_two()
+    }
+}
+
+/// A batch shielded transfer containing multiple transactions.
+///
+/// All transactions in the batch must use the same Merkle anchor.
+/// The batch proof verifies all transactions together.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
+pub struct BatchShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
+    /// STARK batch proof (covers all transactions).
+    pub proof: BatchStarkProof,
+    /// All nullifiers from all transactions in the batch.
+    pub nullifiers: BoundedVec<[u8; 32], MaxNullifiers>,
+    /// All new note commitments from all transactions.
+    pub commitments: BoundedVec<[u8; 32], MaxCommitments>,
+    /// Encrypted notes for all recipients.
+    pub ciphertexts: BoundedVec<EncryptedNote, MaxCommitments>,
+    /// Shared Merkle root all transactions were proven against.
+    pub anchor: [u8; 32],
+    /// Total fee across all transactions.
+    pub total_fee: u128,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

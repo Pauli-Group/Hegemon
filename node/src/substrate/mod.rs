@@ -67,6 +67,7 @@ pub mod block_import;
 pub mod chain_spec;
 pub mod client;
 pub mod command;
+pub mod epoch_proofs;
 pub mod mining_worker;
 pub mod network;
 pub mod network_bridge;
@@ -95,8 +96,10 @@ pub use mining_worker::{
 pub use network::{PqNetworkConfig, PqNetworkKeypair};
 pub use network_bridge::{
     BlockAnnounce, BlockState, IncomingMessage, NetworkBridge, NetworkBridgeBuilder,
-    NetworkBridgeStats, SyncRequest, SyncResponse, TransactionMessage, BLOCK_ANNOUNCE_PROTOCOL,
-    SYNC_PROTOCOL, TRANSACTIONS_PROTOCOL,
+    NetworkBridgeStats, RecursiveEpochProofMessage, RecursiveEpochProofProtocolMessage,
+    SyncRequest, SyncResponse, TransactionMessage, BLOCK_ANNOUNCE_PROTOCOL,
+    RECURSIVE_EPOCH_PROOFS_PROTOCOL, RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2, SYNC_PROTOCOL,
+    TRANSACTIONS_PROTOCOL,
 };
 pub use rpc::{HegemonApiServer, HegemonService, MiningHandle, WalletApiServer, WalletService};
 pub use service::{
