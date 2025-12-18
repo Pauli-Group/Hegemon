@@ -47,10 +47,16 @@ use crate::substrate_transport::{
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{RwLock, mpsc};
-use tokio::time::timeout;
+use tokio::sync::{Notify, RwLock, mpsc};
+use tokio::time::{sleep, timeout};
+
+const BOOTSTRAP_RECONNECT_BASE: Duration = Duration::from_secs(2);
+const BOOTSTRAP_RECONNECT_MAX: Duration = Duration::from_secs(30);
+const BOOTSTRAP_CONNECTED_POLL: Duration = Duration::from_secs(1);
+const BOOTSTRAP_IDLE_POLL: Duration = Duration::from_secs(5);
 
 /// PQ Network Backend configuration
 #[derive(Clone, Debug)]
@@ -171,6 +177,10 @@ pub struct PqNetworkBackend {
     event_rx: mpsc::Receiver<PqNetworkEvent>,
     /// Shutdown signal
     shutdown_tx: Option<mpsc::Sender<()>>,
+    /// Shutdown flag for background tasks (bootstrap reconnection, etc.)
+    shutdown_flag: Arc<AtomicBool>,
+    /// Shutdown notifier for background tasks
+    shutdown_notify: Arc<Notify>,
     /// Local peer ID
     local_peer_id: [u8; 32],
 }
@@ -197,6 +207,8 @@ impl PqNetworkBackend {
             event_tx,
             event_rx,
             shutdown_tx: None,
+            shutdown_flag: Arc::new(AtomicBool::new(false)),
+            shutdown_notify: Arc::new(Notify::new()),
             local_peer_id,
         }
     }
@@ -256,6 +268,8 @@ impl PqNetworkBackend {
         let event_tx = self.event_tx.clone();
         let max_peers = self.config.max_peers;
         let verbose_logging = self.config.verbose_logging;
+        let shutdown_flag = self.shutdown_flag.clone();
+        let shutdown_notify = self.shutdown_notify.clone();
 
         tokio::spawn(async move {
             loop {
@@ -394,20 +408,110 @@ impl PqNetworkBackend {
                     }
                     _ = shutdown_rx.recv() => {
                         tracing::info!("PQ network backend shutting down");
+                        shutdown_flag.store(true, Ordering::SeqCst);
+                        shutdown_notify.notify_waiters();
                         break;
                     }
                 }
             }
         });
 
-        // Connect to bootstrap nodes
-        for addr in &self.config.bootstrap_nodes {
-            if let Err(e) = self.connect(*addr).await {
-                tracing::warn!(
-                    addr = %addr,
-                    error = %e,
-                    "Failed to connect to bootstrap node"
-                );
+        // Maintain outbound connections to configured bootstrap nodes with exponential backoff.
+        if !self.config.bootstrap_nodes.is_empty() {
+            let bootstrap_nodes = self.config.bootstrap_nodes.clone();
+            let peers = self.peers.clone();
+            let transport = self.transport.clone();
+            let event_tx = self.event_tx.clone();
+            let max_peers = self.config.max_peers;
+            let connection_timeout = self.config.connection_timeout;
+            let shutdown_flag = self.shutdown_flag.clone();
+            let shutdown_notify = self.shutdown_notify.clone();
+
+            for addr in bootstrap_nodes {
+                let peers = peers.clone();
+                let transport = transport.clone();
+                let event_tx = event_tx.clone();
+                let shutdown_flag = shutdown_flag.clone();
+                let shutdown_notify = shutdown_notify.clone();
+
+                tokio::spawn(async move {
+                    let mut backoff = BOOTSTRAP_RECONNECT_BASE;
+
+                    loop {
+                        if shutdown_flag.load(Ordering::Relaxed) {
+                            break;
+                        }
+
+                        // If we're already connected to this bootstrap address, just wait.
+                        let already_connected = {
+                            let peers_guard = peers.read().await;
+                            peers_guard
+                                .values()
+                                .any(|p| p.info.is_outbound && p.info.addr == addr)
+                        };
+                        if already_connected {
+                            backoff = BOOTSTRAP_RECONNECT_BASE;
+                            tokio::select! {
+                                _ = sleep(BOOTSTRAP_IDLE_POLL) => {}
+                                _ = shutdown_notify.notified() => break,
+                            }
+                            continue;
+                        }
+
+                        // Don't try to dial if we're already at max peers.
+                        if peers.read().await.len() >= max_peers {
+                            tokio::select! {
+                                _ = sleep(BOOTSTRAP_IDLE_POLL) => {}
+                                _ = shutdown_notify.notified() => break,
+                            }
+                            continue;
+                        }
+
+                        let connect_result = tokio::select! {
+                            res = Self::connect_outbound_inner(
+                                transport.clone(),
+                                peers.clone(),
+                                event_tx.clone(),
+                                addr,
+                                connection_timeout,
+                                max_peers,
+                            ) => res,
+                            _ = shutdown_notify.notified() => break,
+                        };
+
+                        match connect_result {
+                            Ok(peer_id) => {
+                                backoff = BOOTSTRAP_RECONNECT_BASE;
+                                // Wait until the peer disappears from the connection map, then reconnect.
+                                loop {
+                                    if shutdown_flag.load(Ordering::Relaxed) {
+                                        return;
+                                    }
+                                    if !peers.read().await.contains_key(&peer_id) {
+                                        break;
+                                    }
+                                    tokio::select! {
+                                        _ = sleep(BOOTSTRAP_CONNECTED_POLL) => {}
+                                        _ = shutdown_notify.notified() => return,
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    addr = %addr,
+                                    error = %e,
+                                    backoff_secs = backoff.as_secs(),
+                                    "Failed to connect to bootstrap node; retrying"
+                                );
+                                tokio::select! {
+                                    _ = sleep(backoff) => {}
+                                    _ = shutdown_notify.notified() => break,
+                                }
+                                backoff = (backoff * 2).min(BOOTSTRAP_RECONNECT_MAX);
+                            }
+                        }
+                    }
+                });
             }
         }
 
@@ -421,22 +525,27 @@ impl PqNetworkBackend {
         Ok(event_rx)
     }
 
-    /// Connect to a peer
-    pub async fn connect(&self, addr: SocketAddr) -> Result<[u8; 32], String> {
+    async fn connect_outbound_inner(
+        transport: SubstratePqTransport,
+        peers: Arc<RwLock<HashMap<[u8; 32], PeerConnection>>>,
+        event_tx: mpsc::Sender<PqNetworkEvent>,
+        addr: SocketAddr,
+        connection_timeout: Duration,
+        max_peers: usize,
+    ) -> Result<[u8; 32], String> {
         // Check if we're at max peers
-        if self.peers.read().await.len() >= self.config.max_peers {
+        if peers.read().await.len() >= max_peers {
             return Err("Max peers reached".to_string());
         }
 
         // Connect with timeout
-        let socket = timeout(self.config.connection_timeout, TcpStream::connect(addr))
+        let socket = timeout(connection_timeout, TcpStream::connect(addr))
             .await
             .map_err(|_| "Connection timeout")?
             .map_err(|e| e.to_string())?;
 
         // Upgrade connection
-        let conn = self
-            .transport
+        let conn = transport
             .upgrade_outbound(socket, addr)
             .await
             .map_err(|e| e.to_string())?;
@@ -446,7 +555,7 @@ impl PqNetworkBackend {
         let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
 
         // Store only the write channel - connection owned by task
-        self.peers.write().await.insert(
+        peers.write().await.insert(
             peer_id,
             PeerConnection {
                 info: info.clone(),
@@ -454,8 +563,7 @@ impl PqNetworkBackend {
             },
         );
 
-        let _ = self
-            .event_tx
+        let _ = event_tx
             .send(PqNetworkEvent::PeerConnected {
                 peer_id,
                 addr,
@@ -469,10 +577,10 @@ impl PqNetworkBackend {
             "Outbound peer connected via PQ handshake"
         );
 
-        // Spawn combined read/write loop for this peer
-        // Connection is owned by this task, writes come via msg_rx channel
-        let event_tx_for_task = self.event_tx.clone();
-        let peers_for_task = self.peers.clone();
+        // Spawn combined read/write loop for this peer.
+        // Connection is owned by this task, writes come via msg_rx channel.
+        let event_tx_for_task = event_tx.clone();
+        let peers_for_task = peers.clone();
         tokio::spawn(async move {
             let mut conn = conn;
             loop {
@@ -546,6 +654,19 @@ impl PqNetworkBackend {
         Ok(peer_id)
     }
 
+    /// Connect to a peer
+    pub async fn connect(&self, addr: SocketAddr) -> Result<[u8; 32], String> {
+        Self::connect_outbound_inner(
+            self.transport.clone(),
+            self.peers.clone(),
+            self.event_tx.clone(),
+            addr,
+            self.config.connection_timeout,
+            self.config.max_peers,
+        )
+        .await
+    }
+
     /// Disconnect from a peer
     pub async fn disconnect(&self, peer_id: [u8; 32], reason: &str) {
         if self.peers.write().await.remove(&peer_id).is_some() {
@@ -612,6 +733,9 @@ impl PqNetworkBackend {
 
     /// Stop the network backend
     pub async fn stop(&mut self) {
+        self.shutdown_flag.store(true, Ordering::SeqCst);
+        self.shutdown_notify.notify_waiters();
+
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(()).await;
         }
