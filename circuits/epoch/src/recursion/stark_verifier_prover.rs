@@ -194,7 +194,11 @@ impl StarkVerifierProver {
         let active_rows = active_perms * ROWS_PER_PERMUTATION;
         let total_rows = active_rows.next_power_of_two();
 
-        let mut trace = TraceTable::new(VERIFIER_TRACE_WIDTH, total_rows);
+        let mut columns = Vec::with_capacity(VERIFIER_TRACE_WIDTH);
+        for _ in 0..VERIFIER_TRACE_WIDTH {
+            columns.push(vec![BaseElement::ZERO; total_rows]);
+        }
+        let mut trace = TraceTable::init(columns);
 
         let mut perm_idx = 0usize;
         let expected_z = compute_expected_z(&self.pub_inputs);
@@ -1181,7 +1185,11 @@ impl StarkVerifierProver {
         let active_rows = active_perms * ROWS_PER_PERMUTATION;
         let total_rows = active_rows.next_power_of_two();
 
-        let mut trace = TraceTable::new(VERIFIER_TRACE_WIDTH, total_rows);
+        let mut columns = Vec::with_capacity(VERIFIER_TRACE_WIDTH);
+        for _ in 0..VERIFIER_TRACE_WIDTH {
+            columns.push(vec![BaseElement::ZERO; total_rows]);
+        }
+        let mut trace = TraceTable::init(columns);
 
         let mut perm_idx = 0usize;
         let expected_z = compute_expected_z(&self.pub_inputs);

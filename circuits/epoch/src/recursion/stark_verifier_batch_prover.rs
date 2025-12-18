@@ -83,7 +83,11 @@ impl StarkVerifierBatchProver {
         // Concatenate into a single batch trace.
         let batch_len = segment_len * inners.len();
         let batch_len_pow2 = batch_len.next_power_of_two();
-        let mut batch_trace = TraceTable::new(VERIFIER_TRACE_WIDTH, batch_len_pow2);
+        let mut columns = Vec::with_capacity(VERIFIER_TRACE_WIDTH);
+        for _ in 0..VERIFIER_TRACE_WIDTH {
+            columns.push(vec![BaseElement::ZERO; batch_len_pow2]);
+        }
+        let mut batch_trace = TraceTable::init(columns);
 
         for (seg_idx, segment) in segment_traces.iter().enumerate() {
             let offset = seg_idx * segment_len;
@@ -94,8 +98,7 @@ impl StarkVerifierBatchProver {
             }
         }
 
-        // Zero-pad the remaining rows if batch_len < batch_len_pow2.
-        // TraceTable::new already initializes to zero, so this is a no-op.
+        // If `batch_len < batch_len_pow2`, the remaining rows are already zero-padded.
 
         batch_trace
     }
