@@ -1,5 +1,6 @@
 use crate::NetworkError;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::SocketAddr;
@@ -72,19 +73,27 @@ impl PeerStore {
     pub fn record_connected(&mut self, addr: SocketAddr) -> Result<(), NetworkError> {
         let now = SystemTime::now();
         let mut changed = self.prune_stale();
-        let entry = self.entries.entry(addr).or_insert(PeerRecord {
-            addr,
-            last_updated: now,
-            last_connected: Some(now),
-        });
 
-        if entry.last_updated != now {
-            entry.last_updated = now;
-            changed = true;
-        }
-        if entry.last_connected != Some(now) {
-            entry.last_connected = Some(now);
-            changed = true;
+        match self.entries.entry(addr) {
+            Entry::Vacant(entry) => {
+                entry.insert(PeerRecord {
+                    addr,
+                    last_updated: now,
+                    last_connected: Some(now),
+                });
+                changed = true;
+            }
+            Entry::Occupied(mut entry) => {
+                let record = entry.get_mut();
+                if record.last_updated != now {
+                    record.last_updated = now;
+                    changed = true;
+                }
+                if record.last_connected != Some(now) {
+                    record.last_connected = Some(now);
+                    changed = true;
+                }
+            }
         }
 
         if changed || self.enforce_max_entries() {
@@ -107,15 +116,22 @@ impl PeerStore {
         let now = SystemTime::now();
 
         for addr in addrs {
-            let entry = self.entries.entry(addr).or_insert(PeerRecord {
-                addr,
-                last_updated: now,
-                last_connected: None,
-            });
-
-            if entry.last_updated != now {
-                entry.last_updated = now;
-                changed = true;
+            match self.entries.entry(addr) {
+                Entry::Vacant(entry) => {
+                    entry.insert(PeerRecord {
+                        addr,
+                        last_updated: now,
+                        last_connected: None,
+                    });
+                    changed = true;
+                }
+                Entry::Occupied(mut entry) => {
+                    let record = entry.get_mut();
+                    if record.last_updated != now {
+                        record.last_updated = now;
+                        changed = true;
+                    }
+                }
             }
         }
 
