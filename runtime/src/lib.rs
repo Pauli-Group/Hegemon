@@ -1472,15 +1472,15 @@ impl pallet_coinbase::Config for Runtime {
 // === Shielded Pool Configuration ===
 parameter_types! {
     /// Maximum nullifiers per shielded transaction (inputs).
-    pub const MaxNullifiersPerTx: u32 = 4;
+    pub const MaxNullifiersPerTx: u32 = 2;
     /// Maximum commitments per shielded transaction (outputs).
-    pub const MaxCommitmentsPerTx: u32 = 4;
+    pub const MaxCommitmentsPerTx: u32 = 2;
     /// Maximum encrypted notes per transaction.
-    pub const MaxEncryptedNotesPerTx: u32 = 4;
-    /// Maximum nullifiers per batch (16 txs * 4 nullifiers each).
-    pub const MaxNullifiersPerBatch: u32 = 64;
-    /// Maximum commitments per batch (16 txs * 4 commitments each).
-    pub const MaxCommitmentsPerBatch: u32 = 64;
+    pub const MaxEncryptedNotesPerTx: u32 = 2;
+    /// Maximum nullifiers per batch (16 txs * 2 nullifiers each).
+    pub const MaxNullifiersPerBatch: u32 = 32;
+    /// Maximum commitments per batch (16 txs * 2 commitments each).
+    pub const MaxCommitmentsPerBatch: u32 = 32;
     /// Number of historical Merkle roots to keep for anchor validation.
     pub const MerkleRootHistorySize: u32 = 100;
 }

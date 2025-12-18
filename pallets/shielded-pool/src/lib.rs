@@ -643,6 +643,9 @@ pub mod pallet {
                 VerificationResult::InvalidProofFormat => {
                     return Err(Error::<T>::InvalidProofFormat.into())
                 }
+                VerificationResult::InvalidPublicInputs => {
+                    return Err(Error::<T>::InvalidProofFormat.into())
+                }
                 VerificationResult::VerificationFailed => {
                     return Err(Error::<T>::ProofVerificationFailed.into())
                 }
@@ -965,6 +968,10 @@ pub mod pallet {
                     warn!(target: "shielded-pool", "Invalid proof format for unsigned transfer");
                     return Err(Error::<T>::InvalidProofFormat.into());
                 }
+                VerificationResult::InvalidPublicInputs => {
+                    warn!(target: "shielded-pool", "Invalid public inputs for unsigned transfer");
+                    return Err(Error::<T>::InvalidProofFormat.into());
+                }
                 VerificationResult::VerificationFailed => {
                     warn!(target: "shielded-pool", "Proof verification failed for unsigned transfer");
                     return Err(Error::<T>::ProofVerificationFailed.into());
@@ -1120,6 +1127,10 @@ pub mod pallet {
                 verifier::BatchVerificationResult::Valid => {}
                 verifier::BatchVerificationResult::InvalidProofFormat => {
                     warn!(target: "shielded-pool", "Invalid batch proof format");
+                    return Err(Error::<T>::InvalidProofFormat.into());
+                }
+                verifier::BatchVerificationResult::InvalidPublicInputs => {
+                    warn!(target: "shielded-pool", "Invalid batch public inputs");
                     return Err(Error::<T>::InvalidProofFormat.into());
                 }
                 verifier::BatchVerificationResult::InvalidBatchSize => {

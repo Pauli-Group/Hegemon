@@ -36,6 +36,7 @@ blake3 = { version = "1", default-features = false, optional = true }
 sp-io = { workspace = true, features = ["std"] }
 pallet-balances = { workspace = true, features = ["std"] }
 winter-prover = { version = "0.13.1" }
+transaction-circuit = { path = "../../circuits/transaction" }
 
 [features]
 default = ["std"]
@@ -66,7 +67,7 @@ stark-verify = ["winterfell", "winter-verifier", "winter-air", "winter-math", "w
 epoch-proofs = ["epoch-circuit", "blake3"]
 # Production mode: disables AcceptAllProofs and other test-only verifiers
 # Enable this feature for mainnet/production builds to ensure only real verification is available
-production = []
+production = ["stark-verify"]
 
 [lints]
 workspace = true

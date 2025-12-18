@@ -1,5 +1,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[cfg(all(feature = "production", not(feature = "stark-verify")))]
+compile_error!("feature \"production\" requires \"stark-verify\" for real proof verification");
+
 pub use pallet::*;
 
 use blake3::Hasher as Blake3Hasher;
@@ -131,8 +134,10 @@ pub trait ProofVerifier<Hash> {
     ) -> bool;
 }
 
+#[cfg(all(feature = "std", not(feature = "production")))]
 pub struct AcceptAllProofs;
 
+#[cfg(all(feature = "std", not(feature = "production")))]
 impl<Hash> ProofVerifier<Hash> for AcceptAllProofs {
     fn verify(
         _commitment: &Hash,

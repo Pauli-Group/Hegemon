@@ -6,7 +6,7 @@
 //!
 //! Build the production node with:
 //! ```bash
-//! cargo build -p hegemon-node --features substrate --release
+//! cargo build -p hegemon-node --features substrate,production --release
 //! ```
 //!
 //! ## Running
