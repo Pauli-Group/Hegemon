@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2-alpha - 2025-12-18
+- STARK transaction batching (2/4/8/16): `batch-circuit`, pallet verification, and wallet CLI support.
+- Recursive epoch proof plumbing and verifier recursion circuits for aggregation experiments.
+- PQ networking robustness improvements and peer persistence fixes.
+
 ## 2025-02-17
 - **Phase 3: PQ libp2p Integration** - Implemented post-quantum secure peer connections
   - Created `pq-noise` crate implementing pure ML-KEM-768 handshake protocol
