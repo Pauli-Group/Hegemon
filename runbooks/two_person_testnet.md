@@ -297,6 +297,7 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 - Wait for block confirmation (~60 seconds)
 - Re-sync wallet
 - Check node logs for extrinsic errors
+- If you hit `Need X notes but max is 2`, re-run `wallet substrate-send` with `--auto-consolidate` (it submits X-2 consolidation txs and can take multiple blocks)
 
 ### Balance shows 0
 - Mining rewards require `HEGEMON_MINER_ADDRESS` to be set (shielded address)

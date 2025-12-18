@@ -137,7 +137,10 @@ mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{BindingSignature, EncryptedNote, StarkProof};
+    use codec::Encode;
     use frame_support::{assert_noop, assert_ok, BoundedVec};
+    use sp_runtime::transaction_validity::TransactionSource;
+    use sp_runtime::traits::ValidateUnsigned;
 
     fn valid_proof() -> StarkProof {
         StarkProof::from_bytes(vec![1u8; 1024])
@@ -149,6 +152,47 @@ mod tests {
 
     fn valid_encrypted_note() -> EncryptedNote {
         EncryptedNote::default()
+    }
+
+    #[test]
+    fn validate_unsigned_skips_padding_nullifier_in_provides_tags() {
+        new_test_ext().execute_with(|| {
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            // One real nullifier + one padding nullifier.
+            let real_nf = [9u8; 32];
+            let padding_nf = [0u8; 32];
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![real_nf, padding_nf].try_into().unwrap();
+
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![[2u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            let call = crate::Call::<Test>::shielded_transfer_unsigned {
+                proof: valid_proof(),
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                binding_sig: valid_binding_sig(),
+            };
+
+            let validity =
+                Pallet::<Test>::validate_unsigned(TransactionSource::External, &call).unwrap();
+
+            let mut expected_real = b"shielded_nf:".to_vec();
+            expected_real.extend_from_slice(&real_nf);
+            let expected_real = ("ShieldedPoolUnsigned", expected_real).encode();
+            assert!(validity.provides.contains(&expected_real));
+
+            let mut expected_padding = b"shielded_nf:".to_vec();
+            expected_padding.extend_from_slice(&padding_nf);
+            let expected_padding = ("ShieldedPoolUnsigned", expected_padding).encode();
+            assert!(!validity.provides.contains(&expected_padding));
+        });
     }
 
     #[test]
