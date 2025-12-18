@@ -81,6 +81,8 @@ parameter_types! {
     pub const MaxNullifiersPerTx: u32 = 4;
     pub const MaxCommitmentsPerTx: u32 = 4;
     pub const MaxEncryptedNotesPerTx: u32 = 4;
+    pub const MaxNullifiersPerBatch: u32 = 64;  // 16 txs * 4 nullifiers
+    pub const MaxCommitmentsPerBatch: u32 = 64; // 16 txs * 4 commitments
     pub const MerkleRootHistorySize: u32 = 100;
 }
 
@@ -89,9 +91,12 @@ impl pallet_shielded_pool::Config for Test {
     type Currency = Balances;
     type AdminOrigin = frame_system::EnsureRoot<u64>;
     type ProofVerifier = AcceptAllProofs;
+    type BatchProofVerifier = crate::verifier::AcceptAllBatchProofs;
     type MaxNullifiersPerTx = MaxNullifiersPerTx;
     type MaxCommitmentsPerTx = MaxCommitmentsPerTx;
     type MaxEncryptedNotesPerTx = MaxEncryptedNotesPerTx;
+    type MaxNullifiersPerBatch = MaxNullifiersPerBatch;
+    type MaxCommitmentsPerBatch = MaxCommitmentsPerBatch;
     type MerkleRootHistorySize = MerkleRootHistorySize;
     type WeightInfo = crate::DefaultWeightInfo;
 }
@@ -132,7 +137,10 @@ mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{BindingSignature, EncryptedNote, StarkProof};
+    use codec::Encode;
     use frame_support::{assert_noop, assert_ok, BoundedVec};
+    use sp_runtime::traits::ValidateUnsigned;
+    use sp_runtime::transaction_validity::TransactionSource;
 
     fn valid_proof() -> StarkProof {
         StarkProof::from_bytes(vec![1u8; 1024])
@@ -144,6 +152,47 @@ mod tests {
 
     fn valid_encrypted_note() -> EncryptedNote {
         EncryptedNote::default()
+    }
+
+    #[test]
+    fn validate_unsigned_skips_padding_nullifier_in_provides_tags() {
+        new_test_ext().execute_with(|| {
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            // One real nullifier + one padding nullifier.
+            let real_nf = [9u8; 32];
+            let padding_nf = [0u8; 32];
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![real_nf, padding_nf].try_into().unwrap();
+
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![[2u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            let call = crate::Call::<Test>::shielded_transfer_unsigned {
+                proof: valid_proof(),
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                binding_sig: valid_binding_sig(),
+            };
+
+            let validity =
+                Pallet::<Test>::validate_unsigned(TransactionSource::External, &call).unwrap();
+
+            let mut expected_real = b"shielded_nf:".to_vec();
+            expected_real.extend_from_slice(&real_nf);
+            let expected_real = ("ShieldedPoolUnsigned", expected_real).encode();
+            assert!(validity.provides.contains(&expected_real));
+
+            let mut expected_padding = b"shielded_nf:".to_vec();
+            expected_padding.extend_from_slice(&padding_nf);
+            let expected_padding = ("ShieldedPoolUnsigned", expected_padding).encode();
+            assert!(!validity.provides.contains(&expected_padding));
+        });
     }
 
     #[test]
@@ -681,6 +730,167 @@ mod tests {
                 valid_binding_sig(),
                 0,
             ));
+        });
+    }
+
+    #[test]
+    fn batch_shielded_transfer_works() {
+        new_test_ext().execute_with(|| {
+            use crate::types::BatchStarkProof;
+
+            // First shield some funds to establish a valid anchor
+            let amount = 1000u128;
+            let commitment = [42u8; 32];
+            let encrypted_note = valid_encrypted_note();
+
+            assert_ok!(Pallet::<Test>::shield(
+                RuntimeOrigin::signed(1),
+                amount,
+                commitment,
+                encrypted_note.clone(),
+            ));
+
+            // Get the current Merkle root as anchor
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            // Create batch proof for 2 transactions
+            let batch_proof = BatchStarkProof::from_bytes(vec![1u8; 2048], 2);
+
+            // Nullifiers: 2 per tx, 4 total
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerBatch> = vec![
+                [1u8; 32], [2u8; 32], // tx 1
+                [3u8; 32], [4u8; 32], // tx 2
+            ]
+            .try_into()
+            .unwrap();
+
+            // Commitments: 2 per tx, 4 total
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerBatch> = vec![
+                [10u8; 32], [11u8; 32], // tx 1 outputs
+                [12u8; 32], [13u8; 32], // tx 2 outputs
+            ]
+            .try_into()
+            .unwrap();
+
+            let ciphertexts: BoundedVec<EncryptedNote, MaxCommitmentsPerBatch> = vec![
+                valid_encrypted_note(),
+                valid_encrypted_note(),
+                valid_encrypted_note(),
+                valid_encrypted_note(),
+            ]
+            .try_into()
+            .unwrap();
+
+            let total_fee = 100u128;
+
+            // Submit batch transfer
+            assert_ok!(Pallet::<Test>::batch_shielded_transfer(
+                RuntimeOrigin::none(),
+                batch_proof,
+                nullifiers.clone(),
+                commitments.clone(),
+                ciphertexts,
+                anchor,
+                total_fee,
+            ));
+
+            // Check all nullifiers were added
+            for nf in nullifiers.iter() {
+                assert!(
+                    NullifiersStorage::<Test>::contains_key(nf),
+                    "Nullifier should be spent"
+                );
+            }
+
+            // Check all commitments were added
+            let initial_index = 1u64; // After the shield above
+            for (i, _cm) in commitments.iter().enumerate() {
+                assert!(
+                    Pallet::<Test>::commitments(initial_index + i as u64).is_some(),
+                    "Commitment {} should exist",
+                    i
+                );
+            }
+
+            // Check Merkle tree was updated
+            let tree = MerkleTreeStorage::<Test>::get();
+            assert_eq!(tree.len(), 5); // 1 from shield + 4 from batch
+        });
+    }
+
+    #[test]
+    fn batch_shielded_transfer_rejects_invalid_batch_size() {
+        new_test_ext().execute_with(|| {
+            use crate::types::BatchStarkProof;
+
+            // Get genesis anchor
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            // Create invalid batch proof (batch_size = 3 is not power of 2)
+            let invalid_batch_proof = BatchStarkProof::from_bytes(vec![1u8; 2048], 3);
+
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerBatch> =
+                vec![[1u8; 32]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerBatch> =
+                vec![[2u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxCommitmentsPerBatch> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            assert_noop!(
+                Pallet::<Test>::batch_shielded_transfer(
+                    RuntimeOrigin::none(),
+                    invalid_batch_proof,
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    0,
+                ),
+                crate::Error::<Test>::InvalidBatchSize
+            );
+        });
+    }
+
+    #[test]
+    fn batch_shielded_transfer_rejects_duplicate_nullifiers() {
+        new_test_ext().execute_with(|| {
+            use crate::types::BatchStarkProof;
+
+            // Get genesis anchor
+            let tree = MerkleTreeStorage::<Test>::get();
+            let anchor = tree.root();
+
+            let batch_proof = BatchStarkProof::from_bytes(vec![1u8; 2048], 2);
+
+            // Duplicate nullifier
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerBatch> = vec![
+                [1u8; 32], [1u8; 32], // duplicate!
+            ]
+            .try_into()
+            .unwrap();
+
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerBatch> =
+                vec![[2u8; 32], [3u8; 32]].try_into().unwrap();
+
+            let ciphertexts: BoundedVec<EncryptedNote, MaxCommitmentsPerBatch> =
+                vec![valid_encrypted_note(), valid_encrypted_note()]
+                    .try_into()
+                    .unwrap();
+
+            assert_noop!(
+                Pallet::<Test>::batch_shielded_transfer(
+                    RuntimeOrigin::none(),
+                    batch_proof,
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    0,
+                ),
+                crate::Error::<Test>::DuplicateNullifierInTx
+            );
         });
     }
 }

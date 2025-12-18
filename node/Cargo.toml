@@ -38,6 +38,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 transaction_circuit = { path = "../circuits/transaction", package = "transaction-circuit" }
+epoch_circuit = { path = "../circuits/epoch", package = "epoch-circuit" }
 wallet = { path = "../wallet" }
 rand = "0.8"
 rust-embed = "8.0"

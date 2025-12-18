@@ -2,8 +2,10 @@
 members = [
     "crypto",
     "circuits/transaction",
+    "circuits/batch",
     "circuits/block",
     "circuits/bench",
+    "circuits/epoch",
     "state/merkle",
     "consensus",
     "protocol/versioning",

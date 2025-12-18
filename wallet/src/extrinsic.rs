@@ -799,6 +799,108 @@ fn build_sign_payload(
 }
 
 // ============================================================================
+// Batch Shielded Transfer Support
+// ============================================================================
+
+/// Batch shielded transfer call data (call_index 5)
+#[derive(Clone, Debug)]
+pub struct BatchShieldedTransferCall {
+    /// Batch size (2, 4, 8, or 16)
+    pub batch_size: u32,
+    /// All nullifiers from all transactions
+    pub nullifiers: Vec<[u8; 32]>,
+    /// All commitments from all transactions
+    pub commitments: Vec<[u8; 32]>,
+    /// All encrypted notes from all transactions
+    pub encrypted_notes: Vec<Vec<u8>>,
+    /// Shared Merkle anchor
+    pub anchor: [u8; 32],
+    /// Total fee for entire batch
+    pub total_fee: u128,
+}
+
+/// Encode a batch_shielded_transfer call (call_index 5)
+///
+/// This encodes multiple shielded transactions with a single batch proof.
+pub fn encode_batch_shielded_transfer_call(
+    call: &BatchShieldedTransferCall,
+) -> Result<Vec<u8>, WalletError> {
+    let mut encoded = Vec::new();
+
+    // Pallet index for ShieldedPool
+    const SHIELDED_POOL_INDEX: u8 = 20;
+    encoded.push(SHIELDED_POOL_INDEX);
+
+    // Call index for batch_shielded_transfer (call_index 5 in pallet)
+    const BATCH_SHIELDED_TRANSFER_CALL_INDEX: u8 = 5;
+    encoded.push(BATCH_SHIELDED_TRANSFER_CALL_INDEX);
+
+    // Encode proof as BatchStarkProof { data: Vec<u8>, batch_size: u32 }
+    // For now, we use an empty proof (AcceptAllBatchProofs verifier)
+    // The batch_size tells the verifier how many transactions are in the batch
+    let proof_data: Vec<u8> = Vec::new(); // TODO: actual batch proof generation
+    encode_compact_vec(&proof_data, &mut encoded);
+    encoded.extend_from_slice(&call.batch_size.to_le_bytes());
+
+    // Encode nullifiers (BoundedVec<[u8;32], MaxNullifiersPerBatch>)
+    encode_compact_len(call.nullifiers.len(), &mut encoded);
+    for nullifier in &call.nullifiers {
+        encoded.extend_from_slice(nullifier);
+    }
+
+    // Encode commitments (BoundedVec<[u8;32], MaxCommitmentsPerBatch>)
+    encode_compact_len(call.commitments.len(), &mut encoded);
+    for commitment in &call.commitments {
+        encoded.extend_from_slice(commitment);
+    }
+
+    // Encode encrypted notes (BoundedVec<EncryptedNote, MaxCommitmentsPerBatch>)
+    const PALLET_ENCRYPTED_NOTE_SIZE: usize = 611 + 1088;
+    encode_compact_len(call.encrypted_notes.len(), &mut encoded);
+    for note in &call.encrypted_notes {
+        if note.len() != PALLET_ENCRYPTED_NOTE_SIZE {
+            return Err(WalletError::Serialization(format!(
+                "Encrypted note wrong size: expected {} bytes, got {}",
+                PALLET_ENCRYPTED_NOTE_SIZE,
+                note.len()
+            )));
+        }
+        encoded.extend_from_slice(note);
+    }
+
+    // Encode anchor ([u8; 32])
+    encoded.extend_from_slice(&call.anchor);
+
+    // Encode total_fee (u128)
+    encoded.extend_from_slice(&call.total_fee.to_le_bytes());
+
+    Ok(encoded)
+}
+
+/// Build an unsigned extrinsic for a batch shielded transfer
+pub fn build_unsigned_batch_shielded_transfer(
+    call: &BatchShieldedTransferCall,
+) -> Result<Vec<u8>, WalletError> {
+    // Encode the call
+    let encoded_call = encode_batch_shielded_transfer_call(call)?;
+
+    let mut extrinsic = Vec::new();
+
+    // Version byte: 0x04 = unsigned extrinsic
+    extrinsic.push(0x04);
+
+    // Call data
+    extrinsic.extend_from_slice(&encoded_call);
+
+    // Wrap with compact length prefix
+    let mut result = Vec::new();
+    encode_compact_len(extrinsic.len(), &mut result);
+    result.extend_from_slice(&extrinsic);
+
+    Ok(result)
+}
+
+// ============================================================================
 // Unsigned Shielded Transfer Support
 // ============================================================================
 

@@ -27,7 +27,7 @@ use wallet::{
     keys::{DerivedKeys, RootSecret},
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
     rpc::WalletRpcClient,
-    store::{TransferRecipient, WalletMode, WalletStore},
+    store::{PendingStatus, TransferRecipient, WalletMode, WalletStore},
     substrate_rpc::SubstrateRpcClient,
     sync::WalletSyncEngine,
     tx_builder::Recipient,
@@ -107,6 +107,9 @@ enum Commands {
     /// Shield transparent funds into the shielded pool
     #[command(name = "substrate-shield")]
     SubstrateShield(SubstrateShieldArgs),
+    /// Send multiple transactions in a single batched proof
+    #[command(name = "substrate-batch-send")]
+    SubstrateBatchSend(SubstrateBatchSendArgs),
     #[command(name = "export-viewing-key")]
     ExportViewingKey(ExportArgs),
 }
@@ -298,6 +301,32 @@ struct SubstrateShieldArgs {
     use_alice: bool,
 }
 
+/// Arguments for Substrate batch send (multiple transactions in one proof)
+#[derive(Parser)]
+struct SubstrateBatchSendArgs {
+    /// Path to wallet store file
+    #[arg(long)]
+    store: PathBuf,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
+    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    ws_url: String,
+    /// Paths to recipient JSON files (one per transaction, 2-16 files required)
+    #[arg(long, num_args = 2..=16)]
+    recipients: Vec<PathBuf>,
+    /// Total transaction fee for entire batch
+    #[arg(long, default_value_t = 0)]
+    fee: u64,
+    /// Automatically consolidate notes if too many are needed for any transaction
+    #[arg(long, default_value_t = false)]
+    auto_consolidate: bool,
+    /// Show what would happen without executing
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
+}
+
 /// Get passphrase from argument, or prompt interactively if not provided.
 /// Uses rpassword to hide input from terminal.
 fn get_passphrase(passphrase: Option<String>, prompt: &str) -> Result<String> {
@@ -372,6 +401,7 @@ fn main() -> Result<()> {
         Commands::Send(args) => cmd_send(args),
         Commands::SubstrateSend(args) => cmd_substrate_send(args),
         Commands::SubstrateShield(args) => cmd_substrate_shield(args),
+        Commands::SubstrateBatchSend(args) => cmd_substrate_batch_send(args),
         Commands::ExportViewingKey(args) => cmd_export_viewing_key(args),
     }
 }
@@ -583,28 +613,51 @@ fn show_status(store: &WalletStore) -> Result<()> {
     println!();
 
     // Show note counts and balances
-    let notes = store.spendable_notes(0)?; // 0 = native asset
-    let total_value: u64 = notes.iter().map(|n| n.recovered.note.value).sum();
+    let spendable_notes = store.spendable_notes(0)?; // 0 = native asset
+    let locked_notes = store.pending_spend_notes(0)?; // notes locked by pending transactions
 
-    println!("Balance: {} HGM", total_value as f64 / 100_000_000.0);
-    println!("Unspent notes: {}", notes.len());
+    let spendable_value: u64 = spendable_notes
+        .iter()
+        .map(|note| note.recovered.note.value)
+        .sum();
+    let locked_value: u64 = locked_notes
+        .iter()
+        .map(|note| note.recovered.note.value)
+        .sum();
+    let total_tracked = spendable_value.saturating_add(locked_value);
 
-    if notes.len() > wallet::MAX_INPUTS {
+    println!("Balance: {} HGM", spendable_value as f64 / 100_000_000.0);
+    if locked_value > 0 {
+        println!(
+            "Locked (pending spend): {} HGM",
+            locked_value as f64 / 100_000_000.0
+        );
+        println!(
+            "Total (including locked): {} HGM",
+            total_tracked as f64 / 100_000_000.0
+        );
+    }
+    println!("Unspent notes: {}", spendable_notes.len());
+    if !locked_notes.is_empty() {
+        println!("Locked notes: {}", locked_notes.len());
+    }
+
+    if spendable_notes.len() > wallet::MAX_INPUTS {
         println!(
             "  ⚠ Note consolidation needed: {} notes exceeds {} max inputs",
-            notes.len(),
+            spendable_notes.len(),
             wallet::MAX_INPUTS
         );
-        let plan = wallet::ConsolidationPlan::estimate(notes.len());
+        let plan = wallet::ConsolidationPlan::estimate(spendable_notes.len());
         println!(
             "    Consolidation would take {} blocks and {} txs",
             plan.blocks_needed, plan.txs_needed
         );
     }
 
-    if !notes.is_empty() && notes.len() <= 10 {
+    if !spendable_notes.is_empty() && spendable_notes.len() <= 10 {
         println!("\nNote breakdown:");
-        for (i, note) in notes.iter().enumerate() {
+        for (i, note) in spendable_notes.iter().enumerate() {
             println!(
                 "  #{}: {} HGM (position {})",
                 i,
@@ -630,11 +683,21 @@ fn show_status(store: &WalletStore) -> Result<()> {
     if !pending.is_empty() {
         println!("\nPending transactions:");
         for tx in pending {
+            let (status, confirmations_label, confirmations) = match tx.status {
+                PendingStatus::InMempool => ("InMempool".to_string(), "confirmations", 0),
+                PendingStatus::Mined { height } => (
+                    format!("Mined(observed_at_height={})", height),
+                    "observed_confirmations",
+                    synced_height.saturating_sub(height) + 1,
+                ),
+            };
+
             println!(
-                "  {} status={:?} confirmations={}",
+                "  {} status={} {}={}",
                 hex::encode(tx.tx_id),
-                tx.status,
-                tx.confirmations(synced_height)
+                status,
+                confirmations_label,
+                confirmations
             );
         }
     }
@@ -707,6 +770,238 @@ fn cmd_export_viewing_key(args: ExportArgs) -> Result<()> {
         println!("{}", json);
     }
     Ok(())
+}
+
+/// Send multiple transactions in a single batched STARK proof
+fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
+    let batch_size = args.recipients.len();
+
+    // Validate batch size (must be power of 2: 2, 4, 8, or 16)
+    if !batch_size.is_power_of_two() || !(2..=16).contains(&batch_size) {
+        anyhow::bail!(
+            "Batch size must be 2, 4, 8, or 16 (got {} recipient files)",
+            batch_size
+        );
+    }
+
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = WalletStore::open(&args.store, &passphrase)?;
+    if store.mode()? == WalletMode::WatchOnly {
+        anyhow::bail!("watch-only wallets cannot send");
+    }
+
+    let runtime = RuntimeBuilder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to create tokio runtime")?;
+
+    runtime.block_on(async {
+        // Connect and sync first
+        println!("Connecting to {}...", args.ws_url);
+        let client = Arc::new(
+            SubstrateRpcClient::connect(&args.ws_url)
+                .await
+                .map_err(|e| anyhow!("Failed to connect: {}", e))?,
+        );
+
+        let store_arc = Arc::new(store);
+        let engine = AsyncWalletSyncEngine::new(client.clone(), store_arc.clone());
+
+        println!("Syncing wallet...");
+        engine
+            .sync_once()
+            .await
+            .map_err(|e| anyhow!("Sync failed: {}", e))?;
+
+        // Parse all recipient files
+        println!(
+            "Building batch of {} transactions...",
+            args.recipients.len()
+        );
+        let mut all_recipients = Vec::new();
+        let mut total_value = 0u64;
+
+        for (i, path) in args.recipients.iter().enumerate() {
+            let specs: Vec<api::RecipientSpec> = read_json(path)?;
+            let recipients =
+                parse_recipients(&specs).map_err(|e| anyhow!("Recipients file {}: {}", i, e))?;
+            let tx_value: u64 = recipients.iter().map(|r| r.value).sum();
+            total_value += tx_value;
+            all_recipients.push(recipients);
+            println!(
+                "  TX {}: {} recipients, {} HGM",
+                i,
+                specs.len(),
+                tx_value as f64 / 100_000_000.0
+            );
+        }
+
+        // Check if consolidation is needed for any transaction
+        // We need to estimate notes required for the total value across all transactions
+        let fee_per_tx = args.fee / batch_size as u64;
+        let total_needed = total_value + args.fee;
+
+        let mut notes = store_arc.spendable_notes(0)?; // 0 = native asset
+        notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
+
+        // Count how many notes we'd need for total value
+        let mut selected_count = 0;
+        let mut selected_value = 0u64;
+        for note in &notes {
+            if selected_value >= total_needed {
+                break;
+            }
+            selected_value += note.recovered.note.value;
+            selected_count += 1;
+        }
+
+        // Each transaction in the batch can use MAX_INPUTS notes
+        // Total notes available for batch = batch_size * MAX_INPUTS
+        let max_notes_for_batch = batch_size * wallet::MAX_INPUTS;
+        let needs_consolidation = selected_count > max_notes_for_batch;
+
+        if needs_consolidation {
+            let plan = wallet::ConsolidationPlan::estimate(selected_count);
+
+            if args.dry_run {
+                println!("\n=== DRY RUN ===");
+                println!("Would submit batch of {} transactions", batch_size);
+                println!("Total value: {} HGM", total_value as f64 / 100_000_000.0);
+                println!("\n⚠️  Consolidation needed:");
+                println!(
+                    "  Need {} notes but batch of {} can use max {} notes",
+                    selected_count, batch_size, max_notes_for_batch
+                );
+                println!(
+                    "  ~{} consolidation transactions needed first",
+                    plan.txs_needed
+                );
+                println!("\nRe-run with --auto-consolidate to execute.");
+                return Ok(());
+            }
+
+            if !args.auto_consolidate {
+                eprintln!(
+                    "Error: Need {} notes but batch of {} transactions can use max {} notes",
+                    selected_count, batch_size, max_notes_for_batch
+                );
+                eprintln!(
+                    "Suggestion: Add --auto-consolidate flag to automatically merge notes first"
+                );
+                eprintln!(
+                    "  Consolidation would take ~{} transactions",
+                    plan.txs_needed
+                );
+                return Err(anyhow!(wallet::WalletError::TooManyInputs {
+                    needed: selected_count,
+                    max: max_notes_for_batch,
+                }));
+            }
+
+            // Execute consolidation
+            println!(
+                "\nConsolidating {} notes to cover {} HGM...",
+                selected_count,
+                total_needed as f64 / 100_000_000.0
+            );
+            wallet::execute_consolidation(
+                store_arc.clone(),
+                &client,
+                total_needed,
+                fee_per_tx,
+                true, // verbose
+            )
+            .await
+            .map_err(|e| anyhow!("Consolidation failed: {}", e))?;
+
+            // Re-sync after consolidation
+            println!("\nRe-syncing wallet after consolidation...");
+            engine
+                .sync_once()
+                .await
+                .map_err(|e| anyhow!("Post-consolidation sync failed: {}", e))?;
+
+            println!("\nProceeding with batch transfer...");
+        }
+
+        if args.dry_run {
+            println!("\n=== DRY RUN ===");
+            println!("Would submit batch of {} transactions", batch_size);
+            println!("Total value: {} HGM", total_value as f64 / 100_000_000.0);
+            println!("Fee: {} HGM", args.fee as f64 / 100_000_000.0);
+            println!(
+                "\nNote: Batch proving generates a single STARK proof covering all transactions."
+            );
+            println!("Expected proof size savings: ~{}x", batch_size);
+            return Ok(());
+        }
+
+        // Build individual transaction bundles
+        println!("Building transaction bundles...");
+        let mut bundles = Vec::with_capacity(batch_size);
+        let mut all_spent_indexes = Vec::new();
+
+        for (i, recipients) in all_recipients.iter().enumerate() {
+            let built = build_transaction(&store_arc, recipients, fee_per_tx)?;
+            all_spent_indexes.extend(built.spent_note_indexes.iter().cloned());
+            bundles.push(built);
+            println!(
+                "  Built TX {} with {} nullifiers",
+                i,
+                bundles[i].nullifiers.len()
+            );
+        }
+
+        // Mark notes as pending
+        store_arc.mark_notes_pending(&all_spent_indexes, true)?;
+
+        // Collect all nullifiers, commitments, and ciphertexts
+        let mut all_nullifiers = Vec::new();
+        let mut all_commitments = Vec::new();
+        let mut all_ciphertexts = Vec::new();
+
+        for built in &bundles {
+            all_nullifiers.extend(built.nullifiers.iter().cloned());
+            all_commitments.extend(built.bundle.commitments.iter().cloned());
+            all_ciphertexts.extend(built.bundle.ciphertexts.iter().cloned());
+        }
+
+        // Get anchor from first bundle (all should use same anchor after sync)
+        let anchor = bundles[0].bundle.anchor;
+
+        println!(
+            "Submitting batch: {} nullifiers, {} commitments",
+            all_nullifiers.len(),
+            all_commitments.len()
+        );
+
+        // Submit batch transaction
+        let result = client
+            .submit_batch_shielded_transfer(
+                batch_size as u32,
+                all_nullifiers.clone(),
+                all_commitments.clone(),
+                all_ciphertexts,
+                anchor,
+                args.fee as u128,
+            )
+            .await;
+
+        match result {
+            Ok(tx_hash) => {
+                println!("✓ Batch transaction submitted successfully!");
+                println!("  TX Hash: 0x{}", hex::encode(tx_hash));
+                println!("  Batch size: {} transactions", batch_size);
+                println!("  Total nullifiers: {}", all_nullifiers.len());
+                println!("  Total commitments: {}", all_commitments.len());
+                Ok(())
+            }
+            Err(e) => {
+                store_arc.mark_notes_pending(&all_spent_indexes, false)?;
+                Err(anyhow!("Batch submission failed: {}", e))
+            }
+        }
+    })
 }
 
 /// Sync wallet using Substrate WebSocket RPC

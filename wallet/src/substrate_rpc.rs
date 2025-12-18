@@ -924,6 +924,59 @@ impl SubstrateRpcClient {
         self.submit_extrinsic(&extrinsic).await
     }
 
+    /// Submit a batch of shielded transfers with a single proof
+    ///
+    /// This submits multiple shielded transactions aggregated into a single
+    /// batch proof, providing ~Nx size and verification time savings where
+    /// N is the batch size.
+    ///
+    /// # Arguments
+    ///
+    /// * `batch_size` - Number of transactions in batch (2, 4, 8, or 16)
+    /// * `nullifiers` - All nullifiers from all transactions
+    /// * `commitments` - All commitments from all transactions
+    /// * `ciphertexts` - All encrypted notes from all transactions
+    /// * `anchor` - Shared Merkle anchor for all transactions
+    /// * `total_fee` - Total fee for entire batch
+    ///
+    /// # Returns
+    ///
+    /// The transaction hash (32 bytes) if accepted into the pool.
+    pub async fn submit_batch_shielded_transfer(
+        &self,
+        batch_size: u32,
+        nullifiers: Vec<[u8; 32]>,
+        commitments: Vec<[u8; 32]>,
+        ciphertexts: Vec<Vec<u8>>,
+        anchor: [u8; 32],
+        total_fee: u128,
+    ) -> Result<[u8; 32], WalletError> {
+        use crate::extrinsic::{build_unsigned_batch_shielded_transfer, BatchShieldedTransferCall};
+
+        // Validate batch size
+        if !batch_size.is_power_of_two() || !(2..=16).contains(&batch_size) {
+            return Err(WalletError::InvalidArgument(
+                "Batch size must be 2, 4, 8, or 16",
+            ));
+        }
+
+        // Build the call
+        let call = BatchShieldedTransferCall {
+            batch_size,
+            nullifiers,
+            commitments,
+            encrypted_notes: ciphertexts,
+            anchor,
+            total_fee,
+        };
+
+        // Build the unsigned extrinsic
+        let extrinsic = build_unsigned_batch_shielded_transfer(&call)?;
+
+        // Submit
+        self.submit_extrinsic(&extrinsic).await
+    }
+
     /// Shield transparent funds into the shielded pool
     ///
     /// This converts transparent balance to a shielded note by calling
