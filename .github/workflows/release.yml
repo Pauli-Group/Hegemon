@@ -30,12 +30,18 @@ jobs:
       
       - name: Build node binary
         run: cargo build -p hegemon-node --features substrate --release
+
+      - name: Build wallet binary
+        run: cargo build -p wallet --release
       
       - name: Package binary
         run: |
           mkdir -p release
           cp target/release/hegemon-node release/hegemon-node-linux-x86_64
-          cd release && sha256sum hegemon-node-linux-x86_64 > hegemon-node-linux-x86_64.sha256
+          cp target/release/wallet release/wallet-linux-x86_64
+          cd release
+          sha256sum hegemon-node-linux-x86_64 > hegemon-node-linux-x86_64.sha256
+          sha256sum wallet-linux-x86_64 > wallet-linux-x86_64.sha256
       
       - uses: actions/upload-artifact@v4
         with:
@@ -60,12 +66,18 @@ jobs:
       
       - name: Build node binary (cross-compile for Intel)
         run: cargo build -p hegemon-node --features substrate --release --target x86_64-apple-darwin
+
+      - name: Build wallet binary (cross-compile for Intel)
+        run: cargo build -p wallet --release --target x86_64-apple-darwin
       
       - name: Package binary
         run: |
           mkdir -p release
           cp target/x86_64-apple-darwin/release/hegemon-node release/hegemon-node-macos-x86_64
-          cd release && shasum -a 256 hegemon-node-macos-x86_64 > hegemon-node-macos-x86_64.sha256
+          cp target/x86_64-apple-darwin/release/wallet release/wallet-macos-x86_64
+          cd release
+          shasum -a 256 hegemon-node-macos-x86_64 > hegemon-node-macos-x86_64.sha256
+          shasum -a 256 wallet-macos-x86_64 > wallet-macos-x86_64.sha256
       
       - uses: actions/upload-artifact@v4
         with:
@@ -90,12 +102,18 @@ jobs:
       
       - name: Build node binary
         run: cargo build -p hegemon-node --features substrate --release
+
+      - name: Build wallet binary
+        run: cargo build -p wallet --release
       
       - name: Package binary
         run: |
           mkdir -p release
           cp target/release/hegemon-node release/hegemon-node-macos-arm64
-          cd release && shasum -a 256 hegemon-node-macos-arm64 > hegemon-node-macos-arm64.sha256
+          cp target/release/wallet release/wallet-macos-arm64
+          cd release
+          shasum -a 256 hegemon-node-macos-arm64 > hegemon-node-macos-arm64.sha256
+          shasum -a 256 wallet-macos-arm64 > wallet-macos-arm64.sha256
       
       - uses: actions/upload-artifact@v4
         with:
@@ -121,14 +139,19 @@ jobs:
       
       - name: Build node binary
         run: cargo build -p hegemon-node --features substrate --release
+
+      - name: Build wallet binary
+        run: cargo build -p wallet --release
       
       - name: Package binary
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release
           Copy-Item target\release\hegemon-node.exe release\hegemon-node-windows-x86_64.exe
+          Copy-Item target\release\wallet.exe release\wallet-windows-x86_64.exe
           cd release
           Get-FileHash hegemon-node-windows-x86_64.exe -Algorithm SHA256 | Format-List > hegemon-node-windows-x86_64.exe.sha256
+          Get-FileHash wallet-windows-x86_64.exe -Algorithm SHA256 | Format-List > wallet-windows-x86_64.exe.sha256
       
       - uses: actions/upload-artifact@v4
         with:
