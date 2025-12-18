@@ -58,7 +58,7 @@ curl -s -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader"}' \
   -H "Content-Type: application/json" http://127.0.0.1:9944 | jq -r '.result.number'
 ```
 
-At epoch boundaries (every 1000 blocks), Alice logs:
+At epoch boundaries (every 60 blocks in the Substrate dev runtime), Alice logs:
 
 - `Generating recursive epoch proof`
 - `📡 Broadcast recursive epoch proof to peers (v1+v2)`

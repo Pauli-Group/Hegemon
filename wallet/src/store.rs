@@ -348,6 +348,26 @@ impl WalletStore {
         })
     }
 
+    pub fn pending_spend_notes(&self, asset_id: u64) -> Result<Vec<SpendableNote>, WalletError> {
+        self.with_state(|state| {
+            let mut notes: Vec<SpendableNote> = state
+                .notes
+                .iter()
+                .enumerate()
+                .filter(|(_, note)| {
+                    note.note.note.asset_id == asset_id && !note.spent && note.pending_spend
+                })
+                .map(|(idx, note)| SpendableNote {
+                    index: idx,
+                    recovered: note.note.clone(),
+                    position: note.position,
+                })
+                .collect();
+            notes.sort_by_key(|note| note.position);
+            Ok(notes)
+        })
+    }
+
     pub fn mark_notes_pending(&self, indexes: &[usize], pending: bool) -> Result<(), WalletError> {
         self.with_mut(|state| {
             for &idx in indexes {

@@ -1632,21 +1632,36 @@ pub mod pallet {
                     log::info!(target: "shielded-pool", "  binding signature PASSED");
                     log::info!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
 
-                    // Create a unique tag based on the nullifiers
-                    // This prevents duplicate transactions in the pool
-                    let mut provides_tags: Vec<Vec<u8>> = Vec::new();
-                    for nf in nullifiers.iter() {
-                        let mut tag = b"shielded_nf:".to_vec();
-                        tag.extend_from_slice(nf);
-                        provides_tags.push(tag);
-                    }
-
-                    ValidTransaction::with_tag_prefix("ShieldedPoolUnsigned")
+                    // Create tags based on the nullifiers.
+                    //
+                    // IMPORTANT: `and_provides` adds exactly ONE tag per call (and will SCALE-encode
+                    // it), so we must call it once per nullifier. Passing a Vec<...> would create a
+                    // single tag and fail to prevent per-nullifier pool conflicts.
+                    let mut builder = ValidTransaction::with_tag_prefix("ShieldedPoolUnsigned")
                         .priority(100) // Medium priority
                         .longevity(64) // Valid for ~64 blocks
-                        .and_provides(provides_tags)
-                        .propagate(true)
-                        .build()
+                        .propagate(true);
+
+                    let mut provided_any = false;
+                    for nf in nullifiers.iter() {
+                        // Skip padding nullifiers so 1-input spends don't all conflict
+                        // on a single all-zero provides tag.
+                        if is_zero_nullifier(nf) {
+                            continue;
+                        }
+                        let mut tag = b"shielded_nf:".to_vec();
+                        tag.extend_from_slice(nf);
+                        builder = builder.and_provides(tag);
+                        provided_any = true;
+                    }
+
+                    // If a transaction has no real nullifiers, still provide something so it can't
+                    // be duplicated freely in the pool.
+                    if !provided_any {
+                        builder = builder.and_provides(b"shielded_no_nullifiers".to_vec());
+                    }
+
+                    builder.build()
                 }
                 // Inherent call: mint_coinbase
                 // Inherent extrinsics are validated through ProvideInherent::check_inherent

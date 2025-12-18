@@ -6,7 +6,7 @@
 use crate::async_sync::AsyncWalletSyncEngine;
 use crate::error::WalletError;
 use crate::notes::MemoPlaintext;
-use crate::store::WalletStore;
+use crate::store::{TransferRecipient, WalletStore};
 use crate::substrate_rpc::SubstrateRpcClient;
 use crate::tx_builder::{build_transaction, Recipient};
 use std::sync::Arc;
@@ -16,6 +16,9 @@ const NATIVE_ASSET_ID: u64 = 0;
 
 /// Maximum number of inputs per transaction (circuit limit)
 pub const MAX_INPUTS: usize = 2;
+
+const CONFIRMATION_POLL_SECS: u64 = 3;
+const CONFIRMATION_TIMEOUT_SECS: u64 = 600;
 
 /// A consolidation plan - for display/estimation only
 #[derive(Debug, Clone)]
@@ -73,11 +76,11 @@ pub async fn execute_consolidation(
     fee_per_tx: u64,
     verbose: bool,
 ) -> Result<(), WalletError> {
+    let engine = AsyncWalletSyncEngine::new(rpc.clone(), store.clone());
     let mut iteration = 0;
 
     loop {
         // Step 1: Fresh sync each iteration
-        let engine = AsyncWalletSyncEngine::new(rpc.clone(), store.clone());
         engine.sync_once().await?;
 
         // Step 2: Select only notes needed for target_value
@@ -157,31 +160,90 @@ pub async fn execute_consolidation(
         }
 
         // Build and submit
-        let tx = build_transaction(&*store, &[recipient], fee_per_tx)?;
-        let hash = rpc.submit_shielded_transfer_unsigned(&tx.bundle).await?;
+        let built = build_transaction(&*store, &[recipient], fee_per_tx)?;
+
+        // Lock notes before submission so we don't double-spend locally if we loop/retry.
+        store.mark_notes_pending(&built.spent_note_indexes, true)?;
+
+        let submit_result = rpc.submit_shielded_transfer_unsigned(&built.bundle).await;
+        let hash = match submit_result {
+            Ok(hash) => hash,
+            Err(WalletError::Rpc(msg))
+                if msg.contains("Priority is too low") || msg.contains("already in the pool") =>
+            {
+                if verbose {
+                    println!(
+                        "  Note: tx appears already in pool; waiting for confirmation ({}s timeout)...",
+                        CONFIRMATION_TIMEOUT_SECS
+                    );
+                }
+                match wait_for_nullifiers_spent(&engine, rpc, &store, &built.nullifiers).await {
+                    Ok(_) => continue,
+                    Err(err) => {
+                        store.mark_notes_pending(&built.spent_note_indexes, false)?;
+                        return Err(err);
+                    }
+                }
+            }
+            Err(err) => {
+                store.mark_notes_pending(&built.spent_note_indexes, false)?;
+                return Err(err);
+            }
+        };
 
         if verbose {
             println!("  Submitted: 0x{}", hex::encode(&hash[..8]));
         }
 
-        // Step 4: Wait for confirmation
-        let start_height = rpc.latest_block().await?.height;
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-            let current = rpc.latest_block().await?;
-            if current.height > start_height {
-                if verbose {
-                    println!("  Confirmed at block {}", current.height);
-                }
-                break;
-            }
+        // Track pending tx so locked notes can be released on timeout/reorgs.
+        let recipient_address = store.primary_address()?.encode()?;
+        store.record_pending_submission(
+            hash,
+            built.nullifiers.clone(),
+            built.spent_note_indexes.clone(),
+            vec![TransferRecipient {
+                address: recipient_address,
+                value: total - fee_per_tx,
+                asset_id: NATIVE_ASSET_ID,
+                memo: Some("consolidation".to_string()),
+            }],
+            fee_per_tx,
+        )?;
+
+        // Step 4: Wait until the transaction is actually mined (not just "a new block exists").
+        let confirmed_height = wait_for_nullifiers_spent(&engine, rpc, &store, &built.nullifiers).await?;
+        if verbose {
+            println!("  Confirmed (observed at block {})", confirmed_height);
         }
 
-        // Small delay after confirmation to avoid mempool priority collisions
-        // (coinbase tx may still be in pool right after block)
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
         // Step 5: Loop back to sync and check again
+    }
+}
+
+async fn wait_for_nullifiers_spent(
+    engine: &AsyncWalletSyncEngine,
+    rpc: &Arc<SubstrateRpcClient>,
+    store: &Arc<WalletStore>,
+    nullifiers: &[[u8; 32]],
+) -> Result<u64, WalletError> {
+    let start = std::time::Instant::now();
+    let timeout = tokio::time::Duration::from_secs(CONFIRMATION_TIMEOUT_SECS);
+
+    loop {
+        if start.elapsed() > timeout {
+            return Err(WalletError::Rpc(format!(
+                "consolidation tx not confirmed within {}s",
+                CONFIRMATION_TIMEOUT_SECS
+            )));
+        }
+
+        tokio::time::sleep(tokio::time::Duration::from_secs(CONFIRMATION_POLL_SECS)).await;
+        engine.sync_once().await?;
+
+        let spent = rpc.check_nullifiers_spent(nullifiers).await?;
+        if spent.iter().all(|v| *v) {
+            return store.last_synced_height();
+        }
     }
 }
 

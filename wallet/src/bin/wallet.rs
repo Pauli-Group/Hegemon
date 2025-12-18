@@ -27,7 +27,7 @@ use wallet::{
     keys::{DerivedKeys, RootSecret},
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
     rpc::WalletRpcClient,
-    store::{TransferRecipient, WalletMode, WalletStore},
+    store::{PendingStatus, TransferRecipient, WalletMode, WalletStore},
     substrate_rpc::SubstrateRpcClient,
     sync::WalletSyncEngine,
     tx_builder::Recipient,
@@ -613,28 +613,45 @@ fn show_status(store: &WalletStore) -> Result<()> {
     println!();
 
     // Show note counts and balances
-    let notes = store.spendable_notes(0)?; // 0 = native asset
-    let total_value: u64 = notes.iter().map(|n| n.recovered.note.value).sum();
+    let spendable_notes = store.spendable_notes(0)?; // 0 = native asset
+    let locked_notes = store.pending_spend_notes(0)?; // notes locked by pending transactions
 
-    println!("Balance: {} HGM", total_value as f64 / 100_000_000.0);
-    println!("Unspent notes: {}", notes.len());
+    let spendable_value: u64 = spendable_notes
+        .iter()
+        .map(|note| note.recovered.note.value)
+        .sum();
+    let locked_value: u64 = locked_notes.iter().map(|note| note.recovered.note.value).sum();
+    let total_tracked = spendable_value.saturating_add(locked_value);
 
-    if notes.len() > wallet::MAX_INPUTS {
+    println!("Balance: {} HGM", spendable_value as f64 / 100_000_000.0);
+    if locked_value > 0 {
+        println!(
+            "Locked (pending spend): {} HGM",
+            locked_value as f64 / 100_000_000.0
+        );
+        println!("Total (including locked): {} HGM", total_tracked as f64 / 100_000_000.0);
+    }
+    println!("Unspent notes: {}", spendable_notes.len());
+    if !locked_notes.is_empty() {
+        println!("Locked notes: {}", locked_notes.len());
+    }
+
+    if spendable_notes.len() > wallet::MAX_INPUTS {
         println!(
             "  ⚠ Note consolidation needed: {} notes exceeds {} max inputs",
-            notes.len(),
+            spendable_notes.len(),
             wallet::MAX_INPUTS
         );
-        let plan = wallet::ConsolidationPlan::estimate(notes.len());
+        let plan = wallet::ConsolidationPlan::estimate(spendable_notes.len());
         println!(
             "    Consolidation would take {} blocks and {} txs",
             plan.blocks_needed, plan.txs_needed
         );
     }
 
-    if !notes.is_empty() && notes.len() <= 10 {
+    if !spendable_notes.is_empty() && spendable_notes.len() <= 10 {
         println!("\nNote breakdown:");
-        for (i, note) in notes.iter().enumerate() {
+        for (i, note) in spendable_notes.iter().enumerate() {
             println!(
                 "  #{}: {} HGM (position {})",
                 i,
@@ -660,11 +677,21 @@ fn show_status(store: &WalletStore) -> Result<()> {
     if !pending.is_empty() {
         println!("\nPending transactions:");
         for tx in pending {
+            let (status, confirmations_label, confirmations) = match tx.status {
+                PendingStatus::InMempool => ("InMempool".to_string(), "confirmations", 0),
+                PendingStatus::Mined { height } => (
+                    format!("Mined(observed_at_height={})", height),
+                    "observed_confirmations",
+                    synced_height.saturating_sub(height) + 1,
+                ),
+            };
+
             println!(
-                "  {} status={:?} confirmations={}",
+                "  {} status={} {}={}",
                 hex::encode(tx.tx_id),
-                tx.status,
-                tx.confirmations(synced_height)
+                status,
+                confirmations_label,
+                confirmations
             );
         }
     }
