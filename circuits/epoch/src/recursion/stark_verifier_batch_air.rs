@@ -8,7 +8,8 @@
 //! built to keep trace width flat (≤255) by growing trace length with `N`.
 
 use winter_air::{
-    Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo, TransitionConstraintDegree,
+    Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
+    TransitionConstraintDegree,
 };
 use winter_math::fields::f64::BaseElement;
 use winter_math::{FieldElement, StarkField, ToElements};
@@ -16,17 +17,17 @@ use winter_math::{FieldElement, StarkField, ToElements};
 use super::merkle_air::DIGEST_WIDTH;
 use super::rpo_air::{MDS, ROWS_PER_PERMUTATION, STATE_WIDTH};
 use super::stark_verifier_air::{
-    compute_expected_z, StarkVerifierAir,
-    COL_CARRY_MASK, COL_COEFF_MASK, COL_COEFF_START, COL_COIN_INIT_MASK, COL_CONSTRAINT_COEFFS_START, COL_DEEP_C1_ACC, COL_DEEP_C2_ACC,
+    compute_expected_z, StarkVerifierAir, COL_CARRY_MASK, COL_COEFF_MASK, COL_COEFF_START,
+    COL_COIN_INIT_MASK, COL_CONSTRAINT_COEFFS_START, COL_DEEP_C1_ACC, COL_DEEP_C2_ACC,
     COL_DEEP_COEFFS_START, COL_DEEP_MASK, COL_DEEP_START, COL_DEEP_T1_ACC, COL_DEEP_T2_ACC,
     COL_FRI_ALPHA_START, COL_FRI_ALPHA_VALUE, COL_FRI_EVAL, COL_FRI_MASK, COL_FRI_MSB_BITS_START,
     COL_FRI_POW, COL_FRI_X, COL_FULL_CARRY_MASK, COL_MERKLE_INDEX, COL_MERKLE_PATH_BIT,
     COL_OOD_DIGEST_START, COL_OOD_EVALS_START, COL_POS_ACC, COL_POS_BIT0, COL_POS_BIT1,
-    COL_POS_BIT2, COL_POS_BIT3, COL_POS_DECOMP_MASK, COL_POS_HI_AND, COL_POS_LO_ACC,
-    COL_POS_MASK, COL_POS_MASKED_ACC, COL_POS_PERM_ACC, COL_POS_RAW, COL_POS_SORTED_VALUE,
-    COL_POS_START, COL_REMAINDER_COEFFS_START, COL_RESEED_MASK, COL_RESEED_WORD_START,
-    COL_SAVED_COIN_START, COL_Z_MASK, COL_Z_VALUE, NUM_CONSTRAINT_COEFFS, NUM_DEEP_COEFFS,
-    NUM_REMAINDER_COEFFS, OOD_EVAL_LEN, RATE_WIDTH, VERIFIER_TRACE_WIDTH,
+    COL_POS_BIT2, COL_POS_BIT3, COL_POS_DECOMP_MASK, COL_POS_HI_AND, COL_POS_LO_ACC, COL_POS_MASK,
+    COL_POS_MASKED_ACC, COL_POS_PERM_ACC, COL_POS_RAW, COL_POS_SORTED_VALUE, COL_POS_START,
+    COL_REMAINDER_COEFFS_START, COL_RESEED_MASK, COL_RESEED_WORD_START, COL_SAVED_COIN_START,
+    COL_Z_MASK, COL_Z_VALUE, NUM_CONSTRAINT_COEFFS, NUM_DEEP_COEFFS, NUM_REMAINDER_COEFFS,
+    OOD_EVAL_LEN, RATE_WIDTH, VERIFIER_TRACE_WIDTH,
 };
 
 use super::stark_verifier_air::StarkVerifierPublicInputs;
@@ -281,10 +282,8 @@ impl Air for StarkVerifierBatchAir {
         // repeated mask columns together; in the batch trace this drops by `2 * (num_segments - 1)`.
         // We match the observed degrees by using a half-segment cycle (for the two-segment case
         // this is `segment_len / 2`).
-        let boundary_pair_degree = TransitionConstraintDegree::with_cycles(
-            2,
-            vec![ROWS_PER_PERMUTATION, segment_len / 2],
-        );
+        let boundary_pair_degree =
+            TransitionConstraintDegree::with_cycles(2, vec![ROWS_PER_PERMUTATION, segment_len / 2]);
 
         // Capacity carryover + rate relations (3 * DIGEST_WIDTH).
         degrees.extend(vec![boundary_rel_degree.clone(); 3 * DIGEST_WIDTH]);
@@ -301,10 +300,7 @@ impl Air for StarkVerifierBatchAir {
         // Mirror `StarkVerifierAir`'s degree accounting for sparse selectors.
         degrees.push(boundary_pair_degree.clone()); // intra-leaf carry
         degrees.push(deg!(2, boundary_and_full.clone())); // path-bit binary
-        degrees.extend(vec![
-            deg!(2, boundary_and_full.clone());
-            DIGEST_WIDTH
-        ]); // digest carryover
+        degrees.extend(vec![deg!(2, boundary_and_full.clone()); DIGEST_WIDTH]); // digest carryover
         degrees.push(deg!(1, boundary_and_full.clone())); // index shift
         degrees.extend(vec![boundary_rel_degree.clone(); num_root_masks]); // root index checks
         degrees.extend(vec![
@@ -328,8 +324,19 @@ impl Air for StarkVerifierBatchAir {
         degrees.extend(vec![deg!(2, vec![segment_len]); 4]); // bit booleanity
 
         let pos_acc_init_degree = boundary_rel_degree.clone();
-        let pos_acc_update_degree = deg!(1, vec![ROWS_PER_PERMUTATION, ROWS_PER_PERMUTATION, segment_len]);
-        let pos_lo_update_degree = deg!(1, vec![ROWS_PER_PERMUTATION, ROWS_PER_PERMUTATION, ROWS_PER_PERMUTATION, segment_len]);
+        let pos_acc_update_degree = deg!(
+            1,
+            vec![ROWS_PER_PERMUTATION, ROWS_PER_PERMUTATION, segment_len]
+        );
+        let pos_lo_update_degree = deg!(
+            1,
+            vec![
+                ROWS_PER_PERMUTATION,
+                ROWS_PER_PERMUTATION,
+                ROWS_PER_PERMUTATION,
+                segment_len
+            ]
+        );
 
         degrees.push(pos_acc_init_degree.clone()); // acc init
         degrees.push(pos_acc_update_degree.clone()); // acc update
@@ -406,7 +413,8 @@ impl Air for StarkVerifierBatchAir {
         // Compute assertion count for one segment by constructing a segment AIR and reusing its
         // computed context.
         let segment_trace_info = TraceInfo::new(VERIFIER_TRACE_WIDTH, segment_len);
-        let segment_air = StarkVerifierAir::new(segment_trace_info, template.clone(), options.clone());
+        let segment_air =
+            StarkVerifierAir::new(segment_trace_info, template.clone(), options.clone());
         let per_segment_assertions = segment_air.context().num_assertions();
         let num_assertions = per_segment_assertions * pub_inputs.inner.len();
 
@@ -543,8 +551,7 @@ impl Air for StarkVerifierBatchAir {
         p += 1;
         let inner_boundary_inv_at_z: [E; 2] = core::array::from_fn(|i| periodic_values[p + i]);
         p += 2;
-        let inner_ood_constraint_weights: [E; 8] =
-            core::array::from_fn(|i| periodic_values[p + i]);
+        let inner_ood_constraint_weights: [E; 8] = core::array::from_fn(|i| periodic_values[p + i]);
         let _ = inner_ood_constraint_weights;
 
         // MDS result
@@ -937,8 +944,7 @@ impl Air for StarkVerifierBatchAir {
 
         // Saved coin-state columns are constant within a segment.
         for i in 0..STATE_WIDTH {
-            result[idx + i] =
-                next[COL_SAVED_COIN_START + i] - current[COL_SAVED_COIN_START + i];
+            result[idx + i] = next[COL_SAVED_COIN_START + i] - current[COL_SAVED_COIN_START + i];
         }
         idx += STATE_WIDTH;
 
@@ -1002,8 +1008,7 @@ impl Air for StarkVerifierBatchAir {
 
         // Evaluate RpoAir transition constraints at z.
         let half_round_type_z = inner_rpo_periodic_at_z[0];
-        let ark_z: [E; STATE_WIDTH] =
-            core::array::from_fn(|i| inner_rpo_periodic_at_z[1 + i]);
+        let ark_z: [E; STATE_WIDTH] = core::array::from_fn(|i| inner_rpo_periodic_at_z[1 + i]);
 
         // OOD frame layout matches `merge_ood_evaluations`:
         //   [trace(z) | constraint(z) | trace(zg) | constraint(zg)].
@@ -1097,8 +1102,8 @@ impl Air for StarkVerifierBatchAir {
         // --------------------------------------------------------------------
 
         for i in 0..NUM_CONSTRAINT_COEFFS {
-            result[idx + i] = next[COL_CONSTRAINT_COEFFS_START + i]
-                - current[COL_CONSTRAINT_COEFFS_START + i];
+            result[idx + i] =
+                next[COL_CONSTRAINT_COEFFS_START + i] - current[COL_CONSTRAINT_COEFFS_START + i];
         }
         idx += NUM_CONSTRAINT_COEFFS;
 
@@ -1149,8 +1154,8 @@ impl Air for StarkVerifierBatchAir {
 
         // Remainder coefficients are constant within a segment.
         for i in 0..NUM_REMAINDER_COEFFS {
-            result[idx + i] = next[COL_REMAINDER_COEFFS_START + i]
-                - current[COL_REMAINDER_COEFFS_START + i];
+            result[idx + i] =
+                next[COL_REMAINDER_COEFFS_START + i] - current[COL_REMAINDER_COEFFS_START + i];
         }
         idx += NUM_REMAINDER_COEFFS;
 
@@ -1346,7 +1351,8 @@ impl Air for StarkVerifierBatchAir {
         let opts = self.options.clone();
 
         for (seg_idx, inner) in self.pub_inputs.inner.iter().enumerate() {
-            let seg_air = StarkVerifierAir::new(segment_trace_info.clone(), inner.clone(), opts.clone());
+            let seg_air =
+                StarkVerifierAir::new(segment_trace_info.clone(), inner.clone(), opts.clone());
             let offset = seg_idx * self.segment_len;
             for a in seg_air.get_assertions() {
                 debug_assert!(a.is_single(), "segment assertions must be single-step");
@@ -1395,12 +1401,14 @@ impl Air for StarkVerifierBatchAir {
         let num_fri_layers = self.template.fri_commitments.len().saturating_sub(1);
 
         let mut trace_commitment_cols = vec![vec![BaseElement::ZERO; total_rows]; DIGEST_WIDTH];
-        let mut constraint_commitment_cols = vec![vec![BaseElement::ZERO; total_rows]; DIGEST_WIDTH];
+        let mut constraint_commitment_cols =
+            vec![vec![BaseElement::ZERO; total_rows]; DIGEST_WIDTH];
         let mut fri_commitment_cols =
             vec![vec![BaseElement::ZERO; total_rows]; num_fri_layers * DIGEST_WIDTH];
         let mut inner_pub_inputs_cols = vec![vec![BaseElement::ZERO; total_rows]; 2 * STATE_WIDTH];
         let mut expected_z_col = vec![BaseElement::ZERO; total_rows];
-        let mut inner_rpo_periodic_cols = vec![vec![BaseElement::ZERO; total_rows]; 1 + STATE_WIDTH];
+        let mut inner_rpo_periodic_cols =
+            vec![vec![BaseElement::ZERO; total_rows]; 1 + STATE_WIDTH];
         let mut transition_div_inv_col = vec![BaseElement::ZERO; total_rows];
         let mut boundary_inv_cols = vec![vec![BaseElement::ZERO; total_rows]; 2];
         let mut ood_weight_cols = vec![vec![BaseElement::ZERO; total_rows]; 8];
@@ -1408,7 +1416,11 @@ impl Air for StarkVerifierBatchAir {
         for (seg_idx, inner) in self.pub_inputs.inner.iter().enumerate() {
             let expected_z = compute_expected_z(inner);
             let (rpo_periodic_at_z, transition_div_inv_at_z, boundary_inv_at_z, ood_weights) =
-                super::stark_verifier_air::compute_inner_ood_constants(inner, expected_z, self.g_trace);
+                super::stark_verifier_air::compute_inner_ood_constants(
+                    inner,
+                    expected_z,
+                    self.g_trace,
+                );
 
             let start = seg_idx * self.segment_len;
             let end = start + self.segment_len;
@@ -1420,14 +1432,14 @@ impl Air for StarkVerifierBatchAir {
 
             for layer_idx in 0..num_fri_layers {
                 let root = inner.fri_commitments[layer_idx];
-                for i in 0..DIGEST_WIDTH {
+                for (i, value) in root.iter().copied().enumerate() {
                     let col_idx = layer_idx * DIGEST_WIDTH + i;
-                    fri_commitment_cols[col_idx][start..end].fill(root[i]);
+                    fri_commitment_cols[col_idx][start..end].fill(value);
                 }
             }
 
-            for i in 0..2 * STATE_WIDTH {
-                inner_pub_inputs_cols[i][start..end].fill(inner.inner_public_inputs[i]);
+            for (i, value) in inner.inner_public_inputs.iter().copied().enumerate() {
+                inner_pub_inputs_cols[i][start..end].fill(value);
             }
 
             expected_z_col[start..end].fill(expected_z);
@@ -1525,7 +1537,7 @@ mod tests {
             let local_row = row % super::ROWS_PER_PERMUTATION;
             let val = if local_row >= 14 {
                 0
-            } else if local_row % 2 == 0 {
+            } else if local_row.is_multiple_of(2) {
                 1
             } else {
                 2

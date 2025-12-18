@@ -620,7 +620,10 @@ fn show_status(store: &WalletStore) -> Result<()> {
         .iter()
         .map(|note| note.recovered.note.value)
         .sum();
-    let locked_value: u64 = locked_notes.iter().map(|note| note.recovered.note.value).sum();
+    let locked_value: u64 = locked_notes
+        .iter()
+        .map(|note| note.recovered.note.value)
+        .sum();
     let total_tracked = spendable_value.saturating_add(locked_value);
 
     println!("Balance: {} HGM", spendable_value as f64 / 100_000_000.0);
@@ -629,7 +632,10 @@ fn show_status(store: &WalletStore) -> Result<()> {
             "Locked (pending spend): {} HGM",
             locked_value as f64 / 100_000_000.0
         );
-        println!("Total (including locked): {} HGM", total_tracked as f64 / 100_000_000.0);
+        println!(
+            "Total (including locked): {} HGM",
+            total_tracked as f64 / 100_000_000.0
+        );
     }
     println!("Unspent notes: {}", spendable_notes.len());
     if !locked_notes.is_empty() {
@@ -771,7 +777,7 @@ fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
     let batch_size = args.recipients.len();
 
     // Validate batch size (must be power of 2: 2, 4, 8, or 16)
-    if !batch_size.is_power_of_two() || batch_size < 2 || batch_size > 16 {
+    if !batch_size.is_power_of_two() || !(2..=16).contains(&batch_size) {
         anyhow::bail!(
             "Batch size must be 2, 4, 8, or 16 (got {} recipient files)",
             batch_size

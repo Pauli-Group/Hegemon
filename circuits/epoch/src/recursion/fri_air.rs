@@ -381,9 +381,9 @@ impl Air for FriVerifierAir {
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
         let mut assertions = Vec::new();
-        if let Some(first) = self.pub_inputs.layer_commitments.get(0) {
-            for i in 0..DIGEST_WIDTH {
-                assertions.push(Assertion::single(i, 0, first[i]));
+        if let Some(first) = self.pub_inputs.layer_commitments.first() {
+            for (index, value) in first.iter().copied().enumerate() {
+                assertions.push(Assertion::single(index, 0, value));
             }
         }
         assertions
@@ -407,7 +407,7 @@ impl Air for FriVerifierAir {
 
             let val = if local_row >= 14 {
                 0
-            } else if local_row % 2 == 0 {
+            } else if local_row.is_multiple_of(2) {
                 1
             } else {
                 2
@@ -416,7 +416,7 @@ impl Air for FriVerifierAir {
 
             let constants = if local_row >= 14 {
                 [BaseElement::ZERO; STATE_WIDTH]
-            } else if local_row % 2 == 0 {
+            } else if local_row.is_multiple_of(2) {
                 let round = local_row / 2;
                 if round < NUM_ROUNDS {
                     ARK1[round]

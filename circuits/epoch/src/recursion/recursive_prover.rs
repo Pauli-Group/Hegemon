@@ -136,6 +136,12 @@ pub struct RecursiveEpochProver {
     options: RpoProofOptions,
 }
 
+impl Default for RecursiveEpochProver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RecursiveEpochProver {
     /// Create a new recursive epoch prover with default options.
     pub fn new() -> Self {
@@ -374,7 +380,6 @@ impl RecursiveEpochProver {
         &self,
         input_state: [BaseElement; STATE_WIDTH],
     ) -> Result<Vec<u8>, EpochProverError> {
-
         // Create prover with our options
         let prover = RpoStarkProver::from_rpo_options(&self.options);
 
@@ -526,7 +531,7 @@ impl RecursiveEpochProver {
 
         // Verify epoch commitment in proof matches
         let commitment_in_proof = &proof.proof_bytes[8..40];
-        if commitment_in_proof != &epoch.commitment() {
+        if commitment_in_proof != epoch.commitment() {
             return false;
         }
 
@@ -1152,8 +1157,8 @@ mod tests {
     use super::*;
     use crate::recursion::rpo_air::{RpoAir, STATE_WIDTH};
     use crate::recursion::rpo_stark_prover::RpoStarkProver;
-    use crate::recursion::stark_verifier_batch_prover::{prove_batch, verify_batch};
     use crate::recursion::stark_verifier_air::StarkVerifierAir;
+    use crate::recursion::stark_verifier_batch_prover::{prove_batch, verify_batch};
     use crate::types::Epoch;
     use std::time::Instant;
     use winter_math::FieldElement;
@@ -1269,7 +1274,8 @@ mod tests {
             batch.num_epochs,
         );
         let inner_pub_inputs = prover.build_rpo_pub_inputs_for_state(input_state);
-        let inner_data = InnerProofData::from_proof::<RpoAir>(&batch.proof_bytes, inner_pub_inputs)?;
+        let inner_data =
+            InnerProofData::from_proof::<RpoAir>(&batch.proof_bytes, inner_pub_inputs)?;
         let verifier_pub_inputs = inner_data.to_stark_verifier_inputs();
         Ok((inner_data, verifier_pub_inputs))
     }
@@ -1304,28 +1310,40 @@ mod tests {
 
         // Outer batch proof: verify the two batched-inner proofs in-circuit.
         let outer_options = prover.options.to_winter_options();
-        let outer = prove_batch(&[inner1, inner2], vec![pub_inputs1.clone(), pub_inputs2.clone()], outer_options.clone())
-            .expect("outer batch proof");
+        let outer = prove_batch(
+            &[inner1, inner2],
+            vec![pub_inputs1.clone(), pub_inputs2.clone()],
+            outer_options.clone(),
+        )
+        .expect("outer batch proof");
 
         let acceptable = || AcceptableOptions::OptionSet(vec![outer_options.clone()]);
-        verify_batch(&outer, vec![pub_inputs1.clone(), pub_inputs2.clone()], acceptable())
-            .expect("outer batch verification");
+        verify_batch(
+            &outer,
+            vec![pub_inputs1.clone(), pub_inputs2.clone()],
+            acceptable(),
+        )
+        .expect("outer batch verification");
 
         // Tamper reject: swapping per-inner public inputs must fail.
-        assert!(
-            verify_batch(&outer, vec![pub_inputs2.clone(), pub_inputs1.clone()], acceptable())
-                .is_err()
-        );
+        assert!(verify_batch(
+            &outer,
+            vec![pub_inputs2.clone(), pub_inputs1.clone()],
+            acceptable()
+        )
+        .is_err());
 
         // Tamper reject: mutating an inner batch proof must change its derived verifier public inputs.
         let mut tampered_bytes = batch2.clone();
         tampered_bytes.proof_bytes[0] ^= 1;
         match epoch_batch_as_inner(&prover, &tampered_bytes) {
             Ok((_inner2_t, pub_inputs2_t)) => {
-                assert!(
-                    verify_batch(&outer, vec![pub_inputs1.clone(), pub_inputs2_t], acceptable())
-                        .is_err()
-                );
+                assert!(verify_batch(
+                    &outer,
+                    vec![pub_inputs1.clone(), pub_inputs2_t],
+                    acceptable()
+                )
+                .is_err());
             }
             Err(_) => {
                 // If the tampered bytes can't even be parsed as a proof, treat as rejection.
@@ -1335,13 +1353,8 @@ mod tests {
         // Tamper reject: metadata bound into the inner proof's public inputs must be consistent.
         let mut tampered_meta = batch2;
         tampered_meta.epoch_end ^= 1;
-        match epoch_batch_as_inner(&prover, &tampered_meta) {
-            Ok((_inner2_t, pub_inputs2_t)) => {
-                assert!(
-                    verify_batch(&outer, vec![pub_inputs1, pub_inputs2_t], acceptable()).is_err()
-                );
-            }
-            Err(_) => {}
+        if let Ok((_inner2_t, pub_inputs2_t)) = epoch_batch_as_inner(&prover, &tampered_meta) {
+            assert!(verify_batch(&outer, vec![pub_inputs1, pub_inputs2_t], acceptable()).is_err());
         }
     }
 
@@ -1369,7 +1382,8 @@ mod tests {
         let batch2 = prover
             .prove_epoch_batch(14, 17, &epoch_accumulators[4..8])
             .expect("batch2");
-        let acceptable_inner = AcceptableOptions::OptionSet(vec![prover.options.to_winter_options()]);
+        let acceptable_inner =
+            AcceptableOptions::OptionSet(vec![prover.options.to_winter_options()]);
         for batch in [&batch1, &batch2] {
             let input_state = build_epoch_batch_input_state(
                 &batch.batch_accumulator,
@@ -1399,38 +1413,38 @@ mod tests {
         .expect("outer batch proof");
 
         let acceptable = || AcceptableOptions::OptionSet(vec![outer_options.clone()]);
-        verify_batch(&outer, vec![pub_inputs1.clone(), pub_inputs2.clone()], acceptable())
-            .expect("outer batch verification");
+        verify_batch(
+            &outer,
+            vec![pub_inputs1.clone(), pub_inputs2.clone()],
+            acceptable(),
+        )
+        .expect("outer batch verification");
 
         // Tamper reject: swapping per-inner public inputs must fail.
-        assert!(
-            verify_batch(&outer, vec![pub_inputs2.clone(), pub_inputs1.clone()], acceptable())
-                .is_err()
-        );
+        assert!(verify_batch(
+            &outer,
+            vec![pub_inputs2.clone(), pub_inputs1.clone()],
+            acceptable()
+        )
+        .is_err());
 
         // Tamper reject: mutating an inner batch proof must change its derived verifier public inputs.
         let mut tampered_bytes = batch2.clone();
         tampered_bytes.proof_bytes[0] ^= 1;
-        match epoch_batch_as_inner(&prover, &tampered_bytes) {
-            Ok((_inner2_t, pub_inputs2_t)) => {
-                assert!(
-                    verify_batch(&outer, vec![pub_inputs1.clone(), pub_inputs2_t], acceptable())
-                        .is_err()
-                );
-            }
-            Err(_) => {}
+        if let Ok((_inner2_t, pub_inputs2_t)) = epoch_batch_as_inner(&prover, &tampered_bytes) {
+            assert!(verify_batch(
+                &outer,
+                vec![pub_inputs1.clone(), pub_inputs2_t],
+                acceptable()
+            )
+            .is_err());
         }
 
         // Tamper reject: metadata bound into the inner proof's public inputs must be consistent.
         let mut tampered_meta = batch2;
         tampered_meta.epoch_end ^= 1;
-        match epoch_batch_as_inner(&prover, &tampered_meta) {
-            Ok((_inner2_t, pub_inputs2_t)) => {
-                assert!(
-                    verify_batch(&outer, vec![pub_inputs1, pub_inputs2_t], acceptable()).is_err()
-                );
-            }
-            Err(_) => {}
+        if let Ok((_inner2_t, pub_inputs2_t)) = epoch_batch_as_inner(&prover, &tampered_meta) {
+            assert!(verify_batch(&outer, vec![pub_inputs1, pub_inputs2_t], acceptable()).is_err());
         }
     }
 
@@ -1633,8 +1647,9 @@ mod tests {
             .expect("outer RPO verifier proof generation should succeed");
 
         let inner_pub_inputs = prover.build_inner_pub_inputs(&proof.proof_accumulator);
-        let inner_data = InnerProofData::from_proof::<RpoAir>(&proof.inner_proof_bytes, inner_pub_inputs)
-            .expect("inner proof parsing should succeed");
+        let inner_data =
+            InnerProofData::from_proof::<RpoAir>(&proof.inner_proof_bytes, inner_pub_inputs)
+                .expect("inner proof parsing should succeed");
         let outer_pub_inputs = inner_data.to_stark_verifier_inputs();
 
         let outer_as_inner = InnerProofData::from_proof::<StarkVerifierAir>(
@@ -1771,7 +1786,8 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let t_constraints = inner_air.get_transition_constraints(&outer_as_inner.constraint_coeffs.transition);
+        let t_constraints =
+            inner_air.get_transition_constraints(&outer_as_inner.constraint_coeffs.transition);
         let b_constraints = inner_air.get_boundary_constraints::<BaseElement>(
             None,
             &outer_as_inner.constraint_coeffs.boundary,
@@ -1785,7 +1801,8 @@ mod tests {
         );
         let mut t_evals = vec![BaseElement::ZERO; t_constraints.num_main_constraints()];
         inner_air.evaluate_transition(&frame, &periodic_at_z, &mut t_evals);
-        let mut expected_h_at_z = t_constraints.combine_evaluations::<BaseElement>(&t_evals, &[], z);
+        let mut expected_h_at_z =
+            t_constraints.combine_evaluations::<BaseElement>(&t_evals, &[], z);
         for group in b_constraints.main_constraints().iter() {
             expected_h_at_z += group.evaluate_at(frame.current(), z);
         }
@@ -1794,7 +1811,8 @@ mod tests {
         // H(z) = Σ_{i=0}^{m-1} z^{i * n} * H_i(z), where m = constraint composition width.
         let mut h_from_quotients = BaseElement::ZERO;
         for (i, value) in outer_as_inner.ood_quotient_current.iter().enumerate() {
-            h_from_quotients += z.exp_vartime(((i * outer_as_inner.trace_length) as u32).into()) * *value;
+            h_from_quotients +=
+                z.exp_vartime(((i * outer_as_inner.trace_length) as u32).into()) * *value;
         }
 
         assert_eq!(

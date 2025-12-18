@@ -135,11 +135,9 @@ fn test_rpo_merge_for_merkle_trees() {
 #[test]
 fn test_miden_crypto_integration() {
     use miden_crypto::hash::rpo::Rpo256;
-    use miden_crypto::{Felt, Word};
+    use miden_crypto::Felt;
 
     // Direct miden-crypto usage
-    let word = Word::new([Felt::new(1), Felt::new(2), Felt::new(3), Felt::new(4)]);
-
     let elements = [Felt::new(1), Felt::new(2), Felt::new(3), Felt::new(4)];
     let hash = Rpo256::hash_elements(&elements);
 
@@ -259,7 +257,7 @@ fn test_rpo_proof_invalid_output_fails() {
 
     // Tamper with output - change first element
     let mut wrong_output = correct_output;
-    wrong_output[0] = wrong_output[0] + BaseElement::ONE;
+    wrong_output[0] += BaseElement::ONE;
 
     let wrong_pub_inputs = RpoPublicInputs::new(input_state, wrong_output);
 

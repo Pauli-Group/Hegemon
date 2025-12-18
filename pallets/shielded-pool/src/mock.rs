@@ -139,8 +139,8 @@ mod tests {
     use crate::types::{BindingSignature, EncryptedNote, StarkProof};
     use codec::Encode;
     use frame_support::{assert_noop, assert_ok, BoundedVec};
-    use sp_runtime::transaction_validity::TransactionSource;
     use sp_runtime::traits::ValidateUnsigned;
+    use sp_runtime::transaction_validity::TransactionSource;
 
     fn valid_proof() -> StarkProof {
         StarkProof::from_bytes(vec![1u8; 1024])

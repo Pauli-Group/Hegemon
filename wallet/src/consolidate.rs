@@ -211,7 +211,8 @@ pub async fn execute_consolidation(
         )?;
 
         // Step 4: Wait until the transaction is actually mined (not just "a new block exists").
-        let confirmed_height = wait_for_nullifiers_spent(&engine, rpc, &store, &built.nullifiers).await?;
+        let confirmed_height =
+            wait_for_nullifiers_spent(&engine, rpc, &store, &built.nullifiers).await?;
         if verbose {
             println!("  Confirmed (observed at block {})", confirmed_height);
         }

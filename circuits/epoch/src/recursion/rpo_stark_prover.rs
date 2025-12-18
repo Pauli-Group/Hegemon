@@ -176,8 +176,8 @@ impl Prover for RpoStarkProver {
     fn get_pub_inputs(&self, trace: &Self::Trace) -> RpoPublicInputs {
         // Extract input state from first row
         let mut input_state = [BaseElement::ZERO; STATE_WIDTH];
-        for i in 0..STATE_WIDTH {
-            input_state[i] = trace.get(i, 0);
+        for (i, value) in input_state.iter_mut().enumerate() {
+            *value = trace.get(i, 0);
         }
 
         // Compute expected output
@@ -251,22 +251,22 @@ fn add_constants(state: &mut [BaseElement; STATE_WIDTH], round: usize, first_hal
     } else {
         &ARK2[round]
     };
-    for i in 0..STATE_WIDTH {
-        state[i] += constants[i];
+    for (value, constant) in state.iter_mut().zip(constants.iter()) {
+        *value += *constant;
     }
 }
 
 /// Apply forward S-box (x^7) to state
 fn apply_sbox(state: &mut [BaseElement; STATE_WIDTH]) {
-    for i in 0..STATE_WIDTH {
-        state[i] = state[i].exp(ALPHA.into());
+    for value in state.iter_mut() {
+        *value = value.exp(ALPHA.into());
     }
 }
 
 /// Apply inverse S-box (x^{INV_ALPHA}) to state
 fn apply_inv_sbox(state: &mut [BaseElement; STATE_WIDTH]) {
-    for i in 0..STATE_WIDTH {
-        state[i] = state[i].exp(INV_ALPHA.into());
+    for value in state.iter_mut() {
+        *value = value.exp(INV_ALPHA.into());
     }
 }
 

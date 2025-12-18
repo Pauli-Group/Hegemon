@@ -425,20 +425,16 @@ impl MerkleVerifierProver {
             let mut state = [BaseElement::ZERO; STATE_WIDTH];
             // Capacity is zeros (domain separation could go here)
             // Rate = left || right
-            for i in 0..DIGEST_WIDTH {
-                state[CAPACITY_WIDTH + i] = left[i];
-            }
-            for i in 0..DIGEST_WIDTH {
-                state[CAPACITY_WIDTH + DIGEST_WIDTH + i] = right[i];
-            }
+            state[CAPACITY_WIDTH..CAPACITY_WIDTH + DIGEST_WIDTH].copy_from_slice(&left);
+            state[CAPACITY_WIDTH + DIGEST_WIDTH..CAPACITY_WIDTH + 2 * DIGEST_WIDTH]
+                .copy_from_slice(&right);
 
             // Execute RPO permutation and fill trace
             self.fill_rpo_trace(&mut trace, row_offset, state);
 
             // Extract output hash from digest range (rate columns 4..7).
-            for i in 0..DIGEST_WIDTH {
-                current_hash[i] =
-                    trace.get(CAPACITY_WIDTH + i, row_offset + ROWS_PER_PERMUTATION - 1);
+            for (i, value) in current_hash.iter_mut().enumerate() {
+                *value = trace.get(CAPACITY_WIDTH + i, row_offset + ROWS_PER_PERMUTATION - 1);
             }
 
             index >>= 1;
@@ -449,8 +445,8 @@ impl MerkleVerifierProver {
         for perm in depth..total_perms {
             let row_offset = perm * ROWS_PER_PERMUTATION;
             let mut state = [BaseElement::ZERO; STATE_WIDTH];
-            for i in 0..STATE_WIDTH {
-                state[i] = BaseElement::new(((perm as u64) + 1) * ((i as u64) + 7));
+            for (i, value) in state.iter_mut().enumerate() {
+                *value = BaseElement::new(((perm as u64) + 1) * ((i as u64) + 7));
             }
             self.fill_rpo_trace(&mut trace, row_offset, state);
         }

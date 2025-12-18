@@ -8,15 +8,14 @@ use winter_air::ProofOptions;
 use winter_crypto::{hashers::Blake3_256, MerkleTree};
 use winter_fri::folding::fold_positions;
 use winter_math::{FieldElement, StarkField};
-use winterfell::{
-    crypto::DefaultRandomCoin, math::fields::f64::BaseElement, matrix::ColMatrix,
-    AuxRandElements, CompositionPoly, CompositionPolyTrace,
-    ConstraintCompositionCoefficients, DefaultConstraintCommitment, DefaultConstraintEvaluator,
-    DefaultTraceLde, PartitionOptions, Proof, Prover, StarkDomain, TraceInfo, TracePolyTable,
-    TraceTable,
-};
 #[cfg(test)]
 use winterfell::AcceptableOptions;
+use winterfell::{
+    crypto::DefaultRandomCoin, math::fields::f64::BaseElement, matrix::ColMatrix, AuxRandElements,
+    CompositionPoly, CompositionPolyTrace, ConstraintCompositionCoefficients,
+    DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions,
+    Proof, Prover, StarkDomain, TraceInfo, TracePolyTable, TraceTable,
+};
 
 use super::fri_air::{
     FriFoldingVerifier, FriPublicInputs, FriVerifierAir, COL_ALPHA, COL_FOLD_MASK, COL_F_NEG_X,
@@ -54,14 +53,14 @@ impl FriVerifierProver {
             let mut state = [BaseElement::ZERO; STATE_WIDTH];
             if perm == 0 {
                 // Bind first layer commitment to capacity at row 0.
-                if let Some(first) = self.pub_inputs.layer_commitments.get(0) {
+                if let Some(first) = self.pub_inputs.layer_commitments.first() {
                     state[..4].copy_from_slice(first);
                 }
             } else {
                 // Use distinct inputs for each stacked permutation so that trace polynomials are
                 // not 16-periodic. This avoids DEEP composer degree assertions during proof gen.
-                for i in 0..STATE_WIDTH {
-                    state[i] = BaseElement::new(((perm as u64) + 1) * ((i as u64) + 3));
+                for (index, value) in state.iter_mut().enumerate() {
+                    *value = BaseElement::new(((perm as u64) + 1) * ((index as u64) + 3));
                 }
             }
 
@@ -134,8 +133,7 @@ impl FriVerifierProver {
 
             let row_start = perm * ROWS_PER_PERMUTATION;
             let mut acc = BaseElement::ZERO;
-            for r in 0..ROWS_PER_PERMUTATION {
-                let row = row_start + r;
+            for (r, row) in (row_start..row_start + ROWS_PER_PERMUTATION).enumerate() {
                 trace.set(COL_F_X, row, f_x);
                 trace.set(COL_F_NEG_X, row, f_neg_x);
                 trace.set(COL_ALPHA, row, alpha);
@@ -199,12 +197,12 @@ impl FriVerifierProver {
             let row_offset = perm * ROWS_PER_PERMUTATION;
             let mut state = [BaseElement::ZERO; STATE_WIDTH];
             if perm == 0 {
-                if let Some(first) = self.pub_inputs.layer_commitments.get(0) {
+                if let Some(first) = self.pub_inputs.layer_commitments.first() {
                     state[..4].copy_from_slice(first);
                 }
             } else {
-                for i in 0..STATE_WIDTH {
-                    state[i] = BaseElement::new(((perm as u64) + 1) * ((i as u64) + 7));
+                for (index, value) in state.iter_mut().enumerate() {
+                    *value = BaseElement::new(((perm as u64) + 1) * ((index as u64) + 7));
                 }
             }
 
@@ -324,8 +322,7 @@ impl FriVerifierProver {
 
             let row_start = perm_idx * ROWS_PER_PERMUTATION;
             let mut acc = BaseElement::ZERO;
-            for r in 0..ROWS_PER_PERMUTATION {
-                let row = row_start + r;
+            for (r, row) in (row_start..row_start + ROWS_PER_PERMUTATION).enumerate() {
                 trace.set(COL_F_X, row, f_x);
                 trace.set(COL_F_NEG_X, row, f_neg_x);
                 trace.set(COL_ALPHA, row, last_alpha);

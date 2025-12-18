@@ -153,7 +153,7 @@ impl EpochProver {
             input_idx += 1;
 
             // Absorb input into state at the start of the cycle
-            state[0] = state[0] + input;
+            state[0] += input;
 
             // Run Poseidon rounds (first POSEIDON_ROUNDS steps of cycle)
             for step in 0..POSEIDON_ROUNDS {
