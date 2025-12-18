@@ -163,8 +163,8 @@ fn test_outer_proof_valid() {
 #[test]
 fn test_commitment_binding() {
     let fib_prover = FibonacciProver::new();
-    let (proof1, pub_inputs1) = fib_prover.prove(64).unwrap();
-    let (proof2, pub_inputs2) = fib_prover.prove(128).unwrap();
+    let (proof1, _pub_inputs1) = fib_prover.prove(64).unwrap();
+    let (proof2, _pub_inputs2) = fib_prover.prove(128).unwrap();
 
     // Different proofs should have different commitments
     let commitment1 = blake3::hash(&proof1.to_bytes());

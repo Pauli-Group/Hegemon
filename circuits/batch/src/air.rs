@@ -218,8 +218,8 @@ impl Air for BatchTransactionAir {
 /// 1 for hash rounds (steps 0-7), 0 for copy steps (steps 8-15).
 fn make_hash_mask() -> Vec<BaseElement> {
     let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
-    for i in 0..POSEIDON_ROUNDS {
-        mask[i] = BaseElement::ONE;
+    for value in mask.iter_mut().take(POSEIDON_ROUNDS) {
+        *value = BaseElement::ONE;
     }
     mask
 }
@@ -243,13 +243,13 @@ mod tests {
         assert_eq!(mask.len(), CYCLE_LENGTH);
 
         // First 8 should be 1 (hash active)
-        for i in 0..POSEIDON_ROUNDS {
-            assert_eq!(mask[i], BaseElement::ONE, "Step {} should be 1", i);
+        for (i, value) in mask.iter().take(POSEIDON_ROUNDS).enumerate() {
+            assert_eq!(*value, BaseElement::ONE, "Step {} should be 1", i);
         }
 
         // Rest should be 0 (copy/idle)
-        for i in POSEIDON_ROUNDS..CYCLE_LENGTH {
-            assert_eq!(mask[i], BaseElement::ZERO, "Step {} should be 0", i);
+        for (i, value) in mask.iter().enumerate().skip(POSEIDON_ROUNDS) {
+            assert_eq!(*value, BaseElement::ZERO, "Step {} should be 0", i);
         }
     }
 

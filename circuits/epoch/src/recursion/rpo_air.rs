@@ -450,8 +450,8 @@ impl Prover for RpoProver {
     fn get_pub_inputs(&self, trace: &Self::Trace) -> RpoPublicInputs {
         // Extract input state from first row
         let mut input_state = [BaseElement::ZERO; STATE_WIDTH];
-        for i in 0..STATE_WIDTH {
-            input_state[i] = trace.get(i, 0);
+        for (i, value) in input_state.iter_mut().enumerate() {
+            *value = trace.get(i, 0);
         }
 
         // Compute expected output

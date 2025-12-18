@@ -1908,7 +1908,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                             };
 
                                             let v1 = msg.encode();
-                                            let v2 = RecursiveEpochProofProtocolMessage::Proof(msg.clone()).encode();
+                                            let v2 = RecursiveEpochProofProtocolMessage::Proof(Box::new(msg.clone())).encode();
 
                                             if let Err(e) = pq_handle_for_status
                                                 .send_message(
@@ -2078,7 +2078,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                     .get(epoch_number)
                                                     .cloned();
                                                 let response = match msg_opt {
-                                                    Some(msg) => RecursiveEpochProofProtocolMessage::Proof(msg),
+                                                    Some(msg) => RecursiveEpochProofProtocolMessage::Proof(Box::new(msg)),
                                                     None => RecursiveEpochProofProtocolMessage::NotFound { epoch_number },
                                                 };
                                                 if let Err(e) = pq_handle_for_sync
@@ -2097,6 +2097,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                 }
                                             }
                                             Ok(RecursiveEpochProofProtocolMessage::Proof(msg)) => {
+                                                let msg = *msg;
                                                 if recursive_epoch_proofs_enabled {
                                                     let _ = epoch_proof_rx_tx
                                                         .try_send((peer_id, msg));
@@ -2353,7 +2354,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                             // Determine which epoch we're currently in
                             let current_epoch = best_number / EPOCH_SIZE_BLOCKS;
-                            
+
                             // Scan from block 1 (genesis has no txs) to capture ALL epochs
                             // that may have completed while the node was offline.
                             // TODO: Optimize by checking which epochs already have stored proofs
@@ -2474,7 +2475,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         if proof_hashes.is_empty() {
                                             continue;
                                         }
-                                        
+
                                         // Check if we already have this proof stored
                                         {
                                             let store = recursive_epoch_proof_store_for_generator.lock().await;
@@ -2503,7 +2504,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
                                         let proof_hashes_clone = proof_hashes.clone();
                                         let epoch_for_prover = epoch_data.clone();
-                                        
+
                                         let proof_result = if use_rpo_outer_backfill {
                                             EpochRecursiveProver::fast()
                                                 .prove_epoch_recursive_rpo_outer(&epoch_for_prover, &proof_hashes_clone)
@@ -2629,12 +2630,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 }
 
                                 // Finalize the previous epoch at boundary blocks (…, 1000, 2000, …).
-                                if block_number != 0 && block_number % EPOCH_SIZE_BLOCKS == 0 {
+                                if block_number != 0 && block_number.is_multiple_of(EPOCH_SIZE_BLOCKS) {
                                     let finished_epoch = epoch_number.saturating_sub(1);
-                                    let proof_hashes = match epoch_proof_hashes.remove(&finished_epoch) {
-                                        Some(h) => h,
-                                        None => Vec::new(),
-                                    };
+                                    let proof_hashes = epoch_proof_hashes.remove(&finished_epoch).unwrap_or_default();
 
                                     if proof_hashes.is_empty() {
                                         tracing::debug!(
@@ -2756,7 +2754,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
 
                                     let encoded_v1 = msg.encode();
-                                    let encoded_v2 = RecursiveEpochProofProtocolMessage::Proof(msg.clone()).encode();
+                                    let encoded_v2 =
+                                        RecursiveEpochProofProtocolMessage::Proof(Box::new(msg.clone()))
+                                            .encode();
                                     let failed_v1 = pq_handle_for_epoch_broadcast
                                         .broadcast_to_all(
                                             RECURSIVE_EPOCH_PROOFS_PROTOCOL,

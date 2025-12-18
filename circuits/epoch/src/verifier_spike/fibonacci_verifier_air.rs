@@ -340,7 +340,7 @@ impl FibonacciVerifierProver {
                 state[2] = x2_5 + x0 + x1;
 
                 // Increment proof counter
-                state[3] = state[3] + BaseElement::ONE;
+                state[3] += BaseElement::ONE;
 
                 // Verification flag stays 1 (in real impl, could fail)
                 // state[4] unchanged

@@ -146,7 +146,7 @@ pub enum RecursiveEpochProofProtocolMessage {
     /// Request a recursive epoch proof by epoch number.
     Request { epoch_number: u64 },
     /// Provide a recursive epoch proof (as an announcement or response).
-    Proof(RecursiveEpochProofMessage),
+    Proof(Box<RecursiveEpochProofMessage>),
     /// Indicate that the requested proof is not available.
     NotFound { epoch_number: u64 },
 }

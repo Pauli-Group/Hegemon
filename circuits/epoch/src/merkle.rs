@@ -146,7 +146,7 @@ pub fn verify_merkle_proof(
     let mut idx = index;
 
     for sibling in proof {
-        if idx % 2 == 0 {
+        if idx.is_multiple_of(2) {
             // Current is left child
             current = hash_pair(&current, sibling);
         } else {

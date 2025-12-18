@@ -1252,6 +1252,8 @@ impl winterfell::Air for StarkBatchTransactionAir {
     ) -> Self {
         use winterfell::{AirContext, TransitionConstraintDegree};
 
+        assert_eq!(trace_info.width(), Self::TRACE_WIDTH, "Invalid trace width");
+
         let degrees = vec![
             TransitionConstraintDegree::with_cycles(5, vec![Self::CYCLE_LENGTH]),
             TransitionConstraintDegree::with_cycles(5, vec![Self::CYCLE_LENGTH]),

@@ -7,10 +7,11 @@ use winter_air::ProofOptions;
 use winter_crypto::{hashers::Blake3_256, MerkleTree};
 use winter_math::FieldElement;
 use winterfell::{
-    crypto::DefaultRandomCoin, math::fields::f64::BaseElement, matrix::ColMatrix, AcceptableOptions,
-    AuxRandElements, CompositionPoly, CompositionPolyTrace, ConstraintCompositionCoefficients,
-    DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions,
-    Proof, Prover, StarkDomain, Trace, TracePolyTable, TraceTable,
+    crypto::DefaultRandomCoin, math::fields::f64::BaseElement, matrix::ColMatrix,
+    AcceptableOptions, AuxRandElements, CompositionPoly, CompositionPolyTrace,
+    ConstraintCompositionCoefficients, DefaultConstraintCommitment, DefaultConstraintEvaluator,
+    DefaultTraceLde, PartitionOptions, Proof, Prover, StarkDomain, Trace, TracePolyTable,
+    TraceTable,
 };
 
 use super::recursive_prover::InnerProofData;
@@ -32,7 +33,10 @@ pub struct StarkVerifierBatchProver {
 impl StarkVerifierBatchProver {
     /// Create a new batch verifier prover.
     pub fn new(options: ProofOptions, pub_inputs: StarkVerifierBatchPublicInputs) -> Self {
-        Self { options, pub_inputs }
+        Self {
+            options,
+            pub_inputs,
+        }
     }
 
     /// Build the batch trace by concatenating per-proof segment traces.
@@ -60,8 +64,7 @@ impl StarkVerifierBatchProver {
         for (_idx, (inner_data, inner_pub)) in
             inners.iter().zip(self.pub_inputs.inner.iter()).enumerate()
         {
-            let segment_prover =
-                StarkVerifierProver::new(self.options.clone(), inner_pub.clone());
+            let segment_prover = StarkVerifierProver::new(self.options.clone(), inner_pub.clone());
             let segment_trace = segment_prover.build_trace_from_inner(inner_data);
             segment_traces.push(segment_trace);
         }
@@ -215,7 +218,6 @@ mod tests {
     use crate::recursion::rpo_air::{RpoAir, RpoPublicInputs, STATE_WIDTH};
     use crate::recursion::rpo_proof::RpoProofOptions;
     use crate::recursion::rpo_stark_prover::RpoStarkProver;
-    use winter_math::ToElements;
     use winterfell::Prover;
 
     /// Generate a test RpoAir proof with the given input state.

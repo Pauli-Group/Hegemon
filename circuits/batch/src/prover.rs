@@ -103,10 +103,10 @@ impl BatchTransactionProver {
 
             // Copy into batch trace at appropriate offset
             let offset = slot_start_row(tx_idx);
-            for col in 0..TRACE_WIDTH {
+            for (col, column) in trace.iter_mut().enumerate() {
                 for row in 0..ROWS_PER_TX {
                     if row < single_trace.length() {
-                        trace[col][offset + row] = single_trace.get(col, row);
+                        column[offset + row] = single_trace.get(col, row);
                     }
                 }
             }

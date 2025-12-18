@@ -73,7 +73,9 @@ pub use prover::{
 };
 
 // Recursive proof generation (RPO-based for STARK recursion)
-pub use recursion::{EpochBatchProof, RecursiveEpochProof, RecursiveEpochProver, RpoAir, RpoProofOptions};
+pub use recursion::{
+    EpochBatchProof, RecursiveEpochProof, RecursiveEpochProver, RpoAir, RpoProofOptions,
+};
 
 // Re-export winterfell Proof type for pallet usage
 pub use winterfell::Proof;
