@@ -116,6 +116,10 @@ std = [
     "substrate-wasm-builder",
 ]
 runtime-tests = []
+production = [
+    "pallet-settlement/production",
+    "pallet-shielded-pool/production",
+]
 
 runtime-benchmarks = [
     "frame-benchmarking",

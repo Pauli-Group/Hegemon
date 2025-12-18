@@ -11,9 +11,11 @@ After this change, the node enforces real cryptographic proof verification for s
 ## Progress
 
 - [x] (2025-01-15T00:00Z) Drafted ExecPlan after reviewing `DESIGN.md`, `METHODS.md`, and current verifier implementations.
-- [ ] Align transaction circuit and runtime limits (completed: plan; remaining: code change).
+- [x] (2025-01-15T00:00Z) Aligned runtime/pallet limits to 2/2 and updated mocks/tests.
+- [x] (2025-01-15T00:00Z) Added tamper-reject tests for non-canonical inputs/value balance and enforced canonical input checks in the shielded verifier.
+- [x] (2025-01-15T00:00Z) Audited production feature flags to disable AcceptAllProofs and require `stark-verify`.
 - [ ] Implement full transaction AIR constraints and update prover and witness (completed: plan; remaining: code change and tests).
-- [ ] Replace pallet verifier with shared cryptographic verifier and enforce canonical encoding (completed: plan; remaining: code change and tests).
+- [ ] Replace pallet verifier with shared cryptographic verifier and bind value balance to proofs (canonical encoding now enforced; remaining: shared core + value balance binding).
 - [ ] Update recursive proof pipeline to new transaction proof shape and update `RECURSIVE_PROOFS_EXECPLAN.md` (completed: plan; remaining: code change and plan update).
 - [ ] Implement settlement proof verification (fail-closed first, then real circuit) (completed: plan; remaining: code change and tests).
 - [ ] Harden PoW import checks and PQ identity generation (completed: plan; remaining: code change and tests).
@@ -21,7 +23,7 @@ After this change, the node enforces real cryptographic proof verification for s
 
 ## Surprises & Discoveries
 
-None yet. This section will be updated as soon as implementation uncovers behavior that changes the plan.
+- (2025-01-15) The value-balance tamper test currently passes verification because STARK public inputs do not include value_balance; binding must be added in the circuit/core.
 
 ## Decision Log
 

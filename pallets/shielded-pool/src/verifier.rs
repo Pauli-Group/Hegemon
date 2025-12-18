@@ -15,6 +15,9 @@
 //! - `stark-verify`: Enable real STARK verification using winterfell
 //!   Without this feature, only structural validation is performed.
 
+#[cfg(all(feature = "production", not(feature = "stark-verify")))]
+compile_error!("feature \"production\" requires \"stark-verify\" for real proof verification");
+
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 #[cfg(feature = "stark-verify")]
@@ -680,6 +683,37 @@ impl StarkVerifier {
 
         blake2_256(&data)
     }
+
+    fn is_canonical_felt(bytes: &[u8; 32]) -> bool {
+        bytes[..24].iter().all(|byte| *byte == 0)
+    }
+
+    fn validate_public_inputs(inputs: &ShieldedTransferInputs) -> bool {
+        if inputs.nullifiers.len() > Self::MAX_INPUTS {
+            return false;
+        }
+        if inputs.commitments.len() > Self::MAX_OUTPUTS {
+            return false;
+        }
+        if !Self::is_canonical_felt(&inputs.anchor) {
+            return false;
+        }
+        if inputs
+            .nullifiers
+            .iter()
+            .any(|nf| !Self::is_canonical_felt(nf))
+        {
+            return false;
+        }
+        if inputs
+            .commitments
+            .iter()
+            .any(|cm| !Self::is_canonical_felt(cm))
+        {
+            return false;
+        }
+        true
+    }
 }
 
 impl ProofVerifier for StarkVerifier {
@@ -693,6 +727,10 @@ impl ProofVerifier for StarkVerifier {
         // Check key is enabled
         if !vk.enabled {
             return VerificationResult::KeyNotFound;
+        }
+
+        if !Self::validate_public_inputs(inputs) {
+            return VerificationResult::InvalidPublicInputs;
         }
 
         // Check proof is not empty
@@ -733,6 +771,10 @@ impl ProofVerifier for StarkVerifier {
         // Check key is enabled
         if !vk.enabled {
             return VerificationResult::KeyNotFound;
+        }
+
+        if !Self::validate_public_inputs(inputs) {
+            return VerificationResult::InvalidPublicInputs;
         }
 
         // Verify AIR hash matches expected circuit
@@ -1528,6 +1570,26 @@ impl BatchVerifier for StarkBatchVerifier {
             return BatchVerificationResult::KeyNotFound;
         }
 
+        if !StarkVerifier::is_canonical_felt(&inputs.anchor) {
+            return BatchVerificationResult::InvalidPublicInputs;
+        }
+
+        if inputs
+            .nullifiers
+            .iter()
+            .any(|nf| !StarkVerifier::is_canonical_felt(nf))
+        {
+            return BatchVerificationResult::InvalidPublicInputs;
+        }
+
+        if inputs
+            .commitments
+            .iter()
+            .any(|cm| !StarkVerifier::is_canonical_felt(cm))
+        {
+            return BatchVerificationResult::InvalidPublicInputs;
+        }
+
         // Check AIR hash matches expected configuration
         let expected_air_hash = StarkVerifier::compute_expected_air_hash();
         if vk.air_hash != expected_air_hash {
@@ -1568,10 +1630,16 @@ mod tests {
     use super::*;
 
     fn sample_inputs() -> ShieldedTransferInputs {
+        fn canonical_byte(value: u8) -> [u8; 32] {
+            let mut out = [0u8; 32];
+            out[31] = value;
+            out
+        }
+
         ShieldedTransferInputs {
-            anchor: [1u8; 32],
-            nullifiers: vec![[2u8; 32], [3u8; 32]],
-            commitments: vec![[4u8; 32], [5u8; 32]],
+            anchor: canonical_byte(1),
+            nullifiers: vec![canonical_byte(2), canonical_byte(3)],
+            commitments: vec![canonical_byte(4), canonical_byte(5)],
             value_balance: 0,
         }
     }
@@ -1582,6 +1650,98 @@ mod tests {
 
     fn sample_vk() -> VerifyingKey {
         VerifyingKey::default()
+    }
+
+    #[cfg(feature = "stark-verify")]
+    fn compute_merkle_root_from_path(
+        leaf: transaction_circuit::hashing::Felt,
+        position: u64,
+        path: &transaction_circuit::note::MerklePath,
+    ) -> transaction_circuit::hashing::Felt {
+        use transaction_circuit::hashing::merkle_node;
+
+        let mut current = leaf;
+        let mut pos = position;
+        for sibling in &path.siblings {
+            current = if pos & 1 == 0 {
+                merkle_node(current, *sibling)
+            } else {
+                merkle_node(*sibling, current)
+            };
+            pos >>= 1;
+        }
+        current
+    }
+
+    #[cfg(feature = "stark-verify")]
+    fn build_stark_fixture() -> (StarkProof, ShieldedTransferInputs, BindingSignature) {
+        use transaction_circuit::hashing::felt_to_bytes32;
+        use transaction_circuit::keys::generate_keys;
+        use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+        use transaction_circuit::proof::prove;
+        use transaction_circuit::witness::TransactionWitness;
+
+        let input_note = NoteData {
+            value: 1000,
+            asset_id: 0,
+            pk_recipient: [0u8; 32],
+            rho: [1u8; 32],
+            r: [2u8; 32],
+        };
+
+        let output_note = NoteData {
+            value: 900,
+            asset_id: 0,
+            pk_recipient: [3u8; 32],
+            rho: [4u8; 32],
+            r: [5u8; 32],
+        };
+
+        let merkle_path = MerklePath::default();
+        let leaf = input_note.commitment();
+        let merkle_root = compute_merkle_root_from_path(leaf, 0, &merkle_path);
+
+        let witness = TransactionWitness {
+            inputs: vec![InputNoteWitness {
+                note: input_note,
+                position: 0,
+                rho_seed: [7u8; 32],
+                merkle_path,
+            }],
+            outputs: vec![OutputNoteWitness { note: output_note }],
+            sk_spend: [6u8; 32],
+            merkle_root,
+            fee: 100,
+            version: TransactionWitness::default_version_binding(),
+        };
+
+        let (proving_key, _verifying_key) = generate_keys();
+        let proof = prove(&witness, &proving_key).expect("proof generation");
+        let stark_inputs = proof
+            .stark_public_inputs
+            .as_ref()
+            .expect("stark public inputs");
+
+        let inputs = ShieldedTransferInputs {
+            anchor: felt_to_bytes32(stark_inputs.merkle_root),
+            nullifiers: proof
+                .nullifiers
+                .iter()
+                .copied()
+                .map(felt_to_bytes32)
+                .collect(),
+            commitments: proof
+                .commitments
+                .iter()
+                .copied()
+                .map(felt_to_bytes32)
+                .collect(),
+            value_balance: 0,
+        };
+
+        let binding_sig = StarkVerifier::compute_binding_commitment(&inputs);
+
+        (StarkProof::from_bytes(proof.stark_proof), inputs, binding_sig)
     }
 
     #[test]
@@ -1866,5 +2026,62 @@ mod tests {
 
         assert!(verifier.verify_binding_signature(&sig_max, &inputs_max));
         assert!(verifier.verify_binding_signature(&sig_min, &inputs_min));
+    }
+
+    #[test]
+    #[cfg(feature = "stark-verify")]
+    fn stark_verifier_accepts_real_proof_fixture() {
+        let verifier = StarkVerifier;
+        let (proof, inputs, _binding_sig) = build_stark_fixture();
+
+        let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
+        assert_eq!(result, VerificationResult::Valid);
+    }
+
+    #[test]
+    #[cfg(feature = "stark-verify")]
+    fn stark_verifier_rejects_noncanonical_nullifier() {
+        let verifier = StarkVerifier;
+        let (proof, mut inputs, _binding_sig) = build_stark_fixture();
+        inputs.nullifiers[0][0] = 1u8; // Non-canonical high byte
+
+        let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
+        assert_eq!(result, VerificationResult::InvalidPublicInputs);
+    }
+
+    #[test]
+    #[cfg(feature = "stark-verify")]
+    fn stark_verifier_rejects_noncanonical_commitment() {
+        let verifier = StarkVerifier;
+        let (proof, mut inputs, _binding_sig) = build_stark_fixture();
+        inputs.commitments[0][0] = 1u8; // Non-canonical high byte
+
+        let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
+        assert_eq!(result, VerificationResult::InvalidPublicInputs);
+    }
+
+    #[test]
+    #[cfg(feature = "stark-verify")]
+    fn stark_verifier_rejects_noncanonical_anchor() {
+        let verifier = StarkVerifier;
+        let (proof, mut inputs, _binding_sig) = build_stark_fixture();
+        inputs.anchor[0] = 1u8; // Non-canonical high byte
+
+        let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
+        assert_eq!(result, VerificationResult::InvalidPublicInputs);
+    }
+
+    #[test]
+    #[cfg(feature = "stark-verify")]
+    fn stark_verifier_rejects_tampered_value_balance() {
+        let verifier = StarkVerifier;
+        let (proof, mut inputs, _binding_sig) = build_stark_fixture();
+
+        inputs.value_balance = 12345;
+        let binding_sig = StarkVerifier::compute_binding_commitment(&inputs);
+        assert!(verifier.verify_binding_signature(&binding_sig, &inputs));
+
+        let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
+        assert_eq!(result, VerificationResult::VerificationFailed);
     }
 }

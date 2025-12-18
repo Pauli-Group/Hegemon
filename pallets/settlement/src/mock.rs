@@ -9,6 +9,11 @@ use sp_runtime::traits::{BlakeTwo256, IdentityLookup};
 use sp_runtime::BuildStorage;
 use sp_std::vec::Vec;
 
+#[cfg(not(feature = "production"))]
+type TestProofVerifier = pallet_settlement::AcceptAllProofs;
+#[cfg(feature = "production")]
+type TestProofVerifier = pallet_settlement::StarkVerifier;
+
 frame_support::construct_runtime!(
     pub enum Test {
         System: frame_system,
@@ -137,7 +142,7 @@ impl pallet_settlement::Config for Test {
     type ReferendaOrigin = frame_system::EnsureRoot<u64>;
     type Currency = Balances;
     type AuthorityId = TestAuthId;
-    type ProofVerifier = pallet_settlement::AcceptAllProofs;
+    type ProofVerifier = TestProofVerifier;
     type DefaultVerifierParams = DefaultVerifierParams;
     type WeightInfo = ();
     type MaxLegs = MaxLegs;

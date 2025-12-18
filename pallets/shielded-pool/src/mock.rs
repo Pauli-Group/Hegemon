@@ -3,7 +3,14 @@
 use crate as pallet_shielded_pool;
 // AcceptAllProofs is only available in test builds (not production)
 #[cfg(not(feature = "production"))]
-use crate::verifier::AcceptAllProofs;
+type TestProofVerifier = crate::verifier::AcceptAllProofs;
+#[cfg(feature = "production")]
+type TestProofVerifier = crate::verifier::StarkVerifier;
+
+#[cfg(not(feature = "production"))]
+type TestBatchProofVerifier = crate::verifier::AcceptAllBatchProofs;
+#[cfg(feature = "production")]
+type TestBatchProofVerifier = crate::verifier::StarkBatchVerifier;
 
 use frame_support::{
     parameter_types,
@@ -78,11 +85,11 @@ impl pallet_balances::Config for Test {
 }
 
 parameter_types! {
-    pub const MaxNullifiersPerTx: u32 = 4;
-    pub const MaxCommitmentsPerTx: u32 = 4;
-    pub const MaxEncryptedNotesPerTx: u32 = 4;
-    pub const MaxNullifiersPerBatch: u32 = 64;  // 16 txs * 4 nullifiers
-    pub const MaxCommitmentsPerBatch: u32 = 64; // 16 txs * 4 commitments
+    pub const MaxNullifiersPerTx: u32 = 2;
+    pub const MaxCommitmentsPerTx: u32 = 2;
+    pub const MaxEncryptedNotesPerTx: u32 = 2;
+    pub const MaxNullifiersPerBatch: u32 = 32;  // 16 txs * 2 nullifiers
+    pub const MaxCommitmentsPerBatch: u32 = 32; // 16 txs * 2 commitments
     pub const MerkleRootHistorySize: u32 = 100;
 }
 
@@ -90,8 +97,8 @@ impl pallet_shielded_pool::Config for Test {
     type RuntimeEvent = RuntimeEvent;
     type Currency = Balances;
     type AdminOrigin = frame_system::EnsureRoot<u64>;
-    type ProofVerifier = AcceptAllProofs;
-    type BatchProofVerifier = crate::verifier::AcceptAllBatchProofs;
+    type ProofVerifier = TestProofVerifier;
+    type BatchProofVerifier = TestBatchProofVerifier;
     type MaxNullifiersPerTx = MaxNullifiersPerTx;
     type MaxCommitmentsPerTx = MaxCommitmentsPerTx;
     type MaxEncryptedNotesPerTx = MaxEncryptedNotesPerTx;
@@ -672,23 +679,15 @@ mod tests {
             let tree = MerkleTreeStorage::<Test>::get();
             let anchor = tree.root();
 
-            // MaxNullifiersPerTx is 4
+            // MaxNullifiersPerTx is 2
             let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]
-                    .try_into()
-                    .unwrap();
+                vec![[1u8; 32], [2u8; 32]].try_into().unwrap();
             let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[5u8; 32], [6u8; 32], [7u8; 32], [8u8; 32]]
+                vec![[5u8; 32], [6u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note(), valid_encrypted_note()]
                     .try_into()
                     .unwrap();
-            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> = vec![
-                valid_encrypted_note(),
-                valid_encrypted_note(),
-                valid_encrypted_note(),
-                valid_encrypted_note(),
-            ]
-            .try_into()
-            .unwrap();
 
             assert_ok!(Pallet::<Test>::shielded_transfer(
                 RuntimeOrigin::signed(1),
