@@ -21,7 +21,9 @@ use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::runtime::Builder as RuntimeBuilder;
 use transaction_circuit::{
-    hashing::{bytes32_to_felt, felt_to_bytes32, is_canonical_bytes32, note_commitment_bytes, Felt},
+    hashing::{
+        bytes32_to_felt, felt_to_bytes32, is_canonical_bytes32, note_commitment_bytes, Felt,
+    },
     note::{InputNoteWitness, MerklePath, OutputNoteWitness},
     witness::TransactionWitness,
 };
@@ -33,8 +35,8 @@ use wallet::{
     async_sync::AsyncWalletSyncEngine,
     build_transaction,
     disclosure::{
-        decode_base64, encode_base64, DisclosureChainInfo, DisclosureClaim,
-        DisclosureConfirmation, DisclosurePackage, DisclosureProof,
+        decode_base64, encode_base64, DisclosureChainInfo, DisclosureClaim, DisclosureConfirmation,
+        DisclosurePackage, DisclosureProof,
     },
     keys::{DerivedKeys, RootSecret},
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
@@ -124,7 +126,7 @@ enum Commands {
     SubstrateBatchSend(SubstrateBatchSendArgs),
     #[command(name = "export-viewing-key")]
     ExportViewingKey(ExportArgs),
-    #[command(name = "payment-proof")]
+    #[command(name = "payment-proof", subcommand)]
     PaymentProof(PaymentProofCommands),
 }
 
@@ -936,7 +938,10 @@ fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
             .authentication_path(leaf_index as usize)
             .map_err(|e| anyhow!("merkle path error: {e}"))?;
         let anchor = felt_to_bytes32(tree.root());
-        let siblings: Vec<[u8; 32]> = auth_path.iter().map(|felt| felt_to_bytes32(*felt)).collect();
+        let siblings: Vec<[u8; 32]> = auth_path
+            .iter()
+            .map(|felt| felt_to_bytes32(*felt))
+            .collect();
 
         let package = DisclosurePackage {
             version: 1,
@@ -944,7 +949,7 @@ fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
                 genesis_hash: record.genesis_hash,
             },
             claim: DisclosureClaim {
-                recipient_address: record.recipient_address,
+                recipient_address: record.recipient_address.clone(),
                 pk_recipient: record.note.pk_recipient,
                 value: record.note.value,
                 asset_id: record.note.asset_id,
@@ -1008,8 +1013,14 @@ fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
         .map(|bytes| bytes32_to_felt(bytes).ok_or_else(|| anyhow!("non-canonical merkle sibling")))
         .collect::<Result<_, _>>()?;
 
-    let merkle_path = MerklePath { siblings: sibling_felts };
-    if !merkle_path.verify(commitment_felt, package.confirmation.leaf_index, anchor_felt) {
+    let merkle_path = MerklePath {
+        siblings: sibling_felts,
+    };
+    if !merkle_path.verify(
+        commitment_felt,
+        package.confirmation.leaf_index,
+        anchor_felt,
+    ) {
         anyhow::bail!("merkle path verification failed");
     }
 
@@ -1145,11 +1156,7 @@ fn append_credit_record(
             }
             let value: serde_json::Value = serde_json::from_str(&line)
                 .map_err(|e| anyhow!("invalid ledger JSONL entry: {e}"))?;
-            if value
-                .get("idempotence_key")
-                .and_then(|v| v.as_str())
-                == Some(&idempotence_key)
-            {
+            if value.get("idempotence_key").and_then(|v| v.as_str()) == Some(&idempotence_key) {
                 anyhow::bail!("commitment already credited in ledger");
             }
         }
@@ -1167,10 +1174,7 @@ fn append_credit_record(
         "case_id": case_id,
     });
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     writeln!(file, "{}", record)?;
     Ok(())
 }

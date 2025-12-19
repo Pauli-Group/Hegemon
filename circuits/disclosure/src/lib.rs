@@ -6,7 +6,8 @@ mod prover;
 mod verifier;
 
 use serde::{Deserialize, Serialize};
-use winterfell::math::fields::f64::BaseElement;
+use winterfell::math::{fields::f64::BaseElement, FieldElement};
+use winterfell::Prover;
 
 use transaction_core::hashing::{bytes32_to_felt, note_commitment_bytes};
 
@@ -64,6 +65,10 @@ pub fn prove_payment_disclosure(
     claim: &PaymentDisclosureClaim,
     witness: &PaymentDisclosureWitness,
 ) -> Result<PaymentDisclosureProofBundle, DisclosureCircuitError> {
+    if bytes32_to_felt(&claim.commitment).is_none() {
+        return Err(DisclosureCircuitError::NonCanonicalCommitment);
+    }
+
     let expected = note_commitment_bytes(
         claim.value,
         claim.asset_id,
@@ -75,15 +80,11 @@ pub fn prove_payment_disclosure(
         return Err(DisclosureCircuitError::CommitmentMismatch);
     }
 
-    if bytes32_to_felt(&claim.commitment).is_none() {
-        return Err(DisclosureCircuitError::NonCanonicalCommitment);
-    }
-
     let prover = DisclosureProver::with_defaults();
     let trace = prover.build_trace(claim, witness)?;
-    let proof = prover.prove(trace).map_err(|e| {
-        DisclosureCircuitError::ProofGenerationFailed(format!("{:?}", e))
-    })?;
+    let proof = prover
+        .prove(trace)
+        .map_err(|e| DisclosureCircuitError::ProofGenerationFailed(format!("{:?}", e)))?;
 
     Ok(PaymentDisclosureProofBundle {
         claim: claim.clone(),
@@ -106,10 +107,9 @@ pub fn verify_payment_disclosure(
 pub(crate) fn claim_to_public_inputs(
     claim: &PaymentDisclosureClaim,
 ) -> Result<DisclosurePublicInputs, DisclosureVerifyError> {
-    let commitment = bytes32_to_felt(&claim.commitment)
-        .ok_or(DisclosureVerifyError::InvalidPublicInputs(
-            "commitment bytes are not canonical".into(),
-        ))?;
+    let commitment = bytes32_to_felt(&claim.commitment).ok_or(
+        DisclosureVerifyError::InvalidPublicInputs("commitment bytes are not canonical".into()),
+    )?;
 
     Ok(DisclosurePublicInputs {
         value: BaseElement::new(claim.value),

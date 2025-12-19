@@ -5,12 +5,19 @@ use winterfell::{
     crypto::{DefaultRandomCoin, MerkleTree},
     math::{fields::f64::BaseElement, FieldElement},
     matrix::ColMatrix,
+    AuxRandElements, CompositionPoly, CompositionPolyTrace, ConstraintCompositionCoefficients,
     DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions,
     ProofOptions, Prover, StarkDomain, TraceInfo, TracePolyTable, TraceTable,
 };
 
-use crate::air::{DisclosureAir, DisclosurePublicInputs, COL_DOMAIN, COL_IN0, COL_IN1, COL_RESET, COL_S0, COL_S1, COL_S2};
-use crate::constants::{CYCLE_LENGTH, INPUT_PAIRS, NOTE_DOMAIN_TAG, POSEIDON_ROUNDS, TOTAL_CYCLES, TRACE_LENGTH, TRACE_WIDTH};
+use crate::air::{
+    DisclosureAir, DisclosurePublicInputs, COL_DOMAIN, COL_IN0, COL_IN1, COL_RESET, COL_S0, COL_S1,
+    COL_S2,
+};
+use crate::constants::{
+    CYCLE_LENGTH, INPUT_PAIRS, NOTE_DOMAIN_TAG, POSEIDON_ROUNDS, TOTAL_CYCLES, TRACE_LENGTH,
+    TRACE_WIDTH,
+};
 use crate::{DisclosureCircuitError, PaymentDisclosureClaim, PaymentDisclosureWitness};
 
 use transaction_core::stark_air::poseidon_round;
@@ -36,20 +43,6 @@ impl DisclosureProver {
 
     pub fn with_defaults() -> Self {
         Self::new(default_proof_options())
-    }
-
-    pub fn get_public_inputs(
-        &self,
-        claim: &PaymentDisclosureClaim,
-    ) -> Result<DisclosurePublicInputs, DisclosureCircuitError> {
-        let commitment = transaction_core::hashing::bytes32_to_felt(&claim.commitment)
-            .ok_or(DisclosureCircuitError::NonCanonicalCommitment)?;
-        Ok(DisclosurePublicInputs {
-            value: BaseElement::new(claim.value),
-            asset_id: BaseElement::new(claim.asset_id),
-            pk_recipient: bytes32_to_felts(&claim.pk_recipient),
-            commitment,
-        })
     }
 
     pub fn build_trace(
@@ -150,16 +143,6 @@ impl DisclosureProver {
 
         Ok(TraceTable::init(trace))
     }
-
-    pub fn prove_disclosure(
-        &self,
-        claim: &PaymentDisclosureClaim,
-        witness: &PaymentDisclosureWitness,
-    ) -> Result<winterfell::Proof, DisclosureCircuitError> {
-        let trace = self.build_trace(claim, witness)?;
-        self.prove(trace)
-            .map_err(|e| DisclosureCircuitError::ProofGenerationFailed(format!("{:?}", e)))
-    }
 }
 
 impl Default for DisclosureProver {
@@ -209,16 +192,32 @@ impl Prover for DisclosureProver {
         main_trace: &ColMatrix<Self::BaseField>,
         domain: &StarkDomain<Self::BaseField>,
         partition_options: PartitionOptions,
-    ) -> Self::TraceLde<E> {
+    ) -> (Self::TraceLde<E>, TracePolyTable<E>) {
         DefaultTraceLde::new(trace_info, main_trace, domain, partition_options)
     }
 
-    fn new_trace_poly_table<E: FieldElement<BaseField = Self::BaseField>>(
+    fn new_evaluator<'a, E: FieldElement<BaseField = Self::BaseField>>(
         &self,
-        trace_info: &TraceInfo,
-        trace_lde: &Self::TraceLde<E>,
-    ) -> TracePolyTable<E> {
-        TracePolyTable::new(trace_info, trace_lde)
+        air: &'a Self::Air,
+        aux_rand_elements: Option<AuxRandElements<E>>,
+        composition_coefficients: ConstraintCompositionCoefficients<E>,
+    ) -> Self::ConstraintEvaluator<'a, E> {
+        DefaultConstraintEvaluator::new(air, aux_rand_elements, composition_coefficients)
+    }
+
+    fn build_constraint_commitment<E: FieldElement<BaseField = Self::BaseField>>(
+        &self,
+        composition_poly_trace: CompositionPolyTrace<E>,
+        num_trace_poly_columns: usize,
+        domain: &StarkDomain<Self::BaseField>,
+        partition_options: PartitionOptions,
+    ) -> (Self::ConstraintCommitment<E>, CompositionPoly<E>) {
+        DefaultConstraintCommitment::new(
+            composition_poly_trace,
+            num_trace_poly_columns,
+            domain,
+            partition_options,
+        )
     }
 }
 
