@@ -2,6 +2,7 @@ pub mod address;
 pub mod api;
 pub mod async_sync;
 pub mod consolidate;
+pub mod disclosure;
 pub mod error;
 pub mod extrinsic;
 pub mod keys;
@@ -35,7 +36,8 @@ pub use shielded_tx::{
     build_shielding_tx, BuiltShieldedTx, ProofStats, ShieldedOutput, ShieldedTxBuilder, ShieldingTx,
 };
 pub use store::{
-    PendingStatus, PendingTransaction, SpendableNote, TransferRecipient, WalletMode, WalletStore,
+    OutgoingDisclosureDraft, OutgoingDisclosureRecord, PendingStatus, PendingTransaction,
+    SpendableNote, TransferRecipient, WalletMode, WalletStore,
 };
 pub use substrate_rpc::{BlockingSubstrateRpcClient, SubstrateRpcClient, SubstrateRpcConfig};
 pub use sync::{SyncOutcome, WalletSyncEngine};

@@ -13,7 +13,7 @@ The unified `hegemon` binary is the canonical way to exercise the node, wallet, 
 | Area | Language | Primary Commands |
 | --- | --- | --- |
 | PQ primitives (`crypto/`) | Rust 1.75+ | `cargo fmt --all`, `cargo clippy --workspace --all-targets --all-features`, `cargo test -p synthetic-crypto` |
-| Circuits (`circuits/block`, `circuits/transaction`, `circuits/bench`) | Rust 1.75+ | `cargo test -p block-circuit`, `cargo test -p transaction-circuit`, `cargo run -p circuits-bench -- --smoke` |
+| Circuits (`circuits/block`, `circuits/transaction`, `circuits/bench`, `circuits/disclosure`) | Rust 1.75+ | `cargo test -p block-circuit`, `cargo test -p transaction-circuit`, `cargo test -p disclosure-circuit`, `cargo run -p circuits-bench -- --smoke` |
 | Miner coordination & network benchmarks (`consensus`, `consensus/bench`) | Rust + Go 1.21 | `cargo test -p consensus`, `go test ./...` inside `consensus/bench` |
 | Wallet (`wallet`, `wallet/bench`) | Rust 1.75+ | `cargo test -p wallet`, `cargo run -p wallet-bench -- --smoke` |
 | C++ utilities (future) | C++20 + clang-format | `cmake -S cpp -B target/cpp && cmake --build target/cpp`, `clang-format --dry-run --Werror $(git ls-files '*.cpp' '*.h')` |

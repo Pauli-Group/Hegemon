@@ -12,15 +12,16 @@ use chacha20poly1305::{
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use state_merkle::CommitmentTree;
-use transaction_circuit::hashing::Felt;
+use transaction_circuit::{hashing::Felt, note::NoteData};
 use zeroize::Zeroize;
 
 use crate::address::ShieldedAddress;
 use crate::error::WalletError;
 use crate::keys::{DerivedKeys, RootSecret};
+use crate::notes::MemoPlaintext;
 use crate::viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};
 
-const FILE_VERSION: u32 = 1;
+const FILE_VERSION: u32 = 2;
 const KEY_LEN: usize = 32;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
@@ -75,6 +76,7 @@ impl WalletStore {
             next_commitment_index: 0,
             next_ciphertext_index: 0,
             last_synced_height: 0,
+            outgoing_disclosures: Vec::new(),
             genesis_hash: None,
         };
         Self::create_with_state(path, passphrase, state)
@@ -100,6 +102,7 @@ impl WalletStore {
             next_commitment_index: 0,
             next_ciphertext_index: 0,
             last_synced_height: 0,
+            outgoing_disclosures: Vec::new(),
             genesis_hash: None,
         };
         Self::create_with_state(path, passphrase, state)
@@ -126,11 +129,6 @@ impl WalletStore {
     pub fn open<P: AsRef<Path>>(path: P, passphrase: &str) -> Result<Self, WalletError> {
         let bytes = fs::read(path.as_ref())?;
         let file: WalletFile = bincode::deserialize(&bytes)?;
-        if file.version != FILE_VERSION {
-            return Err(WalletError::Serialization(
-                "unsupported wallet file version".into(),
-            ));
-        }
         let key = derive_key(passphrase, &file.salt)?;
         let cipher = ChaCha20Poly1305::new(&key.into());
         let plaintext = cipher
@@ -142,7 +140,18 @@ impl WalletStore {
                 },
             )
             .map_err(|_| WalletError::DecryptionFailure)?;
-        let state: WalletState = bincode::deserialize(&plaintext)?;
+        let state: WalletState = match file.version {
+            1 => {
+                let legacy: WalletStateV1 = bincode::deserialize(&plaintext)?;
+                legacy.into()
+            }
+            2 => bincode::deserialize(&plaintext)?,
+            other => {
+                return Err(WalletError::Serialization(format!(
+                    "unsupported wallet file version {other}"
+                )))
+            }
+        };
         Ok(WalletStore {
             path: path.as_ref().to_path_buf(),
             key,
@@ -428,8 +437,89 @@ impl WalletStore {
         })
     }
 
+    pub fn find_commitment_index(&self, commitment: Felt) -> Result<Option<u64>, WalletError> {
+        self.with_state(|state| {
+            let target = commitment.as_int();
+            Ok(state
+                .commitments
+                .iter()
+                .position(|value| *value == target)
+                .map(|idx| idx as u64))
+        })
+    }
+
     pub fn pending_transactions(&self) -> Result<Vec<PendingTransaction>, WalletError> {
         self.with_state(|state| Ok(state.pending.clone()))
+    }
+
+    pub fn outgoing_disclosures(&self) -> Result<Vec<OutgoingDisclosureRecord>, WalletError> {
+        self.with_state(|state| Ok(state.outgoing_disclosures.clone()))
+    }
+
+    pub fn find_outgoing_disclosure(
+        &self,
+        tx_id: &[u8; 32],
+        output_index: u32,
+    ) -> Result<Option<OutgoingDisclosureRecord>, WalletError> {
+        self.with_state(|state| {
+            Ok(state
+                .outgoing_disclosures
+                .iter()
+                .find(|record| record.tx_id == *tx_id && record.output_index == output_index)
+                .cloned())
+        })
+    }
+
+    pub fn record_outgoing_disclosures(
+        &self,
+        tx_id: [u8; 32],
+        genesis_hash: [u8; 32],
+        outputs: Vec<OutgoingDisclosureDraft>,
+    ) -> Result<(), WalletError> {
+        let created_at = current_timestamp();
+        self.with_mut(|state| {
+            for output in outputs {
+                let exists = state.outgoing_disclosures.iter().any(|record| {
+                    record.tx_id == tx_id && record.output_index == output.output_index
+                });
+                if exists {
+                    continue;
+                }
+                state.outgoing_disclosures.push(OutgoingDisclosureRecord {
+                    tx_id,
+                    output_index: output.output_index,
+                    recipient_address: output.recipient_address,
+                    note: output.note,
+                    commitment: output.commitment,
+                    memo: output.memo,
+                    genesis_hash,
+                    created_at,
+                });
+            }
+            Ok(())
+        })
+    }
+
+    pub fn purge_outgoing_disclosure(
+        &self,
+        tx_id: &[u8; 32],
+        output_index: u32,
+    ) -> Result<bool, WalletError> {
+        self.with_mut(|state| {
+            let original = state.outgoing_disclosures.len();
+            state
+                .outgoing_disclosures
+                .retain(|record| !(record.tx_id == *tx_id && record.output_index == output_index));
+            Ok(state.outgoing_disclosures.len() != original)
+        })
+    }
+
+    pub fn purge_all_outgoing_disclosures(&self) -> Result<usize, WalletError> {
+        self.with_mut(|state| {
+            let count = state.outgoing_disclosures.len();
+            state.outgoing_disclosures.clear();
+            Ok(count)
+        })
     }
 
     pub fn record_pending_submission(
@@ -606,6 +696,50 @@ pub enum WalletMode {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV1 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    commitments: Vec<u64>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+}
+
+impl From<WalletStateV1> for WalletState {
+    fn from(state: WalletStateV1) -> Self {
+        WalletState {
+            mode: state.mode,
+            tree_depth: state.tree_depth,
+            root_secret: state.root_secret,
+            derived: state.derived,
+            incoming: state.incoming,
+            full_viewing_key: state.full_viewing_key,
+            outgoing: state.outgoing,
+            next_address_index: state.next_address_index,
+            notes: state.notes,
+            pending: state.pending,
+            commitments: state.commitments,
+            next_commitment_index: state.next_commitment_index,
+            next_ciphertext_index: state.next_ciphertext_index,
+            last_synced_height: state.last_synced_height,
+            outgoing_disclosures: Vec::new(),
+            genesis_hash: state.genesis_hash,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct WalletState {
     mode: WalletMode,
     tree_depth: u32,
@@ -622,6 +756,8 @@ struct WalletState {
     next_commitment_index: u64,
     next_ciphertext_index: u64,
     last_synced_height: u64,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
     /// Genesis hash of the chain this wallet was synced with.
     /// Used to detect chain resets/mismatches.
     #[serde(default, with = "serde_option_bytes32")]
@@ -675,6 +811,33 @@ pub struct TransferRecipient {
     pub value: u64,
     pub asset_id: u64,
     pub memo: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OutgoingDisclosureDraft {
+    pub output_index: u32,
+    pub recipient_address: String,
+    pub note: NoteData,
+    #[serde(with = "serde_bytes32")]
+    pub commitment: [u8; 32],
+    #[serde(default)]
+    pub memo: Option<MemoPlaintext>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OutgoingDisclosureRecord {
+    #[serde(with = "serde_bytes32")]
+    pub tx_id: [u8; 32],
+    pub output_index: u32,
+    pub recipient_address: String,
+    pub note: NoteData,
+    #[serde(with = "serde_bytes32")]
+    pub commitment: [u8; 32],
+    #[serde(default)]
+    pub memo: Option<MemoPlaintext>,
+    #[serde(with = "serde_bytes32")]
+    pub genesis_hash: [u8; 32],
+    pub created_at: u64,
 }
 
 #[derive(Clone, Debug)]

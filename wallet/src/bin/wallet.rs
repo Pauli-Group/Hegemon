@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::{BufRead, BufReader, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
@@ -7,14 +9,22 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+use chrono::Utc;
 use clap::{Parser, Subcommand};
+use disclosure_circuit::{
+    prove_payment_disclosure, verify_payment_disclosure, PaymentDisclosureClaim,
+    PaymentDisclosureProofBundle, PaymentDisclosureWitness,
+};
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::runtime::Builder as RuntimeBuilder;
 use transaction_circuit::{
-    hashing::Felt,
-    note::{InputNoteWitness, OutputNoteWitness},
+    hashing::{
+        bytes32_to_felt, felt_to_bytes32, is_canonical_bytes32, note_commitment_bytes, Felt,
+    },
+    note::{InputNoteWitness, MerklePath, OutputNoteWitness},
     witness::TransactionWitness,
 };
 use url::Url;
@@ -24,10 +34,14 @@ use wallet::{
     api::{self, RecipientSpec},
     async_sync::AsyncWalletSyncEngine,
     build_transaction,
+    disclosure::{
+        decode_base64, encode_base64, DisclosureChainInfo, DisclosureClaim, DisclosureConfirmation,
+        DisclosurePackage, DisclosureProof,
+    },
     keys::{DerivedKeys, RootSecret},
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
     rpc::WalletRpcClient,
-    store::{PendingStatus, TransferRecipient, WalletMode, WalletStore},
+    store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
     substrate_rpc::SubstrateRpcClient,
     sync::WalletSyncEngine,
     tx_builder::Recipient,
@@ -112,6 +126,8 @@ enum Commands {
     SubstrateBatchSend(SubstrateBatchSendArgs),
     #[command(name = "export-viewing-key")]
     ExportViewingKey(ExportArgs),
+    #[command(name = "payment-proof", subcommand)]
+    PaymentProof(PaymentProofCommands),
 }
 
 #[derive(Parser)]
@@ -209,6 +225,68 @@ struct ExportArgs {
     passphrase: Option<String>,
     #[arg(long)]
     out: Option<PathBuf>,
+}
+
+#[derive(Subcommand)]
+enum PaymentProofCommands {
+    Create(PaymentProofCreateArgs),
+    Verify(PaymentProofVerifyArgs),
+    Purge(PaymentProofPurgeArgs),
+}
+
+#[derive(Parser)]
+struct PaymentProofCreateArgs {
+    #[arg(long)]
+    store: PathBuf,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
+    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    ws_url: String,
+    /// Transaction hash (0x-prefixed hex)
+    #[arg(long)]
+    tx: String,
+    /// Output index within the transaction
+    #[arg(long)]
+    output: u32,
+    /// Output path for disclosure package JSON
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Parser)]
+struct PaymentProofVerifyArgs {
+    /// Disclosure package JSON file
+    #[arg(long)]
+    proof: PathBuf,
+    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    ws_url: String,
+    /// Optional JSONL ledger file to append verified deposits
+    #[arg(long)]
+    credit_ledger: Option<PathBuf>,
+    /// Optional case identifier to include in ledger record
+    #[arg(long)]
+    case_id: Option<String>,
+}
+
+#[derive(Parser)]
+struct PaymentProofPurgeArgs {
+    #[arg(long)]
+    store: PathBuf,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
+    /// Transaction hash (0x-prefixed hex)
+    #[arg(long)]
+    tx: Option<String>,
+    /// Output index within the transaction
+    #[arg(long)]
+    output: Option<u32>,
+    /// Purge all stored outgoing disclosure records
+    #[arg(long, default_value_t = false)]
+    all: bool,
 }
 
 /// Arguments for Substrate WebSocket sync
@@ -403,6 +481,7 @@ fn main() -> Result<()> {
         Commands::SubstrateShield(args) => cmd_substrate_shield(args),
         Commands::SubstrateBatchSend(args) => cmd_substrate_batch_send(args),
         Commands::ExportViewingKey(args) => cmd_export_viewing_key(args),
+        Commands::PaymentProof(args) => cmd_payment_proof(args),
     }
 }
 
@@ -740,9 +819,13 @@ fn cmd_send(args: SendArgs) -> Result<()> {
     let recipients = parse_recipients(&randomized_specs).map_err(|err| anyhow!(err.to_string()))?;
     let metadata = transfer_recipients_from_specs(&randomized_specs);
     let built = build_transaction(&store, &recipients, args.fee)?;
+    let outgoing_disclosures = built.outgoing_disclosures.clone();
     store.mark_notes_pending(&built.spent_note_indexes, true)?;
     match client.submit_transaction(&built.bundle) {
         Ok(tx_id) => {
+            if let Some(genesis_hash) = store.genesis_hash()? {
+                store.record_outgoing_disclosures(tx_id, genesis_hash, outgoing_disclosures)?;
+            }
             store.record_pending_submission(
                 tx_id,
                 built.nullifiers.clone(),
@@ -773,7 +856,329 @@ fn cmd_export_viewing_key(args: ExportArgs) -> Result<()> {
     Ok(())
 }
 
-/// Send multiple transactions in a single batched STARK proof
+fn cmd_payment_proof(args: PaymentProofCommands) -> Result<()> {
+    match args {
+        PaymentProofCommands::Create(args) => cmd_payment_proof_create(args),
+        PaymentProofCommands::Verify(args) => cmd_payment_proof_verify(args),
+        PaymentProofCommands::Purge(args) => cmd_payment_proof_purge(args),
+    }
+}
+
+fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = WalletStore::open(&args.store, &passphrase)?;
+    if store.mode()? == WalletMode::WatchOnly {
+        anyhow::bail!("watch-only wallets cannot create payment proofs");
+    }
+    let tx_id = parse_hex_32(&args.tx)?;
+
+    let runtime = RuntimeBuilder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to create tokio runtime")?;
+
+    runtime.block_on(async {
+        println!("Connecting to {}...", args.ws_url);
+        let client = Arc::new(
+            SubstrateRpcClient::connect(&args.ws_url)
+                .await
+                .map_err(|e| anyhow!("Failed to connect: {}", e))?,
+        );
+
+        let store_arc = Arc::new(store);
+        let engine = AsyncWalletSyncEngine::new(client.clone(), store_arc.clone());
+
+        println!("Syncing wallet...");
+        engine
+            .sync_once()
+            .await
+            .map_err(|e| anyhow!("Sync failed: {}", e))?;
+
+        let record = store_arc
+            .find_outgoing_disclosure(&tx_id, args.output)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "no outgoing disclosure record for tx {} output {}",
+                    hex::encode(tx_id),
+                    args.output
+                )
+            })?;
+
+        let expected_commitment = note_commitment_bytes(
+            record.note.value,
+            record.note.asset_id,
+            &record.note.pk_recipient,
+            &record.note.rho,
+            &record.note.r,
+        );
+        if expected_commitment != record.commitment {
+            anyhow::bail!("stored disclosure record has mismatched commitment");
+        }
+
+        let claim = PaymentDisclosureClaim {
+            value: record.note.value,
+            asset_id: record.note.asset_id,
+            pk_recipient: record.note.pk_recipient,
+            commitment: record.commitment,
+        };
+        let witness = PaymentDisclosureWitness {
+            rho: record.note.rho,
+            r: record.note.r,
+        };
+        let proof_bundle = prove_payment_disclosure(&claim, &witness)
+            .map_err(|e| anyhow!("proof generation failed: {e}"))?;
+
+        let commitment_felt = bytes32_to_felt(&record.commitment)
+            .ok_or_else(|| anyhow!("commitment is not a canonical field encoding"))?;
+        let leaf_index = store_arc
+            .find_commitment_index(commitment_felt)?
+            .ok_or_else(|| anyhow!("commitment not found in wallet tree; sync again"))?;
+        let tree = store_arc.commitment_tree()?;
+        let auth_path = tree
+            .authentication_path(leaf_index as usize)
+            .map_err(|e| anyhow!("merkle path error: {e}"))?;
+        let anchor = felt_to_bytes32(tree.root());
+        let siblings: Vec<[u8; 32]> = auth_path
+            .iter()
+            .map(|felt| felt_to_bytes32(*felt))
+            .collect();
+
+        let package = DisclosurePackage {
+            version: 1,
+            chain: DisclosureChainInfo {
+                genesis_hash: record.genesis_hash,
+            },
+            claim: DisclosureClaim {
+                recipient_address: record.recipient_address.clone(),
+                pk_recipient: record.note.pk_recipient,
+                value: record.note.value,
+                asset_id: record.note.asset_id,
+                commitment: record.commitment,
+            },
+            confirmation: DisclosureConfirmation {
+                anchor,
+                leaf_index,
+                siblings,
+            },
+            proof: DisclosureProof {
+                air_hash: proof_bundle.air_hash,
+                bytes: encode_base64(&proof_bundle.proof_bytes),
+            },
+            disclosed_memo: memo_to_disclosed_string(&record),
+        };
+
+        let json = package.to_pretty_json()?;
+        fs::write(&args.out, json)
+            .with_context(|| format!("failed to write {}", args.out.display()))?;
+        println!("Wrote disclosure package to {}", args.out.display());
+        Ok(())
+    })
+}
+
+fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
+    let data = fs::read_to_string(&args.proof)
+        .with_context(|| format!("failed to read {}", args.proof.display()))?;
+    let package = DisclosurePackage::from_json_str(&data)?;
+    if package.version != 1 {
+        anyhow::bail!("unsupported disclosure package version {}", package.version);
+    }
+
+    let recipient = ShieldedAddress::decode(&package.claim.recipient_address)?;
+    if recipient.pk_recipient != package.claim.pk_recipient {
+        anyhow::bail!("recipient address does not match pk_recipient");
+    }
+
+    ensure_canonical_bytes32("commitment", &package.claim.commitment)?;
+    ensure_canonical_bytes32("anchor", &package.confirmation.anchor)?;
+    for (idx, sibling) in package.confirmation.siblings.iter().enumerate() {
+        ensure_canonical_bytes32(&format!("siblings[{idx}]"), sibling)?;
+    }
+
+    if package.confirmation.siblings.len() != transaction_circuit::note::MERKLE_TREE_DEPTH {
+        anyhow::bail!(
+            "expected {} merkle siblings, got {}",
+            transaction_circuit::note::MERKLE_TREE_DEPTH,
+            package.confirmation.siblings.len()
+        );
+    }
+
+    let commitment_felt = bytes32_to_felt(&package.claim.commitment)
+        .ok_or_else(|| anyhow!("commitment is not a canonical field encoding"))?;
+    let anchor_felt = bytes32_to_felt(&package.confirmation.anchor)
+        .ok_or_else(|| anyhow!("anchor is not a canonical field encoding"))?;
+    let sibling_felts: Vec<Felt> = package
+        .confirmation
+        .siblings
+        .iter()
+        .map(|bytes| bytes32_to_felt(bytes).ok_or_else(|| anyhow!("non-canonical merkle sibling")))
+        .collect::<Result<_, _>>()?;
+
+    let merkle_path = MerklePath {
+        siblings: sibling_felts,
+    };
+    if !merkle_path.verify(
+        commitment_felt,
+        package.confirmation.leaf_index,
+        anchor_felt,
+    ) {
+        anyhow::bail!("merkle path verification failed");
+    }
+
+    let runtime = RuntimeBuilder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to create tokio runtime")?;
+
+    runtime.block_on(async {
+        println!("Connecting to {}...", args.ws_url);
+        let client = SubstrateRpcClient::connect(&args.ws_url)
+            .await
+            .map_err(|e| anyhow!("Failed to connect: {}", e))?;
+
+        let metadata = client.get_chain_metadata().await?;
+        if metadata.genesis_hash != package.chain.genesis_hash {
+            anyhow::bail!("genesis hash mismatch");
+        }
+
+        let anchor_valid = client.is_valid_anchor(&package.confirmation.anchor).await?;
+        if !anchor_valid {
+            anyhow::bail!("anchor is not valid on chain");
+        }
+
+        Ok(())
+    })?;
+
+    let proof_bytes = decode_base64(&package.proof.bytes)?;
+    let bundle = PaymentDisclosureProofBundle {
+        claim: PaymentDisclosureClaim {
+            value: package.claim.value,
+            asset_id: package.claim.asset_id,
+            pk_recipient: package.claim.pk_recipient,
+            commitment: package.claim.commitment,
+        },
+        proof_bytes,
+        air_hash: package.proof.air_hash,
+    };
+
+    verify_payment_disclosure(&bundle).map_err(|e| anyhow!(e.to_string()))?;
+
+    let commitment_hex = format!("0x{}", hex::encode(package.claim.commitment));
+    let anchor_hex = format!("0x{}", hex::encode(package.confirmation.anchor));
+    let chain_hex = format!("0x{}", hex::encode(package.chain.genesis_hash));
+    println!(
+        "VERIFIED paid value={} asset_id={} to={} commitment={} anchor={} chain={}",
+        package.claim.value,
+        package.claim.asset_id,
+        package.claim.recipient_address,
+        commitment_hex,
+        anchor_hex,
+        chain_hex
+    );
+
+    if let Some(path) = args.credit_ledger {
+        append_credit_record(&path, &package, args.case_id.as_deref())?;
+    }
+
+    Ok(())
+}
+
+fn cmd_payment_proof_purge(args: PaymentProofPurgeArgs) -> Result<()> {
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = WalletStore::open(&args.store, &passphrase)?;
+
+    if args.all {
+        let count = store.purge_all_outgoing_disclosures()?;
+        println!("purged {count} disclosure records");
+        return Ok(());
+    }
+
+    let tx = args
+        .tx
+        .as_deref()
+        .ok_or_else(|| anyhow!("--tx is required unless --all is set"))?;
+    let tx_id = parse_hex_32(tx)?;
+    let output = args
+        .output
+        .ok_or_else(|| anyhow!("--output is required unless --all is set"))?;
+
+    let removed = store.purge_outgoing_disclosure(&tx_id, output)?;
+    if removed {
+        println!("purged disclosure record for tx {} output {}", tx, output);
+    } else {
+        println!("no disclosure record found for tx {} output {}", tx, output);
+    }
+    Ok(())
+}
+
+fn memo_to_disclosed_string(record: &OutgoingDisclosureRecord) -> Option<String> {
+    let memo = record.memo.as_ref()?;
+    if memo.as_bytes().is_empty() {
+        return None;
+    }
+    match String::from_utf8(memo.as_bytes().to_vec()) {
+        Ok(text) => Some(text),
+        Err(_) => Some(format!("base64:{}", encode_base64(memo.as_bytes()))),
+    }
+}
+
+fn ensure_canonical_bytes32(label: &str, bytes: &[u8; 32]) -> Result<()> {
+    if !is_canonical_bytes32(bytes) {
+        anyhow::bail!("{} is not a canonical field encoding", label);
+    }
+    Ok(())
+}
+
+fn parse_hex_32(input: &str) -> Result<[u8; 32]> {
+    let trimmed = input.strip_prefix("0x").unwrap_or(input);
+    let bytes = hex::decode(trimmed).map_err(|e| anyhow!("invalid hex: {e}"))?;
+    if bytes.len() != 32 {
+        anyhow::bail!("expected 32-byte hex value");
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn append_credit_record(
+    path: &Path,
+    package: &DisclosurePackage,
+    case_id: Option<&str>,
+) -> Result<()> {
+    let idempotence_key = format!("0x{}", hex::encode(package.claim.commitment));
+
+    if path.exists() {
+        let file = fs::File::open(path)?;
+        let reader = BufReader::new(file);
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_str(&line)
+                .map_err(|e| anyhow!("invalid ledger JSONL entry: {e}"))?;
+            if value.get("idempotence_key").and_then(|v| v.as_str()) == Some(&idempotence_key) {
+                anyhow::bail!("commitment already credited in ledger");
+            }
+        }
+    }
+
+    let record = json!({
+        "idempotence_key": idempotence_key,
+        "deposit_account_id": package.claim.recipient_address.as_str(),
+        "value": package.claim.value,
+        "asset_id": package.claim.asset_id,
+        "commitment": format!("0x{}", hex::encode(package.claim.commitment)),
+        "anchor": format!("0x{}", hex::encode(package.confirmation.anchor)),
+        "chain_genesis_hash": format!("0x{}", hex::encode(package.chain.genesis_hash)),
+        "verified_at": Utc::now().to_rfc3339(),
+        "case_id": case_id,
+    });
+
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    writeln!(file, "{}", record)?;
+    Ok(())
+}
+
 fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
     let batch_size = args.recipients.len();
 
@@ -1249,6 +1654,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         // If so, submit as unsigned - no transparent account needed!
         let is_pure_shielded = built.bundle.value_balance == 0;
 
+        let outgoing_disclosures = built.outgoing_disclosures.clone();
         let result = if is_pure_shielded {
             // Pure shielded transfer: submit unsigned
             // The ZK proof authenticates the spend, no signature needed
@@ -1267,6 +1673,19 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
 
         match result {
             Ok(tx_hash) => {
+                let genesis_hash = match store_arc.genesis_hash()? {
+                    Some(hash) => hash,
+                    None => {
+                        let metadata = client.get_chain_metadata().await?;
+                        store_arc.set_genesis_hash(metadata.genesis_hash)?;
+                        metadata.genesis_hash
+                    }
+                };
+                store_arc.record_outgoing_disclosures(
+                    tx_hash,
+                    genesis_hash,
+                    outgoing_disclosures,
+                )?;
                 store_arc.record_pending_submission(
                     tx_hash,
                     built.nullifiers.clone(),

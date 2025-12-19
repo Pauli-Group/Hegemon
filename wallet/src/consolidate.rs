@@ -165,6 +165,7 @@ pub async fn execute_consolidation(
         // Lock notes before submission so we don't double-spend locally if we loop/retry.
         store.mark_notes_pending(&built.spent_note_indexes, true)?;
 
+        let outgoing_disclosures = built.outgoing_disclosures.clone();
         let submit_result = rpc.submit_shielded_transfer_unsigned(&built.bundle).await;
         let hash = match submit_result {
             Ok(hash) => hash,
@@ -193,6 +194,10 @@ pub async fn execute_consolidation(
 
         if verbose {
             println!("  Submitted: 0x{}", hex::encode(&hash[..8]));
+        }
+
+        if let Some(genesis_hash) = store.genesis_hash()? {
+            store.record_outgoing_disclosures(hash, genesis_hash, outgoing_disclosures)?;
         }
 
         // Track pending tx so locked notes can be released on timeout/reorgs.
