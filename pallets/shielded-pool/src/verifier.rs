@@ -24,6 +24,9 @@ use sp_std::vec::Vec;
 
 use crate::types::{BindingSignature, StarkProof};
 
+#[cfg(feature = "stark-verify")]
+use winterfell::math::FieldElement;
+
 /// Verification key for STARK proofs.
 ///
 /// Contains the circuit parameters needed to verify proofs.
@@ -1410,12 +1413,14 @@ mod tests {
                 .iter()
                 .copied()
                 .map(felt_to_bytes32)
+                .filter(|nf| *nf != [0u8; 32])
                 .collect(),
             commitments: proof
                 .commitments
                 .iter()
                 .copied()
                 .map(felt_to_bytes32)
+                .filter(|cm| *cm != [0u8; 32])
                 .collect(),
             fee: stark_inputs.fee,
             value_balance: 0,

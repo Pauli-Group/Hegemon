@@ -23,6 +23,9 @@ use sp_runtime::RuntimeDebug;
 use sp_std::vec;
 use sp_std::vec::Vec;
 
+#[cfg(feature = "stark-verify")]
+use winterfell::math::FieldElement;
+
 #[cfg(test)]
 mod mock;
 pub mod weights;
