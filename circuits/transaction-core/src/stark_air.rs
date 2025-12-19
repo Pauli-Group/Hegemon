@@ -40,13 +40,13 @@ pub const COL_RESET: usize = 5;
 pub const COL_DOMAIN: usize = 6;
 pub const COL_LINK: usize = 7;
 
-/// Active flags for inputs/outputs (constant across trace).
+/// Active flags for inputs/outputs (set at note start rows).
 pub const COL_IN_ACTIVE0: usize = 8;
 pub const COL_IN_ACTIVE1: usize = 9;
 pub const COL_OUT_ACTIVE0: usize = 10;
 pub const COL_OUT_ACTIVE1: usize = 11;
 
-/// Note values/asset ids (constant across trace).
+/// Note values/asset ids (set at note start rows).
 pub const COL_IN0_VALUE: usize = 12;
 pub const COL_IN0_ASSET: usize = 13;
 pub const COL_IN1_VALUE: usize = 14;
@@ -56,7 +56,7 @@ pub const COL_OUT0_ASSET: usize = 17;
 pub const COL_OUT1_VALUE: usize = 18;
 pub const COL_OUT1_ASSET: usize = 19;
 
-/// Balance slots (asset id + sum in/out).
+/// Balance slots (asset id + running sum in/out).
 pub const COL_SLOT0_ASSET: usize = 20;
 pub const COL_SLOT0_IN: usize = 21;
 pub const COL_SLOT0_OUT: usize = 22;
@@ -164,7 +164,7 @@ pub fn round_constant(round: usize, position: usize) -> BaseElement {
     BaseElement::new(seed)
 }
 
-fn get_periodic_columns() -> Vec<Vec<BaseElement>> {
+fn get_periodic_columns(trace_len: usize) -> Vec<Vec<BaseElement>> {
     let mut result = vec![HASH_MASK.to_vec(), ABSORB_MASK.to_vec()];
 
     for pos in 0..POSEIDON_WIDTH {
@@ -178,6 +178,17 @@ fn get_periodic_columns() -> Vec<Vec<BaseElement>> {
         }
         result.push(column);
     }
+
+    let mut first_row = vec![BaseElement::ZERO; trace_len];
+    if !first_row.is_empty() {
+        first_row[0] = BaseElement::ONE;
+    }
+    let mut final_row = vec![BaseElement::ZERO; trace_len];
+    if trace_len >= 2 {
+        final_row[trace_len - 2] = BaseElement::ONE;
+    }
+    result.push(first_row);
+    result.push(final_row);
 
     result
 }
@@ -341,19 +352,49 @@ pub struct TransactionAirStark {
     pub_inputs: TransactionPublicInputsStark,
 }
 
-const NUM_CONSTRAINTS: usize = 98;
+const NUM_CONSTRAINTS: usize = 55;
 
 impl Air for TransactionAirStark {
     type BaseField = BaseElement;
     type PublicInputs = TransactionPublicInputsStark;
 
     fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
-        let degrees = vec![
-            TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]);
-            NUM_CONSTRAINTS
-        ];
-
         let trace_len = trace_info.length();
+        let mut degrees = Vec::with_capacity(NUM_CONSTRAINTS);
+        // Poseidon transitions use periodic hash/absorb flags and round constants.
+        for _ in 0..3 {
+            degrees.push(TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]));
+        }
+        degrees.push(TransitionConstraintDegree::new(2)); // reset boolean
+        degrees.push(TransitionConstraintDegree::new(2)); // value balance sign boolean
+
+        for _ in 0..4 {
+            degrees.push(TransitionConstraintDegree::new(2)); // active flag booleans
+        }
+        for _ in 0..16 {
+            degrees.push(TransitionConstraintDegree::new(2)); // selector booleans
+        }
+        for _ in 0..4 {
+            degrees.push(TransitionConstraintDegree::new(2)); // selector sums
+        }
+        for _ in 0..4 {
+            degrees.push(TransitionConstraintDegree::new(3)); // asset matches
+        }
+        for _ in 0..8 {
+            degrees.push(TransitionConstraintDegree::with_cycles(3, vec![trace_len])); // slot accumulators
+        }
+        degrees.push(TransitionConstraintDegree::new(2)); // slot0 asset check
+        degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len])); // balance equation
+        for _ in 0..3 {
+            degrees.push(TransitionConstraintDegree::with_cycles(1, vec![trace_len])); // slot1..3 balance
+        }
+        degrees.push(TransitionConstraintDegree::new(3)); // link constraint
+        for _ in 0..(MAX_INPUTS + MAX_OUTPUTS) {
+            degrees.push(TransitionConstraintDegree::new(2)); // note start value binding
+            degrees.push(TransitionConstraintDegree::new(2)); // note start asset binding
+        }
+        debug_assert_eq!(degrees.len(), NUM_CONSTRAINTS);
+
         let mut num_assertions = 0;
 
         for (i, &nf) in pub_inputs.nullifiers.iter().enumerate() {
@@ -385,8 +426,11 @@ impl Air for TransactionAirStark {
         // Note start assertions (one per note).
         num_assertions += MAX_INPUTS + MAX_OUTPUTS;
 
-        // Active flag assertions (one per flag at row 0).
+        // Active flag assertions (one per flag at note start).
         num_assertions += MAX_INPUTS + MAX_OUTPUTS;
+
+        // Fee/value balance assertions at the final enforcement row.
+        num_assertions += 3;
 
         Self {
             context: AirContext::new(trace_info, degrees, num_assertions, options),
@@ -412,6 +456,9 @@ impl Air for TransactionAirStark {
         let rc0 = periodic_values[2];
         let rc1 = periodic_values[3];
         let rc2 = periodic_values[4];
+        let mask_offset = 2 + POSEIDON_WIDTH;
+        let first_row_mask = periodic_values[mask_offset];
+        let final_row_mask = periodic_values[mask_offset + 1];
 
         let t0 = current[COL_S0] + rc0;
         let t1 = current[COL_S1] + rc1;
@@ -427,6 +474,7 @@ impl Air for TransactionAirStark {
         let hash_s2 = s0 + s1 + s2 * two;
 
         let one = E::ONE;
+        let not_first_row = one - first_row_mask;
         let copy_flag = one - hash_flag - absorb_flag;
 
         let reset = current[COL_RESET];
@@ -485,33 +533,37 @@ impl Air for TransactionAirStark {
         // selector sums equal active flags
         let input_active = [current[COL_IN_ACTIVE0], current[COL_IN_ACTIVE1]];
         let output_active = [current[COL_OUT_ACTIVE0], current[COL_OUT_ACTIVE1]];
+        let note_start_in0 = current[COL_NOTE_START_IN0];
+        let note_start_in1 = current[COL_NOTE_START_IN1];
+        let note_start_out0 = current[COL_NOTE_START_OUT0];
+        let note_start_out1 = current[COL_NOTE_START_OUT1];
 
         let in0_sel_sum = current[COL_SEL_IN0_SLOT0]
             + current[COL_SEL_IN0_SLOT1]
             + current[COL_SEL_IN0_SLOT2]
             + current[COL_SEL_IN0_SLOT3];
-        result[idx] = in0_sel_sum - input_active[0];
+        result[idx] = note_start_in0 * (in0_sel_sum - input_active[0]);
         idx += 1;
 
         let in1_sel_sum = current[COL_SEL_IN1_SLOT0]
             + current[COL_SEL_IN1_SLOT1]
             + current[COL_SEL_IN1_SLOT2]
             + current[COL_SEL_IN1_SLOT3];
-        result[idx] = in1_sel_sum - input_active[1];
+        result[idx] = note_start_in1 * (in1_sel_sum - input_active[1]);
         idx += 1;
 
         let out0_sel_sum = current[COL_SEL_OUT0_SLOT0]
             + current[COL_SEL_OUT0_SLOT1]
             + current[COL_SEL_OUT0_SLOT2]
             + current[COL_SEL_OUT0_SLOT3];
-        result[idx] = out0_sel_sum - output_active[0];
+        result[idx] = note_start_out0 * (out0_sel_sum - output_active[0]);
         idx += 1;
 
         let out1_sel_sum = current[COL_SEL_OUT1_SLOT0]
             + current[COL_SEL_OUT1_SLOT1]
             + current[COL_SEL_OUT1_SLOT2]
             + current[COL_SEL_OUT1_SLOT3];
-        result[idx] = out1_sel_sum - output_active[1];
+        result[idx] = note_start_out1 * (out1_sel_sum - output_active[1]);
         idx += 1;
 
         // asset id matches selected slot
@@ -527,7 +579,7 @@ impl Air for TransactionAirStark {
             + current[COL_SEL_IN0_SLOT1] * slot_assets[1]
             + current[COL_SEL_IN0_SLOT2] * slot_assets[2]
             + current[COL_SEL_IN0_SLOT3] * slot_assets[3];
-        result[idx] = in0_asset * input_active[0] - in0_selected;
+        result[idx] = note_start_in0 * (in0_asset * input_active[0] - in0_selected);
         idx += 1;
 
         let in1_asset = current[COL_IN1_ASSET];
@@ -535,7 +587,7 @@ impl Air for TransactionAirStark {
             + current[COL_SEL_IN1_SLOT1] * slot_assets[1]
             + current[COL_SEL_IN1_SLOT2] * slot_assets[2]
             + current[COL_SEL_IN1_SLOT3] * slot_assets[3];
-        result[idx] = in1_asset * input_active[1] - in1_selected;
+        result[idx] = note_start_in1 * (in1_asset * input_active[1] - in1_selected);
         idx += 1;
 
         let out0_asset = current[COL_OUT0_ASSET];
@@ -543,7 +595,7 @@ impl Air for TransactionAirStark {
             + current[COL_SEL_OUT0_SLOT1] * slot_assets[1]
             + current[COL_SEL_OUT0_SLOT2] * slot_assets[2]
             + current[COL_SEL_OUT0_SLOT3] * slot_assets[3];
-        result[idx] = out0_asset * output_active[0] - out0_selected;
+        result[idx] = note_start_out0 * (out0_asset * output_active[0] - out0_selected);
         idx += 1;
 
         let out1_asset = current[COL_OUT1_ASSET];
@@ -551,10 +603,10 @@ impl Air for TransactionAirStark {
             + current[COL_SEL_OUT1_SLOT1] * slot_assets[1]
             + current[COL_SEL_OUT1_SLOT2] * slot_assets[2]
             + current[COL_SEL_OUT1_SLOT3] * slot_assets[3];
-        result[idx] = out1_asset * output_active[1] - out1_selected;
+        result[idx] = note_start_out1 * (out1_asset * output_active[1] - out1_selected);
         idx += 1;
 
-        // slot sums (inputs)
+        // slot accumulators (inputs/outputs)
         let in_values = [current[COL_IN0_VALUE], current[COL_IN1_VALUE]];
         let out_values = [current[COL_OUT0_VALUE], current[COL_OUT1_VALUE]];
 
@@ -579,47 +631,50 @@ impl Air for TransactionAirStark {
             [COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3],
             [COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3],
         ];
+        let note_in_flags = [note_start_in0, note_start_in1];
+        let note_out_flags = [note_start_out0, note_start_out1];
 
         for slot in 0..4 {
-            let mut sum_in = E::ZERO;
-            let mut sum_out = E::ZERO;
+            let mut add_in = E::ZERO;
+            let mut add_out = E::ZERO;
             for note in 0..2 {
-                sum_in += current[sel_in[note][slot]] * in_values[note];
-                sum_out += current[sel_out[note][slot]] * out_values[note];
+                add_in += note_in_flags[note] * current[sel_in[note][slot]] * in_values[note];
+                add_out += note_out_flags[note] * current[sel_out[note][slot]] * out_values[note];
             }
-            result[idx] = current[slot_in_cols[slot]] - sum_in;
+            result[idx] =
+                not_first_row * (next[slot_in_cols[slot]] - (current[slot_in_cols[slot]] + add_in));
             idx += 1;
-            result[idx] = current[slot_out_cols[slot]] - sum_out;
+            result[idx] = not_first_row
+                * (next[slot_out_cols[slot]] - (current[slot_out_cols[slot]] + add_out));
             idx += 1;
         }
 
-        // slot0 asset id must be native
-        result[idx] = current[COL_SLOT0_ASSET] - E::from(BaseElement::new(NATIVE_ASSET_ID));
+        // slot0 asset id must be native (checked at note start rows)
+        let note_start_any = note_start_in0 + note_start_in1 + note_start_out0 + note_start_out1;
+        result[idx] = note_start_any
+            * (current[COL_SLOT0_ASSET] - E::from(BaseElement::new(NATIVE_ASSET_ID)));
         idx += 1;
 
-        // balance equations
+        // balance equations (checked at final enforcement row)
         let fee = current[COL_FEE];
         let vb_mag = current[COL_VALUE_BALANCE_MAG];
         let vb_signed = vb_mag - (vb_sign * vb_mag * two);
         let slot0_in = current[COL_SLOT0_IN];
         let slot0_out = current[COL_SLOT0_OUT];
-        result[idx] = slot0_in + vb_signed - slot0_out - fee;
+        result[idx] = final_row_mask * (slot0_in + vb_signed - slot0_out - fee);
         idx += 1;
 
         for slot in 1..4 {
-            result[idx] = current[slot_in_cols[slot]] - current[slot_out_cols[slot]];
+            result[idx] =
+                final_row_mask * (current[slot_in_cols[slot]] - current[slot_out_cols[slot]]);
             idx += 1;
         }
 
-        // constant columns
-        for &col in CONST_COLUMNS.iter() {
-            result[idx] = next[col] - current[col];
-            idx += 1;
-        }
-
-        // link flag: in0 for next cycle equals current output when set
+        // link flag: next-cycle input must include current output (left or right)
         let link = current[COL_LINK];
-        result[idx] = link * (current[COL_IN0] - current[COL_S0]);
+        let link_diff0 = current[COL_IN0] - current[COL_S0];
+        let link_diff1 = current[COL_IN1] - current[COL_S0];
+        result[idx] = link * link_diff0 * link_diff1;
         idx += 1;
 
         // note start flags: tie commitment inputs to note values/assets
@@ -726,27 +781,44 @@ impl Air for TransactionAirStark {
             }
         }
 
-        // Active flags bound at row 0.
-        if trace_len > 0 {
+        // Active flags bound at note start rows.
+        let input_rows = [note_start_row_input(0), note_start_row_input(1)];
+        let input_cols = [COL_IN_ACTIVE0, COL_IN_ACTIVE1];
+        for (idx, &row) in input_rows.iter().enumerate() {
+            if row < trace_len {
+                assertions.push(Assertion::single(
+                    input_cols[idx],
+                    row,
+                    self.pub_inputs.input_flags[idx],
+                ));
+            }
+        }
+
+        let output_rows = [note_start_row_output(0), note_start_row_output(1)];
+        let output_cols = [COL_OUT_ACTIVE0, COL_OUT_ACTIVE1];
+        for (idx, &row) in output_rows.iter().enumerate() {
+            if row < trace_len {
+                assertions.push(Assertion::single(
+                    output_cols[idx],
+                    row,
+                    self.pub_inputs.output_flags[idx],
+                ));
+            }
+        }
+
+        // Fee/value balance bound at the final enforcement row.
+        if trace_len >= 2 {
+            let final_row = trace_len - 2;
+            assertions.push(Assertion::single(COL_FEE, final_row, self.pub_inputs.fee));
             assertions.push(Assertion::single(
-                COL_IN_ACTIVE0,
-                0,
-                self.pub_inputs.input_flags[0],
+                COL_VALUE_BALANCE_SIGN,
+                final_row,
+                self.pub_inputs.value_balance_sign,
             ));
             assertions.push(Assertion::single(
-                COL_IN_ACTIVE1,
-                0,
-                self.pub_inputs.input_flags[1],
-            ));
-            assertions.push(Assertion::single(
-                COL_OUT_ACTIVE0,
-                0,
-                self.pub_inputs.output_flags[0],
-            ));
-            assertions.push(Assertion::single(
-                COL_OUT_ACTIVE1,
-                0,
-                self.pub_inputs.output_flags[1],
+                COL_VALUE_BALANCE_MAG,
+                final_row,
+                self.pub_inputs.value_balance_magnitude,
             ));
         }
 
@@ -754,7 +826,7 @@ impl Air for TransactionAirStark {
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
-        get_periodic_columns()
+        get_periodic_columns(self.context.trace_len())
     }
 }
 
@@ -775,52 +847,6 @@ const SELECTOR_COLUMNS: [usize; 16] = [
     COL_SEL_OUT1_SLOT1,
     COL_SEL_OUT1_SLOT2,
     COL_SEL_OUT1_SLOT3,
-];
-
-const CONST_COLUMNS: [usize; 43] = [
-    COL_IN_ACTIVE0,
-    COL_IN_ACTIVE1,
-    COL_OUT_ACTIVE0,
-    COL_OUT_ACTIVE1,
-    COL_IN0_VALUE,
-    COL_IN0_ASSET,
-    COL_IN1_VALUE,
-    COL_IN1_ASSET,
-    COL_OUT0_VALUE,
-    COL_OUT0_ASSET,
-    COL_OUT1_VALUE,
-    COL_OUT1_ASSET,
-    COL_SLOT0_ASSET,
-    COL_SLOT0_IN,
-    COL_SLOT0_OUT,
-    COL_SLOT1_ASSET,
-    COL_SLOT1_IN,
-    COL_SLOT1_OUT,
-    COL_SLOT2_ASSET,
-    COL_SLOT2_IN,
-    COL_SLOT2_OUT,
-    COL_SLOT3_ASSET,
-    COL_SLOT3_IN,
-    COL_SLOT3_OUT,
-    COL_SEL_IN0_SLOT0,
-    COL_SEL_IN0_SLOT1,
-    COL_SEL_IN0_SLOT2,
-    COL_SEL_IN0_SLOT3,
-    COL_SEL_IN1_SLOT0,
-    COL_SEL_IN1_SLOT1,
-    COL_SEL_IN1_SLOT2,
-    COL_SEL_IN1_SLOT3,
-    COL_SEL_OUT0_SLOT0,
-    COL_SEL_OUT0_SLOT1,
-    COL_SEL_OUT0_SLOT2,
-    COL_SEL_OUT0_SLOT3,
-    COL_SEL_OUT1_SLOT0,
-    COL_SEL_OUT1_SLOT1,
-    COL_SEL_OUT1_SLOT2,
-    COL_SEL_OUT1_SLOT3,
-    COL_FEE,
-    COL_VALUE_BALANCE_SIGN,
-    COL_VALUE_BALANCE_MAG,
 ];
 
 // ================================================================================================
@@ -883,14 +909,20 @@ mod tests {
 
     #[test]
     fn test_periodic_columns() {
-        let cols = get_periodic_columns();
-        assert_eq!(cols.len(), 2 + POSEIDON_WIDTH);
+        let cols = get_periodic_columns(MIN_TRACE_LENGTH);
+        assert_eq!(cols.len(), 4 + POSEIDON_WIDTH);
         assert_eq!(cols[0].len(), CYCLE_LENGTH);
         assert_eq!(cols[1].len(), CYCLE_LENGTH);
         assert_eq!(cols[0][0], BaseElement::ONE);
         assert_eq!(cols[0][7], BaseElement::ONE);
         assert_eq!(cols[0][8], BaseElement::ZERO);
         assert_eq!(cols[1][15], BaseElement::ONE);
+        let mask_offset = 2 + POSEIDON_WIDTH;
+        assert_eq!(cols[mask_offset].len(), MIN_TRACE_LENGTH);
+        assert_eq!(cols[mask_offset][0], BaseElement::ONE);
+        assert_eq!(cols[mask_offset][1], BaseElement::ZERO);
+        assert_eq!(cols[mask_offset + 1].len(), MIN_TRACE_LENGTH);
+        assert_eq!(cols[mask_offset + 1][MIN_TRACE_LENGTH - 2], BaseElement::ONE);
     }
 
     #[test]

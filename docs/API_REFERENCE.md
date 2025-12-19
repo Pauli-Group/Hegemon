@@ -21,7 +21,7 @@ This reference summarizes the public APIs of the monorepo components and points 
 
 ## `circuits/`
 
-- `transaction-circuit` crate exposes `TransactionCircuit::prove(inputs) -> Proof` and `::verify(proof, public_inputs) -> bool`.
+- `transaction-circuit` crate exposes `proof::prove(witness, proving_key) -> TransactionProof` and `proof::verify(proof, verifying_key) -> VerificationReport`. The direct STARK path is `TransactionProverStark::prove_transaction(witness)` and `stark_verifier::verify_transaction_proof_bytes(proof_bytes, pub_inputs)`.
 - `block-circuit` crate aggregates multiple transaction proofs via `BlockCircuit::prove(block_inputs)`.
 - `circuits/bench` binary crate (`circuits-bench`) provides `cargo run -p circuits-bench -- --iterations N --prove` to compile circuits, generate witnesses, and optionally verify proofs. Output includes constraint rows, hash rounds, and per-proof latency.
 

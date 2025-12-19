@@ -60,6 +60,7 @@ authors = ["Pauli Group Inc."]
 license = "MIT"
 repository = "https://github.com/Pauli-Group/Hegemon"
 
+
 # =============================================================================
 # POLKADOT-SDK WORKSPACE DEPENDENCIES
 # =============================================================================

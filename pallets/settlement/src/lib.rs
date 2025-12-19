@@ -374,7 +374,6 @@ impl<Hash: AsRef<[u8]>> ProofVerifier<Hash> for StarkVerifier {
 pub mod pallet {
     use super::*;
     use crate::weights::WeightInfo;
-    use frame_support::sp_runtime::traits::Hash;
 
     #[pallet::pallet]
     #[pallet::without_storage_info]
@@ -383,8 +382,6 @@ pub mod pallet {
 
     #[pallet::config]
     pub trait Config: frame_system::Config + CreateSignedTransaction<Call<Self>>
-    where
-        Self::Hash: From<[u8; 32]>,
     {
         #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
@@ -552,7 +549,10 @@ pub mod pallet {
     }
 
     #[pallet::hooks]
-    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T>
+    where
+        T::Hash: From<[u8; 32]>,
+    {
         fn offchain_worker(_n: BlockNumberFor<T>) {
             let queue = PendingQueue::<T>::get();
             if queue.is_empty() {
@@ -570,7 +570,7 @@ pub mod pallet {
                 ));
             }
             while nullifier_felts.len() < settlement_circuit::constants::MAX_NULLIFIERS {
-                nullifier_felts.push(settlement_circuit::Felt::ZERO);
+                nullifier_felts.push(settlement_circuit::Felt::new(0));
             }
 
             let mut instructions_felts =
@@ -579,7 +579,7 @@ pub mod pallet {
                 instructions_felts.push(settlement_circuit::Felt::new(*instruction_id));
             }
             while instructions_felts.len() < settlement_circuit::constants::MAX_INSTRUCTIONS {
-                instructions_felts.push(settlement_circuit::Felt::ZERO);
+                instructions_felts.push(settlement_circuit::Felt::new(0));
             }
 
             let mut pub_inputs = settlement_circuit::SettlementPublicInputs {
@@ -587,7 +587,7 @@ pub mod pallet {
                 nullifier_count: nullifier_count as u32,
                 instructions: instructions_felts,
                 nullifiers: nullifier_felts,
-                commitment: settlement_circuit::Felt::ZERO,
+                commitment: settlement_circuit::Felt::new(0),
             };
             let inputs = pub_inputs.input_elements();
             let commitment_felt = settlement_circuit::commitment_from_inputs(&inputs);
@@ -1009,7 +1009,10 @@ pub mod pallet {
             Ok(())
         }
 
-        fn hash_from_felt(value: settlement_circuit::Felt) -> T::Hash {
+        fn hash_from_felt(value: settlement_circuit::Felt) -> T::Hash
+        where
+            T::Hash: From<[u8; 32]>,
+        {
             T::Hash::from(settlement_circuit::felt_to_bytes32(value))
         }
     }

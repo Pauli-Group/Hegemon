@@ -21,12 +21,19 @@ After this change, the node enforces real cryptographic proof verification for s
 - [x] (2025-12-19T01:32Z) Update recursive proof pipeline to the new transaction proof shape and refresh `RECURSIVE_PROOFS_EXECPLAN.md` (proof hash now binds proof bytes + public inputs; batch proofs included).
 - [x] (2025-12-19T02:08Z) Implement settlement proof verification (settlement STARK circuit + verifier wiring + canonical commitment/nullifier encoding).
 - [x] (2025-12-19T01:32Z) Harden PoW import checks and PQ identity generation (proper pre-hash, timestamp inherents restored, zero-seed fallback removed).
-- [ ] (2025-12-19T02:08Z) Update documentation and run validation (completed: DESIGN/METHODS/API updates for settlement proofs; remaining: run tests).
+- [x] (2025-12-19T02:36Z) Fix settlement circuit constraint degrees and pallet hash conversion bounds; `cargo test -p settlement-circuit` and `cargo test -p pallet-settlement` now pass.
+- [x] (2025-12-19T03:55Z) Fix transaction AIR degree mismatches by removing constant-column constraints, adding accumulator transitions + row masks, and rebinding fee/value balance at the final enforcement row.
+- [x] (2025-12-19T03:55Z) Run validation for `cargo test -p transaction-circuit`, `cargo test -p settlement-circuit`, and `cargo test -p pallet-settlement`.
+- [x] (2025-12-19T04:02Z) Run validation for `cargo test -p pallet-shielded-pool` and `cargo test -p epoch-circuit`.
+- [x] (2025-12-19T04:07Z) Update METHODS/API docs for transaction public inputs, MASP selectors, and current circuit APIs.
+- [x] (2025-12-19T04:07Z) Update documentation and run validation (completed: DESIGN/METHODS/API updates for settlement proofs; transaction/settlement/pallet-shielded-pool/epoch tests; docs).
 
 ## Surprises & Discoveries
 
 - (2025-01-15) The value-balance tamper test currently passes verification because STARK public inputs do not include value_balance; binding must be added in the circuit/core.
 - (2025-01-15) Wallet/node submission paths assumed padded nullifiers/commitments; active-flag public inputs required filtering active entries and adding fee into the binding signature message.
+- (2025-12-19) Settlement AIR debug-degree checks flagged hold constraints for all-zero batches; dropping hold constraints avoids degree collapse while keeping absorb-only inputs sound.
+- (2025-12-19) Winterfell debug degree checks surfaced that constant columns make constraint polynomials identically zero; transaction-circuit proofs failed with "transition constraint degrees didn't match" until we made metadata/accumulator columns non-constant via sentinel rows and masked enforcement.
 
 ## Decision Log
 
@@ -58,9 +65,17 @@ After this change, the node enforces real cryptographic proof verification for s
   Rationale: Settlement proofs must bind to concrete batch contents using a hash-friendly STARK primitive without relying on arbitrary 256-bit encodings.
   Date/Author: 2025-12-19 / Codex
 
+- Decision: Drop settlement input-hold constraints and reorder transition degree declarations to match absorb/hash/copy ordering.
+  Rationale: Inputs only affect the absorb step; hold constraints were redundant and could collapse transition degrees for all-zero batches in debug builds.
+  Date/Author: 2025-12-19 / Codex
+
+- Decision: Replace transaction constant-column constraints with sentinel rows and first-row/final-row masks, and enforce balance at the last transition row (trace_len - 2).
+  Rationale: Winterfell debug checks require non-zero constraint polynomials; constant columns collapsed degrees to zero, and transition constraints skip the last row.
+  Date/Author: 2025-12-19 / Codex
+
 ## Outcomes & Retrospective
 
-Not started. This section will be updated at each milestone and at completion.
+Completed proof-verification hardening across transaction, settlement, shielded-pool, and epoch circuits. The transaction AIR now enforces balance via slot accumulators and final-row binding while avoiding debug-degree collapses, settlement verification is wired with canonical encoding, and PoW import + PQ identity hardening is in place. All targeted tests (`transaction-circuit`, `settlement-circuit`, `pallet-settlement`, `pallet-shielded-pool`, `epoch-circuit`) pass. Documentation now reflects current transaction public inputs, MASP selectors, and STARK APIs. Remaining work is outside this plan (e.g., in-circuit range checks and block-level proof aggregation).
 
 ## Context and Orientation
 
@@ -193,3 +208,9 @@ The pallet verifier must use `transaction_core::stark_verifier::verify_transacti
 Revision note: This ExecPlan was created to harden proof verification and consensus integrity without purging the chain, and to keep recursive proof aggregation aligned with the updated transaction proof shape.
 
 Revision note (2025-12-19): Updated progress and decisions for recursive proof hash binding, settlement fail-closed verifier, PoW import hardening, and PQ identity fail-fast behavior; aligned follow-on documentation requirements.
+
+Revision note (2025-12-19T03:55Z): Updated progress, discoveries, and decisions after fixing transaction AIR degree mismatches with sentinel rows/masks and rerunning transaction/settlement tests.
+
+Revision note (2025-12-19T04:02Z): Logged pallet-shielded-pool and epoch-circuit validation runs; narrowed remaining work to documentation updates.
+
+Revision note (2025-12-19T04:07Z): Completed remaining documentation updates and marked the ExecPlan complete with an outcomes summary.
