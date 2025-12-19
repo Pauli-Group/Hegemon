@@ -1,7 +1,7 @@
 use protocol_versioning::{CircuitVersion, CryptoSuiteId, VersionBinding, DEFAULT_VERSION_BINDING};
 use serde::{Deserialize, Serialize};
-use winterfell::math::FieldElement;
 pub use transaction_core::BalanceSlot;
+use winterfell::math::FieldElement;
 
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID},

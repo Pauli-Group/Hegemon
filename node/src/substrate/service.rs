@@ -143,7 +143,7 @@ use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer,
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sp_api::{ProvideRuntimeApi, StorageChanges};
 use sp_core::H256;
-use sp_inherents::{InherentData, InherentDataProvider, InherentDataProviders};
+use sp_inherents::{InherentData, InherentDataProvider};
 use sp_runtime::traits::Header as HeaderT;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -255,13 +255,14 @@ where
 ///
 /// PoW import checks use this to supply timestamp inherent data when
 /// validating blocks during import.
+type PowInherentProviders = (sp_timestamp::InherentDataProvider,);
 type PowInherentDataProviders = fn(
     <runtime::Block as sp_runtime::traits::Block>::Hash,
     (),
 ) -> std::pin::Pin<
     Box<
         dyn std::future::Future<
-                Output = Result<InherentDataProviders, Box<dyn std::error::Error + Send + Sync>>,
+                Output = Result<PowInherentProviders, Box<dyn std::error::Error + Send + Sync>>,
             > + Send,
     >,
 >;
@@ -1192,15 +1193,11 @@ pub fn new_partial_with_client(
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<InherentDataProviders, Box<dyn std::error::Error + Send + Sync>>,
+                    Output = Result<PowInherentProviders, Box<dyn std::error::Error + Send + Sync>>,
                 > + Send,
         >,
     > {
-        Box::pin(async move {
-            let mut providers = InherentDataProviders::new();
-            providers.register_provider(sp_timestamp::InherentDataProvider::from_system_time());
-            Ok(providers)
-        })
+        Box::pin(async move { Ok((sp_timestamp::InherentDataProvider::from_system_time(),)) })
     }
 
     // Create the PoW block import wrapper
@@ -1246,9 +1243,8 @@ pub fn new_partial_with_client(
     };
 
     // Generate PQ network keypair for this node
-    let network_keypair = PqNetworkKeypair::generate().map_err(|e| {
-        ServiceError::Other(format!("PQ network keypair generation failed: {e}"))
-    })?;
+    let network_keypair = PqNetworkKeypair::generate()
+        .map_err(|e| ServiceError::Other(format!("PQ network keypair generation failed: {e}")))?;
     tracing::info!(
         peer_id = %network_keypair.peer_id(),
         "Generated PQ network keypair"

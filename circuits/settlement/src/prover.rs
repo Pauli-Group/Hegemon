@@ -10,8 +10,8 @@ use winterfell::{
     matrix::ColMatrix,
     AuxRandElements, BatchingMethod, CompositionPoly, CompositionPolyTrace,
     ConstraintCompositionCoefficients, DefaultConstraintCommitment, DefaultConstraintEvaluator,
-    DefaultTraceLde, PartitionOptions, Proof, ProofOptions, Prover, StarkDomain,
-    TraceInfo, TracePolyTable, TraceTable,
+    DefaultTraceLde, PartitionOptions, Proof, ProofOptions, Prover, StarkDomain, TraceInfo,
+    TracePolyTable, TraceTable,
 };
 
 use crate::air::{SettlementAir, SettlementPublicInputs};
@@ -214,16 +214,15 @@ mod tests {
         pub_inputs.commitment = commitment;
 
         let mut prover = SettlementProver::with_fast_options();
-        let (proof, pub_inputs) = prover
-            .prove_settlement(pub_inputs)
-            .expect("proof");
+        let (proof, pub_inputs) = prover.prove_settlement(pub_inputs).expect("proof");
 
         let acceptable = winterfell::AcceptableOptions::OptionSet(vec![fast_proof_options()]);
-        let result = winterfell::verify::<SettlementAir, Blake3, DefaultRandomCoin<Blake3>, MerkleTree<Blake3>>(
-            proof,
-            pub_inputs,
-            &acceptable,
-        );
+        let result = winterfell::verify::<
+            SettlementAir,
+            Blake3,
+            DefaultRandomCoin<Blake3>,
+            MerkleTree<Blake3>,
+        >(proof, pub_inputs, &acceptable);
         assert!(result.is_ok());
     }
 
@@ -243,19 +242,18 @@ mod tests {
         pub_inputs.commitment = commitment_from_inputs(&inputs);
 
         let mut prover = SettlementProver::with_fast_options();
-        let (proof, pub_inputs) = prover
-            .prove_settlement(pub_inputs)
-            .expect("proof");
+        let (proof, pub_inputs) = prover.prove_settlement(pub_inputs).expect("proof");
 
         let mut tampered = pub_inputs.clone();
         tampered.commitment += Felt::ONE;
 
         let acceptable = winterfell::AcceptableOptions::OptionSet(vec![fast_proof_options()]);
-        let result = winterfell::verify::<SettlementAir, Blake3, DefaultRandomCoin<Blake3>, MerkleTree<Blake3>>(
-            proof,
-            tampered,
-            &acceptable,
-        );
+        let result = winterfell::verify::<
+            SettlementAir,
+            Blake3,
+            DefaultRandomCoin<Blake3>,
+            MerkleTree<Blake3>,
+        >(proof, tampered, &acceptable);
         assert!(result.is_err());
     }
 }

@@ -384,8 +384,7 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::config]
-    pub trait Config: frame_system::Config + CreateSignedTransaction<Call<Self>>
-    {
+    pub trait Config: frame_system::Config + CreateSignedTransaction<Call<Self>> {
         #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type AssetId: Parameter + Member + Copy + MaxEncodedLen + Default;
@@ -738,13 +737,18 @@ pub mod pallet {
             let verifier_params = VerifierParameters::<T>::get();
 
             let proof_inputs = SettlementProofInputs {
-                commitment: commitment.clone(),
+                commitment,
                 instructions: instructions.clone().into_inner(),
                 nullifiers: nullifiers.clone().into_inner(),
             };
 
             ensure!(
-                T::ProofVerifier::verify(&proof_inputs, &proof, &verification_key, &verifier_params),
+                T::ProofVerifier::verify(
+                    &proof_inputs,
+                    &proof,
+                    &verification_key,
+                    &verifier_params
+                ),
                 Error::<T>::ProofInvalid
             );
 

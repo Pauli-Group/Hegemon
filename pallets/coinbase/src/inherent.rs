@@ -18,7 +18,9 @@
 
 use codec::{Decode, Encode};
 use scale_info::TypeInfo;
-use sp_inherents::{InherentData, InherentIdentifier};
+#[cfg(feature = "std")]
+use sp_inherents::InherentData;
+use sp_inherents::InherentIdentifier;
 
 /// The inherent identifier for coinbase data
 pub const COINBASE_INHERENT_IDENTIFIER: InherentIdentifier = *b"coinbase";

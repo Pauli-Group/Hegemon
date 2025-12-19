@@ -24,20 +24,19 @@ use crate::{
     stark_air::{
         commitment_output_row, cycle_is_merkle, cycle_reset_domain, merkle_root_output_row,
         note_start_row_input, note_start_row_output, nullifier_output_row, poseidon_round,
-        CYCLE_LENGTH, COL_DOMAIN, COL_FEE, COL_IN0, COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1,
-        COL_IN1_ASSET, COL_IN1_VALUE, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_LINK,
-        COL_NOTE_START_IN0, COL_NOTE_START_IN1, COL_NOTE_START_OUT0, COL_NOTE_START_OUT1,
-        COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT_ACTIVE0,
-        COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S2, COL_SEL_IN0_SLOT0,
+        TransactionAirStark, TransactionPublicInputsStark, COL_DOMAIN, COL_FEE, COL_IN0,
+        COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET, COL_IN1_VALUE, COL_IN_ACTIVE0,
+        COL_IN_ACTIVE1, COL_LINK, COL_NOTE_START_IN0, COL_NOTE_START_IN1, COL_NOTE_START_OUT0,
+        COL_NOTE_START_OUT1, COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1_ASSET, COL_OUT1_VALUE,
+        COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S2, COL_SEL_IN0_SLOT0,
         COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0,
         COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0,
         COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0,
-        COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET,
-        COL_SLOT0_IN, COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT,
-        COL_SLOT2_ASSET, COL_SLOT2_IN, COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN,
-        COL_SLOT3_OUT, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN, COMMITMENT_CYCLES,
-        DUMMY_CYCLES, MERKLE_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_CYCLES, TOTAL_TRACE_CYCLES,
-        TOTAL_USED_CYCLES, TRACE_WIDTH, TransactionAirStark, TransactionPublicInputsStark,
+        COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET, COL_SLOT0_IN,
+        COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN,
+        COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_VALUE_BALANCE_MAG,
+        COL_VALUE_BALANCE_SIGN, COMMITMENT_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES, MERKLE_CYCLES,
+        MIN_TRACE_LENGTH, NULLIFIER_CYCLES, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH,
     },
     witness::TransactionWitness,
     TransactionCircuitError,
@@ -82,8 +81,13 @@ impl TransactionProverStark {
 
         let slots = witness.balance_slots()?;
         let slot_assets: Vec<u64> = slots.iter().map(|slot| slot.asset_id).collect();
-        let selectors =
-            build_selectors(&input_notes, &output_notes, &slot_assets, &input_flags, &output_flags);
+        let selectors = build_selectors(
+            &input_notes,
+            &output_notes,
+            &slot_assets,
+            &input_flags,
+            &output_flags,
+        );
 
         let (vb_sign, vb_mag) = value_balance_parts(witness.value_balance)?;
         let fee = BaseElement::new(witness.fee);
@@ -98,10 +102,30 @@ impl TransactionProverStark {
         let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
         let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
         let selector_cols = [
-            [COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3],
-            [COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3],
-            [COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3],
-            [COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3],
+            [
+                COL_SEL_IN0_SLOT0,
+                COL_SEL_IN0_SLOT1,
+                COL_SEL_IN0_SLOT2,
+                COL_SEL_IN0_SLOT3,
+            ],
+            [
+                COL_SEL_IN1_SLOT0,
+                COL_SEL_IN1_SLOT1,
+                COL_SEL_IN1_SLOT2,
+                COL_SEL_IN1_SLOT3,
+            ],
+            [
+                COL_SEL_OUT0_SLOT0,
+                COL_SEL_OUT0_SLOT1,
+                COL_SEL_OUT0_SLOT2,
+                COL_SEL_OUT0_SLOT3,
+            ],
+            [
+                COL_SEL_OUT1_SLOT0,
+                COL_SEL_OUT1_SLOT1,
+                COL_SEL_OUT1_SLOT2,
+                COL_SEL_OUT1_SLOT3,
+            ],
         ];
         let sentinel_cols = [
             COL_IN_ACTIVE0,
@@ -202,6 +226,7 @@ impl TransactionProverStark {
 
         let mut slot_in_acc = [0u64; 4];
         let mut slot_out_acc = [0u64; 4];
+        #[allow(clippy::needless_range_loop)]
         for row in 1..trace_len {
             for slot in 0..4 {
                 trace[slot_in_cols[slot]][row] = BaseElement::new(slot_in_acc[slot]);
@@ -254,15 +279,12 @@ impl TransactionProverStark {
             let state_start = if cycle == 0 {
                 prev_state
             } else {
-                let spec = cycle_specs
-                    .get(cycle - 1)
-                    .cloned()
-                    .unwrap_or(CycleSpec {
-                        reset: false,
-                        domain: 0,
-                        in0: BaseElement::ZERO,
-                        in1: BaseElement::ZERO,
-                    });
+                let spec = cycle_specs.get(cycle - 1).cloned().unwrap_or(CycleSpec {
+                    reset: false,
+                    domain: 0,
+                    in0: BaseElement::ZERO,
+                    in1: BaseElement::ZERO,
+                });
                 if spec.reset {
                     [
                         BaseElement::new(spec.domain) + spec.in0,
@@ -299,12 +321,15 @@ impl TransactionProverStark {
             let end_row = cycle_start + (CYCLE_LENGTH - 1);
             if end_row < trace_len {
                 let next_cycle = cycle + 1;
-                let next_spec = cycle_specs.get(next_cycle - 1).cloned().unwrap_or(CycleSpec {
-                    reset: false,
-                    domain: 0,
-                    in0: BaseElement::ZERO,
-                    in1: BaseElement::ZERO,
-                });
+                let next_spec = cycle_specs
+                    .get(next_cycle - 1)
+                    .cloned()
+                    .unwrap_or(CycleSpec {
+                        reset: false,
+                        domain: 0,
+                        in0: BaseElement::ZERO,
+                        in1: BaseElement::ZERO,
+                    });
                 trace[COL_IN0][end_row] = next_spec.in0;
                 trace[COL_IN1][end_row] = next_spec.in1;
 
@@ -327,7 +352,10 @@ impl TransactionProverStark {
         Ok(TraceTable::init(trace))
     }
 
-    pub fn get_public_inputs(&self, witness: &TransactionWitness) -> Result<TransactionPublicInputsStark, TransactionCircuitError> {
+    pub fn get_public_inputs(
+        &self,
+        witness: &TransactionWitness,
+    ) -> Result<TransactionPublicInputsStark, TransactionCircuitError> {
         let input_flags: Vec<BaseElement> = (0..MAX_INPUTS)
             .map(|i| flag_to_felt(i < witness.inputs.len()))
             .collect();
@@ -338,7 +366,11 @@ impl TransactionProverStark {
         let mut nullifiers = Vec::new();
         let prf = prf_key(&witness.sk_spend);
         for input in &witness.inputs {
-            nullifiers.push(crate::hashing::nullifier(prf, &input.note.rho, input.position));
+            nullifiers.push(crate::hashing::nullifier(
+                prf,
+                &input.note.rho,
+                input.position,
+            ));
         }
         while nullifiers.len() < MAX_INPUTS {
             nullifiers.push(BaseElement::ZERO);
@@ -418,10 +450,9 @@ impl Prover for TransactionProverStark {
         }
 
         let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
-        for i in 0..MAX_INPUTS {
-            let flag = input_flags[i];
+        for (i, flag) in input_flags.iter().enumerate() {
             let row = nullifier_output_row(i);
-            let nf = if flag == BaseElement::ONE && row < trace.length() {
+            let nf = if *flag == BaseElement::ONE && row < trace.length() {
                 trace.get(COL_S0, row)
             } else {
                 BaseElement::ZERO
@@ -430,10 +461,9 @@ impl Prover for TransactionProverStark {
         }
 
         let mut commitments = Vec::with_capacity(MAX_OUTPUTS);
-        for i in 0..MAX_OUTPUTS {
-            let flag = output_flags[i];
+        for (i, flag) in output_flags.iter().enumerate() {
             let row = commitment_output_row(i);
-            let cm = if flag == BaseElement::ONE && row < trace.length() {
+            let cm = if *flag == BaseElement::ONE && row < trace.length() {
                 trace.get(COL_S0, row)
             } else {
                 BaseElement::ZERO
@@ -660,11 +690,17 @@ fn build_selectors(
     selectors
 }
 
-fn value_balance_parts(value_balance: i128) -> Result<(BaseElement, BaseElement), TransactionCircuitError> {
+fn value_balance_parts(
+    value_balance: i128,
+) -> Result<(BaseElement, BaseElement), TransactionCircuitError> {
     let magnitude = value_balance.unsigned_abs();
     let mag_u64 = u64::try_from(magnitude)
         .map_err(|_| TransactionCircuitError::ValueBalanceOutOfRange(magnitude))?;
-    let sign = if value_balance < 0 { BaseElement::ONE } else { BaseElement::ZERO };
+    let sign = if value_balance < 0 {
+        BaseElement::ONE
+    } else {
+        BaseElement::ZERO
+    };
     Ok((sign, BaseElement::new(mag_u64)))
 }
 
@@ -683,7 +719,12 @@ fn build_cycle_specs(
             let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
             let in0 = commitment_inputs[chunk_idx * 2];
             let in1 = commitment_inputs[chunk_idx * 2 + 1];
-            cycles.push(CycleSpec { reset, domain, in0, in1 });
+            cycles.push(CycleSpec {
+                reset,
+                domain,
+                in0,
+                in1,
+            });
         }
 
         let mut current = input.note.commitment();
@@ -716,7 +757,12 @@ fn build_cycle_specs(
             let domain = if reset { NULLIFIER_DOMAIN_TAG } else { 0 };
             let in0 = nullifier_inputs[chunk_idx * 2];
             let in1 = nullifier_inputs[chunk_idx * 2 + 1];
-            cycles.push(CycleSpec { reset, domain, in0, in1 });
+            cycles.push(CycleSpec {
+                reset,
+                domain,
+                in0,
+                in1,
+            });
         }
 
         let _ = idx;
@@ -729,7 +775,12 @@ fn build_cycle_specs(
             let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
             let in0 = commitment_inputs[chunk_idx * 2];
             let in1 = commitment_inputs[chunk_idx * 2 + 1];
-            cycles.push(CycleSpec { reset, domain, in0, in1 });
+            cycles.push(CycleSpec {
+                reset,
+                domain,
+                in0,
+                in1,
+            });
         }
     }
 

@@ -27,6 +27,7 @@ After this change, the node enforces real cryptographic proof verification for s
 - [x] (2025-12-19T04:02Z) Run validation for `cargo test -p pallet-shielded-pool` and `cargo test -p epoch-circuit`.
 - [x] (2025-12-19T04:07Z) Update METHODS/API docs for transaction public inputs, MASP selectors, and current circuit APIs.
 - [x] (2025-12-19T04:07Z) Update documentation and run validation (completed: DESIGN/METHODS/API updates for settlement proofs; transaction/settlement/pallet-shielded-pool/epoch tests; docs).
+- [x] (2025-12-19T05:23Z) Run CI-equivalent checks (fmt, clippy, workspace tests, runtime build/benchmarks, release node build, circuits/wallet benches, security/adversarial suites, go netbench, clang-format) and fix no_std/clippy regressions.
 
 ## Surprises & Discoveries
 
@@ -34,6 +35,7 @@ After this change, the node enforces real cryptographic proof verification for s
 - (2025-01-15) Wallet/node submission paths assumed padded nullifiers/commitments; active-flag public inputs required filtering active entries and adding fee into the binding signature message.
 - (2025-12-19) Settlement AIR debug-degree checks flagged hold constraints for all-zero batches; dropping hold constraints avoids degree collapse while keeping absorb-only inputs sound.
 - (2025-12-19) Winterfell debug degree checks surfaced that constant columns make constraint polynomials identically zero; transaction-circuit proofs failed with "transition constraint degrees didn't match" until we made metadata/accumulator columns non-constant via sentinel rows and masked enforcement.
+- (2025-12-19) Local macOS CI runs required `LIBCLANG_PATH`/`DYLD_LIBRARY_PATH` for RocksDB bindgen and installing Go for netbench tests.
 
 ## Decision Log
 
