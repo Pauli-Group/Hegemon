@@ -5,8 +5,9 @@ compile_error!("feature \"production\" requires \"stark-verify\" for real proof 
 
 pub use pallet::*;
 
-use blake3::Hasher as Blake3Hasher;
 use codec::{Decode, DecodeWithMemTracking, Encode};
+#[cfg(feature = "stark-verify")]
+use core::convert::TryInto;
 use frame_support::pallet_prelude::*;
 use frame_support::pallet_prelude::{
     InvalidTransaction, TransactionPriority, TransactionValidity, ValidTransaction,
@@ -127,11 +128,18 @@ pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(3);
 
 pub trait ProofVerifier<Hash> {
     fn verify(
-        commitment: &Hash,
+        inputs: &SettlementProofInputs<Hash>,
         proof: &[u8],
         verification_key: &[u8],
         params: &StarkVerifierParams,
     ) -> bool;
+}
+
+#[derive(Clone, Eq, PartialEq, RuntimeDebug, TypeInfo)]
+pub struct SettlementProofInputs<Hash> {
+    pub commitment: Hash,
+    pub instructions: Vec<u64>,
+    pub nullifiers: Vec<Hash>,
 }
 
 #[cfg(all(feature = "std", not(feature = "production")))]
@@ -140,7 +148,7 @@ pub struct AcceptAllProofs;
 #[cfg(all(feature = "std", not(feature = "production")))]
 impl<Hash> ProofVerifier<Hash> for AcceptAllProofs {
     fn verify(
-        _commitment: &Hash,
+        _inputs: &SettlementProofInputs<Hash>,
         _proof: &[u8],
         _verification_key: &[u8],
         _params: &StarkVerifierParams,
@@ -153,14 +161,12 @@ impl<Hash> ProofVerifier<Hash> for AcceptAllProofs {
 
 /// STARK proof verifier for settlement instructions.
 ///
-/// This verifier validates FRI-based STARK proofs using the specified
-/// hash function and security parameters.
-///
-/// With the `stark-verify` feature enabled, this performs real winterfell
-/// STARK verification. Without the feature, it performs structural validation only.
+/// This verifier is currently fail-closed: it rejects all proofs until a
+/// concrete settlement circuit is available and wired into runtime verification.
 pub struct StarkVerifier;
 
 /// Proof structure constants for settlement STARK proofs.
+#[allow(dead_code)]
 mod settlement_proof_structure {
     /// Minimum number of FRI layers for 128-bit security
     pub const MIN_FRI_LAYERS: usize = 4;
@@ -185,6 +191,7 @@ mod settlement_proof_structure {
 
 impl StarkVerifier {
     /// Validate proof structure without full cryptographic verification.
+    #[allow(dead_code)]
     fn validate_proof_structure(proof: &[u8], params: &StarkVerifierParams) -> bool {
         // Check minimum size for header
         if proof.len() < settlement_proof_structure::PROOF_HEADER_SIZE {
@@ -216,6 +223,7 @@ impl StarkVerifier {
     }
 
     /// Compute a challenge hash binding proof to commitment.
+    #[allow(dead_code)]
     fn compute_challenge(commitment: &[u8], proof: &[u8]) -> [u8; 32] {
         use sp_core::hashing::blake2_256;
 
@@ -235,154 +243,130 @@ impl StarkVerifier {
     }
 }
 
+#[cfg(feature = "stark-verify")]
+fn hash_to_felt<Hash: AsRef<[u8]>>(hash: &Hash) -> Option<settlement_circuit::Felt> {
+    let bytes: [u8; 32] = hash.as_ref().try_into().ok()?;
+    settlement_circuit::bytes32_to_felt(&bytes)
+}
+
+#[cfg(feature = "stark-verify")]
+fn acceptable_options(params: &StarkVerifierParams) -> Option<winterfell::AcceptableOptions> {
+    if params.fri_queries == 0 {
+        return None;
+    }
+    let blowup = params.blowup_factor as usize;
+    if blowup < 16 || !blowup.is_power_of_two() {
+        return None;
+    }
+
+    let options = winterfell::ProofOptions::new(
+        params.fri_queries as usize,
+        blowup,
+        0,
+        winterfell::FieldExtension::None,
+        4,
+        31,
+        winterfell::BatchingMethod::Linear,
+        winterfell::BatchingMethod::Linear,
+    );
+    Some(winterfell::AcceptableOptions::OptionSet(vec![options]))
+}
+
 #[cfg(not(feature = "stark-verify"))]
 impl<Hash: AsRef<[u8]>> ProofVerifier<Hash> for StarkVerifier {
     fn verify(
-        commitment: &Hash,
-        proof: &[u8],
-        verification_key: &[u8],
-        params: &StarkVerifierParams,
+        _inputs: &SettlementProofInputs<Hash>,
+        _proof: &[u8],
+        _verification_key: &[u8],
+        _params: &StarkVerifierParams,
     ) -> bool {
-        // Reject empty proofs
-        if proof.is_empty() {
-            return false;
-        }
-
-        // Reject empty verification keys
-        if verification_key.is_empty() {
-            return false;
-        }
-
-        // Check commitment is non-zero
-        let commitment_bytes = commitment.as_ref();
-        if commitment_bytes.iter().all(|&b| b == 0) {
-            return false;
-        }
-
-        // Validate proof structure
-        if !Self::validate_proof_structure(proof, params) {
-            return false;
-        }
-
-        // Compute and verify challenge binding
-        let _challenge = Self::compute_challenge(commitment_bytes, proof);
-
-        // Without the stark-verify feature, we perform structural validation only.
-        // This validates:
-        // 1. Proof is non-empty and properly formatted
-        // 2. FRI layer structure is present
-        // 3. Commitment is bound to the proof
-        //
-        // SECURITY WARNING: Enable `stark-verify` feature for production use.
-        // Without it, proofs are not cryptographically verified.
-
-        true
+        log::warn!(
+            target: "settlement",
+            "Settlement STARK verifier not implemented; rejecting proof"
+        );
+        false
     }
 }
 
 #[cfg(feature = "stark-verify")]
 impl<Hash: AsRef<[u8]>> ProofVerifier<Hash> for StarkVerifier {
     fn verify(
-        commitment: &Hash,
+        inputs: &SettlementProofInputs<Hash>,
         proof: &[u8],
         verification_key: &[u8],
         params: &StarkVerifierParams,
     ) -> bool {
-        use sp_core::hashing::blake2_256;
-        use winterfell::Proof;
+        if verification_key.is_empty() {
+            log::warn!(target: "settlement", "Settlement verification key missing");
+            return false;
+        }
 
-        // Reject empty proofs
         if proof.is_empty() {
             return false;
         }
 
-        // Reject empty verification keys
-        if verification_key.is_empty() {
+        if params.hash != StarkHashFunction::Blake3 {
+            log::warn!(
+                target: "settlement",
+                "Settlement verifier only supports Blake3 hashing"
+            );
             return false;
         }
 
-        // Check commitment is non-zero
-        let commitment_bytes = commitment.as_ref();
-        if commitment_bytes.iter().all(|&b| b == 0) {
-            return false;
-        }
-
-        // Validate basic proof structure first
-        if !Self::validate_proof_structure(proof, params) {
-            return false;
-        }
-
-        // Try to deserialize the winterfell proof
-        let winterfell_proof = match Proof::from_bytes(proof) {
-            Ok(p) => p,
-            Err(_) => {
-                // Fall back to FRI structure verification if winterfell deserialization fails
-                let _challenge = Self::compute_challenge(commitment_bytes, proof);
-                return true; // Structural validation passed
-            }
+        let commitment = match hash_to_felt(&inputs.commitment) {
+            Some(value) => value,
+            None => return false,
         };
 
-        // Verify the proof context matches our expectations
-        let trace_info = winterfell_proof.context.trace_info();
-        let options = winterfell_proof.context.options();
+        let mut instructions = Vec::with_capacity(settlement_circuit::constants::MAX_INSTRUCTIONS);
+        if inputs.instructions.len() > settlement_circuit::constants::MAX_INSTRUCTIONS {
+            return false;
+        }
+        for &id in inputs.instructions.iter() {
+            instructions.push(settlement_circuit::Felt::new(id));
+        }
+        while instructions.len() < settlement_circuit::constants::MAX_INSTRUCTIONS {
+            instructions.push(settlement_circuit::Felt::ZERO);
+        }
 
-        // Check trace width is reasonable for settlement (2 columns minimum)
-        if trace_info.width() < 2 {
+        let mut nullifiers = Vec::with_capacity(settlement_circuit::constants::MAX_NULLIFIERS);
+        if inputs.nullifiers.len() > settlement_circuit::constants::MAX_NULLIFIERS {
+            return false;
+        }
+        for nf in &inputs.nullifiers {
+            let felt = match hash_to_felt(nf) {
+                Some(value) => value,
+                None => return false,
+            };
+            nullifiers.push(felt);
+        }
+        while nullifiers.len() < settlement_circuit::constants::MAX_NULLIFIERS {
+            nullifiers.push(settlement_circuit::Felt::ZERO);
+        }
+
+        let pub_inputs = settlement_circuit::SettlementPublicInputs {
+            instruction_count: inputs.instructions.len() as u32,
+            nullifier_count: inputs.nullifiers.len() as u32,
+            instructions,
+            nullifiers,
+            commitment,
+        };
+
+        if pub_inputs.validate().is_err() {
             return false;
         }
 
-        // Check blowup factor is sufficient for security
-        if options.blowup_factor() < params.blowup_factor as usize {
-            return false;
-        }
+        let acceptable = match acceptable_options(params) {
+            Some(options) => options,
+            None => return false,
+        };
 
-        // Check number of queries is sufficient
-        if options.num_queries() < params.fri_queries as usize {
-            return false;
-        }
-
-        // Verify FRI proof exists and has expected structure
-        let fri_proof = &winterfell_proof.fri_proof;
-        if fri_proof.num_layers() < settlement_proof_structure::MIN_FRI_LAYERS {
-            return false;
-        }
-
-        // Verify query count matches
-        let num_queries = winterfell_proof.num_unique_queries as usize;
-        if num_queries < params.fri_queries as usize {
-            return false;
-        }
-
-        // Compute commitment binding
-        let mut binding_data = Vec::new();
-        binding_data.extend_from_slice(b"SETTLEMENT-BINDING-V1");
-        binding_data.extend_from_slice(commitment_bytes);
-        let input_binding = blake2_256(&binding_data);
-
-        // Hash verification data with input binding
-        let mut verification_data = Vec::new();
-        verification_data.extend_from_slice(b"SETTLEMENT-VERIFY-V1");
-        verification_data.extend_from_slice(&input_binding);
-        verification_data.extend_from_slice(&winterfell_proof.pow_nonce.to_le_bytes());
-
-        let verification_hash = blake2_256(&verification_data);
-
-        // The verification hash must have sufficient entropy (not all zeros)
-        if verification_hash.iter().all(|&b| b == 0) {
-            return false;
-        }
-
-        // Full winterfell verification would require matching AIR and hash types.
-        // Since we've verified:
-        // 1. Proof deserializes correctly (winterfell format)
-        // 2. Trace has correct width
-        // 3. Security parameters are sufficient (blowup, queries)
-        // 4. FRI proof has sufficient layers
-        // 5. Commitment is bound to verification
-        //
-        // This provides meaningful verification for winterfell-format proofs.
-
-        true
+        settlement_circuit::verify_settlement_proof_bytes_with_options(
+            proof,
+            &pub_inputs,
+            acceptable,
+        )
+        .is_ok()
     }
 }
 
@@ -398,7 +382,10 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::config]
-    pub trait Config: frame_system::Config + CreateSignedTransaction<Call<Self>> {
+    pub trait Config: frame_system::Config + CreateSignedTransaction<Call<Self>>
+    where
+        Self::Hash: From<[u8; 32]>,
+    {
         #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type AssetId: Parameter + Member + Copy + MaxEncodedLen + Default;
@@ -566,17 +553,64 @@ pub mod pallet {
 
     #[pallet::hooks]
     impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
-        fn offchain_worker(n: BlockNumberFor<T>) {
+        fn offchain_worker(_n: BlockNumberFor<T>) {
             let queue = PendingQueue::<T>::get();
             if queue.is_empty() {
                 return;
             }
 
-            let commitment_hash = Self::blake3_hash(&queue.encode());
-            let nullifier = Self::blake3_hash(&(commitment_hash, n).encode());
+            let max_nullifiers = T::MaxNullifiers::get() as usize;
+            let nullifier_count = queue.len().min(max_nullifiers);
+            let mut nullifier_felts =
+                Vec::with_capacity(settlement_circuit::constants::MAX_NULLIFIERS);
+            for (idx, instruction_id) in queue.iter().take(nullifier_count).enumerate() {
+                nullifier_felts.push(settlement_circuit::nullifier_from_instruction(
+                    *instruction_id,
+                    idx as u64,
+                ));
+            }
+            while nullifier_felts.len() < settlement_circuit::constants::MAX_NULLIFIERS {
+                nullifier_felts.push(settlement_circuit::Felt::ZERO);
+            }
+
+            let mut instructions_felts =
+                Vec::with_capacity(settlement_circuit::constants::MAX_INSTRUCTIONS);
+            for instruction_id in queue.iter() {
+                instructions_felts.push(settlement_circuit::Felt::new(*instruction_id));
+            }
+            while instructions_felts.len() < settlement_circuit::constants::MAX_INSTRUCTIONS {
+                instructions_felts.push(settlement_circuit::Felt::ZERO);
+            }
+
+            let mut pub_inputs = settlement_circuit::SettlementPublicInputs {
+                instruction_count: queue.len() as u32,
+                nullifier_count: nullifier_count as u32,
+                instructions: instructions_felts,
+                nullifiers: nullifier_felts,
+                commitment: settlement_circuit::Felt::ZERO,
+            };
+            let inputs = pub_inputs.input_elements();
+            let commitment_felt = settlement_circuit::commitment_from_inputs(&inputs);
+            pub_inputs.commitment = commitment_felt;
+
+            let commitment_hash = Self::hash_from_felt(commitment_felt);
+            let nullifiers: Vec<T::Hash> = pub_inputs
+                .nullifiers
+                .iter()
+                .take(nullifier_count)
+                .map(|felt| Self::hash_from_felt(*felt))
+                .collect();
             let proof: BoundedVec<u8, T::MaxProofSize> = BoundedVec::truncate_from(Vec::new());
             let nullifiers: BoundedVec<T::Hash, T::MaxNullifiers> =
-                BoundedVec::truncate_from(vec![nullifier]);
+                BoundedVec::truncate_from(nullifiers);
+
+            if proof.is_empty() {
+                warn!(
+                    target: "settlement",
+                    "Settlement proof generation not implemented; skipping submit_batch"
+                );
+                return;
+            }
 
             let call = Call::submit_batch {
                 instructions: queue.clone(),
@@ -700,8 +734,14 @@ pub mod pallet {
                 VerificationKeys::<T>::get(key).ok_or(Error::<T>::VerificationKeyMissing)?;
             let verifier_params = VerifierParameters::<T>::get();
 
+            let proof_inputs = SettlementProofInputs {
+                commitment: commitment.clone(),
+                instructions: instructions.clone().into_inner(),
+                nullifiers: nullifiers.clone().into_inner(),
+            };
+
             ensure!(
-                T::ProofVerifier::verify(&commitment, &proof, &verification_key, &verifier_params),
+                T::ProofVerifier::verify(&proof_inputs, &proof, &verification_key, &verifier_params),
                 Error::<T>::ProofInvalid
             );
 
@@ -709,6 +749,11 @@ pub mod pallet {
                 nullifiers.len() as u32 <= T::MaxNullifiers::get(),
                 Error::<T>::NullifierReused
             );
+            for i in 0..nullifiers.len() {
+                for j in (i + 1)..nullifiers.len() {
+                    ensure!(nullifiers[i] != nullifiers[j], Error::<T>::NullifierReused);
+                }
+            }
             for n in nullifiers.iter() {
                 ensure!(!Nullifiers::<T>::get(n), Error::<T>::NullifierReused);
             }
@@ -964,12 +1009,8 @@ pub mod pallet {
             Ok(())
         }
 
-        fn blake3_hash(data: &[u8]) -> T::Hash {
-            let mut hasher = Blake3Hasher::new();
-            hasher.update(data);
-            let mut out = [0u8; 32];
-            hasher.finalize_xof().fill(&mut out);
-            T::Hashing::hash_of(&out)
+        fn hash_from_felt(value: settlement_circuit::Felt) -> T::Hash {
+            T::Hash::from(settlement_circuit::felt_to_bytes32(value))
         }
     }
 }
@@ -1006,6 +1047,37 @@ impl<T: Config> ValidateUnsigned for Pallet<T> {
         }
 
         InvalidTransaction::Call.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stark_verifier_rejects_until_circuit_exists() {
+        let commitment = [1u8; 32];
+        let proof = vec![2u8; 64];
+        let verification_key = vec![3u8; 32];
+        let params = StarkVerifierParams {
+            hash: StarkHashFunction::Blake3,
+            fri_queries: 1,
+            blowup_factor: 1,
+            security_bits: 32,
+        };
+
+        let inputs = SettlementProofInputs {
+            commitment,
+            instructions: vec![],
+            nullifiers: vec![],
+        };
+        let ok = <StarkVerifier as ProofVerifier<[u8; 32]>>::verify(
+            &inputs,
+            &proof,
+            &verification_key,
+            &params,
+        );
+        assert!(!ok);
     }
 }
 

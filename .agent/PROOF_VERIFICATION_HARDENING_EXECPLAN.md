@@ -18,10 +18,10 @@ After this change, the node enforces real cryptographic proof verification for s
 - [x] (2025-01-15T00:00Z) Wired the shielded-pool verifier to transaction-core and padded STARK public inputs for verification.
 - [x] (2025-01-15T00:00Z) Implemented full transaction AIR constraints, updated prover/witness, and aligned RPO verifier + tests with active flags and value-balance binding.
 - [x] (2025-01-15T00:00Z) Bound value balance + fee into STARK public inputs and binding signature; updated pallet verifier, extrinsic inputs, and wallet/node plumbing to reject zero padding and require canonical non-zero inputs.
-- [ ] Update recursive proof pipeline to new transaction proof shape and update `RECURSIVE_PROOFS_EXECPLAN.md` (completed: plan; remaining: code change and plan update).
-- [ ] Implement settlement proof verification (fail-closed first, then real circuit) (completed: plan; remaining: code change and tests).
-- [ ] Harden PoW import checks and PQ identity generation (completed: plan; remaining: code change and tests).
-- [ ] Update documentation and run validation (completed: plan; remaining: doc updates and tests).
+- [x] (2025-12-19T01:32Z) Update recursive proof pipeline to the new transaction proof shape and refresh `RECURSIVE_PROOFS_EXECPLAN.md` (proof hash now binds proof bytes + public inputs; batch proofs included).
+- [x] (2025-12-19T02:08Z) Implement settlement proof verification (settlement STARK circuit + verifier wiring + canonical commitment/nullifier encoding).
+- [x] (2025-12-19T01:32Z) Harden PoW import checks and PQ identity generation (proper pre-hash, timestamp inherents restored, zero-seed fallback removed).
+- [ ] (2025-12-19T02:08Z) Update documentation and run validation (completed: DESIGN/METHODS/API updates for settlement proofs; remaining: run tests).
 
 ## Surprises & Discoveries
 
@@ -45,6 +45,18 @@ After this change, the node enforces real cryptographic proof verification for s
 - Decision: Do not purge the chain as part of this plan. Use new base paths or `--tmp` when testing.
   Rationale: The user explicitly requested no purge; testing can be done on ephemeral chains.
   Date/Author: 2025-01-15 / Codex
+
+- Decision: Bind epoch proof hashes to proof bytes plus the public inputs required for verification (including batch proofs).
+  Rationale: Proof bytes alone do not identify the verified statement; inclusion proofs and recursive pipelines must commit to anchor/nullifiers/commitments/fee/value balance (and batch metadata) to avoid ambiguity.
+  Date/Author: 2025-12-19 / Codex
+
+- Decision: Remove the PQ identity zero-seed fallback and fail fast if key generation fails.
+  Rationale: Using an all-zero fallback undermines node identity guarantees and masks critical entropy failures; production nodes must not silently degrade.
+  Date/Author: 2025-12-19 / Codex
+
+- Decision: Define settlement commitments as Poseidon hash chains over instruction counts, instruction IDs, and nullifiers with canonical 64-bit encodings.
+  Rationale: Settlement proofs must bind to concrete batch contents using a hash-friendly STARK primitive without relying on arbitrary 256-bit encodings.
+  Date/Author: 2025-12-19 / Codex
 
 ## Outcomes & Retrospective
 
@@ -179,3 +191,5 @@ The shared transaction core must expose the following items:
 The pallet verifier must use `transaction_core::stark_verifier::verify_transaction_proof_bytes` and fail if public inputs are non-canonical. Runtime limits in `runtime/src/lib.rs` must match `MAX_INPUTS/MAX_OUTPUTS` from transaction-core. Recursive proof extraction in `circuits/epoch` must read the new public inputs and proof layout. Settlement verification must route through a concrete verifier in `circuits/settlement` that checks commitments and nullifiers, and the pallet must treat verification failure as `ProofInvalid`.
 
 Revision note: This ExecPlan was created to harden proof verification and consensus integrity without purging the chain, and to keep recursive proof aggregation aligned with the updated transaction proof shape.
+
+Revision note (2025-12-19): Updated progress and decisions for recursive proof hash binding, settlement fail-closed verifier, PoW import hardening, and PQ identity fail-fast behavior; aligned follow-on documentation requirements.

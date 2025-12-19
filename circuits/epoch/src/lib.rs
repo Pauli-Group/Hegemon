@@ -61,7 +61,7 @@ pub use dimensions::{
 };
 
 // Core types
-pub use types::{proof_hash, Epoch};
+pub use types::{batch_proof_hash, proof_hash, BatchProofHashInputs, Epoch, ProofHashInputs};
 
 // Merkle tree operations
 pub use merkle::{compute_proof_root, generate_merkle_proof, verify_merkle_proof};
@@ -218,15 +218,34 @@ mod integration_tests {
     #[test]
     fn test_proof_hash_consistency() {
         let data = vec![1, 2, 3, 4, 5];
-        let h1 = proof_hash(&data);
-        let h2 = proof_hash(&data);
+        let anchor = [7u8; 32];
+        let nullifiers = vec![[3u8; 32]];
+        let commitments = vec![[4u8; 32]];
+        let inputs = ProofHashInputs {
+            proof_bytes: &data,
+            anchor,
+            nullifiers: &nullifiers,
+            commitments: &commitments,
+            fee: 11,
+            value_balance: 0,
+        };
+        let h1 = proof_hash(&inputs);
+        let h2 = proof_hash(&inputs);
 
         assert_eq!(h1, h2);
         assert_ne!(h1, [0u8; 32]);
 
         // Different data should produce different hash
         let other_data = vec![1, 2, 3, 4, 6];
-        let h3 = proof_hash(&other_data);
+        let other_inputs = ProofHashInputs {
+            proof_bytes: &other_data,
+            anchor,
+            nullifiers: &nullifiers,
+            commitments: &commitments,
+            fee: 11,
+            value_balance: 0,
+        };
+        let h3 = proof_hash(&other_inputs);
         assert_ne!(h1, h3);
     }
 }

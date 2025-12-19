@@ -767,6 +767,14 @@ This yields a per-block proof `π_block` showing every transaction adheres to th
 
 If you introduce a new transaction circuit version, update `C_block` so its verification step accepts both old and new proofs. After some time, consensus can reject new transactions with old-version proofs, but `C_block` retains backward verification code as long as necessary (or you drop it when you no longer need to accept old blocks).
 
+#### 6.5 Epoch proof hashes
+
+Epoch proofs for light client sync accumulate proof hashes that bind the STARK proof bytes to the public inputs required for verification (anchor, nullifiers, commitments, fee, and value balance). Batch proofs use the same scheme with batch metadata (`batch_size`, `total_fee`). The hash uses Blake3 with domain separation in `circuits/epoch/src/types.rs`; any change to transaction public input encoding must update that function so epoch inclusion proofs remain sound.
+
+#### 6.6 Settlement batch proofs
+
+Settlement batch proofs bind instruction IDs and nullifiers into a Poseidon-based commitment. The public inputs are the instruction count, nullifier count, the padded instruction ID list (length `MAX_INSTRUCTIONS`), the padded nullifier list (length `MAX_NULLIFIERS`), and the commitment itself. The commitment is computed by absorbing input pairs into a Poseidon sponge initialized as `[domain_tag, 0, 1]`, adding each pair to the first two state elements, running 8 rounds, and repeating for the full padded input list. Nullifiers are Poseidon-derived from `(instruction_id, index)` under a distinct domain tag, then encoded in the same canonical 32-byte format (24 zero prefix, 8-byte big-endian payload). Settlement verification rejects non-canonical encodings and uses the on-chain `StarkVerifierParams` (Blake3, 28 FRI queries, 16x blowup) to select acceptable proof options.
+
 
 ---
 
@@ -781,7 +789,7 @@ Module layout:
 * `crypto::ml_kem` – wraps Kyber-like encapsulation with `MlKemKeyPair`, `MlKemPublicKey`, and `MlKemCiphertext`. Encapsulation uses a seed to deterministically derive ciphertexts and shared secrets, while decapsulation recomputes the shared secret from stored public bytes.
 * `crypto::hashes` – contains `sha256`, `sha3_256`, `blake3_256`, a Poseidon-style permutation over the Goldilocks prime, and helpers `commit_note`, `derive_prf_key`, and `derive_nullifier` (defaulting to BLAKE3 with SHA3 fallbacks) that apply the design’s domain tags (`"c"`, `"nk"`, `"nf"`). PQ address and note hashes now normalize on BLAKE3-256 by default while keeping SHA3-256 as an opt-in override for circuits that still expect it.
 * `pallet_identity` – stores session keys as a `SessionKey` enum (legacy AuthorityId or PQ-only Dilithium/Falcon). The runtime migration wraps any pre-upgrade `AuthorityId` into `SessionKey::Legacy` so existing operators inherit their keys; new registrations can supply PQ-only bundles through the same `register_did` call without a one-off rotate extrinsic.
-* `pallet_attestations` / `pallet_settlement` – persist `StarkVerifierParams` in storage with governance-controlled setters and runtime-upgrade initialization so on-chain STARK verification remains aligned with PQ hash choices. The runtime seeds both pallets with Blake3 hashing, 28 FRI queries, a 4× blowup factor, and 128-bit security, and governance can migrate to new parameters via the `set_verifier_params` call without redeploying code.
+* `pallet_attestations` / `pallet_settlement` – persist `StarkVerifierParams` in storage with governance-controlled setters and runtime-upgrade initialization so on-chain STARK verification remains aligned with PQ hash choices. The runtime seeds attestations with Blake3 hashing, 28 FRI queries, a 4x blowup factor, and 128-bit security; settlement uses the same hash/query/security budget but a 16x blowup factor to satisfy the Poseidon AIR degree constraints. Governance can migrate to new parameters via the `set_verifier_params` call without redeploying code.
 
 The crate’s `tests/crypto_vectors.rs` fixture loads `tests/vectors.json` to assert byte-for-byte deterministic vectors covering:
 

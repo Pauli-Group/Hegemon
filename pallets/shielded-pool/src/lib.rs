@@ -730,7 +730,15 @@ pub mod pallet {
             // Record proof hash for epoch accumulation (if epoch-proofs feature enabled)
             #[cfg(feature = "epoch-proofs")]
             {
-                let proof_hash = blake3::hash(&proof.data).into();
+                let inputs = epoch_circuit::ProofHashInputs {
+                    proof_bytes: &proof.data,
+                    anchor,
+                    nullifiers: nullifiers.as_slice(),
+                    commitments: commitments.as_slice(),
+                    fee,
+                    value_balance,
+                };
+                let proof_hash = epoch_circuit::proof_hash(&inputs);
                 let _ = Self::record_proof_hash(proof_hash);
             }
 
@@ -1032,6 +1040,21 @@ pub mod pallet {
             // Update Merkle tree root
             Self::update_merkle_tree(&commitments)?;
 
+            // Record proof hash for epoch accumulation (if epoch-proofs feature enabled)
+            #[cfg(feature = "epoch-proofs")]
+            {
+                let inputs = epoch_circuit::ProofHashInputs {
+                    proof_bytes: &proof.data,
+                    anchor,
+                    nullifiers: nullifiers.as_slice(),
+                    commitments: commitments.as_slice(),
+                    fee,
+                    value_balance,
+                };
+                let proof_hash = epoch_circuit::proof_hash(&inputs);
+                let _ = Self::record_proof_hash(proof_hash);
+            }
+
             Self::deposit_event(Event::ShieldedTransfer {
                 nullifier_count: nullifiers.len() as u32,
                 commitment_count: commitments.len() as u32,
@@ -1190,6 +1213,21 @@ pub mod pallet {
 
             // Update Merkle tree root
             Self::update_merkle_tree_batch(&commitments)?;
+
+            // Record proof hash for epoch accumulation (if epoch-proofs feature enabled)
+            #[cfg(feature = "epoch-proofs")]
+            {
+                let inputs = epoch_circuit::BatchProofHashInputs {
+                    proof_bytes: &proof.data,
+                    anchor,
+                    nullifiers: nullifiers.as_slice(),
+                    commitments: commitments.as_slice(),
+                    total_fee,
+                    batch_size: proof.batch_size,
+                };
+                let proof_hash = epoch_circuit::batch_proof_hash(&inputs);
+                let _ = Self::record_proof_hash(proof_hash);
+            }
 
             // Emit batch transfer event
             Self::deposit_event(Event::BatchShieldedTransfer {

@@ -4,6 +4,7 @@ members = [
     "circuits/transaction",
     "circuits/transaction-core",
     "circuits/batch",
+    "circuits/settlement",
     "circuits/block",
     "circuits/bench",
     "circuits/epoch",
