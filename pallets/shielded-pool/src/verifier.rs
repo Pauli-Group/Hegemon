@@ -20,12 +20,7 @@ compile_error!("feature \"production\" requires \"stark-verify\" for real proof 
 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
-#[cfg(feature = "stark-verify")]
-use sp_std::vec;
 use sp_std::vec::Vec;
-
-#[cfg(feature = "stark-verify")]
-use winterfell::math::FieldElement;
 
 use crate::types::{BindingSignature, StarkProof};
 
@@ -85,6 +80,8 @@ pub struct ShieldedTransferInputs {
     pub nullifiers: Vec<[u8; 32]>,
     /// Commitments for new notes.
     pub commitments: Vec<[u8; 32]>,
+    /// Native fee encoded in the circuit.
+    pub fee: u64,
     /// Net value balance (transparent component).
     pub value_balance: i128,
 }
@@ -212,71 +209,21 @@ pub struct StarkVerifier;
 // ================================================================================================
 
 impl StarkVerifier {
-    /// Current circuit version. Must match the prover's version.
-    pub const CIRCUIT_VERSION: u32 = 1;
-
-    /// Expected trace width for the transaction circuit.
-    /// Must match TRACE_WIDTH in transaction-circuit/stark_air.rs
-    pub const EXPECTED_TRACE_WIDTH: usize = 5;
-
-    /// Expected cycle length for Poseidon rounds.
-    pub const EXPECTED_CYCLE_LENGTH: usize = 16;
-
     /// Maximum inputs supported.
-    pub const MAX_INPUTS: usize = 2;
+    pub const MAX_INPUTS: usize = transaction_core::constants::MAX_INPUTS;
 
     /// Maximum outputs supported.
-    pub const MAX_OUTPUTS: usize = 2;
-
-    /// Merkle depth in circuit.
-    pub const CIRCUIT_MERKLE_DEPTH: usize = 32;
-
-    /// Poseidon width.
-    pub const POSEIDON_WIDTH: usize = 3;
-
-    /// Poseidon rounds.
-    pub const POSEIDON_ROUNDS: usize = 8;
-
-    /// Domain separator for AIR hash computation.
-    pub const AIR_DOMAIN_TAG: &'static [u8] = b"SHPC-TRANSACTION-AIR-V1";
+    pub const MAX_OUTPUTS: usize = transaction_core::constants::MAX_OUTPUTS;
 
     /// Compute the expected AIR hash for this verifier's circuit configuration.
     /// This must match the hash computed by the prover's circuit.
     pub fn compute_expected_air_hash() -> [u8; 32] {
-        use sp_core::hashing::blake2_256;
-
-        let mut data = sp_std::vec::Vec::with_capacity(128);
-
-        // Domain separator
-        data.extend_from_slice(Self::AIR_DOMAIN_TAG);
-
-        // Circuit version
-        data.extend_from_slice(&Self::CIRCUIT_VERSION.to_le_bytes());
-
-        // Trace configuration
-        data.extend_from_slice(&(Self::EXPECTED_TRACE_WIDTH as u32).to_le_bytes());
-        data.extend_from_slice(&(Self::EXPECTED_CYCLE_LENGTH as u32).to_le_bytes());
-        data.extend_from_slice(&2048u32.to_le_bytes()); // MIN_TRACE_LENGTH (depth 32)
-
-        // Circuit parameters
-        data.extend_from_slice(&(Self::MAX_INPUTS as u32).to_le_bytes());
-        data.extend_from_slice(&(Self::MAX_OUTPUTS as u32).to_le_bytes());
-        data.extend_from_slice(&(Self::CIRCUIT_MERKLE_DEPTH as u32).to_le_bytes());
-
-        // Poseidon configuration
-        data.extend_from_slice(&(Self::POSEIDON_WIDTH as u32).to_le_bytes());
-        data.extend_from_slice(&(Self::POSEIDON_ROUNDS as u32).to_le_bytes());
-
-        // Constraint structure
-        data.extend_from_slice(&6u32.to_le_bytes()); // Max constraint degree
-        data.extend_from_slice(&3u32.to_le_bytes()); // Number of transition constraints
-
-        blake2_256(&data)
+        transaction_core::expected_air_hash()
     }
 
     /// Get the current circuit version.
     pub fn circuit_version() -> u32 {
-        Self::CIRCUIT_VERSION
+        transaction_core::CIRCUIT_VERSION
     }
 
     /// Create a verifying key with the correct AIR hash for this circuit.
@@ -316,282 +263,8 @@ mod proof_structure {
 }
 
 // ================================================================================================
-// STARK AIR for Verification (feature-gated)
+// STARK AIR for Verification lives in transaction-core.
 // ================================================================================================
-
-/// Public inputs structure for STARK verification.
-#[cfg(feature = "stark-verify")]
-#[derive(Clone, Debug)]
-pub struct StarkPublicInputs {
-    pub nullifiers: Vec<winterfell::math::fields::f64::BaseElement>,
-    pub commitments: Vec<winterfell::math::fields::f64::BaseElement>,
-    pub total_input: winterfell::math::fields::f64::BaseElement,
-    pub total_output: winterfell::math::fields::f64::BaseElement,
-    pub fee: winterfell::math::fields::f64::BaseElement,
-    pub merkle_root: winterfell::math::fields::f64::BaseElement,
-}
-
-#[cfg(feature = "stark-verify")]
-impl winterfell::math::ToElements<winterfell::math::fields::f64::BaseElement>
-    for StarkPublicInputs
-{
-    fn to_elements(&self) -> Vec<winterfell::math::fields::f64::BaseElement> {
-        let mut elements = Vec::new();
-        elements.extend(&self.nullifiers);
-        elements.extend(&self.commitments);
-        elements.push(self.total_input);
-        elements.push(self.total_output);
-        elements.push(self.fee);
-        elements.push(self.merkle_root);
-        elements
-    }
-}
-
-/// Minimal AIR implementation for STARK verification.
-/// This must match the AIR used by the prover in transaction-circuit.
-#[cfg(feature = "stark-verify")]
-pub struct StarkTransactionAir {
-    context: winterfell::AirContext<winterfell::math::fields::f64::BaseElement>,
-    pub_inputs: StarkPublicInputs,
-}
-
-#[cfg(feature = "stark-verify")]
-impl StarkTransactionAir {
-    /// Circuit constants - MUST match transaction-circuit/stark_air.rs exactly
-    const TRACE_WIDTH: usize = 5; // COL_S0, COL_S1, COL_S2, COL_MERKLE_SIBLING, COL_VALUE
-    const CYCLE_LENGTH: usize = 16;
-    const POSEIDON_ROUNDS: usize = 8;
-    const MAX_INPUTS: usize = 2;
-    #[allow(dead_code)] // Used by non-stark-verify path
-    const MAX_OUTPUTS: usize = 2;
-    const NULLIFIER_CYCLES: usize = 3;
-    const COMMITMENT_CYCLES: usize = 7;
-    const MERKLE_CYCLES: usize = 32; // CIRCUIT_MERKLE_DEPTH
-    const CYCLES_PER_INPUT: usize = Self::NULLIFIER_CYCLES + Self::MERKLE_CYCLES; // 11
-
-    // Column indices
-    const COL_S0: usize = 0;
-    const COL_S1: usize = 1;
-    const COL_S2: usize = 2;
-    // COL_MERKLE_SIBLING (3) and COL_VALUE (4) are auxiliary - not constrained in transitions
-
-    /// Calculate trace row where nullifier N's hash output is located.
-    fn nullifier_output_row(nullifier_index: usize) -> usize {
-        let start_cycle = nullifier_index * Self::CYCLES_PER_INPUT;
-        (start_cycle + Self::NULLIFIER_CYCLES) * Self::CYCLE_LENGTH - 1
-    }
-
-    /// Calculate trace row where Merkle root for input N is located.
-    fn merkle_root_output_row(input_index: usize) -> usize {
-        let start_cycle = input_index * Self::CYCLES_PER_INPUT + Self::NULLIFIER_CYCLES;
-        (start_cycle + Self::MERKLE_CYCLES) * Self::CYCLE_LENGTH - 1
-    }
-
-    /// Calculate trace row where commitment M's hash output is located.
-    fn commitment_output_row(commitment_index: usize) -> usize {
-        let input_total_cycles = Self::MAX_INPUTS * Self::CYCLES_PER_INPUT;
-        let start_cycle = input_total_cycles + commitment_index * Self::COMMITMENT_CYCLES;
-        (start_cycle + Self::COMMITMENT_CYCLES) * Self::CYCLE_LENGTH - 1
-    }
-
-    pub fn new(
-        trace_info: winterfell::TraceInfo,
-        pub_inputs: StarkPublicInputs,
-        options: winterfell::ProofOptions,
-    ) -> Result<Self, &'static str> {
-        use winterfell::math::fields::f64::BaseElement;
-        use winterfell::{AirContext, TransitionConstraintDegree};
-
-        // Validate trace dimensions
-        if trace_info.width() != Self::TRACE_WIDTH {
-            return Err("Invalid trace width");
-        }
-
-        // Constraint degrees: Poseidon S-box is x^5
-        // We only constrain the 3 Poseidon state columns, not the auxiliary columns
-        let degrees = vec![
-            TransitionConstraintDegree::with_cycles(5, vec![Self::CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(5, vec![Self::CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(5, vec![Self::CYCLE_LENGTH]),
-        ];
-
-        // Count assertions:
-        // - One for each non-zero nullifier
-        // - One for each Merkle root (must match public merkle_root)
-        // - One for each non-zero commitment
-        let trace_len = trace_info.length();
-        let mut num_assertions = 0;
-
-        for (i, &nf) in pub_inputs.nullifiers.iter().enumerate() {
-            let row = Self::nullifier_output_row(i);
-            if nf != BaseElement::ZERO && row < trace_len {
-                num_assertions += 1;
-                // Also count Merkle root assertion for this input
-                let merkle_row = Self::merkle_root_output_row(i);
-                if merkle_row < trace_len {
-                    num_assertions += 1;
-                }
-            }
-        }
-
-        for (i, &cm) in pub_inputs.commitments.iter().enumerate() {
-            let row = Self::commitment_output_row(i);
-            if cm != BaseElement::ZERO && row < trace_len {
-                num_assertions += 1;
-            }
-        }
-
-        let context = AirContext::new(trace_info, degrees, num_assertions, options);
-
-        Ok(Self {
-            context,
-            pub_inputs,
-        })
-    }
-
-    /// Generate periodic column for hash mask
-    fn make_hash_mask() -> Vec<winterfell::math::fields::f64::BaseElement> {
-        use winterfell::math::fields::f64::BaseElement;
-        let mut mask = vec![BaseElement::ZERO; Self::CYCLE_LENGTH];
-        mask.iter_mut()
-            .take(Self::POSEIDON_ROUNDS)
-            .for_each(|m| *m = BaseElement::ONE);
-        mask
-    }
-
-    /// Generate round constant - must match transaction-circuit/stark_air.rs
-    fn round_constant(round: usize, position: usize) -> winterfell::math::fields::f64::BaseElement {
-        use winterfell::math::fields::f64::BaseElement;
-        let seed = ((round as u64 + 1).wrapping_mul(0x9e37_79b9u64))
-            ^ ((position as u64 + 1).wrapping_mul(0x7f4a_7c15u64));
-        BaseElement::new(seed)
-    }
-}
-
-#[cfg(feature = "stark-verify")]
-impl winterfell::Air for StarkTransactionAir {
-    type BaseField = winterfell::math::fields::f64::BaseElement;
-    type PublicInputs = StarkPublicInputs;
-
-    fn new(
-        trace_info: winterfell::TraceInfo,
-        pub_inputs: Self::PublicInputs,
-        options: winterfell::ProofOptions,
-    ) -> Self {
-        Self::new(trace_info, pub_inputs, options).expect("AIR creation should succeed")
-    }
-
-    fn context(&self) -> &winterfell::AirContext<Self::BaseField> {
-        &self.context
-    }
-
-    /// Evaluate Poseidon round constraints.
-    ///
-    /// When hash_flag=1: next = MDS(S-box(current + round_constant))
-    /// When hash_flag=0: no constraint (allows arbitrary state change at cycle boundaries)
-    ///
-    /// We only constrain columns 0-2 (Poseidon state). Columns 3-4 are auxiliary.
-    fn evaluate_transition<E: winterfell::math::FieldElement<BaseField = Self::BaseField>>(
-        &self,
-        frame: &winterfell::EvaluationFrame<E>,
-        periodic_values: &[E],
-        result: &mut [E],
-    ) {
-        let current = frame.current();
-        let next = frame.next();
-
-        // Periodic values: [hash_flag, rc0, rc1, rc2]
-        let hash_flag = periodic_values[0];
-        let rc0 = periodic_values[1];
-        let rc1 = periodic_values[2];
-        let rc2 = periodic_values[3];
-
-        // Compute Poseidon round result on columns 0-2 only
-        let t0 = current[Self::COL_S0] + rc0;
-        let t1 = current[Self::COL_S1] + rc1;
-        let t2 = current[Self::COL_S2] + rc2;
-
-        // S-box: x^5
-        let s0 = t0.exp(5u64.into());
-        let s1 = t1.exp(5u64.into());
-        let s2 = t2.exp(5u64.into());
-
-        // MDS mixing: [[2,1,1],[1,2,1],[1,1,2]]
-        let two: E = E::from(Self::BaseField::new(2));
-        let hash_s0 = s0 * two + s1 + s2;
-        let hash_s1 = s0 + s1 * two + s2;
-        let hash_s2 = s0 + s1 + s2 * two;
-
-        // Constraint: hash_flag * (next - hash_result) = 0
-        // When hash_flag=1: next must equal hash result
-        // When hash_flag=0: constraint is automatically 0 (no enforcement)
-        result[0] = hash_flag * (next[Self::COL_S0] - hash_s0);
-        result[1] = hash_flag * (next[Self::COL_S1] - hash_s1);
-        result[2] = hash_flag * (next[Self::COL_S2] - hash_s2);
-    }
-
-    fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
-        use winterfell::math::fields::f64::BaseElement;
-
-        let mut result = vec![Self::make_hash_mask()];
-
-        // Round constants for each position (3 Poseidon state elements)
-        for pos in 0..3 {
-            let mut column = Vec::with_capacity(Self::CYCLE_LENGTH);
-            for step in 0..Self::CYCLE_LENGTH {
-                if step < Self::POSEIDON_ROUNDS {
-                    column.push(Self::round_constant(step, pos));
-                } else {
-                    column.push(BaseElement::ZERO);
-                }
-            }
-            result.push(column);
-        }
-
-        result
-    }
-
-    fn get_assertions(&self) -> Vec<winterfell::Assertion<Self::BaseField>> {
-        use winterfell::math::fields::f64::BaseElement;
-        use winterfell::Assertion;
-
-        let mut assertions = Vec::new();
-        let trace_len = self.context.trace_len();
-
-        // Assertions for all non-zero nullifiers and their Merkle roots
-        for (i, &nf) in self.pub_inputs.nullifiers.iter().enumerate() {
-            if nf != BaseElement::ZERO {
-                // Nullifier hash output
-                let row = Self::nullifier_output_row(i);
-                if row < trace_len {
-                    assertions.push(Assertion::single(Self::COL_S0, row, nf));
-                }
-
-                // Merkle root output (must match public merkle_root)
-                let merkle_row = Self::merkle_root_output_row(i);
-                if merkle_row < trace_len {
-                    assertions.push(Assertion::single(
-                        Self::COL_S0,
-                        merkle_row,
-                        self.pub_inputs.merkle_root,
-                    ));
-                }
-            }
-        }
-
-        // Assertions for all non-zero commitments
-        for (i, &cm) in self.pub_inputs.commitments.iter().enumerate() {
-            if cm != BaseElement::ZERO {
-                let row = Self::commitment_output_row(i);
-                if row < trace_len {
-                    assertions.push(Assertion::single(Self::COL_S0, row, cm));
-                }
-            }
-        }
-
-        assertions
-    }
-}
 
 impl StarkVerifier {
     /// Encode public inputs as field elements for STARK verification.
@@ -610,6 +283,11 @@ impl StarkVerifier {
         for cm in &inputs.commitments {
             encoded.push(*cm);
         }
+
+        // Fee (u64, canonical field encoding)
+        let mut fee_bytes = [0u8; 32];
+        fee_bytes[24..32].copy_from_slice(&inputs.fee.to_be_bytes());
+        encoded.push(fee_bytes);
 
         // Value balance (encoded as two field elements for sign and magnitude)
         let sign = if inputs.value_balance < 0 { 1u8 } else { 0u8 };
@@ -685,7 +363,7 @@ impl StarkVerifier {
     }
 
     fn is_canonical_felt(bytes: &[u8; 32]) -> bool {
-        bytes[..24].iter().all(|byte| *byte == 0)
+        transaction_core::hashing::is_canonical_bytes32(bytes)
     }
 
     fn validate_public_inputs(inputs: &ShieldedTransferInputs) -> bool {
@@ -695,21 +373,27 @@ impl StarkVerifier {
         if inputs.commitments.len() > Self::MAX_OUTPUTS {
             return false;
         }
+        if inputs.nullifiers.is_empty() && inputs.commitments.is_empty() {
+            return false;
+        }
         if !Self::is_canonical_felt(&inputs.anchor) {
             return false;
         }
         if inputs
             .nullifiers
             .iter()
-            .any(|nf| !Self::is_canonical_felt(nf))
+            .any(|nf| !Self::is_canonical_felt(nf) || *nf == [0u8; 32])
         {
             return false;
         }
         if inputs
             .commitments
             .iter()
-            .any(|cm| !Self::is_canonical_felt(cm))
+            .any(|cm| !Self::is_canonical_felt(cm) || *cm == [0u8; 32])
         {
+            return false;
+        }
+        if transaction_core::hashing::signed_parts(inputs.value_balance).is_none() {
             return false;
         }
         true
@@ -765,9 +449,6 @@ impl ProofVerifier for StarkVerifier {
         inputs: &ShieldedTransferInputs,
         vk: &VerifyingKey,
     ) -> VerificationResult {
-        use winterfell::math::fields::f64::BaseElement;
-        use winterfell::Proof;
-
         // Check key is enabled
         if !vk.enabled {
             return VerificationResult::KeyNotFound;
@@ -794,52 +475,26 @@ impl ProofVerifier for StarkVerifier {
             return VerificationResult::InvalidProofFormat;
         }
 
-        // NOTE: We skip validate_proof_structure() here because it checks a custom
-        // header format that winterfell proofs don't use. The winterfell deserializer
-        // (Proof::from_bytes) is the authoritative format validator.
-
-        // Try to deserialize the winterfell proof
-        let winterfell_proof: Proof = match Proof::from_bytes(&proof.data) {
-            Ok(p) => p,
-            Err(e) => {
-                log::warn!("Failed to deserialize winterfell proof: {:?}", e);
-                return VerificationResult::InvalidProofFormat;
-            }
+        // Convert public inputs to field elements for verification
+        let pub_inputs = match Self::convert_public_inputs(inputs) {
+            Some(pub_inputs) => pub_inputs,
+            None => return VerificationResult::InvalidPublicInputs,
         };
 
-        // Validate proof context matches expected circuit parameters
-        let trace_info = winterfell_proof.context.trace_info();
-        if trace_info.width() != Self::EXPECTED_TRACE_WIDTH {
-            log::warn!(
-                "Trace width mismatch: expected {}, got {}",
-                Self::EXPECTED_TRACE_WIDTH,
-                trace_info.width()
-            );
-            return VerificationResult::InvalidProofFormat;
-        }
-
-        // Convert public inputs to field elements for verification
-        let pub_inputs = Self::convert_public_inputs(inputs);
-
-        // Build acceptable options matching the prover
-        let acceptable = winterfell::AcceptableOptions::OptionSet(vec![
-            Self::default_acceptable_options(),
-            Self::fast_acceptable_options(),
-        ]);
-
-        // Perform actual winterfell verification
-        use winterfell::crypto::{DefaultRandomCoin, MerkleTree};
-        type Blake3 = winter_crypto::hashers::Blake3_256<BaseElement>;
-
-        match winterfell::verify::<
-            StarkTransactionAir,
-            Blake3,
-            DefaultRandomCoin<Blake3>,
-            MerkleTree<Blake3>,
-        >(winterfell_proof, pub_inputs, &acceptable)
-        {
-            Ok(_) => VerificationResult::Valid,
-            Err(_) => VerificationResult::VerificationFailed,
+        match transaction_core::stark_verifier::verify_transaction_proof_bytes(
+            &proof.data,
+            &pub_inputs,
+        ) {
+            Ok(()) => VerificationResult::Valid,
+            Err(transaction_core::stark_verifier::TransactionVerifyError::InvalidProofFormat) => {
+                VerificationResult::InvalidProofFormat
+            }
+            Err(transaction_core::stark_verifier::TransactionVerifyError::InvalidPublicInputs(
+                _,
+            )) => VerificationResult::InvalidPublicInputs,
+            Err(transaction_core::stark_verifier::TransactionVerifyError::VerificationFailed(
+                _,
+            )) => VerificationResult::VerificationFailed,
         }
     }
 
@@ -870,7 +525,7 @@ impl ProofVerifier for StarkVerifier {
 
         // Build the commitment message
         let mut message = sp_std::vec::Vec::with_capacity(
-            32 + inputs.nullifiers.len() * 32 + inputs.commitments.len() * 32 + 16,
+            32 + inputs.nullifiers.len() * 32 + inputs.commitments.len() * 32 + 24,
         );
         message.extend_from_slice(&inputs.anchor);
         for nf in &inputs.nullifiers {
@@ -879,6 +534,7 @@ impl ProofVerifier for StarkVerifier {
         for cm in &inputs.commitments {
             message.extend_from_slice(cm);
         }
+        message.extend_from_slice(&inputs.fee.to_le_bytes());
         message.extend_from_slice(&inputs.value_balance.to_le_bytes());
 
         log::info!(target: "shielded-pool", "verify_binding_signature: message.len = {}", message.len());
@@ -908,7 +564,7 @@ impl StarkVerifier {
 
         // Build the commitment message
         let mut message = sp_std::vec::Vec::with_capacity(
-            32 + inputs.nullifiers.len() * 32 + inputs.commitments.len() * 32 + 16,
+            32 + inputs.nullifiers.len() * 32 + inputs.commitments.len() * 32 + 24,
         );
         message.extend_from_slice(&inputs.anchor);
         for nf in &inputs.nullifiers {
@@ -917,6 +573,7 @@ impl StarkVerifier {
         for cm in &inputs.commitments {
             message.extend_from_slice(cm);
         }
+        message.extend_from_slice(&inputs.fee.to_le_bytes());
         message.extend_from_slice(&inputs.value_balance.to_le_bytes());
 
         // Compute commitment hash
@@ -959,30 +616,52 @@ impl StarkVerifier {
 
     /// Convert pallet public inputs to the format expected by winterfell verification.
     #[cfg(feature = "stark-verify")]
-    fn convert_public_inputs(inputs: &ShieldedTransferInputs) -> StarkPublicInputs {
-        use winterfell::math::fields::f64::BaseElement;
-
-        // Convert 32-byte values to field elements
-        fn bytes_to_felt(bytes: &[u8; 32]) -> BaseElement {
-            let mut buf = [0u8; 8];
-            buf.copy_from_slice(&bytes[24..32]);
-            BaseElement::new(u64::from_be_bytes(buf))
+    fn convert_public_inputs(
+        inputs: &ShieldedTransferInputs,
+    ) -> Option<transaction_core::TransactionPublicInputsStark> {
+        let mut input_flags = Vec::with_capacity(Self::MAX_INPUTS);
+        let mut nullifiers = Vec::with_capacity(Self::MAX_INPUTS);
+        for (idx, nf) in inputs.nullifiers.iter().enumerate() {
+            let felt = transaction_core::hashing::bytes32_to_felt(nf)?;
+            if idx < Self::MAX_INPUTS {
+                input_flags.push(transaction_core::Felt::ONE);
+            }
+            nullifiers.push(felt);
+        }
+        while nullifiers.len() < Self::MAX_INPUTS {
+            nullifiers.push(transaction_core::Felt::ZERO);
+            input_flags.push(transaction_core::Felt::ZERO);
         }
 
-        let nullifiers: Vec<BaseElement> = inputs.nullifiers.iter().map(bytes_to_felt).collect();
+        let mut output_flags = Vec::with_capacity(Self::MAX_OUTPUTS);
+        let mut commitments = Vec::with_capacity(Self::MAX_OUTPUTS);
+        for (idx, cm) in inputs.commitments.iter().enumerate() {
+            let felt = transaction_core::hashing::bytes32_to_felt(cm)?;
+            if idx < Self::MAX_OUTPUTS {
+                output_flags.push(transaction_core::Felt::ONE);
+            }
+            commitments.push(felt);
+        }
+        while commitments.len() < Self::MAX_OUTPUTS {
+            commitments.push(transaction_core::Felt::ZERO);
+            output_flags.push(transaction_core::Felt::ZERO);
+        }
 
-        let commitments: Vec<BaseElement> = inputs.commitments.iter().map(bytes_to_felt).collect();
+        let merkle_root = transaction_core::hashing::bytes32_to_felt(&inputs.anchor)?;
 
-        let merkle_root = bytes_to_felt(&inputs.anchor);
+        let (value_balance_sign, value_balance_magnitude) =
+            transaction_core::hashing::signed_parts(inputs.value_balance)?;
 
-        StarkPublicInputs {
+        Some(transaction_core::TransactionPublicInputsStark {
+            input_flags,
+            output_flags,
             nullifiers,
             commitments,
-            total_input: BaseElement::ZERO,
-            total_output: BaseElement::ZERO,
-            fee: BaseElement::ZERO,
+            fee: transaction_core::Felt::new(inputs.fee),
+            value_balance_sign,
+            value_balance_magnitude,
             merkle_root,
-        }
+        })
     }
 }
 
@@ -1640,6 +1319,7 @@ mod tests {
             anchor: canonical_byte(1),
             nullifiers: vec![canonical_byte(2), canonical_byte(3)],
             commitments: vec![canonical_byte(4), canonical_byte(5)],
+            fee: 0,
             value_balance: 0,
         }
     }
@@ -1712,6 +1392,7 @@ mod tests {
             sk_spend: [6u8; 32],
             merkle_root,
             fee: 100,
+            value_balance: 0,
             version: TransactionWitness::default_version_binding(),
         };
 
@@ -1736,6 +1417,7 @@ mod tests {
                 .copied()
                 .map(felt_to_bytes32)
                 .collect(),
+            fee: stark_inputs.fee,
             value_balance: 0,
         };
 
@@ -1784,8 +1466,8 @@ mod tests {
         let inputs = sample_inputs();
         let encoded = StarkVerifier::encode_public_inputs(&inputs);
 
-        // 1 anchor + 2 nullifiers + 2 commitments + 2 value balance = 7
-        assert_eq!(encoded.len(), 7);
+        // 1 anchor + 2 nullifiers + 2 commitments + fee + value balance (sign + mag) = 8
+        assert_eq!(encoded.len(), 8);
     }
 
     #[test]
@@ -1991,6 +1673,7 @@ mod tests {
             anchor: [1u8; 32],
             nullifiers: vec![], // Empty
             commitments: vec![[4u8; 32]],
+            fee: 0,
             value_balance: 1000, // Minting 1000
         };
 
@@ -2010,6 +1693,7 @@ mod tests {
             anchor: [1u8; 32],
             nullifiers: vec![[2u8; 32]],
             commitments: vec![[4u8; 32]],
+            fee: 0,
             value_balance: i128::MAX,
         };
 
@@ -2017,6 +1701,7 @@ mod tests {
             anchor: [1u8; 32],
             nullifiers: vec![[2u8; 32]],
             commitments: vec![[4u8; 32]],
+            fee: 0,
             value_balance: i128::MIN,
         };
 

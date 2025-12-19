@@ -47,6 +47,7 @@ use super::hegemon::{ConsensusStatus, HegemonService, StorageFootprint, Telemetr
 use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
 use codec::Encode;
+use frame_support::traits::Get;
 use pallet_shielded_pool::types::{
     BindingSignature, EncryptedNote, StarkProof, ENCRYPTED_NOTE_SIZE, ML_KEM_CIPHERTEXT_LEN,
 };
@@ -346,6 +347,7 @@ where
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
         binding_sig: [u8; 64],
+        fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
         // Task 11.7.3: Build the shielded transfer call for the pallet
@@ -356,11 +358,19 @@ where
         // 2. Used directly if the transaction pool accepts unsigned extrinsics (future)
 
         // Validate input sizes
-        if nullifiers.len() > 4 {
-            return Err("Too many nullifiers (max 4)".to_string());
+        let max_nullifiers = runtime::MaxNullifiersPerTx::get() as usize;
+        let max_commitments = runtime::MaxCommitmentsPerTx::get() as usize;
+        if nullifiers.len() > max_nullifiers {
+            return Err(format!(
+                "Too many nullifiers (max {})",
+                max_nullifiers
+            ));
         }
-        if commitments.len() > 4 {
-            return Err("Too many commitments (max 4)".to_string());
+        if commitments.len() > max_commitments {
+            return Err(format!(
+                "Too many commitments (max {})",
+                max_commitments
+            ));
         }
         if encrypted_notes.len() != commitments.len() {
             return Err("Encrypted notes count must match commitments count".to_string());
@@ -435,6 +445,7 @@ where
                 ciphertexts: bounded_ciphertexts,
                 anchor,
                 binding_sig: binding,
+                fee,
                 value_balance,
             });
 

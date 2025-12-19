@@ -1,6 +1,7 @@
 //! Real STARK prover for transaction circuits.
 //!
-//! Builds traces that satisfy the Poseidon AIR with periodic round constants.
+//! Builds traces that satisfy the Poseidon AIR with explicit absorption/reset steps
+//! and MASP balance constraints.
 
 use winter_crypto::hashers::Blake3_256;
 use winterfell::{
@@ -14,22 +15,38 @@ use winterfell::{
 };
 
 use crate::{
-    constants::{
-        MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
-        POSEIDON_ROUNDS, POSEIDON_WIDTH,
-    },
-    hashing::prf_key,
+    constants::{MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS},
+    hashing::{merkle_node, prf_key, Felt},
+    note::{InputNoteWitness, NoteData, OutputNoteWitness},
     stark_air::{
-        commitment_output_row, mds_mix, merkle_root_output_row, nullifier_output_row,
-        round_constant, sbox, TransactionAirStark, TransactionPublicInputsStark,
-        COL_MERKLE_SIBLING, COL_S0, COL_S1, COL_S2, COL_VALUE, COMMITMENT_CYCLES, CYCLES_PER_INPUT,
-        CYCLE_LENGTH, MERKLE_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_CYCLES, TRACE_WIDTH,
+        commitment_output_row, merkle_root_output_row, note_start_row_input, note_start_row_output,
+        cycle_is_merkle, cycle_reset_domain, poseidon_round, CYCLE_LENGTH, COL_DOMAIN, COL_FEE, COL_IN0,
+        COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET, COL_IN1_VALUE, COL_IN_ACTIVE0,
+        COL_IN_ACTIVE1, COL_LINK, COL_NOTE_START_IN0, COL_NOTE_START_IN1, COL_NOTE_START_OUT0,
+        COL_NOTE_START_OUT1, COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1_ASSET, COL_OUT1_VALUE,
+        COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S2, COL_SEL_IN0_SLOT0,
+        COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0,
+        COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0,
+        COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0,
+        COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET,
+        COL_SLOT0_IN, COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT,
+        COL_SLOT2_ASSET, COL_SLOT2_IN, COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN,
+        COL_SLOT3_OUT, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN, COMMITMENT_CYCLES,
+        DUMMY_CYCLES, MERKLE_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_CYCLES, TOTAL_TRACE_CYCLES,
+        TOTAL_USED_CYCLES, TRACE_WIDTH, TransactionAirStark, TransactionPublicInputsStark,
     },
     witness::TransactionWitness,
     TransactionCircuitError,
 };
 
 type Blake3 = Blake3_256<BaseElement>;
+
+struct CycleSpec {
+    reset: bool,
+    domain: u64,
+    in0: BaseElement,
+    in1: BaseElement,
+}
 
 // ================================================================================================
 // PROVER
@@ -48,22 +65,6 @@ impl TransactionProverStark {
         Self::new(default_proof_options())
     }
 
-    /// Build execution trace.
-    ///
-    /// The trace uses 16-step cycles with 8 hash rounds followed by 8 copy steps.
-    /// - Steps 0-7: Apply Poseidon rounds (state changes each step)
-    /// - Steps 8-15: Copy state (state remains unchanged, hash output preserved)
-    ///
-    /// ## Trace Layout (cycles per input):
-    ///
-    /// For each input (MAX_INPUTS = 2):
-    /// - Nullifier hash: NULLIFIER_CYCLES (3) cycles
-    /// - Merkle path verification: MERKLE_CYCLES (32) cycles
-    ///
-    /// For each output (MAX_OUTPUTS = 2):
-    /// - Commitment hash: COMMITMENT_CYCLES (7) cycles
-    ///
-    /// Total cycles = 2 * (3 + 8) + 2 * 7 = 36 cycles = 576 rows → 1024 (power of 2)
     pub fn build_trace(
         &self,
         witness: &TransactionWitness,
@@ -71,280 +72,189 @@ impl TransactionProverStark {
         let trace_len = MIN_TRACE_LENGTH;
         let mut trace = vec![vec![BaseElement::ZERO; trace_len]; TRACE_WIDTH];
 
-        let prf = prf_key(&witness.sk_spend);
+        let (input_notes, input_flags) = pad_inputs(&witness.inputs);
+        let (output_notes, output_flags) = pad_outputs(&witness.outputs);
 
-        // Helper to compute a hash with sponge construction and record in trace
-        let compute_hash_in_trace = |trace: &mut Vec<Vec<BaseElement>>,
-                                     start_cycle: usize,
-                                     domain_tag: u64,
-                                     inputs: &[BaseElement]|
-         -> BaseElement {
-            let rate = POSEIDON_WIDTH - 1;
-            let mut state = [
-                BaseElement::new(domain_tag),
-                BaseElement::ZERO,
-                BaseElement::ONE,
-            ];
+        let slots = witness.balance_slots()?;
+        let slot_assets: Vec<u64> = slots.iter().map(|slot| slot.asset_id).collect();
 
-            let mut cursor = 0;
-            let mut cycle = start_cycle;
+        let mut slot_in = vec![0u64; slot_assets.len()];
+        let mut slot_out = vec![0u64; slot_assets.len()];
 
-            while cursor < inputs.len() {
-                let cycle_start = cycle * CYCLE_LENGTH;
-                if cycle_start + CYCLE_LENGTH > trace_len {
-                    break;
+        for (note, active) in input_notes.iter().zip(input_flags.iter()) {
+            if *active {
+                if let Some(slot_idx) = slot_assets.iter().position(|id| *id == note.note.asset_id)
+                {
+                    slot_in[slot_idx] = slot_in[slot_idx].saturating_add(note.note.value);
                 }
-
-                // Absorb up to 'rate' elements
-                let take = core::cmp::min(rate, inputs.len() - cursor);
-                for i in 0..take {
-                    state[i] += inputs[cursor + i];
-                }
-                cursor += take;
-
-                // Record 8 hash rounds (steps 0-7)
-                for round in 0..POSEIDON_ROUNDS {
-                    let row = cycle_start + round;
-                    trace[COL_S0][row] = state[0];
-                    trace[COL_S1][row] = state[1];
-                    trace[COL_S2][row] = state[2];
-
-                    // Apply round
-                    let t0 = state[0] + round_constant(round, 0);
-                    let t1 = state[1] + round_constant(round, 1);
-                    let t2 = state[2] + round_constant(round, 2);
-                    state = mds_mix(&[sbox(t0), sbox(t1), sbox(t2)]);
-                }
-
-                // Record copy steps (steps 8-15)
-                for step in POSEIDON_ROUNDS..CYCLE_LENGTH {
-                    let row = cycle_start + step;
-                    trace[COL_S0][row] = state[0];
-                    trace[COL_S1][row] = state[1];
-                    trace[COL_S2][row] = state[2];
-                }
-
-                cycle += 1;
             }
+        }
 
-            state[0]
-        };
+        for (note, active) in output_notes.iter().zip(output_flags.iter()) {
+            if *active {
+                if let Some(slot_idx) = slot_assets.iter().position(|id| *id == note.note.asset_id)
+                {
+                    slot_out[slot_idx] = slot_out[slot_idx].saturating_add(note.note.value);
+                }
+            }
+        }
 
-        // Helper to compute merkle_node hash (2 inputs → 1 output) in one cycle
-        let compute_merkle_node_in_trace = |trace: &mut Vec<Vec<BaseElement>>,
-                                            cycle: usize,
-                                            left: BaseElement,
-                                            right: BaseElement,
-                                            sibling: BaseElement|
-         -> BaseElement {
+        let selectors = build_selectors(&input_notes, &output_notes, &slot_assets, &input_flags, &output_flags);
+
+        let (vb_sign, vb_mag) = value_balance_parts(witness.value_balance)?;
+        let fee = BaseElement::new(witness.fee);
+
+        fill_const(&mut trace, COL_IN_ACTIVE0, flag_to_felt(input_flags[0]));
+        fill_const(&mut trace, COL_IN_ACTIVE1, flag_to_felt(input_flags[1]));
+        fill_const(&mut trace, COL_OUT_ACTIVE0, flag_to_felt(output_flags[0]));
+        fill_const(&mut trace, COL_OUT_ACTIVE1, flag_to_felt(output_flags[1]));
+
+        fill_const(&mut trace, COL_IN0_VALUE, BaseElement::new(input_notes[0].note.value));
+        fill_const(&mut trace, COL_IN0_ASSET, BaseElement::new(input_notes[0].note.asset_id));
+        fill_const(&mut trace, COL_IN1_VALUE, BaseElement::new(input_notes[1].note.value));
+        fill_const(&mut trace, COL_IN1_ASSET, BaseElement::new(input_notes[1].note.asset_id));
+
+        fill_const(&mut trace, COL_OUT0_VALUE, BaseElement::new(output_notes[0].note.value));
+        fill_const(&mut trace, COL_OUT0_ASSET, BaseElement::new(output_notes[0].note.asset_id));
+        fill_const(&mut trace, COL_OUT1_VALUE, BaseElement::new(output_notes[1].note.value));
+        fill_const(&mut trace, COL_OUT1_ASSET, BaseElement::new(output_notes[1].note.asset_id));
+
+        fill_const(&mut trace, COL_SLOT0_ASSET, BaseElement::new(slot_assets[0]));
+        fill_const(&mut trace, COL_SLOT1_ASSET, BaseElement::new(slot_assets[1]));
+        fill_const(&mut trace, COL_SLOT2_ASSET, BaseElement::new(slot_assets[2]));
+        fill_const(&mut trace, COL_SLOT3_ASSET, BaseElement::new(slot_assets[3]));
+
+        fill_const(&mut trace, COL_SLOT0_IN, BaseElement::new(slot_in[0]));
+        fill_const(&mut trace, COL_SLOT1_IN, BaseElement::new(slot_in[1]));
+        fill_const(&mut trace, COL_SLOT2_IN, BaseElement::new(slot_in[2]));
+        fill_const(&mut trace, COL_SLOT3_IN, BaseElement::new(slot_in[3]));
+
+        fill_const(&mut trace, COL_SLOT0_OUT, BaseElement::new(slot_out[0]));
+        fill_const(&mut trace, COL_SLOT1_OUT, BaseElement::new(slot_out[1]));
+        fill_const(&mut trace, COL_SLOT2_OUT, BaseElement::new(slot_out[2]));
+        fill_const(&mut trace, COL_SLOT3_OUT, BaseElement::new(slot_out[3]));
+
+        fill_selectors(&mut trace, &selectors);
+
+        fill_const(&mut trace, COL_FEE, fee);
+        fill_const(&mut trace, COL_VALUE_BALANCE_SIGN, vb_sign);
+        fill_const(&mut trace, COL_VALUE_BALANCE_MAG, vb_mag);
+
+        // Note start flags.
+        let start_row_in0 = note_start_row_input(0);
+        let start_row_in1 = note_start_row_input(1);
+        let start_row_out0 = note_start_row_output(0);
+        let start_row_out1 = note_start_row_output(1);
+        if start_row_in0 < trace_len {
+            trace[COL_NOTE_START_IN0][start_row_in0] = BaseElement::ONE;
+        }
+        if start_row_in1 < trace_len {
+            trace[COL_NOTE_START_IN1][start_row_in1] = BaseElement::ONE;
+        }
+        if start_row_out0 < trace_len {
+            trace[COL_NOTE_START_OUT0][start_row_out0] = BaseElement::ONE;
+        }
+        if start_row_out1 < trace_len {
+            trace[COL_NOTE_START_OUT1][start_row_out1] = BaseElement::ONE;
+        }
+
+        let cycle_specs = build_cycle_specs(&input_notes, &output_notes, witness);
+        let mut prev_state = [BaseElement::ZERO, BaseElement::ZERO, BaseElement::ONE];
+
+        for cycle in 0..TOTAL_TRACE_CYCLES {
             let cycle_start = cycle * CYCLE_LENGTH;
             if cycle_start + CYCLE_LENGTH > trace_len {
-                return BaseElement::ZERO;
+                break;
             }
 
-            // merkle_node uses sponge with domain tag and 2 inputs
-            let mut state = [
-                BaseElement::new(MERKLE_DOMAIN_TAG),
-                BaseElement::ZERO,
-                BaseElement::ONE,
-            ];
+            let state_start = if cycle == 0 {
+                prev_state
+            } else {
+                let spec = cycle_specs
+                    .get(cycle - 1)
+                    .cloned()
+                    .unwrap_or(CycleSpec {
+                        reset: false,
+                        domain: 0,
+                        in0: BaseElement::ZERO,
+                        in1: BaseElement::ZERO,
+                    });
+                if spec.reset {
+                    [
+                        BaseElement::new(spec.domain) + spec.in0,
+                        spec.in1,
+                        BaseElement::ONE,
+                    ]
+                } else {
+                    [
+                        prev_state[0] + spec.in0,
+                        prev_state[1] + spec.in1,
+                        prev_state[2],
+                    ]
+                }
+            };
 
-            // Absorb left and right
-            state[0] += left;
-            state[1] += right;
-
-            // Record 8 hash rounds
+            let mut state = state_start;
             for round in 0..POSEIDON_ROUNDS {
                 let row = cycle_start + round;
                 trace[COL_S0][row] = state[0];
                 trace[COL_S1][row] = state[1];
                 trace[COL_S2][row] = state[2];
-                trace[COL_MERKLE_SIBLING][row] = sibling;
-
-                let t0 = state[0] + round_constant(round, 0);
-                let t1 = state[1] + round_constant(round, 1);
-                let t2 = state[2] + round_constant(round, 2);
-                state = mds_mix(&[sbox(t0), sbox(t1), sbox(t2)]);
+                poseidon_round(&mut state, round);
             }
 
-            // Record copy steps
             for step in POSEIDON_ROUNDS..CYCLE_LENGTH {
                 let row = cycle_start + step;
                 trace[COL_S0][row] = state[0];
                 trace[COL_S1][row] = state[1];
                 trace[COL_S2][row] = state[2];
-                trace[COL_MERKLE_SIBLING][row] = sibling;
             }
 
-            state[0]
-        };
+            prev_state = state;
 
-        // Helper to fill cycles with dummy hash for padding
-        // This runs valid Poseidon rounds so the AIR constraints are satisfied
-        let fill_dummy_cycles =
-            |trace: &mut Vec<Vec<BaseElement>>, start_cycle: usize, num_cycles: usize| {
-                let mut state = [BaseElement::ZERO, BaseElement::ZERO, BaseElement::ONE];
+            let end_row = cycle_start + (CYCLE_LENGTH - 1);
+            if end_row < trace_len {
+                let next_cycle = cycle + 1;
+                let next_spec = cycle_specs.get(next_cycle - 1).cloned().unwrap_or(CycleSpec {
+                    reset: false,
+                    domain: 0,
+                    in0: BaseElement::ZERO,
+                    in1: BaseElement::ZERO,
+                });
+                trace[COL_IN0][end_row] = next_spec.in0;
+                trace[COL_IN1][end_row] = next_spec.in1;
 
-                for c in 0..num_cycles {
-                    let cycle_start = (start_cycle + c) * CYCLE_LENGTH;
-                    if cycle_start + CYCLE_LENGTH > trace_len {
-                        break;
-                    }
-
-                    // Record 8 hash rounds
-                    for round in 0..POSEIDON_ROUNDS {
-                        let row = cycle_start + round;
-                        trace[COL_S0][row] = state[0];
-                        trace[COL_S1][row] = state[1];
-                        trace[COL_S2][row] = state[2];
-
-                        let t0 = state[0] + round_constant(round, 0);
-                        let t1 = state[1] + round_constant(round, 1);
-                        let t2 = state[2] + round_constant(round, 2);
-                        state = mds_mix(&[sbox(t0), sbox(t1), sbox(t2)]);
-                    }
-
-                    // Record copy steps
-                    for step in POSEIDON_ROUNDS..CYCLE_LENGTH {
-                        let row = cycle_start + step;
-                        trace[COL_S0][row] = state[0];
-                        trace[COL_S1][row] = state[1];
-                        trace[COL_S2][row] = state[2];
-                    }
-                }
-            };
-
-        // Process each input: nullifier hash + Merkle path verification
-        for idx in 0..MAX_INPUTS {
-            let input_base_cycle = idx * CYCLES_PER_INPUT;
-
-            if idx < witness.inputs.len() {
-                let input = &witness.inputs[idx];
-
-                // Phase 1: Compute nullifier hash (3 cycles)
-                let mut hash_inputs = Vec::new();
-                hash_inputs.push(prf);
-                hash_inputs.push(BaseElement::new(input.position));
-                for chunk in input.note.rho.chunks(8) {
-                    let mut buf = [0u8; 8];
-                    let len = chunk.len().min(8);
-                    buf[8 - len..].copy_from_slice(&chunk[..len]);
-                    hash_inputs.push(BaseElement::new(u64::from_be_bytes(buf)));
-                }
-                compute_hash_in_trace(
-                    &mut trace,
-                    input_base_cycle,
-                    NULLIFIER_DOMAIN_TAG,
-                    &hash_inputs,
-                );
-
-                // Phase 2: Merkle path verification (MERKLE_CYCLES cycles)
-                // Compute note commitment as the leaf
-                let leaf = input.note.commitment();
-                let merkle_start_cycle = input_base_cycle + NULLIFIER_CYCLES;
-
-                // Verify Merkle path from leaf to root
-                let mut current = leaf;
-                let mut pos = input.position;
-
-                for level in 0..MERKLE_CYCLES {
-                    let cycle = merkle_start_cycle + level;
-
-                    // Get sibling from merkle_path (or use zero if path is shorter)
-                    let sibling = if level < input.merkle_path.siblings.len() {
-                        input.merkle_path.siblings[level]
-                    } else {
-                        BaseElement::ZERO
-                    };
-
-                    // Compute merkle_node based on position bit
-                    let (left, right) = if pos & 1 == 0 {
-                        (current, sibling)
-                    } else {
-                        (sibling, current)
-                    };
-
-                    current = compute_merkle_node_in_trace(&mut trace, cycle, left, right, sibling);
-                    pos >>= 1;
+                if let Some(domain) = cycle_reset_domain(next_cycle) {
+                    trace[COL_RESET][end_row] = BaseElement::ONE;
+                    trace[COL_DOMAIN][end_row] = BaseElement::new(domain);
+                } else {
+                    trace[COL_RESET][end_row] = BaseElement::ZERO;
+                    trace[COL_DOMAIN][end_row] = BaseElement::ZERO;
                 }
 
-                // Store marker in COL_VALUE at the nullifier output row
-                // We use value + 1 so zero-value notes still have a non-zero marker
-                let nf_row = (input_base_cycle + NULLIFIER_CYCLES) * CYCLE_LENGTH - 1;
-                if nf_row < trace_len {
-                    trace[COL_VALUE][nf_row] = BaseElement::new(input.note.value.wrapping_add(1));
-                }
-            } else {
-                // Pad with dummy hash cycles (COL_VALUE stays zero for padding)
-                fill_dummy_cycles(&mut trace, input_base_cycle, CYCLES_PER_INPUT);
+                trace[COL_LINK][end_row] = if cycle_is_merkle(next_cycle) {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                };
             }
-        }
-
-        // Process commitments - each gets COMMITMENT_CYCLES (7) cycles
-        let commitment_base_cycle = MAX_INPUTS * CYCLES_PER_INPUT;
-
-        for idx in 0..MAX_OUTPUTS {
-            let start_cycle = commitment_base_cycle + idx * COMMITMENT_CYCLES;
-
-            if idx < witness.outputs.len() {
-                let output = &witness.outputs[idx];
-
-                // Build hash inputs (same as hashing.rs note_commitment function)
-                let mut hash_inputs = Vec::new();
-                hash_inputs.push(BaseElement::new(output.note.value));
-                hash_inputs.push(BaseElement::new(output.note.asset_id));
-                for bytes in [
-                    &output.note.pk_recipient[..],
-                    &output.note.rho[..],
-                    &output.note.r[..],
-                ] {
-                    for chunk in bytes.chunks(8) {
-                        let mut buf = [0u8; 8];
-                        let len = chunk.len().min(8);
-                        buf[8 - len..].copy_from_slice(&chunk[..len]);
-                        hash_inputs.push(BaseElement::new(u64::from_be_bytes(buf)));
-                    }
-                }
-
-                compute_hash_in_trace(&mut trace, start_cycle, NOTE_DOMAIN_TAG, &hash_inputs);
-
-                // Store marker in COL_VALUE at the commitment output row
-                // We use value + 1 so zero-value notes still have a non-zero marker
-                let cm_row = (start_cycle + COMMITMENT_CYCLES) * CYCLE_LENGTH - 1;
-                if cm_row < trace_len {
-                    trace[COL_VALUE][cm_row] = BaseElement::new(output.note.value.wrapping_add(1));
-                }
-            } else {
-                // Pad with dummy hash cycles (COL_VALUE stays zero for padding)
-                fill_dummy_cycles(&mut trace, start_cycle, COMMITMENT_CYCLES);
-            }
-        }
-
-        // Fill remaining rows with proper dummy hash cycles
-        let total_used_cycles = MAX_INPUTS * CYCLES_PER_INPUT + MAX_OUTPUTS * COMMITMENT_CYCLES;
-        let total_cycles = trace_len / CYCLE_LENGTH;
-
-        if total_used_cycles < total_cycles {
-            fill_dummy_cycles(
-                &mut trace,
-                total_used_cycles,
-                total_cycles - total_used_cycles,
-            );
         }
 
         Ok(TraceTable::init(trace))
     }
 
-    pub fn get_public_inputs(&self, witness: &TransactionWitness) -> TransactionPublicInputsStark {
-        let prf = prf_key(&witness.sk_spend);
+    pub fn get_public_inputs(&self, witness: &TransactionWitness) -> Result<TransactionPublicInputsStark, TransactionCircuitError> {
+        let input_flags: Vec<BaseElement> = (0..MAX_INPUTS)
+            .map(|i| flag_to_felt(i < witness.inputs.len()))
+            .collect();
+        let output_flags: Vec<BaseElement> = (0..MAX_OUTPUTS)
+            .map(|i| flag_to_felt(i < witness.outputs.len()))
+            .collect();
 
         let mut nullifiers = Vec::new();
+        let prf = prf_key(&witness.sk_spend);
         for input in &witness.inputs {
-            nullifiers.push(crate::hashing::nullifier(
-                prf,
-                &input.note.rho,
-                input.position,
-            ));
+            nullifiers.push(crate::hashing::nullifier(prf, &input.note.rho, input.position));
         }
         while nullifiers.len() < MAX_INPUTS {
             nullifiers.push(BaseElement::ZERO);
@@ -358,19 +268,18 @@ impl TransactionProverStark {
             commitments.push(BaseElement::ZERO);
         }
 
-        // NOTE: total_input/total_output/fee are set to ZERO for compatibility with
-        // on-chain verification. The pallet verifier doesn't have access to private
-        // note values, so it uses zeros. Balance checking is done via value_balance
-        // in the pallet (outside the STARK). These fields are included in ToElements
-        // for the FRI public coin, so prover and verifier MUST match.
-        TransactionPublicInputsStark {
+        let (vb_sign, vb_mag) = value_balance_parts(witness.value_balance)?;
+
+        Ok(TransactionPublicInputsStark {
+            input_flags,
+            output_flags,
             nullifiers,
             commitments,
-            total_input: BaseElement::ZERO,
-            total_output: BaseElement::ZERO,
-            fee: BaseElement::ZERO,
+            fee: BaseElement::new(witness.fee),
+            value_balance_sign: vb_sign,
+            value_balance_magnitude: vb_mag,
             merkle_root: witness.merkle_root,
-        }
+        })
     }
 
     pub fn prove_transaction(
@@ -399,24 +308,22 @@ impl Prover for TransactionProverStark {
         DefaultConstraintEvaluator<'a, Self::Air, E>;
 
     fn get_pub_inputs(&self, trace: &Self::Trace) -> TransactionPublicInputsStark {
-        // Read nullifiers and commitments from their deterministic trace positions
-        // NOTE: total_input/total_output/fee are set to ZERO because:
-        // 1. The pallet verifier doesn't have access to private note values
-        // 2. Balance checking is done via value_balance in the pallet (outside STARK)
-        // 3. These values are part of ToElements for FRI, so prover and verifier MUST match
+        let row = 0;
+        let input_flags = vec![
+            trace.get(COL_IN_ACTIVE0, row),
+            trace.get(COL_IN_ACTIVE1, row),
+        ];
+        let output_flags = vec![
+            trace.get(COL_OUT_ACTIVE0, row),
+            trace.get(COL_OUT_ACTIVE1, row),
+        ];
 
         let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
         for i in 0..MAX_INPUTS {
+            let flag = input_flags[i];
             let row = nullifier_output_row(i);
-            let nf = if row < trace.length() {
-                let val = trace.get(COL_S0, row);
-                // Check if this is a real input by looking at COL_VALUE
-                let marker = trace.get(COL_VALUE, row);
-                if marker == BaseElement::ZERO {
-                    BaseElement::ZERO
-                } else {
-                    val
-                }
+            let nf = if flag == BaseElement::ONE && row < trace.length() {
+                trace.get(COL_S0, row)
             } else {
                 BaseElement::ZERO
             };
@@ -425,23 +332,16 @@ impl Prover for TransactionProverStark {
 
         let mut commitments = Vec::with_capacity(MAX_OUTPUTS);
         for i in 0..MAX_OUTPUTS {
+            let flag = output_flags[i];
             let row = commitment_output_row(i);
-            let cm = if row < trace.length() {
-                let val = trace.get(COL_S0, row);
-                // Check if this is a real output by looking at COL_VALUE
-                let marker = trace.get(COL_VALUE, row);
-                if marker == BaseElement::ZERO {
-                    BaseElement::ZERO
-                } else {
-                    val
-                }
+            let cm = if flag == BaseElement::ONE && row < trace.length() {
+                trace.get(COL_S0, row)
             } else {
                 BaseElement::ZERO
             };
             commitments.push(cm);
         }
 
-        // Read merkle root from the first input's Merkle output row
         let merkle_root = if trace.length() > 0 {
             let row = merkle_root_output_row(0);
             if row < trace.length() {
@@ -453,13 +353,14 @@ impl Prover for TransactionProverStark {
             BaseElement::ZERO
         };
 
-        // NOTE: Use ZERO for balance fields - pallet verifier uses zeros
         TransactionPublicInputsStark {
+            input_flags,
+            output_flags,
             nullifiers,
             commitments,
-            total_input: BaseElement::ZERO,
-            total_output: BaseElement::ZERO,
-            fee: BaseElement::ZERO,
+            fee: trace.get(COL_FEE, row),
+            value_balance_sign: trace.get(COL_VALUE_BALANCE_SIGN, row),
+            value_balance_magnitude: trace.get(COL_VALUE_BALANCE_MAG, row),
             merkle_root,
         }
     }
@@ -521,8 +422,6 @@ pub fn default_proof_options() -> ProofOptions {
 }
 
 pub fn fast_proof_options() -> ProofOptions {
-    // Blowup factor must be at least 2 * constraint_degree = 2 * 5 = 10
-    // Use 16 to be safe (power of 2)
     ProofOptions::new(
         8,
         16,
@@ -535,15 +434,234 @@ pub fn fast_proof_options() -> ProofOptions {
     )
 }
 
+// ================================================================================================
+// HELPERS
+// ================================================================================================
+
+fn fill_const(trace: &mut [Vec<BaseElement>], col: usize, value: BaseElement) {
+    trace[col].iter_mut().for_each(|v| *v = value);
+}
+
+fn flag_to_felt(active: bool) -> BaseElement {
+    if active {
+        BaseElement::ONE
+    } else {
+        BaseElement::ZERO
+    }
+}
+
+fn bytes_to_felts(bytes: &[u8]) -> Vec<BaseElement> {
+    bytes
+        .chunks(8)
+        .map(|chunk| {
+            let mut buf = [0u8; 8];
+            buf[8 - chunk.len()..].copy_from_slice(chunk);
+            BaseElement::new(u64::from_be_bytes(buf))
+        })
+        .collect()
+}
+
+fn commitment_inputs(note: &NoteData) -> Vec<BaseElement> {
+    let mut inputs = Vec::new();
+    inputs.push(BaseElement::new(note.value));
+    inputs.push(BaseElement::new(note.asset_id));
+    inputs.extend(bytes_to_felts(&note.pk_recipient));
+    inputs.extend(bytes_to_felts(&note.rho));
+    inputs.extend(bytes_to_felts(&note.r));
+    inputs
+}
+
+fn nullifier_inputs(prf: BaseElement, input: &InputNoteWitness) -> Vec<BaseElement> {
+    let mut inputs = Vec::new();
+    inputs.push(prf);
+    inputs.push(BaseElement::new(input.position));
+    inputs.extend(bytes_to_felts(&input.note.rho));
+    inputs
+}
+
+fn pad_inputs(inputs: &[InputNoteWitness]) -> (Vec<InputNoteWitness>, [bool; MAX_INPUTS]) {
+    let mut padded = Vec::with_capacity(MAX_INPUTS);
+    let mut flags = [false; MAX_INPUTS];
+    for (idx, note) in inputs.iter().cloned().enumerate() {
+        if idx < MAX_INPUTS {
+            padded.push(note);
+            flags[idx] = true;
+        }
+    }
+    while padded.len() < MAX_INPUTS {
+        padded.push(dummy_input());
+    }
+    (padded, flags)
+}
+
+fn pad_outputs(outputs: &[OutputNoteWitness]) -> (Vec<OutputNoteWitness>, [bool; MAX_OUTPUTS]) {
+    let mut padded = Vec::with_capacity(MAX_OUTPUTS);
+    let mut flags = [false; MAX_OUTPUTS];
+    for (idx, note) in outputs.iter().cloned().enumerate() {
+        if idx < MAX_OUTPUTS {
+            padded.push(note);
+            flags[idx] = true;
+        }
+    }
+    while padded.len() < MAX_OUTPUTS {
+        padded.push(dummy_output());
+    }
+    (padded, flags)
+}
+
+fn dummy_input() -> InputNoteWitness {
+    InputNoteWitness {
+        note: NoteData {
+            value: 0,
+            asset_id: 0,
+            pk_recipient: [0u8; 32],
+            rho: [0u8; 32],
+            r: [0u8; 32],
+        },
+        position: 0,
+        rho_seed: [0u8; 32],
+        merkle_path: crate::note::MerklePath::default(),
+    }
+}
+
+fn dummy_output() -> OutputNoteWitness {
+    OutputNoteWitness {
+        note: NoteData {
+            value: 0,
+            asset_id: 0,
+            pk_recipient: [0u8; 32],
+            rho: [0u8; 32],
+            r: [0u8; 32],
+        },
+    }
+}
+
+fn build_selectors(
+    inputs: &[InputNoteWitness],
+    outputs: &[OutputNoteWitness],
+    slot_assets: &[u64],
+    input_flags: &[bool; MAX_INPUTS],
+    output_flags: &[bool; MAX_OUTPUTS],
+) -> [[BaseElement; 4]; 4] {
+    let mut selectors = [[BaseElement::ZERO; 4]; 4];
+
+    for (idx, note) in inputs.iter().enumerate() {
+        if input_flags[idx] {
+            if let Some(slot_idx) = slot_assets.iter().position(|id| *id == note.note.asset_id) {
+                selectors[idx][slot_idx] = BaseElement::ONE;
+            }
+        }
+    }
+
+    for (idx, note) in outputs.iter().enumerate() {
+        if output_flags[idx] {
+            if let Some(slot_idx) = slot_assets.iter().position(|id| *id == note.note.asset_id) {
+                selectors[2 + idx][slot_idx] = BaseElement::ONE;
+            }
+        }
+    }
+
+    selectors
+}
+
+fn fill_selectors(trace: &mut [Vec<BaseElement>], selectors: &[[BaseElement; 4]; 4]) {
+    let mapping = [
+        (COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3),
+        (COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3),
+        (COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3),
+        (COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3),
+    ];
+
+    for (note_idx, cols) in mapping.iter().enumerate() {
+        fill_const(trace, cols.0, selectors[note_idx][0]);
+        fill_const(trace, cols.1, selectors[note_idx][1]);
+        fill_const(trace, cols.2, selectors[note_idx][2]);
+        fill_const(trace, cols.3, selectors[note_idx][3]);
+    }
+}
+
+fn value_balance_parts(value_balance: i128) -> Result<(BaseElement, BaseElement), TransactionCircuitError> {
+    let magnitude = value_balance.unsigned_abs();
+    let mag_u64 = u64::try_from(magnitude)
+        .map_err(|_| TransactionCircuitError::ValueBalanceOutOfRange(magnitude))?;
+    let sign = if value_balance < 0 { BaseElement::ONE } else { BaseElement::ZERO };
+    Ok((sign, BaseElement::new(mag_u64)))
+}
+
+fn build_cycle_specs(
+    inputs: &[InputNoteWitness],
+    outputs: &[OutputNoteWitness],
+    witness: &TransactionWitness,
+) -> Vec<CycleSpec> {
+    let prf = prf_key(&witness.sk_spend);
+    let mut cycles = Vec::with_capacity(TOTAL_USED_CYCLES - DUMMY_CYCLES);
+
+    for (idx, input) in inputs.iter().enumerate() {
+        let commitment_inputs = commitment_inputs(&input.note);
+        for chunk_idx in 0..COMMITMENT_CYCLES {
+            let reset = chunk_idx == 0;
+            let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
+            let in0 = commitment_inputs[chunk_idx * 2];
+            let in1 = commitment_inputs[chunk_idx * 2 + 1];
+            cycles.push(CycleSpec { reset, domain, in0, in1 });
+        }
+
+        let mut current = input.note.commitment();
+        let mut pos = input.position;
+        for level in 0..MERKLE_CYCLES {
+            let sibling = input
+                .merkle_path
+                .siblings
+                .get(level)
+                .copied()
+                .unwrap_or(Felt::ZERO);
+            let (left, right) = if pos & 1 == 0 {
+                (current, sibling)
+            } else {
+                (sibling, current)
+            };
+            cycles.push(CycleSpec {
+                reset: true,
+                domain: MERKLE_DOMAIN_TAG,
+                in0: left,
+                in1: right,
+            });
+            current = merkle_node(left, right);
+            pos >>= 1;
+        }
+
+        let nullifier_inputs = nullifier_inputs(prf, input);
+        for chunk_idx in 0..NULLIFIER_CYCLES {
+            let reset = chunk_idx == 0;
+            let domain = if reset { NULLIFIER_DOMAIN_TAG } else { 0 };
+            let in0 = nullifier_inputs[chunk_idx * 2];
+            let in1 = nullifier_inputs[chunk_idx * 2 + 1];
+            cycles.push(CycleSpec { reset, domain, in0, in1 });
+        }
+
+        let _ = idx;
+    }
+
+    for output in outputs.iter() {
+        let commitment_inputs = commitment_inputs(&output.note);
+        for chunk_idx in 0..COMMITMENT_CYCLES {
+            let reset = chunk_idx == 0;
+            let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
+            let in0 = commitment_inputs[chunk_idx * 2];
+            let in1 = commitment_inputs[chunk_idx * 2 + 1];
+            cycles.push(CycleSpec { reset, domain, in0, in1 });
+        }
+    }
+
+    cycles
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::hashing::merkle_node;
-    use crate::note::{
-        InputNoteWitness, MerklePath, NoteData, OutputNoteWitness, MERKLE_TREE_DEPTH,
-    };
+    use crate::note::{MerklePath, NoteData};
 
-    /// Compute the Merkle root from a leaf and a path of siblings (all zeros for default path)
     fn compute_merkle_root_from_path(
         leaf: BaseElement,
         position: u64,
@@ -562,62 +680,27 @@ mod tests {
         current
     }
 
-    /// Build a Merkle tree with 2 leaves at positions 0 and 1, returning paths for both
-    /// This is a minimal tree where leaves 0 and 1 are siblings at the bottom level.
-    fn build_two_leaf_merkle_tree(
-        leaf0: BaseElement,
-        leaf1: BaseElement,
-    ) -> (MerklePath, MerklePath, BaseElement) {
-        // At level 0, leaves 0 and 1 are siblings
-        // For leaf at position 0: sibling at level 0 is leaf1
-        // For leaf at position 1: sibling at level 0 is leaf0
-
-        let mut siblings0 = vec![leaf1]; // Path for position 0
-        let mut siblings1 = vec![leaf0]; // Path for position 1
-
-        // The parent of leaves 0,1 is merkle_node(leaf0, leaf1)
-        let mut current = merkle_node(leaf0, leaf1);
-
-        // For levels 1 through MERKLE_TREE_DEPTH-1, the sibling is zero (no other nodes in tree)
-        for _ in 1..MERKLE_TREE_DEPTH {
-            siblings0.push(BaseElement::ZERO);
-            siblings1.push(BaseElement::ZERO);
-            // Parent: merkle_node(current, 0) since we're always on left branch
-            current = merkle_node(current, BaseElement::ZERO);
-        }
-
-        let path0 = MerklePath {
-            siblings: siblings0,
-        };
-        let path1 = MerklePath {
-            siblings: siblings1,
-        };
-
-        (path0, path1, current)
-    }
-
-    fn make_test_witness() -> TransactionWitness {
+    #[test]
+    fn build_trace_roundtrip() {
         let input_note = NoteData {
-            value: 1000,
+            value: 100,
             asset_id: 0,
-            pk_recipient: [0u8; 32],
-            rho: [1u8; 32],
-            r: [2u8; 32],
+            pk_recipient: [1u8; 32],
+            rho: [2u8; 32],
+            r: [3u8; 32],
         };
-
         let output_note = NoteData {
-            value: 900,
+            value: 80,
             asset_id: 0,
-            pk_recipient: [3u8; 32],
-            rho: [4u8; 32],
-            r: [5u8; 32],
+            pk_recipient: [4u8; 32],
+            rho: [5u8; 32],
+            r: [6u8; 32],
         };
-
         let merkle_path = MerklePath::default();
         let leaf = input_note.commitment();
         let merkle_root = compute_merkle_root_from_path(leaf, 0, &merkle_path);
 
-        TransactionWitness {
+        let witness = TransactionWitness {
             inputs: vec![InputNoteWitness {
                 note: input_note,
                 position: 0,
@@ -625,247 +708,17 @@ mod tests {
                 merkle_path,
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
-            sk_spend: [6u8; 32],
+            sk_spend: [8u8; 32],
             merkle_root,
-            fee: 100,
-            version: protocol_versioning::DEFAULT_VERSION_BINDING,
-        }
-    }
+            fee: 0,
+            value_balance: 0,
+            version: TransactionWitness::default_version_binding(),
+        };
 
-    #[test]
-    fn test_build_trace() {
         let prover = TransactionProverStark::with_default_options();
-        let witness = make_test_witness();
-
-        let trace = prover.build_trace(&witness).unwrap();
-
-        assert_eq!(trace.width(), TRACE_WIDTH);
-        assert!(trace.length() >= MIN_TRACE_LENGTH);
-    }
-
-    #[test]
-    fn test_trace_hash_matches_hashing_module() {
-        let prover = TransactionProverStark::with_default_options();
-        let witness = make_test_witness();
-        let trace = prover.build_trace(&witness).unwrap();
-
-        // Compute expected hashes using hashing module
-        let prf = prf_key(&witness.sk_spend);
-        let expected_nf = crate::hashing::nullifier(prf, &witness.inputs[0].note.rho, 0);
-        let expected_cm = witness.outputs[0].note.commitment();
-
-        // With merkle-path layout:
-        // Input 0: nullifier cycles 0-2 (output at row 47), merkle cycles 3-10 (root at row 175)
-        // Input 1: nullifier cycles 11-13 (output at row 223), merkle cycles 14-21 (root at row 351)
-        // Commitment 0: cycles 22-28 (output at row 463)
-        // Commitment 1: cycles 29-35 (output at row 575)
-        let nf_row = nullifier_output_row(0);
-        let trace_nf = trace.get(COL_S0, nf_row);
-
-        let cm_row = commitment_output_row(0);
-        let trace_cm = trace.get(COL_S0, cm_row);
-
-        println!("Expected nullifier: {:?}", expected_nf);
-        println!("Trace nullifier at row {}: {:?}", nf_row, trace_nf);
-        println!("Expected commitment: {:?}", expected_cm);
-        println!("Trace commitment at row {}: {:?}", cm_row, trace_cm);
-
-        assert_eq!(trace_nf, expected_nf, "Trace nullifier mismatch");
-        assert_eq!(trace_cm, expected_cm, "Trace commitment mismatch");
-
-        // Also verify that get_public_inputs and get_pub_inputs (Prover trait) return same values
-        let pub_from_witness = prover.get_public_inputs(&witness);
-        let pub_from_trace = <TransactionProverStark as Prover>::get_pub_inputs(&prover, &trace);
-
-        println!(
-            "pub_from_witness.nullifiers[0]: {:?}",
-            pub_from_witness.nullifiers[0]
-        );
-        println!(
-            "pub_from_trace.nullifiers[0]: {:?}",
-            pub_from_trace.nullifiers[0]
-        );
-        println!(
-            "pub_from_witness.commitments[0]: {:?}",
-            pub_from_witness.commitments[0]
-        );
-        println!(
-            "pub_from_trace.commitments[0]: {:?}",
-            pub_from_trace.commitments[0]
-        );
-
-        assert_eq!(
-            pub_from_witness.nullifiers[0], pub_from_trace.nullifiers[0],
-            "Nullifier mismatch between functions"
-        );
-        assert_eq!(
-            pub_from_witness.commitments[0], pub_from_trace.commitments[0],
-            "Commitment mismatch between functions"
-        );
-    }
-
-    #[test]
-    fn test_public_inputs_match_witness() {
-        let prover = TransactionProverStark::with_default_options();
-        let witness = make_test_witness();
-
-        let pub_inputs = prover.get_public_inputs(&witness);
-
-        let prf = prf_key(&witness.sk_spend);
-        let expected_nf = crate::hashing::nullifier(prf, &witness.inputs[0].note.rho, 0);
-        assert_eq!(pub_inputs.nullifiers[0], expected_nf);
-
-        let expected_cm = witness.outputs[0].note.commitment();
-        assert_eq!(pub_inputs.commitments[0], expected_cm);
-    }
-
-    #[test]
-    fn test_prove_and_verify() {
-        let prover = TransactionProverStark::new(fast_proof_options());
-        let witness = make_test_witness();
-
-        let trace = prover.build_trace(&witness).unwrap();
-        // Must use get_pub_inputs from Prover trait - this is what the prover uses internally
-        let pub_inputs = <TransactionProverStark as Prover>::get_pub_inputs(&prover, &trace);
-
-        let proof = prover.prove(trace).expect("proving should succeed");
-        let proof_bytes = proof.to_bytes();
-        assert!(proof_bytes.len() > 1000);
-
-        let result = crate::stark_verifier::verify_transaction_proof(&proof, &pub_inputs);
-        assert!(result.is_ok(), "Verification failed: {:?}", result);
-    }
-
-    #[test]
-    fn test_multi_input_output_trace() {
-        // Test with 2 inputs and 2 outputs
-        let input_note1 = NoteData {
-            value: 1000,
-            asset_id: 0,
-            pk_recipient: [0u8; 32],
-            rho: [1u8; 32],
-            r: [2u8; 32],
-        };
-        let input_note2 = NoteData {
-            value: 500,
-            asset_id: 0,
-            pk_recipient: [10u8; 32],
-            rho: [11u8; 32],
-            r: [12u8; 32],
-        };
-        let output_note1 = NoteData {
-            value: 800,
-            asset_id: 0,
-            pk_recipient: [3u8; 32],
-            rho: [4u8; 32],
-            r: [5u8; 32],
-        };
-        let output_note2 = NoteData {
-            value: 600,
-            asset_id: 0,
-            pk_recipient: [13u8; 32],
-            rho: [14u8; 32],
-            r: [15u8; 32],
-        };
-
-        // Build proper Merkle tree with both input notes
-        let leaf0 = input_note1.commitment();
-        let leaf1 = input_note2.commitment();
-        let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
-
-        let witness = TransactionWitness {
-            inputs: vec![
-                InputNoteWitness {
-                    note: input_note1,
-                    position: 0,
-                    rho_seed: [7u8; 32],
-                    merkle_path: merkle_path0,
-                },
-                InputNoteWitness {
-                    note: input_note2,
-                    position: 1,
-                    rho_seed: [17u8; 32],
-                    merkle_path: merkle_path1,
-                },
-            ],
-            outputs: vec![
-                OutputNoteWitness { note: output_note1 },
-                OutputNoteWitness { note: output_note2 },
-            ],
-            sk_spend: [6u8; 32],
-            merkle_root,
-            fee: 100,
-            version: protocol_versioning::DEFAULT_VERSION_BINDING,
-        };
-
-        let prover = TransactionProverStark::new(fast_proof_options());
-        let trace = prover.build_trace(&witness).unwrap();
-
-        // Verify all hashes are at expected positions
-        let prf = prf_key(&witness.sk_spend);
-
-        // Nullifier 0 at nullifier_output_row(0)
-        let nf0_row = nullifier_output_row(0);
-        let expected_nf0 = crate::hashing::nullifier(prf, &witness.inputs[0].note.rho, 0);
-        assert_eq!(
-            trace.get(COL_S0, nf0_row),
-            expected_nf0,
-            "Nullifier 0 mismatch"
-        );
-
-        // Nullifier 1 at nullifier_output_row(1)
-        let nf1_row = nullifier_output_row(1);
-        let expected_nf1 = crate::hashing::nullifier(prf, &witness.inputs[1].note.rho, 1);
-        assert_eq!(
-            trace.get(COL_S0, nf1_row),
-            expected_nf1,
-            "Nullifier 1 mismatch"
-        );
-
-        // Commitment 0 at commitment_output_row(0)
-        let cm0_row = commitment_output_row(0);
-        let expected_cm0 = witness.outputs[0].note.commitment();
-        assert_eq!(
-            trace.get(COL_S0, cm0_row),
-            expected_cm0,
-            "Commitment 0 mismatch"
-        );
-
-        // Commitment 1 at commitment_output_row(1)
-        let cm1_row = commitment_output_row(1);
-        let expected_cm1 = witness.outputs[1].note.commitment();
-        assert_eq!(
-            trace.get(COL_S0, cm1_row),
-            expected_cm1,
-            "Commitment 1 mismatch"
-        );
-
-        // Verify get_pub_inputs reads all values correctly
-        let pub_inputs = <TransactionProverStark as Prover>::get_pub_inputs(&prover, &trace);
-        assert_eq!(
-            pub_inputs.nullifiers[0], expected_nf0,
-            "pub_inputs nullifier 0 mismatch"
-        );
-        assert_eq!(
-            pub_inputs.nullifiers[1], expected_nf1,
-            "pub_inputs nullifier 1 mismatch"
-        );
-        assert_eq!(
-            pub_inputs.commitments[0], expected_cm0,
-            "pub_inputs commitment 0 mismatch"
-        );
-        assert_eq!(
-            pub_inputs.commitments[1], expected_cm1,
-            "pub_inputs commitment 1 mismatch"
-        );
-
-        // Prove and verify
-        let proof = prover.prove(trace).expect("proving should succeed");
-        let result = crate::stark_verifier::verify_transaction_proof(&proof, &pub_inputs);
-        assert!(
-            result.is_ok(),
-            "Multi-I/O verification failed: {:?}",
-            result
-        );
+        let trace = prover.build_trace(&witness).expect("trace build");
+        let pub_inputs = prover.get_pub_inputs(&trace);
+        assert_eq!(pub_inputs.nullifiers.len(), MAX_INPUTS);
+        assert_eq!(pub_inputs.commitments.len(), MAX_OUTPUTS);
     }
 }

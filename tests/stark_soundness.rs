@@ -369,6 +369,7 @@ fn test_end_to_end_proof_security() {
     let witness = TransactionWitness {
         sk_spend,
         fee: 100,
+        value_balance: 0,
         merkle_root: BaseElement::ZERO,
         version: VersionBinding::new(1, 1),
         inputs: vec![InputNoteWitness {

@@ -46,9 +46,11 @@ pub struct TransactionProof {
 /// Serialized STARK public inputs for verification.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SerializedStarkInputs {
-    pub total_input: u64,
-    pub total_output: u64,
+    pub input_flags: Vec<u8>,
+    pub output_flags: Vec<u8>,
     pub fee: u64,
+    pub value_balance_sign: u8,
+    pub value_balance_magnitude: u64,
     #[serde(with = "crate::public_inputs::serde_felt")]
     pub merkle_root: Felt,
 }
@@ -108,10 +110,19 @@ pub fn prove(
     })?;
 
     // Serialize the STARK public inputs
-    // Use as_int() to convert BaseElement to u64
-    let total_input = stark_pub_inputs.total_input.as_int();
-    let total_output = stark_pub_inputs.total_output.as_int();
+    let input_flags = stark_pub_inputs
+        .input_flags
+        .iter()
+        .map(|f| f.as_int() as u8)
+        .collect();
+    let output_flags = stark_pub_inputs
+        .output_flags
+        .iter()
+        .map(|f| f.as_int() as u8)
+        .collect();
     let fee = stark_pub_inputs.fee.as_int();
+    let value_balance_sign = stark_pub_inputs.value_balance_sign.as_int() as u8;
+    let value_balance_magnitude = stark_pub_inputs.value_balance_magnitude.as_int();
 
     Ok(TransactionProof {
         // Use nullifiers/commitments from STARK public inputs to ensure consistency
@@ -121,9 +132,11 @@ pub fn prove(
         public_inputs,
         stark_proof: stark_proof.to_bytes(),
         stark_public_inputs: Some(SerializedStarkInputs {
-            total_input,
-            total_output,
+            input_flags,
+            output_flags,
             fee,
+            value_balance_sign,
+            value_balance_magnitude,
             merkle_root: stark_pub_inputs.merkle_root,
         }),
     })
@@ -161,12 +174,25 @@ pub fn verify(
     // If we have a real STARK proof with serialized public inputs, verify cryptographically
     if proof.has_stark_proof() {
         if let Some(ref stark_inputs) = proof.stark_public_inputs {
+            let input_flags = stark_inputs
+                .input_flags
+                .iter()
+                .map(|flag| Felt::new(*flag as u64))
+                .collect();
+            let output_flags = stark_inputs
+                .output_flags
+                .iter()
+                .map(|flag| Felt::new(*flag as u64))
+                .collect();
+
             let stark_pub_inputs = crate::stark_air::TransactionPublicInputsStark {
+                input_flags,
+                output_flags,
                 nullifiers: proof.nullifiers.clone(),
                 commitments: proof.commitments.clone(),
-                total_input: Felt::new(stark_inputs.total_input),
-                total_output: Felt::new(stark_inputs.total_output),
                 fee: Felt::new(stark_inputs.fee),
+                value_balance_sign: Felt::new(stark_inputs.value_balance_sign as u64),
+                value_balance_magnitude: Felt::new(stark_inputs.value_balance_magnitude),
                 merkle_root: stark_inputs.merkle_root,
             };
 
@@ -234,7 +260,9 @@ fn verify_balance_slots(proof: &TransactionProof) -> Result<(), TransactionCircu
 
         // For native asset, verify delta equals fee
         if expected.asset_id == NATIVE_ASSET_ID {
-            if expected.delta != proof.public_inputs.native_fee as i128 {
+            let expected_native =
+                proof.public_inputs.native_fee as i128 - proof.public_inputs.value_balance;
+            if expected.delta != expected_native {
                 return Err(TransactionCircuitError::BalanceMismatch(expected.asset_id));
             }
         } else if expected.delta != 0 {

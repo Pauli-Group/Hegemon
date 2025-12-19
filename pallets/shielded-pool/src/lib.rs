@@ -78,10 +78,16 @@ const PALLET_ID: PalletId = PalletId(*b"shld/pol");
 ///
 /// This constant exists only for detection - any occurrence is an error.
 const ZERO_NULLIFIER: [u8; 32] = [0u8; 32];
+const ZERO_COMMITMENT: [u8; 32] = [0u8; 32];
 
 /// Check if a nullifier is the zero value (which is invalid).
 fn is_zero_nullifier(nf: &[u8; 32]) -> bool {
     *nf == ZERO_NULLIFIER
+}
+
+/// Check if a commitment is the zero value (which is invalid for active outputs).
+fn is_zero_commitment(cm: &[u8; 32]) -> bool {
+    *cm == ZERO_COMMITMENT
 }
 
 /// Weight information for pallet extrinsics.
@@ -433,6 +439,8 @@ pub mod pallet {
         /// Zero nullifier submitted (security violation - zero nullifiers are padding only).
         /// This error indicates a malicious attempt to bypass double-spend protection.
         ZeroNullifierSubmitted,
+        /// Zero commitment submitted (invalid output commitment).
+        ZeroCommitmentSubmitted,
         /// Proof exceeds maximum allowed size.
         /// This prevents DoS attacks via oversized proofs that consume verification resources.
         ProofTooLarge,
@@ -557,6 +565,7 @@ pub mod pallet {
             ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
             anchor: [u8; 32],
             binding_sig: BindingSignature,
+            fee: u64,
             value_balance: i128,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
@@ -599,6 +608,11 @@ pub mod pallet {
                     return Err(Error::<T>::ZeroNullifierSubmitted.into());
                 }
             }
+            for cm in commitments.iter() {
+                if is_zero_commitment(cm) {
+                    return Err(Error::<T>::ZeroCommitmentSubmitted.into());
+                }
+            }
 
             // For unshielding (value_balance < 0) or pure transfers (value_balance == 0 with outputs),
             // there must be at least one input nullifier to spend from
@@ -629,6 +643,7 @@ pub mod pallet {
                 anchor,
                 nullifiers: nullifiers.clone().into_inner(),
                 commitments: commitments.clone().into_inner(),
+                fee,
                 value_balance,
             };
 
@@ -902,6 +917,7 @@ pub mod pallet {
             ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
             anchor: [u8; 32],
             binding_sig: BindingSignature,
+            fee: u64,
         ) -> DispatchResult {
             // This is an unsigned extrinsic - no signer required
             ensure_none(origin)?;
@@ -925,23 +941,28 @@ pub mod pallet {
                 Error::<T>::InvalidAnchor
             );
 
-            // Check for duplicate nullifiers in transaction (skip zero padding)
-            let mut seen_nullifiers = Vec::new();
             for nf in nullifiers.iter() {
                 if is_zero_nullifier(nf) {
-                    continue;
+                    return Err(Error::<T>::ZeroNullifierSubmitted.into());
                 }
+            }
+            for cm in commitments.iter() {
+                if is_zero_commitment(cm) {
+                    return Err(Error::<T>::ZeroCommitmentSubmitted.into());
+                }
+            }
+
+            // Check for duplicate nullifiers in transaction
+            let mut seen_nullifiers = Vec::new();
+            for nf in nullifiers.iter() {
                 if seen_nullifiers.contains(nf) {
                     return Err(Error::<T>::DuplicateNullifierInTx.into());
                 }
                 seen_nullifiers.push(*nf);
             }
 
-            // Check nullifiers not already spent (skip zero padding)
+            // Check nullifiers not already spent
             for nf in nullifiers.iter() {
-                if is_zero_nullifier(nf) {
-                    continue;
-                }
                 ensure!(
                     !Nullifiers::<T>::contains_key(nf),
                     Error::<T>::NullifierAlreadyExists
@@ -953,6 +974,7 @@ pub mod pallet {
                 anchor,
                 nullifiers: nullifiers.clone().into_inner(),
                 commitments: commitments.clone().into_inner(),
+                fee,
                 value_balance,
             };
 
@@ -988,11 +1010,8 @@ pub mod pallet {
                 Error::<T>::InvalidBindingSignature
             );
 
-            // Add nullifiers to spent set (skip zero padding)
+            // Add nullifiers to spent set
             for nf in nullifiers.iter() {
-                if is_zero_nullifier(nf) {
-                    continue;
-                }
                 Nullifiers::<T>::insert(nf, ());
                 Self::deposit_event(Event::NullifierAdded { nullifier: *nf });
             }
@@ -1552,6 +1571,7 @@ pub mod pallet {
                     ciphertexts,
                     anchor,
                     binding_sig,
+                    fee,
                 } => {
                     log::info!(target: "shielded-pool", "Validating shielded_transfer_unsigned");
                     log::info!(target: "shielded-pool", "  proof.len = {}", proof.data.len());
@@ -1560,12 +1580,17 @@ pub mod pallet {
                     log::info!(target: "shielded-pool", "  ciphertexts.len = {}", ciphertexts.len());
                     log::info!(target: "shielded-pool", "  anchor = {:02x?}", &anchor[..8]);
                     log::info!(target: "shielded-pool", "  binding_sig[0..8] = {:02x?}", &binding_sig.data[..8]);
+                    log::info!(target: "shielded-pool", "  fee = {}", fee);
 
                     // Basic validation before accepting into pool
 
                     // Check counts are valid
                     if nullifiers.is_empty() && commitments.is_empty() {
                         log::info!(target: "shielded-pool", "  REJECTED: Empty nullifiers and commitments");
+                        return InvalidTransaction::Custom(1).into();
+                    }
+                    if commitments.len() > 0 && nullifiers.is_empty() {
+                        log::info!(target: "shielded-pool", "  REJECTED: Missing nullifiers for outputs");
                         return InvalidTransaction::Custom(1).into();
                     }
                     if ciphertexts.len() != commitments.len() {
@@ -1580,12 +1605,22 @@ pub mod pallet {
                     }
                     log::info!(target: "shielded-pool", "  anchor check PASSED");
 
-                    // Check for duplicate nullifiers within the transaction (skip zero padding)
-                    let mut seen = Vec::new();
                     for nf in nullifiers.iter() {
                         if is_zero_nullifier(nf) {
-                            continue;
+                            log::info!(target: "shielded-pool", "  REJECTED: Zero nullifier submitted");
+                            return InvalidTransaction::Custom(4).into();
                         }
+                    }
+                    for cm in commitments.iter() {
+                        if is_zero_commitment(cm) {
+                            log::info!(target: "shielded-pool", "  REJECTED: Zero commitment submitted");
+                            return InvalidTransaction::Custom(4).into();
+                        }
+                    }
+
+                    // Check for duplicate nullifiers within the transaction
+                    let mut seen = Vec::new();
+                    for nf in nullifiers.iter() {
                         if seen.contains(nf) {
                             log::info!(target: "shielded-pool", "  REJECTED: Duplicate nullifier in tx");
                             return InvalidTransaction::Custom(4).into();
@@ -1593,11 +1628,8 @@ pub mod pallet {
                         seen.push(*nf);
                     }
 
-                    // Check nullifiers haven't been spent already (skip zero padding)
+                    // Check nullifiers haven't been spent already
                     for nf in nullifiers.iter() {
-                        if is_zero_nullifier(nf) {
-                            continue;
-                        }
                         if Nullifiers::<T>::contains_key(nf) {
                             log::info!(target: "shielded-pool", "  REJECTED: Nullifier already spent");
                             return InvalidTransaction::Custom(5).into();
@@ -1618,6 +1650,7 @@ pub mod pallet {
                         anchor: *anchor,
                         nullifiers: nullifiers.clone().into_inner(),
                         commitments: commitments.clone().into_inner(),
+                        fee: *fee,
                         value_balance: 0, // Pure shielded transfer
                     };
 
@@ -1655,11 +1688,6 @@ pub mod pallet {
 
                     let mut provided_any = false;
                     for nf in nullifiers.iter() {
-                        // Skip padding nullifiers so 1-input spends don't all conflict
-                        // on a single all-zero provides tag.
-                        if is_zero_nullifier(nf) {
-                            continue;
-                        }
                         let mut tag = b"shielded_nf:".to_vec();
                         tag.extend_from_slice(nf);
                         builder = builder.and_provides(tag);

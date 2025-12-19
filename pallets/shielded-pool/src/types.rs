@@ -224,6 +224,8 @@ pub struct ShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
     pub anchor: [u8; 32],
     /// Value balance commitment (verified in STARK circuit).
     pub binding_sig: BindingSignature,
+    /// Native fee encoded in the proof.
+    pub fee: u64,
     /// Net value change (positive = deposit from transparent, negative = withdraw to transparent).
     pub value_balance: i128,
 }

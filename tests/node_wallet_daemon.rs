@@ -10,6 +10,7 @@ use tempfile::tempdir;
 use tokio::task::spawn_blocking;
 use tokio::time::{sleep, timeout};
 use transaction_circuit::constants::NATIVE_ASSET_ID;
+use transaction_circuit::hashing::felt_to_bytes32;
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{InputNoteWitness, NoteData, OutputNoteWitness};
 use transaction_circuit::proof::prove;
@@ -258,10 +259,49 @@ async fn post_funding_transaction(
         sk_spend: [33u8; 32],
         merkle_root: root,
         fee: 1,
+        value_balance: 0,
         version: TransactionWitness::default_version_binding(),
     };
     let proof = prove(&witness, &proving_key).expect("prove funding");
-    let bundle = TransactionBundle::from_notes(proof, &[alice_ct, change_ct]).expect("bundle");
+    let nullifiers: Vec<[u8; 32]> = proof
+        .nullifiers
+        .iter()
+        .filter(|value| value.as_int() != 0)
+        .map(|value| felt_to_bytes32(*value))
+        .collect();
+    let commitments: Vec<[u8; 32]> = proof
+        .commitments
+        .iter()
+        .filter(|value| value.as_int() != 0)
+        .map(|value| felt_to_bytes32(*value))
+        .collect();
+    let anchor = felt_to_bytes32(witness.merkle_root);
+    let mut message = Vec::new();
+    message.extend_from_slice(&anchor);
+    for nf in &nullifiers {
+        message.extend_from_slice(nf);
+    }
+    for cm in &commitments {
+        message.extend_from_slice(cm);
+    }
+    message.extend_from_slice(&witness.fee.to_le_bytes());
+    message.extend_from_slice(&witness.value_balance.to_le_bytes());
+    let hash = sp_core::hashing::blake2_256(&message);
+    let mut binding_sig = [0u8; 64];
+    binding_sig[..32].copy_from_slice(&hash);
+    binding_sig[32..].copy_from_slice(&hash);
+
+    let bundle = TransactionBundle::new(
+        proof.stark_proof,
+        nullifiers,
+        commitments,
+        &[alice_ct, change_ct],
+        anchor,
+        binding_sig,
+        witness.fee,
+        witness.value_balance,
+    )
+    .expect("bundle");
     handle
         .service
         .submit_transaction(bundle)

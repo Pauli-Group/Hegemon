@@ -94,7 +94,8 @@ impl TransactionAir {
                 return Err(TransactionCircuitError::BalanceMismatch(expected.asset_id));
             }
             if expected.asset_id == NATIVE_ASSET_ID {
-                if expected.delta != public_inputs.native_fee as i128 {
+                let expected_native = public_inputs.native_fee as i128 - public_inputs.value_balance;
+                if expected.delta != expected_native {
                     return Err(TransactionCircuitError::BalanceMismatch(expected.asset_id));
                 }
             } else if expected.delta != 0 {

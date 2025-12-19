@@ -257,6 +257,7 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
         sk_spend: random_bytes(rng),
         merkle_root,
         fee,
+        value_balance: 0,
         version: DEFAULT_VERSION_BINDING,
     }
 }

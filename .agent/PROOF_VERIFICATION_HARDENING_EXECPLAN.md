@@ -14,8 +14,10 @@ After this change, the node enforces real cryptographic proof verification for s
 - [x] (2025-01-15T00:00Z) Aligned runtime/pallet limits to 2/2 and updated mocks/tests.
 - [x] (2025-01-15T00:00Z) Added tamper-reject tests for non-canonical inputs/value balance and enforced canonical input checks in the shielded verifier.
 - [x] (2025-01-15T00:00Z) Audited production feature flags to disable AcceptAllProofs and require `stark-verify`.
-- [ ] Implement full transaction AIR constraints and update prover and witness (completed: plan; remaining: code change and tests).
-- [ ] Replace pallet verifier with shared cryptographic verifier and bind value balance to proofs (canonical encoding now enforced; remaining: shared core + value balance binding).
+- [x] (2025-01-15T00:00Z) Created `circuits/transaction-core` and refactored the transaction circuit to re-export shared core modules.
+- [x] (2025-01-15T00:00Z) Wired the shielded-pool verifier to transaction-core and padded STARK public inputs for verification.
+- [x] (2025-01-15T00:00Z) Implemented full transaction AIR constraints, updated prover/witness, and aligned RPO verifier + tests with active flags and value-balance binding.
+- [x] (2025-01-15T00:00Z) Bound value balance + fee into STARK public inputs and binding signature; updated pallet verifier, extrinsic inputs, and wallet/node plumbing to reject zero padding and require canonical non-zero inputs.
 - [ ] Update recursive proof pipeline to new transaction proof shape and update `RECURSIVE_PROOFS_EXECPLAN.md` (completed: plan; remaining: code change and plan update).
 - [ ] Implement settlement proof verification (fail-closed first, then real circuit) (completed: plan; remaining: code change and tests).
 - [ ] Harden PoW import checks and PQ identity generation (completed: plan; remaining: code change and tests).
@@ -24,6 +26,7 @@ After this change, the node enforces real cryptographic proof verification for s
 ## Surprises & Discoveries
 
 - (2025-01-15) The value-balance tamper test currently passes verification because STARK public inputs do not include value_balance; binding must be added in the circuit/core.
+- (2025-01-15) Wallet/node submission paths assumed padded nullifiers/commitments; active-flag public inputs required filtering active entries and adding fee into the binding signature message.
 
 ## Decision Log
 

@@ -88,6 +88,8 @@ pub struct ShieldedTransferCall {
     pub anchor: [u8; 32],
     /// Binding signature
     pub binding_sig: [u8; 64],
+    /// Native fee encoded in the proof.
+    pub fee: u64,
     /// Value balance (net shielding/unshielding)
     pub value_balance: i128,
 }
@@ -102,6 +104,7 @@ impl ShieldedTransferCall {
             encrypted_notes: bundle.ciphertexts.clone(),
             anchor: bundle.anchor,
             binding_sig: bundle.binding_sig,
+            fee: bundle.fee,
             value_balance: bundle.value_balance,
         }
     }
@@ -295,6 +298,7 @@ impl ExtrinsicBuilder {
     /// - ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx>
     /// - anchor: [u8; 32]
     /// - binding_sig: BindingSignature
+    /// - fee: u64
     /// - value_balance: i128
     fn encode_shielded_transfer_call(
         &self,
@@ -360,6 +364,9 @@ impl ExtrinsicBuilder {
         // Encode binding signature (BindingSignature { data: [u8; 64] })
         encoded.extend_from_slice(&call.binding_sig);
         // eprintln!("DEBUG CALL: after binding_sig, encoded size = {}", encoded.len());
+
+        // Encode fee (u64, little-endian)
+        encoded.extend_from_slice(&call.fee.to_le_bytes());
 
         // Encode value_balance (i128, little-endian)
         encoded.extend_from_slice(&call.value_balance.to_le_bytes());
@@ -955,6 +962,9 @@ pub fn encode_shielded_transfer_unsigned_call(
 
     // Encode binding signature (BindingSignature { data: [u8; 64] })
     encoded.extend_from_slice(&call.binding_sig);
+
+    // Encode fee (u64, little-endian)
+    encoded.extend_from_slice(&call.fee.to_le_bytes());
 
     // NOTE: No value_balance for unsigned transfers - it's always 0
     // The pallet hardcodes value_balance = 0 for unsigned calls
