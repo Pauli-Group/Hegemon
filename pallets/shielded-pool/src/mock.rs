@@ -3,7 +3,14 @@
 use crate as pallet_shielded_pool;
 // AcceptAllProofs is only available in test builds (not production)
 #[cfg(not(feature = "production"))]
-use crate::verifier::AcceptAllProofs;
+type TestProofVerifier = crate::verifier::AcceptAllProofs;
+#[cfg(feature = "production")]
+type TestProofVerifier = crate::verifier::StarkVerifier;
+
+#[cfg(not(feature = "production"))]
+type TestBatchProofVerifier = crate::verifier::AcceptAllBatchProofs;
+#[cfg(feature = "production")]
+type TestBatchProofVerifier = crate::verifier::StarkBatchVerifier;
 
 use frame_support::{
     parameter_types,
@@ -78,11 +85,11 @@ impl pallet_balances::Config for Test {
 }
 
 parameter_types! {
-    pub const MaxNullifiersPerTx: u32 = 4;
-    pub const MaxCommitmentsPerTx: u32 = 4;
-    pub const MaxEncryptedNotesPerTx: u32 = 4;
-    pub const MaxNullifiersPerBatch: u32 = 64;  // 16 txs * 4 nullifiers
-    pub const MaxCommitmentsPerBatch: u32 = 64; // 16 txs * 4 commitments
+    pub const MaxNullifiersPerTx: u32 = 2;
+    pub const MaxCommitmentsPerTx: u32 = 2;
+    pub const MaxEncryptedNotesPerTx: u32 = 2;
+    pub const MaxNullifiersPerBatch: u32 = 32;  // 16 txs * 2 nullifiers
+    pub const MaxCommitmentsPerBatch: u32 = 32; // 16 txs * 2 commitments
     pub const MerkleRootHistorySize: u32 = 100;
 }
 
@@ -90,8 +97,8 @@ impl pallet_shielded_pool::Config for Test {
     type RuntimeEvent = RuntimeEvent;
     type Currency = Balances;
     type AdminOrigin = frame_system::EnsureRoot<u64>;
-    type ProofVerifier = AcceptAllProofs;
-    type BatchProofVerifier = crate::verifier::AcceptAllBatchProofs;
+    type ProofVerifier = TestProofVerifier;
+    type BatchProofVerifier = TestBatchProofVerifier;
     type MaxNullifiersPerTx = MaxNullifiersPerTx;
     type MaxCommitmentsPerTx = MaxCommitmentsPerTx;
     type MaxEncryptedNotesPerTx = MaxEncryptedNotesPerTx;
@@ -137,10 +144,11 @@ mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{BindingSignature, EncryptedNote, StarkProof};
-    use codec::Encode;
     use frame_support::{assert_noop, assert_ok, BoundedVec};
     use sp_runtime::traits::ValidateUnsigned;
-    use sp_runtime::transaction_validity::TransactionSource;
+    use sp_runtime::transaction_validity::{
+        InvalidTransaction, TransactionSource, TransactionValidityError,
+    };
 
     fn valid_proof() -> StarkProof {
         StarkProof::from_bytes(vec![1u8; 1024])
@@ -155,12 +163,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_unsigned_skips_padding_nullifier_in_provides_tags() {
+    fn validate_unsigned_rejects_zero_nullifier() {
         new_test_ext().execute_with(|| {
             let tree = MerkleTreeStorage::<Test>::get();
             let anchor = tree.root();
 
-            // One real nullifier + one padding nullifier.
+            // One real nullifier + one padding nullifier (now rejected).
             let real_nf = [9u8; 32];
             let padding_nf = [0u8; 32];
             let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
@@ -178,20 +186,16 @@ mod tests {
                 ciphertexts,
                 anchor,
                 binding_sig: valid_binding_sig(),
+                fee: 0,
             };
 
-            let validity =
-                Pallet::<Test>::validate_unsigned(TransactionSource::External, &call).unwrap();
-
-            let mut expected_real = b"shielded_nf:".to_vec();
-            expected_real.extend_from_slice(&real_nf);
-            let expected_real = ("ShieldedPoolUnsigned", expected_real).encode();
-            assert!(validity.provides.contains(&expected_real));
-
-            let mut expected_padding = b"shielded_nf:".to_vec();
-            expected_padding.extend_from_slice(&padding_nf);
-            let expected_padding = ("ShieldedPoolUnsigned", expected_padding).encode();
-            assert!(!validity.provides.contains(&expected_padding));
+            let validity = Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(matches!(
+                validity,
+                Err(TransactionValidityError::Invalid(
+                    InvalidTransaction::Custom(4)
+                ))
+            ));
         });
     }
 
@@ -256,6 +260,7 @@ mod tests {
                 ciphertexts,
                 anchor,
                 valid_binding_sig(),
+                0, // fee
                 0, // value_balance = 0 for shielded-to-shielded
             ));
 
@@ -296,6 +301,7 @@ mod tests {
                 anchor,
                 valid_binding_sig(),
                 0,
+                0,
             ));
 
             // Get new anchor
@@ -312,6 +318,7 @@ mod tests {
                     ciphertexts,
                     new_anchor,
                     valid_binding_sig(),
+                    0,
                     0,
                 ),
                 crate::Error::<Test>::NullifierAlreadyExists
@@ -340,6 +347,7 @@ mod tests {
                     ciphertexts,
                     invalid_anchor,
                     valid_binding_sig(),
+                    0,
                     0,
                 ),
                 crate::Error::<Test>::InvalidAnchor
@@ -380,6 +388,7 @@ mod tests {
                     ciphertexts,
                     anchor,
                     valid_binding_sig(),
+                    0,
                     0,
                 ),
                 crate::Error::<Test>::DuplicateNullifierInTx
@@ -454,6 +463,7 @@ mod tests {
                     anchor,
                     valid_binding_sig(),
                     0,
+                    0,
                 ),
                 crate::Error::<Test>::EncryptedNotesMismatch
             );
@@ -514,6 +524,7 @@ mod tests {
                     anchor,
                     valid_binding_sig(),
                     0,
+                    0,
                 ),
                 crate::Error::<Test>::InvalidNullifierCount
             );
@@ -553,6 +564,7 @@ mod tests {
                     ciphertexts,
                     anchor,
                     valid_binding_sig(),
+                    0,
                     0,
                 ),
                 crate::Error::<Test>::InvalidProofFormat
@@ -601,6 +613,7 @@ mod tests {
                         ciphertexts,
                         old_anchor,
                         valid_binding_sig(),
+                        0,
                         0,
                     ),
                     crate::Error::<Test>::InvalidAnchor
@@ -672,23 +685,15 @@ mod tests {
             let tree = MerkleTreeStorage::<Test>::get();
             let anchor = tree.root();
 
-            // MaxNullifiersPerTx is 4
+            // MaxNullifiersPerTx is 2
             let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32]]
-                    .try_into()
-                    .unwrap();
+                vec![[1u8; 32], [2u8; 32]].try_into().unwrap();
             let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[5u8; 32], [6u8; 32], [7u8; 32], [8u8; 32]]
+                vec![[5u8; 32], [6u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note(), valid_encrypted_note()]
                     .try_into()
                     .unwrap();
-            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> = vec![
-                valid_encrypted_note(),
-                valid_encrypted_note(),
-                valid_encrypted_note(),
-                valid_encrypted_note(),
-            ]
-            .try_into()
-            .unwrap();
 
             assert_ok!(Pallet::<Test>::shielded_transfer(
                 RuntimeOrigin::signed(1),
@@ -698,6 +703,7 @@ mod tests {
                 ciphertexts,
                 anchor,
                 valid_binding_sig(),
+                0,
                 0,
             ));
         });
@@ -728,6 +734,7 @@ mod tests {
                 ciphertexts,
                 anchor,
                 valid_binding_sig(),
+                0,
                 0,
             ));
         });

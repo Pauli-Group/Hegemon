@@ -251,23 +251,24 @@ where
     }
 }
 
-/// Type alias for the no-op inherent data providers creator
+/// Type alias for the inherent data providers creator
 ///
-/// For our PoW chain, we don't need any inherent data providers since
-/// timestamps and other inherents are handled differently. This type
-/// is used as the CIDP parameter for PowBlockImport.
-type NoOpInherentDataProviders = fn(
+/// PoW import checks use this to supply timestamp inherent data when
+/// validating blocks during import.
+type PowInherentProviders = (sp_timestamp::InherentDataProvider,);
+type PowInherentDataProviders = fn(
     <runtime::Block as sp_runtime::traits::Block>::Hash,
     (),
 ) -> std::pin::Pin<
     Box<
-        dyn std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>
-            + Send,
+        dyn std::future::Future<
+                Output = Result<PowInherentProviders, Box<dyn std::error::Error + Send + Sync>>,
+            > + Send,
     >,
 >;
 
-/// Concrete type for the PoW block import with no-op inherent providers
-pub type ConcretePowBlockImport = HegemonPowBlockImport<NoOpInherentDataProviders>;
+/// Concrete type for the PoW block import with timestamp inherent providers
+pub type ConcretePowBlockImport = HegemonPowBlockImport<PowInherentDataProviders>;
 
 /// Re-export the runtime WASM binary for node use
 #[cfg(feature = "substrate")]
@@ -1184,35 +1185,33 @@ pub fn new_partial_with_client(
     let pow_algorithm = Blake3Algorithm::new(client.clone());
 
     // Create inherent data providers creator
-    // For our PoW chain, we don't need any inherent data providers since
-    // timestamps are handled separately in the mining worker.
+    // Timestamp inherents are required for runtime validation during import.
     // We use a function pointer type for compatibility with PowBlockImport.
     fn create_inherent_data_providers(
         _parent_hash: <runtime::Block as sp_runtime::traits::Block>::Hash,
         _: (),
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>
-                + Send,
+            dyn std::future::Future<
+                    Output = Result<PowInherentProviders, Box<dyn std::error::Error + Send + Sync>>,
+                > + Send,
         >,
     > {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move { Ok((sp_timestamp::InherentDataProvider::from_system_time(),)) })
     }
 
     // Create the PoW block import wrapper
     // This verifies Blake3 PoW seals before allowing blocks to be imported
     //
-    // NOTE: check_inherents_after is set to u64::MAX to disable inherent checking during sync.
-    // pallet_timestamp's check_inherent validates that block timestamps are within drift of "now",
-    // which fails for historical blocks being synced. Since PoW blocks are already validated
-    // by their proof-of-work seal, timestamp manipulation is constrained by the PoW difficulty.
+    let pow_import_config = crate::substrate::block_import::BlockImportConfig::from_env();
+
     let pow_block_import = sc_consensus_pow::PowBlockImport::new(
         client.clone(),        // Inner block import (client implements BlockImport)
         client.clone(),        // Client for runtime API queries
         pow_algorithm.clone(), // PoW algorithm for verification
-        u64::MAX,              // check_inherents_after: u64::MAX = never check (required for sync)
+        pow_import_config.check_inherents_after as u64, // enable inherent checks when configured
         select_chain.clone(),  // Chain selection rule
-        create_inherent_data_providers as NoOpInherentDataProviders, // Inherent data providers creator
+        create_inherent_data_providers as PowInherentDataProviders, // Inherent data providers creator
     );
 
     tracing::info!("PoW block import pipeline created");
@@ -1244,25 +1243,15 @@ pub fn new_partial_with_client(
     };
 
     // Generate PQ network keypair for this node
-    let network_keypair = match PqNetworkKeypair::generate() {
-        Ok(keypair) => {
-            tracing::info!(
-                peer_id = %keypair.peer_id(),
-                "Generated PQ network keypair"
-            );
-            Some(keypair)
-        }
-        Err(e) => {
-            tracing::warn!("Failed to generate PQ network keypair: {}", e);
-            None
-        }
-    };
+    let network_keypair = PqNetworkKeypair::generate()
+        .map_err(|e| ServiceError::Other(format!("PQ network keypair generation failed: {e}")))?;
+    tracing::info!(
+        peer_id = %network_keypair.peer_id(),
+        "Generated PQ network keypair"
+    );
 
     // Create PQ peer identity and transport
-    let node_seed = network_keypair
-        .as_ref()
-        .map(|k| k.peer_id_bytes().to_vec())
-        .unwrap_or_else(|| vec![0u8; 32]);
+    let node_seed = network_keypair.peer_id_bytes().to_vec();
 
     let pq_transport_config = PqTransportConfig {
         require_pq: pq_service_config.require_pq,
@@ -1298,7 +1287,7 @@ pub fn new_partial_with_client(
         pow_algorithm,
         task_manager,
         pow_handle,
-        network_keypair,
+        network_keypair: Some(network_keypair),
         network_config: pq_network_config,
         pq_identity: Some(pq_identity),
         pq_transport: Some(pq_transport),
@@ -2340,6 +2329,75 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 Vec<[u8; 32]>,
                             > = std::collections::BTreeMap::new();
 
+                            fn proof_hash_from_call(
+                                call: &pallet_shielded_pool::Call<runtime::Runtime>,
+                            ) -> Option<[u8; 32]> {
+                                use epoch_circuit::{
+                                    batch_proof_hash, proof_hash, BatchProofHashInputs,
+                                    ProofHashInputs,
+                                };
+                                use pallet_shielded_pool::Call as PoolCall;
+
+                                match call {
+                                    PoolCall::shielded_transfer {
+                                        proof,
+                                        nullifiers,
+                                        commitments,
+                                        anchor,
+                                        fee,
+                                        value_balance,
+                                        ..
+                                    } => {
+                                        let inputs = ProofHashInputs {
+                                            proof_bytes: proof.data.as_slice(),
+                                            anchor: *anchor,
+                                            nullifiers: nullifiers.as_slice(),
+                                            commitments: commitments.as_slice(),
+                                            fee: *fee,
+                                            value_balance: *value_balance,
+                                        };
+                                        Some(proof_hash(&inputs))
+                                    }
+                                    PoolCall::shielded_transfer_unsigned {
+                                        proof,
+                                        nullifiers,
+                                        commitments,
+                                        anchor,
+                                        fee,
+                                        ..
+                                    } => {
+                                        let inputs = ProofHashInputs {
+                                            proof_bytes: proof.data.as_slice(),
+                                            anchor: *anchor,
+                                            nullifiers: nullifiers.as_slice(),
+                                            commitments: commitments.as_slice(),
+                                            fee: *fee,
+                                            value_balance: 0,
+                                        };
+                                        Some(proof_hash(&inputs))
+                                    }
+                                    PoolCall::batch_shielded_transfer {
+                                        proof,
+                                        nullifiers,
+                                        commitments,
+                                        anchor,
+                                        total_fee,
+                                        ..
+                                    } => {
+                                        let inputs = BatchProofHashInputs {
+                                            proof_bytes: proof.data.as_slice(),
+                                            anchor: *anchor,
+                                            nullifiers: nullifiers.as_slice(),
+                                            commitments: commitments.as_slice(),
+                                            total_fee: *total_fee,
+                                            batch_size: proof.batch_size,
+                                        };
+                                        Some(batch_proof_hash(&inputs))
+                                    }
+                                    _ => None,
+                                }
+                            }
+
                             // =========================================================
                             // Backfill: scan historical blocks for proof hashes
                             // =========================================================
@@ -2409,21 +2467,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     for ext in &body {
                                         // First match on ShieldedPool variant, then match inner call
                                         if let runtime::RuntimeCall::ShieldedPool(ref inner) = ext.function {
-                                            use pallet_shielded_pool::Call as PoolCall;
-                                            match inner {
-                                                PoolCall::shielded_transfer { proof, .. } => {
-                                                    tracing::info!(block_num, "Found shielded_transfer (backfill)");
-                                                    hashes_in_block.push(blake3::hash(&proof.data).into());
-                                                }
-                                                PoolCall::batch_shielded_transfer { proof, .. } => {
-                                                    tracing::info!(block_num, "Found batch_shielded_transfer (backfill)");
-                                                    hashes_in_block.push(blake3::hash(&proof.data).into());
-                                                }
-                                                PoolCall::shielded_transfer_unsigned { proof, .. } => {
-                                                    tracing::info!(block_num, "Found shielded_transfer_unsigned (backfill)");
-                                                    hashes_in_block.push(blake3::hash(&proof.data).into());
-                                                }
-                                                _ => {}
+                                            if let Some(hash) = proof_hash_from_call(inner) {
+                                                tracing::info!(block_num, "Found shielded transfer (backfill)");
+                                                hashes_in_block.push(hash);
                                             }
                                         }
                                     }
@@ -2605,18 +2651,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     // UncheckedExtrinsic has public `function` field (the call).
                                     // Match both individual and batch shielded transfers.
                                     if let runtime::RuntimeCall::ShieldedPool(ref inner) = ext.function {
-                                        use pallet_shielded_pool::Call as PoolCall;
-                                        match inner {
-                                            PoolCall::shielded_transfer { proof, .. } => {
-                                                hashes_in_block.push(blake3::hash(&proof.data).into());
-                                            }
-                                            PoolCall::batch_shielded_transfer { proof, .. } => {
-                                                hashes_in_block.push(blake3::hash(&proof.data).into());
-                                            }
-                                            PoolCall::shielded_transfer_unsigned { proof, .. } => {
-                                                hashes_in_block.push(blake3::hash(&proof.data).into());
-                                            }
-                                            _ => {}
+                                        if let Some(hash) = proof_hash_from_call(inner) {
+                                            hashes_in_block.push(hash);
                                         }
                                     }
                                 }

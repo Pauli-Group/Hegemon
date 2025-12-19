@@ -169,13 +169,6 @@ pub fn build_transaction(
         });
     }
 
-    // Pad ciphertexts to match MAX_OUTPUTS (same as commitments padding in the proof)
-    // The pallet requires ciphertexts.len() == commitments.len()
-    while ciphertexts.len() < MAX_OUTPUTS {
-        // Create a dummy/empty ciphertext for padding
-        ciphertexts.push(NoteCiphertext::empty());
-    }
-
     let tree = store.commitment_tree()?;
     let wallet_root = tree.root();
     // eprintln!("DEBUG: wallet merkle_root = {:?}", wallet_root);
@@ -244,6 +237,7 @@ pub fn build_transaction(
         sk_spend: derived.spend.to_bytes(),
         merkle_root: tree.root(),
         fee,
+        value_balance: 0,
         version: TransactionWitness::default_version_binding(),
     };
 
@@ -277,6 +271,7 @@ pub fn build_transaction(
         &proof_result.anchor,
         &proof_result.nullifiers,
         &proof_result.commitments,
+        proof_result.fee,
         proof_result.value_balance,
     );
     // The binding signature is the 32-byte hash duplicated to 64 bytes
@@ -291,22 +286,15 @@ pub fn build_transaction(
         &ciphertexts,
         proof_result.anchor,
         binding_sig_64,
+        proof_result.fee,
         proof_result.value_balance,
     )?;
     let spent_indexes = selection.spent.iter().map(|note| note.index).collect();
 
-    // Filter out padding nullifiers (all zeros) - only store real nullifiers for tracking
-    let real_nullifiers: Vec<[u8; 32]> = proof_result
-        .nullifiers
-        .iter()
-        .filter(|nf| **nf != [0u8; 32])
-        .copied()
-        .collect();
-
     Ok(BuiltTransaction {
         bundle,
         // Use prover nullifiers, not wallet-computed, to match what's actually submitted
-        nullifiers: real_nullifiers,
+        nullifiers: proof_result.nullifiers.to_vec(),
         spent_note_indexes: spent_indexes,
     })
 }
@@ -314,11 +302,12 @@ pub fn build_transaction(
 /// Compute binding signature hash for transaction commitment.
 ///
 /// Returns the 32-byte Blake2-256 hash of the public inputs:
-/// Blake2_256(anchor || nullifiers || commitments || value_balance)
+/// Blake2_256(anchor || nullifiers || commitments || fee || value_balance)
 fn compute_binding_hash(
     anchor: &[u8; 32],
     nullifiers: &[[u8; 32]],
     commitments: &[[u8; 32]],
+    fee: u64,
     value_balance: i128,
 ) -> [u8; 32] {
     // Debug: print binding hash inputs
@@ -341,6 +330,7 @@ fn compute_binding_hash(
     for cm in commitments {
         data.extend_from_slice(cm);
     }
+    data.extend_from_slice(&fee.to_le_bytes());
     data.extend_from_slice(&value_balance.to_le_bytes());
 
     // eprintln!("DEBUG binding: data.len = {}", data.len());

@@ -1083,7 +1083,6 @@ dependencies = [
  "cc",
  "cfg-if",
  "constant_time_eq",
- "digest 0.10.7",
 ]
 
 [[package]]
@@ -6571,7 +6570,6 @@ dependencies = [
 name = "pallet-settlement"
 version = "0.1.0"
 dependencies = [
- "blake3",
  "frame-benchmarking",
  "frame-support",
  "frame-system",
@@ -6579,6 +6577,7 @@ dependencies = [
  "pallet-balances",
  "parity-scale-codec",
  "scale-info",
+ "settlement-circuit",
  "sp-core",
  "sp-io",
  "sp-runtime",
@@ -6611,6 +6610,8 @@ dependencies = [
  "sp-io",
  "sp-runtime",
  "sp-std",
+ "transaction-circuit",
+ "transaction-core",
  "winter-air",
  "winter-crypto",
  "winter-math",
@@ -9469,6 +9470,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "settlement-circuit"
+version = "0.1.0"
+dependencies = [
+ "winter-crypto",
+ "winterfell",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11267,7 +11276,6 @@ dependencies = [
 name = "transaction-circuit"
 version = "0.1.0"
 dependencies = [
- "blake3",
  "hex",
  "miden-crypto",
  "proptest",
@@ -11277,6 +11285,17 @@ dependencies = [
  "serde_json",
  "synthetic-crypto",
  "thiserror 1.0.69",
+ "transaction-core",
+ "winter-crypto",
+ "winterfell",
+]
+
+[[package]]
+name = "transaction-core"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "serde",
  "winter-crypto",
  "winterfell",
 ]

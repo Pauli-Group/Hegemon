@@ -16,10 +16,10 @@ use sp_std::vec::Vec;
 pub const MERKLE_TREE_DEPTH: u32 = 32;
 
 /// Maximum number of nullifiers per transaction.
-pub const MAX_NULLIFIERS_PER_TX: u32 = 4;
+pub const MAX_NULLIFIERS_PER_TX: u32 = 2;
 
 /// Maximum number of commitments (output notes) per transaction.
-pub const MAX_COMMITMENTS_PER_TX: u32 = 4;
+pub const MAX_COMMITMENTS_PER_TX: u32 = 2;
 
 /// Maximum size of a STARK proof in bytes.
 /// STARK proofs require NO trusted setup.
@@ -224,6 +224,8 @@ pub struct ShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
     pub anchor: [u8; 32],
     /// Value balance commitment (verified in STARK circuit).
     pub binding_sig: BindingSignature,
+    /// Native fee encoded in the proof.
+    pub fee: u64,
     /// Net value change (positive = deposit from transparent, negative = withdraw to transparent).
     pub value_balance: i128,
 }

@@ -9,7 +9,7 @@ use tempfile::Builder;
 use tokio::time::sleep;
 use tokio::time::Duration;
 use transaction_circuit::constants::NATIVE_ASSET_ID;
-use transaction_circuit::hashing::Felt;
+use transaction_circuit::hashing::{felt_to_bytes32, Felt};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{InputNoteWitness, NoteData, OutputNoteWitness};
 use transaction_circuit::proof::prove;
@@ -66,20 +66,51 @@ fn sample_bundle(root: Felt) -> TransactionBundle {
         sk_spend: [42u8; 32],
         merkle_root: root,
         fee: 1,
+        value_balance: 0,
         version: TransactionWitness::default_version_binding(),
     };
 
     let (proving_key, _) = generate_keys();
     let proof = prove(&witness, &proving_key).expect("prove");
-    let commitments = proof
-        .public_inputs
+    let nullifiers: Vec<[u8; 32]> = proof
+        .nullifiers
+        .iter()
+        .filter(|value| value.as_int() != 0)
+        .map(|value| felt_to_bytes32(*value))
+        .collect();
+    let commitments: Vec<[u8; 32]> = proof
         .commitments
         .iter()
         .filter(|value| value.as_int() != 0)
-        .count();
-    let ciphertexts = vec![vec![0u8; 32]; commitments];
+        .map(|value| felt_to_bytes32(*value))
+        .collect();
+    let ciphertexts = vec![vec![0u8; 32]; commitments.len()];
+    let anchor = felt_to_bytes32(witness.merkle_root);
+    let mut message = Vec::new();
+    message.extend_from_slice(&anchor);
+    for nf in &nullifiers {
+        message.extend_from_slice(nf);
+    }
+    for cm in &commitments {
+        message.extend_from_slice(cm);
+    }
+    message.extend_from_slice(&witness.fee.to_le_bytes());
+    message.extend_from_slice(&witness.value_balance.to_le_bytes());
+    let hash = sp_core::hashing::blake2_256(&message);
+    let mut binding_sig = [0u8; 64];
+    binding_sig[..32].copy_from_slice(&hash);
+    binding_sig[32..].copy_from_slice(&hash);
 
-    TransactionBundle { proof, ciphertexts }
+    TransactionBundle {
+        proof_bytes: proof.stark_proof.clone(),
+        nullifiers,
+        commitments,
+        ciphertexts,
+        anchor,
+        binding_sig,
+        fee: witness.fee,
+        value_balance: witness.value_balance,
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

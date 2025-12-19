@@ -98,6 +98,7 @@ frame-support = { workspace = true, features = ["std"], optional = true }
 [features]
 default = ["substrate"]
 test-utils = []
+production = ["substrate", "runtime/production", "pallet-shielded-pool/production"]
 
 # Enable Substrate-based node implementation (Phase 2.5 with PoW + DifficultyApi)
 # 
