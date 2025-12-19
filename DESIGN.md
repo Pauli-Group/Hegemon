@@ -340,6 +340,7 @@ The repository now contains a `wallet` crate that wires these ideas into code:
   * `wallet address --root <hex> --index <n>` derives additional diversified addresses on demand.
   * `wallet tx-craft ...` reads JSON inputs/recipients, creates `TransactionWitness` JSON for the circuit, and emits ML-KEM note ciphertexts for the recipients.
   * `wallet scan --ivk <path> --ledger <path>` decrypts ledger ciphertexts with an incoming viewing key and returns per-asset balances plus recovered note summaries.
+  * `wallet substrate-sync`, `wallet substrate-daemon`, `wallet substrate-send`, and `wallet substrate-shield` are the live Substrate RPC flows, while `wallet payment-proof create|verify|purge` manages disclosure packages for compliance requests.
 
 Integration tests in `wallet/tests/cli.rs` exercise those CLI flows, so anyone can watch address derivation, note encryption, and viewing-key-based balance recovery stay compatible with the proving system.
 
@@ -348,6 +349,10 @@ Long-lived wallets rely on the RPC client (`wallet/src/rpc.rs`) and sync engine 
 The Polkadot.js Apps dashboard (https://polkadot.js.org/apps/) connects to the node's standard Substrate RPC endpoint and provides block exploration, account management, and chain state queries out of the box.
 
 ---
+
+### 4.4 Disclosure on demand (payment proofs)
+
+When a sender must prove a specific shielded payment to an exchange or auditor without revealing a viewing key, the wallet can generate a targeted **payment proof**. A disclosure package includes a STARK proof from `circuits/disclosure` binding `(value, asset_id, pk_recipient, commitment)` to the note-opening secrets `(rho, r)`, plus non-ZK confirmation data (Merkle inclusion path, anchor root) and the chain `genesis_hash`. The wallet stores outgoing note openings in the encrypted `WalletStore`, then `wallet payment-proof create` produces the package on demand. `wallet payment-proof verify` checks the STARK proof, Merkle path, `hegemon_isValidAnchor`, and the disclosed chain identity. Optional `disclosed_memo` fields are treated as user-supplied context and are not bound by the ZK proof.
 
 ## 5. Privacy & “store now, decrypt later”
 

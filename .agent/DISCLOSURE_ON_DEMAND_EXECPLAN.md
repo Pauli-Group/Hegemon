@@ -14,12 +14,12 @@ After this work, a user can send a shielded payment to an exchange deposit addre
 
 - [x] (2025-12-18) Draft this ExecPlan (completed: skeleton).
 - [x] (2025-12-19 07:23Z) Flesh out compliance scope, package schema, chain identity checks, and documentation requirements.
-- [ ] Add `circuits/disclosure` crate with STARK AIR/prover/verifier for note-opening disclosure.
-- [ ] Add `wallet payment-proof create` command (generates disclosure package JSON).
-- [ ] Add `wallet payment-proof verify` command (verifies package, including anchor check against node).
-- [ ] Extend wallet persistence to support "on demand" generation after send (store outgoing note openings and commitments securely).
-- [ ] Add demo runbook and a minimal end-to-end automated test (tamper-reject + happy path).
-- [ ] Update compliance and privacy docs (`docs/COMPLIANCE_ARCHITECTURE.md`, `docs/USER_PRIVACY_GUIDELINES.md`, `docs/API_REFERENCE.md`, `DESIGN.md`, `METHODS.md`) plus a runbook for the disclosure flow.
+- [x] (2025-12-19 08:53Z) Add `circuits/disclosure` crate with STARK AIR/prover/verifier for note-opening disclosure.
+- [x] (2025-12-19 08:53Z) Add `wallet payment-proof create` command (generates disclosure package JSON).
+- [x] (2025-12-19 08:53Z) Add `wallet payment-proof verify` command (verifies package, including anchor check against node).
+- [x] (2025-12-19 08:53Z) Extend wallet persistence to support "on demand" generation after send (store outgoing note openings and commitments securely).
+- [x] (2025-12-19 08:53Z) Add demo runbook and a minimal end-to-end automated test (tamper-reject + happy path).
+- [x] (2025-12-19 08:53Z) Update compliance/privacy docs and runbooks (`docs/COMPLIANCE_ARCHITECTURE.md`, `docs/USER_PRIVACY_GUIDELINES.md`, `docs/API_REFERENCE.md`, `DESIGN.md`, `METHODS.md`, `docs/THREAT_MODEL.md`, `docs/CONTRIBUTING.md`, `wallet/README.md`, `runbooks/disclosure_on_demand.md`).
 
 ## Surprises & Discoveries
 
@@ -27,6 +27,8 @@ After this work, a user can send a shielded payment to an exchange deposit addre
   Evidence: `wallet/src/store.rs` (`commitments: Vec<u64>`).
 - Observation: Anchor validation is exposed via the `hegemon_isValidAnchor` RPC in the `hegemon` namespace.
   Evidence: `node/src/substrate/rpc/shielded.rs`.
+- Observation: `wallet/src/bin/wallet.rs` contained a duplicated CLI/arg block inserted mid-file, which would have caused parse errors; removed the duplicate definitions so only one CLI surface remains.
+  Evidence: duplicate `PaymentProof*` arg structs and command enum fragments removed after `append_credit_record`.
 
 ## Decision Log
 
@@ -50,9 +52,17 @@ After this work, a user can send a shielded payment to an exchange deposit addre
   Rationale: On-demand proofs are often requested after settlement; retention enables compliance without re-crafting transactions.
   Date/Author: 2025-12-19 / Codex
 
+- Decision: Treat `pk_recipient` and `genesis_hash` as raw 32-byte values; apply canonical field-encoding checks only to field elements (`commitment`, `anchor`, `siblings`).
+  Rationale: Only field elements must be canonical for STARK/Merkle arithmetic; address public keys and chain hashes are opaque bytes and should not be constrained to the 64-bit field embedding.
+  Date/Author: 2025-12-19 / Codex
+
+- Decision: Add an offline wallet-level disclosure package test instead of a CLI test that requires a live node.
+  Rationale: Unit tests must run without a dev chain; the test still exercises package creation, Merkle inclusion, and STARK verification by constructing a synthetic tree locally.
+  Date/Author: 2025-12-19 / Codex
+
 ## Outcomes & Retrospective
 
-(Fill in after milestones land.)
+This ExecPlan now ships a working disclosure-on-demand flow: a dedicated disclosure circuit, wallet persistence for outgoing note openings, payment-proof CLI commands, and verification that binds value/asset/recipient/commitment to an on-chain anchor and chain identity. Documentation has been updated across compliance, privacy, API, and runbook materials, and an offline wallet-level test exercises package creation plus tamper rejection without requiring a dev node. The remaining gap is that no live-node end-to-end test was run in this change set; operators should follow the new runbook to validate the demo on a dev chain when time permits.
 
 ## Context and Orientation
 
@@ -68,7 +78,7 @@ This work is specifically the "ZK disclosure proof" option: do not reveal `rho` 
 
 ### Milestone 1: Define the disclosure package and CLI surface (no cryptography yet)
 
-Add a stable on-disk JSON format for the disclosure package and implement CLI plumbing that can read/write it. The format must include a `version`, a `chain` section with `genesis_hash`, a `claim` with `recipient_address`, `pk_recipient`, `value`, `asset_id`, and the on-chain commitment bytes, a `confirmation` section with the Merkle anchor plus an authentication path, and a `proof` section containing `air_hash` plus base64 proof bytes. All 32-byte fields must be hex-encoded with `0x` prefixes and validated as canonical field encodings (first 24 bytes zero). The verifier must decode `recipient_address` to `pk_recipient` and reject mismatches so the disclosure is tied to a concrete deposit address. If a memo or Travel Rule payload is optionally disclosed, include it as a separate `disclosed_memo` field and label it as non-ZK-bound so verifiers treat it as user-supplied context.
+Add a stable on-disk JSON format for the disclosure package and implement CLI plumbing that can read/write it. The format must include a `version`, a `chain` section with `genesis_hash`, a `claim` with `recipient_address`, `pk_recipient`, `value`, `asset_id`, and the on-chain commitment bytes, a `confirmation` section with the Merkle anchor plus an authentication path, and a `proof` section containing `air_hash` plus base64 proof bytes. All 32-byte fields must be hex-encoded with `0x` prefixes; canonical field-encoding checks (first 24 bytes zero) apply only to field elements (`commitment`, `anchor`, `siblings`), while `pk_recipient` and `genesis_hash` remain raw 32-byte values. The verifier must decode `recipient_address` to `pk_recipient` and reject mismatches so the disclosure is tied to a concrete deposit address. If a memo or Travel Rule payload is optionally disclosed, include it as a separate `disclosed_memo` field and label it as non-ZK-bound so verifiers treat it as user-supplied context.
 
 At the end of this milestone, `wallet payment-proof create` can be implemented as "not yet supported" with a clear error, but `wallet payment-proof verify --help` must show the interface we will support, including the mandatory `--ws-url` anchor check and optional `--credit-ledger` logging.
 
@@ -233,7 +243,7 @@ Test expectations:
   - "roundtrip verifies"
   - "tamper reject" for each public field
   - "reject non-canonical commitment bytes"
-- Add a wallet-level test (can be ignored/heavy if needed) that exercises create+verify using the CLI with a local dev node.
+- Add a wallet-level test that builds a disclosure package from a synthetic note, verifies the STARK proof + Merkle inclusion locally, and rejects tampering without requiring a live node (`wallet/tests/disclosure_package.rs`).
 
 ## Idempotence and Recovery
 
@@ -335,3 +345,4 @@ Add wallet CLI subcommands that call these functions and print deterministic tra
 At the end of implementation, the only "exchange integration" required for the demo is running `wallet payment-proof verify` and persisting a JSONL credit record; no custom exchange keys or chain-indexing infrastructure is allowed in the demo.
 
 Plan update note: 2025-12-19 - Expanded the ExecPlan to align with compliance architecture by adding chain identity checks, disclosure package schema details, retention guidance, and documentation deliverables.
+Plan update note: 2025-12-19 08:53Z - Marked milestones complete, documented the canonical-encoding scope decision, added offline disclosure package test expectations, and recorded the CLI duplication cleanup discovery to keep the plan aligned with the delivered implementation.

@@ -85,10 +85,21 @@ In addition to sharing viewing keys, users can generate one-time **payment proof
 
 This supports exchange deposits, invoices/receipts, and dispute resolution without granting broad viewing-key access.
 
-A payment-proof package is verified against on-chain commitments and typically includes:
-- A transaction identifier (or output commitment) plus confirmation data (e.g., inclusion against a known commitment root)
-- A ZK proof that binds the public commitment to the claimed `(value, asset_id, recipient)` without revealing unrelated notes, `rho`, or `r`
-- Optional: memo plaintext and/or Travel Rule payload for the intended counterparty
+A payment-proof package is verified against on-chain commitments and includes:
+- `version`
+- `chain.genesis_hash` (binds the proof to a specific chain)
+- `claim`: `recipient_address`, `pk_recipient`, `value`, `asset_id`, `commitment`
+- `confirmation`: `anchor`, `leaf_index`, `siblings` (Merkle inclusion against the commitment tree)
+- `proof`: `air_hash` plus proof bytes (base64)
+- `disclosed_memo` (optional, non-ZK-bound context)
+
+Verification requires:
+1. Decode `recipient_address` and confirm the derived `pk_recipient` matches the package.
+2. Verify the disclosure STARK proof against `(value, asset_id, pk_recipient, commitment)`.
+3. Verify the Merkle path from `commitment` to `anchor`, and ensure `hegemon_isValidAnchor(anchor)` returns true.
+4. Compare `chain.genesis_hash` with `chain_getBlockHash(0)` to prevent cross-chain reuse.
+
+Field encodings for `commitment`, `anchor`, and `siblings` are canonical 0x-prefixed field encodings (24 leading zero bytes); `pk_recipient` and `genesis_hash` remain raw 32-byte values.
 
 Payment proofs keep the protocol neutral (no transparent pool) while enabling "warrants, not backdoors" style oversight.
 

@@ -788,6 +788,20 @@ impl SubstrateRpcClient {
         Ok(results)
     }
 
+    /// Check if an anchor is valid according to the chain.
+    ///
+    /// Calls the `hegemon_isValidAnchor` RPC.
+    pub async fn is_valid_anchor(&self, anchor: &[u8; 32]) -> Result<bool, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        let anchor_hex = format!("0x{}", hex::encode(anchor));
+        let result: bool = client
+            .request("hegemon_isValidAnchor", rpc_params![anchor_hex])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("hegemon_isValidAnchor failed: {}", e)))?;
+        Ok(result)
+    }
+
     /// Submit a signed extrinsic to the network
     ///
     /// This is the proper Substrate way to submit transactions.
