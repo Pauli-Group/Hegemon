@@ -1186,7 +1186,6 @@ pub mod pallet {
                 verifier::BatchVerificationResult::KeyNotFound => {
                     return Err(Error::<T>::VerifyingKeyNotFound.into());
                 }
-                _ => return Err(Error::<T>::ProofVerificationFailed.into()),
             }
 
             // Add nullifiers to spent set (skip zero padding)

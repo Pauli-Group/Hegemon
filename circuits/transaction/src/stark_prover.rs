@@ -15,16 +15,20 @@ use winterfell::{
 };
 
 use crate::{
-    constants::{MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS},
+    constants::{
+        MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
+        POSEIDON_ROUNDS,
+    },
     hashing::{merkle_node, prf_key, Felt},
     note::{InputNoteWitness, NoteData, OutputNoteWitness},
     stark_air::{
-        commitment_output_row, merkle_root_output_row, note_start_row_input, note_start_row_output,
-        cycle_is_merkle, cycle_reset_domain, poseidon_round, CYCLE_LENGTH, COL_DOMAIN, COL_FEE, COL_IN0,
-        COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET, COL_IN1_VALUE, COL_IN_ACTIVE0,
-        COL_IN_ACTIVE1, COL_LINK, COL_NOTE_START_IN0, COL_NOTE_START_IN1, COL_NOTE_START_OUT0,
-        COL_NOTE_START_OUT1, COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1_ASSET, COL_OUT1_VALUE,
-        COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S2, COL_SEL_IN0_SLOT0,
+        commitment_output_row, cycle_is_merkle, cycle_reset_domain, merkle_root_output_row,
+        note_start_row_input, note_start_row_output, nullifier_output_row, poseidon_round,
+        CYCLE_LENGTH, COL_DOMAIN, COL_FEE, COL_IN0, COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1,
+        COL_IN1_ASSET, COL_IN1_VALUE, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_LINK,
+        COL_NOTE_START_IN0, COL_NOTE_START_IN1, COL_NOTE_START_OUT0, COL_NOTE_START_OUT1,
+        COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT_ACTIVE0,
+        COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S2, COL_SEL_IN0_SLOT0,
         COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0,
         COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0,
         COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0,
@@ -41,6 +45,7 @@ use crate::{
 
 type Blake3 = Blake3_256<BaseElement>;
 
+#[derive(Clone, Copy)]
 struct CycleSpec {
     reset: bool,
     domain: u64,
@@ -77,85 +82,164 @@ impl TransactionProverStark {
 
         let slots = witness.balance_slots()?;
         let slot_assets: Vec<u64> = slots.iter().map(|slot| slot.asset_id).collect();
-
-        let mut slot_in = vec![0u64; slot_assets.len()];
-        let mut slot_out = vec![0u64; slot_assets.len()];
-
-        for (note, active) in input_notes.iter().zip(input_flags.iter()) {
-            if *active {
-                if let Some(slot_idx) = slot_assets.iter().position(|id| *id == note.note.asset_id)
-                {
-                    slot_in[slot_idx] = slot_in[slot_idx].saturating_add(note.note.value);
-                }
-            }
-        }
-
-        for (note, active) in output_notes.iter().zip(output_flags.iter()) {
-            if *active {
-                if let Some(slot_idx) = slot_assets.iter().position(|id| *id == note.note.asset_id)
-                {
-                    slot_out[slot_idx] = slot_out[slot_idx].saturating_add(note.note.value);
-                }
-            }
-        }
-
-        let selectors = build_selectors(&input_notes, &output_notes, &slot_assets, &input_flags, &output_flags);
+        let selectors =
+            build_selectors(&input_notes, &output_notes, &slot_assets, &input_flags, &output_flags);
 
         let (vb_sign, vb_mag) = value_balance_parts(witness.value_balance)?;
         let fee = BaseElement::new(witness.fee);
 
-        fill_const(&mut trace, COL_IN_ACTIVE0, flag_to_felt(input_flags[0]));
-        fill_const(&mut trace, COL_IN_ACTIVE1, flag_to_felt(input_flags[1]));
-        fill_const(&mut trace, COL_OUT_ACTIVE0, flag_to_felt(output_flags[0]));
-        fill_const(&mut trace, COL_OUT_ACTIVE1, flag_to_felt(output_flags[1]));
+        let sentinel_row = 0;
+        let slot_asset_cols = [
+            COL_SLOT0_ASSET,
+            COL_SLOT1_ASSET,
+            COL_SLOT2_ASSET,
+            COL_SLOT3_ASSET,
+        ];
+        let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
+        let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
+        let selector_cols = [
+            [COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3],
+            [COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3],
+            [COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3],
+            [COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3],
+        ];
+        let sentinel_cols = [
+            COL_IN_ACTIVE0,
+            COL_IN_ACTIVE1,
+            COL_OUT_ACTIVE0,
+            COL_OUT_ACTIVE1,
+            COL_IN0_VALUE,
+            COL_IN0_ASSET,
+            COL_IN1_VALUE,
+            COL_IN1_ASSET,
+            COL_OUT0_VALUE,
+            COL_OUT0_ASSET,
+            COL_OUT1_VALUE,
+            COL_OUT1_ASSET,
+            COL_FEE,
+            COL_VALUE_BALANCE_SIGN,
+            COL_VALUE_BALANCE_MAG,
+        ];
 
-        fill_const(&mut trace, COL_IN0_VALUE, BaseElement::new(input_notes[0].note.value));
-        fill_const(&mut trace, COL_IN0_ASSET, BaseElement::new(input_notes[0].note.asset_id));
-        fill_const(&mut trace, COL_IN1_VALUE, BaseElement::new(input_notes[1].note.value));
-        fill_const(&mut trace, COL_IN1_ASSET, BaseElement::new(input_notes[1].note.asset_id));
+        for &col in sentinel_cols.iter() {
+            trace[col][sentinel_row] = BaseElement::ONE;
+        }
+        for cols in selector_cols.iter() {
+            for &col in cols.iter() {
+                trace[col][sentinel_row] = BaseElement::ONE;
+            }
+        }
+        for &col in slot_asset_cols.iter() {
+            trace[col][sentinel_row] = BaseElement::ONE;
+        }
+        for &col in slot_in_cols.iter() {
+            trace[col][sentinel_row] = BaseElement::ONE;
+        }
+        for &col in slot_out_cols.iter() {
+            trace[col][sentinel_row] = BaseElement::new(2);
+        }
 
-        fill_const(&mut trace, COL_OUT0_VALUE, BaseElement::new(output_notes[0].note.value));
-        fill_const(&mut trace, COL_OUT0_ASSET, BaseElement::new(output_notes[0].note.asset_id));
-        fill_const(&mut trace, COL_OUT1_VALUE, BaseElement::new(output_notes[1].note.value));
-        fill_const(&mut trace, COL_OUT1_ASSET, BaseElement::new(output_notes[1].note.asset_id));
-
-        fill_const(&mut trace, COL_SLOT0_ASSET, BaseElement::new(slot_assets[0]));
-        fill_const(&mut trace, COL_SLOT1_ASSET, BaseElement::new(slot_assets[1]));
-        fill_const(&mut trace, COL_SLOT2_ASSET, BaseElement::new(slot_assets[2]));
-        fill_const(&mut trace, COL_SLOT3_ASSET, BaseElement::new(slot_assets[3]));
-
-        fill_const(&mut trace, COL_SLOT0_IN, BaseElement::new(slot_in[0]));
-        fill_const(&mut trace, COL_SLOT1_IN, BaseElement::new(slot_in[1]));
-        fill_const(&mut trace, COL_SLOT2_IN, BaseElement::new(slot_in[2]));
-        fill_const(&mut trace, COL_SLOT3_IN, BaseElement::new(slot_in[3]));
-
-        fill_const(&mut trace, COL_SLOT0_OUT, BaseElement::new(slot_out[0]));
-        fill_const(&mut trace, COL_SLOT1_OUT, BaseElement::new(slot_out[1]));
-        fill_const(&mut trace, COL_SLOT2_OUT, BaseElement::new(slot_out[2]));
-        fill_const(&mut trace, COL_SLOT3_OUT, BaseElement::new(slot_out[3]));
-
-        fill_selectors(&mut trace, &selectors);
-
-        fill_const(&mut trace, COL_FEE, fee);
-        fill_const(&mut trace, COL_VALUE_BALANCE_SIGN, vb_sign);
-        fill_const(&mut trace, COL_VALUE_BALANCE_MAG, vb_mag);
-
-        // Note start flags.
+        // Note start flags and per-note data.
         let start_row_in0 = note_start_row_input(0);
         let start_row_in1 = note_start_row_input(1);
         let start_row_out0 = note_start_row_output(0);
         let start_row_out1 = note_start_row_output(1);
         if start_row_in0 < trace_len {
             trace[COL_NOTE_START_IN0][start_row_in0] = BaseElement::ONE;
+            trace[COL_IN_ACTIVE0][start_row_in0] = flag_to_felt(input_flags[0]);
+            trace[COL_IN0_VALUE][start_row_in0] = BaseElement::new(input_notes[0].note.value);
+            trace[COL_IN0_ASSET][start_row_in0] = BaseElement::new(input_notes[0].note.asset_id);
+            for slot in 0..4 {
+                trace[selector_cols[0][slot]][start_row_in0] = selectors[0][slot];
+            }
+            for (idx, &col) in slot_asset_cols.iter().enumerate() {
+                trace[col][start_row_in0] = BaseElement::new(slot_assets[idx]);
+            }
         }
         if start_row_in1 < trace_len {
             trace[COL_NOTE_START_IN1][start_row_in1] = BaseElement::ONE;
+            trace[COL_IN_ACTIVE1][start_row_in1] = flag_to_felt(input_flags[1]);
+            trace[COL_IN1_VALUE][start_row_in1] = BaseElement::new(input_notes[1].note.value);
+            trace[COL_IN1_ASSET][start_row_in1] = BaseElement::new(input_notes[1].note.asset_id);
+            for slot in 0..4 {
+                trace[selector_cols[1][slot]][start_row_in1] = selectors[1][slot];
+            }
+            for (idx, &col) in slot_asset_cols.iter().enumerate() {
+                trace[col][start_row_in1] = BaseElement::new(slot_assets[idx]);
+            }
         }
         if start_row_out0 < trace_len {
             trace[COL_NOTE_START_OUT0][start_row_out0] = BaseElement::ONE;
+            trace[COL_OUT_ACTIVE0][start_row_out0] = flag_to_felt(output_flags[0]);
+            trace[COL_OUT0_VALUE][start_row_out0] = BaseElement::new(output_notes[0].note.value);
+            trace[COL_OUT0_ASSET][start_row_out0] = BaseElement::new(output_notes[0].note.asset_id);
+            for slot in 0..4 {
+                trace[selector_cols[2][slot]][start_row_out0] = selectors[2][slot];
+            }
+            for (idx, &col) in slot_asset_cols.iter().enumerate() {
+                trace[col][start_row_out0] = BaseElement::new(slot_assets[idx]);
+            }
         }
         if start_row_out1 < trace_len {
             trace[COL_NOTE_START_OUT1][start_row_out1] = BaseElement::ONE;
+            trace[COL_OUT_ACTIVE1][start_row_out1] = flag_to_felt(output_flags[1]);
+            trace[COL_OUT1_VALUE][start_row_out1] = BaseElement::new(output_notes[1].note.value);
+            trace[COL_OUT1_ASSET][start_row_out1] = BaseElement::new(output_notes[1].note.asset_id);
+            for slot in 0..4 {
+                trace[selector_cols[3][slot]][start_row_out1] = selectors[3][slot];
+            }
+            for (idx, &col) in slot_asset_cols.iter().enumerate() {
+                trace[col][start_row_out1] = BaseElement::new(slot_assets[idx]);
+            }
+        }
+
+        let final_row = trace_len.saturating_sub(2);
+        if final_row < trace_len {
+            trace[COL_FEE][final_row] = fee;
+            trace[COL_VALUE_BALANCE_SIGN][final_row] = vb_sign;
+            trace[COL_VALUE_BALANCE_MAG][final_row] = vb_mag;
+        }
+
+        let mut slot_in_acc = [0u64; 4];
+        let mut slot_out_acc = [0u64; 4];
+        for row in 1..trace_len {
+            for slot in 0..4 {
+                trace[slot_in_cols[slot]][row] = BaseElement::new(slot_in_acc[slot]);
+                trace[slot_out_cols[slot]][row] = BaseElement::new(slot_out_acc[slot]);
+            }
+
+            if row == start_row_in0 && start_row_in0 < trace_len {
+                for slot in 0..4 {
+                    if selectors[0][slot] == BaseElement::ONE {
+                        slot_in_acc[slot] =
+                            slot_in_acc[slot].saturating_add(input_notes[0].note.value);
+                    }
+                }
+            }
+            if row == start_row_in1 && start_row_in1 < trace_len {
+                for slot in 0..4 {
+                    if selectors[1][slot] == BaseElement::ONE {
+                        slot_in_acc[slot] =
+                            slot_in_acc[slot].saturating_add(input_notes[1].note.value);
+                    }
+                }
+            }
+            if row == start_row_out0 && start_row_out0 < trace_len {
+                for slot in 0..4 {
+                    if selectors[2][slot] == BaseElement::ONE {
+                        slot_out_acc[slot] =
+                            slot_out_acc[slot].saturating_add(output_notes[0].note.value);
+                    }
+                }
+            }
+            if row == start_row_out1 && start_row_out1 < trace_len {
+                for slot in 0..4 {
+                    if selectors[3][slot] == BaseElement::ONE {
+                        slot_out_acc[slot] =
+                            slot_out_acc[slot].saturating_add(output_notes[1].note.value);
+                    }
+                }
+            }
         }
 
         let cycle_specs = build_cycle_specs(&input_notes, &output_notes, witness);
@@ -308,15 +392,30 @@ impl Prover for TransactionProverStark {
         DefaultConstraintEvaluator<'a, Self::Air, E>;
 
     fn get_pub_inputs(&self, trace: &Self::Trace) -> TransactionPublicInputsStark {
-        let row = 0;
-        let input_flags = vec![
-            trace.get(COL_IN_ACTIVE0, row),
-            trace.get(COL_IN_ACTIVE1, row),
-        ];
-        let output_flags = vec![
-            trace.get(COL_OUT_ACTIVE0, row),
-            trace.get(COL_OUT_ACTIVE1, row),
-        ];
+        let trace_len = trace.length();
+        let input_rows = [note_start_row_input(0), note_start_row_input(1)];
+        let input_cols = [COL_IN_ACTIVE0, COL_IN_ACTIVE1];
+        let mut input_flags = Vec::with_capacity(MAX_INPUTS);
+        for (idx, &row) in input_rows.iter().enumerate() {
+            let flag = if row < trace_len {
+                trace.get(input_cols[idx], row)
+            } else {
+                BaseElement::ZERO
+            };
+            input_flags.push(flag);
+        }
+
+        let output_rows = [note_start_row_output(0), note_start_row_output(1)];
+        let output_cols = [COL_OUT_ACTIVE0, COL_OUT_ACTIVE1];
+        let mut output_flags = Vec::with_capacity(MAX_OUTPUTS);
+        for (idx, &row) in output_rows.iter().enumerate() {
+            let flag = if row < trace_len {
+                trace.get(output_cols[idx], row)
+            } else {
+                BaseElement::ZERO
+            };
+            output_flags.push(flag);
+        }
 
         let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
         for i in 0..MAX_INPUTS {
@@ -342,9 +441,9 @@ impl Prover for TransactionProverStark {
             commitments.push(cm);
         }
 
-        let merkle_root = if trace.length() > 0 {
+        let merkle_root = if trace_len > 0 {
             let row = merkle_root_output_row(0);
-            if row < trace.length() {
+            if row < trace_len {
                 trace.get(COL_S0, row)
             } else {
                 BaseElement::ZERO
@@ -353,14 +452,15 @@ impl Prover for TransactionProverStark {
             BaseElement::ZERO
         };
 
+        let final_row = trace_len.saturating_sub(2);
         TransactionPublicInputsStark {
             input_flags,
             output_flags,
             nullifiers,
             commitments,
-            fee: trace.get(COL_FEE, row),
-            value_balance_sign: trace.get(COL_VALUE_BALANCE_SIGN, row),
-            value_balance_magnitude: trace.get(COL_VALUE_BALANCE_MAG, row),
+            fee: trace.get(COL_FEE, final_row),
+            value_balance_sign: trace.get(COL_VALUE_BALANCE_SIGN, final_row),
+            value_balance_magnitude: trace.get(COL_VALUE_BALANCE_MAG, final_row),
             merkle_root,
         }
     }
@@ -437,10 +537,6 @@ pub fn fast_proof_options() -> ProofOptions {
 // ================================================================================================
 // HELPERS
 // ================================================================================================
-
-fn fill_const(trace: &mut [Vec<BaseElement>], col: usize, value: BaseElement) {
-    trace[col].iter_mut().for_each(|v| *v = value);
-}
 
 fn flag_to_felt(active: bool) -> BaseElement {
     if active {
@@ -562,22 +658,6 @@ fn build_selectors(
     }
 
     selectors
-}
-
-fn fill_selectors(trace: &mut [Vec<BaseElement>], selectors: &[[BaseElement; 4]; 4]) {
-    let mapping = [
-        (COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3),
-        (COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3),
-        (COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3),
-        (COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3),
-    ];
-
-    for (note_idx, cols) in mapping.iter().enumerate() {
-        fill_const(trace, cols.0, selectors[note_idx][0]);
-        fill_const(trace, cols.1, selectors[note_idx][1]);
-        fill_const(trace, cols.2, selectors[note_idx][2]);
-        fill_const(trace, cols.3, selectors[note_idx][3]);
-    }
 }
 
 fn value_balance_parts(value_balance: i128) -> Result<(BaseElement, BaseElement), TransactionCircuitError> {

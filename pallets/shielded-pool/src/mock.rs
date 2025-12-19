@@ -144,10 +144,11 @@ mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{BindingSignature, EncryptedNote, StarkProof};
-    use codec::Encode;
     use frame_support::{assert_noop, assert_ok, BoundedVec};
     use sp_runtime::traits::ValidateUnsigned;
-    use sp_runtime::transaction_validity::TransactionSource;
+    use sp_runtime::transaction_validity::{
+        InvalidTransaction, TransactionSource, TransactionValidityError,
+    };
 
     fn valid_proof() -> StarkProof {
         StarkProof::from_bytes(vec![1u8; 1024])
@@ -162,12 +163,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_unsigned_skips_padding_nullifier_in_provides_tags() {
+    fn validate_unsigned_rejects_zero_nullifier() {
         new_test_ext().execute_with(|| {
             let tree = MerkleTreeStorage::<Test>::get();
             let anchor = tree.root();
 
-            // One real nullifier + one padding nullifier.
+            // One real nullifier + one padding nullifier (now rejected).
             let real_nf = [9u8; 32];
             let padding_nf = [0u8; 32];
             let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
@@ -185,20 +186,14 @@ mod tests {
                 ciphertexts,
                 anchor,
                 binding_sig: valid_binding_sig(),
+                fee: 0,
             };
 
-            let validity =
-                Pallet::<Test>::validate_unsigned(TransactionSource::External, &call).unwrap();
-
-            let mut expected_real = b"shielded_nf:".to_vec();
-            expected_real.extend_from_slice(&real_nf);
-            let expected_real = ("ShieldedPoolUnsigned", expected_real).encode();
-            assert!(validity.provides.contains(&expected_real));
-
-            let mut expected_padding = b"shielded_nf:".to_vec();
-            expected_padding.extend_from_slice(&padding_nf);
-            let expected_padding = ("ShieldedPoolUnsigned", expected_padding).encode();
-            assert!(!validity.provides.contains(&expected_padding));
+            let validity = Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(matches!(
+                validity,
+                Err(TransactionValidityError::Invalid(InvalidTransaction::Custom(4)))
+            ));
         });
     }
 
@@ -263,6 +258,7 @@ mod tests {
                 ciphertexts,
                 anchor,
                 valid_binding_sig(),
+                0, // fee
                 0, // value_balance = 0 for shielded-to-shielded
             ));
 
@@ -303,6 +299,7 @@ mod tests {
                 anchor,
                 valid_binding_sig(),
                 0,
+                0,
             ));
 
             // Get new anchor
@@ -319,6 +316,7 @@ mod tests {
                     ciphertexts,
                     new_anchor,
                     valid_binding_sig(),
+                    0,
                     0,
                 ),
                 crate::Error::<Test>::NullifierAlreadyExists
@@ -347,6 +345,7 @@ mod tests {
                     ciphertexts,
                     invalid_anchor,
                     valid_binding_sig(),
+                    0,
                     0,
                 ),
                 crate::Error::<Test>::InvalidAnchor
@@ -387,6 +386,7 @@ mod tests {
                     ciphertexts,
                     anchor,
                     valid_binding_sig(),
+                    0,
                     0,
                 ),
                 crate::Error::<Test>::DuplicateNullifierInTx
@@ -461,6 +461,7 @@ mod tests {
                     anchor,
                     valid_binding_sig(),
                     0,
+                    0,
                 ),
                 crate::Error::<Test>::EncryptedNotesMismatch
             );
@@ -521,6 +522,7 @@ mod tests {
                     anchor,
                     valid_binding_sig(),
                     0,
+                    0,
                 ),
                 crate::Error::<Test>::InvalidNullifierCount
             );
@@ -560,6 +562,7 @@ mod tests {
                     ciphertexts,
                     anchor,
                     valid_binding_sig(),
+                    0,
                     0,
                 ),
                 crate::Error::<Test>::InvalidProofFormat
@@ -608,6 +611,7 @@ mod tests {
                         ciphertexts,
                         old_anchor,
                         valid_binding_sig(),
+                        0,
                         0,
                     ),
                     crate::Error::<Test>::InvalidAnchor
@@ -698,6 +702,7 @@ mod tests {
                 anchor,
                 valid_binding_sig(),
                 0,
+                0,
             ));
         });
     }
@@ -727,6 +732,7 @@ mod tests {
                 ciphertexts,
                 anchor,
                 valid_binding_sig(),
+                0,
                 0,
             ));
         });

@@ -8,7 +8,6 @@ use winterfell::{
 use crate::constants::{
     COL_IN0, COL_IN1, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH, INPUT_PAIRS_PER_TRACE,
     MAX_INSTRUCTIONS, MAX_NULLIFIERS, PADDED_INPUT_COUNT, SETTLEMENT_DOMAIN_TAG, TRACE_LENGTH,
-    TRACE_WIDTH,
 };
 use crate::hashing::Felt;
 
@@ -74,14 +73,12 @@ impl Air for SettlementAir {
 
     fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
         let degrees = vec![
+            TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
+            TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
+            TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
             TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
             TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
             TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
             TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
             TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
             TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
@@ -111,10 +108,9 @@ impl Air for SettlementAir {
         let absorb_mask = periodic_values[0];
         let hash_mask = periodic_values[1];
         let copy_mask = periodic_values[2];
-        let hold_mask = periodic_values[3];
-        let rc0 = periodic_values[4];
-        let rc1 = periodic_values[5];
-        let rc2 = periodic_values[6];
+        let rc0 = periodic_values[3];
+        let rc1 = periodic_values[4];
+        let rc2 = periodic_values[5];
 
         let input0 = current[COL_IN0];
         let input1 = current[COL_IN1];
@@ -146,10 +142,6 @@ impl Air for SettlementAir {
         result[6] = copy_mask * (next[COL_S0] - current[COL_S0]);
         result[7] = copy_mask * (next[COL_S1] - current[COL_S1]);
         result[8] = copy_mask * (next[COL_S2] - current[COL_S2]);
-
-        // Hold inputs constant within a cycle.
-        result[9] = hold_mask * (next[COL_IN0] - current[COL_IN0]);
-        result[10] = hold_mask * (next[COL_IN1] - current[COL_IN1]);
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
@@ -189,7 +181,6 @@ impl Air for SettlementAir {
         columns.push(absorb_mask());
         columns.push(hash_mask());
         columns.push(copy_mask());
-        columns.push(hold_mask());
         columns.push(round_constants(0));
         columns.push(round_constants(1));
         columns.push(round_constants(2));
@@ -219,12 +210,6 @@ fn copy_mask() -> Vec<BaseElement> {
     mask
 }
 
-fn hold_mask() -> Vec<BaseElement> {
-    let mut mask = vec![BaseElement::ONE; CYCLE_LENGTH];
-    mask[CYCLE_LENGTH - 1] = BaseElement::ZERO;
-    mask
-}
-
 fn round_constants(position: usize) -> Vec<BaseElement> {
     let mut column = Vec::with_capacity(CYCLE_LENGTH);
     for step in 0..CYCLE_LENGTH {
@@ -240,6 +225,7 @@ fn round_constants(position: usize) -> Vec<BaseElement> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::TRACE_WIDTH;
 
     #[test]
     fn test_input_padding() {

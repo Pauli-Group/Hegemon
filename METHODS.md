@@ -13,8 +13,8 @@ per proof. Think Sapling/Orchard style: fixed `M, N` for the base circuit, recur
 
 A **note** is conceptually:
 
-* `value` – integer (e.g. 64‑bit, or 128‑bit if you’re paranoid)
-* `asset_id` – 256‑bit label; `0` = native coin (ZEC‑like)
+* `value` - integer (e.g. 64-bit, or 128-bit if you're paranoid)
+* `asset_id` - 64-bit label (u64) in the current circuit; canonical encoding is a zero-extended 8-byte big-endian payload inside 32 bytes. `0` = native coin (ZEC-like). Future circuit versions can widen this if needed.
 * `pk_recipient` – an encoding of the recipient’s “note‑receiving” public data (tied to their incoming viewing key)
 * `rho` – per‑note secret (random)
 * `r` – commitment randomness
@@ -637,35 +637,36 @@ Assume the base circuit handles up to `M` inputs (e.g., 4) and `N` outputs (e.g.
 
 #### 5.1 Public inputs
 
-The circuit’s public inputs (fed into its transcript) are:
+The circuit's public inputs (fed into its transcript) are:
 
-* `root_before ∈ F_p` – Merkle root at which inputs are valid.
-* `root_after ∈ F_p` – Merkle root after adding outputs and any other block-level updates if handled here.
-* For each input `i`: `nf_in[i] ∈ F_p`.
-* For each output `j`: `cm_out[j] ∈ F_p`.
-* For each asset slot `k` (see MASP below): `Δ_native` or some balance tag (optional; could all be enforced privately).
-* A domain-separated commitment to transaction metadata (`txid`) to tie the proof to that transaction.
+* `root_before ∈ F_p` - Merkle root anchor at which inputs are valid.
+* For each input `i`: `input_active[i] ∈ {0,1}` and `nf_in[i] ∈ F_p` (inactive inputs must use zero nullifiers).
+* For each output `j`: `output_active[j] ∈ {0,1}` and `cm_out[j] ∈ F_p` (inactive outputs must use zero commitments).
+* `fee_native ∈ F_p` and `value_balance` split into a sign bit plus a 64-bit magnitude so all values fit in one field element.
+
+The transaction envelope also carries `balance_slots` and a `balance_tag`, which are validated outside the STARK for now.
+`root_after` and any `txid` binding are handled at the block circuit layer (or a future transaction-circuit revision).
 
 #### 5.2 Witness (private inputs)
 
 For each input `i`:
 
 * `v_in[i] ∈ [0, 2^64)`
-* `a_in[i]` (asset id) as 4 field elements
-* `addr_tag_in[i]` as 4 field elements
+* `a_in[i]` (asset id) as a single 64-bit field element
+* `pk_recipient_in[i]` as 4 field elements (32 bytes split into 4 x 64-bit limbs)
 * `rho_in[i]` as 4 field elements
 * `r_in[i]` as 4 field elements
-* Merkle auth path: `sibling_in[i][d] ∈ F_p` and `bit_in[i][d] ∈ {0,1}` for `d = 0 .. D-1`
-* `pos_in[i]` as a field element (or bit decomposition)
+* Merkle auth path: `sibling_in[i][d] ∈ F_p` for `d = 0 .. D-1`
+* `pos_in[i]` as a 64-bit field element used by the prover to order left/right siblings
 * The global spend secret `sk_spend`
 
 For each output `j`:
 
 * `v_out[j]`
-* `a_out[j]`
-* `addr_tag_out[j]`
-* `rho_out[j]`
-* `r_out[j]`
+* `a_out[j]` as a single 64-bit field element
+* `pk_recipient_out[j]` as 4 field elements
+* `rho_out[j]` as 4 field elements
+* `r_out[j]` as 4 field elements
 * `pos_out[j]` (if the transaction is responsible for tree updates; otherwise position is implicit or handled at block level)
 
 #### 5.3 Constraints: input note verification
@@ -677,11 +678,11 @@ For each input `i`:
    * Compute
 
    \[
-   cm_{\text{in}}[i] = H_f(\text{domain}_{cm}, v_{\text{in}}[i], a_{\text{in}}[i][0..3], \text{addr\_tag}_{\text{in}}[i][0..3], \rho_{\text{in}}[i][0..3], r_{\text{in}}[i][0..3]).
+   cm_{\text{in}}[i] = H_f(\text{domain}_{cm}, v_{\text{in}}[i], a_{\text{in}}[i], \text{pk\_recipient}_{\text{in}}[i][0..3], \rho_{\text{in}}[i][0..3], r_{\text{in}}[i][0..3]).
    \]
 
-   * Compute the root via the Merkle path by iterating the sponge with `domain_merkle` and enforcing boolean constraints on each `bit_in[i][d]`.
-   * Constrain the resulting root to equal `root_before`.
+   * Compute the root via the Merkle path by iterating the sponge with `domain_merkle` using the left/right ordering derived from `pos_in[i]`.
+   * Constrain the resulting root to equal `root_before`. (The position bits are not separately constrained in the current AIR.)
 
 2. **Nullifier**
 
@@ -699,12 +700,12 @@ For each input `i`:
 For each output `j`, enforce
 
 \[
-cm_{\text{calc}}[j] = H_f(\text{domain}_{cm}, v_{\text{out}}[j], a_{\text{out}}[j][0..3], \text{addr\_tag}_{\text{out}}[j][0..3], \rho_{\text{out}}[j][0..3], r_{\text{out}}[j][0..3]) = cm_{\text{out}}[j].
+cm_{\text{calc}}[j] = H_f(\text{domain}_{cm}, v_{\text{out}}[j], a_{\text{out}}[j], \text{pk\_recipient}_{\text{out}}[j][0..3], \rho_{\text{out}}[j][0..3], r_{\text{out}}[j][0..3]) = cm_{\text{out}}[j].
 \]
 
 #### 5.5 Value range checks
 
-For any value `v` (input or output), decompose into 64 bits with boolean constraints `b_k (b_k - 1) = 0` for `k = 0 .. 63` and reconstruct `v = Σ b_k 2^k`. Use PLONK range gates or a custom bit-packing gate to reduce cost.
+The current transaction circuit enforces value bounds in witness validation: note values are `u64` and must be `<= MAX_NOTE_VALUE`. In-circuit range checks (bit decomposition or lookup gates) are planned for a future circuit version.
 
 #### 5.6 MASP: per-asset balance with a small number of slots
 
@@ -712,16 +713,16 @@ Assume each transaction can involve at most `K` distinct assets (e.g., `K = 4`).
 
 Witness for MASP:
 
-* For `k = 0 .. K-1`: `asset_slot[k]` (4 field words of a 256-bit asset id) and `sum_in[k]`, `sum_out[k]` (field elements representing 64-bit totals).
-* For each input note `i`, a slot index `slot_i ∈ {0 .. K-1}`.
-* For each output note `j`, a slot index `slot'_j ∈ {0 .. K-1}`.
+* For `k = 0 .. K-1`: `asset_slot[k]` (one 64-bit field element) and running `sum_in[k]`, `sum_out[k]` (field elements representing 64-bit totals).
+* For each input note `i`, selector flags `sel_in[i][k] ∈ {0,1}` for each slot.
+* For each output note `j`, selector flags `sel_out[j][k] ∈ {0,1}` for each slot.
 
 Constraints:
 
-1. **Slot index correctness** – represent each `slot_i` as boolean bits and constrain membership in `{0 .. K-1}`; same for `slot'_j`.
-2. **Asset-id consistency** – enforce that each note’s `asset_id` equals the asset stored in its assigned slot.
-3. **Summation** – accumulate `sum_in` and `sum_out` per slot via chained additions.
-4. **Conservation per slot** – enforce `net_k = sum_in[k] - sum_out[k]`. For the native asset slot (say slot 0 with `asset_id = 0…0`), constrain `net_0` to equal `fee_native + issuance_native` (public inputs or constants). For other slots, constrain `net_k = 0`. Optionally require sorted, duplicate-free asset slots for canonicalization.
+1. **Selector correctness** - each selector flag is boolean, and the selector sum equals `input_active[i]` / `output_active[j]` so padded notes select no slots.
+2. **Asset-id consistency** - enforce that each note's `asset_id` equals the asset stored in its selected slot.
+3. **Summation** - update `sum_in` and `sum_out` by adding note values at their note-start rows into the selected slot accumulator.
+4. **Conservation per slot** - enforce `net_k = sum_in[k] - sum_out[k]`. For the native asset slot (slot 0 with `asset_id = 0`), constrain `net_0 + value_balance = fee_native`. For other slots, constrain `net_k = 0`. The slot list is derived from witness `balance_slots` and padded with `asset_id = 2^64 - 1` where unused.
 
 This MASP approach is cheaper than sorting an arbitrary `(asset_id, delta)` multiset but restricts how many assets can appear in one transaction.
 
