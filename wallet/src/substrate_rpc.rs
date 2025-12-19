@@ -1135,6 +1135,8 @@ struct ShieldedTransferRequest {
     anchor: String,
     /// Binding signature (hex encoded)
     binding_sig: String,
+    /// Native fee encoded in the proof
+    fee: u64,
     /// Value balance (positive = shielding, negative = unshielding)
     value_balance: i128,
 }
@@ -1174,6 +1176,7 @@ impl ShieldedTransferRequest {
             encrypted_notes,
             anchor,
             binding_sig,
+            fee: bundle.fee,
             value_balance: bundle.value_balance,
         })
     }

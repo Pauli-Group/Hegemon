@@ -9,6 +9,11 @@ use sp_runtime::traits::{BlakeTwo256, IdentityLookup};
 use sp_runtime::BuildStorage;
 use sp_std::vec::Vec;
 
+#[cfg(not(feature = "production"))]
+type TestProofVerifier = pallet_settlement::AcceptAllProofs;
+#[cfg(feature = "production")]
+type TestProofVerifier = pallet_settlement::StarkVerifier;
+
 frame_support::construct_runtime!(
     pub enum Test {
         System: frame_system,
@@ -28,7 +33,7 @@ parameter_types! {
     pub const MaxPendingInstructions: u32 = 8;
     pub const MaxParticipants: u32 = 4;
     pub const MaxNullifiers: u32 = 4;
-    pub const MaxProofSize: u32 = 64;
+    pub const MaxProofSize: u32 = 16384;
     pub const MaxVerificationKeySize: u32 = 64;
     pub const DefaultVerificationKey: u32 = 0;
     pub const MaxPendingPayouts: u32 = 4;
@@ -37,8 +42,8 @@ parameter_types! {
 
 pub const DEFAULT_PARAMS: StarkVerifierParams = StarkVerifierParams {
     hash: StarkHashFunction::Blake3,
-    fri_queries: 1,
-    blowup_factor: 1,
+    fri_queries: 4,
+    blowup_factor: 16,
     security_bits: 32,
 };
 
@@ -137,7 +142,7 @@ impl pallet_settlement::Config for Test {
     type ReferendaOrigin = frame_system::EnsureRoot<u64>;
     type Currency = Balances;
     type AuthorityId = TestAuthId;
-    type ProofVerifier = pallet_settlement::AcceptAllProofs;
+    type ProofVerifier = TestProofVerifier;
     type DefaultVerifierParams = DefaultVerifierParams;
     type WeightInfo = ();
     type MaxLegs = MaxLegs;

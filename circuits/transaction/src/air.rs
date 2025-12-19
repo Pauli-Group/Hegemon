@@ -89,12 +89,17 @@ impl TransactionAir {
                 .balance_slots
                 .get(idx)
                 .cloned()
-                .unwrap_or(BalanceSlot::zero());
+                .unwrap_or(BalanceSlot {
+                    asset_id: 0,
+                    delta: 0,
+                });
             if actual.asset_id != expected.asset_id || actual.delta != expected.delta {
                 return Err(TransactionCircuitError::BalanceMismatch(expected.asset_id));
             }
             if expected.asset_id == NATIVE_ASSET_ID {
-                if expected.delta != public_inputs.native_fee as i128 {
+                let expected_native =
+                    public_inputs.native_fee as i128 - public_inputs.value_balance;
+                if expected.delta != expected_native {
                     return Err(TransactionCircuitError::BalanceMismatch(expected.asset_id));
                 }
             } else if expected.delta != 0 {
@@ -125,15 +130,6 @@ impl TransactionAir {
 }
 
 use crate::public_inputs::BalanceSlot;
-
-impl BalanceSlot {
-    fn zero() -> Self {
-        Self {
-            asset_id: 0,
-            delta: 0,
-        }
-    }
-}
 
 /// Legacy constraint checking function.
 ///

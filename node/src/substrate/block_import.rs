@@ -210,15 +210,16 @@ pub fn extract_seal_from_header<Block: BlockT<Hash = H256>>(
     use sp_runtime::DigestItem;
 
     // Find the seal in the digest
-    let seal_item = header
+    let (seal_index, seal_item) = header
         .digest()
         .logs()
         .iter()
-        .find_map(|item| {
+        .enumerate()
+        .find_map(|(idx, item)| {
             if let DigestItem::Seal(engine_id, data) = item {
                 // Our engine ID for Blake3 PoW
                 if engine_id == b"pow_" || engine_id == b"pow0" || engine_id == b"bpow" {
-                    return Some(data.clone());
+                    return Some((idx, data.clone()));
                 }
             }
             None
@@ -232,9 +233,10 @@ pub fn extract_seal_from_header<Block: BlockT<Hash = H256>>(
     // Compute pre-hash (header hash without the seal)
     let header_hash = header.hash();
 
-    // For pre-hash, we need to remove the seal and hash the remaining header
-    // This is a simplified approach - in production, the seal should be properly stripped
-    let pre_hash = header_hash; // TODO: Proper pre-hash calculation
+    // For pre-hash, remove the seal and hash the remaining header
+    let mut header_without_seal = header.clone();
+    header_without_seal.digest_mut().logs.remove(seal_index);
+    let pre_hash = header_without_seal.hash();
 
     Ok(ExtractedSeal {
         seal,
@@ -758,6 +760,45 @@ mod tests {
         // Check with different expected difficulty (outside tolerance)
         let result = verify_pow_seal(&extracted, 0x1a00ffff, 1); // Very different difficulty
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_seal_pre_hash_strips_seal() {
+        use codec::Encode;
+        use sp_runtime::traits::Header as HeaderT;
+        use sp_runtime::Digest;
+        use sp_runtime::DigestItem;
+
+        let parent = H256::repeat_byte(0x11);
+        let number = 7u64;
+        let state_root = H256::repeat_byte(0x22);
+        let extrinsics_root = H256::repeat_byte(0x33);
+
+        let seal = Blake3Seal {
+            nonce: 5,
+            difficulty: 0x2100ffff,
+            work: H256::repeat_byte(0xaa),
+        };
+        let seal_digest = DigestItem::Seal(*b"pow_", seal.encode());
+        let digest = Digest {
+            logs: vec![seal_digest],
+        };
+
+        let header_with_seal =
+            runtime::Header::new(number, extrinsics_root, state_root, parent, digest);
+
+        let extracted =
+            extract_seal_from_header::<runtime::Block>(&header_with_seal).expect("seal");
+        let header_without_seal = runtime::Header::new(
+            number,
+            extrinsics_root,
+            state_root,
+            parent,
+            Digest::default(),
+        );
+
+        assert_eq!(extracted.pre_hash, header_without_seal.hash());
+        assert_eq!(extracted.header_hash, header_with_seal.hash());
     }
 
     #[test]

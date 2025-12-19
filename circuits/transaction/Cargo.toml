@@ -12,8 +12,8 @@ serde_json = "1"
 synthetic-crypto = { path = "../../crypto" }
 hex = "0.4"
 protocol-versioning = { path = "../../protocol/versioning" }
-blake3 = "1"
 miden-crypto = { version = "0.19", default-features = false, optional = true }
+transaction-core = { path = "../transaction-core", features = ["serde", "stark-verify"] }
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }

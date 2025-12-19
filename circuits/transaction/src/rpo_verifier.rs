@@ -18,9 +18,7 @@ pub fn verify_transaction_proof_rpo(
     proof: &Proof,
     pub_inputs: &TransactionPublicInputsStark,
 ) -> Result<(), VerifierError> {
-    // Balance check must match Blake3 path.
-    let expected_input = pub_inputs.total_output + pub_inputs.fee;
-    if pub_inputs.total_input != expected_input {
+    if pub_inputs.validate().is_err() {
         return Err(VerifierError::InconsistentOodConstraintEvaluations);
     }
 
@@ -41,6 +39,7 @@ pub fn verify_transaction_proof_bytes_rpo(
     proof_bytes: &[u8],
     pub_inputs: &TransactionPublicInputsStark,
 ) -> Result<(), TransactionVerifyError> {
+    pub_inputs.validate()?;
     let proof =
         Proof::from_bytes(proof_bytes).map_err(|_| TransactionVerifyError::InvalidProofFormat)?;
 

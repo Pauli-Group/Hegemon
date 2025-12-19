@@ -119,6 +119,7 @@ fn sample_witness() -> TransactionWitness {
         sk_spend: [42u8; 32],
         merkle_root,
         fee: 5,
+        value_balance: 0,
         version: TransactionWitness::default_version_binding(),
     }
 }

@@ -25,6 +25,8 @@ pub struct TransactionBundle {
     /// Binding signature commitment.
     #[serde(with = "serde_bytes_64")]
     pub binding_sig: [u8; 64],
+    /// Native fee encoded in the proof.
+    pub fee: u64,
     /// Value balance (positive = shielding, negative = unshielding).
     pub value_balance: i128,
 }
@@ -38,6 +40,7 @@ impl TransactionBundle {
         ciphertexts: &[NoteCiphertext],
         anchor: [u8; 32],
         binding_sig: [u8; 64],
+        fee: u64,
         value_balance: i128,
     ) -> Result<Self, WalletError> {
         let mut encoded = Vec::with_capacity(ciphertexts.len());
@@ -52,6 +55,7 @@ impl TransactionBundle {
             ciphertexts: encoded,
             anchor,
             binding_sig,
+            fee,
             value_balance,
         })
     }

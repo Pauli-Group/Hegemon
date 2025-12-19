@@ -1,5 +1,6 @@
 use protocol_versioning::{CircuitVersion, CryptoSuiteId, VersionBinding, DEFAULT_VERSION_BINDING};
 use serde::{Deserialize, Serialize};
+pub use transaction_core::BalanceSlot;
 use winterfell::math::FieldElement;
 
 use crate::{
@@ -7,12 +8,6 @@ use crate::{
     error::TransactionCircuitError,
     hashing::{balance_commitment, Felt},
 };
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct BalanceSlot {
-    pub asset_id: u64,
-    pub delta: i128,
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionPublicInputs {
@@ -24,6 +19,7 @@ pub struct TransactionPublicInputs {
     pub commitments: Vec<Felt>,
     pub balance_slots: Vec<BalanceSlot>,
     pub native_fee: u64,
+    pub value_balance: i128,
     #[serde(with = "crate::public_inputs::serde_felt")]
     pub balance_tag: Felt,
     pub circuit_version: CircuitVersion,
@@ -47,6 +43,7 @@ impl Default for TransactionPublicInputs {
             commitments,
             balance_slots,
             native_fee: 0,
+            value_balance: 0,
             balance_tag: Felt::ZERO,
             circuit_version: DEFAULT_VERSION_BINDING.circuit,
             crypto_suite: DEFAULT_VERSION_BINDING.crypto,
@@ -61,6 +58,7 @@ impl TransactionPublicInputs {
         commitments: Vec<Felt>,
         balance_slots: Vec<BalanceSlot>,
         native_fee: u64,
+        value_balance: i128,
         version: VersionBinding,
     ) -> Result<Self, TransactionCircuitError> {
         if nullifiers.len() != MAX_INPUTS {
@@ -91,6 +89,7 @@ impl TransactionPublicInputs {
             commitments,
             balance_slots,
             native_fee,
+            value_balance,
             balance_tag,
             circuit_version: version.circuit,
             crypto_suite: version.crypto,

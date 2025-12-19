@@ -2,7 +2,9 @@
 members = [
     "crypto",
     "circuits/transaction",
+    "circuits/transaction-core",
     "circuits/batch",
+    "circuits/settlement",
     "circuits/block",
     "circuits/bench",
     "circuits/epoch",
@@ -57,6 +59,7 @@ deprecated = "allow"
 authors = ["Pauli Group Inc."]
 license = "MIT"
 repository = "https://github.com/Pauli-Group/Hegemon"
+
 
 # =============================================================================
 # POLKADOT-SDK WORKSPACE DEPENDENCIES

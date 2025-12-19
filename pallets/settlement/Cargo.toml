@@ -16,8 +16,8 @@ sp-io = { workspace = true }
 sp-core = { workspace = true }
 codec = { workspace = true }
 scale-info = { workspace = true }
-blake3 = { version = "1", default-features = false, features = ["digest"] }
 log = { version = "0.4", default-features = false }
+settlement-circuit = { path = "../../circuits/settlement", default-features = false }
 
 # REAL STARK verification
 winterfell = { version = "0.13.1", default-features = false, optional = true }
@@ -41,15 +41,22 @@ std = [
     "sp-core/std",
     "codec/std",
     "scale-info/std",
-    "blake3/std",
     "pallet-balances/std",
     "winterfell?/std",
     "winter-verifier?/std",
     "winter-air?/std",
     "winter-math?/std",
+    "settlement-circuit/std",
 ]
 runtime-benchmarks = ["frame-benchmarking/runtime-benchmarks"]
-stark-verify = ["winterfell", "winter-verifier", "winter-air", "winter-math"]
+stark-verify = [
+    "winterfell",
+    "winter-verifier",
+    "winter-air",
+    "winter-math",
+    "settlement-circuit/stark-verify",
+]
+production = ["stark-verify"]
 
 [lints]
 workspace = true

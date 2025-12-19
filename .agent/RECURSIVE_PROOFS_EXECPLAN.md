@@ -17,6 +17,7 @@ Implement recursive STARK proof composition where a proof can verify other proof
 ## Progress
 
 - [x] (2025-12-10) Draft plan: capture scope, context, and work breakdown.
+- [x] (2025-12-19) Update proof hash encoding to bind proof bytes + public inputs (single + batch) and align epoch hashing notes with Blake3.
 - [x] (2025-12-10) Phase 0: Create epoch crate skeleton and validate dimensions.
 - [x] (2025-12-10) Phase 1a: Implement Merkle tree (compute_proof_root, generate_merkle_proof, verify_merkle_proof).
 - [x] (2025-12-10) Phase 1b: Create Epoch types and mock EpochProver stub.
@@ -179,7 +180,7 @@ Implement recursive STARK proof composition where a proof can verify other proof
 
 - Observation: Existing `BatchTransactionAir` and `TransactionAirStark` provide reusable Poseidon constraint patterns.
   Evidence: Both circuits use identical Poseidon round structure (8 rounds, 16-step cycles, x^5 S-box, MDS mixing). Constants exported via `transaction_circuit::stark_air`.
-  Implication: EpochProofAir reuses these patterns directly instead of implementing Blake2 in-circuit.
+  Implication: EpochProofAir reuses these patterns directly instead of implementing Blake3 in-circuit.
 
 - Observation: Winterfell requires helper functions (`mds_mix`, `sbox`, `round_constant`) to be exported for trace generation.
   Evidence: `BatchTransactionAir` imports these from `transaction_circuit::stark_air` for fill_poseidon_padding.
@@ -243,9 +244,13 @@ Implement recursive STARK proof composition where a proof can verify other proof
   Rationale: Epoch proofs can commit to individual transaction proof hashes. Batching is an optimization that reduces the number of proofs per epoch but is not required for the accumulator pattern to work.
   Date/Author: 2025-12-10.
 
-- Decision: Use Poseidon hash for epoch AIR constraints (not Blake2).
-  Rationale: The existing `BatchTransactionAir` and `TransactionAirStark` already implement Poseidon round constraints (x^5 S-box, MDS mixing, 8 rounds in 16-step cycles). Reusing this pattern avoids implementing Blake2 as AIR constraints (~100 columns). The epoch proof uses Poseidon in-circuit while epoch commitment uses Blake2-256 for the final hash (hashed outside the circuit as public input).
+- Decision: Use Poseidon hash for epoch AIR constraints (not Blake3).
+  Rationale: The existing `BatchTransactionAir` and `TransactionAirStark` already implement Poseidon round constraints (x^5 S-box, MDS mixing, 8 rounds in 16-step cycles). Reusing this pattern avoids implementing Blake3 as AIR constraints (~100 columns). The epoch proof uses Poseidon in-circuit while epoch commitment uses Blake3-256 for the final hash (hashed outside the circuit as public input).
   Date/Author: 2025-12-10.
+
+- Decision: Bind epoch proof hashes to proof bytes plus the public inputs required for verification, with a separate domain for batch proofs.
+  Rationale: STARK proofs are only meaningful with their public inputs; hashing proof bytes alone does not identify the statement. Including anchor/nullifiers/commitments/fee/value_balance (and batch metadata) ensures inclusion proofs and recursive pipelines commit to the exact transaction statement.
+  Date/Author: 2025-12-19 / Codex.
 
 - Decision: Use quadratic field extension for 128-bit security in production.
   Rationale: Security analysis in dimensions.rs shows base Goldilocks field provides ~36 bits security from FRI. Extension field is required for 128-bit target. Development/testing can use base field; production proofs must use `FieldExtension::Quadratic`.
@@ -551,7 +556,7 @@ Key dependencies:
 Terminology:
 - `Epoch`: A fixed number of blocks (e.g., 1000 blocks). Epoch boundaries are where epoch proofs are generated.
 - `Epoch proof`: A STARK proof that attests to a Merkle tree of transaction proof hashes being valid.
-- `Proof hash`: Blake2-256 hash of a serialized STARK proof. Used as leaf in the epoch Merkle tree.
+- `Proof hash`: Blake3-256 hash of the STARK proof bytes plus public inputs (anchor/nullifiers/commitments/fee/value_balance). Used as leaf in the epoch Merkle tree.
 - `Verifier circuit`: An AIR that encodes STARK verification as constraints. Required for true recursion.
 - `Merkle accumulator`: A Merkle tree of proof hashes. Simpler than true recursion but provides practical compression.
 - `Inner proof`: The proof being verified inside a recursive circuit.
@@ -749,7 +754,7 @@ pub mod security {
 /// Epoch proof trace sizing (for EpochProofAir)
 pub mod trace {
     /// Trace width for epoch proof (simplified)
-    /// - 4 columns for Blake2 state simulation
+    /// - 4 columns for Poseidon state simulation
     /// - 1 column for Merkle position
     /// - 1 column for accumulator
     pub const EPOCH_TRACE_WIDTH: usize = 6;
@@ -966,7 +971,7 @@ Add `"circuits/epoch"` to workspace `Cargo.toml` members.
 Create `circuits/epoch/src/types.rs`:
 
 ```rust
-use sp_core::hashing::blake2_256;
+use blake3::Hasher;
 
 /// Number of blocks per epoch
 pub const EPOCH_SIZE: u64 = 1000;
@@ -1001,13 +1006,77 @@ impl Epoch {
         data.extend_from_slice(&self.state_root);
         data.extend_from_slice(&self.nullifier_set_root);
         data.extend_from_slice(&self.commitment_tree_root);
-        blake2_256(&data)
+        blake3_hash(&data)
     }
 }
 
-/// A proof hash is Blake2-256 of the serialized STARK proof
-pub fn proof_hash(proof_bytes: &[u8]) -> [u8; 32] {
-    blake2_256(proof_bytes)
+fn blake3_hash(data: &[u8]) -> [u8; 32] {
+    *blake3::hash(data).as_bytes()
+}
+
+fn blake3_hash_with_domain(domain: &[u8], data: &[u8]) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    hasher.update(domain);
+    hasher.update(data);
+    *hasher.finalize().as_bytes()
+}
+
+/// Inputs for hashing a single transaction proof into an epoch leaf.
+pub struct ProofHashInputs<'a> {
+    pub proof_bytes: &'a [u8],
+    pub anchor: [u8; 32],
+    pub nullifiers: &'a [[u8; 32]],
+    pub commitments: &'a [[u8; 32]],
+    pub fee: u64,
+    pub value_balance: i128,
+}
+
+/// Inputs for hashing a batch transaction proof into an epoch leaf.
+pub struct BatchProofHashInputs<'a> {
+    pub proof_bytes: &'a [u8],
+    pub anchor: [u8; 32],
+    pub nullifiers: &'a [[u8; 32]],
+    pub commitments: &'a [[u8; 32]],
+    pub total_fee: u128,
+    pub batch_size: u32,
+}
+
+/// A proof hash binds proof bytes to the public inputs required for verification.
+pub fn proof_hash(inputs: &ProofHashInputs<'_>) -> [u8; 32] {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&inputs.anchor);
+    buf.extend_from_slice(&(inputs.nullifiers.len() as u32).to_le_bytes());
+    for nf in inputs.nullifiers {
+        buf.extend_from_slice(nf);
+    }
+    buf.extend_from_slice(&(inputs.commitments.len() as u32).to_le_bytes());
+    for cm in inputs.commitments {
+        buf.extend_from_slice(cm);
+    }
+    buf.extend_from_slice(&inputs.fee.to_le_bytes());
+    buf.extend_from_slice(&inputs.value_balance.to_le_bytes());
+    buf.extend_from_slice(&(inputs.proof_bytes.len() as u32).to_le_bytes());
+    buf.extend_from_slice(inputs.proof_bytes);
+    blake3_hash_with_domain(b"hegemon-proof-hash-v2", &buf)
+}
+
+/// Batch proof hash for aggregated proofs.
+pub fn batch_proof_hash(inputs: &BatchProofHashInputs<'_>) -> [u8; 32] {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&inputs.anchor);
+    buf.extend_from_slice(&inputs.batch_size.to_le_bytes());
+    buf.extend_from_slice(&(inputs.nullifiers.len() as u32).to_le_bytes());
+    for nf in inputs.nullifiers {
+        buf.extend_from_slice(nf);
+    }
+    buf.extend_from_slice(&(inputs.commitments.len() as u32).to_le_bytes());
+    for cm in inputs.commitments {
+        buf.extend_from_slice(cm);
+    }
+    buf.extend_from_slice(&inputs.total_fee.to_le_bytes());
+    buf.extend_from_slice(&(inputs.proof_bytes.len() as u32).to_le_bytes());
+    buf.extend_from_slice(inputs.proof_bytes);
+    blake3_hash_with_domain(b"hegemon-batch-proof-hash-v1", &buf)
 }
 ```
 
@@ -1018,9 +1087,9 @@ Create `circuits/epoch/src/merkle.rs`:
 ```rust
 //! Merkle tree operations for epoch proof accumulation.
 //!
-//! Uses Blake2-256 for hashing (consistent with Substrate).
+//! Uses Blake3-256 for hashing.
 
-use sp_core::hashing::blake2_256;
+use blake3::hash as blake3_hash;
 
 /// Compute Merkle root from list of proof hashes.
 ///
@@ -1046,7 +1115,7 @@ pub fn compute_proof_root(proof_hashes: &[[u8; 32]]) -> [u8; 32] {
             let mut combined = [0u8; 64];
             combined[..32].copy_from_slice(&pair[0]);
             combined[32..].copy_from_slice(&pair[1]);
-            next_level.push(blake2_256(&combined));
+            next_level.push(*blake3_hash(&combined).as_bytes());
         }
         leaves = next_level;
     }
@@ -1089,7 +1158,7 @@ pub fn generate_merkle_proof(
             let mut combined = [0u8; 64];
             combined[..32].copy_from_slice(&pair[0]);
             combined[32..].copy_from_slice(&pair[1]);
-            next_level.push(blake2_256(&combined));
+            next_level.push(*blake3_hash(&combined).as_bytes());
         }
         leaves = next_level;
         idx /= 2;
@@ -1121,7 +1190,7 @@ pub fn verify_merkle_proof(
             combined[..32].copy_from_slice(sibling);
             combined[32..].copy_from_slice(&current);
         }
-        current = blake2_256(&combined);
+        current = *blake3_hash(&combined).as_bytes();
         idx /= 2;
     }
     
@@ -1153,7 +1222,7 @@ mod tests {
         let mut combined = [0u8; 64];
         combined[..32].copy_from_slice(&leaf0);
         combined[32..].copy_from_slice(&leaf1);
-        let expected = blake2_256(&combined);
+        let expected = *blake3_hash(&combined).as_bytes();
         
         assert_eq!(root, expected);
     }
@@ -1232,7 +1301,7 @@ Instead, we prove:
 2. The Poseidon hash of these limbs equals a committed value
 3. The committed value corresponds to the epoch's proof_root (verified off-circuit)
 
-This is simpler than encoding Blake2 Merkle tree computation but still provides
+This is simpler than encoding Blake3 Merkle tree computation but still provides
 binding: the prover cannot generate an epoch proof without knowing all proof hashes.
 
 Create `circuits/epoch/src/air.rs`:
@@ -1270,7 +1339,7 @@ pub struct EpochPublicInputs {
     pub proof_accumulator: BaseElement,
     /// Number of proofs in this epoch
     pub num_proofs: u32,
-    /// Epoch commitment (Blake2 hash of Epoch struct, verified off-circuit)
+    /// Epoch commitment (Blake3 hash of Epoch struct, verified off-circuit)
     pub epoch_commitment: [u8; 32],
 }
 
@@ -2575,8 +2644,9 @@ mod integration_tests;
 
 **Upstream (libraries)**:
 - `winterfell = "0.13.1"` - STARK prover/verifier
-- `sp-core = "21.0.0"` - Blake2 hashing
-- `parity-scale-codec = "3.6"` - Encoding
+- `blake3 = "1"` - Proof hash + Merkle hashing
+- `miden-crypto = "0.19"` - RPO algebraic hash for recursion
+- `transaction-circuit` - Poseidon constants + helpers
 
 **Downstream (consumers)**:
 - `pallet-shielded-pool` - Epoch finalization, light client sync
@@ -2676,7 +2746,6 @@ impl<T: Config> Pallet<T> {
     /// Finalize an epoch and generate its proof.
     fn finalize_epoch_internal(epoch_number: u64) -> DispatchResult {
         use epoch_circuit::{Epoch, MockEpochProver, compute_proof_root};
-        use sp_core::hashing::blake2_256;
 
         let proof_hashes = EpochProofHashes::<T>::take();
         if proof_hashes.is_empty() {
@@ -2764,7 +2833,15 @@ impl<T: Config> Pallet<T> {
         // ... existing verification logic ...
 
         // Record proof hash for epoch accumulation
-        let proof_hash = sp_core::hashing::blake2_256(&proof);
+        let inputs = epoch_circuit::ProofHashInputs {
+            proof_bytes: &proof,
+            anchor,
+            nullifiers: &nullifiers,
+            commitments: &commitments,
+            fee,
+            value_balance,
+        };
+        let proof_hash = epoch_circuit::proof_hash(&inputs);
         Self::record_proof_hash(proof_hash);
 
         // ... rest of existing logic ...
@@ -2842,7 +2919,7 @@ pub struct InclusionProof {
    - Light clients verify commitment before accepting
 
 3. **Merkle Tree Security**
-   - Blake2-256 collision resistance
+   - Blake3-256 collision resistance
    - Proof-of-inclusion requires correct index
    - Padding with zeros prevents length extension
 
@@ -3328,3 +3405,5 @@ docker-compose -f docker-compose.testnet.yml up --abort-on-container-exit
   - Fixed compiler warnings: removed unused imports (`AcceptableOptions`, `Proof`, `fft`, `polynom`, `ALPHA`, etc.), added `#[cfg(test)]` to test-only imports, prefixed unused variables with underscore.
   - Added `#[allow(dead_code)]` annotations for constants/functions reserved for future use (Phase 3x depth-2 recursion, spike code).
   - All 140 epoch-circuit tests pass; crates compile warning-free.
+
+Revision note (2025-12-19): Updated the proof-hash definition to bind proof bytes + public inputs (including batch proofs) and aligned epoch hashing references to Blake3 so the plan matches the current recursive proof pipeline.

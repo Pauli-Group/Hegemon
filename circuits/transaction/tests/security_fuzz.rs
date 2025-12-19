@@ -102,6 +102,7 @@ fn arb_witness() -> impl Strategy<Value = TransactionWitness> {
                 sk_spend,
                 merkle_root: Felt::new(merkle),
                 fee,
+                value_balance: 0,
                 version: TransactionWitness::default_version_binding(),
             }
         })
@@ -164,6 +165,7 @@ fn witness_rejects_oversized_inputs() {
         sk_spend: [0u8; 32],
         merkle_root: Felt::ZERO,
         fee: 0,
+        value_balance: 0,
         version: TransactionWitness::default_version_binding(),
     };
     witness.outputs.resize(

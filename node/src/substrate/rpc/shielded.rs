@@ -42,6 +42,8 @@ pub struct ShieldedTransferRequest {
     pub anchor: String,
     /// Binding signature (hex encoded)
     pub binding_sig: String,
+    /// Native fee encoded in the proof
+    pub fee: u64,
     /// Value balance (positive = shielding, negative = unshielding)
     pub value_balance: i128,
 }
@@ -240,6 +242,7 @@ pub trait ShieldedPoolService: Send + Sync {
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
         binding_sig: [u8; 64],
+        fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String>;
 
@@ -413,6 +416,7 @@ where
             encrypted_notes,
             anchor,
             binding_sig,
+            request.fee,
             request.value_balance,
         ) {
             Ok(tx_hash) => Ok(ShieldedTransferResponse {
@@ -592,6 +596,7 @@ mod tests {
             _encrypted_notes: Vec<Vec<u8>>,
             _anchor: [u8; 32],
             _binding_sig: [u8; 64],
+            _fee: u64,
             _value_balance: i128,
         ) -> Result<[u8; 32], String> {
             Ok([0xab; 32])
@@ -734,6 +739,7 @@ mod tests {
             )],
             anchor: hex::encode([0x33u8; 32]),
             binding_sig: hex::encode([0x44u8; 64]),
+            fee: 0,
             value_balance: 0,
         };
 
@@ -757,6 +763,7 @@ mod tests {
             encrypted_notes: vec![],
             anchor: hex::encode([0x33u8; 32]),
             binding_sig: hex::encode([0x44u8; 64]),
+            fee: 0,
             value_balance: 0,
         };
 
@@ -783,6 +790,7 @@ mod tests {
             encrypted_notes: vec![],
             anchor: hex::encode([0x33u8; 32]),
             binding_sig: hex::encode([0x44u8; 64]),
+            fee: 0,
             value_balance: 0,
         };
 

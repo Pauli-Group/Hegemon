@@ -21,7 +21,7 @@ This reference summarizes the public APIs of the monorepo components and points 
 
 ## `circuits/`
 
-- `transaction-circuit` crate exposes `TransactionCircuit::prove(inputs) -> Proof` and `::verify(proof, public_inputs) -> bool`.
+- `transaction-circuit` crate exposes `proof::prove(witness, proving_key) -> TransactionProof` and `proof::verify(proof, verifying_key) -> VerificationReport`. The direct STARK path is `TransactionProverStark::prove_transaction(witness)` and `stark_verifier::verify_transaction_proof_bytes(proof_bytes, pub_inputs)`.
 - `block-circuit` crate aggregates multiple transaction proofs via `BlockCircuit::prove(block_inputs)`.
 - `circuits/bench` binary crate (`circuits-bench`) provides `cargo run -p circuits-bench -- --iterations N --prove` to compile circuits, generate witnesses, and optionally verify proofs. Output includes constraint rows, hash rounds, and per-proof latency.
 
@@ -45,7 +45,7 @@ p budgets.
   - `register_did(document: Vec<u8>, tags: Vec<IdentityTag>, session_key: Option<SessionKey>)` stores the DID document, identity tags, and an optional session key variant (legacy AuthorityId or PQ-only Dilithium/Falcon). The `on_runtime_upgrade` hook maps any pre-upgrade `AuthorityId` into `SessionKey::Legacy` so operators inherit existing keys before rotating into PQ-only bundles.
 - `pallet-attestations` / `pallet-settlement`
   - `set_verifier_params(params: StarkVerifierParams)` (admin origin) updates the on-chain STARK verifier parameters.
-  - Default runtime constants seed `StarkVerifierParams` with Blake3 hashing, 28 FRI queries, a 4× blowup factor, and 128-bit security; calling `set_verifier_params` is the documented migration path for tightening soundness or swapping hashes without redeploying the pallets.
+  - Default runtime constants seed attestations with Blake3 hashing, 28 FRI queries, a 4x blowup factor, and 128-bit security; settlement uses the same hash/query/security budget but a 16x blowup factor. Calling `set_verifier_params` is the documented migration path for tightening soundness or swapping hashes without redeploying the pallets.
 
 ## Documentation hooks
 
