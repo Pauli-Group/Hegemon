@@ -9,9 +9,7 @@ use winterfell::{
     TransitionConstraintDegree,
 };
 
-use crate::constants::{
-    CYCLE_LENGTH, INPUT_PAIRS, NOTE_DOMAIN_TAG, POSEIDON_ROUNDS, TRACE_LENGTH, TRACE_WIDTH,
-};
+use crate::constants::{CYCLE_LENGTH, INPUT_PAIRS, NOTE_DOMAIN_TAG, POSEIDON_ROUNDS};
 
 // ================================================================================================
 // TRACE CONFIGURATION
@@ -184,11 +182,7 @@ impl Air for DisclosureAir {
 
         // Bind public inputs to absorption rows.
         let row_value = absorb_row(0);
-        assertions.push(Assertion::single(
-            COL_IN0,
-            row_value,
-            self.pub_inputs.value,
-        ));
+        assertions.push(Assertion::single(COL_IN0, row_value, self.pub_inputs.value));
         assertions.push(Assertion::single(
             COL_IN1,
             row_value,
@@ -280,7 +274,7 @@ fn make_absorb_mask() -> Vec<BaseElement> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::constants::TRACE_LENGTH;
 
     #[test]
     fn trace_length_is_power_of_two() {

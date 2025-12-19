@@ -88,8 +88,8 @@ fn verify_package(
         return Err("unsupported disclosure package version".to_string());
     }
 
-    let recipient = ShieldedAddress::decode(&package.claim.recipient_address)
-        .map_err(|e| e.to_string())?;
+    let recipient =
+        ShieldedAddress::decode(&package.claim.recipient_address).map_err(|e| e.to_string())?;
     if recipient.pk_recipient != package.claim.pk_recipient {
         return Err("recipient address does not match pk_recipient".to_string());
     }
@@ -123,7 +123,11 @@ fn verify_package(
     let merkle_path = MerklePath {
         siblings: sibling_felts,
     };
-    if !merkle_path.verify(commitment_felt, package.confirmation.leaf_index, anchor_felt) {
+    if !merkle_path.verify(
+        commitment_felt,
+        package.confirmation.leaf_index,
+        anchor_felt,
+    ) {
         return Err("merkle path verification failed".to_string());
     }
 

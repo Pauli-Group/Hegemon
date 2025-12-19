@@ -507,9 +507,9 @@ impl WalletStore {
     ) -> Result<bool, WalletError> {
         self.with_mut(|state| {
             let original = state.outgoing_disclosures.len();
-            state.outgoing_disclosures.retain(|record| {
-                !(record.tx_id == *tx_id && record.output_index == output_index)
-            });
+            state
+                .outgoing_disclosures
+                .retain(|record| !(record.tx_id == *tx_id && record.output_index == output_index));
             Ok(state.outgoing_disclosures.len() != original)
         })
     }

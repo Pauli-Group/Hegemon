@@ -61,9 +61,9 @@ pub fn encode_hex_32(bytes: &[u8; 32]) -> String {
 }
 
 pub fn decode_hex_32(input: &str) -> Result<[u8; 32], WalletError> {
-    let trimmed = input.strip_prefix("0x").ok_or_else(|| {
-        WalletError::Serialization("hex string must start with 0x".into())
-    })?;
+    let trimmed = input
+        .strip_prefix("0x")
+        .ok_or_else(|| WalletError::Serialization("hex string must start with 0x".into()))?;
     let bytes = hex::decode(trimmed)
         .map_err(|e| WalletError::Serialization(format!("invalid hex: {e}")))?;
     if bytes.len() != 32 {
@@ -75,8 +75,7 @@ pub fn decode_hex_32(input: &str) -> Result<[u8; 32], WalletError> {
 }
 
 pub fn decode_base64(input: &str) -> Result<Vec<u8>, WalletError> {
-    base64::decode(input)
-        .map_err(|e| WalletError::Serialization(format!("invalid base64: {e}")))
+    base64::decode(input).map_err(|e| WalletError::Serialization(format!("invalid base64: {e}")))
 }
 
 pub fn encode_base64(bytes: &[u8]) -> String {

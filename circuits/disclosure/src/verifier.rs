@@ -35,8 +35,7 @@ pub fn verify_disclosure_proof_bytes(
 ) -> Result<(), DisclosureVerifyError> {
     let proof =
         Proof::from_bytes(proof_bytes).map_err(|_| DisclosureVerifyError::InvalidProofFormat)?;
-    verify_disclosure_proof(&proof, pub_inputs)
-        .map_err(DisclosureVerifyError::VerificationFailed)
+    verify_disclosure_proof(&proof, pub_inputs).map_err(DisclosureVerifyError::VerificationFailed)
 }
 
 fn default_acceptable_options() -> winterfell::ProofOptions {
