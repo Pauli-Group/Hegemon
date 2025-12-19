@@ -1626,7 +1626,7 @@ pub mod pallet {
                         log::info!(target: "shielded-pool", "  REJECTED: Empty nullifiers and commitments");
                         return InvalidTransaction::Custom(1).into();
                     }
-                    if commitments.len() > 0 && nullifiers.is_empty() {
+                    if !commitments.is_empty() && nullifiers.is_empty() {
                         log::info!(target: "shielded-pool", "  REJECTED: Missing nullifiers for outputs");
                         return InvalidTransaction::Custom(1).into();
                     }

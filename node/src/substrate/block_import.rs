@@ -765,9 +765,9 @@ mod tests {
     #[test]
     fn test_extract_seal_pre_hash_strips_seal() {
         use codec::Encode;
+        use sp_runtime::traits::Header as HeaderT;
         use sp_runtime::Digest;
         use sp_runtime::DigestItem;
-        use sp_runtime::traits::Header as HeaderT;
 
         let parent = H256::repeat_byte(0x11);
         let number = 7u64;

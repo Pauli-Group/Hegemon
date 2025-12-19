@@ -105,9 +105,7 @@ impl TransactionWitness {
             *map.entry(output.note.asset_id).or_default() -= output.note.value as i128;
         }
 
-        if !map.contains_key(&crate::constants::NATIVE_ASSET_ID) {
-            map.insert(crate::constants::NATIVE_ASSET_ID, 0);
-        }
+        map.entry(crate::constants::NATIVE_ASSET_ID).or_insert(0);
 
         if map.len() > BALANCE_SLOTS {
             return Err(TransactionCircuitError::BalanceSlotOverflow(

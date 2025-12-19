@@ -20,6 +20,8 @@ compile_error!("feature \"production\" requires \"stark-verify\" for real proof 
 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
+#[cfg(not(feature = "std"))]
+use sp_std::vec;
 use sp_std::vec::Vec;
 
 use crate::types::{BindingSignature, StarkProof};
@@ -1360,7 +1362,9 @@ mod tests {
     fn build_stark_fixture() -> (StarkProof, ShieldedTransferInputs, BindingSignature) {
         use transaction_circuit::hashing::felt_to_bytes32;
         use transaction_circuit::keys::generate_keys;
-        use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+        use transaction_circuit::note::{
+            InputNoteWitness, MerklePath, NoteData, OutputNoteWitness,
+        };
         use transaction_circuit::proof::prove;
         use transaction_circuit::witness::TransactionWitness;
 
@@ -1428,7 +1432,11 @@ mod tests {
 
         let binding_sig = StarkVerifier::compute_binding_commitment(&inputs);
 
-        (StarkProof::from_bytes(proof.stark_proof), inputs, binding_sig)
+        (
+            StarkProof::from_bytes(proof.stark_proof),
+            inputs,
+            binding_sig,
+        )
     }
 
     #[test]

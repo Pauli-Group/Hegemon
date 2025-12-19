@@ -192,7 +192,9 @@ mod tests {
             let validity = Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
             assert!(matches!(
                 validity,
-                Err(TransactionValidityError::Invalid(InvalidTransaction::Custom(4)))
+                Err(TransactionValidityError::Invalid(
+                    InvalidTransaction::Custom(4)
+                ))
             ));
         });
     }

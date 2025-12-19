@@ -3,6 +3,7 @@
 //! Actually calls winterfell::verify() to verify proofs.
 
 use alloc::string::String;
+use alloc::vec;
 use winter_crypto::hashers::Blake3_256;
 use winterfell::{
     crypto::{DefaultRandomCoin, MerkleTree},
@@ -170,10 +171,7 @@ impl TransactionPublicInputsStark {
         }
 
         let has_input = self.nullifiers.iter().any(|nf| *nf != BaseElement::ZERO);
-        let has_output = self
-            .commitments
-            .iter()
-            .any(|cm| *cm != BaseElement::ZERO);
+        let has_output = self.commitments.iter().any(|cm| *cm != BaseElement::ZERO);
         if !has_input && !has_output {
             return Err(TransactionVerifyError::InvalidPublicInputs(
                 "Transaction has no inputs or outputs".into(),

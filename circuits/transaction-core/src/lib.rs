@@ -17,8 +17,7 @@ pub mod types;
 
 pub use hashing::Felt;
 pub use stark_air::{
-    TransactionAirStark, TransactionPublicInputsStark, CYCLE_LENGTH, MIN_TRACE_LENGTH,
-    TRACE_WIDTH,
+    TransactionAirStark, TransactionPublicInputsStark, CYCLE_LENGTH, MIN_TRACE_LENGTH, TRACE_WIDTH,
 };
 pub use types::BalanceSlot;
 

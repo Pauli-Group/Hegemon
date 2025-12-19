@@ -3,8 +3,8 @@ use core::convert::TryFrom;
 use winterfell::math::{fields::f64::BaseElement, FieldElement};
 
 use crate::constants::{
-    BALANCE_DOMAIN_TAG, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
-    POSEIDON_ROUNDS, POSEIDON_WIDTH,
+    BALANCE_DOMAIN_TAG, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON_ROUNDS,
+    POSEIDON_WIDTH,
 };
 use crate::types::BalanceSlot;
 
@@ -205,8 +205,7 @@ mod poseidon_compat_tests {
         }
 
         fn mix(state: &mut [u64; POSEIDON_WIDTH]) {
-            const MIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] =
-                [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
+            const MIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
             let state_snapshot = *state;
             let mut tmp = [0u64; POSEIDON_WIDTH];
             for (row, output) in MIX.iter().zip(tmp.iter_mut()) {

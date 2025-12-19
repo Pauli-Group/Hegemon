@@ -1,6 +1,7 @@
 //! Settlement STARK verifier.
 
 use alloc::string::String;
+use alloc::vec;
 use winter_crypto::hashers::Blake3_256;
 use winterfell::{
     crypto::{DefaultRandomCoin, MerkleTree},
@@ -32,7 +33,8 @@ pub fn verify_settlement_proof_bytes_with_options(
     pub_inputs
         .validate()
         .map_err(SettlementVerifyError::InvalidPublicInputs)?;
-    let proof = Proof::from_bytes(proof_bytes).map_err(|_| SettlementVerifyError::InvalidProofFormat)?;
+    let proof =
+        Proof::from_bytes(proof_bytes).map_err(|_| SettlementVerifyError::InvalidProofFormat)?;
     verify_settlement_proof(&proof, pub_inputs, &acceptable)
         .map_err(SettlementVerifyError::VerificationFailed)
 }
@@ -41,7 +43,10 @@ pub fn verify_settlement_proof_bytes(
     proof_bytes: &[u8],
     pub_inputs: &SettlementPublicInputs,
 ) -> Result<(), SettlementVerifyError> {
-    let acceptable = AcceptableOptions::OptionSet(vec![default_acceptable_options(), fast_acceptable_options()]);
+    let acceptable = AcceptableOptions::OptionSet(vec![
+        default_acceptable_options(),
+        fast_acceptable_options(),
+    ]);
     verify_settlement_proof_bytes_with_options(proof_bytes, pub_inputs, acceptable)
 }
 

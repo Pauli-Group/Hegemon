@@ -47,7 +47,6 @@ use super::hegemon::{ConsensusStatus, HegemonService, StorageFootprint, Telemetr
 use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
 use codec::Encode;
-use frame_support::traits::Get;
 use pallet_shielded_pool::types::{
     BindingSignature, EncryptedNote, StarkProof, ENCRYPTED_NOTE_SIZE, ML_KEM_CIPHERTEXT_LEN,
 };
@@ -361,16 +360,10 @@ where
         let max_nullifiers = runtime::MaxNullifiersPerTx::get() as usize;
         let max_commitments = runtime::MaxCommitmentsPerTx::get() as usize;
         if nullifiers.len() > max_nullifiers {
-            return Err(format!(
-                "Too many nullifiers (max {})",
-                max_nullifiers
-            ));
+            return Err(format!("Too many nullifiers (max {})", max_nullifiers));
         }
         if commitments.len() > max_commitments {
-            return Err(format!(
-                "Too many commitments (max {})",
-                max_commitments
-            ));
+            return Err(format!("Too many commitments (max {})", max_commitments));
         }
         if encrypted_notes.len() != commitments.len() {
             return Err("Encrypted notes count must match commitments count".to_string());

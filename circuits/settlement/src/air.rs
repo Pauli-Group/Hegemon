@@ -1,3 +1,4 @@
+use alloc::vec;
 use alloc::vec::Vec;
 use winterfell::{
     math::{fields::f64::BaseElement, FieldElement, ToElements},
@@ -177,14 +178,14 @@ impl Air for SettlementAir {
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
-        let mut columns = Vec::new();
-        columns.push(absorb_mask());
-        columns.push(hash_mask());
-        columns.push(copy_mask());
-        columns.push(round_constants(0));
-        columns.push(round_constants(1));
-        columns.push(round_constants(2));
-        columns
+        vec![
+            absorb_mask(),
+            hash_mask(),
+            copy_mask(),
+            round_constants(0),
+            round_constants(1),
+            round_constants(2),
+        ]
     }
 }
 
@@ -196,16 +197,16 @@ fn absorb_mask() -> Vec<BaseElement> {
 
 fn hash_mask() -> Vec<BaseElement> {
     let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
-    for step in 1..=8 {
-        mask[step] = BaseElement::ONE;
+    for slot in mask.iter_mut().take(9).skip(1) {
+        *slot = BaseElement::ONE;
     }
     mask
 }
 
 fn copy_mask() -> Vec<BaseElement> {
     let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
-    for step in 9..CYCLE_LENGTH {
-        mask[step] = BaseElement::ONE;
+    for slot in mask.iter_mut().skip(9) {
+        *slot = BaseElement::ONE;
     }
     mask
 }

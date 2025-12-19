@@ -34,7 +34,8 @@ use serde::{Deserialize, Serialize};
 use transaction_circuit::{
     default_proof_options, fast_proof_options,
     hashing::{felt_to_bytes32, Felt},
-    witness::TransactionWitness, TransactionProverStark,
+    witness::TransactionWitness,
+    TransactionProverStark,
 };
 
 use crate::error::WalletError;
@@ -157,9 +158,10 @@ impl StarkProver {
         let start = Instant::now();
 
         // Get public inputs from witness
-        let pub_inputs = self.inner.get_public_inputs(witness).map_err(|e| {
-            WalletError::InvalidArgument(Box::leak(e.to_string().into_boxed_str()))
-        })?;
+        let pub_inputs = self
+            .inner
+            .get_public_inputs(witness)
+            .map_err(|e| WalletError::InvalidArgument(Box::leak(e.to_string().into_boxed_str())))?;
 
         // DEBUG: Print balance info
         let total_input: u64 = witness.inputs.iter().map(|i| i.note.value).sum();
@@ -208,14 +210,14 @@ impl StarkProver {
             .nullifiers
             .iter()
             .zip(pub_inputs.input_flags.iter())
-            .filter(|(_, flag)| **flag == Felt::ONE)
+            .filter(|(_, flag)| **flag == Felt::new(1))
             .map(|(f, _)| felt_to_bytes32(*f))
             .collect();
         let commitments: Vec<[u8; 32]> = pub_inputs
             .commitments
             .iter()
             .zip(pub_inputs.output_flags.iter())
-            .filter(|(_, flag)| **flag == Felt::ONE)
+            .filter(|(_, flag)| **flag == Felt::new(1))
             .map(|(f, _)| felt_to_bytes32(*f))
             .collect();
         let anchor = felt_to_bytes32(pub_inputs.merkle_root);
@@ -241,9 +243,10 @@ impl StarkProver {
     ) -> Result<bool, WalletError> {
         use transaction_circuit::verify_transaction_proof_bytes;
 
-        let pub_inputs = self.inner.get_public_inputs(witness).map_err(|e| {
-            WalletError::InvalidArgument(Box::leak(e.to_string().into_boxed_str()))
-        })?;
+        let pub_inputs = self
+            .inner
+            .get_public_inputs(witness)
+            .map_err(|e| WalletError::InvalidArgument(Box::leak(e.to_string().into_boxed_str())))?;
         match verify_transaction_proof_bytes(proof_bytes, &pub_inputs) {
             Ok(()) => Ok(true),
             Err(_) => Ok(false),

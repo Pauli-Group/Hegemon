@@ -21,7 +21,9 @@
 
 use codec::{Decode, Encode};
 use scale_info::TypeInfo;
-use sp_inherents::{InherentData, InherentIdentifier};
+#[cfg(feature = "std")]
+use sp_inherents::InherentData;
+use sp_inherents::InherentIdentifier;
 
 use crate::types::{CoinbaseNoteData, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE};
 

@@ -7,6 +7,7 @@
 //! - Nullifier correctness
 //! - MASP balance conservation with value balance
 
+use alloc::vec;
 use alloc::vec::Vec;
 use winterfell::{
     math::{fields::f64::BaseElement, FieldElement, ToElements},
@@ -15,8 +16,8 @@ use winterfell::{
 };
 
 use crate::constants::{
-    CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID, NOTE_DOMAIN_TAG,
-    NULLIFIER_DOMAIN_TAG, MERKLE_DOMAIN_TAG, POSEIDON_ROUNDS, POSEIDON_WIDTH,
+    CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NATIVE_ASSET_ID,
+    NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON_ROUNDS, POSEIDON_WIDTH,
 };
 
 // ================================================================================================
@@ -295,10 +296,10 @@ fn cycle_kind(cycle: usize) -> CycleKind {
 
 pub fn cycle_reset_domain(cycle: usize) -> Option<u64> {
     match cycle_kind(cycle) {
-        CycleKind::InputCommitment { chunk, .. } if chunk == 0 => Some(NOTE_DOMAIN_TAG),
+        CycleKind::InputCommitment { chunk: 0, .. } => Some(NOTE_DOMAIN_TAG),
         CycleKind::InputMerkle { .. } => Some(MERKLE_DOMAIN_TAG),
-        CycleKind::InputNullifier { chunk, .. } if chunk == 0 => Some(NULLIFIER_DOMAIN_TAG),
-        CycleKind::OutputCommitment { chunk, .. } if chunk == 0 => Some(NOTE_DOMAIN_TAG),
+        CycleKind::InputNullifier { chunk: 0, .. } => Some(NULLIFIER_DOMAIN_TAG),
+        CycleKind::OutputCommitment { chunk: 0, .. } => Some(NOTE_DOMAIN_TAG),
         _ => None,
     }
 }
@@ -363,7 +364,10 @@ impl Air for TransactionAirStark {
         let mut degrees = Vec::with_capacity(NUM_CONSTRAINTS);
         // Poseidon transitions use periodic hash/absorb flags and round constants.
         for _ in 0..3 {
-            degrees.push(TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]));
+            degrees.push(TransitionConstraintDegree::with_cycles(
+                5,
+                vec![CYCLE_LENGTH],
+            ));
         }
         degrees.push(TransitionConstraintDegree::new(2)); // reset boolean
         degrees.push(TransitionConstraintDegree::new(2)); // value balance sign boolean
@@ -381,12 +385,14 @@ impl Air for TransactionAirStark {
             degrees.push(TransitionConstraintDegree::new(3)); // asset matches
         }
         for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::with_cycles(3, vec![trace_len])); // slot accumulators
+            degrees.push(TransitionConstraintDegree::with_cycles(3, vec![trace_len]));
+            // slot accumulators
         }
         degrees.push(TransitionConstraintDegree::new(2)); // slot0 asset check
         degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len])); // balance equation
         for _ in 0..3 {
-            degrees.push(TransitionConstraintDegree::with_cycles(1, vec![trace_len])); // slot1..3 balance
+            degrees.push(TransitionConstraintDegree::with_cycles(1, vec![trace_len]));
+            // slot1..3 balance
         }
         degrees.push(TransitionConstraintDegree::new(3)); // link constraint
         for _ in 0..(MAX_INPUTS + MAX_OUTPUTS) {
@@ -494,9 +500,12 @@ impl Air for TransactionAirStark {
         let absorb_s1 = reset * start_s1 + (one - reset) * cont_s1;
         let absorb_s2 = reset * start_s2 + (one - reset) * cont_s2;
 
-        let expected_s0 = hash_flag * hash_s0 + copy_flag * current[COL_S0] + absorb_flag * absorb_s0;
-        let expected_s1 = hash_flag * hash_s1 + copy_flag * current[COL_S1] + absorb_flag * absorb_s1;
-        let expected_s2 = hash_flag * hash_s2 + copy_flag * current[COL_S2] + absorb_flag * absorb_s2;
+        let expected_s0 =
+            hash_flag * hash_s0 + copy_flag * current[COL_S0] + absorb_flag * absorb_s0;
+        let expected_s1 =
+            hash_flag * hash_s1 + copy_flag * current[COL_S1] + absorb_flag * absorb_s1;
+        let expected_s2 =
+            hash_flag * hash_s2 + copy_flag * current[COL_S2] + absorb_flag * absorb_s2;
 
         let mut idx = 0;
         result[idx] = next[COL_S0] - expected_s0;
@@ -516,7 +525,12 @@ impl Air for TransactionAirStark {
         idx += 1;
 
         // active flags are boolean
-        let active_cols = [COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1];
+        let active_cols = [
+            COL_IN_ACTIVE0,
+            COL_IN_ACTIVE1,
+            COL_OUT_ACTIVE0,
+            COL_OUT_ACTIVE1,
+        ];
         for &col in active_cols.iter() {
             let flag = current[col];
             result[idx] = flag * (flag - one);
@@ -610,26 +624,36 @@ impl Air for TransactionAirStark {
         let in_values = [current[COL_IN0_VALUE], current[COL_IN1_VALUE]];
         let out_values = [current[COL_OUT0_VALUE], current[COL_OUT1_VALUE]];
 
-        let slot_in_cols = [
-            COL_SLOT0_IN,
-            COL_SLOT1_IN,
-            COL_SLOT2_IN,
-            COL_SLOT3_IN,
-        ];
-        let slot_out_cols = [
-            COL_SLOT0_OUT,
-            COL_SLOT1_OUT,
-            COL_SLOT2_OUT,
-            COL_SLOT3_OUT,
-        ];
+        let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
+        let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
 
         let sel_in = [
-            [COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3],
-            [COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3],
+            [
+                COL_SEL_IN0_SLOT0,
+                COL_SEL_IN0_SLOT1,
+                COL_SEL_IN0_SLOT2,
+                COL_SEL_IN0_SLOT3,
+            ],
+            [
+                COL_SEL_IN1_SLOT0,
+                COL_SEL_IN1_SLOT1,
+                COL_SEL_IN1_SLOT2,
+                COL_SEL_IN1_SLOT3,
+            ],
         ];
         let sel_out = [
-            [COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3],
-            [COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3],
+            [
+                COL_SEL_OUT0_SLOT0,
+                COL_SEL_OUT0_SLOT1,
+                COL_SEL_OUT0_SLOT2,
+                COL_SEL_OUT0_SLOT3,
+            ],
+            [
+                COL_SEL_OUT1_SLOT0,
+                COL_SEL_OUT1_SLOT1,
+                COL_SEL_OUT1_SLOT2,
+                COL_SEL_OUT1_SLOT3,
+            ],
         ];
         let note_in_flags = [note_start_in0, note_start_in1];
         let note_out_flags = [note_start_out0, note_start_out1];
@@ -922,7 +946,10 @@ mod tests {
         assert_eq!(cols[mask_offset][0], BaseElement::ONE);
         assert_eq!(cols[mask_offset][1], BaseElement::ZERO);
         assert_eq!(cols[mask_offset + 1].len(), MIN_TRACE_LENGTH);
-        assert_eq!(cols[mask_offset + 1][MIN_TRACE_LENGTH - 2], BaseElement::ONE);
+        assert_eq!(
+            cols[mask_offset + 1][MIN_TRACE_LENGTH - 2],
+            BaseElement::ONE
+        );
     }
 
     #[test]
