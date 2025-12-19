@@ -13,6 +13,13 @@ fn blake3_hash(data: &[u8]) -> [u8; 32] {
     *blake3::hash(data).as_bytes()
 }
 
+fn blake3_hash_with_domain(domain: &[u8], data: &[u8]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(domain);
+    hasher.update(data);
+    *hasher.finalize().as_bytes()
+}
+
 /// Epoch metadata committed to in the epoch proof.
 ///
 /// This structure captures all the data that uniquely identifies an epoch
@@ -84,12 +91,66 @@ impl Default for Epoch {
     }
 }
 
-/// Compute the hash of a serialized STARK proof.
+/// Inputs for hashing a single transaction proof into an epoch leaf.
+#[derive(Clone, Debug)]
+pub struct ProofHashInputs<'a> {
+    pub proof_bytes: &'a [u8],
+    pub anchor: [u8; 32],
+    pub nullifiers: &'a [[u8; 32]],
+    pub commitments: &'a [[u8; 32]],
+    pub fee: u64,
+    pub value_balance: i128,
+}
+
+/// Inputs for hashing a batch transaction proof into an epoch leaf.
+#[derive(Clone, Debug)]
+pub struct BatchProofHashInputs<'a> {
+    pub proof_bytes: &'a [u8],
+    pub anchor: [u8; 32],
+    pub nullifiers: &'a [[u8; 32]],
+    pub commitments: &'a [[u8; 32]],
+    pub total_fee: u128,
+    pub batch_size: u32,
+}
+
+/// Compute the hash of a transaction proof and its public inputs.
 ///
-/// Uses Blake3-256 to create a 32-byte digest of the proof bytes.
-/// This hash is used as a leaf in the epoch's Merkle tree.
-pub fn proof_hash(proof_bytes: &[u8]) -> [u8; 32] {
-    blake3_hash(proof_bytes)
+/// This binds the epoch leaf to the public inputs required for verification.
+pub fn proof_hash(inputs: &ProofHashInputs<'_>) -> [u8; 32] {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&inputs.anchor);
+    buf.extend_from_slice(&(inputs.nullifiers.len() as u32).to_le_bytes());
+    for nf in inputs.nullifiers {
+        buf.extend_from_slice(nf);
+    }
+    buf.extend_from_slice(&(inputs.commitments.len() as u32).to_le_bytes());
+    for cm in inputs.commitments {
+        buf.extend_from_slice(cm);
+    }
+    buf.extend_from_slice(&inputs.fee.to_le_bytes());
+    buf.extend_from_slice(&inputs.value_balance.to_le_bytes());
+    buf.extend_from_slice(&(inputs.proof_bytes.len() as u32).to_le_bytes());
+    buf.extend_from_slice(inputs.proof_bytes);
+    blake3_hash_with_domain(b"hegemon-proof-hash-v2", &buf)
+}
+
+/// Compute the hash of a batch proof and its public inputs.
+pub fn batch_proof_hash(inputs: &BatchProofHashInputs<'_>) -> [u8; 32] {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&inputs.anchor);
+    buf.extend_from_slice(&inputs.batch_size.to_le_bytes());
+    buf.extend_from_slice(&(inputs.nullifiers.len() as u32).to_le_bytes());
+    for nf in inputs.nullifiers {
+        buf.extend_from_slice(nf);
+    }
+    buf.extend_from_slice(&(inputs.commitments.len() as u32).to_le_bytes());
+    for cm in inputs.commitments {
+        buf.extend_from_slice(cm);
+    }
+    buf.extend_from_slice(&inputs.total_fee.to_le_bytes());
+    buf.extend_from_slice(&(inputs.proof_bytes.len() as u32).to_le_bytes());
+    buf.extend_from_slice(inputs.proof_bytes);
+    blake3_hash_with_domain(b"hegemon-batch-proof-hash-v1", &buf)
 }
 
 #[cfg(test)]
@@ -156,16 +217,66 @@ mod tests {
     #[test]
     fn test_proof_hash() {
         let proof = vec![1, 2, 3, 4, 5];
-        let hash = proof_hash(&proof);
+        let anchor = [9u8; 32];
+        let nullifiers = vec![[1u8; 32]];
+        let commitments = vec![[2u8; 32]];
+        let inputs = ProofHashInputs {
+            proof_bytes: &proof,
+            anchor,
+            nullifiers: &nullifiers,
+            commitments: &commitments,
+            fee: 7,
+            value_balance: -5,
+        };
+
+        let hash = proof_hash(&inputs);
         assert_ne!(hash, [0u8; 32]);
 
         // Same input should produce same hash
-        let hash2 = proof_hash(&proof);
+        let hash2 = proof_hash(&inputs);
         assert_eq!(hash, hash2);
 
         // Different input should produce different hash
         let other_proof = vec![1, 2, 3, 4, 6];
-        let other_hash = proof_hash(&other_proof);
+        let other_inputs = ProofHashInputs {
+            proof_bytes: &other_proof,
+            anchor,
+            nullifiers: &nullifiers,
+            commitments: &commitments,
+            fee: 7,
+            value_balance: -5,
+        };
+        let other_hash = proof_hash(&other_inputs);
+        assert_ne!(hash, other_hash);
+    }
+
+    #[test]
+    fn test_batch_proof_hash() {
+        let proof = vec![8, 7, 6, 5];
+        let anchor = [5u8; 32];
+        let nullifiers = vec![[3u8; 32], [4u8; 32]];
+        let commitments = vec![[6u8; 32], [7u8; 32]];
+        let inputs = BatchProofHashInputs {
+            proof_bytes: &proof,
+            anchor,
+            nullifiers: &nullifiers,
+            commitments: &commitments,
+            total_fee: 42,
+            batch_size: 2,
+        };
+
+        let hash = batch_proof_hash(&inputs);
+        assert_ne!(hash, [0u8; 32]);
+
+        let other_inputs = BatchProofHashInputs {
+            proof_bytes: &proof,
+            anchor,
+            nullifiers: &nullifiers,
+            commitments: &commitments,
+            total_fee: 43,
+            batch_size: 2,
+        };
+        let other_hash = batch_proof_hash(&other_inputs);
         assert_ne!(hash, other_hash);
     }
 }

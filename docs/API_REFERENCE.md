@@ -45,7 +45,7 @@ p budgets.
   - `register_did(document: Vec<u8>, tags: Vec<IdentityTag>, session_key: Option<SessionKey>)` stores the DID document, identity tags, and an optional session key variant (legacy AuthorityId or PQ-only Dilithium/Falcon). The `on_runtime_upgrade` hook maps any pre-upgrade `AuthorityId` into `SessionKey::Legacy` so operators inherit existing keys before rotating into PQ-only bundles.
 - `pallet-attestations` / `pallet-settlement`
   - `set_verifier_params(params: StarkVerifierParams)` (admin origin) updates the on-chain STARK verifier parameters.
-  - Default runtime constants seed `StarkVerifierParams` with Blake3 hashing, 28 FRI queries, a 4× blowup factor, and 128-bit security; calling `set_verifier_params` is the documented migration path for tightening soundness or swapping hashes without redeploying the pallets.
+  - Default runtime constants seed attestations with Blake3 hashing, 28 FRI queries, a 4x blowup factor, and 128-bit security; settlement uses the same hash/query/security budget but a 16x blowup factor. Calling `set_verifier_params` is the documented migration path for tightening soundness or swapping hashes without redeploying the pallets.
 
 ## Documentation hooks
 

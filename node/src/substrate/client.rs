@@ -118,8 +118,8 @@ pub type HegemonSelectChain = sc_consensus::LongestChain<FullBackend, runtime::B
 /// - `Blake3Algorithm<HegemonFullClient>`: Our PoW algorithm
 /// - CIDP: A function type for creating inherent data providers
 ///
-/// For our PoW chain, we don't use inherents, so CIDP is a simple closure
-/// that returns an empty tuple.
+/// For our PoW chain, CIDP supplies timestamp inherent data so imports
+/// can enforce runtime timestamp checks.
 pub type HegemonPowBlockImport<CIDP> = sc_consensus_pow::PowBlockImport<
     runtime::Block,
     Arc<HegemonFullClient>,

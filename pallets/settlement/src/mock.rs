@@ -33,7 +33,7 @@ parameter_types! {
     pub const MaxPendingInstructions: u32 = 8;
     pub const MaxParticipants: u32 = 4;
     pub const MaxNullifiers: u32 = 4;
-    pub const MaxProofSize: u32 = 64;
+    pub const MaxProofSize: u32 = 16384;
     pub const MaxVerificationKeySize: u32 = 64;
     pub const DefaultVerificationKey: u32 = 0;
     pub const MaxPendingPayouts: u32 = 4;
@@ -42,8 +42,8 @@ parameter_types! {
 
 pub const DEFAULT_PARAMS: StarkVerifierParams = StarkVerifierParams {
     hash: StarkHashFunction::Blake3,
-    fri_queries: 1,
-    blowup_factor: 1,
+    fri_queries: 4,
+    blowup_factor: 16,
     security_bits: 32,
 };
 
