@@ -26,13 +26,19 @@ The wallet crate exposes a `wallet` binary with the following common flows:
 | `cargo run -p wallet --bin wallet -- daemon --store ~/.synthetic/wallet.db --passphrase hunter2 --rpc-url http://127.0.0.1:8080 --auth-token dev-token --interval-secs 5` | Runs the background sync loop continuously, keeping the local commitment tree and balance view current. |
 | `cargo run -p wallet --bin wallet -- status --store ~/.synthetic/wallet.db --passphrase hunter2` | Prints the latest cached balances plus any pending transactions (including mined/confirmation status). |
 | `cargo run -p wallet --bin wallet -- send --store ~/.synthetic/wallet.db --passphrase hunter2 --rpc-url http://127.0.0.1:8080 --auth-token dev-token --recipients recipients.json --fee 0 [--randomize-memo-order]` | Builds a fully encrypted transaction using locally selected notes, proves it with the circuit, submits it to the node’s mempool, and records the pending nullifiers for tracking. Pass `--randomize-memo-order` before the public alpha release so batched memos are shuffled and cannot be correlated by order. |
+| `cargo run -p wallet --bin wallet -- substrate-sync --store ~/.synthetic/wallet.db --passphrase hunter2 --ws-url ws://127.0.0.1:9944` | Performs a one-shot Substrate WebSocket sync against the node. |
+| `cargo run -p wallet --bin wallet -- substrate-daemon --store ~/.synthetic/wallet.db --passphrase hunter2 --ws-url ws://127.0.0.1:9944` | Runs the Substrate sync loop continuously with subscriptions. |
+| `cargo run -p wallet --bin wallet -- substrate-send --store ~/.synthetic/wallet.db --passphrase hunter2 --ws-url ws://127.0.0.1:9944 --recipients recipients.json --fee 0` | Builds and submits a shielded transaction via Substrate RPC and stores outgoing disclosure records for on-demand proofs. |
+| `cargo run -p wallet --bin wallet -- payment-proof create --store ~/.synthetic/wallet.db --passphrase hunter2 --ws-url ws://127.0.0.1:9944 --tx 0x... --output 0 --out proof.json` | Generates a disclosure package (payment proof) for a specific output. |
+| `cargo run -p wallet --bin wallet -- payment-proof verify --proof proof.json --ws-url ws://127.0.0.1:9944 --credit-ledger deposits.jsonl` | Verifies a disclosure package and (optionally) appends a credited-deposit entry. |
+| `cargo run -p wallet --bin wallet -- payment-proof purge --store ~/.synthetic/wallet.db --passphrase hunter2 --tx 0x... --output 0` | Purges stored outgoing disclosure records after proofs are delivered. |
 | `cargo run -p wallet --bin wallet -- export-viewing-key --store ~/.synthetic/wallet.db --passphrase hunter2 --out ivk.json` | Exports the `IncomingViewingKey` for a friend. They can run `wallet init --viewing-key ivk.json` to operate a watch-only daemon that detects inbound funds without exposing the root secret. |
 
-When using the RPC-enabled commands you **must** pass the node’s base URL and authentication token (the node HTTP API uses the `x-auth-token` header). The wallet stores all secrets, tracked notes, pending transactions, and local Merkle tree cursors inside an encrypted file (Argon2 key derivation + ChaCha20-Poly1305). Every mutation writes through to disk using a temp-file + rename flow so abrupt crashes never leave a partially written store.
+When using the legacy HTTP RPC commands (`sync`, `daemon`, `send`) you **must** pass the node’s base URL and authentication token (the node HTTP API uses the `x-auth-token` header). For Substrate RPC commands (`substrate-sync`, `substrate-daemon`, `substrate-send`), pass `--ws-url` instead. The wallet stores all secrets, tracked notes, pending transactions, and local Merkle tree cursors inside an encrypted file (Argon2 key derivation + ChaCha20-Poly1305). Every mutation writes through to disk using a temp-file + rename flow so abrupt crashes never leave a partially written store.
 
 ### Syncing and daemon workflow
 
-The sync engine (`wallet sync` or `wallet daemon`) performs the following steps every iteration:
+The sync engine (`wallet sync`/`wallet daemon` for legacy HTTP, or `wallet substrate-sync`/`wallet substrate-daemon` for Substrate RPC) performs the following steps every iteration:
 
 1. Fetch `/wallet/notes` to learn the current tree depth, leaf count, and cursor.
 2. Page through `/wallet/commitments` and `/wallet/ciphertexts` to rebuild the local `state_merkle::CommitmentTree`, decrypting each ciphertext with the wallet’s incoming viewing key and recording any recovered notes.
@@ -42,7 +48,9 @@ The daemon repeats that loop every `--interval-secs`, while `wallet sync` just r
 
 ### Initiating payments
 
-`wallet send` consumes a JSON document that lists recipients (address/value/asset/memo). The command selects local notes, computes fees/change, proves the transaction with the `transaction_circuit`, encrypts the note plaintexts, and posts a `TransactionBundle` to `/transactions`. Pending nullifiers are cached inside the store so the daemon can mark them as mined once the node reports them in the nullifier set. Use `wallet status` at any time to view balances and pending transaction confirmations.
+`wallet send` (legacy HTTP) and `wallet substrate-send` (Substrate RPC) consume a JSON document that lists recipients (address/value/asset/memo). The command selects local notes, computes fees/change, proves the transaction with the `transaction_circuit`, encrypts the note plaintexts, and submits it to the node. Pending nullifiers are cached inside the store so the daemon can mark them as mined once the node reports them in the nullifier set. `wallet substrate-send` also records outgoing note openings so `wallet payment-proof create` can emit disclosure packages later. Use `wallet status` at any time to view balances and pending transaction confirmations.
+
+When a counterparty requests a targeted receipt, run `wallet payment-proof create` against the stored transaction hash/output index. Verifiers run `wallet payment-proof verify` to check the STARK proof, Merkle inclusion, anchor validity, and genesis hash before crediting.
 
 Set `--randomize-memo-order` to shuffle memo ordering prior to submission; this prevents deterministic ordering leaks when multiple memos share a bundle and should be enabled for all operators ahead of the public alpha rollout.
 

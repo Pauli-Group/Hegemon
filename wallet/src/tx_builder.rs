@@ -1,5 +1,6 @@
 use rand::rngs::OsRng;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
+use transaction_circuit::hashing::felt_to_bytes32;
 use transaction_circuit::note::OutputNoteWitness;
 use transaction_circuit::witness::TransactionWitness;
 
@@ -8,7 +9,7 @@ use crate::error::WalletError;
 use crate::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 use crate::prover::StarkProver;
 use crate::rpc::TransactionBundle;
-use crate::store::{SpendableNote, WalletMode, WalletStore};
+use crate::store::{OutgoingDisclosureDraft, SpendableNote, WalletMode, WalletStore};
 use crate::substrate_rpc::SubstrateRpcClient;
 
 pub struct Recipient {
@@ -22,6 +23,7 @@ pub struct BuiltTransaction {
     pub bundle: TransactionBundle,
     pub nullifiers: Vec<[u8; 32]>,
     pub spent_note_indexes: Vec<usize>,
+    pub outgoing_disclosures: Vec<OutgoingDisclosureDraft>,
 }
 
 /// Pre-flight check: compute nullifiers for notes and verify none are spent on-chain.
@@ -141,8 +143,24 @@ pub fn build_transaction(
     let mut rng = OsRng;
     let mut outputs = Vec::new();
     let mut ciphertexts = Vec::new();
+    let mut outgoing_disclosures = Vec::new();
     for recipient in recipients {
-        let (output, ciphertext) = build_output(recipient, &mut rng)?;
+        let (output, ciphertext, note) = build_output(recipient, &mut rng)?;
+        let output_index = outputs.len() as u32;
+        let recipient_address = recipient.address.encode()?;
+        let memo = if note.memo.as_bytes().is_empty() {
+            None
+        } else {
+            Some(note.memo.clone())
+        };
+        let commitment = felt_to_bytes32(output.note.commitment());
+        outgoing_disclosures.push(OutgoingDisclosureDraft {
+            output_index,
+            recipient_address,
+            note: output.note.clone(),
+            commitment,
+            memo,
+        });
         outputs.push(output);
         ciphertexts.push(ciphertext);
     }
@@ -163,10 +181,24 @@ pub fn build_transaction(
             &mut rng,
         );
         let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng)?;
-        ciphertexts.push(ciphertext.clone());
-        outputs.push(OutputNoteWitness {
-            note: note.to_note_data(address.pk_recipient),
+        let note_data = note.to_note_data(address.pk_recipient);
+        let output_index = outputs.len() as u32;
+        let recipient_address = address.encode()?;
+        let memo = if note.memo.as_bytes().is_empty() {
+            None
+        } else {
+            Some(note.memo.clone())
+        };
+        let commitment = felt_to_bytes32(note_data.commitment());
+        outgoing_disclosures.push(OutgoingDisclosureDraft {
+            output_index,
+            recipient_address,
+            note: note_data.clone(),
+            commitment,
+            memo,
         });
+        ciphertexts.push(ciphertext.clone());
+        outputs.push(OutputNoteWitness { note: note_data });
     }
 
     let tree = store.commitment_tree()?;
@@ -296,6 +328,7 @@ pub fn build_transaction(
         // Use prover nullifiers, not wallet-computed, to match what's actually submitted
         nullifiers: proof_result.nullifiers.to_vec(),
         spent_note_indexes: spent_indexes,
+        outgoing_disclosures,
     })
 }
 
@@ -369,7 +402,7 @@ fn select_notes(notes: &mut [SpendableNote], target: u64) -> Result<Selection, W
 fn build_output(
     recipient: &Recipient,
     rng: &mut OsRng,
-) -> Result<(OutputNoteWitness, NoteCiphertext), WalletError> {
+) -> Result<(OutputNoteWitness, NoteCiphertext, NotePlaintext), WalletError> {
     let note = NotePlaintext::random(
         recipient.value,
         recipient.asset_id,
@@ -382,5 +415,6 @@ fn build_output(
             note: note.to_note_data(recipient.address.pk_recipient),
         },
         ciphertext,
+        note,
     ))
 }

@@ -1,0 +1,18 @@
+[package]
+name = "disclosure-circuit"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+blake3 = "1"
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"
+winter-crypto = "0.13"
+winterfell = "0.13"
+transaction-core = { path = "../transaction-core", features = ["serde", "stark-verify"] }
+
+[dev-dependencies]
+rand = { version = "0.8", features = ["std"] }
+
+[lints]
+workspace = true

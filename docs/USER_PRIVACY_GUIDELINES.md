@@ -26,6 +26,9 @@ Additional wallet-specific recommendations:
 - Use the wallet’s built-in address book tags instead of plaintext memos when referencing counterparties; tags stay local and prevent memo correlation.
 - Enable `wallet send --randomize-memo-order` (or set the flag in wrapper scripts) before the public alpha launch so deterministic memo ordering never reveals which recipients were co-batched in a shielded transaction.
 - Never re-use transparent fallback addresses when shielded notes are available. Transparent outputs should remain disabled unless governance explicitly mandates an escape hatch.
+- Treat disclosure packages from `wallet payment-proof create` as sensitive receipts: they reveal value, asset id, recipient address, commitment, and anchor. Store them encrypted, share only with the requesting party, and avoid copying them into broad email/chat logs.
+- Use `wallet payment-proof purge` once a payment proof is delivered or once its retention window expires; the wallet store retains outgoing note openings specifically so on-demand proofs are possible.
+- Disclosed memos are not bound by the ZK proof. Only include memos when required by policy, and transmit them over the same secure channel as the disclosure package.
 
 ## 4. Node and network hygiene
 - **Run your own light/full node** – Point wallets at self-hosted RPC endpoints hardened with TLS and mutual authentication. Shared endpoints can log note commitment deltas.
