@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3-alpha - 2025-12-19
+- Disclosure-on-demand payment proofs: new disclosure circuit, wallet persistence, and `payment-proof` CLI (create/verify/purge).
+- Proof verification hardening across transaction/settlement verification and shielded-pool enforcement, plus value balance/fee plumbing.
+- Chainspec 0.3 refresh and transaction builder cleanup (ciphertext padding removal).
+
 ## v0.2-alpha - 2025-12-18
 - STARK transaction batching (2/4/8/16): `batch-circuit`, pallet verification, and wallet CLI support.
 - Recursive epoch proof plumbing and verifier recursion circuits for aggregation experiments.
