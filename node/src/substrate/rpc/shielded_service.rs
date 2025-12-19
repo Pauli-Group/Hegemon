@@ -108,6 +108,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
         encrypted_notes: Vec<Vec<u8>>,
         _anchor: [u8; 32],
         _binding_sig: [u8; 64],
+        _fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
         let nullifier_count = nullifiers.len();
@@ -327,6 +328,7 @@ where
         _encrypted_notes: Vec<Vec<u8>>,
         _anchor: [u8; 32],
         _binding_sig: [u8; 64],
+        _fee: u64,
         _value_balance: i128,
     ) -> Result<[u8; 32], String> {
         // Transaction submission requires building an extrinsic and submitting
@@ -482,6 +484,7 @@ mod tests {
                 [0; 32], // Use valid anchor
                 [0; 64],
                 0,
+                0,
             )
             .unwrap();
 
@@ -542,6 +545,7 @@ mod tests {
                 vec![vec![2]],
                 [0; 32],
                 [0; 64],
+                0,
                 -5000,
             )
             .unwrap();

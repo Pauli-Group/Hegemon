@@ -23,6 +23,8 @@ pub struct TransactionWitness {
     #[serde(with = "crate::witness::serde_felt")]
     pub merkle_root: Felt,
     pub fee: u64,
+    #[serde(default)]
+    pub value_balance: i128,
     #[serde(default = "TransactionWitness::default_version_binding")]
     pub version: VersionBinding,
 }
@@ -51,6 +53,25 @@ impl TransactionWitness {
             if *nf == Felt::ZERO {
                 return Err(TransactionCircuitError::ZeroNullifier(i));
             }
+        }
+
+        if self.value_balance.unsigned_abs() > u64::MAX as u128 {
+            return Err(TransactionCircuitError::ValueBalanceOutOfRange(
+                self.value_balance.unsigned_abs(),
+            ));
+        }
+
+        let slots = self.balance_slots()?;
+        let native_delta = slots
+            .iter()
+            .find(|slot| slot.asset_id == crate::constants::NATIVE_ASSET_ID)
+            .map(|slot| slot.delta)
+            .unwrap_or(0);
+        let expected_native = self.fee as i128 - self.value_balance;
+        if native_delta != expected_native {
+            return Err(TransactionCircuitError::BalanceMismatch(
+                crate::constants::NATIVE_ASSET_ID,
+            ));
         }
 
         Ok(())
@@ -82,6 +103,10 @@ impl TransactionWitness {
         }
         for output in &self.outputs {
             *map.entry(output.note.asset_id).or_default() -= output.note.value as i128;
+        }
+
+        if !map.contains_key(&crate::constants::NATIVE_ASSET_ID) {
+            map.insert(crate::constants::NATIVE_ASSET_ID, 0);
         }
 
         if map.len() > BALANCE_SLOTS {
@@ -123,6 +148,7 @@ impl TransactionWitness {
             commitments,
             balance_slots,
             self.fee,
+            self.value_balance,
             self.version,
         )
     }

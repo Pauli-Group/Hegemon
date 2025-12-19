@@ -20,7 +20,8 @@ use crate::{
     constants::{MAX_INPUTS, MAX_OUTPUTS},
     stark_air::{
         commitment_output_row, merkle_root_output_row, nullifier_output_row, TransactionAirStark,
-        TransactionPublicInputsStark, COL_S0, COL_VALUE,
+        TransactionPublicInputsStark, COL_FEE, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_OUT_ACTIVE0,
+        COL_OUT_ACTIVE1, COL_S0, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN,
     },
     stark_prover::{default_proof_options, fast_proof_options, TransactionProverStark},
     witness::TransactionWitness,
@@ -82,18 +83,22 @@ impl Prover for TransactionProverStarkRpo {
         DefaultConstraintEvaluator<'a, Self::Air, E>;
 
     fn get_pub_inputs(&self, trace: &Self::Trace) -> TransactionPublicInputsStark {
-        // Same deterministic read‑back as the Blake3 prover.
+        let row = 0;
+        let input_flags = vec![
+            trace.get(COL_IN_ACTIVE0, row),
+            trace.get(COL_IN_ACTIVE1, row),
+        ];
+        let output_flags = vec![
+            trace.get(COL_OUT_ACTIVE0, row),
+            trace.get(COL_OUT_ACTIVE1, row),
+        ];
+
         let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
         for i in 0..MAX_INPUTS {
+            let flag = input_flags[i];
             let row = nullifier_output_row(i);
-            let nf = if row < trace.length() {
-                let val = trace.get(COL_S0, row);
-                let marker = trace.get(COL_VALUE, row);
-                if marker == BaseElement::ZERO {
-                    BaseElement::ZERO
-                } else {
-                    val
-                }
+            let nf = if flag == BaseElement::ONE && row < trace.length() {
+                trace.get(COL_S0, row)
             } else {
                 BaseElement::ZERO
             };
@@ -102,15 +107,10 @@ impl Prover for TransactionProverStarkRpo {
 
         let mut commitments = Vec::with_capacity(MAX_OUTPUTS);
         for i in 0..MAX_OUTPUTS {
+            let flag = output_flags[i];
             let row = commitment_output_row(i);
-            let cm = if row < trace.length() {
-                let val = trace.get(COL_S0, row);
-                let marker = trace.get(COL_VALUE, row);
-                if marker == BaseElement::ZERO {
-                    BaseElement::ZERO
-                } else {
-                    val
-                }
+            let cm = if flag == BaseElement::ONE && row < trace.length() {
+                trace.get(COL_S0, row)
             } else {
                 BaseElement::ZERO
             };
@@ -129,11 +129,13 @@ impl Prover for TransactionProverStarkRpo {
         };
 
         TransactionPublicInputsStark {
+            input_flags,
+            output_flags,
             nullifiers,
             commitments,
-            total_input: BaseElement::ZERO,
-            total_output: BaseElement::ZERO,
-            fee: BaseElement::ZERO,
+            fee: trace.get(COL_FEE, row),
+            value_balance_sign: trace.get(COL_VALUE_BALANCE_SIGN, row),
+            value_balance_magnitude: trace.get(COL_VALUE_BALANCE_MAG, row),
             merkle_root,
         }
     }
@@ -234,6 +236,7 @@ mod tests {
             sk_spend: [7u8; 32],
             merkle_root,
             fee: 0,
+            value_balance: 0,
             version: TransactionWitness::default_version_binding(),
         }
     }

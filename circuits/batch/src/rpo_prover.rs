@@ -187,6 +187,7 @@ mod tests {
             sk_spend: [tag.wrapping_add(7); 32],
             merkle_root,
             fee: 0,
+            value_balance: 0,
             version: TransactionWitness::default_version_binding(),
         }
     }

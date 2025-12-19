@@ -31,6 +31,7 @@ winter-crypto = { version = "0.13.1", default-features = false, optional = true 
 # Epoch circuit for light client sync
 epoch-circuit = { path = "../../circuits/epoch", default-features = false, optional = true }
 blake3 = { version = "1", default-features = false, optional = true }
+transaction-core = { path = "../../circuits/transaction-core", default-features = false }
 
 [dev-dependencies]
 sp-io = { workspace = true, features = ["std"] }
@@ -59,10 +60,18 @@ std = [
     "winter-crypto?/std",
     "async-trait",
     "epoch-circuit?/std",
+    "transaction-core/std",
 ]
 runtime-benchmarks = ["frame-benchmarking"]
 try-runtime = ["frame-support/try-runtime"]
-stark-verify = ["winterfell", "winter-verifier", "winter-air", "winter-math", "winter-crypto"]
+stark-verify = [
+    "winterfell",
+    "winter-verifier",
+    "winter-air",
+    "winter-math",
+    "winter-crypto",
+    "transaction-core/stark-verify",
+]
 # Enable epoch proofs for light client sync
 epoch-proofs = ["epoch-circuit", "blake3"]
 # Production mode: disables AcceptAllProofs and other test-only verifiers

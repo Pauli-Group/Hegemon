@@ -101,6 +101,7 @@ fn make_valid_witness(seed: u64) -> (TransactionWitness, Vec<Felt>) {
         sk_spend: [seed as u8 + 15; 32],
         merkle_root,
         fee: 5,
+        value_balance: 0,
         version: DEFAULT_VERSION_BINDING,
     };
 
