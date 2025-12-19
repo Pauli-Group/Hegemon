@@ -3,6 +3,7 @@ members = [
     "crypto",
     "circuits/transaction",
     "circuits/transaction-core",
+    "circuits/disclosure",
     "circuits/batch",
     "circuits/settlement",
     "circuits/block",

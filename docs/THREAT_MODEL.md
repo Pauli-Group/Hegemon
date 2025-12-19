@@ -31,6 +31,7 @@ This document explains the attacker capabilities and design assumptions for each
 
 - **View-key compromise**: Wallet CLI derives viewing keys using keyed hashes; benchmarks simulate rotation cadence to ensure operations stay tractable.
 - **Metadata leakage**: Wallet bench stresses note batching to keep `rho` diversifiers unpredictable even under load.
+- **Disclosure package leakage**: Payment-proof packages include value, asset id, recipient address, commitment, and anchor. Wallet stores encrypt outgoing disclosure records and CLI verification enforces canonical encodings, genesis-hash checks, and on-chain anchor validation to limit replay and tampering risks.
 
 ## Security margins
 
