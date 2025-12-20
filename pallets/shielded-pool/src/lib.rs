@@ -441,6 +441,10 @@ pub mod pallet {
         EncryptedNotesMismatch,
         /// Insufficient transparent balance for shielding.
         InsufficientBalance,
+        /// Shielding without a proof is disabled in production builds.
+        ShieldDisabled,
+        /// Commitment bytes are not a canonical field encoding.
+        InvalidCommitmentEncoding,
         /// Verifying key not found or disabled.
         VerifyingKeyNotFound,
         /// Coinbase commitment verification failed.
@@ -791,10 +795,11 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Shield transparent funds.
+        /// Shield transparent funds (dev-only).
         ///
-        /// Simplified interface for shielding - generates commitment on-chain.
-        /// In production, the commitment should be generated off-chain with proper randomness.
+        /// WARNING: This call is disabled in production builds because it cannot bind the
+        /// transparent deposit amount to the shielded commitment without a proof.
+        /// Use `shielded_transfer` with a real STARK proof for production shielding.
         #[pallet::call_index(1)]
         #[pallet::weight(T::WeightInfo::shield())]
         pub fn shield(
@@ -804,6 +809,20 @@ pub mod pallet {
             encrypted_note: EncryptedNote,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
+
+            ensure!(
+                !cfg!(feature = "production"),
+                Error::<T>::ShieldDisabled
+            );
+
+            ensure!(
+                transaction_core::hashing::is_canonical_bytes32(&commitment),
+                Error::<T>::InvalidCommitmentEncoding
+            );
+            ensure!(
+                !is_zero_commitment(&commitment),
+                Error::<T>::ZeroCommitmentSubmitted
+            );
 
             // Transfer to pool
             T::Currency::transfer(
@@ -969,6 +988,12 @@ pub mod pallet {
         ) -> DispatchResult {
             // This is an unsigned extrinsic - no signer required
             ensure_none(origin)?;
+
+            // SECURITY: Early size check to prevent DoS via oversized proofs.
+            ensure!(
+                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
+                Error::<T>::ProofTooLarge
+            );
 
             // Pure shielded transfers have value_balance = 0
             let value_balance: i128 = 0;

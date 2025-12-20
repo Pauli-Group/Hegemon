@@ -120,6 +120,7 @@ sc-basic-authorship = { git = "https://github.com/paritytech/polkadot-sdk", tag 
 sc-block-builder = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1" }
 sc-rpc = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1" }
 sc-rpc-api = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1" }
+sc-rpc-server = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1" }
 sc-utils = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1" }
 substrate-frame-rpc-system = { git = "https://github.com/paritytech/polkadot-sdk", tag = "polkadot-stable2512-rc1" }
 

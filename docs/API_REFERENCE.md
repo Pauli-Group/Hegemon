@@ -39,7 +39,7 @@ p budgets.
 
 - Rust crate `wallet` exposes CLI subcommands via `clap` definitions in `wallet/src/bin/wallet.rs`, covering offline helpers, Substrate RPC flows, and compliance tooling.
 - `wallet payment-proof create|verify|purge` generates and verifies disclosure packages (payment proofs) and manages stored outgoing disclosure records.
-- `wallet substrate-sync`, `wallet substrate-daemon`, `wallet substrate-send`, and `wallet substrate-shield` are the Substrate RPC paths for live wallets; `wallet sync`/`wallet daemon` remain legacy HTTP flows.
+- `wallet substrate-sync`, `wallet substrate-daemon`, and `wallet substrate-send` are the Substrate RPC paths for live wallets; `wallet substrate-shield` is dev-only and production shielding requires proof-backed `submitShieldedTransfer`; `wallet sync`/`wallet daemon` remain legacy HTTP flows.
 - `wallet::disclosure::{DisclosurePackage, DisclosureClaim, DisclosureConfirmation, DisclosureProof}` defines the JSON schema and encoding helpers used to serialize/deserialize payment-proof packages.
 - `wallet::rpc::TransactionBundle` and shielded-transfer payloads use `binding_hash` (a 64-byte hash commitment), not a signature.
 - `wallet/bench` binary crate (`wallet-bench`) accepts `--iterations` and reports note construction/sec, nullifier derivations/sec, and encryption throughput.

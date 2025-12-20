@@ -23,6 +23,7 @@ The visible proof is that production builds either (a) succeed with full cryptog
 - [x] (2025-12-20 07:05Z) Replace toy Poseidon constants with NUMS-derived constants and 63 full rounds across circuits/runtime/crypto.
 - [x] (2025-12-20 07:05Z) Wire batch proof verification, enforce full binding hash checks, and require `--dev` to start the node.
 - [x] (2025-12-20 07:50Z) Gate legacy commitment helpers, enforce AIR hash non-zero/match, bound Merkle root history, remove hard-coded sudo key, and make balance commitment checks fallible.
+- [x] (2025-12-20 08:35Z) Disable dev-only shielding in production, add proof-size/fee-range guards, and honor RPC deny-unsafe config.
 
 ## Surprises & Discoveries
 
@@ -58,6 +59,10 @@ None yet. Update this section as soon as unexpected behavior is observed, with s
   Rationale: Prevent state bloat and DoS via unbounded anchor storage while keeping a configurable validation window.
   Date/Author: 2025-12-20 / Codex
 
+- Decision: Disable the non-proof `shield` extrinsic in production builds; require proof-backed shielding via `shielded_transfer`.
+  Rationale: The simple shield path cannot bind the transparent deposit amount to the note commitment without a proof.
+  Date/Author: 2025-12-20 / Codex
+
 ## Outcomes & Retrospective
 
 Delivered:
@@ -69,6 +74,7 @@ Delivered:
 - Batch proof verification is wired to the batch circuit, and binding hashes are validated as full 64-byte commitments.
 - Non-dev nodes refuse mock state execution without an explicit flag; wallet batch proofs are opt-in and memos now hard-fail on oversize payloads.
 - Legacy commitment helpers are feature-gated; AIR hash enforcement and bounded Merkle root history prevent silent verification bypass and state bloat.
+- Dev-only shielding is disabled in production, unsigned shielded transfers enforce proof size limits, and fee range checks block modulus-malleable proofs.
 - Documentation, runbooks, and production checks updated to reflect protocol-breaking encoding changes and operational resets.
 
 Open items:

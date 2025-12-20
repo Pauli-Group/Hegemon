@@ -3356,15 +3356,17 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     eprintln!("config.rpc.port: {}", config.rpc.port);
     eprintln!("========================");
 
-    // Get RPC port from CLI config. The --rpc-port flag populates config.rpc.addr,
+    // Get RPC listen address from CLI config. The --rpc-port flag populates config.rpc.addr,
     // falling back to config.rpc.port (default 9944) if no explicit endpoints specified.
-    let rpc_port = config
+    let rpc_listen_addr = config
         .rpc
         .addr
         .as_ref()
         .and_then(|endpoints| endpoints.first())
-        .map(|e| e.listen_addr.port())
-        .unwrap_or(config.rpc.port);
+        .map(|e| e.listen_addr)
+        .unwrap_or_else(|| std::net::SocketAddr::from(([127, 0, 0, 1], config.rpc.port)));
+    let rpc_port = rpc_listen_addr.port();
+    let rpc_deny_unsafe = sc_rpc_server::deny_unsafe(&rpc_listen_addr, &config.rpc.methods);
 
     // Create production RPC service with client access
     let rpc_service = Arc::new(ProductionRpcService::new(client.clone()));
@@ -3653,16 +3655,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Spawn RPC server task
     let rpc_handle = task_manager.spawn_handle();
     rpc_handle.spawn("hegemon-rpc-server", Some("rpc"), async move {
-        use sc_rpc::DenyUnsafe;
-
-        let addr = format!("127.0.0.1:{}", rpc_port);
+        let addr = rpc_listen_addr;
 
         // Create HTTP middleware
         // Note: DenyUnsafe is injected via extension middleware below
         let http_middleware = tower::ServiceBuilder::new();
 
-        // For dev mode, allow all methods; for production, we'd deny unsafe
-        let deny_unsafe = DenyUnsafe::No;
+        let deny_unsafe = rpc_deny_unsafe;
 
         // Create a custom RPC middleware that injects DenyUnsafe
         use jsonrpsee::server::middleware::rpc::RpcServiceBuilder;
@@ -3674,7 +3673,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         let server = match ServerBuilder::default()
             .set_http_middleware(http_middleware)
             .set_rpc_middleware(rpc_middleware)
-            .build(&addr)
+            .build(addr)
             .await
         {
             Ok(s) => s,
@@ -3702,6 +3701,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     });
 
     tracing::info!(
+        rpc_addr = %rpc_listen_addr,
         rpc_port = rpc_port,
         "RPC server spawned with production service"
     );
@@ -3710,9 +3710,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     tracing::info!("═══════════════════════════════════════════════════════════════");
     tracing::info!("STARTING NODE");
     tracing::info!("═══════════════════════════════════════════════════════════════");
-    tracing::info!("  RPC server spawned on port {}", rpc_port);
+    tracing::info!("  RPC server spawned at {}", rpc_listen_addr);
     tracing::info!("  PQ network broadcasting: {}", has_pq_broadcast);
-    tracing::info!("  RPC server: http://127.0.0.1:{}", rpc_port);
+    tracing::info!("  RPC server: http://{}", rpc_listen_addr);
     tracing::info!("  Set HEGEMON_MINE=1 to enable mining");
     tracing::info!("═══════════════════════════════════════════════════════════════");
 
