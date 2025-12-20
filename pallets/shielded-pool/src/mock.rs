@@ -12,6 +12,7 @@ type TestBatchProofVerifier = crate::verifier::AcceptAllBatchProofs;
 #[cfg(feature = "production")]
 type TestBatchProofVerifier = crate::verifier::StarkBatchVerifier;
 
+use crate::verifier::StarkVerifier;
 use frame_support::{
     parameter_types,
     traits::{ConstU16, ConstU32, Everything},
@@ -133,7 +134,7 @@ pub fn new_test_ext() -> TestExternalities {
         pallet_shielded_pool::pallet::MerkleTree::<Test>::put(tree.clone());
         pallet_shielded_pool::pallet::MerkleRoots::<Test>::insert(tree.root(), 0u64);
 
-        let vk = VerifyingKey::default();
+        let vk = StarkVerifier::create_verifying_key(0);
         pallet_shielded_pool::pallet::VerifyingKeyStorage::<Test>::put(vk);
     });
     ext
@@ -425,7 +426,7 @@ mod tests {
             assert_noop!(
                 Pallet::<Test>::update_verifying_key(
                     RuntimeOrigin::signed(1),
-                    VerifyingKey::default(),
+                    StarkVerifier::create_verifying_key(0),
                 ),
                 sp_runtime::DispatchError::BadOrigin
             );

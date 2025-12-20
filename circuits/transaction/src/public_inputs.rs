@@ -102,7 +102,9 @@ impl TransactionPublicInputs {
             .find(|slot| slot.asset_id == NATIVE_ASSET_ID)
             .map(|slot| slot.delta)
             .unwrap_or(0);
-        let expected_balance_tag = balance_commitment(native_delta, &balance_slots);
+        let expected_balance_tag = balance_commitment(native_delta, &balance_slots).map_err(
+            |err| TransactionCircuitError::BalanceDeltaOutOfRange(err.asset_id, err.magnitude),
+        )?;
         let balance_tag = expected_balance_tag;
 
         Ok(Self {

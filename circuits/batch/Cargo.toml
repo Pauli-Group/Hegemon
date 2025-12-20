@@ -38,6 +38,7 @@ std = [
 ]
 rpo-fiat-shamir = ["miden-crypto", "transaction-circuit/rpo-fiat-shamir", "std"]
 stark-fast = []
+production = []
 
 [lints]
 workspace = true

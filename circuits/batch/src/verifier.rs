@@ -15,6 +15,9 @@ use crate::public_inputs::BatchPublicInputs;
 
 type Blake3 = Blake3_256<BaseElement>;
 
+#[cfg(all(feature = "production", feature = "stark-fast"))]
+compile_error!("feature \"production\" cannot be combined with \"stark-fast\"");
+
 /// Verify a batch STARK proof.
 ///
 /// This function cryptographically verifies that the proof is valid
@@ -79,14 +82,14 @@ fn fast_acceptable_options() -> winterfell::ProofOptions {
 }
 
 fn acceptable_options() -> AcceptableOptions {
-    #[cfg(feature = "stark-fast")]
+    #[cfg(all(feature = "stark-fast", not(feature = "production")))]
     {
         AcceptableOptions::OptionSet(vec![
             default_acceptable_options(),
             fast_acceptable_options(),
         ])
     }
-    #[cfg(not(feature = "stark-fast"))]
+    #[cfg(any(not(feature = "stark-fast"), feature = "production"))]
     {
         AcceptableOptions::OptionSet(vec![default_acceptable_options()])
     }

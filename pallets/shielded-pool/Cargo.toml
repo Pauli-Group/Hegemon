@@ -79,7 +79,9 @@ stark-verify = [
 epoch-proofs = ["epoch-circuit", "blake3"]
 # Production mode: disables AcceptAllProofs and other test-only verifiers
 # Enable this feature for mainnet/production builds to ensure only real verification is available
-production = ["stark-verify"]
+production = ["stark-verify", "batch-circuit/production"]
+# Legacy commitment/nullifier helpers (not for production)
+legacy-commitment = []
 
 [lints]
 workspace = true

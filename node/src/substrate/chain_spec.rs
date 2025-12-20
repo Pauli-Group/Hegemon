@@ -28,7 +28,7 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
             "devAccounts": null
         },
         "sudo": {
-            "key": "5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp"
+            "key": null
         },
         "session": {
             "keys": [],

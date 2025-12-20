@@ -3,6 +3,7 @@ use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use serde::{Deserialize, Serialize};
 
 use crate::config::NodeConfig;
+use crate::error::NodeError;
 use crate::telemetry::TelemetryPosture;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, ValueEnum)]
@@ -72,7 +73,7 @@ pub fn chain_spec(profile: ChainProfile) -> ChainSpec {
 }
 
 impl ChainSpec {
-    pub fn apply_to_config(&self, config: &mut NodeConfig) {
+    pub fn apply_to_config(&self, config: &mut NodeConfig) -> Result<(), NodeError> {
         config.pow_bits = self.pow_bits;
         if config.seeds.is_empty() {
             config.seeds = self.pq_seeds.clone();
@@ -82,5 +83,6 @@ impl ChainSpec {
         config.mempool_max_weight = self.mempool_max_weight;
         config.template_tx_limit = self.template_tx_limit;
         config.telemetry = self.telemetry.clone();
+        config.validate()
     }
 }

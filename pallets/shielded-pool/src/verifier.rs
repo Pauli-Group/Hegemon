@@ -66,7 +66,7 @@ impl Default for VerifyingKey {
     fn default() -> Self {
         Self {
             id: 0,
-            enabled: true,
+            enabled: false,
             air_hash: [0u8; 32],
             circuit_id: [0u8; 32],
         }
@@ -454,7 +454,10 @@ impl ProofVerifier for StarkVerifier {
         // Verify AIR hash matches expected circuit
         // This ensures the proof was generated for the correct circuit version
         let expected_air_hash = Self::compute_expected_air_hash();
-        if vk.air_hash != [0u8; 32] && vk.air_hash != expected_air_hash {
+        if vk.air_hash == [0u8; 32] {
+            return VerificationResult::KeyNotFound;
+        }
+        if vk.air_hash != expected_air_hash {
             log::warn!(
                 "AIR hash mismatch: expected {:?}, got {:?}",
                 expected_air_hash,
@@ -901,7 +904,7 @@ mod tests {
     }
 
     fn sample_vk() -> VerifyingKey {
-        VerifyingKey::default()
+        StarkVerifier::create_verifying_key(0)
     }
 
     #[cfg(feature = "stark-verify")]
