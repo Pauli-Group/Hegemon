@@ -177,6 +177,10 @@ pub mod pallet {
         #[pallet::constant]
         type MerkleRootHistorySize: Get<u32>;
 
+        /// Maximum shielded coinbase subsidy per block (safety cap).
+        #[pallet::constant]
+        type MaxCoinbaseSubsidy: Get<u64>;
+
         /// Weight information.
         type WeightInfo: WeightInfo;
     }
@@ -451,6 +455,8 @@ pub mod pallet {
         InvalidCoinbaseCommitment,
         /// Coinbase already processed for this block.
         CoinbaseAlreadyProcessed,
+        /// Coinbase amount exceeds the allowed subsidy for this height.
+        CoinbaseSubsidyExceedsLimit,
         /// Zero nullifier submitted (security violation - zero nullifiers are padding only).
         /// This error indicates a malicious attempt to bypass double-spend protection.
         ZeroNullifierSubmitted,
@@ -907,6 +913,9 @@ pub mod pallet {
                 Error::<T>::CoinbaseAlreadyProcessed
             );
 
+            // Enforce subsidy schedule for shielded coinbase.
+            Self::ensure_coinbase_subsidy(coinbase_data.amount)?;
+
             // Verify the commitment matches the plaintext data
             // This ensures the miner can't claim more than stated
             #[allow(deprecated)]
@@ -1320,6 +1329,22 @@ pub mod pallet {
             PALLET_ID.into_account_truncating()
         }
 
+        /// Ensure the shielded coinbase amount stays within the subsidy schedule.
+        fn ensure_coinbase_subsidy(amount: u64) -> DispatchResult {
+            let block_number = frame_system::Pallet::<T>::block_number();
+            let height: u64 = block_number.try_into().unwrap_or(0);
+            let max_subsidy = pallet_coinbase::block_subsidy(height);
+            ensure!(
+                amount <= max_subsidy,
+                Error::<T>::CoinbaseSubsidyExceedsLimit
+            );
+            ensure!(
+                amount <= T::MaxCoinbaseSubsidy::get(),
+                Error::<T>::CoinbaseSubsidyExceedsLimit
+            );
+            Ok(())
+        }
+
         /// Record a new Merkle root and prune history to the configured bound.
         fn record_merkle_root(root: [u8; 32], block: BlockNumberFor<T>) -> DispatchResult {
             let history_limit = T::MerkleRootHistorySize::get() as usize;
@@ -1653,6 +1678,10 @@ pub mod pallet {
         ) -> Result<(), Self::Error> {
             // Validate the inherent call
             if let Call::mint_coinbase { coinbase_data } = call {
+                if Self::ensure_coinbase_subsidy(coinbase_data.amount).is_err() {
+                    return Err(sp_inherents::MakeFatalError::from(()));
+                }
+
                 // Verify commitment matches plaintext data
                 #[allow(deprecated)]
                 let expected = commitment::coinbase_commitment(
@@ -1714,6 +1743,10 @@ pub mod pallet {
                     log::info!(target: "shielded-pool", "  fee = {}", fee);
 
                     // Basic validation before accepting into pool
+                    if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                        log::info!(target: "shielded-pool", "  REJECTED: Proof exceeds max size");
+                        return InvalidTransaction::ExhaustsResources.into();
+                    }
 
                     // Check counts are valid
                     if nullifiers.is_empty() && commitments.is_empty() {

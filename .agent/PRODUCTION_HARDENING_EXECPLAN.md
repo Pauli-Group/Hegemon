@@ -24,6 +24,7 @@ The visible proof is that production builds either (a) succeed with full cryptog
 - [x] (2025-12-20 07:05Z) Wire batch proof verification, enforce full binding hash checks, and require `--dev` to start the node.
 - [x] (2025-12-20 07:50Z) Gate legacy commitment helpers, enforce AIR hash non-zero/match, bound Merkle root history, remove hard-coded sudo key, and make balance commitment checks fallible.
 - [x] (2025-12-20 08:35Z) Disable dev-only shielding in production, add proof-size/fee-range guards, and honor RPC deny-unsafe config.
+- [x] (2025-12-20 09:05Z) Enforce shielded coinbase subsidy bounds and reject oversized proofs in unsigned validation.
 
 ## Surprises & Discoveries
 

@@ -20,6 +20,7 @@ log = { version = "0.4", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 sha2 = { version = "0.10", default-features = false }
 async-trait = { version = "0.1", optional = true }
+pallet-coinbase = { path = "../coinbase", default-features = false }
 
 # REAL STARK verification
 winterfell = { version = "0.13.1", default-features = false, optional = true }
@@ -61,6 +62,7 @@ std = [
     "winter-crypto?/std",
     "async-trait",
     "epoch-circuit?/std",
+    "pallet-coinbase/std",
     "transaction-core/std",
     "batch-circuit?/std",
 ]
