@@ -260,11 +260,11 @@ impl ExtrinsicBuilder {
         let mut encoded = Vec::new();
 
         // Pallet index for ShieldedPool (from construct_runtime! ordering)
-        // System=0, Timestamp=1, Coinbase=2, Pow=3, Difficulty=4, Session=5, Balances=6,
-        // TransactionPayment=7, Sudo=8, Council=9, CouncilMembership=10, Treasury=11,
-        // Oracles=12, Identity=13, Attestations=14, AssetRegistry=15, Settlement=16,
-        // FeatureFlags=17, FeeModel=18, Observability=19, ShieldedPool=20
-        const SHIELDED_POOL_INDEX: u8 = 20;
+        // System=0, Timestamp=1, Pow=2, Difficulty=3, Session=4, Balances=5,
+        // TransactionPayment=6, Sudo=7, Council=8, CouncilMembership=9, Treasury=10,
+        // Oracles=11, Identity=12, Attestations=13, AssetRegistry=14, Settlement=15,
+        // FeatureFlags=16, FeeModel=17, Observability=18, ShieldedPool=19
+        const SHIELDED_POOL_INDEX: u8 = 19;
         encoded.push(SHIELDED_POOL_INDEX);
 
         // Call index for shield (second call in pallet, after shielded_transfer)
@@ -307,11 +307,11 @@ impl ExtrinsicBuilder {
         let mut encoded = Vec::new();
 
         // Pallet index for ShieldedPool (from construct_runtime! ordering)
-        // System=0, Timestamp=1, Coinbase=2, Pow=3, Difficulty=4, Session=5, Balances=6,
-        // TransactionPayment=7, Sudo=8, Council=9, CouncilMembership=10, Treasury=11,
-        // Oracles=12, Identity=13, Attestations=14, AssetRegistry=15, Settlement=16,
-        // FeatureFlags=17, FeeModel=18, Observability=19, ShieldedPool=20
-        const SHIELDED_POOL_INDEX: u8 = 20;
+        // System=0, Timestamp=1, Pow=2, Difficulty=3, Session=4, Balances=5,
+        // TransactionPayment=6, Sudo=7, Council=8, CouncilMembership=9, Treasury=10,
+        // Oracles=11, Identity=12, Attestations=13, AssetRegistry=14, Settlement=15,
+        // FeatureFlags=16, FeeModel=17, Observability=18, ShieldedPool=19
+        const SHIELDED_POOL_INDEX: u8 = 19;
         encoded.push(SHIELDED_POOL_INDEX);
 
         // Call index for shielded_transfer (first call in pallet)
@@ -742,7 +742,7 @@ fn encode_shield_call(call: &ShieldCall) -> Vec<u8> {
     let mut encoded = Vec::new();
 
     // ShieldedPool pallet index (see construct_runtime! in runtime/src/lib.rs)
-    const SHIELDED_POOL_INDEX: u8 = 20;
+    const SHIELDED_POOL_INDEX: u8 = 19;
     encoded.push(SHIELDED_POOL_INDEX);
 
     const SHIELD_CALL_INDEX: u8 = 1;
@@ -841,7 +841,7 @@ pub fn encode_batch_shielded_transfer_call(
     let mut encoded = Vec::new();
 
     // Pallet index for ShieldedPool
-    const SHIELDED_POOL_INDEX: u8 = 20;
+    const SHIELDED_POOL_INDEX: u8 = 19;
     encoded.push(SHIELDED_POOL_INDEX);
 
     // Call index for batch_shielded_transfer (call_index 5 in pallet)
@@ -928,7 +928,7 @@ pub fn encode_shielded_transfer_unsigned_call(
     let mut encoded = Vec::new();
 
     // Pallet index for ShieldedPool (from construct_runtime! ordering)
-    const SHIELDED_POOL_INDEX: u8 = 20;
+    const SHIELDED_POOL_INDEX: u8 = 19;
     encoded.push(SHIELDED_POOL_INDEX);
 
     // Call index for shielded_transfer_unsigned (call_index 4 in pallet)
@@ -1163,7 +1163,7 @@ mod encoding_tests {
             "Encoded call should be {} bytes",
             expected
         );
-        assert_eq!(encoded[0], 20, "Pallet index should be 20 (ShieldedPool)");
+        assert_eq!(encoded[0], 19, "Pallet index should be 19 (ShieldedPool)");
         assert_eq!(encoded[1], 1, "Call index should be 1");
 
         // Verify amount encoding (1000 as u128 little-endian)
@@ -1247,7 +1247,7 @@ mod encoding_tests {
         let call_bytes = &body[call_start..];
         println!("\nCall starts at byte {} (offset from body)", call_start);
         println!("Call length: {} bytes", call_bytes.len());
-        println!("Call pallet index: {} (expected 20)", call_bytes[0]);
+        println!("Call pallet index: {} (expected 19)", call_bytes[0]);
         println!("Call index: {} (expected 1 for shield)", call_bytes[1]);
 
         // Amount is raw u128 (16 bytes)

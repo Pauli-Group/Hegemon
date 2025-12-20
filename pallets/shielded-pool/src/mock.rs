@@ -20,14 +20,12 @@ use frame_support::{
 use sp_io::TestExternalities;
 use sp_runtime::testing::H256;
 use sp_runtime::traits::{BlakeTwo256, IdentityLookup};
-use sp_runtime::Permill;
 use sp_runtime::BuildStorage;
 
 frame_support::construct_runtime!(
     pub enum Test {
         System: frame_system,
         Balances: pallet_balances,
-        Coinbase: pallet_coinbase,
         ShieldedPool: pallet_shielded_pool,
     }
 );
@@ -35,12 +33,6 @@ frame_support::construct_runtime!(
 parameter_types! {
     pub const BlockHashCount: u64 = 250;
     pub const ExistentialDeposit: u128 = 1;
-    pub const MaxSubsidy: u64 = 10 * 100_000_000;
-    pub const MinerShare: Permill = Permill::from_percent(80);
-    pub const TreasuryShare: Permill = Permill::from_percent(10);
-    pub const CommunityShare: Permill = Permill::from_percent(10);
-    pub const TreasuryAccount: u64 = 10_000;
-    pub const CommunityAccount: u64 = 10_001;
 }
 
 impl frame_system::Config for Test {
@@ -91,16 +83,6 @@ impl pallet_balances::Config for Test {
     type FreezeIdentifier = ();
     type MaxFreezes = ConstU32<0>;
     type DoneSlashHandler = ();
-}
-
-impl pallet_coinbase::Config for Test {
-    type Currency = Balances;
-    type MaxSubsidy = MaxSubsidy;
-    type MinerShare = MinerShare;
-    type TreasuryShare = TreasuryShare;
-    type CommunityShare = CommunityShare;
-    type TreasuryAccount = TreasuryAccount;
-    type CommunityAccount = CommunityAccount;
 }
 
 parameter_types! {

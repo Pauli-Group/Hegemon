@@ -136,7 +136,7 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::config]
-    pub trait Config: frame_system::Config + pallet_coinbase::Config<Currency = Self::Currency> {
+    pub trait Config: frame_system::Config {
         /// The overarching event type.
         #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
@@ -912,10 +912,6 @@ pub mod pallet {
                 !CoinbaseProcessed::<T>::get(),
                 Error::<T>::CoinbaseAlreadyProcessed
             );
-            ensure!(
-                !pallet_coinbase::CoinbaseProcessed::<T>::get(),
-                Error::<T>::CoinbaseAlreadyProcessed
-            );
 
             // Enforce subsidy schedule for shielded coinbase.
             Self::ensure_coinbase_subsidy(coinbase_data.amount)?;
@@ -955,7 +951,6 @@ pub mod pallet {
 
             // Mark as processed
             CoinbaseProcessed::<T>::put(true);
-            pallet_coinbase::CoinbaseProcessed::<T>::put(true);
 
             let block_number = <frame_system::Pallet<T>>::block_number();
             Self::deposit_event(Event::CoinbaseMinted {
@@ -1683,9 +1678,7 @@ pub mod pallet {
         ) -> Result<(), Self::Error> {
             // Validate the inherent call
             if let Call::mint_coinbase { coinbase_data } = call {
-                if CoinbaseProcessed::<T>::get()
-                    || pallet_coinbase::CoinbaseProcessed::<T>::get()
-                {
+                if CoinbaseProcessed::<T>::get() {
                     return Err(sp_inherents::MakeFatalError::from(()));
                 }
 
@@ -1885,9 +1878,7 @@ pub mod pallet {
                     if _source != TransactionSource::InBlock {
                         return InvalidTransaction::Call.into();
                     }
-                    if CoinbaseProcessed::<T>::get()
-                        || pallet_coinbase::CoinbaseProcessed::<T>::get()
-                    {
+                    if CoinbaseProcessed::<T>::get() {
                         return InvalidTransaction::Stale.into();
                     }
                     if Self::ensure_coinbase_subsidy(coinbase_data.amount).is_err() {

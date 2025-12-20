@@ -6,7 +6,7 @@ Reference: repository root `.agent/PLANS.md` defines the ExecPlan format and mai
 
 ## Purpose / Big Picture
 
-Production builds must not rely on placeholders, unsafe fallbacks, or misleading security features. After this change, the node and wallet will only accept real cryptographic proofs, commitments and nullifiers will have full‑strength (256‑bit) encodings, viewing keys will no longer embed spend keys, and the node will refuse to run with mock state execution outside development profiles. A user can start the node, submit a shielded transaction, and verify that it is rejected if any proof, commitment, or Merkle root is malformed, while developers can still enable explicit dev‑only features when testing.
+Production builds must not rely on placeholders, unsafe fallbacks, or misleading security features. After this change, the node and wallet will only accept real cryptographic proofs, commitments and nullifiers will have full‑strength (256‑bit) encodings, viewing keys will no longer embed spend keys, transparent coinbase paths are removed, and the node will refuse to run with mock state execution outside development profiles. A user can start the node, submit a shielded transaction, and verify that it is rejected if any proof, commitment, or Merkle root is malformed, while developers can still enable explicit dev‑only features when testing.
 
 The visible proof is that production builds either (a) succeed with full cryptographic verification and correct 256‑bit commitments/nullifiers or (b) refuse to run or reject transactions when required safety hooks are missing. This plan is focused on production‑compiled code; explicitly gated dev‑only features can remain but must be opt‑in and impossible to reach in production builds.
 
@@ -26,10 +26,12 @@ The visible proof is that production builds either (a) succeed with full cryptog
 - [x] (2025-12-20 08:35Z) Disable dev-only shielding in production, add proof-size/fee-range guards, and honor RPC deny-unsafe config.
 - [x] (2025-12-20 09:05Z) Enforce shielded coinbase subsidy bounds and reject oversized proofs in unsigned validation.
 - [x] (2025-12-20 09:35Z) Enforce cross-pallet coinbase exclusion and gate inherent validation by source and local checks.
+- [x] (2025-12-20 10:15Z) Remove transparent coinbase pallet and fallback paths; align wallet encoding/tests with the new pallet order.
 
 ## Surprises & Discoveries
 
-None yet. Update this section as soon as unexpected behavior is observed, with short evidence snippets.
+- Observation: Wallet extrinsic encoding hard-codes pallet indices, so removing the Coinbase pallet shifts indices and would misroute shielded calls without updating the constants.
+  Evidence: `wallet/src/extrinsic.rs` uses fixed `SHIELDED_POOL_INDEX` values alongside construct_runtime ordering comments and tests.
 
 ## Decision Log
 
@@ -65,6 +67,14 @@ None yet. Update this section as soon as unexpected behavior is observed, with s
   Rationale: The simple shield path cannot bind the transparent deposit amount to the note commitment without a proof.
   Date/Author: 2025-12-20 / Codex
 
+- Decision: Remove the transparent coinbase pallet and all `HEGEMON_MINER_ACCOUNT` fallbacks, keeping shielded coinbase as the only production reward path.
+  Rationale: DESIGN.md and TOKENOMICS_CALCULATION.md require no transparent pool; transparent coinbase in production undermines that guarantee and invites inconsistent supply semantics.
+  Date/Author: 2025-12-20 / Codex
+
+- Decision: Update wallet pallet index constants to match the runtime ordering after removing the Coinbase pallet (ShieldedPool -> 19, Balances -> 5).
+  Rationale: Wallet extrinsics are manually encoded; incorrect indices would route calls to the wrong pallet and break shielded transfers.
+  Date/Author: 2025-12-20 / Codex
+
 ## Outcomes & Retrospective
 
 Delivered:
@@ -78,6 +88,7 @@ Delivered:
 - Legacy commitment helpers are feature-gated; AIR hash enforcement and bounded Merkle root history prevent silent verification bypass and state bloat.
 - Dev-only shielding is disabled in production, unsigned shielded transfers enforce proof size limits, and fee range checks block modulus-malleable proofs.
 - Documentation, runbooks, and production checks updated to reflect protocol-breaking encoding changes and operational resets.
+- Transparent coinbase pallet and `HEGEMON_MINER_ACCOUNT` fallback removed; shielded coinbase is the only production reward path and wallet call indices/tests match the new runtime ordering.
 
 Open items:
 - None in this ExecPlan scope.
@@ -91,13 +102,15 @@ This repository implements a single shielded pool with STARK proofs. A “note c
 
 The transaction circuit code lives under `circuits/transaction-core` and `circuits/transaction`. The proof verifier accepts a “fast” set of STARK options and the transaction proof `verify()` function falls back to a legacy consistency checker if no cryptographic proof bytes are present. In the wallet, the `FullViewingKey` currently stores the raw spend key, which is not a safe viewing key. The node’s Substrate client falls back to mock state execution with a zero state root when callbacks are missing. The wallet CLI has a batch send path that encodes an empty proof. All of these are compiled into production unless explicitly gated.
 
+The runtime previously included both a transparent coinbase pallet and the shielded pool pallet, while the node could fall back to `HEGEMON_MINER_ACCOUNT` for transparent rewards. Wallet extrinsics are manually encoded with hard-coded pallet indices in `wallet/src/extrinsic.rs`, so removing the transparent coinbase pallet shifts indices and requires updating those constants and tests to keep shielded calls routed correctly.
+
 Terms used in this plan:
 
 “Commitment” is the public hash of a note’s contents. “Nullifier” is the public hash used to prevent double‑spends. A “Merkle root” is the root hash of the commitment tree used as the anchor for proofs. A “STARK proof” is a cryptographic proof produced by Winterfell. “Production build” means a binary compiled with the runtime `production` feature and without dev/test features.
 
 Key files to be changed include:
 
-`circuits/transaction-core/src/hashing.rs`, `circuits/transaction-core/src/constants.rs`, `circuits/transaction/src/stark_prover.rs`, `circuits/transaction-core/src/stark_verifier.rs`, `circuits/transaction/src/proof.rs`, `state/merkle/src/lib.rs`, `pallets/shielded-pool/src/commitment.rs`, `pallets/shielded-pool/src/verifier.rs`, `wallet/src/viewing.rs`, `wallet/src/keys.rs`, `wallet/src/store.rs`, `wallet/src/extrinsic.rs`, `wallet/src/notes.rs`, `node/src/substrate/client.rs`, and `node/src/config.rs`. Documentation updates must touch `DESIGN.md`, `METHODS.md`, and `docs/THREAT_MODEL.md` at minimum.
+`circuits/transaction-core/src/hashing.rs`, `circuits/transaction-core/src/constants.rs`, `circuits/transaction/src/stark_prover.rs`, `circuits/transaction-core/src/stark_verifier.rs`, `circuits/transaction/src/proof.rs`, `state/merkle/src/lib.rs`, `pallets/shielded-pool/src/commitment.rs`, `pallets/shielded-pool/src/verifier.rs`, `wallet/src/viewing.rs`, `wallet/src/keys.rs`, `wallet/src/store.rs`, `wallet/src/extrinsic.rs`, `wallet/src/notes.rs`, `wallet/src/bin/wallet.rs`, `node/src/substrate/client.rs`, `node/src/substrate/service.rs`, `node/src/config.rs`, `runtime/src/lib.rs`, `runtime/Cargo.toml`, `runtime/tests/coinbase_flow.rs`, and `runbooks/miner_wallet_quickstart.md`. Documentation updates must touch `DESIGN.md`, `METHODS.md`, and `docs/THREAT_MODEL.md` at minimum.
 
 ## Plan of Work
 
@@ -149,6 +162,14 @@ Update `DESIGN.md`, `METHODS.md`, `docs/THREAT_MODEL.md`, and `docs/API_REFERENC
 
 End state: documentation and tests enforce the hardened production guarantees.
 
+### Milestone 8: Remove transparent coinbase and align runtime/wallet indices
+
+Remove the transparent coinbase pallet and all fallback paths so shielded coinbase is the only production reward flow. In `runtime/src/lib.rs`, drop the `pallet_coinbase` configuration and remove the pallet from `construct_runtime!`, leaving only the shielded pool inherent for coinbase. In `runtime/Cargo.toml`, remove the direct `pallet-coinbase` dependency and std feature entry. In `pallets/shielded-pool/src/lib.rs`, remove cross-pallet `CoinbaseProcessed` checks so the shielded pallet’s own guard is the single source of truth. In `node/src/substrate/service.rs`, remove the transparent coinbase inherent fallback and treat missing/invalid shielded addresses as “no reward.” In `node/src/substrate/client.rs`, delete `HEGEMON_MINER_ACCOUNT` parsing and the `miner_account` field/accessors so only `HEGEMON_MINER_ADDRESS` remains.
+
+Because wallet extrinsics are manually encoded, update `wallet/src/extrinsic.rs` to reflect the new pallet ordering (ShieldedPool index 19, Balances index 5) and update its encoding tests. Update `runtime/tests/coinbase_flow.rs` to validate shielded coinbase minting into `PoolBalance` rather than transparent balances. Remove wallet status output and runbook references that imply a transparent miner account (`wallet/src/bin/wallet.rs`, `runbooks/miner_wallet_quickstart.md`).
+
+End state: production builds have no transparent coinbase pallet or environment fallback, wallet-encoded extrinsics target the correct pallets, and shielded coinbase tests validate pool minting behavior.
+
 ## Concrete Steps
 
 All commands below assume the working directory is the repository root.
@@ -163,6 +184,7 @@ Local compilation and targeted tests during development:
     cargo test -p transaction-core
     cargo test -p transaction-circuit
     cargo test -p pallet-shielded-pool
+    cargo test -p runtime --test coinbase_flow
     cargo test -p wallet
     cargo test -p state-merkle
 
@@ -186,6 +208,7 @@ Acceptance is observable:
 4. A `FullViewingKey` export no longer contains a spend key, and nullifiers computed from that viewing key still match the chain.
 5. Non‑dev nodes refuse to start or mine when state execution is not wired.
 6. The batch‑send CLI path cannot emit empty proofs in production builds.
+7. The runtime has no transparent coinbase pallet or `HEGEMON_MINER_ACCOUNT` fallback, and `runtime/tests/coinbase_flow.rs` confirms shielded coinbase minting only updates `ShieldedPool::pool_balance`.
 
 Test expectations:
 
@@ -238,3 +261,5 @@ and ensure the stored `nullifier_key` is derived from `sk_view` (not `sk_spend`)
 In `pallets/shielded-pool/src/types.rs`, rename `BindingSignature` to `BindingHash` (or equivalent) and update all references accordingly. This should be reflected in any RPC payloads or extrinsic encodings.
 
 Dependencies should remain within the existing Winterfell and hash crates already in the workspace; avoid introducing new external hash crates unless strictly necessary, and document any new dependency in `DESIGN.md` and `docs/THREAT_MODEL.md`.
+
+Plan update (2025-12-20 10:15Z): Added Milestone 8 and related context/acceptance updates to remove the transparent coinbase pallet and fallbacks, because the design requires a single shielded pool and wallet encoders must track the new pallet ordering.
