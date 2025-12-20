@@ -92,6 +92,7 @@ parameter_types! {
     pub const MaxNullifiersPerBatch: u32 = 32;  // 16 txs * 2 nullifiers
     pub const MaxCommitmentsPerBatch: u32 = 32; // 16 txs * 2 commitments
     pub const MerkleRootHistorySize: u32 = 100;
+    pub const MaxCoinbaseSubsidy: u64 = 10 * 100_000_000;
 }
 
 impl pallet_shielded_pool::Config for Test {
@@ -106,6 +107,7 @@ impl pallet_shielded_pool::Config for Test {
     type MaxNullifiersPerBatch = MaxNullifiersPerBatch;
     type MaxCommitmentsPerBatch = MaxCommitmentsPerBatch;
     type MerkleRootHistorySize = MerkleRootHistorySize;
+    type MaxCoinbaseSubsidy = MaxCoinbaseSubsidy;
     type WeightInfo = crate::DefaultWeightInfo;
 }
 

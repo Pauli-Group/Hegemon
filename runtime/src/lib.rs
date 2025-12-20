@@ -1497,6 +1497,7 @@ impl pallet_shielded_pool::Config for Runtime {
     type MaxNullifiersPerBatch = MaxNullifiersPerBatch;
     type MaxCommitmentsPerBatch = MaxCommitmentsPerBatch;
     type MerkleRootHistorySize = MerkleRootHistorySize;
+    type MaxCoinbaseSubsidy = MaxSubsidy;
     type WeightInfo = pallet_shielded_pool::DefaultWeightInfo;
 }
 
