@@ -136,7 +136,7 @@ pub mod pallet {
     pub struct Pallet<T>(_);
 
     #[pallet::config]
-    pub trait Config: frame_system::Config {
+    pub trait Config: frame_system::Config + pallet_coinbase::Config<Currency = Self::Currency> {
         /// The overarching event type.
         #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
@@ -912,6 +912,10 @@ pub mod pallet {
                 !CoinbaseProcessed::<T>::get(),
                 Error::<T>::CoinbaseAlreadyProcessed
             );
+            ensure!(
+                !pallet_coinbase::CoinbaseProcessed::<T>::get(),
+                Error::<T>::CoinbaseAlreadyProcessed
+            );
 
             // Enforce subsidy schedule for shielded coinbase.
             Self::ensure_coinbase_subsidy(coinbase_data.amount)?;
@@ -951,6 +955,7 @@ pub mod pallet {
 
             // Mark as processed
             CoinbaseProcessed::<T>::put(true);
+            pallet_coinbase::CoinbaseProcessed::<T>::put(true);
 
             let block_number = <frame_system::Pallet<T>>::block_number();
             Self::deposit_event(Event::CoinbaseMinted {
@@ -1678,6 +1683,12 @@ pub mod pallet {
         ) -> Result<(), Self::Error> {
             // Validate the inherent call
             if let Call::mint_coinbase { coinbase_data } = call {
+                if CoinbaseProcessed::<T>::get()
+                    || pallet_coinbase::CoinbaseProcessed::<T>::get()
+                {
+                    return Err(sp_inherents::MakeFatalError::from(()));
+                }
+
                 if Self::ensure_coinbase_subsidy(coinbase_data.amount).is_err() {
                     return Err(sp_inherents::MakeFatalError::from(()));
                 }
@@ -1870,7 +1881,27 @@ pub mod pallet {
                 // Inherent extrinsics are validated through ProvideInherent::check_inherent
                 // but they still need to pass ValidateUnsigned to be applied.
                 // We return a valid transaction here; the actual validation happens in check_inherent.
-                Call::mint_coinbase { .. } => {
+                Call::mint_coinbase { coinbase_data } => {
+                    if _source != TransactionSource::InBlock {
+                        return InvalidTransaction::Call.into();
+                    }
+                    if CoinbaseProcessed::<T>::get()
+                        || pallet_coinbase::CoinbaseProcessed::<T>::get()
+                    {
+                        return InvalidTransaction::Stale.into();
+                    }
+                    if Self::ensure_coinbase_subsidy(coinbase_data.amount).is_err() {
+                        return InvalidTransaction::Custom(9).into();
+                    }
+                    #[allow(deprecated)]
+                    let expected_commitment = commitment::coinbase_commitment(
+                        &coinbase_data.recipient_address,
+                        coinbase_data.amount,
+                        &coinbase_data.public_seed,
+                    );
+                    if coinbase_data.commitment != expected_commitment {
+                        return InvalidTransaction::BadProof.into();
+                    }
                     ValidTransaction::with_tag_prefix("ShieldedPoolCoinbase")
                         .priority(TransactionPriority::MAX) // Inherents have highest priority
                         .longevity(1) // Only valid for current block
