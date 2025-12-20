@@ -163,7 +163,7 @@ impl MockRpcService {
         commitments: Vec<[u8; 32]>,
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
-        _binding_sig: [u8; 64],
+        _binding_hash: [u8; 64],
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
         // Verify anchor is valid
@@ -363,7 +363,7 @@ impl TestRpcClient {
         commitments: Vec<[u8; 32]>,
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
-        binding_sig: [u8; 64],
+        binding_hash: [u8; 64],
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
         if let Some(mock) = &self.mock {
@@ -373,7 +373,7 @@ impl TestRpcClient {
                 commitments,
                 encrypted_notes,
                 anchor,
-                binding_sig,
+                binding_hash,
                 value_balance,
             )
             .await

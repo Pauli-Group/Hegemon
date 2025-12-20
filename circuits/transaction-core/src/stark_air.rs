@@ -25,7 +25,7 @@ use crate::constants::{
 // ================================================================================================
 
 /// Trace width (columns) for the transaction circuit.
-pub const TRACE_WIDTH: usize = 55;
+pub const TRACE_WIDTH: usize = 65;
 
 /// Poseidon state columns.
 pub const COL_S0: usize = 0;
@@ -39,7 +39,7 @@ pub const COL_IN1: usize = 4;
 /// Cycle control flags for the *next* cycle (written at cycle end).
 pub const COL_RESET: usize = 5;
 pub const COL_DOMAIN: usize = 6;
-pub const COL_LINK: usize = 7;
+pub const COL_MERKLE_LEFT_23: usize = 7;
 
 /// Active flags for inputs/outputs (set at note start rows).
 pub const COL_IN_ACTIVE0: usize = 8;
@@ -106,17 +106,64 @@ pub const COL_NOTE_START_IN1: usize = 52;
 pub const COL_NOTE_START_OUT0: usize = 53;
 pub const COL_NOTE_START_OUT1: usize = 54;
 
+/// Captured hash limbs (first two limbs) carried across squeeze cycles.
+pub const COL_OUT0: usize = 55;
+pub const COL_OUT1: usize = 56;
+
+/// Merkle pair flag for left limbs 0/1 (set on the second pair).
+pub const COL_MERKLE_LEFT_01: usize = 57;
+
+/// Capture flag to latch out0/out1 from the Poseidon state at cycle boundaries.
+pub const COL_CAPTURE: usize = 58;
+
+/// Merkle pair flag for right limbs 2/3 (third pair).
+pub const COL_MERKLE_RIGHT_23: usize = 59;
+
+/// Merkle pair flag for right limbs 0/1 (fourth pair).
+pub const COL_MERKLE_RIGHT_01: usize = 60;
+
+/// Capture flag to latch out2/out3 (squeeze output) at cycle boundaries.
+pub const COL_CAPTURE2: usize = 61;
+
+/// Captured hash limbs (second two limbs) carried across cycles.
+pub const COL_OUT2: usize = 62;
+pub const COL_OUT3: usize = 63;
+
+/// Direction bit for Merkle path (0 = current is left, 1 = current is right).
+pub const COL_DIR: usize = 64;
+
 /// Cycle length: power of 2, must be > POSEIDON_ROUNDS.
 pub const CYCLE_LENGTH: usize = 16;
 
-/// Number of cycles for a commitment hash (14 inputs / rate 2 = 7 cycles).
-pub const COMMITMENT_CYCLES: usize = 7;
+/// Number of absorb cycles for a commitment hash (14 inputs / rate 2 = 7 cycles).
+pub const COMMITMENT_ABSORB_CYCLES: usize = 7;
 
-/// Number of cycles for a nullifier hash (6 inputs / rate 2 = 3 cycles).
-pub const NULLIFIER_CYCLES: usize = 3;
+/// One squeeze cycle to output the final two limbs.
+pub const COMMITMENT_SQUEEZE_CYCLES: usize = 1;
 
-/// Number of cycles for Merkle path verification (one hash per level).
-pub const MERKLE_CYCLES: usize = CIRCUIT_MERKLE_DEPTH;
+/// Total cycles for a commitment hash (absorb + squeeze).
+pub const COMMITMENT_CYCLES: usize = COMMITMENT_ABSORB_CYCLES + COMMITMENT_SQUEEZE_CYCLES;
+
+/// Number of absorb cycles for a nullifier hash (6 inputs / rate 2 = 3 cycles).
+pub const NULLIFIER_ABSORB_CYCLES: usize = 3;
+
+/// One squeeze cycle to output the final two limbs.
+pub const NULLIFIER_SQUEEZE_CYCLES: usize = 1;
+
+/// Total cycles for a nullifier hash (absorb + squeeze).
+pub const NULLIFIER_CYCLES: usize = NULLIFIER_ABSORB_CYCLES + NULLIFIER_SQUEEZE_CYCLES;
+
+/// Number of absorb cycles per Merkle level (8 inputs / rate 2 = 4 cycles).
+pub const MERKLE_ABSORB_CYCLES: usize = 4;
+
+/// One squeeze cycle to output the final two limbs.
+pub const MERKLE_SQUEEZE_CYCLES: usize = 1;
+
+/// Total cycles per Merkle level.
+pub const MERKLE_CYCLES_PER_LEVEL: usize = MERKLE_ABSORB_CYCLES + MERKLE_SQUEEZE_CYCLES;
+
+/// Number of cycles for Merkle path verification (hash per level).
+pub const MERKLE_CYCLES: usize = CIRCUIT_MERKLE_DEPTH * MERKLE_CYCLES_PER_LEVEL;
 
 /// Cycles per input note: commitment + merkle + nullifier.
 pub const CYCLES_PER_INPUT: usize = COMMITMENT_CYCLES + MERKLE_CYCLES + NULLIFIER_CYCLES;
@@ -129,8 +176,8 @@ pub const TOTAL_USED_CYCLES: usize =
     DUMMY_CYCLES + (MAX_INPUTS * CYCLES_PER_INPUT) + (MAX_OUTPUTS * COMMITMENT_CYCLES);
 
 /// Minimum trace length (power of 2).
-/// For MAX_INPUTS=2, MAX_OUTPUTS=2, depth=32: 105 cycles * 16 = 1680 -> 2048.
-pub const MIN_TRACE_LENGTH: usize = 2048;
+/// For MAX_INPUTS=2, MAX_OUTPUTS=2, depth=32: 361 cycles * 16 = 5776 -> 8192.
+pub const MIN_TRACE_LENGTH: usize = 8192;
 
 /// Total cycles in the trace (including padding cycles).
 pub const TOTAL_TRACE_CYCLES: usize = MIN_TRACE_LENGTH / CYCLE_LENGTH;
@@ -202,40 +249,45 @@ fn get_periodic_columns(trace_len: usize) -> Vec<Vec<BaseElement>> {
 pub struct TransactionPublicInputsStark {
     pub input_flags: Vec<BaseElement>,
     pub output_flags: Vec<BaseElement>,
-    pub nullifiers: Vec<BaseElement>,
-    pub commitments: Vec<BaseElement>,
+    pub nullifiers: Vec<[BaseElement; 4]>,
+    pub commitments: Vec<[BaseElement; 4]>,
     pub fee: BaseElement,
     pub value_balance_sign: BaseElement,
     pub value_balance_magnitude: BaseElement,
-    pub merkle_root: BaseElement,
+    pub merkle_root: [BaseElement; 4],
 }
 
 impl Default for TransactionPublicInputsStark {
     fn default() -> Self {
+        let zero = [BaseElement::ZERO; 4];
         Self {
             input_flags: vec![BaseElement::ZERO; MAX_INPUTS],
             output_flags: vec![BaseElement::ZERO; MAX_OUTPUTS],
-            nullifiers: vec![BaseElement::ZERO; MAX_INPUTS],
-            commitments: vec![BaseElement::ZERO; MAX_OUTPUTS],
+            nullifiers: vec![zero; MAX_INPUTS],
+            commitments: vec![zero; MAX_OUTPUTS],
             fee: BaseElement::ZERO,
             value_balance_sign: BaseElement::ZERO,
             value_balance_magnitude: BaseElement::ZERO,
-            merkle_root: BaseElement::ZERO,
+            merkle_root: zero,
         }
     }
 }
 
 impl ToElements<BaseElement> for TransactionPublicInputsStark {
     fn to_elements(&self) -> Vec<BaseElement> {
-        let mut elements = Vec::with_capacity(MAX_INPUTS + MAX_OUTPUTS + 8);
+        let mut elements = Vec::with_capacity((MAX_INPUTS + MAX_OUTPUTS) * 5 + 7);
         elements.extend(&self.input_flags);
         elements.extend(&self.output_flags);
-        elements.extend(&self.nullifiers);
-        elements.extend(&self.commitments);
+        for nf in &self.nullifiers {
+            elements.extend_from_slice(nf);
+        }
+        for cm in &self.commitments {
+            elements.extend_from_slice(cm);
+        }
         elements.push(self.fee);
         elements.push(self.value_balance_sign);
         elements.push(self.value_balance_magnitude);
-        elements.push(self.merkle_root);
+        elements.extend_from_slice(&self.merkle_root);
         elements
     }
 }
@@ -248,7 +300,7 @@ impl ToElements<BaseElement> for TransactionPublicInputsStark {
 enum CycleKind {
     Dummy,
     InputCommitment { input: usize, chunk: usize },
-    InputMerkle { input: usize, level: usize },
+    InputMerkle { input: usize, level: usize, chunk: usize },
     InputNullifier { input: usize, chunk: usize },
     OutputCommitment { output: usize, chunk: usize },
     Padding,
@@ -271,10 +323,9 @@ fn cycle_kind(cycle: usize) -> CycleKind {
         }
         let merkle_offset = offset - COMMITMENT_CYCLES;
         if merkle_offset < MERKLE_CYCLES {
-            return CycleKind::InputMerkle {
-                input,
-                level: merkle_offset,
-            };
+            let level = merkle_offset / MERKLE_CYCLES_PER_LEVEL;
+            let chunk = merkle_offset % MERKLE_CYCLES_PER_LEVEL;
+            return CycleKind::InputMerkle { input, level, chunk };
         }
         return CycleKind::InputNullifier {
             input,
@@ -296,16 +347,42 @@ fn cycle_kind(cycle: usize) -> CycleKind {
 
 pub fn cycle_reset_domain(cycle: usize) -> Option<u64> {
     match cycle_kind(cycle) {
-        CycleKind::InputCommitment { chunk: 0, .. } => Some(NOTE_DOMAIN_TAG),
-        CycleKind::InputMerkle { .. } => Some(MERKLE_DOMAIN_TAG),
-        CycleKind::InputNullifier { chunk: 0, .. } => Some(NULLIFIER_DOMAIN_TAG),
-        CycleKind::OutputCommitment { chunk: 0, .. } => Some(NOTE_DOMAIN_TAG),
+        CycleKind::InputCommitment { chunk, .. } if chunk == 0 => Some(NOTE_DOMAIN_TAG),
+        CycleKind::InputMerkle { chunk, .. } if chunk == 0 => Some(MERKLE_DOMAIN_TAG),
+        CycleKind::InputNullifier { chunk, .. } if chunk == 0 => Some(NULLIFIER_DOMAIN_TAG),
+        CycleKind::OutputCommitment { chunk, .. } if chunk == 0 => Some(NOTE_DOMAIN_TAG),
         _ => None,
     }
 }
 
-pub fn cycle_is_merkle(cycle: usize) -> bool {
-    matches!(cycle_kind(cycle), CycleKind::InputMerkle { .. })
+pub fn cycle_is_merkle_pair(cycle: usize, pair: usize) -> bool {
+    matches!(cycle_kind(cycle), CycleKind::InputMerkle { chunk, .. } if chunk == pair)
+}
+
+pub fn cycle_is_merkle_left_23(cycle: usize) -> bool {
+    cycle_is_merkle_pair(cycle, 0)
+}
+
+pub fn cycle_is_merkle_left_01(cycle: usize) -> bool {
+    cycle_is_merkle_pair(cycle, 1)
+}
+
+pub fn cycle_is_merkle_right_23(cycle: usize) -> bool {
+    cycle_is_merkle_pair(cycle, 2)
+}
+
+pub fn cycle_is_merkle_right_01(cycle: usize) -> bool {
+    cycle_is_merkle_pair(cycle, 3)
+}
+
+pub fn cycle_is_squeeze(cycle: usize) -> bool {
+    match cycle_kind(cycle) {
+        CycleKind::InputCommitment { chunk, .. } => chunk >= COMMITMENT_ABSORB_CYCLES,
+        CycleKind::InputNullifier { chunk, .. } => chunk >= NULLIFIER_ABSORB_CYCLES,
+        CycleKind::OutputCommitment { chunk, .. } => chunk >= COMMITMENT_ABSORB_CYCLES,
+        CycleKind::InputMerkle { chunk, .. } => chunk >= MERKLE_ABSORB_CYCLES,
+        _ => false,
+    }
 }
 
 pub fn input_commitment_start_cycle(input_index: usize) -> usize {
@@ -344,6 +421,10 @@ pub fn note_start_row_output(output_index: usize) -> usize {
     (output_commitment_start_cycle(output_index) - 1) * CYCLE_LENGTH + (CYCLE_LENGTH - 1)
 }
 
+fn is_zero_hash(value: &[BaseElement; 4]) -> bool {
+    value.iter().all(|elem| *elem == BaseElement::ZERO)
+}
+
 // ================================================================================================
 // AIR IMPLEMENTATION
 // ================================================================================================
@@ -353,7 +434,7 @@ pub struct TransactionAirStark {
     pub_inputs: TransactionPublicInputsStark,
 }
 
-const NUM_CONSTRAINTS: usize = 55;
+const NUM_CONSTRAINTS: usize = 72;
 
 impl Air for TransactionAirStark {
     type BaseField = BaseElement;
@@ -394,7 +475,19 @@ impl Air for TransactionAirStark {
             degrees.push(TransitionConstraintDegree::with_cycles(1, vec![trace_len]));
             // slot1..3 balance
         }
-        degrees.push(TransitionConstraintDegree::new(3)); // link constraint
+        degrees.push(TransitionConstraintDegree::new(2)); // merkle direction boolean
+        degrees.push(TransitionConstraintDegree::new(2)); // merkle direction carry
+        for _ in 0..8 {
+            degrees.push(TransitionConstraintDegree::new(3)); // merkle link constraints
+        }
+        degrees.push(TransitionConstraintDegree::new(2)); // capture0 boolean
+        degrees.push(TransitionConstraintDegree::new(2)); // capture0 only on absorb row
+        degrees.push(TransitionConstraintDegree::new(2)); // out0 carry/update
+        degrees.push(TransitionConstraintDegree::new(2)); // out1 carry/update
+        degrees.push(TransitionConstraintDegree::new(2)); // capture2 boolean
+        degrees.push(TransitionConstraintDegree::new(2)); // capture2 only on absorb row
+        degrees.push(TransitionConstraintDegree::new(2)); // out2 carry/update
+        degrees.push(TransitionConstraintDegree::new(2)); // out3 carry/update
         for _ in 0..(MAX_INPUTS + MAX_OUTPUTS) {
             degrees.push(TransitionConstraintDegree::new(2)); // note start value binding
             degrees.push(TransitionConstraintDegree::new(2)); // note start asset binding
@@ -403,31 +496,31 @@ impl Air for TransactionAirStark {
 
         let mut num_assertions = 0;
 
-        for (i, &nf) in pub_inputs.nullifiers.iter().enumerate() {
-            if nf != BaseElement::ZERO && pub_inputs.input_flags[i] != BaseElement::ZERO {
+        for (i, nf) in pub_inputs.nullifiers.iter().enumerate() {
+            if !is_zero_hash(nf) && pub_inputs.input_flags[i] != BaseElement::ZERO {
                 let row = nullifier_output_row(i);
                 if row < trace_len {
-                    num_assertions += 1;
+                    num_assertions += 4;
                 }
                 let merkle_row = merkle_root_output_row(i);
                 if merkle_row < trace_len {
-                    num_assertions += 1;
+                    num_assertions += 4;
                 }
             }
         }
 
-        for (i, &cm) in pub_inputs.commitments.iter().enumerate() {
-            if cm != BaseElement::ZERO && pub_inputs.output_flags[i] != BaseElement::ZERO {
+        for (i, cm) in pub_inputs.commitments.iter().enumerate() {
+            if !is_zero_hash(cm) && pub_inputs.output_flags[i] != BaseElement::ZERO {
                 let row = commitment_output_row(i);
                 if row < trace_len {
-                    num_assertions += 1;
+                    num_assertions += 4;
                 }
             }
         }
 
-        // Reset/domain/link assertions for each cycle end.
+        // Reset/domain/merkle-pair/capture assertions for each cycle end.
         let total_cycles = trace_info.length() / CYCLE_LENGTH;
-        num_assertions += total_cycles * 3;
+        num_assertions += total_cycles * 8;
 
         // Note start assertions (one per note).
         num_assertions += MAX_INPUTS + MAX_OUTPUTS;
@@ -694,11 +787,69 @@ impl Air for TransactionAirStark {
             idx += 1;
         }
 
-        // link flag: next-cycle input must include current output (left or right)
-        let link = current[COL_LINK];
-        let link_diff0 = current[COL_IN0] - current[COL_S0];
-        let link_diff1 = current[COL_IN1] - current[COL_S0];
-        result[idx] = link * link_diff0 * link_diff1;
+        // merkle direction must be boolean and stable between resets
+        let dir = current[COL_DIR];
+        result[idx] = dir * (dir - one);
+        idx += 1;
+        result[idx] = (one - reset) * (next[COL_DIR] - current[COL_DIR]);
+        idx += 1;
+
+        // merkle link constraints (applied at cycle boundaries)
+        let left_23 = current[COL_MERKLE_LEFT_23];
+        let left_01 = current[COL_MERKLE_LEFT_01];
+        let right_23 = current[COL_MERKLE_RIGHT_23];
+        let right_01 = current[COL_MERKLE_RIGHT_01];
+        let not_dir = one - dir;
+
+        result[idx] =
+            absorb_flag * left_23 * not_dir * (current[COL_IN0] - current[COL_OUT2]);
+        idx += 1;
+        result[idx] =
+            absorb_flag * left_23 * not_dir * (current[COL_IN1] - current[COL_OUT3]);
+        idx += 1;
+        result[idx] =
+            absorb_flag * left_01 * not_dir * (current[COL_IN0] - current[COL_OUT0]);
+        idx += 1;
+        result[idx] =
+            absorb_flag * left_01 * not_dir * (current[COL_IN1] - current[COL_OUT1]);
+        idx += 1;
+        result[idx] = absorb_flag * right_23 * dir * (current[COL_IN0] - current[COL_OUT2]);
+        idx += 1;
+        result[idx] = absorb_flag * right_23 * dir * (current[COL_IN1] - current[COL_OUT3]);
+        idx += 1;
+        result[idx] = absorb_flag * right_01 * dir * (current[COL_IN0] - current[COL_OUT0]);
+        idx += 1;
+        result[idx] = absorb_flag * right_01 * dir * (current[COL_IN1] - current[COL_OUT1]);
+        idx += 1;
+
+        // capture0 flag must be boolean
+        let capture = current[COL_CAPTURE];
+        result[idx] = capture * (capture - one);
+        idx += 1;
+        // capture0 only on absorb rows
+        result[idx] = capture * (one - absorb_flag);
+        idx += 1;
+        // carry/update captured outputs
+        result[idx] = next[COL_OUT0]
+            - (capture * current[COL_S0] + (one - capture) * current[COL_OUT0]);
+        idx += 1;
+        result[idx] = next[COL_OUT1]
+            - (capture * current[COL_S1] + (one - capture) * current[COL_OUT1]);
+        idx += 1;
+
+        // capture2 flag must be boolean
+        let capture2 = current[COL_CAPTURE2];
+        result[idx] = capture2 * (capture2 - one);
+        idx += 1;
+        // capture2 only on absorb rows
+        result[idx] = capture2 * (one - absorb_flag);
+        idx += 1;
+        // carry/update captured outputs
+        result[idx] = next[COL_OUT2]
+            - (capture2 * current[COL_S0] + (one - capture2) * current[COL_OUT2]);
+        idx += 1;
+        result[idx] = next[COL_OUT3]
+            - (capture2 * current[COL_S1] + (one - capture2) * current[COL_OUT3]);
         idx += 1;
 
         // note start flags: tie commitment inputs to note values/assets
@@ -724,29 +875,50 @@ impl Air for TransactionAirStark {
         let mut assertions = Vec::new();
         let trace_len = self.context.trace_len();
 
-        for (i, &nf) in self.pub_inputs.nullifiers.iter().enumerate() {
-            if nf != BaseElement::ZERO && self.pub_inputs.input_flags[i] != BaseElement::ZERO {
+        for (i, nf) in self.pub_inputs.nullifiers.iter().enumerate() {
+            if !is_zero_hash(nf) && self.pub_inputs.input_flags[i] != BaseElement::ZERO {
                 let row = nullifier_output_row(i);
                 if row < trace_len {
-                    assertions.push(Assertion::single(COL_S0, row, nf));
+                    assertions.push(Assertion::single(COL_OUT0, row, nf[0]));
+                    assertions.push(Assertion::single(COL_OUT1, row, nf[1]));
+                    assertions.push(Assertion::single(COL_S0, row, nf[2]));
+                    assertions.push(Assertion::single(COL_S1, row, nf[3]));
                 }
 
                 let merkle_row = merkle_root_output_row(i);
                 if merkle_row < trace_len {
                     assertions.push(Assertion::single(
+                        COL_OUT0,
+                        merkle_row,
+                        self.pub_inputs.merkle_root[0],
+                    ));
+                    assertions.push(Assertion::single(
+                        COL_OUT1,
+                        merkle_row,
+                        self.pub_inputs.merkle_root[1],
+                    ));
+                    assertions.push(Assertion::single(
                         COL_S0,
                         merkle_row,
-                        self.pub_inputs.merkle_root,
+                        self.pub_inputs.merkle_root[2],
+                    ));
+                    assertions.push(Assertion::single(
+                        COL_S1,
+                        merkle_row,
+                        self.pub_inputs.merkle_root[3],
                     ));
                 }
             }
         }
 
-        for (i, &cm) in self.pub_inputs.commitments.iter().enumerate() {
-            if cm != BaseElement::ZERO && self.pub_inputs.output_flags[i] != BaseElement::ZERO {
+        for (i, cm) in self.pub_inputs.commitments.iter().enumerate() {
+            if !is_zero_hash(cm) && self.pub_inputs.output_flags[i] != BaseElement::ZERO {
                 let row = commitment_output_row(i);
                 if row < trace_len {
-                    assertions.push(Assertion::single(COL_S0, row, cm));
+                    assertions.push(Assertion::single(COL_OUT0, row, cm[0]));
+                    assertions.push(Assertion::single(COL_OUT1, row, cm[1]));
+                    assertions.push(Assertion::single(COL_S0, row, cm[2]));
+                    assertions.push(Assertion::single(COL_S1, row, cm[3]));
                 }
             }
         }
@@ -755,7 +927,8 @@ impl Air for TransactionAirStark {
         for cycle in 0..total_cycles {
             let row = cycle * CYCLE_LENGTH + (CYCLE_LENGTH - 1);
             let next_cycle = cycle + 1;
-            let (reset, domain, link) = if next_cycle < total_cycles {
+            let (reset, domain, left_23, left_01, right_23, right_01) = if next_cycle < total_cycles
+            {
                 let reset_domain = cycle_reset_domain(next_cycle);
                 let reset = if reset_domain.is_some() {
                     BaseElement::ONE
@@ -765,19 +938,57 @@ impl Air for TransactionAirStark {
                 let domain = reset_domain
                     .map(BaseElement::new)
                     .unwrap_or(BaseElement::ZERO);
-                let link = if cycle_is_merkle(next_cycle) {
+                let left_23 = if cycle_is_merkle_left_23(next_cycle) {
                     BaseElement::ONE
                 } else {
                     BaseElement::ZERO
                 };
-                (reset, domain, link)
+                let left_01 = if cycle_is_merkle_left_01(next_cycle) {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                };
+                let right_23 = if cycle_is_merkle_right_23(next_cycle) {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                };
+                let right_01 = if cycle_is_merkle_right_01(next_cycle) {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                };
+                (reset, domain, left_23, left_01, right_23, right_01)
             } else {
-                (BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO)
+                (
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                )
+            };
+
+            let capture = if cycle_is_squeeze(next_cycle) {
+                BaseElement::ONE
+            } else {
+                BaseElement::ZERO
+            };
+            let capture2 = if cycle_is_squeeze(cycle) {
+                BaseElement::ONE
+            } else {
+                BaseElement::ZERO
             };
 
             assertions.push(Assertion::single(COL_RESET, row, reset));
             assertions.push(Assertion::single(COL_DOMAIN, row, domain));
-            assertions.push(Assertion::single(COL_LINK, row, link));
+            assertions.push(Assertion::single(COL_MERKLE_LEFT_23, row, left_23));
+            assertions.push(Assertion::single(COL_MERKLE_LEFT_01, row, left_01));
+            assertions.push(Assertion::single(COL_MERKLE_RIGHT_23, row, right_23));
+            assertions.push(Assertion::single(COL_MERKLE_RIGHT_01, row, right_01));
+            assertions.push(Assertion::single(COL_CAPTURE, row, capture));
+            assertions.push(Assertion::single(COL_CAPTURE2, row, capture2));
         }
 
         // Note start flags: one assertion per note.
@@ -955,15 +1166,22 @@ mod tests {
     #[test]
     fn test_air_creation() {
         let trace_info = TraceInfo::new(TRACE_WIDTH, MIN_TRACE_LENGTH);
+        let zero = [BaseElement::ZERO; 4];
         let pub_inputs = TransactionPublicInputsStark {
             input_flags: vec![BaseElement::ONE, BaseElement::ZERO],
             output_flags: vec![BaseElement::ONE, BaseElement::ZERO],
-            nullifiers: vec![BaseElement::new(123), BaseElement::ZERO],
-            commitments: vec![BaseElement::new(456), BaseElement::ZERO],
+            nullifiers: vec![
+                [BaseElement::new(123), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                zero,
+            ],
+            commitments: vec![
+                [BaseElement::new(456), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                zero,
+            ],
             fee: BaseElement::ZERO,
             value_balance_sign: BaseElement::ZERO,
             value_balance_magnitude: BaseElement::ZERO,
-            merkle_root: BaseElement::ZERO,
+            merkle_root: zero,
         };
         let options = ProofOptions::new(
             32,

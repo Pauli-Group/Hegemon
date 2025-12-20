@@ -40,7 +40,7 @@ This document provides the pre-launch verification checklist and day-of-launch r
   ```
 
 - [ ] **No Known Vulnerabilities**
-  - CVE check: `cargo audit`
+  - CVE check: `./scripts/dependency-audit.sh`
   - Dependency review completed
   - No critical/high severity issues
 

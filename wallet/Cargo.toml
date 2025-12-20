@@ -43,5 +43,9 @@ predicates = "3"
 tempfile = "3"
 proptest = "1"
 
+[features]
+default = []
+batch-proofs = []
+
 [lints]
 workspace = true

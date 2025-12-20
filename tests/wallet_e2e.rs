@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use transaction_circuit::constants::NATIVE_ASSET_ID;
-use transaction_circuit::hashing::Felt;
+use transaction_circuit::hashing::felts_to_bytes32;
 use wallet::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 use wallet::viewing::IncomingViewingKey;
 use wallet::{
@@ -45,7 +45,7 @@ struct MockNode {
 }
 
 struct MockState {
-    commitments: Mutex<Vec<u64>>,
+    commitments: Mutex<Vec<[u8; 32]>>,
     ciphertexts: Mutex<Vec<Vec<u8>>>,
     nullifiers: Mutex<HashSet<[u8; 32]>>,
     pending: Mutex<Vec<PendingTx>>,
@@ -54,7 +54,7 @@ struct MockState {
 }
 
 struct PendingTx {
-    commitments: Vec<u64>,
+    commitments: Vec<[u8; 32]>,
     ciphertexts: Vec<Vec<u8>>,
     nullifiers: Vec<[u8; 32]>,
 }
@@ -112,7 +112,7 @@ impl MockNode {
                 #[derive(Serialize)]
                 struct CommitmentEntry {
                     index: u64,
-                    value: u64,
+                    value: String,
                 }
 
                 #[derive(Serialize)]
@@ -136,7 +136,7 @@ impl MockNode {
                 struct NoteStatus {
                     leaf_count: u64,
                     depth: u64,
-                    root: u64,
+                    root: String,
                     next_index: u64,
                 }
 
@@ -162,13 +162,10 @@ impl MockNode {
                     Json(bundle): Json<TransactionBundle>,
                 ) -> Result<Json<TxResponse>, StatusCode> {
                     require_auth(&headers, &state.token)?;
-                    // New TransactionBundle has commitments/nullifiers directly as [u8; 32]
                     let mut commitments = Vec::new();
                     for bytes in &bundle.commitments {
-                        // Convert [u8; 32] to u64 (last 8 bytes)
-                        let val = u64::from_be_bytes(bytes[24..32].try_into().unwrap());
-                        if val != 0 {
-                            commitments.push(val);
+                        if *bytes != [0u8; 32] {
+                            commitments.push(*bytes);
                         }
                     }
                     let wire = PendingTx {
@@ -205,7 +202,7 @@ impl MockNode {
                         .take(limit)
                         .map(|(index, value)| CommitmentEntry {
                             index: index as u64,
-                            value: *value,
+                            value: format!("0x{}", hex::encode(value)),
                         })
                         .collect();
                     Ok(Json(CommitmentResponse { entries: slice }))
@@ -256,12 +253,12 @@ impl MockNode {
                     let commitments = state.commitments.lock().unwrap();
                     let mut tree = state_merkle::CommitmentTree::new(32).unwrap();
                     for value in commitments.iter() {
-                        let _ = tree.append(Felt::new(*value)).unwrap();
+                        let _ = tree.append(*value).unwrap();
                     }
                     Ok(Json(NoteStatus {
                         leaf_count: commitments.len() as u64,
                         depth: 32,
-                        root: tree.root().as_int(),
+                        root: format!("0x{}", hex::encode(tree.root())),
                         next_index: state.ciphertexts.lock().unwrap().len() as u64,
                     }))
                 }
@@ -327,11 +324,8 @@ impl MockNode {
     ) {
         let mut commitments = self.state.commitments.lock().unwrap();
         let mut ciphertexts = self.state.ciphertexts.lock().unwrap();
-        commitments.push(
-            note.to_note_data(address.pk_recipient)
-                .commitment()
-                .as_int(),
-        );
+        let note_data = note.to_note_data(address.pk_recipient);
+        commitments.push(felts_to_bytes32(&note_data.commitment()));
         ciphertexts.push(bincode::serialize(&ciphertext).unwrap());
         drop(commitments);
         drop(ciphertexts);

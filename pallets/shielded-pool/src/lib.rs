@@ -38,7 +38,7 @@ pub mod types;
 pub mod verifier;
 
 use merkle::CompactMerkleTree;
-use types::{BindingSignature, EncryptedNote, StarkProof, VerifyingKeyParams, MERKLE_TREE_DEPTH};
+use types::{BindingHash, EncryptedNote, StarkProof, VerifyingKeyParams, MERKLE_TREE_DEPTH};
 use verifier::{
     BatchVerifier, ProofVerifier, ShieldedTransferInputs, VerificationResult, VerifyingKey,
 };
@@ -415,7 +415,7 @@ pub mod pallet {
         /// Duplicate nullifier in transaction.
         DuplicateNullifierInTx,
         /// Binding signature verification failed.
-        InvalidBindingSignature,
+        InvalidBindingHash,
         /// Value balance overflow.
         ValueBalanceOverflow,
         /// Insufficient shielded pool balance.
@@ -564,7 +564,7 @@ pub mod pallet {
             commitments: BoundedVec<[u8; 32], T::MaxCommitmentsPerTx>,
             ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
             anchor: [u8; 32],
-            binding_sig: BindingSignature,
+            binding_hash: BindingHash,
             fee: u64,
             value_balance: i128,
         ) -> DispatchResult {
@@ -672,8 +672,8 @@ pub mod pallet {
 
             // Verify value balance commitment (checked in-circuit for PQC)
             ensure!(
-                verifier.verify_binding_signature(&binding_sig, &inputs),
-                Error::<T>::InvalidBindingSignature
+                verifier.verify_binding_hash(&binding_hash, &inputs),
+                Error::<T>::InvalidBindingHash
             );
 
             // Handle value balance (shielding/unshielding)
@@ -924,7 +924,7 @@ pub mod pallet {
             commitments: BoundedVec<[u8; 32], T::MaxCommitmentsPerTx>,
             ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
             anchor: [u8; 32],
-            binding_sig: BindingSignature,
+            binding_hash: BindingHash,
             fee: u64,
         ) -> DispatchResult {
             // This is an unsigned extrinsic - no signer required
@@ -1014,8 +1014,8 @@ pub mod pallet {
 
             // Verify value balance commitment (checked in-circuit for PQC)
             ensure!(
-                verifier.verify_binding_signature(&binding_sig, &inputs),
-                Error::<T>::InvalidBindingSignature
+                verifier.verify_binding_hash(&binding_hash, &inputs),
+                Error::<T>::InvalidBindingHash
             );
 
             // Add nullifiers to spent set
@@ -1607,7 +1607,7 @@ pub mod pallet {
                     commitments,
                     ciphertexts,
                     anchor,
-                    binding_sig,
+                    binding_hash,
                     fee,
                 } => {
                     log::info!(target: "shielded-pool", "Validating shielded_transfer_unsigned");
@@ -1616,7 +1616,7 @@ pub mod pallet {
                     log::info!(target: "shielded-pool", "  commitments.len = {}", commitments.len());
                     log::info!(target: "shielded-pool", "  ciphertexts.len = {}", ciphertexts.len());
                     log::info!(target: "shielded-pool", "  anchor = {:02x?}", &anchor[..8]);
-                    log::info!(target: "shielded-pool", "  binding_sig[0..8] = {:02x?}", &binding_sig.data[..8]);
+                    log::info!(target: "shielded-pool", "  binding_hash[0..8] = {:02x?}", &binding_hash.data[..8]);
                     log::info!(target: "shielded-pool", "  fee = {}", fee);
 
                     // Basic validation before accepting into pool
@@ -1704,13 +1704,13 @@ pub mod pallet {
                         }
                     }
 
-                    // Verify binding signature
-                    log::info!(target: "shielded-pool", "  Verifying binding signature...");
-                    if !verifier.verify_binding_signature(binding_sig, &inputs) {
-                        log::info!(target: "shielded-pool", "  binding signature FAILED");
+                    // Verify binding hash
+                    log::info!(target: "shielded-pool", "  Verifying binding hash...");
+                    if !verifier.verify_binding_hash(binding_hash, &inputs) {
+                        log::info!(target: "shielded-pool", "  binding hash FAILED");
                         return InvalidTransaction::BadSigner.into();
                     }
-                    log::info!(target: "shielded-pool", "  binding signature PASSED");
+                    log::info!(target: "shielded-pool", "  binding hash PASSED");
                     log::info!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
 
                     // Create tags based on the nullifiers.

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use winterfell::math::{fields::f64::BaseElement, FieldElement};
 use winterfell::Prover;
 
-use transaction_core::hashing::{bytes32_to_felt, note_commitment_bytes};
+use transaction_core::hashing::{bytes32_to_felts, note_commitment_bytes};
 
 use crate::air::DisclosurePublicInputs;
 use crate::constants::expected_air_hash;
@@ -65,7 +65,7 @@ pub fn prove_payment_disclosure(
     claim: &PaymentDisclosureClaim,
     witness: &PaymentDisclosureWitness,
 ) -> Result<PaymentDisclosureProofBundle, DisclosureCircuitError> {
-    if bytes32_to_felt(&claim.commitment).is_none() {
+    if bytes32_to_felts(&claim.commitment).is_none() {
         return Err(DisclosureCircuitError::NonCanonicalCommitment);
     }
 
@@ -107,19 +107,19 @@ pub fn verify_payment_disclosure(
 pub(crate) fn claim_to_public_inputs(
     claim: &PaymentDisclosureClaim,
 ) -> Result<DisclosurePublicInputs, DisclosureVerifyError> {
-    let commitment = bytes32_to_felt(&claim.commitment).ok_or(
+    let commitment = bytes32_to_felts(&claim.commitment).ok_or(
         DisclosureVerifyError::InvalidPublicInputs("commitment bytes are not canonical".into()),
     )?;
 
     Ok(DisclosurePublicInputs {
         value: BaseElement::new(claim.value),
         asset_id: BaseElement::new(claim.asset_id),
-        pk_recipient: bytes32_to_felts(&claim.pk_recipient),
+        pk_recipient: bytes32_to_field_elements(&claim.pk_recipient),
         commitment,
     })
 }
 
-fn bytes32_to_felts(bytes: &[u8; 32]) -> [BaseElement; 4] {
+fn bytes32_to_field_elements(bytes: &[u8; 32]) -> [BaseElement; 4] {
     let mut out = [BaseElement::ZERO; 4];
     for (idx, chunk) in bytes.chunks(8).enumerate() {
         let mut buf = [0u8; 8];

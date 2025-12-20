@@ -20,6 +20,8 @@ This document explains the attacker capabilities and design assumptions for each
 
 - **Soundness breaks via stale constraints**: Transaction/block circuits must include the latest nullifier/account rules. Circuit README + benchmarking harness describe how to recompile constraints and run proofs.
 - **Witness leakage**: Benchmarks never persist witness data to disk; they scrub buffers after proof verification to prevent info leaks during profiling.
+- **Proof bypass**: Production verification rejects missing STARK bytes or public inputs; legacy/fast paths are feature-gated and must not be enabled in production builds.
+- **Encoding malleability**: Commitments/nullifiers are 32-byte encodings of four field limbs; any limb ≥ field modulus is rejected to avoid alternate encodings.
 
 ### `consensus/`
 
@@ -29,7 +31,7 @@ This document explains the attacker capabilities and design assumptions for each
 
 ### `wallet/`
 
-- **View-key compromise**: Wallet CLI derives viewing keys using keyed hashes; benchmarks simulate rotation cadence to ensure operations stay tractable.
+- **View-key compromise**: Full viewing keys include a view-derived nullifier key (`view_nf`) for spentness tracking but do not embed `sk_spend`; compromise exposes nullifier tracking but not extrinsic signing keys.
 - **Metadata leakage**: Wallet bench stresses note batching to keep `rho` diversifiers unpredictable even under load.
 - **Disclosure package leakage**: Payment-proof packages include value, asset id, recipient address, commitment, and anchor. Wallet stores encrypt outgoing disclosure records and CLI verification enforces canonical encodings, genesis-hash checks, and on-chain anchor validation to limit replay and tampering risks.
 

@@ -247,9 +247,9 @@ impl StarkVerifier {
 }
 
 #[cfg(feature = "stark-verify")]
-fn hash_to_felt<Hash: AsRef<[u8]>>(hash: &Hash) -> Option<settlement_circuit::Felt> {
+fn hash_to_felts<Hash: AsRef<[u8]>>(hash: &Hash) -> Option<settlement_circuit::HashFelt> {
     let bytes: [u8; 32] = hash.as_ref().try_into().ok()?;
-    settlement_circuit::bytes32_to_felt(&bytes)
+    settlement_circuit::bytes32_to_felts(&bytes)
 }
 
 #[cfg(feature = "stark-verify")]
@@ -316,7 +316,7 @@ impl<Hash: AsRef<[u8]>> ProofVerifier<Hash> for StarkVerifier {
             return false;
         }
 
-        let commitment = match hash_to_felt(&inputs.commitment) {
+        let commitment = match hash_to_felts(&inputs.commitment) {
             Some(value) => value,
             None => return false,
         };
@@ -337,14 +337,14 @@ impl<Hash: AsRef<[u8]>> ProofVerifier<Hash> for StarkVerifier {
             return false;
         }
         for nf in &inputs.nullifiers {
-            let felt = match hash_to_felt(nf) {
+            let felt = match hash_to_felts(nf) {
                 Some(value) => value,
                 None => return false,
             };
             nullifiers.push(felt);
         }
         while nullifiers.len() < settlement_circuit::constants::MAX_NULLIFIERS {
-            nullifiers.push(settlement_circuit::Felt::ZERO);
+            nullifiers.push([settlement_circuit::Felt::ZERO; 4]);
         }
 
         let pub_inputs = settlement_circuit::SettlementPublicInputs {
@@ -572,7 +572,7 @@ pub mod pallet {
                 ));
             }
             while nullifier_felts.len() < settlement_circuit::constants::MAX_NULLIFIERS {
-                nullifier_felts.push(settlement_circuit::Felt::new(0));
+                nullifier_felts.push([settlement_circuit::Felt::new(0); 4]);
             }
 
             let mut instructions_felts =
@@ -589,13 +589,13 @@ pub mod pallet {
                 nullifier_count: nullifier_count as u32,
                 instructions: instructions_felts,
                 nullifiers: nullifier_felts,
-                commitment: settlement_circuit::Felt::new(0),
+                commitment: [settlement_circuit::Felt::new(0); 4],
             };
             let inputs = pub_inputs.input_elements();
-            let commitment_felt = settlement_circuit::commitment_from_inputs(&inputs);
-            pub_inputs.commitment = commitment_felt;
+            let commitment_felts = settlement_circuit::commitment_from_inputs(&inputs);
+            pub_inputs.commitment = commitment_felts;
 
-            let commitment_hash = Self::hash_from_felt(commitment_felt);
+            let commitment_hash = Self::hash_from_felt(commitment_felts);
             let nullifiers: Vec<T::Hash> = pub_inputs
                 .nullifiers
                 .iter()
@@ -1016,11 +1016,11 @@ pub mod pallet {
             Ok(())
         }
 
-        fn hash_from_felt(value: settlement_circuit::Felt) -> T::Hash
+        fn hash_from_felt(value: settlement_circuit::HashFelt) -> T::Hash
         where
             T::Hash: From<[u8; 32]>,
         {
-            T::Hash::from(settlement_circuit::felt_to_bytes32(value))
+            T::Hash::from(settlement_circuit::felts_to_bytes32(&value))
         }
     }
 }

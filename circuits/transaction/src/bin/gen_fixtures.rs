@@ -6,7 +6,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use transaction_circuit::hashing::Felt;
+use transaction_circuit::hashing::{felt_to_bytes32, Felt};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::MerklePath;
 use transaction_circuit::proof::{prove, TransactionProof};
@@ -59,7 +59,7 @@ fn sample_witness() -> TransactionWitness {
         inputs: vec![input_note_native, input_note_asset],
         outputs: vec![output_native, output_asset],
         sk_spend: [42u8; 32],
-        merkle_root: Felt::new(99),
+        merkle_root: felt_to_bytes32(Felt::new(99)),
         fee: 5,
         value_balance: 0,
         version: TransactionWitness::default_version_binding(),

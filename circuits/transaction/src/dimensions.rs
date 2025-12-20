@@ -5,8 +5,12 @@
 
 #[cfg(test)]
 use crate::constants::MAX_OUTPUTS;
-use crate::constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS};
-use crate::stark_air::{CYCLE_LENGTH, MIN_TRACE_LENGTH};
+use crate::constants::MAX_INPUTS;
+use crate::stark_air::{
+    CYCLE_LENGTH, COMMITMENT_CYCLES as STARK_COMMITMENT_CYCLES,
+    CYCLES_PER_INPUT as STARK_CYCLES_PER_INPUT, MERKLE_CYCLES as STARK_MERKLE_CYCLES,
+    MIN_TRACE_LENGTH, NULLIFIER_CYCLES as STARK_NULLIFIER_CYCLES,
+};
 
 /// Trace width (re-exported for convenience).
 pub const TRACE_WIDTH: usize = crate::stark_air::TRACE_WIDTH;
@@ -15,18 +19,13 @@ pub const TRACE_WIDTH: usize = crate::stark_air::TRACE_WIDTH;
 pub const ROWS_PER_TX: usize = MIN_TRACE_LENGTH;
 
 /// Number of cycles for nullifier hash computation per input.
-/// Nullifier = H(prf || position || rho), requiring ~6 field elements absorbed.
-/// With rate 2, this takes 3 cycles.
-pub const NULLIFIER_CYCLES: usize = 3;
+pub const NULLIFIER_CYCLES: usize = STARK_NULLIFIER_CYCLES;
 
 /// Number of cycles for Merkle path verification per input.
-/// One hash per tree level.
-pub const MERKLE_CYCLES: usize = CIRCUIT_MERKLE_DEPTH;
+pub const MERKLE_CYCLES: usize = STARK_MERKLE_CYCLES;
 
 /// Number of cycles for commitment hash computation per output.
-/// Commitment = H(value || asset_id || pk || rho || r), requiring ~14 field elements.
-/// With rate 2, this takes 7 cycles.
-pub const COMMITMENT_CYCLES: usize = 7;
+pub const COMMITMENT_CYCLES: usize = STARK_COMMITMENT_CYCLES;
 
 /// Maximum constraint degree allowed by winterfell.
 pub const MAX_CONSTRAINT_DEGREE: usize = 8;
@@ -54,8 +53,8 @@ pub fn slot_start_row(tx_index: usize) -> usize {
     tx_index * ROWS_PER_TX
 }
 
-/// Cycles per input: nullifier computation + Merkle path verification.
-pub const CYCLES_PER_INPUT: usize = NULLIFIER_CYCLES + MERKLE_CYCLES;
+/// Cycles per input: commitment + Merkle + nullifier.
+pub const CYCLES_PER_INPUT: usize = STARK_CYCLES_PER_INPUT;
 
 /// Compute row where nullifier output appears for given tx and input.
 ///
@@ -63,7 +62,9 @@ pub const CYCLES_PER_INPUT: usize = NULLIFIER_CYCLES + MERKLE_CYCLES;
 pub fn nullifier_output_row(tx_index: usize, input_index: usize) -> usize {
     let slot_start = slot_start_row(tx_index);
     let start_cycle = input_index * CYCLES_PER_INPUT;
-    slot_start + (start_cycle + NULLIFIER_CYCLES) * CYCLE_LENGTH - 1
+    slot_start
+        + (start_cycle + COMMITMENT_CYCLES + MERKLE_CYCLES + NULLIFIER_CYCLES) * CYCLE_LENGTH
+        - 1
 }
 
 /// Compute row where Merkle root output appears for given tx and input.
@@ -71,7 +72,7 @@ pub fn nullifier_output_row(tx_index: usize, input_index: usize) -> usize {
 /// The Merkle root appears after verifying the full path.
 pub fn merkle_root_output_row(tx_index: usize, input_index: usize) -> usize {
     let slot_start = slot_start_row(tx_index);
-    let start_cycle = input_index * CYCLES_PER_INPUT + NULLIFIER_CYCLES;
+    let start_cycle = input_index * CYCLES_PER_INPUT + COMMITMENT_CYCLES;
     slot_start + (start_cycle + MERKLE_CYCLES) * CYCLE_LENGTH - 1
 }
 
@@ -138,9 +139,9 @@ mod tests {
 
     #[test]
     fn test_batch_16_fits_exactly() {
-        // 16 × 2048 = 32768 = 2^15, should fit exactly
-        assert_eq!(batch_trace_rows(16), 32768);
-        assert_eq!(32768, 1 << 15);
+        // 16 × 8192 = 131072 = 2^17, should fit exactly
+        assert_eq!(batch_trace_rows(16), 131072);
+        assert_eq!(131072, 1 << 17);
     }
 
     #[test]

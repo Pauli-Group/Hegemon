@@ -8,26 +8,29 @@ use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
 use std::collections::HashMap;
 use transaction_circuit::{
     constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID},
-    hashing::{merkle_node, Felt},
+    hashing::{felts_to_bytes32, merkle_node, Felt, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
     proof::prove,
     TransactionWitness,
 };
-use winter_math::FieldElement;
 
 /// Build a Merkle tree with 2 leaves at positions 0 and 1.
 /// Returns paths and root consistent with CIRCUIT_MERKLE_DEPTH.
-fn build_two_leaf_merkle_tree(leaf0: Felt, leaf1: Felt) -> (MerklePath, MerklePath, Felt) {
+fn build_two_leaf_merkle_tree(
+    leaf0: HashFelt,
+    leaf1: HashFelt,
+) -> (MerklePath, MerklePath, HashFelt) {
     let mut siblings0 = vec![leaf1];
     let mut siblings1 = vec![leaf0];
 
     let mut current = merkle_node(leaf0, leaf1);
 
     for _ in 1..CIRCUIT_MERKLE_DEPTH {
-        siblings0.push(Felt::ZERO);
-        siblings1.push(Felt::ZERO);
-        current = merkle_node(current, Felt::ZERO);
+        let zero = [Felt::ZERO; 4];
+        siblings0.push(zero);
+        siblings1.push(zero);
+        current = merkle_node(current, zero);
     }
 
     let path0 = MerklePath { siblings: siblings0 };
@@ -38,7 +41,7 @@ fn build_two_leaf_merkle_tree(leaf0: Felt, leaf1: Felt) -> (MerklePath, MerklePa
 
 /// Create a valid witness with proper Merkle paths for testing.
 /// The witness spends 2 notes (native + asset) and creates 2 outputs.
-fn make_valid_witness(seed: u64) -> (TransactionWitness, Vec<Felt>) {
+fn make_valid_witness(seed: u64) -> (TransactionWitness, Vec<HashFelt>) {
     // Create input notes
     let input_native = NoteData {
         value: 9,
@@ -99,7 +102,7 @@ fn make_valid_witness(seed: u64) -> (TransactionWitness, Vec<Felt>) {
         ],
         outputs: vec![output_native.clone(), output_asset.clone()],
         sk_spend: [seed as u8 + 15; 32],
-        merkle_root,
+        merkle_root: felts_to_bytes32(&merkle_root),
         fee: 5,
         value_balance: 0,
         version: DEFAULT_VERSION_BINDING,

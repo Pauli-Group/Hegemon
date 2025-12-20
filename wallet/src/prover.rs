@@ -32,8 +32,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
-    default_proof_options, fast_proof_options,
-    hashing::{felt_to_bytes32, Felt},
+    proof_options_from_config,
+    hashing::{felts_to_bytes32, Felt},
     witness::TransactionWitness,
     TransactionProverStark,
 };
@@ -47,7 +47,7 @@ pub struct StarkProverConfig {
     /// Default: 8 (128-bit security).
     pub blowup_factor: usize,
     /// Number of FRI query rounds.
-    /// Default: 30 (128-bit security).
+    /// Default: 32 (128-bit security).
     pub num_queries: usize,
     /// Enable proof grinding (PoW on proof for size reduction).
     /// Default: false (not needed for transactions).
@@ -62,7 +62,7 @@ impl Default for StarkProverConfig {
     fn default() -> Self {
         Self {
             blowup_factor: 8,
-            num_queries: 30,
+            num_queries: 32,
             enable_grinding: false,
             grinding_bits: 0,
             max_proving_time: Duration::from_secs(60),
@@ -74,8 +74,8 @@ impl StarkProverConfig {
     /// Create a config optimized for fast proving (lower security margin).
     pub fn fast() -> Self {
         Self {
-            blowup_factor: 4,
-            num_queries: 20,
+            blowup_factor: 16,
+            num_queries: 8,
             enable_grinding: false,
             grinding_bits: 0,
             max_proving_time: Duration::from_secs(30),
@@ -103,6 +103,38 @@ impl StarkProverConfig {
             max_proving_time: Duration::from_secs(180),
         }
     }
+
+    fn normalized(&self) -> Self {
+        let mut cfg = self.clone();
+        if cfg.num_queries == 0 {
+            cfg.num_queries = 1;
+        }
+        if cfg.num_queries > 255 {
+            cfg.num_queries = 255;
+        }
+        if cfg.blowup_factor < 2 {
+            cfg.blowup_factor = 2;
+        }
+        if cfg.blowup_factor > 128 {
+            cfg.blowup_factor = 128;
+        }
+        if !cfg.blowup_factor.is_power_of_two() {
+            cfg.blowup_factor = cfg.blowup_factor.next_power_of_two();
+        }
+        if cfg.grinding_bits > 32 {
+            cfg.grinding_bits = 32;
+        }
+        if !cfg.enable_grinding {
+            cfg.grinding_bits = 0;
+        }
+
+        if !cfg!(debug_assertions) {
+            cfg.num_queries = cfg.num_queries.max(32);
+            cfg.blowup_factor = cfg.blowup_factor.max(8);
+        }
+
+        cfg
+    }
 }
 
 /// STARK prover for shielded transactions.
@@ -121,11 +153,14 @@ impl StarkProver {
     ///
     /// Note: Key generation is deterministic and requires no trusted setup.
     pub fn new(config: StarkProverConfig) -> Self {
-        let options = if config.blowup_factor <= 4 {
-            fast_proof_options()
+        let config = config.normalized();
+        let grinding_factor = if config.enable_grinding {
+            config.grinding_bits as u32
         } else {
-            default_proof_options()
+            0
         };
+        let options =
+            proof_options_from_config(config.num_queries, config.blowup_factor, grinding_factor);
         let inner = TransactionProverStark::new(options);
         Self { config, inner }
     }
@@ -211,16 +246,16 @@ impl StarkProver {
             .iter()
             .zip(pub_inputs.input_flags.iter())
             .filter(|(_, flag)| **flag == Felt::new(1))
-            .map(|(f, _)| felt_to_bytes32(*f))
+            .map(|(f, _)| felts_to_bytes32(f))
             .collect();
         let commitments: Vec<[u8; 32]> = pub_inputs
             .commitments
             .iter()
             .zip(pub_inputs.output_flags.iter())
             .filter(|(_, flag)| **flag == Felt::new(1))
-            .map(|(f, _)| felt_to_bytes32(*f))
+            .map(|(f, _)| felts_to_bytes32(f))
             .collect();
-        let anchor = felt_to_bytes32(pub_inputs.merkle_root);
+        let anchor = felts_to_bytes32(&pub_inputs.merkle_root);
 
         Ok(ProofResult {
             proof_bytes,
@@ -333,15 +368,15 @@ mod tests {
     fn test_config_defaults() {
         let config = StarkProverConfig::default();
         assert_eq!(config.blowup_factor, 8);
-        assert_eq!(config.num_queries, 30);
+        assert_eq!(config.num_queries, 32);
         assert!(!config.enable_grinding);
     }
 
     #[test]
     fn test_config_fast() {
         let config = StarkProverConfig::fast();
-        assert_eq!(config.blowup_factor, 4);
-        assert_eq!(config.num_queries, 20);
+        assert_eq!(config.blowup_factor, 16);
+        assert_eq!(config.num_queries, 8);
     }
 
     #[test]

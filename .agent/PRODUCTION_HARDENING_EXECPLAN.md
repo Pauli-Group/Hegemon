@@ -13,13 +13,13 @@ The visible proof is that production builds either (a) succeed with full cryptog
 ## Progress
 
 - [x] (2025-12-20 01:01Z) Create the production hardening ExecPlan.
-- [ ] Remove production paths that accept legacy or placeholder verification behavior (completed: none; remaining: all).
-- [ ] Replace 64‑bit commitment/nullifier encodings with 256‑bit encodings across circuits, runtime, wallet, and state (completed: none; remaining: all).
-- [ ] Remove spend‑key leakage from viewing keys and align PRF derivations across crates (completed: none; remaining: all).
-- [ ] Remove misleading “binding signature” semantics from production transactions (completed: none; remaining: all).
-- [ ] Enforce real state execution in non‑dev nodes and block CLI paths that emit empty proofs (completed: none; remaining: all).
-- [ ] Fix wallet serialization truncation and production defaults that embed predictable seeds/tokens (completed: none; remaining: all).
-- [ ] Update docs, tests, and hardening scripts to match the new guarantees (completed: none; remaining: all).
+- [x] (2025-12-20 04:47Z) Remove production paths that accept legacy or placeholder verification behavior.
+- [x] (2025-12-20 04:47Z) Replace 64‑bit commitment/nullifier encodings with 256‑bit encodings across circuits, runtime, wallet, and state.
+- [x] (2025-12-20 04:47Z) Remove spend‑key leakage from viewing keys and align PRF derivations across crates.
+- [x] (2025-12-20 04:47Z) Remove misleading “binding signature” semantics from production transactions.
+- [x] (2025-12-20 04:47Z) Enforce real state execution in non‑dev nodes and block CLI paths that emit empty proofs.
+- [x] (2025-12-20 04:47Z) Fix wallet serialization truncation and production defaults that embed predictable seeds/tokens.
+- [x] (2025-12-20 04:47Z) Update docs, tests, and hardening scripts to match the new guarantees.
 
 ## Surprises & Discoveries
 
@@ -41,7 +41,19 @@ None yet. Update this section as soon as unexpected behavior is observed, with s
 
 ## Outcomes & Retrospective
 
-Not yet complete. This section must be filled in as milestones are achieved, including what was delivered, what is still open, and any lessons learned.
+Delivered:
+- Production verification now requires real STARK proof bytes/public inputs; legacy and fast verification paths are gated behind explicit features and checked by the hardening script.
+- Commitments, nullifiers, and Merkle roots use 4-limb (256-bit) Poseidon outputs with canonical limb checks across circuits, pallet, wallet, and state.
+- Viewing keys store a view-derived nullifier key (`view_nf`), wallet stores migrate safely, and PRF derivations are aligned across crates.
+- “Binding signature” renamed to `binding_hash` across runtime, RPC, wallet, tests, and docs.
+- Non-dev nodes refuse mock state execution without an explicit flag; wallet batch proofs are opt-in and memos now hard-fail on oversize payloads.
+- Documentation, runbooks, and production checks updated to reflect protocol-breaking encoding changes and operational resets.
+
+Open items:
+- None in this ExecPlan scope.
+
+Lessons learned:
+- Feature-gating dev-only verification paths plus script-level checks keeps production builds honest without blocking test workflows.
 
 ## Context and Orientation
 

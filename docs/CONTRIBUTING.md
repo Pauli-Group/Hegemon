@@ -36,6 +36,10 @@ GitHub Actions runs `.github/workflows/ci.yml` on every push/PR. Jobs:
 
 When you add a new crate or language toolchain, extend CI accordingly **and** document the new step here and in `METHODS.md`.
 
+## Dependency advisories
+
+Use `./scripts/dependency-audit.sh --record` to run `cargo audit` and append the output to `docs/DEPENDENCY_AUDITS.md`. This is advisory-only for now, so use it to track risk and open follow-up issues without blocking normal development.
+
 ## Benchmarks
 
 Three benchmarking harnesses exist to make performance work repeatable:

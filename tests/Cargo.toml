@@ -38,6 +38,8 @@ default = []
 substrate = ["sp-core", "hegemon-node/substrate"]
 # Enable legacy node integration tests (require refactored NodeService API)
 legacy-node-tests = []
+# Enable fast STARK options in transaction-circuit (development only).
+stark-fast = ["transaction-circuit/stark-fast"]
 
 [[test]]
 name = "security_pipeline"

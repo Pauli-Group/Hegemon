@@ -42,6 +42,7 @@ use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
     constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID},
+    hashing::bytes32_to_felts,
     note::OutputNoteWitness,
     witness::TransactionWitness,
 };
@@ -271,7 +272,7 @@ impl<'a> ShieldedTxBuilder<'a> {
         stats.proving_time = proof_result.proving_time;
         stats.proof_size = proof_result.proof_size();
 
-        // Compute binding signature commitment (Blake2-256 hash of public inputs)
+        // Compute binding hash commitment (Blake2-256 hash of public inputs)
         let binding_hash = self.compute_binding_hash(
             &proof_result.anchor,
             &proof_result.nullifiers,
@@ -279,10 +280,10 @@ impl<'a> ShieldedTxBuilder<'a> {
             proof_result.fee,
             proof_result.value_balance,
         );
-        // The binding signature is the 32-byte hash duplicated to 64 bytes
-        let mut binding_sig_64 = [0u8; 64];
-        binding_sig_64[..32].copy_from_slice(&binding_hash);
-        binding_sig_64[32..].copy_from_slice(&binding_hash);
+        // The binding hash is the 32-byte hash duplicated to 64 bytes
+        let mut binding_hash_64 = [0u8; 64];
+        binding_hash_64[..32].copy_from_slice(&binding_hash);
+        binding_hash_64[32..].copy_from_slice(&binding_hash);
 
         // Build transaction bundle
         let bundle = TransactionBundle::new(
@@ -291,7 +292,7 @@ impl<'a> ShieldedTxBuilder<'a> {
             proof_result.commitments.to_vec(),
             &ciphertexts,
             proof_result.anchor,
-            binding_sig_64,
+            binding_hash_64,
             proof_result.fee,
             proof_result.value_balance,
         )?;
@@ -462,9 +463,17 @@ impl<'a> ShieldedTxBuilder<'a> {
                     ))
                 })?;
 
+            let mut siblings = Vec::with_capacity(auth_path.len());
+            for sibling in auth_path.iter() {
+                let felts = bytes32_to_felts(sibling).ok_or_else(|| {
+                    WalletError::InvalidState("non-canonical merkle sibling encoding")
+                })?;
+                siblings.push(felts);
+            }
+
             // Convert Felt path to MerklePath
             let merkle_path = transaction_circuit::note::MerklePath {
-                siblings: auth_path,
+                siblings,
             };
 
             // Create input witness with the merkle path
@@ -476,7 +485,7 @@ impl<'a> ShieldedTxBuilder<'a> {
         Ok(TransactionWitness {
             inputs,
             outputs,
-            sk_spend: derived.spend.to_bytes(),
+            sk_spend: derived.view.nullifier_key(),
             merkle_root: tree.root(),
             fee,
             value_balance: 0,
@@ -484,7 +493,7 @@ impl<'a> ShieldedTxBuilder<'a> {
         })
     }
 
-    /// Compute binding signature hash for transaction commitment.
+    /// Compute binding hash for transaction commitment.
     ///
     /// Returns the 32-byte Blake2-256 hash of the public inputs:
     /// Blake2_256(anchor || nullifiers || commitments || fee || value_balance)
@@ -559,9 +568,7 @@ pub fn build_shielding_tx(
 
     // Compute commitment
     let note_data = note.to_note_data(address.pk_recipient);
-    let commitment_felt = note_data.commitment();
-    let mut commitment = [0u8; 32];
-    commitment[24..32].copy_from_slice(&commitment_felt.as_int().to_be_bytes());
+    let commitment = transaction_circuit::hashing::felts_to_bytes32(&note_data.commitment());
 
     // Serialize ciphertext
     let encrypted_note =

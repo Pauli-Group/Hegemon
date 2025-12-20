@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use state_merkle::CommitmentTree;
 use transaction_circuit::{
-    hashing::{merkle_node, Felt},
+    hashing::{felt_to_bytes32, merkle_node_bytes, Commitment, Felt},
     proof, TransactionProof, VerifyingKey,
 };
 
@@ -12,13 +12,13 @@ use crate::error::BlockError;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RecursiveAggregation {
-    #[serde(with = "crate::proof::serde_felt")]
-    pub digest: Felt,
+    #[serde(with = "crate::proof::serde_bytes32")]
+    pub digest: Commitment,
     pub transaction_count: usize,
 }
 
 impl RecursiveAggregation {
-    pub fn new(digest: Felt, transaction_count: usize) -> Self {
+    pub fn new(digest: Commitment, transaction_count: usize) -> Self {
         Self {
             digest,
             transaction_count,
@@ -28,12 +28,12 @@ impl RecursiveAggregation {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BlockProof {
-    #[serde(with = "crate::proof::serde_felt")]
-    pub starting_root: Felt,
-    #[serde(with = "crate::proof::serde_felt")]
-    pub ending_root: Felt,
-    #[serde(with = "crate::proof::serde_vec_felt")]
-    pub root_trace: Vec<Felt>,
+    #[serde(with = "crate::proof::serde_bytes32")]
+    pub starting_root: Commitment,
+    #[serde(with = "crate::proof::serde_bytes32")]
+    pub ending_root: Commitment,
+    #[serde(with = "crate::proof::serde_vec_bytes32")]
+    pub root_trace: Vec<Commitment>,
     pub aggregation: RecursiveAggregation,
     pub transactions: Vec<TransactionProof>,
     pub version_counts: Vec<VersionCount>,
@@ -98,8 +98,8 @@ pub fn verify_block(
 type ExecutionResult = ExecutionArtifacts;
 
 struct ExecutionArtifacts {
-    root_trace: Vec<Felt>,
-    ending_root: Felt,
+    root_trace: Vec<Commitment>,
+    ending_root: Commitment,
     aggregation: RecursiveAggregation,
     version_matrix: VersionMatrix,
 }
@@ -111,9 +111,9 @@ fn execute_block(
 ) -> Result<ExecutionResult, BlockError> {
     let mut root_trace = Vec::with_capacity(transactions.len() + 1);
     root_trace.push(tree.root());
-    let mut seen_nullifiers: HashSet<u64> = HashSet::new();
-    let mut digest = Felt::new(0);
-    let zero = Felt::new(0);
+    let mut seen_nullifiers: HashSet<[u8; 32]> = HashSet::new();
+    let mut digest = [0u8; 32];
+    let zero = [0u8; 32];
     let mut version_matrix = VersionMatrix::new();
 
     for (index, proof) in transactions.iter().enumerate() {
@@ -142,7 +142,7 @@ fn execute_block(
             if nullifier == zero {
                 continue;
             }
-            if !seen_nullifiers.insert(nullifier.as_int()) {
+            if !seen_nullifiers.insert(nullifier) {
                 return Err(BlockError::DuplicateNullifier(nullifier));
             }
         }
@@ -164,19 +164,24 @@ fn execute_block(
     })
 }
 
-fn fold_digest(mut acc: Felt, proof: &TransactionProof) -> Felt {
+fn fold_digest(mut acc: Commitment, proof: &TransactionProof) -> Commitment {
     let binding = proof.version_binding();
-    acc = merkle_node(acc, Felt::new(u64::from(binding.circuit)));
-    acc = merkle_node(acc, Felt::new(u64::from(binding.crypto)));
-    acc = merkle_node(acc, proof.public_inputs.merkle_root);
-    acc = merkle_node(acc, proof.public_inputs.balance_tag);
+    acc = merkle_node_bytes(&acc, &felt_to_bytes32(Felt::new(u64::from(binding.circuit))))
+        .expect("canonical digest bytes");
+    acc = merkle_node_bytes(&acc, &felt_to_bytes32(Felt::new(u64::from(binding.crypto))))
+        .expect("canonical digest bytes");
+    acc = merkle_node_bytes(&acc, &proof.public_inputs.merkle_root)
+        .expect("canonical digest bytes");
+    acc = merkle_node_bytes(&acc, &felt_to_bytes32(proof.public_inputs.balance_tag))
+        .expect("canonical digest bytes");
     for value in &proof.public_inputs.nullifiers {
-        acc = merkle_node(acc, *value);
+        acc = merkle_node_bytes(&acc, value).expect("canonical digest bytes");
     }
     for value in &proof.public_inputs.commitments {
-        acc = merkle_node(acc, *value);
+        acc = merkle_node_bytes(&acc, value).expect("canonical digest bytes");
     }
-    acc = merkle_node(acc, Felt::new(proof.public_inputs.native_fee));
+    acc = merkle_node_bytes(&acc, &felt_to_bytes32(Felt::new(proof.public_inputs.native_fee)))
+        .expect("canonical digest bytes");
     acc
 }
 
@@ -197,56 +202,56 @@ fn version_counts_match(counts: &[VersionCount], execution: &VersionMatrix) -> b
     reported.counts() == execution.counts()
 }
 
-mod serde_felt {
+mod serde_bytes32 {
     use serde::{Deserialize, Deserializer, Serializer};
-    use transaction_circuit::hashing::Felt;
 
-    pub fn serialize<S>(value: &Felt, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(value: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        serializer.serialize_u64(value.as_int())
+        serializer.serialize_bytes(value)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Felt, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = u64::deserialize(deserializer)?;
-        Ok(Felt::new(value))
-    }
-}
-
-mod serde_vec_felt {
-    use serde::{Deserialize, Deserializer, Serializer};
-    use std::convert::TryInto;
-    use transaction_circuit::hashing::Felt;
-
-    pub fn serialize<S>(values: &[Felt], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut bytes = Vec::with_capacity(values.len() * 8);
-        for value in values {
-            bytes.extend_from_slice(&value.as_int().to_be_bytes());
-        }
-        serializer.serialize_bytes(&bytes)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<Felt>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
     where
         D: Deserializer<'de>,
     {
         let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        if !bytes.len().is_multiple_of(8) {
-            return Err(serde::de::Error::custom("invalid field encoding"));
+        if bytes.len() != 32 {
+            return Err(serde::de::Error::custom("expected 32 bytes"));
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        Ok(out)
+    }
+}
+
+mod serde_vec_bytes32 {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::convert::TryInto;
+
+    pub fn serialize<S>(values: &[[u8; 32]], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut bytes = Vec::with_capacity(values.len() * 32);
+        for value in values {
+            bytes.extend_from_slice(value);
+        }
+        serializer.serialize_bytes(&bytes)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<[u8; 32]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        if !bytes.len().is_multiple_of(32) {
+            return Err(serde::de::Error::custom("invalid 32-byte encoding"));
         }
         Ok(bytes
-            .chunks(8)
-            .map(|chunk| {
-                let array: [u8; 8] = chunk.try_into().expect("chunk size");
-                Felt::new(u64::from_be_bytes(array))
-            })
+            .chunks(32)
+            .map(|chunk| <[u8; 32]>::try_from(chunk).expect("32-byte chunk"))
             .collect())
     }
 }

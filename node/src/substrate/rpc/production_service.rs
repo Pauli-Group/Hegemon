@@ -48,7 +48,7 @@ use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
 use codec::Encode;
 use pallet_shielded_pool::types::{
-    BindingSignature, EncryptedNote, StarkProof, ENCRYPTED_NOTE_SIZE, ML_KEM_CIPHERTEXT_LEN,
+    BindingHash, EncryptedNote, StarkProof, ENCRYPTED_NOTE_SIZE, ML_KEM_CIPHERTEXT_LEN,
 };
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use sp_api::ProvideRuntimeApi;
@@ -222,7 +222,7 @@ where
         }
     }
 
-    fn commitment_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, u64)>, String> {
+    fn commitment_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, [u8; 32])>, String> {
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
 
@@ -230,14 +230,7 @@ where
             Ok(notes) => Ok(notes
                 .into_iter()
                 .enumerate()
-                .map(|(i, (_, _, _, commitment))| {
-                    // Convert commitment hash to a u64 Felt value
-                    // The Felt is stored in the LAST 8 bytes as big-endian
-                    // (matching circuits/transaction/src/hashing.rs felt_to_bytes32)
-                    let value =
-                        u64::from_be_bytes(commitment[24..32].try_into().unwrap_or([0u8; 8]));
-                    (start + i as u64, value)
-                })
+                .map(|(i, (_, _, _, commitment))| (start + i as u64, commitment))
                 .collect()),
             Err(e) => Err(format!("Runtime API error: {:?}", e)),
         }
@@ -345,7 +338,7 @@ where
         commitments: Vec<[u8; 32]>,
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
-        binding_sig: [u8; 64],
+        binding_hash: [u8; 64],
         fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
@@ -426,8 +419,8 @@ where
             .try_into()
             .map_err(|_| "Failed to convert encrypted notes")?;
 
-        // Convert binding signature
-        let binding = BindingSignature { data: binding_sig };
+        // Convert binding hash
+        let binding = BindingHash { data: binding_hash };
 
         // Build the pallet call
         let call =
@@ -437,7 +430,7 @@ where
                 commitments: bounded_commitments,
                 ciphertexts: bounded_ciphertexts,
                 anchor,
-                binding_sig: binding,
+                binding_hash: binding,
                 fee,
                 value_balance,
             });

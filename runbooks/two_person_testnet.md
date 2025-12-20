@@ -24,6 +24,8 @@ Both participants need:
 
 **Solution:** The boot node exports the chain specification once, and all other nodes use that exact file.
 
+**Protocol-breaking note:** If you switch to a chainspec that upgrades commitment/nullifier encoding (4-limb 256-bit), delete `node.db` and wallet store files before starting. Old state is incompatible.
+
 ### Boot Node: Export Chain Spec
 
 Run once on the boot node machine:

@@ -1,6 +1,6 @@
 use rand::rngs::OsRng;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
-use transaction_circuit::hashing::felt_to_bytes32;
+use transaction_circuit::hashing::{bytes32_to_felts, felts_to_bytes32, merkle_node};
 use transaction_circuit::note::OutputNoteWitness;
 use transaction_circuit::witness::TransactionWitness;
 
@@ -153,7 +153,7 @@ pub fn build_transaction(
         } else {
             Some(note.memo.clone())
         };
-        let commitment = felt_to_bytes32(output.note.commitment());
+        let commitment = felts_to_bytes32(&output.note.commitment());
         outgoing_disclosures.push(OutgoingDisclosureDraft {
             output_index,
             recipient_address,
@@ -189,7 +189,7 @@ pub fn build_transaction(
         } else {
             Some(note.memo.clone())
         };
-        let commitment = felt_to_bytes32(note_data.commitment());
+        let commitment = felts_to_bytes32(&note_data.commitment());
         outgoing_disclosures.push(OutgoingDisclosureDraft {
             output_index,
             recipient_address,
@@ -235,25 +235,29 @@ pub fn build_transaction(
 
         let mut current = leaf;
         let mut pos = note.position;
-        for (_level, sibling) in auth_path.iter().enumerate() {
-            use transaction_circuit::hashing::merkle_node;
+        let mut siblings = Vec::with_capacity(auth_path.len());
+        for sibling in auth_path.iter() {
+            let felts = bytes32_to_felts(sibling).ok_or_else(|| {
+                WalletError::InvalidState("non-canonical merkle sibling encoding")
+            })?;
+            siblings.push(felts);
             let (left, right) = if pos & 1 == 0 {
-                (current, *sibling)
+                (current, felts)
             } else {
-                (*sibling, current)
+                (felts, current)
             };
             current = merkle_node(left, right);
             pos >>= 1;
         }
         // eprintln!("DEBUG: computed_root = {:?}", current);
         // eprintln!("DEBUG: expected_root = {:?}", wallet_root);
-        if current != wallet_root {
+        if felts_to_bytes32(&current) != wallet_root {
             // eprintln!("DEBUG: ROOT MISMATCH!");
         }
 
         // Convert Felt path to MerklePath
         let merkle_path = transaction_circuit::note::MerklePath {
-            siblings: auth_path,
+            siblings,
         };
 
         // Create input witness with the merkle path
@@ -266,7 +270,7 @@ pub fn build_transaction(
     let witness = TransactionWitness {
         inputs,
         outputs,
-        sk_spend: derived.spend.to_bytes(),
+        sk_spend: derived.view.nullifier_key(),
         merkle_root: tree.root(),
         fee,
         value_balance: 0,
@@ -298,7 +302,7 @@ pub fn build_transaction(
     // eprintln!("DEBUG tx_builder: proof_result.commitments.len() = {}", proof_result.commitments.len());
     // eprintln!("DEBUG tx_builder: ciphertexts.len() = {}", ciphertexts.len());
 
-    // Compute binding signature commitment (Blake2-256 hash of public inputs)
+    // Compute binding hash commitment (Blake2-256 hash of public inputs)
     let binding_hash = compute_binding_hash(
         &proof_result.anchor,
         &proof_result.nullifiers,
@@ -306,10 +310,10 @@ pub fn build_transaction(
         proof_result.fee,
         proof_result.value_balance,
     );
-    // The binding signature is the 32-byte hash duplicated to 64 bytes
-    let mut binding_sig_64 = [0u8; 64];
-    binding_sig_64[..32].copy_from_slice(&binding_hash);
-    binding_sig_64[32..].copy_from_slice(&binding_hash);
+    // The binding hash is the 32-byte hash duplicated to 64 bytes
+    let mut binding_hash_64 = [0u8; 64];
+    binding_hash_64[..32].copy_from_slice(&binding_hash);
+    binding_hash_64[32..].copy_from_slice(&binding_hash);
 
     let bundle = TransactionBundle::new(
         proof_result.proof_bytes,
@@ -317,7 +321,7 @@ pub fn build_transaction(
         proof_result.commitments.to_vec(),
         &ciphertexts,
         proof_result.anchor,
-        binding_sig_64,
+        binding_hash_64,
         proof_result.fee,
         proof_result.value_balance,
     )?;
@@ -332,7 +336,7 @@ pub fn build_transaction(
     })
 }
 
-/// Compute binding signature hash for transaction commitment.
+/// Compute binding hash for transaction commitment.
 ///
 /// Returns the 32-byte Blake2-256 hash of the public inputs:
 /// Blake2_256(anchor || nullifiers || commitments || fee || value_balance)

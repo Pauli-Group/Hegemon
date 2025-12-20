@@ -143,7 +143,7 @@ pub fn new_test_ext() -> TestExternalities {
 mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
-    use crate::types::{BindingSignature, EncryptedNote, StarkProof};
+    use crate::types::{BindingHash, EncryptedNote, StarkProof};
     use frame_support::{assert_noop, assert_ok, BoundedVec};
     use sp_runtime::traits::ValidateUnsigned;
     use sp_runtime::transaction_validity::{
@@ -154,8 +154,8 @@ mod tests {
         StarkProof::from_bytes(vec![1u8; 1024])
     }
 
-    fn valid_binding_sig() -> BindingSignature {
-        BindingSignature { data: [1u8; 64] }
+    fn valid_binding_hash() -> BindingHash {
+        BindingHash { data: [1u8; 64] }
     }
 
     fn valid_encrypted_note() -> EncryptedNote {
@@ -185,7 +185,7 @@ mod tests {
                 commitments,
                 ciphertexts,
                 anchor,
-                binding_sig: valid_binding_sig(),
+                binding_hash: valid_binding_hash(),
                 fee: 0,
             };
 
@@ -259,7 +259,7 @@ mod tests {
                 new_commitments,
                 ciphertexts,
                 anchor,
-                valid_binding_sig(),
+                valid_binding_hash(),
                 0, // fee
                 0, // value_balance = 0 for shielded-to-shielded
             ));
@@ -299,7 +299,7 @@ mod tests {
                 new_commitments.clone(),
                 ciphertexts.clone(),
                 anchor,
-                valid_binding_sig(),
+                valid_binding_hash(),
                 0,
                 0,
             ));
@@ -317,7 +317,7 @@ mod tests {
                     new_commitments,
                     ciphertexts,
                     new_anchor,
-                    valid_binding_sig(),
+                    valid_binding_hash(),
                     0,
                     0,
                 ),
@@ -346,7 +346,7 @@ mod tests {
                     commitments,
                     ciphertexts,
                     invalid_anchor,
-                    valid_binding_sig(),
+                    valid_binding_hash(),
                     0,
                     0,
                 ),
@@ -387,7 +387,7 @@ mod tests {
                     commitments,
                     ciphertexts,
                     anchor,
-                    valid_binding_sig(),
+                    valid_binding_hash(),
                     0,
                     0,
                 ),
@@ -461,7 +461,7 @@ mod tests {
                     commitments,
                     ciphertexts,
                     anchor,
-                    valid_binding_sig(),
+                    valid_binding_hash(),
                     0,
                     0,
                 ),
@@ -522,7 +522,7 @@ mod tests {
                     empty_commitments,
                     empty_ciphertexts,
                     anchor,
-                    valid_binding_sig(),
+                    valid_binding_hash(),
                     0,
                     0,
                 ),
@@ -563,7 +563,7 @@ mod tests {
                     commitments,
                     ciphertexts,
                     anchor,
-                    valid_binding_sig(),
+                    valid_binding_hash(),
                     0,
                     0,
                 ),
@@ -612,7 +612,7 @@ mod tests {
                         commitments,
                         ciphertexts,
                         old_anchor,
-                        valid_binding_sig(),
+                        valid_binding_hash(),
                         0,
                         0,
                     ),
@@ -702,7 +702,7 @@ mod tests {
                 commitments,
                 ciphertexts,
                 anchor,
-                valid_binding_sig(),
+                valid_binding_hash(),
                 0,
                 0,
             ));
@@ -733,7 +733,7 @@ mod tests {
                 commitments,
                 ciphertexts,
                 anchor,
-                valid_binding_sig(),
+                valid_binding_hash(),
                 0,
                 0,
             ));

@@ -7,7 +7,7 @@ use winterfell::math::FieldElement;
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing::{nullifier, prf_key, Felt},
+    hashing::{felts_to_bytes32, nullifier, prf_key, HashFelt},
     note::{InputNoteWitness, OutputNoteWitness},
     public_inputs::{BalanceSlot, TransactionPublicInputs},
 };
@@ -20,8 +20,8 @@ pub struct TransactionWitness {
     pub outputs: Vec<OutputNoteWitness>,
     #[serde(with = "crate::witness::serde_bytes32")]
     pub sk_spend: [u8; 32],
-    #[serde(with = "crate::witness::serde_felt")]
-    pub merkle_root: Felt,
+    #[serde(with = "crate::witness::serde_bytes32")]
+    pub merkle_root: [u8; 32],
     pub fee: u64,
     #[serde(default)]
     pub value_balance: i128,
@@ -50,7 +50,7 @@ impl TransactionWitness {
         // which would allow that note to be spent multiple times.
         let nullifiers = self.nullifiers();
         for (i, nf) in nullifiers.iter().enumerate() {
-            if *nf == Felt::ZERO {
+            if nf.iter().all(|elem| *elem == crate::hashing::Felt::ZERO) {
                 return Err(TransactionCircuitError::ZeroNullifier(i));
             }
         }
@@ -77,11 +77,11 @@ impl TransactionWitness {
         Ok(())
     }
 
-    pub fn prf_key(&self) -> Felt {
+    pub fn prf_key(&self) -> crate::hashing::Felt {
         prf_key(&self.sk_spend)
     }
 
-    pub fn nullifiers(&self) -> Vec<Felt> {
+    pub fn nullifiers(&self) -> Vec<HashFelt> {
         let prf = self.prf_key();
         self.inputs
             .iter()
@@ -89,7 +89,7 @@ impl TransactionWitness {
             .collect()
     }
 
-    pub fn commitments(&self) -> Vec<Felt> {
+    pub fn commitments(&self) -> Vec<HashFelt> {
         self.outputs
             .iter()
             .map(|note| note.note.commitment())
@@ -130,13 +130,15 @@ impl TransactionWitness {
 
     pub fn public_inputs(&self) -> Result<TransactionPublicInputs, TransactionCircuitError> {
         let nullifiers = {
-            let mut list = self.nullifiers();
-            list.resize(MAX_INPUTS, Felt::ZERO);
+            let mut list: Vec<[u8; 32]> =
+                self.nullifiers().iter().map(felts_to_bytes32).collect();
+            list.resize(MAX_INPUTS, [0u8; 32]);
             list
         };
         let commitments = {
-            let mut list = self.commitments();
-            list.resize(MAX_OUTPUTS, Felt::ZERO);
+            let mut list: Vec<[u8; 32]> =
+                self.commitments().iter().map(felts_to_bytes32).collect();
+            list.resize(MAX_OUTPUTS, [0u8; 32]);
             list
         };
         let balance_slots = self.balance_slots()?;

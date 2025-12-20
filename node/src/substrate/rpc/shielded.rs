@@ -40,8 +40,8 @@ pub struct ShieldedTransferRequest {
     pub encrypted_notes: Vec<String>,
     /// Merkle root anchor (hex encoded)
     pub anchor: String,
-    /// Binding signature (hex encoded)
-    pub binding_sig: String,
+    /// Binding hash (hex encoded)
+    pub binding_hash: String,
     /// Native fee encoded in the proof
     pub fee: u64,
     /// Value balance (positive = shielding, negative = unshielding)
@@ -241,7 +241,7 @@ pub trait ShieldedPoolService: Send + Sync {
         commitments: Vec<[u8; 32]>,
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
-        binding_sig: [u8; 64],
+        binding_hash: [u8; 64],
         fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String>;
@@ -395,15 +395,15 @@ where
             }
         };
 
-        // Decode binding signature
-        let binding_sig = match hex_to_array64(&request.binding_sig) {
+        // Decode binding hash
+        let binding_hash = match hex_to_array64(&request.binding_hash) {
             Ok(s) => s,
             Err(e) => {
                 return Ok(ShieldedTransferResponse {
                     success: false,
                     tx_hash: None,
                     block_number: None,
-                    error: Some(format!("Invalid binding signature: {}", e)),
+                    error: Some(format!("Invalid binding hash: {}", e)),
                 });
             }
         };
@@ -415,7 +415,7 @@ where
             commitments,
             encrypted_notes,
             anchor,
-            binding_sig,
+            binding_hash,
             request.fee,
             request.value_balance,
         ) {
@@ -595,7 +595,7 @@ mod tests {
             _commitments: Vec<[u8; 32]>,
             _encrypted_notes: Vec<Vec<u8>>,
             _anchor: [u8; 32],
-            _binding_sig: [u8; 64],
+            _binding_hash: [u8; 64],
             _fee: u64,
             _value_balance: i128,
         ) -> Result<[u8; 32], String> {
@@ -738,7 +738,7 @@ mod tests {
                 &[1, 2, 3, 4],
             )],
             anchor: hex::encode([0x33u8; 32]),
-            binding_sig: hex::encode([0x44u8; 64]),
+            binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
         };
@@ -762,7 +762,7 @@ mod tests {
             commitments: vec![hex::encode([0x22u8; 32])],
             encrypted_notes: vec![],
             anchor: hex::encode([0x33u8; 32]),
-            binding_sig: hex::encode([0x44u8; 64]),
+            binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
         };
@@ -789,7 +789,7 @@ mod tests {
             commitments: vec![hex::encode([0x22u8; 32])],
             encrypted_notes: vec![],
             anchor: hex::encode([0x33u8; 32]),
-            binding_sig: hex::encode([0x44u8; 64]),
+            binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
         };

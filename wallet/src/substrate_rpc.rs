@@ -93,19 +93,27 @@ pub struct NoteStatus {
 pub struct CommitmentEntry {
     /// Index in the commitment tree
     pub index: u64,
-    /// Commitment value (field element)
-    pub value: u64,
+    /// Commitment value (32-byte encoding)
+    pub value: [u8; 32],
 }
 
 /// Paginated commitment response
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommitmentResponse {
     /// Commitment entries
-    pub entries: Vec<CommitmentEntry>,
+    pub entries: Vec<CommitmentWireEntry>,
     /// Total count
     pub total: u64,
     /// Whether there are more entries
     pub has_more: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommitmentWireEntry {
+    /// Index in the commitment tree
+    pub index: u64,
+    /// Commitment value (hex encoded)
+    pub value: String,
 }
 
 /// Ciphertext entry from the node
@@ -398,7 +406,17 @@ impl SubstrateRpcClient {
             .await
             .map_err(|e| WalletError::Rpc(format!("hegemon_walletCommitments failed: {}", e)))?;
 
-        Ok(response.entries)
+        response
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let value = hex_to_array(&entry.value)?;
+                Ok(CommitmentEntry {
+                    index: entry.index,
+                    value,
+                })
+            })
+            .collect()
     }
 
     /// Get ciphertext entries
@@ -493,7 +511,7 @@ impl SubstrateRpcClient {
     /// Submit a shielded transaction to the network
     ///
     /// Submits a signed transaction bundle containing the STARK proof,
-    /// nullifiers, commitments, encrypted notes, anchor, and binding signature.
+    /// nullifiers, commitments, encrypted notes, anchor, and binding hash.
     /// This calls the `hegemon_submitShieldedTransfer` RPC which verifies
     /// the STARK proof and submits the transaction to the shielded pool.
     ///
@@ -1148,7 +1166,7 @@ struct ShieldedTransferRequest {
     /// Merkle root anchor (hex encoded)
     anchor: String,
     /// Binding signature (hex encoded)
-    binding_sig: String,
+    binding_hash: String,
     /// Native fee encoded in the proof
     fee: u64,
     /// Value balance (positive = shielding, negative = unshielding)
@@ -1181,7 +1199,7 @@ impl ShieldedTransferRequest {
 
         // Encode anchor and binding sig
         let anchor = hex::encode(bundle.anchor);
-        let binding_sig = hex::encode(bundle.binding_sig);
+        let binding_hash = hex::encode(bundle.binding_hash);
 
         Ok(Self {
             proof,
@@ -1189,7 +1207,7 @@ impl ShieldedTransferRequest {
             commitments,
             encrypted_notes,
             anchor,
-            binding_sig,
+            binding_hash,
             fee: bundle.fee,
             value_balance: bundle.value_balance,
         })
@@ -1210,7 +1228,8 @@ struct ShieldedTransferResponse {
 }
 
 fn hex_to_array(hex_str: &str) -> Result<[u8; 32], WalletError> {
-    let bytes = hex::decode(hex_str)
+    let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    let bytes = hex::decode(trimmed)
         .map_err(|e| WalletError::Serialization(format!("Invalid hex: {}", e)))?;
     if bytes.len() != 32 {
         return Err(WalletError::Serialization("expected 32-byte hash".into()));

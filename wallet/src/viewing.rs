@@ -86,10 +86,15 @@ impl OutgoingViewingKey {
 
 impl FullViewingKey {
     pub fn from_keys(keys: &DerivedKeys) -> Self {
+        Self::from_incoming(IncomingViewingKey::from_keys(keys))
+    }
+
+    pub(crate) fn from_incoming(incoming: IncomingViewingKey) -> Self {
+        let nullifier_key = incoming.view_key.nullifier_key();
         Self {
-            incoming: IncomingViewingKey::from_keys(keys),
-            // Store raw sk_spend bytes - circuit computes prf_key(sk_spend) directly
-            nullifier_key: keys.spend.to_bytes(),
+            incoming,
+            // View-only nullifier key derived from sk_view (domain "view_nf").
+            nullifier_key,
         }
     }
 
@@ -102,7 +107,7 @@ impl FullViewingKey {
     }
 
     pub fn compute_nullifier(&self, rho: &[u8; 32], position: u64) -> [u8; 32] {
-        // Use Poseidon-based nullifier matching the circuit
+        // Use Poseidon-based nullifier matching the circuit, with view-derived nullifier key.
         let prf = compute_prf_key(&self.nullifier_key);
         nullifier_bytes(prf, rho, position)
     }

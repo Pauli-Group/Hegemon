@@ -5,7 +5,7 @@
 //! inserted leaves.
 
 use thiserror::Error;
-use transaction_circuit::hashing::{merkle_node, Felt};
+use transaction_circuit::hashing::{merkle_node_bytes, Commitment};
 
 /// Binary Merkle tree.
 const BRANCH_FACTOR: usize = 2;
@@ -24,9 +24,9 @@ pub enum MerkleError {
 pub struct CommitmentTree {
     depth: usize,
     leaf_count: usize,
-    default_nodes: Vec<Felt>,
-    levels: Vec<Vec<Felt>>,
-    root_history: Vec<Felt>,
+    default_nodes: Vec<Commitment>,
+    levels: Vec<Vec<Commitment>>,
+    root_history: Vec<Commitment>,
 }
 
 impl CommitmentTree {
@@ -35,10 +35,12 @@ impl CommitmentTree {
             return Err(MerkleError::InvalidDepth);
         }
         let mut default_nodes = Vec::with_capacity(depth + 1);
-        default_nodes.push(Felt::new(0));
+        default_nodes.push([0u8; 32]);
         for level in 0..depth {
             let prev = default_nodes[level];
-            default_nodes.push(merkle_node(prev, prev));
+            let next =
+                merkle_node_bytes(&prev, &prev).expect("default nodes use canonical bytes");
+            default_nodes.push(next);
         }
         let mut levels = Vec::with_capacity(depth + 1);
         for _ in 0..=depth {
@@ -74,15 +76,15 @@ impl CommitmentTree {
         self.leaf_count == self.capacity()
     }
 
-    pub fn root(&self) -> Felt {
+    pub fn root(&self) -> Commitment {
         *self.root_history.last().expect("root history non-empty")
     }
 
-    pub fn root_history(&self) -> &[Felt] {
+    pub fn root_history(&self) -> &[Commitment] {
         &self.root_history
     }
 
-    pub fn append(&mut self, value: Felt) -> Result<(usize, Felt), MerkleError> {
+    pub fn append(&mut self, value: Commitment) -> Result<(usize, Commitment), MerkleError> {
         if self.is_full() {
             return Err(MerkleError::TreeFull);
         }
@@ -93,10 +95,12 @@ impl CommitmentTree {
         let mut position = index;
         for level in 0..self.depth {
             if position.is_multiple_of(BRANCH_FACTOR) {
-                current = merkle_node(current, self.default_nodes[level]);
+                current = merkle_node_bytes(&current, &self.default_nodes[level])
+                    .expect("canonical commitment bytes");
             } else {
                 let left = self.levels[level][position - 1];
-                current = merkle_node(left, current);
+                current =
+                    merkle_node_bytes(&left, &current).expect("canonical commitment bytes");
             }
             position /= BRANCH_FACTOR;
             if self.levels[level + 1].len() == position {
@@ -110,9 +114,9 @@ impl CommitmentTree {
         Ok((index, root))
     }
 
-    pub fn extend<I>(&mut self, values: I) -> Result<Vec<Felt>, MerkleError>
+    pub fn extend<I>(&mut self, values: I) -> Result<Vec<Commitment>, MerkleError>
     where
-        I: IntoIterator<Item = Felt>,
+        I: IntoIterator<Item = Commitment>,
     {
         let mut roots = Vec::new();
         for value in values {
@@ -122,7 +126,7 @@ impl CommitmentTree {
         Ok(roots)
     }
 
-    pub fn authentication_path(&self, index: usize) -> Result<Vec<Felt>, MerkleError> {
+    pub fn authentication_path(&self, index: usize) -> Result<Vec<Commitment>, MerkleError> {
         if index >= self.leaf_count {
             return Err(MerkleError::InvalidLeafIndex(index));
         }
@@ -153,7 +157,11 @@ mod tests {
     #[test]
     fn append_and_paths_match() {
         let mut tree = CommitmentTree::new(4).unwrap();
-        let values: Vec<Felt> = (0..8).map(|v| Felt::new(v as u64 + 1)).collect();
+        let values: Vec<Commitment> = (0..8).map(|v| {
+            let mut bytes = [0u8; 32];
+            bytes[24..32].copy_from_slice(&(v as u64 + 1).to_be_bytes());
+            bytes
+        }).collect();
         for value in &values {
             tree.append(*value).unwrap();
         }

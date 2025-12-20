@@ -14,7 +14,13 @@ use crate::public_inputs::BatchPublicInputs;
 use transaction_circuit::dimensions::{
     batch_trace_rows, commitment_output_row, merkle_root_output_row, nullifier_output_row,
 };
-use transaction_circuit::stark_air::{round_constant, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH};
+use transaction_circuit::stark_air::{
+    round_constant, COL_OUT0, COL_OUT1, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH,
+};
+
+fn is_zero_hash(value: &[BaseElement; 4]) -> bool {
+    value.iter().all(|elem| *elem == BaseElement::ZERO)
+}
 
 /// Number of Poseidon rounds per cycle.
 pub const POSEIDON_ROUNDS: usize = 8;
@@ -74,9 +80,9 @@ impl Air for BatchTransactionAir {
                 let pub_idx = tx_idx * 2 + nf_idx;
                 if pub_idx < pub_inputs.nullifiers.len() {
                     let nf = pub_inputs.nullifiers[pub_idx];
-                    if nf != BaseElement::ZERO {
-                        num_assertions += 1; // Nullifier output
-                        num_assertions += 1; // Merkle root
+                    if !is_zero_hash(&nf) {
+                        num_assertions += 4; // Nullifier output
+                        num_assertions += 4; // Merkle root
                     }
                 }
             }
@@ -86,8 +92,8 @@ impl Air for BatchTransactionAir {
                 let pub_idx = tx_idx * 2 + cm_idx;
                 if pub_idx < pub_inputs.commitments.len() {
                     let cm = pub_inputs.commitments[pub_idx];
-                    if cm != BaseElement::ZERO {
-                        num_assertions += 1;
+                    if !is_zero_hash(&cm) {
+                        num_assertions += 4;
                     }
                 }
             }
@@ -156,20 +162,38 @@ impl Air for BatchTransactionAir {
                 let pub_idx = tx_idx * 2 + nf_idx;
                 if pub_idx < self.pub_inputs.nullifiers.len() {
                     let nf = self.pub_inputs.nullifiers[pub_idx];
-                    if nf != BaseElement::ZERO {
+                    if !is_zero_hash(&nf) {
                         // Nullifier hash output
                         let nf_row = nullifier_output_row(tx_idx, nf_idx);
                         if nf_row < trace_len {
-                            assertions.push(Assertion::single(COL_S0, nf_row, nf));
+                            assertions.push(Assertion::single(COL_OUT0, nf_row, nf[0]));
+                            assertions.push(Assertion::single(COL_OUT1, nf_row, nf[1]));
+                            assertions.push(Assertion::single(COL_S0, nf_row, nf[2]));
+                            assertions.push(Assertion::single(COL_S1, nf_row, nf[3]));
                         }
 
                         // Merkle root output (must match shared anchor)
                         let merkle_row = merkle_root_output_row(tx_idx, nf_idx);
                         if merkle_row < trace_len {
                             assertions.push(Assertion::single(
+                                COL_OUT0,
+                                merkle_row,
+                                self.pub_inputs.anchor[0],
+                            ));
+                            assertions.push(Assertion::single(
+                                COL_OUT1,
+                                merkle_row,
+                                self.pub_inputs.anchor[1],
+                            ));
+                            assertions.push(Assertion::single(
                                 COL_S0,
                                 merkle_row,
-                                self.pub_inputs.anchor,
+                                self.pub_inputs.anchor[2],
+                            ));
+                            assertions.push(Assertion::single(
+                                COL_S1,
+                                merkle_row,
+                                self.pub_inputs.anchor[3],
                             ));
                         }
                     }
@@ -181,10 +205,13 @@ impl Air for BatchTransactionAir {
                 let pub_idx = tx_idx * 2 + cm_idx;
                 if pub_idx < self.pub_inputs.commitments.len() {
                     let cm = self.pub_inputs.commitments[pub_idx];
-                    if cm != BaseElement::ZERO {
+                    if !is_zero_hash(&cm) {
                         let cm_row = commitment_output_row(tx_idx, cm_idx);
                         if cm_row < trace_len {
-                            assertions.push(Assertion::single(COL_S0, cm_row, cm));
+                            assertions.push(Assertion::single(COL_OUT0, cm_row, cm[0]));
+                            assertions.push(Assertion::single(COL_OUT1, cm_row, cm[1]));
+                            assertions.push(Assertion::single(COL_S0, cm_row, cm[2]));
+                            assertions.push(Assertion::single(COL_S1, cm_row, cm[3]));
                         }
                     }
                 }
@@ -257,18 +284,18 @@ mod tests {
     fn test_batch_public_inputs_elements() {
         let pub_inputs = BatchPublicInputs::new(
             2,
-            BaseElement::new(12345),
+            [BaseElement::new(12345), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
             vec![
-                BaseElement::new(1),
-                BaseElement::new(2),
-                BaseElement::new(3),
-                BaseElement::new(4),
+                [BaseElement::new(1), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                [BaseElement::new(2), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                [BaseElement::new(3), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                [BaseElement::new(4), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
             ],
             vec![
-                BaseElement::new(10),
-                BaseElement::new(20),
-                BaseElement::new(30),
-                BaseElement::new(40),
+                [BaseElement::new(10), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                [BaseElement::new(20), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                [BaseElement::new(30), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                [BaseElement::new(40), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
             ],
             BaseElement::new(100),
         );

@@ -24,7 +24,7 @@ use scale_info::TypeInfo;
 use sp_std::vec;
 use sp_std::vec::Vec;
 
-use crate::types::{BindingSignature, StarkProof};
+use crate::types::{BindingHash, StarkProof};
 
 #[cfg(feature = "stark-verify")]
 use winterfell::math::FieldElement;
@@ -104,8 +104,8 @@ pub enum VerificationResult {
     VerificationFailed,
     /// Verifying key not found or disabled.
     KeyNotFound,
-    /// Binding signature invalid.
-    InvalidBindingSignature,
+    /// Binding hash invalid.
+    InvalidBindingHash,
 }
 
 /// Proof verifier trait.
@@ -124,11 +124,8 @@ pub trait ProofVerifier {
     /// Verify value balance commitment.
     /// In the PQC model, this is typically verified in-circuit,
     /// but we keep the API for compatibility.
-    fn verify_binding_signature(
-        &self,
-        signature: &BindingSignature,
-        inputs: &ShieldedTransferInputs,
-    ) -> bool;
+    fn verify_binding_hash(&self, binding_hash: &BindingHash, inputs: &ShieldedTransferInputs)
+        -> bool;
 }
 
 /// Accept-all proof verifier for testing/development.
@@ -163,11 +160,8 @@ impl ProofVerifier for AcceptAllProofs {
         VerificationResult::Valid
     }
 
-    fn verify_binding_signature(
-        &self,
-        _signature: &BindingSignature,
-        _inputs: &ShieldedTransferInputs,
-    ) -> bool {
+    fn verify_binding_hash(&self, _binding_hash: &BindingHash, _inputs: &ShieldedTransferInputs)
+        -> bool {
         true
     }
 }
@@ -190,11 +184,8 @@ impl ProofVerifier for RejectAllProofs {
         VerificationResult::VerificationFailed
     }
 
-    fn verify_binding_signature(
-        &self,
-        _signature: &BindingSignature,
-        _inputs: &ShieldedTransferInputs,
-    ) -> bool {
+    fn verify_binding_hash(&self, _binding_hash: &BindingHash, _inputs: &ShieldedTransferInputs)
+        -> bool {
         false
     }
 }
@@ -503,13 +494,10 @@ impl ProofVerifier for StarkVerifier {
         }
     }
 
-    fn verify_binding_signature(
-        &self,
-        signature: &BindingSignature,
-        inputs: &ShieldedTransferInputs,
-    ) -> bool {
+    fn verify_binding_hash(&self, binding_hash: &BindingHash, inputs: &ShieldedTransferInputs)
+        -> bool {
         // In the STARK model, value balance is verified in-circuit.
-        // The binding signature is a Blake2 commitment to the public inputs,
+        // The binding hash is a Blake2 commitment to the public inputs,
         // providing defense-in-depth and a simple integrity check.
         //
         // Commitment = Blake2_256(anchor || nullifiers || commitments || value_balance)
@@ -517,16 +505,16 @@ impl ProofVerifier for StarkVerifier {
         use sp_core::hashing::blake2_256;
 
         // Debug output
-        log::info!(target: "shielded-pool", "verify_binding_signature: anchor = {:02x?}", &inputs.anchor[..8]);
-        log::info!(target: "shielded-pool", "verify_binding_signature: nullifiers.len = {}", inputs.nullifiers.len());
+        log::info!(target: "shielded-pool", "verify_binding_hash: anchor = {:02x?}", &inputs.anchor[..8]);
+        log::info!(target: "shielded-pool", "verify_binding_hash: nullifiers.len = {}", inputs.nullifiers.len());
         for (i, nf) in inputs.nullifiers.iter().enumerate() {
-            log::info!(target: "shielded-pool", "verify_binding_signature: nullifiers[{}] = {:02x?}", i, &nf[..8]);
+            log::info!(target: "shielded-pool", "verify_binding_hash: nullifiers[{}] = {:02x?}", i, &nf[..8]);
         }
-        log::info!(target: "shielded-pool", "verify_binding_signature: commitments.len = {}", inputs.commitments.len());
+        log::info!(target: "shielded-pool", "verify_binding_hash: commitments.len = {}", inputs.commitments.len());
         for (i, cm) in inputs.commitments.iter().enumerate() {
-            log::info!(target: "shielded-pool", "verify_binding_signature: commitments[{}] = {:02x?}", i, &cm[..8]);
+            log::info!(target: "shielded-pool", "verify_binding_hash: commitments[{}] = {:02x?}", i, &cm[..8]);
         }
-        log::info!(target: "shielded-pool", "verify_binding_signature: value_balance = {}", inputs.value_balance);
+        log::info!(target: "shielded-pool", "verify_binding_hash: value_balance = {}", inputs.value_balance);
 
         // Build the commitment message
         let mut message = sp_std::vec::Vec::with_capacity(
@@ -542,29 +530,29 @@ impl ProofVerifier for StarkVerifier {
         message.extend_from_slice(&inputs.fee.to_le_bytes());
         message.extend_from_slice(&inputs.value_balance.to_le_bytes());
 
-        log::info!(target: "shielded-pool", "verify_binding_signature: message.len = {}", message.len());
+        log::info!(target: "shielded-pool", "verify_binding_hash: message.len = {}", message.len());
 
         // Compute expected commitment
         let hash = blake2_256(&message);
 
-        log::info!(target: "shielded-pool", "verify_binding_signature: computed_hash = {:02x?}", &hash[..8]);
-        log::info!(target: "shielded-pool", "verify_binding_signature: signature[0..8] = {:02x?}", &signature.data[..8]);
+        log::info!(target: "shielded-pool", "verify_binding_hash: computed_hash = {:02x?}", &hash[..8]);
+        log::info!(target: "shielded-pool", "verify_binding_hash: binding_hash[0..8] = {:02x?}", &binding_hash.data[..8]);
 
-        // The binding signature's first 32 bytes should match the hash
-        let result = signature.data[..32] == hash;
-        log::info!(target: "shielded-pool", "verify_binding_signature: result = {}", result);
+        // The binding hash's first 32 bytes should match the hash
+        let result = binding_hash.data[..32] == hash;
+        log::info!(target: "shielded-pool", "verify_binding_hash: result = {}", result);
         result
     }
 }
 
 impl StarkVerifier {
-    /// Compute the binding signature commitment for given public inputs.
+    /// Compute the binding hash for given public inputs.
     ///
-    /// This should be used by wallet/client code to generate the binding signature
-    /// that will be verified by `verify_binding_signature`.
+    /// This should be used by wallet/client code to generate the binding hash
+    /// that will be verified by `verify_binding_hash`.
     ///
-    /// Returns a 64-byte binding signature (first 32 bytes are the commitment hash).
-    pub fn compute_binding_commitment(inputs: &ShieldedTransferInputs) -> BindingSignature {
+    /// Returns a 64-byte binding hash (first 32 bytes are the commitment hash).
+    pub fn compute_binding_hash(inputs: &ShieldedTransferInputs) -> BindingHash {
         use sp_core::hashing::blake2_256;
 
         // Build the commitment message
@@ -584,11 +572,11 @@ impl StarkVerifier {
         // Compute commitment hash
         let hash = blake2_256(&message);
 
-        // Build binding signature (hash in first 32 bytes, zeros in rest)
+        // Build binding hash (hash in first 32 bytes, zeros in rest)
         let mut data = [0u8; 64];
         data[..32].copy_from_slice(&hash);
 
-        BindingSignature { data }
+        BindingHash { data }
     }
 
     #[cfg(feature = "stark-verify")]
@@ -627,32 +615,32 @@ impl StarkVerifier {
         let mut input_flags = Vec::with_capacity(Self::MAX_INPUTS);
         let mut nullifiers = Vec::with_capacity(Self::MAX_INPUTS);
         for (idx, nf) in inputs.nullifiers.iter().enumerate() {
-            let felt = transaction_core::hashing::bytes32_to_felt(nf)?;
+            let felt = transaction_core::hashing::bytes32_to_felts(nf)?;
             if idx < Self::MAX_INPUTS {
                 input_flags.push(transaction_core::Felt::ONE);
             }
             nullifiers.push(felt);
         }
         while nullifiers.len() < Self::MAX_INPUTS {
-            nullifiers.push(transaction_core::Felt::ZERO);
+            nullifiers.push([transaction_core::Felt::ZERO; 4]);
             input_flags.push(transaction_core::Felt::ZERO);
         }
 
         let mut output_flags = Vec::with_capacity(Self::MAX_OUTPUTS);
         let mut commitments = Vec::with_capacity(Self::MAX_OUTPUTS);
         for (idx, cm) in inputs.commitments.iter().enumerate() {
-            let felt = transaction_core::hashing::bytes32_to_felt(cm)?;
+            let felt = transaction_core::hashing::bytes32_to_felts(cm)?;
             if idx < Self::MAX_OUTPUTS {
                 output_flags.push(transaction_core::Felt::ONE);
             }
             commitments.push(felt);
         }
         while commitments.len() < Self::MAX_OUTPUTS {
-            commitments.push(transaction_core::Felt::ZERO);
+            commitments.push([transaction_core::Felt::ZERO; 4]);
             output_flags.push(transaction_core::Felt::ZERO);
         }
 
-        let merkle_root = transaction_core::hashing::bytes32_to_felt(&inputs.anchor)?;
+        let merkle_root = transaction_core::hashing::bytes32_to_felts(&inputs.anchor)?;
 
         let (value_balance_sign, value_balance_magnitude) =
             transaction_core::hashing::signed_parts(inputs.value_balance)?;
@@ -1359,7 +1347,7 @@ mod tests {
     }
 
     #[cfg(feature = "stark-verify")]
-    fn build_stark_fixture() -> (StarkProof, ShieldedTransferInputs, BindingSignature) {
+    fn build_stark_fixture() -> (StarkProof, ShieldedTransferInputs, BindingHash) {
         use transaction_circuit::hashing::felt_to_bytes32;
         use transaction_circuit::keys::generate_keys;
         use transaction_circuit::note::{
@@ -1430,12 +1418,12 @@ mod tests {
             value_balance: 0,
         };
 
-        let binding_sig = StarkVerifier::compute_binding_commitment(&inputs);
+        let binding_hash = StarkVerifier::compute_binding_hash(&inputs);
 
         (
             StarkProof::from_bytes(proof.stark_proof),
             inputs,
-            binding_sig,
+            binding_hash,
         )
     }
 
@@ -1485,33 +1473,33 @@ mod tests {
 
     #[test]
     #[cfg(not(feature = "production"))]
-    fn accept_all_binding_sig_accepts() {
+    fn accept_all_binding_hash_accepts() {
         let verifier = AcceptAllProofs;
         // AcceptAllProofs accepts anything non-zero
-        let sig = BindingSignature { data: [1u8; 64] };
-        assert!(verifier.verify_binding_signature(&sig, &sample_inputs()));
+        let sig = BindingHash { data: [1u8; 64] };
+        assert!(verifier.verify_binding_hash(&sig, &sample_inputs()));
     }
 
     #[test]
     #[cfg(not(feature = "production"))]
-    fn reject_all_binding_sig_rejects() {
+    fn reject_all_binding_hash_rejects() {
         let verifier = RejectAllProofs;
-        let sig = BindingSignature { data: [1u8; 64] };
-        assert!(!verifier.verify_binding_signature(&sig, &sample_inputs()));
+        let sig = BindingHash { data: [1u8; 64] };
+        assert!(!verifier.verify_binding_hash(&sig, &sample_inputs()));
     }
 
     #[test]
-    fn stark_verifier_binding_sig_works() {
+    fn stark_verifier_binding_hash_works() {
         let verifier = StarkVerifier;
         let inputs = sample_inputs();
 
-        // Compute correct binding signature
-        let sig = StarkVerifier::compute_binding_commitment(&inputs);
-        assert!(verifier.verify_binding_signature(&sig, &inputs));
+        // Compute correct binding hash
+        let sig = StarkVerifier::compute_binding_hash(&inputs);
+        assert!(verifier.verify_binding_hash(&sig, &inputs));
 
-        // Incorrect signature should fail
-        let bad_sig = BindingSignature { data: [1u8; 64] };
-        assert!(!verifier.verify_binding_signature(&bad_sig, &inputs));
+        // Incorrect hash should fail
+        let bad_sig = BindingHash { data: [1u8; 64] };
+        assert!(!verifier.verify_binding_hash(&bad_sig, &inputs));
     }
 
     // ============================================================================
@@ -1519,82 +1507,82 @@ mod tests {
     // ============================================================================
 
     #[test]
-    fn adversarial_zero_binding_signature_rejected() {
-        // Test A9: All-zero binding signature must be rejected
+    fn adversarial_zero_binding_hash_rejected() {
+        // Test A9: All-zero binding hash must be rejected
         let verifier = StarkVerifier;
-        let zero_sig = BindingSignature { data: [0u8; 64] };
+        let zero_sig = BindingHash { data: [0u8; 64] };
         let inputs = sample_inputs();
 
         assert!(
-            !verifier.verify_binding_signature(&zero_sig, &inputs),
-            "Zero binding signature should be rejected"
+            !verifier.verify_binding_hash(&zero_sig, &inputs),
+            "Zero binding hash should be rejected"
         );
     }
 
     #[test]
-    fn adversarial_modified_anchor_binding_sig_fails() {
+    fn adversarial_modified_anchor_binding_hash_fails() {
         // Test A10: Signing with one anchor, verifying with another
         let verifier = StarkVerifier;
         let inputs = sample_inputs();
 
-        // Compute binding signature for original inputs
-        let sig = StarkVerifier::compute_binding_commitment(&inputs);
+        // Compute binding hash for original inputs
+        let sig = StarkVerifier::compute_binding_hash(&inputs);
 
         // Modify the anchor
         let mut modified_inputs = inputs.clone();
         modified_inputs.anchor = [99u8; 32];
 
         assert!(
-            !verifier.verify_binding_signature(&sig, &modified_inputs),
-            "Modified anchor should cause binding sig verification to fail"
+            !verifier.verify_binding_hash(&sig, &modified_inputs),
+            "Modified anchor should cause binding hash verification to fail"
         );
     }
 
     #[test]
-    fn adversarial_modified_nullifier_binding_sig_fails() {
+    fn adversarial_modified_nullifier_binding_hash_fails() {
         let verifier = StarkVerifier;
         let inputs = sample_inputs();
 
-        let sig = StarkVerifier::compute_binding_commitment(&inputs);
+        let sig = StarkVerifier::compute_binding_hash(&inputs);
 
         let mut modified_inputs = inputs.clone();
         modified_inputs.nullifiers[0] = [99u8; 32];
 
         assert!(
-            !verifier.verify_binding_signature(&sig, &modified_inputs),
-            "Modified nullifier should cause binding sig verification to fail"
+            !verifier.verify_binding_hash(&sig, &modified_inputs),
+            "Modified nullifier should cause binding hash verification to fail"
         );
     }
 
     #[test]
-    fn adversarial_modified_commitment_binding_sig_fails() {
+    fn adversarial_modified_commitment_binding_hash_fails() {
         let verifier = StarkVerifier;
         let inputs = sample_inputs();
 
-        let sig = StarkVerifier::compute_binding_commitment(&inputs);
+        let sig = StarkVerifier::compute_binding_hash(&inputs);
 
         let mut modified_inputs = inputs.clone();
         modified_inputs.commitments[0] = [99u8; 32];
 
         assert!(
-            !verifier.verify_binding_signature(&sig, &modified_inputs),
-            "Modified commitment should cause binding sig verification to fail"
+            !verifier.verify_binding_hash(&sig, &modified_inputs),
+            "Modified commitment should cause binding hash verification to fail"
         );
     }
 
     #[test]
-    fn adversarial_modified_value_balance_binding_sig_fails() {
+    fn adversarial_modified_value_balance_binding_hash_fails() {
         let verifier = StarkVerifier;
         let inputs = sample_inputs();
 
-        let sig = StarkVerifier::compute_binding_commitment(&inputs);
+        let sig = StarkVerifier::compute_binding_hash(&inputs);
 
         let mut modified_inputs = inputs.clone();
         modified_inputs.value_balance = 12345;
 
         assert!(
-            !verifier.verify_binding_signature(&sig, &modified_inputs),
-            "Modified value_balance should cause binding sig verification to fail"
+            !verifier.verify_binding_hash(&sig, &modified_inputs),
+            "Modified value_balance should cause binding hash verification to fail"
         );
     }
 
@@ -1680,7 +1668,7 @@ mod tests {
     #[test]
     fn adversarial_empty_nullifiers_accepted() {
         // Empty nullifiers with non-empty commitments might be valid (mint operation)
-        // Test that binding signature still works
+        // Test that binding hash still works
         let verifier = StarkVerifier;
         let inputs = ShieldedTransferInputs {
             anchor: [1u8; 32],
@@ -1690,10 +1678,10 @@ mod tests {
             value_balance: 1000, // Minting 1000
         };
 
-        let sig = StarkVerifier::compute_binding_commitment(&inputs);
+        let sig = StarkVerifier::compute_binding_hash(&inputs);
         assert!(
-            verifier.verify_binding_signature(&sig, &inputs),
-            "Valid binding signature should work with empty nullifiers"
+            verifier.verify_binding_hash(&sig, &inputs),
+            "Valid binding hash should work with empty nullifiers"
         );
     }
 
@@ -1718,19 +1706,19 @@ mod tests {
             value_balance: i128::MIN,
         };
 
-        // Both should produce valid binding signatures (no panic)
-        let sig_max = StarkVerifier::compute_binding_commitment(&inputs_max);
-        let sig_min = StarkVerifier::compute_binding_commitment(&inputs_min);
+        // Both should produce valid binding hashes (no panic)
+        let sig_max = StarkVerifier::compute_binding_hash(&inputs_max);
+        let sig_min = StarkVerifier::compute_binding_hash(&inputs_min);
 
-        assert!(verifier.verify_binding_signature(&sig_max, &inputs_max));
-        assert!(verifier.verify_binding_signature(&sig_min, &inputs_min));
+        assert!(verifier.verify_binding_hash(&sig_max, &inputs_max));
+        assert!(verifier.verify_binding_hash(&sig_min, &inputs_min));
     }
 
     #[test]
     #[cfg(feature = "stark-verify")]
     fn stark_verifier_accepts_real_proof_fixture() {
         let verifier = StarkVerifier;
-        let (proof, inputs, _binding_sig) = build_stark_fixture();
+        let (proof, inputs, _binding_hash) = build_stark_fixture();
 
         let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
         assert_eq!(result, VerificationResult::Valid);
@@ -1740,7 +1728,7 @@ mod tests {
     #[cfg(feature = "stark-verify")]
     fn stark_verifier_rejects_noncanonical_nullifier() {
         let verifier = StarkVerifier;
-        let (proof, mut inputs, _binding_sig) = build_stark_fixture();
+        let (proof, mut inputs, _binding_hash) = build_stark_fixture();
         inputs.nullifiers[0][0] = 1u8; // Non-canonical high byte
 
         let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
@@ -1751,7 +1739,7 @@ mod tests {
     #[cfg(feature = "stark-verify")]
     fn stark_verifier_rejects_noncanonical_commitment() {
         let verifier = StarkVerifier;
-        let (proof, mut inputs, _binding_sig) = build_stark_fixture();
+        let (proof, mut inputs, _binding_hash) = build_stark_fixture();
         inputs.commitments[0][0] = 1u8; // Non-canonical high byte
 
         let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
@@ -1762,7 +1750,7 @@ mod tests {
     #[cfg(feature = "stark-verify")]
     fn stark_verifier_rejects_noncanonical_anchor() {
         let verifier = StarkVerifier;
-        let (proof, mut inputs, _binding_sig) = build_stark_fixture();
+        let (proof, mut inputs, _binding_hash) = build_stark_fixture();
         inputs.anchor[0] = 1u8; // Non-canonical high byte
 
         let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
@@ -1773,11 +1761,11 @@ mod tests {
     #[cfg(feature = "stark-verify")]
     fn stark_verifier_rejects_tampered_value_balance() {
         let verifier = StarkVerifier;
-        let (proof, mut inputs, _binding_sig) = build_stark_fixture();
+        let (proof, mut inputs, _binding_hash) = build_stark_fixture();
 
         inputs.value_balance = 12345;
-        let binding_sig = StarkVerifier::compute_binding_commitment(&inputs);
-        assert!(verifier.verify_binding_signature(&binding_sig, &inputs));
+        let binding_hash = StarkVerifier::compute_binding_hash(&inputs);
+        assert!(verifier.verify_binding_hash(&binding_hash, &inputs));
 
         let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
         assert_eq!(result, VerificationResult::VerificationFailed);
