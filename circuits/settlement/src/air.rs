@@ -145,10 +145,16 @@ impl Air for SettlementAir {
         let s1 = t1.exp(5u64.into());
         let s2 = t2.exp(5u64.into());
 
-        let two: E = E::from(BaseElement::new(2));
-        let hash_s0 = s0 * two + s1 + s2;
-        let hash_s1 = s0 + s1 * two + s2;
-        let hash_s2 = s0 + s1 + s2 * two;
+        let mds = transaction_core::poseidon_constants::MDS_MATRIX;
+        let hash_s0 = s0 * E::from(BaseElement::new(mds[0][0]))
+            + s1 * E::from(BaseElement::new(mds[0][1]))
+            + s2 * E::from(BaseElement::new(mds[0][2]));
+        let hash_s1 = s0 * E::from(BaseElement::new(mds[1][0]))
+            + s1 * E::from(BaseElement::new(mds[1][1]))
+            + s2 * E::from(BaseElement::new(mds[1][2]));
+        let hash_s2 = s0 * E::from(BaseElement::new(mds[2][0]))
+            + s1 * E::from(BaseElement::new(mds[2][1]))
+            + s2 * E::from(BaseElement::new(mds[2][2]));
 
         result[3] = hash_mask * (next[COL_S0] - hash_s0);
         result[4] = hash_mask * (next[COL_S1] - hash_s1);
@@ -232,15 +238,20 @@ fn absorb_mask() -> Vec<BaseElement> {
 
 fn hash_mask() -> Vec<BaseElement> {
     let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
-    for slot in mask.iter_mut().take(9).skip(1) {
-        *slot = BaseElement::ONE;
+    for (idx, slot) in mask.iter_mut().enumerate() {
+        if idx >= 1 && idx <= transaction_core::constants::POSEIDON_ROUNDS {
+            *slot = BaseElement::ONE;
+        }
     }
     mask
 }
 
 fn copy_mask() -> Vec<BaseElement> {
     let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
-    for slot in mask.iter_mut().skip(9) {
+    for slot in mask
+        .iter_mut()
+        .skip(transaction_core::constants::POSEIDON_ROUNDS + 1)
+    {
         *slot = BaseElement::ONE;
     }
     mask
@@ -249,7 +260,7 @@ fn copy_mask() -> Vec<BaseElement> {
 fn round_constants(position: usize) -> Vec<BaseElement> {
     let mut column = Vec::with_capacity(CYCLE_LENGTH);
     for step in 0..CYCLE_LENGTH {
-        if (1..=8).contains(&step) {
+        if (1..=transaction_core::constants::POSEIDON_ROUNDS).contains(&step) {
             column.push(crate::hashing::poseidon_round_constant(step - 1, position));
         } else {
             column.push(BaseElement::ZERO);

@@ -302,7 +302,7 @@ pub fn build_transaction(
     // eprintln!("DEBUG tx_builder: proof_result.commitments.len() = {}", proof_result.commitments.len());
     // eprintln!("DEBUG tx_builder: ciphertexts.len() = {}", ciphertexts.len());
 
-    // Compute binding hash commitment (Blake2-256 hash of public inputs)
+    // Compute binding hash commitment (domain-separated Blake2-256 of public inputs)
     let binding_hash = compute_binding_hash(
         &proof_result.anchor,
         &proof_result.nullifiers,
@@ -310,10 +310,6 @@ pub fn build_transaction(
         proof_result.fee,
         proof_result.value_balance,
     );
-    // The binding hash is the 32-byte hash duplicated to 64 bytes
-    let mut binding_hash_64 = [0u8; 64];
-    binding_hash_64[..32].copy_from_slice(&binding_hash);
-    binding_hash_64[32..].copy_from_slice(&binding_hash);
 
     let bundle = TransactionBundle::new(
         proof_result.proof_bytes,
@@ -321,7 +317,7 @@ pub fn build_transaction(
         proof_result.commitments.to_vec(),
         &ciphertexts,
         proof_result.anchor,
-        binding_hash_64,
+        binding_hash,
         proof_result.fee,
         proof_result.value_balance,
     )?;
@@ -338,15 +334,15 @@ pub fn build_transaction(
 
 /// Compute binding hash for transaction commitment.
 ///
-/// Returns the 32-byte Blake2-256 hash of the public inputs:
-/// Blake2_256(anchor || nullifiers || commitments || fee || value_balance)
+/// Returns the 64-byte binding hash of the public inputs:
+/// Blake2_256(domain || 0 || message) || Blake2_256(domain || 1 || message)
 fn compute_binding_hash(
     anchor: &[u8; 32],
     nullifiers: &[[u8; 32]],
     commitments: &[[u8; 32]],
     fee: u64,
     value_balance: i128,
-) -> [u8; 32] {
+) -> [u8; 64] {
     // Debug: print binding hash inputs
     // eprintln!("DEBUG binding: anchor = {}", hex::encode(anchor));
     // eprintln!("DEBUG binding: nullifiers.len = {}", nullifiers.len());
@@ -371,10 +367,23 @@ fn compute_binding_hash(
     data.extend_from_slice(&value_balance.to_le_bytes());
 
     // eprintln!("DEBUG binding: data.len = {}", data.len());
-    let hash = synthetic_crypto::hashes::blake2_256(&data);
-    // eprintln!("DEBUG binding: hash = {}", hex::encode(&hash));
+    const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v1";
+    let mut msg0 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + data.len());
+    msg0.extend_from_slice(BINDING_HASH_DOMAIN);
+    msg0.push(0);
+    msg0.extend_from_slice(&data);
+    let hash0 = synthetic_crypto::hashes::blake2_256(&msg0);
 
-    hash
+    let mut msg1 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + data.len());
+    msg1.extend_from_slice(BINDING_HASH_DOMAIN);
+    msg1.push(1);
+    msg1.extend_from_slice(&data);
+    let hash1 = synthetic_crypto::hashes::blake2_256(&msg1);
+
+    let mut out = [0u8; 64];
+    out[..32].copy_from_slice(&hash0);
+    out[32..].copy_from_slice(&hash1);
+    out
 }
 
 struct Selection {

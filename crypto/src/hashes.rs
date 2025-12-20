@@ -3,11 +3,12 @@ use sha2::Sha256;
 use sha3::digest::Digest;
 use sha3::Sha3_256;
 
-use crate::deterministic::expand_to_length;
 
 const FIELD_MODULUS: u128 = 0xffffffff00000001;
 const POSEIDON_WIDTH: usize = 3;
-const POSEIDON_ROUNDS: usize = 8;
+const POSEIDON_ROUNDS: usize = 63;
+const NUMS_DOMAIN_ROUND_CONSTANTS: &[u8] = b"hegemon-poseidon-round-constants-v1";
+const NUMS_DOMAIN_MDS: &[u8] = b"hegemon-poseidon-mds-v1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldElement(u64);
@@ -54,21 +55,73 @@ fn poseidon_round_constants() -> [[FieldElement; POSEIDON_WIDTH]; POSEIDON_ROUND
     let mut constants = [[FieldElement::zero(); POSEIDON_WIDTH]; POSEIDON_ROUNDS];
     for (round, round_constants) in constants.iter_mut().enumerate() {
         for (idx, constant) in round_constants.iter_mut().enumerate() {
-            let material = [round as u8, idx as u8];
-            let bytes = expand_to_length(b"poseidon-constants", &material, 8);
-            *constant = FieldElement::from_bytes(&bytes);
+            let mut label = [0u8; 8];
+            label[..4].copy_from_slice(&(round as u32).to_be_bytes());
+            label[4..].copy_from_slice(&(idx as u32).to_be_bytes());
+            let value = hash_to_field(NUMS_DOMAIN_ROUND_CONSTANTS, &label);
+            *constant = FieldElement::from_u64(value);
         }
     }
     constants
 }
 
-fn poseidon_mix(state: &mut [FieldElement; POSEIDON_WIDTH]) {
-    const MIX_MATRIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
+fn poseidon_mds_matrix() -> [[FieldElement; POSEIDON_WIDTH]; POSEIDON_WIDTH] {
+    let mut xs = [0u64; POSEIDON_WIDTH];
+    let mut ys = [0u64; POSEIDON_WIDTH];
+
+    let mut x_count = 0usize;
+    let mut i = 0u32;
+    while x_count < POSEIDON_WIDTH {
+        let mut label = [0u8; 5];
+        label[0] = b'x';
+        label[1..].copy_from_slice(&i.to_be_bytes());
+        let value = hash_to_field(NUMS_DOMAIN_MDS, &label);
+        if xs[..x_count].contains(&value) {
+            i += 1;
+            continue;
+        }
+        xs[x_count] = value;
+        x_count += 1;
+        i += 1;
+    }
+
+    let mut y_count = 0usize;
+    let mut j = 0u32;
+    while y_count < POSEIDON_WIDTH {
+        let mut label = [0u8; 5];
+        label[0] = b'y';
+        label[1..].copy_from_slice(&j.to_be_bytes());
+        let value = hash_to_field(NUMS_DOMAIN_MDS, &label);
+        if xs[..x_count].contains(&value) || ys[..y_count].contains(&value) {
+            j += 1;
+            continue;
+        }
+        ys[y_count] = value;
+        y_count += 1;
+        j += 1;
+    }
+
+    let mut matrix = [[FieldElement::zero(); POSEIDON_WIDTH]; POSEIDON_WIDTH];
+    for (row_idx, x) in xs.iter().enumerate() {
+        for (col_idx, y) in ys.iter().enumerate() {
+            let denom = ((*x as u128 + FIELD_MODULUS - *y as u128) % FIELD_MODULUS) as u64;
+            let inv = mod_pow(denom, (FIELD_MODULUS as u64) - 2);
+            matrix[row_idx][col_idx] = FieldElement::from_u64(inv);
+        }
+    }
+
+    matrix
+}
+
+fn poseidon_mix(
+    state: &mut [FieldElement; POSEIDON_WIDTH],
+    mds: &[[FieldElement; POSEIDON_WIDTH]; POSEIDON_WIDTH],
+) {
     let mut new_state = [FieldElement::zero(); POSEIDON_WIDTH];
-    for (new_slot, mix_row) in new_state.iter_mut().zip(MIX_MATRIX.iter()) {
+    for (new_slot, mix_row) in new_state.iter_mut().zip(mds.iter()) {
         let mut acc = FieldElement::zero();
         for (value, coeff) in state.iter().zip(mix_row.iter()) {
-            acc = acc.add(value.mul(FieldElement::from_u64(*coeff)));
+            acc = acc.add(value.mul(*coeff));
         }
         *new_slot = acc;
     }
@@ -77,6 +130,7 @@ fn poseidon_mix(state: &mut [FieldElement; POSEIDON_WIDTH]) {
 
 pub fn poseidon_hash(inputs: &[FieldElement]) -> FieldElement {
     let constants = poseidon_round_constants();
+    let mds = poseidon_mds_matrix();
     let mut state = [
         FieldElement::from_u64(1),
         FieldElement::from_u64(inputs.len() as u64),
@@ -92,11 +146,42 @@ pub fn poseidon_hash(inputs: &[FieldElement]) -> FieldElement {
             for state_slot in &mut state {
                 *state_slot = state_slot.pow5();
             }
-            poseidon_mix(&mut state);
+            poseidon_mix(&mut state, &mds);
         }
     }
 
     state[0]
+}
+
+fn hash_to_field(domain: &[u8], label: &[u8]) -> u64 {
+    let mut counter = 0u32;
+    loop {
+        let mut hasher = Sha256::new();
+        hasher.update(domain);
+        hasher.update(label);
+        hasher.update(counter.to_be_bytes());
+        let digest = hasher.finalize();
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&digest[..8]);
+        let candidate = u64::from_be_bytes(buf);
+        if (candidate as u128) < FIELD_MODULUS {
+            return candidate;
+        }
+        counter = counter.wrapping_add(1);
+    }
+}
+
+fn mod_pow(base: u64, mut exp: u64) -> u64 {
+    let mut result = 1u128;
+    let mut acc = base as u128;
+    while exp > 0 {
+        if exp & 1 == 1 {
+            result = (result * acc) % FIELD_MODULUS;
+        }
+        acc = (acc * acc) % FIELD_MODULUS;
+        exp >>= 1;
+    }
+    result as u64
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -272,7 +272,7 @@ impl<'a> ShieldedTxBuilder<'a> {
         stats.proving_time = proof_result.proving_time;
         stats.proof_size = proof_result.proof_size();
 
-        // Compute binding hash commitment (Blake2-256 hash of public inputs)
+        // Compute binding hash commitment (domain-separated Blake2-256 of public inputs)
         let binding_hash = self.compute_binding_hash(
             &proof_result.anchor,
             &proof_result.nullifiers,
@@ -280,10 +280,6 @@ impl<'a> ShieldedTxBuilder<'a> {
             proof_result.fee,
             proof_result.value_balance,
         );
-        // The binding hash is the 32-byte hash duplicated to 64 bytes
-        let mut binding_hash_64 = [0u8; 64];
-        binding_hash_64[..32].copy_from_slice(&binding_hash);
-        binding_hash_64[32..].copy_from_slice(&binding_hash);
 
         // Build transaction bundle
         let bundle = TransactionBundle::new(
@@ -292,7 +288,7 @@ impl<'a> ShieldedTxBuilder<'a> {
             proof_result.commitments.to_vec(),
             &ciphertexts,
             proof_result.anchor,
-            binding_hash_64,
+            binding_hash,
             proof_result.fee,
             proof_result.value_balance,
         )?;
@@ -495,8 +491,8 @@ impl<'a> ShieldedTxBuilder<'a> {
 
     /// Compute binding hash for transaction commitment.
     ///
-    /// Returns the 32-byte Blake2-256 hash of the public inputs:
-    /// Blake2_256(anchor || nullifiers || commitments || fee || value_balance)
+    /// Returns the 64-byte binding hash of the public inputs:
+    /// Blake2_256(domain || 0 || message) || Blake2_256(domain || 1 || message)
     fn compute_binding_hash(
         &self,
         anchor: &[u8; 32],
@@ -504,7 +500,7 @@ impl<'a> ShieldedTxBuilder<'a> {
         commitments: &[[u8; 32]],
         fee: u64,
         value_balance: i128,
-    ) -> [u8; 32] {
+    ) -> [u8; 64] {
         let mut data = Vec::new();
         data.extend_from_slice(anchor);
         for nf in nullifiers {
@@ -515,7 +511,23 @@ impl<'a> ShieldedTxBuilder<'a> {
         }
         data.extend_from_slice(&fee.to_le_bytes());
         data.extend_from_slice(&value_balance.to_le_bytes());
-        synthetic_crypto::hashes::blake2_256(&data)
+        const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v1";
+        let mut msg0 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + data.len());
+        msg0.extend_from_slice(BINDING_HASH_DOMAIN);
+        msg0.push(0);
+        msg0.extend_from_slice(&data);
+        let hash0 = synthetic_crypto::hashes::blake2_256(&msg0);
+
+        let mut msg1 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + data.len());
+        msg1.extend_from_slice(BINDING_HASH_DOMAIN);
+        msg1.push(1);
+        msg1.extend_from_slice(&data);
+        let hash1 = synthetic_crypto::hashes::blake2_256(&msg1);
+
+        let mut out = [0u8; 64];
+        out[..32].copy_from_slice(&hash0);
+        out[32..].copy_from_slice(&hash1);
+        out
     }
 
     /// Compute nullifiers for the spent notes.

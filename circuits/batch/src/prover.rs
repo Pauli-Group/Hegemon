@@ -216,15 +216,15 @@ fn fill_padding_rows(trace: &mut [Vec<BaseElement>], start_row: usize, end_row: 
         mds_mix, round_constant, sbox, COL_S1, COL_S2, CYCLE_LENGTH,
     };
 
-    const POSEIDON_ROUNDS: usize = 8;
+    const POSEIDON_ROUNDS: usize = transaction_core::constants::POSEIDON_ROUNDS;
 
     let mut state = [BaseElement::ZERO, BaseElement::ZERO, BaseElement::ONE];
 
     let mut row = start_row;
     while row < end_row {
-        // Process one cycle (16 rows)
+        // Process one cycle (CYCLE_LENGTH rows)
 
-        // Hash rounds (first 8 steps)
+        // Hash rounds (first POSEIDON_ROUNDS steps)
         for step in 0..POSEIDON_ROUNDS {
             let r = row + step;
             if r >= end_row {

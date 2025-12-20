@@ -126,6 +126,7 @@ To connect an external node to the testnet:
 
 ```bash
 hegemon-node \
+    --dev \
     --chain=config/testnet/testnet-raw.json \
     --base-path=/data/hegemon \
     --port=30333 \

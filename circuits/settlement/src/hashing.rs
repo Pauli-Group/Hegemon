@@ -3,18 +3,17 @@ use core::convert::TryInto;
 use winterfell::math::{fields::f64::BaseElement, FieldElement};
 
 use crate::constants::{SETTLEMENT_DOMAIN_TAG, SETTLEMENT_NULLIFIER_DOMAIN_TAG};
+use transaction_core::poseidon_constants;
 
 pub type Felt = BaseElement;
 pub type HashFelt = [Felt; 4];
 pub type Commitment = [u8; 32];
 
-const FIELD_MODULUS: u128 = (1u128 << 64) - (1u128 << 32) + 1;
+const FIELD_MODULUS: u128 = transaction_core::constants::FIELD_MODULUS;
 
 #[inline]
 pub fn poseidon_round_constant(round: usize, position: usize) -> Felt {
-    let seed = ((round as u64 + 1).wrapping_mul(0x9e37_79b9u64))
-        ^ ((position as u64 + 1).wrapping_mul(0x7f4a_7c15u64));
-    Felt::new(seed)
+    Felt::new(poseidon_constants::ROUND_CONSTANTS[round][position])
 }
 
 #[inline]
@@ -24,12 +23,16 @@ pub fn sbox(x: Felt) -> Felt {
 
 #[inline]
 pub fn mds_mix(state: &[Felt; 3]) -> [Felt; 3] {
-    let two = Felt::new(2);
-    [
-        state[0] * two + state[1] + state[2],
-        state[0] + state[1] * two + state[2],
-        state[0] + state[1] + state[2] * two,
-    ]
+    let mut out = [Felt::ZERO; 3];
+    for (row_idx, out_slot) in out.iter_mut().enumerate() {
+        let mut acc = Felt::ZERO;
+        for (col_idx, value) in state.iter().enumerate() {
+            let coeff = poseidon_constants::MDS_MATRIX[row_idx][col_idx];
+            acc += *value * Felt::new(coeff);
+        }
+        *out_slot = acc;
+    }
+    out
 }
 
 pub fn poseidon_round(state: &mut [Felt; 3], round: usize) {
@@ -43,7 +46,7 @@ pub fn poseidon_round(state: &mut [Felt; 3], round: usize) {
 }
 
 pub fn poseidon_permutation(state: &mut [Felt; 3]) {
-    for round in 0..8 {
+    for round in 0..transaction_core::constants::POSEIDON_ROUNDS {
         poseidon_round(state, round);
     }
 }

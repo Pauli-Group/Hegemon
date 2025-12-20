@@ -910,8 +910,8 @@ dependencies = [
  "miden-crypto",
  "proptest",
  "rand 0.8.5",
- "thiserror 1.0.69",
  "transaction-circuit",
+ "transaction-core",
  "winter-air",
  "winter-crypto",
  "winter-prover",
@@ -6607,6 +6607,7 @@ name = "pallet-shielded-pool"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "batch-circuit",
  "blake3",
  "epoch-circuit",
  "frame-benchmarking",
@@ -9486,6 +9487,7 @@ dependencies = [
 name = "settlement-circuit"
 version = "0.1.0"
 dependencies = [
+ "transaction-core",
  "winter-crypto",
  "winterfell",
 ]

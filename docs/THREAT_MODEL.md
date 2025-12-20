@@ -39,7 +39,7 @@ This document explains the attacker capabilities and design assumptions for each
 
 - **Signatures**: Target ≥ 128-bit PQ security (ML-DSA-65 / SLH-DSA-128f). Keys larger than spec are rejected.
 - **KEM**: ML-KEM-768 or higher. Shared secrets truncated to 256 bits of entropy.
-- **Hashes**: SHA-256/BLAKE3 externally, Poseidon-like field hash internally. Minimum output 256 bits.
+- **Hashes**: SHA-256/BLAKE3 externally, Poseidon-like field hash internally (width 3, 63 full rounds, NUMS constants). Minimum output 256 bits.
 - **Proving**: FRI queries sized for ≥110-bit classical security; Grover halves to ~55-bit, so recursion layers stack to recover ≥128-bit effective security.
 
 When implementation shifts any of these values, update this document alongside the relevant design/method sections.

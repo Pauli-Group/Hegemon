@@ -461,14 +461,17 @@ Everything arithmetized in the STARK (commitments, Merkle hashes, PRFs) lives in
 
 Define a Poseidon-like permutation \(P: \mathbb{F}_p^t \to \mathbb{F}_p^t\):
 
-* Width \(t = 12\) so we can absorb multiple words at once.
-* Round constants and MDS matrix chosen per the standard Poseidon recipe for this field.
-* Rounds: for example, \(R_F = 8\) full and \(R_P = 56\) partial (numbers can be tuned; assume we choose something with at least a 128-bit post-quantum security margin).
+* Width \(t = 3\) (rate 2, capacity 1) for a small, STARK-friendly state.
+* S-box is \(x^5\) applied to every state element (full rounds only).
+* Rounds: \(R_F = 63\) full rounds, no partial rounds, which is conservative for 128-bit post-Grover security in this field.
+* Round constants and MDS matrix are generated via a NUMS scheme:
+  * Round constants: SHA-256(domain || round_be32 || pos_be32 || counter_be32), rejected if the 64-bit candidate is \(\ge p\).
+  * MDS: Cauchy matrix \((x_i - y_j)^{-1}\) with distinct \(x_i, y_j\) seeds derived by SHA-256(domain || label || counter_be32).
 
 We derive a field hash by sponge:
 
 \[
-H_f(x_0, \ldots, x_{k-1}) = \operatorname{Sponge}(P, \text{capacity}=4, \text{rate}=8, x_0, \ldots, x_{k-1})
+H_f(x_0, \ldots, x_{k-1}) = \operatorname{Sponge}(P, \text{capacity}=1, \text{rate}=2, x_0, \ldots, x_{k-1})
 \]
 
 For commitments, nullifiers, and Merkle nodes we emit four field elements: take `state[0]` and
@@ -660,6 +663,16 @@ The circuit's public inputs (fed into its transcript) are:
 The transaction envelope also carries `balance_slots` and a `balance_tag`, which are validated outside the STARK for now.
 `root_after` and any `txid` binding are handled at the block circuit layer (or a future transaction-circuit revision).
 
+As an additional integrity check outside the STARK, the runtime and wallet compute a 64-byte binding hash over the public inputs:
+
+```
+message = anchor || nullifiers || commitments || fee || value_balance
+binding_hash = Blake2_256("binding-hash-v1" || 0 || message)
+             || Blake2_256("binding-hash-v1" || 1 || message)
+```
+
+Verifiers must compare all 64 bytes; this is a defense-in-depth commitment, not a signature.
+
 #### 5.2 Witness (private inputs)
 
 For each input `i`:
@@ -787,7 +800,7 @@ Epoch proofs for light client sync accumulate proof hashes that bind the STARK p
 
 #### 6.6 Settlement batch proofs
 
-Settlement batch proofs bind instruction IDs and nullifiers into a Poseidon-based commitment. The public inputs are the instruction count, nullifier count, the padded instruction ID list (length `MAX_INSTRUCTIONS`), the padded nullifier list (length `MAX_NULLIFIERS`), and the commitment itself. The commitment is computed by absorbing input pairs into a Poseidon sponge initialized as `[domain_tag, 0, 1]`, adding each pair to the first two state elements, running 8 rounds, and repeating for the full padded input list. Nullifiers are Poseidon-derived from `(instruction_id, index)` under a distinct domain tag, then encoded as 32 bytes with four big-endian limbs; canonical encodings reject any limb \(\ge p\). Settlement verification rejects non-canonical encodings and uses the on-chain `StarkVerifierParams` (Blake3, 28 FRI queries, 16x blowup) to select acceptable proof options.
+Settlement batch proofs bind instruction IDs and nullifiers into a Poseidon-based commitment. The public inputs are the instruction count, nullifier count, the padded instruction ID list (length `MAX_INSTRUCTIONS`), the padded nullifier list (length `MAX_NULLIFIERS`), and the commitment itself. The commitment is computed by absorbing input pairs into a Poseidon sponge initialized as `[domain_tag, 0, 1]`, adding each pair to the first two state elements, running the full-round permutation (`POSEIDON_ROUNDS = 63`) per absorb cycle, and repeating for the full padded input list. Nullifiers are Poseidon-derived from `(instruction_id, index)` under a distinct domain tag, then encoded as 32 bytes with four big-endian limbs; canonical encodings reject any limb \(\ge p\). Settlement verification rejects non-canonical encodings and uses the on-chain `StarkVerifierParams` (Blake3, 28 FRI queries, 16x blowup) to select acceptable proof options.
 
 
 ---
@@ -801,7 +814,7 @@ Module layout:
 * `crypto::ml_dsa` – exposes `MlDsaSecretKey`, `MlDsaPublicKey`, and `MlDsaSignature` with `SigningKey`/`VerifyKey` trait implementations. Secret keys derive public keys by hashing with domain tag `ml-dsa-pk`, and signatures deterministically expand `ml-dsa-signature || pk || message` to 3293 bytes.
 * `crypto::slh_dsa` – mirrors the ML-DSA interface but with SLH-DSA key lengths (32 B public, 64 B secret, 17088 B signatures).
 * `crypto::ml_kem` – wraps Kyber-like encapsulation with `MlKemKeyPair`, `MlKemPublicKey`, and `MlKemCiphertext`. Encapsulation uses a seed to deterministically derive ciphertexts and shared secrets, while decapsulation recomputes the shared secret from stored public bytes.
-* `crypto::hashes` – contains `sha256`, `sha3_256`, `blake3_256`, a Poseidon-style permutation over the Goldilocks prime, and helpers `commit_note`, `derive_prf_key`, and `derive_nullifier` (defaulting to BLAKE3 with SHA3 fallbacks) that apply the design’s domain tags (`"c"`, `"nk"`, `"nf"`). PQ address and note hashes now normalize on BLAKE3-256 by default while keeping SHA3-256 as an opt-in override for circuits that still expect it.
+* `crypto::hashes` – contains `sha256`, `sha3_256`, `blake3_256`, a Poseidon-style permutation over the Goldilocks prime (width 3, 63 full rounds, NUMS constants), and helpers `commit_note`, `derive_prf_key`, and `derive_nullifier` (defaulting to BLAKE3 with SHA3 fallbacks) that apply the design’s domain tags (`"c"`, `"nk"`, `"nf"`). PQ address and note hashes now normalize on BLAKE3-256 by default while keeping SHA3-256 as an opt-in override for circuits that still expect it.
 * `pallet_identity` – stores session keys as a `SessionKey` enum (legacy AuthorityId or PQ-only Dilithium/Falcon). The runtime migration wraps any pre-upgrade `AuthorityId` into `SessionKey::Legacy` so existing operators inherit their keys; new registrations can supply PQ-only bundles through the same `register_did` call without a one-off rotate extrinsic.
 * `pallet_attestations` / `pallet_settlement` – persist `StarkVerifierParams` in storage with governance-controlled setters and runtime-upgrade initialization so on-chain STARK verification remains aligned with PQ hash choices. The runtime seeds attestations with Blake3 hashing, 28 FRI queries, a 4x blowup factor, and 128-bit security; settlement uses the same hash/query/security budget but a 16x blowup factor to satisfy the Poseidon AIR degree constraints. Governance can migrate to new parameters via the `set_verifier_params` call without redeploying code.
 

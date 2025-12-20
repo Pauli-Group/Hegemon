@@ -4,18 +4,14 @@ use transaction_circuit::hashing::{merkle_node_bytes, Commitment};
 
 // Re-implement the pallet's Poseidon for comparison in a test context
 mod pallet_poseidon {
-    const POSEIDON_WIDTH: usize = 3;
-    const POSEIDON_ROUNDS: usize = 8;
-    const MERKLE_DOMAIN_TAG: u64 = 4;
-    const FIELD_MODULUS: u128 = (1u128 << 64) - (1u128 << 32) + 1;
+    const POSEIDON_WIDTH: usize = transaction_circuit::constants::POSEIDON_WIDTH;
+    const POSEIDON_ROUNDS: usize = transaction_circuit::constants::POSEIDON_ROUNDS;
+    const MERKLE_DOMAIN_TAG: u64 = transaction_circuit::constants::MERKLE_DOMAIN_TAG;
+    const FIELD_MODULUS: u128 = transaction_circuit::constants::FIELD_MODULUS;
 
     #[inline]
     fn round_constant(round: usize, position: usize) -> u64 {
-        let seed = ((round as u64).wrapping_add(1).wrapping_mul(0x9e37_79b9u64))
-            ^ ((position as u64)
-                .wrapping_add(1)
-                .wrapping_mul(0x7f4a_7c15u64));
-        seed
+        transaction_circuit::poseidon_constants::ROUND_CONSTANTS[round][position]
     }
 
     #[inline]
@@ -41,10 +37,10 @@ mod pallet_poseidon {
     }
 
     fn mix(state: &mut [u64; POSEIDON_WIDTH]) {
-        const MIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
+        let mix = transaction_circuit::poseidon_constants::MDS_MATRIX;
         let state_snapshot = *state;
         let mut tmp = [0u64; POSEIDON_WIDTH];
-        for (row, output) in MIX.iter().zip(tmp.iter_mut()) {
+        for (row, output) in mix.iter().zip(tmp.iter_mut()) {
             let mut acc = 0u64;
             for (&coef, &value) in row.iter().zip(state_snapshot.iter()) {
                 acc = field_add(acc, field_mul(value, coef));

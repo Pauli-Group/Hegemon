@@ -6,6 +6,7 @@ use crate::constants::{
     BALANCE_DOMAIN_TAG, FIELD_MODULUS, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
     POSEIDON_ROUNDS, POSEIDON_WIDTH,
 };
+use crate::poseidon_constants;
 use crate::types::BalanceSlot;
 
 pub type Felt = BaseElement;
@@ -13,22 +14,19 @@ pub type HashFelt = [Felt; 4];
 pub type Commitment = [u8; 32];
 
 fn round_constant(round: usize, position: usize) -> Felt {
-    // Deterministic but simple constant generation derived from round/position indices.
-    let seed = ((round as u64 + 1) * 0x9e37_79b9u64) ^ ((position as u64 + 1) * 0x7f4a_7c15u64);
-    Felt::new(seed)
+    Felt::new(poseidon_constants::ROUND_CONSTANTS[round][position])
 }
 
 fn mix(state: &mut [Felt; POSEIDON_WIDTH]) {
-    const MIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
     let state_snapshot = *state;
     let mut tmp = [Felt::ZERO; POSEIDON_WIDTH];
-    for (row, output) in MIX.iter().zip(tmp.iter_mut()) {
-        *output = row
-            .iter()
-            .zip(state_snapshot.iter())
-            .fold(Felt::ZERO, |acc, (&coef, value)| {
-                acc + *value * Felt::new(coef)
-            });
+    for (row_idx, output) in tmp.iter_mut().enumerate() {
+        let mut acc = Felt::ZERO;
+        for (col_idx, value) in state_snapshot.iter().enumerate() {
+            let coef = poseidon_constants::MDS_MATRIX[row_idx][col_idx];
+            acc += *value * Felt::new(coef);
+        }
+        *output = acc;
     }
     *state = tmp;
 }
@@ -262,123 +260,4 @@ pub fn signed_parts(value: i128) -> Option<(Felt, Felt)> {
     let mag_u64 = u64::try_from(magnitude).ok()?;
     let sign = if value < 0 { Felt::ONE } else { Felt::ZERO };
     Some((sign, Felt::new(mag_u64)))
-}
-
-#[cfg(test)]
-mod poseidon_compat_tests {
-    use super::*;
-
-    // Re-implement the pallet's Poseidon for comparison
-    mod pallet_poseidon {
-        const POSEIDON_WIDTH: usize = 3;
-        const POSEIDON_ROUNDS: usize = 8;
-        const MERKLE_DOMAIN_TAG: u64 = 4;
-        const FIELD_MODULUS: u128 = (1u128 << 64) - (1u128 << 32) + 1;
-
-        #[inline]
-        fn round_constant(round: usize, position: usize) -> u64 {
-            let seed = ((round as u64).wrapping_add(1).wrapping_mul(0x9e37_79b9u64))
-                ^ ((position as u64)
-                    .wrapping_add(1)
-                    .wrapping_mul(0x7f4a_7c15u64));
-            seed
-        }
-
-        #[inline]
-        fn reduce(val: u128) -> u64 {
-            (val % FIELD_MODULUS) as u64
-        }
-
-        #[inline]
-        fn field_mul(a: u64, b: u64) -> u64 {
-            reduce((a as u128) * (b as u128))
-        }
-
-        #[inline]
-        fn field_add(a: u64, b: u64) -> u64 {
-            reduce((a as u128) + (b as u128))
-        }
-
-        #[inline]
-        fn field_exp5(x: u64) -> u64 {
-            let x2 = field_mul(x, x);
-            let x4 = field_mul(x2, x2);
-            field_mul(x4, x)
-        }
-
-        fn mix(state: &mut [u64; POSEIDON_WIDTH]) {
-            const MIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
-            let state_snapshot = *state;
-            let mut tmp = [0u64; POSEIDON_WIDTH];
-            for (row, output) in MIX.iter().zip(tmp.iter_mut()) {
-                let mut acc = 0u64;
-                for (&coef, &value) in row.iter().zip(state_snapshot.iter()) {
-                    acc = field_add(acc, field_mul(value, coef));
-                }
-                *output = acc;
-            }
-            *state = tmp;
-        }
-
-        fn permutation(state: &mut [u64; POSEIDON_WIDTH]) {
-            for round in 0..POSEIDON_ROUNDS {
-                for (position, value) in state.iter_mut().enumerate() {
-                    *value = field_add(*value, round_constant(round, position));
-                }
-                for value in state.iter_mut() {
-                    *value = field_exp5(*value);
-                }
-                mix(state);
-            }
-        }
-
-        fn absorb(state: &mut [u64; POSEIDON_WIDTH], chunk: &[u64]) {
-            for (state_slot, value) in state.iter_mut().zip(chunk.iter()) {
-                *state_slot = field_add(*state_slot, *value);
-            }
-            permutation(state);
-        }
-
-        fn sponge_hash(domain_tag: u64, inputs: &[u64]) -> [u64; 4] {
-            let mut state = [domain_tag, 0, 1];
-            let rate = POSEIDON_WIDTH - 1;
-            let mut cursor = 0;
-            while cursor < inputs.len() {
-                let take = core::cmp::min(rate, inputs.len() - cursor);
-                let mut chunk = [0u64; POSEIDON_WIDTH - 1];
-                chunk[..take].copy_from_slice(&inputs[cursor..cursor + take]);
-                absorb(&mut state, &chunk);
-                cursor += take;
-            }
-            let mut output = [0u64; 4];
-            output[0] = state[0];
-            output[1] = state[1];
-            permutation(&mut state);
-            output[2] = state[0];
-            output[3] = state[1];
-            output
-        }
-
-        pub fn merkle_node(left: [u64; 4], right: [u64; 4]) -> [u64; 4] {
-            let inputs = [
-                left[2], left[3], left[0], left[1], right[2], right[3], right[0], right[1],
-            ];
-            sponge_hash(MERKLE_DOMAIN_TAG, &inputs)
-        }
-    }
-
-    #[test]
-    fn merkle_node_matches_pallet_hash() {
-        let left = [Felt::new(10), Felt::ZERO, Felt::ZERO, Felt::ZERO];
-        let right = [Felt::new(20), Felt::ZERO, Felt::ZERO, Felt::ZERO];
-        let circuit_hash = merkle_node(left, right);
-        let pallet_hash = pallet_poseidon::merkle_node([10, 0, 0, 0], [20, 0, 0, 0]);
-        let circuit_hash_int: [u64; 4] = [
-            circuit_hash[0].as_int(),
-            circuit_hash[1].as_int(),
-            circuit_hash[2].as_int(),
-            circuit_hash[3].as_int(),
-        ];
-        assert_eq!(circuit_hash_int, pallet_hash);
-    }
 }

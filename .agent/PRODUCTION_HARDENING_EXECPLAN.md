@@ -20,6 +20,8 @@ The visible proof is that production builds either (a) succeed with full cryptog
 - [x] (2025-12-20 04:47Z) Enforce real state execution in non‑dev nodes and block CLI paths that emit empty proofs.
 - [x] (2025-12-20 04:47Z) Fix wallet serialization truncation and production defaults that embed predictable seeds/tokens.
 - [x] (2025-12-20 04:47Z) Update docs, tests, and hardening scripts to match the new guarantees.
+- [x] (2025-12-20 07:05Z) Replace toy Poseidon constants with NUMS-derived constants and 63 full rounds across circuits/runtime/crypto.
+- [x] (2025-12-20 07:05Z) Wire batch proof verification, enforce full binding hash checks, and require `--dev` to start the node.
 
 ## Surprises & Discoveries
 
@@ -39,13 +41,23 @@ None yet. Update this section as soon as unexpected behavior is observed, with s
   Rationale: The current field is a hash commitment, not a signature; the name is misleading and suggests security that does not exist.
   Date/Author: 2025-12-20 / Codex
 
+- Decision: Adopt NUMS Poseidon parameters (width 3, 63 full rounds, SHA-256-derived constants) for commitments/nullifiers/Merkle hashing.
+  Rationale: The previous toy Poseidon constants and 8-round configuration do not meet binding/hiding assumptions; NUMS constants provide transparent, non-adversarial parameters.
+  Date/Author: 2025-12-20 / Codex
+
+- Decision: Require `--dev` at node startup until non-dev profiles are re-enabled with audited production defaults.
+  Rationale: Prevent accidental non-dev starts while hardening work remains in flight; force explicit dev-mode acknowledgement.
+  Date/Author: 2025-12-20 / Codex
+
 ## Outcomes & Retrospective
 
 Delivered:
 - Production verification now requires real STARK proof bytes/public inputs; legacy and fast verification paths are gated behind explicit features and checked by the hardening script.
 - Commitments, nullifiers, and Merkle roots use 4-limb (256-bit) Poseidon outputs with canonical limb checks across circuits, pallet, wallet, and state.
+- Poseidon hashing now uses NUMS-derived constants with 63 full rounds, aligned across circuits, runtime, and crypto helper crates.
 - Viewing keys store a view-derived nullifier key (`view_nf`), wallet stores migrate safely, and PRF derivations are aligned across crates.
 - “Binding signature” renamed to `binding_hash` across runtime, RPC, wallet, tests, and docs.
+- Batch proof verification is wired to the batch circuit, and binding hashes are validated as full 64-byte commitments.
 - Non-dev nodes refuse mock state execution without an explicit flag; wallet batch proofs are opt-in and memos now hard-fail on oversize payloads.
 - Documentation, runbooks, and production checks updated to reflect protocol-breaking encoding changes and operational resets.
 

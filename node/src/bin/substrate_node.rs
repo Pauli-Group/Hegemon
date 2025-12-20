@@ -142,6 +142,16 @@ mod cli {
     pub fn run() -> sc_cli::Result<()> {
         let cli = Cli::parse();
 
+        if cli.subcommand.is_none() && !cli.run.shared_params.dev {
+            return Err(sc_cli::Error::Input(
+                "refusing to start without --dev (non-dev profiles are disabled)".into(),
+            ));
+        }
+
+        if cli.run.shared_params.dev {
+            std::env::set_var("HEGEMON_DEV_MODE", "1");
+        }
+
         if let Some(dir) = cli.recursive_epoch_proofs_dir.as_ref() {
             std::env::set_var("HEGEMON_RECURSIVE_EPOCH_PROOFS_DIR", dir);
         }

@@ -23,28 +23,12 @@ const NULLIFIER_DOMAIN: &[u8] = b"Hegemon_Nullifier_v1";
 /// Domain separator for PRF key derivation.
 const PRF_KEY_DOMAIN: &[u8] = b"Hegemon_PrfKey_v1";
 
-/// Poseidon-like hash parameters for note commitments.
-/// These are simplified for the pallet; the actual ZK circuit uses
-/// proper Poseidon with STARK-friendly field elements.
-const POSEIDON_ROUNDS: usize = 8;
-const POSEIDON_WIDTH: usize = 3;
+/// Poseidon hash parameters (shared with the circuit).
+const POSEIDON_ROUNDS: usize = transaction_core::constants::POSEIDON_ROUNDS;
+const POSEIDON_WIDTH: usize = transaction_core::constants::POSEIDON_WIDTH;
 
-// ================================================================================================
-// CIRCUIT-COMPATIBLE DOMAIN TAGS (must match circuits/transaction/src/constants.rs)
-// ================================================================================================
-
-/// Domain separation tag for note commitments (circuit-compatible).
-const CIRCUIT_NOTE_DOMAIN_TAG: u64 = 1;
-
-/// Domain separation tag for nullifiers (circuit-compatible).
-const CIRCUIT_NULLIFIER_DOMAIN_TAG: u64 = 2;
-
-/// Domain separation tag for Merkle tree nodes (circuit-compatible).
-#[allow(dead_code)]
-const CIRCUIT_MERKLE_DOMAIN_TAG: u64 = 4;
-
-/// Field modulus for simplified Poseidon (Goldilocks-like).
-const FIELD_MODULUS: u128 = 0xffffffff00000001;
+/// Field modulus for Poseidon (Goldilocks prime).
+const FIELD_MODULUS: u128 = transaction_core::constants::FIELD_MODULUS;
 
 /// A field element for Poseidon operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,138 +85,10 @@ impl FieldElement {
 }
 
 // ================================================================================================
-// CIRCUIT-COMPATIBLE SPONGE (matches circuits/transaction/src/hashing.rs exactly)
+// CIRCUIT-COMPATIBLE HASHING (matches circuits/transaction-core hashing)
 // ================================================================================================
 
-/// Compute round constant matching the circuit implementation.
-#[inline]
-fn circuit_round_constant(round: usize, position: usize) -> u64 {
-    ((round as u64).wrapping_add(1).wrapping_mul(0x9e37_79b9u64))
-        ^ ((position as u64)
-            .wrapping_add(1)
-            .wrapping_mul(0x7f4a_7c15u64))
-}
-
-/// Mix function matching the circuit implementation.
-fn circuit_mix(state: &mut [u64; POSEIDON_WIDTH]) {
-    const MIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
-    let state_snapshot = *state;
-    let mut tmp = [0u64; POSEIDON_WIDTH];
-    for (row, output) in MIX.iter().zip(tmp.iter_mut()) {
-        let mut acc: u128 = 0;
-        for (&coef, &value) in row.iter().zip(state_snapshot.iter()) {
-            // Use u128 for intermediate multiplication to match circuit
-            let prod = ((value as u128) * (coef as u128)) % FIELD_MODULUS;
-            acc = (acc + prod) % FIELD_MODULUS;
-        }
-        *output = acc as u64;
-    }
-    *state = tmp;
-}
-
-/// Permutation function matching the circuit implementation.
-fn circuit_permutation(state: &mut [u64; POSEIDON_WIDTH]) {
-    for round in 0..POSEIDON_ROUNDS {
-        for (position, value) in state.iter_mut().enumerate() {
-            let rc = circuit_round_constant(round, position);
-            *value = ((*value as u128 + rc as u128) % FIELD_MODULUS) as u64;
-        }
-        for value in state.iter_mut() {
-            // x^5 S-box
-            let v = *value as u128;
-            let v2 = (v * v) % FIELD_MODULUS;
-            let v4 = (v2 * v2) % FIELD_MODULUS;
-            let v5 = (v4 * v) % FIELD_MODULUS;
-            *value = v5 as u64;
-        }
-        circuit_mix(state);
-    }
-}
-
-/// Absorb function matching the circuit implementation.
-fn circuit_absorb(state: &mut [u64; POSEIDON_WIDTH], chunk: &[u64]) {
-    for (state_slot, &value) in state.iter_mut().zip(chunk.iter()) {
-        *state_slot = ((*state_slot as u128 + value as u128) % FIELD_MODULUS) as u64;
-    }
-    circuit_permutation(state);
-}
-
-/// Sponge hash function matching the circuit implementation exactly (4-limb output).
-///
-/// This is the canonical hash used by the ZK circuits.
-/// Initial state: [domain_tag, 0, 1]
-/// Rate: 2 (POSEIDON_WIDTH - 1)
-pub fn circuit_sponge_hash(domain_tag: u64, inputs: &[u64]) -> [u64; 4] {
-    let mut state = [domain_tag, 0, 1];
-    let rate = POSEIDON_WIDTH - 1;
-    let mut cursor = 0;
-    while cursor < inputs.len() {
-        let take = core::cmp::min(rate, inputs.len() - cursor);
-        let mut chunk = [0u64; 2]; // rate = 2
-        chunk[..take].copy_from_slice(&inputs[cursor..cursor + take]);
-        circuit_absorb(&mut state, &chunk);
-        cursor += take;
-    }
-    let mut output = [0u64; 4];
-    output[0] = state[0];
-    output[1] = state[1];
-    circuit_permutation(&mut state);
-    output[2] = state[0];
-    output[3] = state[1];
-    output
-}
-
-/// Sponge hash function returning a single field element (used for PRF key).
-fn circuit_sponge_single(domain_tag: u64, inputs: &[u64]) -> u64 {
-    let mut state = [domain_tag, 0, 1];
-    let rate = POSEIDON_WIDTH - 1;
-    let mut cursor = 0;
-    while cursor < inputs.len() {
-        let take = core::cmp::min(rate, inputs.len() - cursor);
-        let mut chunk = [0u64; 2]; // rate = 2
-        chunk[..take].copy_from_slice(&inputs[cursor..cursor + take]);
-        circuit_absorb(&mut state, &chunk);
-        cursor += take;
-    }
-    state[0]
-}
-
-/// Convert bytes to circuit-compatible field elements.
-/// Takes 8 bytes at a time as big-endian u64, left-padding shorter chunks.
-fn bytes_to_circuit_felts(bytes: &[u8]) -> Vec<u64> {
-    bytes
-        .chunks(8)
-        .map(|chunk| {
-            let mut buf = [0u8; 8];
-            buf[8 - chunk.len()..].copy_from_slice(chunk);
-            u64::from_be_bytes(buf)
-        })
-        .collect()
-}
-
-/// Convert circuit field limbs into a 32-byte commitment encoding.
-fn felts_to_commitment(felts: &[u64; 4]) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    for (idx, limb) in felts.iter().enumerate() {
-        let start = idx * 8;
-        out[start..start + 8].copy_from_slice(&limb.to_be_bytes());
-    }
-    out
-}
-
 /// Compute note commitment exactly as the ZK circuit does.
-///
-/// This matches `circuits/transaction/src/hashing.rs::note_commitment` exactly.
-/// Format: sponge(NOTE_DOMAIN_TAG, [value, asset_id, pk_recipient..., rho..., r...])
-///
-/// Arguments:
-/// - value: Note value in atomic units
-/// - asset_id: Asset identifier (0 for native)
-/// - pk_recipient: 32-byte recipient public key
-/// - rho: 32-byte randomness for nullifier derivation
-/// - r: 32-byte commitment randomness
-///
-/// Returns: 32-byte commitment encoding (4 x 64-bit limbs).
 pub fn circuit_note_commitment(
     value: u64,
     asset_id: u64,
@@ -240,26 +96,14 @@ pub fn circuit_note_commitment(
     rho: &[u8; 32],
     r: &[u8; 32],
 ) -> [u8; 32] {
-    let mut inputs = Vec::new();
-    inputs.push(value);
-    inputs.push(asset_id);
-    inputs.extend(bytes_to_circuit_felts(pk_recipient));
-    inputs.extend(bytes_to_circuit_felts(rho));
-    inputs.extend(bytes_to_circuit_felts(r));
-    let felts = circuit_sponge_hash(CIRCUIT_NOTE_DOMAIN_TAG, &inputs);
-    felts_to_commitment(&felts)
+    transaction_core::hashing::note_commitment_bytes(value, asset_id, pk_recipient, rho, r)
 }
 
 /// Compute nullifier exactly as the ZK circuit does.
 ///
 /// This matches `circuits/transaction/src/hashing.rs::nullifier` exactly.
 pub fn circuit_nullifier(prf_key: u64, rho: &[u8; 32], position: u64) -> [u8; 32] {
-    let mut inputs = Vec::new();
-    inputs.push(prf_key);
-    inputs.push(position);
-    inputs.extend(bytes_to_circuit_felts(rho));
-    let felts = circuit_sponge_hash(CIRCUIT_NULLIFIER_DOMAIN_TAG, &inputs);
-    felts_to_commitment(&felts)
+    transaction_core::hashing::nullifier_bytes(transaction_core::Felt::new(prf_key), rho, position)
 }
 
 /// Compute PRF key exactly as the ZK circuit does.
@@ -293,7 +137,7 @@ pub fn commitment_to_felt(commitment: &[u8; 32]) -> u64 {
 }
 
 // ================================================================================================
-// LEGACY POSEIDON IMPLEMENTATION (kept for backward compatibility)
+// RUNTIME POSEIDON IMPLEMENTATION (matches circuit constants)
 // ================================================================================================
 
 /// Generate round constants for Poseidon.
@@ -301,10 +145,8 @@ fn poseidon_round_constants() -> [[FieldElement; POSEIDON_WIDTH]; POSEIDON_ROUND
     let mut constants = [[FieldElement::zero(); POSEIDON_WIDTH]; POSEIDON_ROUNDS];
     for (round, round_constants) in constants.iter_mut().enumerate() {
         for (idx, constant) in round_constants.iter_mut().enumerate() {
-            // Derive deterministic constants
-            let material = [round as u8, idx as u8];
-            let hash = blake2_256(&[b"poseidon-constants", material.as_slice()].concat());
-            *constant = FieldElement::from_bytes(&hash[..8]);
+            let value = transaction_core::poseidon_constants::ROUND_CONSTANTS[round][idx];
+            *constant = FieldElement::from_u64(value);
         }
     }
     constants
@@ -312,12 +154,12 @@ fn poseidon_round_constants() -> [[FieldElement; POSEIDON_WIDTH]; POSEIDON_ROUND
 
 /// MDS mixing matrix application.
 fn poseidon_mix(state: &mut [FieldElement; POSEIDON_WIDTH]) {
-    const MIX_MATRIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
     let mut new_state = [FieldElement::zero(); POSEIDON_WIDTH];
-    for (new_slot, mix_row) in new_state.iter_mut().zip(MIX_MATRIX.iter()) {
+    for (row_idx, new_slot) in new_state.iter_mut().enumerate() {
         let mut acc = FieldElement::zero();
-        for (value, coeff) in state.iter().zip(mix_row.iter()) {
-            acc = acc.add(value.mul(FieldElement::from_u64(*coeff)));
+        for (col_idx, value) in state.iter().enumerate() {
+            let coeff = transaction_core::poseidon_constants::MDS_MATRIX[row_idx][col_idx];
+            acc = acc.add(value.mul(FieldElement::from_u64(coeff)));
         }
         *new_slot = acc;
     }

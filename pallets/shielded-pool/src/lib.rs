@@ -1157,6 +1157,7 @@ pub mod pallet {
                 nullifiers: nullifiers.clone().into_inner(),
                 commitments: commitments.clone().into_inner(),
                 batch_size: proof.batch_size,
+                total_fee,
             };
 
             // Get verifying key

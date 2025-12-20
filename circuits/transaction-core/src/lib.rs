@@ -9,7 +9,9 @@
 extern crate alloc;
 
 pub mod constants;
+pub mod dimensions;
 pub mod hashing;
+pub mod poseidon_constants;
 pub mod stark_air;
 #[cfg(feature = "stark-verify")]
 pub mod stark_verifier;

@@ -410,9 +410,22 @@ impl ProductionConfig {
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
 
-        let allow_mock_execution = std::env::var("HEGEMON_ALLOW_MOCK_EXECUTION")
+        let dev_mode = std::env::var("HEGEMON_DEV_MODE")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
+        let allow_mock_execution_requested = std::env::var("HEGEMON_ALLOW_MOCK_EXECUTION")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+        let allow_mock_execution = if dev_mode {
+            allow_mock_execution_requested
+        } else {
+            if allow_mock_execution_requested {
+                tracing::warn!(
+                    "HEGEMON_ALLOW_MOCK_EXECUTION ignored without HEGEMON_DEV_MODE"
+                );
+            }
+            false
+        };
 
         // Parse miner account from environment (hex-encoded SS58 or raw bytes)
         // DEPRECATED: Use HEGEMON_MINER_ADDRESS for shielded coinbase

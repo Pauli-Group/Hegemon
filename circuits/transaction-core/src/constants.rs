@@ -15,12 +15,12 @@ pub const FIELD_MODULUS: u128 = (1u128 << 64) - (1u128 << 32) + 1;
 /// Maximum note value enforced by the witness layer (must fit in the base field).
 pub const MAX_NOTE_VALUE: u128 = FIELD_MODULUS - 1;
 
-/// Poseidon-like permutation width used by the toy STARK-friendly hash.
+/// Poseidon permutation width used by the STARK-friendly hash.
 pub const POSEIDON_WIDTH: usize = 3;
 
-/// Number of rounds for the poseidon-like permutation.
-/// Must be a power of 2 for winterfell's periodic columns.
-pub const POSEIDON_ROUNDS: usize = 8;
+/// Number of full rounds for the Poseidon permutation.
+/// Full-round-only schedule with NUMS constants; must be < cycle length (power of 2).
+pub const POSEIDON_ROUNDS: usize = 63;
 
 /// Domain separation tag for note commitments.
 pub const NOTE_DOMAIN_TAG: u64 = 1;
@@ -39,7 +39,7 @@ pub const NATIVE_ASSET_ID: u64 = 0;
 
 /// Merkle tree depth for the STARK circuit.
 /// Depth 32 supports 4 billion notes (production capacity).
-/// Each Merkle level requires one hash cycle (16 steps).
+/// Each Merkle level requires one hash cycle.
 pub const CIRCUIT_MERKLE_DEPTH: usize = 32;
 
 // ================================================================================================
