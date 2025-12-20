@@ -1422,51 +1422,11 @@ impl pallet_fee_model::Config for Runtime {
 
 impl pallet_difficulty::Config for Runtime {}
 
-// === Coinbase Configuration ===
+// === Shielded Coinbase Safety Cap ===
 parameter_types! {
-    /// Maximum subsidy per block - updated for new tokenomics (~5 HEG initial)
-    /// This is a safety limit - actual subsidy follows halving schedule
+    /// Maximum subsidy per block - safety limit for shielded coinbase.
+    /// Actual subsidy follows the halving schedule.
     pub const MaxSubsidy: u64 = 10 * 100_000_000; // 10 HEG safety cap
-
-    /// Reward split fractions (must sum to 100%)
-    /// α_m = 80% to miners
-    pub MinerShare: Permill = Permill::from_percent(80);
-    /// α_f = 10% to treasury
-    pub TreasuryShare: Permill = Permill::from_percent(10);
-    /// α_c = 10% to community pool
-    pub CommunityShare: Permill = Permill::from_percent(10);
-}
-
-/// Treasury account for coinbase rewards
-pub struct CoinbaseTreasuryAccount;
-impl frame_support::traits::Get<AccountId> for CoinbaseTreasuryAccount {
-    fn get() -> AccountId {
-        // Use the treasury pallet's account
-        pallet_treasury::Pallet::<Runtime>::account_id()
-    }
-}
-
-/// Community pool account for coinbase rewards
-/// In practice this could be a multisig, DAO, or grants program address
-pub struct CoinbaseCommunityAccount;
-impl frame_support::traits::Get<AccountId> for CoinbaseCommunityAccount {
-    fn get() -> AccountId {
-        // For now, use a derived account from a fixed seed
-        // This should be replaced with an actual governance-controlled address
-        let seed: &[u8] = b"hegemon/community_pool";
-        let hash = sp_io::hashing::blake2_256(seed);
-        AccountId::from(hash)
-    }
-}
-
-impl pallet_coinbase::Config for Runtime {
-    type Currency = Balances;
-    type MaxSubsidy = MaxSubsidy;
-    type MinerShare = MinerShare;
-    type TreasuryShare = TreasuryShare;
-    type CommunityShare = CommunityShare;
-    type TreasuryAccount = CoinbaseTreasuryAccount;
-    type CommunityAccount = CoinbaseCommunityAccount;
 }
 
 // === Shielded Pool Configuration ===
@@ -1505,7 +1465,6 @@ construct_runtime!(
     pub enum Runtime {
         System: frame_system::{Pallet, Call, Config<T>, Storage, Event<T>},
         Timestamp: pallet_timestamp::{Pallet, Call, Storage, Inherent},
-        Coinbase: pallet_coinbase::{Pallet, Call, Storage, Event<T>, Inherent},
         Pow: pow::{Pallet, Call, Storage, Event<T>},
         Difficulty: pallet_difficulty::{Pallet, Call, Storage, Event<T>, Config<T>},
         Session: pallet_session::{Pallet, Call, Storage, Event<T>, Config<T>},

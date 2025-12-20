@@ -371,10 +371,6 @@ pub struct ProductionConfig {
     pub verbose: bool,
     /// Allow mock state execution (dev-only).
     pub allow_mock_execution: bool,
-    /// Miner account for coinbase rewards (SCALE-encoded AccountId)
-    /// If None, no coinbase inherent will be created (testing/relay mode)
-    /// DEPRECATED: Use miner_shielded_address instead
-    pub miner_account: Option<Vec<u8>>,
     /// Miner's shielded address for coinbase rewards (Bech32m encoded)
     /// If set, coinbase rewards will go directly to the shielded pool
     pub miner_shielded_address: Option<String>,
@@ -387,7 +383,6 @@ impl Default for ProductionConfig {
             max_block_transactions: 1000,
             verbose: false,
             allow_mock_execution: false,
-            miner_account: None,
             miner_shielded_address: None,
         }
     }
@@ -427,13 +422,6 @@ impl ProductionConfig {
             false
         };
 
-        // Parse miner account from environment (hex-encoded SS58 or raw bytes)
-        // DEPRECATED: Use HEGEMON_MINER_ADDRESS for shielded coinbase
-        let miner_account = std::env::var("HEGEMON_MINER_ACCOUNT").ok().and_then(|s| {
-            // Try to decode as hex first
-            hex::decode(s.trim_start_matches("0x")).ok()
-        });
-
         // Parse shielded miner address from environment (Bech32m encoded)
         // If set, coinbase rewards go directly to shielded pool
         let miner_shielded_address = std::env::var("HEGEMON_MINER_ADDRESS").ok();
@@ -443,15 +431,8 @@ impl ProductionConfig {
             max_block_transactions,
             verbose,
             allow_mock_execution,
-            miner_account,
             miner_shielded_address,
         }
-    }
-
-    /// Set the miner account for coinbase rewards (DEPRECATED)
-    pub fn with_miner_account(mut self, account: Vec<u8>) -> Self {
-        self.miner_account = Some(account);
-        self
     }
 
     /// Set the miner's shielded address for coinbase rewards
@@ -569,11 +550,6 @@ impl ProductionChainStateProvider {
     /// Create with default config
     pub fn with_defaults() -> Self {
         Self::new(ProductionConfig::default())
-    }
-
-    /// Get the miner account (if configured) - DEPRECATED
-    pub fn miner_account(&self) -> Option<Vec<u8>> {
-        self.config.miner_account.clone()
     }
 
     /// Get the miner's shielded address (if configured)

@@ -1,45 +1,38 @@
-//! Coinbase Flow Integration Tests
+//! Shielded Coinbase Flow Integration Tests
 //!
 //! These tests verify the complete mining reward flow WITHOUT mocks:
 //!
-//! 1. Miner constructs block with coinbase recipient
-//! 2. Valid PoW seal is found
-//! 3. Block is imported through real runtime execution
-//! 4. Miner's balance increases by block_subsidy(height)
+//! 1. Miner constructs block with shielded coinbase note data
+//! 2. Block executes the shielded coinbase inherent
+//! 3. Shielded pool balance and commitment index advance
 //!
-//! If any test fails, it indicates missing infrastructure for production mining.
+//! If any test fails, it indicates missing infrastructure for shielded mining.
 //!
 //! ## Hegemon Tokenomics Model
 //!
-//! Unlike Bitcoin's 50 BTC → 210,000 block halving, Hegemon uses:
+//! Unlike Bitcoin's 50 BTC -> 210,000 block halving, Hegemon uses:
 //! - 21 million HEG max supply (same as Bitcoin in coins)
 //! - ~4.99 HEG initial block reward
 //! - 4-year epochs (~2.1 million blocks at 60s)
 //! - Halving each epoch
 //!
-//! The coinbase inherent:
-//! - Is constructed by the miner with their address as recipient
-//! - Is committed to via merkle root in the block header
+//! The shielded coinbase inherent:
+//! - Is constructed by the miner with their shielded address as recipient
+//! - Is committed to via the commitment tree root in the block header
 //! - Is covered by the PoW hash (changing recipient invalidates proof)
-//! - Is executed when the block is processed, minting new coins
+//! - Is executed when the block is processed, minting new coins into the pool
 
 use frame_support::assert_ok;
 use frame_support::sp_runtime::BuildStorage;
 use frame_support::traits::Hooks;
 use pallet_coinbase::{block_subsidy, BLOCKS_PER_EPOCH, INITIAL_REWARD};
-use runtime::{Balances, Coinbase, RuntimeOrigin, System, Timestamp};
+use pallet_shielded_pool::types::{CoinbaseNoteData, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE};
+use runtime::{RuntimeOrigin, ShieldedPool, System, Timestamp};
 use sp_io::TestExternalities;
 
 // ============================================================================
 // Test Infrastructure
 // ============================================================================
-
-/// Create a test account from a seed
-fn account(seed: u8) -> runtime::AccountId {
-    use sp_core::Pair;
-    let pair = sp_core::sr25519::Pair::from_seed(&[seed; 32]);
-    pair.public().into()
-}
 
 /// Create test externalities with development genesis config
 fn new_ext() -> TestExternalities {
@@ -47,7 +40,7 @@ fn new_ext() -> TestExternalities {
         .build_storage()
         .unwrap();
     pallet_balances::GenesisConfig::<runtime::Runtime> {
-        balances: vec![(account(1), 1_000_000), (account(2), 1_000_000)],
+        balances: vec![],
         dev_accounts: None,
     }
     .assimilate_storage(&mut t)
@@ -55,98 +48,71 @@ fn new_ext() -> TestExternalities {
     t.into()
 }
 
+fn public_seed_from_block(block_number: u64) -> [u8; 32] {
+    sp_io::hashing::blake2_256(&block_number.to_le_bytes())
+}
+
+fn coinbase_note_data(amount: u64, recipient: [u8; DIVERSIFIED_ADDRESS_SIZE], public_seed: [u8; 32]) -> CoinbaseNoteData {
+    #[allow(deprecated)]
+    let commitment =
+        pallet_shielded_pool::commitment::coinbase_commitment(&recipient, amount, &public_seed);
+    CoinbaseNoteData {
+        commitment,
+        encrypted_note: EncryptedNote::default(),
+        recipient_address: recipient,
+        amount,
+        public_seed,
+    }
+}
+
 // ============================================================================
-// CRITICAL TEST: Mining Must Produce Balance
+// CRITICAL TEST: Mining Must Produce Shielded Balance
 // ============================================================================
 
 /// This is THE critical test for production mining rewards.
 ///
 /// It verifies that:
-/// 1. A miner starts with ZERO balance (no pre-funding)
-/// 2. The coinbase inherent mints block_subsidy(height) to miner
-/// 3. Total issuance increases by the same amount
-///
-/// If this test fails, the chain cannot function as a PoW cryptocurrency.
+/// 1. The shielded pool starts with zero balance
+/// 2. The coinbase inherent mints block_subsidy(height) into the pool
+/// 3. The commitment index advances by one
 #[test]
-fn mining_block_credits_coinbase_reward_to_miner() {
-    // Use development config for easy difficulty
+fn mining_block_mints_shielded_coinbase_to_pool() {
     let mut ext = new_ext();
 
     ext.execute_with(|| {
-        // Miner account - we'll verify this account receives the reward
-        let miner = account(42); // Arbitrary seed, not pre-funded in dev config
-
-        // Step 1: Verify miner starts with zero balance
-        let initial_balance = Balances::free_balance(&miner);
-        println!("Miner initial balance: {}", initial_balance);
-
-        // Record initial total issuance
-        let initial_issuance = Balances::total_issuance();
-        println!("Initial total issuance: {}", initial_issuance);
-
-        // Step 2: Set up block 1
-        System::set_block_number(1);
+        let block_number = 1;
+        System::set_block_number(block_number);
         Timestamp::set_timestamp(1000);
+        ShieldedPool::on_initialize(block_number.into());
 
-        // Initialize the coinbase pallet for this block (clears processed flag)
-        // This happens automatically via on_initialize in real block execution
-        Coinbase::on_initialize(1u64.into());
+        let initial_pool_balance = ShieldedPool::pool_balance();
+        assert_eq!(initial_pool_balance, 0);
 
-        // Step 3: Execute the coinbase inherent directly
-        // This is what happens when the block is imported - the inherent is executed
-        let block_reward = block_subsidy(1);
+        let subsidy = block_subsidy(block_number);
+        let recipient = [7u8; DIVERSIFIED_ADDRESS_SIZE];
+        let public_seed = public_seed_from_block(block_number);
+        let coinbase_data = coinbase_note_data(subsidy, recipient, public_seed);
 
-        // Call the coinbase mint_reward extrinsic with None origin (inherent)
-        assert_ok!(Coinbase::mint_reward(
-            RuntimeOrigin::none(), // Inherent origin
-            miner.clone(),
-            block_reward,
+        assert_ok!(ShieldedPool::mint_coinbase(
+            RuntimeOrigin::none(),
+            coinbase_data.clone(),
         ));
 
-        // Step 4: CRITICAL CHECK - Miner should receive their share of the reward
-        // The coinbase pallet splits rewards: 80% miner, 10% treasury, 10% community
-        let final_balance = Balances::free_balance(&miner);
-        let final_issuance = Balances::total_issuance();
-
-        // Miner gets 80% of block reward (MinerShare = Permill::from_percent(80))
-        let expected_miner_reward = (block_reward as u128 * 80) / 100;
-
-        println!(
-            "Block reward: {} (~{:.2} HEG)",
-            block_reward,
-            block_reward as f64 / 100_000_000.0
-        );
-        println!(
-            "Expected miner share (80%): {} (~{:.2} HEG)",
-            expected_miner_reward,
-            expected_miner_reward as f64 / 100_000_000.0
-        );
-        println!("Miner final balance: {}", final_balance);
-        println!("Final total issuance: {}", final_issuance);
-
-        // THE ACTUAL ASSERTION - This is what we're testing
-        let balance_increase = final_balance.saturating_sub(initial_balance);
-        let issuance_increase = final_issuance.saturating_sub(initial_issuance);
-
-        // If this fails, mining rewards are not implemented!
+        let final_pool_balance = ShieldedPool::pool_balance();
         assert_eq!(
-            balance_increase, expected_miner_reward,
-            "CRITICAL: Mining did not credit correct reward to miner! \
-             Balance increased by {} but expected {} (80% of {}). \
-             This means coinbase reward execution is missing or incorrect.",
-            balance_increase, expected_miner_reward, block_reward
+            final_pool_balance,
+            subsidy as u128,
+            "Shielded pool balance should equal the block subsidy"
         );
-
-        // Total issuance should increase by full block reward (miner + treasury + community)
         assert_eq!(
-            issuance_increase, block_reward as u128,
-            "CRITICAL: Total issuance did not increase by block reward! \
-             Issuance increased by {} but expected {}. \
-             This means new coins were not minted.",
-            issuance_increase, block_reward
+            ShieldedPool::commitment_index(),
+            1,
+            "Commitment index should advance after minting coinbase"
         );
 
-        println!("SUCCESS: Coinbase reward successfully minted!");
+        let stored = ShieldedPool::coinbase_notes(0).expect("coinbase note stored");
+        assert_eq!(stored.amount, subsidy);
+        assert_eq!(stored.commitment, coinbase_data.commitment);
     });
 }
 
@@ -180,48 +146,43 @@ fn block_subsidy_follows_halving_schedule() {
 // Multiple Block Mining Test
 // ============================================================================
 
-/// Test that rewards accumulate over multiple blocks
+/// Test that rewards accumulate over multiple blocks in the shielded pool
 #[test]
 fn rewards_accumulate_over_multiple_blocks() {
     let mut ext = new_ext();
 
     ext.execute_with(|| {
-        let miner = account(42);
-
-        let mut total_miner_expected: u128 = 0;
+        let recipient = [9u8; DIVERSIFIED_ADDRESS_SIZE];
+        let mut total_expected: u128 = 0;
         let blocks_to_mine = 5;
 
         for block_num in 1..=blocks_to_mine {
             System::set_block_number(block_num);
             Timestamp::set_timestamp(block_num * 1000);
+            ShieldedPool::on_initialize(block_num.into());
 
-            // Initialize coinbase for this block
-            Coinbase::on_initialize(block_num.into());
+            let subsidy = block_subsidy(block_num);
+            let public_seed = public_seed_from_block(block_num);
+            let coinbase_data = coinbase_note_data(subsidy, recipient, public_seed);
 
-            let reward = block_subsidy(block_num);
-            // Miner gets 80% of each block reward
-            total_miner_expected += (reward as u128 * 80) / 100;
-
-            // Execute coinbase inherent
-            assert_ok!(Coinbase::mint_reward(
+            assert_ok!(ShieldedPool::mint_coinbase(
                 RuntimeOrigin::none(),
-                miner.clone(),
-                reward,
+                coinbase_data,
             ));
+
+            total_expected = total_expected.saturating_add(subsidy as u128);
+
+            assert_eq!(
+                ShieldedPool::pool_balance(),
+                total_expected,
+                "Pool balance mismatch at block {}",
+                block_num
+            );
+            assert_eq!(
+                ShieldedPool::commitment_index(),
+                block_num,
+                "Commitment index should track coinbase count"
+            );
         }
-
-        let balance = Balances::free_balance(&miner);
-        assert_eq!(
-            balance, total_miner_expected,
-            "Miner should have accumulated {} (80% of rewards) over {} blocks, but has {}",
-            total_miner_expected, blocks_to_mine, balance
-        );
-
-        println!(
-            "SUCCESS: Miner accumulated {} (~{:.2} HEG) over {} blocks",
-            balance,
-            balance as f64 / 100_000_000.0,
-            blocks_to_mine
-        );
     });
 }

@@ -108,7 +108,7 @@ enum Commands {
     SubstrateDaemon(SubstrateDaemonArgs),
     /// Show wallet status (syncs first by default)
     Status(StatusArgs),
-    /// Print miner account ID (hex) for HEGEMON_MINER_ACCOUNT
+    /// Print account ID (hex) for signed extrinsics
     #[command(name = "account-id")]
     AccountId(StoreArgs),
     /// Send using legacy HTTP RPC (deprecated, use substrate-send)
@@ -669,19 +669,10 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
 }
 
 fn show_status(store: &WalletStore) -> Result<()> {
-    use wallet::extrinsic::ExtrinsicBuilder;
 
     println!("\n═══════════════════════════════════════");
     println!("            WALLET STATUS");
     println!("═══════════════════════════════════════\n");
-
-    // Show miner account ID (for HEGEMON_MINER_ACCOUNT)
-    if let Ok(Some(derived)) = store.derived_keys() {
-        let signing_seed = derived.spend.to_bytes();
-        let builder = ExtrinsicBuilder::from_seed(&signing_seed);
-        let account_id = builder.account_id();
-        println!("Miner Account ID: {}", hex::encode(account_id));
-    }
 
     // Show primary shielded address (stable, for mining)
     if let Ok(addr) = store.primary_address() {
