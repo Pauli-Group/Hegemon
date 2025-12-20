@@ -21,8 +21,10 @@
 
 use transaction_circuit::{
     constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS},
-    stark_prover::{default_proof_options, fast_proof_options},
+    stark_prover::default_proof_options,
 };
+#[cfg(feature = "stark-fast")]
+use transaction_circuit::stark_prover::fast_proof_options;
 
 /// The Goldilocks prime: p = 2^64 - 2^32 + 1
 /// This is the field used by winterfell's BaseElement (f64)
@@ -127,6 +129,7 @@ fn test_fri_security_parameters_default() {
     println!("✅ Default FRI parameters verified (128-bit security)");
 }
 
+#[cfg(feature = "stark-fast")]
 #[test]
 fn test_fri_security_parameters_fast() {
     // Test fast (development) proof options - may have reduced security
@@ -432,11 +435,19 @@ fn test_security_summary() {
     println!("  Query count: {}", default_opts.num_queries());
     println!("  Security: ~128 bits\n");
 
-    let fast_opts = fast_proof_options();
-    println!("FRI Protocol (Development):");
-    println!("  Blowup factor: {}", fast_opts.blowup_factor());
-    println!("  Query count: {}", fast_opts.num_queries());
-    println!("  Security: Reduced (development only)\n");
+    #[cfg(feature = "stark-fast")]
+    {
+        let fast_opts = fast_proof_options();
+        println!("FRI Protocol (Development):");
+        println!("  Blowup factor: {}", fast_opts.blowup_factor());
+        println!("  Query count: {}", fast_opts.num_queries());
+        println!("  Security: Reduced (development only)\n");
+    }
+    #[cfg(not(feature = "stark-fast"))]
+    {
+        println!("FRI Protocol (Development):");
+        println!("  Disabled (stark-fast feature not enabled)\n");
+    }
 
     println!("Poseidon Hash:");
     println!(

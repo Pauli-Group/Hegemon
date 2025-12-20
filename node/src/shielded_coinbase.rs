@@ -129,21 +129,37 @@ fn convert_to_pallet_format(
         .copy_from_slice(&ciphertext.diversifier_index.to_le_bytes());
     offset += 4;
 
+    // Note + memo payloads must fit before the trailing 32-byte hint tag.
+    let note_len = ciphertext.note_payload.len();
+    let memo_len = ciphertext.memo_payload.len();
+    let max_payload = ENCRYPTED_NOTE_SIZE - 32 - 5 - 8;
+    if note_len + memo_len > max_payload {
+        return Err(CoinbaseEncryptionError::EncryptionFailed(format!(
+            "Encrypted note payloads too large: note={} memo={} max_total={}",
+            note_len, memo_len, max_payload
+        )));
+    }
+
+    let note_len_u32 = u32::try_from(note_len).map_err(|_| {
+        CoinbaseEncryptionError::EncryptionFailed("note payload length overflow".into())
+    })?;
+    let memo_len_u32 = u32::try_from(memo_len).map_err(|_| {
+        CoinbaseEncryptionError::EncryptionFailed("memo payload length overflow".into())
+    })?;
+
     // Note payload length and data
-    let note_len = ciphertext.note_payload.len().min(400) as u32;
-    ciphertext_bytes[offset..offset + 4].copy_from_slice(&note_len.to_le_bytes());
+    ciphertext_bytes[offset..offset + 4].copy_from_slice(&note_len_u32.to_le_bytes());
     offset += 4;
-    ciphertext_bytes[offset..offset + note_len as usize]
-        .copy_from_slice(&ciphertext.note_payload[..note_len as usize]);
-    offset += note_len as usize;
+    ciphertext_bytes[offset..offset + note_len]
+        .copy_from_slice(&ciphertext.note_payload[..note_len]);
+    offset += note_len;
 
     // Memo payload length and data
-    let memo_len = ciphertext.memo_payload.len().min(100) as u32;
-    ciphertext_bytes[offset..offset + 4].copy_from_slice(&memo_len.to_le_bytes());
+    ciphertext_bytes[offset..offset + 4].copy_from_slice(&memo_len_u32.to_le_bytes());
     offset += 4;
     if memo_len > 0 {
-        ciphertext_bytes[offset..offset + memo_len as usize]
-            .copy_from_slice(&ciphertext.memo_payload[..memo_len as usize]);
+        ciphertext_bytes[offset..offset + memo_len]
+            .copy_from_slice(&ciphertext.memo_payload[..memo_len]);
     }
 
     // Hint tag at the end
@@ -210,6 +226,7 @@ mod tests {
     use super::*;
     use crypto::ml_kem::MlKemKeyPair;
     use crypto::traits::KemKeyPair;
+    use rand::{rngs::StdRng, SeedableRng};
 
     #[test]
     fn test_derive_public_seed() {
@@ -252,5 +269,28 @@ mod tests {
         let note_data = result.unwrap();
         assert_eq!(note_data.amount, amount);
         assert_eq!(note_data.commitment.len(), 32);
+    }
+
+    #[test]
+    fn convert_to_pallet_format_rejects_oversize_memo() {
+        let keypair = MlKemKeyPair::generate_deterministic(b"test-oversize-memo");
+        let mut rng = StdRng::seed_from_u64(2024);
+        let mut kem_randomness = [0u8; 32];
+        rng.fill_bytes(&mut kem_randomness);
+
+        let memo = vec![0u8; 600];
+        let note = NotePlaintext::new(1, 0, [1u8; 32], [2u8; 32], memo);
+        let ciphertext = NoteCiphertext::encrypt(
+            &keypair.public_key(),
+            [3u8; 32],
+            1,
+            0,
+            [4u8; 32],
+            &note,
+            &kem_randomness,
+        )
+        .expect("note encryption should succeed");
+
+        assert!(convert_to_pallet_format(&ciphertext).is_err());
     }
 }

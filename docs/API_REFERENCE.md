@@ -21,7 +21,7 @@ This reference summarizes the public APIs of the monorepo components and points 
 
 ## `circuits/`
 
-- `transaction-circuit` crate exposes `proof::prove(witness, proving_key) -> TransactionProof` and `proof::verify(proof, verifying_key) -> VerificationReport`. The direct STARK path is `TransactionProverStark::prove_transaction(witness)` and `stark_verifier::verify_transaction_proof_bytes(proof_bytes, pub_inputs)`.
+- `transaction-circuit` crate exposes `proof::prove(witness, proving_key) -> TransactionProof` and `proof::verify(proof, verifying_key) -> VerificationReport`. The direct STARK path is `TransactionProverStark::prove_transaction(witness)` and `stark_verifier::verify_transaction_proof_bytes(proof_bytes, pub_inputs)`. Production verification rejects missing STARK proof bytes/public inputs unless compiled with `legacy-proof`, and commitment/nullifier encodings are 32-byte values with four canonical limbs (validated via `hashing::is_canonical_bytes32`).
 - `disclosure-circuit` crate exposes `prove_payment_disclosure(claim, witness) -> PaymentDisclosureProofBundle` and `verify_payment_disclosure(bundle)`. The claim binds `value`, `asset_id`, `pk_recipient`, and `commitment`; the witness supplies `rho` and `r`. `PaymentDisclosureProofBundle` carries `proof_bytes` plus the `air_hash` used for verifier binding.
 - `block-circuit` crate aggregates multiple transaction proofs via `BlockCircuit::prove(block_inputs)`.
 - `circuits/bench` binary crate (`circuits-bench`) provides `cargo run -p circuits-bench -- --iterations N --prove` to compile circuits, generate witnesses, and optionally verify proofs. Output includes constraint rows, hash rounds, and per-proof latency.
@@ -41,6 +41,7 @@ p budgets.
 - `wallet payment-proof create|verify|purge` generates and verifies disclosure packages (payment proofs) and manages stored outgoing disclosure records.
 - `wallet substrate-sync`, `wallet substrate-daemon`, `wallet substrate-send`, and `wallet substrate-shield` are the Substrate RPC paths for live wallets; `wallet sync`/`wallet daemon` remain legacy HTTP flows.
 - `wallet::disclosure::{DisclosurePackage, DisclosureClaim, DisclosureConfirmation, DisclosureProof}` defines the JSON schema and encoding helpers used to serialize/deserialize payment-proof packages.
+- `wallet::rpc::TransactionBundle` and shielded-transfer payloads use `binding_hash` (a 64-byte hash commitment), not a signature.
 - `wallet/bench` binary crate (`wallet-bench`) accepts `--iterations` and reports note construction/sec, nullifier derivations/sec, and encryption throughput.
 
 ## Runtime pallets (identity, attestations, settlement)

@@ -157,12 +157,33 @@ fn circuit_absorb(state: &mut [u64; POSEIDON_WIDTH], chunk: &[u64]) {
     circuit_permutation(state);
 }
 
-/// Sponge hash function matching the circuit implementation exactly.
+/// Sponge hash function matching the circuit implementation exactly (4-limb output).
 ///
 /// This is the canonical hash used by the ZK circuits.
 /// Initial state: [domain_tag, 0, 1]
 /// Rate: 2 (POSEIDON_WIDTH - 1)
-pub fn circuit_sponge(domain_tag: u64, inputs: &[u64]) -> u64 {
+pub fn circuit_sponge_hash(domain_tag: u64, inputs: &[u64]) -> [u64; 4] {
+    let mut state = [domain_tag, 0, 1];
+    let rate = POSEIDON_WIDTH - 1;
+    let mut cursor = 0;
+    while cursor < inputs.len() {
+        let take = core::cmp::min(rate, inputs.len() - cursor);
+        let mut chunk = [0u64; 2]; // rate = 2
+        chunk[..take].copy_from_slice(&inputs[cursor..cursor + take]);
+        circuit_absorb(&mut state, &chunk);
+        cursor += take;
+    }
+    let mut output = [0u64; 4];
+    output[0] = state[0];
+    output[1] = state[1];
+    circuit_permutation(&mut state);
+    output[2] = state[0];
+    output[3] = state[1];
+    output
+}
+
+/// Sponge hash function returning a single field element (used for PRF key).
+fn circuit_sponge_single(domain_tag: u64, inputs: &[u64]) -> u64 {
     let mut state = [domain_tag, 0, 1];
     let rate = POSEIDON_WIDTH - 1;
     let mut cursor = 0;
@@ -189,6 +210,16 @@ fn bytes_to_circuit_felts(bytes: &[u8]) -> Vec<u64> {
         .collect()
 }
 
+/// Convert circuit field limbs into a 32-byte commitment encoding.
+fn felts_to_commitment(felts: &[u64; 4]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (idx, limb) in felts.iter().enumerate() {
+        let start = idx * 8;
+        out[start..start + 8].copy_from_slice(&limb.to_be_bytes());
+    }
+    out
+}
+
 /// Compute note commitment exactly as the ZK circuit does.
 ///
 /// This matches `circuits/transaction/src/hashing.rs::note_commitment` exactly.
@@ -201,44 +232,41 @@ fn bytes_to_circuit_felts(bytes: &[u8]) -> Vec<u64> {
 /// - rho: 32-byte randomness for nullifier derivation
 /// - r: 32-byte commitment randomness
 ///
-/// Returns: 64-bit Felt value (stored as last 8 bytes of 32-byte commitment)
+/// Returns: 32-byte commitment encoding (4 x 64-bit limbs).
 pub fn circuit_note_commitment(
     value: u64,
     asset_id: u64,
     pk_recipient: &[u8; 32],
     rho: &[u8; 32],
     r: &[u8; 32],
-) -> u64 {
+) -> [u8; 32] {
     let mut inputs = Vec::new();
     inputs.push(value);
     inputs.push(asset_id);
     inputs.extend(bytes_to_circuit_felts(pk_recipient));
     inputs.extend(bytes_to_circuit_felts(rho));
     inputs.extend(bytes_to_circuit_felts(r));
-    circuit_sponge(CIRCUIT_NOTE_DOMAIN_TAG, &inputs)
+    let felts = circuit_sponge_hash(CIRCUIT_NOTE_DOMAIN_TAG, &inputs);
+    felts_to_commitment(&felts)
 }
 
 /// Compute nullifier exactly as the ZK circuit does.
 ///
 /// This matches `circuits/transaction/src/hashing.rs::nullifier` exactly.
-pub fn circuit_nullifier(prf_key: u64, rho: &[u8; 32], position: u64) -> u64 {
+pub fn circuit_nullifier(prf_key: u64, rho: &[u8; 32], position: u64) -> [u8; 32] {
     let mut inputs = Vec::new();
     inputs.push(prf_key);
     inputs.push(position);
     inputs.extend(bytes_to_circuit_felts(rho));
-    circuit_sponge(CIRCUIT_NULLIFIER_DOMAIN_TAG, &inputs)
+    let felts = circuit_sponge_hash(CIRCUIT_NULLIFIER_DOMAIN_TAG, &inputs);
+    felts_to_commitment(&felts)
 }
 
 /// Compute PRF key exactly as the ZK circuit does.
 ///
 /// This matches `circuits/transaction/src/hashing.rs::prf_key` exactly.
 pub fn circuit_prf_key(sk_spend: &[u8; 32]) -> u64 {
-    let elements = bytes_to_circuit_felts(sk_spend);
-    // PRF key uses sponge with no domain tag, just absorbing sk_spend
-    // Actually, looking at hashing.rs, prf_key just converts bytes to felts and returns first one
-    // Let me check the actual implementation...
-    // For now, use a simple sponge
-    circuit_sponge(0, &elements)
+    transaction_core::hashing::prf_key(sk_spend).as_int()
 }
 
 /// Convert a circuit Felt (u64) to a 32-byte commitment.
@@ -458,7 +486,7 @@ pub fn coinbase_commitment(
 /// - public_seed: 32-byte seed used to derive rho and r
 /// - asset_id: Asset identifier (0 for native)
 ///
-/// Returns: 32-byte commitment where the Felt is stored in bytes[24..32]
+/// Returns: 32-byte commitment encoding (4 x 64-bit limbs)
 pub fn circuit_coinbase_commitment(
     pk_recipient: &[u8; 32],
     value: u64,
@@ -469,9 +497,7 @@ pub fn circuit_coinbase_commitment(
     let rho = derive_coinbase_rho(public_seed);
     let r = derive_coinbase_r(public_seed);
 
-    // Compute circuit-compatible commitment
-    let felt = circuit_note_commitment(value, asset_id, pk_recipient, &rho, &r);
-    felt_to_commitment(felt)
+    circuit_note_commitment(value, asset_id, pk_recipient, &rho, &r)
 }
 
 /// Derive PRF key from spending key.

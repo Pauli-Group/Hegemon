@@ -107,7 +107,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
         commitments: Vec<[u8; 32]>,
         encrypted_notes: Vec<Vec<u8>>,
         _anchor: [u8; 32],
-        _binding_sig: [u8; 64],
+        _binding_hash: [u8; 64],
         _fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
@@ -327,7 +327,7 @@ where
         _commitments: Vec<[u8; 32]>,
         _encrypted_notes: Vec<Vec<u8>>,
         _anchor: [u8; 32],
-        _binding_sig: [u8; 64],
+        _binding_hash: [u8; 64],
         _fee: u64,
         _value_balance: i128,
     ) -> Result<[u8; 32], String> {

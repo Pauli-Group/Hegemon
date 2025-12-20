@@ -20,7 +20,7 @@ use crate::public_inputs::{BatchPublicInputs, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::dimensions::{
     batch_trace_rows, slot_start_row, validate_batch_size, ROWS_PER_TX, TRACE_WIDTH,
 };
-use transaction_circuit::hashing::{nullifier, prf_key};
+use transaction_circuit::hashing::{bytes32_to_felts, nullifier, prf_key};
 use transaction_circuit::stark_air::COL_S0;
 use transaction_circuit::{TransactionProverStark, TransactionWitness};
 
@@ -143,6 +143,9 @@ impl BatchTransactionProver {
             }
         }
 
+        let anchor = bytes32_to_felts(&anchor)
+            .ok_or(BatchCircuitError::InvalidPublicInputs("anchor not canonical".into()))?;
+
         // Collect all nullifiers and commitments
         let mut nullifiers = Vec::with_capacity(batch_size * MAX_INPUTS);
         let mut commitments = Vec::with_capacity(batch_size * MAX_OUTPUTS);
@@ -159,7 +162,7 @@ impl BatchTransactionProver {
             }
             // Pad with zeros if needed
             for _ in witness.inputs.len()..MAX_INPUTS {
-                nullifiers.push(BaseElement::ZERO);
+                nullifiers.push([BaseElement::ZERO; 4]);
             }
 
             // Add commitments for this transaction
@@ -170,7 +173,7 @@ impl BatchTransactionProver {
             }
             // Pad with zeros if needed
             for _ in witness.outputs.len()..MAX_OUTPUTS {
-                commitments.push(BaseElement::ZERO);
+                commitments.push([BaseElement::ZERO; 4]);
             }
 
             total_fee += witness.fee;

@@ -11,8 +11,8 @@ use winterfell::{
 };
 
 use crate::air::{
-    DisclosureAir, DisclosurePublicInputs, COL_DOMAIN, COL_IN0, COL_IN1, COL_RESET, COL_S0, COL_S1,
-    COL_S2,
+    commitment_row_01, commitment_row_23, DisclosureAir, DisclosurePublicInputs, COL_DOMAIN,
+    COL_IN0, COL_IN1, COL_RESET, COL_S0, COL_S1, COL_S2,
 };
 use crate::constants::{
     CYCLE_LENGTH, INPUT_PAIRS, NOTE_DOMAIN_TAG, POSEIDON_ROUNDS, TOTAL_CYCLES, TRACE_LENGTH,
@@ -172,7 +172,14 @@ impl Prover for DisclosureProver {
         let pk1 = trace.get(COL_IN1, crate::air::absorb_row(1));
         let pk2 = trace.get(COL_IN0, crate::air::absorb_row(2));
         let pk3 = trace.get(COL_IN1, crate::air::absorb_row(2));
-        let commitment = trace.get(COL_S0, crate::air::commitment_row());
+        let row_01 = commitment_row_01();
+        let row_23 = commitment_row_23();
+        let commitment = [
+            trace.get(COL_S0, row_01),
+            trace.get(COL_S1, row_01),
+            trace.get(COL_S0, row_23),
+            trace.get(COL_S1, row_23),
+        ];
 
         DisclosurePublicInputs {
             value,

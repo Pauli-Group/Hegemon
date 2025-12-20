@@ -14,7 +14,7 @@ per proof. Think Sapling/Orchard style: fixed `M, N` for the base circuit, recur
 A **note** is conceptually:
 
 * `value` - integer (e.g. 64-bit, or 128-bit if you're paranoid)
-* `asset_id` - 64-bit label (u64) in the current circuit; canonical encoding is a zero-extended 8-byte big-endian payload inside 32 bytes. `0` = native coin (ZEC-like). Future circuit versions can widen this if needed.
+* `asset_id` - 64-bit label (u64) in the current circuit, encoded as a single field element inside the STARK. Commitments and nullifiers are serialized as 32-byte outputs with four 64-bit limbs (see §2). `0` = native coin (ZEC-like). Future circuit versions can widen this if needed.
 * `pk_recipient` – an encoding of the recipient’s “note‑receiving” public data (tied to their incoming viewing key)
 * `rho` – per‑note secret (random)
 * `r` – commitment randomness
@@ -58,7 +58,7 @@ The core statement the STARK proves:
 > * for each input `i` in `[0..M-1]`:
 >
 >   * `(value_i, asset_i, pk_i, rho_i, r_i, pos_i)`
->   * `sk_spend` (or a per‑address derived secret)
+>   * `sk_nf` (nullifier secret derived from `sk_view`)
 > * for each output `j` in `[0..N-1]`:
 >
 >   * `(value'_j, asset'_j, pk'_j, rho'_j, r'_j)`
@@ -88,7 +88,7 @@ The core statement the STARK proves:
 >    * Derive a nullifier key:
 >
 >      ```text
->      nk = H("nk" || sk_spend)
+>      nk = H("nk" || sk_nf)
 >      ```
 >    * For each input note:
 >
@@ -252,27 +252,32 @@ We define:
 
 * **Spending key material**:
 
-  * `sk_spend` used *only inside the STARK* to derive nullifier keys.
+  * `sk_spend` used for wallet authorization and extrinsic signing; it is not embedded in viewing keys.
+* **Nullifier key material**:
+
+  * `sk_nf = H("view_nf" || sk_view)` used inside the STARK to derive nullifiers.
 * **Viewing key material**:
 
-  * `vk_full = (sk_view, sk_enc, public_params…)`
+  * `vk_full = (sk_view, sk_enc, sk_nf, public_params…)`
 * **Incoming‑only viewing key**:
 
-  * `vk_incoming = (sk_enc, some public tag)`
+  * `vk_incoming = (sk_view, sk_enc, diversifier params)`
     (can scan chain and decrypt incoming notes, but can’t produce spends or see nullifiers.)
 
 ### 4.2 Nullifier key
 
-Inside proofs we don’t want to expose `sk_spend` or `nk`, but we need a deterministic nullifier.
+Inside proofs we don’t want to expose `sk_nf` or `nk`, but we need a deterministic nullifier.
 
 Define:
 
 ```text
-nk = Hf("nk" || sk_spend)
+sk_nf = H("view_nf" || sk_view)
+nk = Hf("nk" || sk_nf)
 nf = Hf("nf" || nk || rho || pos)
 ```
 
-Only someone knowing `sk_spend` can compute `nf` for a given `(rho, pos)`; the STARK proves consistency.
+Only someone knowing `sk_nf` can compute `nf` for a given `(rho, pos)`; the STARK proves consistency while the wallet keeps
+`sk_spend` separate for authorization/signing.
 
 ### 4.3 Addresses and encryption keys (ML‑KEM)
 
@@ -367,10 +372,8 @@ Given that ML‑KEM decapsulation is not *that* expensive and users don’t have
   * enough info to recompute nullifiers (`nk` or a view‑equivalent),
   * so it can see which of “its” notes have been spent.
 
-You can decide whether you want nullifier computation to be *derivable* from viewing keys (like Sapling’s full viewing key) or strictly tied to `sk_spend`. Both are possible:
-
-* If you want watch‑only wallets to see spent status, you derive a “viewing nullifier key” `vnk` from `sk_view` that mirrors `nk` but cannot be used to spend.
-* If you want stricter separation, only `sk_spend` can compute nullifiers, and watch‑only wallets infer spentness by tracking spends by inference (less robust).
+Hegemon chooses the watch‑only path: full viewing keys include `sk_nf = H("view_nf" || sk_view)` so wallets can compute
+nullifiers for spentness tracking without embedding `sk_spend`.
 
 ### 4.5 Implementation details
 
@@ -378,13 +381,13 @@ You can decide whether you want nullifier computation to be *derivable* from vie
 
 *Note encryption.* `wallet/src/notes.rs` consumes the recipient’s Bech32 data, runs ML-KEM encapsulation with a random seed, and stretches the shared secret into two ChaCha20-Poly1305 keys via `expand_to_length("wallet-aead", shared_secret || label, 44)`. The first 32 bytes drive the AEAD key and the final 12 bytes form the nonce so both note payload and memo use disjoint key/nonce pairs. Ciphertexts record the diversifier index, hint tag, and ML-KEM ciphertext so incoming viewing keys can reconstruct the exact `AddressKeyMaterial` needed for decryption.
 
-*Viewing keys and nullifiers.* `wallet/src/viewing.rs` defines `IncomingViewingKey` (scan + decrypt), `OutgoingViewingKey` (derive address tags/pk_recipient for audit), and `FullViewingKey` (incoming + nullifier key). Full viewing keys store the SHA-256 nullifier PRF output derived from `sk_spend`, letting watch-only tooling compute chain nullifiers without exposing the spend key itself. `RecoveredNote::to_input_witness` converts decrypted notes into `transaction_circuit::note::InputNoteWitness` values by reusing the same `NoteData` and taking the best-effort `rho_seed = rho` placeholder until the circuit’s derivation is finalized.
+*Viewing keys and nullifiers.* `wallet/src/viewing.rs` defines `IncomingViewingKey` (scan + decrypt), `OutgoingViewingKey` (derive address tags/pk_recipient for audit), and `FullViewingKey` (incoming + nullifier key). Full viewing keys store the view-derived nullifier key `sk_nf = BLAKE3("view_nf" || sk_view)`, letting watch-only tooling compute chain nullifiers without exposing the spend key itself. `RecoveredNote::to_input_witness` converts decrypted notes into `transaction_circuit::note::InputNoteWitness` values by reusing the same `NoteData` and taking the best-effort `rho_seed = rho` placeholder until the circuit’s derivation is finalized.
 
 *CLI, daemon, and fixtures.* `wallet/src/bin/wallet.rs` now ships three families of commands:
 
   * Offline helpers (`generate`, `address`, `tx-craft`, `scan`) that mirror the deterministic witness tooling described in DESIGN.md.
   * Legacy HTTP RPC wallet management (`init`, `sync`, `daemon`, `status`, `send`, `export-viewing-key`). `wallet init` writes an encrypted store (Argon2 + ChaCha20-Poly1305) containing the root secret or an imported viewing key. `wallet sync` and `wallet daemon` talk to `/wallet/{commitments,ciphertexts,nullifiers}` plus `/wallet/notes` and `/blocks/latest` to maintain a local Merkle tree/nullifier set, while `wallet send` crafts witnesses, proves them locally, and submits a `TransactionBundle` to `/transactions` before tracking the pending nullifiers.
-  * Substrate RPC wallet management (`substrate-sync`, `substrate-daemon`, `substrate-send`, `substrate-shield`, `substrate-batch-send`) that use the WebSocket RPC for live wallets. `wallet substrate-send` records outgoing disclosure records inside the encrypted store so on-demand payment proofs can be generated later.
+* Substrate RPC wallet management (`substrate-sync`, `substrate-daemon`, `substrate-send`, `substrate-shield`, `substrate-batch-send` gated behind the `batch-proofs` feature) that use the WebSocket RPC for live wallets. `wallet substrate-send` records outgoing disclosure records inside the encrypted store so on-demand payment proofs can be generated later.
   * Compliance tooling (`payment-proof create`, `payment-proof verify`, `payment-proof purge`) that emits disclosure packages and verifies them against Merkle inclusion plus `hegemon_isValidAnchor` and the chain genesis hash.
 
 JSON fixtures for transaction inputs/recipients still follow the `transaction_circuit` `serde` representation so the witness builder plugs directly into existing proving code. `wallet/tests/cli.rs` exercises the offline commands via `cargo_bin_cmd!`, `wallet/tests/rpc_flow.rs` spins up a lightweight test node for send/receive flows, and `wallet/tests/disclosure_package.rs` covers payment-proof package generation plus tamper rejection without requiring a live node. The disclosure circuit itself is tested under `circuits/disclosure/tests/disclosure.rs`.
@@ -468,17 +471,19 @@ We derive a field hash by sponge:
 H_f(x_0, \ldots, x_{k-1}) = \operatorname{Sponge}(P, \text{capacity}=4, \text{rate}=8, x_0, \ldots, x_{k-1})
 \]
 
-The output is one field element (the first state word).
+For commitments, nullifiers, and Merkle nodes we emit four field elements: take `state[0]` and
+`state[1]`, apply one more permutation, then take `state[0]` and `state[1]` again. Single-field
+values (e.g., balance tags) still use the first state word.
 
 Outside the circuit (for block headers, addresses, etc.) we can still use standard SHA-256 as a byte-oriented hash. Inside, we stick to \(H_f\).
 
 #### 1.3 Merkle tree
 
-* Each leaf: one field element \(cm \in \mathbb{F}_p\).
-* Parent hash: for children \(L, R \in \mathbb{F}_p\),
+* Each leaf: a four-limb commitment \(cm = (cm_0, cm_1, cm_2, cm_3)\) with \(cm_i \in \mathbb{F}_p\).
+* Parent hash: for children \(L, R\) (each 4 limbs), absorb the limbs in circuit order and output four limbs:
 
 \[
-\text{parent} = H_f(\text{domain}_{\text{merkle}}, L, R)
+\text{parent} = H_f(\text{domain}_{\text{merkle}}, L_0, L_1, L_2, L_3, R_0, R_1, R_2, R_3)
 \]
 
 where \(\text{domain}_{\text{merkle}}\) is a fixed field element.
@@ -500,7 +505,7 @@ We do not need signatures inside the shielded circuit, only for block authentica
 
 * \(v\): 64-bit unsigned integer, value of note.
 * Encoded into one field element \(v \in \mathbb{F}_p\) via the natural embedding (\(0 \le v < 2^{64} \subset \mathbb{F}_p\)).
-* \(a\): 256-bit asset ID (for MASP) represented as four field elements \(a_0, a_1, a_2, a_3 \in \mathbb{F}_p\), each encoding 64 bits of the asset ID.
+* \(a\): 64-bit asset ID (current MASP circuit) represented as a single field element \(a \in \mathbb{F}_p\).
 
 #### 2.2 Address tag and randomness
 
@@ -516,19 +521,21 @@ Take the 1-word capacity / 8-word rate sponge and define
 \begin{aligned}
 cm = H_f(&\text{domain}_{cm},
     v, \\
-    &a_0, a_1, a_2, a_3, \\
+    &a, \\
     &t_0, t_1, t_2, t_3, \\
     &\rho_0, \rho_1, \rho_2, \rho_3, \\
     &r_0, r_1, r_2, r_3)
 \end{aligned}
 \]
 
-Inputs are a sequence of field elements. \(\text{domain}_{cm}\) is a constant field element. On chain, the note commitment tree leaf is exactly \(cm\).
+The sponge emits four field elements \((cm_0, cm_1, cm_2, cm_3)\). On chain, commitments are
+serialized as 32 bytes by concatenating each 64-bit limb big-endian; a canonical encoding
+requires each limb to be strictly less than the field modulus.
 
 #### 2.4 Nullifier
 
-* Spend secret: \(sk_{\text{spend}}\) is a 256-bit integer, but never placed on chain.
-* Nullifier key: first map \(sk_{\text{spend}}\) to field elements \(ssk_0, \ldots, ssk_3 \in \mathbb{F}_p\) (four 64-bit chunks), then
+* Nullifier secret: \(sk_{\text{nf}}\) is a 256-bit integer (derived from `sk_view` with a `view_nf` domain tag in the wallet) and never placed on chain.
+* Nullifier key: first map \(sk_{\text{nf}}\) to field elements \(ssk_0, \ldots, ssk_3 \in \mathbb{F}_p\) (four 64-bit chunks), then
 
 \[
 nk = H_f(\text{domain}_{nk}, ssk_0, ssk_1, ssk_2, ssk_3).
@@ -545,7 +552,11 @@ Define
 nf = H_f(\text{domain}_{nf}, nk, \text{pos}, \rho_0, \rho_1, \rho_2, \rho_3).
 \]
 
-This \(nf \in \mathbb{F}_p\) is the on-chain nullifier.
+The sponge emits four field elements \((nf_0, nf_1, nf_2, nf_3)\). On chain, the nullifier is the
+32-byte concatenation of those limbs, and canonical encodings reject any limb \(\ge p\).
+
+This 4-limb encoding is protocol-breaking relative to the legacy 64-bit encoding; adopting it
+requires a fresh genesis and wiping node databases and wallet stores.
 
 ### 3. Key / address hierarchy with ML-KEM
 
@@ -554,9 +565,9 @@ This \(nf \in \mathbb{F}_p\) is the on-chain nullifier.
 Let `seed` be a 256-bit root (e.g., from BIP-39). Derive
 
 ```
-sk_spend = SHA256("spend" || seed)
-sk_view  = SHA256("view"  || seed)
-sk_enc   = SHA256("enc"   || seed)
+sk_spend = HKDF("spend" || seed)
+sk_view  = HKDF("view"  || seed)
+sk_enc   = HKDF("enc"   || seed)
 ```
 
 To get deterministic KEM keypairs, use `sk_enc` as the seed to the KEM keygen’s RNG. In practice:
@@ -586,9 +597,9 @@ The wallet stores `sk_spend`, `sk_view`, and either `sk_enc` or all `sk_enc_i` d
 #### 3.3 Viewing keys
 
 * Incoming Viewing Key (IVK): `ivk = (sk_view, sk_enc)` can recompute all `addr_tag_i` and `sk_enc_i`, decrypt all notes, and see all incoming funds.
-* Full Viewing Key (FVK): `fvk = (sk_view, sk_enc, vk_nf)` where `vk_nf = SHA256("view_nf" || sk_spend)`.
+* Full Viewing Key (FVK): `fvk = (sk_view, sk_enc, vk_nf)` where `vk_nf = BLAKE3("view_nf" || sk_view)`.
 
-In the circuit we derive `nk = H_f(domain_nk, ssk_0, \ldots, ssk_3)`, but for viewing we derive a view-only nullifier key `vk_nf` outside the circuit that allows watch-only wallets to detect nullifiers corresponding to their notes but not to spend. You can tune whether `vk_nf` equals `nk` or is a one-way function of it, depending on how tightly you want to tie full viewing to spending.
+In the circuit we derive `nk = H_f(domain_nk, ssk_0, \ldots, ssk_3)` from the view-derived nullifier secret, and for viewing we derive `vk_nf` with the `view_nf` domain tag so watch-only wallets can detect spent notes without embedding `sk_spend`.
 
 ### 4. Note encryption details
 
@@ -620,7 +631,7 @@ Sender:
 
 On chain per output:
 
-* `cm ∈ F_p`
+* `cm` as a 32-byte commitment (4 x 64-bit limbs, canonical encoding)
 * `ct_kem` (≈1.1 KB)
 * `ct_aead` (|note_plain| + tag, say ≈100 bytes)
 * Optional small `scan_tag` if you want faster scanning.
@@ -641,9 +652,9 @@ Assume the base circuit handles up to `M` inputs (e.g., 4) and `N` outputs (e.g.
 
 The circuit's public inputs (fed into its transcript) are:
 
-* `root_before ∈ F_p` - Merkle root anchor at which inputs are valid.
-* For each input `i`: `input_active[i] ∈ {0,1}` and `nf_in[i] ∈ F_p` (inactive inputs must use zero nullifiers).
-* For each output `j`: `output_active[j] ∈ {0,1}` and `cm_out[j] ∈ F_p` (inactive outputs must use zero commitments).
+* `root_before` - Merkle root anchor encoded as four field elements (32-byte canonical encoding).
+* For each input `i`: `input_active[i] ∈ {0,1}` and `nf_in[i]` is a 4-limb nullifier (inactive inputs must use all-zero limbs).
+* For each output `j`: `output_active[j] ∈ {0,1}` and `cm_out[j]` is a 4-limb commitment (inactive outputs must use all-zero limbs).
 * `fee_native ∈ F_p` and `value_balance` split into a sign bit plus a 64-bit magnitude so all values fit in one field element.
 
 The transaction envelope also carries `balance_slots` and a `balance_tag`, which are validated outside the STARK for now.
@@ -658,9 +669,9 @@ For each input `i`:
 * `pk_recipient_in[i]` as 4 field elements (32 bytes split into 4 x 64-bit limbs)
 * `rho_in[i]` as 4 field elements
 * `r_in[i]` as 4 field elements
-* Merkle auth path: `sibling_in[i][d] ∈ F_p` for `d = 0 .. D-1`
+* Merkle auth path: `sibling_in[i][d]` is a 4-limb node for `d = 0 .. D-1`
 * `pos_in[i]` as a 64-bit field element used by the prover to order left/right siblings
-* The global spend secret `sk_spend`
+* The nullifier secret `sk_nf` (view-derived)
 
 For each output `j`:
 
@@ -688,7 +699,7 @@ For each input `i`:
 
 2. **Nullifier**
 
-   * Derive the nullifier key once: split `sk_spend` into four field words `ssk_0 .. ssk_3` and compute `nk = H_f(domain_nk, ssk_0, ssk_1, ssk_2, ssk_3)`.
+   * Derive the nullifier key once: split `sk_nf` into four field words `ssk_0 .. ssk_3` and compute `nk = H_f(domain_nk, ssk_0, ssk_1, ssk_2, ssk_3)`.
    * For each input note, compute
 
    \[
@@ -749,7 +760,7 @@ The node maintains a canonical commitment tree with current root `root_state`. A
 
 #### 6.3 Block circuit and proof
 
-The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same poseidon-style `Felt` hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. On top of that, the `circuits/block` crate processes sequences of `TransactionProof`s. Its `prove_block` entry point re-verifies each transaction against the transaction verifying key, checks that each proof’s published `merkle_root` matches the running tree root, rejects repeated nullifiers by inserting their `as_int()` encodings into a set, appends every non-zero commitment through the `CommitmentTree`, and records the intermediate root trace. It also collapses each transaction’s public inputs, nullifiers, commitments, and native fee into a folded hash recorded as `RecursiveAggregation`, giving consensus a succinct digest of the block contents until full recursive proof composition lands. Mining nodes invoke `prove_block` immediately before attempting a PoW solution so the resulting header already carries the recursive digest and `version_commitment` they derived from their private tree state; no staking committee or delegated quorum is required.
+The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same poseidon-style hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. `TransactionProof::verify` rejects missing STARK proof bytes/public inputs in production builds; the legacy consistency checker is gated behind the `legacy-proof` feature for test fixtures only. On top of that, the `circuits/block` crate processes sequences of `TransactionProof`s. Its `prove_block` entry point re-verifies each transaction against the transaction verifying key, checks that each proof’s published `merkle_root` matches the running tree root, rejects repeated nullifiers by inserting their 32-byte encodings into a set, appends every non-zero commitment through the `CommitmentTree`, and records the intermediate root trace. It also collapses each transaction’s public inputs, nullifiers, commitments, and native fee into a folded hash recorded as `RecursiveAggregation`, giving consensus a succinct digest of the block contents until full recursive proof composition lands. Mining nodes invoke `prove_block` immediately before attempting a PoW solution so the resulting header already carries the recursive digest and `version_commitment` they derived from their private tree state; no staking committee or delegated quorum is required.
 
 `verify_block` expects miners to supply the current tree state. It replays the same verification and append logic, recomputes the aggregation digest, and only mutates local state when the recomputed root trace and digest match the prover’s output. Solo miners follow a simple operational loop: sync the tree, run `verify_block` on any candidate they plan to extend, update their local `VersionSchedule`, and only then start hashing on top of the verified root. Pools do the same before paying shares or relaying templates so that all PoW-only participants agree on state transitions without any staking-committee style coordination. This provides a concrete path from transaction proofs to a block-level proof artifact that consensus can check in one step.
 
@@ -776,7 +787,7 @@ Epoch proofs for light client sync accumulate proof hashes that bind the STARK p
 
 #### 6.6 Settlement batch proofs
 
-Settlement batch proofs bind instruction IDs and nullifiers into a Poseidon-based commitment. The public inputs are the instruction count, nullifier count, the padded instruction ID list (length `MAX_INSTRUCTIONS`), the padded nullifier list (length `MAX_NULLIFIERS`), and the commitment itself. The commitment is computed by absorbing input pairs into a Poseidon sponge initialized as `[domain_tag, 0, 1]`, adding each pair to the first two state elements, running 8 rounds, and repeating for the full padded input list. Nullifiers are Poseidon-derived from `(instruction_id, index)` under a distinct domain tag, then encoded in the same canonical 32-byte format (24 zero prefix, 8-byte big-endian payload). Settlement verification rejects non-canonical encodings and uses the on-chain `StarkVerifierParams` (Blake3, 28 FRI queries, 16x blowup) to select acceptable proof options.
+Settlement batch proofs bind instruction IDs and nullifiers into a Poseidon-based commitment. The public inputs are the instruction count, nullifier count, the padded instruction ID list (length `MAX_INSTRUCTIONS`), the padded nullifier list (length `MAX_NULLIFIERS`), and the commitment itself. The commitment is computed by absorbing input pairs into a Poseidon sponge initialized as `[domain_tag, 0, 1]`, adding each pair to the first two state elements, running 8 rounds, and repeating for the full padded input list. Nullifiers are Poseidon-derived from `(instruction_id, index)` under a distinct domain tag, then encoded as 32 bytes with four big-endian limbs; canonical encodings reject any limb \(\ge p\). Settlement verification rejects non-canonical encodings and uses the on-chain `StarkVerifierParams` (Blake3, 28 FRI queries, 16x blowup) to select acceptable proof options.
 
 
 ---
@@ -856,6 +867,7 @@ Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md
 - Follow `docs/SECURITY_REVIEWS.md` whenever commissioning cryptanalysis or third-party audits. Every finding recorded there must reference the code path touched plus the mitigation PR.
 - `circuits/formal/README.md` and `consensus/spec/formal/README.md` explain how to run the new TLA+ models. Include the TLC/Apalache output summary in PR descriptions when those specs change.
 - `runbooks/security_testing.md` documents how to rerun the `security-adversarial` job locally, capture artifacts, and notify auditors if a regression appears on CI. Treat it as mandatory reading before release tagging.
+- Track dependency advisories with `./scripts/dependency-audit.sh --record`; this is advisory-only until release hardening, so treat findings as signals to triage rather than blockers.
 
 ### Documentation + threat-model synchronization
 

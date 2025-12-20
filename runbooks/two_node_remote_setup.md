@@ -127,6 +127,9 @@ One person starts first and becomes the initial bootnode.
 # Create a data directory
 mkdir -p /tmp/my-hegemon-node
 
+# If switching to a chainspec that upgrades commitment/nullifier encoding,
+# wipe any existing node.db and wallet stores before starting.
+
 # Start your mining node
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
 cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \

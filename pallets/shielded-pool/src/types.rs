@@ -26,8 +26,8 @@ pub const MAX_COMMITMENTS_PER_TX: u32 = 2;
 /// Typical range: 20KB-100KB depending on circuit complexity.
 pub const STARK_PROOF_MAX_SIZE: usize = 65536;
 
-/// Size of a binding signature.
-pub const BINDING_SIG_SIZE: usize = 64;
+/// Size of a binding hash.
+pub const BINDING_HASH_SIZE: usize = 64;
 
 /// Size of the memo field in bytes.
 pub const MEMO_SIZE: usize = 512;
@@ -142,15 +142,15 @@ impl StarkProof {
 #[derive(
     Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
 )]
-pub struct BindingSignature {
+pub struct BindingHash {
     /// Hash-based commitment to the value balance.
-    pub data: [u8; BINDING_SIG_SIZE],
+    pub data: [u8; BINDING_HASH_SIZE],
 }
 
-impl Default for BindingSignature {
+impl Default for BindingHash {
     fn default() -> Self {
         Self {
-            data: [0u8; BINDING_SIG_SIZE],
+            data: [0u8; BINDING_HASH_SIZE],
         }
     }
 }
@@ -223,7 +223,7 @@ pub struct ShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
     /// Merkle root the proof was generated against.
     pub anchor: [u8; 32],
     /// Value balance commitment (verified in STARK circuit).
-    pub binding_sig: BindingSignature,
+    pub binding_hash: BindingHash,
     /// Native fee encoded in the proof.
     pub fee: u64,
     /// Net value change (positive = deposit from transparent, negative = withdraw to transparent).

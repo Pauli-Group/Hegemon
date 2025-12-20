@@ -13,143 +13,17 @@ use scale_info::TypeInfo;
 use sp_std::vec::Vec;
 
 use crate::types::MERKLE_TREE_DEPTH;
+use transaction_core::hashing::{merkle_node_bytes, Commitment};
 
 // ================================================================================================
-// POSEIDON-LIKE SPONGE (matching circuits/transaction/src/hashing.rs)
+// MERKLE HASHING (circuit-compatible)
 // ================================================================================================
-
-/// Poseidon permutation width (matching circuit constants).
-const POSEIDON_WIDTH: usize = 3;
-
-/// Number of rounds for the Poseidon-like permutation.
-const POSEIDON_ROUNDS: usize = 8;
-
-/// Domain separation tag for Merkle tree nodes.
-const MERKLE_DOMAIN_TAG: u64 = 4;
-
-/// Field modulus for the 64-bit Goldilocks-like field.
-/// This is 2^64 - 2^32 + 1, but we use wrapping arithmetic matching winterfell.
-const FIELD_MODULUS: u128 = (1u128 << 64) - (1u128 << 32) + 1;
-
-/// Compute round constant for Poseidon (deterministic, matching circuit).
-#[inline]
-fn round_constant(round: usize, position: usize) -> u64 {
-    ((round as u64).wrapping_add(1).wrapping_mul(0x9e37_79b9u64))
-        ^ ((position as u64)
-            .wrapping_add(1)
-            .wrapping_mul(0x7f4a_7c15u64))
-}
-
-/// Reduce a u128 value to field element.
-#[inline]
-fn reduce(val: u128) -> u64 {
-    (val % FIELD_MODULUS) as u64
-}
-
-/// Field multiplication.
-#[inline]
-fn field_mul(a: u64, b: u64) -> u64 {
-    reduce((a as u128) * (b as u128))
-}
-
-/// Field addition.
-#[inline]
-fn field_add(a: u64, b: u64) -> u64 {
-    reduce((a as u128) + (b as u128))
-}
-
-/// Compute x^5 in the field.
-#[inline]
-fn field_exp5(x: u64) -> u64 {
-    let x2 = field_mul(x, x);
-    let x4 = field_mul(x2, x2);
-    field_mul(x4, x)
-}
-
-/// Mix the Poseidon state using MDS matrix.
-fn mix(state: &mut [u64; POSEIDON_WIDTH]) {
-    const MIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
-    let state_snapshot = *state;
-    let mut tmp = [0u64; POSEIDON_WIDTH];
-    for (row, output) in MIX.iter().zip(tmp.iter_mut()) {
-        let mut acc = 0u64;
-        for (&coef, &value) in row.iter().zip(state_snapshot.iter()) {
-            acc = field_add(acc, field_mul(value, coef));
-        }
-        *output = acc;
-    }
-    *state = tmp;
-}
-
-/// Poseidon permutation.
-fn permutation(state: &mut [u64; POSEIDON_WIDTH]) {
-    for round in 0..POSEIDON_ROUNDS {
-        // Add round constants
-        for (position, value) in state.iter_mut().enumerate() {
-            *value = field_add(*value, round_constant(round, position));
-        }
-        // S-box: x^5
-        for value in state.iter_mut() {
-            *value = field_exp5(*value);
-        }
-        // MDS mix
-        mix(state);
-    }
-}
-
-/// Absorb values into the sponge state.
-fn absorb(state: &mut [u64; POSEIDON_WIDTH], chunk: &[u64]) {
-    for (state_slot, value) in state.iter_mut().zip(chunk.iter()) {
-        *state_slot = field_add(*state_slot, *value);
-    }
-    permutation(state);
-}
-
-/// Poseidon sponge hash function.
-fn sponge(domain_tag: u64, inputs: &[u64]) -> u64 {
-    let mut state = [domain_tag, 0, 1]; // Initial state matches circuit
-    let rate = POSEIDON_WIDTH - 1;
-    let mut cursor = 0;
-    while cursor < inputs.len() {
-        let take = core::cmp::min(rate, inputs.len() - cursor);
-        let mut chunk = [0u64; POSEIDON_WIDTH - 1];
-        chunk[..take].copy_from_slice(&inputs[cursor..cursor + take]);
-        absorb(&mut state, &chunk);
-        cursor += take;
-    }
-    state[0]
-}
-
-/// Compute Merkle node hash from two children (as Felt values).
-/// This matches the circuit's `merkle_node` function exactly.
-fn merkle_node_felt(left: u64, right: u64) -> u64 {
-    sponge(MERKLE_DOMAIN_TAG, &[left, right])
-}
-
-/// Convert 32 bytes to a field element (take last 8 bytes as BE u64).
-/// This matches the circuit's representation where Felt is stored in last 8 bytes.
-fn bytes32_to_felt(bytes: &[u8; 32]) -> u64 {
-    u64::from_be_bytes([
-        bytes[24], bytes[25], bytes[26], bytes[27], bytes[28], bytes[29], bytes[30], bytes[31],
-    ])
-}
-
-/// Convert a field element to 32 bytes (left-padded with zeros).
-fn felt_to_bytes32(felt: u64) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out[24..32].copy_from_slice(&felt.to_be_bytes());
-    out
-}
 
 /// Hash two child nodes to produce parent node.
 ///
-/// Uses Poseidon-like sponge matching the transaction circuit.
-/// The bytes are interpreted as field elements (last 8 bytes as BE u64).
-pub fn merkle_hash(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
-    let left_felt = bytes32_to_felt(left);
-    let right_felt = bytes32_to_felt(right);
-    let parent_felt = merkle_node_felt(left_felt, right_felt);
-    felt_to_bytes32(parent_felt)
+/// Uses the circuit-compatible Poseidon sponge and 32-byte limb encoding.
+pub fn merkle_hash(left: &Commitment, right: &Commitment) -> Commitment {
+    merkle_node_bytes(left, right).expect("canonical merkle node")
 }
 
 /// Compute the default (empty) hash for a given tree level.

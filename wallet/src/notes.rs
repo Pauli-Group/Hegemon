@@ -158,21 +158,37 @@ impl NoteCiphertext {
         ciphertext[offset..offset + 4].copy_from_slice(&self.diversifier_index.to_le_bytes());
         offset += 4;
 
+        // Note + memo payloads must fit before the trailing 32-byte hint tag.
+        let note_len = self.note_payload.len();
+        let memo_len = self.memo_payload.len();
+        let max_payload = PALLET_CIPHERTEXT_SIZE - 32 - 5 - 8; // hint + version/diversifier + 2 length fields
+        if note_len + memo_len > max_payload {
+            return Err(WalletError::Serialization(format!(
+                "Encrypted note payloads too large: note={} memo={} max_total={}",
+                note_len, memo_len, max_payload
+            )));
+        }
+
+        let note_len_u32 = u32::try_from(note_len).map_err(|_| {
+            WalletError::Serialization("note payload length overflow".into())
+        })?;
+        let memo_len_u32 = u32::try_from(memo_len).map_err(|_| {
+            WalletError::Serialization("memo payload length overflow".into())
+        })?;
+
         // Note payload length (4 bytes) and data
-        let note_len = self.note_payload.len().min(400) as u32;
-        ciphertext[offset..offset + 4].copy_from_slice(&note_len.to_le_bytes());
+        ciphertext[offset..offset + 4].copy_from_slice(&note_len_u32.to_le_bytes());
         offset += 4;
-        ciphertext[offset..offset + note_len as usize]
-            .copy_from_slice(&self.note_payload[..note_len as usize]);
-        offset += note_len as usize;
+        ciphertext[offset..offset + note_len]
+            .copy_from_slice(&self.note_payload[..note_len]);
+        offset += note_len;
 
         // Memo payload length (4 bytes) and data
-        let memo_len = self.memo_payload.len().min(100) as u32;
-        ciphertext[offset..offset + 4].copy_from_slice(&memo_len.to_le_bytes());
+        ciphertext[offset..offset + 4].copy_from_slice(&memo_len_u32.to_le_bytes());
         offset += 4;
         if memo_len > 0 {
-            ciphertext[offset..offset + memo_len as usize]
-                .copy_from_slice(&self.memo_payload[..memo_len as usize]);
+            ciphertext[offset..offset + memo_len]
+                .copy_from_slice(&self.memo_payload[..memo_len]);
         }
 
         // Hint tag at the end (last 32 bytes)
@@ -434,5 +450,18 @@ mod tests {
 
         assert_eq!(recovered.version, ciphertext.version);
         assert_eq!(recovered.hint_tag, ciphertext.hint_tag);
+    }
+
+    #[test]
+    fn to_pallet_bytes_rejects_oversize_memo() {
+        let mut rng = StdRng::seed_from_u64(789);
+        let root = RootSecret::from_rng(&mut rng);
+        let keys = root.derive();
+        let material = keys.address(0).unwrap();
+        let address = material.shielded_address();
+        let memo = vec![0u8; 600];
+        let note = NotePlaintext::random(1, 0, MemoPlaintext::new(memo), &mut rng);
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+        assert!(ciphertext.to_pallet_bytes().is_err());
     }
 }

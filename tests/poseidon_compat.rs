@@ -1,6 +1,6 @@
 //! Test that pallet and circuit Poseidon implementations match.
 
-use transaction_circuit::hashing::{merkle_node, Felt};
+use transaction_circuit::hashing::{merkle_node_bytes, Commitment};
 
 // Re-implement the pallet's Poseidon for comparison in a test context
 mod pallet_poseidon {
@@ -73,7 +73,7 @@ mod pallet_poseidon {
         permutation(state);
     }
 
-    pub fn sponge(domain_tag: u64, inputs: &[u64]) -> u64 {
+    fn sponge_hash(domain_tag: u64, inputs: &[u64]) -> [u64; 4] {
         let mut state = [domain_tag, 0, 1];
         let rate = POSEIDON_WIDTH - 1;
         let mut cursor = 0;
@@ -84,40 +84,89 @@ mod pallet_poseidon {
             absorb(&mut state, &chunk);
             cursor += take;
         }
-        state[0]
+        let mut out = [0u64; 4];
+        out[0] = state[0];
+        out[1] = state[1];
+        permutation(&mut state);
+        out[2] = state[0];
+        out[3] = state[1];
+        out
     }
 
-    pub fn merkle_node(left: u64, right: u64) -> u64 {
-        sponge(MERKLE_DOMAIN_TAG, &[left, right])
+    fn bytes32_to_limbs(bytes: &Commitment) -> [u64; 4] {
+        let mut out = [0u64; 4];
+        for (idx, chunk) in bytes.chunks(8).enumerate() {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(chunk);
+            out[idx] = u64::from_be_bytes(buf);
+        }
+        out
+    }
+
+    pub fn limbs_to_bytes32(limbs: &[u64; 4]) -> Commitment {
+        let mut out = [0u8; 32];
+        for (idx, limb) in limbs.iter().enumerate() {
+            let start = idx * 8;
+            out[start..start + 8].copy_from_slice(&limb.to_be_bytes());
+        }
+        out
+    }
+
+    pub fn merkle_node_bytes(left: &Commitment, right: &Commitment) -> Commitment {
+        let left_limbs = bytes32_to_limbs(left);
+        let right_limbs = bytes32_to_limbs(right);
+        let mut inputs = Vec::with_capacity(8);
+        inputs.extend_from_slice(&[
+            left_limbs[2],
+            left_limbs[3],
+            left_limbs[0],
+            left_limbs[1],
+        ]);
+        inputs.extend_from_slice(&[
+            right_limbs[2],
+            right_limbs[3],
+            right_limbs[0],
+            right_limbs[1],
+        ]);
+        let out = sponge_hash(MERKLE_DOMAIN_TAG, &inputs);
+        limbs_to_bytes32(&out)
     }
 }
 
 #[test]
 fn poseidon_merkle_hash_matches() {
     // Test with zeros
-    let circuit_result = merkle_node(Felt::new(0), Felt::new(0)).as_int();
-    let pallet_result = pallet_poseidon::merkle_node(0, 0);
+    let left = [0u8; 32];
+    let right = [0u8; 32];
+    let circuit_result = merkle_node_bytes(&left, &right).expect("canonical");
+    let pallet_result = pallet_poseidon::merkle_node_bytes(&left, &right);
     println!("merkle_node(0, 0):");
-    println!("  circuit: {}", circuit_result);
-    println!("  pallet:  {}", pallet_result);
+    println!("  circuit: {}", hex::encode(circuit_result));
+    println!("  pallet:  {}", hex::encode(pallet_result));
     assert_eq!(circuit_result, pallet_result, "merkle_node(0,0) mismatch");
 
     // Test with small values
-    let circuit_result = merkle_node(Felt::new(1), Felt::new(2)).as_int();
-    let pallet_result = pallet_poseidon::merkle_node(1, 2);
+    let mut left = [0u8; 32];
+    let mut right = [0u8; 32];
+    left[24..32].copy_from_slice(&1u64.to_be_bytes());
+    right[24..32].copy_from_slice(&2u64.to_be_bytes());
+    let circuit_result = merkle_node_bytes(&left, &right).expect("canonical");
+    let pallet_result = pallet_poseidon::merkle_node_bytes(&left, &right);
     println!("merkle_node(1, 2):");
-    println!("  circuit: {}", circuit_result);
-    println!("  pallet:  {}", pallet_result);
+    println!("  circuit: {}", hex::encode(circuit_result));
+    println!("  pallet:  {}", hex::encode(pallet_result));
     assert_eq!(circuit_result, pallet_result, "merkle_node(1,2) mismatch");
 
     // Test with larger values
-    let large1 = 12345678901234567890u64;
-    let large2 = 9876543210987654321u64;
-    let circuit_result = merkle_node(Felt::new(large1), Felt::new(large2)).as_int();
-    let pallet_result = pallet_poseidon::merkle_node(large1, large2);
+    let large1 = [1u64, 2, 3, 4];
+    let large2 = [5u64, 6, 7, 8];
+    let left = pallet_poseidon::limbs_to_bytes32(&large1);
+    let right = pallet_poseidon::limbs_to_bytes32(&large2);
+    let circuit_result = merkle_node_bytes(&left, &right).expect("canonical");
+    let pallet_result = pallet_poseidon::merkle_node_bytes(&left, &right);
     println!("merkle_node(large1, large2):");
-    println!("  circuit: {}", circuit_result);
-    println!("  pallet:  {}", pallet_result);
+    println!("  circuit: {}", hex::encode(circuit_result));
+    println!("  pallet:  {}", hex::encode(pallet_result));
     assert_eq!(circuit_result, pallet_result, "merkle_node(large) mismatch");
 }
 
@@ -127,31 +176,26 @@ fn poseidon_empty_tree_root_matches() {
     // Empty leaf = 0, then hash(empty, empty) recursively
     let depth = 32;
 
-    let mut circuit_current = Felt::new(0);
-    let mut pallet_current = 0u64;
+    let mut circuit_current = [0u8; 32];
+    let mut pallet_current = [0u8; 32];
 
     for level in 0..depth {
-        circuit_current = merkle_node(circuit_current, circuit_current);
-        pallet_current = pallet_poseidon::merkle_node(pallet_current, pallet_current);
+        circuit_current =
+            merkle_node_bytes(&circuit_current, &circuit_current).expect("canonical");
+        pallet_current = pallet_poseidon::merkle_node_bytes(&pallet_current, &pallet_current);
 
         if level < 5 || level == depth - 1 {
             println!("Level {level} default:");
-            println!("  circuit: {}", circuit_current.as_int());
-            println!("  pallet:  {}", pallet_current);
+            println!("  circuit: {}", hex::encode(circuit_current));
+            println!("  pallet:  {}", hex::encode(pallet_current));
         }
-        assert_eq!(
-            circuit_current.as_int(),
-            pallet_current,
-            "Level {} mismatch",
-            level
-        );
+        assert_eq!(circuit_current, pallet_current, "Level {} mismatch", level);
     }
 
     println!("Empty tree root (depth {}):", depth);
     println!(
-        "  circuit: {} (0x{:016x})",
-        circuit_current.as_int(),
-        circuit_current.as_int()
+        "  circuit: {}",
+        hex::encode(circuit_current)
     );
-    println!("  pallet:  {} (0x{:016x})", pallet_current, pallet_current);
+    println!("  pallet:  {}", hex::encode(pallet_current));
 }

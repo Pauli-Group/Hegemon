@@ -56,8 +56,8 @@ pub struct NoteStatus {
 pub struct CommitmentEntry {
     /// Index in the commitment tree
     pub index: u64,
-    /// Commitment value (field element)
-    pub value: u64,
+    /// Commitment value (hex encoded)
+    pub value: String,
 }
 
 /// Paginated commitment response
@@ -261,7 +261,7 @@ pub trait WalletService: Send + Sync {
     fn note_status(&self) -> NoteStatus;
 
     /// Get commitment entries
-    fn commitment_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, u64)>, String>;
+    fn commitment_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, [u8; 32])>, String>;
 
     /// Get ciphertext entries
     fn ciphertext_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, Vec<u8>)>, String>;
@@ -337,7 +337,10 @@ where
         Ok(CommitmentResponse {
             entries: entries
                 .into_iter()
-                .map(|(index, value)| CommitmentEntry { index, value })
+                .map(|(index, value)| CommitmentEntry {
+                    index,
+                    value: format!("0x{}", hex::encode(value)),
+                })
                 .collect(),
             total,
             has_more,
@@ -507,10 +510,18 @@ mod tests {
             }
         }
 
-        fn commitment_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, u64)>, String> {
+        fn commitment_slice(
+            &self,
+            start: u64,
+            limit: usize,
+        ) -> Result<Vec<(u64, [u8; 32])>, String> {
             let entries: Vec<_> = (start..start + limit as u64)
                 .take(100)
-                .map(|i| (i, i * 2))
+                .map(|i| {
+                    let mut bytes = [0u8; 32];
+                    bytes[24..32].copy_from_slice(&(i * 2).to_be_bytes());
+                    (i, bytes)
+                })
                 .collect();
             Ok(entries)
         }

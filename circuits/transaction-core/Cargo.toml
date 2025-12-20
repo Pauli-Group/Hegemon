@@ -16,6 +16,7 @@ default = ["std"]
 std = ["winterfell/std", "winter-crypto?/std", "blake3/std", "serde?/std"]
 serde = ["dep:serde"]
 stark-verify = ["winter-crypto"]
+stark-fast = []
 
 [lints]
 workspace = true

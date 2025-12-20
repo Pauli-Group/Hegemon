@@ -30,8 +30,17 @@ pub fn absorb_row(cycle: usize) -> usize {
 }
 
 pub fn commitment_row() -> usize {
+    commitment_row_01()
+}
+
+pub fn commitment_row_01() -> usize {
     let last_cycle = crate::constants::DUMMY_CYCLES + INPUT_PAIRS - 1;
     absorb_row(last_cycle)
+}
+
+pub fn commitment_row_23() -> usize {
+    let squeeze_cycle = crate::constants::DUMMY_CYCLES + INPUT_PAIRS;
+    absorb_row(squeeze_cycle)
 }
 
 // ================================================================================================
@@ -43,7 +52,7 @@ pub struct DisclosurePublicInputs {
     pub value: BaseElement,
     pub asset_id: BaseElement,
     pub pk_recipient: [BaseElement; 4],
-    pub commitment: BaseElement,
+    pub commitment: [BaseElement; 4],
 }
 
 impl Default for DisclosurePublicInputs {
@@ -52,18 +61,18 @@ impl Default for DisclosurePublicInputs {
             value: BaseElement::ZERO,
             asset_id: BaseElement::ZERO,
             pk_recipient: [BaseElement::ZERO; 4],
-            commitment: BaseElement::ZERO,
+            commitment: [BaseElement::ZERO; 4],
         }
     }
 }
 
 impl ToElements<BaseElement> for DisclosurePublicInputs {
     fn to_elements(&self) -> Vec<BaseElement> {
-        let mut out = Vec::with_capacity(7);
+        let mut out = Vec::with_capacity(10);
         out.push(self.value);
         out.push(self.asset_id);
         out.extend(self.pk_recipient);
-        out.push(self.commitment);
+        out.extend(self.commitment);
         out
     }
 }
@@ -78,7 +87,7 @@ pub struct DisclosureAir {
 }
 
 const NUM_CONSTRAINTS: usize = 4;
-const NUM_ASSERTIONS: usize = 26;
+const NUM_ASSERTIONS: usize = 45;
 
 impl Air for DisclosureAir {
     type BaseField = BaseElement;
@@ -229,11 +238,28 @@ impl Air for DisclosureAir {
             }
         }
 
-        // Final commitment output.
+        // Final commitment output (4 limbs).
+        let row_01 = commitment_row_01();
+        let row_23 = commitment_row_23();
         assertions.push(Assertion::single(
             COL_S0,
-            commitment_row(),
-            self.pub_inputs.commitment,
+            row_01,
+            self.pub_inputs.commitment[0],
+        ));
+        assertions.push(Assertion::single(
+            COL_S1,
+            row_01,
+            self.pub_inputs.commitment[1],
+        ));
+        assertions.push(Assertion::single(
+            COL_S0,
+            row_23,
+            self.pub_inputs.commitment[2],
+        ));
+        assertions.push(Assertion::single(
+            COL_S1,
+            row_23,
+            self.pub_inputs.commitment[3],
         ));
 
         assertions
@@ -278,7 +304,7 @@ mod tests {
 
     #[test]
     fn trace_length_is_power_of_two() {
-        assert_eq!(TRACE_LENGTH, 128);
+        assert_eq!(TRACE_LENGTH, 256);
         assert!(TRACE_LENGTH.is_power_of_two());
     }
 }

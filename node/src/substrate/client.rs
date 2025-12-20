@@ -369,6 +369,8 @@ pub struct ProductionConfig {
     pub max_block_transactions: usize,
     /// Whether to log verbose state updates
     pub verbose: bool,
+    /// Allow mock state execution (dev-only).
+    pub allow_mock_execution: bool,
     /// Miner account for coinbase rewards (SCALE-encoded AccountId)
     /// If None, no coinbase inherent will be created (testing/relay mode)
     /// DEPRECATED: Use miner_shielded_address instead
@@ -384,6 +386,7 @@ impl Default for ProductionConfig {
             poll_interval_ms: 100,
             max_block_transactions: 1000,
             verbose: false,
+            allow_mock_execution: false,
             miner_account: None,
             miner_shielded_address: None,
         }
@@ -407,6 +410,10 @@ impl ProductionConfig {
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
 
+        let allow_mock_execution = std::env::var("HEGEMON_ALLOW_MOCK_EXECUTION")
+            .map(|v| v == "1" || v.to_lowercase() == "true")
+            .unwrap_or(false);
+
         // Parse miner account from environment (hex-encoded SS58 or raw bytes)
         // DEPRECATED: Use HEGEMON_MINER_ADDRESS for shielded coinbase
         let miner_account = std::env::var("HEGEMON_MINER_ACCOUNT").ok().and_then(|s| {
@@ -422,6 +429,7 @@ impl ProductionConfig {
             poll_interval_ms,
             max_block_transactions,
             verbose,
+            allow_mock_execution,
             miner_account,
             miner_shielded_address,
         }
@@ -692,10 +700,12 @@ impl ProductionChainStateProvider {
                 }
             }
             result
-        } else {
-            tracing::warn!(block_number, "execute_extrinsics_fn NOT SET - using mock");
-            // Fallback: mock execution with zero state root
-            // This allows mining to work in scaffold mode without full runtime
+        } else if self.config.allow_mock_execution {
+            tracing::warn!(
+                block_number,
+                "execute_extrinsics_fn NOT SET - using mock (dev-only)"
+            );
+            // Fallback: mock execution with zero state root (dev-only)
             let extrinsics_root =
                 crate::substrate::mining_worker::compute_extrinsics_root(extrinsics);
             Ok(StateExecutionResult {
@@ -705,6 +715,9 @@ impl ProductionChainStateProvider {
                 failed_count: 0,
                 storage_changes_key: None, // No storage changes in mock mode
             })
+        } else {
+            Err("state execution is not configured; refusing to run without real execution"
+                .into())
         }
     }
 
@@ -715,7 +728,7 @@ impl ProductionChainStateProvider {
             && self.pending_txs_fn.read().is_some()
             && self.import_fn.read().is_some()
         // on_import_success_fn is optional
-        // execute_extrinsics_fn is optional (fallback to mock)
+        // execute_extrinsics_fn is optional only when allow_mock_execution is true
     }
 
     /// Check if state execution is configured (Task 11.4)
@@ -849,13 +862,12 @@ impl ChainStateProvider for ProductionChainStateProvider {
                 )
             }
             Err(e) => {
-                tracing::warn!(
+                tracing::error!(
                     block_number,
                     error = %e,
-                    "State execution failed, falling back to mock (Task 11.4)"
+                    "State execution failed; refusing to build block template"
                 );
-                // Fallback to simple extrinsics without state execution
-                template.with_extrinsics(pending)
+                panic!("state execution failed: {e}");
             }
         }
     }
@@ -1155,7 +1167,11 @@ mod tests {
 
     #[test]
     fn test_production_provider_execute_extrinsics() {
-        let provider = ProductionChainStateProvider::new(ProductionConfig::default());
+        let config = ProductionConfig {
+            allow_mock_execution: true,
+            ..ProductionConfig::default()
+        };
+        let provider = ProductionChainStateProvider::new(config);
 
         let parent = H256::from([1u8; 32]);
         let extrinsics = vec![vec![1, 2, 3], vec![4, 5, 6]];
@@ -1168,6 +1184,17 @@ mod tests {
         assert_eq!(exec_result.failed_count, 0);
         // State root should be zero in fallback mode
         assert_eq!(exec_result.state_root, H256::zero());
+    }
+
+    #[test]
+    fn test_production_provider_execute_extrinsics_requires_real() {
+        let provider = ProductionChainStateProvider::new(ProductionConfig::default());
+
+        let parent = H256::from([1u8; 32]);
+        let extrinsics = vec![vec![1, 2, 3]];
+
+        let result = provider.execute_extrinsics(&parent, 1, &extrinsics);
+        assert!(result.is_err());
     }
 
     #[test]

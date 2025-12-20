@@ -3272,6 +3272,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
         tracing::info!("BlockBuilder API wired for real state execution");
 
+        if !chain_state.has_state_execution() && !production_config.allow_mock_execution {
+            return Err(ServiceError::Other(
+                "state execution is not configured; refuse to start without real execution"
+                    .into(),
+            ));
+        }
+
         // =======================================================================
         // Wire PowBlockImport for real block import
         // =======================================================================

@@ -1,9 +1,14 @@
 use alloc::vec::Vec;
+use core::convert::TryInto;
 use winterfell::math::{fields::f64::BaseElement, FieldElement};
 
 use crate::constants::{SETTLEMENT_DOMAIN_TAG, SETTLEMENT_NULLIFIER_DOMAIN_TAG};
 
 pub type Felt = BaseElement;
+pub type HashFelt = [Felt; 4];
+pub type Commitment = [u8; 32];
+
+const FIELD_MODULUS: u128 = (1u128 << 64) - (1u128 << 32) + 1;
 
 #[inline]
 pub fn poseidon_round_constant(round: usize, position: usize) -> Felt {
@@ -47,7 +52,7 @@ pub fn poseidon_permutation(state: &mut [Felt; 3]) {
 ///
 /// This mirrors the trace layout: absorb two elements, run 8 Poseidon rounds,
 /// and repeat for every input pair.
-pub fn commitment_from_inputs(inputs: &[Felt]) -> Felt {
+pub fn commitment_from_inputs(inputs: &[Felt]) -> HashFelt {
     let mut state = [Felt::new(SETTLEMENT_DOMAIN_TAG), Felt::ZERO, Felt::ONE];
     for chunk in inputs.chunks(2) {
         let in0 = chunk[0];
@@ -56,41 +61,67 @@ pub fn commitment_from_inputs(inputs: &[Felt]) -> Felt {
         state[1] += in1;
         poseidon_permutation(&mut state);
     }
-    state[0]
+    let mut out = [Felt::ZERO; 4];
+    out[0] = state[0];
+    out[1] = state[1];
+    poseidon_permutation(&mut state);
+    out[2] = state[0];
+    out[3] = state[1];
+    out
 }
 
 /// Compute a nullifier from an instruction id and index.
-pub fn nullifier_from_instruction(instruction_id: u64, index: u64) -> Felt {
+pub fn nullifier_from_instruction(instruction_id: u64, index: u64) -> HashFelt {
     let mut state = [
         Felt::new(SETTLEMENT_NULLIFIER_DOMAIN_TAG),
         Felt::new(instruction_id),
         Felt::new(index),
     ];
     poseidon_permutation(&mut state);
-    state[0]
+    let mut out = [Felt::ZERO; 4];
+    out[0] = state[0];
+    out[1] = state[1];
+    poseidon_permutation(&mut state);
+    out[2] = state[0];
+    out[3] = state[1];
+    out
 }
 
 /// Convert a field element to 32 bytes (left-padded with zeros).
-pub fn felt_to_bytes32(felt: Felt) -> [u8; 32] {
+pub fn felt_to_bytes32(felt: Felt) -> Commitment {
     let mut out = [0u8; 32];
     out[24..32].copy_from_slice(&felt.as_int().to_be_bytes());
     out
 }
 
-/// Returns true if the 32-byte value is a canonical field encoding.
-pub fn is_canonical_bytes32(bytes: &[u8; 32]) -> bool {
-    bytes[..24].iter().all(|byte| *byte == 0)
+/// Returns true if the 32-byte value is a canonical 4-limb encoding.
+pub fn is_canonical_bytes32(bytes: &Commitment) -> bool {
+    bytes.chunks(8).all(|chunk| {
+        (u64::from_be_bytes(chunk.try_into().expect("8-byte chunk")) as u128) < FIELD_MODULUS
+    })
 }
 
-/// Convert a canonical 32-byte encoding into a field element.
-pub fn bytes32_to_felt(bytes: &[u8; 32]) -> Option<Felt> {
+/// Convert a canonical 32-byte encoding into 4 field elements.
+pub fn bytes32_to_felts(bytes: &Commitment) -> Option<HashFelt> {
     if !is_canonical_bytes32(bytes) {
         return None;
     }
+    let mut out = [Felt::ZERO; 4];
+    for (idx, chunk) in bytes.chunks(8).enumerate() {
+        let limb = u64::from_be_bytes(chunk.try_into().expect("8-byte chunk"));
+        out[idx] = Felt::new(limb);
+    }
+    Some(out)
+}
 
-    let mut buf = [0u8; 8];
-    buf.copy_from_slice(&bytes[24..32]);
-    Some(Felt::new(u64::from_be_bytes(buf)))
+/// Convert 4 field elements into a 32-byte encoding.
+pub fn felts_to_bytes32(felts: &HashFelt) -> Commitment {
+    let mut out = [0u8; 32];
+    for (idx, felt) in felts.iter().enumerate() {
+        let start = idx * 8;
+        out[start..start + 8].copy_from_slice(&felt.as_int().to_be_bytes());
+    }
+    out
 }
 
 #[allow(dead_code)]
@@ -118,9 +149,14 @@ mod tests {
 
     #[test]
     fn bytes_roundtrip() {
-        let felt = Felt::new(42);
-        let bytes = felt_to_bytes32(felt);
-        let parsed = bytes32_to_felt(&bytes).expect("canonical bytes");
-        assert_eq!(felt, parsed);
+        let felts = [
+            Felt::new(42),
+            Felt::new(7),
+            Felt::new(0),
+            Felt::new(9),
+        ];
+        let bytes = felts_to_bytes32(&felts);
+        let parsed = bytes32_to_felts(&bytes).expect("canonical bytes");
+        assert_eq!(felts, parsed);
     }
 }

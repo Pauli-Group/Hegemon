@@ -6,17 +6,17 @@ use winterfell::math::FieldElement;
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID},
     error::TransactionCircuitError,
-    hashing::{balance_commitment, Felt},
+    hashing::{balance_commitment, Commitment, Felt},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionPublicInputs {
-    #[serde(with = "crate::public_inputs::serde_felt")]
-    pub merkle_root: Felt,
-    #[serde(with = "crate::public_inputs::serde_vec_felt")]
-    pub nullifiers: Vec<Felt>,
-    #[serde(with = "crate::public_inputs::serde_vec_felt")]
-    pub commitments: Vec<Felt>,
+    #[serde(with = "crate::public_inputs::serde_bytes32")]
+    pub merkle_root: Commitment,
+    #[serde(with = "crate::public_inputs::serde_vec_bytes32")]
+    pub nullifiers: Vec<Commitment>,
+    #[serde(with = "crate::public_inputs::serde_vec_bytes32")]
+    pub commitments: Vec<Commitment>,
     pub balance_slots: Vec<BalanceSlot>,
     pub native_fee: u64,
     pub value_balance: i128,
@@ -28,8 +28,8 @@ pub struct TransactionPublicInputs {
 
 impl Default for TransactionPublicInputs {
     fn default() -> Self {
-        let nullifiers = vec![Felt::ZERO; MAX_INPUTS];
-        let commitments = vec![Felt::ZERO; MAX_OUTPUTS];
+        let nullifiers = vec![[0u8; 32]; MAX_INPUTS];
+        let commitments = vec![[0u8; 32]; MAX_OUTPUTS];
         let balance_slots = (0..BALANCE_SLOTS)
             .map(|_| BalanceSlot {
                 asset_id: u64::MAX,
@@ -38,7 +38,7 @@ impl Default for TransactionPublicInputs {
             .collect();
 
         Self {
-            merkle_root: Felt::ZERO,
+            merkle_root: [0u8; 32],
             nullifiers,
             commitments,
             balance_slots,
@@ -53,9 +53,9 @@ impl Default for TransactionPublicInputs {
 
 impl TransactionPublicInputs {
     pub fn new(
-        merkle_root: Felt,
-        nullifiers: Vec<Felt>,
-        commitments: Vec<Felt>,
+        merkle_root: Commitment,
+        nullifiers: Vec<Commitment>,
+        commitments: Vec<Commitment>,
         balance_slots: Vec<BalanceSlot>,
         native_fee: u64,
         value_balance: i128,
@@ -72,6 +72,28 @@ impl TransactionPublicInputs {
         if balance_slots.len() != BALANCE_SLOTS {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "balance slot vector must match BALANCE_SLOTS",
+            ));
+        }
+
+        if !transaction_core::hashing::is_canonical_bytes32(&merkle_root) {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "merkle root encoding is non-canonical",
+            ));
+        }
+        if nullifiers
+            .iter()
+            .any(|nf| !transaction_core::hashing::is_canonical_bytes32(nf))
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "nullifier encoding is non-canonical",
+            ));
+        }
+        if commitments
+            .iter()
+            .any(|cm| !transaction_core::hashing::is_canonical_bytes32(cm))
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "commitment encoding is non-canonical",
             ));
         }
 
@@ -101,31 +123,58 @@ impl TransactionPublicInputs {
     }
 }
 
-pub(crate) mod serde_vec_felt {
+pub(crate) mod serde_vec_bytes32 {
     use serde::{Deserializer, Serializer};
-    use std::convert::TryInto;
-    use winterfell::math::fields::f64::BaseElement;
 
-    pub fn serialize<S>(values: &[BaseElement], serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(values: &[[u8; 32]], serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let bytes: Vec<[u8; 8]> = values.iter().map(|v| v.as_int().to_be_bytes()).collect();
-        serializer.serialize_bytes(&bytes.concat())
+        let mut bytes = Vec::with_capacity(values.len() * 32);
+        for value in values {
+            bytes.extend_from_slice(value);
+        }
+        serializer.serialize_bytes(&bytes)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<BaseElement>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<[u8; 32]>, D::Error>
     where
         D: Deserializer<'de>,
     {
         let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        if !bytes.len().is_multiple_of(8) {
-            return Err(serde::de::Error::custom("invalid field encoding"));
+        if !bytes.len().is_multiple_of(32) {
+            return Err(serde::de::Error::custom("invalid 32-byte encoding"));
         }
         Ok(bytes
-            .chunks(8)
-            .map(|chunk| BaseElement::new(u64::from_be_bytes(chunk.try_into().unwrap())))
+            .chunks(32)
+            .map(|chunk| <[u8; 32]>::try_from(chunk).expect("32-byte chunk"))
             .collect())
+    }
+
+    use serde::Deserialize;
+}
+
+pub(crate) mod serde_bytes32 {
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(value)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        if bytes.len() != 32 {
+            return Err(serde::de::Error::custom("expected 32 bytes"));
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        Ok(out)
     }
 
     use serde::Deserialize;

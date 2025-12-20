@@ -21,12 +21,15 @@ use crate::{
     stark_air::{
         commitment_output_row, merkle_root_output_row, nullifier_output_row, TransactionAirStark,
         TransactionPublicInputsStark, COL_FEE, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_OUT_ACTIVE0,
-        COL_OUT_ACTIVE1, COL_S0, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN,
+        COL_OUT_ACTIVE1, COL_OUT0, COL_OUT1, COL_S0, COL_S1, COL_VALUE_BALANCE_MAG,
+        COL_VALUE_BALANCE_SIGN,
     },
-    stark_prover::{default_proof_options, fast_proof_options, TransactionProverStark},
+    stark_prover::{default_proof_options, TransactionProverStark},
     witness::TransactionWitness,
     TransactionCircuitError,
 };
+#[cfg(feature = "stark-fast")]
+use crate::stark_prover::fast_proof_options;
 
 type RpoMerkleTree = MerkleTree<Rpo256>;
 
@@ -44,6 +47,7 @@ impl TransactionProverStarkRpo {
         Self::new(default_proof_options())
     }
 
+    #[cfg(feature = "stark-fast")]
     pub fn with_fast_options() -> Self {
         Self::new(fast_proof_options())
     }
@@ -93,14 +97,23 @@ impl Prover for TransactionProverStarkRpo {
             trace.get(COL_OUT_ACTIVE1, row),
         ];
 
+        let read_hash = |row: usize| -> [BaseElement; 4] {
+            [
+                trace.get(COL_OUT0, row),
+                trace.get(COL_OUT1, row),
+                trace.get(COL_S0, row),
+                trace.get(COL_S1, row),
+            ]
+        };
+
         let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
         for i in 0..MAX_INPUTS {
             let flag = input_flags[i];
             let row = nullifier_output_row(i);
             let nf = if flag == BaseElement::ONE && row < trace.length() {
-                trace.get(COL_S0, row)
+                read_hash(row)
             } else {
-                BaseElement::ZERO
+                [BaseElement::ZERO; 4]
             };
             nullifiers.push(nf);
         }
@@ -110,9 +123,9 @@ impl Prover for TransactionProverStarkRpo {
             let flag = output_flags[i];
             let row = commitment_output_row(i);
             let cm = if flag == BaseElement::ONE && row < trace.length() {
-                trace.get(COL_S0, row)
+                read_hash(row)
             } else {
-                BaseElement::ZERO
+                [BaseElement::ZERO; 4]
             };
             commitments.push(cm);
         }
@@ -120,12 +133,12 @@ impl Prover for TransactionProverStarkRpo {
         let merkle_root = if trace.length() > 0 {
             let row = merkle_root_output_row(0);
             if row < trace.length() {
-                trace.get(COL_S0, row)
+                read_hash(row)
             } else {
-                BaseElement::ZERO
+                [BaseElement::ZERO; 4]
             }
         } else {
-            BaseElement::ZERO
+            [BaseElement::ZERO; 4]
         };
 
         TransactionPublicInputsStark {
@@ -182,15 +195,15 @@ impl Prover for TransactionProverStarkRpo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hashing::merkle_node;
+    use crate::hashing::{felts_to_bytes32, merkle_node, HashFelt};
     use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
     use crate::rpo_verifier::verify_transaction_proof_rpo;
 
     fn compute_merkle_root_from_path(
-        leaf: BaseElement,
+        leaf: HashFelt,
         position: u64,
         path: &MerklePath,
-    ) -> BaseElement {
+    ) -> HashFelt {
         let mut current = leaf;
         let mut pos = position;
         for sibling in &path.siblings {
@@ -223,7 +236,7 @@ mod tests {
 
         let merkle_path = MerklePath::default();
         let leaf = input_note.commitment();
-        let merkle_root = compute_merkle_root_from_path(leaf, 0, &merkle_path);
+        let merkle_root = felts_to_bytes32(&compute_merkle_root_from_path(leaf, 0, &merkle_path));
 
         TransactionWitness {
             inputs: vec![InputNoteWitness {

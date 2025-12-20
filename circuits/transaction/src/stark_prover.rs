@@ -16,27 +16,33 @@ use winterfell::{
 
 use crate::{
     constants::{
-        MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
-        POSEIDON_ROUNDS,
+        CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG,
+        NULLIFIER_DOMAIN_TAG, POSEIDON_ROUNDS,
     },
     hashing::{merkle_node, prf_key, Felt},
     note::{InputNoteWitness, NoteData, OutputNoteWitness},
     stark_air::{
-        commitment_output_row, cycle_is_merkle, cycle_reset_domain, merkle_root_output_row,
-        note_start_row_input, note_start_row_output, nullifier_output_row, poseidon_round,
-        TransactionAirStark, TransactionPublicInputsStark, COL_DOMAIN, COL_FEE, COL_IN0,
-        COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET, COL_IN1_VALUE, COL_IN_ACTIVE0,
-        COL_IN_ACTIVE1, COL_LINK, COL_NOTE_START_IN0, COL_NOTE_START_IN1, COL_NOTE_START_OUT0,
-        COL_NOTE_START_OUT1, COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1_ASSET, COL_OUT1_VALUE,
-        COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S2, COL_SEL_IN0_SLOT0,
-        COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0,
-        COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0,
-        COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0,
-        COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET, COL_SLOT0_IN,
-        COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN,
+        commitment_output_row, cycle_is_merkle_left_01, cycle_is_merkle_left_23,
+        cycle_is_merkle_right_01, cycle_is_merkle_right_23, cycle_is_squeeze,
+        cycle_reset_domain, merkle_root_output_row, note_start_row_input, note_start_row_output,
+        nullifier_output_row, poseidon_round, TransactionAirStark,
+        TransactionPublicInputsStark, COL_CAPTURE, COL_CAPTURE2, COL_DIR, COL_DOMAIN, COL_FEE,
+        COL_IN0, COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET, COL_IN1_VALUE,
+        COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT_01, COL_MERKLE_LEFT_23,
+        COL_MERKLE_RIGHT_01, COL_MERKLE_RIGHT_23, COL_NOTE_START_IN0, COL_NOTE_START_IN1,
+        COL_NOTE_START_OUT0, COL_NOTE_START_OUT1, COL_OUT0, COL_OUT0_ASSET, COL_OUT0_VALUE,
+        COL_OUT1, COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT_ACTIVE0,
+        COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S2, COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1,
+        COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1,
+        COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1,
+        COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1,
+        COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET, COL_SLOT0_IN, COL_SLOT0_OUT,
+        COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN,
         COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_VALUE_BALANCE_MAG,
-        COL_VALUE_BALANCE_SIGN, COMMITMENT_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES, MERKLE_CYCLES,
-        MIN_TRACE_LENGTH, NULLIFIER_CYCLES, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH,
+        COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, COMMITMENT_CYCLES, CYCLE_LENGTH,
+        DUMMY_CYCLES, MERKLE_ABSORB_CYCLES, MERKLE_CYCLES, MERKLE_CYCLES_PER_LEVEL,
+        MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES, NULLIFIER_CYCLES, TOTAL_TRACE_CYCLES,
+        TOTAL_USED_CYCLES, TRACE_WIDTH,
     },
     witness::TransactionWitness,
     TransactionCircuitError,
@@ -50,6 +56,7 @@ struct CycleSpec {
     domain: u64,
     in0: BaseElement,
     in1: BaseElement,
+    dir: BaseElement,
 }
 
 // ================================================================================================
@@ -269,6 +276,10 @@ impl TransactionProverStark {
 
         let cycle_specs = build_cycle_specs(&input_notes, &output_notes, witness);
         let mut prev_state = [BaseElement::ZERO, BaseElement::ZERO, BaseElement::ONE];
+        let mut out0 = BaseElement::ZERO;
+        let mut out1 = BaseElement::ZERO;
+        let mut out2 = BaseElement::ZERO;
+        let mut out3 = BaseElement::ZERO;
 
         for cycle in 0..TOTAL_TRACE_CYCLES {
             let cycle_start = cycle * CYCLE_LENGTH;
@@ -276,16 +287,17 @@ impl TransactionProverStark {
                 break;
             }
 
-            let state_start = if cycle == 0 {
-                prev_state
+            let (state_start, dir) = if cycle == 0 {
+                (prev_state, BaseElement::ZERO)
             } else {
                 let spec = cycle_specs.get(cycle - 1).cloned().unwrap_or(CycleSpec {
                     reset: false,
                     domain: 0,
                     in0: BaseElement::ZERO,
                     in1: BaseElement::ZERO,
+                    dir: BaseElement::ZERO,
                 });
-                if spec.reset {
+                let state_start = if spec.reset {
                     [
                         BaseElement::new(spec.domain) + spec.in0,
                         spec.in1,
@@ -297,7 +309,8 @@ impl TransactionProverStark {
                         prev_state[1] + spec.in1,
                         prev_state[2],
                     ]
-                }
+                };
+                (state_start, spec.dir)
             };
 
             let mut state = state_start;
@@ -306,6 +319,11 @@ impl TransactionProverStark {
                 trace[COL_S0][row] = state[0];
                 trace[COL_S1][row] = state[1];
                 trace[COL_S2][row] = state[2];
+                trace[COL_OUT0][row] = out0;
+                trace[COL_OUT1][row] = out1;
+                trace[COL_OUT2][row] = out2;
+                trace[COL_OUT3][row] = out3;
+                trace[COL_DIR][row] = dir;
                 poseidon_round(&mut state, round);
             }
 
@@ -314,6 +332,11 @@ impl TransactionProverStark {
                 trace[COL_S0][row] = state[0];
                 trace[COL_S1][row] = state[1];
                 trace[COL_S2][row] = state[2];
+                trace[COL_OUT0][row] = out0;
+                trace[COL_OUT1][row] = out1;
+                trace[COL_OUT2][row] = out2;
+                trace[COL_OUT3][row] = out3;
+                trace[COL_DIR][row] = dir;
             }
 
             prev_state = state;
@@ -329,6 +352,7 @@ impl TransactionProverStark {
                         domain: 0,
                         in0: BaseElement::ZERO,
                         in1: BaseElement::ZERO,
+                        dir: BaseElement::ZERO,
                     });
                 trace[COL_IN0][end_row] = next_spec.in0;
                 trace[COL_IN1][end_row] = next_spec.in1;
@@ -341,11 +365,47 @@ impl TransactionProverStark {
                     trace[COL_DOMAIN][end_row] = BaseElement::ZERO;
                 }
 
-                trace[COL_LINK][end_row] = if cycle_is_merkle(next_cycle) {
+                trace[COL_MERKLE_LEFT_23][end_row] = if cycle_is_merkle_left_23(next_cycle) {
                     BaseElement::ONE
                 } else {
                     BaseElement::ZERO
                 };
+                trace[COL_MERKLE_LEFT_01][end_row] = if cycle_is_merkle_left_01(next_cycle) {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                };
+                trace[COL_MERKLE_RIGHT_23][end_row] = if cycle_is_merkle_right_23(next_cycle) {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                };
+                trace[COL_MERKLE_RIGHT_01][end_row] = if cycle_is_merkle_right_01(next_cycle) {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                };
+                let capture = if cycle_is_squeeze(next_cycle) {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                };
+                trace[COL_CAPTURE][end_row] = capture;
+                let capture2 = if cycle_is_squeeze(cycle) {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                };
+                trace[COL_CAPTURE2][end_row] = capture2;
+
+                if capture == BaseElement::ONE {
+                    out0 = state[0];
+                    out1 = state[1];
+                }
+                if capture2 == BaseElement::ONE {
+                    out2 = state[0];
+                    out3 = state[1];
+                }
             }
         }
 
@@ -373,7 +433,7 @@ impl TransactionProverStark {
             ));
         }
         while nullifiers.len() < MAX_INPUTS {
-            nullifiers.push(BaseElement::ZERO);
+            nullifiers.push([BaseElement::ZERO; 4]);
         }
 
         let mut commitments = Vec::new();
@@ -381,10 +441,12 @@ impl TransactionProverStark {
             commitments.push(output.note.commitment());
         }
         while commitments.len() < MAX_OUTPUTS {
-            commitments.push(BaseElement::ZERO);
+            commitments.push([BaseElement::ZERO; 4]);
         }
 
         let (vb_sign, vb_mag) = value_balance_parts(witness.value_balance)?;
+        let merkle_root = transaction_core::hashing::bytes32_to_felts(&witness.merkle_root)
+            .ok_or(TransactionCircuitError::ConstraintViolation("invalid merkle root"))?;
 
         Ok(TransactionPublicInputsStark {
             input_flags,
@@ -394,7 +456,7 @@ impl TransactionProverStark {
             fee: BaseElement::new(witness.fee),
             value_balance_sign: vb_sign,
             value_balance_magnitude: vb_mag,
-            merkle_root: witness.merkle_root,
+            merkle_root,
         })
     }
 
@@ -449,13 +511,22 @@ impl Prover for TransactionProverStark {
             output_flags.push(flag);
         }
 
+        let read_hash = |row: usize| -> [BaseElement; 4] {
+            [
+                trace.get(COL_OUT0, row),
+                trace.get(COL_OUT1, row),
+                trace.get(COL_S0, row),
+                trace.get(COL_S1, row),
+            ]
+        };
+
         let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
         for (i, flag) in input_flags.iter().enumerate() {
             let row = nullifier_output_row(i);
             let nf = if *flag == BaseElement::ONE && row < trace.length() {
-                trace.get(COL_S0, row)
+                read_hash(row)
             } else {
-                BaseElement::ZERO
+                [BaseElement::ZERO; 4]
             };
             nullifiers.push(nf);
         }
@@ -464,9 +535,9 @@ impl Prover for TransactionProverStark {
         for (i, flag) in output_flags.iter().enumerate() {
             let row = commitment_output_row(i);
             let cm = if *flag == BaseElement::ONE && row < trace.length() {
-                trace.get(COL_S0, row)
+                read_hash(row)
             } else {
-                BaseElement::ZERO
+                [BaseElement::ZERO; 4]
             };
             commitments.push(cm);
         }
@@ -474,12 +545,12 @@ impl Prover for TransactionProverStark {
         let merkle_root = if trace_len > 0 {
             let row = merkle_root_output_row(0);
             if row < trace_len {
-                trace.get(COL_S0, row)
+                read_hash(row)
             } else {
-                BaseElement::ZERO
+                [BaseElement::ZERO; 4]
             }
         } else {
-            BaseElement::ZERO
+            [BaseElement::ZERO; 4]
         };
 
         let final_row = trace_len.saturating_sub(2);
@@ -538,6 +609,23 @@ impl Prover for TransactionProverStark {
 // PROOF OPTIONS
 // ================================================================================================
 
+pub fn proof_options_from_config(
+    num_queries: usize,
+    blowup_factor: usize,
+    grinding_factor: u32,
+) -> ProofOptions {
+    ProofOptions::new(
+        num_queries,
+        blowup_factor,
+        grinding_factor,
+        winterfell::FieldExtension::None,
+        4,
+        31,
+        BatchingMethod::Linear,
+        BatchingMethod::Linear,
+    )
+}
+
 pub fn default_proof_options() -> ProofOptions {
     ProofOptions::new(
         32,
@@ -551,6 +639,7 @@ pub fn default_proof_options() -> ProofOptions {
     )
 }
 
+#[cfg(feature = "stark-fast")]
 pub fn fast_proof_options() -> ProofOptions {
     ProofOptions::new(
         8,
@@ -714,7 +803,7 @@ fn build_cycle_specs(
 
     for (idx, input) in inputs.iter().enumerate() {
         let commitment_inputs = commitment_inputs(&input.note);
-        for chunk_idx in 0..COMMITMENT_CYCLES {
+        for chunk_idx in 0..COMMITMENT_ABSORB_CYCLES {
             let reset = chunk_idx == 0;
             let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
             let in0 = commitment_inputs[chunk_idx * 2];
@@ -724,35 +813,69 @@ fn build_cycle_specs(
                 domain,
                 in0,
                 in1,
+                dir: BaseElement::ZERO,
             });
         }
+        cycles.push(CycleSpec {
+            reset: false,
+            domain: 0,
+            in0: BaseElement::ZERO,
+            in1: BaseElement::ZERO,
+            dir: BaseElement::ZERO,
+        });
 
         let mut current = input.note.commitment();
         let mut pos = input.position;
-        for level in 0..MERKLE_CYCLES {
+        for level in 0..CIRCUIT_MERKLE_DEPTH {
+            let dir = if pos & 1 == 0 {
+                BaseElement::ZERO
+            } else {
+                BaseElement::ONE
+            };
             let sibling = input
                 .merkle_path
                 .siblings
                 .get(level)
                 .copied()
-                .unwrap_or(Felt::ZERO);
+                .unwrap_or([Felt::ZERO; 4]);
             let (left, right) = if pos & 1 == 0 {
                 (current, sibling)
             } else {
                 (sibling, current)
             };
+            let left_ordered = [left[2], left[3], left[0], left[1]];
+            let right_ordered = [right[2], right[3], right[0], right[1]];
+            for pair_idx in 0..MERKLE_ABSORB_CYCLES {
+                let reset = pair_idx == 0;
+                let domain = if reset { MERKLE_DOMAIN_TAG } else { 0 };
+                let (in0, in1) = if pair_idx < 2 {
+                    let idx = pair_idx * 2;
+                    (left_ordered[idx], left_ordered[idx + 1])
+                } else {
+                    let idx = (pair_idx - 2) * 2;
+                    (right_ordered[idx], right_ordered[idx + 1])
+                };
+                cycles.push(CycleSpec {
+                    reset,
+                    domain,
+                    in0,
+                    in1,
+                    dir,
+                });
+            }
             cycles.push(CycleSpec {
-                reset: true,
-                domain: MERKLE_DOMAIN_TAG,
-                in0: left,
-                in1: right,
+                reset: false,
+                domain: 0,
+                in0: BaseElement::ZERO,
+                in1: BaseElement::ZERO,
+                dir,
             });
             current = merkle_node(left, right);
             pos >>= 1;
         }
 
         let nullifier_inputs = nullifier_inputs(prf, input);
-        for chunk_idx in 0..NULLIFIER_CYCLES {
+        for chunk_idx in 0..NULLIFIER_ABSORB_CYCLES {
             let reset = chunk_idx == 0;
             let domain = if reset { NULLIFIER_DOMAIN_TAG } else { 0 };
             let in0 = nullifier_inputs[chunk_idx * 2];
@@ -762,15 +885,23 @@ fn build_cycle_specs(
                 domain,
                 in0,
                 in1,
+                dir: BaseElement::ZERO,
             });
         }
+        cycles.push(CycleSpec {
+            reset: false,
+            domain: 0,
+            in0: BaseElement::ZERO,
+            in1: BaseElement::ZERO,
+            dir: BaseElement::ZERO,
+        });
 
         let _ = idx;
     }
 
     for output in outputs.iter() {
         let commitment_inputs = commitment_inputs(&output.note);
-        for chunk_idx in 0..COMMITMENT_CYCLES {
+        for chunk_idx in 0..COMMITMENT_ABSORB_CYCLES {
             let reset = chunk_idx == 0;
             let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
             let in0 = commitment_inputs[chunk_idx * 2];
@@ -780,8 +911,16 @@ fn build_cycle_specs(
                 domain,
                 in0,
                 in1,
+                dir: BaseElement::ZERO,
             });
         }
+        cycles.push(CycleSpec {
+            reset: false,
+            domain: 0,
+            in0: BaseElement::ZERO,
+            in1: BaseElement::ZERO,
+            dir: BaseElement::ZERO,
+        });
     }
 
     cycles
@@ -790,14 +929,14 @@ fn build_cycle_specs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hashing::merkle_node;
+    use crate::hashing::{felts_to_bytes32, merkle_node, HashFelt};
     use crate::note::{MerklePath, NoteData};
 
     fn compute_merkle_root_from_path(
-        leaf: BaseElement,
+        leaf: HashFelt,
         position: u64,
         path: &MerklePath,
-    ) -> BaseElement {
+    ) -> HashFelt {
         let mut current = leaf;
         let mut pos = position;
         for sibling in &path.siblings {
@@ -829,7 +968,7 @@ mod tests {
         };
         let merkle_path = MerklePath::default();
         let leaf = input_note.commitment();
-        let merkle_root = compute_merkle_root_from_path(leaf, 0, &merkle_path);
+        let merkle_root = felts_to_bytes32(&compute_merkle_root_from_path(leaf, 0, &merkle_path));
 
         let witness = TransactionWitness {
             inputs: vec![InputNoteWitness {

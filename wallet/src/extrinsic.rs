@@ -87,7 +87,7 @@ pub struct ShieldedTransferCall {
     /// Merkle tree anchor (root hash)
     pub anchor: [u8; 32],
     /// Binding signature
-    pub binding_sig: [u8; 64],
+    pub binding_hash: [u8; 64],
     /// Native fee encoded in the proof.
     pub fee: u64,
     /// Value balance (net shielding/unshielding)
@@ -103,7 +103,7 @@ impl ShieldedTransferCall {
             commitments: bundle.commitments.clone(),
             encrypted_notes: bundle.ciphertexts.clone(),
             anchor: bundle.anchor,
-            binding_sig: bundle.binding_sig,
+            binding_hash: bundle.binding_hash,
             fee: bundle.fee,
             value_balance: bundle.value_balance,
         }
@@ -297,7 +297,7 @@ impl ExtrinsicBuilder {
     /// - commitments: BoundedVec<[u8;32], MaxCommitmentsPerTx>
     /// - ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx>
     /// - anchor: [u8; 32]
-    /// - binding_sig: BindingSignature
+    /// - binding_hash: BindingHash
     /// - fee: u64
     /// - value_balance: i128
     fn encode_shielded_transfer_call(
@@ -361,9 +361,9 @@ impl ExtrinsicBuilder {
         encoded.extend_from_slice(&call.anchor);
         // eprintln!("DEBUG CALL: after anchor, encoded size = {}", encoded.len());
 
-        // Encode binding signature (BindingSignature { data: [u8; 64] })
-        encoded.extend_from_slice(&call.binding_sig);
-        // eprintln!("DEBUG CALL: after binding_sig, encoded size = {}", encoded.len());
+        // Encode binding hash (BindingHash { data: [u8; 64] })
+        encoded.extend_from_slice(&call.binding_hash);
+        // eprintln!("DEBUG CALL: after binding_hash, encoded size = {}", encoded.len());
 
         // Encode fee (u64, little-endian)
         encoded.extend_from_slice(&call.fee.to_le_bytes());
@@ -832,6 +832,12 @@ pub struct BatchShieldedTransferCall {
 pub fn encode_batch_shielded_transfer_call(
     call: &BatchShieldedTransferCall,
 ) -> Result<Vec<u8>, WalletError> {
+    if !cfg!(feature = "batch-proofs") {
+        return Err(WalletError::InvalidArgument(
+            "batch proofs are disabled; rebuild with --features batch-proofs",
+        ));
+    }
+
     let mut encoded = Vec::new();
 
     // Pallet index for ShieldedPool
@@ -843,8 +849,9 @@ pub fn encode_batch_shielded_transfer_call(
     encoded.push(BATCH_SHIELDED_TRANSFER_CALL_INDEX);
 
     // Encode proof as BatchStarkProof { data: Vec<u8>, batch_size: u32 }
-    // For now, we use an empty proof (AcceptAllBatchProofs verifier)
-    // The batch_size tells the verifier how many transactions are in the batch
+    // NOTE: This placeholder empty proof is only reachable with the
+    // `batch-proofs` feature enabled (dev/test-only).
+    // The batch_size tells the verifier how many transactions are in the batch.
     let proof_data: Vec<u8> = Vec::new(); // TODO: actual batch proof generation
     encode_compact_vec(&proof_data, &mut encoded);
     encoded.extend_from_slice(&call.batch_size.to_le_bytes());
@@ -960,8 +967,8 @@ pub fn encode_shielded_transfer_unsigned_call(
     // Encode anchor ([u8; 32])
     encoded.extend_from_slice(&call.anchor);
 
-    // Encode binding signature (BindingSignature { data: [u8; 64] })
-    encoded.extend_from_slice(&call.binding_sig);
+    // Encode binding hash (BindingHash { data: [u8; 64] })
+    encoded.extend_from_slice(&call.binding_hash);
 
     // Encode fee (u64, little-endian)
     encoded.extend_from_slice(&call.fee.to_le_bytes());

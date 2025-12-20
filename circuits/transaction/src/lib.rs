@@ -41,6 +41,7 @@ pub mod rpo_prover;
 pub mod rpo_verifier;
 
 // Legacy module (deprecated)
+#[cfg(feature = "legacy-proof")]
 #[deprecated(since = "0.2.0", note = "Use stark_air module for real STARK proofs")]
 pub mod air;
 
@@ -55,7 +56,9 @@ pub use witness::TransactionWitness;
 pub use stark_air::{
     TransactionAirStark, TransactionPublicInputsStark, MIN_TRACE_LENGTH, TRACE_WIDTH,
 };
-pub use stark_prover::{default_proof_options, fast_proof_options, TransactionProverStark};
+pub use stark_prover::{default_proof_options, proof_options_from_config, TransactionProverStark};
+#[cfg(feature = "stark-fast")]
+pub use stark_prover::fast_proof_options;
 pub use stark_verifier::{
     verify_transaction_proof, verify_transaction_proof_bytes, TransactionVerifyError,
 };
@@ -69,6 +72,7 @@ pub use rpo_verifier::{verify_transaction_proof_bytes_rpo, verify_transaction_pr
 pub use constants::{compute_air_hash, expected_air_hash, CIRCUIT_VERSION};
 
 // Legacy re-exports (deprecated)
+#[cfg(feature = "legacy-proof")]
 #[deprecated(since = "0.2.0", note = "Use stark_air::TransactionAirStark instead")]
 #[allow(deprecated)]
 pub use air::{check_constraints, TransactionAir};

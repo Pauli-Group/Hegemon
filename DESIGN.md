@@ -122,7 +122,8 @@ PRFs:
 
 * All “note identifiers”, nullifiers, etc. are derived with keyed hashes (BLAKE3-256 or SHA3-256, matching the commitment domain separation):
 
-  * `nk = H("nk" || sk_spend)`
+  * `sk_nf = H("view_nf" || sk_view)`
+  * `nk = H("nk" || sk_nf)`
   * `nullifier = H("nf" || nk || note_position || rho)`
 
 No group operations anywhere in user-visible cryptography.
@@ -201,20 +202,23 @@ We keep the Zcash mental model, but trimmed:
   * `r` (commitment randomness)
 * The chain stores only:
 
-  * a **commitment** `cm = Com(value, asset_id, pk_view, rho; r)`,
+  * a **commitment** `cm = Com(value, asset_id, pk_view, rho; r)` (32-byte, 4-limb encoding),
   * a Merkle tree of note commitments,
-  * a **nullifier** `nf` when the note is spent.
+  * a **nullifier** `nf` when the note is spent (32-byte, 4-limb encoding).
 
 The ZK proof shows:
 
-* “I know some opening `(value, asset_id, pk_view, rho, r)` and secret key `sk_spend` such that:
+* “I know some opening `(value, asset_id, pk_view, rho, r)` and nullifier secret `sk_nf` such that:
 
   * `cm` is in the tree,
-  * `nf = PRF(sk_spend, rho, position, …)`,
+  * `nf = PRF(sk_nf, rho, position, …)`,
   * total inputs = total outputs (value-conservation),
   * overflow conditions don’t happen.”
 
-No ECDSA/EdDSA/RedDSA anywhere; the “authorization” is just knowledge of `sk_spend` inside the ZK proof.
+No ECDSA/EdDSA/RedDSA anywhere; the “authorization” is just knowledge of `sk_nf` inside the ZK proof.
+
+Note: the switch to 4-limb 32-byte commitment/nullifier encodings is protocol-breaking. Any chain spec
+that adopts this encoding requires a fresh genesis and wiping `node.db` plus wallet stores.
 
 ### 3.2 Transaction structure
 
@@ -281,7 +285,7 @@ flowchart TD
     ROOT -->|HKDF "enc"| SK_ENC[sk_enc]
     ROOT -->|HKDF "derive"| SK_DERIVE[sk_derive]
 
-    SK_SPEND -->|H "nk"| NK[nk - Nullifier key]
+    VK_NF -->|H "nk"| NK[nk - Nullifier key]
 
     subgraph Viewing Keys
         IVK[Incoming VK<br/>sk_view + sk_enc]
@@ -290,7 +294,7 @@ flowchart TD
 
     SK_VIEW --> IVK
     SK_ENC --> IVK
-    SK_SPEND -->|H "view_nf"| VK_NF[vk_nf]
+    SK_VIEW -->|H "view_nf"| VK_NF[vk_nf]
     VK_NF --> FVK
 
     SK_DERIVE --> ADDR[Diversified Addresses<br/>shca1...]
@@ -309,10 +313,13 @@ From this we derive:
 
 * **Spending authorization material**:
 
-  * The STARK circuit uses `sk_spend` for nullifiers and for a commitment to “this user is allowed to spend this note”.
+  * `sk_spend` remains in the wallet for authorization/signing and is never embedded in viewing keys.
+* **Nullifier key material**:
+
+  * `vk_nf = H("view_nf" || sk_view)` is used inside the STARK to derive `nk` and nullifiers.
 * **Viewing keys**:
 
-  * `vk_full`: includes enough to derive both incoming and outgoing note info (e.g. seeds to recompute all `pk_view`, plus the PRFs used in the circuit).
+  * `vk_full`: includes enough to derive both incoming and outgoing note info plus `vk_nf` for spentness tracking.
   * `vk_incoming`: only the KEM/AEAD decryption info and the ability to scan for your notes, not to reconstruct spends.
 
 Everything is done via hash-based PRFs / KDFs; no ECC.
@@ -334,7 +341,7 @@ The repository now contains a `wallet` crate that wires these ideas into code:
 * `wallet/src/keys.rs` defines `RootSecret`, `DerivedKeys`, and `AddressKeyMaterial`. A SHA-256-based HKDF (`wallet-hkdf`) produces `sk_spend`, `sk_view`, `sk_enc`, and `sk_derive`, and diversified addresses are computed deterministically from `(sk_view, sk_enc, sk_derive, index)`.
 * `wallet/src/address.rs` encodes addresses as Bech32m (`shca1…`) strings that bundle the version, diversifier index, ML-KEM public key, `pk_recipient`, and a 32-byte hint tag. Decoding performs the inverse mapping so senders can rebuild the ML-KEM key and note metadata.
 * `wallet/src/notes.rs` handles ML-KEM encapsulation plus ChaCha20-Poly1305 AEAD wrapping for both the note payload and memo. The shared secret is expanded with a domain-separated label (`wallet-aead`) so note payloads and memos use independent nonces/keys.
-* `wallet/src/viewing.rs` exposes `IncomingViewingKey`, `OutgoingViewingKey`, and `FullViewingKey`. Incoming keys decrypt ciphertexts and rebuild `NoteData`/`InputNoteWitness` objects for the transaction circuit, outgoing keys let wallets audit their own sent notes, and full viewing keys add the nullifier PRF material needed for spentness tracking.
+* `wallet/src/viewing.rs` exposes `IncomingViewingKey`, `OutgoingViewingKey`, and `FullViewingKey`. Incoming keys decrypt ciphertexts and rebuild `NoteData`/`InputNoteWitness` objects for the transaction circuit, outgoing keys let wallets audit their own sent notes, and full viewing keys add the view-derived nullifier key (`vk_nf = BLAKE3("view_nf" || sk_view)`) needed for spentness tracking.
 * `wallet/src/bin/wallet.rs` ships a CLI with the following flow:
   * `wallet generate --count N` prints a JSON export containing the root secret (hex), the first `N` addresses, and serialized viewing keys.
   * `wallet address --root <hex> --index <n>` derives additional diversified addresses on demand.

@@ -15,7 +15,7 @@ All cryptographic operations are **post-quantum secure** using hash-based and la
 | Nullifiers | PRF with Poseidon | ✅ Hash-based |
 | Merkle Tree | Poseidon-based incremental tree | ✅ Hash-based |
 | ZK Proofs | STARK (FRI-based IOP) | ✅ Transparent, no trusted setup |
-| Value Balance | Verified in-circuit | ✅ No binding signatures |
+| Value Balance | Verified in-circuit | ✅ Binding hash only |
 | Key Encapsulation | ML-KEM (placeholder) | ✅ Lattice-based |
 
 ## Architecture
@@ -51,7 +51,7 @@ All cryptographic operations are **post-quantum secure** using hash-based and la
 ### `shield(amount, commitment, encrypted_note)`
 Deposit transparent funds into the shielded pool.
 
-### `shielded_transfer(proof, nullifiers, commitments, ciphertexts, anchor, binding_sig, value_balance)`
+### `shielded_transfer(proof, nullifiers, commitments, ciphertexts, anchor, binding_hash, value_balance)`
 Execute a private transfer (or partial shield/unshield with value_balance).
 
 ### `update_verifying_key(vk)` (admin only)

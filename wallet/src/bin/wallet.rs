@@ -21,9 +21,7 @@ use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::runtime::Builder as RuntimeBuilder;
 use transaction_circuit::{
-    hashing::{
-        bytes32_to_felt, felt_to_bytes32, is_canonical_bytes32, note_commitment_bytes, Felt,
-    },
+    hashing::{bytes32_to_felts, is_canonical_bytes32, note_commitment_bytes},
     note::{InputNoteWitness, MerklePath, OutputNoteWitness},
     witness::TransactionWitness,
 };
@@ -78,8 +76,8 @@ enum Commands {
         inputs: PathBuf,
         #[arg(long)]
         recipients: PathBuf,
-        #[arg(long, default_value_t = 0)]
-        merkle_root: u64,
+        #[arg(long, default_value = "0")]
+        merkle_root: String,
         #[arg(long, default_value_t = 0)]
         fee: u64,
         #[arg(long)]
@@ -464,7 +462,7 @@ fn main() -> Result<()> {
             recipients_path: recipients.as_path(),
             witness_out: witness_out.as_path(),
             ciphertext_out: ciphertext_out.as_path(),
-            merkle_root,
+            merkle_root: merkle_root.as_str(),
             fee,
             rng_seed,
         }),
@@ -540,8 +538,8 @@ fn cmd_tx_craft(params: TxCraftParams<'_>) -> Result<()> {
     let witness = TransactionWitness {
         inputs,
         outputs,
-        sk_spend: keys.spend.to_bytes(),
-        merkle_root: Felt::new(params.merkle_root),
+        sk_spend: keys.view.nullifier_key(),
+        merkle_root: parse_merkle_root(params.merkle_root)?,
         fee: params.fee,
         value_balance: 0,
         version: TransactionWitness::default_version_binding(),
@@ -928,20 +926,15 @@ fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
         let proof_bundle = prove_payment_disclosure(&claim, &witness)
             .map_err(|e| anyhow!("proof generation failed: {e}"))?;
 
-        let commitment_felt = bytes32_to_felt(&record.commitment)
-            .ok_or_else(|| anyhow!("commitment is not a canonical field encoding"))?;
         let leaf_index = store_arc
-            .find_commitment_index(commitment_felt)?
+            .find_commitment_index(record.commitment)?
             .ok_or_else(|| anyhow!("commitment not found in wallet tree; sync again"))?;
         let tree = store_arc.commitment_tree()?;
         let auth_path = tree
             .authentication_path(leaf_index as usize)
             .map_err(|e| anyhow!("merkle path error: {e}"))?;
-        let anchor = felt_to_bytes32(tree.root());
-        let siblings: Vec<[u8; 32]> = auth_path
-            .iter()
-            .map(|felt| felt_to_bytes32(*felt))
-            .collect();
+        let anchor = tree.root();
+        let siblings = auth_path;
 
         let package = DisclosurePackage {
             version: 1,
@@ -1002,15 +995,17 @@ fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
         );
     }
 
-    let commitment_felt = bytes32_to_felt(&package.claim.commitment)
+    let commitment_felt = bytes32_to_felts(&package.claim.commitment)
         .ok_or_else(|| anyhow!("commitment is not a canonical field encoding"))?;
-    let anchor_felt = bytes32_to_felt(&package.confirmation.anchor)
+    let anchor_felt = bytes32_to_felts(&package.confirmation.anchor)
         .ok_or_else(|| anyhow!("anchor is not a canonical field encoding"))?;
-    let sibling_felts: Vec<Felt> = package
+    let sibling_felts = package
         .confirmation
         .siblings
         .iter()
-        .map(|bytes| bytes32_to_felt(bytes).ok_or_else(|| anyhow!("non-canonical merkle sibling")))
+        .map(|bytes| {
+            bytes32_to_felts(bytes).ok_or_else(|| anyhow!("non-canonical merkle sibling"))
+        })
         .collect::<Result<_, _>>()?;
 
     let merkle_path = MerklePath {
@@ -1139,6 +1134,25 @@ fn parse_hex_32(input: &str) -> Result<[u8; 32]> {
     Ok(out)
 }
 
+fn parse_merkle_root(input: &str) -> Result<[u8; 32]> {
+    let trimmed = input.trim();
+    if trimmed.chars().all(|c| c.is_ascii_digit()) && trimmed.len() <= 16 {
+        let value: u64 = trimmed.parse().map_err(|e| anyhow!("invalid merkle root: {e}"))?;
+        let mut out = [0u8; 32];
+        out[24..32].copy_from_slice(&value.to_be_bytes());
+        return Ok(out);
+    }
+    let hex = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+    if hex.len() <= 16 {
+        let value =
+            u64::from_str_radix(hex, 16).map_err(|e| anyhow!("invalid merkle root hex: {e}"))?;
+        let mut out = [0u8; 32];
+        out[24..32].copy_from_slice(&value.to_be_bytes());
+        return Ok(out);
+    }
+    parse_hex_32(trimmed)
+}
+
 fn append_credit_record(
     path: &Path,
     package: &DisclosurePackage,
@@ -1180,6 +1194,12 @@ fn append_credit_record(
 }
 
 fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
+    if !cfg!(feature = "batch-proofs") {
+        anyhow::bail!(
+            "substrate-batch-send requires --features batch-proofs (disabled in production builds)"
+        );
+    }
+
     let batch_size = args.recipients.len();
 
     // Validate batch size (must be power of 2: 2, 4, 8, or 16)
@@ -1920,7 +1940,7 @@ struct TxCraftParams<'a> {
     recipients_path: &'a Path,
     witness_out: &'a Path,
     ciphertext_out: &'a Path,
-    merkle_root: u64,
+    merkle_root: &'a str,
     fee: u64,
     rng_seed: Option<u64>,
 }

@@ -99,7 +99,7 @@ Verification requires:
 3. Verify the Merkle path from `commitment` to `anchor`, and ensure `hegemon_isValidAnchor(anchor)` returns true.
 4. Compare `chain.genesis_hash` with `chain_getBlockHash(0)` to prevent cross-chain reuse.
 
-Field encodings for `commitment`, `anchor`, and `siblings` are canonical 0x-prefixed field encodings (24 leading zero bytes); `pk_recipient` and `genesis_hash` remain raw 32-byte values.
+Field encodings for `commitment`, `anchor`, and `siblings` are canonical 32-byte encodings with four big-endian 64-bit limbs (each limb must be < the field modulus); `pk_recipient` and `genesis_hash` remain raw 32-byte values.
 
 Payment proofs keep the protocol neutral (no transparent pool) while enabling "warrants, not backdoors" style oversight.
 
