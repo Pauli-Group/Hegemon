@@ -205,8 +205,8 @@ mod integration_tests {
         // Should be a power of 2
         assert!(trace_len.is_power_of_two());
 
-        // Should be large enough for 1000 proofs × 4 elements × 16 rows/element
-        let min_rows = 1000 * 4 * 16;
+        // Should be large enough for 1000 proofs × 4 elements × CYCLE_LENGTH rows/element
+        let min_rows = 1000 * 4 * transaction_circuit::stark_air::CYCLE_LENGTH;
         assert!(trace_len >= min_rows);
 
         // Should match dimensions module

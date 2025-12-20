@@ -28,10 +28,7 @@ pub fn verify_batch_proof(
         .validate()
         .map_err(|e| BatchCircuitError::InvalidPublicInputs(e.to_string()))?;
 
-    let acceptable = AcceptableOptions::OptionSet(vec![
-        default_acceptable_options(),
-        fast_acceptable_options(),
-    ]);
+    let acceptable = acceptable_options();
 
     verify::<BatchTransactionAir, Blake3, DefaultRandomCoin<Blake3>, MerkleTree<Blake3>>(
         proof.clone(),
@@ -67,6 +64,7 @@ fn default_acceptable_options() -> winterfell::ProofOptions {
 }
 
 /// Fast acceptable options for verification (used in testing).
+#[cfg(feature = "stark-fast")]
 fn fast_acceptable_options() -> winterfell::ProofOptions {
     winterfell::ProofOptions::new(
         8,
@@ -78,6 +76,20 @@ fn fast_acceptable_options() -> winterfell::ProofOptions {
         winterfell::BatchingMethod::Linear,
         winterfell::BatchingMethod::Linear,
     )
+}
+
+fn acceptable_options() -> AcceptableOptions {
+    #[cfg(feature = "stark-fast")]
+    {
+        AcceptableOptions::OptionSet(vec![
+            default_acceptable_options(),
+            fast_acceptable_options(),
+        ])
+    }
+    #[cfg(not(feature = "stark-fast"))]
+    {
+        AcceptableOptions::OptionSet(vec![default_acceptable_options()])
+    }
 }
 
 #[cfg(test)]

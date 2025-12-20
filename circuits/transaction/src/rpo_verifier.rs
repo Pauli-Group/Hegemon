@@ -22,10 +22,7 @@ pub fn verify_transaction_proof_rpo(
         return Err(VerifierError::InconsistentOodConstraintEvaluations);
     }
 
-    let acceptable = AcceptableOptions::OptionSet(vec![
-        default_acceptable_options(),
-        fast_acceptable_options(),
-    ]);
+    let acceptable = acceptable_options();
 
     verify::<TransactionAirStark, Rpo256, RpoRandomCoin, RpoMerkleTree>(
         proof.clone(),
@@ -61,6 +58,21 @@ fn default_acceptable_options() -> winterfell::ProofOptions {
     )
 }
 
+fn acceptable_options() -> AcceptableOptions {
+    #[cfg(feature = "stark-fast")]
+    {
+        AcceptableOptions::OptionSet(vec![
+            default_acceptable_options(),
+            fast_acceptable_options(),
+        ])
+    }
+    #[cfg(not(feature = "stark-fast"))]
+    {
+        AcceptableOptions::OptionSet(vec![default_acceptable_options()])
+    }
+}
+
+#[cfg(feature = "stark-fast")]
 fn fast_acceptable_options() -> winterfell::ProofOptions {
     winterfell::ProofOptions::new(
         8,

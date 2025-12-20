@@ -11,29 +11,31 @@ use winterfell::{
 };
 
 use crate::public_inputs::BatchPublicInputs;
-use transaction_circuit::dimensions::{
+use transaction_core::dimensions::{
     batch_trace_rows, commitment_output_row, merkle_root_output_row, nullifier_output_row,
 };
-use transaction_circuit::stark_air::{
+use transaction_core::stark_air::{
     round_constant, COL_OUT0, COL_OUT1, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH,
 };
+
+use alloc::vec::Vec;
 
 fn is_zero_hash(value: &[BaseElement; 4]) -> bool {
     value.iter().all(|elem| *elem == BaseElement::ZERO)
 }
 
 /// Number of Poseidon rounds per cycle.
-pub const POSEIDON_ROUNDS: usize = 8;
+pub const POSEIDON_ROUNDS: usize = transaction_core::constants::POSEIDON_ROUNDS;
 
 /// Batch transaction AIR - proves N transactions in one trace.
 ///
 /// The trace layout is:
 /// ```text
-/// Transaction 0:  [nullifier_0 | merkle_0 | commitment_0]  (2048 rows)
-/// Transaction 1:  [nullifier_1 | merkle_1 | commitment_1]  (2048 rows)
+/// Transaction 0:  [nullifier_0 | merkle_0 | commitment_0]  (ROWS_PER_TX rows)
+/// Transaction 1:  [nullifier_1 | merkle_1 | commitment_1]  (ROWS_PER_TX rows)
 /// ...
 /// Transaction N-1: [nullifier_{N-1} | merkle_{N-1} | commitment_{N-1}]
-/// (Padding to power of 2)
+/// (Padding to power of 2; ROWS_PER_TX currently 32768)
 /// ```
 ///
 /// Each transaction slot uses the same 5-column layout as the single-transaction AIR:
@@ -139,11 +141,16 @@ impl Air for BatchTransactionAir {
         let s1 = t1.exp(5u64.into());
         let s2 = t2.exp(5u64.into());
 
-        // MDS mixing: [[2,1,1],[1,2,1],[1,1,2]]
-        let two: E = E::from(BaseElement::new(2));
-        let hash_s0 = s0 * two + s1 + s2;
-        let hash_s1 = s0 + s1 * two + s2;
-        let hash_s2 = s0 + s1 + s2 * two;
+        let mds = transaction_core::poseidon_constants::MDS_MATRIX;
+        let hash_s0 = s0 * E::from(BaseElement::new(mds[0][0]))
+            + s1 * E::from(BaseElement::new(mds[0][1]))
+            + s2 * E::from(BaseElement::new(mds[0][2]));
+        let hash_s1 = s0 * E::from(BaseElement::new(mds[1][0]))
+            + s1 * E::from(BaseElement::new(mds[1][1]))
+            + s2 * E::from(BaseElement::new(mds[1][2]));
+        let hash_s2 = s0 * E::from(BaseElement::new(mds[2][0]))
+            + s1 * E::from(BaseElement::new(mds[2][1]))
+            + s2 * E::from(BaseElement::new(mds[2][2]));
 
         // Constraint: hash_flag * (next - hash_result) = 0
         result[0] = hash_flag * (next[COL_S0] - hash_s0);

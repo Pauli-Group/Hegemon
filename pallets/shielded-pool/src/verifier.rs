@@ -26,9 +26,6 @@ use sp_std::vec::Vec;
 
 use crate::types::{BindingHash, StarkProof};
 
-#[cfg(feature = "stark-verify")]
-use winterfell::math::FieldElement;
-
 /// Verification key for STARK proofs.
 ///
 /// Contains the circuit parameters needed to verify proofs.
@@ -500,7 +497,7 @@ impl ProofVerifier for StarkVerifier {
         // The binding hash is a Blake2 commitment to the public inputs,
         // providing defense-in-depth and a simple integrity check.
         //
-        // Commitment = Blake2_256(anchor || nullifiers || commitments || value_balance)
+        // Commitment = Blake2_256(domain || 0 || message) || Blake2_256(domain || 1 || message)
 
         use sp_core::hashing::blake2_256;
 
@@ -516,46 +513,27 @@ impl ProofVerifier for StarkVerifier {
         }
         log::info!(target: "shielded-pool", "verify_binding_hash: value_balance = {}", inputs.value_balance);
 
-        // Build the commitment message
-        let mut message = sp_std::vec::Vec::with_capacity(
-            32 + inputs.nullifiers.len() * 32 + inputs.commitments.len() * 32 + 24,
-        );
-        message.extend_from_slice(&inputs.anchor);
-        for nf in &inputs.nullifiers {
-            message.extend_from_slice(nf);
-        }
-        for cm in &inputs.commitments {
-            message.extend_from_slice(cm);
-        }
-        message.extend_from_slice(&inputs.fee.to_le_bytes());
-        message.extend_from_slice(&inputs.value_balance.to_le_bytes());
+        let message = Self::binding_hash_message(inputs);
 
         log::info!(target: "shielded-pool", "verify_binding_hash: message.len = {}", message.len());
 
         // Compute expected commitment
-        let hash = blake2_256(&message);
+        let expected = Self::binding_hash_from_message(&message, blake2_256);
 
-        log::info!(target: "shielded-pool", "verify_binding_hash: computed_hash = {:02x?}", &hash[..8]);
+        log::info!(target: "shielded-pool", "verify_binding_hash: computed_hash = {:02x?}", &expected[..8]);
         log::info!(target: "shielded-pool", "verify_binding_hash: binding_hash[0..8] = {:02x?}", &binding_hash.data[..8]);
 
-        // The binding hash's first 32 bytes should match the hash
-        let result = binding_hash.data[..32] == hash;
+        // Full 64-byte binding hash must match
+        let result = binding_hash.data == expected;
         log::info!(target: "shielded-pool", "verify_binding_hash: result = {}", result);
         result
     }
 }
 
 impl StarkVerifier {
-    /// Compute the binding hash for given public inputs.
-    ///
-    /// This should be used by wallet/client code to generate the binding hash
-    /// that will be verified by `verify_binding_hash`.
-    ///
-    /// Returns a 64-byte binding hash (first 32 bytes are the commitment hash).
-    pub fn compute_binding_hash(inputs: &ShieldedTransferInputs) -> BindingHash {
-        use sp_core::hashing::blake2_256;
+    const BINDING_HASH_DOMAIN: &'static [u8] = b"binding-hash-v1";
 
-        // Build the commitment message
+    fn binding_hash_message(inputs: &ShieldedTransferInputs) -> Vec<u8> {
         let mut message = sp_std::vec::Vec::with_capacity(
             32 + inputs.nullifiers.len() * 32 + inputs.commitments.len() * 32 + 24,
         );
@@ -568,43 +546,42 @@ impl StarkVerifier {
         }
         message.extend_from_slice(&inputs.fee.to_le_bytes());
         message.extend_from_slice(&inputs.value_balance.to_le_bytes());
+        message
+    }
 
-        // Compute commitment hash
-        let hash = blake2_256(&message);
+    fn binding_hash_from_message(
+        message: &[u8],
+        blake2_256: fn(&[u8]) -> [u8; 32],
+    ) -> [u8; 64] {
+        let mut msg0 = sp_std::vec::Vec::with_capacity(Self::BINDING_HASH_DOMAIN.len() + 1 + message.len());
+        msg0.extend_from_slice(Self::BINDING_HASH_DOMAIN);
+        msg0.push(0);
+        msg0.extend_from_slice(message);
+        let hash0 = blake2_256(&msg0);
 
-        // Build binding hash (hash in first 32 bytes, zeros in rest)
-        let mut data = [0u8; 64];
-        data[..32].copy_from_slice(&hash);
+        let mut msg1 = sp_std::vec::Vec::with_capacity(Self::BINDING_HASH_DOMAIN.len() + 1 + message.len());
+        msg1.extend_from_slice(Self::BINDING_HASH_DOMAIN);
+        msg1.push(1);
+        msg1.extend_from_slice(message);
+        let hash1 = blake2_256(&msg1);
 
+        let mut out = [0u8; 64];
+        out[..32].copy_from_slice(&hash0);
+        out[32..].copy_from_slice(&hash1);
+        out
+    }
+
+    /// Compute the binding hash for given public inputs.
+    ///
+    /// This should be used by wallet/client code to generate the binding hash
+    /// that will be verified by `verify_binding_hash`.
+    ///
+    /// Returns a 64-byte binding hash with domain-separated halves.
+    pub fn compute_binding_hash(inputs: &ShieldedTransferInputs) -> BindingHash {
+        use sp_core::hashing::blake2_256;
+        let message = Self::binding_hash_message(inputs);
+        let data = Self::binding_hash_from_message(&message, blake2_256);
         BindingHash { data }
-    }
-
-    #[cfg(feature = "stark-verify")]
-    fn default_acceptable_options() -> winterfell::ProofOptions {
-        winterfell::ProofOptions::new(
-            32,
-            8,
-            0,
-            winterfell::FieldExtension::None,
-            4,
-            31,
-            winterfell::BatchingMethod::Linear,
-            winterfell::BatchingMethod::Linear,
-        )
-    }
-
-    #[cfg(feature = "stark-verify")]
-    fn fast_acceptable_options() -> winterfell::ProofOptions {
-        winterfell::ProofOptions::new(
-            8,
-            16,
-            0,
-            winterfell::FieldExtension::None,
-            2,
-            7,
-            winterfell::BatchingMethod::Linear,
-            winterfell::BatchingMethod::Linear,
-        )
     }
 
     /// Convert pallet public inputs to the format expected by winterfell verification.
@@ -664,470 +641,6 @@ impl StarkVerifier {
 
 /// Public inputs for batch shielded transfer verification.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
-pub struct BatchShieldedTransferInputs {
-    /// Number of transactions in the batch (2, 4, 8, or 16).
-    pub batch_size: u32,
-    /// Shared Merkle root anchor for all transactions.
-    pub anchor: [u8; 32],
-    /// All nullifiers from all transactions in the batch.
-    pub nullifiers: Vec<[u8; 32]>,
-    /// All commitments from all transactions in the batch.
-    pub commitments: Vec<[u8; 32]>,
-    /// Total fee across all transactions.
-    pub total_fee: u128,
-}
-
-impl BatchShieldedTransferInputs {
-    /// Validate the batch inputs.
-    pub fn validate(&self) -> Result<(), &'static str> {
-        // Check batch size is valid
-        if self.batch_size == 0 {
-            return Err("Batch size cannot be zero");
-        }
-        if !self.batch_size.is_power_of_two() {
-            return Err("Batch size must be power of 2");
-        }
-        if self.batch_size > 16 {
-            return Err("Batch size exceeds maximum");
-        }
-
-        // Check vector lengths match batch size
-        let expected_nullifiers = self.batch_size as usize * 2; // MAX_INPUTS = 2
-        let expected_commitments = self.batch_size as usize * 2; // MAX_OUTPUTS = 2
-
-        if self.nullifiers.len() != expected_nullifiers {
-            return Err("Incorrect number of nullifiers for batch size");
-        }
-        if self.commitments.len() != expected_commitments {
-            return Err("Incorrect number of commitments for batch size");
-        }
-
-        // Must have at least one non-zero nullifier
-        let has_active_nullifier = self.nullifiers.iter().any(|nf| *nf != [0u8; 32]);
-        if !has_active_nullifier {
-            return Err("No active nullifiers in batch");
-        }
-
-        Ok(())
-    }
-}
-
-/// Batch proof verifier trait.
-pub trait BatchProofVerifier {
-    /// Verify a batch STARK proof with the given public inputs.
-    fn verify_batch_stark(
-        &self,
-        proof: &crate::types::BatchStarkProof,
-        inputs: &BatchShieldedTransferInputs,
-        vk: &VerifyingKey,
-    ) -> VerificationResult;
-}
-
-/// STARK batch proof verifier implementation.
-impl BatchProofVerifier for StarkVerifier {
-    fn verify_batch_stark(
-        &self,
-        proof: &crate::types::BatchStarkProof,
-        inputs: &BatchShieldedTransferInputs,
-        vk: &VerifyingKey,
-    ) -> VerificationResult {
-        // Check key is enabled
-        if !vk.enabled {
-            return VerificationResult::KeyNotFound;
-        }
-
-        // Check proof is not empty
-        if proof.is_empty() {
-            return VerificationResult::InvalidProofFormat;
-        }
-
-        // Validate batch size in proof matches inputs
-        if !proof.is_valid_batch_size() {
-            return VerificationResult::InvalidProofFormat;
-        }
-
-        if proof.batch_size != inputs.batch_size {
-            return VerificationResult::InvalidPublicInputs;
-        }
-
-        // Validate inputs
-        if inputs.validate().is_err() {
-            return VerificationResult::InvalidPublicInputs;
-        }
-
-        // Without stark-verify feature, we do structural validation only
-        #[cfg(not(feature = "stark-verify"))]
-        {
-            // Structural validation passed
-            VerificationResult::Valid
-        }
-
-        // With stark-verify feature, perform real verification
-        #[cfg(feature = "stark-verify")]
-        {
-            Self::verify_batch_stark_impl(proof, inputs, vk)
-        }
-    }
-}
-
-#[cfg(feature = "stark-verify")]
-impl StarkVerifier {
-    /// Implementation of batch STARK verification with winterfell.
-    fn verify_batch_stark_impl(
-        proof: &crate::types::BatchStarkProof,
-        inputs: &BatchShieldedTransferInputs,
-        _vk: &VerifyingKey,
-    ) -> VerificationResult {
-        use winterfell::math::fields::f64::BaseElement;
-        use winterfell::Proof;
-
-        // Try to deserialize the winterfell proof
-        let winterfell_proof: Proof = match Proof::from_bytes(&proof.data) {
-            Ok(p) => p,
-            Err(e) => {
-                log::warn!("Failed to deserialize batch winterfell proof: {:?}", e);
-                return VerificationResult::InvalidProofFormat;
-            }
-        };
-
-        // Validate trace dimensions for batch
-        let trace_info = winterfell_proof.context.trace_info();
-        let expected_width = 5; // Same as single transaction
-        if trace_info.width() != expected_width {
-            log::warn!(
-                "Batch trace width mismatch: expected {}, got {}",
-                expected_width,
-                trace_info.width()
-            );
-            return VerificationResult::InvalidProofFormat;
-        }
-
-        // Convert batch public inputs to field elements
-        let batch_pub_inputs = Self::convert_batch_public_inputs(inputs);
-
-        // Build acceptable options
-        let acceptable = winterfell::AcceptableOptions::OptionSet(vec![
-            Self::default_acceptable_options(),
-            Self::fast_acceptable_options(),
-        ]);
-
-        // Perform actual winterfell verification with batch AIR
-        // Note: This requires the batch AIR implementation
-        use winterfell::crypto::{DefaultRandomCoin, MerkleTree};
-        type Blake3 = winter_crypto::hashers::Blake3_256<BaseElement>;
-
-        match winterfell::verify::<
-            StarkBatchTransactionAir,
-            Blake3,
-            DefaultRandomCoin<Blake3>,
-            MerkleTree<Blake3>,
-        >(winterfell_proof, batch_pub_inputs, &acceptable)
-        {
-            Ok(_) => VerificationResult::Valid,
-            Err(e) => {
-                log::warn!("Batch STARK verification failed: {:?}", e);
-                VerificationResult::VerificationFailed
-            }
-        }
-    }
-
-    /// Convert batch pallet public inputs to the format expected by winterfell.
-    #[cfg(feature = "stark-verify")]
-    fn convert_batch_public_inputs(inputs: &BatchShieldedTransferInputs) -> StarkBatchPublicInputs {
-        use winterfell::math::fields::f64::BaseElement;
-
-        fn bytes_to_felt(bytes: &[u8; 32]) -> BaseElement {
-            let mut buf = [0u8; 8];
-            buf.copy_from_slice(&bytes[24..32]);
-            BaseElement::new(u64::from_be_bytes(buf))
-        }
-
-        StarkBatchPublicInputs {
-            batch_size: inputs.batch_size,
-            anchor: bytes_to_felt(&inputs.anchor),
-            nullifiers: inputs.nullifiers.iter().map(bytes_to_felt).collect(),
-            commitments: inputs.commitments.iter().map(bytes_to_felt).collect(),
-            total_fee: BaseElement::new(inputs.total_fee as u64),
-            circuit_version: 1,
-        }
-    }
-}
-
-// ================================================================================================
-// BATCH STARK AIR FOR VERIFICATION (feature-gated)
-// ================================================================================================
-
-/// Public inputs for batch STARK verification.
-#[cfg(feature = "stark-verify")]
-#[derive(Clone, Debug)]
-pub struct StarkBatchPublicInputs {
-    pub batch_size: u32,
-    pub anchor: winterfell::math::fields::f64::BaseElement,
-    pub nullifiers: Vec<winterfell::math::fields::f64::BaseElement>,
-    pub commitments: Vec<winterfell::math::fields::f64::BaseElement>,
-    pub total_fee: winterfell::math::fields::f64::BaseElement,
-    pub circuit_version: u32,
-}
-
-#[cfg(feature = "stark-verify")]
-impl winterfell::math::ToElements<winterfell::math::fields::f64::BaseElement>
-    for StarkBatchPublicInputs
-{
-    fn to_elements(&self) -> Vec<winterfell::math::fields::f64::BaseElement> {
-        use winterfell::math::fields::f64::BaseElement;
-        let mut elements = Vec::new();
-        elements.push(BaseElement::new(self.batch_size as u64));
-        elements.push(self.anchor);
-        elements.extend(&self.nullifiers);
-        elements.extend(&self.commitments);
-        elements.push(self.total_fee);
-        elements.push(BaseElement::new(self.circuit_version as u64));
-        elements
-    }
-}
-
-/// Batch transaction AIR for STARK verification.
-/// This matches the AIR used by the batch-circuit prover.
-#[cfg(feature = "stark-verify")]
-pub struct StarkBatchTransactionAir {
-    context: winterfell::AirContext<winterfell::math::fields::f64::BaseElement>,
-    pub_inputs: StarkBatchPublicInputs,
-}
-
-#[cfg(feature = "stark-verify")]
-impl StarkBatchTransactionAir {
-    const TRACE_WIDTH: usize = 5;
-    const CYCLE_LENGTH: usize = 16;
-    const POSEIDON_ROUNDS: usize = 8;
-    const ROWS_PER_TX: usize = 2048;
-    const MAX_INPUTS: usize = 2;
-    const MAX_OUTPUTS: usize = 2;
-    const NULLIFIER_CYCLES: usize = 3;
-    const MERKLE_CYCLES: usize = 32;
-    const COMMITMENT_CYCLES: usize = 7;
-
-    const COL_S0: usize = 0;
-    const COL_S1: usize = 1;
-    const COL_S2: usize = 2;
-
-    fn slot_start_row(tx_index: usize) -> usize {
-        tx_index * Self::ROWS_PER_TX
-    }
-
-    fn cycles_per_input() -> usize {
-        Self::NULLIFIER_CYCLES + Self::MERKLE_CYCLES
-    }
-
-    fn nullifier_output_row(tx_index: usize, input_index: usize) -> usize {
-        let slot_start = Self::slot_start_row(tx_index);
-        let start_cycle = input_index * Self::cycles_per_input();
-        slot_start + (start_cycle + Self::NULLIFIER_CYCLES) * Self::CYCLE_LENGTH - 1
-    }
-
-    fn merkle_root_output_row(tx_index: usize, input_index: usize) -> usize {
-        let slot_start = Self::slot_start_row(tx_index);
-        let start_cycle = input_index * Self::cycles_per_input() + Self::NULLIFIER_CYCLES;
-        slot_start + (start_cycle + Self::MERKLE_CYCLES) * Self::CYCLE_LENGTH - 1
-    }
-
-    fn commitment_output_row(tx_index: usize, output_index: usize) -> usize {
-        let slot_start = Self::slot_start_row(tx_index);
-        let input_total_cycles = Self::MAX_INPUTS * Self::cycles_per_input();
-        let start_cycle = input_total_cycles + output_index * Self::COMMITMENT_CYCLES;
-        slot_start + (start_cycle + Self::COMMITMENT_CYCLES) * Self::CYCLE_LENGTH - 1
-    }
-
-    fn make_hash_mask() -> Vec<winterfell::math::fields::f64::BaseElement> {
-        use winterfell::math::fields::f64::BaseElement;
-        let mut mask = vec![BaseElement::ZERO; Self::CYCLE_LENGTH];
-        mask.iter_mut()
-            .take(Self::POSEIDON_ROUNDS)
-            .for_each(|m| *m = BaseElement::ONE);
-        mask
-    }
-
-    fn round_constant(round: usize, position: usize) -> winterfell::math::fields::f64::BaseElement {
-        use winterfell::math::fields::f64::BaseElement;
-        let seed = ((round as u64 + 1).wrapping_mul(0x9e37_79b9u64))
-            ^ ((position as u64 + 1).wrapping_mul(0x7f4a_7c15u64));
-        BaseElement::new(seed)
-    }
-}
-
-#[cfg(feature = "stark-verify")]
-impl winterfell::Air for StarkBatchTransactionAir {
-    type BaseField = winterfell::math::fields::f64::BaseElement;
-    type PublicInputs = StarkBatchPublicInputs;
-
-    fn new(
-        trace_info: winterfell::TraceInfo,
-        pub_inputs: Self::PublicInputs,
-        options: winterfell::ProofOptions,
-    ) -> Self {
-        use winterfell::{AirContext, TransitionConstraintDegree};
-
-        assert_eq!(trace_info.width(), Self::TRACE_WIDTH, "Invalid trace width");
-
-        let degrees = vec![
-            TransitionConstraintDegree::with_cycles(5, vec![Self::CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(5, vec![Self::CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(5, vec![Self::CYCLE_LENGTH]),
-        ];
-
-        // Count assertions
-        let batch_size = pub_inputs.batch_size as usize;
-        let trace_len = trace_info.length();
-        let mut num_assertions = 0;
-
-        for tx_idx in 0..batch_size {
-            for nf_idx in 0..Self::MAX_INPUTS {
-                let pub_idx = tx_idx * Self::MAX_INPUTS + nf_idx;
-                if pub_idx < pub_inputs.nullifiers.len() {
-                    use winterfell::math::FieldElement;
-                    let nf = pub_inputs.nullifiers[pub_idx];
-                    if nf != Self::BaseField::ZERO {
-                        let nf_row = Self::nullifier_output_row(tx_idx, nf_idx);
-                        if nf_row < trace_len {
-                            num_assertions += 1;
-                        }
-                        let merkle_row = Self::merkle_root_output_row(tx_idx, nf_idx);
-                        if merkle_row < trace_len {
-                            num_assertions += 1;
-                        }
-                    }
-                }
-            }
-
-            for cm_idx in 0..Self::MAX_OUTPUTS {
-                let pub_idx = tx_idx * Self::MAX_OUTPUTS + cm_idx;
-                if pub_idx < pub_inputs.commitments.len() {
-                    use winterfell::math::FieldElement;
-                    let cm = pub_inputs.commitments[pub_idx];
-                    if cm != Self::BaseField::ZERO {
-                        let cm_row = Self::commitment_output_row(tx_idx, cm_idx);
-                        if cm_row < trace_len {
-                            num_assertions += 1;
-                        }
-                    }
-                }
-            }
-        }
-
-        Self {
-            context: AirContext::new(trace_info, degrees, num_assertions, options),
-            pub_inputs,
-        }
-    }
-
-    fn context(&self) -> &winterfell::AirContext<Self::BaseField> {
-        &self.context
-    }
-
-    fn evaluate_transition<E: winterfell::math::FieldElement<BaseField = Self::BaseField>>(
-        &self,
-        frame: &winterfell::EvaluationFrame<E>,
-        periodic_values: &[E],
-        result: &mut [E],
-    ) {
-        let current = frame.current();
-        let next = frame.next();
-
-        let hash_flag = periodic_values[0];
-        let rc0 = periodic_values[1];
-        let rc1 = periodic_values[2];
-        let rc2 = periodic_values[3];
-
-        let t0 = current[Self::COL_S0] + rc0;
-        let t1 = current[Self::COL_S1] + rc1;
-        let t2 = current[Self::COL_S2] + rc2;
-
-        let s0 = t0.exp(5u64.into());
-        let s1 = t1.exp(5u64.into());
-        let s2 = t2.exp(5u64.into());
-
-        let two: E = E::from(Self::BaseField::new(2));
-        let hash_s0 = s0 * two + s1 + s2;
-        let hash_s1 = s0 + s1 * two + s2;
-        let hash_s2 = s0 + s1 + s2 * two;
-
-        result[0] = hash_flag * (next[Self::COL_S0] - hash_s0);
-        result[1] = hash_flag * (next[Self::COL_S1] - hash_s1);
-        result[2] = hash_flag * (next[Self::COL_S2] - hash_s2);
-    }
-
-    fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
-        let mut result = vec![Self::make_hash_mask()];
-
-        for pos in 0..3 {
-            let mut column = Vec::with_capacity(Self::CYCLE_LENGTH);
-            for step in 0..Self::CYCLE_LENGTH {
-                if step < Self::POSEIDON_ROUNDS {
-                    column.push(Self::round_constant(step, pos));
-                } else {
-                    column.push(Self::BaseField::ZERO);
-                }
-            }
-            result.push(column);
-        }
-
-        result
-    }
-
-    fn get_assertions(&self) -> Vec<winterfell::Assertion<Self::BaseField>> {
-        use winterfell::math::FieldElement;
-        use winterfell::Assertion;
-
-        let mut assertions = Vec::new();
-        let batch_size = self.pub_inputs.batch_size as usize;
-        let trace_len = self.context.trace_len();
-
-        for tx_idx in 0..batch_size {
-            for nf_idx in 0..Self::MAX_INPUTS {
-                let pub_idx = tx_idx * Self::MAX_INPUTS + nf_idx;
-                if pub_idx < self.pub_inputs.nullifiers.len() {
-                    let nf = self.pub_inputs.nullifiers[pub_idx];
-                    if nf != Self::BaseField::ZERO {
-                        let nf_row = Self::nullifier_output_row(tx_idx, nf_idx);
-                        if nf_row < trace_len {
-                            assertions.push(Assertion::single(Self::COL_S0, nf_row, nf));
-                        }
-
-                        let merkle_row = Self::merkle_root_output_row(tx_idx, nf_idx);
-                        if merkle_row < trace_len {
-                            assertions.push(Assertion::single(
-                                Self::COL_S0,
-                                merkle_row,
-                                self.pub_inputs.anchor,
-                            ));
-                        }
-                    }
-                }
-            }
-
-            for cm_idx in 0..Self::MAX_OUTPUTS {
-                let pub_idx = tx_idx * Self::MAX_OUTPUTS + cm_idx;
-                if pub_idx < self.pub_inputs.commitments.len() {
-                    let cm = self.pub_inputs.commitments[pub_idx];
-                    if cm != Self::BaseField::ZERO {
-                        let cm_row = Self::commitment_output_row(tx_idx, cm_idx);
-                        if cm_row < trace_len {
-                            assertions.push(Assertion::single(Self::COL_S0, cm_row, cm));
-                        }
-                    }
-                }
-            }
-        }
-
-        assertions
-    }
-}
-
-// ================================================================================================
-// BATCH PROOF VERIFICATION
-// ================================================================================================
-
-/// Public inputs for batch shielded transfer verification.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
 pub struct BatchPublicInputs {
     /// Shared Merkle root anchor.
     pub anchor: [u8; 32],
@@ -1137,6 +650,8 @@ pub struct BatchPublicInputs {
     pub commitments: Vec<[u8; 32]>,
     /// Number of transactions in the batch.
     pub batch_size: u32,
+    /// Total fee across all transactions.
+    pub total_fee: u128,
 }
 
 /// Result of batch proof verification.
@@ -1272,25 +787,89 @@ impl BatchVerifier for StarkBatchVerifier {
         let expected_nullifiers = inputs.batch_size as usize * 2; // MAX_INPUTS per tx
         let expected_commitments = inputs.batch_size as usize * 2; // MAX_OUTPUTS per tx
 
-        if inputs.nullifiers.len() > expected_nullifiers {
+        if inputs.nullifiers.len() != expected_nullifiers {
             return BatchVerificationResult::InvalidPublicInputs;
         }
-        if inputs.commitments.len() > expected_commitments {
+        if inputs.commitments.len() != expected_commitments {
             return BatchVerificationResult::InvalidPublicInputs;
         }
 
-        // With stark-verify feature, perform real winterfell verification
+        let has_active_nullifier = inputs.nullifiers.iter().any(|nf| *nf != [0u8; 32]);
+        if !has_active_nullifier {
+            return BatchVerificationResult::InvalidPublicInputs;
+        }
+
+        if inputs.total_fee >= transaction_core::constants::FIELD_MODULUS {
+            return BatchVerificationResult::InvalidPublicInputs;
+        }
+
+        // With stark-verify feature, perform real batch verification
         #[cfg(feature = "stark-verify")]
         {
-            // TODO: Integrate with batch-circuit crate for full verification
-            // For now, we do structural validation only
-            // The batch-circuit crate provides BatchTransactionAir and verify_batch_proof
-            // which should be called here once the integration is complete.
-            //
-            // Full integration requires:
-            // 1. Adding batch-circuit as a dependency
-            // 2. Converting pallet BatchPublicInputs to circuit BatchPublicInputs
-            // 3. Calling batch_circuit::verify_batch_proof()
+            use batch_circuit::{
+                verify_batch_proof_bytes, BatchCircuitError,
+                BatchPublicInputs as CircuitBatchPublicInputs,
+            };
+            use transaction_core::hashing::bytes32_to_felts;
+
+            let anchor = match bytes32_to_felts(&inputs.anchor) {
+                Some(value) => value,
+                None => return BatchVerificationResult::InvalidPublicInputs,
+            };
+
+            let mut nullifiers = Vec::with_capacity(inputs.nullifiers.len());
+            for nf in &inputs.nullifiers {
+                let value = match bytes32_to_felts(nf) {
+                    Some(value) => value,
+                    None => return BatchVerificationResult::InvalidPublicInputs,
+                };
+                nullifiers.push(value);
+            }
+
+            let mut commitments = Vec::with_capacity(inputs.commitments.len());
+            for cm in &inputs.commitments {
+                let value = match bytes32_to_felts(cm) {
+                    Some(value) => value,
+                    None => return BatchVerificationResult::InvalidPublicInputs,
+                };
+                commitments.push(value);
+            }
+
+            let total_fee = transaction_core::Felt::new(inputs.total_fee as u64);
+            let mut batch_inputs = CircuitBatchPublicInputs::new(
+                inputs.batch_size,
+                anchor,
+                nullifiers,
+                commitments,
+                total_fee,
+            );
+            batch_inputs.circuit_version = transaction_core::CIRCUIT_VERSION;
+
+            match verify_batch_proof_bytes(&proof.data, &batch_inputs) {
+                Ok(()) => {}
+                Err(err) => {
+                    return match err {
+                        BatchCircuitError::InvalidProofFormat => {
+                            BatchVerificationResult::InvalidProofFormat
+                        }
+                        BatchCircuitError::InvalidBatchSize(_) | BatchCircuitError::EmptyBatch => {
+                            BatchVerificationResult::InvalidBatchSize
+                        }
+                        BatchCircuitError::InvalidPublicInputs(_)
+                        | BatchCircuitError::AnchorMismatch => {
+                            BatchVerificationResult::InvalidPublicInputs
+                        }
+                        BatchCircuitError::VerificationError(_) => {
+                            BatchVerificationResult::VerificationFailed
+                        }
+                        BatchCircuitError::InvalidWitness { .. }
+                        | BatchCircuitError::TraceBuildError(_)
+                        | BatchCircuitError::ProofGenerationError(_) => {
+                            BatchVerificationResult::VerificationFailed
+                        }
+                    };
+                }
+            }
         }
 
         BatchVerificationResult::Valid

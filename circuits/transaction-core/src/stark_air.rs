@@ -19,6 +19,7 @@ use crate::constants::{
     CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NATIVE_ASSET_ID,
     NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON_ROUNDS, POSEIDON_WIDTH,
 };
+use crate::poseidon_constants;
 
 // ================================================================================================
 // TRACE CONFIGURATION
@@ -133,7 +134,7 @@ pub const COL_OUT3: usize = 63;
 pub const COL_DIR: usize = 64;
 
 /// Cycle length: power of 2, must be > POSEIDON_ROUNDS.
-pub const CYCLE_LENGTH: usize = 16;
+pub const CYCLE_LENGTH: usize = 64;
 
 /// Number of absorb cycles for a commitment hash (14 inputs / rate 2 = 7 cycles).
 pub const COMMITMENT_ABSORB_CYCLES: usize = 7;
@@ -176,8 +177,8 @@ pub const TOTAL_USED_CYCLES: usize =
     DUMMY_CYCLES + (MAX_INPUTS * CYCLES_PER_INPUT) + (MAX_OUTPUTS * COMMITMENT_CYCLES);
 
 /// Minimum trace length (power of 2).
-/// For MAX_INPUTS=2, MAX_OUTPUTS=2, depth=32: 361 cycles * 16 = 5776 -> 8192.
-pub const MIN_TRACE_LENGTH: usize = 8192;
+/// For MAX_INPUTS=2, MAX_OUTPUTS=2, depth=32: 361 cycles * 64 = 23104 -> 32768.
+pub const MIN_TRACE_LENGTH: usize = 32768;
 
 /// Total cycles in the trace (including padding cycles).
 pub const TOTAL_TRACE_CYCLES: usize = MIN_TRACE_LENGTH / CYCLE_LENGTH;
@@ -207,9 +208,7 @@ const ABSORB_MASK: [BaseElement; CYCLE_LENGTH] = make_absorb_mask();
 
 #[inline]
 pub fn round_constant(round: usize, position: usize) -> BaseElement {
-    let seed = ((round as u64 + 1).wrapping_mul(0x9e37_79b9u64))
-        ^ ((position as u64 + 1).wrapping_mul(0x7f4a_7c15u64));
-    BaseElement::new(seed)
+    BaseElement::new(poseidon_constants::ROUND_CONSTANTS[round][position])
 }
 
 fn get_periodic_columns(trace_len: usize) -> Vec<Vec<BaseElement>> {
@@ -1094,12 +1093,16 @@ pub fn sbox(x: BaseElement) -> BaseElement {
 }
 
 pub fn mds_mix(state: &[BaseElement; 3]) -> [BaseElement; 3] {
-    let two = BaseElement::new(2);
-    [
-        state[0] * two + state[1] + state[2],
-        state[0] + state[1] * two + state[2],
-        state[0] + state[1] + state[2] * two,
-    ]
+    let mut out = [BaseElement::ZERO; 3];
+    for (row_idx, out_slot) in out.iter_mut().enumerate() {
+        let mut acc = BaseElement::ZERO;
+        for (col_idx, value) in state.iter().enumerate() {
+            let coeff = BaseElement::new(poseidon_constants::MDS_MATRIX[row_idx][col_idx]);
+            acc += *value * coeff;
+        }
+        *out_slot = acc;
+    }
+    out
 }
 
 pub fn poseidon_round(state: &mut [BaseElement; 3], round: usize) {
@@ -1149,9 +1152,9 @@ mod tests {
         assert_eq!(cols[0].len(), CYCLE_LENGTH);
         assert_eq!(cols[1].len(), CYCLE_LENGTH);
         assert_eq!(cols[0][0], BaseElement::ONE);
-        assert_eq!(cols[0][7], BaseElement::ONE);
-        assert_eq!(cols[0][8], BaseElement::ZERO);
-        assert_eq!(cols[1][15], BaseElement::ONE);
+        assert_eq!(cols[0][POSEIDON_ROUNDS - 1], BaseElement::ONE);
+        assert_eq!(cols[0][POSEIDON_ROUNDS], BaseElement::ZERO);
+        assert_eq!(cols[1][CYCLE_LENGTH - 1], BaseElement::ONE);
         let mask_offset = 2 + POSEIDON_WIDTH;
         assert_eq!(cols[mask_offset].len(), MIN_TRACE_LENGTH);
         assert_eq!(cols[mask_offset][0], BaseElement::ONE);

@@ -1,5 +1,6 @@
 //! Public inputs for batch transaction verification.
 
+use alloc::vec::Vec;
 use winterfell::math::{fields::f64::BaseElement, FieldElement, ToElements};
 
 /// Maximum transactions per batch (power of 2 for trace efficiency).

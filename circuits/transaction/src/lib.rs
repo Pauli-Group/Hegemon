@@ -28,6 +28,7 @@ pub mod proof;
 pub mod public_inputs;
 pub mod trace;
 pub mod witness;
+pub use transaction_core::poseidon_constants;
 
 // Real STARK implementation using winterfell 0.13
 pub mod stark_air;

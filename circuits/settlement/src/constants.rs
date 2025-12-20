@@ -10,14 +10,14 @@ pub const NULLIFIER_LIMBS: usize = 4;
 pub const COMMITMENT_LIMBS: usize = 4;
 pub const INPUT_COUNT: usize = 2 + MAX_INSTRUCTIONS + (MAX_NULLIFIERS * NULLIFIER_LIMBS);
 
-/// Poseidon cycle length (absorb + 8 rounds + copy padding).
-pub const CYCLE_LENGTH: usize = 16;
-
-/// Trace length (must be power of two).
-pub const TRACE_LENGTH: usize = 512;
+/// Poseidon cycle length (matches transaction circuit).
+pub const CYCLE_LENGTH: usize = transaction_core::stark_air::CYCLE_LENGTH;
 
 /// Number of input pairs processed in a full trace.
-pub const INPUT_PAIRS_PER_TRACE: usize = TRACE_LENGTH / CYCLE_LENGTH;
+pub const INPUT_PAIRS_PER_TRACE: usize = 32;
+
+/// Trace length (must be power of two).
+pub const TRACE_LENGTH: usize = INPUT_PAIRS_PER_TRACE * CYCLE_LENGTH;
 
 /// Number of cycles reserved for sponge squeezing.
 pub const SQUEEZE_CYCLES: usize = 1;

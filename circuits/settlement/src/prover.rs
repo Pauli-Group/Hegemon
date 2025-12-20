@@ -75,7 +75,7 @@ impl SettlementProver {
                             state[0] += in0;
                             state[1] += in1;
                         }
-                        1..=8 => {
+                        1..=transaction_core::constants::POSEIDON_ROUNDS => {
                             poseidon_round(&mut state, step - 1);
                         }
                         _ => {

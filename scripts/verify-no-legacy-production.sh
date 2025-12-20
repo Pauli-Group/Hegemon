@@ -192,7 +192,17 @@ if echo "$feature_tree" | grep -q "stark-fast"; then
 fi
 echo "✅ PASS"
 
-# 17. Verify mock state execution is opt-in
+# 17. Verify batch-circuit is not built with fast proof options
+echo -n "Checking batch-circuit features... "
+feature_tree=$(cargo tree -p batch-circuit -e features 2>/dev/null)
+if echo "$feature_tree" | grep -q "stark-fast"; then
+    echo "❌ FAILED"
+    echo "batch-circuit compiled with stark-fast feature!"
+    exit 1
+fi
+echo "✅ PASS"
+
+# 18. Verify mock state execution is opt-in
 echo -n "Checking mock state execution gating... "
 if ! grep -q "HEGEMON_ALLOW_MOCK_EXECUTION" node/src/substrate/client.rs 2>/dev/null; then
     echo "❌ FAILED"
@@ -206,7 +216,7 @@ if ! grep -q "allow_mock_execution: false" node/src/substrate/client.rs 2>/dev/n
 fi
 echo "✅ PASS"
 
-# 18. Verify batch proofs remain opt-in in wallet
+# 19. Verify batch proofs remain opt-in in wallet
 echo -n "Checking batch proofs are opt-in... "
 if grep -q 'default = .*batch-proofs' wallet/Cargo.toml 2>/dev/null; then
     echo "❌ FAILED"

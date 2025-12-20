@@ -4,6 +4,8 @@
 
 This guide covers setting up a Hegemon boot node for mainnet operation.
 
+> **Note:** The node currently refuses to start without `--dev` (non-dev profiles are disabled). The systemd unit below includes `--dev` until non-dev mode is re-enabled.
+
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
@@ -216,6 +218,7 @@ Environment="RUST_BACKTRACE=1"
 
 # Main command
 ExecStart=/usr/local/bin/hegemon-node \
+    --dev \
     --chain /etc/hegemon/mainnet-spec.json \
     --node-key-file /etc/hegemon/node-key.pem \
     --port 30333 \

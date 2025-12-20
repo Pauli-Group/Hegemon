@@ -135,8 +135,7 @@ impl LightClient {
         };
 
         // Create acceptable options set for verification
-        let acceptable =
-            AcceptableOptions::OptionSet(vec![default_epoch_options(), fast_epoch_options()]);
+        let acceptable = acceptable_epoch_options();
 
         // Verify the proof
         match verify::<EpochProofAir, Blake3, DefaultRandomCoin<Blake3>, MerkleTree<Blake3>>(
@@ -251,6 +250,17 @@ impl LightClient {
     /// Check if an epoch is verified.
     pub fn is_epoch_verified(&self, epoch_number: u64) -> bool {
         self.get_epoch(epoch_number).is_some()
+    }
+}
+
+fn acceptable_epoch_options() -> AcceptableOptions {
+    #[cfg(feature = "stark-fast")]
+    {
+        AcceptableOptions::OptionSet(vec![default_epoch_options(), fast_epoch_options()])
+    }
+    #[cfg(not(feature = "stark-fast"))]
+    {
+        AcceptableOptions::OptionSet(vec![default_epoch_options()])
     }
 }
 

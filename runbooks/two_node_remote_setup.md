@@ -133,6 +133,7 @@ mkdir -p /tmp/my-hegemon-node
 # Start your mining node
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
 cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
+  --dev \
   --base-path /tmp/my-hegemon-node \
   --chain config/dev-chainspec.json \
   --port 30333 \
@@ -186,6 +187,7 @@ mkdir -p /tmp/friend-hegemon-node
 # Start the node, connecting to the bootnode
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
 cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
+  --dev \
   --base-path /tmp/friend-hegemon-node \
   --chain config/dev-chainspec.json \
   --port 30333 \
@@ -252,6 +254,7 @@ For more robust connectivity, update both nodes to know about each other.
 ```bash
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
 cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
+  --dev \
   --base-path /tmp/my-hegemon-node \
   --chain config/dev-chainspec.json \
   --port 30333 \
@@ -356,13 +359,13 @@ sudo iptables -L -n
 
 ```bash
 cargo run --release -p hegemon-node --features substrate -- \
-  ... --hybrid-pq
+  --dev ... --hybrid-pq
 ```
 
 **5. Enable verbose PQ logging:**
 
 ```bash
-HEGEMON_PQ_VERBOSE=1 cargo run --release -p hegemon-node --features substrate -- ...
+HEGEMON_PQ_VERBOSE=1 cargo run --release -p hegemon-node --features substrate -- --dev ...
 ```
 
 ### No Blocks Being Mined

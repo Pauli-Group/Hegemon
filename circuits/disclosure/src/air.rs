@@ -135,10 +135,16 @@ impl Air for DisclosureAir {
         let s1 = t1.exp(5u64.into());
         let s2 = t2.exp(5u64.into());
 
-        let two: E = E::from(BaseElement::new(2));
-        let hash_s0 = s0 * two + s1 + s2;
-        let hash_s1 = s0 + s1 * two + s2;
-        let hash_s2 = s0 + s1 + s2 * two;
+        let mds = transaction_core::poseidon_constants::MDS_MATRIX;
+        let hash_s0 = s0 * E::from(BaseElement::new(mds[0][0]))
+            + s1 * E::from(BaseElement::new(mds[0][1]))
+            + s2 * E::from(BaseElement::new(mds[0][2]));
+        let hash_s1 = s0 * E::from(BaseElement::new(mds[1][0]))
+            + s1 * E::from(BaseElement::new(mds[1][1]))
+            + s2 * E::from(BaseElement::new(mds[1][2]));
+        let hash_s2 = s0 * E::from(BaseElement::new(mds[2][0]))
+            + s1 * E::from(BaseElement::new(mds[2][1]))
+            + s2 * E::from(BaseElement::new(mds[2][2]));
 
         let one = E::ONE;
         let copy_flag = one - hash_flag - absorb_flag;
