@@ -386,6 +386,9 @@ impl StarkVerifier {
         {
             return false;
         }
+        if (inputs.fee as u128) >= transaction_core::constants::FIELD_MODULUS {
+            return false;
+        }
         if transaction_core::hashing::signed_parts(inputs.value_balance).is_none() {
             return false;
         }

@@ -64,6 +64,7 @@ sc-basic-authorship = { workspace = true, optional = true }
 sc-block-builder = { workspace = true, optional = true }
 sc-rpc = { workspace = true, optional = true }
 sc-rpc-api = { workspace = true, optional = true }
+sc-rpc-server = { workspace = true, optional = true }
 sc-utils = { workspace = true, optional = true }
 substrate-frame-rpc-system = { workspace = true, optional = true }
 sp-consensus-pow = { workspace = true, optional = true }
@@ -132,6 +133,7 @@ substrate = [
     "dep:sc-block-builder",
     "dep:sc-rpc",
     "dep:sc-rpc-api",
+    "dep:sc-rpc-server",
     "dep:sc-utils",
     "dep:substrate-frame-rpc-system",
     "dep:sp-consensus-pow",
