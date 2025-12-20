@@ -13,6 +13,12 @@ pub type Felt = BaseElement;
 pub type HashFelt = [Felt; 4];
 pub type Commitment = [u8; 32];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BalanceCommitmentError {
+    pub asset_id: u64,
+    pub magnitude: u128,
+}
+
 fn round_constant(round: usize, position: usize) -> Felt {
     Felt::new(poseidon_constants::ROUND_CONSTANTS[round][position])
 }
@@ -242,16 +248,27 @@ mod tests {
     }
 }
 
-pub fn balance_commitment(native_delta: i128, slots: &[BalanceSlot]) -> Felt {
+pub fn balance_commitment(
+    native_delta: i128,
+    slots: &[BalanceSlot],
+) -> Result<Felt, BalanceCommitmentError> {
     let mut inputs = Vec::with_capacity(1 + slots.len() * 2);
-    let native_mag = u64::try_from(native_delta.unsigned_abs()).expect("native delta within u64");
-    inputs.push(Felt::new(native_mag));
+    let native_mag = native_delta.unsigned_abs();
+    let native_mag_u64 = u64::try_from(native_mag).map_err(|_| BalanceCommitmentError {
+        asset_id: crate::constants::NATIVE_ASSET_ID,
+        magnitude: native_mag,
+    })?;
+    inputs.push(Felt::new(native_mag_u64));
     for slot in slots {
-        let magnitude = u64::try_from(slot.delta.unsigned_abs()).expect("delta within u64");
+        let magnitude = slot.delta.unsigned_abs();
+        let magnitude_u64 = u64::try_from(magnitude).map_err(|_| BalanceCommitmentError {
+            asset_id: slot.asset_id,
+            magnitude,
+        })?;
         inputs.push(Felt::new(slot.asset_id));
-        inputs.push(Felt::new(magnitude));
+        inputs.push(Felt::new(magnitude_u64));
     }
-    sponge_single(BALANCE_DOMAIN_TAG, &inputs)
+    Ok(sponge_single(BALANCE_DOMAIN_TAG, &inputs))
 }
 
 /// Convert a signed value into (sign, magnitude) field elements.

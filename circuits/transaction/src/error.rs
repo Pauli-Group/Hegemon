@@ -23,6 +23,9 @@ pub enum TransactionCircuitError {
     #[error("value balance magnitude exceeds 64-bit range: {0}")]
     ValueBalanceOutOfRange(u128),
 
+    #[error("balance delta for asset {0} exceeds 64-bit range: {1}")]
+    BalanceDeltaOutOfRange(u64, u128),
+
     #[error("nullifier mismatch at index {0}")]
     NullifierMismatch(usize),
 

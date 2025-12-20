@@ -492,6 +492,7 @@ Outside the circuit (for block headers, addresses, etc.) we can still use standa
 where \(\text{domain}_{\text{merkle}}\) is a fixed field element.
 
 * Tree depth: say 32 or 40 (gives capacity for \(2^{32}\)–\(2^{40}\) notes; you can always roll a new tree later via a transition proof).
+* Runtime keeps a bounded window of recent Merkle roots (`MerkleRootHistorySize`); anchors older than the window are invalid to cap state growth.
 
 #### 1.4 PQC choices
 

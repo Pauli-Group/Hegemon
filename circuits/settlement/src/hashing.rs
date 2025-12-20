@@ -53,8 +53,8 @@ pub fn poseidon_permutation(state: &mut [Felt; 3]) {
 
 /// Compute the settlement commitment from a list of input elements.
 ///
-/// This mirrors the trace layout: absorb two elements, run 8 Poseidon rounds,
-/// and repeat for every input pair.
+/// This mirrors the trace layout: absorb two elements, run the configured
+/// Poseidon permutation rounds, and repeat for every input pair.
 pub fn commitment_from_inputs(inputs: &[Felt]) -> HashFelt {
     let mut state = [Felt::new(SETTLEMENT_DOMAIN_TAG), Felt::ZERO, Felt::ONE];
     for chunk in inputs.chunks(2) {

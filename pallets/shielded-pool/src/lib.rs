@@ -129,7 +129,7 @@ pub mod pallet {
     use super::*;
 
     /// Current storage version.
-    pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+    pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(2);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
@@ -196,6 +196,15 @@ pub mod pallet {
     #[pallet::getter(fn merkle_roots)]
     pub type MerkleRoots<T: Config> =
         StorageMap<_, Blake2_128Concat, [u8; 32], BlockNumberFor<T>, OptionQuery>;
+
+    /// Ordered history of recent Merkle roots (bounded by MerkleRootHistorySize).
+    #[pallet::storage]
+    #[pallet::getter(fn merkle_root_history)]
+    pub type MerkleRootHistory<T: Config> = StorageValue<
+        _,
+        BoundedVec<[u8; 32], T::MerkleRootHistorySize>,
+        ValueQuery,
+    >;
 
     /// Current commitment index (number of commitments in the tree).
     #[pallet::storage]
@@ -422,6 +431,8 @@ pub mod pallet {
         InsufficientPoolBalance,
         /// Merkle tree is full.
         MerkleTreeFull,
+        /// Merkle root history is full (history size too small).
+        MerkleRootHistoryFull,
         /// Invalid number of nullifiers.
         InvalidNullifierCount,
         /// Invalid number of commitments.
@@ -476,6 +487,12 @@ pub mod pallet {
 
             // Store initial root as valid
             MerkleRoots::<T>::insert(tree.root(), BlockNumberFor::<T>::from(0u32));
+            if T::MerkleRootHistorySize::get() > 0 {
+                let mut history: BoundedVec<[u8; 32], T::MerkleRootHistorySize> =
+                    BoundedVec::default();
+                let _ = history.try_push(tree.root());
+                MerkleRootHistory::<T>::put(history);
+            }
 
             // Initialize verifying key if provided
             if let Some(ref vk) = self.verifying_key {
@@ -504,8 +521,31 @@ pub mod pallet {
 
             if on_chain < STORAGE_VERSION {
                 info!(target: "shielded-pool", "Migrating from {:?} to {:?}", on_chain, STORAGE_VERSION);
+                let mut weight = Weight::zero();
+                let history_limit = T::MerkleRootHistorySize::get() as usize;
+                if history_limit > 0 {
+                    let mut roots: Vec<([u8; 32], BlockNumberFor<T>)> =
+                        MerkleRoots::<T>::iter().collect();
+                    roots.sort_by_key(|(_, block)| *block);
+                    let keep_start = roots.len().saturating_sub(history_limit);
+                    let (to_remove, to_keep) = roots.split_at(keep_start);
+                    for (root, _) in to_remove {
+                        MerkleRoots::<T>::remove(root);
+                    }
+                    let mut history: BoundedVec<[u8; 32], T::MerkleRootHistorySize> =
+                        BoundedVec::default();
+                    for (root, _) in to_keep {
+                        let _ = history.try_push(*root);
+                    }
+                    MerkleRootHistory::<T>::put(history);
+
+                    weight = weight.saturating_add(T::DbWeight::get().reads_writes(
+                        (roots.len() as u64) + 1,
+                        (to_remove.len() as u64) + 2,
+                    ));
+                }
                 STORAGE_VERSION.put::<Pallet<T>>();
-                T::WeightInfo::update_verifying_key()
+                weight
             } else {
                 Weight::zero()
             }
@@ -1255,6 +1295,34 @@ pub mod pallet {
             PALLET_ID.into_account_truncating()
         }
 
+        /// Record a new Merkle root and prune history to the configured bound.
+        fn record_merkle_root(root: [u8; 32], block: BlockNumberFor<T>) -> DispatchResult {
+            let history_limit = T::MerkleRootHistorySize::get() as usize;
+            MerkleRoots::<T>::insert(root, block);
+
+            if history_limit == 0 {
+                return Ok(());
+            }
+
+            let mut history = MerkleRootHistory::<T>::get();
+            if history.last().map(|last| *last == root).unwrap_or(false) {
+                return Ok(());
+            }
+
+            if history.len() >= history_limit {
+                if let Some(oldest) = history.first().copied() {
+                    MerkleRoots::<T>::remove(oldest);
+                }
+                history.remove(0);
+            }
+
+            history
+                .try_push(root)
+                .map_err(|_| Error::<T>::MerkleRootHistoryFull)?;
+            MerkleRootHistory::<T>::put(history);
+            Ok(())
+        }
+
         /// Update the Merkle tree with new commitments.
         fn update_merkle_tree(
             new_commitments: &BoundedVec<[u8; 32], T::MaxCommitmentsPerTx>,
@@ -1273,7 +1341,7 @@ pub mod pallet {
 
             // Store root in history
             let block = <frame_system::Pallet<T>>::block_number();
-            MerkleRoots::<T>::insert(new_root, block);
+            Self::record_merkle_root(new_root, block)?;
 
             Self::deposit_event(Event::MerkleRootUpdated { root: new_root });
 
@@ -1298,7 +1366,7 @@ pub mod pallet {
 
             // Store root in history
             let block = <frame_system::Pallet<T>>::block_number();
-            MerkleRoots::<T>::insert(new_root, block);
+            Self::record_merkle_root(new_root, block)?;
 
             Self::deposit_event(Event::MerkleRootUpdated { root: new_root });
 
@@ -1771,11 +1839,12 @@ mod tests {
 
     #[test]
     fn note_commitment_matches_types() {
-        use commitment::note_commitment;
-        use types::Note;
+        use commitment::circuit_note_commitment;
 
-        let note = Note::with_empty_memo([1u8; 43], 1000, [2u8; 32]);
-        let cm = note_commitment(&note);
+        let pk_recipient = [1u8; 32];
+        let rho = [2u8; 32];
+        let r = [3u8; 32];
+        let cm = circuit_note_commitment(1000, 0, &pk_recipient, &rho, &r);
 
         assert_eq!(cm.len(), 32);
     }

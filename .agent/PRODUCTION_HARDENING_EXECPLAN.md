@@ -22,6 +22,7 @@ The visible proof is that production builds either (a) succeed with full cryptog
 - [x] (2025-12-20 04:47Z) Update docs, tests, and hardening scripts to match the new guarantees.
 - [x] (2025-12-20 07:05Z) Replace toy Poseidon constants with NUMS-derived constants and 63 full rounds across circuits/runtime/crypto.
 - [x] (2025-12-20 07:05Z) Wire batch proof verification, enforce full binding hash checks, and require `--dev` to start the node.
+- [x] (2025-12-20 07:50Z) Gate legacy commitment helpers, enforce AIR hash non-zero/match, bound Merkle root history, remove hard-coded sudo key, and make balance commitment checks fallible.
 
 ## Surprises & Discoveries
 
@@ -49,6 +50,14 @@ None yet. Update this section as soon as unexpected behavior is observed, with s
   Rationale: Prevent accidental non-dev starts while hardening work remains in flight; force explicit dev-mode acknowledgement.
   Date/Author: 2025-12-20 / Codex
 
+- Decision: Feature-gate legacy Blake2-wrapped commitment/nullifier helpers and require explicit opt-in for any non-circuit hashing.
+  Rationale: Production must only expose circuit-compatible commitments and nullifiers to avoid unsafe or inconsistent hashing paths.
+  Date/Author: 2025-12-20 / Codex
+
+- Decision: Enforce a bounded Merkle root history (prune beyond `MerkleRootHistorySize`).
+  Rationale: Prevent state bloat and DoS via unbounded anchor storage while keeping a configurable validation window.
+  Date/Author: 2025-12-20 / Codex
+
 ## Outcomes & Retrospective
 
 Delivered:
@@ -59,6 +68,7 @@ Delivered:
 - “Binding signature” renamed to `binding_hash` across runtime, RPC, wallet, tests, and docs.
 - Batch proof verification is wired to the batch circuit, and binding hashes are validated as full 64-byte commitments.
 - Non-dev nodes refuse mock state execution without an explicit flag; wallet batch proofs are opt-in and memos now hard-fail on oversize payloads.
+- Legacy commitment helpers are feature-gated; AIR hash enforcement and bounded Merkle root history prevent silent verification bypass and state bloat.
 - Documentation, runbooks, and production checks updated to reflect protocol-breaking encoding changes and operational resets.
 
 Open items:

@@ -216,6 +216,16 @@ if ! grep -q "allow_mock_execution: false" node/src/substrate/client.rs 2>/dev/n
 fi
 echo "✅ PASS"
 
+# 18. Verify legacy commitment helpers are not enabled
+echo -n "Checking legacy commitment feature... "
+feature_tree=$(cargo tree -p pallet-shielded-pool -e features 2>/dev/null)
+if echo "$feature_tree" | grep -q "legacy-commitment"; then
+    echo "❌ FAILED"
+    echo "pallet-shielded-pool compiled with legacy-commitment feature!"
+    exit 1
+fi
+echo "✅ PASS"
+
 # 19. Verify batch proofs remain opt-in in wallet
 echo -n "Checking batch proofs are opt-in... "
 if grep -q 'default = .*batch-proofs' wallet/Cargo.toml 2>/dev/null; then
