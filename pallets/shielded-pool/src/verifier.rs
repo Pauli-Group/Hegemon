@@ -21,9 +21,7 @@ compile_error!("feature \"production\" requires \"stark-verify\" for real proof 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_std::vec::Vec;
-use winter_math::FieldElement;
-
-use crate::types::{BindingHash, StarkProof};
+use crate::types::{BindingHash, StarkProof, StablecoinPolicyBinding};
 
 /// Verification key for STARK proofs.
 ///
@@ -85,6 +83,8 @@ pub struct ShieldedTransferInputs {
     pub fee: u64,
     /// Net value balance (transparent component).
     pub value_balance: i128,
+    /// Optional stablecoin policy binding (required for issuance/burn).
+    pub stablecoin: Option<StablecoinPolicyBinding>,
 }
 
 /// Result of proof verification.
@@ -302,6 +302,50 @@ impl StarkVerifier {
         mag_bytes[24..32].copy_from_slice(&magnitude.to_be_bytes());
         encoded.push(mag_bytes);
 
+        let (stablecoin_enabled, stablecoin_asset, stablecoin_policy_version, issuance_sign, issuance_mag, policy_hash, oracle_commitment, attestation_commitment) =
+            match inputs.stablecoin.as_ref() {
+                Some(binding) => {
+                    let (sign, mag) = transaction_core::hashing::signed_parts(binding.issuance_delta)
+                        .map(|(sign, mag)| (sign.as_int() as u8, mag.as_int()))
+                        .unwrap_or((0u8, 0u64));
+                    (
+                        1u8,
+                        binding.asset_id,
+                        u64::from(binding.policy_version),
+                        sign,
+                        mag,
+                        binding.policy_hash,
+                        binding.oracle_commitment,
+                        binding.attestation_commitment,
+                    )
+                }
+                None => (0u8, 0u64, 0u64, 0u8, 0u64, [0u8; 32], [0u8; 32], [0u8; 32]),
+            };
+
+        let mut stablecoin_enabled_bytes = [0u8; 32];
+        stablecoin_enabled_bytes[31] = stablecoin_enabled;
+        encoded.push(stablecoin_enabled_bytes);
+
+        let mut asset_bytes = [0u8; 32];
+        asset_bytes[24..32].copy_from_slice(&stablecoin_asset.to_be_bytes());
+        encoded.push(asset_bytes);
+
+        let mut policy_version_bytes = [0u8; 32];
+        policy_version_bytes[24..32].copy_from_slice(&stablecoin_policy_version.to_be_bytes());
+        encoded.push(policy_version_bytes);
+
+        let mut issuance_sign_bytes = [0u8; 32];
+        issuance_sign_bytes[31] = issuance_sign;
+        encoded.push(issuance_sign_bytes);
+
+        let mut issuance_mag_bytes = [0u8; 32];
+        issuance_mag_bytes[24..32].copy_from_slice(&issuance_mag.to_be_bytes());
+        encoded.push(issuance_mag_bytes);
+
+        encoded.push(policy_hash);
+        encoded.push(oracle_commitment);
+        encoded.push(attestation_commitment);
+
         encoded
     }
 
@@ -399,6 +443,22 @@ impl StarkVerifier {
         }
         if transaction_core::hashing::signed_parts(inputs.value_balance).is_none() {
             return false;
+        }
+        if let Some(binding) = inputs.stablecoin.as_ref() {
+            if binding.asset_id == transaction_core::constants::NATIVE_ASSET_ID
+                || binding.asset_id == u64::MAX
+            {
+                return false;
+            }
+            if !Self::is_canonical_felt(&binding.policy_hash)
+                || !Self::is_canonical_felt(&binding.oracle_commitment)
+                || !Self::is_canonical_felt(&binding.attestation_commitment)
+            {
+                return false;
+            }
+            if transaction_core::hashing::signed_parts(binding.issuance_delta).is_none() {
+                return false;
+            }
         }
         true
     }
@@ -638,6 +698,47 @@ impl StarkVerifier {
         let (value_balance_sign, value_balance_magnitude) =
             transaction_core::hashing::signed_parts(inputs.value_balance)?;
 
+        let (
+            stablecoin_enabled,
+            stablecoin_asset,
+            stablecoin_policy_version,
+            stablecoin_issuance_sign,
+            stablecoin_issuance_magnitude,
+            stablecoin_policy_hash,
+            stablecoin_oracle_commitment,
+            stablecoin_attestation_commitment,
+        ) = match inputs.stablecoin.as_ref() {
+            Some(binding) => {
+                let (issuance_sign, issuance_mag) =
+                    transaction_core::hashing::signed_parts(binding.issuance_delta)?;
+                let policy_hash = transaction_core::hashing::bytes32_to_felts(&binding.policy_hash)?;
+                let oracle_commitment =
+                    transaction_core::hashing::bytes32_to_felts(&binding.oracle_commitment)?;
+                let attestation_commitment =
+                    transaction_core::hashing::bytes32_to_felts(&binding.attestation_commitment)?;
+                (
+                    transaction_core::Felt::ONE,
+                    transaction_core::Felt::new(binding.asset_id),
+                    transaction_core::Felt::new(u64::from(binding.policy_version)),
+                    issuance_sign,
+                    issuance_mag,
+                    policy_hash,
+                    oracle_commitment,
+                    attestation_commitment,
+                )
+            }
+            None => (
+                transaction_core::Felt::ZERO,
+                transaction_core::Felt::ZERO,
+                transaction_core::Felt::ZERO,
+                transaction_core::Felt::ZERO,
+                transaction_core::Felt::ZERO,
+                [transaction_core::Felt::ZERO; 4],
+                [transaction_core::Felt::ZERO; 4],
+                [transaction_core::Felt::ZERO; 4],
+            ),
+        };
+
         Some(transaction_core::TransactionPublicInputsStark {
             input_flags,
             output_flags,
@@ -647,6 +748,14 @@ impl StarkVerifier {
             value_balance_sign,
             value_balance_magnitude,
             merkle_root,
+            stablecoin_enabled,
+            stablecoin_asset,
+            stablecoin_policy_version,
+            stablecoin_issuance_sign,
+            stablecoin_issuance_magnitude,
+            stablecoin_policy_hash,
+            stablecoin_oracle_commitment,
+            stablecoin_attestation_commitment,
         })
     }
 }
@@ -909,6 +1018,7 @@ mod tests {
             commitments: vec![canonical_byte(4), canonical_byte(5)],
             fee: 0,
             value_balance: 0,
+            stablecoin: None,
         }
     }
 
@@ -951,6 +1061,7 @@ mod tests {
         };
         use transaction_circuit::proof::prove;
         use transaction_circuit::witness::TransactionWitness;
+        use transaction_circuit::StablecoinPolicyBinding;
 
         static FIXTURE: OnceLock<(StarkProof, ShieldedTransferInputs, BindingHash)> = OnceLock::new();
         FIXTURE
@@ -988,6 +1099,7 @@ mod tests {
                     merkle_root: felts_to_bytes32(&merkle_root),
                     fee: 100,
                     value_balance: 0,
+                    stablecoin: StablecoinPolicyBinding::default(),
                     version: TransactionWitness::default_version_binding(),
                 };
 
@@ -1014,6 +1126,7 @@ mod tests {
                         .collect(),
                     fee: stark_inputs.fee,
                     value_balance: 0,
+                    stablecoin: None,
                 };
 
                 let binding_hash = StarkVerifier::compute_binding_hash(&inputs);
@@ -1068,7 +1181,7 @@ mod tests {
         let encoded = StarkVerifier::encode_public_inputs(&inputs);
 
         // 1 anchor + 2 nullifiers + 2 commitments + fee + value balance (sign + mag) = 8
-        assert_eq!(encoded.len(), 8);
+        assert_eq!(encoded.len(), 16);
     }
 
     #[test]
@@ -1276,6 +1389,7 @@ mod tests {
             commitments: vec![[4u8; 32]],
             fee: 0,
             value_balance: 1000, // Minting 1000
+            stablecoin: None,
         };
 
         let sig = StarkVerifier::compute_binding_hash(&inputs);
@@ -1296,6 +1410,7 @@ mod tests {
             commitments: vec![[4u8; 32]],
             fee: 0,
             value_balance: i128::MAX,
+            stablecoin: None,
         };
 
         let inputs_min = ShieldedTransferInputs {
@@ -1304,6 +1419,7 @@ mod tests {
             commitments: vec![[4u8; 32]],
             fee: 0,
             value_balance: i128::MIN,
+            stablecoin: None,
         };
 
         // Both should produce valid binding hashes (no panic)

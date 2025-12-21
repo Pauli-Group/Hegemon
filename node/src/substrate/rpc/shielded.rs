@@ -46,6 +46,19 @@ pub struct ShieldedTransferRequest {
     pub fee: u64,
     /// Value balance (must be 0 when no transparent pool is enabled)
     pub value_balance: i128,
+    /// Optional stablecoin policy binding
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stablecoin: Option<StablecoinPolicyBindingRequest>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StablecoinPolicyBindingRequest {
+    pub asset_id: u64,
+    pub policy_hash: String,
+    pub oracle_commitment: String,
+    pub attestation_commitment: String,
+    pub issuance_delta: i128,
+    pub policy_version: u32,
 }
 
 /// Shielded transfer response
@@ -208,6 +221,7 @@ pub trait ShieldedPoolService: Send + Sync {
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
         binding_hash: [u8; 64],
+        stablecoin: Option<pallet_shielded_pool::StablecoinPolicyBinding>,
         fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String>;
@@ -366,6 +380,53 @@ where
             }
         };
 
+        let stablecoin = match request.stablecoin.as_ref() {
+            Some(binding) => {
+                let policy_hash = match hex_to_array32(&binding.policy_hash) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        return Ok(ShieldedTransferResponse {
+                            success: false,
+                            tx_hash: None,
+                            block_number: None,
+                            error: Some(format!("Invalid stablecoin policy hash: {}", e)),
+                        });
+                    }
+                };
+                let oracle_commitment = match hex_to_array32(&binding.oracle_commitment) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        return Ok(ShieldedTransferResponse {
+                            success: false,
+                            tx_hash: None,
+                            block_number: None,
+                            error: Some(format!("Invalid stablecoin oracle commitment: {}", e)),
+                        });
+                    }
+                };
+                let attestation_commitment = match hex_to_array32(&binding.attestation_commitment) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        return Ok(ShieldedTransferResponse {
+                            success: false,
+                            tx_hash: None,
+                            block_number: None,
+                            error: Some(format!("Invalid stablecoin attestation commitment: {}", e)),
+                        });
+                    }
+                };
+                Some(pallet_shielded_pool::StablecoinPolicyBinding {
+                    asset_id: binding.asset_id,
+                    policy_hash,
+                    oracle_commitment,
+                    attestation_commitment,
+                    issuance_delta: binding.issuance_delta,
+                    policy_version: binding.policy_version,
+                })
+            }
+            None => None,
+        };
+
         if request.value_balance != 0 {
             return Ok(ShieldedTransferResponse {
                 success: false,
@@ -383,6 +444,7 @@ where
             encrypted_notes,
             anchor,
             binding_hash,
+            stablecoin,
             request.fee,
             request.value_balance,
         ) {
@@ -514,6 +576,7 @@ mod tests {
             _encrypted_notes: Vec<Vec<u8>>,
             _anchor: [u8; 32],
             _binding_hash: [u8; 64],
+            _stablecoin: Option<pallet_shielded_pool::StablecoinPolicyBinding>,
             _fee: u64,
             _value_balance: i128,
         ) -> Result<[u8; 32], String> {
@@ -650,6 +713,7 @@ mod tests {
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
+            stablecoin: None,
         };
 
         let response = rpc.submit_shielded_transfer(request).await.unwrap();
@@ -674,6 +738,7 @@ mod tests {
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
+            stablecoin: None,
         };
 
         let response = rpc.submit_shielded_transfer(request).await.unwrap();
@@ -701,6 +766,7 @@ mod tests {
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
+            stablecoin: None,
         };
 
         let response = rpc.submit_shielded_transfer(request).await.unwrap();

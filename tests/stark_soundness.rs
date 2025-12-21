@@ -341,7 +341,7 @@ fn test_end_to_end_proof_security() {
         hashing::{felts_to_bytes32, merkle_node},
         keys::generate_keys,
         note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
-        proof, TransactionWitness,
+        proof, StablecoinPolicyBinding, TransactionWitness,
     };
     use winter_math::fields::f64::BaseElement;
     use winter_math::FieldElement;
@@ -388,6 +388,7 @@ fn test_end_to_end_proof_security() {
         sk_spend,
         fee: 100,
         value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
         merkle_root,
         version: VersionBinding::new(1, 1),
         inputs: vec![InputNoteWitness {

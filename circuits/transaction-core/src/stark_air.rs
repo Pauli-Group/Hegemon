@@ -26,7 +26,7 @@ use crate::poseidon_constants;
 // ================================================================================================
 
 /// Trace width (columns) for the transaction circuit.
-pub const TRACE_WIDTH: usize = 65;
+pub const TRACE_WIDTH: usize = 86;
 
 /// Poseidon state columns.
 pub const COL_S0: usize = 0;
@@ -132,6 +132,29 @@ pub const COL_OUT3: usize = 63;
 
 /// Direction bit for Merkle path (0 = current is left, 1 = current is right).
 pub const COL_DIR: usize = 64;
+
+/// Stablecoin policy binding and issuance fields (final row only).
+pub const COL_STABLECOIN_ENABLED: usize = 65;
+pub const COL_STABLECOIN_ASSET: usize = 66;
+pub const COL_STABLECOIN_POLICY_VERSION: usize = 67;
+pub const COL_STABLECOIN_ISSUANCE_SIGN: usize = 68;
+pub const COL_STABLECOIN_ISSUANCE_MAG: usize = 69;
+pub const COL_STABLECOIN_POLICY_HASH0: usize = 70;
+pub const COL_STABLECOIN_POLICY_HASH1: usize = 71;
+pub const COL_STABLECOIN_POLICY_HASH2: usize = 72;
+pub const COL_STABLECOIN_POLICY_HASH3: usize = 73;
+pub const COL_STABLECOIN_ORACLE0: usize = 74;
+pub const COL_STABLECOIN_ORACLE1: usize = 75;
+pub const COL_STABLECOIN_ORACLE2: usize = 76;
+pub const COL_STABLECOIN_ORACLE3: usize = 77;
+pub const COL_STABLECOIN_ATTEST0: usize = 78;
+pub const COL_STABLECOIN_ATTEST1: usize = 79;
+pub const COL_STABLECOIN_ATTEST2: usize = 80;
+pub const COL_STABLECOIN_ATTEST3: usize = 81;
+pub const COL_STABLECOIN_SLOT_SEL0: usize = 82;
+pub const COL_STABLECOIN_SLOT_SEL1: usize = 83;
+pub const COL_STABLECOIN_SLOT_SEL2: usize = 84;
+pub const COL_STABLECOIN_SLOT_SEL3: usize = 85;
 
 /// Cycle length: power of 2, must be > POSEIDON_ROUNDS.
 pub const CYCLE_LENGTH: usize = 64;
@@ -254,6 +277,14 @@ pub struct TransactionPublicInputsStark {
     pub value_balance_sign: BaseElement,
     pub value_balance_magnitude: BaseElement,
     pub merkle_root: [BaseElement; 4],
+    pub stablecoin_enabled: BaseElement,
+    pub stablecoin_asset: BaseElement,
+    pub stablecoin_policy_version: BaseElement,
+    pub stablecoin_issuance_sign: BaseElement,
+    pub stablecoin_issuance_magnitude: BaseElement,
+    pub stablecoin_policy_hash: [BaseElement; 4],
+    pub stablecoin_oracle_commitment: [BaseElement; 4],
+    pub stablecoin_attestation_commitment: [BaseElement; 4],
 }
 
 impl Default for TransactionPublicInputsStark {
@@ -268,13 +299,21 @@ impl Default for TransactionPublicInputsStark {
             value_balance_sign: BaseElement::ZERO,
             value_balance_magnitude: BaseElement::ZERO,
             merkle_root: zero,
+            stablecoin_enabled: BaseElement::ZERO,
+            stablecoin_asset: BaseElement::ZERO,
+            stablecoin_policy_version: BaseElement::ZERO,
+            stablecoin_issuance_sign: BaseElement::ZERO,
+            stablecoin_issuance_magnitude: BaseElement::ZERO,
+            stablecoin_policy_hash: zero,
+            stablecoin_oracle_commitment: zero,
+            stablecoin_attestation_commitment: zero,
         }
     }
 }
 
 impl ToElements<BaseElement> for TransactionPublicInputsStark {
     fn to_elements(&self) -> Vec<BaseElement> {
-        let mut elements = Vec::with_capacity((MAX_INPUTS + MAX_OUTPUTS) * 5 + 7);
+        let mut elements = Vec::with_capacity((MAX_INPUTS + MAX_OUTPUTS) * 5 + 24);
         elements.extend(&self.input_flags);
         elements.extend(&self.output_flags);
         for nf in &self.nullifiers {
@@ -287,6 +326,14 @@ impl ToElements<BaseElement> for TransactionPublicInputsStark {
         elements.push(self.value_balance_sign);
         elements.push(self.value_balance_magnitude);
         elements.extend_from_slice(&self.merkle_root);
+        elements.push(self.stablecoin_enabled);
+        elements.push(self.stablecoin_asset);
+        elements.push(self.stablecoin_policy_version);
+        elements.push(self.stablecoin_issuance_sign);
+        elements.push(self.stablecoin_issuance_magnitude);
+        elements.extend_from_slice(&self.stablecoin_policy_hash);
+        elements.extend_from_slice(&self.stablecoin_oracle_commitment);
+        elements.extend_from_slice(&self.stablecoin_attestation_commitment);
         elements
     }
 }
@@ -450,7 +497,7 @@ pub struct TransactionAirStark {
     pub_inputs: TransactionPublicInputsStark,
 }
 
-const NUM_CONSTRAINTS: usize = 72;
+const NUM_CONSTRAINTS: usize = 103;
 
 impl Air for TransactionAirStark {
     type BaseField = BaseElement;
@@ -468,6 +515,24 @@ impl Air for TransactionAirStark {
         }
         degrees.push(TransitionConstraintDegree::new(2)); // reset boolean
         degrees.push(TransitionConstraintDegree::new(2)); // value balance sign boolean
+        degrees.push(TransitionConstraintDegree::new(2)); // stablecoin enabled boolean
+        degrees.push(TransitionConstraintDegree::new(2)); // stablecoin issuance sign boolean
+        for _ in 0..4 {
+            degrees.push(TransitionConstraintDegree::new(2)); // stablecoin slot selector booleans
+        }
+        degrees.push(TransitionConstraintDegree::with_cycles(1, vec![trace_len])); // selector sum
+        for _ in 0..4 {
+            degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len])); // asset match
+        }
+        degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len])); // delta equality
+        for _ in 0..3 {
+            degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len]));
+            // non-selected slot balance
+        }
+        for _ in 0..16 {
+            degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len]));
+            // zeroed when stablecoin disabled
+        }
 
         for _ in 0..4 {
             degrees.push(TransitionConstraintDegree::new(2)); // active flag booleans
@@ -549,6 +614,8 @@ impl Air for TransactionAirStark {
 
         // Fee/value balance assertions at the final enforcement row.
         num_assertions += 3;
+        // Stablecoin policy binding assertions at the final enforcement row.
+        num_assertions += 17;
 
         Self {
             context: AirContext::new(trace_info, degrees, num_assertions, options),
@@ -647,6 +714,91 @@ impl Air for TransactionAirStark {
         result[idx] = vb_sign * (vb_sign - one);
         idx += 1;
 
+        // stablecoin enabled/issuance flags are boolean
+        let stablecoin_enabled = current[COL_STABLECOIN_ENABLED];
+        result[idx] = stablecoin_enabled * (stablecoin_enabled - one);
+        idx += 1;
+
+        let stablecoin_sign = current[COL_STABLECOIN_ISSUANCE_SIGN];
+        result[idx] = stablecoin_sign * (stablecoin_sign - one);
+        idx += 1;
+
+        let stablecoin_sel_cols = [
+            COL_STABLECOIN_SLOT_SEL0,
+            COL_STABLECOIN_SLOT_SEL1,
+            COL_STABLECOIN_SLOT_SEL2,
+            COL_STABLECOIN_SLOT_SEL3,
+        ];
+        for &col in stablecoin_sel_cols.iter() {
+            let sel = current[col];
+            result[idx] = sel * (sel - one);
+            idx += 1;
+        }
+
+        let slot_assets = [
+            current[COL_SLOT0_ASSET],
+            current[COL_SLOT1_ASSET],
+            current[COL_SLOT2_ASSET],
+            current[COL_SLOT3_ASSET],
+        ];
+        let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
+        let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
+
+        let stablecoin_sel_sum = stablecoin_sel_cols
+            .iter()
+            .fold(E::ZERO, |acc, col| acc + current[*col]);
+        result[idx] = final_row_mask * (stablecoin_sel_sum - stablecoin_enabled);
+        idx += 1;
+
+        let stablecoin_asset = current[COL_STABLECOIN_ASSET];
+        for slot in 0..4 {
+            result[idx] = final_row_mask
+                * current[stablecoin_sel_cols[slot]]
+                * (slot_assets[slot] - stablecoin_asset);
+            idx += 1;
+        }
+
+        let stablecoin_mag = current[COL_STABLECOIN_ISSUANCE_MAG];
+        let stablecoin_signed = stablecoin_mag - (stablecoin_sign * stablecoin_mag * two);
+        let mut selected_delta = E::ZERO;
+        for slot in 0..4 {
+            let delta = current[slot_in_cols[slot]] - current[slot_out_cols[slot]];
+            selected_delta += current[stablecoin_sel_cols[slot]] * delta;
+        }
+        result[idx] = final_row_mask * (selected_delta - stablecoin_signed);
+        idx += 1;
+
+        for slot in 1..4 {
+            let delta = current[slot_in_cols[slot]] - current[slot_out_cols[slot]];
+            result[idx] =
+                final_row_mask * delta * (one - current[stablecoin_sel_cols[slot]]);
+            idx += 1;
+        }
+
+        let stablecoin_disabled = one - stablecoin_enabled;
+        let stablecoin_zero_cols = [
+            COL_STABLECOIN_ASSET,
+            COL_STABLECOIN_POLICY_VERSION,
+            COL_STABLECOIN_ISSUANCE_SIGN,
+            COL_STABLECOIN_ISSUANCE_MAG,
+            COL_STABLECOIN_POLICY_HASH0,
+            COL_STABLECOIN_POLICY_HASH1,
+            COL_STABLECOIN_POLICY_HASH2,
+            COL_STABLECOIN_POLICY_HASH3,
+            COL_STABLECOIN_ORACLE0,
+            COL_STABLECOIN_ORACLE1,
+            COL_STABLECOIN_ORACLE2,
+            COL_STABLECOIN_ORACLE3,
+            COL_STABLECOIN_ATTEST0,
+            COL_STABLECOIN_ATTEST1,
+            COL_STABLECOIN_ATTEST2,
+            COL_STABLECOIN_ATTEST3,
+        ];
+        for &col in stablecoin_zero_cols.iter() {
+            result[idx] = final_row_mask * stablecoin_disabled * current[col];
+            idx += 1;
+        }
+
         // active flags are boolean
         let active_cols = [
             COL_IN_ACTIVE0,
@@ -703,14 +855,6 @@ impl Air for TransactionAirStark {
         result[idx] = note_start_out1 * (out1_sel_sum - output_active[1]);
         idx += 1;
 
-        // asset id matches selected slot
-        let slot_assets = [
-            current[COL_SLOT0_ASSET],
-            current[COL_SLOT1_ASSET],
-            current[COL_SLOT2_ASSET],
-            current[COL_SLOT3_ASSET],
-        ];
-
         let in0_asset = current[COL_IN0_ASSET];
         let in0_selected = current[COL_SEL_IN0_SLOT0] * slot_assets[0]
             + current[COL_SEL_IN0_SLOT1] * slot_assets[1]
@@ -746,9 +890,6 @@ impl Air for TransactionAirStark {
         // slot accumulators (inputs/outputs)
         let in_values = [current[COL_IN0_VALUE], current[COL_IN1_VALUE]];
         let out_values = [current[COL_OUT0_VALUE], current[COL_OUT1_VALUE]];
-
-        let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
-        let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
 
         let sel_in = [
             [
@@ -1083,6 +1224,70 @@ impl Air for TransactionAirStark {
                 final_row,
                 self.pub_inputs.value_balance_magnitude,
             ));
+            assertions.push(Assertion::single(
+                COL_STABLECOIN_ENABLED,
+                final_row,
+                self.pub_inputs.stablecoin_enabled,
+            ));
+            assertions.push(Assertion::single(
+                COL_STABLECOIN_ASSET,
+                final_row,
+                self.pub_inputs.stablecoin_asset,
+            ));
+            assertions.push(Assertion::single(
+                COL_STABLECOIN_POLICY_VERSION,
+                final_row,
+                self.pub_inputs.stablecoin_policy_version,
+            ));
+            assertions.push(Assertion::single(
+                COL_STABLECOIN_ISSUANCE_SIGN,
+                final_row,
+                self.pub_inputs.stablecoin_issuance_sign,
+            ));
+            assertions.push(Assertion::single(
+                COL_STABLECOIN_ISSUANCE_MAG,
+                final_row,
+                self.pub_inputs.stablecoin_issuance_magnitude,
+            ));
+            let stablecoin_hash_cols = [
+                COL_STABLECOIN_POLICY_HASH0,
+                COL_STABLECOIN_POLICY_HASH1,
+                COL_STABLECOIN_POLICY_HASH2,
+                COL_STABLECOIN_POLICY_HASH3,
+            ];
+            for (idx, col) in stablecoin_hash_cols.iter().enumerate() {
+                assertions.push(Assertion::single(
+                    *col,
+                    final_row,
+                    self.pub_inputs.stablecoin_policy_hash[idx],
+                ));
+            }
+            let stablecoin_oracle_cols = [
+                COL_STABLECOIN_ORACLE0,
+                COL_STABLECOIN_ORACLE1,
+                COL_STABLECOIN_ORACLE2,
+                COL_STABLECOIN_ORACLE3,
+            ];
+            for (idx, col) in stablecoin_oracle_cols.iter().enumerate() {
+                assertions.push(Assertion::single(
+                    *col,
+                    final_row,
+                    self.pub_inputs.stablecoin_oracle_commitment[idx],
+                ));
+            }
+            let stablecoin_attest_cols = [
+                COL_STABLECOIN_ATTEST0,
+                COL_STABLECOIN_ATTEST1,
+                COL_STABLECOIN_ATTEST2,
+                COL_STABLECOIN_ATTEST3,
+            ];
+            for (idx, col) in stablecoin_attest_cols.iter().enumerate() {
+                assertions.push(Assertion::single(
+                    *col,
+                    final_row,
+                    self.pub_inputs.stablecoin_attestation_commitment[idx],
+                ));
+            }
         }
 
         assertions
@@ -1224,6 +1429,14 @@ mod tests {
             value_balance_sign: BaseElement::ZERO,
             value_balance_magnitude: BaseElement::ZERO,
             merkle_root: zero,
+            stablecoin_enabled: BaseElement::ZERO,
+            stablecoin_asset: BaseElement::ZERO,
+            stablecoin_policy_version: BaseElement::ZERO,
+            stablecoin_issuance_sign: BaseElement::ZERO,
+            stablecoin_issuance_magnitude: BaseElement::ZERO,
+            stablecoin_policy_hash: zero,
+            stablecoin_oracle_commitment: zero,
+            stablecoin_attestation_commitment: zero,
         };
         let options = ProofOptions::new(
             32,

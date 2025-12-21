@@ -1,6 +1,10 @@
 //! Mock runtime for testing the shielded pool pallet.
 
 use crate as pallet_shielded_pool;
+use crate::{
+    AttestationCommitmentProvider, AttestationCommitmentSnapshot, OracleCommitmentProvider,
+    OracleCommitmentSnapshot, StablecoinPolicyProvider, StablecoinPolicySnapshot,
+};
 // AcceptAllProofs is only available in test builds (not production)
 #[cfg(not(feature = "production"))]
 type TestProofVerifier = crate::verifier::AcceptAllProofs;
@@ -13,6 +17,7 @@ type TestBatchProofVerifier = crate::verifier::AcceptAllBatchProofs;
 type TestBatchProofVerifier = crate::verifier::StarkBatchVerifier;
 
 use crate::verifier::StarkVerifier;
+use core::cell::RefCell;
 use frame_support::{
     parameter_types,
     traits::{ConstU16, ConstU32, Everything},
@@ -21,6 +26,88 @@ use sp_io::TestExternalities;
 use sp_runtime::testing::H256;
 use sp_runtime::traits::{BlakeTwo256, IdentityLookup};
 use sp_runtime::BuildStorage;
+
+thread_local! {
+    static MOCK_POLICY: RefCell<Option<StablecoinPolicySnapshot<u32, u32, u64, u64>>> =
+        RefCell::new(None);
+    static MOCK_POLICY_HASH: RefCell<Option<[u8; 32]>> = RefCell::new(None);
+    static MOCK_ORACLE: RefCell<Option<(u32, OracleCommitmentSnapshot<u64>)>> =
+        RefCell::new(None);
+    static MOCK_ATTESTATION: RefCell<Option<(u64, AttestationCommitmentSnapshot<u64>)>> =
+        RefCell::new(None);
+}
+
+pub struct MockStablecoinPolicyProvider;
+impl StablecoinPolicyProvider<u32, u32, u64, u64> for MockStablecoinPolicyProvider {
+    fn policy(
+        asset_id: &u32,
+    ) -> Option<StablecoinPolicySnapshot<u32, u32, u64, u64>> {
+        MOCK_POLICY.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .filter(|policy| &policy.asset_id == asset_id)
+                .cloned()
+        })
+    }
+
+    fn policy_hash(asset_id: &u32) -> Option<[u8; 32]> {
+        let policy = MOCK_POLICY.with(|cell| cell.borrow().clone());
+        if policy.as_ref().map(|p| &p.asset_id) != Some(asset_id) {
+            return None;
+        }
+        MOCK_POLICY_HASH.with(|cell| *cell.borrow())
+    }
+}
+
+pub struct MockOracleCommitmentProvider;
+impl OracleCommitmentProvider<u32, u64> for MockOracleCommitmentProvider {
+    fn latest_commitment(feed_id: &u32) -> Option<OracleCommitmentSnapshot<u64>> {
+        MOCK_ORACLE.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .filter(|(id, _)| id == feed_id)
+                .map(|(_, snapshot)| snapshot.clone())
+        })
+    }
+}
+
+pub struct MockAttestationCommitmentProvider;
+impl AttestationCommitmentProvider<u64, u64> for MockAttestationCommitmentProvider {
+    fn commitment(commitment_id: &u64) -> Option<AttestationCommitmentSnapshot<u64>> {
+        MOCK_ATTESTATION.with(|cell| {
+            cell.borrow()
+                .as_ref()
+                .filter(|(id, _)| id == commitment_id)
+                .map(|(_, snapshot)| snapshot.clone())
+        })
+    }
+}
+
+pub fn set_mock_policy(
+    policy: Option<StablecoinPolicySnapshot<u32, u32, u64, u64>>,
+    hash: Option<[u8; 32]>,
+) {
+    MOCK_POLICY.with(|cell| *cell.borrow_mut() = policy);
+    MOCK_POLICY_HASH.with(|cell| *cell.borrow_mut() = hash);
+}
+
+pub fn set_mock_oracle(feed_id: u32, snapshot: Option<OracleCommitmentSnapshot<u64>>) {
+    MOCK_ORACLE.with(|cell| *cell.borrow_mut() = snapshot.map(|snap| (feed_id, snap)));
+}
+
+pub fn set_mock_attestation(
+    commitment_id: u64,
+    snapshot: Option<AttestationCommitmentSnapshot<u64>>,
+) {
+    MOCK_ATTESTATION
+        .with(|cell| *cell.borrow_mut() = snapshot.map(|snap| (commitment_id, snap)));
+}
+
+pub fn clear_mock_stablecoin_state() {
+    set_mock_policy(None, None);
+    set_mock_oracle(0, None);
+    set_mock_attestation(0, None);
+}
 
 frame_support::construct_runtime!(
     pub enum Test {
@@ -107,6 +194,12 @@ impl pallet_shielded_pool::Config for Test {
     type MaxCommitmentsPerBatch = MaxCommitmentsPerBatch;
     type MerkleRootHistorySize = MerkleRootHistorySize;
     type MaxCoinbaseSubsidy = MaxCoinbaseSubsidy;
+    type StablecoinAssetId = u32;
+    type OracleFeedId = u32;
+    type AttestationId = u64;
+    type StablecoinPolicyProvider = MockStablecoinPolicyProvider;
+    type OracleCommitmentProvider = MockOracleCommitmentProvider;
+    type AttestationCommitmentProvider = MockAttestationCommitmentProvider;
     type WeightInfo = crate::DefaultWeightInfo;
 }
 
@@ -125,6 +218,7 @@ pub fn new_test_ext() -> TestExternalities {
 
     let mut ext: TestExternalities = t.into();
     ext.execute_with(|| {
+        clear_mock_stablecoin_state();
         frame_system::Pallet::<Test>::set_block_number(1);
 
         // Initialize shielded pool storage
@@ -144,7 +238,7 @@ pub fn new_test_ext() -> TestExternalities {
 mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
-    use crate::types::{BindingHash, EncryptedNote, StarkProof};
+    use crate::types::{BindingHash, EncryptedNote, StarkProof, StablecoinPolicyBinding};
     use frame_support::{assert_noop, assert_ok, BoundedVec};
     use sp_runtime::traits::ValidateUnsigned;
     use sp_runtime::transaction_validity::{
@@ -179,6 +273,34 @@ mod tests {
         }
     }
 
+    fn stablecoin_policy_snapshot() -> StablecoinPolicySnapshot<u32, u32, u64, u64> {
+        StablecoinPolicySnapshot {
+            asset_id: 1001,
+            oracle_feeds: vec![7],
+            attestation_id: 42,
+            min_collateral_ratio_ppm: 1_500_000,
+            max_mint_per_epoch: 1_000_000_000,
+            oracle_max_age: 5,
+            policy_version: 1,
+            active: true,
+        }
+    }
+
+    fn stablecoin_binding(
+        policy_hash: [u8; 32],
+        oracle_commitment: [u8; 32],
+        attestation_commitment: [u8; 32],
+    ) -> StablecoinPolicyBinding {
+        StablecoinPolicyBinding {
+            asset_id: 1001,
+            policy_hash,
+            oracle_commitment,
+            attestation_commitment,
+            issuance_delta: 100,
+            policy_version: 1,
+        }
+    }
+
     #[test]
     fn validate_unsigned_rejects_zero_nullifier() {
         new_test_ext().execute_with(|| {
@@ -203,6 +325,7 @@ mod tests {
                 ciphertexts,
                 anchor,
                 binding_hash: valid_binding_hash(),
+                stablecoin: None,
                 fee: 0,
             };
 
@@ -263,12 +386,222 @@ mod tests {
                 ciphertexts,
                 anchor,
                 valid_binding_hash(),
+                None,
                 0, // fee
                 0, // value_balance = 0 for shielded-to-shielded
             ));
 
             // Check nullifier was added
             assert!(NullifiersStorage::<Test>::contains_key([1u8; 32]));
+        });
+    }
+
+    #[test]
+    fn shielded_transfer_rejects_missing_oracle_commitment() {
+        new_test_ext().execute_with(|| {
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![[1u8; 32]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![[2u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            let policy_hash = [10u8; 32];
+            let oracle_commitment = [11u8; 32];
+            let attestation_commitment = [12u8; 32];
+
+            set_mock_policy(Some(stablecoin_policy_snapshot()), Some(policy_hash));
+            set_mock_oracle(7, None);
+            set_mock_attestation(
+                42,
+                Some(AttestationCommitmentSnapshot {
+                    commitment: attestation_commitment,
+                    disputed: false,
+                    created_at: 1,
+                }),
+            );
+
+            let stablecoin =
+                Some(stablecoin_binding(policy_hash, oracle_commitment, attestation_commitment));
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer(
+                    RuntimeOrigin::signed(1),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    valid_binding_hash(),
+                    stablecoin,
+                    0,
+                    0,
+                ),
+                crate::Error::<Test>::StablecoinOracleCommitmentMissing
+            );
+        });
+    }
+
+    #[test]
+    fn shielded_transfer_rejects_stale_oracle_commitment() {
+        new_test_ext().execute_with(|| {
+            frame_system::Pallet::<Test>::set_block_number(10);
+
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![[1u8; 32]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![[2u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            let policy_hash = [20u8; 32];
+            let oracle_commitment = [21u8; 32];
+            let attestation_commitment = [22u8; 32];
+
+            set_mock_policy(Some(stablecoin_policy_snapshot()), Some(policy_hash));
+            set_mock_oracle(
+                7,
+                Some(OracleCommitmentSnapshot {
+                    commitment: oracle_commitment,
+                    submitted_at: 1,
+                }),
+            );
+            set_mock_attestation(
+                42,
+                Some(AttestationCommitmentSnapshot {
+                    commitment: attestation_commitment,
+                    disputed: false,
+                    created_at: 1,
+                }),
+            );
+
+            let stablecoin =
+                Some(stablecoin_binding(policy_hash, oracle_commitment, attestation_commitment));
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer(
+                    RuntimeOrigin::signed(1),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    valid_binding_hash(),
+                    stablecoin,
+                    0,
+                    0,
+                ),
+                crate::Error::<Test>::StablecoinOracleCommitmentStale
+            );
+        });
+    }
+
+    #[test]
+    fn shielded_transfer_rejects_disputed_attestation() {
+        new_test_ext().execute_with(|| {
+            frame_system::Pallet::<Test>::set_block_number(10);
+
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![[1u8; 32]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![[2u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            let policy_hash = [30u8; 32];
+            let oracle_commitment = [31u8; 32];
+            let attestation_commitment = [32u8; 32];
+
+            set_mock_policy(Some(stablecoin_policy_snapshot()), Some(policy_hash));
+            set_mock_oracle(
+                7,
+                Some(OracleCommitmentSnapshot {
+                    commitment: oracle_commitment,
+                    submitted_at: 9,
+                }),
+            );
+            set_mock_attestation(
+                42,
+                Some(AttestationCommitmentSnapshot {
+                    commitment: attestation_commitment,
+                    disputed: true,
+                    created_at: 9,
+                }),
+            );
+
+            let stablecoin =
+                Some(stablecoin_binding(policy_hash, oracle_commitment, attestation_commitment));
+
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer(
+                    RuntimeOrigin::signed(1),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    valid_binding_hash(),
+                    stablecoin,
+                    0,
+                    0,
+                ),
+                crate::Error::<Test>::StablecoinAttestationDisputed
+            );
+        });
+    }
+
+    #[test]
+    fn shielded_transfer_accepts_valid_stablecoin_binding() {
+        new_test_ext().execute_with(|| {
+            frame_system::Pallet::<Test>::set_block_number(10);
+
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![[1u8; 32]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![[2u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            let policy_hash = [40u8; 32];
+            let oracle_commitment = [41u8; 32];
+            let attestation_commitment = [42u8; 32];
+
+            set_mock_policy(Some(stablecoin_policy_snapshot()), Some(policy_hash));
+            set_mock_oracle(
+                7,
+                Some(OracleCommitmentSnapshot {
+                    commitment: oracle_commitment,
+                    submitted_at: 9,
+                }),
+            );
+            set_mock_attestation(
+                42,
+                Some(AttestationCommitmentSnapshot {
+                    commitment: attestation_commitment,
+                    disputed: false,
+                    created_at: 9,
+                }),
+            );
+
+            let stablecoin =
+                Some(stablecoin_binding(policy_hash, oracle_commitment, attestation_commitment));
+
+            assert_ok!(Pallet::<Test>::shielded_transfer(
+                RuntimeOrigin::signed(1),
+                valid_proof(),
+                nullifiers,
+                commitments,
+                ciphertexts,
+                anchor,
+                valid_binding_hash(),
+                stablecoin,
+                0,
+                0,
+            ));
         });
     }
 
@@ -294,6 +627,7 @@ mod tests {
                 ciphertexts.clone(),
                 anchor,
                 valid_binding_hash(),
+                None,
                 0,
                 0,
             ));
@@ -312,6 +646,7 @@ mod tests {
                     ciphertexts,
                     new_anchor,
                     valid_binding_hash(),
+                    None,
                     0,
                     0,
                 ),
@@ -341,6 +676,7 @@ mod tests {
                     ciphertexts,
                     invalid_anchor,
                     valid_binding_hash(),
+                    None,
                     0,
                     0,
                 ),
@@ -374,6 +710,7 @@ mod tests {
                     ciphertexts,
                     anchor,
                     valid_binding_hash(),
+                    None,
                     0,
                     0,
                 ),
@@ -438,6 +775,7 @@ mod tests {
                     ciphertexts,
                     anchor,
                     valid_binding_hash(),
+                    None,
                     0,
                     0,
                 ),
@@ -499,6 +837,7 @@ mod tests {
                     empty_ciphertexts,
                     anchor,
                     valid_binding_hash(),
+                    None,
                     0,
                     0,
                 ),
@@ -532,6 +871,7 @@ mod tests {
                     ciphertexts,
                     anchor,
                     valid_binding_hash(),
+                    None,
                     0,
                     0,
                 ),
@@ -568,6 +908,7 @@ mod tests {
                     ciphertexts,
                     anchor,
                     valid_binding_hash(),
+                    None,
                     0,
                     0,
                 ));
@@ -596,6 +937,7 @@ mod tests {
                         ciphertexts,
                         old_anchor,
                         valid_binding_hash(),
+                        None,
                         0,
                         0,
                     ),
@@ -629,6 +971,7 @@ mod tests {
                 ciphertexts_a,
                 anchor,
                 valid_binding_hash(),
+                None,
                 0,
                 0,
             ));
@@ -649,6 +992,7 @@ mod tests {
                 ciphertexts_b,
                 anchor,
                 valid_binding_hash(),
+                None,
                 0,
                 0,
             ));
@@ -679,6 +1023,7 @@ mod tests {
                     ciphertexts,
                     anchor,
                     valid_binding_hash(),
+                    None,
                     0,
                     1, // non-zero value_balance is forbidden
                 ),
@@ -711,6 +1056,7 @@ mod tests {
                 ciphertexts,
                 anchor,
                 valid_binding_hash(),
+                None,
                 0,
                 0,
             ));
@@ -742,6 +1088,7 @@ mod tests {
                 ciphertexts,
                 anchor,
                 valid_binding_hash(),
+                None,
                 0,
                 0,
             ));

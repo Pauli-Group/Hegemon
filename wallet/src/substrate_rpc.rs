@@ -1035,6 +1035,19 @@ struct ShieldedTransferRequest {
     fee: u64,
     /// Value balance (must be 0 when no transparent pool is enabled)
     value_balance: i128,
+    /// Optional stablecoin policy binding
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stablecoin: Option<StablecoinPolicyBindingRequest>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct StablecoinPolicyBindingRequest {
+    asset_id: u64,
+    policy_hash: String,
+    oracle_commitment: String,
+    attestation_commitment: String,
+    issuance_delta: i128,
+    policy_version: u32,
 }
 
 impl ShieldedTransferRequest {
@@ -1064,6 +1077,18 @@ impl ShieldedTransferRequest {
         // Encode anchor and binding sig
         let anchor = hex::encode(bundle.anchor);
         let binding_hash = hex::encode(bundle.binding_hash);
+        let stablecoin = if bundle.stablecoin.enabled {
+            Some(StablecoinPolicyBindingRequest {
+                asset_id: bundle.stablecoin.asset_id,
+                policy_hash: hex::encode(bundle.stablecoin.policy_hash),
+                oracle_commitment: hex::encode(bundle.stablecoin.oracle_commitment),
+                attestation_commitment: hex::encode(bundle.stablecoin.attestation_commitment),
+                issuance_delta: bundle.stablecoin.issuance_delta,
+                policy_version: bundle.stablecoin.policy_version,
+            })
+        } else {
+            None
+        };
 
         Ok(Self {
             proof,
@@ -1074,6 +1099,7 @@ impl ShieldedTransferRequest {
             binding_hash,
             fee: bundle.fee,
             value_balance: bundle.value_balance,
+            stablecoin,
         })
     }
 }

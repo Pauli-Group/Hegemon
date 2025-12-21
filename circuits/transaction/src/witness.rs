@@ -9,7 +9,7 @@ use crate::{
     error::TransactionCircuitError,
     hashing::{felts_to_bytes32, nullifier, prf_key, HashFelt},
     note::{InputNoteWitness, OutputNoteWitness},
-    public_inputs::{BalanceSlot, TransactionPublicInputs},
+    public_inputs::{BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -25,6 +25,8 @@ pub struct TransactionWitness {
     pub fee: u64,
     #[serde(default)]
     pub value_balance: i128,
+    #[serde(default)]
+    pub stablecoin: StablecoinPolicyBinding,
     #[serde(default = "TransactionWitness::default_version_binding")]
     pub version: VersionBinding,
 }
@@ -62,6 +64,27 @@ impl TransactionWitness {
         }
 
         let slots = self.balance_slots()?;
+        if self.stablecoin.enabled {
+            if self.stablecoin.asset_id == crate::constants::NATIVE_ASSET_ID {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "stablecoin asset id cannot be native",
+                ));
+            }
+            if self.stablecoin.asset_id == u64::MAX {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "stablecoin asset id cannot be padding",
+                ));
+            }
+            let issuance_mag = self.stablecoin.issuance_delta.unsigned_abs();
+            if issuance_mag > u64::MAX as u128 {
+                return Err(TransactionCircuitError::ValueBalanceOutOfRange(issuance_mag));
+            }
+        } else if !stablecoin_binding_is_zero(&self.stablecoin) {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "stablecoin binding must be zeroed when disabled",
+            ));
+        }
+
         let native_delta = slots
             .iter()
             .find(|slot| slot.asset_id == crate::constants::NATIVE_ASSET_ID)
@@ -72,6 +95,28 @@ impl TransactionWitness {
             return Err(TransactionCircuitError::BalanceMismatch(
                 crate::constants::NATIVE_ASSET_ID,
             ));
+        }
+        if self.stablecoin.enabled {
+            let mut stablecoin_slot_seen = false;
+            for slot in slots.iter() {
+                if slot.asset_id == self.stablecoin.asset_id {
+                    stablecoin_slot_seen = true;
+                    if slot.delta != self.stablecoin.issuance_delta {
+                        return Err(TransactionCircuitError::BalanceMismatch(slot.asset_id));
+                    }
+                } else if slot.asset_id != crate::constants::NATIVE_ASSET_ID && slot.delta != 0 {
+                    return Err(TransactionCircuitError::BalanceMismatch(slot.asset_id));
+                }
+            }
+            if !stablecoin_slot_seen {
+                return Err(TransactionCircuitError::BalanceMismatch(self.stablecoin.asset_id));
+            }
+        } else {
+            for slot in slots.iter() {
+                if slot.asset_id != crate::constants::NATIVE_ASSET_ID && slot.delta != 0 {
+                    return Err(TransactionCircuitError::BalanceMismatch(slot.asset_id));
+                }
+            }
         }
 
         Ok(())
@@ -106,6 +151,9 @@ impl TransactionWitness {
         }
 
         map.entry(crate::constants::NATIVE_ASSET_ID).or_insert(0);
+        if self.stablecoin.enabled {
+            map.entry(self.stablecoin.asset_id).or_insert(0);
+        }
 
         if map.len() > BALANCE_SLOTS {
             return Err(TransactionCircuitError::BalanceSlotOverflow(
@@ -147,6 +195,7 @@ impl TransactionWitness {
             balance_slots,
             self.fee,
             self.value_balance,
+            self.stablecoin.clone(),
             self.version,
         )
     }
@@ -218,6 +267,16 @@ pub(crate) mod serde_bytes32 {
     }
 
     use serde::Deserialize;
+}
+
+fn stablecoin_binding_is_zero(binding: &StablecoinPolicyBinding) -> bool {
+    !binding.enabled
+        && binding.asset_id == 0
+        && binding.policy_hash == [0u8; 32]
+        && binding.oracle_commitment == [0u8; 32]
+        && binding.attestation_commitment == [0u8; 32]
+        && binding.issuance_delta == 0
+        && binding.policy_version == 0
 }
 #[allow(dead_code)]
 pub(crate) mod serde_felt {

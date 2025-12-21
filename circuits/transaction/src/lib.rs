@@ -50,7 +50,7 @@ pub use error::TransactionCircuitError;
 pub use keys::{generate_keys, ProvingKey, VerifyingKey};
 pub use note::{InputNoteWitness, OutputNoteWitness};
 pub use proof::{TransactionProof, VerificationReport};
-pub use public_inputs::TransactionPublicInputs;
+pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 pub use witness::TransactionWitness;
 
 // Re-export real STARK types (preferred API)

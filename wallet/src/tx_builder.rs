@@ -3,6 +3,7 @@ use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
 use transaction_circuit::hashing::{bytes32_to_felts, felts_to_bytes32, merkle_node};
 use transaction_circuit::note::OutputNoteWitness;
 use transaction_circuit::witness::TransactionWitness;
+use transaction_circuit::StablecoinPolicyBinding;
 
 use crate::address::ShieldedAddress;
 use crate::error::WalletError;
@@ -272,6 +273,7 @@ pub fn build_transaction(
         merkle_root: tree.root(),
         fee,
         value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
         version: TransactionWitness::default_version_binding(),
     };
 
@@ -318,6 +320,7 @@ pub fn build_transaction(
         binding_hash,
         proof_result.fee,
         proof_result.value_balance,
+        witness.stablecoin.clone(),
     )?;
     let spent_indexes = selection.spent.iter().map(|note| note.index).collect();
 

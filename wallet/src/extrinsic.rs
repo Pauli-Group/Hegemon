@@ -20,6 +20,7 @@ use synthetic_crypto::slh_dsa::{
     SlhDsaPublicKey, SlhDsaSecretKey, SLH_DSA_PUBLIC_KEY_LEN, SLH_DSA_SIGNATURE_LEN,
 };
 use synthetic_crypto::traits::{Signature as SigTrait, SigningKey, VerifyKey};
+use transaction_circuit::StablecoinPolicyBinding;
 
 /// Chain metadata required for extrinsic construction
 #[derive(Clone, Debug)]
@@ -88,6 +89,8 @@ pub struct ShieldedTransferCall {
     pub anchor: [u8; 32],
     /// Binding signature
     pub binding_hash: [u8; 64],
+    /// Optional stablecoin policy binding
+    pub stablecoin: Option<StablecoinPolicyBinding>,
     /// Native fee encoded in the proof.
     pub fee: u64,
     /// Value balance (must be 0 when no transparent pool is enabled).
@@ -97,6 +100,11 @@ pub struct ShieldedTransferCall {
 impl ShieldedTransferCall {
     /// Create from a TransactionBundle
     pub fn from_bundle(bundle: &TransactionBundle) -> Self {
+        let stablecoin = if bundle.stablecoin.enabled {
+            Some(bundle.stablecoin.clone())
+        } else {
+            None
+        };
         Self {
             proof: bundle.proof_bytes.clone(),
             nullifiers: bundle.nullifiers.clone(),
@@ -104,6 +112,7 @@ impl ShieldedTransferCall {
             encrypted_notes: bundle.ciphertexts.clone(),
             anchor: bundle.anchor,
             binding_hash: bundle.binding_hash,
+            stablecoin,
             fee: bundle.fee,
             value_balance: bundle.value_balance,
         }
@@ -186,6 +195,7 @@ impl ExtrinsicBuilder {
     /// - ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx>
     /// - anchor: [u8; 32]
     /// - binding_hash: BindingHash
+    /// - stablecoin: Option<StablecoinPolicyBinding>
     /// - fee: u64
     /// - value_balance: i128
     fn encode_shielded_transfer_call(
@@ -252,6 +262,9 @@ impl ExtrinsicBuilder {
         // Encode binding hash (BindingHash { data: [u8; 64] })
         encoded.extend_from_slice(&call.binding_hash);
         // eprintln!("DEBUG CALL: after binding_hash, encoded size = {}", encoded.len());
+
+        // Encode stablecoin binding (Option<StablecoinPolicyBinding>)
+        encode_stablecoin_binding(&call.stablecoin, &mut encoded)?;
 
         // Encode fee (u64, little-endian)
         encoded.extend_from_slice(&call.fee.to_le_bytes());
@@ -793,6 +806,15 @@ pub fn encode_shielded_transfer_unsigned_call(
     // Encode binding hash (BindingHash { data: [u8; 64] })
     encoded.extend_from_slice(&call.binding_hash);
 
+    if call.stablecoin.is_some() {
+        return Err(WalletError::Serialization(
+            "stablecoin binding not allowed in unsigned transfers".into(),
+        ));
+    }
+
+    // Encode stablecoin binding (Option<StablecoinPolicyBinding>)
+    encode_stablecoin_binding(&call.stablecoin, &mut encoded)?;
+
     // Encode fee (u64, little-endian)
     encoded.extend_from_slice(&call.fee.to_le_bytes());
 
@@ -838,6 +860,27 @@ pub fn build_unsigned_shielded_transfer(
 // ============================================================================
 // SCALE Encoding Helpers
 // ============================================================================
+
+fn encode_stablecoin_binding(
+    binding: &Option<StablecoinPolicyBinding>,
+    out: &mut Vec<u8>,
+) -> Result<(), WalletError> {
+    match binding {
+        None => {
+            out.push(0u8);
+        }
+        Some(binding) => {
+            out.push(1u8);
+            out.extend_from_slice(&binding.asset_id.to_le_bytes());
+            out.extend_from_slice(&binding.policy_hash);
+            out.extend_from_slice(&binding.oracle_commitment);
+            out.extend_from_slice(&binding.attestation_commitment);
+            out.extend_from_slice(&binding.issuance_delta.to_le_bytes());
+            out.extend_from_slice(&binding.policy_version.to_le_bytes());
+        }
+    }
+    Ok(())
+}
 
 /// Encode a compact integer (SCALE compact encoding)
 fn encode_compact_len(value: usize, out: &mut Vec<u8>) {

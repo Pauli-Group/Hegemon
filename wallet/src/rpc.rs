@@ -4,6 +4,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use url::Url;
 
 use crate::{error::WalletError, notes::NoteCiphertext};
+use transaction_circuit::StablecoinPolicyBinding;
 
 /// Transaction bundle for submission to the node.
 ///
@@ -29,6 +30,9 @@ pub struct TransactionBundle {
     pub fee: u64,
     /// Value balance (must be 0 when no transparent pool is enabled).
     pub value_balance: i128,
+    /// Optional stablecoin policy binding (disabled by default).
+    #[serde(default)]
+    pub stablecoin: StablecoinPolicyBinding,
 }
 
 impl TransactionBundle {
@@ -42,6 +46,7 @@ impl TransactionBundle {
         binding_hash: [u8; 64],
         fee: u64,
         value_balance: i128,
+        stablecoin: StablecoinPolicyBinding,
     ) -> Result<Self, WalletError> {
         let mut encoded = Vec::with_capacity(ciphertexts.len());
         for ct in ciphertexts {
@@ -57,6 +62,7 @@ impl TransactionBundle {
             binding_hash,
             fee,
             value_balance,
+            stablecoin,
         })
     }
 

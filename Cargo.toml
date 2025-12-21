@@ -26,6 +26,7 @@ members = [
     "pallets/observability",
     "pallets/difficulty",
     "pallets/coinbase",
+    "pallets/stablecoin-policy",
     "pallets/shielded-pool",
     "tests", "node",
     "runtime",

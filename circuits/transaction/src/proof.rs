@@ -58,6 +58,22 @@ pub struct SerializedStarkInputs {
     pub value_balance_magnitude: u64,
     #[serde(with = "crate::public_inputs::serde_bytes32")]
     pub merkle_root: Commitment,
+    #[serde(default)]
+    pub stablecoin_enabled: u8,
+    #[serde(default)]
+    pub stablecoin_asset_id: u64,
+    #[serde(default)]
+    pub stablecoin_policy_version: u32,
+    #[serde(default)]
+    pub stablecoin_issuance_sign: u8,
+    #[serde(default)]
+    pub stablecoin_issuance_magnitude: u64,
+    #[serde(default, with = "crate::public_inputs::serde_bytes32")]
+    pub stablecoin_policy_hash: Commitment,
+    #[serde(default, with = "crate::public_inputs::serde_bytes32")]
+    pub stablecoin_oracle_commitment: Commitment,
+    #[serde(default, with = "crate::public_inputs::serde_bytes32")]
+    pub stablecoin_attestation_commitment: Commitment,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -138,6 +154,12 @@ pub fn prove(
     let fee = stark_pub_inputs.fee.as_int();
     let value_balance_sign = stark_pub_inputs.value_balance_sign.as_int() as u8;
     let value_balance_magnitude = stark_pub_inputs.value_balance_magnitude.as_int();
+    let stablecoin_enabled = stark_pub_inputs.stablecoin_enabled.as_int() as u8;
+    let stablecoin_asset_id = stark_pub_inputs.stablecoin_asset.as_int();
+    let stablecoin_policy_version = stark_pub_inputs.stablecoin_policy_version.as_int() as u32;
+    let stablecoin_issuance_sign = stark_pub_inputs.stablecoin_issuance_sign.as_int() as u8;
+    let stablecoin_issuance_magnitude =
+        stark_pub_inputs.stablecoin_issuance_magnitude.as_int();
 
     let nullifiers = stark_pub_inputs
         .nullifiers
@@ -150,6 +172,11 @@ pub fn prove(
         .map(felts_to_bytes32)
         .collect();
     let merkle_root = felts_to_bytes32(&stark_pub_inputs.merkle_root);
+    let stablecoin_policy_hash = felts_to_bytes32(&stark_pub_inputs.stablecoin_policy_hash);
+    let stablecoin_oracle_commitment =
+        felts_to_bytes32(&stark_pub_inputs.stablecoin_oracle_commitment);
+    let stablecoin_attestation_commitment =
+        felts_to_bytes32(&stark_pub_inputs.stablecoin_attestation_commitment);
 
     Ok(TransactionProof {
         // Use nullifiers/commitments from STARK public inputs to ensure consistency
@@ -165,6 +192,14 @@ pub fn prove(
             value_balance_sign,
             value_balance_magnitude,
             merkle_root,
+            stablecoin_enabled,
+            stablecoin_asset_id,
+            stablecoin_policy_version,
+            stablecoin_issuance_sign,
+            stablecoin_issuance_magnitude,
+            stablecoin_policy_hash,
+            stablecoin_oracle_commitment,
+            stablecoin_attestation_commitment,
         }),
     })
 }
@@ -262,6 +297,22 @@ pub fn verify(
     let merkle_root = bytes32_to_felts(&stark_inputs.merkle_root).ok_or(
         TransactionCircuitError::ConstraintViolation("invalid merkle root encoding"),
     )?;
+    let stablecoin_policy_hash =
+        bytes32_to_felts(&stark_inputs.stablecoin_policy_hash).ok_or(
+            TransactionCircuitError::ConstraintViolation("invalid stablecoin policy hash encoding"),
+        )?;
+    let stablecoin_oracle_commitment =
+        bytes32_to_felts(&stark_inputs.stablecoin_oracle_commitment).ok_or(
+            TransactionCircuitError::ConstraintViolation(
+                "invalid stablecoin oracle commitment encoding",
+            ),
+        )?;
+    let stablecoin_attestation_commitment =
+        bytes32_to_felts(&stark_inputs.stablecoin_attestation_commitment).ok_or(
+            TransactionCircuitError::ConstraintViolation(
+                "invalid stablecoin attestation commitment encoding",
+            ),
+        )?;
 
     let stark_pub_inputs = crate::stark_air::TransactionPublicInputsStark {
         input_flags,
@@ -272,6 +323,14 @@ pub fn verify(
         value_balance_sign: Felt::new(stark_inputs.value_balance_sign as u64),
         value_balance_magnitude: Felt::new(stark_inputs.value_balance_magnitude),
         merkle_root,
+        stablecoin_enabled: Felt::new(stark_inputs.stablecoin_enabled as u64),
+        stablecoin_asset: Felt::new(stark_inputs.stablecoin_asset_id),
+        stablecoin_policy_version: Felt::new(stark_inputs.stablecoin_policy_version as u64),
+        stablecoin_issuance_sign: Felt::new(stark_inputs.stablecoin_issuance_sign as u64),
+        stablecoin_issuance_magnitude: Felt::new(stark_inputs.stablecoin_issuance_magnitude),
+        stablecoin_policy_hash,
+        stablecoin_oracle_commitment,
+        stablecoin_attestation_commitment,
     };
 
     match verify_transaction_proof_bytes(&proof.stark_proof, &stark_pub_inputs) {
@@ -293,6 +352,7 @@ fn verify_balance_slots(proof: &TransactionProof) -> Result<(), TransactionCircu
         ));
     }
 
+    let mut stablecoin_slot_seen = false;
     for (idx, expected) in proof.public_inputs.balance_slots.iter().enumerate() {
         let actual = proof
             .balance_slots
@@ -314,10 +374,23 @@ fn verify_balance_slots(proof: &TransactionProof) -> Result<(), TransactionCircu
             if expected.delta != expected_native {
                 return Err(TransactionCircuitError::BalanceMismatch(expected.asset_id));
             }
+        } else if proof.public_inputs.stablecoin.enabled
+            && expected.asset_id == proof.public_inputs.stablecoin.asset_id
+        {
+            stablecoin_slot_seen = true;
+            if expected.delta != proof.public_inputs.stablecoin.issuance_delta {
+                return Err(TransactionCircuitError::BalanceMismatch(expected.asset_id));
+            }
         } else if expected.delta != 0 {
             // Non-native assets must balance to zero
             return Err(TransactionCircuitError::BalanceMismatch(expected.asset_id));
         }
+    }
+
+    if proof.public_inputs.stablecoin.enabled && !stablecoin_slot_seen {
+        return Err(TransactionCircuitError::BalanceMismatch(
+            proof.public_inputs.stablecoin.asset_id,
+        ));
     }
 
     Ok(())

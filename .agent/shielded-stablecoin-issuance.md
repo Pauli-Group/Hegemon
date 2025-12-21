@@ -18,13 +18,17 @@ The visible proof is that on a dev node you can mint stablecoin notes when polic
 ## Progress
 
 - [x] (2025-12-21 07:10Z) Draft initial ExecPlan for shielded stablecoin issuance.
-- [ ] (2025-12-21 07:10Z) Implement stablecoin policy pallet and runtime wiring.
-- [ ] (2025-12-21 07:10Z) Add stablecoin issuance proof path in circuits and verifier.
-- [ ] (2025-12-21 07:10Z) Update wallet, tests, and docs; run validation.
+- [x] (2025-12-21 19:20Z) Implement stablecoin policy pallet and runtime wiring; run `cargo test -p pallet-stablecoin-policy`.
+- [x] (2025-12-21 19:20Z) Extend MASP circuit/public inputs for stablecoin issuance, fix selector-sum degree mismatch, and run `cargo test -p transaction-core` plus `cargo test -p transaction-circuit proving_and_verification_succeeds -- --nocapture`.
+- [x] (2025-12-21 20:50Z) Implement shielded-pool runtime verification and unsigned rejection, wire provider hooks, and run `cargo test -p pallet-shielded-pool`.
+- [ ] (2025-12-21 19:20Z) Update wallet and issuer tooling (remaining).
+- [ ] (2025-12-21 19:20Z) Documentation, tests, and hardening (remaining: DESIGN/METHODS/README updates, runtime tests).
 
 ## Surprises & Discoveries
 
-None yet.
+- Observation: Winterfell debug degree checks flagged the stablecoin selector-sum constraint as over-declared (expected 65534, actual 32767) because the mask multiplies a linear expression, so the base degree is 1. Evidence: `transition constraint degrees didn't match ... expected ... 65534 ... actual ... 32767`.
+- Observation: The end-to-end proof test is slow; `cargo test -p transaction-circuit proving_and_verification_succeeds -- --nocapture` finished in ~273s. Evidence: test output `finished in 273.42s`.
+- Observation: `cargo test -p pallet-shielded-pool` initially failed due to an unused `winter_math` import in the verifier. Evidence: `unresolved import winter_math`.
 
 ## Decision Log
 
@@ -36,9 +40,16 @@ Decision: Bind issuance proofs to on-chain oracle commitments and attestation co
 
 Decision: Require stablecoin issuance to use the signed shielded_transfer path only, and reject any stablecoin issuance in unsigned transactions. Rationale: signed extrinsics provide nonce-based replay protection and allow role checks for authorized issuers. Date/Author: 2025-12-21 / Codex.
 
+Decision: Store minimum collateral ratio as a ppm-scaled `u128` (1_000_000 = 1.0) in the policy and hash it as-is. Rationale: avoids floating point, keeps the policy hash deterministic, and stays within a safe integer range for runtime and circuit bindings. Date/Author: 2025-12-21 / Codex.
+
+Decision: Require exactly one oracle feed id in stablecoin policies for now. Rationale: the circuit binds a single oracle commitment, so enforcing a single feed keeps constraints simple while leaving room for a multi-feed upgrade later. Date/Author: 2025-12-21 / Codex.
+
+Decision: Allow genesis policy insertion to bypass asset-registry checks. Rationale: dev chains can pre-seed policies for assets that are registered later, keeping policies inactive until assets exist. Date/Author: 2025-12-21 / Codex.
+
 ## Outcomes & Retrospective
 
-Not started yet. Update this section after the first milestone that changes behavior.
+Outcome (2025-12-21): Milestones 1–2 landed. Stablecoin policy storage is wired into the runtime, and the transaction circuit now binds issuance deltas to policy/oracle/attestation commitments with passing `transaction-core` and `transaction-circuit` tests. Remaining work is shielded-pool runtime verification, wallet tooling, and documentation/test hardening.
+Outcome (2025-12-21): Milestone 3 landed with stablecoin binding checks in the shielded pool and passing `cargo test -p pallet-shielded-pool`.
 
 ## Context and Orientation
 
@@ -46,7 +57,7 @@ This repository implements a single shielded pool with STARK proofs. A shielded 
 
 Oracle commitments are on-chain hashes of feed updates stored by `pallets/oracles`. Attestations are on-chain records of audit or reserve proofs stored by `pallets/attestations`, including dispute status. A peg policy is a set of on-chain parameters that define which oracle feeds and attestation records must be bound into a stablecoin issuance proof, how fresh those inputs must be, and how much the issuer can mint per epoch. A policy hash is a deterministic 32 byte hash computed from the policy fields so the circuit can bind to a single value rather than the full policy structure.
 
-The shielded pool pallet is `pallets/shielded-pool`, which verifies proofs and updates the commitment tree and nullifier set. The MASP circuit lives under `circuits/transaction-core` and `circuits/transaction`, and its public inputs are enforced by the verifier in the shielded pool pallet. Asset metadata and regulatory tags live in `pallets/asset-registry`, and identity roles live in `pallets/identity`. The stablecoin policy will be new in `pallets/stablecoin-policy` and must be wired into `runtime/src/lib.rs` and referenced by the shielded pool verifier.
+The shielded pool pallet is `pallets/shielded-pool`, which verifies proofs and updates the commitment tree and nullifier set. The MASP circuit lives under `circuits/transaction-core` and `circuits/transaction`, and its public inputs are enforced by the verifier in the shielded pool pallet. Asset metadata and regulatory tags live in `pallets/asset-registry`, and identity roles live in `pallets/identity`. The stablecoin policy lives in `pallets/stablecoin-policy`, is wired into `runtime/src/lib.rs`, and must be referenced by the shielded pool verifier.
 
 Before changing code, read `DESIGN.md` and `METHODS.md` and keep them updated if the architecture or methods evolve. If the README whitepaper is updated, preserve the title and subtitle and keep the whitepaper before the Monorepo layout and Getting started sections.
 
@@ -93,6 +104,7 @@ Use the same root directory for all cargo commands. During development, run targ
 
     cargo test -p transaction-core
     cargo test -p transaction-circuit
+    cargo test -p transaction-circuit proving_and_verification_succeeds -- --nocapture
     cargo test -p pallet-shielded-pool
     cargo test -p pallet-oracles
     cargo test -p pallet-attestations
@@ -127,3 +139,5 @@ In `pallets/shielded-pool/src/types.rs`, extend `ShieldedTransfer` to carry an o
 In `circuits/transaction-core/src/types.rs` and `circuits/transaction/src/public_inputs.rs`, add matching fields in the public input encoding so the circuit enforces the policy binding. The verifier must reject proofs when the binding does not match chain state. The signed `shielded_transfer` path must be the only entry point for stablecoin issuance, and `shielded_transfer_unsigned` must reject any transaction that includes a stablecoin issuance binding.
 
 In `runtime/src/lib.rs`, wire the new pallet and configure its roles using `pallets/identity`, and ensure the oracle and attestation pallets are available for commitment lookups. All new proof verification must use the production verifier path and must not accept empty or placeholder proofs.
+
+Plan update note (2025-12-21 20:50Z): Completed milestone 3 with runtime verification and stablecoin binding checks, noted the `winter_math` import fix, and recorded the `cargo test -p pallet-shielded-pool` run.

@@ -1,0 +1,45 @@
+[package]
+name = "pallet-stablecoin-policy"
+version = "0.1.0"
+edition = "2021"
+authors = ["Hegemon Contributors"]
+description = "Stablecoin issuance policy pallet."
+license = "Apache-2.0"
+
+[dependencies]
+frame-support = { workspace = true }
+frame-system = { workspace = true }
+sp-runtime = { workspace = true }
+sp-std = { workspace = true }
+codec = { workspace = true }
+scale-info = { workspace = true }
+log = { version = "0.4", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+blake3 = { version = "1", default-features = false }
+
+pallet-identity = { path = "../identity", default-features = false }
+pallet-asset-registry = { path = "../asset-registry", default-features = false }
+
+[dev-dependencies]
+sp-io = { workspace = true, features = ["std"] }
+
+[features]
+default = ["std"]
+std = [
+    "frame-support/std",
+    "frame-system/std",
+    "sp-runtime/std",
+    "sp-std/std",
+    "codec/std",
+    "scale-info/std",
+    "serde",
+    "serde/std",
+    "blake3/std",
+    "pallet-identity/std",
+    "pallet-asset-registry/std",
+]
+runtime-benchmarks = ["frame-support/runtime-benchmarks"]
+try-runtime = ["frame-support/try-runtime"]
+
+[lints]
+workspace = true

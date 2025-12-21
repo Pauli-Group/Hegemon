@@ -4,7 +4,8 @@ use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
 use transaction_circuit::proof::{prove, verify};
 use transaction_circuit::{
-    InputNoteWitness, OutputNoteWitness, TransactionCircuitError, TransactionWitness,
+    InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionCircuitError,
+    TransactionWitness,
 };
 use winterfell::math::FieldElement;
 
@@ -124,6 +125,55 @@ fn sample_witness() -> TransactionWitness {
         merkle_root: felts_to_bytes32(&merkle_root),
         fee: 5,
         value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: TransactionWitness::default_version_binding(),
+    }
+}
+
+fn stablecoin_witness() -> TransactionWitness {
+    let input_note_native = NoteData {
+        value: 5,
+        asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+        pk_recipient: [1u8; 32],
+        rho: [2u8; 32],
+        r: [3u8; 32],
+    };
+
+    let leaf0 = input_note_native.commitment();
+    let leaf1 = [Felt::ZERO; 4];
+    let (merkle_path0, _merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
+
+    let output_stablecoin = OutputNoteWitness {
+        note: NoteData {
+            value: 5,
+            asset_id: 4242,
+            pk_recipient: [4u8; 32],
+            rho: [5u8; 32],
+            r: [6u8; 32],
+        },
+    };
+
+    TransactionWitness {
+        inputs: vec![InputNoteWitness {
+            note: input_note_native,
+            position: 0,
+            rho_seed: [7u8; 32],
+            merkle_path: merkle_path0,
+        }],
+        outputs: vec![output_stablecoin],
+        sk_spend: [8u8; 32],
+        merkle_root: felts_to_bytes32(&merkle_root),
+        fee: 5,
+        value_balance: 0,
+        stablecoin: StablecoinPolicyBinding {
+            enabled: true,
+            asset_id: 4242,
+            policy_hash: [10u8; 32],
+            oracle_commitment: [11u8; 32],
+            attestation_commitment: [12u8; 32],
+            issuance_delta: -5,
+            policy_version: 1,
+        },
         version: TransactionWitness::default_version_binding(),
     }
 }
@@ -161,6 +211,25 @@ fn verification_fails_for_nullifier_mutation() {
                                     // With real STARK proofs, tampering with public inputs causes verification failure.
     let err = verify(&proof, &verifying_key).expect_err("expected failure");
     // STARK proofs return generic constraint violation for any tampering
+    assert!(
+        matches!(err, TransactionCircuitError::ConstraintViolation(_)),
+        "Expected STARK verification failure, got: {:?}",
+        err
+    );
+}
+
+#[test]
+fn verification_fails_for_stablecoin_policy_hash_mutation() {
+    let witness = stablecoin_witness();
+    let (proving_key, verifying_key) = generate_keys();
+    let mut proof = prove(&witness, &proving_key).expect("proof generation");
+    let mut stark_inputs = proof
+        .stark_public_inputs
+        .clone()
+        .expect("stark public inputs");
+    stark_inputs.stablecoin_policy_hash[0] ^= 0x01;
+    proof.stark_public_inputs = Some(stark_inputs);
+    let err = verify(&proof, &verifying_key).expect_err("expected failure");
     assert!(
         matches!(err, TransactionCircuitError::ConstraintViolation(_)),
         "Expected STARK verification failure, got: {:?}",

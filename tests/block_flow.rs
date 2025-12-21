@@ -12,7 +12,7 @@ use transaction_circuit::{
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
     proof::prove,
-    TransactionWitness,
+    StablecoinPolicyBinding, TransactionWitness,
 };
 
 /// Build a Merkle tree with 2 leaves at positions 0 and 1.
@@ -105,6 +105,7 @@ fn make_valid_witness(seed: u64) -> (TransactionWitness, Vec<HashFelt>) {
         merkle_root: felts_to_bytes32(&merkle_root),
         fee: 5,
         value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
         version: DEFAULT_VERSION_BINDING,
     };
 

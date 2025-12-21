@@ -45,6 +45,7 @@ use transaction_circuit::{
     hashing::bytes32_to_felts,
     note::OutputNoteWitness,
     witness::TransactionWitness,
+    StablecoinPolicyBinding,
 };
 
 use crate::address::ShieldedAddress;
@@ -297,6 +298,7 @@ impl<'a> ShieldedTxBuilder<'a> {
             binding_hash,
             proof_result.fee,
             proof_result.value_balance,
+            witness.stablecoin.clone(),
         )?;
 
         // Compute nullifiers for wallet tracking
@@ -489,6 +491,7 @@ impl<'a> ShieldedTxBuilder<'a> {
             merkle_root: tree.root(),
             fee,
             value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
             version: TransactionWitness::default_version_binding(),
         })
     }

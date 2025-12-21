@@ -24,6 +24,7 @@ use transaction_circuit::{
     hashing::{bytes32_to_felts, is_canonical_bytes32, note_commitment_bytes},
     note::{InputNoteWitness, MerklePath, OutputNoteWitness},
     witness::TransactionWitness,
+    StablecoinPolicyBinding,
 };
 use url::Url;
 
@@ -518,6 +519,7 @@ fn cmd_tx_craft(params: TxCraftParams<'_>) -> Result<()> {
         merkle_root: parse_merkle_root(params.merkle_root)?,
         fee: params.fee,
         value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
         version: TransactionWitness::default_version_binding(),
     };
     write_json(params.witness_out, &witness)?;
