@@ -16,7 +16,7 @@ The visible proof is that a seed file appears under the node base path (or a con
 - [x] (2025-12-21 03:12Z) Implement PQ identity seed load/generate with domain-separated derivations for PQ network keypair and PQ-Noise identity.
 - [x] (2025-12-21 03:12Z) Add gitignore coverage for PQ identity seed artifacts.
 - [x] (2025-12-21 03:12Z) Update DESIGN.md, METHODS.md, and docs/THREAT_MODEL.md to document the new identity seed handling.
-- [ ] Validate seed persistence behavior and update this plan’s evidence sections.
+- [ ] Validate seed persistence behavior and update this plan’s evidence sections (blocked by current `make node` WASM build failure; see Surprises).
 
 ## Surprises & Discoveries
 
