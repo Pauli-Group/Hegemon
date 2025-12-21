@@ -9,7 +9,7 @@ use rand_chacha::ChaCha20Rng;
 use serde::Serialize;
 use transaction_circuit::{
     constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS},
-    hashing::{merkle_node, Felt},
+    hashing::{felts_to_bytes32, merkle_node, Felt, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
     proof, TransactionWitness,
@@ -129,23 +129,24 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
 
 /// Build a Merkle tree with N leaves, returning paths and root.
 /// Uses CIRCUIT_MERKLE_DEPTH levels with zero siblings for sparse positions.
-fn build_merkle_tree(leaves: &[Felt]) -> (Vec<MerklePath>, Felt) {
+fn build_merkle_tree(leaves: &[HashFelt]) -> (Vec<MerklePath>, HashFelt) {
+    let zero = [Felt::ZERO; 4];
     if leaves.is_empty() {
         // Empty tree - all zeros
         let path = MerklePath {
-            siblings: vec![Felt::ZERO; CIRCUIT_MERKLE_DEPTH],
+            siblings: vec![zero; CIRCUIT_MERKLE_DEPTH],
         };
-        let mut root = Felt::ZERO;
+        let mut root = zero;
         for _ in 0..CIRCUIT_MERKLE_DEPTH {
-            root = merkle_node(root, Felt::ZERO);
+            root = merkle_node(root, zero);
         }
         return (vec![path], root);
     }
 
     // Pad leaves to next power of 2
     let n = leaves.len().next_power_of_two().max(2);
-    let mut level: Vec<Felt> = leaves.to_vec();
-    level.resize(n, Felt::ZERO);
+    let mut level: Vec<HashFelt> = leaves.to_vec();
+    level.resize(n, zero);
 
     // Store all levels for path reconstruction
     let mut levels = vec![level.clone()];
@@ -169,15 +170,12 @@ fn build_merkle_tree(leaves: &[Felt]) -> (Vec<MerklePath>, Felt) {
         for level_idx in 0..CIRCUIT_MERKLE_DEPTH {
             if level_idx < levels.len() - 1 {
                 let sibling_pos = if pos % 2 == 0 { pos + 1 } else { pos - 1 };
-                let sibling = levels[level_idx]
-                    .get(sibling_pos)
-                    .copied()
-                    .unwrap_or(Felt::ZERO);
+                let sibling = levels[level_idx].get(sibling_pos).copied().unwrap_or(zero);
                 siblings.push(sibling);
                 pos /= 2;
             } else {
                 // Above tree height - use zero
-                siblings.push(Felt::ZERO);
+                siblings.push(zero);
             }
         }
 
@@ -187,7 +185,7 @@ fn build_merkle_tree(leaves: &[Felt]) -> (Vec<MerklePath>, Felt) {
     // Compute final root continuing to CIRCUIT_MERKLE_DEPTH
     let mut root = levels.last().unwrap()[0];
     for _ in levels.len()..=CIRCUIT_MERKLE_DEPTH {
-        root = merkle_node(root, Felt::ZERO);
+        root = merkle_node(root, zero);
     }
 
     (paths, root)
@@ -206,7 +204,7 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
         .collect();
 
     // Compute commitments
-    let commitments: Vec<Felt> = input_notes.iter().map(|n| n.commitment()).collect();
+    let commitments: Vec<HashFelt> = input_notes.iter().map(|n| n.commitment()).collect();
 
     // Build Merkle tree with these leaves
     let (paths, merkle_root) = build_merkle_tree(&commitments);
@@ -255,7 +253,7 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
         inputs: input_witnesses,
         outputs,
         sk_spend: random_bytes(rng),
-        merkle_root,
+        merkle_root: felts_to_bytes32(&merkle_root),
         fee,
         value_balance: 0,
         version: DEFAULT_VERSION_BINDING,

@@ -18,6 +18,7 @@ use transaction_core::stark_air::{
     round_constant, COL_OUT0, COL_OUT1, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH,
 };
 
+use alloc::vec;
 use alloc::vec::Vec;
 
 fn is_zero_hash(value: &[BaseElement; 4]) -> bool {
@@ -265,10 +266,10 @@ mod tests {
 
     #[test]
     fn test_batch_air_trace_length() {
-        assert_eq!(BatchTransactionAir::trace_length(2), 4096);
-        assert_eq!(BatchTransactionAir::trace_length(4), 8192);
-        assert_eq!(BatchTransactionAir::trace_length(8), 16384);
-        assert_eq!(BatchTransactionAir::trace_length(16), 32768);
+        assert_eq!(BatchTransactionAir::trace_length(2), 65536);
+        assert_eq!(BatchTransactionAir::trace_length(4), 131072);
+        assert_eq!(BatchTransactionAir::trace_length(8), 262144);
+        assert_eq!(BatchTransactionAir::trace_length(16), 524288);
     }
 
     #[test]
@@ -291,18 +292,63 @@ mod tests {
     fn test_batch_public_inputs_elements() {
         let pub_inputs = BatchPublicInputs::new(
             2,
-            [BaseElement::new(12345), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
-            vec![
-                [BaseElement::new(1), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
-                [BaseElement::new(2), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
-                [BaseElement::new(3), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
-                [BaseElement::new(4), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+            [
+                BaseElement::new(12345),
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
             ],
             vec![
-                [BaseElement::new(10), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
-                [BaseElement::new(20), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
-                [BaseElement::new(30), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
-                [BaseElement::new(40), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                [
+                    BaseElement::new(1),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                [
+                    BaseElement::new(2),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                [
+                    BaseElement::new(3),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                [
+                    BaseElement::new(4),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+            ],
+            vec![
+                [
+                    BaseElement::new(10),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                [
+                    BaseElement::new(20),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                [
+                    BaseElement::new(30),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                [
+                    BaseElement::new(40),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
             ],
             BaseElement::new(100),
         );

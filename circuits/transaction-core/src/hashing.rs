@@ -99,13 +99,7 @@ fn bytes_to_field_elements(bytes: &[u8]) -> Vec<Felt> {
         .collect()
 }
 
-pub fn note_commitment(
-    value: u64,
-    asset_id: u64,
-    pk: &[u8],
-    rho: &[u8],
-    r: &[u8],
-) -> HashFelt {
+pub fn note_commitment(value: u64, asset_id: u64, pk: &[u8], rho: &[u8], r: &[u8]) -> HashFelt {
     let mut inputs = Vec::new();
     inputs.push(Felt::new(value));
     inputs.push(Felt::new(asset_id));
@@ -154,12 +148,10 @@ pub fn felt_to_bytes32(felt: Felt) -> Commitment {
 
 /// Returns true if the 32-byte value is a canonical field encoding.
 pub fn is_canonical_bytes32(bytes: &Commitment) -> bool {
-    bytes
-        .chunks(8)
-        .all(|chunk| {
-            let limb = u64::from_be_bytes(chunk.try_into().expect("8-byte chunk")) as u128;
-            limb < FIELD_MODULUS
-        })
+    bytes.chunks(8).all(|chunk| {
+        let limb = u64::from_be_bytes(chunk.try_into().expect("8-byte chunk")) as u128;
+        limb < FIELD_MODULUS
+    })
 }
 
 /// Convert a canonical 32-byte encoding into 4 field elements.
@@ -223,31 +215,6 @@ pub fn prf_key(sk_spend: &[u8]) -> Felt {
     sponge_single(NULLIFIER_DOMAIN_TAG, &elements)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn canonical_bytes_round_trip() {
-        let felts = [Felt::new(1), Felt::new(2), Felt::new(3), Felt::new(4)];
-        let bytes = felts_to_bytes32(&felts);
-        assert!(is_canonical_bytes32(&bytes));
-        let decoded = bytes32_to_felts(&bytes).expect("canonical bytes");
-        for (got, expected) in decoded.iter().zip(felts.iter()) {
-            assert_eq!(got.as_int(), expected.as_int());
-        }
-    }
-
-    #[test]
-    fn noncanonical_limb_is_rejected() {
-        let mut bytes = [0u8; 32];
-        let bad = FIELD_MODULUS as u64;
-        bytes[..8].copy_from_slice(&bad.to_be_bytes());
-        assert!(!is_canonical_bytes32(&bytes));
-        assert!(bytes32_to_felts(&bytes).is_none());
-    }
-}
-
 pub fn balance_commitment(
     native_delta: i128,
     slots: &[BalanceSlot],
@@ -277,4 +244,29 @@ pub fn signed_parts(value: i128) -> Option<(Felt, Felt)> {
     let mag_u64 = u64::try_from(magnitude).ok()?;
     let sign = if value < 0 { Felt::ONE } else { Felt::ZERO };
     Some((sign, Felt::new(mag_u64)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_bytes_round_trip() {
+        let felts = [Felt::new(1), Felt::new(2), Felt::new(3), Felt::new(4)];
+        let bytes = felts_to_bytes32(&felts);
+        assert!(is_canonical_bytes32(&bytes));
+        let decoded = bytes32_to_felts(&bytes).expect("canonical bytes");
+        for (got, expected) in decoded.iter().zip(felts.iter()) {
+            assert_eq!(got.as_int(), expected.as_int());
+        }
+    }
+
+    #[test]
+    fn noncanonical_limb_is_rejected() {
+        let mut bytes = [0u8; 32];
+        let bad = FIELD_MODULUS as u64;
+        bytes[..8].copy_from_slice(&bad.to_be_bytes());
+        assert!(!is_canonical_bytes32(&bytes));
+        assert!(bytes32_to_felts(&bytes).is_none());
+    }
 }

@@ -12,12 +12,14 @@ use crate::{
     hashing::{bytes32_to_felts, felts_to_bytes32, Commitment, Felt},
     keys::{ProvingKey, VerifyingKey},
     public_inputs::{BalanceSlot, TransactionPublicInputs},
-    stark_prover::{default_proof_options, TransactionProverStark},
+    stark_prover::TransactionProverStark,
     stark_verifier::verify_transaction_proof_bytes,
     trace::TransactionTrace,
     witness::TransactionWitness,
 };
 
+#[cfg(not(feature = "stark-fast"))]
+use crate::stark_prover::default_proof_options;
 #[cfg(feature = "stark-fast")]
 use crate::stark_prover::fast_proof_options;
 
@@ -227,10 +229,7 @@ pub fn verify(
         }
     }
 
-    let stark_inputs = proof
-        .stark_public_inputs
-        .as_ref()
-        .expect("checked above");
+    let stark_inputs = proof.stark_public_inputs.as_ref().expect("checked above");
     let input_flags = stark_inputs
         .input_flags
         .iter()

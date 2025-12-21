@@ -645,7 +645,6 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
 }
 
 fn show_status(store: &WalletStore) -> Result<()> {
-
     println!("\n═══════════════════════════════════════");
     println!("            WALLET STATUS");
     println!("═══════════════════════════════════════\n");
@@ -970,9 +969,7 @@ fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
         .confirmation
         .siblings
         .iter()
-        .map(|bytes| {
-            bytes32_to_felts(bytes).ok_or_else(|| anyhow!("non-canonical merkle sibling"))
-        })
+        .map(|bytes| bytes32_to_felts(bytes).ok_or_else(|| anyhow!("non-canonical merkle sibling")))
         .collect::<Result<_, _>>()?;
 
     let merkle_path = MerklePath {
@@ -1104,7 +1101,9 @@ fn parse_hex_32(input: &str) -> Result<[u8; 32]> {
 fn parse_merkle_root(input: &str) -> Result<[u8; 32]> {
     let trimmed = input.trim();
     if trimmed.chars().all(|c| c.is_ascii_digit()) && trimmed.len() <= 16 {
-        let value: u64 = trimmed.parse().map_err(|e| anyhow!("invalid merkle root: {e}"))?;
+        let value: u64 = trimmed
+            .parse()
+            .map_err(|e| anyhow!("invalid merkle root: {e}"))?;
         let mut out = [0u8; 32];
         out[24..32].copy_from_slice(&value.to_be_bytes());
         return Ok(out);

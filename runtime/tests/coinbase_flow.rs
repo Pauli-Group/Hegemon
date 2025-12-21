@@ -52,7 +52,11 @@ fn public_seed_from_block(block_number: u64) -> [u8; 32] {
     sp_io::hashing::blake2_256(&block_number.to_le_bytes())
 }
 
-fn coinbase_note_data(amount: u64, recipient: [u8; DIVERSIFIED_ADDRESS_SIZE], public_seed: [u8; 32]) -> CoinbaseNoteData {
+fn coinbase_note_data(
+    amount: u64,
+    recipient: [u8; DIVERSIFIED_ADDRESS_SIZE],
+    public_seed: [u8; 32],
+) -> CoinbaseNoteData {
     #[allow(deprecated)]
     let commitment =
         pallet_shielded_pool::commitment::coinbase_commitment(&recipient, amount, &public_seed);
@@ -100,8 +104,7 @@ fn mining_block_mints_shielded_coinbase_to_pool() {
 
         let final_pool_balance = ShieldedPool::pool_balance();
         assert_eq!(
-            final_pool_balance,
-            subsidy as u128,
+            final_pool_balance, subsidy as u128,
             "Shielded pool balance should equal the block subsidy"
         );
         assert_eq!(

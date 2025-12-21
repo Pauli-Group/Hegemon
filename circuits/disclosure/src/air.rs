@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn trace_length_is_power_of_two() {
-        assert_eq!(TRACE_LENGTH, 256);
+        assert_eq!(TRACE_LENGTH, 1024);
         assert!(TRACE_LENGTH.is_power_of_two());
     }
 }

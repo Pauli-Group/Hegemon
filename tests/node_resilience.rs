@@ -11,7 +11,7 @@ use tokio::time::Duration;
 use transaction_circuit::constants::NATIVE_ASSET_ID;
 use transaction_circuit::hashing::Commitment;
 use transaction_circuit::keys::generate_keys;
-use transaction_circuit::note::{InputNoteWitness, NoteData, OutputNoteWitness};
+use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use transaction_circuit::proof::prove;
 use transaction_circuit::witness::TransactionWitness;
 use wallet::rpc::TransactionBundle;
@@ -53,6 +53,7 @@ fn sample_bundle(root: Commitment) -> TransactionBundle {
             },
             position: 1,
             rho_seed: [9u8; 32],
+            merkle_path: MerklePath::default(),
         }],
         outputs: vec![OutputNoteWitness {
             note: NoteData {

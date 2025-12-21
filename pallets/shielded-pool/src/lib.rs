@@ -113,6 +113,7 @@ impl WeightInfo for DefaultWeightInfo {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::large_enum_variant)]
 #[frame_support::pallet]
 pub mod pallet {
     use super::*;
@@ -186,11 +187,8 @@ pub mod pallet {
     /// Ordered history of recent Merkle roots (bounded by MerkleRootHistorySize).
     #[pallet::storage]
     #[pallet::getter(fn merkle_root_history)]
-    pub type MerkleRootHistory<T: Config> = StorageValue<
-        _,
-        BoundedVec<[u8; 32], T::MerkleRootHistorySize>,
-        ValueQuery,
-    >;
+    pub type MerkleRootHistory<T: Config> =
+        StorageValue<_, BoundedVec<[u8; 32], T::MerkleRootHistorySize>, ValueQuery>;
 
     /// Current commitment index (number of commitments in the tree).
     #[pallet::storage]
@@ -507,10 +505,10 @@ pub mod pallet {
                     }
                     MerkleRootHistory::<T>::put(history);
 
-                    weight = weight.saturating_add(T::DbWeight::get().reads_writes(
-                        (roots.len() as u64) + 1,
-                        (to_remove.len() as u64) + 2,
-                    ));
+                    weight = weight.saturating_add(
+                        T::DbWeight::get()
+                            .reads_writes((roots.len() as u64) + 1, (to_remove.len() as u64) + 2),
+                    );
                 }
                 STORAGE_VERSION.put::<Pallet<T>>();
                 weight
@@ -533,7 +531,7 @@ pub mod pallet {
                 let block_num: u64 = block_number.try_into().unwrap_or(0u64);
 
                 // Check if this block ends an epoch
-                if block_num > 0 && block_num % EPOCH_SIZE == 0 {
+                if block_num > 0 && block_num.is_multiple_of(EPOCH_SIZE) {
                     let epoch_number = (block_num / EPOCH_SIZE) - 1;
                     if let Err(e) = Self::finalize_epoch_internal(epoch_number) {
                         log::error!(

@@ -1014,7 +1014,6 @@ impl SubstrateRpcClient {
         // Submit
         self.submit_extrinsic(&extrinsic).await
     }
-
 }
 
 /// Shielded transfer request matching `hegemon_submitShieldedTransfer` RPC

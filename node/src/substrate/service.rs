@@ -138,9 +138,11 @@ use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
+use rand::{rngs::OsRng, RngCore};
 use sc_client_api::{BlockBackend, BlockchainEvents, HeaderBackend};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
+use sha2::{Digest as ShaDigest, Sha256};
 use sp_api::{ProvideRuntimeApi, StorageChanges};
 use sp_core::H256;
 use sp_inherents::{InherentData, InherentDataProvider};
@@ -151,8 +153,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use rand::{rngs::OsRng, RngCore};
-use sha2::{Digest, Sha256};
 
 use epoch_circuit::{
     compute_proof_root, Epoch as EpochCircuit, RecursiveEpochProver as EpochRecursiveProver,
@@ -3386,8 +3386,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
         if !chain_state.has_state_execution() && !production_config.allow_mock_execution {
             return Err(ServiceError::Other(
-                "state execution is not configured; refuse to start without real execution"
-                    .into(),
+                "state execution is not configured; refuse to start without real execution".into(),
             ));
         }
 
@@ -3478,7 +3477,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         .map(|e| e.listen_addr)
         .unwrap_or_else(|| std::net::SocketAddr::from(([127, 0, 0, 1], config.rpc.port)));
     let rpc_port = rpc_listen_addr.port();
-    let rpc_deny_unsafe = sc_rpc_server::deny_unsafe(&rpc_listen_addr, &config.rpc.methods);
+    let rpc_deny_unsafe = sc_rpc_server::utils::deny_unsafe(&rpc_listen_addr, &config.rpc.methods);
 
     // Create production RPC service with client access
     let rpc_service = Arc::new(ProductionRpcService::new(client.clone()));

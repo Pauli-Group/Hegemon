@@ -11,7 +11,7 @@ use std::time::Duration;
 use network::{
     protocol::{
         is_pq_protocol, negotiate_protocol, supported_protocols, NegotiationResult,
-        ProtocolSecurityLevel, HYBRID_PROTOCOL_V1, PQ_PROTOCOL_V1,
+        ProtocolSecurityLevel, PQ_PROTOCOL_V1,
     },
     PqNetworkBackend, PqNetworkBackendConfig, PqPeerIdentity, PqTransportConfig,
     SubstratePqTransport, SubstratePqTransportConfig,
@@ -20,15 +20,6 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
-
-/// Get a random available address for testing
-fn random_addr() -> SocketAddr {
-    // Use std::net::TcpListener (sync) to get an ephemeral port
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("bind ephemeral socket")
-        .local_addr()
-        .expect("local addr")
-}
 
 // ==================== Substrate Transport Tests ====================
 
@@ -166,30 +157,20 @@ async fn test_substrate_transport_messaging() -> TestResult<()> {
 /// Test: Protocol negotiation prefers PQ over legacy
 #[test]
 fn test_protocol_negotiation_prefers_pq() {
-    let local = vec![PQ_PROTOCOL_V1, HYBRID_PROTOCOL_V1];
-    let remote = vec![PQ_PROTOCOL_V1, HYBRID_PROTOCOL_V1];
+    let local = vec![PQ_PROTOCOL_V1];
+    let remote = vec![PQ_PROTOCOL_V1];
 
-    let result = negotiate_protocol(&local, &remote, true);
+    let result = negotiate_protocol(&local, &remote);
     assert_eq!(result, Some(PQ_PROTOCOL_V1));
-}
-
-/// Test: Protocol negotiation falls back to hybrid when needed
-#[test]
-fn test_protocol_negotiation_hybrid_fallback() {
-    let local = vec![PQ_PROTOCOL_V1, HYBRID_PROTOCOL_V1];
-    let remote = vec![HYBRID_PROTOCOL_V1]; // Only supports hybrid
-
-    let result = negotiate_protocol(&local, &remote, true);
-    assert_eq!(result, Some(HYBRID_PROTOCOL_V1));
 }
 
 /// Test: Protocol negotiation fails when PQ required but not supported
 #[test]
 fn test_protocol_negotiation_pq_required_fails() {
-    let local = vec![PQ_PROTOCOL_V1, HYBRID_PROTOCOL_V1];
+    let local = vec![PQ_PROTOCOL_V1];
     let remote = vec!["/hegemon/legacy/1"]; // Only supports legacy
 
-    let result = negotiate_protocol(&local, &remote, true);
+    let result = negotiate_protocol(&local, &remote);
     assert_eq!(
         result, None,
         "Should fail when PQ required but not supported"
@@ -208,24 +189,21 @@ fn test_is_pq_protocol() {
 /// Test: supported_protocols returns correct list
 #[test]
 fn test_supported_protocols() {
-    let pq_required = supported_protocols(true);
-    assert!(!pq_required.contains(&"/hegemon/legacy/1"));
-    assert!(pq_required.contains(&PQ_PROTOCOL_V1));
-
-    let pq_optional = supported_protocols(false);
-    assert!(pq_optional.contains(&"/hegemon/legacy/1"));
+    let protocols = supported_protocols();
+    assert!(!protocols.contains(&"/hegemon/legacy/1"));
+    assert!(protocols.contains(&PQ_PROTOCOL_V1));
 }
 
 /// Test: NegotiationResult correctly identifies security levels
 #[test]
 fn test_negotiation_result() {
-    let result = NegotiationResult::new(PQ_PROTOCOL_V1, true);
+    let result = NegotiationResult::new(PQ_PROTOCOL_V1);
     assert_eq!(result.security_level, ProtocolSecurityLevel::PostQuantum);
     assert!(result.peer_supports_pq);
     assert!(result.meets_pq_requirement);
 
-    let result = NegotiationResult::new("/hegemon/legacy/1", true);
-    assert_eq!(result.security_level, ProtocolSecurityLevel::Legacy);
+    let result = NegotiationResult::new("/hegemon/legacy/1");
+    assert_eq!(result.security_level, ProtocolSecurityLevel::PostQuantum);
     assert!(!result.peer_supports_pq);
     assert!(!result.meets_pq_requirement);
 }
@@ -282,7 +260,7 @@ async fn test_network_backend_peer_connection() -> TestResult<()> {
     let backend_b = PqNetworkBackend::new(&identity_b, config_b);
 
     // Start backend A
-    let mut events_a = backend_a.start().await?;
+    let _events_a = backend_a.start().await?;
 
     // Wait for start event
     let started = timeout(Duration::from_secs(5), async {

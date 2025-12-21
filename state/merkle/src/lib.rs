@@ -38,8 +38,7 @@ impl CommitmentTree {
         default_nodes.push([0u8; 32]);
         for level in 0..depth {
             let prev = default_nodes[level];
-            let next =
-                merkle_node_bytes(&prev, &prev).expect("default nodes use canonical bytes");
+            let next = merkle_node_bytes(&prev, &prev).expect("default nodes use canonical bytes");
             default_nodes.push(next);
         }
         let mut levels = Vec::with_capacity(depth + 1);
@@ -99,8 +98,7 @@ impl CommitmentTree {
                     .expect("canonical commitment bytes");
             } else {
                 let left = self.levels[level][position - 1];
-                current =
-                    merkle_node_bytes(&left, &current).expect("canonical commitment bytes");
+                current = merkle_node_bytes(&left, &current).expect("canonical commitment bytes");
             }
             position /= BRANCH_FACTOR;
             if self.levels[level + 1].len() == position {
@@ -157,11 +155,13 @@ mod tests {
     #[test]
     fn append_and_paths_match() {
         let mut tree = CommitmentTree::new(4).unwrap();
-        let values: Vec<Commitment> = (0..8).map(|v| {
-            let mut bytes = [0u8; 32];
-            bytes[24..32].copy_from_slice(&(v as u64 + 1).to_be_bytes());
-            bytes
-        }).collect();
+        let values: Vec<Commitment> = (0..8)
+            .map(|v| {
+                let mut bytes = [0u8; 32];
+                bytes[24..32].copy_from_slice(&(v as u64 + 1).to_be_bytes());
+                bytes
+            })
+            .collect();
         for value in &values {
             tree.append(*value).unwrap();
         }

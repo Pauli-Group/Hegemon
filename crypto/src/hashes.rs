@@ -3,7 +3,6 @@ use sha2::Sha256;
 use sha3::digest::Digest;
 use sha3::Sha3_256;
 
-
 const FIELD_MODULUS: u128 = 0xffffffff00000001;
 const POSEIDON_WIDTH: usize = 3;
 const POSEIDON_ROUNDS: usize = 63;

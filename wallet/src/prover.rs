@@ -32,8 +32,8 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
-    proof_options_from_config,
     hashing::{felts_to_bytes32, Felt},
+    proof_options_from_config,
     witness::TransactionWitness,
     TransactionProverStark,
 };
@@ -112,12 +112,7 @@ impl StarkProverConfig {
         if cfg.num_queries > 255 {
             cfg.num_queries = 255;
         }
-        if cfg.blowup_factor < 2 {
-            cfg.blowup_factor = 2;
-        }
-        if cfg.blowup_factor > 128 {
-            cfg.blowup_factor = 128;
-        }
+        cfg.blowup_factor = cfg.blowup_factor.clamp(2, 128);
         if !cfg.blowup_factor.is_power_of_two() {
             cfg.blowup_factor = cfg.blowup_factor.next_power_of_two();
         }

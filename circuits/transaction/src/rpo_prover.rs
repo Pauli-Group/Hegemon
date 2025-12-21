@@ -16,20 +16,20 @@ use winterfell::{
     Proof, ProofOptions, Prover, StarkDomain, Trace, TraceInfo, TracePolyTable, TraceTable,
 };
 
+#[cfg(feature = "stark-fast")]
+use crate::stark_prover::fast_proof_options;
 use crate::{
     constants::{MAX_INPUTS, MAX_OUTPUTS},
     stark_air::{
         commitment_output_row, merkle_root_output_row, nullifier_output_row, TransactionAirStark,
-        TransactionPublicInputsStark, COL_FEE, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_OUT_ACTIVE0,
-        COL_OUT_ACTIVE1, COL_OUT0, COL_OUT1, COL_S0, COL_S1, COL_VALUE_BALANCE_MAG,
+        TransactionPublicInputsStark, COL_FEE, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_OUT0, COL_OUT1,
+        COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_S0, COL_S1, COL_VALUE_BALANCE_MAG,
         COL_VALUE_BALANCE_SIGN,
     },
     stark_prover::{default_proof_options, TransactionProverStark},
     witness::TransactionWitness,
     TransactionCircuitError,
 };
-#[cfg(feature = "stark-fast")]
-use crate::stark_prover::fast_proof_options;
 
 type RpoMerkleTree = MerkleTree<Rpo256>;
 
@@ -107,10 +107,9 @@ impl Prover for TransactionProverStarkRpo {
         };
 
         let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
-        for i in 0..MAX_INPUTS {
-            let flag = input_flags[i];
+        for (i, flag) in input_flags.iter().enumerate().take(MAX_INPUTS) {
             let row = nullifier_output_row(i);
-            let nf = if flag == BaseElement::ONE && row < trace.length() {
+            let nf = if *flag == BaseElement::ONE && row < trace.length() {
                 read_hash(row)
             } else {
                 [BaseElement::ZERO; 4]
@@ -119,10 +118,9 @@ impl Prover for TransactionProverStarkRpo {
         }
 
         let mut commitments = Vec::with_capacity(MAX_OUTPUTS);
-        for i in 0..MAX_OUTPUTS {
-            let flag = output_flags[i];
+        for (i, flag) in output_flags.iter().enumerate().take(MAX_OUTPUTS) {
             let row = commitment_output_row(i);
-            let cm = if flag == BaseElement::ONE && row < trace.length() {
+            let cm = if *flag == BaseElement::ONE && row < trace.length() {
                 read_hash(row)
             } else {
                 [BaseElement::ZERO; 4]
@@ -199,11 +197,7 @@ mod tests {
     use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
     use crate::rpo_verifier::verify_transaction_proof_rpo;
 
-    fn compute_merkle_root_from_path(
-        leaf: HashFelt,
-        position: u64,
-        path: &MerklePath,
-    ) -> HashFelt {
+    fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
         let mut current = leaf;
         let mut pos = position;
         for sibling in &path.siblings {

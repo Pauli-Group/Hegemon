@@ -3,13 +3,13 @@
 //! This module validates sizing assumptions and computes trace layouts.
 //! It is designed to be used by both single-transaction and batch circuits.
 
+use crate::constants::MAX_INPUTS;
 #[cfg(test)]
 use crate::constants::MAX_OUTPUTS;
-use crate::constants::MAX_INPUTS;
 use crate::stark_air::{
-    CYCLE_LENGTH, COMMITMENT_CYCLES as STARK_COMMITMENT_CYCLES,
-    CYCLES_PER_INPUT as STARK_CYCLES_PER_INPUT, MERKLE_CYCLES as STARK_MERKLE_CYCLES,
-    MIN_TRACE_LENGTH, NULLIFIER_CYCLES as STARK_NULLIFIER_CYCLES,
+    COMMITMENT_CYCLES as STARK_COMMITMENT_CYCLES, CYCLES_PER_INPUT as STARK_CYCLES_PER_INPUT,
+    CYCLE_LENGTH, MERKLE_CYCLES as STARK_MERKLE_CYCLES, MIN_TRACE_LENGTH,
+    NULLIFIER_CYCLES as STARK_NULLIFIER_CYCLES,
 };
 
 /// Trace width (re-exported for convenience).
@@ -42,6 +42,13 @@ pub const BALANCE_DEGREE: usize = 1;
 /// Maximum batch size (power of 2).
 pub const MAX_BATCH_SIZE: usize = 16;
 
+fn log2_rows(rows: usize) -> usize {
+    if rows == 0 {
+        return 0;
+    }
+    (usize::BITS - 1 - rows.leading_zeros()) as usize
+}
+
 /// Compute batch trace row count (must be power of 2 for winterfell).
 pub fn batch_trace_rows(batch_size: usize) -> usize {
     let raw = batch_size * ROWS_PER_TX;
@@ -62,8 +69,7 @@ pub const CYCLES_PER_INPUT: usize = STARK_CYCLES_PER_INPUT;
 pub fn nullifier_output_row(tx_index: usize, input_index: usize) -> usize {
     let slot_start = slot_start_row(tx_index);
     let start_cycle = input_index * CYCLES_PER_INPUT;
-    slot_start
-        + (start_cycle + COMMITMENT_CYCLES + MERKLE_CYCLES + NULLIFIER_CYCLES) * CYCLE_LENGTH
+    slot_start + (start_cycle + COMMITMENT_CYCLES + MERKLE_CYCLES + NULLIFIER_CYCLES) * CYCLE_LENGTH
         - 1
 }
 
@@ -92,7 +98,7 @@ pub fn estimated_proof_size(trace_rows: usize, trace_width: usize) -> usize {
     // Base: ~50 bytes per column for commitments
     // FRI layers: ~log2(rows) × 32 bytes per query × 8 queries
     // Query proofs: ~8 × log2(rows) × 32 bytes
-    let log_rows = (trace_rows as f64).log2() as usize;
+    let log_rows = log2_rows(trace_rows);
     let base = trace_width * 50;
     let fri = log_rows * 32 * 8;
     let queries = 8 * log_rows * 32;
@@ -132,7 +138,7 @@ mod tests {
                 "Batch {:2}: {:6} rows (2^{})",
                 batch_size,
                 rows,
-                (rows as f64).log2() as usize
+                log2_rows(rows)
             );
         }
     }

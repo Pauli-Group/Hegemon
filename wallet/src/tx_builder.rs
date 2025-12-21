@@ -237,9 +237,9 @@ pub fn build_transaction(
         let mut pos = note.position;
         let mut siblings = Vec::with_capacity(auth_path.len());
         for sibling in auth_path.iter() {
-            let felts = bytes32_to_felts(sibling).ok_or_else(|| {
-                WalletError::InvalidState("non-canonical merkle sibling encoding")
-            })?;
+            let felts = bytes32_to_felts(sibling).ok_or(WalletError::InvalidState(
+                "non-canonical merkle sibling encoding",
+            ))?;
             siblings.push(felts);
             let (left, right) = if pos & 1 == 0 {
                 (current, felts)
@@ -256,9 +256,7 @@ pub fn build_transaction(
         }
 
         // Convert Felt path to MerklePath
-        let merkle_path = transaction_circuit::note::MerklePath {
-            siblings,
-        };
+        let merkle_path = transaction_circuit::note::MerklePath { siblings };
 
         // Create input witness with the merkle path
         let mut input_witness = note.recovered.to_input_witness(note.position);

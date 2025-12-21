@@ -119,9 +119,10 @@ impl TransactionAir {
             .find(|slot| slot.asset_id == NATIVE_ASSET_ID)
             .map(|slot| slot.delta)
             .unwrap_or(0);
-        let expected = balance_commitment(native_delta, &public_inputs.balance_slots).map_err(
-            |err| TransactionCircuitError::BalanceDeltaOutOfRange(err.asset_id, err.magnitude),
-        )?;
+        let expected =
+            balance_commitment(native_delta, &public_inputs.balance_slots).map_err(|err| {
+                TransactionCircuitError::BalanceDeltaOutOfRange(err.asset_id, err.magnitude)
+            })?;
         if expected != public_inputs.balance_tag {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "balance tag mismatch",

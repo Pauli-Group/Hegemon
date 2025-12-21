@@ -21,16 +21,25 @@ use transaction_circuit::dimensions::{
 
 /// Create mock batch public inputs for benchmarking
 fn mock_batch_public_inputs(batch_size: u32) -> BatchPublicInputs {
-    let nullifiers: Vec<BaseElement> = (0..batch_size * 2)
-        .map(|i| BaseElement::new(1000 + i as u64))
+    let mk_hash = |seed: u64| -> [BaseElement; 4] {
+        [
+            BaseElement::new(seed),
+            BaseElement::new(seed + 1),
+            BaseElement::new(seed + 2),
+            BaseElement::new(seed + 3),
+        ]
+    };
+
+    let nullifiers: Vec<[BaseElement; 4]> = (0..batch_size * 2)
+        .map(|i| mk_hash(1000 + i as u64))
         .collect();
-    let commitments: Vec<BaseElement> = (0..batch_size * 2)
-        .map(|i| BaseElement::new(2000 + i as u64))
+    let commitments: Vec<[BaseElement; 4]> = (0..batch_size * 2)
+        .map(|i| mk_hash(2000 + i as u64))
         .collect();
 
     BatchPublicInputs {
         batch_size,
-        anchor: BaseElement::new(12345),
+        anchor: mk_hash(12_345),
         nullifiers,
         commitments,
         total_fee: BaseElement::ZERO,

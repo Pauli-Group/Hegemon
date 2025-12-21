@@ -19,12 +19,12 @@
 //! - **FRI queries**: Number of queries for interactive protocol security
 //! - **Hash function**: Collision resistance for Merkle commitments
 
+#[cfg(feature = "stark-fast")]
+use transaction_circuit::stark_prover::fast_proof_options;
 use transaction_circuit::{
     constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS},
     stark_prover::default_proof_options,
 };
-#[cfg(feature = "stark-fast")]
-use transaction_circuit::stark_prover::fast_proof_options;
 
 /// The Goldilocks prime: p = 2^64 - 2^32 + 1
 /// This is the field used by winterfell's BaseElement (f64)
@@ -366,14 +366,14 @@ fn test_end_to_end_proof_security() {
     };
 
     let merkle_path = MerklePath {
-        siblings: vec![BaseElement::ZERO; CIRCUIT_MERKLE_DEPTH],
+        siblings: vec![[BaseElement::ZERO; 4]; CIRCUIT_MERKLE_DEPTH],
     };
 
     let witness = TransactionWitness {
         sk_spend,
         fee: 100,
         value_balance: 0,
-        merkle_root: BaseElement::ZERO,
+        merkle_root: [0u8; 32],
         version: VersionBinding::new(1, 1),
         inputs: vec![InputNoteWitness {
             note: input_note.clone(),

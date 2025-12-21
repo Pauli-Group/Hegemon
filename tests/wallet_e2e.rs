@@ -29,8 +29,6 @@ use wallet::{
     MemoPlaintext as WalletMemo, RootSecret, ShieldedAddress, TransferRecipient,
 };
 
-type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
-
 // ============================================================================
 // Mock Node for HTTP RPC Testing
 // ============================================================================

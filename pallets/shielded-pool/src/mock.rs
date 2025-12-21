@@ -129,7 +129,6 @@ pub fn new_test_ext() -> TestExternalities {
 
         // Initialize shielded pool storage
         use crate::merkle::CompactMerkleTree;
-        use crate::verifier::VerifyingKey;
 
         let tree = CompactMerkleTree::new();
         pallet_shielded_pool::pallet::MerkleTree::<Test>::put(tree.clone());
@@ -407,8 +406,6 @@ mod tests {
     #[test]
     fn non_admin_cannot_update_key() {
         new_test_ext().execute_with(|| {
-            use crate::verifier::VerifyingKey;
-
             assert_noop!(
                 Pallet::<Test>::update_verifying_key(
                     RuntimeOrigin::signed(1),
