@@ -169,26 +169,22 @@ impl NoteCiphertext {
             )));
         }
 
-        let note_len_u32 = u32::try_from(note_len).map_err(|_| {
-            WalletError::Serialization("note payload length overflow".into())
-        })?;
-        let memo_len_u32 = u32::try_from(memo_len).map_err(|_| {
-            WalletError::Serialization("memo payload length overflow".into())
-        })?;
+        let note_len_u32 = u32::try_from(note_len)
+            .map_err(|_| WalletError::Serialization("note payload length overflow".into()))?;
+        let memo_len_u32 = u32::try_from(memo_len)
+            .map_err(|_| WalletError::Serialization("memo payload length overflow".into()))?;
 
         // Note payload length (4 bytes) and data
         ciphertext[offset..offset + 4].copy_from_slice(&note_len_u32.to_le_bytes());
         offset += 4;
-        ciphertext[offset..offset + note_len]
-            .copy_from_slice(&self.note_payload[..note_len]);
+        ciphertext[offset..offset + note_len].copy_from_slice(&self.note_payload[..note_len]);
         offset += note_len;
 
         // Memo payload length (4 bytes) and data
         ciphertext[offset..offset + 4].copy_from_slice(&memo_len_u32.to_le_bytes());
         offset += 4;
         if memo_len > 0 {
-            ciphertext[offset..offset + memo_len]
-                .copy_from_slice(&self.memo_payload[..memo_len]);
+            ciphertext[offset..offset + memo_len].copy_from_slice(&self.memo_payload[..memo_len]);
         }
 
         // Hint tag at the end (last 32 bytes)

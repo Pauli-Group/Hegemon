@@ -11,7 +11,7 @@ use tokio::task::spawn_blocking;
 use tokio::time::{sleep, timeout};
 use transaction_circuit::constants::NATIVE_ASSET_ID;
 use transaction_circuit::keys::generate_keys;
-use transaction_circuit::note::{InputNoteWitness, NoteData, OutputNoteWitness};
+use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use transaction_circuit::proof::prove;
 use transaction_circuit::witness::TransactionWitness;
 use url::Url;
@@ -236,6 +236,7 @@ async fn post_funding_transaction(
         },
         position: 1,
         rho_seed: [12u8; 32],
+        merkle_path: MerklePath::default(),
     };
     let mut rng = StdRng::seed_from_u64(42);
     let alice_note = NotePlaintext::random(90, NATIVE_ASSET_ID, MemoPlaintext::default(), &mut rng);

@@ -43,7 +43,11 @@ impl core::fmt::Display for BatchCircuitError {
             ),
             Self::EmptyBatch => write!(f, "Batch cannot be empty"),
             Self::InvalidWitness { index, reason } => {
-                write!(f, "Invalid transaction witness at index {}: {}", index, reason)
+                write!(
+                    f,
+                    "Invalid transaction witness at index {}: {}",
+                    index, reason
+                )
             }
             Self::TraceBuildError(err) => write!(f, "Failed to build trace: {}", err),
             Self::ProofGenerationError(err) => write!(f, "Proof generation failed: {}", err),

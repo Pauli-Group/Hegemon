@@ -23,25 +23,23 @@ use crate::{
     note::{InputNoteWitness, NoteData, OutputNoteWitness},
     stark_air::{
         commitment_output_row, cycle_is_merkle_left_01, cycle_is_merkle_left_23,
-        cycle_is_merkle_right_01, cycle_is_merkle_right_23, cycle_is_squeeze,
-        cycle_reset_domain, merkle_root_output_row, note_start_row_input, note_start_row_output,
-        nullifier_output_row, poseidon_round, TransactionAirStark,
-        TransactionPublicInputsStark, COL_CAPTURE, COL_CAPTURE2, COL_DIR, COL_DOMAIN, COL_FEE,
-        COL_IN0, COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET, COL_IN1_VALUE,
-        COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT_01, COL_MERKLE_LEFT_23,
-        COL_MERKLE_RIGHT_01, COL_MERKLE_RIGHT_23, COL_NOTE_START_IN0, COL_NOTE_START_IN1,
-        COL_NOTE_START_OUT0, COL_NOTE_START_OUT1, COL_OUT0, COL_OUT0_ASSET, COL_OUT0_VALUE,
-        COL_OUT1, COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT_ACTIVE0,
-        COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S2, COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1,
-        COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1,
-        COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1,
-        COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1,
-        COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET, COL_SLOT0_IN, COL_SLOT0_OUT,
-        COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN,
+        cycle_is_merkle_right_01, cycle_is_merkle_right_23, cycle_is_squeeze, cycle_reset_domain,
+        merkle_root_output_row, note_start_row_input, note_start_row_output, nullifier_output_row,
+        poseidon_round, TransactionAirStark, TransactionPublicInputsStark, COL_CAPTURE,
+        COL_CAPTURE2, COL_DIR, COL_DOMAIN, COL_FEE, COL_IN0, COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1,
+        COL_IN1_ASSET, COL_IN1_VALUE, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT_01,
+        COL_MERKLE_LEFT_23, COL_MERKLE_RIGHT_01, COL_MERKLE_RIGHT_23, COL_NOTE_START_IN0,
+        COL_NOTE_START_IN1, COL_NOTE_START_OUT0, COL_NOTE_START_OUT1, COL_OUT0, COL_OUT0_ASSET,
+        COL_OUT0_VALUE, COL_OUT1, COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT2, COL_OUT3,
+        COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S2, COL_SEL_IN0_SLOT0,
+        COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0,
+        COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0,
+        COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0,
+        COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET, COL_SLOT0_IN,
+        COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN,
         COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_VALUE_BALANCE_MAG,
-        COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, COMMITMENT_CYCLES, CYCLE_LENGTH,
-        DUMMY_CYCLES, MERKLE_ABSORB_CYCLES, MERKLE_CYCLES, MERKLE_CYCLES_PER_LEVEL,
-        MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES, NULLIFIER_CYCLES, TOTAL_TRACE_CYCLES,
+        COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES,
+        MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES, TOTAL_TRACE_CYCLES,
         TOTAL_USED_CYCLES, TRACE_WIDTH,
     },
     witness::TransactionWitness,
@@ -445,8 +443,9 @@ impl TransactionProverStark {
         }
 
         let (vb_sign, vb_mag) = value_balance_parts(witness.value_balance)?;
-        let merkle_root = transaction_core::hashing::bytes32_to_felts(&witness.merkle_root)
-            .ok_or(TransactionCircuitError::ConstraintViolation("invalid merkle root"))?;
+        let merkle_root = transaction_core::hashing::bytes32_to_felts(&witness.merkle_root).ok_or(
+            TransactionCircuitError::ConstraintViolation("invalid merkle root"),
+        )?;
 
         Ok(TransactionPublicInputsStark {
             input_flags,
@@ -932,11 +931,7 @@ mod tests {
     use crate::hashing::{felts_to_bytes32, merkle_node, HashFelt};
     use crate::note::{MerklePath, NoteData};
 
-    fn compute_merkle_root_from_path(
-        leaf: HashFelt,
-        position: u64,
-        path: &MerklePath,
-    ) -> HashFelt {
+    fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
         let mut current = leaf;
         let mut pos = position;
         for sibling in &path.siblings {

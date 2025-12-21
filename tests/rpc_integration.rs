@@ -859,7 +859,12 @@ mod integration_tests {
             Ok(commits) => {
                 eprintln!("Retrieved {} commitments", commits.len());
                 for (i, c) in commits.iter().enumerate().take(3) {
-                    eprintln!("  [{}]: index={}, value={}", i, c.index, c.value);
+                    eprintln!(
+                        "  [{}]: index={}, value=0x{}",
+                        i,
+                        c.index,
+                        hex::encode(c.value)
+                    );
                 }
             }
             Err(e) => {

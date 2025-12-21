@@ -166,12 +166,15 @@ fn execute_block(
 
 fn fold_digest(mut acc: Commitment, proof: &TransactionProof) -> Commitment {
     let binding = proof.version_binding();
-    acc = merkle_node_bytes(&acc, &felt_to_bytes32(Felt::new(u64::from(binding.circuit))))
-        .expect("canonical digest bytes");
+    acc = merkle_node_bytes(
+        &acc,
+        &felt_to_bytes32(Felt::new(u64::from(binding.circuit))),
+    )
+    .expect("canonical digest bytes");
     acc = merkle_node_bytes(&acc, &felt_to_bytes32(Felt::new(u64::from(binding.crypto))))
         .expect("canonical digest bytes");
-    acc = merkle_node_bytes(&acc, &proof.public_inputs.merkle_root)
-        .expect("canonical digest bytes");
+    acc =
+        merkle_node_bytes(&acc, &proof.public_inputs.merkle_root).expect("canonical digest bytes");
     acc = merkle_node_bytes(&acc, &felt_to_bytes32(proof.public_inputs.balance_tag))
         .expect("canonical digest bytes");
     for value in &proof.public_inputs.nullifiers {
@@ -180,8 +183,11 @@ fn fold_digest(mut acc: Commitment, proof: &TransactionProof) -> Commitment {
     for value in &proof.public_inputs.commitments {
         acc = merkle_node_bytes(&acc, value).expect("canonical digest bytes");
     }
-    acc = merkle_node_bytes(&acc, &felt_to_bytes32(Felt::new(proof.public_inputs.native_fee)))
-        .expect("canonical digest bytes");
+    acc = merkle_node_bytes(
+        &acc,
+        &felt_to_bytes32(Felt::new(proof.public_inputs.native_fee)),
+    )
+    .expect("canonical digest bytes");
     acc
 }
 
@@ -228,7 +234,6 @@ mod serde_bytes32 {
 
 mod serde_vec_bytes32 {
     use serde::{Deserialize, Deserializer, Serializer};
-    use std::convert::TryInto;
 
     pub fn serialize<S>(values: &[[u8; 32]], serializer: S) -> Result<S::Ok, S::Error>
     where

@@ -4,6 +4,8 @@ use transaction_circuit::hashing::{merkle_node_bytes, Commitment};
 
 // Re-implement the pallet's Poseidon for comparison in a test context
 mod pallet_poseidon {
+    use super::Commitment;
+
     const POSEIDON_WIDTH: usize = transaction_circuit::constants::POSEIDON_WIDTH;
     const POSEIDON_ROUNDS: usize = transaction_circuit::constants::POSEIDON_ROUNDS;
     const MERKLE_DOMAIN_TAG: u64 = transaction_circuit::constants::MERKLE_DOMAIN_TAG;
@@ -112,12 +114,7 @@ mod pallet_poseidon {
         let left_limbs = bytes32_to_limbs(left);
         let right_limbs = bytes32_to_limbs(right);
         let mut inputs = Vec::with_capacity(8);
-        inputs.extend_from_slice(&[
-            left_limbs[2],
-            left_limbs[3],
-            left_limbs[0],
-            left_limbs[1],
-        ]);
+        inputs.extend_from_slice(&[left_limbs[2], left_limbs[3], left_limbs[0], left_limbs[1]]);
         inputs.extend_from_slice(&[
             right_limbs[2],
             right_limbs[3],
@@ -176,8 +173,7 @@ fn poseidon_empty_tree_root_matches() {
     let mut pallet_current = [0u8; 32];
 
     for level in 0..depth {
-        circuit_current =
-            merkle_node_bytes(&circuit_current, &circuit_current).expect("canonical");
+        circuit_current = merkle_node_bytes(&circuit_current, &circuit_current).expect("canonical");
         pallet_current = pallet_poseidon::merkle_node_bytes(&pallet_current, &pallet_current);
 
         if level < 5 || level == depth - 1 {
@@ -189,9 +185,6 @@ fn poseidon_empty_tree_root_matches() {
     }
 
     println!("Empty tree root (depth {}):", depth);
-    println!(
-        "  circuit: {}",
-        hex::encode(circuit_current)
-    );
+    println!("  circuit: {}", hex::encode(circuit_current));
     println!("  pallet:  {}", hex::encode(pallet_current));
 }

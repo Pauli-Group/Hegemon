@@ -16,7 +16,9 @@ use winterfell::{
 
 use crate::air::{EpochProofAir, EpochPublicInputs};
 use crate::merkle;
-use crate::prover::{default_epoch_options, fast_epoch_options, EpochProof};
+#[cfg(feature = "stark-fast")]
+use crate::prover::fast_epoch_options;
+use crate::prover::{default_epoch_options, EpochProof};
 use crate::recursion::{RecursiveEpochProof, RecursiveEpochProver};
 use crate::types::Epoch;
 

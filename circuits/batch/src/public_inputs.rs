@@ -1,5 +1,6 @@
 //! Public inputs for batch transaction verification.
 
+use alloc::vec;
 use alloc::vec::Vec;
 use winterfell::math::{fields::f64::BaseElement, FieldElement, ToElements};
 
@@ -166,17 +167,42 @@ mod tests {
         let zero = [BaseElement::ZERO; 4];
         let inputs = BatchPublicInputs {
             batch_size: 2,
-            anchor: [BaseElement::new(123), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+            anchor: [
+                BaseElement::new(123),
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+            ],
             nullifiers: vec![
-                [BaseElement::new(1), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                [
+                    BaseElement::new(1),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
                 zero,
-                [BaseElement::new(2), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                [
+                    BaseElement::new(2),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
                 zero,
             ],
             commitments: vec![
-                [BaseElement::new(10), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                [
+                    BaseElement::new(10),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
                 zero,
-                [BaseElement::new(20), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                [
+                    BaseElement::new(20),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
                 zero,
             ],
             total_fee: BaseElement::new(100),
@@ -206,35 +232,42 @@ mod tests {
         let elements = inputs.to_elements();
 
         // batch_size + anchor(4) + nullifiers(4 limbs each) + commitments(4 limbs each) + fee + version
-        let expected_len =
-            1 + 4 + (2 * MAX_INPUTS * 4) + (2 * MAX_OUTPUTS * 4) + 1 + 1;
+        let expected_len = 1 + 4 + (2 * MAX_INPUTS * 4) + (2 * MAX_OUTPUTS * 4) + 1 + 1;
         assert_eq!(elements.len(), expected_len);
     }
 
     #[test]
     fn test_transaction_accessors() {
+        let mk_felt4 = |value| {
+            [
+                BaseElement::new(value),
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+            ]
+        };
         let inputs = BatchPublicInputs {
             batch_size: 2,
-            anchor: BaseElement::ZERO,
+            anchor: [BaseElement::ZERO; 4],
             nullifiers: vec![
-                BaseElement::new(1),
-                BaseElement::new(2), // TX 0
-                BaseElement::new(3),
-                BaseElement::new(4), // TX 1
+                mk_felt4(1),
+                mk_felt4(2), // TX 0
+                mk_felt4(3),
+                mk_felt4(4), // TX 1
             ],
             commitments: vec![
-                BaseElement::new(10),
-                BaseElement::new(20), // TX 0
-                BaseElement::new(30),
-                BaseElement::new(40), // TX 1
+                mk_felt4(10),
+                mk_felt4(20), // TX 0
+                mk_felt4(30),
+                mk_felt4(40), // TX 1
             ],
             total_fee: BaseElement::ZERO,
             circuit_version: 1,
         };
 
-        assert_eq!(inputs.transaction_nullifiers(0)[0], BaseElement::new(1));
-        assert_eq!(inputs.transaction_nullifiers(1)[0], BaseElement::new(3));
-        assert_eq!(inputs.transaction_commitments(0)[1], BaseElement::new(20));
-        assert_eq!(inputs.transaction_commitments(1)[1], BaseElement::new(40));
+        assert_eq!(inputs.transaction_nullifiers(0)[0], mk_felt4(1));
+        assert_eq!(inputs.transaction_nullifiers(1)[0], mk_felt4(3));
+        assert_eq!(inputs.transaction_commitments(0)[1], mk_felt4(20));
+        assert_eq!(inputs.transaction_commitments(1)[1], mk_felt4(40));
     }
 }

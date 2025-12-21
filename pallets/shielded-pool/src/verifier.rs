@@ -20,9 +20,8 @@ compile_error!("feature \"production\" requires \"stark-verify\" for real proof 
 
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
-#[cfg(not(feature = "std"))]
-use sp_std::vec;
 use sp_std::vec::Vec;
+use winter_math::FieldElement;
 
 use crate::types::{BindingHash, StarkProof};
 
@@ -121,8 +120,11 @@ pub trait ProofVerifier {
     /// Verify value balance commitment.
     /// In the PQC model, this is typically verified in-circuit,
     /// but we keep the API for compatibility.
-    fn verify_binding_hash(&self, binding_hash: &BindingHash, inputs: &ShieldedTransferInputs)
-        -> bool;
+    fn verify_binding_hash(
+        &self,
+        binding_hash: &BindingHash,
+        inputs: &ShieldedTransferInputs,
+    ) -> bool;
 }
 
 /// Accept-all proof verifier for testing/development.
@@ -157,8 +159,11 @@ impl ProofVerifier for AcceptAllProofs {
         VerificationResult::Valid
     }
 
-    fn verify_binding_hash(&self, _binding_hash: &BindingHash, _inputs: &ShieldedTransferInputs)
-        -> bool {
+    fn verify_binding_hash(
+        &self,
+        _binding_hash: &BindingHash,
+        _inputs: &ShieldedTransferInputs,
+    ) -> bool {
         true
     }
 }
@@ -181,8 +186,11 @@ impl ProofVerifier for RejectAllProofs {
         VerificationResult::VerificationFailed
     }
 
-    fn verify_binding_hash(&self, _binding_hash: &BindingHash, _inputs: &ShieldedTransferInputs)
-        -> bool {
+    fn verify_binding_hash(
+        &self,
+        _binding_hash: &BindingHash,
+        _inputs: &ShieldedTransferInputs,
+    ) -> bool {
         false
     }
 }
@@ -497,8 +505,11 @@ impl ProofVerifier for StarkVerifier {
         }
     }
 
-    fn verify_binding_hash(&self, binding_hash: &BindingHash, inputs: &ShieldedTransferInputs)
-        -> bool {
+    fn verify_binding_hash(
+        &self,
+        binding_hash: &BindingHash,
+        inputs: &ShieldedTransferInputs,
+    ) -> bool {
         // In the STARK model, value balance is verified in-circuit.
         // The binding hash is a Blake2 commitment to the public inputs,
         // providing defense-in-depth and a simple integrity check.
@@ -555,17 +566,16 @@ impl StarkVerifier {
         message
     }
 
-    fn binding_hash_from_message(
-        message: &[u8],
-        blake2_256: fn(&[u8]) -> [u8; 32],
-    ) -> [u8; 64] {
-        let mut msg0 = sp_std::vec::Vec::with_capacity(Self::BINDING_HASH_DOMAIN.len() + 1 + message.len());
+    fn binding_hash_from_message(message: &[u8], blake2_256: fn(&[u8]) -> [u8; 32]) -> [u8; 64] {
+        let mut msg0 =
+            sp_std::vec::Vec::with_capacity(Self::BINDING_HASH_DOMAIN.len() + 1 + message.len());
         msg0.extend_from_slice(Self::BINDING_HASH_DOMAIN);
         msg0.push(0);
         msg0.extend_from_slice(message);
         let hash0 = blake2_256(&msg0);
 
-        let mut msg1 = sp_std::vec::Vec::with_capacity(Self::BINDING_HASH_DOMAIN.len() + 1 + message.len());
+        let mut msg1 =
+            sp_std::vec::Vec::with_capacity(Self::BINDING_HASH_DOMAIN.len() + 1 + message.len());
         msg1.extend_from_slice(Self::BINDING_HASH_DOMAIN);
         msg1.push(1);
         msg1.extend_from_slice(message);
@@ -912,10 +922,10 @@ mod tests {
 
     #[cfg(feature = "stark-verify")]
     fn compute_merkle_root_from_path(
-        leaf: transaction_circuit::hashing::Felt,
+        leaf: transaction_circuit::hashing::HashFelt,
         position: u64,
         path: &transaction_circuit::note::MerklePath,
-    ) -> transaction_circuit::hashing::Felt {
+    ) -> transaction_circuit::hashing::HashFelt {
         use transaction_circuit::hashing::merkle_node;
 
         let mut current = leaf;
@@ -933,7 +943,7 @@ mod tests {
 
     #[cfg(feature = "stark-verify")]
     fn build_stark_fixture() -> (StarkProof, ShieldedTransferInputs, BindingHash) {
-        use transaction_circuit::hashing::felt_to_bytes32;
+        use transaction_circuit::hashing::felts_to_bytes32;
         use transaction_circuit::keys::generate_keys;
         use transaction_circuit::note::{
             InputNoteWitness, MerklePath, NoteData, OutputNoteWitness,
@@ -970,7 +980,7 @@ mod tests {
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
             sk_spend: [6u8; 32],
-            merkle_root,
+            merkle_root: felts_to_bytes32(&merkle_root),
             fee: 100,
             value_balance: 0,
             version: TransactionWitness::default_version_binding(),
@@ -984,19 +994,17 @@ mod tests {
             .expect("stark public inputs");
 
         let inputs = ShieldedTransferInputs {
-            anchor: felt_to_bytes32(stark_inputs.merkle_root),
+            anchor: stark_inputs.merkle_root,
             nullifiers: proof
                 .nullifiers
                 .iter()
                 .copied()
-                .map(felt_to_bytes32)
                 .filter(|nf| *nf != [0u8; 32])
                 .collect(),
             commitments: proof
                 .commitments
                 .iter()
                 .copied()
-                .map(felt_to_bytes32)
                 .filter(|cm| *cm != [0u8; 32])
                 .collect(),
             fee: stark_inputs.fee,

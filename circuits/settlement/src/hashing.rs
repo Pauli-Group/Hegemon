@@ -152,12 +152,7 @@ mod tests {
 
     #[test]
     fn bytes_roundtrip() {
-        let felts = [
-            Felt::new(42),
-            Felt::new(7),
-            Felt::new(0),
-            Felt::new(9),
-        ];
+        let felts = [Felt::new(42), Felt::new(7), Felt::new(0), Felt::new(9)];
         let bytes = felts_to_bytes32(&felts);
         let parsed = bytes32_to_felts(&bytes).expect("canonical bytes");
         assert_eq!(felts, parsed);

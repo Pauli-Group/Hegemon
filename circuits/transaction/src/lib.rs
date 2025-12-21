@@ -57,9 +57,9 @@ pub use witness::TransactionWitness;
 pub use stark_air::{
     TransactionAirStark, TransactionPublicInputsStark, MIN_TRACE_LENGTH, TRACE_WIDTH,
 };
-pub use stark_prover::{default_proof_options, proof_options_from_config, TransactionProverStark};
 #[cfg(feature = "stark-fast")]
 pub use stark_prover::fast_proof_options;
+pub use stark_prover::{default_proof_options, proof_options_from_config, TransactionProverStark};
 pub use stark_verifier::{
     verify_transaction_proof, verify_transaction_proof_bytes, TransactionVerifyError,
 };

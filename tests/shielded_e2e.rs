@@ -55,15 +55,6 @@ use crypto::traits::SigningKey;
 #[cfg(feature = "substrate")]
 use sp_core::H256;
 
-#[cfg(feature = "substrate")]
-use hegemon_node::substrate::{
-    client::{ProductionChainStateProvider, ProductionConfig, StateExecutionResult},
-    mining_worker::{BlockTemplate, ChainStateProvider, MiningWorkerStats},
-};
-
-#[cfg(feature = "substrate")]
-use consensus::Blake3Seal;
-
 /// Default test difficulty (very easy for fast mining)
 const TEST_DIFFICULTY_BITS: u32 = 0x2100ffff;
 

@@ -7,9 +7,8 @@ use winterfell::{
 };
 
 use crate::constants::{
-    ABSORB_CYCLES, COL_IN0, COL_IN1, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH, COMMITMENT_LIMBS,
-    MAX_INSTRUCTIONS, MAX_NULLIFIERS, NULLIFIER_LIMBS, PADDED_INPUT_COUNT,
-    SETTLEMENT_DOMAIN_TAG,
+    ABSORB_CYCLES, COL_IN0, COL_IN1, COL_S0, COL_S1, COL_S2, COMMITMENT_LIMBS, CYCLE_LENGTH,
+    MAX_INSTRUCTIONS, MAX_NULLIFIERS, NULLIFIER_LIMBS, PADDED_INPUT_COUNT, SETTLEMENT_DOMAIN_TAG,
 };
 use crate::hashing::{Felt, HashFelt};
 
@@ -239,7 +238,7 @@ fn absorb_mask() -> Vec<BaseElement> {
 fn hash_mask() -> Vec<BaseElement> {
     let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
     for (idx, slot) in mask.iter_mut().enumerate() {
-        if idx >= 1 && idx <= transaction_core::constants::POSEIDON_ROUNDS {
+        if (1..=transaction_core::constants::POSEIDON_ROUNDS).contains(&idx) {
             *slot = BaseElement::ONE;
         }
     }

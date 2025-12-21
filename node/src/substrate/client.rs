@@ -415,9 +415,7 @@ impl ProductionConfig {
             allow_mock_execution_requested
         } else {
             if allow_mock_execution_requested {
-                tracing::warn!(
-                    "HEGEMON_ALLOW_MOCK_EXECUTION ignored without HEGEMON_DEV_MODE"
-                );
+                tracing::warn!("HEGEMON_ALLOW_MOCK_EXECUTION ignored without HEGEMON_DEV_MODE");
             }
             false
         };
@@ -705,8 +703,7 @@ impl ProductionChainStateProvider {
                 storage_changes_key: None, // No storage changes in mock mode
             })
         } else {
-            Err("state execution is not configured; refusing to run without real execution"
-                .into())
+            Err("state execution is not configured; refusing to run without real execution".into())
         }
     }
 

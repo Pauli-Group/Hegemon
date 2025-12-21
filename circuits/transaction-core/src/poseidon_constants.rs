@@ -14,28 +14,17 @@ use crate::constants::{POSEIDON_ROUNDS, POSEIDON_WIDTH};
 pub const NUMS_DOMAIN_ROUND_CONSTANTS: &[u8] = b"hegemon-poseidon-round-constants-v1";
 pub const NUMS_DOMAIN_MDS: &[u8] = b"hegemon-poseidon-mds-v1";
 
-pub const MDS_X_SEEDS: [u64; 3] = [
-    0x2a3af9cbe3a17cc9,
-    0xd4b516ba82c1e8ea,
-    0x7afac776daede1b6,
-];
+pub const MDS_X_SEEDS: [u64; 3] = [0x2a3af9cbe3a17cc9, 0xd4b516ba82c1e8ea, 0x7afac776daede1b6];
 
-pub const MDS_Y_SEEDS: [u64; 3] = [
-    0x9fd54d3ae78d39db,
-    0x42c34aa97cc5c724,
-    0xefce20d912251ed0,
-];
+pub const MDS_Y_SEEDS: [u64; 3] = [0x9fd54d3ae78d39db, 0x42c34aa97cc5c724, 0xefce20d912251ed0];
 
-pub const MDS_MATRIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = 
-[
+pub const MDS_MATRIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [
     [0x5d80c0aae9349251, 0x363dc1882ff020a7, 0x4beb1e524871f0d0],
     [0x58e089990fa63791, 0x0ea4ac8319e46eb1, 0x4094490d1c632eaa],
     [0x6ab16a64861ac16a, 0xd6aea38e5b7144ae, 0xc4c4517fa118c2a3],
-]
-;
+];
 
-pub const ROUND_CONSTANTS: [[u64; POSEIDON_WIDTH]; POSEIDON_ROUNDS] = 
-[
+pub const ROUND_CONSTANTS: [[u64; POSEIDON_WIDTH]; POSEIDON_ROUNDS] = [
     [0x3ed482724d32dff1, 0x1e18a1ef3d6d8b70, 0x546400b4a2032649],
     [0xd9d7ec93263c6cb4, 0x92c9065c93201825, 0x7138d910ff66095e],
     [0xe3c6dda2ac6a4513, 0x2bb682389bd01fb6, 0x351817560b510cab],
@@ -99,5 +88,4 @@ pub const ROUND_CONSTANTS: [[u64; POSEIDON_WIDTH]; POSEIDON_ROUNDS] =
     [0x29230f43f1262943, 0x5d2992985553b72c, 0x516dc839ee031af6],
     [0x790172121a1d3893, 0xd310f29425592804, 0xe6f46d9ba3f2a3a3],
     [0x529b48dc89cbcff8, 0x11cd3dc43685c471, 0x3114e34e9a39720a],
-]
-;
+];

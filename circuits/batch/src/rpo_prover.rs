@@ -141,11 +141,7 @@ mod tests {
     use transaction_circuit::hashing::{felts_to_bytes32, merkle_node, HashFelt};
     use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 
-    fn compute_merkle_root_from_path(
-        leaf: HashFelt,
-        position: u64,
-        path: &MerklePath,
-    ) -> HashFelt {
+    fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
         let mut current = leaf;
         let mut pos = position;
         for sibling in &path.siblings {
@@ -203,8 +199,11 @@ mod tests {
             r: [2u8; 32],
         };
         let leaf = base_input.commitment();
-        let merkle_root =
-            felts_to_bytes32(&compute_merkle_root_from_path(leaf, 0, &MerklePath::default()));
+        let merkle_root = felts_to_bytes32(&compute_merkle_root_from_path(
+            leaf,
+            0,
+            &MerklePath::default(),
+        ));
 
         let witnesses = vec![
             make_test_witness(1, merkle_root, &base_input),
@@ -227,8 +226,11 @@ mod tests {
             r: [2u8; 32],
         };
         let leaf = base_input.commitment();
-        let merkle_root =
-            felts_to_bytes32(&compute_merkle_root_from_path(leaf, 0, &MerklePath::default()));
+        let merkle_root = felts_to_bytes32(&compute_merkle_root_from_path(
+            leaf,
+            0,
+            &MerklePath::default(),
+        ));
 
         let witnesses = vec![
             make_test_witness(1, merkle_root, &base_input),

@@ -455,5 +455,4 @@ mod tests {
         // Still invalid
         assert!(!service.is_valid_anchor(&anchor2));
     }
-
 }

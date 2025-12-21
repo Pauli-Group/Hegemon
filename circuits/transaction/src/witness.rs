@@ -130,14 +130,12 @@ impl TransactionWitness {
 
     pub fn public_inputs(&self) -> Result<TransactionPublicInputs, TransactionCircuitError> {
         let nullifiers = {
-            let mut list: Vec<[u8; 32]> =
-                self.nullifiers().iter().map(felts_to_bytes32).collect();
+            let mut list: Vec<[u8; 32]> = self.nullifiers().iter().map(felts_to_bytes32).collect();
             list.resize(MAX_INPUTS, [0u8; 32]);
             list
         };
         let commitments = {
-            let mut list: Vec<[u8; 32]> =
-                self.commitments().iter().map(felts_to_bytes32).collect();
+            let mut list: Vec<[u8; 32]> = self.commitments().iter().map(felts_to_bytes32).collect();
             list.resize(MAX_OUTPUTS, [0u8; 32]);
             list
         };
@@ -221,6 +219,7 @@ pub(crate) mod serde_bytes32 {
 
     use serde::Deserialize;
 }
+#[allow(dead_code)]
 pub(crate) mod serde_felt {
     use serde::{Deserializer, Serializer};
     use winterfell::math::fields::f64::BaseElement;

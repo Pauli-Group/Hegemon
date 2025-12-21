@@ -36,16 +36,8 @@ impl TransactionTrace {
             .unwrap_or(0);
         Ok(Self {
             merkle_root: witness.merkle_root,
-            nullifiers: witness
-                .nullifiers()
-                .iter()
-                .map(felts_to_bytes32)
-                .collect(),
-            commitments: witness
-                .commitments()
-                .iter()
-                .map(felts_to_bytes32)
-                .collect(),
+            nullifiers: witness.nullifiers().iter().map(felts_to_bytes32).collect(),
+            commitments: witness.commitments().iter().map(felts_to_bytes32).collect(),
             balance_slots,
             native_delta,
             fee: witness.fee,

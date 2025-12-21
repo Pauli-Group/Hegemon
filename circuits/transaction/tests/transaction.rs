@@ -158,7 +158,7 @@ fn verification_fails_for_nullifier_mutation() {
     let (proving_key, verifying_key) = generate_keys();
     let mut proof = prove(&witness, &proving_key).expect("proof generation");
     proof.nullifiers[0][0] ^= 0x01; // tamper with nullifier
-                                      // With real STARK proofs, tampering with public inputs causes verification failure.
+                                    // With real STARK proofs, tampering with public inputs causes verification failure.
     let err = verify(&proof, &verifying_key).expect_err("expected failure");
     // STARK proofs return generic constraint violation for any tampering
     assert!(

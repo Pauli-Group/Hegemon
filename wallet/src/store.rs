@@ -1136,7 +1136,8 @@ mod tests {
         let note = NotePlaintext::random(10, 0, crate::notes::MemoPlaintext::default(), &mut rng);
         let ciphertext = crate::notes::NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
         let recovered = ivk.decrypt_note(&ciphertext).unwrap();
-        let commitment = transaction_circuit::hashing::felts_to_bytes32(&recovered.note_data.commitment());
+        let commitment =
+            transaction_circuit::hashing::felts_to_bytes32(&recovered.note_data.commitment());
         store.append_commitments(&[(0, commitment)]).unwrap();
         store.register_ciphertext_index(0).unwrap();
         store
@@ -1179,7 +1180,9 @@ mod tests {
         };
 
         let migrated: WalletState = legacy_state.into();
-        let fvk = migrated.full_viewing_key.expect("full viewing key should migrate");
+        let fvk = migrated
+            .full_viewing_key
+            .expect("full viewing key should migrate");
         let rho = [5u8; 32];
         let position = 7u64;
         let expected = transaction_circuit::hashing::nullifier_bytes(

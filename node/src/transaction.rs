@@ -2,7 +2,10 @@ use std::time::Instant;
 
 use consensus::types::{BalanceTag, Commitment, Transaction as ConsensusTransaction};
 use protocol_versioning::VersionBinding;
-use transaction_circuit::{hashing::{felt_to_bytes32, Felt}, proof::TransactionProof};
+use transaction_circuit::{
+    hashing::{felt_to_bytes32, Felt},
+    proof::TransactionProof,
+};
 
 #[derive(Clone, Debug)]
 pub struct ValidatedTransaction {

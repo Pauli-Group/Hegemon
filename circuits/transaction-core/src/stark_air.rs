@@ -298,10 +298,23 @@ impl ToElements<BaseElement> for TransactionPublicInputsStark {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CycleKind {
     Dummy,
-    InputCommitment { input: usize, chunk: usize },
-    InputMerkle { input: usize, level: usize, chunk: usize },
-    InputNullifier { input: usize, chunk: usize },
-    OutputCommitment { output: usize, chunk: usize },
+    InputCommitment {
+        input: usize,
+        chunk: usize,
+    },
+    InputMerkle {
+        input: usize,
+        level: usize,
+        chunk: usize,
+    },
+    InputNullifier {
+        input: usize,
+        chunk: usize,
+    },
+    OutputCommitment {
+        output: usize,
+        chunk: usize,
+    },
     Padding,
 }
 
@@ -324,7 +337,11 @@ fn cycle_kind(cycle: usize) -> CycleKind {
         if merkle_offset < MERKLE_CYCLES {
             let level = merkle_offset / MERKLE_CYCLES_PER_LEVEL;
             let chunk = merkle_offset % MERKLE_CYCLES_PER_LEVEL;
-            return CycleKind::InputMerkle { input, level, chunk };
+            return CycleKind::InputMerkle {
+                input,
+                level,
+                chunk,
+            };
         }
         return CycleKind::InputNullifier {
             input,
@@ -346,10 +363,10 @@ fn cycle_kind(cycle: usize) -> CycleKind {
 
 pub fn cycle_reset_domain(cycle: usize) -> Option<u64> {
     match cycle_kind(cycle) {
-        CycleKind::InputCommitment { chunk, .. } if chunk == 0 => Some(NOTE_DOMAIN_TAG),
-        CycleKind::InputMerkle { chunk, .. } if chunk == 0 => Some(MERKLE_DOMAIN_TAG),
-        CycleKind::InputNullifier { chunk, .. } if chunk == 0 => Some(NULLIFIER_DOMAIN_TAG),
-        CycleKind::OutputCommitment { chunk, .. } if chunk == 0 => Some(NOTE_DOMAIN_TAG),
+        CycleKind::InputCommitment { chunk: 0, .. } => Some(NOTE_DOMAIN_TAG),
+        CycleKind::InputMerkle { chunk: 0, .. } => Some(MERKLE_DOMAIN_TAG),
+        CycleKind::InputNullifier { chunk: 0, .. } => Some(NULLIFIER_DOMAIN_TAG),
+        CycleKind::OutputCommitment { chunk: 0, .. } => Some(NOTE_DOMAIN_TAG),
         _ => None,
     }
 }
@@ -800,17 +817,13 @@ impl Air for TransactionAirStark {
         let right_01 = current[COL_MERKLE_RIGHT_01];
         let not_dir = one - dir;
 
-        result[idx] =
-            absorb_flag * left_23 * not_dir * (current[COL_IN0] - current[COL_OUT2]);
+        result[idx] = absorb_flag * left_23 * not_dir * (current[COL_IN0] - current[COL_OUT2]);
         idx += 1;
-        result[idx] =
-            absorb_flag * left_23 * not_dir * (current[COL_IN1] - current[COL_OUT3]);
+        result[idx] = absorb_flag * left_23 * not_dir * (current[COL_IN1] - current[COL_OUT3]);
         idx += 1;
-        result[idx] =
-            absorb_flag * left_01 * not_dir * (current[COL_IN0] - current[COL_OUT0]);
+        result[idx] = absorb_flag * left_01 * not_dir * (current[COL_IN0] - current[COL_OUT0]);
         idx += 1;
-        result[idx] =
-            absorb_flag * left_01 * not_dir * (current[COL_IN1] - current[COL_OUT1]);
+        result[idx] = absorb_flag * left_01 * not_dir * (current[COL_IN1] - current[COL_OUT1]);
         idx += 1;
         result[idx] = absorb_flag * right_23 * dir * (current[COL_IN0] - current[COL_OUT2]);
         idx += 1;
@@ -829,11 +842,11 @@ impl Air for TransactionAirStark {
         result[idx] = capture * (one - absorb_flag);
         idx += 1;
         // carry/update captured outputs
-        result[idx] = next[COL_OUT0]
-            - (capture * current[COL_S0] + (one - capture) * current[COL_OUT0]);
+        result[idx] =
+            next[COL_OUT0] - (capture * current[COL_S0] + (one - capture) * current[COL_OUT0]);
         idx += 1;
-        result[idx] = next[COL_OUT1]
-            - (capture * current[COL_S1] + (one - capture) * current[COL_OUT1]);
+        result[idx] =
+            next[COL_OUT1] - (capture * current[COL_S1] + (one - capture) * current[COL_OUT1]);
         idx += 1;
 
         // capture2 flag must be boolean
@@ -844,11 +857,11 @@ impl Air for TransactionAirStark {
         result[idx] = capture2 * (one - absorb_flag);
         idx += 1;
         // carry/update captured outputs
-        result[idx] = next[COL_OUT2]
-            - (capture2 * current[COL_S0] + (one - capture2) * current[COL_OUT2]);
+        result[idx] =
+            next[COL_OUT2] - (capture2 * current[COL_S0] + (one - capture2) * current[COL_OUT2]);
         idx += 1;
-        result[idx] = next[COL_OUT3]
-            - (capture2 * current[COL_S1] + (one - capture2) * current[COL_OUT3]);
+        result[idx] =
+            next[COL_OUT3] - (capture2 * current[COL_S1] + (one - capture2) * current[COL_OUT3]);
         idx += 1;
 
         // note start flags: tie commitment inputs to note values/assets
@@ -1174,11 +1187,21 @@ mod tests {
             input_flags: vec![BaseElement::ONE, BaseElement::ZERO],
             output_flags: vec![BaseElement::ONE, BaseElement::ZERO],
             nullifiers: vec![
-                [BaseElement::new(123), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                [
+                    BaseElement::new(123),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
                 zero,
             ],
             commitments: vec![
-                [BaseElement::new(456), BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO],
+                [
+                    BaseElement::new(456),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
                 zero,
             ],
             fee: BaseElement::ZERO,

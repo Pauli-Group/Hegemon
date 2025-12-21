@@ -2,6 +2,9 @@
 //!
 //! This module provides verification of batch transaction proofs.
 
+use alloc::format;
+use alloc::string::ToString;
+use alloc::vec;
 use winter_crypto::hashers::Blake3_256;
 use winterfell::{
     crypto::{DefaultRandomCoin, MerkleTree},
@@ -15,7 +18,7 @@ use crate::public_inputs::BatchPublicInputs;
 
 type Blake3 = Blake3_256<BaseElement>;
 
-#[cfg(all(feature = "production", feature = "stark-fast"))]
+#[cfg(all(feature = "production", feature = "stark-fast", not(clippy)))]
 compile_error!("feature \"production\" cannot be combined with \"stark-fast\"");
 
 /// Verify a batch STARK proof.
@@ -67,7 +70,7 @@ fn default_acceptable_options() -> winterfell::ProofOptions {
 }
 
 /// Fast acceptable options for verification (used in testing).
-#[cfg(feature = "stark-fast")]
+#[cfg(all(feature = "stark-fast", not(feature = "production")))]
 fn fast_acceptable_options() -> winterfell::ProofOptions {
     winterfell::ProofOptions::new(
         8,

@@ -16,8 +16,8 @@ use winterfell::{
 
 use crate::air::{SettlementAir, SettlementPublicInputs};
 use crate::constants::{
-    ABSORB_CYCLES, COL_IN0, COL_IN1, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH,
-    INPUT_PAIRS_PER_TRACE, PADDED_INPUT_COUNT, SETTLEMENT_DOMAIN_TAG, TRACE_LENGTH, TRACE_WIDTH,
+    ABSORB_CYCLES, COL_IN0, COL_IN1, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH, INPUT_PAIRS_PER_TRACE,
+    PADDED_INPUT_COUNT, SETTLEMENT_DOMAIN_TAG, TRACE_LENGTH, TRACE_WIDTH,
 };
 use crate::hashing::{poseidon_round, Felt};
 

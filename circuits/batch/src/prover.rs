@@ -143,8 +143,9 @@ impl BatchTransactionProver {
             }
         }
 
-        let anchor = bytes32_to_felts(&anchor)
-            .ok_or(BatchCircuitError::InvalidPublicInputs("anchor not canonical".into()))?;
+        let anchor = bytes32_to_felts(&anchor).ok_or(BatchCircuitError::InvalidPublicInputs(
+            "anchor not canonical".into(),
+        ))?;
 
         // Collect all nullifiers and commitments
         let mut nullifiers = Vec::with_capacity(batch_size * MAX_INPUTS);

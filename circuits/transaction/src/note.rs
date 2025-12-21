@@ -84,8 +84,8 @@ impl MerklePath {
 }
 
 pub(crate) mod serde_merkle_path {
-    use serde::{de::SeqAccess, de::Visitor, ser::SerializeSeq, Deserializer, Serializer};
     use crate::hashing::{bytes32_to_felts, felts_to_bytes32, HashFelt};
+    use serde::{de::SeqAccess, de::Visitor, ser::SerializeSeq, Deserializer, Serializer};
 
     pub fn serialize<S>(value: &Vec<HashFelt>, serializer: S) -> Result<S::Ok, S::Error>
     where

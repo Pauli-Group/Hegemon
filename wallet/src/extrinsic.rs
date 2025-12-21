@@ -445,6 +445,7 @@ impl ExtrinsicBuilder {
 /// **Note**: SLH-DSA signatures are ~5x larger than ML-DSA (17KB vs 3.3KB),
 /// which increases transaction size significantly. Use ML-DSA for routine
 /// transactions and reserve SLH-DSA for long-lived trust roots or governance.
+#[allow(dead_code)]
 pub struct SlhDsaExtrinsicBuilder {
     /// SLH-DSA signing key
     signing_key: SlhDsaSecretKey,
@@ -454,6 +455,7 @@ pub struct SlhDsaExtrinsicBuilder {
     account_id: [u8; 32],
 }
 
+#[allow(dead_code)]
 impl SlhDsaExtrinsicBuilder {
     /// Create a new SLH-DSA extrinsic builder from a seed
     ///
@@ -483,6 +485,23 @@ impl SlhDsaExtrinsicBuilder {
     /// Get the public key bytes
     pub fn public_key_bytes(&self) -> Vec<u8> {
         self.public_key.to_bytes()
+    }
+
+    /// Build a signed balance transfer extrinsic.
+    pub fn build_transfer(
+        &self,
+        recipient: &[u8; 32],
+        amount: u128,
+        nonce: Nonce,
+        era: Era,
+        tip: u128,
+        metadata: &ChainMetadata,
+    ) -> Result<Vec<u8>, WalletError> {
+        let encoded_call = encode_balances_transfer_call(recipient, amount);
+        let encoded_extra = encode_signed_extra(nonce, &era, tip);
+        let payload = build_sign_payload(&encoded_call, &encoded_extra, metadata);
+        let signature = self.sign_payload(&payload);
+        Ok(self.build_extrinsic(&encoded_call, &signature, &encoded_extra))
     }
 
     /// Sign payload with SLH-DSA
@@ -588,6 +607,25 @@ fn build_sign_payload(
     } else {
         payload
     }
+}
+
+/// Encode a balances::transfer call.
+fn encode_balances_transfer_call(recipient: &[u8; 32], amount: u128) -> Vec<u8> {
+    // Pallet index for Balances (from construct_runtime! ordering).
+    const BALANCES_PALLET_INDEX: u8 = 5;
+    // Call index for Balances::transfer.
+    const BALANCES_TRANSFER_CALL_INDEX: u8 = 0;
+
+    let mut encoded = Vec::new();
+    encoded.push(BALANCES_PALLET_INDEX);
+    encoded.push(BALANCES_TRANSFER_CALL_INDEX);
+
+    // MultiAddress::Id(AccountId32)
+    encoded.push(0u8);
+    encoded.extend_from_slice(recipient);
+
+    encode_compact_u128(amount, &mut encoded);
+    encoded
 }
 
 // ============================================================================

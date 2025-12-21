@@ -144,7 +144,8 @@ impl TransactionPublicInputsStark {
             ));
         }
 
-        let is_zero_hash = |value: &[BaseElement; 4]| value.iter().all(|elem| *elem == BaseElement::ZERO);
+        let is_zero_hash =
+            |value: &[BaseElement; 4]| value.iter().all(|elem| *elem == BaseElement::ZERO);
 
         for (idx, flag) in self.input_flags.iter().enumerate() {
             if *flag != BaseElement::ZERO && *flag != BaseElement::ONE {
