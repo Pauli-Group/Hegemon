@@ -943,6 +943,7 @@ mod tests {
 
     #[cfg(feature = "stark-verify")]
     fn build_stark_fixture() -> (StarkProof, ShieldedTransferInputs, BindingHash) {
+        use std::sync::OnceLock;
         use transaction_circuit::hashing::felts_to_bytes32;
         use transaction_circuit::keys::generate_keys;
         use transaction_circuit::note::{
@@ -951,73 +952,79 @@ mod tests {
         use transaction_circuit::proof::prove;
         use transaction_circuit::witness::TransactionWitness;
 
-        let input_note = NoteData {
-            value: 1000,
-            asset_id: 0,
-            pk_recipient: [0u8; 32],
-            rho: [1u8; 32],
-            r: [2u8; 32],
-        };
+        static FIXTURE: OnceLock<(StarkProof, ShieldedTransferInputs, BindingHash)> = OnceLock::new();
+        FIXTURE
+            .get_or_init(|| {
+                let input_note = NoteData {
+                    value: 1000,
+                    asset_id: 0,
+                    pk_recipient: [0u8; 32],
+                    rho: [1u8; 32],
+                    r: [2u8; 32],
+                };
 
-        let output_note = NoteData {
-            value: 900,
-            asset_id: 0,
-            pk_recipient: [3u8; 32],
-            rho: [4u8; 32],
-            r: [5u8; 32],
-        };
+                let output_note = NoteData {
+                    value: 900,
+                    asset_id: 0,
+                    pk_recipient: [3u8; 32],
+                    rho: [4u8; 32],
+                    r: [5u8; 32],
+                };
 
-        let merkle_path = MerklePath::default();
-        let leaf = input_note.commitment();
-        let merkle_root = compute_merkle_root_from_path(leaf, 0, &merkle_path);
+                let merkle_path = MerklePath::default();
+                let position = 0xA5A5A5A5u64;
+                let leaf = input_note.commitment();
+                let merkle_root = compute_merkle_root_from_path(leaf, position, &merkle_path);
 
-        let witness = TransactionWitness {
-            inputs: vec![InputNoteWitness {
-                note: input_note,
-                position: 0,
-                rho_seed: [7u8; 32],
-                merkle_path,
-            }],
-            outputs: vec![OutputNoteWitness { note: output_note }],
-            sk_spend: [6u8; 32],
-            merkle_root: felts_to_bytes32(&merkle_root),
-            fee: 100,
-            value_balance: 0,
-            version: TransactionWitness::default_version_binding(),
-        };
+                let witness = TransactionWitness {
+                    inputs: vec![InputNoteWitness {
+                        note: input_note,
+                        position,
+                        rho_seed: [7u8; 32],
+                        merkle_path,
+                    }],
+                    outputs: vec![OutputNoteWitness { note: output_note }],
+                    sk_spend: [6u8; 32],
+                    merkle_root: felts_to_bytes32(&merkle_root),
+                    fee: 100,
+                    value_balance: 0,
+                    version: TransactionWitness::default_version_binding(),
+                };
 
-        let (proving_key, _verifying_key) = generate_keys();
-        let proof = prove(&witness, &proving_key).expect("proof generation");
-        let stark_inputs = proof
-            .stark_public_inputs
-            .as_ref()
-            .expect("stark public inputs");
+                let (proving_key, _verifying_key) = generate_keys();
+                let proof = prove(&witness, &proving_key).expect("proof generation");
+                let stark_inputs = proof
+                    .stark_public_inputs
+                    .as_ref()
+                    .expect("stark public inputs");
 
-        let inputs = ShieldedTransferInputs {
-            anchor: stark_inputs.merkle_root,
-            nullifiers: proof
-                .nullifiers
-                .iter()
-                .copied()
-                .filter(|nf| *nf != [0u8; 32])
-                .collect(),
-            commitments: proof
-                .commitments
-                .iter()
-                .copied()
-                .filter(|cm| *cm != [0u8; 32])
-                .collect(),
-            fee: stark_inputs.fee,
-            value_balance: 0,
-        };
+                let inputs = ShieldedTransferInputs {
+                    anchor: stark_inputs.merkle_root,
+                    nullifiers: proof
+                        .nullifiers
+                        .iter()
+                        .copied()
+                        .filter(|nf| *nf != [0u8; 32])
+                        .collect(),
+                    commitments: proof
+                        .commitments
+                        .iter()
+                        .copied()
+                        .filter(|cm| *cm != [0u8; 32])
+                        .collect(),
+                    fee: stark_inputs.fee,
+                    value_balance: 0,
+                };
 
-        let binding_hash = StarkVerifier::compute_binding_hash(&inputs);
+                let binding_hash = StarkVerifier::compute_binding_hash(&inputs);
 
-        (
-            StarkProof::from_bytes(proof.stark_proof),
-            inputs,
-            binding_hash,
-        )
+                (
+                    StarkProof::from_bytes(proof.stark_proof),
+                    inputs,
+                    binding_hash,
+                )
+            })
+            .clone()
     }
 
     #[test]
@@ -1322,7 +1329,7 @@ mod tests {
     fn stark_verifier_rejects_noncanonical_nullifier() {
         let verifier = StarkVerifier;
         let (proof, mut inputs, _binding_hash) = build_stark_fixture();
-        inputs.nullifiers[0][0] = 1u8; // Non-canonical high byte
+        inputs.nullifiers[0][..8].copy_from_slice(&u64::MAX.to_be_bytes());
 
         let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
         assert_eq!(result, VerificationResult::InvalidPublicInputs);
@@ -1333,7 +1340,7 @@ mod tests {
     fn stark_verifier_rejects_noncanonical_commitment() {
         let verifier = StarkVerifier;
         let (proof, mut inputs, _binding_hash) = build_stark_fixture();
-        inputs.commitments[0][0] = 1u8; // Non-canonical high byte
+        inputs.commitments[0][..8].copy_from_slice(&u64::MAX.to_be_bytes());
 
         let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
         assert_eq!(result, VerificationResult::InvalidPublicInputs);
@@ -1344,7 +1351,7 @@ mod tests {
     fn stark_verifier_rejects_noncanonical_anchor() {
         let verifier = StarkVerifier;
         let (proof, mut inputs, _binding_hash) = build_stark_fixture();
-        inputs.anchor[0] = 1u8; // Non-canonical high byte
+        inputs.anchor[..8].copy_from_slice(&u64::MAX.to_be_bytes());
 
         let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
         assert_eq!(result, VerificationResult::InvalidPublicInputs);

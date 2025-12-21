@@ -732,7 +732,7 @@ fn dummy_input() -> InputNoteWitness {
             rho: [0u8; 32],
             r: [0u8; 32],
         },
-        position: 0,
+        position: 0xA5A5_A5A5,
         rho_seed: [0u8; 32],
         merkle_path: crate::note::MerklePath::default(),
     }

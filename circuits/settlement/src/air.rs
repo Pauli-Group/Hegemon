@@ -8,7 +8,8 @@ use winterfell::{
 
 use crate::constants::{
     ABSORB_CYCLES, COL_IN0, COL_IN1, COL_S0, COL_S1, COL_S2, COMMITMENT_LIMBS, CYCLE_LENGTH,
-    MAX_INSTRUCTIONS, MAX_NULLIFIERS, NULLIFIER_LIMBS, PADDED_INPUT_COUNT, SETTLEMENT_DOMAIN_TAG,
+    INPUT_PAIRS_PER_TRACE, MAX_INSTRUCTIONS, MAX_NULLIFIERS, NULLIFIER_LIMBS, PADDED_INPUT_COUNT,
+    SETTLEMENT_DOMAIN_TAG,
 };
 use crate::hashing::{Felt, HashFelt};
 
@@ -94,12 +95,9 @@ impl Air for SettlementAir {
             TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
             TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
             TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(1, vec![CYCLE_LENGTH]),
         ];
 
-        let num_assertions = 2 * ABSORB_CYCLES + 9;
+        let num_assertions = 2 * INPUT_PAIRS_PER_TRACE + 7;
 
         Self {
             context: AirContext::new(trace_info, degrees, num_assertions, options),
@@ -122,10 +120,9 @@ impl Air for SettlementAir {
 
         let absorb_mask = periodic_values[0];
         let hash_mask = periodic_values[1];
-        let copy_mask = periodic_values[2];
-        let rc0 = periodic_values[3];
-        let rc1 = periodic_values[4];
-        let rc2 = periodic_values[5];
+        let rc0 = periodic_values[2];
+        let rc1 = periodic_values[3];
+        let rc2 = periodic_values[4];
 
         let input0 = current[COL_IN0];
         let input1 = current[COL_IN1];
@@ -159,37 +156,35 @@ impl Air for SettlementAir {
         result[4] = hash_mask * (next[COL_S1] - hash_s1);
         result[5] = hash_mask * (next[COL_S2] - hash_s2);
 
-        // Copy step: state remains unchanged.
-        result[6] = copy_mask * (next[COL_S0] - current[COL_S0]);
-        result[7] = copy_mask * (next[COL_S1] - current[COL_S1]);
-        result[8] = copy_mask * (next[COL_S2] - current[COL_S2]);
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
         let mut assertions = Vec::new();
 
+        let inputs = self.pub_inputs.input_elements();
+        debug_assert_eq!(inputs.len(), PADDED_INPUT_COUNT);
+        let init_in0 = inputs[0];
+        let init_in1 = inputs[1];
+
         assertions.push(Assertion::single(
             COL_S0,
             0,
-            BaseElement::new(SETTLEMENT_DOMAIN_TAG),
+            BaseElement::new(SETTLEMENT_DOMAIN_TAG) + init_in0,
         ));
-        assertions.push(Assertion::single(COL_S1, 0, BaseElement::ZERO));
+        assertions.push(Assertion::single(COL_S1, 0, init_in1));
         assertions.push(Assertion::single(COL_S2, 0, BaseElement::ONE));
 
-        let inputs = self.pub_inputs.input_elements();
-        debug_assert_eq!(inputs.len(), PADDED_INPUT_COUNT);
-
-        for cycle in 0..ABSORB_CYCLES {
+        for cycle in 0..INPUT_PAIRS_PER_TRACE {
             let row = cycle * CYCLE_LENGTH;
-            let in0 = inputs[2 * cycle];
-            let in1 = inputs[2 * cycle + 1];
+            let pair_index = cycle + 1;
+            let (in0, in1) = if pair_index < ABSORB_CYCLES {
+                (inputs[2 * pair_index], inputs[2 * pair_index + 1])
+            } else {
+                (BaseElement::ZERO, BaseElement::ZERO)
+            };
             assertions.push(Assertion::single(COL_IN0, row, in0));
             assertions.push(Assertion::single(COL_IN1, row, in1));
         }
-
-        let squeeze_row = ABSORB_CYCLES * CYCLE_LENGTH;
-        assertions.push(Assertion::single(COL_IN0, squeeze_row, BaseElement::ZERO));
-        assertions.push(Assertion::single(COL_IN1, squeeze_row, BaseElement::ZERO));
 
         let row_01 = commitment_row_01();
         let row_23 = commitment_row_23();
@@ -221,7 +216,6 @@ impl Air for SettlementAir {
         vec![
             absorb_mask(),
             hash_mask(),
-            copy_mask(),
             round_constants(0),
             round_constants(1),
             round_constants(2),
@@ -231,27 +225,16 @@ impl Air for SettlementAir {
 
 fn absorb_mask() -> Vec<BaseElement> {
     let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
-    mask[0] = BaseElement::ONE;
+    mask[CYCLE_LENGTH - 1] = BaseElement::ONE;
     mask
 }
 
 fn hash_mask() -> Vec<BaseElement> {
     let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
     for (idx, slot) in mask.iter_mut().enumerate() {
-        if (1..=transaction_core::constants::POSEIDON_ROUNDS).contains(&idx) {
+        if idx < transaction_core::constants::POSEIDON_ROUNDS {
             *slot = BaseElement::ONE;
         }
-    }
-    mask
-}
-
-fn copy_mask() -> Vec<BaseElement> {
-    let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
-    for slot in mask
-        .iter_mut()
-        .skip(transaction_core::constants::POSEIDON_ROUNDS + 1)
-    {
-        *slot = BaseElement::ONE;
     }
     mask
 }
@@ -259,8 +242,8 @@ fn copy_mask() -> Vec<BaseElement> {
 fn round_constants(position: usize) -> Vec<BaseElement> {
     let mut column = Vec::with_capacity(CYCLE_LENGTH);
     for step in 0..CYCLE_LENGTH {
-        if (1..=transaction_core::constants::POSEIDON_ROUNDS).contains(&step) {
-            column.push(crate::hashing::poseidon_round_constant(step - 1, position));
+        if step < transaction_core::constants::POSEIDON_ROUNDS {
+            column.push(crate::hashing::poseidon_round_constant(step, position));
         } else {
             column.push(BaseElement::ZERO);
         }

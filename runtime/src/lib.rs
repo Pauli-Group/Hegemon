@@ -893,7 +893,7 @@ parameter_types! {
     pub const TreasuryPayoutPeriod: u64 = 10;
     pub const PowDifficulty: u32 = 0x3f00_ffff;
     pub const PowRetargetWindow: u32 = 120;
-    pub const PowTargetBlockTime: Moment = 20_000;
+    pub const PowTargetBlockTime: Moment = 60_000;
     pub const PowFutureDrift: Moment = 90_000;
 }
 

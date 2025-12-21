@@ -8,7 +8,7 @@ while preserving the project’s STARK-based execution model and nullifier accou
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
-| Target block interval | 20 seconds | Used for difficulty retargeting and throughput sizing. |
+| Target block interval | 60 seconds | Used for difficulty retargeting and throughput sizing. |
 | Difficulty window (`RETARGET_WINDOW`) | 120 blocks | Canonical window for recalculating the PoW target. |
 | Max timestamp skew | +90 seconds | Reject blocks whose timestamp exceeds local time + 90 s. |
 | Median-time-past window | 11 blocks | Block timestamp must be strictly greater than the median of the past 11 headers. |
@@ -75,7 +75,7 @@ Every 120 blocks the network retargets difficulty using the observed timestamps 
 
 Let:
 - `W = 120` (window length)
-- `T_target = 20 s` (target interval)
+- `T_target = 60 s` (target interval)
 - `target_prev` = target at the start of the window
 - `t_actual = timestamp_last − timestamp_window_start`
 
@@ -106,7 +106,7 @@ When comparing candidates:
 3. If a chain was previously marked invalid due to failed validation, it may never be selected regardless of work.
 
 Reorganizations are permitted whenever a fork with strictly greater work appears. Clients seeking probabilistic finality should
-wait for 120 confirmations (~40 minutes) before considering a transaction final given the assumed ≤30% adversarial hash share.
+wait for 120 confirmations (~2 hours) before considering a transaction final given the assumed ≤30% adversarial hash share.
 
 ## Nullifier Accounting
 
