@@ -871,6 +871,12 @@ impl SubstrateRpcClient {
     ) -> Result<[u8; 32], WalletError> {
         use crate::extrinsic::{Era, ExtrinsicBuilder, ShieldedTransferCall};
 
+        if bundle.value_balance != 0 {
+            return Err(WalletError::InvalidArgument(
+                "transparent pool disabled: value_balance must be 0",
+            ));
+        }
+
         // 1. Create extrinsic builder from seed
         let builder = ExtrinsicBuilder::from_seed(signing_seed);
 
@@ -1009,147 +1015,6 @@ impl SubstrateRpcClient {
         self.submit_extrinsic(&extrinsic).await
     }
 
-    /// Shield transparent funds into the shielded pool
-    ///
-    /// This converts transparent balance to a shielded note by calling
-    /// `pallet_shielded_pool::shield(amount, commitment, encrypted_note)`
-    ///
-    /// # Arguments
-    ///
-    /// * `amount` - Amount to shield (in smallest units)
-    /// * `commitment` - Note commitment (32 bytes, hash of note contents)
-    /// * `encrypted_note` - Encrypted note data for recipient
-    /// * `signing_seed` - 32-byte seed for ML-DSA key derivation
-    ///
-    /// # Returns
-    ///
-    /// The transaction hash (32 bytes) if accepted into the pool.
-    pub async fn submit_shield_signed(
-        &self,
-        amount: u128,
-        commitment: [u8; 32],
-        encrypted_note: crate::extrinsic::EncryptedNote,
-        signing_seed: &[u8; 32],
-    ) -> Result<[u8; 32], WalletError> {
-        use crate::extrinsic::{Era, ExtrinsicBuilder, ShieldCall};
-
-        // 1. Create extrinsic builder from seed
-        let builder = ExtrinsicBuilder::from_seed(signing_seed);
-
-        // 2. Get chain metadata
-        let metadata = self.get_chain_metadata().await?;
-        // eprintln!("DEBUG: Block number: {}", metadata.block_number);
-        // eprintln!("DEBUG: Genesis hash: 0x{}", hex::encode(&metadata.genesis_hash));
-        // eprintln!("DEBUG: Block hash: 0x{}", hex::encode(&metadata.block_hash));
-        // eprintln!("DEBUG: Spec version: {}", metadata.spec_version);
-        // eprintln!("DEBUG: Tx version: {}", metadata.tx_version);
-
-        // 3. Get account nonce
-        let nonce = self.get_nonce(&builder.account_id()).await?;
-        // eprintln!("DEBUG: Account nonce: {}", nonce);
-
-        // 4. Build the call
-        let call = ShieldCall::new(amount, commitment, encrypted_note);
-
-        // 5. Build mortal era (64 block validity)
-        // Use current block number directly - block_hash is the hash of this block
-        let era = Era::mortal(64, metadata.block_number);
-        // eprintln!("DEBUG: Era bytes: {:?}", era.encode());
-
-        // Calculate expected extra bytes
-        let era_bytes = era.encode().len();
-        let nonce_compact_bytes = if nonce < 64 {
-            1
-        } else if nonce < 16384 {
-            2
-        } else {
-            4
-        };
-        let tip_bytes = 1; // tip=0 is always 1 byte
-        let _extra_total = era_bytes + nonce_compact_bytes + tip_bytes;
-        // eprintln!("DEBUG: Extra bytes expected: {} (era={}, nonce_compact={}, tip={})",
-        //     extra_total, era_bytes, nonce_compact_bytes, tip_bytes);
-
-        // 6. Build and sign the extrinsic
-        let extrinsic = builder.build_shield(
-            &call, nonce, era, 0, // tip
-            &metadata,
-        )?;
-
-        // DEBUG: Detailed byte-by-byte analysis
-        // eprintln!("DEBUG: Extrinsic total length: {} bytes", extrinsic.len());
-
-        // Parse compact length prefix
-        let compact_mode = extrinsic[0] & 0b11;
-        let (_compact_value, compact_len) = match compact_mode {
-            0 => ((extrinsic[0] >> 2) as usize, 1),
-            1 => {
-                let v = u16::from_le_bytes([extrinsic[0], extrinsic[1]]) >> 2;
-                (v as usize, 2)
-            }
-            2 => {
-                let v =
-                    u32::from_le_bytes([extrinsic[0], extrinsic[1], extrinsic[2], extrinsic[3]])
-                        >> 2;
-                (v as usize, 4)
-            }
-            _ => {
-                let n = (extrinsic[0] >> 2) + 4;
-                (0usize, 1 + n as usize) // simplified
-            }
-        };
-        // eprintln!("DEBUG: Compact length: {} (encoded in {} bytes)", compact_value, compact_len);
-
-        let pos = compact_len;
-        // eprintln!("DEBUG: Version byte at {}: 0x{:02x} (expected 0x84)", pos, extrinsic[pos]);
-
-        let pos = pos + 1;
-        // eprintln!("DEBUG: MultiAddress variant at {}: 0x{:02x} (expected 0x00)", pos, extrinsic[pos]);
-
-        let pos = pos + 1;
-        // eprintln!("DEBUG: AccountId at {}: {}", pos, hex::encode(&extrinsic[pos..pos+32]));
-
-        let pos = pos + 32;
-        // eprintln!("DEBUG: Signature variant at {}: 0x{:02x} (expected 0x00 for MlDsa)", pos, extrinsic[pos]);
-
-        let pos = pos + 1;
-        // eprintln!("DEBUG: Signature (3309 bytes) starts at {}", pos);
-
-        let pos = pos + 3309;
-        // eprintln!("DEBUG: Public variant at {}: 0x{:02x} (expected 0x00)", pos, extrinsic[pos]);
-
-        let pos = pos + 1;
-        // eprintln!("DEBUG: Public key (1952 bytes) starts at {}", pos);
-
-        let pos = pos + 1952;
-        // eprintln!("DEBUG: Extra starts at {}", pos);
-        // eprintln!("DEBUG: Extra bytes: {}", hex::encode(&extrinsic[pos..pos+_extra_total]));
-
-        let pos = pos + _extra_total;
-        // eprintln!("DEBUG: Call starts at {}", pos);
-        // eprintln!("DEBUG: First 50 bytes of call: {}", hex::encode(&extrinsic[pos..pos+50.min(extrinsic.len()-pos)]));
-
-        // Verify call structure
-        // eprintln!("DEBUG: Pallet index: {} (expected 19)", extrinsic[pos]);
-        // eprintln!("DEBUG: Call index: {} (expected 1)", extrinsic[pos+1]);
-
-        // Calculate where kem_ciphertext should start
-        // Call: pallet(1) + call(1) + amount(16) + commitment(32) + ciphertext(611) = 661
-        let kem_start_in_call = 1 + 1 + 16 + 32 + 611;
-        let kem_start_absolute = pos + kem_start_in_call;
-        let kem_end = kem_start_absolute + 1088;
-        // eprintln!("DEBUG: kem_ciphertext should be at bytes {}-{}", kem_start_absolute, kem_end);
-        // eprintln!("DEBUG: Extrinsic ends at byte {}", extrinsic.len());
-
-        if kem_end > extrinsic.len() {
-            // eprintln!("DEBUG: ERROR! kem_ciphertext would extend {} bytes beyond extrinsic!", kem_end - extrinsic.len());
-        } else {
-            // eprintln!("DEBUG: kem_ciphertext fits within extrinsic ✓");
-        }
-
-        // 7. Submit
-        self.submit_extrinsic(&extrinsic).await
-    }
 }
 
 /// Shielded transfer request matching `hegemon_submitShieldedTransfer` RPC
@@ -1169,7 +1034,7 @@ struct ShieldedTransferRequest {
     binding_hash: String,
     /// Native fee encoded in the proof
     fee: u64,
-    /// Value balance (positive = shielding, negative = unshielding)
+    /// Value balance (must be 0 when no transparent pool is enabled)
     value_balance: i128,
 }
 

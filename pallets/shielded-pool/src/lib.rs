@@ -5,9 +5,8 @@
 //! ## Overview
 //!
 //! The shielded pool allows users to:
-//! - Shield transparent funds (deposit into shielded pool)
-//! - Transfer shielded funds privately
-//! - Unshield funds back to transparent balances
+//! - Transfer shielded funds privately inside the single PQ pool
+//! - Mint shielded coinbase notes as the sole issuance path
 //!
 //! ## Key Components
 //!
@@ -22,7 +21,7 @@
 //! 1. Anchor validation (Merkle root must be historical)
 //! 2. Nullifier uniqueness check (no double-spending)
 //! 3. ZK proof verification (transaction is valid)
-//! 4. Binding signature verification (value balance is correct)
+//! 4. Binding hash verification (public inputs are committed)
 //! 5. State update (add nullifiers, add commitments)
 
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -45,21 +44,16 @@ use verifier::{
 
 use frame_support::dispatch::DispatchResult;
 use frame_support::pallet_prelude::*;
-use frame_support::traits::{Currency, ExistenceRequirement, StorageVersion};
+use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
-use frame_support::PalletId;
 use frame_system::pallet_prelude::*;
 use log::{info, warn};
-use sp_runtime::traits::AccountIdConversion;
 use sp_runtime::transaction_validity::{
     InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity,
     ValidTransaction,
 };
 use sp_std::vec;
 use sp_std::vec::Vec;
-
-/// Pallet ID for deriving the pool account.
-const PALLET_ID: PalletId = PalletId(*b"shld/pol");
 
 /// Zero nullifier constant.
 ///
@@ -93,8 +87,7 @@ fn is_zero_commitment(cm: &[u8; 32]) -> bool {
 /// Weight information for pallet extrinsics.
 pub trait WeightInfo {
     fn shielded_transfer(nullifiers: u32, commitments: u32) -> Weight;
-    fn shield() -> Weight;
-    fn unshield() -> Weight;
+    fn mint_coinbase() -> Weight;
     fn update_verifying_key() -> Weight;
 }
 
@@ -110,11 +103,7 @@ impl WeightInfo for DefaultWeightInfo {
         )
     }
 
-    fn shield() -> Weight {
-        Weight::from_parts(50_000_000, 0)
-    }
-
-    fn unshield() -> Weight {
+    fn mint_coinbase() -> Weight {
         Weight::from_parts(50_000_000, 0)
     }
 
@@ -140,9 +129,6 @@ pub mod pallet {
         /// The overarching event type.
         #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-
-        /// Currency for transparent balance operations.
-        type Currency: Currency<Self::AccountId>;
 
         /// Origin that can update verifying keys.
         type AdminOrigin: EnsureOrigin<Self::RuntimeOrigin>;
@@ -184,10 +170,6 @@ pub mod pallet {
         /// Weight information.
         type WeightInfo: WeightInfo;
     }
-
-    /// Type alias for currency balance.
-    pub type BalanceOf<T> =
-        <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
     /// The Merkle tree for note commitments.
     #[pallet::storage]
@@ -315,26 +297,8 @@ pub mod pallet {
             nullifier_count: u32,
             /// Number of new commitments.
             commitment_count: u32,
-            /// Net value change (0 for shielded-to-shielded).
+            /// Net value change (must be 0 when no transparent pool is enabled).
             value_balance: i128,
-        },
-
-        /// Funds were shielded (transparent to shielded).
-        Shielded {
-            /// Account that shielded funds.
-            from: T::AccountId,
-            /// Amount shielded.
-            amount: BalanceOf<T>,
-            /// New commitment index.
-            commitment_index: u64,
-        },
-
-        /// Funds were unshielded (shielded to transparent).
-        Unshielded {
-            /// Account receiving funds.
-            to: T::AccountId,
-            /// Amount unshielded.
-            amount: BalanceOf<T>,
         },
 
         /// A new commitment was added to the tree.
@@ -429,10 +393,6 @@ pub mod pallet {
         DuplicateNullifierInTx,
         /// Binding signature verification failed.
         InvalidBindingHash,
-        /// Value balance overflow.
-        ValueBalanceOverflow,
-        /// Insufficient shielded pool balance.
-        InsufficientPoolBalance,
         /// Merkle tree is full.
         MerkleTreeFull,
         /// Merkle root history is full (history size too small).
@@ -443,10 +403,8 @@ pub mod pallet {
         InvalidCommitmentCount,
         /// Encrypted notes count doesn't match commitments.
         EncryptedNotesMismatch,
-        /// Insufficient transparent balance for shielding.
-        InsufficientBalance,
-        /// Shielding without a proof is disabled in production builds.
-        ShieldDisabled,
+        /// Transparent pool operations are disabled (value_balance must be zero).
+        TransparentPoolDisabled,
         /// Commitment bytes are not a canonical field encoding.
         InvalidCommitmentEncoding,
         /// Verifying key not found or disabled.
@@ -598,10 +556,7 @@ pub mod pallet {
         /// Execute a shielded transfer.
         ///
         /// This is the core privacy-preserving transfer function.
-        /// It can handle:
-        /// - Shielded to shielded transfers (value_balance = 0)
-        /// - Shielding (value_balance > 0, from transparent)
-        /// - Unshielding (value_balance < 0, to transparent)
+        /// Only shielded-to-shielded transfers are supported (value_balance must be 0).
         #[pallet::call_index(0)]
         #[pallet::weight(T::WeightInfo::shielded_transfer(
             nullifiers.len() as u32,
@@ -618,7 +573,7 @@ pub mod pallet {
             fee: u64,
             value_balance: i128,
         ) -> DispatchResult {
-            let who = ensure_signed(origin)?;
+            ensure_signed(origin)?;
 
             // SECURITY: Early size check to prevent DoS via oversized proofs.
             // This is the cheapest possible rejection - no deserialization or crypto ops.
@@ -644,6 +599,9 @@ pub mod pallet {
                 Error::<T>::InvalidAnchor
             );
 
+            // No transparent pool: reject any non-zero value balance.
+            ensure!(value_balance == 0, Error::<T>::TransparentPoolDisabled);
+
             // SECURITY: Count real (non-zero) nullifiers and validate transaction structure.
             // The STARK proof commits to exact input/output counts, so we must verify
             // that the number of real nullifiers is consistent with the claimed operation.
@@ -664,10 +622,9 @@ pub mod pallet {
                 }
             }
 
-            // For unshielding (value_balance < 0) or pure transfers (value_balance == 0 with outputs),
-            // there must be at least one input nullifier to spend from
+            // Outputs require at least one input nullifier to spend from.
             if value_balance <= 0 && !commitments.is_empty() && nullifiers.is_empty() {
-                // Attempting to create outputs or unshield without any inputs
+                // Attempting to create outputs without any inputs
                 return Err(Error::<T>::InvalidNullifierCount.into());
             }
 
@@ -726,34 +683,6 @@ pub mod pallet {
                 Error::<T>::InvalidBindingHash
             );
 
-            // Handle value balance (shielding/unshielding)
-            if value_balance > 0 {
-                // Shielding: transfer from transparent to pool
-                let amount = Self::i128_to_balance(value_balance)?;
-                T::Currency::transfer(
-                    &who,
-                    &Self::pool_account(),
-                    amount,
-                    ExistenceRequirement::KeepAlive,
-                )?;
-                PoolBalance::<T>::mutate(|b| *b = b.saturating_add(value_balance as u128));
-            } else if value_balance < 0 {
-                // Unshielding: transfer from pool to transparent
-                let amount = Self::i128_to_balance(-value_balance)?;
-                let pool_balance = PoolBalance::<T>::get();
-                ensure!(
-                    pool_balance >= (-value_balance) as u128,
-                    Error::<T>::InsufficientPoolBalance
-                );
-                T::Currency::transfer(
-                    &Self::pool_account(),
-                    &who,
-                    amount,
-                    ExistenceRequirement::AllowDeath,
-                )?;
-                PoolBalance::<T>::mutate(|b| *b = b.saturating_sub((-value_balance) as u128));
-            }
-
             // Add nullifiers to spent set
             // Note: Zero nullifiers were already rejected above, so no skip needed
             for nf in nullifiers.iter() {
@@ -801,68 +730,6 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Shield transparent funds (dev-only).
-        ///
-        /// WARNING: This call is disabled in production builds because it cannot bind the
-        /// transparent deposit amount to the shielded commitment without a proof.
-        /// Use `shielded_transfer` with a real STARK proof for production shielding.
-        #[pallet::call_index(1)]
-        #[pallet::weight(T::WeightInfo::shield())]
-        pub fn shield(
-            origin: OriginFor<T>,
-            amount: BalanceOf<T>,
-            commitment: [u8; 32],
-            encrypted_note: EncryptedNote,
-        ) -> DispatchResult {
-            let who = ensure_signed(origin)?;
-
-            ensure!(
-                !cfg!(feature = "production"),
-                Error::<T>::ShieldDisabled
-            );
-
-            ensure!(
-                transaction_core::hashing::is_canonical_bytes32(&commitment),
-                Error::<T>::InvalidCommitmentEncoding
-            );
-            ensure!(
-                !is_zero_commitment(&commitment),
-                Error::<T>::ZeroCommitmentSubmitted
-            );
-
-            // Transfer to pool
-            T::Currency::transfer(
-                &who,
-                &Self::pool_account(),
-                amount,
-                ExistenceRequirement::KeepAlive,
-            )?;
-
-            // Update pool balance
-            let amount_u128 = Self::balance_to_u128(amount);
-            PoolBalance::<T>::mutate(|b| *b = b.saturating_add(amount_u128));
-
-            // Add commitment to tree
-            let index = CommitmentIndex::<T>::get();
-            Commitments::<T>::insert(index, commitment);
-            EncryptedNotes::<T>::insert(index, encrypted_note);
-            CommitmentIndex::<T>::put(index + 1);
-
-            // Update Merkle tree
-            let commitments =
-                BoundedVec::<[u8; 32], T::MaxCommitmentsPerTx>::try_from(vec![commitment])
-                    .map_err(|_| Error::<T>::InvalidCommitmentCount)?;
-            Self::update_merkle_tree(&commitments)?;
-
-            Self::deposit_event(Event::Shielded {
-                from: who,
-                amount,
-                commitment_index: index,
-            });
-
-            Ok(())
-        }
-
         /// Update the verifying key.
         ///
         /// Can only be called by AdminOrigin (governance).
@@ -889,7 +756,7 @@ pub mod pallet {
         /// Mint coinbase reward directly to the shielded pool.
         ///
         /// This is an inherent extrinsic that creates a shielded note for the miner.
-        /// Unlike regular shielding, this creates new coins (no transparent input).
+        /// Unlike regular shielded transfers, this creates new coins (no transparent input).
         ///
         /// # Arguments
         /// * `coinbase_data` - The coinbase note data containing encrypted note and audit info
@@ -899,7 +766,7 @@ pub mod pallet {
         /// - Can only be called once per block
         /// - Commitment is verified against plaintext data
         #[pallet::call_index(3)]
-        #[pallet::weight(T::WeightInfo::shield())]
+        #[pallet::weight(T::WeightInfo::mint_coinbase())]
         pub fn mint_coinbase(
             origin: OriginFor<T>,
             coinbase_data: types::CoinbaseNoteData,
@@ -978,8 +845,7 @@ pub mod pallet {
         ///
         /// IMPORTANT: This call ONLY works for pure shielded transfers where
         /// value_balance = 0 (no value entering or leaving the shielded pool).
-        /// For shielding (transparent → shielded) or unshielding (shielded → transparent),
-        /// use the signed `shielded_transfer` call instead.
+        /// The signed `shielded_transfer` call also enforces value_balance = 0.
         #[pallet::call_index(4)]
         #[pallet::weight(T::WeightInfo::shielded_transfer(
             nullifiers.len() as u32,
@@ -1324,11 +1190,6 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
-        /// Get the pool account (derives from pallet ID).
-        pub fn pool_account() -> T::AccountId {
-            PALLET_ID.into_account_truncating()
-        }
-
         /// Ensure the shielded coinbase amount stays within the subsidy schedule.
         fn ensure_coinbase_subsidy(amount: u64) -> DispatchResult {
             let block_number = frame_system::Pallet::<T>::block_number();
@@ -1421,20 +1282,6 @@ pub mod pallet {
             Self::deposit_event(Event::MerkleRootUpdated { root: new_root });
 
             Ok(())
-        }
-
-        /// Convert i128 to Balance.
-        fn i128_to_balance(value: i128) -> Result<BalanceOf<T>, Error<T>> {
-            if value < 0 {
-                return Err(Error::<T>::ValueBalanceOverflow);
-            }
-            let value_u128 = value as u128;
-            BalanceOf::<T>::try_from(value_u128).map_err(|_| Error::<T>::ValueBalanceOverflow)
-        }
-
-        /// Convert Balance to u128.
-        fn balance_to_u128(balance: BalanceOf<T>) -> u128 {
-            balance.try_into().unwrap_or(0u128)
         }
 
         /// Get Merkle witness for a commitment at given index.

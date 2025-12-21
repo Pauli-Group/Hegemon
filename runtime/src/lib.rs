@@ -1447,7 +1447,6 @@ parameter_types! {
 
 impl pallet_shielded_pool::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
-    type Currency = Balances;
     type AdminOrigin = frame_system::EnsureRoot<AccountId>;
     type ProofVerifier = pallet_shielded_pool::verifier::StarkVerifier;
     type BatchProofVerifier = pallet_shielded_pool::verifier::StarkBatchVerifier;
@@ -1468,7 +1467,7 @@ construct_runtime!(
         Pow: pow::{Pallet, Call, Storage, Event<T>},
         Difficulty: pallet_difficulty::{Pallet, Call, Storage, Event<T>, Config<T>},
         Session: pallet_session::{Pallet, Call, Storage, Event<T>, Config<T>},
-        Balances: pallet_balances::{Pallet, Call, Storage, Config<T>, Event<T>},
+        Balances: pallet_balances::{Pallet, Storage, Config<T>, Event<T>},
         TransactionPayment: pallet_transaction_payment::{Pallet, Storage, Event<T>},
         Sudo: pallet_sudo::{Pallet, Call, Storage, Event<T>, Config<T>},
         Council: pallet_collective::<Instance1>::{Pallet, Call, Storage, Origin<T>, Event<T>},

@@ -226,23 +226,9 @@ pub struct ShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
     pub binding_hash: BindingHash,
     /// Native fee encoded in the proof.
     pub fee: u64,
-    /// Net value change (positive = deposit from transparent, negative = withdraw to transparent).
+    /// Net value change (must be 0 when no transparent pool is enabled).
     pub value_balance: i128,
 }
-
-/// Transfer direction for shielding/unshielding.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
-pub enum TransferType {
-    /// Transparent to shielded (shielding).
-    Shield,
-    /// Shielded to shielded (private transfer).
-    #[default]
-    ShieldedToShielded,
-    /// Shielded to transparent (unshielding).
-    Unshield,
-}
-
-impl DecodeWithMemTracking for TransferType {}
 
 /// Parameters for the STARK verifying key.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]

@@ -44,7 +44,7 @@ pub struct ShieldedTransferRequest {
     pub binding_hash: String,
     /// Native fee encoded in the proof
     pub fee: u64,
-    /// Value balance (positive = shielding, negative = unshielding)
+    /// Value balance (must be 0 when no transparent pool is enabled)
     pub value_balance: i128,
 }
 
@@ -136,30 +136,6 @@ pub struct ShieldedPoolStatus {
     pub last_update_block: u64,
 }
 
-/// Shield request (transparent -> shielded)
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ShieldRequest {
-    /// Amount to shield
-    pub amount: u128,
-    /// Note commitment (hex encoded)
-    pub commitment: String,
-    /// Encrypted note (base64 encoded)
-    pub encrypted_note: String,
-}
-
-/// Shield response
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ShieldResponse {
-    /// Whether shielding succeeded
-    pub success: bool,
-    /// Transaction hash if successful (hex encoded)
-    pub tx_hash: Option<String>,
-    /// Note index in the commitment tree
-    pub note_index: Option<u64>,
-    /// Error message if failed
-    pub error: Option<String>,
-}
-
 /// Shielded Transaction RPC API
 #[rpc(server, client, namespace = "hegemon")]
 pub trait ShieldedApi {
@@ -205,16 +181,6 @@ pub trait ShieldedApi {
     /// note count, nullifier count, and pool balance.
     #[method(name = "getShieldedPoolStatus")]
     async fn get_shielded_pool_status(&self) -> RpcResult<ShieldedPoolStatus>;
-
-    /// Shield transparent funds
-    ///
-    /// Deposits transparent funds into the shielded pool,
-    /// creating a new shielded note.
-    ///
-    /// # Parameters
-    /// - `request`: Shield request with amount and commitment
-    #[method(name = "shield")]
-    async fn shield(&self, request: ShieldRequest) -> RpcResult<ShieldResponse>;
 
     /// Check if a nullifier has been spent
     ///
@@ -266,14 +232,6 @@ pub trait ShieldedPoolService: Send + Sync {
 
     /// Get shielded pool status
     fn get_pool_status(&self) -> ShieldedPoolStatus;
-
-    /// Shield transparent funds
-    fn shield(
-        &self,
-        amount: u128,
-        commitment: [u8; 32],
-        encrypted_note: Vec<u8>,
-    ) -> Result<([u8; 32], u64), String>;
 
     /// Check if nullifier is spent
     fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool;
@@ -408,6 +366,15 @@ where
             }
         };
 
+        if request.value_balance != 0 {
+            return Ok(ShieldedTransferResponse {
+                success: false,
+                tx_hash: None,
+                block_number: None,
+                error: Some("Transparent pool disabled: value_balance must be 0".to_string()),
+            });
+        }
+
         // Submit to service
         match self.service.submit_shielded_transfer(
             proof,
@@ -487,55 +454,6 @@ where
 
     async fn get_shielded_pool_status(&self) -> RpcResult<ShieldedPoolStatus> {
         Ok(self.service.get_pool_status())
-    }
-
-    async fn shield(&self, request: ShieldRequest) -> RpcResult<ShieldResponse> {
-        // Decode commitment
-        let commitment = match hex_to_array32(&request.commitment) {
-            Ok(c) => c,
-            Err(e) => {
-                return Ok(ShieldResponse {
-                    success: false,
-                    tx_hash: None,
-                    note_index: None,
-                    error: Some(format!("Invalid commitment: {}", e)),
-                });
-            }
-        };
-
-        // Decode encrypted note
-        let encrypted_note = match base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            &request.encrypted_note,
-        ) {
-            Ok(n) => n,
-            Err(e) => {
-                return Ok(ShieldResponse {
-                    success: false,
-                    tx_hash: None,
-                    note_index: None,
-                    error: Some(format!("Invalid encrypted note: {}", e)),
-                });
-            }
-        };
-
-        match self
-            .service
-            .shield(request.amount, commitment, encrypted_note)
-        {
-            Ok((tx_hash, note_index)) => Ok(ShieldResponse {
-                success: true,
-                tx_hash: Some(hex::encode(tx_hash)),
-                note_index: Some(note_index),
-                error: None,
-            }),
-            Err(e) => Ok(ShieldResponse {
-                success: false,
-                tx_hash: None,
-                note_index: None,
-                error: Some(e),
-            }),
-        }
     }
 
     async fn is_nullifier_spent(&self, nullifier: String) -> RpcResult<bool> {
@@ -639,15 +557,6 @@ mod tests {
                 pool_balance: 1_000_000_000,
                 last_update_block: 100,
             }
-        }
-
-        fn shield(
-            &self,
-            _amount: u128,
-            _commitment: [u8; 32],
-            _encrypted_note: Vec<u8>,
-        ) -> Result<([u8; 32], u64), String> {
-            Ok(([0xcd; 32], 1001))
         }
 
         fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
@@ -837,66 +746,6 @@ mod tests {
         if !response.notes.is_empty() {
             assert_eq!(response.notes[0].index, 5);
         }
-    }
-
-    #[tokio::test]
-    async fn test_shield_operation() {
-        let service = Arc::new(MockShieldedService);
-        let rpc = ShieldedRpc::new(service);
-
-        let encrypted_note =
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &[1, 2, 3, 4]);
-
-        let request = ShieldRequest {
-            amount: 1_000_000,
-            commitment: hex::encode([0xaa; 32]),
-            encrypted_note,
-        };
-
-        let response = rpc.shield(request).await.unwrap();
-        assert!(response.success);
-        assert!(response.tx_hash.is_some());
-        assert_eq!(response.tx_hash.unwrap(), hex::encode([0xcd; 32]));
-        assert_eq!(response.note_index, Some(1001));
-        assert!(response.error.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_shield_invalid_commitment() {
-        let service = Arc::new(MockShieldedService);
-        let rpc = ShieldedRpc::new(service);
-
-        let encrypted_note =
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &[1, 2, 3, 4]);
-
-        // Invalid hex commitment
-        let request = ShieldRequest {
-            amount: 1_000_000,
-            commitment: "not-valid-hex-zzz".to_string(),
-            encrypted_note,
-        };
-
-        let response = rpc.shield(request).await.unwrap();
-        assert!(!response.success);
-        assert!(response.error.is_some());
-        assert!(response.error.unwrap().contains("Invalid commitment"));
-    }
-
-    #[tokio::test]
-    async fn test_shield_invalid_encrypted_note() {
-        let service = Arc::new(MockShieldedService);
-        let rpc = ShieldedRpc::new(service);
-
-        let request = ShieldRequest {
-            amount: 1_000_000,
-            commitment: hex::encode([0xaa; 32]),
-            encrypted_note: "not-valid-base64!!!".to_string(),
-        };
-
-        let response = rpc.shield(request).await.unwrap();
-        assert!(!response.success);
-        assert!(response.error.is_some());
-        assert!(response.error.unwrap().contains("Invalid encrypted note"));
     }
 
     #[tokio::test]

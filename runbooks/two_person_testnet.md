@@ -317,7 +317,6 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 | `wallet init` | Create new wallet |
 | `wallet status` | Show addresses and balances |
 | `wallet substrate-sync` | Sync with node |
-| `wallet substrate-shield` | Shield external funds (rarely needed with shielded coinbase) |
 | `wallet substrate-send` | Send shielded transaction |
 | `wallet export-viewing-key` | Export keys for watch-only |
 

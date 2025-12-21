@@ -110,7 +110,7 @@ pub struct BuiltShieldedTx {
     pub commitments: Vec<[u8; 32]>,
     /// Indices of spent notes in the wallet store.
     pub spent_note_indices: Vec<usize>,
-    /// Value balance (positive = shielding, negative = unshielding).
+    /// Value balance (must be 0 when no transparent pool is enabled).
     pub value_balance: i128,
     /// Fee paid.
     pub fee: u64,
@@ -271,6 +271,12 @@ impl<'a> ShieldedTxBuilder<'a> {
         let proof_result = self.prover.prove(&witness)?;
         stats.proving_time = proof_result.proving_time;
         stats.proof_size = proof_result.proof_size();
+
+        if proof_result.value_balance != 0 {
+            return Err(WalletError::InvalidArgument(
+                "transparent pool disabled: value_balance must be 0",
+            ));
+        }
 
         // Compute binding hash commitment (domain-separated Blake2-256 of public inputs)
         let binding_hash = self.compute_binding_hash(
@@ -541,56 +547,6 @@ impl<'a> ShieldedTxBuilder<'a> {
             .map(|note| fvk.compute_nullifier(&note.recovered.note.rho, note.position))
             .collect()
     }
-}
-
-/// Shield transparent funds into the shielded pool.
-///
-/// This creates a shielding transaction that moves transparent funds
-/// into the shielded pool, creating a new shielded note.
-#[derive(Clone, Debug)]
-pub struct ShieldingTx {
-    /// Commitment for the new note.
-    pub commitment: [u8; 32],
-    /// Encrypted note ciphertext.
-    pub encrypted_note: Vec<u8>,
-    /// Amount being shielded.
-    pub amount: u64,
-}
-
-/// Build a shielding transaction.
-///
-/// # Arguments
-///
-/// * `address` - Shielded address to receive the funds
-/// * `amount` - Amount to shield
-/// * `memo` - Optional memo
-pub fn build_shielding_tx(
-    address: &ShieldedAddress,
-    amount: u64,
-    memo: Option<String>,
-) -> Result<ShieldingTx, WalletError> {
-    let mut rng = OsRng;
-
-    let memo_plaintext = memo
-        .map(|m| MemoPlaintext::new(m.as_bytes().to_vec()))
-        .unwrap_or_default();
-
-    let note = NotePlaintext::random(amount, NATIVE_ASSET_ID, memo_plaintext, &mut rng);
-    let ciphertext = NoteCiphertext::encrypt(address, &note, &mut rng)?;
-
-    // Compute commitment
-    let note_data = note.to_note_data(address.pk_recipient);
-    let commitment = transaction_circuit::hashing::felts_to_bytes32(&note_data.commitment());
-
-    // Serialize ciphertext
-    let encrypted_note =
-        bincode::serialize(&ciphertext).map_err(|e| WalletError::Serialization(e.to_string()))?;
-
-    Ok(ShieldingTx {
-        commitment,
-        encrypted_note,
-        amount,
-    })
 }
 
 #[cfg(test)]

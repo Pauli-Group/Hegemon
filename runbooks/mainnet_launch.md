@@ -71,9 +71,8 @@ This document provides the pre-launch verification checklist and day-of-launch r
   - All at same block height
 
 - [ ] **Shielded Transactions Verified**
-  - Shield transaction: TX hash _________________
-  - Unshield transaction: TX hash _________________
-  - Transfer transaction: TX hash _________________
+  - Shielded transfer: TX hash _________________
+  - Coinbase mint (shielded): block hash _________________
 
 ### 📊 Performance Verified (T-7 days)
 
