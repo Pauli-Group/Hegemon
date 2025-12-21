@@ -48,11 +48,14 @@ All cryptographic operations are **post-quantum secure** using hash-based and la
 
 ## Extrinsics
 
-### `shield(amount, commitment, encrypted_note)`
-Deposit transparent funds into the shielded pool.
-
 ### `shielded_transfer(proof, nullifiers, commitments, ciphertexts, anchor, binding_hash, value_balance)`
-Execute a private transfer (or partial shield/unshield with value_balance).
+Execute a private transfer inside the shielded pool. `value_balance` must be 0 (no transparent pool).
+
+### `shielded_transfer_unsigned(proof, nullifiers, commitments, ciphertexts, anchor, binding_hash, fee)`
+Execute an unsigned shielded-to-shielded transfer; `value_balance` is fixed to 0.
+
+### `mint_coinbase(coinbase_data)` (inherent)
+Mint a shielded coinbase note as the only issuance path.
 
 ### `update_verifying_key(vk)` (admin only)
 Update the STARK verification parameters.

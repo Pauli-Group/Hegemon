@@ -116,9 +116,6 @@ enum Commands {
     /// Send using Substrate WebSocket RPC
     #[command(name = "substrate-send")]
     SubstrateSend(SubstrateSendArgs),
-    /// Shield transparent funds into the shielded pool
-    #[command(name = "substrate-shield")]
-    SubstrateShield(SubstrateShieldArgs),
     /// Send multiple transactions in a single batched proof
     #[command(name = "substrate-batch-send")]
     SubstrateBatchSend(SubstrateBatchSendArgs),
@@ -357,26 +354,6 @@ struct SubstrateSendArgs {
     dry_run: bool,
 }
 
-/// Arguments for Substrate WebSocket shield command
-#[derive(Parser)]
-struct SubstrateShieldArgs {
-    /// Path to wallet store file
-    #[arg(long)]
-    store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
-    ws_url: String,
-    /// Amount to shield (in smallest units)
-    #[arg(long)]
-    amount: u128,
-    /// Use Alice dev account (for testing with --dev chain)
-    #[arg(long, default_value_t = false)]
-    use_alice: bool,
-}
-
 /// Arguments for Substrate batch send (multiple transactions in one proof)
 #[derive(Parser)]
 struct SubstrateBatchSendArgs {
@@ -476,7 +453,6 @@ fn main() -> Result<()> {
         Commands::AccountId(args) => cmd_account_id(args),
         Commands::Send(args) => cmd_send(args),
         Commands::SubstrateSend(args) => cmd_substrate_send(args),
-        Commands::SubstrateShield(args) => cmd_substrate_shield(args),
         Commands::SubstrateBatchSend(args) => cmd_substrate_batch_send(args),
         Commands::ExportViewingKey(args) => cmd_export_viewing_key(args),
         Commands::PaymentProof(args) => cmd_payment_proof(args),
@@ -1536,12 +1512,6 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         anyhow::bail!("watch-only wallets cannot send");
     }
 
-    // Get the spend key for ML-DSA signing (only needed for signed extrinsics)
-    let derived = store
-        .derived_keys()?
-        .ok_or_else(|| anyhow!("watch-only wallet has no spend key"))?;
-    let signing_seed = derived.spend.to_bytes();
-
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
         .build()
@@ -1659,28 +1629,21 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         // Build transaction (creates STARK proof)
         println!("Building shielded transaction with STARK proof...");
         let built = build_transaction(&store_arc, &recipients, args.fee)?;
+        if built.bundle.value_balance != 0 {
+            return Err(anyhow!(
+                "transparent pool disabled: value_balance must be 0 (got {})",
+                built.bundle.value_balance
+            ));
+        }
+
         store_arc.mark_notes_pending(&built.spent_note_indexes, true)?;
 
-        // Check if this is a pure shielded-to-shielded transfer (value_balance = 0)
-        // If so, submit as unsigned - no transparent account needed!
-        let is_pure_shielded = built.bundle.value_balance == 0;
-
         let outgoing_disclosures = built.outgoing_disclosures.clone();
-        let result = if is_pure_shielded {
-            // Pure shielded transfer: submit unsigned
-            // The ZK proof authenticates the spend, no signature needed
-            println!("Submitting unsigned shielded-to-shielded transfer...");
-            println!("  (No transparent account required - ZK proof authenticates the spend)");
-            client
-                .submit_shielded_transfer_unsigned(&built.bundle)
-                .await
-        } else {
-            // Value entering/leaving shielded pool: need signed extrinsic
-            println!("Signing extrinsic with ML-DSA and submitting...");
-            client
-                .submit_shielded_transfer_signed(&built.bundle, &signing_seed)
-                .await
-        };
+        println!("Submitting unsigned shielded-to-shielded transfer...");
+        println!("  (No transparent account required - ZK proof authenticates the spend)");
+        let result = client
+            .submit_shielded_transfer_unsigned(&built.bundle)
+            .await;
 
         match result {
             Ok(tx_hash) => {
@@ -1712,77 +1675,6 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
                 store_arc.mark_notes_pending(&built.spent_note_indexes, false)?;
                 Err(anyhow!("Transaction submission failed: {}", e))
             }
-        }
-    })
-}
-
-/// Shield transparent funds into the shielded pool
-fn cmd_substrate_shield(args: SubstrateShieldArgs) -> Result<()> {
-    // Determine signing seed
-    let signing_seed: [u8; 32] = if args.use_alice {
-        // Alice dev account: blake2_256("//Alice") - must match gen_dev_account.rs
-        // Note: Uses Blake2b-256 (sp_crypto_hashing::blake2_256), not Blake2s-256
-        sp_crypto_hashing::blake2_256(b"//Alice")
-    } else {
-        let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
-        let store = WalletStore::open(&args.store, &passphrase)?;
-        if store.mode()? == WalletMode::WatchOnly {
-            anyhow::bail!("watch-only wallets cannot shield");
-        }
-        let derived = store
-            .derived_keys()?
-            .ok_or_else(|| anyhow!("watch-only wallet has no spend key"))?;
-        derived.spend.to_bytes()
-    };
-
-    let runtime = RuntimeBuilder::new_multi_thread()
-        .enable_all()
-        .build()
-        .context("failed to create tokio runtime")?;
-
-    runtime.block_on(async {
-        use blake2::{Blake2s256, Digest};
-        use wallet::extrinsic::{EncryptedNote, ExtrinsicBuilder};
-
-        println!("Connecting to {}...", args.ws_url);
-        let client = SubstrateRpcClient::connect(&args.ws_url)
-            .await
-            .map_err(|e| anyhow!("Failed to connect: {}", e))?;
-
-        // Get account info
-        let builder = ExtrinsicBuilder::from_seed(&signing_seed);
-        let account_id = builder.account_id();
-        println!("Using account: 0x{}", hex::encode(account_id));
-
-        // Generate note commitment
-        // In a real implementation, this would be properly encrypted using ML-KEM
-        let mut hasher = Blake2s256::new();
-        hasher.update(args.amount.to_le_bytes());
-        hasher.update(account_id);
-        hasher.update(b"shield_commitment_v1");
-        let commitment: [u8; 32] = hasher.finalize().into();
-
-        // Create encrypted note (in practice, use ML-KEM to encrypt)
-        let encrypted_note = EncryptedNote::default();
-
-        println!(
-            "Shielding {} units to commitment 0x{}...",
-            args.amount,
-            hex::encode(&commitment[..8])
-        );
-
-        match client
-            .submit_shield_signed(args.amount, commitment, encrypted_note, &signing_seed)
-            .await
-        {
-            Ok(tx_hash) => {
-                println!("✓ Shield transaction submitted successfully!");
-                println!("  TX Hash: 0x{}", hex::encode(tx_hash));
-                println!("  Amount: {} units", args.amount);
-                println!("  Commitment: 0x{}", hex::encode(commitment));
-                Ok(())
-            }
-            Err(e) => Err(anyhow!("Shield transaction failed: {}", e)),
         }
     })
 }

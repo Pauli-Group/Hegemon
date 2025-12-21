@@ -27,11 +27,14 @@ The visible proof is that production builds either (a) succeed with full cryptog
 - [x] (2025-12-20 09:05Z) Enforce shielded coinbase subsidy bounds and reject oversized proofs in unsigned validation.
 - [x] (2025-12-20 09:35Z) Enforce cross-pallet coinbase exclusion and gate inherent validation by source and local checks.
 - [x] (2025-12-20 10:15Z) Remove transparent coinbase pallet and fallback paths; align wallet encoding/tests with the new pallet order.
+- [x] (2025-12-20 12:30Z) Remove transparent pool paths: enforce value_balance = 0, delete shield extrinsic/RPC/CLI, disable balances calls, and update tests/docs/runbooks.
 
 ## Surprises & Discoveries
 
 - Observation: Wallet extrinsic encoding hard-codes pallet indices, so removing the Coinbase pallet shifts indices and would misroute shielded calls without updating the constants.
   Evidence: `wallet/src/extrinsic.rs` uses fixed `SHIELDED_POOL_INDEX` values alongside construct_runtime ordering comments and tests.
+- Observation: Transparent pool hooks still existed in `shielded_transfer` and the wallet/RPC layer even after coinbase cleanup; removing them required dropping `Currency` from the pallet config and updating RPC/CLI surfaces.
+  Evidence: `pallets/shielded-pool/src/lib.rs` used `value_balance` transfers; `wallet/src/bin/wallet.rs` exposed `substrate-shield`.
 
 ## Decision Log
 
@@ -75,6 +78,10 @@ The visible proof is that production builds either (a) succeed with full cryptog
   Rationale: Wallet extrinsics are manually encoded; incorrect indices would route calls to the wrong pallet and break shielded transfers.
   Date/Author: 2025-12-20 / Codex
 
+- Decision: Eliminate transparent pool surfaces by enforcing value_balance = 0, removing the shield extrinsic/RPC/CLI, and dropping the pallet Currency dependency while keeping Balances only for fees.
+  Rationale: DESIGN.md mandates no transparent pool; any production path that moves value between Balances and the shielded pool violates that guarantee.
+  Date/Author: 2025-12-20 / Codex
+
 ## Outcomes & Retrospective
 
 Delivered:
@@ -89,6 +96,7 @@ Delivered:
 - Dev-only shielding is disabled in production, unsigned shielded transfers enforce proof size limits, and fee range checks block modulus-malleable proofs.
 - Documentation, runbooks, and production checks updated to reflect protocol-breaking encoding changes and operational resets.
 - Transparent coinbase pallet and `HEGEMON_MINER_ACCOUNT` fallback removed; shielded coinbase is the only production reward path and wallet call indices/tests match the new runtime ordering.
+- Transparent pool paths removed: Balances calls disabled, shield extrinsic/RPC/CLI deleted, and `shielded_transfer` now enforces value_balance = 0 to prevent shielding/unshielding in production.
 
 Open items:
 - None in this ExecPlan scope.
@@ -102,7 +110,7 @@ This repository implements a single shielded pool with STARK proofs. A “note c
 
 The transaction circuit code lives under `circuits/transaction-core` and `circuits/transaction`. The proof verifier accepts a “fast” set of STARK options and the transaction proof `verify()` function falls back to a legacy consistency checker if no cryptographic proof bytes are present. In the wallet, the `FullViewingKey` currently stores the raw spend key, which is not a safe viewing key. The node’s Substrate client falls back to mock state execution with a zero state root when callbacks are missing. The wallet CLI has a batch send path that encodes an empty proof. All of these are compiled into production unless explicitly gated.
 
-The runtime previously included both a transparent coinbase pallet and the shielded pool pallet, while the node could fall back to `HEGEMON_MINER_ACCOUNT` for transparent rewards. Wallet extrinsics are manually encoded with hard-coded pallet indices in `wallet/src/extrinsic.rs`, so removing the transparent coinbase pallet shifts indices and requires updating those constants and tests to keep shielded calls routed correctly.
+The runtime previously included both a transparent coinbase pallet and the shielded pool pallet, while the node could fall back to `HEGEMON_MINER_ACCOUNT` for transparent rewards. `pallets/shielded-pool` also allowed `value_balance` to move funds between Balances and the pool, and the wallet/RPC layers exposed shielding helpers. Wallet extrinsics are manually encoded with hard-coded pallet indices in `wallet/src/extrinsic.rs`, so removing the transparent coinbase pallet shifts indices and requires updating those constants and tests to keep shielded calls routed correctly.
 
 Terms used in this plan:
 
@@ -170,6 +178,12 @@ Because wallet extrinsics are manually encoded, update `wallet/src/extrinsic.rs`
 
 End state: production builds have no transparent coinbase pallet or environment fallback, wallet-encoded extrinsics target the correct pallets, and shielded coinbase tests validate pool minting behavior.
 
+### Milestone 9: Remove transparent pool surfaces
+
+Enforce the single-pool design by removing any production path that moves value between Balances and the shielded pool. In `pallets/shielded-pool/src/lib.rs`, remove the `shield` extrinsic and its events/errors, drop `Currency` from the pallet config, and enforce `value_balance == 0` in `shielded_transfer` via a dedicated error. Update `pallets/shielded-pool/src/types.rs` and `pallets/shielded-pool/README.md` to remove shielding/unshielding semantics. In `runtime/src/lib.rs`, remove the Balances `Call` from `construct_runtime!` so transparent transfers cannot be dispatched. Update RPC and wallet surfaces to delete the `shield` request/handler, remove the `substrate-shield` CLI, and ensure signed/unsigned submissions reject non-zero `value_balance`. Update tests and runbooks to reflect the removed command and the no-transparent-pool requirement.
+
+End state: production builds cannot shield/unshield or submit Balances transfers, `value_balance` is always zero, and RPC/wallet documentation no longer references transparent shielding.
+
 ## Concrete Steps
 
 All commands below assume the working directory is the repository root.
@@ -209,6 +223,7 @@ Acceptance is observable:
 5. Non‑dev nodes refuse to start or mine when state execution is not wired.
 6. The batch‑send CLI path cannot emit empty proofs in production builds.
 7. The runtime has no transparent coinbase pallet or `HEGEMON_MINER_ACCOUNT` fallback, and `runtime/tests/coinbase_flow.rs` confirms shielded coinbase minting only updates `ShieldedPool::pool_balance`.
+8. Transparent pool operations are disabled: Balances has no callable extrinsics, `shielded_transfer` rejects non-zero `value_balance`, and RPC/CLI surfaces do not expose shielding helpers.
 
 Test expectations:
 
@@ -263,3 +278,4 @@ In `pallets/shielded-pool/src/types.rs`, rename `BindingSignature` to `BindingHa
 Dependencies should remain within the existing Winterfell and hash crates already in the workspace; avoid introducing new external hash crates unless strictly necessary, and document any new dependency in `DESIGN.md` and `docs/THREAT_MODEL.md`.
 
 Plan update (2025-12-20 10:15Z): Added Milestone 8 and related context/acceptance updates to remove the transparent coinbase pallet and fallbacks, because the design requires a single shielded pool and wallet encoders must track the new pallet ordering.
+Plan update (2025-12-20 12:30Z): Added Milestone 9 to remove transparent pool surfaces (value_balance enforcement, shield RPC/CLI removal, Balances call disablement) and updated progress/decisions/acceptance accordingly.

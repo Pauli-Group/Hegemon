@@ -387,7 +387,7 @@ nullifiers for spentness tracking without embedding `sk_spend`.
 
   * Offline helpers (`generate`, `address`, `tx-craft`, `scan`) that mirror the deterministic witness tooling described in DESIGN.md.
   * Legacy HTTP RPC wallet management (`init`, `sync`, `daemon`, `status`, `send`, `export-viewing-key`). `wallet init` writes an encrypted store (Argon2 + ChaCha20-Poly1305) containing the root secret or an imported viewing key. `wallet sync` and `wallet daemon` talk to `/wallet/{commitments,ciphertexts,nullifiers}` plus `/wallet/notes` and `/blocks/latest` to maintain a local Merkle tree/nullifier set, while `wallet send` crafts witnesses, proves them locally, and submits a `TransactionBundle` to `/transactions` before tracking the pending nullifiers.
-* Substrate RPC wallet management (`substrate-sync`, `substrate-daemon`, `substrate-send`, `substrate-batch-send` gated behind the `batch-proofs` feature) that use the WebSocket RPC for live wallets. `substrate-shield` remains dev-only; production shielding requires proof-backed `submitShieldedTransfer` via `substrate-send`. `wallet substrate-send` records outgoing disclosure records inside the encrypted store so on-demand payment proofs can be generated later.
+* Substrate RPC wallet management (`substrate-sync`, `substrate-daemon`, `substrate-send`, `substrate-batch-send` gated behind the `batch-proofs` feature) that use the WebSocket RPC for live wallets. `wallet substrate-send` records outgoing disclosure records inside the encrypted store so on-demand payment proofs can be generated later.
   * Compliance tooling (`payment-proof create`, `payment-proof verify`, `payment-proof purge`) that emits disclosure packages and verifies them against Merkle inclusion plus `hegemon_isValidAnchor` and the chain genesis hash.
 
 JSON fixtures for transaction inputs/recipients still follow the `transaction_circuit` `serde` representation so the witness builder plugs directly into existing proving code. `wallet/tests/cli.rs` exercises the offline commands via `cargo_bin_cmd!`, `wallet/tests/rpc_flow.rs` spins up a lightweight test node for send/receive flows, and `wallet/tests/disclosure_package.rs` covers payment-proof package generation plus tamper rejection without requiring a live node. The disclosure circuit itself is tested under `circuits/disclosure/tests/disclosure.rs`.
@@ -660,6 +660,7 @@ The circuit's public inputs (fed into its transcript) are:
 * For each input `i`: `input_active[i] ∈ {0,1}` and `nf_in[i]` is a 4-limb nullifier (inactive inputs must use all-zero limbs).
 * For each output `j`: `output_active[j] ∈ {0,1}` and `cm_out[j]` is a 4-limb commitment (inactive outputs must use all-zero limbs).
 * `fee_native ∈ F_p` and `value_balance` split into a sign bit plus a 64-bit magnitude so all values fit in one field element.
+  In production, `value_balance` is required to be zero because there is no transparent pool.
 
 The transaction envelope also carries `balance_slots` and a `balance_tag`, which are validated outside the STARK for now.
 `root_after` and any `txid` binding are handled at the block circuit layer (or a future transaction-circuit revision).

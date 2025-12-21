@@ -32,9 +32,7 @@ pub use scanner::{
     NoteScanner, PositionedNote, ScanResult, ScannedNote, ScannerConfig, ScannerStats,
     SharedScanner,
 };
-pub use shielded_tx::{
-    build_shielding_tx, BuiltShieldedTx, ProofStats, ShieldedOutput, ShieldedTxBuilder, ShieldingTx,
-};
+pub use shielded_tx::{BuiltShieldedTx, ProofStats, ShieldedOutput, ShieldedTxBuilder};
 pub use store::{
     OutgoingDisclosureDraft, OutgoingDisclosureRecord, PendingStatus, PendingTransaction,
     SpendableNote, TransferRecipient, WalletMode, WalletStore,

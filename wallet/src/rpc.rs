@@ -27,7 +27,7 @@ pub struct TransactionBundle {
     pub binding_hash: [u8; 64],
     /// Native fee encoded in the proof.
     pub fee: u64,
-    /// Value balance (positive = shielding, negative = unshielding).
+    /// Value balance (must be 0 when no transparent pool is enabled).
     pub value_balance: i128,
 }
 

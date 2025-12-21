@@ -97,7 +97,6 @@ parameter_types! {
 
 impl pallet_shielded_pool::Config for Test {
     type RuntimeEvent = RuntimeEvent;
-    type Currency = Balances;
     type AdminOrigin = frame_system::EnsureRoot<u64>;
     type ProofVerifier = TestProofVerifier;
     type BatchProofVerifier = TestBatchProofVerifier;
@@ -165,6 +164,22 @@ mod tests {
         EncryptedNote::default()
     }
 
+    fn valid_coinbase_data(amount: u64) -> crate::types::CoinbaseNoteData {
+        let recipient_address = [7u8; crate::types::DIVERSIFIED_ADDRESS_SIZE];
+        let public_seed = [9u8; 32];
+        #[allow(deprecated)]
+        let commitment =
+            crate::commitment::coinbase_commitment(&recipient_address, amount, &public_seed);
+
+        crate::types::CoinbaseNoteData {
+            commitment,
+            encrypted_note: valid_encrypted_note(),
+            recipient_address,
+            amount,
+            public_seed,
+        }
+    }
+
     #[test]
     fn validate_unsigned_rejects_zero_nullifier() {
         new_test_ext().execute_with(|| {
@@ -203,21 +218,18 @@ mod tests {
     }
 
     #[test]
-    fn shield_works() {
+    fn mint_coinbase_works() {
         new_test_ext().execute_with(|| {
-            let amount = 1000u128;
-            let commitment = [42u8; 32];
-            let encrypted_note = valid_encrypted_note();
+            let amount = 1000u64;
+            let coinbase_data = valid_coinbase_data(amount);
 
-            assert_ok!(Pallet::<Test>::shield(
-                RuntimeOrigin::signed(1),
-                amount,
-                commitment,
-                encrypted_note,
+            assert_ok!(Pallet::<Test>::mint_coinbase(
+                RuntimeOrigin::none(),
+                coinbase_data,
             ));
 
             // Check pool balance increased
-            assert_eq!(Pallet::<Test>::pool_balance(), amount);
+            assert_eq!(Pallet::<Test>::pool_balance(), amount as u128);
 
             // Check commitment was added
             assert!(Pallet::<Test>::commitments(0).is_some());
@@ -231,21 +243,10 @@ mod tests {
     #[test]
     fn shielded_transfer_with_valid_proof_works() {
         new_test_ext().execute_with(|| {
-            // First shield some funds
-            let amount = 1000u128;
-            let commitment = [42u8; 32];
             let encrypted_note = valid_encrypted_note();
 
-            assert_ok!(Pallet::<Test>::shield(
-                RuntimeOrigin::signed(1),
-                amount,
-                commitment,
-                encrypted_note.clone(),
-            ));
-
-            // Get the current Merkle root as anchor
-            let tree = MerkleTreeStorage::<Test>::get();
-            let anchor = tree.root();
+            // Use the genesis Merkle root as anchor
+            let anchor = MerkleTreeStorage::<Test>::get().root();
 
             // Now do a shielded transfer
             let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
@@ -275,16 +276,7 @@ mod tests {
     #[test]
     fn double_spend_rejected() {
         new_test_ext().execute_with(|| {
-            // Shield some funds
-            assert_ok!(Pallet::<Test>::shield(
-                RuntimeOrigin::signed(1),
-                1000,
-                [42u8; 32],
-                valid_encrypted_note(),
-            ));
-
-            let tree = MerkleTreeStorage::<Test>::get();
-            let anchor = tree.root();
+            let anchor = MerkleTreeStorage::<Test>::get().root();
 
             // First spend
             let nullifier = [99u8; 32];
@@ -361,15 +353,7 @@ mod tests {
     #[test]
     fn duplicate_nullifier_in_tx_rejected() {
         new_test_ext().execute_with(|| {
-            assert_ok!(Pallet::<Test>::shield(
-                RuntimeOrigin::signed(1),
-                1000,
-                [42u8; 32],
-                valid_encrypted_note(),
-            ));
-
-            let tree = MerkleTreeStorage::<Test>::get();
-            let anchor = tree.root();
+            let anchor = MerkleTreeStorage::<Test>::get().root();
 
             // Same nullifier twice
             let duplicate_nf = [1u8; 32];
@@ -438,15 +422,7 @@ mod tests {
     #[test]
     fn encrypted_notes_mismatch_rejected() {
         new_test_ext().execute_with(|| {
-            assert_ok!(Pallet::<Test>::shield(
-                RuntimeOrigin::signed(1),
-                1000,
-                [42u8; 32],
-                valid_encrypted_note(),
-            ));
-
-            let tree = MerkleTreeStorage::<Test>::get();
-            let anchor = tree.root();
+            let anchor = MerkleTreeStorage::<Test>::get().root();
 
             // 2 commitments but 1 encrypted note
             let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
@@ -538,15 +514,7 @@ mod tests {
     fn adversarial_empty_proof_rejected() {
         // Test A4 variant: Empty proof bytes
         new_test_ext().execute_with(|| {
-            assert_ok!(Pallet::<Test>::shield(
-                RuntimeOrigin::signed(1),
-                1000,
-                [42u8; 32],
-                valid_encrypted_note(),
-            ));
-
-            let tree = MerkleTreeStorage::<Test>::get();
-            let anchor = tree.root();
+            let anchor = MerkleTreeStorage::<Test>::get().root();
 
             let empty_proof = StarkProof::from_bytes(vec![]);
             let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
@@ -585,14 +553,29 @@ mod tests {
 
             // Add many commitments to push the old root out of history
             // MerkleRootHistorySize is 100, so we need > 100 new roots
+            let mut anchor = old_anchor;
             for i in 0..101u32 {
-                let commitment = [i as u8; 32];
-                assert_ok!(Pallet::<Test>::shield(
+                let byte = (i + 1) as u8;
+                let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                    vec![[byte; 32]].try_into().unwrap();
+                let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                    vec![[byte; 32]].try_into().unwrap();
+                let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                    vec![valid_encrypted_note()].try_into().unwrap();
+
+                assert_ok!(Pallet::<Test>::shielded_transfer(
                     RuntimeOrigin::signed(1),
-                    100,
-                    commitment,
-                    valid_encrypted_note(),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    valid_binding_hash(),
+                    0,
+                    0,
                 ));
+
+                anchor = MerkleTreeStorage::<Test>::get().root();
             }
 
             // Now try to use the old anchor
@@ -632,45 +615,78 @@ mod tests {
         new_test_ext().execute_with(|| {
             let commitment = [42u8; 32];
 
-            // Shield same commitment twice - should succeed
-            assert_ok!(Pallet::<Test>::shield(
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+
+            let nullifiers_a: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![[1u8; 32]].try_into().unwrap();
+            let commitments_a: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![commitment].try_into().unwrap();
+            let ciphertexts_a: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            assert_ok!(Pallet::<Test>::shielded_transfer(
                 RuntimeOrigin::signed(1),
-                1000,
-                commitment,
-                valid_encrypted_note(),
+                valid_proof(),
+                nullifiers_a,
+                commitments_a,
+                ciphertexts_a,
+                anchor,
+                valid_binding_hash(),
+                0,
+                0,
             ));
 
-            assert_ok!(Pallet::<Test>::shield(
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers_b: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![[2u8; 32]].try_into().unwrap();
+            let commitments_b: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![commitment].try_into().unwrap();
+            let ciphertexts_b: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
+
+            assert_ok!(Pallet::<Test>::shielded_transfer(
                 RuntimeOrigin::signed(1),
-                1000,
-                commitment, // Same commitment
-                valid_encrypted_note(),
+                valid_proof(),
+                nullifiers_b,
+                commitments_b,
+                ciphertexts_b,
+                anchor,
+                valid_binding_hash(),
+                0,
+                0,
             ));
 
-            // Both should be in the tree
-            assert_eq!(Pallet::<Test>::pool_balance(), 2000);
+            // Both commitments should be in the tree
+            assert_eq!(Pallet::<Test>::commitments(0), Some(commitment));
+            assert_eq!(Pallet::<Test>::commitments(1), Some(commitment));
         });
     }
 
     #[test]
-    fn adversarial_zero_value_shield() {
-        // Zero value shield should be rejected or handled
+    fn adversarial_nonzero_value_balance_rejected() {
         new_test_ext().execute_with(|| {
-            // This might be allowed or rejected depending on design
-            let result = Pallet::<Test>::shield(
-                RuntimeOrigin::signed(1),
-                0, // Zero value
-                [42u8; 32],
-                valid_encrypted_note(),
-            );
+            let anchor = MerkleTreeStorage::<Test>::get().root();
+            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+                vec![[1u8; 32]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+                vec![[2u8; 32]].try_into().unwrap();
+            let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
+                vec![valid_encrypted_note()].try_into().unwrap();
 
-            // Document behavior: is zero-value shielding allowed?
-            // For privacy, it might be useful to allow dummy transactions
-            // For now, just ensure it doesn't panic
-            match result {
-                Ok(_) => println!("Zero-value shield accepted (by design for privacy)"),
-                Err(e) => println!("Zero-value shield rejected: {:?}", e),
-            }
+            assert_noop!(
+                Pallet::<Test>::shielded_transfer(
+                    RuntimeOrigin::signed(1),
+                    valid_proof(),
+                    nullifiers,
+                    commitments,
+                    ciphertexts,
+                    anchor,
+                    valid_binding_hash(),
+                    0,
+                    1, // non-zero value_balance is forbidden
+                ),
+                crate::Error::<Test>::TransparentPoolDisabled
+            );
         });
     }
 
@@ -678,15 +694,7 @@ mod tests {
     fn adversarial_max_nullifiers_accepted() {
         // Verify we can use the maximum number of nullifiers
         new_test_ext().execute_with(|| {
-            assert_ok!(Pallet::<Test>::shield(
-                RuntimeOrigin::signed(1),
-                10000,
-                [42u8; 32],
-                valid_encrypted_note(),
-            ));
-
-            let tree = MerkleTreeStorage::<Test>::get();
-            let anchor = tree.root();
+            let anchor = MerkleTreeStorage::<Test>::get().root();
 
             // MaxNullifiersPerTx is 2
             let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
@@ -748,21 +756,8 @@ mod tests {
         new_test_ext().execute_with(|| {
             use crate::types::BatchStarkProof;
 
-            // First shield some funds to establish a valid anchor
-            let amount = 1000u128;
-            let commitment = [42u8; 32];
-            let encrypted_note = valid_encrypted_note();
-
-            assert_ok!(Pallet::<Test>::shield(
-                RuntimeOrigin::signed(1),
-                amount,
-                commitment,
-                encrypted_note.clone(),
-            ));
-
-            // Get the current Merkle root as anchor
-            let tree = MerkleTreeStorage::<Test>::get();
-            let anchor = tree.root();
+            // Use genesis anchor
+            let anchor = MerkleTreeStorage::<Test>::get().root();
 
             // Create batch proof for 2 transactions
             let batch_proof = BatchStarkProof::from_bytes(vec![1u8; 2048], 2);
@@ -814,7 +809,7 @@ mod tests {
             }
 
             // Check all commitments were added
-            let initial_index = 1u64; // After the shield above
+            let initial_index = 0u64;
             for (i, _cm) in commitments.iter().enumerate() {
                 assert!(
                     Pallet::<Test>::commitments(initial_index + i as u64).is_some(),
@@ -825,7 +820,7 @@ mod tests {
 
             // Check Merkle tree was updated
             let tree = MerkleTreeStorage::<Test>::get();
-            assert_eq!(tree.len(), 5); // 1 from shield + 4 from batch
+            assert_eq!(tree.len(), 4); // 4 from batch
         });
     }
 
