@@ -23,6 +23,10 @@ This document explains the attacker capabilities and design assumptions for each
 - **Proof bypass**: Production verification rejects missing STARK bytes or public inputs; legacy/fast paths are feature-gated and must not be enabled in production builds.
 - **Encoding malleability**: Commitments/nullifiers are 32-byte encodings of four field limbs; any limb ≥ field modulus is rejected to avoid alternate encodings.
 
+### `network/`
+
+- **Peer impersonation**: PQ transport identities must be derived from secret seeds stored with restrictive permissions (0600) or supplied via secure env overrides; seeds must never be derived from public peer IDs to prevent key prediction.
+
 ### `consensus/`
 
 - **Network DoS**: Attackers flood PQ-sized signatures and large STARK proofs. The Go net benchmark evaluates miner and pool throughput budgets with inflated payloads, and `METHODS.md` documents required admission-control thresholds for share telemetry.
