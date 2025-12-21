@@ -338,6 +338,7 @@ fn test_end_to_end_proof_security() {
 
     use protocol_versioning::VersionBinding;
     use transaction_circuit::{
+        hashing::{felts_to_bytes32, merkle_node},
         keys::generate_keys,
         note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
         proof, TransactionWitness,
@@ -368,16 +369,30 @@ fn test_end_to_end_proof_security() {
     let merkle_path = MerklePath {
         siblings: vec![[BaseElement::ZERO; 4]; CIRCUIT_MERKLE_DEPTH],
     };
+    let position = 0xA5A5A5A5u64;
+    let merkle_root = {
+        let mut current = input_note.commitment();
+        let mut pos = position;
+        for sibling in &merkle_path.siblings {
+            current = if pos & 1 == 0 {
+                merkle_node(current, *sibling)
+            } else {
+                merkle_node(*sibling, current)
+            };
+            pos >>= 1;
+        }
+        felts_to_bytes32(&current)
+    };
 
     let witness = TransactionWitness {
         sk_spend,
         fee: 100,
         value_balance: 0,
-        merkle_root: [0u8; 32],
+        merkle_root,
         version: VersionBinding::new(1, 1),
         inputs: vec![InputNoteWitness {
             note: input_note.clone(),
-            position: 0,
+            position,
             rho_seed: [7u8; 32],
             merkle_path: merkle_path.clone(),
         }],

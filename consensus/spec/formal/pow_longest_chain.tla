@@ -3,7 +3,7 @@ EXTENDS Naturals, TLC
 
 CONSTANTS
     RETARGET_WINDOW, \* 120
-    TARGET_INTERVAL, \* 20-second target interval (expressed in seconds)
+    TARGET_INTERVAL, \* 60-second target interval (expressed in seconds)
     MAX_TARGET,
     MIN_TARGET,
     MAX_SKEW, \* 90-second bound on timestamps

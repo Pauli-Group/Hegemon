@@ -65,7 +65,11 @@ impl Default for StarkProverConfig {
             num_queries: 32,
             enable_grinding: false,
             grinding_bits: 0,
-            max_proving_time: Duration::from_secs(60),
+            max_proving_time: if cfg!(debug_assertions) {
+                Duration::from_secs(300)
+            } else {
+                Duration::from_secs(60)
+            },
         }
     }
 }

@@ -50,14 +50,15 @@ impl SettlementProver {
 
         let mut columns = vec![vec![BaseElement::ZERO; TRACE_LENGTH]; TRACE_WIDTH];
         let mut state = [
-            BaseElement::new(SETTLEMENT_DOMAIN_TAG),
-            BaseElement::ZERO,
+            BaseElement::new(SETTLEMENT_DOMAIN_TAG) + inputs[0],
+            inputs[1],
             BaseElement::ONE,
         ];
 
         for cycle in 0..INPUT_PAIRS_PER_TRACE {
-            let (in0, in1) = if cycle < ABSORB_CYCLES {
-                (inputs[2 * cycle], inputs[2 * cycle + 1])
+            let pair_index = cycle + 1;
+            let (in0, in1) = if pair_index < ABSORB_CYCLES {
+                (inputs[2 * pair_index], inputs[2 * pair_index + 1])
             } else {
                 (BaseElement::ZERO, BaseElement::ZERO)
             };
@@ -71,15 +72,12 @@ impl SettlementProver {
 
                 if row + 1 < TRACE_LENGTH {
                     match step {
-                        0 => {
-                            state[0] += in0;
-                            state[1] += in1;
-                        }
-                        1..=transaction_core::constants::POSEIDON_ROUNDS => {
-                            poseidon_round(&mut state, step - 1);
+                        0..transaction_core::constants::POSEIDON_ROUNDS => {
+                            poseidon_round(&mut state, step);
                         }
                         _ => {
-                            // Copy step: keep state unchanged.
+                            state[0] += in0;
+                            state[1] += in1;
                         }
                     }
                 }

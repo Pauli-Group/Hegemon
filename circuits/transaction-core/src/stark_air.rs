@@ -494,14 +494,17 @@ impl Air for TransactionAirStark {
         degrees.push(TransitionConstraintDegree::new(2)); // merkle direction boolean
         degrees.push(TransitionConstraintDegree::new(2)); // merkle direction carry
         for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::new(3)); // merkle link constraints
+            degrees.push(TransitionConstraintDegree::with_cycles(3, vec![CYCLE_LENGTH]));
+            // merkle link constraints
         }
         degrees.push(TransitionConstraintDegree::new(2)); // capture0 boolean
-        degrees.push(TransitionConstraintDegree::new(2)); // capture0 only on absorb row
+        degrees.push(TransitionConstraintDegree::with_cycles(2, vec![CYCLE_LENGTH]));
+        // capture0 only on absorb row
         degrees.push(TransitionConstraintDegree::new(2)); // out0 carry/update
         degrees.push(TransitionConstraintDegree::new(2)); // out1 carry/update
         degrees.push(TransitionConstraintDegree::new(2)); // capture2 boolean
-        degrees.push(TransitionConstraintDegree::new(2)); // capture2 only on absorb row
+        degrees.push(TransitionConstraintDegree::with_cycles(2, vec![CYCLE_LENGTH]));
+        // capture2 only on absorb row
         degrees.push(TransitionConstraintDegree::new(2)); // out2 carry/update
         degrees.push(TransitionConstraintDegree::new(2)); // out3 carry/update
         for _ in 0..(MAX_INPUTS + MAX_OUTPUTS) {
@@ -583,10 +586,21 @@ impl Air for TransactionAirStark {
         let s1 = t1.exp(5u64.into());
         let s2 = t2.exp(5u64.into());
 
+        let mds = poseidon_constants::MDS_MATRIX;
+        let m00: E = E::from(BaseElement::new(mds[0][0]));
+        let m01: E = E::from(BaseElement::new(mds[0][1]));
+        let m02: E = E::from(BaseElement::new(mds[0][2]));
+        let m10: E = E::from(BaseElement::new(mds[1][0]));
+        let m11: E = E::from(BaseElement::new(mds[1][1]));
+        let m12: E = E::from(BaseElement::new(mds[1][2]));
+        let m20: E = E::from(BaseElement::new(mds[2][0]));
+        let m21: E = E::from(BaseElement::new(mds[2][1]));
+        let m22: E = E::from(BaseElement::new(mds[2][2]));
+
+        let hash_s0 = s0 * m00 + s1 * m01 + s2 * m02;
+        let hash_s1 = s0 * m10 + s1 * m11 + s2 * m12;
+        let hash_s2 = s0 * m20 + s1 * m21 + s2 * m22;
         let two: E = E::from(BaseElement::new(2));
-        let hash_s0 = s0 * two + s1 + s2;
-        let hash_s1 = s0 + s1 * two + s2;
-        let hash_s2 = s0 + s1 + s2 * two;
 
         let one = E::ONE;
         let not_first_row = one - first_row_mask;
@@ -815,23 +829,24 @@ impl Air for TransactionAirStark {
         let left_01 = current[COL_MERKLE_LEFT_01];
         let right_23 = current[COL_MERKLE_RIGHT_23];
         let right_01 = current[COL_MERKLE_RIGHT_01];
-        let not_dir = one - dir;
+        let next_dir = next[COL_DIR];
+        let not_next_dir = one - next_dir;
 
-        result[idx] = absorb_flag * left_23 * not_dir * (current[COL_IN0] - current[COL_OUT2]);
+        result[idx] = absorb_flag * left_23 * not_next_dir * (current[COL_IN0] - next[COL_OUT2]);
         idx += 1;
-        result[idx] = absorb_flag * left_23 * not_dir * (current[COL_IN1] - current[COL_OUT3]);
+        result[idx] = absorb_flag * left_23 * not_next_dir * (current[COL_IN1] - next[COL_OUT3]);
         idx += 1;
-        result[idx] = absorb_flag * left_01 * not_dir * (current[COL_IN0] - current[COL_OUT0]);
+        result[idx] = absorb_flag * left_01 * not_next_dir * (current[COL_IN0] - next[COL_OUT0]);
         idx += 1;
-        result[idx] = absorb_flag * left_01 * not_dir * (current[COL_IN1] - current[COL_OUT1]);
+        result[idx] = absorb_flag * left_01 * not_next_dir * (current[COL_IN1] - next[COL_OUT1]);
         idx += 1;
-        result[idx] = absorb_flag * right_23 * dir * (current[COL_IN0] - current[COL_OUT2]);
+        result[idx] = absorb_flag * right_23 * next_dir * (current[COL_IN0] - next[COL_OUT2]);
         idx += 1;
-        result[idx] = absorb_flag * right_23 * dir * (current[COL_IN1] - current[COL_OUT3]);
+        result[idx] = absorb_flag * right_23 * next_dir * (current[COL_IN1] - next[COL_OUT3]);
         idx += 1;
-        result[idx] = absorb_flag * right_01 * dir * (current[COL_IN0] - current[COL_OUT0]);
+        result[idx] = absorb_flag * right_01 * next_dir * (current[COL_IN0] - next[COL_OUT0]);
         idx += 1;
-        result[idx] = absorb_flag * right_01 * dir * (current[COL_IN1] - current[COL_OUT1]);
+        result[idx] = absorb_flag * right_01 * next_dir * (current[COL_IN1] - next[COL_OUT1]);
         idx += 1;
 
         // capture0 flag must be boolean
@@ -839,7 +854,8 @@ impl Air for TransactionAirStark {
         result[idx] = capture * (capture - one);
         idx += 1;
         // capture0 only on absorb rows
-        result[idx] = capture * (one - absorb_flag);
+        let capture_guard = current[COL_IN_ACTIVE0] + one;
+        result[idx] = capture * (one - absorb_flag) * capture_guard;
         idx += 1;
         // carry/update captured outputs
         result[idx] =
@@ -854,7 +870,7 @@ impl Air for TransactionAirStark {
         result[idx] = capture2 * (capture2 - one);
         idx += 1;
         // capture2 only on absorb rows
-        result[idx] = capture2 * (one - absorb_flag);
+        result[idx] = capture2 * (one - absorb_flag) * capture_guard;
         idx += 1;
         // carry/update captured outputs
         result[idx] =

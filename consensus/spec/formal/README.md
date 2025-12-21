@@ -7,7 +7,7 @@ highest-work branch and that probabilistic finality holds under the assumed hash
 ## Files
 
 - `pow_longest_chain.tla` – captures PoW retarget windows, timestamp bounds, and honest/adversarial mining actions.
-- `pow_longest_chain.cfg` – sets the canonical constants (120-block retarget window, 20 s target interval, 90 s skew bound,
+- `pow_longest_chain.cfg` – sets the canonical constants (120-block retarget window, 60 s target interval, 90 s skew bound,
   3/10 adversary ratio, and 120-block finality depth) and lists the invariants to check.
 
 ## Running TLC
