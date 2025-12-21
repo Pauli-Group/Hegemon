@@ -39,5 +39,8 @@ test-logs/
 # Node data directories
 data/
 
+# PQ network identity seeds
+pq-identity.seed
+
 # Debug output
 out.txt

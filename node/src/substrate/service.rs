@@ -146,9 +146,13 @@ use sp_core::H256;
 use sp_inherents::{InherentData, InherentDataProvider};
 use sp_runtime::traits::Header as HeaderT;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use rand::{rngs::OsRng, RngCore};
+use sha2::{Digest, Sha256};
 
 use epoch_circuit::{
     compute_proof_root, Epoch as EpochCircuit, RecursiveEpochProver as EpochRecursiveProver,
@@ -953,6 +957,137 @@ impl PqServiceConfig {
     }
 }
 
+const PQ_IDENTITY_SEED_ENV: &str = "HEGEMON_PQ_IDENTITY_SEED";
+const PQ_IDENTITY_SEED_PATH_ENV: &str = "HEGEMON_PQ_IDENTITY_SEED_PATH";
+const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
+
+fn pq_identity_seed_path(config: &Configuration) -> PathBuf {
+    std::env::var(PQ_IDENTITY_SEED_PATH_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| config.base_path.path().join(PQ_IDENTITY_SEED_FILE))
+}
+
+fn parse_pq_identity_seed_hex(value: &str) -> Result<[u8; 32], ServiceError> {
+    let trimmed = value.trim().strip_prefix("0x").unwrap_or(value.trim());
+    let bytes = hex::decode(trimmed)
+        .map_err(|err| ServiceError::Other(format!("invalid PQ identity seed hex: {err}")))?;
+    if bytes.len() != 32 {
+        return Err(ServiceError::Other(format!(
+            "PQ identity seed must be 32 bytes (got {})",
+            bytes.len()
+        )));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&bytes);
+    Ok(seed)
+}
+
+fn derive_seed(label: &[u8], seed: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(label);
+    hasher.update(seed);
+    hasher.finalize().into()
+}
+
+#[cfg(unix)]
+fn warn_if_seed_permissions_loose(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(metadata) = fs::metadata(path) {
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            tracing::warn!(
+                path = %path.display(),
+                mode = format!("{:o}", mode),
+                "PQ identity seed permissions are too open; expected 0600"
+            );
+        }
+    }
+}
+
+fn load_or_create_pq_identity_seed(config: &Configuration) -> Result<[u8; 32], ServiceError> {
+    if let Ok(seed_hex) = std::env::var(PQ_IDENTITY_SEED_ENV) {
+        let seed = parse_pq_identity_seed_hex(&seed_hex)?;
+        tracing::info!("Using PQ identity seed from HEGEMON_PQ_IDENTITY_SEED");
+        return Ok(seed);
+    }
+
+    let path = pq_identity_seed_path(config);
+    match fs::read_to_string(&path) {
+        Ok(contents) => {
+            let seed = parse_pq_identity_seed_hex(&contents)?;
+            #[cfg(unix)]
+            warn_if_seed_permissions_loose(&path);
+            tracing::info!(
+                path = %path.display(),
+                "Loaded PQ identity seed"
+            );
+            Ok(seed)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let mut seed = [0u8; 32];
+            OsRng.fill_bytes(&mut seed);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|e| {
+                    ServiceError::Other(format!(
+                        "failed to create PQ identity seed directory {}: {e}",
+                        parent.display()
+                    ))
+                })?;
+            }
+
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&path) {
+                Ok(mut file) => {
+                    let encoded = hex::encode(seed);
+                    file.write_all(encoded.as_bytes()).map_err(|e| {
+                        ServiceError::Other(format!(
+                            "failed to write PQ identity seed {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    file.write_all(b"\n").map_err(|e| {
+                        ServiceError::Other(format!(
+                            "failed to finalize PQ identity seed {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    tracing::info!(
+                        path = %path.display(),
+                        "Generated PQ identity seed"
+                    );
+                    Ok(seed)
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let contents = fs::read_to_string(&path).map_err(|e| {
+                        ServiceError::Other(format!(
+                            "failed to read PQ identity seed {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    let seed = parse_pq_identity_seed_hex(&contents)?;
+                    #[cfg(unix)]
+                    warn_if_seed_permissions_loose(&path);
+                    Ok(seed)
+                }
+                Err(err) => Err(ServiceError::Other(format!(
+                    "failed to create PQ identity seed {}: {err}",
+                    path.display()
+                ))),
+            }
+        }
+        Err(err) => Err(ServiceError::Other(format!(
+            "failed to read PQ identity seed {}: {err}",
+            path.display()
+        ))),
+    }
+}
+
 // =============================================================================
 // LEGACY PartialComponents AND new_partial() REMOVED
 // =============================================================================
@@ -1215,16 +1350,20 @@ pub fn new_partial_with_client(
         verbose_logging: pq_service_config.verbose_logging,
     };
 
+    // Load or create PQ identity seed and derive independent seeds.
+    let identity_seed = load_or_create_pq_identity_seed(config)?;
+    let network_seed = derive_seed(b"pq-network-keypair", &identity_seed);
+    let transport_seed = derive_seed(b"pq-noise-identity", &identity_seed);
+
     // Generate PQ network keypair for this node
-    let network_keypair = PqNetworkKeypair::generate()
+    let network_keypair = PqNetworkKeypair::from_seed(&network_seed)
         .map_err(|e| ServiceError::Other(format!("PQ network keypair generation failed: {e}")))?;
     tracing::info!(
         peer_id = %network_keypair.peer_id(),
-        "Generated PQ network keypair"
+        "Initialized PQ network keypair"
     );
 
     // Create PQ peer identity and transport
-    let node_seed = network_keypair.peer_id_bytes().to_vec();
 
     let pq_transport_config = PqTransportConfig {
         require_pq: pq_service_config.require_pq,
@@ -1232,7 +1371,7 @@ pub fn new_partial_with_client(
         verbose_logging: pq_service_config.verbose_logging,
     };
 
-    let pq_identity = PqPeerIdentity::new(&node_seed, pq_transport_config.clone());
+    let pq_identity = PqPeerIdentity::new(&transport_seed, pq_transport_config.clone());
 
     let substrate_transport_config = SubstratePqTransportConfig {
         require_pq: pq_service_config.require_pq,

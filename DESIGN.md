@@ -65,6 +65,7 @@ Where they're used:
 
   * Block producers sign block headers with ML-DSA.
   * Mining node identity keys = ML-DSA.
+  * PQ network identity seeds are generated from OS entropy, persisted under the node base path (for example `pq-identity.seed`) or provided via environment override, and never derived from public peer IDs.
   * Identity/session records support `SessionKey::Legacy` (existing `AuthorityId`) and `SessionKey::PostQuantum` (Dilithium/Falcon). The runtime migration in `pallet_identity` wraps any stored `AuthorityId` into `SessionKey::Legacy` on upgrade so operators inherit their previous keys before rotating into PQ-only bundles.
 * **User layer**:
 
