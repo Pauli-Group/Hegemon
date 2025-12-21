@@ -131,3 +131,4 @@ Ensure any new imports are added explicitly (e.g., `std::fs`, `rand::rngs::OsRng
 Plan update note: Initial creation of this ExecPlan for PQ identity seed persistence. Reason: implementing a security-critical fix with documented steps.
 Plan update note: Marked implementation/gitignore/docs steps complete and recorded domain-separated seed decision. Reason: reflect work completed and design choices made during implementation.
 Plan update note: Recorded build failure in Surprises section. Reason: capture validation blocker encountered during setup.
+Plan update note: Marked validation as blocked by the current `make node` build failure. Reason: keep Progress aligned with the observed blocker.
