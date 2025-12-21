@@ -1162,6 +1162,26 @@ impl pallet_oracles::Config for Runtime {
 }
 
 parameter_types! {
+    pub const StablecoinPolicyAdminRole: u32 = 9;
+    pub const MaxStablecoinOracleFeeds: u32 = 1;
+}
+
+impl pallet_stablecoin_policy::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type AssetId = u32;
+    type OracleFeedId = u32;
+    type AttestationId = u64;
+    type RoleId = u32;
+    type CredentialSchemaId = u32;
+    type IdentityTag = pallet_identity::pallet::IdentityTag<Runtime>;
+    type Identity = pallet_identity::Pallet<Runtime>;
+    type PolicyAdminRole = StablecoinPolicyAdminRole;
+    type AssetRegistry = pallet_asset_registry::Pallet<Runtime>;
+    type MaxOracleFeeds = MaxStablecoinOracleFeeds;
+    type WeightInfo = ();
+}
+
+parameter_types! {
     pub const DefaultAttestationVerifierParams: pallet_attestations::StarkVerifierParams =
         pallet_attestations::StarkVerifierParams {
             hash: pallet_attestations::StarkHashFunction::Blake3,
@@ -1445,6 +1465,76 @@ parameter_types! {
     pub const MerkleRootHistorySize: u32 = 100;
 }
 
+pub struct RuntimeStablecoinPolicyProvider;
+impl pallet_shielded_pool::StablecoinPolicyProvider<u32, u32, u64, BlockNumber>
+    for RuntimeStablecoinPolicyProvider
+{
+    fn policy(
+        asset_id: &u32,
+    ) -> Option<pallet_shielded_pool::StablecoinPolicySnapshot<u32, u32, u64, BlockNumber>> {
+        let policy = pallet_stablecoin_policy::Policies::<Runtime>::get(asset_id)?;
+        Some(pallet_shielded_pool::StablecoinPolicySnapshot {
+            asset_id: policy.asset_id,
+            oracle_feeds: policy.oracle_feeds.to_vec(),
+            attestation_id: policy.attestation_id,
+            min_collateral_ratio_ppm: policy.min_collateral_ratio_ppm,
+            max_mint_per_epoch: policy.max_mint_per_epoch,
+            oracle_max_age: policy.oracle_max_age,
+            policy_version: policy.policy_version,
+            active: policy.active,
+        })
+    }
+
+    fn policy_hash(asset_id: &u32) -> Option<[u8; 32]> {
+        pallet_stablecoin_policy::PolicyHashes::<Runtime>::get(asset_id)
+    }
+}
+
+pub struct RuntimeOracleCommitmentProvider;
+impl pallet_shielded_pool::OracleCommitmentProvider<u32, BlockNumber>
+    for RuntimeOracleCommitmentProvider
+{
+    fn latest_commitment(
+        feed_id: &u32,
+    ) -> Option<pallet_shielded_pool::OracleCommitmentSnapshot<BlockNumber>> {
+        let feed = pallet_oracles::Feeds::<Runtime>::get(feed_id)?;
+        let record = feed.latest_commitment?;
+        let bytes = record.commitment.to_vec();
+        if bytes.len() != 32 {
+            return None;
+        }
+        let mut commitment = [0u8; 32];
+        commitment.copy_from_slice(&bytes);
+        Some(pallet_shielded_pool::OracleCommitmentSnapshot {
+            commitment,
+            submitted_at: record.submitted_at,
+        })
+    }
+}
+
+pub struct RuntimeAttestationCommitmentProvider;
+impl pallet_shielded_pool::AttestationCommitmentProvider<u64, BlockNumber>
+    for RuntimeAttestationCommitmentProvider
+{
+    fn commitment(
+        commitment_id: &u64,
+    ) -> Option<pallet_shielded_pool::AttestationCommitmentSnapshot<BlockNumber>> {
+        let record = pallet_attestations::Commitments::<Runtime>::get(commitment_id)?;
+        let bytes = record.root.to_vec();
+        if bytes.len() != 32 {
+            return None;
+        }
+        let mut commitment = [0u8; 32];
+        commitment.copy_from_slice(&bytes);
+        let disputed = record.dispute != pallet_attestations::DisputeStatus::None;
+        Some(pallet_shielded_pool::AttestationCommitmentSnapshot {
+            commitment,
+            disputed,
+            created_at: record.created,
+        })
+    }
+}
+
 impl pallet_shielded_pool::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type AdminOrigin = frame_system::EnsureRoot<AccountId>;
@@ -1457,6 +1547,12 @@ impl pallet_shielded_pool::Config for Runtime {
     type MaxCommitmentsPerBatch = MaxCommitmentsPerBatch;
     type MerkleRootHistorySize = MerkleRootHistorySize;
     type MaxCoinbaseSubsidy = MaxSubsidy;
+    type StablecoinAssetId = u32;
+    type OracleFeedId = u32;
+    type AttestationId = u64;
+    type StablecoinPolicyProvider = RuntimeStablecoinPolicyProvider;
+    type OracleCommitmentProvider = RuntimeOracleCommitmentProvider;
+    type AttestationCommitmentProvider = RuntimeAttestationCommitmentProvider;
     type WeightInfo = pallet_shielded_pool::DefaultWeightInfo;
 }
 
@@ -1474,6 +1570,7 @@ construct_runtime!(
         CouncilMembership: pallet_membership::<Instance1>::{Pallet, Call, Storage, Event<T>},
         Treasury: pallet_treasury::{Pallet, Call, Storage, Event<T>},
         Oracles: pallet_oracles::{Pallet, Call, Storage, Event<T>},
+        StablecoinPolicy: pallet_stablecoin_policy::{Pallet, Call, Storage, Event<T>},
         Identity: pallet_identity::{Pallet, Call, Storage, Event<T>},
         Attestations: pallet_attestations::{Pallet, Call, Storage, Event<T>},
         AssetRegistry: pallet_asset_registry::{Pallet, Call, Storage, Event<T>},

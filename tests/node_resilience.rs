@@ -14,6 +14,7 @@ use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use transaction_circuit::proof::prove;
 use transaction_circuit::witness::TransactionWitness;
+use transaction_circuit::StablecoinPolicyBinding;
 use wallet::rpc::TransactionBundle;
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -68,6 +69,7 @@ fn sample_bundle(root: Commitment) -> TransactionBundle {
         merkle_root: root,
         fee: 1,
         value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
         version: TransactionWitness::default_version_binding(),
     };
 
@@ -112,6 +114,7 @@ fn sample_bundle(root: Commitment) -> TransactionBundle {
         binding_hash,
         fee: witness.fee,
         value_balance: witness.value_balance,
+        stablecoin: witness.stablecoin.clone(),
     }
 }
 

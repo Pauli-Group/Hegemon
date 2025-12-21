@@ -140,6 +140,7 @@ mod tests {
     use crate::rpo_verifier::verify_batch_proof_rpo;
     use transaction_circuit::hashing::{felts_to_bytes32, merkle_node, HashFelt};
     use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+    use transaction_circuit::StablecoinPolicyBinding;
 
     fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
         let mut current = leaf;
@@ -184,6 +185,7 @@ mod tests {
             merkle_root,
             fee: 0,
             value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
             version: TransactionWitness::default_version_binding(),
         }
     }

@@ -24,10 +24,16 @@ use crate::{
         commitment_output_row, merkle_root_output_row, nullifier_output_row, TransactionAirStark,
         TransactionPublicInputsStark, COL_FEE, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_OUT0, COL_OUT1,
         COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_S0, COL_S1, COL_VALUE_BALANCE_MAG,
-        COL_VALUE_BALANCE_SIGN,
+        COL_VALUE_BALANCE_SIGN, COL_STABLECOIN_ASSET, COL_STABLECOIN_ATTEST0,
+        COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2, COL_STABLECOIN_ATTEST3,
+        COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG, COL_STABLECOIN_ISSUANCE_SIGN,
+        COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1, COL_STABLECOIN_ORACLE2,
+        COL_STABLECOIN_ORACLE3, COL_STABLECOIN_POLICY_HASH0, COL_STABLECOIN_POLICY_HASH1,
+        COL_STABLECOIN_POLICY_HASH2, COL_STABLECOIN_POLICY_HASH3, COL_STABLECOIN_POLICY_VERSION,
     },
     stark_prover::{default_proof_options, TransactionProverStark},
     witness::TransactionWitness,
+    StablecoinPolicyBinding,
     TransactionCircuitError,
 };
 
@@ -139,15 +145,39 @@ impl Prover for TransactionProverStarkRpo {
             [BaseElement::ZERO; 4]
         };
 
+        let final_row = trace.length().saturating_sub(2);
         TransactionPublicInputsStark {
             input_flags,
             output_flags,
             nullifiers,
             commitments,
-            fee: trace.get(COL_FEE, row),
-            value_balance_sign: trace.get(COL_VALUE_BALANCE_SIGN, row),
-            value_balance_magnitude: trace.get(COL_VALUE_BALANCE_MAG, row),
+            fee: trace.get(COL_FEE, final_row),
+            value_balance_sign: trace.get(COL_VALUE_BALANCE_SIGN, final_row),
+            value_balance_magnitude: trace.get(COL_VALUE_BALANCE_MAG, final_row),
             merkle_root,
+            stablecoin_enabled: trace.get(COL_STABLECOIN_ENABLED, final_row),
+            stablecoin_asset: trace.get(COL_STABLECOIN_ASSET, final_row),
+            stablecoin_policy_version: trace.get(COL_STABLECOIN_POLICY_VERSION, final_row),
+            stablecoin_issuance_sign: trace.get(COL_STABLECOIN_ISSUANCE_SIGN, final_row),
+            stablecoin_issuance_magnitude: trace.get(COL_STABLECOIN_ISSUANCE_MAG, final_row),
+            stablecoin_policy_hash: [
+                trace.get(COL_STABLECOIN_POLICY_HASH0, final_row),
+                trace.get(COL_STABLECOIN_POLICY_HASH1, final_row),
+                trace.get(COL_STABLECOIN_POLICY_HASH2, final_row),
+                trace.get(COL_STABLECOIN_POLICY_HASH3, final_row),
+            ],
+            stablecoin_oracle_commitment: [
+                trace.get(COL_STABLECOIN_ORACLE0, final_row),
+                trace.get(COL_STABLECOIN_ORACLE1, final_row),
+                trace.get(COL_STABLECOIN_ORACLE2, final_row),
+                trace.get(COL_STABLECOIN_ORACLE3, final_row),
+            ],
+            stablecoin_attestation_commitment: [
+                trace.get(COL_STABLECOIN_ATTEST0, final_row),
+                trace.get(COL_STABLECOIN_ATTEST1, final_row),
+                trace.get(COL_STABLECOIN_ATTEST2, final_row),
+                trace.get(COL_STABLECOIN_ATTEST3, final_row),
+            ],
         }
     }
 
@@ -244,6 +274,7 @@ mod tests {
             merkle_root,
             fee: 0,
             value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
             version: TransactionWitness::default_version_binding(),
         }
     }

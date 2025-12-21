@@ -21,7 +21,7 @@ pub use hashing::Felt;
 pub use stark_air::{
     TransactionAirStark, TransactionPublicInputsStark, CYCLE_LENGTH, MIN_TRACE_LENGTH, TRACE_WIDTH,
 };
-pub use types::BalanceSlot;
+pub use types::{BalanceSlot, StablecoinPolicyBinding};
 
 #[cfg(feature = "stark-verify")]
 pub use stark_verifier::{

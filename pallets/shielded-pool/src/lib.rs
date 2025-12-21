@@ -37,7 +37,10 @@ pub mod types;
 pub mod verifier;
 
 use merkle::CompactMerkleTree;
-use types::{BindingHash, EncryptedNote, StarkProof, VerifyingKeyParams, MERKLE_TREE_DEPTH};
+use types::{
+    BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof, VerifyingKeyParams,
+    MERKLE_TREE_DEPTH,
+};
 use verifier::{
     BatchVerifier, ProofVerifier, ShieldedTransferInputs, VerificationResult, VerifyingKey,
 };
@@ -52,6 +55,7 @@ use sp_runtime::transaction_validity::{
     InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity,
     ValidTransaction,
 };
+use sp_runtime::traits::Saturating;
 use sp_std::vec;
 use sp_std::vec::Vec;
 
@@ -73,6 +77,52 @@ use sp_std::vec::Vec;
 /// This constant exists only for detection - any occurrence is an error.
 const ZERO_NULLIFIER: [u8; 32] = [0u8; 32];
 const ZERO_COMMITMENT: [u8; 32] = [0u8; 32];
+
+/// Stablecoin policy snapshot used by the shielded pool verifier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StablecoinPolicySnapshot<AssetId, OracleFeedId, AttestationId, BlockNumber> {
+    pub asset_id: AssetId,
+    pub oracle_feeds: Vec<OracleFeedId>,
+    pub attestation_id: AttestationId,
+    pub min_collateral_ratio_ppm: u128,
+    pub max_mint_per_epoch: u128,
+    pub oracle_max_age: BlockNumber,
+    pub policy_version: u32,
+    pub active: bool,
+}
+
+/// Provider for stablecoin policy data.
+pub trait StablecoinPolicyProvider<AssetId, OracleFeedId, AttestationId, BlockNumber> {
+    fn policy(
+        asset_id: &AssetId,
+    ) -> Option<StablecoinPolicySnapshot<AssetId, OracleFeedId, AttestationId, BlockNumber>>;
+    fn policy_hash(asset_id: &AssetId) -> Option<[u8; 32]>;
+}
+
+/// Oracle commitment snapshot used by the verifier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OracleCommitmentSnapshot<BlockNumber> {
+    pub commitment: [u8; 32],
+    pub submitted_at: BlockNumber,
+}
+
+/// Provider for oracle commitments.
+pub trait OracleCommitmentProvider<FeedId, BlockNumber> {
+    fn latest_commitment(feed_id: &FeedId) -> Option<OracleCommitmentSnapshot<BlockNumber>>;
+}
+
+/// Attestation commitment snapshot used by the verifier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttestationCommitmentSnapshot<BlockNumber> {
+    pub commitment: [u8; 32],
+    pub disputed: bool,
+    pub created_at: BlockNumber,
+}
+
+/// Provider for attestation commitments.
+pub trait AttestationCommitmentProvider<CommitmentId, BlockNumber> {
+    fn commitment(commitment_id: &CommitmentId) -> Option<AttestationCommitmentSnapshot<BlockNumber>>;
+}
 
 /// Check if a nullifier is the zero value (which is invalid).
 fn is_zero_nullifier(nf: &[u8; 32]) -> bool {
@@ -167,6 +217,31 @@ pub mod pallet {
         /// Maximum shielded coinbase subsidy per block (safety cap).
         #[pallet::constant]
         type MaxCoinbaseSubsidy: Get<u64>;
+
+        /// Asset id type for stablecoin policy lookups.
+        type StablecoinAssetId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Ord + TryFrom<u64>;
+
+        /// Oracle feed id type for stablecoin policy lookups.
+        type OracleFeedId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Ord;
+
+        /// Attestation commitment id type for stablecoin policy lookups.
+        type AttestationId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Ord;
+
+        /// Provider for stablecoin policy data.
+        type StablecoinPolicyProvider: StablecoinPolicyProvider<
+            Self::StablecoinAssetId,
+            Self::OracleFeedId,
+            Self::AttestationId,
+            BlockNumberFor<Self>,
+        >;
+
+        /// Provider for oracle commitments.
+        type OracleCommitmentProvider:
+            OracleCommitmentProvider<Self::OracleFeedId, BlockNumberFor<Self>>;
+
+        /// Provider for attestation commitments.
+        type AttestationCommitmentProvider:
+            AttestationCommitmentProvider<Self::AttestationId, BlockNumberFor<Self>>;
 
         /// Weight information.
         type WeightInfo: WeightInfo;
@@ -403,6 +478,30 @@ pub mod pallet {
         EncryptedNotesMismatch,
         /// Transparent pool operations are disabled (value_balance must be zero).
         TransparentPoolDisabled,
+        /// Stablecoin issuance is not allowed in unsigned transactions.
+        StablecoinIssuanceUnsigned,
+        /// Stablecoin asset id cannot be mapped into runtime AssetId.
+        StablecoinAssetIdInvalid,
+        /// Stablecoin policy is missing for the requested asset.
+        StablecoinPolicyMissing,
+        /// Stablecoin policy is inactive.
+        StablecoinPolicyInactive,
+        /// Stablecoin policy hash or version mismatch.
+        StablecoinPolicyMismatch,
+        /// Stablecoin policy oracle feed configuration is invalid.
+        StablecoinPolicyInvalid,
+        /// Stablecoin oracle commitment missing.
+        StablecoinOracleCommitmentMissing,
+        /// Stablecoin oracle commitment is stale.
+        StablecoinOracleCommitmentStale,
+        /// Stablecoin oracle commitment mismatch.
+        StablecoinOracleCommitmentMismatch,
+        /// Stablecoin attestation commitment missing.
+        StablecoinAttestationMissing,
+        /// Stablecoin attestation is disputed.
+        StablecoinAttestationDisputed,
+        /// Stablecoin attestation commitment mismatch.
+        StablecoinAttestationCommitmentMismatch,
         /// Commitment bytes are not a canonical field encoding.
         InvalidCommitmentEncoding,
         /// Verifying key not found or disabled.
@@ -568,6 +667,7 @@ pub mod pallet {
             ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
             anchor: [u8; 32],
             binding_hash: BindingHash,
+            stablecoin: Option<StablecoinPolicyBinding>,
             fee: u64,
             value_balance: i128,
         ) -> DispatchResult {
@@ -599,6 +699,9 @@ pub mod pallet {
 
             // No transparent pool: reject any non-zero value balance.
             ensure!(value_balance == 0, Error::<T>::TransparentPoolDisabled);
+
+            // Stablecoin issuance requires an active policy and fresh commitments.
+            Self::ensure_stablecoin_binding(&stablecoin)?;
 
             // SECURITY: Count real (non-zero) nullifiers and validate transaction structure.
             // The STARK proof commits to exact input/output counts, so we must verify
@@ -650,6 +753,7 @@ pub mod pallet {
                 commitments: commitments.clone().into_inner(),
                 fee,
                 value_balance,
+                stablecoin: stablecoin.clone(),
             };
 
             // Get verifying key
@@ -857,6 +961,7 @@ pub mod pallet {
             ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
             anchor: [u8; 32],
             binding_hash: BindingHash,
+            stablecoin: Option<StablecoinPolicyBinding>,
             fee: u64,
         ) -> DispatchResult {
             // This is an unsigned extrinsic - no signer required
@@ -870,6 +975,8 @@ pub mod pallet {
 
             // Pure shielded transfers have value_balance = 0
             let value_balance: i128 = 0;
+
+            ensure!(stablecoin.is_none(), Error::<T>::StablecoinIssuanceUnsigned);
 
             // Validate counts
             ensure!(
@@ -922,6 +1029,7 @@ pub mod pallet {
                 commitments: commitments.clone().into_inner(),
                 fee,
                 value_balance,
+                stablecoin: None,
             };
 
             // Get verifying key
@@ -1201,6 +1309,66 @@ pub mod pallet {
                 amount <= T::MaxCoinbaseSubsidy::get(),
                 Error::<T>::CoinbaseSubsidyExceedsLimit
             );
+            Ok(())
+        }
+
+        fn ensure_stablecoin_binding(
+            stablecoin: &Option<StablecoinPolicyBinding>,
+        ) -> Result<(), Error<T>> {
+            let binding = match stablecoin.as_ref() {
+                Some(binding) => binding,
+                None => return Ok(()),
+            };
+
+            let asset_id: T::StablecoinAssetId = binding
+                .asset_id
+                .try_into()
+                .map_err(|_| Error::<T>::StablecoinAssetIdInvalid)?;
+
+            let policy = T::StablecoinPolicyProvider::policy(&asset_id)
+                .ok_or(Error::<T>::StablecoinPolicyMissing)?;
+            let policy_hash = T::StablecoinPolicyProvider::policy_hash(&asset_id)
+                .ok_or(Error::<T>::StablecoinPolicyMissing)?;
+
+            if policy_hash != binding.policy_hash || policy.policy_version != binding.policy_version
+            {
+                return Err(Error::<T>::StablecoinPolicyMismatch);
+            }
+            if policy.asset_id != asset_id {
+                return Err(Error::<T>::StablecoinPolicyMismatch);
+            }
+            if !policy.active {
+                return Err(Error::<T>::StablecoinPolicyInactive);
+            }
+            if policy.oracle_feeds.len() != 1 {
+                return Err(Error::<T>::StablecoinPolicyInvalid);
+            }
+
+            let oracle_feed = policy
+                .oracle_feeds
+                .get(0)
+                .ok_or(Error::<T>::StablecoinPolicyInvalid)?;
+            let oracle = T::OracleCommitmentProvider::latest_commitment(oracle_feed)
+                .ok_or(Error::<T>::StablecoinOracleCommitmentMissing)?;
+            if oracle.commitment != binding.oracle_commitment {
+                return Err(Error::<T>::StablecoinOracleCommitmentMismatch);
+            }
+
+            let now = frame_system::Pallet::<T>::block_number();
+            let age = now.saturating_sub(oracle.submitted_at);
+            if age > policy.oracle_max_age {
+                return Err(Error::<T>::StablecoinOracleCommitmentStale);
+            }
+
+            let attestation = T::AttestationCommitmentProvider::commitment(&policy.attestation_id)
+                .ok_or(Error::<T>::StablecoinAttestationMissing)?;
+            if attestation.commitment != binding.attestation_commitment {
+                return Err(Error::<T>::StablecoinAttestationCommitmentMismatch);
+            }
+            if attestation.disputed {
+                return Err(Error::<T>::StablecoinAttestationDisputed);
+            }
+
             Ok(())
         }
 
@@ -1580,6 +1748,7 @@ pub mod pallet {
                     ciphertexts,
                     anchor,
                     binding_hash,
+                    stablecoin,
                     fee,
                 } => {
                     log::info!(target: "shielded-pool", "Validating shielded_transfer_unsigned");
@@ -1590,6 +1759,14 @@ pub mod pallet {
                     log::info!(target: "shielded-pool", "  anchor = {:02x?}", &anchor[..8]);
                     log::info!(target: "shielded-pool", "  binding_hash[0..8] = {:02x?}", &binding_hash.data[..8]);
                     log::info!(target: "shielded-pool", "  fee = {}", fee);
+
+                    if stablecoin.is_some() {
+                        log::info!(
+                            target: "shielded-pool",
+                            "  REJECTED: stablecoin issuance not allowed in unsigned transfer"
+                        );
+                        return InvalidTransaction::Custom(7).into();
+                    }
 
                     // Basic validation before accepting into pool
                     if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
@@ -1665,6 +1842,7 @@ pub mod pallet {
                         commitments: commitments.clone().into_inner(),
                         fee: *fee,
                         value_balance: 0, // Pure shielded transfer
+                        stablecoin: None,
                     };
 
                     // Verify the STARK proof (this is the main validation)

@@ -88,7 +88,7 @@ pub fn compute_air_hash() -> [u8; 32] {
 
     // Constraint structure: max degree 5 (x^5)
     hasher.update(&5u32.to_le_bytes()); // Max constraint degree
-    hasher.update(&98u32.to_le_bytes()); // Number of transition constraints
+    hasher.update(&103u32.to_le_bytes()); // Number of transition constraints
 
     let hash = hasher.finalize();
     let mut result = [0u8; 32];

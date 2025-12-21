@@ -339,6 +339,7 @@ where
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
         binding_hash: [u8; 64],
+        stablecoin: Option<pallet_shielded_pool::StablecoinPolicyBinding>,
         fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
@@ -435,6 +436,7 @@ where
                 ciphertexts: bounded_ciphertexts,
                 anchor,
                 binding_hash: binding,
+                stablecoin,
                 fee,
                 value_balance,
             });

@@ -10,7 +10,9 @@ use transaction_circuit::hashing::{felt_to_bytes32, Felt};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::MerklePath;
 use transaction_circuit::proof::{prove, TransactionProof};
-use transaction_circuit::{InputNoteWitness, OutputNoteWitness, TransactionWitness};
+use transaction_circuit::{
+    InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionWitness,
+};
 
 fn sample_witness() -> TransactionWitness {
     let input_note_native = InputNoteWitness {
@@ -62,6 +64,7 @@ fn sample_witness() -> TransactionWitness {
         merkle_root: felt_to_bytes32(Felt::new(99)),
         fee: 5,
         value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
         version: TransactionWitness::default_version_binding(),
     }
 }

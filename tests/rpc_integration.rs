@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
+use transaction_circuit::StablecoinPolicyBinding;
 
 // ============================================================================
 // Mock RPC Service for Testing
@@ -116,6 +117,7 @@ impl MockRpcService {
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
         _binding_hash: [u8; 64],
+        _stablecoin: Option<StablecoinPolicyBinding>,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
         if value_balance != 0 {
@@ -296,6 +298,7 @@ impl TestRpcClient {
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
         binding_hash: [u8; 64],
+        stablecoin: Option<StablecoinPolicyBinding>,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
         if let Some(mock) = &self.mock {
@@ -306,6 +309,7 @@ impl TestRpcClient {
                 encrypted_notes,
                 anchor,
                 binding_hash,
+                stablecoin,
                 value_balance,
             )
             .await
@@ -443,6 +447,7 @@ mod basic_rpc_tests {
                 vec![vec![1, 2, 3]],
                 [0; 32], // valid anchor
                 [0; 64],
+                None,
                 0,
             )
             .await
@@ -490,6 +495,7 @@ mod shielded_transfer_tests {
                 vec![vec![2, 3, 4]], // encrypted note
                 [0; 32],             // anchor
                 [0; 64],             // binding sig
+                None,
                 0,                   // value balance
             )
             .await
@@ -519,6 +525,7 @@ mod shielded_transfer_tests {
                 vec![vec![2]],
                 [0; 32],
                 [0; 64],
+                None,
                 0,
             )
             .await;
@@ -533,6 +540,7 @@ mod shielded_transfer_tests {
                 vec![vec![3]],
                 [0; 32],
                 [0; 64],
+                None,
                 0,
             )
             .await;
@@ -552,6 +560,7 @@ mod shielded_transfer_tests {
                 vec![vec![2]],
                 [0xff; 32], // Invalid anchor
                 [0; 64],
+                None,
                 0,
             )
             .await;
@@ -609,6 +618,7 @@ mod concurrent_tests {
                     vec![vec![i]],
                     [0; 32],
                     [0; 64],
+                    None,
                     0,
                 )
                 .await
@@ -694,6 +704,7 @@ mod full_flow_tests {
                 vec![vec![5, 6, 7, 8]],
                 root,
                 [0; 64],
+                None,
                 0, // Pure transfer, no value balance change
             )
             .await
@@ -730,6 +741,7 @@ mod full_flow_tests {
                 vec![vec![3]],
                 [0; 32],
                 [0; 64],
+                None,
                 0,
             )
             .await;

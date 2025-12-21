@@ -42,6 +42,20 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
         },
         "shieldedPool": {
             "verifyingKey": null
+        },
+        "stablecoinPolicy": {
+            "policies": [
+                {
+                    "assetId": 1001,
+                    "oracleFeeds": [1],
+                    "attestationId": 1,
+                    "minCollateralRatioPpm": "1500000",
+                    "maxMintPerEpoch": "1000000000",
+                    "oracleMaxAge": 120,
+                    "policyVersion": 1,
+                    "active": false
+                }
+            ]
         }
     });
 

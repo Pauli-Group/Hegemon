@@ -14,6 +14,7 @@ use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use transaction_circuit::proof::prove;
 use transaction_circuit::witness::TransactionWitness;
+use transaction_circuit::StablecoinPolicyBinding;
 use url::Url;
 use wallet::address::ShieldedAddress;
 use wallet::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
@@ -260,6 +261,7 @@ async fn post_funding_transaction(
         merkle_root: root,
         fee: 1,
         value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
         version: TransactionWitness::default_version_binding(),
     };
     let proof = prove(&witness, &proving_key).expect("prove funding");
@@ -301,6 +303,7 @@ async fn post_funding_transaction(
         binding_hash,
         witness.fee,
         witness.value_balance,
+        witness.stablecoin.clone(),
     )
     .expect("bundle");
     handle

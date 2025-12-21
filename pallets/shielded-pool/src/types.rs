@@ -155,6 +155,41 @@ impl Default for BindingHash {
     }
 }
 
+/// Stablecoin policy binding for issuance proofs.
+///
+/// When present, these fields are bound into the transaction proof and must
+/// match on-chain policy, oracle, and attestation commitments.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
+)]
+pub struct StablecoinPolicyBinding {
+    /// Stablecoin asset identifier (MASP asset id).
+    pub asset_id: u64,
+    /// Deterministic policy hash (BLAKE3-256).
+    pub policy_hash: [u8; 32],
+    /// Latest oracle commitment bound into the proof.
+    pub oracle_commitment: [u8; 32],
+    /// Latest attestation commitment bound into the proof.
+    pub attestation_commitment: [u8; 32],
+    /// Signed issuance delta (positive for mint, negative for burn).
+    pub issuance_delta: i128,
+    /// Policy version to make upgrades explicit.
+    pub policy_version: u32,
+}
+
+impl Default for StablecoinPolicyBinding {
+    fn default() -> Self {
+        Self {
+            asset_id: 0,
+            policy_hash: [0u8; 32],
+            oracle_commitment: [0u8; 32],
+            attestation_commitment: [0u8; 32],
+            issuance_delta: 0,
+            policy_version: 0,
+        }
+    }
+}
+
 /// Merkle authentication path for proving note membership.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
 pub struct MerklePath {
@@ -224,6 +259,8 @@ pub struct ShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
     pub anchor: [u8; 32],
     /// Value balance commitment (verified in STARK circuit).
     pub binding_hash: BindingHash,
+    /// Optional stablecoin policy binding (required for issuance/burn).
+    pub stablecoin: Option<StablecoinPolicyBinding>,
     /// Native fee encoded in the proof.
     pub fee: u64,
     /// Net value change (must be 0 when no transparent pool is enabled).

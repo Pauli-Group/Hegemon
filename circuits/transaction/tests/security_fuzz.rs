@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use proptest::{collection::vec, prelude::*};
 use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
 use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
-use transaction_circuit::{TransactionCircuitError, TransactionWitness};
+use transaction_circuit::{StablecoinPolicyBinding, TransactionCircuitError, TransactionWitness};
 
 fn arb_bytes32() -> impl Strategy<Value = [u8; 32]> {
     prop::array::uniform32(any::<u8>())
@@ -101,6 +101,7 @@ fn arb_witness() -> impl Strategy<Value = TransactionWitness> {
                 merkle_root,
                 fee,
                 value_balance: 0,
+                stablecoin: StablecoinPolicyBinding::default(),
                 version: TransactionWitness::default_version_binding(),
             }
         })
@@ -164,6 +165,7 @@ fn witness_rejects_oversized_inputs() {
         merkle_root: [0u8; 32],
         fee: 0,
         value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
         version: TransactionWitness::default_version_binding(),
     };
     witness.outputs.resize(

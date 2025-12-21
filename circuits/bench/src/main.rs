@@ -12,7 +12,7 @@ use transaction_circuit::{
     hashing::{felts_to_bytes32, merkle_node, Felt, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
-    proof, TransactionWitness,
+    proof, StablecoinPolicyBinding, TransactionWitness,
 };
 use winterfell::math::FieldElement;
 
@@ -256,6 +256,7 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
         merkle_root: felts_to_bytes32(&merkle_root),
         fee,
         value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
         version: DEFAULT_VERSION_BINDING,
     }
 }

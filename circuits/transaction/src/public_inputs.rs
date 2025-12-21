@@ -10,6 +10,36 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StablecoinPolicyBinding {
+    #[serde(default)]
+    pub enabled: bool,
+    pub asset_id: u64,
+    #[serde(with = "crate::public_inputs::serde_bytes32")]
+    pub policy_hash: Commitment,
+    #[serde(with = "crate::public_inputs::serde_bytes32")]
+    pub oracle_commitment: Commitment,
+    #[serde(with = "crate::public_inputs::serde_bytes32")]
+    pub attestation_commitment: Commitment,
+    #[serde(default)]
+    pub issuance_delta: i128,
+    pub policy_version: u32,
+}
+
+impl Default for StablecoinPolicyBinding {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            asset_id: 0,
+            policy_hash: [0u8; 32],
+            oracle_commitment: [0u8; 32],
+            attestation_commitment: [0u8; 32],
+            issuance_delta: 0,
+            policy_version: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionPublicInputs {
     #[serde(with = "crate::public_inputs::serde_bytes32")]
     pub merkle_root: Commitment,
@@ -19,7 +49,10 @@ pub struct TransactionPublicInputs {
     pub commitments: Vec<Commitment>,
     pub balance_slots: Vec<BalanceSlot>,
     pub native_fee: u64,
+    #[serde(default)]
     pub value_balance: i128,
+    #[serde(default)]
+    pub stablecoin: StablecoinPolicyBinding,
     #[serde(with = "crate::public_inputs::serde_felt")]
     pub balance_tag: Felt,
     pub circuit_version: CircuitVersion,
@@ -44,6 +77,7 @@ impl Default for TransactionPublicInputs {
             balance_slots,
             native_fee: 0,
             value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
             balance_tag: Felt::ZERO,
             circuit_version: DEFAULT_VERSION_BINDING.circuit,
             crypto_suite: DEFAULT_VERSION_BINDING.crypto,
@@ -59,6 +93,7 @@ impl TransactionPublicInputs {
         balance_slots: Vec<BalanceSlot>,
         native_fee: u64,
         value_balance: i128,
+        stablecoin: StablecoinPolicyBinding,
         version: VersionBinding,
     ) -> Result<Self, TransactionCircuitError> {
         if nullifiers.len() != MAX_INPUTS {
@@ -96,6 +131,32 @@ impl TransactionPublicInputs {
                 "commitment encoding is non-canonical",
             ));
         }
+        if stablecoin.enabled {
+            if stablecoin.asset_id == NATIVE_ASSET_ID || stablecoin.asset_id == u64::MAX {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "stablecoin asset id invalid",
+                ));
+            }
+            if !transaction_core::hashing::is_canonical_bytes32(&stablecoin.policy_hash)
+                || !transaction_core::hashing::is_canonical_bytes32(&stablecoin.oracle_commitment)
+                || !transaction_core::hashing::is_canonical_bytes32(
+                    &stablecoin.attestation_commitment,
+                )
+            {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "stablecoin binding encoding is non-canonical",
+                ));
+            }
+            if transaction_core::hashing::signed_parts(stablecoin.issuance_delta).is_none() {
+                return Err(TransactionCircuitError::ValueBalanceOutOfRange(
+                    stablecoin.issuance_delta.unsigned_abs(),
+                ));
+            }
+        } else if !stablecoin_binding_is_zero(&stablecoin) {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "stablecoin binding must be zeroed when disabled",
+            ));
+        }
 
         let native_delta = balance_slots
             .iter()
@@ -108,6 +169,14 @@ impl TransactionPublicInputs {
             })?;
         let balance_tag = expected_balance_tag;
 
+        if stablecoin.enabled
+            && !balance_slots
+                .iter()
+                .any(|slot| slot.asset_id == stablecoin.asset_id)
+        {
+            return Err(TransactionCircuitError::BalanceMismatch(stablecoin.asset_id));
+        }
+
         Ok(Self {
             merkle_root,
             nullifiers,
@@ -115,6 +184,7 @@ impl TransactionPublicInputs {
             balance_slots,
             native_fee,
             value_balance,
+            stablecoin,
             balance_tag,
             circuit_version: version.circuit,
             crypto_suite: version.crypto,
@@ -202,4 +272,14 @@ pub(crate) mod serde_felt {
     }
 
     use serde::Deserialize;
+}
+
+fn stablecoin_binding_is_zero(binding: &StablecoinPolicyBinding) -> bool {
+    !binding.enabled
+        && binding.asset_id == 0
+        && binding.policy_hash == [0u8; 32]
+        && binding.oracle_commitment == [0u8; 32]
+        && binding.attestation_commitment == [0u8; 32]
+        && binding.issuance_delta == 0
+        && binding.policy_version == 0
 }

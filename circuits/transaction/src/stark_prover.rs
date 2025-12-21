@@ -19,7 +19,7 @@ use crate::{
         CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG,
         NULLIFIER_DOMAIN_TAG, POSEIDON_ROUNDS,
     },
-    hashing::{merkle_node, prf_key, Felt},
+    hashing::{bytes32_to_felts, merkle_node, prf_key, Felt},
     note::{InputNoteWitness, NoteData, OutputNoteWitness},
     stark_air::{
         commitment_output_row, cycle_is_merkle_left_01, cycle_is_merkle_left_23,
@@ -37,10 +37,18 @@ use crate::{
         COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0,
         COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET, COL_SLOT0_IN,
         COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN,
-        COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_VALUE_BALANCE_MAG,
-        COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES,
-        MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES, TOTAL_TRACE_CYCLES,
-        TOTAL_USED_CYCLES, TRACE_WIDTH,
+        COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT,
+        COL_STABLECOIN_ASSET, COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1,
+        COL_STABLECOIN_ATTEST2, COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ENABLED,
+        COL_STABLECOIN_ISSUANCE_MAG, COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0,
+        COL_STABLECOIN_ORACLE1, COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3,
+        COL_STABLECOIN_POLICY_HASH0, COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2,
+        COL_STABLECOIN_POLICY_HASH3, COL_STABLECOIN_POLICY_VERSION,
+        COL_STABLECOIN_SLOT_SEL0, COL_STABLECOIN_SLOT_SEL1, COL_STABLECOIN_SLOT_SEL2,
+        COL_STABLECOIN_SLOT_SEL3, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN,
+        COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES, MERKLE_ABSORB_CYCLES,
+        MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES,
+        TRACE_WIDTH,
     },
     witness::TransactionWitness,
     TransactionCircuitError,
@@ -96,6 +104,7 @@ impl TransactionProverStark {
 
         let (vb_sign, vb_mag) = value_balance_parts(witness.value_balance)?;
         let fee = BaseElement::new(witness.fee);
+        let stablecoin_inputs = stablecoin_binding_inputs(witness, &slot_assets)?;
 
         let sentinel_row = 0;
         let slot_asset_cols = [
@@ -227,6 +236,85 @@ impl TransactionProverStark {
             trace[COL_FEE][final_row] = fee;
             trace[COL_VALUE_BALANCE_SIGN][final_row] = vb_sign;
             trace[COL_VALUE_BALANCE_MAG][final_row] = vb_mag;
+            trace[COL_STABLECOIN_ENABLED][final_row] = stablecoin_inputs.enabled;
+            trace[COL_STABLECOIN_ASSET][final_row] = stablecoin_inputs.asset;
+            trace[COL_STABLECOIN_POLICY_VERSION][final_row] = stablecoin_inputs.policy_version;
+            trace[COL_STABLECOIN_ISSUANCE_SIGN][final_row] = stablecoin_inputs.issuance_sign;
+            trace[COL_STABLECOIN_ISSUANCE_MAG][final_row] = stablecoin_inputs.issuance_mag;
+            trace[COL_STABLECOIN_POLICY_HASH0][final_row] = stablecoin_inputs.policy_hash[0];
+            trace[COL_STABLECOIN_POLICY_HASH1][final_row] = stablecoin_inputs.policy_hash[1];
+            trace[COL_STABLECOIN_POLICY_HASH2][final_row] = stablecoin_inputs.policy_hash[2];
+            trace[COL_STABLECOIN_POLICY_HASH3][final_row] = stablecoin_inputs.policy_hash[3];
+            trace[COL_STABLECOIN_ORACLE0][final_row] = stablecoin_inputs.oracle_commitment[0];
+            trace[COL_STABLECOIN_ORACLE1][final_row] = stablecoin_inputs.oracle_commitment[1];
+            trace[COL_STABLECOIN_ORACLE2][final_row] = stablecoin_inputs.oracle_commitment[2];
+            trace[COL_STABLECOIN_ORACLE3][final_row] = stablecoin_inputs.oracle_commitment[3];
+            trace[COL_STABLECOIN_ATTEST0][final_row] = stablecoin_inputs.attestation_commitment[0];
+            trace[COL_STABLECOIN_ATTEST1][final_row] = stablecoin_inputs.attestation_commitment[1];
+            trace[COL_STABLECOIN_ATTEST2][final_row] = stablecoin_inputs.attestation_commitment[2];
+            trace[COL_STABLECOIN_ATTEST3][final_row] = stablecoin_inputs.attestation_commitment[3];
+            trace[COL_STABLECOIN_SLOT_SEL0][final_row] = stablecoin_inputs.slot_selectors[0];
+            trace[COL_STABLECOIN_SLOT_SEL1][final_row] = stablecoin_inputs.slot_selectors[1];
+            trace[COL_STABLECOIN_SLOT_SEL2][final_row] = stablecoin_inputs.slot_selectors[2];
+            trace[COL_STABLECOIN_SLOT_SEL3][final_row] = stablecoin_inputs.slot_selectors[3];
+        }
+
+        if final_row < trace_len {
+            let one = BaseElement::ONE;
+            let stablecoin_sel_cols = [
+                COL_STABLECOIN_SLOT_SEL0,
+                COL_STABLECOIN_SLOT_SEL1,
+                COL_STABLECOIN_SLOT_SEL2,
+                COL_STABLECOIN_SLOT_SEL3,
+            ];
+            for row in 0..trace_len {
+                let is_final = row == final_row;
+                let enabled =
+                    bool_trace_value(stablecoin_inputs.enabled, is_final);
+                let issuance_sign =
+                    bool_trace_value(stablecoin_inputs.issuance_sign, is_final);
+                trace[COL_STABLECOIN_ENABLED][row] = enabled;
+                trace[COL_STABLECOIN_ISSUANCE_SIGN][row] = issuance_sign;
+                for (idx, &col) in stablecoin_sel_cols.iter().enumerate() {
+                    trace[col][row] = bool_trace_value(
+                        stablecoin_inputs.slot_selectors[idx],
+                        is_final,
+                    );
+                }
+
+                if !is_final {
+                    trace[COL_STABLECOIN_ASSET][row] =
+                        stablecoin_inputs.asset + one;
+                    trace[COL_STABLECOIN_POLICY_VERSION][row] =
+                        stablecoin_inputs.policy_version + one;
+                    trace[COL_STABLECOIN_ISSUANCE_MAG][row] =
+                        stablecoin_inputs.issuance_mag + one;
+                    trace[COL_STABLECOIN_POLICY_HASH0][row] =
+                        stablecoin_inputs.policy_hash[0] + one;
+                    trace[COL_STABLECOIN_POLICY_HASH1][row] =
+                        stablecoin_inputs.policy_hash[1] + one;
+                    trace[COL_STABLECOIN_POLICY_HASH2][row] =
+                        stablecoin_inputs.policy_hash[2] + one;
+                    trace[COL_STABLECOIN_POLICY_HASH3][row] =
+                        stablecoin_inputs.policy_hash[3] + one;
+                    trace[COL_STABLECOIN_ORACLE0][row] =
+                        stablecoin_inputs.oracle_commitment[0] + one;
+                    trace[COL_STABLECOIN_ORACLE1][row] =
+                        stablecoin_inputs.oracle_commitment[1] + one;
+                    trace[COL_STABLECOIN_ORACLE2][row] =
+                        stablecoin_inputs.oracle_commitment[2] + one;
+                    trace[COL_STABLECOIN_ORACLE3][row] =
+                        stablecoin_inputs.oracle_commitment[3] + one;
+                    trace[COL_STABLECOIN_ATTEST0][row] =
+                        stablecoin_inputs.attestation_commitment[0] + one;
+                    trace[COL_STABLECOIN_ATTEST1][row] =
+                        stablecoin_inputs.attestation_commitment[1] + one;
+                    trace[COL_STABLECOIN_ATTEST2][row] =
+                        stablecoin_inputs.attestation_commitment[2] + one;
+                    trace[COL_STABLECOIN_ATTEST3][row] =
+                        stablecoin_inputs.attestation_commitment[3] + one;
+                }
+            }
         }
 
         let mut slot_in_acc = [0u64; 4];
@@ -446,6 +534,9 @@ impl TransactionProverStark {
         let merkle_root = transaction_core::hashing::bytes32_to_felts(&witness.merkle_root).ok_or(
             TransactionCircuitError::ConstraintViolation("invalid merkle root"),
         )?;
+        let slots = witness.balance_slots()?;
+        let slot_assets: Vec<u64> = slots.iter().map(|slot| slot.asset_id).collect();
+        let stablecoin_inputs = stablecoin_binding_inputs(witness, &slot_assets)?;
 
         Ok(TransactionPublicInputsStark {
             input_flags,
@@ -456,6 +547,14 @@ impl TransactionProverStark {
             value_balance_sign: vb_sign,
             value_balance_magnitude: vb_mag,
             merkle_root,
+            stablecoin_enabled: stablecoin_inputs.enabled,
+            stablecoin_asset: stablecoin_inputs.asset,
+            stablecoin_policy_version: stablecoin_inputs.policy_version,
+            stablecoin_issuance_sign: stablecoin_inputs.issuance_sign,
+            stablecoin_issuance_magnitude: stablecoin_inputs.issuance_mag,
+            stablecoin_policy_hash: stablecoin_inputs.policy_hash,
+            stablecoin_oracle_commitment: stablecoin_inputs.oracle_commitment,
+            stablecoin_attestation_commitment: stablecoin_inputs.attestation_commitment,
         })
     }
 
@@ -562,6 +661,29 @@ impl Prover for TransactionProverStark {
             value_balance_sign: trace.get(COL_VALUE_BALANCE_SIGN, final_row),
             value_balance_magnitude: trace.get(COL_VALUE_BALANCE_MAG, final_row),
             merkle_root,
+            stablecoin_enabled: trace.get(COL_STABLECOIN_ENABLED, final_row),
+            stablecoin_asset: trace.get(COL_STABLECOIN_ASSET, final_row),
+            stablecoin_policy_version: trace.get(COL_STABLECOIN_POLICY_VERSION, final_row),
+            stablecoin_issuance_sign: trace.get(COL_STABLECOIN_ISSUANCE_SIGN, final_row),
+            stablecoin_issuance_magnitude: trace.get(COL_STABLECOIN_ISSUANCE_MAG, final_row),
+            stablecoin_policy_hash: [
+                trace.get(COL_STABLECOIN_POLICY_HASH0, final_row),
+                trace.get(COL_STABLECOIN_POLICY_HASH1, final_row),
+                trace.get(COL_STABLECOIN_POLICY_HASH2, final_row),
+                trace.get(COL_STABLECOIN_POLICY_HASH3, final_row),
+            ],
+            stablecoin_oracle_commitment: [
+                trace.get(COL_STABLECOIN_ORACLE0, final_row),
+                trace.get(COL_STABLECOIN_ORACLE1, final_row),
+                trace.get(COL_STABLECOIN_ORACLE2, final_row),
+                trace.get(COL_STABLECOIN_ORACLE3, final_row),
+            ],
+            stablecoin_attestation_commitment: [
+                trace.get(COL_STABLECOIN_ATTEST0, final_row),
+                trace.get(COL_STABLECOIN_ATTEST1, final_row),
+                trace.get(COL_STABLECOIN_ATTEST2, final_row),
+                trace.get(COL_STABLECOIN_ATTEST3, final_row),
+            ],
         }
     }
 
@@ -661,6 +783,20 @@ fn flag_to_felt(active: bool) -> BaseElement {
         BaseElement::ONE
     } else {
         BaseElement::ZERO
+    }
+}
+
+fn bool_trace_value(value: BaseElement, is_final: bool) -> BaseElement {
+    if value == BaseElement::ONE {
+        if is_final {
+            BaseElement::ONE
+        } else {
+            BaseElement::ZERO
+        }
+    } else if is_final {
+        BaseElement::ZERO
+    } else {
+        BaseElement::ONE
     }
 }
 
@@ -790,6 +926,80 @@ fn value_balance_parts(
         BaseElement::ZERO
     };
     Ok((sign, BaseElement::new(mag_u64)))
+}
+
+struct StablecoinBindingInputs {
+    enabled: BaseElement,
+    asset: BaseElement,
+    policy_version: BaseElement,
+    issuance_sign: BaseElement,
+    issuance_mag: BaseElement,
+    policy_hash: [BaseElement; 4],
+    oracle_commitment: [BaseElement; 4],
+    attestation_commitment: [BaseElement; 4],
+    slot_selectors: [BaseElement; 4],
+}
+
+fn stablecoin_binding_inputs(
+    witness: &TransactionWitness,
+    slot_assets: &[u64],
+) -> Result<StablecoinBindingInputs, TransactionCircuitError> {
+    if !witness.stablecoin.enabled {
+        return Ok(StablecoinBindingInputs {
+            enabled: BaseElement::ZERO,
+            asset: BaseElement::ZERO,
+            policy_version: BaseElement::ZERO,
+            issuance_sign: BaseElement::ZERO,
+            issuance_mag: BaseElement::ZERO,
+            policy_hash: [BaseElement::ZERO; 4],
+            oracle_commitment: [BaseElement::ZERO; 4],
+            attestation_commitment: [BaseElement::ZERO; 4],
+            slot_selectors: [BaseElement::ZERO; 4],
+        });
+    }
+
+    let policy_hash = bytes32_to_felts(&witness.stablecoin.policy_hash).ok_or(
+        TransactionCircuitError::ConstraintViolation("invalid stablecoin policy hash encoding"),
+    )?;
+    let oracle_commitment =
+        bytes32_to_felts(&witness.stablecoin.oracle_commitment).ok_or(
+            TransactionCircuitError::ConstraintViolation(
+                "invalid stablecoin oracle commitment encoding",
+            ),
+        )?;
+    let attestation_commitment =
+        bytes32_to_felts(&witness.stablecoin.attestation_commitment).ok_or(
+            TransactionCircuitError::ConstraintViolation(
+                "invalid stablecoin attestation commitment encoding",
+            ),
+        )?;
+
+    let (issuance_sign, issuance_mag) = value_balance_parts(witness.stablecoin.issuance_delta)?;
+    let mut slot_selectors = [BaseElement::ZERO; 4];
+    let slot_index = slot_assets
+        .iter()
+        .position(|asset_id| *asset_id == witness.stablecoin.asset_id)
+        .ok_or(TransactionCircuitError::BalanceMismatch(
+            witness.stablecoin.asset_id,
+        ))?;
+    if slot_index >= slot_selectors.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "stablecoin slot index overflow",
+        ));
+    }
+    slot_selectors[slot_index] = BaseElement::ONE;
+
+    Ok(StablecoinBindingInputs {
+        enabled: BaseElement::ONE,
+        asset: BaseElement::new(witness.stablecoin.asset_id),
+        policy_version: BaseElement::new(u64::from(witness.stablecoin.policy_version)),
+        issuance_sign,
+        issuance_mag,
+        policy_hash,
+        oracle_commitment,
+        attestation_commitment,
+        slot_selectors,
+    })
 }
 
 fn build_cycle_specs(
@@ -930,6 +1140,7 @@ mod tests {
     use super::*;
     use crate::hashing::{felts_to_bytes32, merkle_node, HashFelt};
     use crate::note::{MerklePath, NoteData};
+    use crate::StablecoinPolicyBinding;
 
     fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
         let mut current = leaf;
@@ -977,6 +1188,7 @@ mod tests {
             merkle_root,
             fee: 0,
             value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
             version: TransactionWitness::default_version_binding(),
         };
 

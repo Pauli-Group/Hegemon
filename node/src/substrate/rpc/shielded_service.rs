@@ -108,6 +108,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
         encrypted_notes: Vec<Vec<u8>>,
         _anchor: [u8; 32],
         _binding_hash: [u8; 64],
+        _stablecoin: Option<pallet_shielded_pool::StablecoinPolicyBinding>,
         _fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
@@ -289,6 +290,7 @@ where
         _encrypted_notes: Vec<Vec<u8>>,
         _anchor: [u8; 32],
         _binding_hash: [u8; 64],
+        _stablecoin: Option<pallet_shielded_pool::StablecoinPolicyBinding>,
         _fee: u64,
         _value_balance: i128,
     ) -> Result<[u8; 32], String> {
@@ -413,6 +415,7 @@ mod tests {
                 vec![],
                 [0; 32], // Use valid anchor
                 [0; 64],
+                None,
                 0,
                 0,
             )
