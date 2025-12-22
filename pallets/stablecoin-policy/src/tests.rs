@@ -33,10 +33,7 @@ fn set_policy_stores_policy_and_hash() {
         let policy = sample_policy(true, 1);
         let expected_hash = policy.policy_hash();
 
-        assert_ok!(Pallet::set_policy(
-            RuntimeOrigin::signed(1),
-            policy.clone()
-        ));
+        assert_ok!(Pallet::set_policy(RuntimeOrigin::signed(1), policy.clone()));
 
         let stored = Policies::<Test>::get(1).expect("policy stored");
         assert!(stored == policy);
@@ -49,16 +46,9 @@ fn set_policy_active_updates_hash() {
     new_test_ext().execute_with(|| {
         let mut policy = sample_policy(false, 1);
         let original_hash = policy.policy_hash();
-        assert_ok!(Pallet::set_policy(
-            RuntimeOrigin::signed(1),
-            policy.clone()
-        ));
+        assert_ok!(Pallet::set_policy(RuntimeOrigin::signed(1), policy.clone()));
 
-        assert_ok!(Pallet::set_policy_active(
-            RuntimeOrigin::signed(1),
-            1,
-            true
-        ));
+        assert_ok!(Pallet::set_policy_active(RuntimeOrigin::signed(1), 1, true));
 
         let updated = Policies::<Test>::get(1).expect("policy stored");
         assert!(updated.active);
@@ -73,14 +63,11 @@ fn set_policy_active_updates_hash() {
 fn policy_provider_falls_back_to_computed_hash() {
     new_test_ext().execute_with(|| {
         let policy = sample_policy(true, 1);
-        assert_ok!(Pallet::set_policy(
-            RuntimeOrigin::signed(1),
-            policy.clone()
-        ));
+        assert_ok!(Pallet::set_policy(RuntimeOrigin::signed(1), policy.clone()));
 
         PolicyHashes::<Test>::remove(1);
-        let fetched = <Pallet as StablecoinPolicyProvider<u32>>::policy_hash(&1)
-            .expect("hash computed");
+        let fetched =
+            <Pallet as StablecoinPolicyProvider<u32>>::policy_hash(&1).expect("hash computed");
         assert_eq!(fetched, policy.policy_hash());
     });
 }

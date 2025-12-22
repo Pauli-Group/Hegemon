@@ -11736,6 +11736,7 @@ dependencies = [
  "futures",
  "hex",
  "jsonrpsee",
+ "parity-scale-codec",
  "predicates",
  "proptest",
  "rand 0.8.5",

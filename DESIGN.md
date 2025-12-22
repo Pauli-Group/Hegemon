@@ -264,6 +264,12 @@ No transparent outputs; everything is in this one PQ pool from day 1.
 
 The workspace-level test `tests/node_wallet_daemon.rs` keeps the HTTP API, miner loop, and wallet RPC client in sync by spinning two nodes, verifying the minted supply, and forcing a user-facing transfer.
 
+### 3.3 Shielded stablecoin issuance
+
+Stablecoin issuance and burn are modeled as a non-native MASP asset that lives entirely inside the shielded pool. Instead of exposing a transparent mint, the transaction circuit allows a single asset id to carry a non-zero net delta, but only when the proof binds to an on-chain policy hash plus the latest oracle and attestation commitments. The policy lives in `pallets/stablecoin-policy` and is hashed with BLAKE3 under the `stablecoin-policy-v1` domain so the circuit can consume a single 32-byte value. The verifier in `pallets/shielded-pool` checks that the policy hash, policy version, oracle commitment freshness, and attestation dispute status match chain state before accepting the proof.
+
+Issuance and burn therefore stay shielded: the proof shows `inputs - outputs = issuance_delta` for the stablecoin asset, and the runtime rejects any stablecoin binding supplied via the unsigned path. Wallet tooling assembles the binding by reading `StablecoinPolicy`, `Oracles::Feeds`, and `Attestations::Commitments`, then submits a signed `shielded_transfer` extrinsic so role checks and replay protection remain in place. Normal stablecoin transfers do not require a binding, but they still ride the same MASP rules and never leave the privacy pool.
+
 ---
 
 ## 4. Addresses and keys (PQ analogue of Sapling/Orchard)

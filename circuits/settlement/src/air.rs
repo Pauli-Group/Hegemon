@@ -155,7 +155,6 @@ impl Air for SettlementAir {
         result[3] = hash_mask * (next[COL_S0] - hash_s0);
         result[4] = hash_mask * (next[COL_S1] - hash_s1);
         result[5] = hash_mask * (next[COL_S2] - hash_s2);
-
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {

@@ -37,18 +37,17 @@ use crate::{
         COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0,
         COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET, COL_SLOT0_IN,
         COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN,
-        COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT,
-        COL_STABLECOIN_ASSET, COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1,
-        COL_STABLECOIN_ATTEST2, COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ENABLED,
-        COL_STABLECOIN_ISSUANCE_MAG, COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0,
-        COL_STABLECOIN_ORACLE1, COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3,
-        COL_STABLECOIN_POLICY_HASH0, COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2,
-        COL_STABLECOIN_POLICY_HASH3, COL_STABLECOIN_POLICY_VERSION,
-        COL_STABLECOIN_SLOT_SEL0, COL_STABLECOIN_SLOT_SEL1, COL_STABLECOIN_SLOT_SEL2,
-        COL_STABLECOIN_SLOT_SEL3, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN,
-        COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES, MERKLE_ABSORB_CYCLES,
-        MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES,
-        TRACE_WIDTH,
+        COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_ASSET,
+        COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2,
+        COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG,
+        COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1,
+        COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3, COL_STABLECOIN_POLICY_HASH0,
+        COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2, COL_STABLECOIN_POLICY_HASH3,
+        COL_STABLECOIN_POLICY_VERSION, COL_STABLECOIN_SLOT_SEL0, COL_STABLECOIN_SLOT_SEL1,
+        COL_STABLECOIN_SLOT_SEL2, COL_STABLECOIN_SLOT_SEL3, COL_VALUE_BALANCE_MAG,
+        COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES,
+        MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES, TOTAL_TRACE_CYCLES,
+        TOTAL_USED_CYCLES, TRACE_WIDTH,
     },
     witness::TransactionWitness,
     TransactionCircuitError,
@@ -236,6 +235,9 @@ impl TransactionProverStark {
             trace[COL_FEE][final_row] = fee;
             trace[COL_VALUE_BALANCE_SIGN][final_row] = vb_sign;
             trace[COL_VALUE_BALANCE_MAG][final_row] = vb_mag;
+            for (idx, &col) in slot_asset_cols.iter().enumerate() {
+                trace[col][final_row] = BaseElement::new(slot_assets[idx]);
+            }
             trace[COL_STABLECOIN_ENABLED][final_row] = stablecoin_inputs.enabled;
             trace[COL_STABLECOIN_ASSET][final_row] = stablecoin_inputs.asset;
             trace[COL_STABLECOIN_POLICY_VERSION][final_row] = stablecoin_inputs.policy_version;
@@ -267,28 +269,23 @@ impl TransactionProverStark {
                 COL_STABLECOIN_SLOT_SEL2,
                 COL_STABLECOIN_SLOT_SEL3,
             ];
+            #[allow(clippy::needless_range_loop)]
             for row in 0..trace_len {
                 let is_final = row == final_row;
-                let enabled =
-                    bool_trace_value(stablecoin_inputs.enabled, is_final);
-                let issuance_sign =
-                    bool_trace_value(stablecoin_inputs.issuance_sign, is_final);
+                let enabled = bool_trace_value(stablecoin_inputs.enabled, is_final);
+                let issuance_sign = bool_trace_value(stablecoin_inputs.issuance_sign, is_final);
                 trace[COL_STABLECOIN_ENABLED][row] = enabled;
                 trace[COL_STABLECOIN_ISSUANCE_SIGN][row] = issuance_sign;
                 for (idx, &col) in stablecoin_sel_cols.iter().enumerate() {
-                    trace[col][row] = bool_trace_value(
-                        stablecoin_inputs.slot_selectors[idx],
-                        is_final,
-                    );
+                    trace[col][row] =
+                        bool_trace_value(stablecoin_inputs.slot_selectors[idx], is_final);
                 }
 
                 if !is_final {
-                    trace[COL_STABLECOIN_ASSET][row] =
-                        stablecoin_inputs.asset + one;
+                    trace[COL_STABLECOIN_ASSET][row] = stablecoin_inputs.asset + one;
                     trace[COL_STABLECOIN_POLICY_VERSION][row] =
                         stablecoin_inputs.policy_version + one;
-                    trace[COL_STABLECOIN_ISSUANCE_MAG][row] =
-                        stablecoin_inputs.issuance_mag + one;
+                    trace[COL_STABLECOIN_ISSUANCE_MAG][row] = stablecoin_inputs.issuance_mag + one;
                     trace[COL_STABLECOIN_POLICY_HASH0][row] =
                         stablecoin_inputs.policy_hash[0] + one;
                     trace[COL_STABLECOIN_POLICY_HASH1][row] =
@@ -961,18 +958,15 @@ fn stablecoin_binding_inputs(
     let policy_hash = bytes32_to_felts(&witness.stablecoin.policy_hash).ok_or(
         TransactionCircuitError::ConstraintViolation("invalid stablecoin policy hash encoding"),
     )?;
-    let oracle_commitment =
-        bytes32_to_felts(&witness.stablecoin.oracle_commitment).ok_or(
-            TransactionCircuitError::ConstraintViolation(
-                "invalid stablecoin oracle commitment encoding",
-            ),
-        )?;
-    let attestation_commitment =
-        bytes32_to_felts(&witness.stablecoin.attestation_commitment).ok_or(
-            TransactionCircuitError::ConstraintViolation(
-                "invalid stablecoin attestation commitment encoding",
-            ),
-        )?;
+    let oracle_commitment = bytes32_to_felts(&witness.stablecoin.oracle_commitment).ok_or(
+        TransactionCircuitError::ConstraintViolation(
+            "invalid stablecoin oracle commitment encoding",
+        ),
+    )?;
+    let attestation_commitment = bytes32_to_felts(&witness.stablecoin.attestation_commitment)
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "invalid stablecoin attestation commitment encoding",
+        ))?;
 
     let (issuance_sign, issuance_mag) = value_balance_parts(witness.stablecoin.issuance_delta)?;
     let mut slot_selectors = [BaseElement::ZERO; 4];

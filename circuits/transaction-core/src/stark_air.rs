@@ -522,7 +522,8 @@ impl Air for TransactionAirStark {
         }
         degrees.push(TransitionConstraintDegree::with_cycles(1, vec![trace_len])); // selector sum
         for _ in 0..4 {
-            degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len])); // asset match
+            degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len]));
+            // asset match
         }
         degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len])); // delta equality
         for _ in 0..3 {
@@ -553,22 +554,31 @@ impl Air for TransactionAirStark {
         degrees.push(TransitionConstraintDegree::new(2)); // slot0 asset check
         degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len])); // balance equation
         for _ in 0..3 {
-            degrees.push(TransitionConstraintDegree::with_cycles(1, vec![trace_len]));
+            degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len]));
             // slot1..3 balance
         }
         degrees.push(TransitionConstraintDegree::new(2)); // merkle direction boolean
         degrees.push(TransitionConstraintDegree::new(2)); // merkle direction carry
         for _ in 0..8 {
-            degrees.push(TransitionConstraintDegree::with_cycles(3, vec![CYCLE_LENGTH]));
+            degrees.push(TransitionConstraintDegree::with_cycles(
+                3,
+                vec![CYCLE_LENGTH],
+            ));
             // merkle link constraints
         }
         degrees.push(TransitionConstraintDegree::new(2)); // capture0 boolean
-        degrees.push(TransitionConstraintDegree::with_cycles(2, vec![CYCLE_LENGTH]));
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            2,
+            vec![CYCLE_LENGTH],
+        ));
         // capture0 only on absorb row
         degrees.push(TransitionConstraintDegree::new(2)); // out0 carry/update
         degrees.push(TransitionConstraintDegree::new(2)); // out1 carry/update
         degrees.push(TransitionConstraintDegree::new(2)); // capture2 boolean
-        degrees.push(TransitionConstraintDegree::with_cycles(2, vec![CYCLE_LENGTH]));
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            2,
+            vec![CYCLE_LENGTH],
+        ));
         // capture2 only on absorb row
         degrees.push(TransitionConstraintDegree::new(2)); // out2 carry/update
         degrees.push(TransitionConstraintDegree::new(2)); // out3 carry/update
@@ -770,8 +780,7 @@ impl Air for TransactionAirStark {
 
         for slot in 1..4 {
             let delta = current[slot_in_cols[slot]] - current[slot_out_cols[slot]];
-            result[idx] =
-                final_row_mask * delta * (one - current[stablecoin_sel_cols[slot]]);
+            result[idx] = final_row_mask * delta * (one - current[stablecoin_sel_cols[slot]]);
             idx += 1;
         }
 
@@ -953,8 +962,8 @@ impl Air for TransactionAirStark {
         idx += 1;
 
         for slot in 1..4 {
-            result[idx] =
-                final_row_mask * (current[slot_in_cols[slot]] - current[slot_out_cols[slot]]);
+            let delta = current[slot_in_cols[slot]] - current[slot_out_cols[slot]];
+            result[idx] = final_row_mask * stablecoin_disabled * delta;
             idx += 1;
         }
 

@@ -29,19 +29,17 @@ use sp_runtime::BuildStorage;
 
 thread_local! {
     static MOCK_POLICY: RefCell<Option<StablecoinPolicySnapshot<u32, u32, u64, u64>>> =
-        RefCell::new(None);
-    static MOCK_POLICY_HASH: RefCell<Option<[u8; 32]>> = RefCell::new(None);
+        const { RefCell::new(None) };
+    static MOCK_POLICY_HASH: RefCell<Option<[u8; 32]>> = const { RefCell::new(None) };
     static MOCK_ORACLE: RefCell<Option<(u32, OracleCommitmentSnapshot<u64>)>> =
-        RefCell::new(None);
+        const { RefCell::new(None) };
     static MOCK_ATTESTATION: RefCell<Option<(u64, AttestationCommitmentSnapshot<u64>)>> =
-        RefCell::new(None);
+        const { RefCell::new(None) };
 }
 
 pub struct MockStablecoinPolicyProvider;
 impl StablecoinPolicyProvider<u32, u32, u64, u64> for MockStablecoinPolicyProvider {
-    fn policy(
-        asset_id: &u32,
-    ) -> Option<StablecoinPolicySnapshot<u32, u32, u64, u64>> {
+    fn policy(asset_id: &u32) -> Option<StablecoinPolicySnapshot<u32, u32, u64, u64>> {
         MOCK_POLICY.with(|cell| {
             cell.borrow()
                 .as_ref()
@@ -99,8 +97,7 @@ pub fn set_mock_attestation(
     commitment_id: u64,
     snapshot: Option<AttestationCommitmentSnapshot<u64>>,
 ) {
-    MOCK_ATTESTATION
-        .with(|cell| *cell.borrow_mut() = snapshot.map(|snap| (commitment_id, snap)));
+    MOCK_ATTESTATION.with(|cell| *cell.borrow_mut() = snapshot.map(|snap| (commitment_id, snap)));
 }
 
 pub fn clear_mock_stablecoin_state() {
@@ -238,7 +235,7 @@ pub fn new_test_ext() -> TestExternalities {
 mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
-    use crate::types::{BindingHash, EncryptedNote, StarkProof, StablecoinPolicyBinding};
+    use crate::types::{BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof};
     use frame_support::{assert_noop, assert_ok, BoundedVec};
     use sp_runtime::traits::ValidateUnsigned;
     use sp_runtime::transaction_validity::{
@@ -422,8 +419,11 @@ mod tests {
                 }),
             );
 
-            let stablecoin =
-                Some(stablecoin_binding(policy_hash, oracle_commitment, attestation_commitment));
+            let stablecoin = Some(stablecoin_binding(
+                policy_hash,
+                oracle_commitment,
+                attestation_commitment,
+            ));
 
             assert_noop!(
                 Pallet::<Test>::shielded_transfer(
@@ -477,8 +477,11 @@ mod tests {
                 }),
             );
 
-            let stablecoin =
-                Some(stablecoin_binding(policy_hash, oracle_commitment, attestation_commitment));
+            let stablecoin = Some(stablecoin_binding(
+                policy_hash,
+                oracle_commitment,
+                attestation_commitment,
+            ));
 
             assert_noop!(
                 Pallet::<Test>::shielded_transfer(
@@ -532,8 +535,11 @@ mod tests {
                 }),
             );
 
-            let stablecoin =
-                Some(stablecoin_binding(policy_hash, oracle_commitment, attestation_commitment));
+            let stablecoin = Some(stablecoin_binding(
+                policy_hash,
+                oracle_commitment,
+                attestation_commitment,
+            ));
 
             assert_noop!(
                 Pallet::<Test>::shielded_transfer(
@@ -587,8 +593,11 @@ mod tests {
                 }),
             );
 
-            let stablecoin =
-                Some(stablecoin_binding(policy_hash, oracle_commitment, attestation_commitment));
+            let stablecoin = Some(stablecoin_binding(
+                policy_hash,
+                oracle_commitment,
+                attestation_commitment,
+            ));
 
             assert_ok!(Pallet::<Test>::shielded_transfer(
                 RuntimeOrigin::signed(1),

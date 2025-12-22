@@ -51,11 +51,11 @@ use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
 use log::{info, warn};
+use sp_runtime::traits::Saturating;
 use sp_runtime::transaction_validity::{
     InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity,
     ValidTransaction,
 };
-use sp_runtime::traits::Saturating;
 use sp_std::vec;
 use sp_std::vec::Vec;
 
@@ -121,7 +121,9 @@ pub struct AttestationCommitmentSnapshot<BlockNumber> {
 
 /// Provider for attestation commitments.
 pub trait AttestationCommitmentProvider<CommitmentId, BlockNumber> {
-    fn commitment(commitment_id: &CommitmentId) -> Option<AttestationCommitmentSnapshot<BlockNumber>>;
+    fn commitment(
+        commitment_id: &CommitmentId,
+    ) -> Option<AttestationCommitmentSnapshot<BlockNumber>>;
 }
 
 /// Check if a nullifier is the zero value (which is invalid).
@@ -219,7 +221,13 @@ pub mod pallet {
         type MaxCoinbaseSubsidy: Get<u64>;
 
         /// Asset id type for stablecoin policy lookups.
-        type StablecoinAssetId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Ord + TryFrom<u64>;
+        type StablecoinAssetId: Parameter
+            + Member
+            + MaxEncodedLen
+            + TypeInfo
+            + Copy
+            + Ord
+            + TryFrom<u64>;
 
         /// Oracle feed id type for stablecoin policy lookups.
         type OracleFeedId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Ord;
@@ -236,12 +244,16 @@ pub mod pallet {
         >;
 
         /// Provider for oracle commitments.
-        type OracleCommitmentProvider:
-            OracleCommitmentProvider<Self::OracleFeedId, BlockNumberFor<Self>>;
+        type OracleCommitmentProvider: OracleCommitmentProvider<
+            Self::OracleFeedId,
+            BlockNumberFor<Self>,
+        >;
 
         /// Provider for attestation commitments.
-        type AttestationCommitmentProvider:
-            AttestationCommitmentProvider<Self::AttestationId, BlockNumberFor<Self>>;
+        type AttestationCommitmentProvider: AttestationCommitmentProvider<
+            Self::AttestationId,
+            BlockNumberFor<Self>,
+        >;
 
         /// Weight information.
         type WeightInfo: WeightInfo;
@@ -1346,7 +1358,7 @@ pub mod pallet {
 
             let oracle_feed = policy
                 .oracle_feeds
-                .get(0)
+                .first()
                 .ok_or(Error::<T>::StablecoinPolicyInvalid)?;
             let oracle = T::OracleCommitmentProvider::latest_commitment(oracle_feed)
                 .ok_or(Error::<T>::StablecoinOracleCommitmentMissing)?;

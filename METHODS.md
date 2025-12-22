@@ -162,6 +162,19 @@ This gives MASP semantics without any ECC:
 
 If you want to be more aggressive, you can avoid exposing per‑asset details publicly: the proof enforces the equalities, but `balance_tag` is simply a commitment to the whole vector `(Δ_k)`. Nodes don’t need to inspect it; they only check that the proof verifies.
 
+### 2.2 Stablecoin issuance binding
+
+Stablecoin issuance and burn are handled as a controlled exception to the per-asset conservation rules. The circuit allows exactly one non-native asset id to have a non-zero delta when a stablecoin binding is present. The binding is part of the public inputs and includes:
+
+* `stablecoin_asset_id`
+* `issuance_delta` (signed, exposed as sign + magnitude)
+* `policy_hash`
+* `oracle_commitment`
+* `attestation_commitment`
+* `policy_version`
+
+Inside the AIR, the stablecoin slot selector must sum to 1 when the binding is enabled, the selected balance slot must match `stablecoin_asset_id`, and the selected slot delta must equal `issuance_delta`. All other non-native slots are still constrained to zero. The runtime then enforces that the binding matches the on-chain `StablecoinPolicy` hash and version, the oracle commitment is fresh, and the attestation is not disputed. This keeps issuance fully shielded while still tethering it to governance-approved policy inputs.
+
 Consensus stitches this MASP output into PoW validation by requiring a coinbase commitment on every block. The `ConsensusBlock`
 type now carries `CoinbaseData` that either references a concrete transaction (by index) or supplies an explicit `balance_tag`.
 Miners populate `CoinbaseData` with the minted amount, collected fees, and any explicit burns, and full nodes recompute the

@@ -77,7 +77,9 @@ impl TransactionWitness {
             }
             let issuance_mag = self.stablecoin.issuance_delta.unsigned_abs();
             if issuance_mag > u64::MAX as u128 {
-                return Err(TransactionCircuitError::ValueBalanceOutOfRange(issuance_mag));
+                return Err(TransactionCircuitError::ValueBalanceOutOfRange(
+                    issuance_mag,
+                ));
             }
         } else if !stablecoin_binding_is_zero(&self.stablecoin) {
             return Err(TransactionCircuitError::ConstraintViolation(
@@ -109,7 +111,9 @@ impl TransactionWitness {
                 }
             }
             if !stablecoin_slot_seen {
-                return Err(TransactionCircuitError::BalanceMismatch(self.stablecoin.asset_id));
+                return Err(TransactionCircuitError::BalanceMismatch(
+                    self.stablecoin.asset_id,
+                ));
             }
         } else {
             for slot in slots.iter() {

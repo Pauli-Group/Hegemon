@@ -18,10 +18,12 @@
 #[cfg(all(feature = "production", not(feature = "stark-verify")))]
 compile_error!("feature \"production\" requires \"stark-verify\" for real proof verification");
 
+use crate::types::{BindingHash, StablecoinPolicyBinding, StarkProof};
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_std::vec::Vec;
-use crate::types::{BindingHash, StarkProof, StablecoinPolicyBinding};
+#[cfg(feature = "stark-verify")]
+use winter_math::FieldElement;
 
 /// Verification key for STARK proofs.
 ///
@@ -302,25 +304,33 @@ impl StarkVerifier {
         mag_bytes[24..32].copy_from_slice(&magnitude.to_be_bytes());
         encoded.push(mag_bytes);
 
-        let (stablecoin_enabled, stablecoin_asset, stablecoin_policy_version, issuance_sign, issuance_mag, policy_hash, oracle_commitment, attestation_commitment) =
-            match inputs.stablecoin.as_ref() {
-                Some(binding) => {
-                    let (sign, mag) = transaction_core::hashing::signed_parts(binding.issuance_delta)
-                        .map(|(sign, mag)| (sign.as_int() as u8, mag.as_int()))
-                        .unwrap_or((0u8, 0u64));
-                    (
-                        1u8,
-                        binding.asset_id,
-                        u64::from(binding.policy_version),
-                        sign,
-                        mag,
-                        binding.policy_hash,
-                        binding.oracle_commitment,
-                        binding.attestation_commitment,
-                    )
-                }
-                None => (0u8, 0u64, 0u64, 0u8, 0u64, [0u8; 32], [0u8; 32], [0u8; 32]),
-            };
+        let (
+            stablecoin_enabled,
+            stablecoin_asset,
+            stablecoin_policy_version,
+            issuance_sign,
+            issuance_mag,
+            policy_hash,
+            oracle_commitment,
+            attestation_commitment,
+        ) = match inputs.stablecoin.as_ref() {
+            Some(binding) => {
+                let (sign, mag) = transaction_core::hashing::signed_parts(binding.issuance_delta)
+                    .map(|(sign, mag)| (sign.as_int() as u8, mag.as_int()))
+                    .unwrap_or((0u8, 0u64));
+                (
+                    1u8,
+                    binding.asset_id,
+                    u64::from(binding.policy_version),
+                    sign,
+                    mag,
+                    binding.policy_hash,
+                    binding.oracle_commitment,
+                    binding.attestation_commitment,
+                )
+            }
+            None => (0u8, 0u64, 0u64, 0u8, 0u64, [0u8; 32], [0u8; 32], [0u8; 32]),
+        };
 
         let mut stablecoin_enabled_bytes = [0u8; 32];
         stablecoin_enabled_bytes[31] = stablecoin_enabled;
@@ -711,7 +721,8 @@ impl StarkVerifier {
             Some(binding) => {
                 let (issuance_sign, issuance_mag) =
                     transaction_core::hashing::signed_parts(binding.issuance_delta)?;
-                let policy_hash = transaction_core::hashing::bytes32_to_felts(&binding.policy_hash)?;
+                let policy_hash =
+                    transaction_core::hashing::bytes32_to_felts(&binding.policy_hash)?;
                 let oracle_commitment =
                     transaction_core::hashing::bytes32_to_felts(&binding.oracle_commitment)?;
                 let attestation_commitment =
@@ -1063,7 +1074,8 @@ mod tests {
         use transaction_circuit::witness::TransactionWitness;
         use transaction_circuit::StablecoinPolicyBinding;
 
-        static FIXTURE: OnceLock<(StarkProof, ShieldedTransferInputs, BindingHash)> = OnceLock::new();
+        static FIXTURE: OnceLock<(StarkProof, ShieldedTransferInputs, BindingHash)> =
+            OnceLock::new();
         FIXTURE
             .get_or_init(|| {
                 let input_note = NoteData {

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
@@ -32,13 +32,14 @@ use wallet::{
     address::ShieldedAddress,
     api::{self, RecipientSpec},
     async_sync::AsyncWalletSyncEngine,
-    build_transaction,
+    build_stablecoin_burn, build_transaction, build_transaction_with_binding,
     disclosure::{
         decode_base64, encode_base64, DisclosureChainInfo, DisclosureClaim, DisclosureConfirmation,
         DisclosurePackage, DisclosureProof,
     },
     keys::{DerivedKeys, RootSecret},
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
+    precheck_nullifiers_with_binding,
     rpc::WalletRpcClient,
     store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
     substrate_rpc::SubstrateRpcClient,
@@ -120,6 +121,12 @@ enum Commands {
     /// Send multiple transactions in a single batched proof
     #[command(name = "substrate-batch-send")]
     SubstrateBatchSend(SubstrateBatchSendArgs),
+    /// Mint stablecoin via signed shielded transfer
+    #[command(name = "stablecoin-mint")]
+    StablecoinMint(StablecoinMintArgs),
+    /// Burn stablecoin via signed shielded transfer
+    #[command(name = "stablecoin-burn")]
+    StablecoinBurn(StablecoinBurnArgs),
     #[command(name = "export-viewing-key")]
     ExportViewingKey(ExportArgs),
     #[command(name = "payment-proof", subcommand)]
@@ -381,6 +388,64 @@ struct SubstrateBatchSendArgs {
     dry_run: bool,
 }
 
+/// Arguments for stablecoin minting (signed)
+#[derive(Parser)]
+struct StablecoinMintArgs {
+    /// Path to wallet store file
+    #[arg(long)]
+    store: PathBuf,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
+    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    ws_url: String,
+    /// Recipient shielded address
+    #[arg(long)]
+    recipient: String,
+    /// Stablecoin amount to mint
+    #[arg(long)]
+    amount: u64,
+    /// Stablecoin asset id
+    #[arg(long)]
+    asset_id: u64,
+    /// Optional memo for recipient
+    #[arg(long)]
+    memo: Option<String>,
+    /// Transaction fee in native asset
+    #[arg(long, default_value_t = 0)]
+    fee: u64,
+    /// Show what would happen without executing
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
+}
+
+/// Arguments for stablecoin burning (signed)
+#[derive(Parser)]
+struct StablecoinBurnArgs {
+    /// Path to wallet store file
+    #[arg(long)]
+    store: PathBuf,
+    /// Wallet passphrase (prompts interactively if not provided)
+    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
+    passphrase: Option<String>,
+    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    ws_url: String,
+    /// Stablecoin amount to burn
+    #[arg(long)]
+    amount: u64,
+    /// Stablecoin asset id
+    #[arg(long)]
+    asset_id: u64,
+    /// Transaction fee in native asset
+    #[arg(long, default_value_t = 0)]
+    fee: u64,
+    /// Show what would happen without executing
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
+}
+
 /// Get passphrase from argument, or prompt interactively if not provided.
 /// Uses rpassword to hide input from terminal.
 fn get_passphrase(passphrase: Option<String>, prompt: &str) -> Result<String> {
@@ -455,6 +520,8 @@ fn main() -> Result<()> {
         Commands::Send(args) => cmd_send(args),
         Commands::SubstrateSend(args) => cmd_substrate_send(args),
         Commands::SubstrateBatchSend(args) => cmd_substrate_batch_send(args),
+        Commands::StablecoinMint(args) => cmd_stablecoin_mint(args),
+        Commands::StablecoinBurn(args) => cmd_stablecoin_burn(args),
         Commands::ExportViewingKey(args) => cmd_export_viewing_key(args),
         Commands::PaymentProof(args) => cmd_payment_proof(args),
     }
@@ -615,6 +682,7 @@ fn cmd_daemon(args: DaemonArgs) -> Result<()> {
 
 fn cmd_status(args: StatusArgs) -> Result<()> {
     let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let mut metadata_map: BTreeMap<u64, String> = BTreeMap::new();
     // Sync first unless --no-sync is specified
     if !args.no_sync {
         let runtime = RuntimeBuilder::new_multi_thread()
@@ -622,7 +690,7 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
             .build()
             .context("failed to create tokio runtime")?;
 
-        runtime.block_on(async {
+        metadata_map = runtime.block_on(async {
             println!("Syncing with {}...", args.ws_url);
             let client = Arc::new(
                 SubstrateRpcClient::connect(&args.ws_url)
@@ -637,16 +705,32 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
                 .sync_once()
                 .await
                 .map_err(|e| anyhow!("Sync failed: {}", e))?;
-            Ok::<_, anyhow::Error>(())
+            let balances = store_arc.balances()?;
+            let pending_balances = store_arc.pending_balances()?;
+            let mut asset_ids = BTreeSet::new();
+            asset_ids.extend(balances.keys().copied());
+            asset_ids.extend(pending_balances.keys().copied());
+            let mut metadata_map = BTreeMap::new();
+            for asset_id in asset_ids.iter() {
+                if let Ok(Some(metadata)) = client.asset_metadata(*asset_id).await {
+                    metadata_map.insert(*asset_id, metadata);
+                }
+            }
+            Ok::<_, anyhow::Error>(metadata_map)
         })?;
     }
 
     // Re-open to get synced state
     let store = WalletStore::open(&args.store, &passphrase)?;
-    show_status(&store)
+    let metadata = if metadata_map.is_empty() {
+        None
+    } else {
+        Some(&metadata_map)
+    };
+    show_status(&store, metadata)
 }
 
-fn show_status(store: &WalletStore) -> Result<()> {
+fn show_status(store: &WalletStore, metadata: Option<&BTreeMap<u64, String>>) -> Result<()> {
     println!("\n═══════════════════════════════════════");
     println!("            WALLET STATUS");
     println!("═══════════════════════════════════════\n");
@@ -658,57 +742,77 @@ fn show_status(store: &WalletStore) -> Result<()> {
 
     println!();
 
-    // Show note counts and balances
-    let spendable_notes = store.spendable_notes(0)?; // 0 = native asset
-    let locked_notes = store.pending_spend_notes(0)?; // notes locked by pending transactions
+    let balances = store.balances()?;
+    let pending_balances = store.pending_balances()?;
+    let mut asset_ids = BTreeSet::new();
+    asset_ids.extend(balances.keys().copied());
+    asset_ids.extend(pending_balances.keys().copied());
 
-    let spendable_value: u64 = spendable_notes
-        .iter()
-        .map(|note| note.recovered.note.value)
-        .sum();
-    let locked_value: u64 = locked_notes
-        .iter()
-        .map(|note| note.recovered.note.value)
-        .sum();
-    let total_tracked = spendable_value.saturating_add(locked_value);
-
-    println!("Balance: {} HGM", spendable_value as f64 / 100_000_000.0);
-    if locked_value > 0 {
-        println!(
-            "Locked (pending spend): {} HGM",
-            locked_value as f64 / 100_000_000.0
-        );
-        println!(
-            "Total (including locked): {} HGM",
-            total_tracked as f64 / 100_000_000.0
-        );
-    }
-    println!("Unspent notes: {}", spendable_notes.len());
-    if !locked_notes.is_empty() {
-        println!("Locked notes: {}", locked_notes.len());
-    }
-
-    if spendable_notes.len() > wallet::MAX_INPUTS {
-        println!(
-            "  ⚠ Note consolidation needed: {} notes exceeds {} max inputs",
-            spendable_notes.len(),
-            wallet::MAX_INPUTS
-        );
-        let plan = wallet::ConsolidationPlan::estimate(spendable_notes.len());
-        println!(
-            "    Consolidation would take {} blocks and {} txs",
-            plan.blocks_needed, plan.txs_needed
-        );
+    if asset_ids.is_empty() {
+        println!("Balance: 0 HGM");
+    } else {
+        println!("Balances:");
+        for asset_id in asset_ids.iter() {
+            let spendable = balances.get(asset_id).copied().unwrap_or(0);
+            let locked = pending_balances.get(asset_id).copied().unwrap_or(0);
+            let total = spendable.saturating_add(locked);
+            let label = if *asset_id == transaction_circuit::constants::NATIVE_ASSET_ID {
+                "HGM".to_string()
+            } else if let Some(meta) = metadata.and_then(|m| m.get(asset_id)) {
+                format!("asset {} ({})", asset_id, meta)
+            } else {
+                format!("asset {}", asset_id)
+            };
+            if *asset_id == transaction_circuit::constants::NATIVE_ASSET_ID {
+                println!("  {}: {:.8}", label, total as f64 / 100_000_000.0);
+                if locked > 0 {
+                    println!("    locked: {:.8}", locked as f64 / 100_000_000.0);
+                }
+            } else {
+                println!("  {}: {}", label, total);
+                if locked > 0 {
+                    println!("    locked: {}", locked);
+                }
+            }
+        }
     }
 
-    if !spendable_notes.is_empty() && spendable_notes.len() <= 10 {
-        println!("\nNote breakdown:");
-        for (i, note) in spendable_notes.iter().enumerate() {
+    let mut total_spendable_notes = Vec::new();
+    for asset_id in asset_ids.iter() {
+        let spendable_notes = store.spendable_notes(*asset_id)?;
+        let locked_notes = store.pending_spend_notes(*asset_id)?;
+
+        if spendable_notes.len() > wallet::MAX_INPUTS {
             println!(
-                "  #{}: {} HGM (position {})",
-                i,
-                note.recovered.note.value as f64 / 100_000_000.0,
-                note.position
+                "  ⚠ Note consolidation needed for asset {}: {} notes exceeds {} max inputs",
+                asset_id,
+                spendable_notes.len(),
+                wallet::MAX_INPUTS
+            );
+            let plan = wallet::ConsolidationPlan::estimate(spendable_notes.len());
+            println!(
+                "    Consolidation would take {} blocks and {} txs",
+                plan.blocks_needed, plan.txs_needed
+            );
+        }
+
+        if !locked_notes.is_empty() {
+            println!(
+                "  Pending notes for asset {}: {}",
+                asset_id,
+                locked_notes.len()
+            );
+        }
+
+        total_spendable_notes.extend(spendable_notes);
+    }
+
+    if !total_spendable_notes.is_empty() && total_spendable_notes.len() <= 10 {
+        println!("\nNote breakdown:");
+        for (i, note) in total_spendable_notes.iter().enumerate() {
+            println!(
+                "  #{}: value={} asset_id={} position={}",
+                i, note.recovered.note.value, note.recovered.note.asset_id, note.position
             );
         }
     }
@@ -1541,25 +1645,34 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         let randomized_specs = randomize_recipient_specs(&specs, args.randomize_memo_order);
         let recipients = parse_recipients(&randomized_specs).map_err(|e| anyhow!(e.to_string()))?;
         let metadata = transfer_recipients_from_specs(&randomized_specs);
+        let output_asset = recipients
+            .first()
+            .map(|recipient| recipient.asset_id)
+            .unwrap_or(transaction_circuit::constants::NATIVE_ASSET_ID);
 
         // Check if consolidation is needed
         // Sort by value descending to match tx_builder behavior
-        let mut notes = store_arc.spendable_notes(0)?; // 0 = native asset
-        notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
-        let total_needed: u64 = recipients.iter().map(|r| r.value).sum::<u64>() + args.fee;
+        let mut plan = wallet::ConsolidationPlan::estimate(0);
         let mut selected_count = 0;
-        let mut selected_value = 0u64;
-        for note in &notes {
-            if selected_value >= total_needed {
-                break;
+        let mut total_needed = 0u64;
+        if output_asset == transaction_circuit::constants::NATIVE_ASSET_ID {
+            let mut notes = store_arc.spendable_notes(0)?; // 0 = native asset
+            notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
+            total_needed = recipients.iter().map(|r| r.value).sum::<u64>() + args.fee;
+            let mut selected_value = 0u64;
+            for note in &notes {
+                if selected_value >= total_needed {
+                    break;
+                }
+                selected_value += note.recovered.note.value;
+                selected_count += 1;
             }
-            selected_value += note.recovered.note.value;
-            selected_count += 1;
+            plan = wallet::ConsolidationPlan::estimate(selected_count);
+        } else if args.auto_consolidate {
+            eprintln!("Warning: auto-consolidate only supports native asset transactions.");
         }
 
-        let plan = wallet::ConsolidationPlan::estimate(selected_count);
-
-        if !plan.is_empty() {
+        if output_asset == transaction_circuit::constants::NATIVE_ASSET_ID && !plan.is_empty() {
             if args.dry_run {
                 println!("\n=== DRY RUN ===");
                 println!(
@@ -1603,11 +1716,21 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
                 .map_err(|e| anyhow!("Consolidation failed: {}", e))?;
 
             println!("\nProceeding with original transfer...");
-        } else if args.dry_run {
+        } else if output_asset == transaction_circuit::constants::NATIVE_ASSET_ID && args.dry_run {
             println!("\n=== DRY RUN ===");
             println!(
                 "No consolidation needed. Would send {} HGM to {} recipient(s).",
                 total_needed as f64 / 100_000_000.0,
+                recipients.len()
+            );
+            return Ok(());
+        } else if output_asset != transaction_circuit::constants::NATIVE_ASSET_ID && args.dry_run {
+            let total = recipients.iter().map(|r| r.value).sum::<u64>();
+            println!("\n=== DRY RUN ===");
+            println!(
+                "Would send {} units of asset {} to {} recipient(s).",
+                total,
+                output_asset,
                 recipients.len()
             );
             return Ok(());
@@ -1675,6 +1798,220 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
             Err(e) => {
                 store_arc.mark_notes_pending(&built.spent_note_indexes, false)?;
                 Err(anyhow!("Transaction submission failed: {}", e))
+            }
+        }
+    })
+}
+
+fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = WalletStore::open(&args.store, &passphrase)?;
+    if store.mode()? == WalletMode::WatchOnly {
+        anyhow::bail!("watch-only wallets cannot mint");
+    }
+    if args.amount == 0 {
+        anyhow::bail!("amount must be greater than zero");
+    }
+    if args.asset_id == transaction_circuit::constants::NATIVE_ASSET_ID {
+        anyhow::bail!("stablecoin asset id cannot be native");
+    }
+
+    let runtime = RuntimeBuilder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to create tokio runtime")?;
+
+    runtime.block_on(async {
+        println!("Connecting to {}...", args.ws_url);
+        let client = Arc::new(
+            SubstrateRpcClient::connect(&args.ws_url)
+                .await
+                .map_err(|e| anyhow!("Failed to connect: {}", e))?,
+        );
+
+        let store_arc = Arc::new(store);
+        let engine = AsyncWalletSyncEngine::new(client.clone(), store_arc.clone());
+        println!("Syncing wallet...");
+        engine
+            .sync_once()
+            .await
+            .map_err(|e| anyhow!("Sync failed: {}", e))?;
+
+        let recipient_address = ShieldedAddress::decode(&args.recipient)?;
+        let memo = MemoPlaintext::new(args.memo.clone().unwrap_or_default().into_bytes());
+        let recipients = vec![Recipient {
+            address: recipient_address,
+            value: args.amount,
+            asset_id: args.asset_id,
+            memo,
+        }];
+
+        let issuance_delta = -(args.amount as i128);
+        let binding = client
+            .stablecoin_policy_binding(args.asset_id, issuance_delta)
+            .await?;
+
+        if args.dry_run {
+            println!("\n=== DRY RUN ===");
+            println!(
+                "Would mint {} units of asset {} to {} (fee {}).",
+                args.amount, args.asset_id, args.recipient, args.fee
+            );
+            return Ok(());
+        }
+
+        println!("Checking note status...");
+        precheck_nullifiers_with_binding(&store_arc, &client, &recipients, args.fee, &binding)
+            .await?;
+
+        println!("Building stablecoin issuance proof...");
+        let built = build_transaction_with_binding(&store_arc, &recipients, args.fee, binding)?;
+
+        let derived = store_arc
+            .derived_keys()?
+            .ok_or(WalletError::InvalidState("missing derived keys"))?;
+        let signing_seed = derived.spend.to_bytes();
+
+        store_arc.mark_notes_pending(&built.spent_note_indexes, true)?;
+
+        let outgoing_disclosures = built.outgoing_disclosures.clone();
+        println!("Submitting signed stablecoin issuance...");
+        let result = client
+            .submit_shielded_transfer_signed(&built.bundle, &signing_seed)
+            .await;
+
+        match result {
+            Ok(tx_hash) => {
+                let genesis_hash = match store_arc.genesis_hash()? {
+                    Some(hash) => hash,
+                    None => {
+                        let metadata = client.get_chain_metadata().await?;
+                        store_arc.set_genesis_hash(metadata.genesis_hash)?;
+                        metadata.genesis_hash
+                    }
+                };
+                let metadata = vec![TransferRecipient {
+                    address: args.recipient,
+                    value: args.amount,
+                    asset_id: args.asset_id,
+                    memo: args.memo,
+                }];
+                store_arc.record_outgoing_disclosures(
+                    tx_hash,
+                    genesis_hash,
+                    outgoing_disclosures,
+                )?;
+                store_arc.record_pending_submission(
+                    tx_hash,
+                    built.nullifiers.clone(),
+                    built.spent_note_indexes.clone(),
+                    metadata,
+                    args.fee,
+                )?;
+                println!("✓ Mint submitted successfully!");
+                println!("  TX Hash: 0x{}", hex::encode(tx_hash));
+                Ok(())
+            }
+            Err(e) => {
+                store_arc.mark_notes_pending(&built.spent_note_indexes, false)?;
+                Err(anyhow!("Mint submission failed: {}", e))
+            }
+        }
+    })
+}
+
+fn cmd_stablecoin_burn(args: StablecoinBurnArgs) -> Result<()> {
+    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let store = WalletStore::open(&args.store, &passphrase)?;
+    if store.mode()? == WalletMode::WatchOnly {
+        anyhow::bail!("watch-only wallets cannot burn");
+    }
+    if args.amount == 0 {
+        anyhow::bail!("amount must be greater than zero");
+    }
+    if args.asset_id == transaction_circuit::constants::NATIVE_ASSET_ID {
+        anyhow::bail!("stablecoin asset id cannot be native");
+    }
+
+    let runtime = RuntimeBuilder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to create tokio runtime")?;
+
+    runtime.block_on(async {
+        println!("Connecting to {}...", args.ws_url);
+        let client = Arc::new(
+            SubstrateRpcClient::connect(&args.ws_url)
+                .await
+                .map_err(|e| anyhow!("Failed to connect: {}", e))?,
+        );
+
+        let store_arc = Arc::new(store);
+        let engine = AsyncWalletSyncEngine::new(client.clone(), store_arc.clone());
+        println!("Syncing wallet...");
+        engine
+            .sync_once()
+            .await
+            .map_err(|e| anyhow!("Sync failed: {}", e))?;
+
+        let issuance_delta = args.amount as i128;
+        let binding = client
+            .stablecoin_policy_binding(args.asset_id, issuance_delta)
+            .await?;
+
+        if args.dry_run {
+            println!("\n=== DRY RUN ===");
+            println!(
+                "Would burn {} units of asset {} (fee {}).",
+                args.amount, args.asset_id, args.fee
+            );
+            return Ok(());
+        }
+
+        println!("Building stablecoin burn proof...");
+        let built = build_stablecoin_burn(&store_arc, args.asset_id, args.fee, binding)?;
+
+        let derived = store_arc
+            .derived_keys()?
+            .ok_or(WalletError::InvalidState("missing derived keys"))?;
+        let signing_seed = derived.spend.to_bytes();
+
+        store_arc.mark_notes_pending(&built.spent_note_indexes, true)?;
+        let outgoing_disclosures = built.outgoing_disclosures.clone();
+        println!("Submitting signed stablecoin burn...");
+        let result = client
+            .submit_shielded_transfer_signed(&built.bundle, &signing_seed)
+            .await;
+
+        match result {
+            Ok(tx_hash) => {
+                let genesis_hash = match store_arc.genesis_hash()? {
+                    Some(hash) => hash,
+                    None => {
+                        let metadata = client.get_chain_metadata().await?;
+                        store_arc.set_genesis_hash(metadata.genesis_hash)?;
+                        metadata.genesis_hash
+                    }
+                };
+                store_arc.record_outgoing_disclosures(
+                    tx_hash,
+                    genesis_hash,
+                    outgoing_disclosures,
+                )?;
+                store_arc.record_pending_submission(
+                    tx_hash,
+                    built.nullifiers.clone(),
+                    built.spent_note_indexes.clone(),
+                    Vec::new(),
+                    args.fee,
+                )?;
+                println!("✓ Burn submitted successfully!");
+                println!("  TX Hash: 0x{}", hex::encode(tx_hash));
+                Ok(())
+            }
+            Err(e) => {
+                store_arc.mark_notes_pending(&built.spent_note_indexes, false)?;
+                Err(anyhow!("Burn submission failed: {}", e))
             }
         }
     })

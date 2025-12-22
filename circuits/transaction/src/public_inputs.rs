@@ -174,7 +174,9 @@ impl TransactionPublicInputs {
                 .iter()
                 .any(|slot| slot.asset_id == stablecoin.asset_id)
         {
-            return Err(TransactionCircuitError::BalanceMismatch(stablecoin.asset_id));
+            return Err(TransactionCircuitError::BalanceMismatch(
+                stablecoin.asset_id,
+            ));
         }
 
         Ok(Self {
