@@ -14,7 +14,7 @@ sp-std = { workspace = true }
 codec = { workspace = true }
 scale-info = { workspace = true }
 log = { version = "0.4", default-features = false }
-serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 blake3 = { version = "1", default-features = false }
 
 pallet-identity = { path = "../identity", default-features = false }
@@ -32,7 +32,6 @@ std = [
     "sp-std/std",
     "codec/std",
     "scale-info/std",
-    "serde",
     "serde/std",
     "blake3/std",
     "pallet-identity/std",

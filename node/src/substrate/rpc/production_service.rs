@@ -48,7 +48,8 @@ use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
 use codec::Encode;
 use pallet_shielded_pool::types::{
-    BindingHash, EncryptedNote, StarkProof, ENCRYPTED_NOTE_SIZE, ML_KEM_CIPHERTEXT_LEN,
+    BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof, ENCRYPTED_NOTE_SIZE,
+    ML_KEM_CIPHERTEXT_LEN,
 };
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use sp_api::ProvideRuntimeApi;
@@ -339,7 +340,7 @@ where
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
         binding_hash: [u8; 64],
-        stablecoin: Option<pallet_shielded_pool::StablecoinPolicyBinding>,
+        stablecoin: Option<StablecoinPolicyBinding>,
         fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {

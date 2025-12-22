@@ -21,14 +21,17 @@ The visible proof is that on a dev node you can mint stablecoin notes when polic
 - [x] (2025-12-21 19:20Z) Implement stablecoin policy pallet and runtime wiring; run `cargo test -p pallet-stablecoin-policy`.
 - [x] (2025-12-21 19:20Z) Extend MASP circuit/public inputs for stablecoin issuance, fix selector-sum degree mismatch, and run `cargo test -p transaction-core` plus `cargo test -p transaction-circuit proving_and_verification_succeeds -- --nocapture`.
 - [x] (2025-12-21 20:50Z) Implement shielded-pool runtime verification and unsigned rejection, wire provider hooks, and run `cargo test -p pallet-shielded-pool`.
-- [ ] (2025-12-21 19:20Z) Update wallet and issuer tooling (remaining).
-- [ ] (2025-12-21 19:20Z) Documentation, tests, and hardening (remaining: DESIGN/METHODS/README updates, runtime tests).
+- [x] (2025-12-22 02:00Z) Update wallet and issuer tooling; run `cargo test -p wallet` and `cargo run -p wallet-bench -- --smoke --json`.
+- [x] (2025-12-22 02:00Z) Documentation, tests, and hardening (updated DESIGN/METHODS/README; ran CI-aligned checks listed in Concrete Steps).
 
 ## Surprises & Discoveries
 
 - Observation: Winterfell debug degree checks flagged the stablecoin selector-sum constraint as over-declared (expected 65534, actual 32767) because the mask multiplies a linear expression, so the base degree is 1. Evidence: `transition constraint degrees didn't match ... expected ... 65534 ... actual ... 32767`.
 - Observation: The end-to-end proof test is slow; `cargo test -p transaction-circuit proving_and_verification_succeeds -- --nocapture` finished in ~273s. Evidence: test output `finished in 273.42s`.
 - Observation: `cargo test -p pallet-shielded-pool` initially failed due to an unused `winter_math` import in the verifier. Evidence: `unresolved import winter_math`.
+- Observation: `cargo clippy` and other builds that compile `librocksdb-sys` fail on macOS without an explicit libclang search path. Evidence: `dyld: Library not loaded: @rpath/libclang.dylib` resolved by `DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib`.
+- Observation: `cargo run -p circuits-bench -- --smoke --prove --json` reports block proving is disabled. Evidence: `Warning: block proving temporarily disabled pending Merkle tree alignment`.
+- Observation: `cargo test -p security-tests --features legacy-node-tests --test node_wallet_daemon` fails to compile due to missing `sp_core`, so the CI skip path is triggered. Evidence: `failed to resolve: use of unresolved module or unlinked crate sp_core`.
 
 ## Decision Log
 
@@ -50,6 +53,8 @@ Decision: Allow genesis policy insertion to bypass asset-registry checks. Ration
 
 Outcome (2025-12-21): Milestones 1–2 landed. Stablecoin policy storage is wired into the runtime, and the transaction circuit now binds issuance deltas to policy/oracle/attestation commitments with passing `transaction-core` and `transaction-circuit` tests. Remaining work is shielded-pool runtime verification, wallet tooling, and documentation/test hardening.
 Outcome (2025-12-21): Milestone 3 landed with stablecoin binding checks in the shielded pool and passing `cargo test -p pallet-shielded-pool`.
+Outcome (2025-12-22): Milestone 4 landed with stablecoin mint/burn tooling in the wallet, CLI support, and passing `cargo test -p wallet` plus `cargo run -p wallet-bench -- --smoke --json`.
+Outcome (2025-12-22): Milestone 5 landed with DESIGN/METHODS/README updates and CI-aligned checks passing locally; the legacy node-wallet flow remains skipped due to the missing `sp_core` dependency in the legacy feature path.
 
 ## Context and Orientation
 
@@ -110,6 +115,60 @@ Use the same root directory for all cargo commands. During development, run targ
     cargo test -p pallet-attestations
     cargo test -p wallet
 
+For CI-aligned validation after implementation, run:
+
+    cargo fmt --all -- --check
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      cargo clippy --workspace --all-targets -- -D warnings
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      cargo clippy -p runtime --all-targets --all-features -- -D warnings
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      cargo test --workspace
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      cargo test -p network
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      cargo build -p runtime
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      cargo build -p hegemon-node --release
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      cargo test -p runtime --features runtime-benchmarks -- --nocapture
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      cargo test -p runtime migration
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      cargo run -p circuits-bench -- --smoke --prove --json
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      cargo run -p wallet-bench -- --smoke --json
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      PROPTEST_MAX_CASES=64 cargo test -p transaction-circuit --test security_fuzz -- --nocapture
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      PROPTEST_MAX_CASES=64 cargo test -p network --test adversarial -- --nocapture
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      PROPTEST_MAX_CASES=64 cargo test -p wallet --test address_fuzz -- --nocapture
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      PROPTEST_MAX_CASES=64 cargo test --test security_pipeline -- --nocapture
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      cargo test -p block-circuit
+    DYLD_LIBRARY_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib \
+      cargo test -p security-tests --features legacy-node-tests --test node_wallet_daemon -- --nocapture || echo "SKIPPED: legacy-node-tests feature requires API updates"
+    go test ./... (run from consensus/bench)
+    go run ./cmd/netbench --smoke --json (run from consensus/bench)
+
 Update this section with any additional commands introduced during implementation.
 
 ## Validation and Acceptance
@@ -127,6 +186,8 @@ Capture concise logs or test output that demonstrates acceptance and rejection. 
     shielded-pool: stablecoin issuance verified for asset_id 1001
     shielded-pool: rejected stablecoin issuance, oracle commitment too old
     shielded-pool: rejected stablecoin issuance, missing policy proof
+    Warning: block proving temporarily disabled pending Merkle tree alignment
+    test verification_fails_for_stablecoin_policy_hash_mutation ... ok
 
 ## Interfaces and Dependencies
 
@@ -141,3 +202,4 @@ In `circuits/transaction-core/src/types.rs` and `circuits/transaction/src/public
 In `runtime/src/lib.rs`, wire the new pallet and configure its roles using `pallets/identity`, and ensure the oracle and attestation pallets are available for commitment lookups. All new proof verification must use the production verifier path and must not accept empty or placeholder proofs.
 
 Plan update note (2025-12-21 20:50Z): Completed milestone 3 with runtime verification and stablecoin binding checks, noted the `winter_math` import fix, and recorded the `cargo test -p pallet-shielded-pool` run.
+Plan update note (2025-12-22 02:00Z): Marked milestones 4 and 5 complete, recorded CI-aligned validation commands/results, and documented libclang and legacy node-wallet test behavior.

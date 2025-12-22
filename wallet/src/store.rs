@@ -427,6 +427,20 @@ impl WalletStore {
         })
     }
 
+    pub fn pending_balances(&self) -> Result<BTreeMap<u64, u64>, WalletError> {
+        self.with_state(|state| {
+            let mut map: BTreeMap<u64, u64> = BTreeMap::new();
+            for note in &state.notes {
+                if note.spent || !note.pending_spend {
+                    continue;
+                }
+                let entry = map.entry(note.note.note.asset_id).or_default();
+                *entry = entry.saturating_add(note.note.note.value);
+            }
+            Ok(map)
+        })
+    }
+
     pub fn commitment_tree(&self) -> Result<CommitmentTree, WalletError> {
         self.with_state(|state| {
             let depth = state.tree_depth as usize;

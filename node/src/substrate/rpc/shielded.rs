@@ -24,6 +24,7 @@
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::ErrorObjectOwned;
+use pallet_shielded_pool::types::StablecoinPolicyBinding;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -221,7 +222,7 @@ pub trait ShieldedPoolService: Send + Sync {
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
         binding_hash: [u8; 64],
-        stablecoin: Option<pallet_shielded_pool::StablecoinPolicyBinding>,
+        stablecoin: Option<StablecoinPolicyBinding>,
         fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String>;
@@ -411,11 +412,14 @@ where
                             success: false,
                             tx_hash: None,
                             block_number: None,
-                            error: Some(format!("Invalid stablecoin attestation commitment: {}", e)),
+                            error: Some(format!(
+                                "Invalid stablecoin attestation commitment: {}",
+                                e
+                            )),
                         });
                     }
                 };
-                Some(pallet_shielded_pool::StablecoinPolicyBinding {
+                Some(StablecoinPolicyBinding {
                     asset_id: binding.asset_id,
                     policy_hash,
                     oracle_commitment,
@@ -576,7 +580,7 @@ mod tests {
             _encrypted_notes: Vec<Vec<u8>>,
             _anchor: [u8; 32],
             _binding_hash: [u8; 64],
-            _stablecoin: Option<pallet_shielded_pool::StablecoinPolicyBinding>,
+            _stablecoin: Option<StablecoinPolicyBinding>,
             _fee: u64,
             _value_balance: i128,
         ) -> Result<[u8; 32], String> {

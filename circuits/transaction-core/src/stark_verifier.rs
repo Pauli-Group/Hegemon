@@ -217,19 +217,18 @@ impl TransactionPublicInputsStark {
             ));
         }
 
-        if self.stablecoin_enabled == BaseElement::ZERO {
-            if self.stablecoin_asset != BaseElement::ZERO
+        if self.stablecoin_enabled == BaseElement::ZERO
+            && (self.stablecoin_asset != BaseElement::ZERO
                 || self.stablecoin_policy_version != BaseElement::ZERO
                 || self.stablecoin_issuance_sign != BaseElement::ZERO
                 || self.stablecoin_issuance_magnitude != BaseElement::ZERO
                 || !is_zero_hash(&self.stablecoin_policy_hash)
                 || !is_zero_hash(&self.stablecoin_oracle_commitment)
-                || !is_zero_hash(&self.stablecoin_attestation_commitment)
-            {
-                return Err(TransactionVerifyError::InvalidPublicInputs(
-                    "Stablecoin binding must be zeroed when disabled".into(),
-                ));
-            }
+                || !is_zero_hash(&self.stablecoin_attestation_commitment))
+        {
+            return Err(TransactionVerifyError::InvalidPublicInputs(
+                "Stablecoin binding must be zeroed when disabled".into(),
+            ));
         }
 
         Ok(())

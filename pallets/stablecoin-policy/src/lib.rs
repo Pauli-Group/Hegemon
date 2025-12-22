@@ -9,20 +9,16 @@ use frame_support::weights::Weight;
 use frame_system::pallet_prelude::*;
 use log::warn;
 use pallet_identity::IdentityProvider;
+use serde::{Deserialize, Serialize};
 use sp_runtime::traits::MaybeSerializeDeserialize;
 use sp_std::vec::Vec;
 
-#[cfg(feature = "std")]
-use serde::{Deserialize, Serialize};
-
 pub const POLICY_HASH_DOMAIN: &[u8] = b"stablecoin-policy-v1";
 
-pub type OracleFeedIds<T> =
-    BoundedVec<<T as Config>::OracleFeedId, <T as Config>::MaxOracleFeeds>;
+pub type OracleFeedIds<T> = BoundedVec<<T as Config>::OracleFeedId, <T as Config>::MaxOracleFeeds>;
 
-#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "std", serde(bound = ""))]
-#[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
+#[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen, Serialize, Deserialize)]
+#[serde(bound = "")]
 #[scale_info(skip_type_params(T))]
 pub struct StablecoinPolicy<T: Config> {
     pub asset_id: T::AssetId,

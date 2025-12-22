@@ -496,7 +496,7 @@ mod shielded_transfer_tests {
                 [0; 32],             // anchor
                 [0; 64],             // binding sig
                 None,
-                0,                   // value balance
+                0, // value balance
             )
             .await
             .unwrap();
