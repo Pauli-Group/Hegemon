@@ -18,6 +18,7 @@ pub const POLICY_HASH_DOMAIN: &[u8] = b"stablecoin-policy-v1";
 pub type OracleFeedIds<T> = BoundedVec<<T as Config>::OracleFeedId, <T as Config>::MaxOracleFeeds>;
 
 #[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[serde(bound = "")]
 #[scale_info(skip_type_params(T))]
 pub struct StablecoinPolicy<T: Config> {
