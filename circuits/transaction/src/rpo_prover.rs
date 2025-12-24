@@ -33,7 +33,7 @@ use crate::{
     },
     stark_prover::{default_proof_options, TransactionProverStark},
     witness::TransactionWitness,
-    StablecoinPolicyBinding, TransactionCircuitError,
+    TransactionCircuitError,
 };
 
 type RpoMerkleTree = MerkleTree<Rpo256>;
@@ -225,6 +225,7 @@ mod tests {
     use crate::hashing::{felts_to_bytes32, merkle_node, HashFelt};
     use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
     use crate::rpo_verifier::verify_transaction_proof_rpo;
+    use crate::StablecoinPolicyBinding;
 
     fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
         let mut current = leaf;

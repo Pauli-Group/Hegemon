@@ -112,7 +112,7 @@ HEGEMON_RECURSIVE_EPOCH_PROOFS=1 \
 HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1 \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
-  --dev \
+  --dev
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
   --rpc-port 9944 \
@@ -176,7 +176,7 @@ HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1 \
 HEGEMON_SEEDS="hegemon.pauli.group:30333" \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "BOB_CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
-  --dev \
+  --dev
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
   --rpc-port 9944 \
