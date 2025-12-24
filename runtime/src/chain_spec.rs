@@ -37,6 +37,7 @@ fn base_genesis(endowed: &[(AccountId, Balance)], sudo: AccountId) -> RuntimeGen
         },
         difficulty: DifficultyConfig::default(),
         shielded_pool: ShieldedPoolConfig::default(),
+        ..Default::default()
     }
 }
 

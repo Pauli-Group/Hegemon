@@ -1570,7 +1570,7 @@ construct_runtime!(
         CouncilMembership: pallet_membership::<Instance1>::{Pallet, Call, Storage, Event<T>},
         Treasury: pallet_treasury::{Pallet, Call, Storage, Event<T>},
         Oracles: pallet_oracles::{Pallet, Call, Storage, Event<T>},
-        StablecoinPolicy: pallet_stablecoin_policy::{Pallet, Call, Storage, Event<T>},
+        StablecoinPolicy: pallet_stablecoin_policy::{Pallet, Call, Storage, Event<T>, Config<T>},
         Identity: pallet_identity::{Pallet, Call, Storage, Event<T>},
         Attestations: pallet_attestations::{Pallet, Call, Storage, Event<T>},
         AssetRegistry: pallet_asset_registry::{Pallet, Call, Storage, Event<T>},
