@@ -939,7 +939,8 @@ impl SubstrateRpcClient {
     pub async fn is_valid_anchor(&self, anchor: &[u8; 32]) -> Result<bool, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
-        let anchor_hex = format!("0x{}", hex::encode(anchor));
+        // `hegemon_isValidAnchor` expects hex without a 0x prefix.
+        let anchor_hex = hex::encode(anchor);
         let result: bool = client
             .request("hegemon_isValidAnchor", rpc_params![anchor_hex])
             .await
