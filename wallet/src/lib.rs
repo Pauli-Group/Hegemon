@@ -6,6 +6,7 @@ pub mod disclosure;
 pub mod error;
 pub mod extrinsic;
 pub mod keys;
+pub mod metadata;
 pub mod notes;
 pub mod prover;
 pub mod rpc;

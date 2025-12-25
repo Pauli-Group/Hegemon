@@ -12,6 +12,7 @@
 //!                 ChargeTransactionPayment)
 
 use crate::error::WalletError;
+use crate::metadata::RuntimeCallIndex;
 use crate::rpc::TransactionBundle;
 use synthetic_crypto::ml_dsa::{
     MlDsaPublicKey, MlDsaSecretKey, ML_DSA_PUBLIC_KEY_LEN, ML_DSA_SIGNATURE_LEN,
@@ -161,13 +162,14 @@ impl ExtrinsicBuilder {
     pub fn build_shielded_transfer(
         &self,
         call: &ShieldedTransferCall,
+        call_index: RuntimeCallIndex,
         nonce: Nonce,
         era: Era,
         tip: u128,
         metadata: &ChainMetadata,
     ) -> Result<Vec<u8>, WalletError> {
         // 1. Encode the call
-        let encoded_call = self.encode_shielded_transfer_call(call)?;
+        let encoded_call = self.encode_shielded_transfer_call(call, call_index)?;
 
         // 2. Encode SignedExtra
         let encoded_extra = self.encode_signed_extra(nonce, &era, tip, metadata);
@@ -187,8 +189,8 @@ impl ExtrinsicBuilder {
     /// Encode the shielded_transfer call
     ///
     /// Call format:
-    /// - pallet_index (1 byte) = ShieldedPool index in construct_runtime!
-    /// - call_index (1 byte) = 0 for shielded_transfer
+    /// - pallet_index (1 byte) = ShieldedPool index from runtime metadata
+    /// - call_index (1 byte) = shielded_transfer call index from metadata
     /// - proof: StarkProof (Vec<u8> prefixed with compact length)
     /// - nullifiers: BoundedVec<[u8;32], MaxNullifiersPerTx>
     /// - commitments: BoundedVec<[u8;32], MaxCommitmentsPerTx>
@@ -201,20 +203,13 @@ impl ExtrinsicBuilder {
     fn encode_shielded_transfer_call(
         &self,
         call: &ShieldedTransferCall,
+        call_index: RuntimeCallIndex,
     ) -> Result<Vec<u8>, WalletError> {
         let mut encoded = Vec::new();
 
-        // Pallet index for ShieldedPool (from construct_runtime! ordering)
-        // System=0, Timestamp=1, Pow=2, Difficulty=3, Session=4, Balances=5,
-        // TransactionPayment=6, Sudo=7, Council=8, CouncilMembership=9, Treasury=10,
-        // Oracles=11, Identity=12, Attestations=13, AssetRegistry=14, Settlement=15,
-        // FeatureFlags=16, FeeModel=17, Observability=18, ShieldedPool=19
-        const SHIELDED_POOL_INDEX: u8 = 19;
-        encoded.push(SHIELDED_POOL_INDEX);
-
-        // Call index for shielded_transfer (first call in pallet)
-        const SHIELDED_TRANSFER_CALL_INDEX: u8 = 0;
-        encoded.push(SHIELDED_TRANSFER_CALL_INDEX);
+        // Pallet and call indices resolved from runtime metadata.
+        encoded.push(call_index.pallet_index);
+        encoded.push(call_index.call_index);
 
         // Encode proof (StarkProof is Vec<u8>)
         // eprintln!("DEBUG CALL: proof size = {} bytes", call.proof.len());
@@ -645,7 +640,7 @@ fn encode_balances_transfer_call(recipient: &[u8; 32], amount: u128) -> Vec<u8> 
 // Batch Shielded Transfer Support
 // ============================================================================
 
-/// Batch shielded transfer call data (call_index 5)
+/// Batch shielded transfer call data
 #[derive(Clone, Debug)]
 pub struct BatchShieldedTransferCall {
     /// Batch size (2, 4, 8, or 16)
@@ -662,11 +657,12 @@ pub struct BatchShieldedTransferCall {
     pub total_fee: u128,
 }
 
-/// Encode a batch_shielded_transfer call (call_index 5)
+/// Encode a batch_shielded_transfer call
 ///
 /// This encodes multiple shielded transactions with a single batch proof.
 pub fn encode_batch_shielded_transfer_call(
     call: &BatchShieldedTransferCall,
+    call_index: RuntimeCallIndex,
 ) -> Result<Vec<u8>, WalletError> {
     if !cfg!(feature = "batch-proofs") {
         return Err(WalletError::InvalidArgument(
@@ -676,13 +672,9 @@ pub fn encode_batch_shielded_transfer_call(
 
     let mut encoded = Vec::new();
 
-    // Pallet index for ShieldedPool
-    const SHIELDED_POOL_INDEX: u8 = 19;
-    encoded.push(SHIELDED_POOL_INDEX);
-
-    // Call index for batch_shielded_transfer (call_index 5 in pallet)
-    const BATCH_SHIELDED_TRANSFER_CALL_INDEX: u8 = 5;
-    encoded.push(BATCH_SHIELDED_TRANSFER_CALL_INDEX);
+    // Pallet and call indices resolved from runtime metadata.
+    encoded.push(call_index.pallet_index);
+    encoded.push(call_index.call_index);
 
     // Encode proof as BatchStarkProof { data: Vec<u8>, batch_size: u32 }
     // NOTE: This placeholder empty proof is only reachable with the
@@ -730,9 +722,10 @@ pub fn encode_batch_shielded_transfer_call(
 /// Build an unsigned extrinsic for a batch shielded transfer
 pub fn build_unsigned_batch_shielded_transfer(
     call: &BatchShieldedTransferCall,
+    call_index: RuntimeCallIndex,
 ) -> Result<Vec<u8>, WalletError> {
     // Encode the call
-    let encoded_call = encode_batch_shielded_transfer_call(call)?;
+    let encoded_call = encode_batch_shielded_transfer_call(call, call_index)?;
 
     let mut extrinsic = Vec::new();
 
@@ -754,22 +747,19 @@ pub fn build_unsigned_batch_shielded_transfer(
 // Unsigned Shielded Transfer Support
 // ============================================================================
 
-/// Encode an unsigned shielded_transfer_unsigned call (call_index 4)
+/// Encode an unsigned shielded_transfer_unsigned call
 ///
 /// This encodes a pure shielded-to-shielded transfer that doesn't require
 /// a transparent account. The ZK proof authenticates the spend.
 pub fn encode_shielded_transfer_unsigned_call(
     call: &ShieldedTransferCall,
+    call_index: RuntimeCallIndex,
 ) -> Result<Vec<u8>, WalletError> {
     let mut encoded = Vec::new();
 
-    // Pallet index for ShieldedPool (from construct_runtime! ordering)
-    const SHIELDED_POOL_INDEX: u8 = 19;
-    encoded.push(SHIELDED_POOL_INDEX);
-
-    // Call index for shielded_transfer_unsigned (call_index 4 in pallet)
-    const SHIELDED_TRANSFER_UNSIGNED_CALL_INDEX: u8 = 4;
-    encoded.push(SHIELDED_TRANSFER_UNSIGNED_CALL_INDEX);
+    // Pallet and call indices resolved from runtime metadata.
+    encoded.push(call_index.pallet_index);
+    encoded.push(call_index.call_index);
 
     // Encode proof (StarkProof is Vec<u8>)
     encode_compact_vec(&call.proof, &mut encoded);
@@ -833,9 +823,10 @@ pub fn encode_shielded_transfer_unsigned_call(
 /// No signature, no signer address, no extra fields.
 pub fn build_unsigned_shielded_transfer(
     call: &ShieldedTransferCall,
+    call_index: RuntimeCallIndex,
 ) -> Result<Vec<u8>, WalletError> {
     // Encode the call
-    let encoded_call = encode_shielded_transfer_unsigned_call(call)?;
+    let encoded_call = encode_shielded_transfer_unsigned_call(call, call_index)?;
 
     let mut extrinsic = Vec::new();
 

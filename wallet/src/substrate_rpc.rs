@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::error::WalletError;
+use crate::metadata::{lookup_shielded_pool_call_indices, ShieldedPoolCallIndices};
 use crate::notes::NoteCiphertext;
 use crate::rpc::TransactionBundle;
 use transaction_circuit::StablecoinPolicyBinding;
@@ -662,6 +663,27 @@ impl SubstrateRpcClient {
         })
     }
 
+    async fn get_runtime_metadata_bytes(&self) -> Result<Vec<u8>, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+
+        let metadata_hex: String = client
+            .request("state_getMetadata", rpc_params![])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("state_getMetadata failed: {}", e)))?;
+
+        hex::decode(metadata_hex.trim_start_matches("0x")).map_err(|e| {
+            WalletError::Serialization(format!("failed to decode runtime metadata hex: {}", e))
+        })
+    }
+
+    async fn get_shielded_pool_call_indices(
+        &self,
+    ) -> Result<ShieldedPoolCallIndices, WalletError> {
+        let metadata_bytes = self.get_runtime_metadata_bytes().await?;
+        lookup_shielded_pool_call_indices(&metadata_bytes)
+    }
+
     /// Get account nonce for replay protection
     ///
     /// Queries the System.Account storage to get the nonce for the account.
@@ -987,6 +1009,7 @@ impl SubstrateRpcClient {
 
         // 2. Get chain metadata
         let metadata = self.get_chain_metadata().await?;
+        let call_indices = self.get_shielded_pool_call_indices().await?;
 
         // 3. Get account nonce
         let nonce = self.get_nonce(&builder.account_id()).await?;
@@ -1008,7 +1031,11 @@ impl SubstrateRpcClient {
 
         // 6. Build and sign the extrinsic
         let extrinsic = builder.build_shielded_transfer(
-            &call, nonce, era, 0, // tip
+            &call,
+            call_indices.shielded_transfer,
+            nonce,
+            era,
+            0, // tip
             &metadata,
         )?;
 
@@ -1044,6 +1071,7 @@ impl SubstrateRpcClient {
 
         // Build the call from the bundle
         let call = ShieldedTransferCall::from_bundle(bundle);
+        let call_indices = self.get_shielded_pool_call_indices().await?;
 
         // Verify this is a pure shielded transfer (value_balance = 0)
         if bundle.value_balance != 0 {
@@ -1059,7 +1087,8 @@ impl SubstrateRpcClient {
         // eprintln!("DEBUG: Number of encrypted notes: {}", call.encrypted_notes.len());
 
         // Build the unsigned extrinsic
-        let extrinsic = build_unsigned_shielded_transfer(&call)?;
+        let extrinsic =
+            build_unsigned_shielded_transfer(&call, call_indices.shielded_transfer_unsigned)?;
 
         // eprintln!("DEBUG: Unsigned extrinsic size: {} bytes", extrinsic.len());
 
@@ -1103,6 +1132,8 @@ impl SubstrateRpcClient {
             ));
         }
 
+        let call_indices = self.get_shielded_pool_call_indices().await?;
+
         // Build the call
         let call = BatchShieldedTransferCall {
             batch_size,
@@ -1114,7 +1145,10 @@ impl SubstrateRpcClient {
         };
 
         // Build the unsigned extrinsic
-        let extrinsic = build_unsigned_batch_shielded_transfer(&call)?;
+        let extrinsic = build_unsigned_batch_shielded_transfer(
+            &call,
+            call_indices.batch_shielded_transfer,
+        )?;
 
         // Submit
         self.submit_extrinsic(&extrinsic).await
