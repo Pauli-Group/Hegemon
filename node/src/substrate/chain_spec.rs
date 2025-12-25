@@ -3,6 +3,7 @@
 //! ONE chain spec. Difficulty retargeting handles hashrate differences.
 
 use runtime::WASM_BINARY;
+use pallet_shielded_pool::verifier::StarkVerifier;
 use sc_service::ChainType;
 
 /// Specialized `ChainSpec` for the Hegemon runtime.
@@ -19,6 +20,10 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
     properties.insert("tokenSymbol".into(), "HGM".into());
     properties.insert("tokenDecimals".into(), 12.into());
     properties.insert("ss58Format".into(), 42.into());
+
+    let verifying_key = StarkVerifier::create_verifying_key(0);
+    let verifying_key_value = serde_json::to_value(&verifying_key)
+        .map_err(|e| format!("Failed to serialize shielded verifying key: {e}"))?;
 
     let genesis_config = serde_json::json!({
         "system": {},
@@ -41,7 +46,7 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
             "initialBits": 0x1d1a_d7f2_u32
         },
         "shieldedPool": {
-            "verifyingKey": null
+            "verifyingKey": verifying_key_value
         },
         "stablecoinPolicy": {
             "policies": [
