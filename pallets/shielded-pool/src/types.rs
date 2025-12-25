@@ -24,7 +24,8 @@ pub const MAX_COMMITMENTS_PER_TX: u32 = 2;
 /// Maximum size of a STARK proof in bytes.
 /// STARK proofs require NO trusted setup.
 /// Typical range: 20KB-100KB depending on circuit complexity.
-pub const STARK_PROOF_MAX_SIZE: usize = 65536;
+/// Cap is set higher to accommodate real proofs under default security settings.
+pub const STARK_PROOF_MAX_SIZE: usize = 200_000;
 
 /// Size of a binding hash.
 pub const BINDING_HASH_SIZE: usize = 64;
