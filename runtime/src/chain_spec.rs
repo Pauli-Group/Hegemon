@@ -4,6 +4,7 @@ use crate::{
     AccountId, Balance, BalancesConfig, DifficultyConfig, DummySessionKeys, PowDifficulty,
     RuntimeGenesisConfig, SessionConfig, ShieldedPoolConfig, SudoConfig, SystemConfig,
 };
+use pallet_shielded_pool::verifier::StarkVerifier;
 
 /// Structured chain spec describing PoW parameters, telemetry defaults, and genesis state.
 pub struct ChainSpec {
@@ -36,7 +37,10 @@ fn base_genesis(endowed: &[(AccountId, Balance)], sudo: AccountId) -> RuntimeGen
                 .collect(),
         },
         difficulty: DifficultyConfig::default(),
-        shielded_pool: ShieldedPoolConfig::default(),
+        shielded_pool: ShieldedPoolConfig {
+            verifying_key: Some(StarkVerifier::create_verifying_key(0)),
+            ..Default::default()
+        },
         ..Default::default()
     }
 }

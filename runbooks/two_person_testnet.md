@@ -314,6 +314,11 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 - Check node logs for extrinsic errors
 - If you hit `Need X notes but max is 2`, re-run `wallet substrate-send` with `--auto-consolidate` (it submits X-2 consolidation txs and can take multiple blocks)
 
+### Invalid Transaction: `Custom error: 6`
+- The shielded verifying key is disabled in genesis, so unsigned transfers are rejected.
+- Fix: rebuild the node, regenerate the chainspec, and restart with the new spec (or wipe `node.db` when using `--dev`).
+- If you need to keep chain state, use sudo to call `ShieldedPool.update_verifying_key` with `StarkVerifier::create_verifying_key(0)` via Polkadot.js Apps.
+
 ### Balance shows 0
 - Mining rewards require `HEGEMON_MINER_ADDRESS` to be set (shielded address)
 - Sync wallet after blocks are mined
