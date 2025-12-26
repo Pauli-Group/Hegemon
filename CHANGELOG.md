@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4-alpha - 2025-12-25
+- Production hardening: shielded-only coinbase, proof-backed transfers, legacy commitment gating + Merkle root history, and subsidy/proof size enforcement.
+- Stablecoin issuance/burn: new stablecoin-policy pallet, runtime bindings, wallet mint/burn support, and chain spec updates through 0.4.2 (genesis shielded verifying key).
+- Wallet/RPC resilience: metadata-driven extrinsic encoding, stricter anchor encoding validation, and RPC hardening guidance in runbooks.
+- Ops tooling: dependency audit script improvements and persisted PQ identity seed.
+
 ## v0.3-alpha - 2025-12-19
 - Disclosure-on-demand payment proofs: new disclosure circuit, wallet persistence, and `payment-proof` CLI (create/verify/purge).
 - Proof verification hardening across transaction/settlement verification and shielded-pool enforcement, plus value balance/fee plumbing.
