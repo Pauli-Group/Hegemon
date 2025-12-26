@@ -17,8 +17,8 @@ pub mod verifier;
 
 pub use air::{SettlementAir, SettlementPublicInputs};
 pub use hashing::{
-    bytes32_to_felt, commitment_from_inputs, felt_to_bytes32, is_canonical_bytes32,
-    nullifier_from_instruction, Felt,
+    bytes32_to_felts, commitment_from_inputs, felts_to_bytes32, is_canonical_bytes32,
+    nullifier_from_instruction, Commitment, Felt, HashFelt,
 };
 
 #[cfg(feature = "std")]

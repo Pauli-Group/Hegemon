@@ -22,6 +22,8 @@ proptest = "1"
 [features]
 default = []
 rpo-fiat-shamir = ["miden-crypto"]
+legacy-proof = []
+stark-fast = ["transaction-core/stark-fast"]
 
 [lints]
 workspace = true

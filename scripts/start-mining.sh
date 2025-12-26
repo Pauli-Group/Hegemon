@@ -99,6 +99,7 @@ export HEGEMON_MINER_ADDRESS="$SHIELDED_ADDR"
 
 # Build node arguments
 NODE_ARGS=(
+    --dev
     --base-path "$NODE_PATH"
     --chain config/dev-chainspec.json
     --rpc-port 9944

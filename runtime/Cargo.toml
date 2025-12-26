@@ -54,11 +54,11 @@ pallet-attestations = { path = "../pallets/attestations", default-features = fal
 pallet-asset-registry = { path = "../pallets/asset-registry", default-features = false }
 pallet-settlement = { path = "../pallets/settlement", default-features = false, features = ["stark-verify"] }
 pallet-oracles = { path = "../pallets/oracles", default-features = false }
+pallet-stablecoin-policy = { path = "../pallets/stablecoin-policy", default-features = false }
 pallet-fee-model = { path = "../pallets/fee-model", default-features = false }
 pallet-feature-flags = { path = "../pallets/feature-flags", default-features = false }
 pallet-observability = { path = "../pallets/observability", default-features = false }
 pallet-difficulty = { path = "../pallets/difficulty", default-features = false }
-pallet-coinbase = { path = "../pallets/coinbase", default-features = false }
 pallet-shielded-pool = { path = "../pallets/shielded-pool", default-features = false, features = ["stark-verify"] }
 
 [dev-dependencies]
@@ -66,6 +66,7 @@ sp-runtime = { workspace = true, features = ["std"] }
 frame-support = { workspace = true, features = ["std"] }
 frame-system = { workspace = true, features = ["std"] }
 sp-io = { workspace = true, features = ["std"] }
+pallet-coinbase = { path = "../pallets/coinbase", features = ["std"] }
 
 [features]
 default = ["std"]
@@ -103,11 +104,11 @@ std = [
     "pallet-asset-registry/std",
     "pallet-settlement/std",
     "pallet-oracles/std",
+    "pallet-stablecoin-policy/std",
     "pallet-fee-model/std",
     "pallet-feature-flags/std",
     "pallet-observability/std",
     "pallet-difficulty/std",
-    "pallet-coinbase/std",
     "pallet-shielded-pool/std",
     "crypto/std",
     "serde/std",

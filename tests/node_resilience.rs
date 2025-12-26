@@ -9,11 +9,12 @@ use tempfile::Builder;
 use tokio::time::sleep;
 use tokio::time::Duration;
 use transaction_circuit::constants::NATIVE_ASSET_ID;
-use transaction_circuit::hashing::{felt_to_bytes32, Felt};
+use transaction_circuit::hashing::Commitment;
 use transaction_circuit::keys::generate_keys;
-use transaction_circuit::note::{InputNoteWitness, NoteData, OutputNoteWitness};
+use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use transaction_circuit::proof::prove;
 use transaction_circuit::witness::TransactionWitness;
+use transaction_circuit::StablecoinPolicyBinding;
 use wallet::rpc::TransactionBundle;
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -41,7 +42,7 @@ fn base_config(path: &std::path::Path) -> NodeConfig {
     config
 }
 
-fn sample_bundle(root: Felt) -> TransactionBundle {
+fn sample_bundle(root: Commitment) -> TransactionBundle {
     let witness = TransactionWitness {
         inputs: vec![InputNoteWitness {
             note: NoteData {
@@ -53,6 +54,7 @@ fn sample_bundle(root: Felt) -> TransactionBundle {
             },
             position: 1,
             rho_seed: [9u8; 32],
+            merkle_path: MerklePath::default(),
         }],
         outputs: vec![OutputNoteWitness {
             note: NoteData {
@@ -67,25 +69,27 @@ fn sample_bundle(root: Felt) -> TransactionBundle {
         merkle_root: root,
         fee: 1,
         value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
         version: TransactionWitness::default_version_binding(),
     };
 
     let (proving_key, _) = generate_keys();
     let proof = prove(&witness, &proving_key).expect("prove");
+    let zero = [0u8; 32];
     let nullifiers: Vec<[u8; 32]> = proof
         .nullifiers
         .iter()
-        .filter(|value| value.as_int() != 0)
-        .map(|value| felt_to_bytes32(*value))
+        .copied()
+        .filter(|value| *value != zero)
         .collect();
     let commitments: Vec<[u8; 32]> = proof
         .commitments
         .iter()
-        .filter(|value| value.as_int() != 0)
-        .map(|value| felt_to_bytes32(*value))
+        .copied()
+        .filter(|value| *value != zero)
         .collect();
     let ciphertexts = vec![vec![0u8; 32]; commitments.len()];
-    let anchor = felt_to_bytes32(witness.merkle_root);
+    let anchor = witness.merkle_root;
     let mut message = Vec::new();
     message.extend_from_slice(&anchor);
     for nf in &nullifiers {
@@ -97,9 +101,9 @@ fn sample_bundle(root: Felt) -> TransactionBundle {
     message.extend_from_slice(&witness.fee.to_le_bytes());
     message.extend_from_slice(&witness.value_balance.to_le_bytes());
     let hash = sp_core::hashing::blake2_256(&message);
-    let mut binding_sig = [0u8; 64];
-    binding_sig[..32].copy_from_slice(&hash);
-    binding_sig[32..].copy_from_slice(&hash);
+    let mut binding_hash = [0u8; 64];
+    binding_hash[..32].copy_from_slice(&hash);
+    binding_hash[32..].copy_from_slice(&hash);
 
     TransactionBundle {
         proof_bytes: proof.stark_proof.clone(),
@@ -107,9 +111,10 @@ fn sample_bundle(root: Felt) -> TransactionBundle {
         commitments,
         ciphertexts,
         anchor,
-        binding_sig,
+        binding_hash,
         fee: witness.fee,
         value_balance: witness.value_balance,
+        stablecoin: witness.stablecoin.clone(),
     }
 }
 

@@ -1,7 +1,6 @@
 use network::{establish_secure_channel, PeerIdentity};
-use transaction_circuit::hashing::Felt;
 use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
-use transaction_circuit::TransactionWitness;
+use transaction_circuit::{StablecoinPolicyBinding, TransactionWitness};
 use wallet::address::ShieldedAddress;
 use wallet::RootSecret;
 
@@ -54,9 +53,10 @@ fn sample_witness() -> TransactionWitness {
             },
         ],
         sk_spend: [42u8; 32],
-        merkle_root: Felt::new(99),
+        merkle_root: [0u8; 32],
         fee: 5,
         value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
         version: TransactionWitness::default_version_binding(),
     }
 }

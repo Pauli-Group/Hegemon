@@ -42,8 +42,10 @@ use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
     constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID},
+    hashing::bytes32_to_felts,
     note::OutputNoteWitness,
     witness::TransactionWitness,
+    StablecoinPolicyBinding,
 };
 
 use crate::address::ShieldedAddress;
@@ -109,7 +111,7 @@ pub struct BuiltShieldedTx {
     pub commitments: Vec<[u8; 32]>,
     /// Indices of spent notes in the wallet store.
     pub spent_note_indices: Vec<usize>,
-    /// Value balance (positive = shielding, negative = unshielding).
+    /// Value balance (must be 0 when no transparent pool is enabled).
     pub value_balance: i128,
     /// Fee paid.
     pub fee: u64,
@@ -271,7 +273,13 @@ impl<'a> ShieldedTxBuilder<'a> {
         stats.proving_time = proof_result.proving_time;
         stats.proof_size = proof_result.proof_size();
 
-        // Compute binding signature commitment (Blake2-256 hash of public inputs)
+        if proof_result.value_balance != 0 {
+            return Err(WalletError::InvalidArgument(
+                "transparent pool disabled: value_balance must be 0",
+            ));
+        }
+
+        // Compute binding hash commitment (domain-separated Blake2-256 of public inputs)
         let binding_hash = self.compute_binding_hash(
             &proof_result.anchor,
             &proof_result.nullifiers,
@@ -279,10 +287,6 @@ impl<'a> ShieldedTxBuilder<'a> {
             proof_result.fee,
             proof_result.value_balance,
         );
-        // The binding signature is the 32-byte hash duplicated to 64 bytes
-        let mut binding_sig_64 = [0u8; 64];
-        binding_sig_64[..32].copy_from_slice(&binding_hash);
-        binding_sig_64[32..].copy_from_slice(&binding_hash);
 
         // Build transaction bundle
         let bundle = TransactionBundle::new(
@@ -291,9 +295,10 @@ impl<'a> ShieldedTxBuilder<'a> {
             proof_result.commitments.to_vec(),
             &ciphertexts,
             proof_result.anchor,
-            binding_sig_64,
+            binding_hash,
             proof_result.fee,
             proof_result.value_balance,
+            witness.stablecoin.clone(),
         )?;
 
         // Compute nullifiers for wallet tracking
@@ -462,10 +467,16 @@ impl<'a> ShieldedTxBuilder<'a> {
                     ))
                 })?;
 
+            let mut siblings = Vec::with_capacity(auth_path.len());
+            for sibling in auth_path.iter() {
+                let felts = bytes32_to_felts(sibling).ok_or(WalletError::InvalidState(
+                    "non-canonical merkle sibling encoding",
+                ))?;
+                siblings.push(felts);
+            }
+
             // Convert Felt path to MerklePath
-            let merkle_path = transaction_circuit::note::MerklePath {
-                siblings: auth_path,
-            };
+            let merkle_path = transaction_circuit::note::MerklePath { siblings };
 
             // Create input witness with the merkle path
             let mut input_witness = note.recovered.to_input_witness(note.position);
@@ -476,18 +487,19 @@ impl<'a> ShieldedTxBuilder<'a> {
         Ok(TransactionWitness {
             inputs,
             outputs,
-            sk_spend: derived.spend.to_bytes(),
+            sk_spend: derived.view.nullifier_key(),
             merkle_root: tree.root(),
             fee,
             value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
             version: TransactionWitness::default_version_binding(),
         })
     }
 
-    /// Compute binding signature hash for transaction commitment.
+    /// Compute binding hash for transaction commitment.
     ///
-    /// Returns the 32-byte Blake2-256 hash of the public inputs:
-    /// Blake2_256(anchor || nullifiers || commitments || fee || value_balance)
+    /// Returns the 64-byte binding hash of the public inputs:
+    /// Blake2_256(domain || 0 || message) || Blake2_256(domain || 1 || message)
     fn compute_binding_hash(
         &self,
         anchor: &[u8; 32],
@@ -495,7 +507,7 @@ impl<'a> ShieldedTxBuilder<'a> {
         commitments: &[[u8; 32]],
         fee: u64,
         value_balance: i128,
-    ) -> [u8; 32] {
+    ) -> [u8; 64] {
         let mut data = Vec::new();
         data.extend_from_slice(anchor);
         for nf in nullifiers {
@@ -506,7 +518,23 @@ impl<'a> ShieldedTxBuilder<'a> {
         }
         data.extend_from_slice(&fee.to_le_bytes());
         data.extend_from_slice(&value_balance.to_le_bytes());
-        synthetic_crypto::hashes::blake2_256(&data)
+        const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v1";
+        let mut msg0 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + data.len());
+        msg0.extend_from_slice(BINDING_HASH_DOMAIN);
+        msg0.push(0);
+        msg0.extend_from_slice(&data);
+        let hash0 = synthetic_crypto::hashes::blake2_256(&msg0);
+
+        let mut msg1 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + data.len());
+        msg1.extend_from_slice(BINDING_HASH_DOMAIN);
+        msg1.push(1);
+        msg1.extend_from_slice(&data);
+        let hash1 = synthetic_crypto::hashes::blake2_256(&msg1);
+
+        let mut out = [0u8; 64];
+        out[..32].copy_from_slice(&hash0);
+        out[32..].copy_from_slice(&hash1);
+        out
     }
 
     /// Compute nullifiers for the spent notes.
@@ -520,58 +548,6 @@ impl<'a> ShieldedTxBuilder<'a> {
             .map(|note| fvk.compute_nullifier(&note.recovered.note.rho, note.position))
             .collect()
     }
-}
-
-/// Shield transparent funds into the shielded pool.
-///
-/// This creates a shielding transaction that moves transparent funds
-/// into the shielded pool, creating a new shielded note.
-#[derive(Clone, Debug)]
-pub struct ShieldingTx {
-    /// Commitment for the new note.
-    pub commitment: [u8; 32],
-    /// Encrypted note ciphertext.
-    pub encrypted_note: Vec<u8>,
-    /// Amount being shielded.
-    pub amount: u64,
-}
-
-/// Build a shielding transaction.
-///
-/// # Arguments
-///
-/// * `address` - Shielded address to receive the funds
-/// * `amount` - Amount to shield
-/// * `memo` - Optional memo
-pub fn build_shielding_tx(
-    address: &ShieldedAddress,
-    amount: u64,
-    memo: Option<String>,
-) -> Result<ShieldingTx, WalletError> {
-    let mut rng = OsRng;
-
-    let memo_plaintext = memo
-        .map(|m| MemoPlaintext::new(m.as_bytes().to_vec()))
-        .unwrap_or_default();
-
-    let note = NotePlaintext::random(amount, NATIVE_ASSET_ID, memo_plaintext, &mut rng);
-    let ciphertext = NoteCiphertext::encrypt(address, &note, &mut rng)?;
-
-    // Compute commitment
-    let note_data = note.to_note_data(address.pk_recipient);
-    let commitment_felt = note_data.commitment();
-    let mut commitment = [0u8; 32];
-    commitment[24..32].copy_from_slice(&commitment_felt.as_int().to_be_bytes());
-
-    // Serialize ciphertext
-    let encrypted_note =
-        bincode::serialize(&ciphertext).map_err(|e| WalletError::Serialization(e.to_string()))?;
-
-    Ok(ShieldingTx {
-        commitment,
-        encrypted_note,
-        amount,
-    })
 }
 
 #[cfg(test)]

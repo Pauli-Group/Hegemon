@@ -83,6 +83,7 @@ impl TransactionAir {
                 "balance slot length mismatch",
             ));
         }
+        let mut stablecoin_slot_seen = false;
         for (idx, expected) in public_inputs.balance_slots.iter().enumerate() {
             let actual = self
                 .trace
@@ -102,9 +103,21 @@ impl TransactionAir {
                 if expected.delta != expected_native {
                     return Err(TransactionCircuitError::BalanceMismatch(expected.asset_id));
                 }
+            } else if public_inputs.stablecoin.enabled
+                && expected.asset_id == public_inputs.stablecoin.asset_id
+            {
+                stablecoin_slot_seen = true;
+                if expected.delta != public_inputs.stablecoin.issuance_delta {
+                    return Err(TransactionCircuitError::BalanceMismatch(expected.asset_id));
+                }
             } else if expected.delta != 0 {
                 return Err(TransactionCircuitError::BalanceMismatch(expected.asset_id));
             }
+        }
+        if public_inputs.stablecoin.enabled && !stablecoin_slot_seen {
+            return Err(TransactionCircuitError::BalanceMismatch(
+                public_inputs.stablecoin.asset_id,
+            ));
         }
         Ok(())
     }
@@ -119,7 +132,10 @@ impl TransactionAir {
             .find(|slot| slot.asset_id == NATIVE_ASSET_ID)
             .map(|slot| slot.delta)
             .unwrap_or(0);
-        let expected = balance_commitment(native_delta, &public_inputs.balance_slots);
+        let expected =
+            balance_commitment(native_delta, &public_inputs.balance_slots).map_err(|err| {
+                TransactionCircuitError::BalanceDeltaOutOfRange(err.asset_id, err.magnitude)
+            })?;
         if expected != public_inputs.balance_tag {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "balance tag mismatch",

@@ -6,20 +6,53 @@ use winterfell::math::FieldElement;
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID},
     error::TransactionCircuitError,
-    hashing::{balance_commitment, Felt},
+    hashing::{balance_commitment, Commitment, Felt},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StablecoinPolicyBinding {
+    #[serde(default)]
+    pub enabled: bool,
+    pub asset_id: u64,
+    #[serde(with = "crate::public_inputs::serde_bytes32")]
+    pub policy_hash: Commitment,
+    #[serde(with = "crate::public_inputs::serde_bytes32")]
+    pub oracle_commitment: Commitment,
+    #[serde(with = "crate::public_inputs::serde_bytes32")]
+    pub attestation_commitment: Commitment,
+    #[serde(default)]
+    pub issuance_delta: i128,
+    pub policy_version: u32,
+}
+
+impl Default for StablecoinPolicyBinding {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            asset_id: 0,
+            policy_hash: [0u8; 32],
+            oracle_commitment: [0u8; 32],
+            attestation_commitment: [0u8; 32],
+            issuance_delta: 0,
+            policy_version: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionPublicInputs {
-    #[serde(with = "crate::public_inputs::serde_felt")]
-    pub merkle_root: Felt,
-    #[serde(with = "crate::public_inputs::serde_vec_felt")]
-    pub nullifiers: Vec<Felt>,
-    #[serde(with = "crate::public_inputs::serde_vec_felt")]
-    pub commitments: Vec<Felt>,
+    #[serde(with = "crate::public_inputs::serde_bytes32")]
+    pub merkle_root: Commitment,
+    #[serde(with = "crate::public_inputs::serde_vec_bytes32")]
+    pub nullifiers: Vec<Commitment>,
+    #[serde(with = "crate::public_inputs::serde_vec_bytes32")]
+    pub commitments: Vec<Commitment>,
     pub balance_slots: Vec<BalanceSlot>,
     pub native_fee: u64,
+    #[serde(default)]
     pub value_balance: i128,
+    #[serde(default)]
+    pub stablecoin: StablecoinPolicyBinding,
     #[serde(with = "crate::public_inputs::serde_felt")]
     pub balance_tag: Felt,
     pub circuit_version: CircuitVersion,
@@ -28,8 +61,8 @@ pub struct TransactionPublicInputs {
 
 impl Default for TransactionPublicInputs {
     fn default() -> Self {
-        let nullifiers = vec![Felt::ZERO; MAX_INPUTS];
-        let commitments = vec![Felt::ZERO; MAX_OUTPUTS];
+        let nullifiers = vec![[0u8; 32]; MAX_INPUTS];
+        let commitments = vec![[0u8; 32]; MAX_OUTPUTS];
         let balance_slots = (0..BALANCE_SLOTS)
             .map(|_| BalanceSlot {
                 asset_id: u64::MAX,
@@ -38,12 +71,13 @@ impl Default for TransactionPublicInputs {
             .collect();
 
         Self {
-            merkle_root: Felt::ZERO,
+            merkle_root: [0u8; 32],
             nullifiers,
             commitments,
             balance_slots,
             native_fee: 0,
             value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
             balance_tag: Felt::ZERO,
             circuit_version: DEFAULT_VERSION_BINDING.circuit,
             crypto_suite: DEFAULT_VERSION_BINDING.crypto,
@@ -53,12 +87,13 @@ impl Default for TransactionPublicInputs {
 
 impl TransactionPublicInputs {
     pub fn new(
-        merkle_root: Felt,
-        nullifiers: Vec<Felt>,
-        commitments: Vec<Felt>,
+        merkle_root: Commitment,
+        nullifiers: Vec<Commitment>,
+        commitments: Vec<Commitment>,
         balance_slots: Vec<BalanceSlot>,
         native_fee: u64,
         value_balance: i128,
+        stablecoin: StablecoinPolicyBinding,
         version: VersionBinding,
     ) -> Result<Self, TransactionCircuitError> {
         if nullifiers.len() != MAX_INPUTS {
@@ -75,13 +110,74 @@ impl TransactionPublicInputs {
             ));
         }
 
+        if !transaction_core::hashing::is_canonical_bytes32(&merkle_root) {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "merkle root encoding is non-canonical",
+            ));
+        }
+        if nullifiers
+            .iter()
+            .any(|nf| !transaction_core::hashing::is_canonical_bytes32(nf))
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "nullifier encoding is non-canonical",
+            ));
+        }
+        if commitments
+            .iter()
+            .any(|cm| !transaction_core::hashing::is_canonical_bytes32(cm))
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "commitment encoding is non-canonical",
+            ));
+        }
+        if stablecoin.enabled {
+            if stablecoin.asset_id == NATIVE_ASSET_ID || stablecoin.asset_id == u64::MAX {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "stablecoin asset id invalid",
+                ));
+            }
+            if !transaction_core::hashing::is_canonical_bytes32(&stablecoin.policy_hash)
+                || !transaction_core::hashing::is_canonical_bytes32(&stablecoin.oracle_commitment)
+                || !transaction_core::hashing::is_canonical_bytes32(
+                    &stablecoin.attestation_commitment,
+                )
+            {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "stablecoin binding encoding is non-canonical",
+                ));
+            }
+            if transaction_core::hashing::signed_parts(stablecoin.issuance_delta).is_none() {
+                return Err(TransactionCircuitError::ValueBalanceOutOfRange(
+                    stablecoin.issuance_delta.unsigned_abs(),
+                ));
+            }
+        } else if !stablecoin_binding_is_zero(&stablecoin) {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "stablecoin binding must be zeroed when disabled",
+            ));
+        }
+
         let native_delta = balance_slots
             .iter()
             .find(|slot| slot.asset_id == NATIVE_ASSET_ID)
             .map(|slot| slot.delta)
             .unwrap_or(0);
-        let expected_balance_tag = balance_commitment(native_delta, &balance_slots);
+        let expected_balance_tag =
+            balance_commitment(native_delta, &balance_slots).map_err(|err| {
+                TransactionCircuitError::BalanceDeltaOutOfRange(err.asset_id, err.magnitude)
+            })?;
         let balance_tag = expected_balance_tag;
+
+        if stablecoin.enabled
+            && !balance_slots
+                .iter()
+                .any(|slot| slot.asset_id == stablecoin.asset_id)
+        {
+            return Err(TransactionCircuitError::BalanceMismatch(
+                stablecoin.asset_id,
+            ));
+        }
 
         Ok(Self {
             merkle_root,
@@ -90,6 +186,7 @@ impl TransactionPublicInputs {
             balance_slots,
             native_fee,
             value_balance,
+            stablecoin,
             balance_tag,
             circuit_version: version.circuit,
             crypto_suite: version.crypto,
@@ -101,31 +198,58 @@ impl TransactionPublicInputs {
     }
 }
 
-pub(crate) mod serde_vec_felt {
+pub(crate) mod serde_vec_bytes32 {
     use serde::{Deserializer, Serializer};
-    use std::convert::TryInto;
-    use winterfell::math::fields::f64::BaseElement;
 
-    pub fn serialize<S>(values: &[BaseElement], serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(values: &[[u8; 32]], serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let bytes: Vec<[u8; 8]> = values.iter().map(|v| v.as_int().to_be_bytes()).collect();
-        serializer.serialize_bytes(&bytes.concat())
+        let mut bytes = Vec::with_capacity(values.len() * 32);
+        for value in values {
+            bytes.extend_from_slice(value);
+        }
+        serializer.serialize_bytes(&bytes)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<BaseElement>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<[u8; 32]>, D::Error>
     where
         D: Deserializer<'de>,
     {
         let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        if !bytes.len().is_multiple_of(8) {
-            return Err(serde::de::Error::custom("invalid field encoding"));
+        if !bytes.len().is_multiple_of(32) {
+            return Err(serde::de::Error::custom("invalid 32-byte encoding"));
         }
         Ok(bytes
-            .chunks(8)
-            .map(|chunk| BaseElement::new(u64::from_be_bytes(chunk.try_into().unwrap())))
+            .chunks(32)
+            .map(|chunk| <[u8; 32]>::try_from(chunk).expect("32-byte chunk"))
             .collect())
+    }
+
+    use serde::Deserialize;
+}
+
+pub(crate) mod serde_bytes32 {
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(value)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        if bytes.len() != 32 {
+            return Err(serde::de::Error::custom("expected 32 bytes"));
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        Ok(out)
     }
 
     use serde::Deserialize;
@@ -150,4 +274,14 @@ pub(crate) mod serde_felt {
     }
 
     use serde::Deserialize;
+}
+
+fn stablecoin_binding_is_zero(binding: &StablecoinPolicyBinding) -> bool {
+    !binding.enabled
+        && binding.asset_id == 0
+        && binding.policy_hash == [0u8; 32]
+        && binding.oracle_commitment == [0u8; 32]
+        && binding.attestation_commitment == [0u8; 32]
+        && binding.issuance_delta == 0
+        && binding.policy_version == 0
 }

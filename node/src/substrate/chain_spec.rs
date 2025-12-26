@@ -2,6 +2,7 @@
 //!
 //! ONE chain spec. Difficulty retargeting handles hashrate differences.
 
+use pallet_shielded_pool::verifier::StarkVerifier;
 use runtime::WASM_BINARY;
 use sc_service::ChainType;
 
@@ -20,6 +21,10 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
     properties.insert("tokenDecimals".into(), 12.into());
     properties.insert("ss58Format".into(), 42.into());
 
+    let verifying_key = StarkVerifier::create_verifying_key(0);
+    let verifying_key_value = serde_json::to_value(&verifying_key)
+        .map_err(|e| format!("Failed to serialize shielded verifying key: {e}"))?;
+
     let genesis_config = serde_json::json!({
         "system": {},
         "balances": {
@@ -28,7 +33,7 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
             "devAccounts": null
         },
         "sudo": {
-            "key": "5G8keFJUprzBHMg6EqbYmWXevPyUVy9hgLB9YdwdqV2su5Zp"
+            "key": null
         },
         "session": {
             "keys": [],
@@ -41,7 +46,21 @@ pub fn chain_spec() -> Result<ChainSpec, String> {
             "initialBits": 0x1d1a_d7f2_u32
         },
         "shieldedPool": {
-            "verifyingKey": null
+            "verifyingKey": verifying_key_value
+        },
+        "stablecoinPolicy": {
+            "policies": [
+                {
+                    "assetId": 1001,
+                    "oracleFeeds": [1],
+                    "attestationId": 1,
+                    "minCollateralRatioPpm": 1500000,
+                    "maxMintPerEpoch": 1000000000,
+                    "oracleMaxAge": 120,
+                    "policyVersion": 1,
+                    "active": false
+                }
+            ]
         }
     });
 

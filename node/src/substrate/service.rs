@@ -138,15 +138,19 @@ use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
+use rand::{rngs::OsRng, RngCore};
 use sc_client_api::{BlockBackend, BlockchainEvents, HeaderBackend};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
+use sha2::{Digest as ShaDigest, Sha256};
 use sp_api::{ProvideRuntimeApi, StorageChanges};
 use sp_core::H256;
 use sp_inherents::{InherentData, InherentDataProvider};
 use sp_runtime::traits::Header as HeaderT;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
@@ -340,9 +344,8 @@ pub fn wire_block_builder_api(
 
     let client_for_exec = client;
 
-    // Capture the miner's shielded address (preferred) or transparent account (deprecated)
+    // Capture the miner's shielded address
     let miner_shielded_address = chain_state.miner_shielded_address();
-    let miner_account = chain_state.miner_account();
 
     // Log coinbase configuration
     if let Some(ref address) = miner_shielded_address {
@@ -350,13 +353,8 @@ pub fn wire_block_builder_api(
             address = %address,
             "Shielded coinbase enabled for miner"
         );
-    } else if let Some(ref account) = miner_account {
-        tracing::warn!(
-            miner = %hex::encode(account),
-            "Using deprecated transparent coinbase - set HEGEMON_MINER_ADDRESS for shielded rewards"
-        );
     } else {
-        tracing::warn!("No miner address configured - coinbase rewards disabled");
+        tracing::warn!("No shielded miner address configured - coinbase rewards disabled");
     }
 
     // Parse shielded address once outside the closure
@@ -367,7 +365,7 @@ pub fn wire_block_builder_api(
                 tracing::error!(
                     error = ?e,
                     address = %addr,
-                    "Failed to parse shielded miner address - falling back to transparent"
+                    "Failed to parse shielded miner address - coinbase disabled"
                 );
                 None
             }
@@ -394,8 +392,7 @@ pub fn wire_block_builder_api(
             tracing::warn!(error = ?e, "Failed to provide timestamp inherent data");
         }
 
-        // Add coinbase inherent data
-        // Prefer shielded coinbase if address is configured
+        // Add coinbase inherent data (shielded only)
         if let Some(ref address) = parsed_shielded_address {
             // Calculate block subsidy for this height using Bitcoin-style halving
             let subsidy = pallet_coinbase::block_subsidy(block_number);
@@ -440,26 +437,6 @@ pub fn wire_block_builder_api(
                         "Failed to encrypt coinbase note - no reward for this block"
                     );
                 }
-            }
-        } else if let Some(ref miner) = miner_account {
-            // Fall back to deprecated transparent coinbase
-            let subsidy = pallet_coinbase::block_subsidy(block_number);
-
-            let coinbase_provider = pallet_coinbase::CoinbaseInherentDataProvider::new(
-                miner.clone(),
-                subsidy,
-            );
-            if let Err(e) = futures::executor::block_on(
-                coinbase_provider.provide_inherent_data(&mut inherent_data)
-            ) {
-                tracing::warn!(error = ?e, "Failed to provide coinbase inherent data");
-            } else {
-                tracing::debug!(
-                    block_number,
-                    subsidy,
-                    miner = %hex::encode(miner),
-                    "Added coinbase inherent for block reward"
-                );
             }
         }
 
@@ -980,6 +957,137 @@ impl PqServiceConfig {
     }
 }
 
+const PQ_IDENTITY_SEED_ENV: &str = "HEGEMON_PQ_IDENTITY_SEED";
+const PQ_IDENTITY_SEED_PATH_ENV: &str = "HEGEMON_PQ_IDENTITY_SEED_PATH";
+const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
+
+fn pq_identity_seed_path(config: &Configuration) -> PathBuf {
+    std::env::var(PQ_IDENTITY_SEED_PATH_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| config.base_path.path().join(PQ_IDENTITY_SEED_FILE))
+}
+
+fn parse_pq_identity_seed_hex(value: &str) -> Result<[u8; 32], ServiceError> {
+    let trimmed = value.trim().strip_prefix("0x").unwrap_or(value.trim());
+    let bytes = hex::decode(trimmed)
+        .map_err(|err| ServiceError::Other(format!("invalid PQ identity seed hex: {err}")))?;
+    if bytes.len() != 32 {
+        return Err(ServiceError::Other(format!(
+            "PQ identity seed must be 32 bytes (got {})",
+            bytes.len()
+        )));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&bytes);
+    Ok(seed)
+}
+
+fn derive_seed(label: &[u8], seed: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(label);
+    hasher.update(seed);
+    hasher.finalize().into()
+}
+
+#[cfg(unix)]
+fn warn_if_seed_permissions_loose(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(metadata) = fs::metadata(path) {
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            tracing::warn!(
+                path = %path.display(),
+                mode = format!("{:o}", mode),
+                "PQ identity seed permissions are too open; expected 0600"
+            );
+        }
+    }
+}
+
+fn load_or_create_pq_identity_seed(config: &Configuration) -> Result<[u8; 32], ServiceError> {
+    if let Ok(seed_hex) = std::env::var(PQ_IDENTITY_SEED_ENV) {
+        let seed = parse_pq_identity_seed_hex(&seed_hex)?;
+        tracing::info!("Using PQ identity seed from HEGEMON_PQ_IDENTITY_SEED");
+        return Ok(seed);
+    }
+
+    let path = pq_identity_seed_path(config);
+    match fs::read_to_string(&path) {
+        Ok(contents) => {
+            let seed = parse_pq_identity_seed_hex(&contents)?;
+            #[cfg(unix)]
+            warn_if_seed_permissions_loose(&path);
+            tracing::info!(
+                path = %path.display(),
+                "Loaded PQ identity seed"
+            );
+            Ok(seed)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let mut seed = [0u8; 32];
+            OsRng.fill_bytes(&mut seed);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|e| {
+                    ServiceError::Other(format!(
+                        "failed to create PQ identity seed directory {}: {e}",
+                        parent.display()
+                    ))
+                })?;
+            }
+
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&path) {
+                Ok(mut file) => {
+                    let encoded = hex::encode(seed);
+                    file.write_all(encoded.as_bytes()).map_err(|e| {
+                        ServiceError::Other(format!(
+                            "failed to write PQ identity seed {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    file.write_all(b"\n").map_err(|e| {
+                        ServiceError::Other(format!(
+                            "failed to finalize PQ identity seed {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    tracing::info!(
+                        path = %path.display(),
+                        "Generated PQ identity seed"
+                    );
+                    Ok(seed)
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let contents = fs::read_to_string(&path).map_err(|e| {
+                        ServiceError::Other(format!(
+                            "failed to read PQ identity seed {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    let seed = parse_pq_identity_seed_hex(&contents)?;
+                    #[cfg(unix)]
+                    warn_if_seed_permissions_loose(&path);
+                    Ok(seed)
+                }
+                Err(err) => Err(ServiceError::Other(format!(
+                    "failed to create PQ identity seed {}: {err}",
+                    path.display()
+                ))),
+            }
+        }
+        Err(err) => Err(ServiceError::Other(format!(
+            "failed to read PQ identity seed {}: {err}",
+            path.display()
+        ))),
+    }
+}
+
 // =============================================================================
 // LEGACY PartialComponents AND new_partial() REMOVED
 // =============================================================================
@@ -1242,16 +1350,20 @@ pub fn new_partial_with_client(
         verbose_logging: pq_service_config.verbose_logging,
     };
 
+    // Load or create PQ identity seed and derive independent seeds.
+    let identity_seed = load_or_create_pq_identity_seed(config)?;
+    let network_seed = derive_seed(b"pq-network-keypair", &identity_seed);
+    let transport_seed = derive_seed(b"pq-noise-identity", &identity_seed);
+
     // Generate PQ network keypair for this node
-    let network_keypair = PqNetworkKeypair::generate()
+    let network_keypair = PqNetworkKeypair::from_seed(&network_seed)
         .map_err(|e| ServiceError::Other(format!("PQ network keypair generation failed: {e}")))?;
     tracing::info!(
         peer_id = %network_keypair.peer_id(),
-        "Generated PQ network keypair"
+        "Initialized PQ network keypair"
     );
 
     // Create PQ peer identity and transport
-    let node_seed = network_keypair.peer_id_bytes().to_vec();
 
     let pq_transport_config = PqTransportConfig {
         require_pq: pq_service_config.require_pq,
@@ -1259,7 +1371,7 @@ pub fn new_partial_with_client(
         verbose_logging: pq_service_config.verbose_logging,
     };
 
-    let pq_identity = PqPeerIdentity::new(&node_seed, pq_transport_config.clone());
+    let pq_identity = PqPeerIdentity::new(&transport_seed, pq_transport_config.clone());
 
     let substrate_transport_config = SubstratePqTransportConfig {
         require_pq: pq_service_config.require_pq,
@@ -3272,6 +3384,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
         tracing::info!("BlockBuilder API wired for real state execution");
 
+        if !chain_state.has_state_execution() && !production_config.allow_mock_execution {
+            return Err(ServiceError::Other(
+                "state execution is not configured; refuse to start without real execution".into(),
+            ));
+        }
+
         // =======================================================================
         // Wire PowBlockImport for real block import
         // =======================================================================
@@ -3349,15 +3467,17 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     eprintln!("config.rpc.port: {}", config.rpc.port);
     eprintln!("========================");
 
-    // Get RPC port from CLI config. The --rpc-port flag populates config.rpc.addr,
+    // Get RPC listen address from CLI config. The --rpc-port flag populates config.rpc.addr,
     // falling back to config.rpc.port (default 9944) if no explicit endpoints specified.
-    let rpc_port = config
+    let rpc_listen_addr = config
         .rpc
         .addr
         .as_ref()
         .and_then(|endpoints| endpoints.first())
-        .map(|e| e.listen_addr.port())
-        .unwrap_or(config.rpc.port);
+        .map(|e| e.listen_addr)
+        .unwrap_or_else(|| std::net::SocketAddr::from(([127, 0, 0, 1], config.rpc.port)));
+    let rpc_port = rpc_listen_addr.port();
+    let rpc_deny_unsafe = sc_rpc_server::utils::deny_unsafe(&rpc_listen_addr, &config.rpc.methods);
 
     // Create production RPC service with client access
     let rpc_service = Arc::new(ProductionRpcService::new(client.clone()));
@@ -3646,16 +3766,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     // Spawn RPC server task
     let rpc_handle = task_manager.spawn_handle();
     rpc_handle.spawn("hegemon-rpc-server", Some("rpc"), async move {
-        use sc_rpc::DenyUnsafe;
-
-        let addr = format!("127.0.0.1:{}", rpc_port);
+        let addr = rpc_listen_addr;
 
         // Create HTTP middleware
         // Note: DenyUnsafe is injected via extension middleware below
         let http_middleware = tower::ServiceBuilder::new();
 
-        // For dev mode, allow all methods; for production, we'd deny unsafe
-        let deny_unsafe = DenyUnsafe::No;
+        let deny_unsafe = rpc_deny_unsafe;
 
         // Create a custom RPC middleware that injects DenyUnsafe
         use jsonrpsee::server::middleware::rpc::RpcServiceBuilder;
@@ -3667,7 +3784,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         let server = match ServerBuilder::default()
             .set_http_middleware(http_middleware)
             .set_rpc_middleware(rpc_middleware)
-            .build(&addr)
+            .build(addr)
             .await
         {
             Ok(s) => s,
@@ -3695,6 +3812,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     });
 
     tracing::info!(
+        rpc_addr = %rpc_listen_addr,
         rpc_port = rpc_port,
         "RPC server spawned with production service"
     );
@@ -3703,9 +3821,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     tracing::info!("═══════════════════════════════════════════════════════════════");
     tracing::info!("STARTING NODE");
     tracing::info!("═══════════════════════════════════════════════════════════════");
-    tracing::info!("  RPC server spawned on port {}", rpc_port);
+    tracing::info!("  RPC server spawned at {}", rpc_listen_addr);
     tracing::info!("  PQ network broadcasting: {}", has_pq_broadcast);
-    tracing::info!("  RPC server: http://127.0.0.1:{}", rpc_port);
+    tracing::info!("  RPC server: http://{}", rpc_listen_addr);
     tracing::info!("  Set HEGEMON_MINE=1 to enable mining");
     tracing::info!("═══════════════════════════════════════════════════════════════");
 

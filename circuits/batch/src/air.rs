@@ -11,23 +11,32 @@ use winterfell::{
 };
 
 use crate::public_inputs::BatchPublicInputs;
-use transaction_circuit::dimensions::{
+use transaction_core::dimensions::{
     batch_trace_rows, commitment_output_row, merkle_root_output_row, nullifier_output_row,
 };
-use transaction_circuit::stark_air::{round_constant, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH};
+use transaction_core::stark_air::{
+    round_constant, COL_OUT0, COL_OUT1, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH,
+};
+
+use alloc::vec;
+use alloc::vec::Vec;
+
+fn is_zero_hash(value: &[BaseElement; 4]) -> bool {
+    value.iter().all(|elem| *elem == BaseElement::ZERO)
+}
 
 /// Number of Poseidon rounds per cycle.
-pub const POSEIDON_ROUNDS: usize = 8;
+pub const POSEIDON_ROUNDS: usize = transaction_core::constants::POSEIDON_ROUNDS;
 
 /// Batch transaction AIR - proves N transactions in one trace.
 ///
 /// The trace layout is:
 /// ```text
-/// Transaction 0:  [nullifier_0 | merkle_0 | commitment_0]  (2048 rows)
-/// Transaction 1:  [nullifier_1 | merkle_1 | commitment_1]  (2048 rows)
+/// Transaction 0:  [nullifier_0 | merkle_0 | commitment_0]  (ROWS_PER_TX rows)
+/// Transaction 1:  [nullifier_1 | merkle_1 | commitment_1]  (ROWS_PER_TX rows)
 /// ...
 /// Transaction N-1: [nullifier_{N-1} | merkle_{N-1} | commitment_{N-1}]
-/// (Padding to power of 2)
+/// (Padding to power of 2; ROWS_PER_TX currently 32768)
 /// ```
 ///
 /// Each transaction slot uses the same 5-column layout as the single-transaction AIR:
@@ -74,9 +83,9 @@ impl Air for BatchTransactionAir {
                 let pub_idx = tx_idx * 2 + nf_idx;
                 if pub_idx < pub_inputs.nullifiers.len() {
                     let nf = pub_inputs.nullifiers[pub_idx];
-                    if nf != BaseElement::ZERO {
-                        num_assertions += 1; // Nullifier output
-                        num_assertions += 1; // Merkle root
+                    if !is_zero_hash(&nf) {
+                        num_assertions += 4; // Nullifier output
+                        num_assertions += 4; // Merkle root
                     }
                 }
             }
@@ -86,8 +95,8 @@ impl Air for BatchTransactionAir {
                 let pub_idx = tx_idx * 2 + cm_idx;
                 if pub_idx < pub_inputs.commitments.len() {
                     let cm = pub_inputs.commitments[pub_idx];
-                    if cm != BaseElement::ZERO {
-                        num_assertions += 1;
+                    if !is_zero_hash(&cm) {
+                        num_assertions += 4;
                     }
                 }
             }
@@ -133,11 +142,16 @@ impl Air for BatchTransactionAir {
         let s1 = t1.exp(5u64.into());
         let s2 = t2.exp(5u64.into());
 
-        // MDS mixing: [[2,1,1],[1,2,1],[1,1,2]]
-        let two: E = E::from(BaseElement::new(2));
-        let hash_s0 = s0 * two + s1 + s2;
-        let hash_s1 = s0 + s1 * two + s2;
-        let hash_s2 = s0 + s1 + s2 * two;
+        let mds = transaction_core::poseidon_constants::MDS_MATRIX;
+        let hash_s0 = s0 * E::from(BaseElement::new(mds[0][0]))
+            + s1 * E::from(BaseElement::new(mds[0][1]))
+            + s2 * E::from(BaseElement::new(mds[0][2]));
+        let hash_s1 = s0 * E::from(BaseElement::new(mds[1][0]))
+            + s1 * E::from(BaseElement::new(mds[1][1]))
+            + s2 * E::from(BaseElement::new(mds[1][2]));
+        let hash_s2 = s0 * E::from(BaseElement::new(mds[2][0]))
+            + s1 * E::from(BaseElement::new(mds[2][1]))
+            + s2 * E::from(BaseElement::new(mds[2][2]));
 
         // Constraint: hash_flag * (next - hash_result) = 0
         result[0] = hash_flag * (next[COL_S0] - hash_s0);
@@ -156,20 +170,38 @@ impl Air for BatchTransactionAir {
                 let pub_idx = tx_idx * 2 + nf_idx;
                 if pub_idx < self.pub_inputs.nullifiers.len() {
                     let nf = self.pub_inputs.nullifiers[pub_idx];
-                    if nf != BaseElement::ZERO {
+                    if !is_zero_hash(&nf) {
                         // Nullifier hash output
                         let nf_row = nullifier_output_row(tx_idx, nf_idx);
                         if nf_row < trace_len {
-                            assertions.push(Assertion::single(COL_S0, nf_row, nf));
+                            assertions.push(Assertion::single(COL_OUT0, nf_row, nf[0]));
+                            assertions.push(Assertion::single(COL_OUT1, nf_row, nf[1]));
+                            assertions.push(Assertion::single(COL_S0, nf_row, nf[2]));
+                            assertions.push(Assertion::single(COL_S1, nf_row, nf[3]));
                         }
 
                         // Merkle root output (must match shared anchor)
                         let merkle_row = merkle_root_output_row(tx_idx, nf_idx);
                         if merkle_row < trace_len {
                             assertions.push(Assertion::single(
+                                COL_OUT0,
+                                merkle_row,
+                                self.pub_inputs.anchor[0],
+                            ));
+                            assertions.push(Assertion::single(
+                                COL_OUT1,
+                                merkle_row,
+                                self.pub_inputs.anchor[1],
+                            ));
+                            assertions.push(Assertion::single(
                                 COL_S0,
                                 merkle_row,
-                                self.pub_inputs.anchor,
+                                self.pub_inputs.anchor[2],
+                            ));
+                            assertions.push(Assertion::single(
+                                COL_S1,
+                                merkle_row,
+                                self.pub_inputs.anchor[3],
                             ));
                         }
                     }
@@ -181,10 +213,13 @@ impl Air for BatchTransactionAir {
                 let pub_idx = tx_idx * 2 + cm_idx;
                 if pub_idx < self.pub_inputs.commitments.len() {
                     let cm = self.pub_inputs.commitments[pub_idx];
-                    if cm != BaseElement::ZERO {
+                    if !is_zero_hash(&cm) {
                         let cm_row = commitment_output_row(tx_idx, cm_idx);
                         if cm_row < trace_len {
-                            assertions.push(Assertion::single(COL_S0, cm_row, cm));
+                            assertions.push(Assertion::single(COL_OUT0, cm_row, cm[0]));
+                            assertions.push(Assertion::single(COL_OUT1, cm_row, cm[1]));
+                            assertions.push(Assertion::single(COL_S0, cm_row, cm[2]));
+                            assertions.push(Assertion::single(COL_S1, cm_row, cm[3]));
                         }
                     }
                 }
@@ -231,10 +266,10 @@ mod tests {
 
     #[test]
     fn test_batch_air_trace_length() {
-        assert_eq!(BatchTransactionAir::trace_length(2), 4096);
-        assert_eq!(BatchTransactionAir::trace_length(4), 8192);
-        assert_eq!(BatchTransactionAir::trace_length(8), 16384);
-        assert_eq!(BatchTransactionAir::trace_length(16), 32768);
+        assert_eq!(BatchTransactionAir::trace_length(2), 65536);
+        assert_eq!(BatchTransactionAir::trace_length(4), 131072);
+        assert_eq!(BatchTransactionAir::trace_length(8), 262144);
+        assert_eq!(BatchTransactionAir::trace_length(16), 524288);
     }
 
     #[test]
@@ -257,18 +292,63 @@ mod tests {
     fn test_batch_public_inputs_elements() {
         let pub_inputs = BatchPublicInputs::new(
             2,
-            BaseElement::new(12345),
-            vec![
-                BaseElement::new(1),
-                BaseElement::new(2),
-                BaseElement::new(3),
-                BaseElement::new(4),
+            [
+                BaseElement::new(12345),
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
             ],
             vec![
-                BaseElement::new(10),
-                BaseElement::new(20),
-                BaseElement::new(30),
-                BaseElement::new(40),
+                [
+                    BaseElement::new(1),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                [
+                    BaseElement::new(2),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                [
+                    BaseElement::new(3),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                [
+                    BaseElement::new(4),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+            ],
+            vec![
+                [
+                    BaseElement::new(10),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                [
+                    BaseElement::new(20),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                [
+                    BaseElement::new(30),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                [
+                    BaseElement::new(40),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
             ],
             BaseElement::new(100),
         );

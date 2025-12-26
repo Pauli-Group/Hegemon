@@ -404,8 +404,8 @@ mod tests {
 
         let (trace, accumulator) = prover.build_trace(&hashes).unwrap();
 
-        // 2 proofs × 4 elements = 8 cycles = 128 rows → 128
-        assert_eq!(trace.length(), 128);
+        // 2 proofs × 4 elements = 8 cycles = 128 base rows → 512 padded
+        assert_eq!(trace.length(), 512);
         assert_ne!(accumulator, BaseElement::ZERO);
     }
 
@@ -416,8 +416,8 @@ mod tests {
 
         let (trace, accumulator) = prover.build_trace(&hashes).unwrap();
 
-        // 1 proof × 4 elements = 4 cycles = 64 rows → 64
-        assert_eq!(trace.length(), 64);
+        // 1 proof × 4 elements = 4 cycles = 64 base rows → 256 padded
+        assert_eq!(trace.length(), 256);
         assert_ne!(accumulator, BaseElement::ZERO);
     }
 

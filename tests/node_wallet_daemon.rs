@@ -10,11 +10,11 @@ use tempfile::tempdir;
 use tokio::task::spawn_blocking;
 use tokio::time::{sleep, timeout};
 use transaction_circuit::constants::NATIVE_ASSET_ID;
-use transaction_circuit::hashing::felt_to_bytes32;
 use transaction_circuit::keys::generate_keys;
-use transaction_circuit::note::{InputNoteWitness, NoteData, OutputNoteWitness};
+use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use transaction_circuit::proof::prove;
 use transaction_circuit::witness::TransactionWitness;
+use transaction_circuit::StablecoinPolicyBinding;
 use url::Url;
 use wallet::address::ShieldedAddress;
 use wallet::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
@@ -237,6 +237,7 @@ async fn post_funding_transaction(
         },
         position: 1,
         rho_seed: [12u8; 32],
+        merkle_path: MerklePath::default(),
     };
     let mut rng = StdRng::seed_from_u64(42);
     let alice_note = NotePlaintext::random(90, NATIVE_ASSET_ID, MemoPlaintext::default(), &mut rng);
@@ -260,22 +261,24 @@ async fn post_funding_transaction(
         merkle_root: root,
         fee: 1,
         value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
         version: TransactionWitness::default_version_binding(),
     };
     let proof = prove(&witness, &proving_key).expect("prove funding");
+    let zero = [0u8; 32];
     let nullifiers: Vec<[u8; 32]> = proof
         .nullifiers
         .iter()
-        .filter(|value| value.as_int() != 0)
-        .map(|value| felt_to_bytes32(*value))
+        .copied()
+        .filter(|value| *value != zero)
         .collect();
     let commitments: Vec<[u8; 32]> = proof
         .commitments
         .iter()
-        .filter(|value| value.as_int() != 0)
-        .map(|value| felt_to_bytes32(*value))
+        .copied()
+        .filter(|value| *value != zero)
         .collect();
-    let anchor = felt_to_bytes32(witness.merkle_root);
+    let anchor = witness.merkle_root;
     let mut message = Vec::new();
     message.extend_from_slice(&anchor);
     for nf in &nullifiers {
@@ -287,9 +290,9 @@ async fn post_funding_transaction(
     message.extend_from_slice(&witness.fee.to_le_bytes());
     message.extend_from_slice(&witness.value_balance.to_le_bytes());
     let hash = sp_core::hashing::blake2_256(&message);
-    let mut binding_sig = [0u8; 64];
-    binding_sig[..32].copy_from_slice(&hash);
-    binding_sig[32..].copy_from_slice(&hash);
+    let mut binding_hash = [0u8; 64];
+    binding_hash[..32].copy_from_slice(&hash);
+    binding_hash[32..].copy_from_slice(&hash);
 
     let bundle = TransactionBundle::new(
         proof.stark_proof,
@@ -297,9 +300,10 @@ async fn post_funding_transaction(
         commitments,
         &[alice_ct, change_ct],
         anchor,
-        binding_sig,
+        binding_hash,
         witness.fee,
         witness.value_balance,
+        witness.stablecoin.clone(),
     )
     .expect("bundle");
     handle

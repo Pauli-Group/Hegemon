@@ -28,6 +28,7 @@ pub mod proof;
 pub mod public_inputs;
 pub mod trace;
 pub mod witness;
+pub use transaction_core::poseidon_constants;
 
 // Real STARK implementation using winterfell 0.13
 pub mod stark_air;
@@ -41,6 +42,7 @@ pub mod rpo_prover;
 pub mod rpo_verifier;
 
 // Legacy module (deprecated)
+#[cfg(feature = "legacy-proof")]
 #[deprecated(since = "0.2.0", note = "Use stark_air module for real STARK proofs")]
 pub mod air;
 
@@ -48,14 +50,16 @@ pub use error::TransactionCircuitError;
 pub use keys::{generate_keys, ProvingKey, VerifyingKey};
 pub use note::{InputNoteWitness, OutputNoteWitness};
 pub use proof::{TransactionProof, VerificationReport};
-pub use public_inputs::TransactionPublicInputs;
+pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 pub use witness::TransactionWitness;
 
 // Re-export real STARK types (preferred API)
 pub use stark_air::{
     TransactionAirStark, TransactionPublicInputsStark, MIN_TRACE_LENGTH, TRACE_WIDTH,
 };
-pub use stark_prover::{default_proof_options, fast_proof_options, TransactionProverStark};
+#[cfg(feature = "stark-fast")]
+pub use stark_prover::fast_proof_options;
+pub use stark_prover::{default_proof_options, proof_options_from_config, TransactionProverStark};
 pub use stark_verifier::{
     verify_transaction_proof, verify_transaction_proof_bytes, TransactionVerifyError,
 };
@@ -69,6 +73,7 @@ pub use rpo_verifier::{verify_transaction_proof_bytes_rpo, verify_transaction_pr
 pub use constants::{compute_air_hash, expected_air_hash, CIRCUIT_VERSION};
 
 // Legacy re-exports (deprecated)
+#[cfg(feature = "legacy-proof")]
 #[deprecated(since = "0.2.0", note = "Use stark_air::TransactionAirStark instead")]
 #[allow(deprecated)]
 pub use air::{check_constraints, TransactionAir};

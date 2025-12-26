@@ -177,6 +177,64 @@ if grep -q 'default = .*"test"' */Cargo.toml 2>/dev/null; then
 fi
 echo "✅ PASS"
 
+# 16. Verify transaction circuit is not built with legacy or fast proof features
+echo -n "Checking transaction-circuit features... "
+feature_tree=$(cargo tree -p transaction-circuit -e features 2>/dev/null)
+if echo "$feature_tree" | grep -q "legacy-proof"; then
+    echo "❌ FAILED"
+    echo "transaction-circuit compiled with legacy-proof feature!"
+    exit 1
+fi
+if echo "$feature_tree" | grep -q "stark-fast"; then
+    echo "❌ FAILED"
+    echo "transaction-circuit compiled with stark-fast feature!"
+    exit 1
+fi
+echo "✅ PASS"
+
+# 17. Verify batch-circuit is not built with fast proof options
+echo -n "Checking batch-circuit features... "
+feature_tree=$(cargo tree -p batch-circuit -e features 2>/dev/null)
+if echo "$feature_tree" | grep -q "stark-fast"; then
+    echo "❌ FAILED"
+    echo "batch-circuit compiled with stark-fast feature!"
+    exit 1
+fi
+echo "✅ PASS"
+
+# 18. Verify mock state execution is opt-in
+echo -n "Checking mock state execution gating... "
+if ! grep -q "HEGEMON_ALLOW_MOCK_EXECUTION" node/src/substrate/client.rs 2>/dev/null; then
+    echo "❌ FAILED"
+    echo "Mock execution gate missing (HEGEMON_ALLOW_MOCK_EXECUTION)!"
+    exit 1
+fi
+if ! grep -q "allow_mock_execution: false" node/src/substrate/client.rs 2>/dev/null; then
+    echo "❌ FAILED"
+    echo "ProductionConfig default does not disable mock execution!"
+    exit 1
+fi
+echo "✅ PASS"
+
+# 18. Verify legacy commitment helpers are not enabled
+echo -n "Checking legacy commitment feature... "
+feature_tree=$(cargo tree -p pallet-shielded-pool -e features 2>/dev/null)
+if echo "$feature_tree" | grep -q "legacy-commitment"; then
+    echo "❌ FAILED"
+    echo "pallet-shielded-pool compiled with legacy-commitment feature!"
+    exit 1
+fi
+echo "✅ PASS"
+
+# 19. Verify batch proofs remain opt-in in wallet
+echo -n "Checking batch proofs are opt-in... "
+if grep -q 'default = .*batch-proofs' wallet/Cargo.toml 2>/dev/null; then
+    echo "❌ FAILED"
+    echo "batch-proofs enabled by default in wallet!"
+    exit 1
+fi
+echo "✅ PASS"
+
 echo ""
 echo "=== All Checks Passed ==="
 echo "✅ Production code uses real implementations"
@@ -184,4 +242,3 @@ echo "✅ No legacy scaffold code in production paths"
 echo "✅ Test mocks exist only in test modules"
 echo "✅ PQ-only crypto verified (ML-KEM, ML-DSA, STARK)"
 echo "✅ No forbidden primitives (ECC, Groth16)"
-

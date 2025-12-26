@@ -1,32 +1,38 @@
 use alloc::vec::Vec;
-use core::convert::TryFrom;
+use core::convert::{TryFrom, TryInto};
 use winterfell::math::{fields::f64::BaseElement, FieldElement};
 
 use crate::constants::{
-    BALANCE_DOMAIN_TAG, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON_ROUNDS,
-    POSEIDON_WIDTH,
+    BALANCE_DOMAIN_TAG, FIELD_MODULUS, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
+    POSEIDON_ROUNDS, POSEIDON_WIDTH,
 };
+use crate::poseidon_constants;
 use crate::types::BalanceSlot;
 
 pub type Felt = BaseElement;
+pub type HashFelt = [Felt; 4];
+pub type Commitment = [u8; 32];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BalanceCommitmentError {
+    pub asset_id: u64,
+    pub magnitude: u128,
+}
 
 fn round_constant(round: usize, position: usize) -> Felt {
-    // Deterministic but simple constant generation derived from round/position indices.
-    let seed = ((round as u64 + 1) * 0x9e37_79b9u64) ^ ((position as u64 + 1) * 0x7f4a_7c15u64);
-    Felt::new(seed)
+    Felt::new(poseidon_constants::ROUND_CONSTANTS[round][position])
 }
 
 fn mix(state: &mut [Felt; POSEIDON_WIDTH]) {
-    const MIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
     let state_snapshot = *state;
     let mut tmp = [Felt::ZERO; POSEIDON_WIDTH];
-    for (row, output) in MIX.iter().zip(tmp.iter_mut()) {
-        *output = row
-            .iter()
-            .zip(state_snapshot.iter())
-            .fold(Felt::ZERO, |acc, (&coef, value)| {
-                acc + *value * Felt::new(coef)
-            });
+    for (row_idx, output) in tmp.iter_mut().enumerate() {
+        let mut acc = Felt::ZERO;
+        for (col_idx, value) in state_snapshot.iter().enumerate() {
+            let coef = poseidon_constants::MDS_MATRIX[row_idx][col_idx];
+            acc += *value * Felt::new(coef);
+        }
+        *output = acc;
     }
     *state = tmp;
 }
@@ -48,7 +54,7 @@ fn absorb(state: &mut [Felt; POSEIDON_WIDTH], chunk: &[Felt]) {
     permutation(state);
 }
 
-fn sponge(domain_tag: u64, inputs: &[Felt]) -> Felt {
+fn sponge_single(domain_tag: u64, inputs: &[Felt]) -> Felt {
     let mut state = [Felt::new(domain_tag), Felt::ZERO, Felt::ONE];
     let rate = POSEIDON_WIDTH - 1;
     let mut cursor = 0;
@@ -62,6 +68,26 @@ fn sponge(domain_tag: u64, inputs: &[Felt]) -> Felt {
     state[0]
 }
 
+fn sponge_hash(domain_tag: u64, inputs: &[Felt]) -> HashFelt {
+    let mut state = [Felt::new(domain_tag), Felt::ZERO, Felt::ONE];
+    let rate = POSEIDON_WIDTH - 1;
+    let mut cursor = 0;
+    while cursor < inputs.len() {
+        let take = core::cmp::min(rate, inputs.len() - cursor);
+        let mut chunk = [Felt::ZERO; POSEIDON_WIDTH - 1];
+        chunk[..take].copy_from_slice(&inputs[cursor..cursor + take]);
+        absorb(&mut state, &chunk);
+        cursor += take;
+    }
+    let mut output = [Felt::ZERO; 4];
+    output[0] = state[0];
+    output[1] = state[1];
+    permutation(&mut state);
+    output[2] = state[0];
+    output[3] = state[1];
+    output
+}
+
 fn bytes_to_field_elements(bytes: &[u8]) -> Vec<Felt> {
     bytes
         .chunks(8)
@@ -73,31 +99,47 @@ fn bytes_to_field_elements(bytes: &[u8]) -> Vec<Felt> {
         .collect()
 }
 
-pub fn note_commitment(value: u64, asset_id: u64, pk: &[u8], rho: &[u8], r: &[u8]) -> Felt {
+pub fn note_commitment(value: u64, asset_id: u64, pk: &[u8], rho: &[u8], r: &[u8]) -> HashFelt {
     let mut inputs = Vec::new();
     inputs.push(Felt::new(value));
     inputs.push(Felt::new(asset_id));
     inputs.extend(bytes_to_field_elements(pk));
     inputs.extend(bytes_to_field_elements(rho));
     inputs.extend(bytes_to_field_elements(r));
-    sponge(NOTE_DOMAIN_TAG, &inputs)
+    sponge_hash(NOTE_DOMAIN_TAG, &inputs)
 }
 
-pub fn merkle_node(left: Felt, right: Felt) -> Felt {
-    sponge(MERKLE_DOMAIN_TAG, &[left, right])
+pub fn merkle_node(left: HashFelt, right: HashFelt) -> HashFelt {
+    let mut inputs = Vec::with_capacity(8);
+    inputs.extend_from_slice(&[left[2], left[3], left[0], left[1]]);
+    inputs.extend_from_slice(&[right[2], right[3], right[0], right[1]]);
+    sponge_hash(MERKLE_DOMAIN_TAG, &inputs)
 }
 
-pub fn nullifier(prf_key: Felt, rho: &[u8], position: u64) -> Felt {
+/// Legacy single-field Merkle hash helper (64-bit).
+#[deprecated(note = "use merkle_node with 4-limb encodings")]
+pub fn merkle_node_felt(left: Felt, right: Felt) -> Felt {
+    sponge_single(MERKLE_DOMAIN_TAG, &[left, right])
+}
+
+/// Compute Merkle node hash from 32-byte canonical encodings.
+pub fn merkle_node_bytes(left: &Commitment, right: &Commitment) -> Option<Commitment> {
+    let left_felts = bytes32_to_felts(left)?;
+    let right_felts = bytes32_to_felts(right)?;
+    Some(felts_to_bytes32(&merkle_node(left_felts, right_felts)))
+}
+
+pub fn nullifier(prf_key: Felt, rho: &[u8], position: u64) -> HashFelt {
     let mut inputs = Vec::new();
     inputs.push(prf_key);
     inputs.push(Felt::new(position));
     inputs.extend(bytes_to_field_elements(rho));
-    sponge(NULLIFIER_DOMAIN_TAG, &inputs)
+    sponge_hash(NULLIFIER_DOMAIN_TAG, &inputs)
 }
 
 /// Convert a field element to 32 bytes (left-padded with zeros).
-/// This is the canonical serialization for nullifiers/commitments.
-pub fn felt_to_bytes32(felt: Felt) -> [u8; 32] {
+/// This is used for single-field encodings (e.g., balance tags).
+pub fn felt_to_bytes32(felt: Felt) -> Commitment {
     let mut out = [0u8; 32];
     // Put the 8-byte BE representation in the last 8 bytes
     out[24..32].copy_from_slice(&felt.as_int().to_be_bytes());
@@ -105,25 +147,56 @@ pub fn felt_to_bytes32(felt: Felt) -> [u8; 32] {
 }
 
 /// Returns true if the 32-byte value is a canonical field encoding.
-pub fn is_canonical_bytes32(bytes: &[u8; 32]) -> bool {
-    bytes[..24].iter().all(|byte| *byte == 0)
+pub fn is_canonical_bytes32(bytes: &Commitment) -> bool {
+    bytes.chunks(8).all(|chunk| {
+        let limb = u64::from_be_bytes(chunk.try_into().expect("8-byte chunk")) as u128;
+        limb < FIELD_MODULUS
+    })
 }
 
-/// Convert a canonical 32-byte encoding into a field element.
-pub fn bytes32_to_felt(bytes: &[u8; 32]) -> Option<Felt> {
+/// Convert a canonical 32-byte encoding into 4 field elements.
+pub fn bytes32_to_felts(bytes: &Commitment) -> Option<HashFelt> {
     if !is_canonical_bytes32(bytes) {
         return None;
     }
+    let mut felts = [Felt::ZERO; 4];
+    for (idx, chunk) in bytes.chunks(8).enumerate() {
+        let limb = u64::from_be_bytes(chunk.try_into().expect("8-byte chunk"));
+        felts[idx] = Felt::new(limb);
+    }
+    Some(felts)
+}
 
+/// Convert a canonical 32-byte single-field encoding into a field element.
+/// This expects the high 24 bytes to be zero.
+#[deprecated(note = "use bytes32_to_felts for 4-limb encodings")]
+pub fn bytes32_to_felt(bytes: &Commitment) -> Option<Felt> {
+    if bytes[..24].iter().any(|byte| *byte != 0) {
+        return None;
+    }
     let mut buf = [0u8; 8];
     buf.copy_from_slice(&bytes[24..32]);
-    Some(Felt::new(u64::from_be_bytes(buf)))
+    let value = u64::from_be_bytes(buf);
+    if value as u128 >= FIELD_MODULUS {
+        return None;
+    }
+    Some(Felt::new(value))
+}
+
+/// Convert 4 field elements into a 32-byte canonical encoding.
+pub fn felts_to_bytes32(felts: &HashFelt) -> Commitment {
+    let mut out = [0u8; 32];
+    for (idx, felt) in felts.iter().enumerate() {
+        let start = idx * 8;
+        out[start..start + 8].copy_from_slice(&felt.as_int().to_be_bytes());
+    }
+    out
 }
 
 /// Compute a nullifier and return it as 32 bytes.
 /// This is the format expected by the pallet for on-chain storage.
-pub fn nullifier_bytes(prf_key: Felt, rho: &[u8], position: u64) -> [u8; 32] {
-    felt_to_bytes32(nullifier(prf_key, rho, position))
+pub fn nullifier_bytes(prf_key: Felt, rho: &[u8], position: u64) -> Commitment {
+    felts_to_bytes32(&nullifier(prf_key, rho, position))
 }
 
 /// Compute note commitment and return it as 32 bytes.
@@ -134,24 +207,35 @@ pub fn note_commitment_bytes(
     rho: &[u8],
     r: &[u8],
 ) -> [u8; 32] {
-    felt_to_bytes32(note_commitment(value, asset_id, pk, rho, r))
+    felts_to_bytes32(&note_commitment(value, asset_id, pk, rho, r))
 }
 
 pub fn prf_key(sk_spend: &[u8]) -> Felt {
     let elements = bytes_to_field_elements(sk_spend);
-    sponge(NULLIFIER_DOMAIN_TAG, &elements)
+    sponge_single(NULLIFIER_DOMAIN_TAG, &elements)
 }
 
-pub fn balance_commitment(native_delta: i128, slots: &[BalanceSlot]) -> Felt {
+pub fn balance_commitment(
+    native_delta: i128,
+    slots: &[BalanceSlot],
+) -> Result<Felt, BalanceCommitmentError> {
     let mut inputs = Vec::with_capacity(1 + slots.len() * 2);
-    let native_mag = u64::try_from(native_delta.unsigned_abs()).expect("native delta within u64");
-    inputs.push(Felt::new(native_mag));
+    let native_mag = native_delta.unsigned_abs();
+    let native_mag_u64 = u64::try_from(native_mag).map_err(|_| BalanceCommitmentError {
+        asset_id: crate::constants::NATIVE_ASSET_ID,
+        magnitude: native_mag,
+    })?;
+    inputs.push(Felt::new(native_mag_u64));
     for slot in slots {
-        let magnitude = u64::try_from(slot.delta.unsigned_abs()).expect("delta within u64");
+        let magnitude = slot.delta.unsigned_abs();
+        let magnitude_u64 = u64::try_from(magnitude).map_err(|_| BalanceCommitmentError {
+            asset_id: slot.asset_id,
+            magnitude,
+        })?;
         inputs.push(Felt::new(slot.asset_id));
-        inputs.push(Felt::new(magnitude));
+        inputs.push(Felt::new(magnitude_u64));
     }
-    sponge(BALANCE_DOMAIN_TAG, &inputs)
+    Ok(sponge_single(BALANCE_DOMAIN_TAG, &inputs))
 }
 
 /// Convert a signed value into (sign, magnitude) field elements.
@@ -163,105 +247,26 @@ pub fn signed_parts(value: i128) -> Option<(Felt, Felt)> {
 }
 
 #[cfg(test)]
-mod poseidon_compat_tests {
+mod tests {
     use super::*;
 
-    // Re-implement the pallet's Poseidon for comparison
-    mod pallet_poseidon {
-        const POSEIDON_WIDTH: usize = 3;
-        const POSEIDON_ROUNDS: usize = 8;
-        const MERKLE_DOMAIN_TAG: u64 = 4;
-        const FIELD_MODULUS: u128 = (1u128 << 64) - (1u128 << 32) + 1;
-
-        #[inline]
-        fn round_constant(round: usize, position: usize) -> u64 {
-            let seed = ((round as u64).wrapping_add(1).wrapping_mul(0x9e37_79b9u64))
-                ^ ((position as u64)
-                    .wrapping_add(1)
-                    .wrapping_mul(0x7f4a_7c15u64));
-            seed
-        }
-
-        #[inline]
-        fn reduce(val: u128) -> u64 {
-            (val % FIELD_MODULUS) as u64
-        }
-
-        #[inline]
-        fn field_mul(a: u64, b: u64) -> u64 {
-            reduce((a as u128) * (b as u128))
-        }
-
-        #[inline]
-        fn field_add(a: u64, b: u64) -> u64 {
-            reduce((a as u128) + (b as u128))
-        }
-
-        #[inline]
-        fn field_exp5(x: u64) -> u64 {
-            let x2 = field_mul(x, x);
-            let x4 = field_mul(x2, x2);
-            field_mul(x4, x)
-        }
-
-        fn mix(state: &mut [u64; POSEIDON_WIDTH]) {
-            const MIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
-            let state_snapshot = *state;
-            let mut tmp = [0u64; POSEIDON_WIDTH];
-            for (row, output) in MIX.iter().zip(tmp.iter_mut()) {
-                let mut acc = 0u64;
-                for (&coef, &value) in row.iter().zip(state_snapshot.iter()) {
-                    acc = field_add(acc, field_mul(value, coef));
-                }
-                *output = acc;
-            }
-            *state = tmp;
-        }
-
-        fn permutation(state: &mut [u64; POSEIDON_WIDTH]) {
-            for round in 0..POSEIDON_ROUNDS {
-                for (position, value) in state.iter_mut().enumerate() {
-                    *value = field_add(*value, round_constant(round, position));
-                }
-                for value in state.iter_mut() {
-                    *value = field_exp5(*value);
-                }
-                mix(state);
-            }
-        }
-
-        fn absorb(state: &mut [u64; POSEIDON_WIDTH], chunk: &[u64]) {
-            for (state_slot, value) in state.iter_mut().zip(chunk.iter()) {
-                *state_slot = field_add(*state_slot, *value);
-            }
-            permutation(state);
-        }
-
-        fn sponge(domain_tag: u64, inputs: &[u64]) -> u64 {
-            let mut state = [domain_tag, 0, 1];
-            let rate = POSEIDON_WIDTH - 1;
-            let mut cursor = 0;
-            while cursor < inputs.len() {
-                let take = core::cmp::min(rate, inputs.len() - cursor);
-                let mut chunk = [0u64; POSEIDON_WIDTH - 1];
-                chunk[..take].copy_from_slice(&inputs[cursor..cursor + take]);
-                absorb(&mut state, &chunk);
-                cursor += take;
-            }
-            state[0]
-        }
-
-        pub fn merkle_node(left: u64, right: u64) -> u64 {
-            sponge(MERKLE_DOMAIN_TAG, &[left, right])
+    #[test]
+    fn canonical_bytes_round_trip() {
+        let felts = [Felt::new(1), Felt::new(2), Felt::new(3), Felt::new(4)];
+        let bytes = felts_to_bytes32(&felts);
+        assert!(is_canonical_bytes32(&bytes));
+        let decoded = bytes32_to_felts(&bytes).expect("canonical bytes");
+        for (got, expected) in decoded.iter().zip(felts.iter()) {
+            assert_eq!(got.as_int(), expected.as_int());
         }
     }
 
     #[test]
-    fn merkle_node_matches_pallet_hash() {
-        let left = Felt::new(10);
-        let right = Felt::new(20);
-        let circuit_hash = merkle_node(left, right).as_int();
-        let pallet_hash = pallet_poseidon::merkle_node(10, 20);
-        assert_eq!(circuit_hash, pallet_hash);
+    fn noncanonical_limb_is_rejected() {
+        let mut bytes = [0u8; 32];
+        let bad = FIELD_MODULUS as u64;
+        bytes[..8].copy_from_slice(&bad.to_be_bytes());
+        assert!(!is_canonical_bytes32(&bytes));
+        assert!(bytes32_to_felts(&bytes).is_none());
     }
 }

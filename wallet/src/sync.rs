@@ -29,7 +29,7 @@ impl<'a> WalletSyncEngine<'a> {
             if entries.is_empty() {
                 break;
             }
-            let pairs: Vec<(u64, u64)> = entries
+            let pairs: Vec<(u64, [u8; 32])> = entries
                 .iter()
                 .map(|entry| (entry.index, entry.value))
                 .collect();

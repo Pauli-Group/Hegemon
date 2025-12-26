@@ -35,7 +35,6 @@ View your wallet status to get your shielded address:
 
 Output includes:
 - **Shielded Address**: A ~2KB bech32m string starting with `shca1...` 
-- **Miner Account ID (hex)**: Legacy transparent address (not recommended)
 
 Export the shielded address for mining:
 ```bash

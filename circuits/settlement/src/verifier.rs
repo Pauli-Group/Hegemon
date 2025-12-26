@@ -43,10 +43,7 @@ pub fn verify_settlement_proof_bytes(
     proof_bytes: &[u8],
     pub_inputs: &SettlementPublicInputs,
 ) -> Result<(), SettlementVerifyError> {
-    let acceptable = AcceptableOptions::OptionSet(vec![
-        default_acceptable_options(),
-        fast_acceptable_options(),
-    ]);
+    let acceptable = acceptable_options();
     verify_settlement_proof_bytes_with_options(proof_bytes, pub_inputs, acceptable)
 }
 
@@ -80,6 +77,21 @@ fn default_acceptable_options() -> ProofOptions {
     )
 }
 
+fn acceptable_options() -> AcceptableOptions {
+    #[cfg(feature = "stark-fast")]
+    {
+        AcceptableOptions::OptionSet(vec![
+            default_acceptable_options(),
+            fast_acceptable_options(),
+        ])
+    }
+    #[cfg(not(feature = "stark-fast"))]
+    {
+        AcceptableOptions::OptionSet(vec![default_acceptable_options()])
+    }
+}
+
+#[cfg(feature = "stark-fast")]
 fn fast_acceptable_options() -> ProofOptions {
     ProofOptions::new(
         4,

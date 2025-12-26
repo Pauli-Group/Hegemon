@@ -24,10 +24,11 @@ pub const MAX_COMMITMENTS_PER_TX: u32 = 2;
 /// Maximum size of a STARK proof in bytes.
 /// STARK proofs require NO trusted setup.
 /// Typical range: 20KB-100KB depending on circuit complexity.
-pub const STARK_PROOF_MAX_SIZE: usize = 65536;
+/// Cap is set higher to accommodate real proofs under default security settings.
+pub const STARK_PROOF_MAX_SIZE: usize = 200_000;
 
-/// Size of a binding signature.
-pub const BINDING_SIG_SIZE: usize = 64;
+/// Size of a binding hash.
+pub const BINDING_HASH_SIZE: usize = 64;
 
 /// Size of the memo field in bytes.
 pub const MEMO_SIZE: usize = 512;
@@ -142,15 +143,50 @@ impl StarkProof {
 #[derive(
     Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
 )]
-pub struct BindingSignature {
+pub struct BindingHash {
     /// Hash-based commitment to the value balance.
-    pub data: [u8; BINDING_SIG_SIZE],
+    pub data: [u8; BINDING_HASH_SIZE],
 }
 
-impl Default for BindingSignature {
+impl Default for BindingHash {
     fn default() -> Self {
         Self {
-            data: [0u8; BINDING_SIG_SIZE],
+            data: [0u8; BINDING_HASH_SIZE],
+        }
+    }
+}
+
+/// Stablecoin policy binding for issuance proofs.
+///
+/// When present, these fields are bound into the transaction proof and must
+/// match on-chain policy, oracle, and attestation commitments.
+#[derive(
+    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
+)]
+pub struct StablecoinPolicyBinding {
+    /// Stablecoin asset identifier (MASP asset id).
+    pub asset_id: u64,
+    /// Deterministic policy hash (BLAKE3-256).
+    pub policy_hash: [u8; 32],
+    /// Latest oracle commitment bound into the proof.
+    pub oracle_commitment: [u8; 32],
+    /// Latest attestation commitment bound into the proof.
+    pub attestation_commitment: [u8; 32],
+    /// Signed issuance delta (positive for mint, negative for burn).
+    pub issuance_delta: i128,
+    /// Policy version to make upgrades explicit.
+    pub policy_version: u32,
+}
+
+impl Default for StablecoinPolicyBinding {
+    fn default() -> Self {
+        Self {
+            asset_id: 0,
+            policy_hash: [0u8; 32],
+            oracle_commitment: [0u8; 32],
+            attestation_commitment: [0u8; 32],
+            issuance_delta: 0,
+            policy_version: 0,
         }
     }
 }
@@ -223,26 +259,14 @@ pub struct ShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
     /// Merkle root the proof was generated against.
     pub anchor: [u8; 32],
     /// Value balance commitment (verified in STARK circuit).
-    pub binding_sig: BindingSignature,
+    pub binding_hash: BindingHash,
+    /// Optional stablecoin policy binding (required for issuance/burn).
+    pub stablecoin: Option<StablecoinPolicyBinding>,
     /// Native fee encoded in the proof.
     pub fee: u64,
-    /// Net value change (positive = deposit from transparent, negative = withdraw to transparent).
+    /// Net value change (must be 0 when no transparent pool is enabled).
     pub value_balance: i128,
 }
-
-/// Transfer direction for shielding/unshielding.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
-pub enum TransferType {
-    /// Transparent to shielded (shielding).
-    Shield,
-    /// Shielded to shielded (private transfer).
-    #[default]
-    ShieldedToShielded,
-    /// Shielded to transparent (unshielding).
-    Unshield,
-}
-
-impl DecodeWithMemTracking for TransferType {}
 
 /// Parameters for the STARK verifying key.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]

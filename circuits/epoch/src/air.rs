@@ -16,7 +16,7 @@
 //! 1. Start with initial state [0, 0, 0]
 //! 2. For each proof hash (32 bytes = 4 field elements):
 //!    - Absorb 1 element per cycle into S0
-//!    - Run Poseidon permutation (8 rounds per cycle)
+//!    - Run Poseidon permutation (POSEIDON_ROUNDS rounds per cycle)
 //! 3. Final S0 is the proof_accumulator public input
 
 use winterfell::{
@@ -32,7 +32,7 @@ use transaction_circuit::stark_air::{round_constant, CYCLE_LENGTH};
 // ================================================================================================
 
 /// Number of Poseidon rounds per cycle (matching transaction circuit).
-pub const POSEIDON_ROUNDS: usize = 8;
+pub const POSEIDON_ROUNDS: usize = transaction_circuit::constants::POSEIDON_ROUNDS;
 
 /// Trace width: 3 Poseidon state + 1 proof input + 1 accumulator.
 pub const EPOCH_TRACE_WIDTH: usize = 5;
@@ -180,11 +180,16 @@ impl Air for EpochProofAir {
         let s1 = t1.exp(5u64.into());
         let s2 = t2.exp(5u64.into());
 
-        // MDS mixing: [[2,1,1],[1,2,1],[1,1,2]]
-        let two: E = E::from(BaseElement::new(2));
-        let hash_s0 = s0 * two + s1 + s2;
-        let hash_s1 = s0 + s1 * two + s2;
-        let hash_s2 = s0 + s1 + s2 * two;
+        let mds = transaction_circuit::poseidon_constants::MDS_MATRIX;
+        let hash_s0 = s0 * E::from(BaseElement::new(mds[0][0]))
+            + s1 * E::from(BaseElement::new(mds[0][1]))
+            + s2 * E::from(BaseElement::new(mds[0][2]));
+        let hash_s1 = s0 * E::from(BaseElement::new(mds[1][0]))
+            + s1 * E::from(BaseElement::new(mds[1][1]))
+            + s2 * E::from(BaseElement::new(mds[1][2]));
+        let hash_s2 = s0 * E::from(BaseElement::new(mds[2][0]))
+            + s1 * E::from(BaseElement::new(mds[2][1]))
+            + s2 * E::from(BaseElement::new(mds[2][2]));
 
         // Constraint: hash_flag * (next - hash_result) = 0
         result[0] = hash_flag * (next[COL_S0] - hash_s0);
@@ -226,7 +231,7 @@ impl Air for EpochProofAir {
 }
 
 /// Create the hash mask periodic column.
-/// 1 for hash rounds (steps 0-7), 0 for copy steps (steps 8-15).
+/// 1 for hash rounds (steps 0..POSEIDON_ROUNDS), 0 for copy steps.
 fn make_hash_mask() -> Vec<BaseElement> {
     let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
     for value in mask.iter_mut().take(POSEIDON_ROUNDS) {
@@ -241,14 +246,14 @@ mod tests {
 
     #[test]
     fn test_trace_length_calculation() {
-        // 1 proof = 4 elements = 4 cycles = 64 rows → 64
-        assert_eq!(EpochProofAir::trace_length(1), 64);
+        // 1 proof = 4 elements = 4 cycles = 256 rows → 256
+        assert_eq!(EpochProofAir::trace_length(1), 256);
 
-        // 16 proofs = 64 elements = 64 cycles = 1024 rows → 1024
-        assert_eq!(EpochProofAir::trace_length(16), 1024);
+        // 16 proofs = 64 elements = 64 cycles = 4096 rows → 4096
+        assert_eq!(EpochProofAir::trace_length(16), 4096);
 
-        // 1000 proofs = 4000 elements = 4000 cycles = 64000 rows → 65536
-        assert_eq!(EpochProofAir::trace_length(1000), 65536);
+        // 1000 proofs = 4000 elements = 4000 cycles = 256000 rows → 262144
+        assert_eq!(EpochProofAir::trace_length(1000), 262144);
     }
 
     #[test]

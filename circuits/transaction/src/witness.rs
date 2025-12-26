@@ -7,9 +7,9 @@ use winterfell::math::FieldElement;
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing::{nullifier, prf_key, Felt},
+    hashing::{felts_to_bytes32, nullifier, prf_key, HashFelt},
     note::{InputNoteWitness, OutputNoteWitness},
-    public_inputs::{BalanceSlot, TransactionPublicInputs},
+    public_inputs::{BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -20,11 +20,13 @@ pub struct TransactionWitness {
     pub outputs: Vec<OutputNoteWitness>,
     #[serde(with = "crate::witness::serde_bytes32")]
     pub sk_spend: [u8; 32],
-    #[serde(with = "crate::witness::serde_felt")]
-    pub merkle_root: Felt,
+    #[serde(with = "crate::witness::serde_bytes32")]
+    pub merkle_root: [u8; 32],
     pub fee: u64,
     #[serde(default)]
     pub value_balance: i128,
+    #[serde(default)]
+    pub stablecoin: StablecoinPolicyBinding,
     #[serde(default = "TransactionWitness::default_version_binding")]
     pub version: VersionBinding,
 }
@@ -50,7 +52,7 @@ impl TransactionWitness {
         // which would allow that note to be spent multiple times.
         let nullifiers = self.nullifiers();
         for (i, nf) in nullifiers.iter().enumerate() {
-            if *nf == Felt::ZERO {
+            if nf.iter().all(|elem| *elem == crate::hashing::Felt::ZERO) {
                 return Err(TransactionCircuitError::ZeroNullifier(i));
             }
         }
@@ -62,6 +64,29 @@ impl TransactionWitness {
         }
 
         let slots = self.balance_slots()?;
+        if self.stablecoin.enabled {
+            if self.stablecoin.asset_id == crate::constants::NATIVE_ASSET_ID {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "stablecoin asset id cannot be native",
+                ));
+            }
+            if self.stablecoin.asset_id == u64::MAX {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "stablecoin asset id cannot be padding",
+                ));
+            }
+            let issuance_mag = self.stablecoin.issuance_delta.unsigned_abs();
+            if issuance_mag > u64::MAX as u128 {
+                return Err(TransactionCircuitError::ValueBalanceOutOfRange(
+                    issuance_mag,
+                ));
+            }
+        } else if !stablecoin_binding_is_zero(&self.stablecoin) {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "stablecoin binding must be zeroed when disabled",
+            ));
+        }
+
         let native_delta = slots
             .iter()
             .find(|slot| slot.asset_id == crate::constants::NATIVE_ASSET_ID)
@@ -73,15 +98,39 @@ impl TransactionWitness {
                 crate::constants::NATIVE_ASSET_ID,
             ));
         }
+        if self.stablecoin.enabled {
+            let mut stablecoin_slot_seen = false;
+            for slot in slots.iter() {
+                if slot.asset_id == self.stablecoin.asset_id {
+                    stablecoin_slot_seen = true;
+                    if slot.delta != self.stablecoin.issuance_delta {
+                        return Err(TransactionCircuitError::BalanceMismatch(slot.asset_id));
+                    }
+                } else if slot.asset_id != crate::constants::NATIVE_ASSET_ID && slot.delta != 0 {
+                    return Err(TransactionCircuitError::BalanceMismatch(slot.asset_id));
+                }
+            }
+            if !stablecoin_slot_seen {
+                return Err(TransactionCircuitError::BalanceMismatch(
+                    self.stablecoin.asset_id,
+                ));
+            }
+        } else {
+            for slot in slots.iter() {
+                if slot.asset_id != crate::constants::NATIVE_ASSET_ID && slot.delta != 0 {
+                    return Err(TransactionCircuitError::BalanceMismatch(slot.asset_id));
+                }
+            }
+        }
 
         Ok(())
     }
 
-    pub fn prf_key(&self) -> Felt {
+    pub fn prf_key(&self) -> crate::hashing::Felt {
         prf_key(&self.sk_spend)
     }
 
-    pub fn nullifiers(&self) -> Vec<Felt> {
+    pub fn nullifiers(&self) -> Vec<HashFelt> {
         let prf = self.prf_key();
         self.inputs
             .iter()
@@ -89,7 +138,7 @@ impl TransactionWitness {
             .collect()
     }
 
-    pub fn commitments(&self) -> Vec<Felt> {
+    pub fn commitments(&self) -> Vec<HashFelt> {
         self.outputs
             .iter()
             .map(|note| note.note.commitment())
@@ -106,6 +155,9 @@ impl TransactionWitness {
         }
 
         map.entry(crate::constants::NATIVE_ASSET_ID).or_insert(0);
+        if self.stablecoin.enabled {
+            map.entry(self.stablecoin.asset_id).or_insert(0);
+        }
 
         if map.len() > BALANCE_SLOTS {
             return Err(TransactionCircuitError::BalanceSlotOverflow(
@@ -130,13 +182,13 @@ impl TransactionWitness {
 
     pub fn public_inputs(&self) -> Result<TransactionPublicInputs, TransactionCircuitError> {
         let nullifiers = {
-            let mut list = self.nullifiers();
-            list.resize(MAX_INPUTS, Felt::ZERO);
+            let mut list: Vec<[u8; 32]> = self.nullifiers().iter().map(felts_to_bytes32).collect();
+            list.resize(MAX_INPUTS, [0u8; 32]);
             list
         };
         let commitments = {
-            let mut list = self.commitments();
-            list.resize(MAX_OUTPUTS, Felt::ZERO);
+            let mut list: Vec<[u8; 32]> = self.commitments().iter().map(felts_to_bytes32).collect();
+            list.resize(MAX_OUTPUTS, [0u8; 32]);
             list
         };
         let balance_slots = self.balance_slots()?;
@@ -147,6 +199,7 @@ impl TransactionWitness {
             balance_slots,
             self.fee,
             self.value_balance,
+            self.stablecoin.clone(),
             self.version,
         )
     }
@@ -219,6 +272,17 @@ pub(crate) mod serde_bytes32 {
 
     use serde::Deserialize;
 }
+
+fn stablecoin_binding_is_zero(binding: &StablecoinPolicyBinding) -> bool {
+    !binding.enabled
+        && binding.asset_id == 0
+        && binding.policy_hash == [0u8; 32]
+        && binding.oracle_commitment == [0u8; 32]
+        && binding.attestation_commitment == [0u8; 32]
+        && binding.issuance_delta == 0
+        && binding.policy_version == 0
+}
+#[allow(dead_code)]
 pub(crate) mod serde_felt {
     use serde::{Deserializer, Serializer};
     use winterfell::math::fields::f64::BaseElement;

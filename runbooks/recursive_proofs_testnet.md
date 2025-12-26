@@ -42,6 +42,7 @@ HEGEMON_MINE=1 \
 HEGEMON_RECURSIVE_EPOCH_PROOFS=1 \
 HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1 \
 ./target/release/hegemon-node \
+  --dev \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
   --rpc-port 9944 \
@@ -70,6 +71,7 @@ Start Bob and connect to Alice:
 ```bash
 HEGEMON_SEEDS="alice.public.ip:30333" \
 ./target/release/hegemon-node \
+  --dev \
   --base-path ~/.hegemon-node-bob \
   --chain config/dev-chainspec.json \
   --rpc-port 9945 \

@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use transaction_circuit::constants::NATIVE_ASSET_ID;
-use transaction_circuit::hashing::Felt;
+use transaction_circuit::hashing::{felts_to_bytes32, Commitment};
 use wallet::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 use wallet::viewing::IncomingViewingKey;
 use wallet::{
@@ -167,11 +167,8 @@ impl TestNode {
     ) {
         let mut commitments = self.state.commitments.lock().unwrap();
         let mut ciphertexts = self.state.ciphertexts.lock().unwrap();
-        commitments.push(
-            note.to_note_data(address.pk_recipient)
-                .commitment()
-                .as_int(),
-        );
+        let commitment = note.to_note_data(address.pk_recipient).commitment();
+        commitments.push(felts_to_bytes32(&commitment));
         // Use to_pallet_bytes() to match the format expected by from_pallet_bytes()
         ciphertexts.push(ciphertext.to_pallet_bytes().expect("pallet bytes"));
         drop(commitments);
@@ -213,7 +210,7 @@ impl Drop for TestNode {
 }
 
 struct TestState {
-    commitments: Mutex<Vec<u64>>,
+    commitments: Mutex<Vec<Commitment>>,
     ciphertexts: Mutex<Vec<Vec<u8>>>,
     nullifiers: Mutex<HashSet<[u8; 32]>>,
     pending: Mutex<Vec<PendingTx>>,
@@ -235,7 +232,7 @@ impl TestState {
 }
 
 struct PendingTx {
-    commitments: Vec<u64>,
+    commitments: Vec<Commitment>,
     ciphertexts: Vec<Vec<u8>>,
     nullifiers: Vec<[u8; 32]>,
 }
@@ -254,16 +251,11 @@ async fn handle_transaction(
     require_auth(&headers, &state.token)?;
 
     // Commitments are now already in the correct format
-    let commitments: Vec<u64> = bundle
+    let commitments: Vec<Commitment> = bundle
         .commitments
         .iter()
         .filter(|cm| *cm != &[0u8; 32])
-        .map(|cm| {
-            // Extract u64 from last 8 bytes
-            let mut bytes = [0u8; 8];
-            bytes.copy_from_slice(&cm[24..32]);
-            u64::from_be_bytes(bytes)
-        })
+        .copied()
         .collect();
 
     // Nullifiers are now already in the correct format
@@ -308,7 +300,7 @@ async fn handle_commitments(
         .take(limit)
         .map(|(index, value)| CommitmentEntry {
             index: index as u64,
-            value: *value,
+            value: hex::encode(value),
         })
         .collect();
     Ok(Json(CommitmentResponse { entries: slice }))
@@ -359,12 +351,12 @@ async fn handle_notes(
     let commitments = state.commitments.lock().unwrap();
     let mut tree = state_merkle::CommitmentTree::new(32).unwrap();
     for value in commitments.iter() {
-        let _ = tree.append(Felt::new(*value)).unwrap();
+        let _ = tree.append(*value).unwrap();
     }
     Ok(Json(NoteStatus {
         leaf_count: commitments.len() as u64,
         depth: 32,
-        root: tree.root().as_int(),
+        root: format!("0x{}", hex::encode(tree.root())),
         next_index: state.ciphertexts.lock().unwrap().len() as u64,
     }))
 }
@@ -404,7 +396,7 @@ struct CommitmentResponse {
 #[derive(Serialize)]
 struct CommitmentEntry {
     index: u64,
-    value: u64,
+    value: String,
 }
 
 #[derive(Serialize)]
@@ -428,7 +420,7 @@ struct NullifierResponse {
 struct NoteStatus {
     leaf_count: u64,
     depth: u64,
-    root: u64,
+    root: String,
     next_index: u64,
 }
 

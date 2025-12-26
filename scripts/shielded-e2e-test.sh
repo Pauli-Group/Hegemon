@@ -144,61 +144,11 @@ echo "Step 4: Initializing wallet..."
 pass "Wallet initialized"
 
 echo ""
-echo "Step 5: Attempting to shield funds using Alice dev account..."
-# The shield command requires:
-# 1. The signing account has balance (Alice has dev funds in genesis)
-# 2. The wallet can sign with ML-DSA
-#
-# Using --use-alice to use the dev account with pre-funded balance
-
-# First, let's check the node is still running
-if ! kill -0 $NODE_PID 2>/dev/null; then
-    fail "Node crashed during test"
-fi
-
-# Try to shield 1_000_000 units (1 HGM with 12 decimals = 0.000001 HGM)
-SHIELD_AMOUNT=1000000000000
-
-echo "Shielding $SHIELD_AMOUNT units using Alice dev account..."
-./target/release/wallet substrate-shield \
-    --store "$WALLET_STORE" \
-    --passphrase "$PASSPHRASE" \
-    --ws-url "$RPC_URL" \
-    --amount "$SHIELD_AMOUNT" \
-    --use-alice 2>&1 | tee /tmp/hegemon-test-shield.log || true
-
-# Check if shield succeeded
-if grep -q "submitted successfully" /tmp/hegemon-test-shield.log; then
-    pass "Shield transaction submitted"
-    TX_HASH=$(grep "TX Hash" /tmp/hegemon-test-shield.log | cut -d' ' -f4)
-    echo "  TX Hash: $TX_HASH"
-else
-    # Common failure reasons:
-    # 1. Account has no balance
-    # 2. Extrinsic encoding mismatch
-    # 3. Signature verification failure
-    
-    echo ""
-    echo "Shield output:"
-    cat /tmp/hegemon-test-shield.log
-    echo ""
-    
-    # This is expected to fail initially - the wallet account won't have funds
-    # because we're not using Alice's key
-    warn "Shield failed (expected if wallet doesn't have transparent balance)"
-    echo ""
-    echo "To fix this, we need to either:"
-    echo "  1. Use Alice's signing key in the wallet"
-    echo "  2. Transfer funds to the wallet's account first"
-    echo ""
-fi
-
-echo ""
-echo "Step 6: Waiting for block inclusion..."
+echo "Step 5: Waiting for block inclusion..."
 sleep 15
 
 echo ""
-echo "Step 7: Getting final shielded pool status..."
+echo "Step 6: Getting final shielded pool status..."
 FINAL_STATUS=$(curl -s -X POST -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"hegemon_getShieldedPoolStatus","params":[],"id":1}' \
     "$HTTP_URL")

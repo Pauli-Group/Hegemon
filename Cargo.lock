@@ -910,8 +910,8 @@ dependencies = [
  "miden-crypto",
  "proptest",
  "rand 0.8.5",
- "thiserror 1.0.69",
  "transaction-circuit",
+ "transaction-core",
  "winter-air",
  "winter-crypto",
  "winter-prover",
@@ -3639,6 +3639,7 @@ dependencies = [
  "sc-executor",
  "sc-rpc",
  "sc-rpc-api",
+ "sc-rpc-server",
  "sc-service",
  "sc-transaction-pool",
  "sc-transaction-pool-api",
@@ -6607,6 +6608,7 @@ name = "pallet-shielded-pool"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "batch-circuit",
  "blake3",
  "epoch-circuit",
  "frame-benchmarking",
@@ -6614,6 +6616,7 @@ dependencies = [
  "frame-system",
  "log",
  "pallet-balances",
+ "pallet-coinbase",
  "parity-scale-codec",
  "scale-info",
  "serde",
@@ -6631,6 +6634,24 @@ dependencies = [
  "winter-prover",
  "winter-verifier",
  "winterfell",
+]
+
+[[package]]
+name = "pallet-stablecoin-policy"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "frame-support",
+ "frame-system",
+ "log",
+ "pallet-asset-registry",
+ "pallet-identity",
+ "parity-scale-codec",
+ "scale-info",
+ "serde",
+ "sp-io",
+ "sp-runtime",
+ "sp-std",
 ]
 
 [[package]]
@@ -8039,6 +8060,7 @@ dependencies = [
  "pallet-session",
  "pallet-settlement",
  "pallet-shielded-pool",
+ "pallet-stablecoin-policy",
  "pallet-sudo",
  "pallet-timestamp",
  "pallet-transaction-payment",
@@ -9486,6 +9508,7 @@ dependencies = [
 name = "settlement-circuit"
 version = "0.1.0"
 dependencies = [
+ "transaction-core",
  "winter-crypto",
  "winterfell",
 ]
@@ -11710,14 +11733,17 @@ dependencies = [
  "chrono",
  "clap",
  "disclosure-circuit",
+ "frame-metadata",
  "futures",
  "hex",
  "jsonrpsee",
+ "parity-scale-codec",
  "predicates",
  "proptest",
  "rand 0.8.5",
  "reqwest",
  "rpassword",
+ "scale-info",
  "serde",
  "serde_bytes",
  "serde_json",

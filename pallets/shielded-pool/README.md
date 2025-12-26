@@ -15,7 +15,7 @@ All cryptographic operations are **post-quantum secure** using hash-based and la
 | Nullifiers | PRF with Poseidon | ✅ Hash-based |
 | Merkle Tree | Poseidon-based incremental tree | ✅ Hash-based |
 | ZK Proofs | STARK (FRI-based IOP) | ✅ Transparent, no trusted setup |
-| Value Balance | Verified in-circuit | ✅ No binding signatures |
+| Value Balance | Verified in-circuit | ✅ Binding hash only |
 | Key Encapsulation | ML-KEM (placeholder) | ✅ Lattice-based |
 
 ## Architecture
@@ -48,11 +48,14 @@ All cryptographic operations are **post-quantum secure** using hash-based and la
 
 ## Extrinsics
 
-### `shield(amount, commitment, encrypted_note)`
-Deposit transparent funds into the shielded pool.
+### `shielded_transfer(proof, nullifiers, commitments, ciphertexts, anchor, binding_hash, stablecoin, fee, value_balance)`
+Execute a private transfer inside the shielded pool. `stablecoin` is optional and only used for issuance proofs; `value_balance` must be 0 (no transparent pool).
 
-### `shielded_transfer(proof, nullifiers, commitments, ciphertexts, anchor, binding_sig, value_balance)`
-Execute a private transfer (or partial shield/unshield with value_balance).
+### `shielded_transfer_unsigned(proof, nullifiers, commitments, ciphertexts, anchor, binding_hash, stablecoin, fee)`
+Execute an unsigned shielded-to-shielded transfer; `stablecoin` must be `None` and `value_balance` is fixed to 0.
+
+### `mint_coinbase(coinbase_data)` (inherent)
+Mint a shielded coinbase note as the only issuance path.
 
 ### `update_verifying_key(vk)` (admin only)
 Update the STARK verification parameters.

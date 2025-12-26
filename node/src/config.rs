@@ -11,7 +11,11 @@ use wallet::address::ShieldedAddress;
 use wallet::keys::RootSecret;
 
 use crate::chain_spec::ChainProfile;
+use crate::error::NodeError;
 use crate::telemetry::TelemetryPosture;
+
+const DEFAULT_API_TOKEN: &str = "devnet-token";
+const DEFAULT_MINER_SEED: [u8; 32] = [7u8; 32];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NodeConfig {
@@ -69,6 +73,22 @@ impl NodeConfig {
             NatTraversalConfig::disabled(self.p2p_addr)
         }
     }
+
+    pub fn validate(&self) -> Result<(), NodeError> {
+        if self.chain_profile != ChainProfile::Dev {
+            if self.api_token == DEFAULT_API_TOKEN {
+                return Err(NodeError::InvalidInput(
+                    "api_token must be set to a non-default value for non-dev profiles".into(),
+                ));
+            }
+            if self.miner_seed == DEFAULT_MINER_SEED {
+                return Err(NodeError::InvalidInput(
+                    "miner_seed must be set to a non-default value for non-dev profiles".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for NodeConfig {
@@ -77,13 +97,13 @@ impl Default for NodeConfig {
             db_path: PathBuf::from("node.db"),
             peer_store_path: PathBuf::from("node.db.peers"),
             api_addr: "127.0.0.1:8080".parse().expect("loopback socket"),
-            api_token: "devnet-token".to_string(),
+            api_token: DEFAULT_API_TOKEN.to_string(),
             note_tree_depth: 32,
             mempool_max_txs: 1024,
             template_tx_limit: 512,
             miner_workers: 2,
-            miner_seed: [7u8; 32],
-            miner_payout_address: default_payout_address([7u8; 32]),
+            miner_seed: DEFAULT_MINER_SEED,
+            miner_payout_address: default_payout_address(DEFAULT_MINER_SEED),
             pow_bits: DEFAULT_GENESIS_POW_BITS,
             chain_profile: ChainProfile::Dev,
             gossip_buffer: 1024,

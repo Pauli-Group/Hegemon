@@ -65,6 +65,7 @@ Where they're used:
 
   * Block producers sign block headers with ML-DSA.
   * Mining node identity keys = ML-DSA.
+  * PQ network identity seeds are generated from OS entropy, persisted under the node base path (for example `pq-identity.seed`) or provided via environment override, and never derived from public peer IDs.
   * Identity/session records support `SessionKey::Legacy` (existing `AuthorityId`) and `SessionKey::PostQuantum` (Dilithium/Falcon). The runtime migration in `pallet_identity` wraps any stored `AuthorityId` into `SessionKey::Legacy` on upgrade so operators inherit their previous keys before rotating into PQ-only bundles.
 * **User layer**:
 
@@ -122,7 +123,8 @@ PRFs:
 
 * All “note identifiers”, nullifiers, etc. are derived with keyed hashes (BLAKE3-256 or SHA3-256, matching the commitment domain separation):
 
-  * `nk = H("nk" || sk_spend)`
+  * `sk_nf = H("view_nf" || sk_view)`
+  * `nk = H("nk" || sk_nf)`
   * `nullifier = H("nf" || nk || note_position || rho)`
 
 No group operations anywhere in user-visible cryptography.
@@ -136,7 +138,7 @@ The repository now includes a standalone Rust crate at `crypto/` that collects t
 * `ml_dsa` – deterministic key generation, signing, verification, and serialization helpers sized to ML-DSA-65 (Dilithium3) keys (pk = 1952 B, sk = 4000 B, sig = 3293 B).
 * `slh_dsa` – the analogous interface for SLH-DSA (SPHINCS+-SHA2-128f) with pk = 32 B, sk = 64 B, signature = 17088 B.
 * `ml_kem` – Kyber-768-style encapsulation/decapsulation with pk = 1184 B, sk = 2400 B, ciphertext = 1088 B, shared secret = 32 B.
-* `hashes` – SHA-256, SHA3-256, BLAKE3-256, and a Poseidon-inspired permutation over the Goldilocks prime, plus helpers for commitments (`b"c"` tag), PRF key derivation (`b"nk"`), and nullifiers (`b"nf"`) that default to BLAKE3 with SHA3 fallbacks for STARK-friendly domains.
+* `hashes` – SHA-256, SHA3-256, BLAKE3-256, and a Poseidon-inspired permutation over the Goldilocks prime using width 3, 63 full rounds, and NUMS-generated round constants/MDS (SHA-256 domain separation + Cauchy matrix), plus helpers for commitments (`b"c"` tag), PRF key derivation (`b"nk"`), and nullifiers (`b"nf"`) that default to BLAKE3 with SHA3 fallbacks for STARK-friendly domains. Poseidon2 is under evaluation but not yet adopted in the circuit AIR.
 
 Everything derives deterministic test vectors using a ChaCha20-based RNG seeded via SHA-256 so that serialization and domain separation match the simple hash-based definitions above. Integration tests under `crypto/tests/` lock in the byte-level expectations for key generation, signing, verification, KEM encapsulation/decapsulation, and commitment/nullifier derivation.
 
@@ -201,20 +203,23 @@ We keep the Zcash mental model, but trimmed:
   * `r` (commitment randomness)
 * The chain stores only:
 
-  * a **commitment** `cm = Com(value, asset_id, pk_view, rho; r)`,
+  * a **commitment** `cm = Com(value, asset_id, pk_view, rho; r)` (32-byte, 4-limb encoding),
   * a Merkle tree of note commitments,
-  * a **nullifier** `nf` when the note is spent.
+  * a **nullifier** `nf` when the note is spent (32-byte, 4-limb encoding).
 
 The ZK proof shows:
 
-* “I know some opening `(value, asset_id, pk_view, rho, r)` and secret key `sk_spend` such that:
+* “I know some opening `(value, asset_id, pk_view, rho, r)` and nullifier secret `sk_nf` such that:
 
   * `cm` is in the tree,
-  * `nf = PRF(sk_spend, rho, position, …)`,
+  * `nf = PRF(sk_nf, rho, position, …)`,
   * total inputs = total outputs (value-conservation),
   * overflow conditions don’t happen.”
 
-No ECDSA/EdDSA/RedDSA anywhere; the “authorization” is just knowledge of `sk_spend` inside the ZK proof.
+No ECDSA/EdDSA/RedDSA anywhere; the “authorization” is just knowledge of `sk_nf` inside the ZK proof.
+
+Note: the switch to 4-limb 32-byte commitment/nullifier encodings is protocol-breaking. Any chain spec
+that adopts this encoding requires a fresh genesis and wiping `node.db` plus wallet stores.
 
 ### 3.2 Transaction structure
 
@@ -259,6 +264,12 @@ No transparent outputs; everything is in this one PQ pool from day 1.
 
 The workspace-level test `tests/node_wallet_daemon.rs` keeps the HTTP API, miner loop, and wallet RPC client in sync by spinning two nodes, verifying the minted supply, and forcing a user-facing transfer.
 
+### 3.3 Shielded stablecoin issuance
+
+Stablecoin issuance and burn are modeled as a non-native MASP asset that lives entirely inside the shielded pool. Instead of exposing a transparent mint, the transaction circuit allows a single asset id to carry a non-zero net delta, but only when the proof binds to an on-chain policy hash plus the latest oracle and attestation commitments. The policy lives in `pallets/stablecoin-policy` and is hashed with BLAKE3 under the `stablecoin-policy-v1` domain so the circuit can consume a single 32-byte value. The verifier in `pallets/shielded-pool` checks that the policy hash, policy version, oracle commitment freshness, and attestation dispute status match chain state before accepting the proof.
+
+Issuance and burn therefore stay shielded: the proof shows `inputs - outputs = issuance_delta` for the stablecoin asset, and the runtime rejects any stablecoin binding supplied via the unsigned path. Wallet tooling assembles the binding by reading `StablecoinPolicy`, `Oracles::Feeds`, and `Attestations::Commitments`, then submits a signed `shielded_transfer` extrinsic so role checks and replay protection remain in place. Normal stablecoin transfers do not require a binding, but they still ride the same MASP rules and never leave the privacy pool.
+
 ---
 
 ## 4. Addresses and keys (PQ analogue of Sapling/Orchard)
@@ -281,7 +292,7 @@ flowchart TD
     ROOT -->|HKDF "enc"| SK_ENC[sk_enc]
     ROOT -->|HKDF "derive"| SK_DERIVE[sk_derive]
 
-    SK_SPEND -->|H "nk"| NK[nk - Nullifier key]
+    VK_NF -->|H "nk"| NK[nk - Nullifier key]
 
     subgraph Viewing Keys
         IVK[Incoming VK<br/>sk_view + sk_enc]
@@ -290,7 +301,7 @@ flowchart TD
 
     SK_VIEW --> IVK
     SK_ENC --> IVK
-    SK_SPEND -->|H "view_nf"| VK_NF[vk_nf]
+    SK_VIEW -->|H "view_nf"| VK_NF[vk_nf]
     VK_NF --> FVK
 
     SK_DERIVE --> ADDR[Diversified Addresses<br/>shca1...]
@@ -309,10 +320,13 @@ From this we derive:
 
 * **Spending authorization material**:
 
-  * The STARK circuit uses `sk_spend` for nullifiers and for a commitment to “this user is allowed to spend this note”.
+  * `sk_spend` remains in the wallet for authorization/signing and is never embedded in viewing keys.
+* **Nullifier key material**:
+
+  * `vk_nf = H("view_nf" || sk_view)` is used inside the STARK to derive `nk` and nullifiers.
 * **Viewing keys**:
 
-  * `vk_full`: includes enough to derive both incoming and outgoing note info (e.g. seeds to recompute all `pk_view`, plus the PRFs used in the circuit).
+  * `vk_full`: includes enough to derive both incoming and outgoing note info plus `vk_nf` for spentness tracking.
   * `vk_incoming`: only the KEM/AEAD decryption info and the ability to scan for your notes, not to reconstruct spends.
 
 Everything is done via hash-based PRFs / KDFs; no ECC.
@@ -334,13 +348,13 @@ The repository now contains a `wallet` crate that wires these ideas into code:
 * `wallet/src/keys.rs` defines `RootSecret`, `DerivedKeys`, and `AddressKeyMaterial`. A SHA-256-based HKDF (`wallet-hkdf`) produces `sk_spend`, `sk_view`, `sk_enc`, and `sk_derive`, and diversified addresses are computed deterministically from `(sk_view, sk_enc, sk_derive, index)`.
 * `wallet/src/address.rs` encodes addresses as Bech32m (`shca1…`) strings that bundle the version, diversifier index, ML-KEM public key, `pk_recipient`, and a 32-byte hint tag. Decoding performs the inverse mapping so senders can rebuild the ML-KEM key and note metadata.
 * `wallet/src/notes.rs` handles ML-KEM encapsulation plus ChaCha20-Poly1305 AEAD wrapping for both the note payload and memo. The shared secret is expanded with a domain-separated label (`wallet-aead`) so note payloads and memos use independent nonces/keys.
-* `wallet/src/viewing.rs` exposes `IncomingViewingKey`, `OutgoingViewingKey`, and `FullViewingKey`. Incoming keys decrypt ciphertexts and rebuild `NoteData`/`InputNoteWitness` objects for the transaction circuit, outgoing keys let wallets audit their own sent notes, and full viewing keys add the nullifier PRF material needed for spentness tracking.
+* `wallet/src/viewing.rs` exposes `IncomingViewingKey`, `OutgoingViewingKey`, and `FullViewingKey`. Incoming keys decrypt ciphertexts and rebuild `NoteData`/`InputNoteWitness` objects for the transaction circuit, outgoing keys let wallets audit their own sent notes, and full viewing keys add the view-derived nullifier key (`vk_nf = BLAKE3("view_nf" || sk_view)`) needed for spentness tracking.
 * `wallet/src/bin/wallet.rs` ships a CLI with the following flow:
   * `wallet generate --count N` prints a JSON export containing the root secret (hex), the first `N` addresses, and serialized viewing keys.
   * `wallet address --root <hex> --index <n>` derives additional diversified addresses on demand.
   * `wallet tx-craft ...` reads JSON inputs/recipients, creates `TransactionWitness` JSON for the circuit, and emits ML-KEM note ciphertexts for the recipients.
   * `wallet scan --ivk <path> --ledger <path>` decrypts ledger ciphertexts with an incoming viewing key and returns per-asset balances plus recovered note summaries.
-  * `wallet substrate-sync`, `wallet substrate-daemon`, `wallet substrate-send`, and `wallet substrate-shield` are the live Substrate RPC flows, while `wallet payment-proof create|verify|purge` manages disclosure packages for compliance requests.
+  * `wallet substrate-sync`, `wallet substrate-daemon`, and `wallet substrate-send` are the live Substrate RPC flows; `wallet substrate-send` uses proof-backed `submitShieldedTransfer`.
 
 Integration tests in `wallet/tests/cli.rs` exercise those CLI flows, so anyone can watch address derivation, note encryption, and viewing-key-based balance recovery stay compatible with the proving system.
 

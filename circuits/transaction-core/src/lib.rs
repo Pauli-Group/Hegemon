@@ -9,7 +9,9 @@
 extern crate alloc;
 
 pub mod constants;
+pub mod dimensions;
 pub mod hashing;
+pub mod poseidon_constants;
 pub mod stark_air;
 #[cfg(feature = "stark-verify")]
 pub mod stark_verifier;
@@ -19,7 +21,7 @@ pub use hashing::Felt;
 pub use stark_air::{
     TransactionAirStark, TransactionPublicInputsStark, CYCLE_LENGTH, MIN_TRACE_LENGTH, TRACE_WIDTH,
 };
-pub use types::BalanceSlot;
+pub use types::{BalanceSlot, StablecoinPolicyBinding};
 
 #[cfg(feature = "stark-verify")]
 pub use stark_verifier::{

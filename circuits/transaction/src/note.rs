@@ -4,7 +4,7 @@ use winterfell::math::FieldElement;
 use crate::{
     constants::MAX_NOTE_VALUE,
     error::TransactionCircuitError,
-    hashing::{note_commitment, Felt},
+    hashing::{note_commitment, HashFelt},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -27,7 +27,7 @@ impl NoteData {
         Ok(())
     }
 
-    pub fn commitment(&self) -> Felt {
+    pub fn commitment(&self) -> HashFelt {
         note_commitment(
             self.value,
             self.asset_id,
@@ -46,13 +46,13 @@ pub const MERKLE_TREE_DEPTH: usize = 32;
 pub struct MerklePath {
     /// Sibling hashes from leaf to root (length = MERKLE_TREE_DEPTH).
     #[serde(with = "crate::note::serde_merkle_path")]
-    pub siblings: Vec<crate::hashing::Felt>,
+    pub siblings: Vec<crate::hashing::HashFelt>,
 }
 
 impl Default for MerklePath {
     fn default() -> Self {
         Self {
-            siblings: vec![crate::hashing::Felt::ZERO; MERKLE_TREE_DEPTH],
+            siblings: vec![[crate::hashing::Felt::ZERO; 4]; MERKLE_TREE_DEPTH],
         }
     }
 }
@@ -61,9 +61,9 @@ impl MerklePath {
     /// Verify this path connects leaf_hash at position to the given root.
     pub fn verify(
         &self,
-        leaf_hash: crate::hashing::Felt,
+        leaf_hash: crate::hashing::HashFelt,
         position: u64,
-        root: crate::hashing::Felt,
+        root: crate::hashing::HashFelt,
     ) -> bool {
         use crate::hashing::merkle_node;
 
@@ -84,31 +84,31 @@ impl MerklePath {
 }
 
 pub(crate) mod serde_merkle_path {
+    use crate::hashing::{bytes32_to_felts, felts_to_bytes32, HashFelt};
     use serde::{de::SeqAccess, de::Visitor, ser::SerializeSeq, Deserializer, Serializer};
-    #[allow(unused_imports)] // FieldElement trait is used for .as_int() method
-    use winterfell::math::FieldElement;
 
-    pub fn serialize<S>(value: &Vec<crate::hashing::Felt>, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(value: &Vec<HashFelt>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
         let mut seq = serializer.serialize_seq(Some(value.len()))?;
         for elem in value {
-            seq.serialize_element(&elem.as_int())?;
+            let bytes = felts_to_bytes32(elem);
+            seq.serialize_element(&bytes)?;
         }
         seq.end()
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<crate::hashing::Felt>, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<HashFelt>, D::Error>
     where
         D: Deserializer<'de>,
     {
         struct FeltVecVisitor;
         impl<'de> Visitor<'de> for FeltVecVisitor {
-            type Value = Vec<crate::hashing::Felt>;
+            type Value = Vec<HashFelt>;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a sequence of u64 field elements")
+                formatter.write_str("a sequence of 32-byte hash encodings")
             }
 
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
@@ -116,8 +116,10 @@ pub(crate) mod serde_merkle_path {
                 A: SeqAccess<'de>,
             {
                 let mut vec = Vec::new();
-                while let Some(val) = seq.next_element::<u64>()? {
-                    vec.push(crate::hashing::Felt::new(val));
+                while let Some(val) = seq.next_element::<[u8; 32]>()? {
+                    let felts = bytes32_to_felts(&val)
+                        .ok_or_else(|| serde::de::Error::custom("non-canonical hash bytes"))?;
+                    vec.push(felts);
                 }
                 Ok(vec)
             }

@@ -91,6 +91,13 @@ impl ViewKey {
         self.0
     }
 
+    pub fn nullifier_key(&self) -> [u8; KEY_SIZE] {
+        let mut material = Vec::with_capacity(b"view_nf".len() + self.0.len());
+        material.extend_from_slice(b"view_nf");
+        material.extend_from_slice(&self.0);
+        blake3_256(&material)
+    }
+
     pub fn pk_recipient(&self, diversifier: &[u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
         let mut material = Vec::with_capacity(self.0.len() + diversifier.len());
         material.extend_from_slice(&self.0);

@@ -1,6 +1,6 @@
 use protocol_versioning::VersionBinding;
 use thiserror::Error;
-use transaction_circuit::{hashing::Felt, TransactionCircuitError};
+use transaction_circuit::{hashing::Commitment, TransactionCircuitError};
 
 use state_merkle::MerkleError;
 
@@ -17,11 +17,11 @@ pub enum BlockError {
     )]
     UnexpectedMerkleRoot {
         index: usize,
-        expected: Felt,
-        reported: Felt,
+        expected: Commitment,
+        reported: Commitment,
     },
     #[error("duplicate nullifier {0:?} encountered in block")]
-    DuplicateNullifier(Felt),
+    DuplicateNullifier(Commitment),
     #[error(transparent)]
     Merkle(#[from] MerkleError),
     #[error("recursive aggregation digest mismatch")]
@@ -29,7 +29,10 @@ pub enum BlockError {
     #[error("transaction proof at index {0} reported verifier rejection")]
     TransactionRejected(usize),
     #[error("block starting root {observed:?} does not match expected {expected:?}")]
-    StartingRootMismatch { expected: Felt, observed: Felt },
+    StartingRootMismatch {
+        expected: Commitment,
+        observed: Commitment,
+    },
     #[error("block root trace mismatch")]
     RootTraceMismatch,
     #[error("transaction proof at index {index} declared unsupported version {version:?}")]

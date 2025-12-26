@@ -16,14 +16,22 @@ use winterfell::{
     Proof, ProofOptions, Prover, StarkDomain, Trace, TraceInfo, TracePolyTable, TraceTable,
 };
 
+#[cfg(feature = "stark-fast")]
+use crate::stark_prover::fast_proof_options;
 use crate::{
     constants::{MAX_INPUTS, MAX_OUTPUTS},
     stark_air::{
         commitment_output_row, merkle_root_output_row, nullifier_output_row, TransactionAirStark,
-        TransactionPublicInputsStark, COL_FEE, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_OUT_ACTIVE0,
-        COL_OUT_ACTIVE1, COL_S0, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN,
+        TransactionPublicInputsStark, COL_FEE, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_OUT0, COL_OUT1,
+        COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_S0, COL_S1, COL_STABLECOIN_ASSET,
+        COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2,
+        COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG,
+        COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1,
+        COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3, COL_STABLECOIN_POLICY_HASH0,
+        COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2, COL_STABLECOIN_POLICY_HASH3,
+        COL_STABLECOIN_POLICY_VERSION, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN,
     },
-    stark_prover::{default_proof_options, fast_proof_options, TransactionProverStark},
+    stark_prover::{default_proof_options, TransactionProverStark},
     witness::TransactionWitness,
     TransactionCircuitError,
 };
@@ -44,6 +52,7 @@ impl TransactionProverStarkRpo {
         Self::new(default_proof_options())
     }
 
+    #[cfg(feature = "stark-fast")]
     pub fn with_fast_options() -> Self {
         Self::new(fast_proof_options())
     }
@@ -93,26 +102,33 @@ impl Prover for TransactionProverStarkRpo {
             trace.get(COL_OUT_ACTIVE1, row),
         ];
 
+        let read_hash = |row: usize| -> [BaseElement; 4] {
+            [
+                trace.get(COL_OUT0, row),
+                trace.get(COL_OUT1, row),
+                trace.get(COL_S0, row),
+                trace.get(COL_S1, row),
+            ]
+        };
+
         let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
-        for i in 0..MAX_INPUTS {
-            let flag = input_flags[i];
+        for (i, flag) in input_flags.iter().enumerate().take(MAX_INPUTS) {
             let row = nullifier_output_row(i);
-            let nf = if flag == BaseElement::ONE && row < trace.length() {
-                trace.get(COL_S0, row)
+            let nf = if *flag == BaseElement::ONE && row < trace.length() {
+                read_hash(row)
             } else {
-                BaseElement::ZERO
+                [BaseElement::ZERO; 4]
             };
             nullifiers.push(nf);
         }
 
         let mut commitments = Vec::with_capacity(MAX_OUTPUTS);
-        for i in 0..MAX_OUTPUTS {
-            let flag = output_flags[i];
+        for (i, flag) in output_flags.iter().enumerate().take(MAX_OUTPUTS) {
             let row = commitment_output_row(i);
-            let cm = if flag == BaseElement::ONE && row < trace.length() {
-                trace.get(COL_S0, row)
+            let cm = if *flag == BaseElement::ONE && row < trace.length() {
+                read_hash(row)
             } else {
-                BaseElement::ZERO
+                [BaseElement::ZERO; 4]
             };
             commitments.push(cm);
         }
@@ -120,23 +136,47 @@ impl Prover for TransactionProverStarkRpo {
         let merkle_root = if trace.length() > 0 {
             let row = merkle_root_output_row(0);
             if row < trace.length() {
-                trace.get(COL_S0, row)
+                read_hash(row)
             } else {
-                BaseElement::ZERO
+                [BaseElement::ZERO; 4]
             }
         } else {
-            BaseElement::ZERO
+            [BaseElement::ZERO; 4]
         };
 
+        let final_row = trace.length().saturating_sub(2);
         TransactionPublicInputsStark {
             input_flags,
             output_flags,
             nullifiers,
             commitments,
-            fee: trace.get(COL_FEE, row),
-            value_balance_sign: trace.get(COL_VALUE_BALANCE_SIGN, row),
-            value_balance_magnitude: trace.get(COL_VALUE_BALANCE_MAG, row),
+            fee: trace.get(COL_FEE, final_row),
+            value_balance_sign: trace.get(COL_VALUE_BALANCE_SIGN, final_row),
+            value_balance_magnitude: trace.get(COL_VALUE_BALANCE_MAG, final_row),
             merkle_root,
+            stablecoin_enabled: trace.get(COL_STABLECOIN_ENABLED, final_row),
+            stablecoin_asset: trace.get(COL_STABLECOIN_ASSET, final_row),
+            stablecoin_policy_version: trace.get(COL_STABLECOIN_POLICY_VERSION, final_row),
+            stablecoin_issuance_sign: trace.get(COL_STABLECOIN_ISSUANCE_SIGN, final_row),
+            stablecoin_issuance_magnitude: trace.get(COL_STABLECOIN_ISSUANCE_MAG, final_row),
+            stablecoin_policy_hash: [
+                trace.get(COL_STABLECOIN_POLICY_HASH0, final_row),
+                trace.get(COL_STABLECOIN_POLICY_HASH1, final_row),
+                trace.get(COL_STABLECOIN_POLICY_HASH2, final_row),
+                trace.get(COL_STABLECOIN_POLICY_HASH3, final_row),
+            ],
+            stablecoin_oracle_commitment: [
+                trace.get(COL_STABLECOIN_ORACLE0, final_row),
+                trace.get(COL_STABLECOIN_ORACLE1, final_row),
+                trace.get(COL_STABLECOIN_ORACLE2, final_row),
+                trace.get(COL_STABLECOIN_ORACLE3, final_row),
+            ],
+            stablecoin_attestation_commitment: [
+                trace.get(COL_STABLECOIN_ATTEST0, final_row),
+                trace.get(COL_STABLECOIN_ATTEST1, final_row),
+                trace.get(COL_STABLECOIN_ATTEST2, final_row),
+                trace.get(COL_STABLECOIN_ATTEST3, final_row),
+            ],
         }
     }
 
@@ -182,15 +222,12 @@ impl Prover for TransactionProverStarkRpo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hashing::merkle_node;
+    use crate::hashing::{felts_to_bytes32, merkle_node, HashFelt};
     use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
     use crate::rpo_verifier::verify_transaction_proof_rpo;
+    use crate::StablecoinPolicyBinding;
 
-    fn compute_merkle_root_from_path(
-        leaf: BaseElement,
-        position: u64,
-        path: &MerklePath,
-    ) -> BaseElement {
+    fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
         let mut current = leaf;
         let mut pos = position;
         for sibling in &path.siblings {
@@ -223,7 +260,7 @@ mod tests {
 
         let merkle_path = MerklePath::default();
         let leaf = input_note.commitment();
-        let merkle_root = compute_merkle_root_from_path(leaf, 0, &merkle_path);
+        let merkle_root = felts_to_bytes32(&compute_merkle_root_from_path(leaf, 0, &merkle_path));
 
         TransactionWitness {
             inputs: vec![InputNoteWitness {
@@ -237,6 +274,7 @@ mod tests {
             merkle_root,
             fee: 0,
             value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
             version: TransactionWitness::default_version_binding(),
         }
     }

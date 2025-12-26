@@ -27,10 +27,7 @@ pub fn verify_transaction_proof(
     proof: &Proof,
     pub_inputs: &TransactionPublicInputsStark,
 ) -> Result<(), VerifierError> {
-    let acceptable = AcceptableOptions::OptionSet(vec![
-        default_acceptable_options(),
-        fast_acceptable_options(),
-    ]);
+    let acceptable = acceptable_options();
 
     verify::<TransactionAirStark, Blake3, DefaultRandomCoin<Blake3>, MerkleTree<Blake3>>(
         proof.clone(),
@@ -89,6 +86,21 @@ fn default_acceptable_options() -> winterfell::ProofOptions {
     )
 }
 
+fn acceptable_options() -> AcceptableOptions {
+    #[cfg(feature = "stark-fast")]
+    {
+        AcceptableOptions::OptionSet(vec![
+            default_acceptable_options(),
+            fast_acceptable_options(),
+        ])
+    }
+    #[cfg(not(feature = "stark-fast"))]
+    {
+        AcceptableOptions::OptionSet(vec![default_acceptable_options()])
+    }
+}
+
+#[cfg(feature = "stark-fast")]
 fn fast_acceptable_options() -> winterfell::ProofOptions {
     // Blowup factor must be at least 2 * constraint_degree = 2 * 5 = 10
     // Use 16 to be safe (power of 2)
@@ -132,19 +144,22 @@ impl TransactionPublicInputsStark {
             ));
         }
 
+        let is_zero_hash =
+            |value: &[BaseElement; 4]| value.iter().all(|elem| *elem == BaseElement::ZERO);
+
         for (idx, flag) in self.input_flags.iter().enumerate() {
             if *flag != BaseElement::ZERO && *flag != BaseElement::ONE {
                 return Err(TransactionVerifyError::InvalidPublicInputs(
                     "input flag must be 0 or 1".into(),
                 ));
             }
-            let nf = self.nullifiers[idx];
-            if *flag == BaseElement::ZERO && nf != BaseElement::ZERO {
+            let nf = &self.nullifiers[idx];
+            if *flag == BaseElement::ZERO && !is_zero_hash(nf) {
                 return Err(TransactionVerifyError::InvalidPublicInputs(
                     "inactive input has non-zero nullifier".into(),
                 ));
             }
-            if *flag == BaseElement::ONE && nf == BaseElement::ZERO {
+            if *flag == BaseElement::ONE && is_zero_hash(nf) {
                 return Err(TransactionVerifyError::InvalidPublicInputs(
                     "active input has zero nullifier".into(),
                 ));
@@ -157,21 +172,21 @@ impl TransactionPublicInputsStark {
                     "output flag must be 0 or 1".into(),
                 ));
             }
-            let cm = self.commitments[idx];
-            if *flag == BaseElement::ZERO && cm != BaseElement::ZERO {
+            let cm = &self.commitments[idx];
+            if *flag == BaseElement::ZERO && !is_zero_hash(cm) {
                 return Err(TransactionVerifyError::InvalidPublicInputs(
                     "inactive output has non-zero commitment".into(),
                 ));
             }
-            if *flag == BaseElement::ONE && cm == BaseElement::ZERO {
+            if *flag == BaseElement::ONE && is_zero_hash(cm) {
                 return Err(TransactionVerifyError::InvalidPublicInputs(
                     "active output has zero commitment".into(),
                 ));
             }
         }
 
-        let has_input = self.nullifiers.iter().any(|nf| *nf != BaseElement::ZERO);
-        let has_output = self.commitments.iter().any(|cm| *cm != BaseElement::ZERO);
+        let has_input = self.nullifiers.iter().any(|nf| !is_zero_hash(nf));
+        let has_output = self.commitments.iter().any(|cm| !is_zero_hash(cm));
         if !has_input && !has_output {
             return Err(TransactionVerifyError::InvalidPublicInputs(
                 "Transaction has no inputs or outputs".into(),
@@ -183,6 +198,36 @@ impl TransactionPublicInputsStark {
         {
             return Err(TransactionVerifyError::InvalidPublicInputs(
                 "Value balance sign must be 0 or 1".into(),
+            ));
+        }
+
+        if self.stablecoin_enabled != BaseElement::ZERO
+            && self.stablecoin_enabled != BaseElement::ONE
+        {
+            return Err(TransactionVerifyError::InvalidPublicInputs(
+                "Stablecoin enabled flag must be 0 or 1".into(),
+            ));
+        }
+
+        if self.stablecoin_issuance_sign != BaseElement::ZERO
+            && self.stablecoin_issuance_sign != BaseElement::ONE
+        {
+            return Err(TransactionVerifyError::InvalidPublicInputs(
+                "Stablecoin issuance sign must be 0 or 1".into(),
+            ));
+        }
+
+        if self.stablecoin_enabled == BaseElement::ZERO
+            && (self.stablecoin_asset != BaseElement::ZERO
+                || self.stablecoin_policy_version != BaseElement::ZERO
+                || self.stablecoin_issuance_sign != BaseElement::ZERO
+                || self.stablecoin_issuance_magnitude != BaseElement::ZERO
+                || !is_zero_hash(&self.stablecoin_policy_hash)
+                || !is_zero_hash(&self.stablecoin_oracle_commitment)
+                || !is_zero_hash(&self.stablecoin_attestation_commitment))
+        {
+            return Err(TransactionVerifyError::InvalidPublicInputs(
+                "Stablecoin binding must be zeroed when disabled".into(),
             ));
         }
 

@@ -6,6 +6,7 @@ pub mod disclosure;
 pub mod error;
 pub mod extrinsic;
 pub mod keys;
+pub mod metadata;
 pub mod notes;
 pub mod prover;
 pub mod rpc;
@@ -32,14 +33,15 @@ pub use scanner::{
     NoteScanner, PositionedNote, ScanResult, ScannedNote, ScannerConfig, ScannerStats,
     SharedScanner,
 };
-pub use shielded_tx::{
-    build_shielding_tx, BuiltShieldedTx, ProofStats, ShieldedOutput, ShieldedTxBuilder, ShieldingTx,
-};
+pub use shielded_tx::{BuiltShieldedTx, ProofStats, ShieldedOutput, ShieldedTxBuilder};
 pub use store::{
     OutgoingDisclosureDraft, OutgoingDisclosureRecord, PendingStatus, PendingTransaction,
     SpendableNote, TransferRecipient, WalletMode, WalletStore,
 };
 pub use substrate_rpc::{BlockingSubstrateRpcClient, SubstrateRpcClient, SubstrateRpcConfig};
 pub use sync::{SyncOutcome, WalletSyncEngine};
-pub use tx_builder::{build_transaction, precheck_nullifiers, BuiltTransaction, Recipient};
+pub use tx_builder::{
+    build_stablecoin_burn, build_transaction, build_transaction_with_binding, precheck_nullifiers,
+    precheck_nullifiers_with_binding, BuiltTransaction, Recipient,
+};
 pub use viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};
