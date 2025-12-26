@@ -14,8 +14,10 @@ blake2 = "0.10"
 chacha20poly1305 = { version = "0.10", features = ["alloc"] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
+codec = { workspace = true }
 futures = "0.3"
 bs58 = "0.5"
+frame-metadata = "23"
 hex = "0.4"
 jsonrpsee = { version = "0.24", features = ["ws-client", "client"] }
 rand = { version = "0.8", features = ["std"] }
@@ -24,6 +26,7 @@ rpassword = "7.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_bytes = "0.11"
+scale-info = { workspace = true }
 sha2 = "0.10"
 sp-crypto-hashing = "0.1"
 state-merkle = { path = "../state/merkle" }
@@ -42,6 +45,10 @@ assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
 proptest = "1"
+
+[features]
+default = []
+batch-proofs = []
 
 [lints]
 workspace = true

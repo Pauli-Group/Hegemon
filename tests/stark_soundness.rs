@@ -19,9 +19,11 @@
 //! - **FRI queries**: Number of queries for interactive protocol security
 //! - **Hash function**: Collision resistance for Merkle commitments
 
+#[cfg(feature = "stark-fast")]
+use transaction_circuit::stark_prover::fast_proof_options;
 use transaction_circuit::{
     constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, POSEIDON_ROUNDS},
-    stark_prover::{default_proof_options, fast_proof_options},
+    stark_prover::default_proof_options,
 };
 
 /// The Goldilocks prime: p = 2^64 - 2^32 + 1
@@ -127,6 +129,7 @@ fn test_fri_security_parameters_default() {
     println!("✅ Default FRI parameters verified (128-bit security)");
 }
 
+#[cfg(feature = "stark-fast")]
 #[test]
 fn test_fri_security_parameters_fast() {
     // Test fast (development) proof options - may have reduced security
@@ -335,9 +338,10 @@ fn test_end_to_end_proof_security() {
 
     use protocol_versioning::VersionBinding;
     use transaction_circuit::{
+        hashing::{felts_to_bytes32, merkle_node},
         keys::generate_keys,
         note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
-        proof, TransactionWitness,
+        proof, StablecoinPolicyBinding, TransactionWitness,
     };
     use winter_math::fields::f64::BaseElement;
     use winter_math::FieldElement;
@@ -363,18 +367,33 @@ fn test_end_to_end_proof_security() {
     };
 
     let merkle_path = MerklePath {
-        siblings: vec![BaseElement::ZERO; CIRCUIT_MERKLE_DEPTH],
+        siblings: vec![[BaseElement::ZERO; 4]; CIRCUIT_MERKLE_DEPTH],
+    };
+    let position = 0xA5A5A5A5u64;
+    let merkle_root = {
+        let mut current = input_note.commitment();
+        let mut pos = position;
+        for sibling in &merkle_path.siblings {
+            current = if pos & 1 == 0 {
+                merkle_node(current, *sibling)
+            } else {
+                merkle_node(*sibling, current)
+            };
+            pos >>= 1;
+        }
+        felts_to_bytes32(&current)
     };
 
     let witness = TransactionWitness {
         sk_spend,
         fee: 100,
         value_balance: 0,
-        merkle_root: BaseElement::ZERO,
+        stablecoin: StablecoinPolicyBinding::default(),
+        merkle_root,
         version: VersionBinding::new(1, 1),
         inputs: vec![InputNoteWitness {
             note: input_note.clone(),
-            position: 0,
+            position,
             rho_seed: [7u8; 32],
             merkle_path: merkle_path.clone(),
         }],
@@ -432,11 +451,19 @@ fn test_security_summary() {
     println!("  Query count: {}", default_opts.num_queries());
     println!("  Security: ~128 bits\n");
 
-    let fast_opts = fast_proof_options();
-    println!("FRI Protocol (Development):");
-    println!("  Blowup factor: {}", fast_opts.blowup_factor());
-    println!("  Query count: {}", fast_opts.num_queries());
-    println!("  Security: Reduced (development only)\n");
+    #[cfg(feature = "stark-fast")]
+    {
+        let fast_opts = fast_proof_options();
+        println!("FRI Protocol (Development):");
+        println!("  Blowup factor: {}", fast_opts.blowup_factor());
+        println!("  Query count: {}", fast_opts.num_queries());
+        println!("  Security: Reduced (development only)\n");
+    }
+    #[cfg(not(feature = "stark-fast"))]
+    {
+        println!("FRI Protocol (Development):");
+        println!("  Disabled (stark-fast feature not enabled)\n");
+    }
 
     println!("Poseidon Hash:");
     println!(

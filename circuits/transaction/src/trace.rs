@@ -1,17 +1,15 @@
-use winterfell::math::FieldElement;
-
 use crate::{
     constants::{BALANCE_SLOTS, NATIVE_ASSET_ID},
-    hashing::Felt,
+    hashing::{felts_to_bytes32, Commitment},
     public_inputs::BalanceSlot,
     witness::TransactionWitness,
 };
 
 #[derive(Clone, Debug)]
 pub struct TransactionTrace {
-    pub merkle_root: Felt,
-    pub nullifiers: Vec<Felt>,
-    pub commitments: Vec<Felt>,
+    pub merkle_root: Commitment,
+    pub nullifiers: Vec<Commitment>,
+    pub commitments: Vec<Commitment>,
     pub balance_slots: Vec<BalanceSlot>,
     pub native_delta: i128,
     pub fee: u64,
@@ -38,23 +36,23 @@ impl TransactionTrace {
             .unwrap_or(0);
         Ok(Self {
             merkle_root: witness.merkle_root,
-            nullifiers: witness.nullifiers(),
-            commitments: witness.commitments(),
+            nullifiers: witness.nullifiers().iter().map(felts_to_bytes32).collect(),
+            commitments: witness.commitments().iter().map(felts_to_bytes32).collect(),
             balance_slots,
             native_delta,
             fee: witness.fee,
         })
     }
 
-    pub fn padded_nullifiers(&self, target: usize) -> Vec<Felt> {
+    pub fn padded_nullifiers(&self, target: usize) -> Vec<Commitment> {
         let mut list = self.nullifiers.clone();
-        list.resize(target, Felt::ZERO);
+        list.resize(target, [0u8; 32]);
         list
     }
 
-    pub fn padded_commitments(&self, target: usize) -> Vec<Felt> {
+    pub fn padded_commitments(&self, target: usize) -> Vec<Commitment> {
         let mut list = self.commitments.clone();
-        list.resize(target, Felt::ZERO);
+        list.resize(target, [0u8; 32]);
         list
     }
 

@@ -29,6 +29,8 @@ The wallet crate exposes a `wallet` binary with the following common flows:
 | `cargo run -p wallet --bin wallet -- substrate-sync --store ~/.synthetic/wallet.db --passphrase hunter2 --ws-url ws://127.0.0.1:9944` | Performs a one-shot Substrate WebSocket sync against the node. |
 | `cargo run -p wallet --bin wallet -- substrate-daemon --store ~/.synthetic/wallet.db --passphrase hunter2 --ws-url ws://127.0.0.1:9944` | Runs the Substrate sync loop continuously with subscriptions. |
 | `cargo run -p wallet --bin wallet -- substrate-send --store ~/.synthetic/wallet.db --passphrase hunter2 --ws-url ws://127.0.0.1:9944 --recipients recipients.json --fee 0` | Builds and submits a shielded transaction via Substrate RPC and stores outgoing disclosure records for on-demand proofs. |
+| `cargo run -p wallet --bin wallet -- stablecoin-mint --store ~/.synthetic/wallet.db --passphrase hunter2 --ws-url ws://127.0.0.1:9944 --recipient <ADDR> --amount 100 --asset-id 4242 --fee 0` | Mints shielded stablecoin notes via a signed extrinsic after binding to on-chain policy/oracle/attestation commitments. |
+| `cargo run -p wallet --bin wallet -- stablecoin-burn --store ~/.synthetic/wallet.db --passphrase hunter2 --ws-url ws://127.0.0.1:9944 --amount 100 --asset-id 4242 --fee 0` | Burns shielded stablecoin notes via a signed extrinsic, returning any change to an internal address. |
 | `cargo run -p wallet --bin wallet -- payment-proof create --store ~/.synthetic/wallet.db --passphrase hunter2 --ws-url ws://127.0.0.1:9944 --tx 0x... --output 0 --out proof.json` | Generates a disclosure package (payment proof) for a specific output. |
 | `cargo run -p wallet --bin wallet -- payment-proof verify --proof proof.json --ws-url ws://127.0.0.1:9944 --credit-ledger deposits.jsonl` | Verifies a disclosure package and (optionally) appends a credited-deposit entry. |
 | `cargo run -p wallet --bin wallet -- payment-proof purge --store ~/.synthetic/wallet.db --passphrase hunter2 --tx 0x... --output 0` | Purges stored outgoing disclosure records after proofs are delivered. |
@@ -49,6 +51,8 @@ The daemon repeats that loop every `--interval-secs`, while `wallet sync` just r
 ### Initiating payments
 
 `wallet send` (legacy HTTP) and `wallet substrate-send` (Substrate RPC) consume a JSON document that lists recipients (address/value/asset/memo). The command selects local notes, computes fees/change, proves the transaction with the `transaction_circuit`, encrypts the note plaintexts, and submits it to the node. Pending nullifiers are cached inside the store so the daemon can mark them as mined once the node reports them in the nullifier set. `wallet substrate-send` also records outgoing note openings so `wallet payment-proof create` can emit disclosure packages later. Use `wallet status` at any time to view balances and pending transaction confirmations.
+
+Stablecoin mint/burn commands (`wallet stablecoin-mint`, `wallet stablecoin-burn`) fetch the active `StablecoinPolicy` plus the latest oracle and attestation commitments over Substrate RPC, build the binding required by the circuit, and submit a signed `shielded_transfer`. Issuance failures surface early if the policy is inactive, the oracle commitment is stale, or the attestation is disputed.
 
 When a counterparty requests a targeted receipt, run `wallet payment-proof create` against the stored transaction hash/output index. Verifiers run `wallet payment-proof verify` to check the STARK proof, Merkle inclusion, anchor validity, and genesis hash before crediting.
 

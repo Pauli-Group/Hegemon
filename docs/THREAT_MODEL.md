@@ -20,6 +20,12 @@ This document explains the attacker capabilities and design assumptions for each
 
 - **Soundness breaks via stale constraints**: Transaction/block circuits must include the latest nullifier/account rules. Circuit README + benchmarking harness describe how to recompile constraints and run proofs.
 - **Witness leakage**: Benchmarks never persist witness data to disk; they scrub buffers after proof verification to prevent info leaks during profiling.
+- **Proof bypass**: Production verification rejects missing STARK bytes or public inputs; legacy/fast paths are feature-gated and must not be enabled in production builds.
+- **Encoding malleability**: Commitments/nullifiers are 32-byte encodings of four field limbs; any limb ≥ field modulus is rejected to avoid alternate encodings.
+
+### `network/`
+
+- **Peer impersonation**: PQ transport identities must be derived from secret seeds stored with restrictive permissions (0600) or supplied via secure env overrides; seeds must never be derived from public peer IDs to prevent key prediction.
 
 ### `consensus/`
 
@@ -29,7 +35,7 @@ This document explains the attacker capabilities and design assumptions for each
 
 ### `wallet/`
 
-- **View-key compromise**: Wallet CLI derives viewing keys using keyed hashes; benchmarks simulate rotation cadence to ensure operations stay tractable.
+- **View-key compromise**: Full viewing keys include a view-derived nullifier key (`view_nf`) for spentness tracking but do not embed `sk_spend`; compromise exposes nullifier tracking but not extrinsic signing keys.
 - **Metadata leakage**: Wallet bench stresses note batching to keep `rho` diversifiers unpredictable even under load.
 - **Disclosure package leakage**: Payment-proof packages include value, asset id, recipient address, commitment, and anchor. Wallet stores encrypt outgoing disclosure records and CLI verification enforces canonical encodings, genesis-hash checks, and on-chain anchor validation to limit replay and tampering risks.
 
@@ -37,7 +43,7 @@ This document explains the attacker capabilities and design assumptions for each
 
 - **Signatures**: Target ≥ 128-bit PQ security (ML-DSA-65 / SLH-DSA-128f). Keys larger than spec are rejected.
 - **KEM**: ML-KEM-768 or higher. Shared secrets truncated to 256 bits of entropy.
-- **Hashes**: SHA-256/BLAKE3 externally, Poseidon-like field hash internally. Minimum output 256 bits.
+- **Hashes**: SHA-256/BLAKE3 externally, Poseidon-like field hash internally (width 3, 63 full rounds, NUMS constants). Minimum output 256 bits.
 - **Proving**: FRI queries sized for ≥110-bit classical security; Grover halves to ~55-bit, so recursion layers stack to recover ≥128-bit effective security.
 
 When implementation shifts any of these values, update this document alongside the relevant design/method sections.

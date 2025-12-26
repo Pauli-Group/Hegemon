@@ -48,7 +48,8 @@ use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
 use super::wallet::{LatestBlock, NoteStatus, WalletService};
 use codec::Encode;
 use pallet_shielded_pool::types::{
-    BindingSignature, EncryptedNote, StarkProof, ENCRYPTED_NOTE_SIZE, ML_KEM_CIPHERTEXT_LEN,
+    BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof, ENCRYPTED_NOTE_SIZE,
+    ML_KEM_CIPHERTEXT_LEN,
 };
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use sp_api::ProvideRuntimeApi;
@@ -222,7 +223,7 @@ where
         }
     }
 
-    fn commitment_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, u64)>, String> {
+    fn commitment_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, [u8; 32])>, String> {
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
 
@@ -230,14 +231,7 @@ where
             Ok(notes) => Ok(notes
                 .into_iter()
                 .enumerate()
-                .map(|(i, (_, _, _, commitment))| {
-                    // Convert commitment hash to a u64 Felt value
-                    // The Felt is stored in the LAST 8 bytes as big-endian
-                    // (matching circuits/transaction/src/hashing.rs felt_to_bytes32)
-                    let value =
-                        u64::from_be_bytes(commitment[24..32].try_into().unwrap_or([0u8; 8]));
-                    (start + i as u64, value)
-                })
+                .map(|(i, (_, _, _, commitment))| (start + i as u64, commitment))
                 .collect()),
             Err(e) => Err(format!("Runtime API error: {:?}", e)),
         }
@@ -345,7 +339,8 @@ where
         commitments: Vec<[u8; 32]>,
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
-        binding_sig: [u8; 64],
+        binding_hash: [u8; 64],
+        stablecoin: Option<StablecoinPolicyBinding>,
         fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
@@ -355,6 +350,10 @@ where
         // This RPC builds the encoded call data that can be:
         // 1. Signed client-side and submitted via author_submitExtrinsic
         // 2. Used directly if the transaction pool accepts unsigned extrinsics (future)
+
+        if value_balance != 0 {
+            return Err("Transparent pool disabled: value_balance must be 0".to_string());
+        }
 
         // Validate input sizes
         let max_nullifiers = runtime::MaxNullifiersPerTx::get() as usize;
@@ -426,8 +425,8 @@ where
             .try_into()
             .map_err(|_| "Failed to convert encrypted notes")?;
 
-        // Convert binding signature
-        let binding = BindingSignature { data: binding_sig };
+        // Convert binding hash
+        let binding = BindingHash { data: binding_hash };
 
         // Build the pallet call
         let call =
@@ -437,7 +436,8 @@ where
                 commitments: bounded_commitments,
                 ciphertexts: bounded_ciphertexts,
                 anchor,
-                binding_sig: binding,
+                binding_hash: binding,
+                stablecoin,
                 fee,
                 value_balance,
             });
@@ -519,68 +519,6 @@ where
             pool_balance,
             last_update_block: self.best_number(),
         }
-    }
-
-    fn shield(
-        &self,
-        amount: u128,
-        commitment: [u8; 32],
-        encrypted_note: Vec<u8>,
-    ) -> Result<([u8; 32], u64), String> {
-        // Task 11.7.3: Build shield call
-
-        // Convert encrypted note to EncryptedNote struct
-        // Expected format: [ciphertext (611 bytes)][kem_ciphertext (1088 bytes)]
-        let required_len = ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN;
-        if encrypted_note.len() < required_len {
-            return Err(format!(
-                "Encrypted note too small: {} bytes (need {})",
-                encrypted_note.len(),
-                required_len
-            ));
-        }
-
-        let mut ciphertext = [0u8; ENCRYPTED_NOTE_SIZE];
-        ciphertext.copy_from_slice(&encrypted_note[..ENCRYPTED_NOTE_SIZE]);
-
-        let mut kem_ciphertext = [0u8; ML_KEM_CIPHERTEXT_LEN];
-        kem_ciphertext.copy_from_slice(
-            &encrypted_note[ENCRYPTED_NOTE_SIZE..ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN],
-        );
-
-        let enc_note = EncryptedNote {
-            ciphertext,
-            kem_ciphertext,
-        };
-
-        // Build the pallet call
-        // Note: amount needs to be converted to Balance type
-        let call = runtime::RuntimeCall::ShieldedPool(pallet_shielded_pool::Call::shield {
-            amount: amount.into(),
-            commitment,
-            encrypted_note: enc_note,
-        });
-
-        // Encode the call
-        let encoded_call = call.encode();
-
-        // Return hash of the encoded call
-        use sp_core::hashing::blake2_256;
-        let call_hash = blake2_256(&encoded_call);
-
-        tracing::info!(
-            amount = amount,
-            commitment = %hex::encode(commitment),
-            call_size = encoded_call.len(),
-            "Built shield call (Task 11.7.3)"
-        );
-
-        // Return encoded call info - client must sign and submit
-        Err(format!(
-            "CALL_DATA:0x{}|CALL_HASH:0x{}|NOTE:Sign this call and submit via author_submitExtrinsic",
-            hex::encode(&encoded_call),
-            hex::encode(call_hash)
-        ))
     }
 
     fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {

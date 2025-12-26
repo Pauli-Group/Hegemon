@@ -38,6 +38,7 @@
 //! - Extrinsic submission for shielded transfers
 
 use super::shielded::{ShieldedPoolService, ShieldedPoolStatus};
+use pallet_shielded_pool::types::StablecoinPolicyBinding;
 use std::sync::{Arc, RwLock};
 
 /// Mock implementation for testing without a real client
@@ -107,10 +108,15 @@ impl ShieldedPoolService for MockShieldedPoolService {
         commitments: Vec<[u8; 32]>,
         encrypted_notes: Vec<Vec<u8>>,
         _anchor: [u8; 32],
-        _binding_sig: [u8; 64],
+        _binding_hash: [u8; 64],
+        _stablecoin: Option<StablecoinPolicyBinding>,
         _fee: u64,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
+        if value_balance != 0 {
+            return Err("Transparent pool disabled: value_balance must be 0".to_string());
+        }
+
         let nullifier_count = nullifiers.len();
         let commitment_count = commitments.len();
 
@@ -129,16 +135,6 @@ impl ShieldedPoolService for MockShieldedPoolService {
             for (commitment, encrypted_note) in commitments.iter().zip(encrypted_notes.iter()) {
                 let index = notes.len() as u64;
                 notes.push((index, encrypted_note.clone(), height, *commitment));
-            }
-        }
-
-        // Update balance
-        {
-            let mut bal = self.balance.write().expect("balance lock poisoned");
-            if value_balance > 0 {
-                *bal = bal.saturating_add(value_balance as u128);
-            } else if value_balance < 0 {
-                *bal = bal.saturating_sub((-value_balance) as u128);
             }
         }
 
@@ -210,39 +206,6 @@ impl ShieldedPoolService for MockShieldedPoolService {
             pool_balance: bal,
             last_update_block: h,
         }
-    }
-
-    fn shield(
-        &self,
-        amount: u128,
-        commitment: [u8; 32],
-        encrypted_note: Vec<u8>,
-    ) -> Result<([u8; 32], u64), String> {
-        let note_index = {
-            let mut notes = self.notes.write().expect("notes lock poisoned");
-            let mut bal = self.balance.write().expect("balance lock poisoned");
-            let height = *self.height.read().expect("height lock poisoned");
-
-            let index = notes.len() as u64;
-            notes.push((index, encrypted_note, height, commitment));
-            *bal = bal.saturating_add(amount);
-
-            index
-        };
-
-        // Mock tx hash
-        let mut tx_hash = [0u8; 32];
-        tx_hash[0] = 0xcd;
-        tx_hash[1..17].copy_from_slice(&amount.to_le_bytes());
-
-        tracing::info!(
-            amount = amount,
-            commitment = %hex::encode(commitment),
-            note_index = note_index,
-            "Mock shield operation"
-        );
-
-        Ok((tx_hash, note_index))
     }
 
     fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
@@ -327,7 +290,8 @@ where
         _commitments: Vec<[u8; 32]>,
         _encrypted_notes: Vec<Vec<u8>>,
         _anchor: [u8; 32],
-        _binding_sig: [u8; 64],
+        _binding_hash: [u8; 64],
+        _stablecoin: Option<StablecoinPolicyBinding>,
         _fee: u64,
         _value_balance: i128,
     ) -> Result<[u8; 32], String> {
@@ -393,19 +357,6 @@ where
         }
     }
 
-    fn shield(
-        &self,
-        _amount: u128,
-        _commitment: [u8; 32],
-        _encrypted_note: Vec<u8>,
-    ) -> Result<([u8; 32], u64), String> {
-        // Shield requires submitting an extrinsic to pallet_shielded_pool::shield()
-        Err(
-            "Production shield not yet implemented. Use RPC `author_submitExtrinsic` directly."
-                .to_string(),
-        )
-    }
-
     fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
         let api = self.client.runtime_api();
         let hash = self.best_hash();
@@ -445,24 +396,6 @@ mod tests {
     }
 
     #[test]
-    fn test_mock_service_shield() {
-        let service = MockShieldedPoolService::new();
-
-        let result = service.shield(1000, [0xbb; 32], vec![4, 5, 6]);
-        assert!(result.is_ok());
-
-        let (_, index) = result.unwrap();
-        assert_eq!(index, 0);
-
-        // Check note was added
-        assert_eq!(service.encrypted_note_count(), 1);
-
-        // Check balance updated
-        let status = service.get_pool_status();
-        assert_eq!(status.pool_balance, 1000);
-    }
-
-    #[test]
     fn test_mock_service_nullifiers() {
         let service = MockShieldedPoolService::new();
 
@@ -483,6 +416,7 @@ mod tests {
                 vec![],
                 [0; 32], // Use valid anchor
                 [0; 64],
+                None,
                 0,
                 0,
             )
@@ -524,35 +458,5 @@ mod tests {
 
         // Still invalid
         assert!(!service.is_valid_anchor(&anchor2));
-    }
-
-    #[test]
-    fn test_mock_service_transfer_updates_balance() {
-        let service = MockShieldedPoolService::new();
-
-        // Add initial anchor
-        service.add_anchor([0; 32]);
-
-        // Shield some funds first
-        service.shield(10000, [0xaa; 32], vec![1]).unwrap();
-
-        // Transfer with negative value balance (unshield)
-        service
-            .submit_shielded_transfer(
-                vec![],
-                vec![[0xbb; 32]],
-                vec![[0xcc; 32]],
-                vec![vec![2]],
-                [0; 32],
-                [0; 64],
-                0,
-                -5000,
-            )
-            .unwrap();
-
-        let status = service.get_pool_status();
-        assert_eq!(status.pool_balance, 5000); // 10000 - 5000
-        assert_eq!(status.total_notes, 2); // original + new
-        assert_eq!(status.total_nullifiers, 1);
     }
 }

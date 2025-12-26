@@ -20,6 +20,7 @@ log = { version = "0.4", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 sha2 = { version = "0.10", default-features = false }
 async-trait = { version = "0.1", optional = true }
+pallet-coinbase = { path = "../coinbase", default-features = false }
 
 # REAL STARK verification
 winterfell = { version = "0.13.1", default-features = false, optional = true }
@@ -32,6 +33,7 @@ winter-crypto = { version = "0.13.1", default-features = false, optional = true 
 epoch-circuit = { path = "../../circuits/epoch", default-features = false, optional = true }
 blake3 = { version = "1", default-features = false, optional = true }
 transaction-core = { path = "../../circuits/transaction-core", default-features = false }
+batch-circuit = { path = "../../circuits/batch", default-features = false, optional = true }
 
 [dev-dependencies]
 sp-io = { workspace = true, features = ["std"] }
@@ -60,7 +62,9 @@ std = [
     "winter-crypto?/std",
     "async-trait",
     "epoch-circuit?/std",
+    "pallet-coinbase/std",
     "transaction-core/std",
+    "batch-circuit?/std",
 ]
 runtime-benchmarks = ["frame-benchmarking"]
 try-runtime = ["frame-support/try-runtime"]
@@ -71,12 +75,15 @@ stark-verify = [
     "winter-math",
     "winter-crypto",
     "transaction-core/stark-verify",
+    "batch-circuit",
 ]
 # Enable epoch proofs for light client sync
 epoch-proofs = ["epoch-circuit", "blake3"]
 # Production mode: disables AcceptAllProofs and other test-only verifiers
 # Enable this feature for mainnet/production builds to ensure only real verification is available
-production = ["stark-verify"]
+production = ["stark-verify", "batch-circuit/production"]
+# Legacy commitment/nullifier helpers (not for production)
+legacy-commitment = []
 
 [lints]
 workspace = true

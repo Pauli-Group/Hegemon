@@ -12,7 +12,7 @@ use chacha20poly1305::{
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use state_merkle::CommitmentTree;
-use transaction_circuit::{hashing::Felt, note::NoteData};
+use transaction_circuit::{hashing::Commitment, note::NoteData};
 use zeroize::Zeroize;
 
 use crate::address::ShieldedAddress;
@@ -21,7 +21,7 @@ use crate::keys::{DerivedKeys, RootSecret};
 use crate::notes::MemoPlaintext;
 use crate::viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};
 
-const FILE_VERSION: u32 = 2;
+const FILE_VERSION: u32 = 3;
 const KEY_LEN: usize = 32;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
@@ -145,7 +145,11 @@ impl WalletStore {
                 let legacy: WalletStateV1 = bincode::deserialize(&plaintext)?;
                 legacy.into()
             }
-            2 => bincode::deserialize(&plaintext)?,
+            2 => {
+                let legacy: WalletStateV2 = bincode::deserialize(&plaintext)?;
+                legacy.into()
+            }
+            3 => bincode::deserialize(&plaintext)?,
             other => {
                 return Err(WalletError::Serialization(format!(
                     "unsupported wallet file version {other}"
@@ -275,7 +279,7 @@ impl WalletStore {
         })
     }
 
-    pub fn append_commitments(&self, entries: &[(u64, u64)]) -> Result<(), WalletError> {
+    pub fn append_commitments(&self, entries: &[(u64, Commitment)]) -> Result<(), WalletError> {
         if entries.is_empty() {
             return Ok(());
         }
@@ -423,6 +427,20 @@ impl WalletStore {
         })
     }
 
+    pub fn pending_balances(&self) -> Result<BTreeMap<u64, u64>, WalletError> {
+        self.with_state(|state| {
+            let mut map: BTreeMap<u64, u64> = BTreeMap::new();
+            for note in &state.notes {
+                if note.spent || !note.pending_spend {
+                    continue;
+                }
+                let entry = map.entry(note.note.note.asset_id).or_default();
+                *entry = entry.saturating_add(note.note.note.value);
+            }
+            Ok(map)
+        })
+    }
+
     pub fn commitment_tree(&self) -> Result<CommitmentTree, WalletError> {
         self.with_state(|state| {
             let depth = state.tree_depth as usize;
@@ -430,20 +448,22 @@ impl WalletStore {
                 .map_err(|_| WalletError::InvalidState("invalid tree depth"))?;
             for value in &state.commitments {
                 let _ = tree
-                    .append(Felt::new(*value))
+                    .append(*value)
                     .map_err(|_| WalletError::InvalidState("tree overflow"))?;
             }
             Ok(tree)
         })
     }
 
-    pub fn find_commitment_index(&self, commitment: Felt) -> Result<Option<u64>, WalletError> {
+    pub fn find_commitment_index(
+        &self,
+        commitment: Commitment,
+    ) -> Result<Option<u64>, WalletError> {
         self.with_state(|state| {
-            let target = commitment.as_int();
             Ok(state
                 .commitments
                 .iter()
-                .position(|value| *value == target)
+                .position(|value| *value == commitment)
                 .map(|idx| idx as u64))
         })
     }
@@ -695,6 +715,19 @@ pub enum WalletMode {
     WatchOnly,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct LegacyFullViewingKey {
+    incoming: IncomingViewingKey,
+    #[serde(with = "serde_bytes32")]
+    nullifier_key: [u8; 32],
+}
+
+impl LegacyFullViewingKey {
+    fn migrate(self) -> FullViewingKey {
+        FullViewingKey::from_incoming(self.incoming)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct WalletStateV1 {
     mode: WalletMode,
@@ -703,7 +736,7 @@ struct WalletStateV1 {
     root_secret: Option<[u8; 32]>,
     derived: Option<DerivedKeys>,
     incoming: IncomingViewingKey,
-    full_viewing_key: Option<FullViewingKey>,
+    full_viewing_key: Option<LegacyFullViewingKey>,
     outgoing: Option<OutgoingViewingKey>,
     next_address_index: u32,
     notes: Vec<TrackedNote>,
@@ -718,13 +751,64 @@ struct WalletStateV1 {
 
 impl From<WalletStateV1> for WalletState {
     fn from(state: WalletStateV1) -> Self {
+        let to_commitment = |value: u64| {
+            let mut bytes = [0u8; 32];
+            bytes[24..32].copy_from_slice(&value.to_be_bytes());
+            bytes
+        };
         WalletState {
             mode: state.mode,
             tree_depth: state.tree_depth,
             root_secret: state.root_secret,
             derived: state.derived,
             incoming: state.incoming,
-            full_viewing_key: state.full_viewing_key,
+            full_viewing_key: state.full_viewing_key.map(LegacyFullViewingKey::migrate),
+            outgoing: state.outgoing,
+            next_address_index: state.next_address_index,
+            notes: state.notes,
+            pending: state.pending,
+            commitments: state.commitments.into_iter().map(to_commitment).collect(),
+            next_commitment_index: state.next_commitment_index,
+            next_ciphertext_index: state.next_ciphertext_index,
+            last_synced_height: state.last_synced_height,
+            outgoing_disclosures: Vec::new(),
+            genesis_hash: state.genesis_hash,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV2 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<LegacyFullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    commitments: Vec<Commitment>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+}
+
+impl From<WalletStateV2> for WalletState {
+    fn from(state: WalletStateV2) -> Self {
+        WalletState {
+            mode: state.mode,
+            tree_depth: state.tree_depth,
+            root_secret: state.root_secret,
+            derived: state.derived,
+            incoming: state.incoming,
+            full_viewing_key: state.full_viewing_key.map(LegacyFullViewingKey::migrate),
             outgoing: state.outgoing,
             next_address_index: state.next_address_index,
             notes: state.notes,
@@ -733,7 +817,7 @@ impl From<WalletStateV1> for WalletState {
             next_commitment_index: state.next_commitment_index,
             next_ciphertext_index: state.next_ciphertext_index,
             last_synced_height: state.last_synced_height,
-            outgoing_disclosures: Vec::new(),
+            outgoing_disclosures: state.outgoing_disclosures,
             genesis_hash: state.genesis_hash,
         }
     }
@@ -752,7 +836,7 @@ struct WalletState {
     next_address_index: u32,
     notes: Vec<TrackedNote>,
     pending: Vec<PendingTransaction>,
-    commitments: Vec<u64>,
+    commitments: Vec<Commitment>,
     next_commitment_index: u64,
     next_ciphertext_index: u64,
     last_synced_height: u64,
@@ -1066,9 +1150,9 @@ mod tests {
         let note = NotePlaintext::random(10, 0, crate::notes::MemoPlaintext::default(), &mut rng);
         let ciphertext = crate::notes::NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
         let recovered = ivk.decrypt_note(&ciphertext).unwrap();
-        store
-            .append_commitments(&[(0, recovered.note_data.commitment().as_int())])
-            .unwrap();
+        let commitment =
+            transaction_circuit::hashing::felts_to_bytes32(&recovered.note_data.commitment());
+        store.append_commitments(&[(0, commitment)]).unwrap();
         store.register_ciphertext_index(0).unwrap();
         store
             .record_recovered_note(recovered.clone(), 0, 0)
@@ -1077,5 +1161,55 @@ mod tests {
         assert_eq!(notes.len(), 1);
         store.mark_notes_pending(&[notes[0].index], true).unwrap();
         assert!(store.spendable_notes(0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn migrate_full_viewing_key_derives_view_nullifier_key() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let root = RootSecret::from_rng(&mut rng);
+        let keys = root.derive();
+        let incoming = IncomingViewingKey::from_keys(&keys);
+        let legacy_fvk = LegacyFullViewingKey {
+            incoming: incoming.clone(),
+            nullifier_key: keys.spend.to_bytes(),
+        };
+
+        let legacy_state = WalletStateV2 {
+            mode: WalletMode::Full,
+            tree_depth: DEFAULT_TREE_DEPTH,
+            root_secret: Some(root.to_bytes()),
+            derived: Some(keys.clone()),
+            incoming,
+            full_viewing_key: Some(legacy_fvk),
+            outgoing: Some(OutgoingViewingKey::from_keys(&keys)),
+            next_address_index: 0,
+            notes: Vec::new(),
+            pending: Vec::new(),
+            commitments: Vec::new(),
+            next_commitment_index: 0,
+            next_ciphertext_index: 0,
+            last_synced_height: 0,
+            outgoing_disclosures: Vec::new(),
+            genesis_hash: None,
+        };
+
+        let migrated: WalletState = legacy_state.into();
+        let fvk = migrated
+            .full_viewing_key
+            .expect("full viewing key should migrate");
+        let rho = [5u8; 32];
+        let position = 7u64;
+        let expected = transaction_circuit::hashing::nullifier_bytes(
+            transaction_circuit::hashing::prf_key(&keys.view.nullifier_key()),
+            &rho,
+            position,
+        );
+        assert_eq!(fvk.compute_nullifier(&rho, position), expected);
+        let legacy = transaction_circuit::hashing::nullifier_bytes(
+            transaction_circuit::hashing::prf_key(&keys.spend.to_bytes()),
+            &rho,
+            position,
+        );
+        assert_ne!(legacy, expected);
     }
 }

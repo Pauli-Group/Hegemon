@@ -7,7 +7,7 @@
 //!
 //! 1. **Connection Tests**: WebSocket connection, reconnection, timeouts
 //! 2. **Read Operations**: Note fetching, Merkle witnesses, pool status
-//! 3. **Write Operations**: Shield, shielded transfer, unshield
+//! 3. **Write Operations**: Shielded transfer
 //! 4. **Concurrent Operations**: Multiple simultaneous requests
 //!
 //! ## Running Tests
@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
+use transaction_circuit::StablecoinPolicyBinding;
 
 // ============================================================================
 // Mock RPC Service for Testing
@@ -61,18 +62,9 @@ pub struct MockTransaction {
 
 #[derive(Clone, Debug)]
 pub enum MockTxType {
-    Shield {
-        amount: u128,
-        commitment: [u8; 32],
-    },
     ShieldedTransfer {
         nullifiers: Vec<[u8; 32]>,
         commitments: Vec<[u8; 32]>,
-    },
-    Unshield {
-        nullifier: [u8; 32],
-        amount: u128,
-        recipient: [u8; 32],
     },
 }
 
@@ -116,45 +108,6 @@ impl MockRpcService {
         self.anchors.write().await.push(anchor);
     }
 
-    /// Shield funds (transparent → shielded)
-    pub async fn shield(
-        &self,
-        amount: u128,
-        commitment: [u8; 32],
-        encrypted_note: Vec<u8>,
-    ) -> Result<[u8; 32], String> {
-        let index = self.add_note(encrypted_note, commitment).await;
-
-        // Update balance
-        let mut bal = self.balance.write().await;
-        *bal = bal.saturating_add(amount);
-
-        // Generate tx hash
-        let mut hasher = Sha256::new();
-        hasher.update(b"shield");
-        hasher.update(&amount.to_le_bytes());
-        hasher.update(&commitment);
-        let hash_bytes = hasher.finalize();
-        let mut tx_hash = [0u8; 32];
-        tx_hash.copy_from_slice(&hash_bytes);
-
-        // Record transaction
-        self.transactions.write().await.push(MockTransaction {
-            tx_hash,
-            block_number: Some(*self.height.read().await),
-            tx_type: MockTxType::Shield { amount, commitment },
-        });
-
-        eprintln!(
-            "Mock shield executed: amount={}, index={}, tx_hash={}",
-            amount,
-            index,
-            hex::encode(tx_hash)
-        );
-
-        Ok(tx_hash)
-    }
-
     /// Submit shielded transfer
     pub async fn submit_shielded_transfer(
         &self,
@@ -163,9 +116,14 @@ impl MockRpcService {
         commitments: Vec<[u8; 32]>,
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
-        _binding_sig: [u8; 64],
+        _binding_hash: [u8; 64],
+        _stablecoin: Option<StablecoinPolicyBinding>,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
+        if value_balance != 0 {
+            return Err("Transparent pool disabled: value_balance must be 0".to_string());
+        }
+
         // Verify anchor is valid
         if !self.is_valid_anchor(&anchor).await {
             return Err("Invalid anchor".to_string());
@@ -192,16 +150,6 @@ impl MockRpcService {
         // Add new notes
         for (commitment, encrypted_note) in commitments.iter().zip(encrypted_notes.iter()) {
             self.add_note(encrypted_note.clone(), *commitment).await;
-        }
-
-        // Update balance
-        {
-            let mut bal = self.balance.write().await;
-            if value_balance > 0 {
-                *bal = bal.saturating_add(value_balance as u128);
-            } else if value_balance < 0 {
-                *bal = bal.saturating_sub((-value_balance) as u128);
-            }
         }
 
         // Generate tx hash
@@ -341,20 +289,6 @@ impl TestRpcClient {
         (client, service)
     }
 
-    /// Shield funds
-    pub async fn shield(
-        &self,
-        amount: u128,
-        commitment: [u8; 32],
-        encrypted_note: Vec<u8>,
-    ) -> Result<[u8; 32], String> {
-        if let Some(mock) = &self.mock {
-            mock.shield(amount, commitment, encrypted_note).await
-        } else {
-            Err("Real RPC not implemented".to_string())
-        }
-    }
-
     /// Submit shielded transfer
     pub async fn submit_shielded_transfer(
         &self,
@@ -363,7 +297,8 @@ impl TestRpcClient {
         commitments: Vec<[u8; 32]>,
         encrypted_notes: Vec<Vec<u8>>,
         anchor: [u8; 32],
-        binding_sig: [u8; 64],
+        binding_hash: [u8; 64],
+        stablecoin: Option<StablecoinPolicyBinding>,
         value_balance: i128,
     ) -> Result<[u8; 32], String> {
         if let Some(mock) = &self.mock {
@@ -373,7 +308,8 @@ impl TestRpcClient {
                 commitments,
                 encrypted_notes,
                 anchor,
-                binding_sig,
+                binding_hash,
+                stablecoin,
                 value_balance,
             )
             .await
@@ -463,30 +399,6 @@ mod basic_rpc_tests {
     }
 
     #[tokio::test]
-    async fn test_shield_operation() {
-        let service = MockRpcService::new();
-
-        let commitment = [0xaa; 32];
-        let encrypted_note = vec![1, 2, 3, 4];
-        let amount = 1_000_000u128;
-
-        // Shield funds
-        let tx_hash = service
-            .shield(amount, commitment, encrypted_note)
-            .await
-            .unwrap();
-
-        // Verify state
-        let status = service.get_pool_status().await;
-        assert_eq!(status.total_notes, 1);
-        assert_eq!(status.pool_balance, amount);
-
-        // Verify transaction recorded
-        let tx = service.get_transaction(&tx_hash).await;
-        assert!(tx.is_some());
-    }
-
-    #[tokio::test]
     async fn test_get_encrypted_notes() {
         let service = MockRpcService::new();
 
@@ -535,6 +447,7 @@ mod basic_rpc_tests {
                 vec![vec![1, 2, 3]],
                 [0; 32], // valid anchor
                 [0; 64],
+                None,
                 0,
             )
             .await
@@ -573,9 +486,6 @@ mod shielded_transfer_tests {
         let (client, service) = TestRpcClient::mock();
         service.add_anchor([0; 32]).await;
 
-        // Shield initial funds
-        client.shield(1_000_000, [0xaa; 32], vec![1]).await.unwrap();
-
         // Submit shielded transfer
         let tx_hash = client
             .submit_shielded_transfer(
@@ -585,7 +495,8 @@ mod shielded_transfer_tests {
                 vec![vec![2, 3, 4]], // encrypted note
                 [0; 32],             // anchor
                 [0; 64],             // binding sig
-                0,                   // value balance
+                None,
+                0, // value balance
             )
             .await
             .unwrap();
@@ -594,7 +505,7 @@ mod shielded_transfer_tests {
         assert_ne!(tx_hash, [0u8; 32]);
 
         let status = client.get_pool_status().await;
-        assert_eq!(status.total_notes, 2); // original + new
+        assert_eq!(status.total_notes, 1);
         assert_eq!(status.total_nullifiers, 1);
     }
 
@@ -602,9 +513,6 @@ mod shielded_transfer_tests {
     async fn test_double_spend_rejected() {
         let (client, service) = TestRpcClient::mock();
         service.add_anchor([0; 32]).await;
-
-        // Shield funds
-        client.shield(1_000_000, [0xaa; 32], vec![1]).await.unwrap();
 
         let nullifier = [0x99; 32];
 
@@ -617,6 +525,7 @@ mod shielded_transfer_tests {
                 vec![vec![2]],
                 [0; 32],
                 [0; 64],
+                None,
                 0,
             )
             .await;
@@ -631,6 +540,7 @@ mod shielded_transfer_tests {
                 vec![vec![3]],
                 [0; 32],
                 [0; 64],
+                None,
                 0,
             )
             .await;
@@ -641,9 +551,6 @@ mod shielded_transfer_tests {
     async fn test_invalid_anchor_rejected() {
         let (client, _service) = TestRpcClient::mock();
 
-        // Shield funds
-        client.shield(1_000_000, [0xaa; 32], vec![1]).await.unwrap();
-
         // Try transfer with invalid anchor
         let result = client
             .submit_shielded_transfer(
@@ -653,6 +560,7 @@ mod shielded_transfer_tests {
                 vec![vec![2]],
                 [0xff; 32], // Invalid anchor
                 [0; 64],
+                None,
                 0,
             )
             .await;
@@ -669,31 +577,6 @@ mod shielded_transfer_tests {
 mod concurrent_tests {
     use super::*;
     use tokio::task::JoinSet;
-
-    #[tokio::test]
-    async fn test_concurrent_shields() {
-        let service = Arc::new(MockRpcService::new());
-        let mut tasks = JoinSet::new();
-
-        // Spawn 10 concurrent shield operations
-        for i in 0..10 {
-            let svc = service.clone();
-            tasks.spawn(async move {
-                let commitment = [i; 32];
-                svc.shield(100_000, commitment, vec![i]).await
-            });
-        }
-
-        // Wait for all to complete
-        while let Some(result) = tasks.join_next().await {
-            assert!(result.unwrap().is_ok());
-        }
-
-        // Verify all notes added
-        let status = service.get_pool_status().await;
-        assert_eq!(status.total_notes, 10);
-        assert_eq!(status.pool_balance, 1_000_000);
-    }
 
     #[tokio::test]
     async fn test_concurrent_note_fetching() {
@@ -735,6 +618,7 @@ mod concurrent_tests {
                     vec![vec![i]],
                     [0; 32],
                     [0; 64],
+                    None,
                     0,
                 )
                 .await
@@ -788,23 +672,18 @@ mod full_flow_tests {
         assert_eq!(status.pool_balance, 0);
         assert_eq!(status.total_notes, 0);
 
-        // 2. Shield funds
-        let shield_amount = 1_000_000u128;
-        let shield_commitment = [0xaa; 32];
-        let _shield_tx = client
-            .shield(shield_amount, shield_commitment, vec![1, 2, 3, 4])
-            .await
-            .unwrap();
+        // 2. Seed a note for the mock pool
+        let seed_commitment = [0xaa; 32];
+        service.add_note(vec![1, 2, 3, 4], seed_commitment).await;
 
-        // 3. Verify shield
+        // 3. Verify note was recorded
         let status = client.get_pool_status().await;
-        assert_eq!(status.pool_balance, shield_amount);
         assert_eq!(status.total_notes, 1);
 
         // 4. Fetch encrypted notes
         let notes = client.get_encrypted_notes(0, 100, None, None).await;
         assert_eq!(notes.len(), 1);
-        assert_eq!(notes[0].3, shield_commitment); // commitment matches
+        assert_eq!(notes[0].3, seed_commitment); // commitment matches
 
         // 5. Get Merkle witness
         let (siblings, indices, root) = client.get_merkle_witness(0).await;
@@ -825,6 +704,7 @@ mod full_flow_tests {
                 vec![vec![5, 6, 7, 8]],
                 root,
                 [0; 64],
+                None,
                 0, // Pure transfer, no value balance change
             )
             .await
@@ -837,7 +717,7 @@ mod full_flow_tests {
         let final_status = client.get_pool_status().await;
         assert_eq!(final_status.total_notes, 2); // original + new
         assert_eq!(final_status.total_nullifiers, 1);
-        assert_eq!(final_status.pool_balance, shield_amount); // unchanged for pure transfer
+        assert_eq!(final_status.pool_balance, 0);
     }
 
     #[tokio::test]
@@ -845,23 +725,11 @@ mod full_flow_tests {
         let (client, service) = TestRpcClient::mock();
         service.add_anchor([0; 32]).await;
 
-        // Alice shields
-        let alice_amount = 500_000u128;
-        client
-            .shield(alice_amount, [0xa0; 32], vec![1])
-            .await
-            .unwrap();
+        // Seed Alice and Bob notes
+        service.add_note(vec![1], [0xa0; 32]).await;
+        service.add_note(vec![2], [0xb0; 32]).await;
 
-        // Bob shields
-        let bob_amount = 300_000u128;
-        client
-            .shield(bob_amount, [0xb0; 32], vec![2])
-            .await
-            .unwrap();
-
-        // Verify pool has both amounts
         let status = client.get_pool_status().await;
-        assert_eq!(status.pool_balance, alice_amount + bob_amount);
         assert_eq!(status.total_notes, 2);
 
         // Alice transfers to Charlie (simulated)
@@ -873,6 +741,7 @@ mod full_flow_tests {
                 vec![vec![3]],
                 [0; 32],
                 [0; 64],
+                None,
                 0,
             )
             .await;
@@ -967,11 +836,11 @@ mod integration_tests {
     /// Test commitment and ciphertext retrieval
     #[tokio::test]
     #[ignore = "Requires running Substrate node - run with cargo test --ignored"]
-    async fn test_real_shield_transaction() {
+    async fn test_real_shielded_pool_queries() {
         let endpoint =
             std::env::var("HEGEMON_RPC_URL").unwrap_or_else(|_| "ws://127.0.0.1:9944".to_string());
 
-        eprintln!("Shield infrastructure test on: {}", endpoint);
+        eprintln!("Shielded pool query test on: {}", endpoint);
 
         // Connect to node
         let client = match wallet::SubstrateRpcClient::connect(&endpoint).await {
@@ -1002,7 +871,12 @@ mod integration_tests {
             Ok(commits) => {
                 eprintln!("Retrieved {} commitments", commits.len());
                 for (i, c) in commits.iter().enumerate().take(3) {
-                    eprintln!("  [{}]: index={}, value={}", i, c.index, c.value);
+                    eprintln!(
+                        "  [{}]: index={}, value=0x{}",
+                        i,
+                        c.index,
+                        hex::encode(c.value)
+                    );
                 }
             }
             Err(e) => {
@@ -1029,7 +903,7 @@ mod integration_tests {
             }
         }
 
-        eprintln!("\n✅ Shield infrastructure test completed");
+        eprintln!("\n✅ Shielded pool query test completed");
     }
 
     /// Test nullifier queries

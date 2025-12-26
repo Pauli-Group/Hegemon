@@ -19,13 +19,14 @@ use crate::constants::{
     CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NATIVE_ASSET_ID,
     NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON_ROUNDS, POSEIDON_WIDTH,
 };
+use crate::poseidon_constants;
 
 // ================================================================================================
 // TRACE CONFIGURATION
 // ================================================================================================
 
 /// Trace width (columns) for the transaction circuit.
-pub const TRACE_WIDTH: usize = 55;
+pub const TRACE_WIDTH: usize = 86;
 
 /// Poseidon state columns.
 pub const COL_S0: usize = 0;
@@ -39,7 +40,7 @@ pub const COL_IN1: usize = 4;
 /// Cycle control flags for the *next* cycle (written at cycle end).
 pub const COL_RESET: usize = 5;
 pub const COL_DOMAIN: usize = 6;
-pub const COL_LINK: usize = 7;
+pub const COL_MERKLE_LEFT_23: usize = 7;
 
 /// Active flags for inputs/outputs (set at note start rows).
 pub const COL_IN_ACTIVE0: usize = 8;
@@ -106,17 +107,87 @@ pub const COL_NOTE_START_IN1: usize = 52;
 pub const COL_NOTE_START_OUT0: usize = 53;
 pub const COL_NOTE_START_OUT1: usize = 54;
 
+/// Captured hash limbs (first two limbs) carried across squeeze cycles.
+pub const COL_OUT0: usize = 55;
+pub const COL_OUT1: usize = 56;
+
+/// Merkle pair flag for left limbs 0/1 (set on the second pair).
+pub const COL_MERKLE_LEFT_01: usize = 57;
+
+/// Capture flag to latch out0/out1 from the Poseidon state at cycle boundaries.
+pub const COL_CAPTURE: usize = 58;
+
+/// Merkle pair flag for right limbs 2/3 (third pair).
+pub const COL_MERKLE_RIGHT_23: usize = 59;
+
+/// Merkle pair flag for right limbs 0/1 (fourth pair).
+pub const COL_MERKLE_RIGHT_01: usize = 60;
+
+/// Capture flag to latch out2/out3 (squeeze output) at cycle boundaries.
+pub const COL_CAPTURE2: usize = 61;
+
+/// Captured hash limbs (second two limbs) carried across cycles.
+pub const COL_OUT2: usize = 62;
+pub const COL_OUT3: usize = 63;
+
+/// Direction bit for Merkle path (0 = current is left, 1 = current is right).
+pub const COL_DIR: usize = 64;
+
+/// Stablecoin policy binding and issuance fields (final row only).
+pub const COL_STABLECOIN_ENABLED: usize = 65;
+pub const COL_STABLECOIN_ASSET: usize = 66;
+pub const COL_STABLECOIN_POLICY_VERSION: usize = 67;
+pub const COL_STABLECOIN_ISSUANCE_SIGN: usize = 68;
+pub const COL_STABLECOIN_ISSUANCE_MAG: usize = 69;
+pub const COL_STABLECOIN_POLICY_HASH0: usize = 70;
+pub const COL_STABLECOIN_POLICY_HASH1: usize = 71;
+pub const COL_STABLECOIN_POLICY_HASH2: usize = 72;
+pub const COL_STABLECOIN_POLICY_HASH3: usize = 73;
+pub const COL_STABLECOIN_ORACLE0: usize = 74;
+pub const COL_STABLECOIN_ORACLE1: usize = 75;
+pub const COL_STABLECOIN_ORACLE2: usize = 76;
+pub const COL_STABLECOIN_ORACLE3: usize = 77;
+pub const COL_STABLECOIN_ATTEST0: usize = 78;
+pub const COL_STABLECOIN_ATTEST1: usize = 79;
+pub const COL_STABLECOIN_ATTEST2: usize = 80;
+pub const COL_STABLECOIN_ATTEST3: usize = 81;
+pub const COL_STABLECOIN_SLOT_SEL0: usize = 82;
+pub const COL_STABLECOIN_SLOT_SEL1: usize = 83;
+pub const COL_STABLECOIN_SLOT_SEL2: usize = 84;
+pub const COL_STABLECOIN_SLOT_SEL3: usize = 85;
+
 /// Cycle length: power of 2, must be > POSEIDON_ROUNDS.
-pub const CYCLE_LENGTH: usize = 16;
+pub const CYCLE_LENGTH: usize = 64;
 
-/// Number of cycles for a commitment hash (14 inputs / rate 2 = 7 cycles).
-pub const COMMITMENT_CYCLES: usize = 7;
+/// Number of absorb cycles for a commitment hash (14 inputs / rate 2 = 7 cycles).
+pub const COMMITMENT_ABSORB_CYCLES: usize = 7;
 
-/// Number of cycles for a nullifier hash (6 inputs / rate 2 = 3 cycles).
-pub const NULLIFIER_CYCLES: usize = 3;
+/// One squeeze cycle to output the final two limbs.
+pub const COMMITMENT_SQUEEZE_CYCLES: usize = 1;
 
-/// Number of cycles for Merkle path verification (one hash per level).
-pub const MERKLE_CYCLES: usize = CIRCUIT_MERKLE_DEPTH;
+/// Total cycles for a commitment hash (absorb + squeeze).
+pub const COMMITMENT_CYCLES: usize = COMMITMENT_ABSORB_CYCLES + COMMITMENT_SQUEEZE_CYCLES;
+
+/// Number of absorb cycles for a nullifier hash (6 inputs / rate 2 = 3 cycles).
+pub const NULLIFIER_ABSORB_CYCLES: usize = 3;
+
+/// One squeeze cycle to output the final two limbs.
+pub const NULLIFIER_SQUEEZE_CYCLES: usize = 1;
+
+/// Total cycles for a nullifier hash (absorb + squeeze).
+pub const NULLIFIER_CYCLES: usize = NULLIFIER_ABSORB_CYCLES + NULLIFIER_SQUEEZE_CYCLES;
+
+/// Number of absorb cycles per Merkle level (8 inputs / rate 2 = 4 cycles).
+pub const MERKLE_ABSORB_CYCLES: usize = 4;
+
+/// One squeeze cycle to output the final two limbs.
+pub const MERKLE_SQUEEZE_CYCLES: usize = 1;
+
+/// Total cycles per Merkle level.
+pub const MERKLE_CYCLES_PER_LEVEL: usize = MERKLE_ABSORB_CYCLES + MERKLE_SQUEEZE_CYCLES;
+
+/// Number of cycles for Merkle path verification (hash per level).
+pub const MERKLE_CYCLES: usize = CIRCUIT_MERKLE_DEPTH * MERKLE_CYCLES_PER_LEVEL;
 
 /// Cycles per input note: commitment + merkle + nullifier.
 pub const CYCLES_PER_INPUT: usize = COMMITMENT_CYCLES + MERKLE_CYCLES + NULLIFIER_CYCLES;
@@ -129,8 +200,8 @@ pub const TOTAL_USED_CYCLES: usize =
     DUMMY_CYCLES + (MAX_INPUTS * CYCLES_PER_INPUT) + (MAX_OUTPUTS * COMMITMENT_CYCLES);
 
 /// Minimum trace length (power of 2).
-/// For MAX_INPUTS=2, MAX_OUTPUTS=2, depth=32: 105 cycles * 16 = 1680 -> 2048.
-pub const MIN_TRACE_LENGTH: usize = 2048;
+/// For MAX_INPUTS=2, MAX_OUTPUTS=2, depth=32: 361 cycles * 64 = 23104 -> 32768.
+pub const MIN_TRACE_LENGTH: usize = 32768;
 
 /// Total cycles in the trace (including padding cycles).
 pub const TOTAL_TRACE_CYCLES: usize = MIN_TRACE_LENGTH / CYCLE_LENGTH;
@@ -160,9 +231,7 @@ const ABSORB_MASK: [BaseElement; CYCLE_LENGTH] = make_absorb_mask();
 
 #[inline]
 pub fn round_constant(round: usize, position: usize) -> BaseElement {
-    let seed = ((round as u64 + 1).wrapping_mul(0x9e37_79b9u64))
-        ^ ((position as u64 + 1).wrapping_mul(0x7f4a_7c15u64));
-    BaseElement::new(seed)
+    BaseElement::new(poseidon_constants::ROUND_CONSTANTS[round][position])
 }
 
 fn get_periodic_columns(trace_len: usize) -> Vec<Vec<BaseElement>> {
@@ -202,40 +271,69 @@ fn get_periodic_columns(trace_len: usize) -> Vec<Vec<BaseElement>> {
 pub struct TransactionPublicInputsStark {
     pub input_flags: Vec<BaseElement>,
     pub output_flags: Vec<BaseElement>,
-    pub nullifiers: Vec<BaseElement>,
-    pub commitments: Vec<BaseElement>,
+    pub nullifiers: Vec<[BaseElement; 4]>,
+    pub commitments: Vec<[BaseElement; 4]>,
     pub fee: BaseElement,
     pub value_balance_sign: BaseElement,
     pub value_balance_magnitude: BaseElement,
-    pub merkle_root: BaseElement,
+    pub merkle_root: [BaseElement; 4],
+    pub stablecoin_enabled: BaseElement,
+    pub stablecoin_asset: BaseElement,
+    pub stablecoin_policy_version: BaseElement,
+    pub stablecoin_issuance_sign: BaseElement,
+    pub stablecoin_issuance_magnitude: BaseElement,
+    pub stablecoin_policy_hash: [BaseElement; 4],
+    pub stablecoin_oracle_commitment: [BaseElement; 4],
+    pub stablecoin_attestation_commitment: [BaseElement; 4],
 }
 
 impl Default for TransactionPublicInputsStark {
     fn default() -> Self {
+        let zero = [BaseElement::ZERO; 4];
         Self {
             input_flags: vec![BaseElement::ZERO; MAX_INPUTS],
             output_flags: vec![BaseElement::ZERO; MAX_OUTPUTS],
-            nullifiers: vec![BaseElement::ZERO; MAX_INPUTS],
-            commitments: vec![BaseElement::ZERO; MAX_OUTPUTS],
+            nullifiers: vec![zero; MAX_INPUTS],
+            commitments: vec![zero; MAX_OUTPUTS],
             fee: BaseElement::ZERO,
             value_balance_sign: BaseElement::ZERO,
             value_balance_magnitude: BaseElement::ZERO,
-            merkle_root: BaseElement::ZERO,
+            merkle_root: zero,
+            stablecoin_enabled: BaseElement::ZERO,
+            stablecoin_asset: BaseElement::ZERO,
+            stablecoin_policy_version: BaseElement::ZERO,
+            stablecoin_issuance_sign: BaseElement::ZERO,
+            stablecoin_issuance_magnitude: BaseElement::ZERO,
+            stablecoin_policy_hash: zero,
+            stablecoin_oracle_commitment: zero,
+            stablecoin_attestation_commitment: zero,
         }
     }
 }
 
 impl ToElements<BaseElement> for TransactionPublicInputsStark {
     fn to_elements(&self) -> Vec<BaseElement> {
-        let mut elements = Vec::with_capacity(MAX_INPUTS + MAX_OUTPUTS + 8);
+        let mut elements = Vec::with_capacity((MAX_INPUTS + MAX_OUTPUTS) * 5 + 24);
         elements.extend(&self.input_flags);
         elements.extend(&self.output_flags);
-        elements.extend(&self.nullifiers);
-        elements.extend(&self.commitments);
+        for nf in &self.nullifiers {
+            elements.extend_from_slice(nf);
+        }
+        for cm in &self.commitments {
+            elements.extend_from_slice(cm);
+        }
         elements.push(self.fee);
         elements.push(self.value_balance_sign);
         elements.push(self.value_balance_magnitude);
-        elements.push(self.merkle_root);
+        elements.extend_from_slice(&self.merkle_root);
+        elements.push(self.stablecoin_enabled);
+        elements.push(self.stablecoin_asset);
+        elements.push(self.stablecoin_policy_version);
+        elements.push(self.stablecoin_issuance_sign);
+        elements.push(self.stablecoin_issuance_magnitude);
+        elements.extend_from_slice(&self.stablecoin_policy_hash);
+        elements.extend_from_slice(&self.stablecoin_oracle_commitment);
+        elements.extend_from_slice(&self.stablecoin_attestation_commitment);
         elements
     }
 }
@@ -247,10 +345,23 @@ impl ToElements<BaseElement> for TransactionPublicInputsStark {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CycleKind {
     Dummy,
-    InputCommitment { input: usize, chunk: usize },
-    InputMerkle { input: usize, level: usize },
-    InputNullifier { input: usize, chunk: usize },
-    OutputCommitment { output: usize, chunk: usize },
+    InputCommitment {
+        input: usize,
+        chunk: usize,
+    },
+    InputMerkle {
+        input: usize,
+        level: usize,
+        chunk: usize,
+    },
+    InputNullifier {
+        input: usize,
+        chunk: usize,
+    },
+    OutputCommitment {
+        output: usize,
+        chunk: usize,
+    },
     Padding,
 }
 
@@ -271,9 +382,12 @@ fn cycle_kind(cycle: usize) -> CycleKind {
         }
         let merkle_offset = offset - COMMITMENT_CYCLES;
         if merkle_offset < MERKLE_CYCLES {
+            let level = merkle_offset / MERKLE_CYCLES_PER_LEVEL;
+            let chunk = merkle_offset % MERKLE_CYCLES_PER_LEVEL;
             return CycleKind::InputMerkle {
                 input,
-                level: merkle_offset,
+                level,
+                chunk,
             };
         }
         return CycleKind::InputNullifier {
@@ -297,15 +411,41 @@ fn cycle_kind(cycle: usize) -> CycleKind {
 pub fn cycle_reset_domain(cycle: usize) -> Option<u64> {
     match cycle_kind(cycle) {
         CycleKind::InputCommitment { chunk: 0, .. } => Some(NOTE_DOMAIN_TAG),
-        CycleKind::InputMerkle { .. } => Some(MERKLE_DOMAIN_TAG),
+        CycleKind::InputMerkle { chunk: 0, .. } => Some(MERKLE_DOMAIN_TAG),
         CycleKind::InputNullifier { chunk: 0, .. } => Some(NULLIFIER_DOMAIN_TAG),
         CycleKind::OutputCommitment { chunk: 0, .. } => Some(NOTE_DOMAIN_TAG),
         _ => None,
     }
 }
 
-pub fn cycle_is_merkle(cycle: usize) -> bool {
-    matches!(cycle_kind(cycle), CycleKind::InputMerkle { .. })
+pub fn cycle_is_merkle_pair(cycle: usize, pair: usize) -> bool {
+    matches!(cycle_kind(cycle), CycleKind::InputMerkle { chunk, .. } if chunk == pair)
+}
+
+pub fn cycle_is_merkle_left_23(cycle: usize) -> bool {
+    cycle_is_merkle_pair(cycle, 0)
+}
+
+pub fn cycle_is_merkle_left_01(cycle: usize) -> bool {
+    cycle_is_merkle_pair(cycle, 1)
+}
+
+pub fn cycle_is_merkle_right_23(cycle: usize) -> bool {
+    cycle_is_merkle_pair(cycle, 2)
+}
+
+pub fn cycle_is_merkle_right_01(cycle: usize) -> bool {
+    cycle_is_merkle_pair(cycle, 3)
+}
+
+pub fn cycle_is_squeeze(cycle: usize) -> bool {
+    match cycle_kind(cycle) {
+        CycleKind::InputCommitment { chunk, .. } => chunk >= COMMITMENT_ABSORB_CYCLES,
+        CycleKind::InputNullifier { chunk, .. } => chunk >= NULLIFIER_ABSORB_CYCLES,
+        CycleKind::OutputCommitment { chunk, .. } => chunk >= COMMITMENT_ABSORB_CYCLES,
+        CycleKind::InputMerkle { chunk, .. } => chunk >= MERKLE_ABSORB_CYCLES,
+        _ => false,
+    }
 }
 
 pub fn input_commitment_start_cycle(input_index: usize) -> usize {
@@ -344,6 +484,10 @@ pub fn note_start_row_output(output_index: usize) -> usize {
     (output_commitment_start_cycle(output_index) - 1) * CYCLE_LENGTH + (CYCLE_LENGTH - 1)
 }
 
+fn is_zero_hash(value: &[BaseElement; 4]) -> bool {
+    value.iter().all(|elem| *elem == BaseElement::ZERO)
+}
+
 // ================================================================================================
 // AIR IMPLEMENTATION
 // ================================================================================================
@@ -353,7 +497,7 @@ pub struct TransactionAirStark {
     pub_inputs: TransactionPublicInputsStark,
 }
 
-const NUM_CONSTRAINTS: usize = 55;
+const NUM_CONSTRAINTS: usize = 103;
 
 impl Air for TransactionAirStark {
     type BaseField = BaseElement;
@@ -371,6 +515,25 @@ impl Air for TransactionAirStark {
         }
         degrees.push(TransitionConstraintDegree::new(2)); // reset boolean
         degrees.push(TransitionConstraintDegree::new(2)); // value balance sign boolean
+        degrees.push(TransitionConstraintDegree::new(2)); // stablecoin enabled boolean
+        degrees.push(TransitionConstraintDegree::new(2)); // stablecoin issuance sign boolean
+        for _ in 0..4 {
+            degrees.push(TransitionConstraintDegree::new(2)); // stablecoin slot selector booleans
+        }
+        degrees.push(TransitionConstraintDegree::with_cycles(1, vec![trace_len])); // selector sum
+        for _ in 0..4 {
+            degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len]));
+            // asset match
+        }
+        degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len])); // delta equality
+        for _ in 0..3 {
+            degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len]));
+            // non-selected slot balance
+        }
+        for _ in 0..16 {
+            degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len]));
+            // zeroed when stablecoin disabled
+        }
 
         for _ in 0..4 {
             degrees.push(TransitionConstraintDegree::new(2)); // active flag booleans
@@ -391,10 +554,34 @@ impl Air for TransactionAirStark {
         degrees.push(TransitionConstraintDegree::new(2)); // slot0 asset check
         degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len])); // balance equation
         for _ in 0..3 {
-            degrees.push(TransitionConstraintDegree::with_cycles(1, vec![trace_len]));
+            degrees.push(TransitionConstraintDegree::with_cycles(2, vec![trace_len]));
             // slot1..3 balance
         }
-        degrees.push(TransitionConstraintDegree::new(3)); // link constraint
+        degrees.push(TransitionConstraintDegree::new(2)); // merkle direction boolean
+        degrees.push(TransitionConstraintDegree::new(2)); // merkle direction carry
+        for _ in 0..8 {
+            degrees.push(TransitionConstraintDegree::with_cycles(
+                3,
+                vec![CYCLE_LENGTH],
+            ));
+            // merkle link constraints
+        }
+        degrees.push(TransitionConstraintDegree::new(2)); // capture0 boolean
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            2,
+            vec![CYCLE_LENGTH],
+        ));
+        // capture0 only on absorb row
+        degrees.push(TransitionConstraintDegree::new(2)); // out0 carry/update
+        degrees.push(TransitionConstraintDegree::new(2)); // out1 carry/update
+        degrees.push(TransitionConstraintDegree::new(2)); // capture2 boolean
+        degrees.push(TransitionConstraintDegree::with_cycles(
+            2,
+            vec![CYCLE_LENGTH],
+        ));
+        // capture2 only on absorb row
+        degrees.push(TransitionConstraintDegree::new(2)); // out2 carry/update
+        degrees.push(TransitionConstraintDegree::new(2)); // out3 carry/update
         for _ in 0..(MAX_INPUTS + MAX_OUTPUTS) {
             degrees.push(TransitionConstraintDegree::new(2)); // note start value binding
             degrees.push(TransitionConstraintDegree::new(2)); // note start asset binding
@@ -403,31 +590,31 @@ impl Air for TransactionAirStark {
 
         let mut num_assertions = 0;
 
-        for (i, &nf) in pub_inputs.nullifiers.iter().enumerate() {
-            if nf != BaseElement::ZERO && pub_inputs.input_flags[i] != BaseElement::ZERO {
+        for (i, nf) in pub_inputs.nullifiers.iter().enumerate() {
+            if !is_zero_hash(nf) && pub_inputs.input_flags[i] != BaseElement::ZERO {
                 let row = nullifier_output_row(i);
                 if row < trace_len {
-                    num_assertions += 1;
+                    num_assertions += 4;
                 }
                 let merkle_row = merkle_root_output_row(i);
                 if merkle_row < trace_len {
-                    num_assertions += 1;
+                    num_assertions += 4;
                 }
             }
         }
 
-        for (i, &cm) in pub_inputs.commitments.iter().enumerate() {
-            if cm != BaseElement::ZERO && pub_inputs.output_flags[i] != BaseElement::ZERO {
+        for (i, cm) in pub_inputs.commitments.iter().enumerate() {
+            if !is_zero_hash(cm) && pub_inputs.output_flags[i] != BaseElement::ZERO {
                 let row = commitment_output_row(i);
                 if row < trace_len {
-                    num_assertions += 1;
+                    num_assertions += 4;
                 }
             }
         }
 
-        // Reset/domain/link assertions for each cycle end.
+        // Reset/domain/merkle-pair/capture assertions for each cycle end.
         let total_cycles = trace_info.length() / CYCLE_LENGTH;
-        num_assertions += total_cycles * 3;
+        num_assertions += total_cycles * 8;
 
         // Note start assertions (one per note).
         num_assertions += MAX_INPUTS + MAX_OUTPUTS;
@@ -437,6 +624,8 @@ impl Air for TransactionAirStark {
 
         // Fee/value balance assertions at the final enforcement row.
         num_assertions += 3;
+        // Stablecoin policy binding assertions at the final enforcement row.
+        num_assertions += 17;
 
         Self {
             context: AirContext::new(trace_info, degrees, num_assertions, options),
@@ -474,10 +663,21 @@ impl Air for TransactionAirStark {
         let s1 = t1.exp(5u64.into());
         let s2 = t2.exp(5u64.into());
 
+        let mds = poseidon_constants::MDS_MATRIX;
+        let m00: E = E::from(BaseElement::new(mds[0][0]));
+        let m01: E = E::from(BaseElement::new(mds[0][1]));
+        let m02: E = E::from(BaseElement::new(mds[0][2]));
+        let m10: E = E::from(BaseElement::new(mds[1][0]));
+        let m11: E = E::from(BaseElement::new(mds[1][1]));
+        let m12: E = E::from(BaseElement::new(mds[1][2]));
+        let m20: E = E::from(BaseElement::new(mds[2][0]));
+        let m21: E = E::from(BaseElement::new(mds[2][1]));
+        let m22: E = E::from(BaseElement::new(mds[2][2]));
+
+        let hash_s0 = s0 * m00 + s1 * m01 + s2 * m02;
+        let hash_s1 = s0 * m10 + s1 * m11 + s2 * m12;
+        let hash_s2 = s0 * m20 + s1 * m21 + s2 * m22;
         let two: E = E::from(BaseElement::new(2));
-        let hash_s0 = s0 * two + s1 + s2;
-        let hash_s1 = s0 + s1 * two + s2;
-        let hash_s2 = s0 + s1 + s2 * two;
 
         let one = E::ONE;
         let not_first_row = one - first_row_mask;
@@ -523,6 +723,90 @@ impl Air for TransactionAirStark {
         let vb_sign = current[COL_VALUE_BALANCE_SIGN];
         result[idx] = vb_sign * (vb_sign - one);
         idx += 1;
+
+        // stablecoin enabled/issuance flags are boolean
+        let stablecoin_enabled = current[COL_STABLECOIN_ENABLED];
+        result[idx] = stablecoin_enabled * (stablecoin_enabled - one);
+        idx += 1;
+
+        let stablecoin_sign = current[COL_STABLECOIN_ISSUANCE_SIGN];
+        result[idx] = stablecoin_sign * (stablecoin_sign - one);
+        idx += 1;
+
+        let stablecoin_sel_cols = [
+            COL_STABLECOIN_SLOT_SEL0,
+            COL_STABLECOIN_SLOT_SEL1,
+            COL_STABLECOIN_SLOT_SEL2,
+            COL_STABLECOIN_SLOT_SEL3,
+        ];
+        for &col in stablecoin_sel_cols.iter() {
+            let sel = current[col];
+            result[idx] = sel * (sel - one);
+            idx += 1;
+        }
+
+        let slot_assets = [
+            current[COL_SLOT0_ASSET],
+            current[COL_SLOT1_ASSET],
+            current[COL_SLOT2_ASSET],
+            current[COL_SLOT3_ASSET],
+        ];
+        let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
+        let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
+
+        let stablecoin_sel_sum = stablecoin_sel_cols
+            .iter()
+            .fold(E::ZERO, |acc, col| acc + current[*col]);
+        result[idx] = final_row_mask * (stablecoin_sel_sum - stablecoin_enabled);
+        idx += 1;
+
+        let stablecoin_asset = current[COL_STABLECOIN_ASSET];
+        for slot in 0..4 {
+            result[idx] = final_row_mask
+                * current[stablecoin_sel_cols[slot]]
+                * (slot_assets[slot] - stablecoin_asset);
+            idx += 1;
+        }
+
+        let stablecoin_mag = current[COL_STABLECOIN_ISSUANCE_MAG];
+        let stablecoin_signed = stablecoin_mag - (stablecoin_sign * stablecoin_mag * two);
+        let mut selected_delta = E::ZERO;
+        for slot in 0..4 {
+            let delta = current[slot_in_cols[slot]] - current[slot_out_cols[slot]];
+            selected_delta += current[stablecoin_sel_cols[slot]] * delta;
+        }
+        result[idx] = final_row_mask * (selected_delta - stablecoin_signed);
+        idx += 1;
+
+        for slot in 1..4 {
+            let delta = current[slot_in_cols[slot]] - current[slot_out_cols[slot]];
+            result[idx] = final_row_mask * delta * (one - current[stablecoin_sel_cols[slot]]);
+            idx += 1;
+        }
+
+        let stablecoin_disabled = one - stablecoin_enabled;
+        let stablecoin_zero_cols = [
+            COL_STABLECOIN_ASSET,
+            COL_STABLECOIN_POLICY_VERSION,
+            COL_STABLECOIN_ISSUANCE_SIGN,
+            COL_STABLECOIN_ISSUANCE_MAG,
+            COL_STABLECOIN_POLICY_HASH0,
+            COL_STABLECOIN_POLICY_HASH1,
+            COL_STABLECOIN_POLICY_HASH2,
+            COL_STABLECOIN_POLICY_HASH3,
+            COL_STABLECOIN_ORACLE0,
+            COL_STABLECOIN_ORACLE1,
+            COL_STABLECOIN_ORACLE2,
+            COL_STABLECOIN_ORACLE3,
+            COL_STABLECOIN_ATTEST0,
+            COL_STABLECOIN_ATTEST1,
+            COL_STABLECOIN_ATTEST2,
+            COL_STABLECOIN_ATTEST3,
+        ];
+        for &col in stablecoin_zero_cols.iter() {
+            result[idx] = final_row_mask * stablecoin_disabled * current[col];
+            idx += 1;
+        }
 
         // active flags are boolean
         let active_cols = [
@@ -580,14 +864,6 @@ impl Air for TransactionAirStark {
         result[idx] = note_start_out1 * (out1_sel_sum - output_active[1]);
         idx += 1;
 
-        // asset id matches selected slot
-        let slot_assets = [
-            current[COL_SLOT0_ASSET],
-            current[COL_SLOT1_ASSET],
-            current[COL_SLOT2_ASSET],
-            current[COL_SLOT3_ASSET],
-        ];
-
         let in0_asset = current[COL_IN0_ASSET];
         let in0_selected = current[COL_SEL_IN0_SLOT0] * slot_assets[0]
             + current[COL_SEL_IN0_SLOT1] * slot_assets[1]
@@ -623,9 +899,6 @@ impl Air for TransactionAirStark {
         // slot accumulators (inputs/outputs)
         let in_values = [current[COL_IN0_VALUE], current[COL_IN1_VALUE]];
         let out_values = [current[COL_OUT0_VALUE], current[COL_OUT1_VALUE]];
-
-        let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
-        let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
 
         let sel_in = [
             [
@@ -689,16 +962,72 @@ impl Air for TransactionAirStark {
         idx += 1;
 
         for slot in 1..4 {
-            result[idx] =
-                final_row_mask * (current[slot_in_cols[slot]] - current[slot_out_cols[slot]]);
+            let delta = current[slot_in_cols[slot]] - current[slot_out_cols[slot]];
+            result[idx] = final_row_mask * stablecoin_disabled * delta;
             idx += 1;
         }
 
-        // link flag: next-cycle input must include current output (left or right)
-        let link = current[COL_LINK];
-        let link_diff0 = current[COL_IN0] - current[COL_S0];
-        let link_diff1 = current[COL_IN1] - current[COL_S0];
-        result[idx] = link * link_diff0 * link_diff1;
+        // merkle direction must be boolean and stable between resets
+        let dir = current[COL_DIR];
+        result[idx] = dir * (dir - one);
+        idx += 1;
+        result[idx] = (one - reset) * (next[COL_DIR] - current[COL_DIR]);
+        idx += 1;
+
+        // merkle link constraints (applied at cycle boundaries)
+        let left_23 = current[COL_MERKLE_LEFT_23];
+        let left_01 = current[COL_MERKLE_LEFT_01];
+        let right_23 = current[COL_MERKLE_RIGHT_23];
+        let right_01 = current[COL_MERKLE_RIGHT_01];
+        let next_dir = next[COL_DIR];
+        let not_next_dir = one - next_dir;
+
+        result[idx] = absorb_flag * left_23 * not_next_dir * (current[COL_IN0] - next[COL_OUT2]);
+        idx += 1;
+        result[idx] = absorb_flag * left_23 * not_next_dir * (current[COL_IN1] - next[COL_OUT3]);
+        idx += 1;
+        result[idx] = absorb_flag * left_01 * not_next_dir * (current[COL_IN0] - next[COL_OUT0]);
+        idx += 1;
+        result[idx] = absorb_flag * left_01 * not_next_dir * (current[COL_IN1] - next[COL_OUT1]);
+        idx += 1;
+        result[idx] = absorb_flag * right_23 * next_dir * (current[COL_IN0] - next[COL_OUT2]);
+        idx += 1;
+        result[idx] = absorb_flag * right_23 * next_dir * (current[COL_IN1] - next[COL_OUT3]);
+        idx += 1;
+        result[idx] = absorb_flag * right_01 * next_dir * (current[COL_IN0] - next[COL_OUT0]);
+        idx += 1;
+        result[idx] = absorb_flag * right_01 * next_dir * (current[COL_IN1] - next[COL_OUT1]);
+        idx += 1;
+
+        // capture0 flag must be boolean
+        let capture = current[COL_CAPTURE];
+        result[idx] = capture * (capture - one);
+        idx += 1;
+        // capture0 only on absorb rows
+        let capture_guard = current[COL_IN_ACTIVE0] + one;
+        result[idx] = capture * (one - absorb_flag) * capture_guard;
+        idx += 1;
+        // carry/update captured outputs
+        result[idx] =
+            next[COL_OUT0] - (capture * current[COL_S0] + (one - capture) * current[COL_OUT0]);
+        idx += 1;
+        result[idx] =
+            next[COL_OUT1] - (capture * current[COL_S1] + (one - capture) * current[COL_OUT1]);
+        idx += 1;
+
+        // capture2 flag must be boolean
+        let capture2 = current[COL_CAPTURE2];
+        result[idx] = capture2 * (capture2 - one);
+        idx += 1;
+        // capture2 only on absorb rows
+        result[idx] = capture2 * (one - absorb_flag) * capture_guard;
+        idx += 1;
+        // carry/update captured outputs
+        result[idx] =
+            next[COL_OUT2] - (capture2 * current[COL_S0] + (one - capture2) * current[COL_OUT2]);
+        idx += 1;
+        result[idx] =
+            next[COL_OUT3] - (capture2 * current[COL_S1] + (one - capture2) * current[COL_OUT3]);
         idx += 1;
 
         // note start flags: tie commitment inputs to note values/assets
@@ -724,29 +1053,50 @@ impl Air for TransactionAirStark {
         let mut assertions = Vec::new();
         let trace_len = self.context.trace_len();
 
-        for (i, &nf) in self.pub_inputs.nullifiers.iter().enumerate() {
-            if nf != BaseElement::ZERO && self.pub_inputs.input_flags[i] != BaseElement::ZERO {
+        for (i, nf) in self.pub_inputs.nullifiers.iter().enumerate() {
+            if !is_zero_hash(nf) && self.pub_inputs.input_flags[i] != BaseElement::ZERO {
                 let row = nullifier_output_row(i);
                 if row < trace_len {
-                    assertions.push(Assertion::single(COL_S0, row, nf));
+                    assertions.push(Assertion::single(COL_OUT0, row, nf[0]));
+                    assertions.push(Assertion::single(COL_OUT1, row, nf[1]));
+                    assertions.push(Assertion::single(COL_S0, row, nf[2]));
+                    assertions.push(Assertion::single(COL_S1, row, nf[3]));
                 }
 
                 let merkle_row = merkle_root_output_row(i);
                 if merkle_row < trace_len {
                     assertions.push(Assertion::single(
+                        COL_OUT0,
+                        merkle_row,
+                        self.pub_inputs.merkle_root[0],
+                    ));
+                    assertions.push(Assertion::single(
+                        COL_OUT1,
+                        merkle_row,
+                        self.pub_inputs.merkle_root[1],
+                    ));
+                    assertions.push(Assertion::single(
                         COL_S0,
                         merkle_row,
-                        self.pub_inputs.merkle_root,
+                        self.pub_inputs.merkle_root[2],
+                    ));
+                    assertions.push(Assertion::single(
+                        COL_S1,
+                        merkle_row,
+                        self.pub_inputs.merkle_root[3],
                     ));
                 }
             }
         }
 
-        for (i, &cm) in self.pub_inputs.commitments.iter().enumerate() {
-            if cm != BaseElement::ZERO && self.pub_inputs.output_flags[i] != BaseElement::ZERO {
+        for (i, cm) in self.pub_inputs.commitments.iter().enumerate() {
+            if !is_zero_hash(cm) && self.pub_inputs.output_flags[i] != BaseElement::ZERO {
                 let row = commitment_output_row(i);
                 if row < trace_len {
-                    assertions.push(Assertion::single(COL_S0, row, cm));
+                    assertions.push(Assertion::single(COL_OUT0, row, cm[0]));
+                    assertions.push(Assertion::single(COL_OUT1, row, cm[1]));
+                    assertions.push(Assertion::single(COL_S0, row, cm[2]));
+                    assertions.push(Assertion::single(COL_S1, row, cm[3]));
                 }
             }
         }
@@ -755,7 +1105,8 @@ impl Air for TransactionAirStark {
         for cycle in 0..total_cycles {
             let row = cycle * CYCLE_LENGTH + (CYCLE_LENGTH - 1);
             let next_cycle = cycle + 1;
-            let (reset, domain, link) = if next_cycle < total_cycles {
+            let (reset, domain, left_23, left_01, right_23, right_01) = if next_cycle < total_cycles
+            {
                 let reset_domain = cycle_reset_domain(next_cycle);
                 let reset = if reset_domain.is_some() {
                     BaseElement::ONE
@@ -765,19 +1116,57 @@ impl Air for TransactionAirStark {
                 let domain = reset_domain
                     .map(BaseElement::new)
                     .unwrap_or(BaseElement::ZERO);
-                let link = if cycle_is_merkle(next_cycle) {
+                let left_23 = if cycle_is_merkle_left_23(next_cycle) {
                     BaseElement::ONE
                 } else {
                     BaseElement::ZERO
                 };
-                (reset, domain, link)
+                let left_01 = if cycle_is_merkle_left_01(next_cycle) {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                };
+                let right_23 = if cycle_is_merkle_right_23(next_cycle) {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                };
+                let right_01 = if cycle_is_merkle_right_01(next_cycle) {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                };
+                (reset, domain, left_23, left_01, right_23, right_01)
             } else {
-                (BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO)
+                (
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                )
+            };
+
+            let capture = if cycle_is_squeeze(next_cycle) {
+                BaseElement::ONE
+            } else {
+                BaseElement::ZERO
+            };
+            let capture2 = if cycle_is_squeeze(cycle) {
+                BaseElement::ONE
+            } else {
+                BaseElement::ZERO
             };
 
             assertions.push(Assertion::single(COL_RESET, row, reset));
             assertions.push(Assertion::single(COL_DOMAIN, row, domain));
-            assertions.push(Assertion::single(COL_LINK, row, link));
+            assertions.push(Assertion::single(COL_MERKLE_LEFT_23, row, left_23));
+            assertions.push(Assertion::single(COL_MERKLE_LEFT_01, row, left_01));
+            assertions.push(Assertion::single(COL_MERKLE_RIGHT_23, row, right_23));
+            assertions.push(Assertion::single(COL_MERKLE_RIGHT_01, row, right_01));
+            assertions.push(Assertion::single(COL_CAPTURE, row, capture));
+            assertions.push(Assertion::single(COL_CAPTURE2, row, capture2));
         }
 
         // Note start flags: one assertion per note.
@@ -844,6 +1233,70 @@ impl Air for TransactionAirStark {
                 final_row,
                 self.pub_inputs.value_balance_magnitude,
             ));
+            assertions.push(Assertion::single(
+                COL_STABLECOIN_ENABLED,
+                final_row,
+                self.pub_inputs.stablecoin_enabled,
+            ));
+            assertions.push(Assertion::single(
+                COL_STABLECOIN_ASSET,
+                final_row,
+                self.pub_inputs.stablecoin_asset,
+            ));
+            assertions.push(Assertion::single(
+                COL_STABLECOIN_POLICY_VERSION,
+                final_row,
+                self.pub_inputs.stablecoin_policy_version,
+            ));
+            assertions.push(Assertion::single(
+                COL_STABLECOIN_ISSUANCE_SIGN,
+                final_row,
+                self.pub_inputs.stablecoin_issuance_sign,
+            ));
+            assertions.push(Assertion::single(
+                COL_STABLECOIN_ISSUANCE_MAG,
+                final_row,
+                self.pub_inputs.stablecoin_issuance_magnitude,
+            ));
+            let stablecoin_hash_cols = [
+                COL_STABLECOIN_POLICY_HASH0,
+                COL_STABLECOIN_POLICY_HASH1,
+                COL_STABLECOIN_POLICY_HASH2,
+                COL_STABLECOIN_POLICY_HASH3,
+            ];
+            for (idx, col) in stablecoin_hash_cols.iter().enumerate() {
+                assertions.push(Assertion::single(
+                    *col,
+                    final_row,
+                    self.pub_inputs.stablecoin_policy_hash[idx],
+                ));
+            }
+            let stablecoin_oracle_cols = [
+                COL_STABLECOIN_ORACLE0,
+                COL_STABLECOIN_ORACLE1,
+                COL_STABLECOIN_ORACLE2,
+                COL_STABLECOIN_ORACLE3,
+            ];
+            for (idx, col) in stablecoin_oracle_cols.iter().enumerate() {
+                assertions.push(Assertion::single(
+                    *col,
+                    final_row,
+                    self.pub_inputs.stablecoin_oracle_commitment[idx],
+                ));
+            }
+            let stablecoin_attest_cols = [
+                COL_STABLECOIN_ATTEST0,
+                COL_STABLECOIN_ATTEST1,
+                COL_STABLECOIN_ATTEST2,
+                COL_STABLECOIN_ATTEST3,
+            ];
+            for (idx, col) in stablecoin_attest_cols.iter().enumerate() {
+                assertions.push(Assertion::single(
+                    *col,
+                    final_row,
+                    self.pub_inputs.stablecoin_attestation_commitment[idx],
+                ));
+            }
         }
 
         assertions
@@ -883,12 +1336,16 @@ pub fn sbox(x: BaseElement) -> BaseElement {
 }
 
 pub fn mds_mix(state: &[BaseElement; 3]) -> [BaseElement; 3] {
-    let two = BaseElement::new(2);
-    [
-        state[0] * two + state[1] + state[2],
-        state[0] + state[1] * two + state[2],
-        state[0] + state[1] + state[2] * two,
-    ]
+    let mut out = [BaseElement::ZERO; 3];
+    for (row_idx, out_slot) in out.iter_mut().enumerate() {
+        let mut acc = BaseElement::ZERO;
+        for (col_idx, value) in state.iter().enumerate() {
+            let coeff = BaseElement::new(poseidon_constants::MDS_MATRIX[row_idx][col_idx]);
+            acc += *value * coeff;
+        }
+        *out_slot = acc;
+    }
+    out
 }
 
 pub fn poseidon_round(state: &mut [BaseElement; 3], round: usize) {
@@ -938,9 +1395,9 @@ mod tests {
         assert_eq!(cols[0].len(), CYCLE_LENGTH);
         assert_eq!(cols[1].len(), CYCLE_LENGTH);
         assert_eq!(cols[0][0], BaseElement::ONE);
-        assert_eq!(cols[0][7], BaseElement::ONE);
-        assert_eq!(cols[0][8], BaseElement::ZERO);
-        assert_eq!(cols[1][15], BaseElement::ONE);
+        assert_eq!(cols[0][POSEIDON_ROUNDS - 1], BaseElement::ONE);
+        assert_eq!(cols[0][POSEIDON_ROUNDS], BaseElement::ZERO);
+        assert_eq!(cols[1][CYCLE_LENGTH - 1], BaseElement::ONE);
         let mask_offset = 2 + POSEIDON_WIDTH;
         assert_eq!(cols[mask_offset].len(), MIN_TRACE_LENGTH);
         assert_eq!(cols[mask_offset][0], BaseElement::ONE);
@@ -955,15 +1412,40 @@ mod tests {
     #[test]
     fn test_air_creation() {
         let trace_info = TraceInfo::new(TRACE_WIDTH, MIN_TRACE_LENGTH);
+        let zero = [BaseElement::ZERO; 4];
         let pub_inputs = TransactionPublicInputsStark {
             input_flags: vec![BaseElement::ONE, BaseElement::ZERO],
             output_flags: vec![BaseElement::ONE, BaseElement::ZERO],
-            nullifiers: vec![BaseElement::new(123), BaseElement::ZERO],
-            commitments: vec![BaseElement::new(456), BaseElement::ZERO],
+            nullifiers: vec![
+                [
+                    BaseElement::new(123),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                zero,
+            ],
+            commitments: vec![
+                [
+                    BaseElement::new(456),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                zero,
+            ],
             fee: BaseElement::ZERO,
             value_balance_sign: BaseElement::ZERO,
             value_balance_magnitude: BaseElement::ZERO,
-            merkle_root: BaseElement::ZERO,
+            merkle_root: zero,
+            stablecoin_enabled: BaseElement::ZERO,
+            stablecoin_asset: BaseElement::ZERO,
+            stablecoin_policy_version: BaseElement::ZERO,
+            stablecoin_issuance_sign: BaseElement::ZERO,
+            stablecoin_issuance_magnitude: BaseElement::ZERO,
+            stablecoin_policy_hash: zero,
+            stablecoin_oracle_commitment: zero,
+            stablecoin_attestation_commitment: zero,
         };
         let options = ProofOptions::new(
             32,

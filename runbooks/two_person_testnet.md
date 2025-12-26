@@ -24,6 +24,8 @@ Both participants need:
 
 **Solution:** The boot node exports the chain specification once, and all other nodes use that exact file.
 
+**Protocol-breaking note:** If you switch to a chainspec that upgrades commitment/nullifier encoding (4-limb 256-bit), delete `node.db` and wallet store files before starting. Old state is incompatible.
+
 ### Boot Node: Export Chain Spec
 
 Run once on the boot node machine:
@@ -61,6 +63,15 @@ All nodes (including boot node) must use the shared chainspec:
 ```bash
 --chain config/dev-chainspec.json   # NOT --chain dev
 ```
+
+## Public RPC Hardening (When RPC Is Internet-Exposed)
+
+If you expose the RPC port to the internet, treat it as a production surface:
+
+- Prefer an SSH tunnel or VPN and keep RPC bound to localhost.
+- If you must expose it, use `--rpc-external --rpc-methods safe` and avoid `--unsafe-rpc-external`.
+- Do not use `--rpc-cors all`; set an explicit origin or omit the flag.
+- Restrict inbound IPs at the firewall or a reverse proxy, and terminate TLS there.
 
 ---
 
@@ -110,11 +121,12 @@ HEGEMON_RECURSIVE_EPOCH_PROOFS=1 \
 HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1 \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
+  --dev \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
   --rpc-port 9944 \
-  --rpc-cors all \
-  --unsafe-rpc-external \
+  --rpc-external \
+  --rpc-methods safe \
   --listen-addr /ip4/0.0.0.0/tcp/30333 \
   --name "AliceBootNode"
 ```
@@ -173,10 +185,12 @@ HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1 \
 HEGEMON_SEEDS="hegemon.pauli.group:30333" \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "BOB_CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
+  --dev \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
   --rpc-port 9944 \
-  --rpc-cors all \
+  --rpc-external \
+  --rpc-methods safe \
   --name "BobNode"
 ```
 
@@ -205,8 +219,8 @@ Both participants run:
 ```bash
 ./target/release/wallet substrate-sync \
   --store ~/.hegemon-wallet \
-  --passphrase "YOUR_PASSPHRASE" \
-  --ws-url ws://127.0.0.1:9944
+  --ws-url ws://127.0.0.1:9944 \
+  --passphrase "YOUR_PASSPHRASE"
 ```
 
 Check balance:
@@ -248,9 +262,10 @@ Create `recipients.json`:
 ```bash
 ./target/release/wallet substrate-send \
   --store ~/.hegemon-wallet \
-  --passphrase "YOUR_PASSPHRASE" \
+  --auto-consolidate \
+  --ws-url ws://127.0.0.1:9944 \
   --recipients recipients.json \
-  --ws-url ws://127.0.0.1:9944
+  --passphrase "YOUR_PASSPHRASE" \
 ```
 
 ### 4. Bob Receives
@@ -299,6 +314,11 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 - Check node logs for extrinsic errors
 - If you hit `Need X notes but max is 2`, re-run `wallet substrate-send` with `--auto-consolidate` (it submits X-2 consolidation txs and can take multiple blocks)
 
+### Invalid Transaction: `Custom error: 6`
+- The shielded verifying key is disabled in genesis, so unsigned transfers are rejected.
+- Fix: rebuild the node, regenerate the chainspec, and restart with the new spec (or wipe `node.db` when using `--dev`).
+- If you need to keep chain state, use sudo to call `ShieldedPool.update_verifying_key` with `StarkVerifier::create_verifying_key(0)` via Polkadot.js Apps.
+
 ### Balance shows 0
 - Mining rewards require `HEGEMON_MINER_ADDRESS` to be set (shielded address)
 - Sync wallet after blocks are mined
@@ -313,7 +333,6 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 | `wallet init` | Create new wallet |
 | `wallet status` | Show addresses and balances |
 | `wallet substrate-sync` | Sync with node |
-| `wallet substrate-shield` | Shield external funds (rarely needed with shielded coinbase) |
 | `wallet substrate-send` | Send shielded transaction |
 | `wallet export-viewing-key` | Export keys for watch-only |
 
@@ -352,11 +371,12 @@ This section documents how to test the recursive STARK epoch proof system on a t
 HEGEMON_MINE=1 \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
+  --dev \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
   --rpc-port 9944 \
-  --rpc-cors all \
-  --unsafe-rpc-external \
+  --rpc-external \
+  --rpc-methods safe \
   --listen-addr /ip4/0.0.0.0/tcp/30333 \
   --name "AliceBootNode"
 ```
@@ -367,10 +387,12 @@ HEGEMON_MINE=1 \
 HEGEMON_SEEDS="<ALICE_IP>:30333" \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "BOB_CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
+  --dev \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
   --rpc-port 9944 \
-  --rpc-cors all \
+  --rpc-external \
+  --rpc-methods safe \
   --name "BobNode"
 ```
 

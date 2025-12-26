@@ -28,6 +28,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use codec::{Decode, Encode};
 use jsonrpsee::core::client::{ClientT, SubscriptionClientT};
 use jsonrpsee::rpc_params;
 use jsonrpsee::ws_client::{WsClient, WsClientBuilder};
@@ -35,8 +36,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::error::WalletError;
+use crate::metadata::{lookup_shielded_pool_call_indices, ShieldedPoolCallIndices};
 use crate::notes::NoteCiphertext;
 use crate::rpc::TransactionBundle;
+use transaction_circuit::StablecoinPolicyBinding;
 
 /// Configuration for the Substrate RPC client
 #[derive(Clone, Debug)]
@@ -93,19 +96,27 @@ pub struct NoteStatus {
 pub struct CommitmentEntry {
     /// Index in the commitment tree
     pub index: u64,
-    /// Commitment value (field element)
-    pub value: u64,
+    /// Commitment value (32-byte encoding)
+    pub value: [u8; 32],
 }
 
 /// Paginated commitment response
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommitmentResponse {
     /// Commitment entries
-    pub entries: Vec<CommitmentEntry>,
+    pub entries: Vec<CommitmentWireEntry>,
     /// Total count
     pub total: u64,
     /// Whether there are more entries
     pub has_more: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommitmentWireEntry {
+    /// Index in the commitment tree
+    pub index: u64,
+    /// Commitment value (hex encoded)
+    pub value: String,
 }
 
 /// Ciphertext entry from the node
@@ -398,7 +409,17 @@ impl SubstrateRpcClient {
             .await
             .map_err(|e| WalletError::Rpc(format!("hegemon_walletCommitments failed: {}", e)))?;
 
-        Ok(response.entries)
+        response
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let value = hex_to_array(&entry.value)?;
+                Ok(CommitmentEntry {
+                    index: entry.index,
+                    value,
+                })
+            })
+            .collect()
     }
 
     /// Get ciphertext entries
@@ -493,7 +514,7 @@ impl SubstrateRpcClient {
     /// Submit a shielded transaction to the network
     ///
     /// Submits a signed transaction bundle containing the STARK proof,
-    /// nullifiers, commitments, encrypted notes, anchor, and binding signature.
+    /// nullifiers, commitments, encrypted notes, anchor, and binding hash.
     /// This calls the `hegemon_submitShieldedTransfer` RPC which verifies
     /// the STARK proof and submits the transaction to the shielded pool.
     ///
@@ -642,6 +663,25 @@ impl SubstrateRpcClient {
         })
     }
 
+    async fn get_runtime_metadata_bytes(&self) -> Result<Vec<u8>, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+
+        let metadata_hex: String = client
+            .request("state_getMetadata", rpc_params![])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("state_getMetadata failed: {}", e)))?;
+
+        hex::decode(metadata_hex.trim_start_matches("0x")).map_err(|e| {
+            WalletError::Serialization(format!("failed to decode runtime metadata hex: {}", e))
+        })
+    }
+
+    async fn get_shielded_pool_call_indices(&self) -> Result<ShieldedPoolCallIndices, WalletError> {
+        let metadata_bytes = self.get_runtime_metadata_bytes().await?;
+        lookup_shielded_pool_call_indices(&metadata_bytes)
+    }
+
     /// Get account nonce for replay protection
     ///
     /// Queries the System.Account storage to get the nonce for the account.
@@ -735,6 +775,109 @@ impl SubstrateRpcClient {
         Ok(free_balance)
     }
 
+    /// Fetch asset registry metadata for an asset id.
+    pub async fn asset_metadata(&self, asset_id: u64) -> Result<Option<String>, WalletError> {
+        let asset_id: u32 = asset_id
+            .try_into()
+            .map_err(|_| WalletError::InvalidArgument("asset id out of range"))?;
+        let details = self.fetch_asset_details(asset_id).await?;
+        let Some(details) = details else {
+            return Ok(None);
+        };
+        if details.metadata.is_empty() {
+            return Ok(None);
+        }
+        let metadata = match String::from_utf8(details.metadata.clone()) {
+            Ok(text) => text,
+            Err(_) => format!("0x{}", hex::encode(details.metadata)),
+        };
+        Ok(Some(metadata))
+    }
+
+    /// Build a stablecoin policy binding from on-chain state.
+    pub async fn stablecoin_policy_binding(
+        &self,
+        asset_id: u64,
+        issuance_delta: i128,
+    ) -> Result<StablecoinPolicyBinding, WalletError> {
+        if issuance_delta == 0 {
+            return Err(WalletError::InvalidArgument(
+                "stablecoin issuance delta must be non-zero",
+            ));
+        }
+        let magnitude = issuance_delta.unsigned_abs();
+        if magnitude > u64::MAX as u128 {
+            return Err(WalletError::InvalidArgument(
+                "stablecoin issuance delta exceeds u64 range",
+            ));
+        }
+
+        let asset_id_u32: u32 = asset_id
+            .try_into()
+            .map_err(|_| WalletError::InvalidArgument("asset id out of range"))?;
+
+        let policy = self
+            .fetch_stablecoin_policy(asset_id_u32)
+            .await?
+            .ok_or(WalletError::InvalidArgument("stablecoin policy missing"))?;
+
+        if policy.asset_id != asset_id_u32 {
+            return Err(WalletError::InvalidArgument(
+                "stablecoin policy asset id mismatch",
+            ));
+        }
+        if !policy.active {
+            return Err(WalletError::InvalidArgument("stablecoin policy inactive"));
+        }
+        if policy.oracle_feeds.len() != 1 {
+            return Err(WalletError::InvalidArgument(
+                "stablecoin policy requires exactly one oracle feed",
+            ));
+        }
+
+        let policy_hash = self
+            .fetch_stablecoin_policy_hash(asset_id_u32)
+            .await?
+            .ok_or(WalletError::InvalidArgument(
+                "stablecoin policy hash missing",
+            ))?;
+
+        let oracle_feed = policy.oracle_feeds[0];
+        let oracle = self.fetch_oracle_commitment(oracle_feed).await?.ok_or(
+            WalletError::InvalidArgument("stablecoin oracle commitment missing"),
+        )?;
+
+        let metadata = self.get_chain_metadata().await?;
+        let age = metadata.block_number.saturating_sub(oracle.submitted_at);
+        if age > policy.oracle_max_age {
+            return Err(WalletError::InvalidArgument(
+                "stablecoin oracle commitment is stale",
+            ));
+        }
+
+        let attestation = self
+            .fetch_attestation_commitment(policy.attestation_id)
+            .await?
+            .ok_or(WalletError::InvalidArgument(
+                "stablecoin attestation missing",
+            ))?;
+        if attestation.disputed {
+            return Err(WalletError::InvalidArgument(
+                "stablecoin attestation is disputed",
+            ));
+        }
+
+        Ok(StablecoinPolicyBinding {
+            enabled: true,
+            asset_id,
+            policy_hash,
+            oracle_commitment: oracle.commitment,
+            attestation_commitment: attestation.commitment,
+            issuance_delta,
+            policy_version: policy.policy_version,
+        })
+    }
+
     /// Check if a nullifier has been spent on-chain
     ///
     /// Queries the ShieldedPool.Nullifiers storage to check if a nullifier exists.
@@ -794,7 +937,8 @@ impl SubstrateRpcClient {
     pub async fn is_valid_anchor(&self, anchor: &[u8; 32]) -> Result<bool, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
-        let anchor_hex = format!("0x{}", hex::encode(anchor));
+        // `hegemon_isValidAnchor` expects hex without a 0x prefix.
+        let anchor_hex = hex::encode(anchor);
         let result: bool = client
             .request("hegemon_isValidAnchor", rpc_params![anchor_hex])
             .await
@@ -853,11 +997,18 @@ impl SubstrateRpcClient {
     ) -> Result<[u8; 32], WalletError> {
         use crate::extrinsic::{Era, ExtrinsicBuilder, ShieldedTransferCall};
 
+        if bundle.value_balance != 0 {
+            return Err(WalletError::InvalidArgument(
+                "transparent pool disabled: value_balance must be 0",
+            ));
+        }
+
         // 1. Create extrinsic builder from seed
         let builder = ExtrinsicBuilder::from_seed(signing_seed);
 
         // 2. Get chain metadata
         let metadata = self.get_chain_metadata().await?;
+        let call_indices = self.get_shielded_pool_call_indices().await?;
 
         // 3. Get account nonce
         let nonce = self.get_nonce(&builder.account_id()).await?;
@@ -879,7 +1030,11 @@ impl SubstrateRpcClient {
 
         // 6. Build and sign the extrinsic
         let extrinsic = builder.build_shielded_transfer(
-            &call, nonce, era, 0, // tip
+            &call,
+            call_indices.shielded_transfer,
+            nonce,
+            era,
+            0, // tip
             &metadata,
         )?;
 
@@ -915,6 +1070,7 @@ impl SubstrateRpcClient {
 
         // Build the call from the bundle
         let call = ShieldedTransferCall::from_bundle(bundle);
+        let call_indices = self.get_shielded_pool_call_indices().await?;
 
         // Verify this is a pure shielded transfer (value_balance = 0)
         if bundle.value_balance != 0 {
@@ -930,7 +1086,8 @@ impl SubstrateRpcClient {
         // eprintln!("DEBUG: Number of encrypted notes: {}", call.encrypted_notes.len());
 
         // Build the unsigned extrinsic
-        let extrinsic = build_unsigned_shielded_transfer(&call)?;
+        let extrinsic =
+            build_unsigned_shielded_transfer(&call, call_indices.shielded_transfer_unsigned)?;
 
         // eprintln!("DEBUG: Unsigned extrinsic size: {} bytes", extrinsic.len());
 
@@ -974,6 +1131,8 @@ impl SubstrateRpcClient {
             ));
         }
 
+        let call_indices = self.get_shielded_pool_call_indices().await?;
+
         // Build the call
         let call = BatchShieldedTransferCall {
             batch_size,
@@ -985,152 +1144,109 @@ impl SubstrateRpcClient {
         };
 
         // Build the unsigned extrinsic
-        let extrinsic = build_unsigned_batch_shielded_transfer(&call)?;
+        let extrinsic =
+            build_unsigned_batch_shielded_transfer(&call, call_indices.batch_shielded_transfer)?;
 
         // Submit
         self.submit_extrinsic(&extrinsic).await
     }
 
-    /// Shield transparent funds into the shielded pool
-    ///
-    /// This converts transparent balance to a shielded note by calling
-    /// `pallet_shielded_pool::shield(amount, commitment, encrypted_note)`
-    ///
-    /// # Arguments
-    ///
-    /// * `amount` - Amount to shield (in smallest units)
-    /// * `commitment` - Note commitment (32 bytes, hash of note contents)
-    /// * `encrypted_note` - Encrypted note data for recipient
-    /// * `signing_seed` - 32-byte seed for ML-DSA key derivation
-    ///
-    /// # Returns
-    ///
-    /// The transaction hash (32 bytes) if accepted into the pool.
-    pub async fn submit_shield_signed(
+    async fn storage_value(&self, storage_key: Vec<u8>) -> Result<Option<Vec<u8>>, WalletError> {
+        self.ensure_connected().await?;
+        let client = self.client.read().await;
+        let storage_key_hex = format!("0x{}", hex::encode(&storage_key));
+        let result: Option<String> = client
+            .request("state_getStorage", rpc_params![storage_key_hex])
+            .await
+            .map_err(|e| WalletError::Rpc(format!("state_getStorage failed: {}", e)))?;
+
+        let Some(data_hex) = result else {
+            return Ok(None);
+        };
+
+        let data = hex::decode(data_hex.trim_start_matches("0x"))
+            .map_err(|e| WalletError::Rpc(format!("failed to decode storage: {}", e)))?;
+        Ok(Some(data))
+    }
+
+    async fn fetch_stablecoin_policy(
         &self,
-        amount: u128,
-        commitment: [u8; 32],
-        encrypted_note: crate::extrinsic::EncryptedNote,
-        signing_seed: &[u8; 32],
-    ) -> Result<[u8; 32], WalletError> {
-        use crate::extrinsic::{Era, ExtrinsicBuilder, ShieldCall};
-
-        // 1. Create extrinsic builder from seed
-        let builder = ExtrinsicBuilder::from_seed(signing_seed);
-
-        // 2. Get chain metadata
-        let metadata = self.get_chain_metadata().await?;
-        // eprintln!("DEBUG: Block number: {}", metadata.block_number);
-        // eprintln!("DEBUG: Genesis hash: 0x{}", hex::encode(&metadata.genesis_hash));
-        // eprintln!("DEBUG: Block hash: 0x{}", hex::encode(&metadata.block_hash));
-        // eprintln!("DEBUG: Spec version: {}", metadata.spec_version);
-        // eprintln!("DEBUG: Tx version: {}", metadata.tx_version);
-
-        // 3. Get account nonce
-        let nonce = self.get_nonce(&builder.account_id()).await?;
-        // eprintln!("DEBUG: Account nonce: {}", nonce);
-
-        // 4. Build the call
-        let call = ShieldCall::new(amount, commitment, encrypted_note);
-
-        // 5. Build mortal era (64 block validity)
-        // Use current block number directly - block_hash is the hash of this block
-        let era = Era::mortal(64, metadata.block_number);
-        // eprintln!("DEBUG: Era bytes: {:?}", era.encode());
-
-        // Calculate expected extra bytes
-        let era_bytes = era.encode().len();
-        let nonce_compact_bytes = if nonce < 64 {
-            1
-        } else if nonce < 16384 {
-            2
-        } else {
-            4
+        asset_id: u32,
+    ) -> Result<Option<StablecoinPolicyStorage>, WalletError> {
+        let key = build_storage_map_key(b"StablecoinPolicy", b"Policies", &asset_id.encode());
+        let Some(data) = self.storage_value(key).await? else {
+            return Ok(None);
         };
-        let tip_bytes = 1; // tip=0 is always 1 byte
-        let _extra_total = era_bytes + nonce_compact_bytes + tip_bytes;
-        // eprintln!("DEBUG: Extra bytes expected: {} (era={}, nonce_compact={}, tip={})",
-        //     extra_total, era_bytes, nonce_compact_bytes, tip_bytes);
+        StablecoinPolicyStorage::decode(&mut &data[..])
+            .map(Some)
+            .map_err(|e| WalletError::Rpc(format!("stablecoin policy decode failed: {}", e)))
+    }
 
-        // 6. Build and sign the extrinsic
-        let extrinsic = builder.build_shield(
-            &call, nonce, era, 0, // tip
-            &metadata,
-        )?;
-
-        // DEBUG: Detailed byte-by-byte analysis
-        // eprintln!("DEBUG: Extrinsic total length: {} bytes", extrinsic.len());
-
-        // Parse compact length prefix
-        let compact_mode = extrinsic[0] & 0b11;
-        let (_compact_value, compact_len) = match compact_mode {
-            0 => ((extrinsic[0] >> 2) as usize, 1),
-            1 => {
-                let v = u16::from_le_bytes([extrinsic[0], extrinsic[1]]) >> 2;
-                (v as usize, 2)
-            }
-            2 => {
-                let v =
-                    u32::from_le_bytes([extrinsic[0], extrinsic[1], extrinsic[2], extrinsic[3]])
-                        >> 2;
-                (v as usize, 4)
-            }
-            _ => {
-                let n = (extrinsic[0] >> 2) + 4;
-                (0usize, 1 + n as usize) // simplified
-            }
+    async fn fetch_stablecoin_policy_hash(
+        &self,
+        asset_id: u32,
+    ) -> Result<Option<[u8; 32]>, WalletError> {
+        let key = build_storage_map_key(b"StablecoinPolicy", b"PolicyHashes", &asset_id.encode());
+        let Some(data) = self.storage_value(key).await? else {
+            return Ok(None);
         };
-        // eprintln!("DEBUG: Compact length: {} (encoded in {} bytes)", compact_value, compact_len);
+        <[u8; 32]>::decode(&mut &data[..])
+            .map(Some)
+            .map_err(|e| WalletError::Rpc(format!("policy hash decode failed: {}", e)))
+    }
 
-        let pos = compact_len;
-        // eprintln!("DEBUG: Version byte at {}: 0x{:02x} (expected 0x84)", pos, extrinsic[pos]);
+    async fn fetch_oracle_commitment(
+        &self,
+        feed_id: u32,
+    ) -> Result<Option<OracleCommitmentSnapshot>, WalletError> {
+        let key = build_storage_map_key(b"Oracles", b"Feeds", &feed_id.encode());
+        let Some(data) = self.storage_value(key).await? else {
+            return Ok(None);
+        };
+        let feed = OracleFeedDetails::decode(&mut &data[..])
+            .map_err(|e| WalletError::Rpc(format!("oracle feed decode failed: {}", e)))?;
+        let record = match feed.latest_commitment {
+            Some(record) => record,
+            None => return Ok(None),
+        };
+        let commitment = bytes32_from_vec(record.commitment, "oracle commitment")?;
+        Ok(Some(OracleCommitmentSnapshot {
+            commitment,
+            submitted_at: record.submitted_at,
+        }))
+    }
 
-        let pos = pos + 1;
-        // eprintln!("DEBUG: MultiAddress variant at {}: 0x{:02x} (expected 0x00)", pos, extrinsic[pos]);
+    async fn fetch_attestation_commitment(
+        &self,
+        commitment_id: u64,
+    ) -> Result<Option<AttestationCommitmentSnapshot>, WalletError> {
+        let key = build_storage_map_key(b"Attestations", b"Commitments", &commitment_id.encode());
+        let Some(data) = self.storage_value(key).await? else {
+            return Ok(None);
+        };
+        let record = AttestationCommitmentRecord::decode(&mut &data[..]).map_err(|e| {
+            WalletError::Rpc(format!("attestation commitment decode failed: {}", e))
+        })?;
+        let commitment = bytes32_from_vec(record.root, "attestation commitment")?;
+        let disputed = record.dispute != DisputeStatus::None;
+        Ok(Some(AttestationCommitmentSnapshot {
+            commitment,
+            disputed,
+            created_at: record.created,
+        }))
+    }
 
-        let pos = pos + 1;
-        // eprintln!("DEBUG: AccountId at {}: {}", pos, hex::encode(&extrinsic[pos..pos+32]));
-
-        let pos = pos + 32;
-        // eprintln!("DEBUG: Signature variant at {}: 0x{:02x} (expected 0x00 for MlDsa)", pos, extrinsic[pos]);
-
-        let pos = pos + 1;
-        // eprintln!("DEBUG: Signature (3309 bytes) starts at {}", pos);
-
-        let pos = pos + 3309;
-        // eprintln!("DEBUG: Public variant at {}: 0x{:02x} (expected 0x00)", pos, extrinsic[pos]);
-
-        let pos = pos + 1;
-        // eprintln!("DEBUG: Public key (1952 bytes) starts at {}", pos);
-
-        let pos = pos + 1952;
-        // eprintln!("DEBUG: Extra starts at {}", pos);
-        // eprintln!("DEBUG: Extra bytes: {}", hex::encode(&extrinsic[pos..pos+_extra_total]));
-
-        let pos = pos + _extra_total;
-        // eprintln!("DEBUG: Call starts at {}", pos);
-        // eprintln!("DEBUG: First 50 bytes of call: {}", hex::encode(&extrinsic[pos..pos+50.min(extrinsic.len()-pos)]));
-
-        // Verify call structure
-        // eprintln!("DEBUG: Pallet index: {} (expected 19)", extrinsic[pos]);
-        // eprintln!("DEBUG: Call index: {} (expected 1)", extrinsic[pos+1]);
-
-        // Calculate where kem_ciphertext should start
-        // Call: pallet(1) + call(1) + amount(16) + commitment(32) + ciphertext(611) = 661
-        let kem_start_in_call = 1 + 1 + 16 + 32 + 611;
-        let kem_start_absolute = pos + kem_start_in_call;
-        let kem_end = kem_start_absolute + 1088;
-        // eprintln!("DEBUG: kem_ciphertext should be at bytes {}-{}", kem_start_absolute, kem_end);
-        // eprintln!("DEBUG: Extrinsic ends at byte {}", extrinsic.len());
-
-        if kem_end > extrinsic.len() {
-            // eprintln!("DEBUG: ERROR! kem_ciphertext would extend {} bytes beyond extrinsic!", kem_end - extrinsic.len());
-        } else {
-            // eprintln!("DEBUG: kem_ciphertext fits within extrinsic ✓");
-        }
-
-        // 7. Submit
-        self.submit_extrinsic(&extrinsic).await
+    async fn fetch_asset_details(
+        &self,
+        asset_id: u32,
+    ) -> Result<Option<AssetDetailsStorage>, WalletError> {
+        let key = build_storage_map_key(b"AssetRegistry", b"Assets", &asset_id.encode());
+        let Some(data) = self.storage_value(key).await? else {
+            return Ok(None);
+        };
+        AssetDetailsStorage::decode(&mut &data[..])
+            .map(Some)
+            .map_err(|e| WalletError::Rpc(format!("asset details decode failed: {}", e)))
     }
 }
 
@@ -1148,11 +1264,24 @@ struct ShieldedTransferRequest {
     /// Merkle root anchor (hex encoded)
     anchor: String,
     /// Binding signature (hex encoded)
-    binding_sig: String,
+    binding_hash: String,
     /// Native fee encoded in the proof
     fee: u64,
-    /// Value balance (positive = shielding, negative = unshielding)
+    /// Value balance (must be 0 when no transparent pool is enabled)
     value_balance: i128,
+    /// Optional stablecoin policy binding
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stablecoin: Option<StablecoinPolicyBindingRequest>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct StablecoinPolicyBindingRequest {
+    asset_id: u64,
+    policy_hash: String,
+    oracle_commitment: String,
+    attestation_commitment: String,
+    issuance_delta: i128,
+    policy_version: u32,
 }
 
 impl ShieldedTransferRequest {
@@ -1181,7 +1310,19 @@ impl ShieldedTransferRequest {
 
         // Encode anchor and binding sig
         let anchor = hex::encode(bundle.anchor);
-        let binding_sig = hex::encode(bundle.binding_sig);
+        let binding_hash = hex::encode(bundle.binding_hash);
+        let stablecoin = if bundle.stablecoin.enabled {
+            Some(StablecoinPolicyBindingRequest {
+                asset_id: bundle.stablecoin.asset_id,
+                policy_hash: hex::encode(bundle.stablecoin.policy_hash),
+                oracle_commitment: hex::encode(bundle.stablecoin.oracle_commitment),
+                attestation_commitment: hex::encode(bundle.stablecoin.attestation_commitment),
+                issuance_delta: bundle.stablecoin.issuance_delta,
+                policy_version: bundle.stablecoin.policy_version,
+            })
+        } else {
+            None
+        };
 
         Ok(Self {
             proof,
@@ -1189,9 +1330,10 @@ impl ShieldedTransferRequest {
             commitments,
             encrypted_notes,
             anchor,
-            binding_sig,
+            binding_hash,
             fee: bundle.fee,
             value_balance: bundle.value_balance,
+            stablecoin,
         })
     }
 }
@@ -1210,7 +1352,8 @@ struct ShieldedTransferResponse {
 }
 
 fn hex_to_array(hex_str: &str) -> Result<[u8; 32], WalletError> {
-    let bytes = hex::decode(hex_str)
+    let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    let bytes = hex::decode(trimmed)
         .map_err(|e| WalletError::Serialization(format!("Invalid hex: {}", e)))?;
     if bytes.len() != 32 {
         return Err(WalletError::Serialization("expected 32-byte hash".into()));
@@ -1218,6 +1361,112 @@ fn hex_to_array(hex_str: &str) -> Result<[u8; 32], WalletError> {
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
     Ok(out)
+}
+
+fn bytes32_from_vec(bytes: Vec<u8>, label: &'static str) -> Result<[u8; 32], WalletError> {
+    if bytes.len() != 32 {
+        return Err(WalletError::Rpc(format!(
+            "{} length {} != 32",
+            label,
+            bytes.len()
+        )));
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Decode)]
+struct StablecoinPolicyStorage {
+    asset_id: u32,
+    oracle_feeds: Vec<u32>,
+    attestation_id: u64,
+    min_collateral_ratio_ppm: u128,
+    max_mint_per_epoch: u128,
+    oracle_max_age: u64,
+    policy_version: u32,
+    active: bool,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Decode)]
+struct OracleSubmissionRules {
+    min_interval: u64,
+    max_size: u32,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Decode)]
+struct OracleCommitmentRecord {
+    commitment: Vec<u8>,
+    attestation: Option<u64>,
+    submitted_by: [u8; 32],
+    submitted_at: u64,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Decode)]
+struct OracleFeedDetails {
+    owner: [u8; 32],
+    name: Vec<u8>,
+    endpoint: Vec<u8>,
+    rules: OracleSubmissionRules,
+    latest_commitment: Option<OracleCommitmentRecord>,
+    last_ingestion: u64,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Decode, PartialEq, Eq)]
+enum RootKind {
+    Hash,
+    Merkle,
+    Stark,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Decode, PartialEq, Eq)]
+enum DisputeStatus {
+    None,
+    Pending,
+    Escalated,
+    RolledBack,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Decode)]
+struct AttestationCommitmentRecord {
+    root_kind: RootKind,
+    root: Vec<u8>,
+    issuer: Option<u64>,
+    verification_key: Option<Vec<u8>>,
+    dispute: DisputeStatus,
+    created: u64,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug, Decode)]
+struct AssetDetailsStorage {
+    creator: [u8; 32],
+    metadata: Vec<u8>,
+    regulatory_tags: Vec<Vec<u8>>,
+    provenance: Vec<u64>,
+    updated: u64,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct OracleCommitmentSnapshot {
+    commitment: [u8; 32],
+    submitted_at: u64,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+struct AttestationCommitmentSnapshot {
+    commitment: [u8; 32],
+    disputed: bool,
+    created_at: u64,
 }
 
 /// Blocking wrapper for SubstrateRpcClient
@@ -1350,6 +1599,20 @@ fn build_nullifier_storage_key(nullifier: &[u8; 32]) -> Vec<u8> {
     key.extend_from_slice(nullifier);
 
     key
+}
+
+/// Build the storage key for a map with Blake2_128Concat keys.
+fn build_storage_map_key(pallet: &[u8], storage: &[u8], key: &[u8]) -> Vec<u8> {
+    let pallet_hash = twox_128(pallet);
+    let storage_hash = twox_128(storage);
+    let blake2_hash = blake2_128(key);
+
+    let mut out = Vec::with_capacity(16 + 16 + 16 + key.len());
+    out.extend_from_slice(&pallet_hash);
+    out.extend_from_slice(&storage_hash);
+    out.extend_from_slice(&blake2_hash);
+    out.extend_from_slice(key);
+    out
 }
 
 /// xxHash 128-bit (two rounds of xxHash64)

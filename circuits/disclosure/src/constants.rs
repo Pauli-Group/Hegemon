@@ -12,8 +12,14 @@ pub const INPUT_PAIRS: usize = 7;
 /// Dummy cycle to seed the first absorption.
 pub const DUMMY_CYCLES: usize = 1;
 
+/// Number of cycles reserved for squeezing extra output limbs.
+pub const SQUEEZE_CYCLES: usize = 1;
+
+/// Padding cycles to keep trace length a power of two.
+pub const PADDING_CYCLES: usize = 16 - DUMMY_CYCLES - INPUT_PAIRS - SQUEEZE_CYCLES;
+
 /// Total cycles in the trace.
-pub const TOTAL_CYCLES: usize = DUMMY_CYCLES + INPUT_PAIRS;
+pub const TOTAL_CYCLES: usize = DUMMY_CYCLES + INPUT_PAIRS + SQUEEZE_CYCLES + PADDING_CYCLES;
 
 /// Trace width (columns).
 pub const TRACE_WIDTH: usize = 7;
@@ -22,7 +28,7 @@ pub const TRACE_WIDTH: usize = 7;
 pub const TRACE_LENGTH: usize = TOTAL_CYCLES * CYCLE_LENGTH;
 
 /// Circuit version (increment on constraint changes).
-pub const CIRCUIT_VERSION: u32 = 1;
+pub const CIRCUIT_VERSION: u32 = 2;
 
 /// AIR domain tag for hash binding.
 pub const AIR_DOMAIN_TAG: &[u8] = b"SHPC-DISCLOSURE-AIR-V1";

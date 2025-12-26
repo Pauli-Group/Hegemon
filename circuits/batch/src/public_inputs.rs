@@ -1,5 +1,7 @@
 //! Public inputs for batch transaction verification.
 
+use alloc::vec;
+use alloc::vec::Vec;
 use winterfell::math::{fields::f64::BaseElement, FieldElement, ToElements};
 
 /// Maximum transactions per batch (power of 2 for trace efficiency).
@@ -10,6 +12,10 @@ pub const MAX_INPUTS: usize = 2;
 
 /// Maximum outputs per transaction.
 pub const MAX_OUTPUTS: usize = 2;
+
+fn is_zero_hash(value: &[BaseElement; 4]) -> bool {
+    value.iter().all(|elem| *elem == BaseElement::ZERO)
+}
 
 /// Public inputs for batch transaction verification.
 ///
@@ -22,15 +28,15 @@ pub struct BatchPublicInputs {
 
     /// Shared Merkle anchor for all input notes.
     /// All transactions in the batch must use the same anchor.
-    pub anchor: BaseElement,
+    pub anchor: [BaseElement; 4],
 
     /// Nullifiers from all transactions (batch_size × MAX_INPUTS).
     /// Zero values indicate unused slots.
-    pub nullifiers: Vec<BaseElement>,
+    pub nullifiers: Vec<[BaseElement; 4]>,
 
     /// Commitments from all transactions (batch_size × MAX_OUTPUTS).
     /// Zero values indicate unused slots.
-    pub commitments: Vec<BaseElement>,
+    pub commitments: Vec<[BaseElement; 4]>,
 
     /// Total fee across all transactions.
     pub total_fee: BaseElement,
@@ -43,9 +49,9 @@ impl BatchPublicInputs {
     /// Create new batch public inputs.
     pub fn new(
         batch_size: u32,
-        anchor: BaseElement,
-        nullifiers: Vec<BaseElement>,
-        commitments: Vec<BaseElement>,
+        anchor: [BaseElement; 4],
+        nullifiers: Vec<[BaseElement; 4]>,
+        commitments: Vec<[BaseElement; 4]>,
         total_fee: BaseElement,
     ) -> Self {
         Self {
@@ -62,7 +68,7 @@ impl BatchPublicInputs {
     pub fn active_nullifier_count(&self) -> usize {
         self.nullifiers
             .iter()
-            .filter(|nf| **nf != BaseElement::ZERO)
+            .filter(|nf| !is_zero_hash(nf))
             .count()
     }
 
@@ -70,7 +76,7 @@ impl BatchPublicInputs {
     pub fn active_commitment_count(&self) -> usize {
         self.commitments
             .iter()
-            .filter(|cm| **cm != BaseElement::ZERO)
+            .filter(|cm| !is_zero_hash(cm))
             .count()
     }
 
@@ -107,14 +113,14 @@ impl BatchPublicInputs {
     }
 
     /// Get nullifiers for a specific transaction in the batch.
-    pub fn transaction_nullifiers(&self, tx_index: usize) -> &[BaseElement] {
+    pub fn transaction_nullifiers(&self, tx_index: usize) -> &[[BaseElement; 4]] {
         let start = tx_index * MAX_INPUTS;
         let end = start + MAX_INPUTS;
         &self.nullifiers[start..end]
     }
 
     /// Get commitments for a specific transaction in the batch.
-    pub fn transaction_commitments(&self, tx_index: usize) -> &[BaseElement] {
+    pub fn transaction_commitments(&self, tx_index: usize) -> &[[BaseElement; 4]] {
         let start = tx_index * MAX_OUTPUTS;
         let end = start + MAX_OUTPUTS;
         &self.commitments[start..end]
@@ -125,9 +131,13 @@ impl ToElements<BaseElement> for BatchPublicInputs {
     fn to_elements(&self) -> Vec<BaseElement> {
         let mut elements = Vec::new();
         elements.push(BaseElement::new(self.batch_size as u64));
-        elements.push(self.anchor);
-        elements.extend(&self.nullifiers);
-        elements.extend(&self.commitments);
+        elements.extend_from_slice(&self.anchor);
+        for nf in &self.nullifiers {
+            elements.extend_from_slice(nf);
+        }
+        for cm in &self.commitments {
+            elements.extend_from_slice(cm);
+        }
         elements.push(self.total_fee);
         elements.push(BaseElement::new(self.circuit_version as u64));
         elements
@@ -138,9 +148,9 @@ impl Default for BatchPublicInputs {
     fn default() -> Self {
         Self {
             batch_size: 2,
-            anchor: BaseElement::ZERO,
-            nullifiers: vec![BaseElement::ZERO; 2 * MAX_INPUTS],
-            commitments: vec![BaseElement::ZERO; 2 * MAX_OUTPUTS],
+            anchor: [BaseElement::ZERO; 4],
+            nullifiers: vec![[BaseElement::ZERO; 4]; 2 * MAX_INPUTS],
+            commitments: vec![[BaseElement::ZERO; 4]; 2 * MAX_OUTPUTS],
             total_fee: BaseElement::ZERO,
             circuit_version: 1,
         }
@@ -154,20 +164,46 @@ mod tests {
     #[test]
     fn test_batch_public_inputs_validation() {
         // Valid batch of 2
+        let zero = [BaseElement::ZERO; 4];
         let inputs = BatchPublicInputs {
             batch_size: 2,
-            anchor: BaseElement::new(123),
-            nullifiers: vec![
-                BaseElement::new(1),
+            anchor: [
+                BaseElement::new(123),
                 BaseElement::ZERO,
-                BaseElement::new(2),
+                BaseElement::ZERO,
                 BaseElement::ZERO,
             ],
+            nullifiers: vec![
+                [
+                    BaseElement::new(1),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                zero,
+                [
+                    BaseElement::new(2),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                zero,
+            ],
             commitments: vec![
-                BaseElement::new(10),
-                BaseElement::ZERO,
-                BaseElement::new(20),
-                BaseElement::ZERO,
+                [
+                    BaseElement::new(10),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                zero,
+                [
+                    BaseElement::new(20),
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                    BaseElement::ZERO,
+                ],
+                zero,
             ],
             total_fee: BaseElement::new(100),
             circuit_version: 1,
@@ -195,35 +231,43 @@ mod tests {
         let inputs = BatchPublicInputs::default();
         let elements = inputs.to_elements();
 
-        // batch_size + anchor + nullifiers + commitments + fee + version
-        let expected_len = 1 + 1 + (2 * MAX_INPUTS) + (2 * MAX_OUTPUTS) + 1 + 1;
+        // batch_size + anchor(4) + nullifiers(4 limbs each) + commitments(4 limbs each) + fee + version
+        let expected_len = 1 + 4 + (2 * MAX_INPUTS * 4) + (2 * MAX_OUTPUTS * 4) + 1 + 1;
         assert_eq!(elements.len(), expected_len);
     }
 
     #[test]
     fn test_transaction_accessors() {
+        let mk_felt4 = |value| {
+            [
+                BaseElement::new(value),
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+            ]
+        };
         let inputs = BatchPublicInputs {
             batch_size: 2,
-            anchor: BaseElement::ZERO,
+            anchor: [BaseElement::ZERO; 4],
             nullifiers: vec![
-                BaseElement::new(1),
-                BaseElement::new(2), // TX 0
-                BaseElement::new(3),
-                BaseElement::new(4), // TX 1
+                mk_felt4(1),
+                mk_felt4(2), // TX 0
+                mk_felt4(3),
+                mk_felt4(4), // TX 1
             ],
             commitments: vec![
-                BaseElement::new(10),
-                BaseElement::new(20), // TX 0
-                BaseElement::new(30),
-                BaseElement::new(40), // TX 1
+                mk_felt4(10),
+                mk_felt4(20), // TX 0
+                mk_felt4(30),
+                mk_felt4(40), // TX 1
             ],
             total_fee: BaseElement::ZERO,
             circuit_version: 1,
         };
 
-        assert_eq!(inputs.transaction_nullifiers(0)[0], BaseElement::new(1));
-        assert_eq!(inputs.transaction_nullifiers(1)[0], BaseElement::new(3));
-        assert_eq!(inputs.transaction_commitments(0)[1], BaseElement::new(20));
-        assert_eq!(inputs.transaction_commitments(1)[1], BaseElement::new(40));
+        assert_eq!(inputs.transaction_nullifiers(0)[0], mk_felt4(1));
+        assert_eq!(inputs.transaction_nullifiers(1)[0], mk_felt4(3));
+        assert_eq!(inputs.transaction_commitments(0)[1], mk_felt4(20));
+        assert_eq!(inputs.transaction_commitments(1)[1], mk_felt4(40));
     }
 }

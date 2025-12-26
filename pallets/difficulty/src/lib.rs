@@ -515,8 +515,8 @@ mod tests {
     fn difficulty_increases_when_blocks_too_fast() {
         new_test_ext().execute_with(|| {
             let old_difficulty = U256::from(1_000_000u64);
-            let actual_time = 5_000u64; // 5 seconds (should be 10)
-            let expected_time = 10_000u64;
+            let expected_time = TARGET_BLOCK_TIME_MS;
+            let actual_time = expected_time / 2; // half target
 
             let new_difficulty =
                 Difficulty::calculate_new_difficulty(old_difficulty, actual_time, expected_time);
@@ -530,8 +530,8 @@ mod tests {
     fn difficulty_decreases_when_blocks_too_slow() {
         new_test_ext().execute_with(|| {
             let old_difficulty = U256::from(1_000_000u64);
-            let actual_time = 20_000u64; // 20 seconds (should be 10)
-            let expected_time = 10_000u64;
+            let expected_time = TARGET_BLOCK_TIME_MS;
+            let actual_time = expected_time * 2; // 2x target
 
             let new_difficulty =
                 Difficulty::calculate_new_difficulty(old_difficulty, actual_time, expected_time);
@@ -546,7 +546,7 @@ mod tests {
         new_test_ext().execute_with(|| {
             let old_difficulty = U256::from(1_000_000u64);
             let actual_time = 1u64; // Extremely fast
-            let expected_time = 10_000u64;
+            let expected_time = TARGET_BLOCK_TIME_MS;
 
             let new_difficulty =
                 Difficulty::calculate_new_difficulty(old_difficulty, actual_time, expected_time);

@@ -72,7 +72,7 @@ fn tamper_commitment_rejects() {
 #[test]
 fn reject_non_canonical_commitment() {
     let (mut claim, witness) = sample_claim_and_witness();
-    claim.commitment = [0xAA; 32];
+    claim.commitment = [0xFF; 32];
     let err = prove_payment_disclosure(&claim, &witness).unwrap_err();
     match err {
         DisclosureCircuitError::NonCanonicalCommitment => {}

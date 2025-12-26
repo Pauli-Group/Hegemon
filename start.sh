@@ -31,6 +31,7 @@ HEGEMON_MINE="$HEGEMON_MINE" \
 HEGEMON_SEEDS="$HEGEMON_SEEDS" \
 HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
 ./target/release/hegemon-node \
+  --dev \
   --base-path "$HOME/.hegemon-node" \
   --chain config/dev-chainspec.json \
   --rpc-port 9944 \

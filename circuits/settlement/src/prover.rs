@@ -16,8 +16,8 @@ use winterfell::{
 
 use crate::air::{SettlementAir, SettlementPublicInputs};
 use crate::constants::{
-    COL_IN0, COL_IN1, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH, INPUT_PAIRS_PER_TRACE,
-    SETTLEMENT_DOMAIN_TAG, TRACE_LENGTH, TRACE_WIDTH,
+    ABSORB_CYCLES, COL_IN0, COL_IN1, COL_S0, COL_S1, COL_S2, CYCLE_LENGTH, INPUT_PAIRS_PER_TRACE,
+    PADDED_INPUT_COUNT, SETTLEMENT_DOMAIN_TAG, TRACE_LENGTH, TRACE_WIDTH,
 };
 use crate::hashing::{poseidon_round, Felt};
 
@@ -46,18 +46,22 @@ impl SettlementProver {
 
     pub fn build_trace(&self, pub_inputs: &SettlementPublicInputs) -> TraceTable<BaseElement> {
         let inputs = pub_inputs.input_elements();
-        debug_assert_eq!(inputs.len(), INPUT_PAIRS_PER_TRACE * 2);
+        debug_assert_eq!(inputs.len(), PADDED_INPUT_COUNT);
 
         let mut columns = vec![vec![BaseElement::ZERO; TRACE_LENGTH]; TRACE_WIDTH];
         let mut state = [
-            BaseElement::new(SETTLEMENT_DOMAIN_TAG),
-            BaseElement::ZERO,
+            BaseElement::new(SETTLEMENT_DOMAIN_TAG) + inputs[0],
+            inputs[1],
             BaseElement::ONE,
         ];
 
         for cycle in 0..INPUT_PAIRS_PER_TRACE {
-            let in0 = inputs[2 * cycle];
-            let in1 = inputs[2 * cycle + 1];
+            let pair_index = cycle + 1;
+            let (in0, in1) = if pair_index < ABSORB_CYCLES {
+                (inputs[2 * pair_index], inputs[2 * pair_index + 1])
+            } else {
+                (BaseElement::ZERO, BaseElement::ZERO)
+            };
             for step in 0..CYCLE_LENGTH {
                 let row = cycle * CYCLE_LENGTH + step;
                 columns[COL_S0][row] = state[0];
@@ -68,15 +72,12 @@ impl SettlementProver {
 
                 if row + 1 < TRACE_LENGTH {
                     match step {
-                        0 => {
-                            state[0] += in0;
-                            state[1] += in1;
-                        }
-                        1..=8 => {
-                            poseidon_round(&mut state, step - 1);
+                        0..transaction_core::constants::POSEIDON_ROUNDS => {
+                            poseidon_round(&mut state, step);
                         }
                         _ => {
-                            // Copy step: keep state unchanged.
+                            state[0] += in0;
+                            state[1] += in1;
                         }
                     }
                 }
@@ -119,8 +120,8 @@ impl Prover for SettlementProver {
             instruction_count: 0,
             nullifier_count: 0,
             instructions: vec![Felt::ZERO; crate::constants::MAX_INSTRUCTIONS],
-            nullifiers: vec![Felt::ZERO; crate::constants::MAX_NULLIFIERS],
-            commitment: Felt::ZERO,
+            nullifiers: vec![[Felt::ZERO; 4]; crate::constants::MAX_NULLIFIERS],
+            commitment: [Felt::ZERO; 4],
         })
     }
 
@@ -198,15 +199,15 @@ mod tests {
     fn prove_and_verify_roundtrip() {
         let mut instructions = vec![Felt::ZERO; crate::constants::MAX_INSTRUCTIONS];
         instructions[0] = Felt::new(10);
-        let mut nullifiers = vec![Felt::ZERO; crate::constants::MAX_NULLIFIERS];
-        nullifiers[0] = Felt::new(22);
+        let mut nullifiers = vec![[Felt::ZERO; 4]; crate::constants::MAX_NULLIFIERS];
+        nullifiers[0][0] = Felt::new(22);
 
         let pub_inputs = SettlementPublicInputs {
             instruction_count: 1,
             nullifier_count: 1,
             instructions,
             nullifiers,
-            commitment: Felt::ZERO,
+            commitment: [Felt::ZERO; 4],
         };
         let inputs = pub_inputs.input_elements();
         let commitment = commitment_from_inputs(&inputs);
@@ -229,14 +230,14 @@ mod tests {
     #[test]
     fn tamper_rejects_commitment() {
         let instructions = vec![Felt::ZERO; crate::constants::MAX_INSTRUCTIONS];
-        let nullifiers = vec![Felt::ZERO; crate::constants::MAX_NULLIFIERS];
+        let nullifiers = vec![[Felt::ZERO; 4]; crate::constants::MAX_NULLIFIERS];
 
         let mut pub_inputs = SettlementPublicInputs {
             instruction_count: 0,
             nullifier_count: 0,
             instructions,
             nullifiers,
-            commitment: Felt::ZERO,
+            commitment: [Felt::ZERO; 4],
         };
         let inputs = pub_inputs.input_elements();
         pub_inputs.commitment = commitment_from_inputs(&inputs);
@@ -245,7 +246,7 @@ mod tests {
         let (proof, pub_inputs) = prover.prove_settlement(pub_inputs).expect("proof");
 
         let mut tampered = pub_inputs.clone();
-        tampered.commitment += Felt::ONE;
+        tampered.commitment[0] += Felt::ONE;
 
         let acceptable = winterfell::AcceptableOptions::OptionSet(vec![fast_proof_options()]);
         let result = winterfell::verify::<

@@ -14,5 +14,8 @@ transaction-core = { path = "../transaction-core", features = ["serde", "stark-v
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }
 
+[features]
+stark-fast = []
+
 [lints]
 workspace = true

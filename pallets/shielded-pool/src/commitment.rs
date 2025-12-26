@@ -5,51 +5,46 @@
 //! - Hiding: commitment reveals nothing about the note contents
 //! - Binding: cannot find another note with the same commitment
 //!
-//! IMPORTANT: This module contains TWO commitment schemes:
-//! 1. Legacy `note_commitment` - Blake2-wrapped Poseidon (deprecated)
-//! 2. Circuit-compatible `circuit_note_commitment` - matches ZK circuit exactly
+//! IMPORTANT: Legacy Blake2-wrapped Poseidon helpers are available only with the
+//! `legacy-commitment` feature. Production uses circuit-compatible hashing.
 
+#[cfg(feature = "legacy-commitment")]
 use sp_core::blake2_256;
+#[cfg(feature = "legacy-commitment")]
 use sp_std::vec::Vec;
 
-use crate::types::{Note, DIVERSIFIED_ADDRESS_SIZE, MEMO_SIZE};
+use crate::types::DIVERSIFIED_ADDRESS_SIZE;
+#[cfg(feature = "legacy-commitment")]
+use crate::types::{Note, MEMO_SIZE};
 
-/// Domain separator for note commitments.
+/// Domain separator for legacy note commitments.
+#[cfg(feature = "legacy-commitment")]
 const NOTE_COMMITMENT_DOMAIN: &[u8] = b"Hegemon_NoteCommitment_v1";
 
-/// Domain separator for nullifiers.
+/// Domain separator for legacy nullifiers.
+#[cfg(feature = "legacy-commitment")]
 const NULLIFIER_DOMAIN: &[u8] = b"Hegemon_Nullifier_v1";
 
-/// Domain separator for PRF key derivation.
+/// Domain separator for legacy PRF key derivation.
+#[cfg(feature = "legacy-commitment")]
 const PRF_KEY_DOMAIN: &[u8] = b"Hegemon_PrfKey_v1";
 
-/// Poseidon-like hash parameters for note commitments.
-/// These are simplified for the pallet; the actual ZK circuit uses
-/// proper Poseidon with STARK-friendly field elements.
-const POSEIDON_ROUNDS: usize = 8;
-const POSEIDON_WIDTH: usize = 3;
+/// Poseidon hash parameters (shared with the circuit).
+#[cfg(feature = "legacy-commitment")]
+const POSEIDON_ROUNDS: usize = transaction_core::constants::POSEIDON_ROUNDS;
+#[cfg(feature = "legacy-commitment")]
+const POSEIDON_WIDTH: usize = transaction_core::constants::POSEIDON_WIDTH;
 
-// ================================================================================================
-// CIRCUIT-COMPATIBLE DOMAIN TAGS (must match circuits/transaction/src/constants.rs)
-// ================================================================================================
+/// Field modulus for legacy Poseidon (Goldilocks prime).
+#[cfg(feature = "legacy-commitment")]
+const FIELD_MODULUS: u128 = transaction_core::constants::FIELD_MODULUS;
 
-/// Domain separation tag for note commitments (circuit-compatible).
-const CIRCUIT_NOTE_DOMAIN_TAG: u64 = 1;
-
-/// Domain separation tag for nullifiers (circuit-compatible).
-const CIRCUIT_NULLIFIER_DOMAIN_TAG: u64 = 2;
-
-/// Domain separation tag for Merkle tree nodes (circuit-compatible).
-#[allow(dead_code)]
-const CIRCUIT_MERKLE_DOMAIN_TAG: u64 = 4;
-
-/// Field modulus for simplified Poseidon (Goldilocks-like).
-const FIELD_MODULUS: u128 = 0xffffffff00000001;
-
-/// A field element for Poseidon operations.
+/// A field element for legacy Poseidon operations.
+#[cfg(feature = "legacy-commitment")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldElement(u64);
 
+#[cfg(feature = "legacy-commitment")]
 impl FieldElement {
     /// Create zero element.
     pub fn zero() -> Self {
@@ -101,144 +96,32 @@ impl FieldElement {
 }
 
 // ================================================================================================
-// CIRCUIT-COMPATIBLE SPONGE (matches circuits/transaction/src/hashing.rs exactly)
+// CIRCUIT-COMPATIBLE HASHING (matches circuits/transaction-core hashing)
 // ================================================================================================
 
-/// Compute round constant matching the circuit implementation.
-#[inline]
-fn circuit_round_constant(round: usize, position: usize) -> u64 {
-    ((round as u64).wrapping_add(1).wrapping_mul(0x9e37_79b9u64))
-        ^ ((position as u64)
-            .wrapping_add(1)
-            .wrapping_mul(0x7f4a_7c15u64))
-}
-
-/// Mix function matching the circuit implementation.
-fn circuit_mix(state: &mut [u64; POSEIDON_WIDTH]) {
-    const MIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
-    let state_snapshot = *state;
-    let mut tmp = [0u64; POSEIDON_WIDTH];
-    for (row, output) in MIX.iter().zip(tmp.iter_mut()) {
-        let mut acc: u128 = 0;
-        for (&coef, &value) in row.iter().zip(state_snapshot.iter()) {
-            // Use u128 for intermediate multiplication to match circuit
-            let prod = ((value as u128) * (coef as u128)) % FIELD_MODULUS;
-            acc = (acc + prod) % FIELD_MODULUS;
-        }
-        *output = acc as u64;
-    }
-    *state = tmp;
-}
-
-/// Permutation function matching the circuit implementation.
-fn circuit_permutation(state: &mut [u64; POSEIDON_WIDTH]) {
-    for round in 0..POSEIDON_ROUNDS {
-        for (position, value) in state.iter_mut().enumerate() {
-            let rc = circuit_round_constant(round, position);
-            *value = ((*value as u128 + rc as u128) % FIELD_MODULUS) as u64;
-        }
-        for value in state.iter_mut() {
-            // x^5 S-box
-            let v = *value as u128;
-            let v2 = (v * v) % FIELD_MODULUS;
-            let v4 = (v2 * v2) % FIELD_MODULUS;
-            let v5 = (v4 * v) % FIELD_MODULUS;
-            *value = v5 as u64;
-        }
-        circuit_mix(state);
-    }
-}
-
-/// Absorb function matching the circuit implementation.
-fn circuit_absorb(state: &mut [u64; POSEIDON_WIDTH], chunk: &[u64]) {
-    for (state_slot, &value) in state.iter_mut().zip(chunk.iter()) {
-        *state_slot = ((*state_slot as u128 + value as u128) % FIELD_MODULUS) as u64;
-    }
-    circuit_permutation(state);
-}
-
-/// Sponge hash function matching the circuit implementation exactly.
-///
-/// This is the canonical hash used by the ZK circuits.
-/// Initial state: [domain_tag, 0, 1]
-/// Rate: 2 (POSEIDON_WIDTH - 1)
-pub fn circuit_sponge(domain_tag: u64, inputs: &[u64]) -> u64 {
-    let mut state = [domain_tag, 0, 1];
-    let rate = POSEIDON_WIDTH - 1;
-    let mut cursor = 0;
-    while cursor < inputs.len() {
-        let take = core::cmp::min(rate, inputs.len() - cursor);
-        let mut chunk = [0u64; 2]; // rate = 2
-        chunk[..take].copy_from_slice(&inputs[cursor..cursor + take]);
-        circuit_absorb(&mut state, &chunk);
-        cursor += take;
-    }
-    state[0]
-}
-
-/// Convert bytes to circuit-compatible field elements.
-/// Takes 8 bytes at a time as big-endian u64, left-padding shorter chunks.
-fn bytes_to_circuit_felts(bytes: &[u8]) -> Vec<u64> {
-    bytes
-        .chunks(8)
-        .map(|chunk| {
-            let mut buf = [0u8; 8];
-            buf[8 - chunk.len()..].copy_from_slice(chunk);
-            u64::from_be_bytes(buf)
-        })
-        .collect()
-}
-
 /// Compute note commitment exactly as the ZK circuit does.
-///
-/// This matches `circuits/transaction/src/hashing.rs::note_commitment` exactly.
-/// Format: sponge(NOTE_DOMAIN_TAG, [value, asset_id, pk_recipient..., rho..., r...])
-///
-/// Arguments:
-/// - value: Note value in atomic units
-/// - asset_id: Asset identifier (0 for native)
-/// - pk_recipient: 32-byte recipient public key
-/// - rho: 32-byte randomness for nullifier derivation
-/// - r: 32-byte commitment randomness
-///
-/// Returns: 64-bit Felt value (stored as last 8 bytes of 32-byte commitment)
 pub fn circuit_note_commitment(
     value: u64,
     asset_id: u64,
     pk_recipient: &[u8; 32],
     rho: &[u8; 32],
     r: &[u8; 32],
-) -> u64 {
-    let mut inputs = Vec::new();
-    inputs.push(value);
-    inputs.push(asset_id);
-    inputs.extend(bytes_to_circuit_felts(pk_recipient));
-    inputs.extend(bytes_to_circuit_felts(rho));
-    inputs.extend(bytes_to_circuit_felts(r));
-    circuit_sponge(CIRCUIT_NOTE_DOMAIN_TAG, &inputs)
+) -> [u8; 32] {
+    transaction_core::hashing::note_commitment_bytes(value, asset_id, pk_recipient, rho, r)
 }
 
 /// Compute nullifier exactly as the ZK circuit does.
 ///
 /// This matches `circuits/transaction/src/hashing.rs::nullifier` exactly.
-pub fn circuit_nullifier(prf_key: u64, rho: &[u8; 32], position: u64) -> u64 {
-    let mut inputs = Vec::new();
-    inputs.push(prf_key);
-    inputs.push(position);
-    inputs.extend(bytes_to_circuit_felts(rho));
-    circuit_sponge(CIRCUIT_NULLIFIER_DOMAIN_TAG, &inputs)
+pub fn circuit_nullifier(prf_key: u64, rho: &[u8; 32], position: u64) -> [u8; 32] {
+    transaction_core::hashing::nullifier_bytes(transaction_core::Felt::new(prf_key), rho, position)
 }
 
 /// Compute PRF key exactly as the ZK circuit does.
 ///
 /// This matches `circuits/transaction/src/hashing.rs::prf_key` exactly.
 pub fn circuit_prf_key(sk_spend: &[u8; 32]) -> u64 {
-    let elements = bytes_to_circuit_felts(sk_spend);
-    // PRF key uses sponge with no domain tag, just absorbing sk_spend
-    // Actually, looking at hashing.rs, prf_key just converts bytes to felts and returns first one
-    // Let me check the actual implementation...
-    // For now, use a simple sponge
-    circuit_sponge(0, &elements)
+    transaction_core::hashing::prf_key(sk_spend).as_int()
 }
 
 /// Convert a circuit Felt (u64) to a 32-byte commitment.
@@ -265,42 +148,39 @@ pub fn commitment_to_felt(commitment: &[u8; 32]) -> u64 {
 }
 
 // ================================================================================================
-// LEGACY POSEIDON IMPLEMENTATION (kept for backward compatibility)
+// LEGACY POSEIDON IMPLEMENTATION (feature-gated; not used in production)
 // ================================================================================================
 
-/// Generate round constants for Poseidon.
+/// Generate round constants for legacy Poseidon.
+#[cfg(feature = "legacy-commitment")]
 fn poseidon_round_constants() -> [[FieldElement; POSEIDON_WIDTH]; POSEIDON_ROUNDS] {
     let mut constants = [[FieldElement::zero(); POSEIDON_WIDTH]; POSEIDON_ROUNDS];
     for (round, round_constants) in constants.iter_mut().enumerate() {
         for (idx, constant) in round_constants.iter_mut().enumerate() {
-            // Derive deterministic constants
-            let material = [round as u8, idx as u8];
-            let hash = blake2_256(&[b"poseidon-constants", material.as_slice()].concat());
-            *constant = FieldElement::from_bytes(&hash[..8]);
+            let value = transaction_core::poseidon_constants::ROUND_CONSTANTS[round][idx];
+            *constant = FieldElement::from_u64(value);
         }
     }
     constants
 }
 
-/// MDS mixing matrix application.
+/// MDS mixing matrix application (legacy).
+#[cfg(feature = "legacy-commitment")]
 fn poseidon_mix(state: &mut [FieldElement; POSEIDON_WIDTH]) {
-    const MIX_MATRIX: [[u64; POSEIDON_WIDTH]; POSEIDON_WIDTH] = [[2, 1, 1], [1, 2, 1], [1, 1, 2]];
     let mut new_state = [FieldElement::zero(); POSEIDON_WIDTH];
-    for (new_slot, mix_row) in new_state.iter_mut().zip(MIX_MATRIX.iter()) {
+    for (row_idx, new_slot) in new_state.iter_mut().enumerate() {
         let mut acc = FieldElement::zero();
-        for (value, coeff) in state.iter().zip(mix_row.iter()) {
-            acc = acc.add(value.mul(FieldElement::from_u64(*coeff)));
+        for (col_idx, value) in state.iter().enumerate() {
+            let coeff = transaction_core::poseidon_constants::MDS_MATRIX[row_idx][col_idx];
+            acc = acc.add(value.mul(FieldElement::from_u64(coeff)));
         }
         *new_slot = acc;
     }
     *state = new_state;
 }
 
-/// Poseidon hash function.
-///
-/// This is a simplified implementation for the pallet runtime.
-/// The ZK circuits use the full algebraic Poseidon over the Goldilocks field (2^64 - 2^32 + 1).
-/// Poseidon is STARK-friendly and uses only field arithmetic.
+/// Legacy Poseidon hash (feature-gated).
+#[cfg(feature = "legacy-commitment")]
 pub fn poseidon_hash(inputs: &[FieldElement]) -> FieldElement {
     let constants = poseidon_round_constants();
     let mut state = [
@@ -325,44 +205,26 @@ pub fn poseidon_hash(inputs: &[FieldElement]) -> FieldElement {
     state[0]
 }
 
-/// Compute note commitment.
-///
-/// commitment = Poseidon(domain || recipient || value || rcm)
-///
-/// This produces a 32-byte commitment that hides the note contents
-/// but is binding (cannot find a different note with the same commitment).
+/// Compute legacy note commitment (feature-gated).
+#[cfg(feature = "legacy-commitment")]
 pub fn note_commitment(note: &Note) -> [u8; 32] {
-    // Convert note fields to field elements
     let mut inputs = Vec::new();
-
-    // Domain separator
     let domain_hash = blake2_256(NOTE_COMMITMENT_DOMAIN);
     inputs.push(FieldElement::from_bytes(&domain_hash[..8]));
-
-    // Recipient address (split into chunks)
     for chunk in note.recipient.chunks(8) {
         inputs.push(FieldElement::from_bytes(chunk));
     }
-
-    // Value
     inputs.push(FieldElement::from_u64(note.value));
-
-    // Randomness (split into chunks)
     for chunk in note.rcm.chunks(8) {
         inputs.push(FieldElement::from_bytes(chunk));
     }
-
-    // Compute Poseidon hash
     let hash = poseidon_hash(&inputs);
-
-    // Expand to 32 bytes using Blake2b
     let hash_bytes = hash.to_bytes();
     blake2_256(&[NOTE_COMMITMENT_DOMAIN, &hash_bytes].concat())
 }
 
-/// Compute note commitment from raw components.
-///
-/// This is useful when you have the components separately rather than a full Note.
+/// Compute legacy note commitment from raw components (feature-gated).
+#[cfg(feature = "legacy-commitment")]
 pub fn note_commitment_from_parts(
     recipient: &[u8; DIVERSIFIED_ADDRESS_SIZE],
     value: u64,
@@ -427,8 +289,8 @@ pub fn derive_coinbase_r(public_seed: &[u8; 32]) -> [u8; 32] {
 /// This is a specialized commitment for coinbase notes that uses the
 /// deterministic rho/r derived from the public seed.
 ///
-/// commitment = note_commitment(recipient, value, r)
-/// where r = derive_coinbase_r(public_seed)
+/// commitment = circuit_note_commitment(recipient, value, rho, r)
+/// where rho/r are derived from the public seed
 #[deprecated(
     since = "0.2.0",
     note = "Use circuit_coinbase_commitment for ZK-compatible commitments"
@@ -458,7 +320,7 @@ pub fn coinbase_commitment(
 /// - public_seed: 32-byte seed used to derive rho and r
 /// - asset_id: Asset identifier (0 for native)
 ///
-/// Returns: 32-byte commitment where the Felt is stored in bytes[24..32]
+/// Returns: 32-byte commitment encoding (4 x 64-bit limbs)
 pub fn circuit_coinbase_commitment(
     pk_recipient: &[u8; 32],
     value: u64,
@@ -469,9 +331,7 @@ pub fn circuit_coinbase_commitment(
     let rho = derive_coinbase_rho(public_seed);
     let r = derive_coinbase_r(public_seed);
 
-    // Compute circuit-compatible commitment
-    let felt = circuit_note_commitment(value, asset_id, pk_recipient, &rho, &r);
-    felt_to_commitment(felt)
+    circuit_note_commitment(value, asset_id, pk_recipient, &rho, &r)
 }
 
 /// Derive PRF key from spending key.
@@ -479,6 +339,7 @@ pub fn circuit_coinbase_commitment(
 /// prf_key = Blake2b(domain || sk_spend)
 ///
 /// The PRF key is used to derive nullifiers for spent notes.
+#[cfg(feature = "legacy-commitment")]
 pub fn derive_prf_key(sk_spend: &[u8; 32]) -> [u8; 32] {
     blake2_256(&[PRF_KEY_DOMAIN, sk_spend.as_slice()].concat())
 }
@@ -489,6 +350,7 @@ pub fn derive_prf_key(sk_spend: &[u8; 32]) -> [u8; 32] {
 ///
 /// The nullifier uniquely identifies a spent note without revealing which note it is.
 /// Only the owner (who knows prf_key) can compute the nullifier.
+#[cfg(feature = "legacy-commitment")]
 pub fn compute_nullifier(prf_key: &[u8; 32], position: u32, cm: &[u8; 32]) -> [u8; 32] {
     let mut inputs = Vec::new();
 
@@ -520,6 +382,7 @@ pub fn compute_nullifier(prf_key: &[u8; 32], position: u32, cm: &[u8; 32]) -> [u
 /// Verify that a commitment matches a note.
 ///
 /// Returns true if note_commitment(note) == commitment.
+#[cfg(feature = "legacy-commitment")]
 pub fn verify_commitment(note: &Note, commitment: &[u8; 32]) -> bool {
     note_commitment(note) == *commitment
 }
@@ -530,75 +393,63 @@ mod tests {
 
     #[test]
     fn note_commitment_is_deterministic() {
-        let recipient = [1u8; DIVERSIFIED_ADDRESS_SIZE];
+        let pk_recipient = [1u8; 32];
+        let rho = [2u8; 32];
+        let r = [3u8; 32];
         let value = 1000u64;
-        let rcm = [2u8; 32];
+        let asset_id = 0u64;
 
-        let note = Note::with_empty_memo(recipient, value, rcm);
-        let cm1 = note_commitment(&note);
-        let cm2 = note_commitment(&note);
-
+        let cm1 = circuit_note_commitment(value, asset_id, &pk_recipient, &rho, &r);
+        let cm2 = circuit_note_commitment(value, asset_id, &pk_recipient, &rho, &r);
         assert_eq!(cm1, cm2);
     }
 
     #[test]
     fn note_commitment_is_binding() {
-        let recipient = [1u8; DIVERSIFIED_ADDRESS_SIZE];
+        let pk_recipient = [1u8; 32];
+        let rho = [2u8; 32];
         let value = 1000u64;
-        let rcm1 = [2u8; 32];
-        let rcm2 = [3u8; 32];
+        let asset_id = 0u64;
+        let r1 = [3u8; 32];
+        let r2 = [4u8; 32];
 
-        let note1 = Note::with_empty_memo(recipient, value, rcm1);
-        let note2 = Note::with_empty_memo(recipient, value, rcm2);
-
-        assert_ne!(note_commitment(&note1), note_commitment(&note2));
-    }
-
-    #[test]
-    fn note_commitment_from_parts_matches_full_note() {
-        let recipient = [1u8; DIVERSIFIED_ADDRESS_SIZE];
-        let value = 1000u64;
-        let rcm = [2u8; 32];
-
-        let note = Note::with_empty_memo(recipient, value, rcm);
-        let cm1 = note_commitment(&note);
-        let cm2 = note_commitment_from_parts(&recipient, value, &rcm);
-
-        assert_eq!(cm1, cm2);
+        let cm1 = circuit_note_commitment(value, asset_id, &pk_recipient, &rho, &r1);
+        let cm2 = circuit_note_commitment(value, asset_id, &pk_recipient, &rho, &r2);
+        assert_ne!(cm1, cm2);
     }
 
     #[test]
     fn nullifier_is_deterministic() {
-        let prf_key = [1u8; 32];
-        let position = 42u32;
-        let cm = [2u8; 32];
+        let prf_key = 42u64;
+        let position = 42u64;
+        let rho = [9u8; 32];
 
-        let nf1 = compute_nullifier(&prf_key, position, &cm);
-        let nf2 = compute_nullifier(&prf_key, position, &cm);
+        let nf1 = circuit_nullifier(prf_key, &rho, position);
+        let nf2 = circuit_nullifier(prf_key, &rho, position);
 
         assert_eq!(nf1, nf2);
     }
 
     #[test]
     fn nullifier_uniquely_identifies_note() {
-        let prf_key = [1u8; 32];
-        let cm = [2u8; 32];
+        let prf_key = 1u64;
+        let rho = [2u8; 32];
 
-        let nf1 = compute_nullifier(&prf_key, 0, &cm);
-        let nf2 = compute_nullifier(&prf_key, 1, &cm);
+        let nf1 = circuit_nullifier(prf_key, &rho, 0);
+        let nf2 = circuit_nullifier(prf_key, &rho, 1);
 
         assert_ne!(nf1, nf2);
     }
 
     #[test]
     fn different_prf_keys_produce_different_nullifiers() {
-        let prf_key1 = [1u8; 32];
-        let prf_key2 = [2u8; 32];
-        let position = 0u32;
-        let cm = [3u8; 32];
+        let prf_key1 = 1u64;
+        let prf_key2 = 2u64;
+        let position = 0u64;
+        let rho = [3u8; 32];
 
-        let nf1 = compute_nullifier(&prf_key1, position, &cm);
-        let nf2 = compute_nullifier(&prf_key2, position, &cm);
+        let nf1 = circuit_nullifier(prf_key1, &rho, position);
+        let nf2 = circuit_nullifier(prf_key2, &rho, position);
 
         assert_ne!(nf1, nf2);
     }
@@ -606,45 +457,27 @@ mod tests {
     #[test]
     fn prf_key_derivation_works() {
         let sk_spend = [1u8; 32];
-        let prf_key = derive_prf_key(&sk_spend);
+        let prf_key = circuit_prf_key(&sk_spend);
 
         // PRF key should be deterministic
-        assert_eq!(prf_key, derive_prf_key(&sk_spend));
+        assert_eq!(prf_key, circuit_prf_key(&sk_spend));
 
         // Different spending keys should produce different PRF keys
         let sk_spend2 = [2u8; 32];
-        assert_ne!(prf_key, derive_prf_key(&sk_spend2));
+        assert_ne!(prf_key, circuit_prf_key(&sk_spend2));
     }
 
     #[test]
-    fn verify_commitment_works() {
-        let recipient = [1u8; DIVERSIFIED_ADDRESS_SIZE];
-        let value = 1000u64;
-        let rcm = [2u8; 32];
+    fn coinbase_commitment_matches_circuit_form() {
+        let pk_recipient = [9u8; 32];
+        let value = 500u64;
+        let seed = [7u8; 32];
 
-        let note = Note::with_empty_memo(recipient, value, rcm);
-        let cm = note_commitment(&note);
+        let rho = derive_coinbase_rho(&seed);
+        let r = derive_coinbase_r(&seed);
+        let direct = circuit_note_commitment(value, 0, &pk_recipient, &rho, &r);
+        let via_coinbase = circuit_coinbase_commitment(&pk_recipient, value, &seed, 0);
 
-        assert!(verify_commitment(&note, &cm));
-
-        // Wrong commitment should fail
-        let wrong_cm = [0u8; 32];
-        assert!(!verify_commitment(&note, &wrong_cm));
-    }
-
-    #[test]
-    fn poseidon_basic_works() {
-        let inputs = [
-            FieldElement::from_u64(1),
-            FieldElement::from_u64(2),
-            FieldElement::from_u64(3),
-        ];
-        let hash = poseidon_hash(&inputs);
-
-        // Hash should be non-zero
-        assert_ne!(hash.inner(), 0);
-
-        // Hash should be deterministic
-        assert_eq!(hash, poseidon_hash(&inputs));
+        assert_eq!(direct, via_coinbase);
     }
 }

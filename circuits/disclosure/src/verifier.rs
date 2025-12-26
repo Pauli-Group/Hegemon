@@ -16,10 +16,7 @@ pub fn verify_disclosure_proof(
     proof: &Proof,
     pub_inputs: &DisclosurePublicInputs,
 ) -> Result<(), VerifierError> {
-    let acceptable = AcceptableOptions::OptionSet(vec![
-        default_acceptable_options(),
-        fast_acceptable_options(),
-    ]);
+    let acceptable = acceptable_options();
 
     verify::<DisclosureAir, Blake3, DefaultRandomCoin<Blake3>, MerkleTree<Blake3>>(
         proof.clone(),
@@ -51,6 +48,21 @@ fn default_acceptable_options() -> winterfell::ProofOptions {
     )
 }
 
+fn acceptable_options() -> AcceptableOptions {
+    #[cfg(feature = "stark-fast")]
+    {
+        AcceptableOptions::OptionSet(vec![
+            default_acceptable_options(),
+            fast_acceptable_options(),
+        ])
+    }
+    #[cfg(not(feature = "stark-fast"))]
+    {
+        AcceptableOptions::OptionSet(vec![default_acceptable_options()])
+    }
+}
+
+#[cfg(feature = "stark-fast")]
 fn fast_acceptable_options() -> winterfell::ProofOptions {
     winterfell::ProofOptions::new(
         8,

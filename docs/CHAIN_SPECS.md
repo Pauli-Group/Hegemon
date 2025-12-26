@@ -52,3 +52,4 @@ This guide tracks the chain specifications we ship for coordinated testing and p
 - Keep these specs synchronized with `DESIGN.md` network parameters and the governance procedures in `METHODS.md`.
 - When generating JSON specs, commit the signed authority keys to the internal registry and link the digest here.
 - Include the expected `spec_version` and `state_version` bumps in release notes so node operators can validate binaries before joining.
+- Any protocol-breaking commitment/nullifier encoding change (e.g., switching to 4-limb 256-bit encodings) requires operators to delete `node.db` and wallet store files before joining the new chain spec.

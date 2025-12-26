@@ -5,9 +5,8 @@
 //! ## Overview
 //!
 //! The shielded pool allows users to:
-//! - Shield transparent funds (deposit into shielded pool)
-//! - Transfer shielded funds privately
-//! - Unshield funds back to transparent balances
+//! - Transfer shielded funds privately inside the single PQ pool
+//! - Mint shielded coinbase notes as the sole issuance path
 //!
 //! ## Key Components
 //!
@@ -22,7 +21,7 @@
 //! 1. Anchor validation (Merkle root must be historical)
 //! 2. Nullifier uniqueness check (no double-spending)
 //! 3. ZK proof verification (transaction is valid)
-//! 4. Binding signature verification (value balance is correct)
+//! 4. Binding hash verification (public inputs are committed)
 //! 5. State update (add nullifiers, add commitments)
 
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -38,28 +37,27 @@ pub mod types;
 pub mod verifier;
 
 use merkle::CompactMerkleTree;
-use types::{BindingSignature, EncryptedNote, StarkProof, VerifyingKeyParams, MERKLE_TREE_DEPTH};
+use types::{
+    BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof, VerifyingKeyParams,
+    MERKLE_TREE_DEPTH,
+};
 use verifier::{
     BatchVerifier, ProofVerifier, ShieldedTransferInputs, VerificationResult, VerifyingKey,
 };
 
 use frame_support::dispatch::DispatchResult;
 use frame_support::pallet_prelude::*;
-use frame_support::traits::{Currency, ExistenceRequirement, StorageVersion};
+use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
-use frame_support::PalletId;
 use frame_system::pallet_prelude::*;
 use log::{info, warn};
-use sp_runtime::traits::AccountIdConversion;
+use sp_runtime::traits::Saturating;
 use sp_runtime::transaction_validity::{
     InvalidTransaction, TransactionPriority, TransactionSource, TransactionValidity,
     ValidTransaction,
 };
 use sp_std::vec;
 use sp_std::vec::Vec;
-
-/// Pallet ID for deriving the pool account.
-const PALLET_ID: PalletId = PalletId(*b"shld/pol");
 
 /// Zero nullifier constant.
 ///
@@ -80,6 +78,54 @@ const PALLET_ID: PalletId = PalletId(*b"shld/pol");
 const ZERO_NULLIFIER: [u8; 32] = [0u8; 32];
 const ZERO_COMMITMENT: [u8; 32] = [0u8; 32];
 
+/// Stablecoin policy snapshot used by the shielded pool verifier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StablecoinPolicySnapshot<AssetId, OracleFeedId, AttestationId, BlockNumber> {
+    pub asset_id: AssetId,
+    pub oracle_feeds: Vec<OracleFeedId>,
+    pub attestation_id: AttestationId,
+    pub min_collateral_ratio_ppm: u128,
+    pub max_mint_per_epoch: u128,
+    pub oracle_max_age: BlockNumber,
+    pub policy_version: u32,
+    pub active: bool,
+}
+
+/// Provider for stablecoin policy data.
+pub trait StablecoinPolicyProvider<AssetId, OracleFeedId, AttestationId, BlockNumber> {
+    fn policy(
+        asset_id: &AssetId,
+    ) -> Option<StablecoinPolicySnapshot<AssetId, OracleFeedId, AttestationId, BlockNumber>>;
+    fn policy_hash(asset_id: &AssetId) -> Option<[u8; 32]>;
+}
+
+/// Oracle commitment snapshot used by the verifier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OracleCommitmentSnapshot<BlockNumber> {
+    pub commitment: [u8; 32],
+    pub submitted_at: BlockNumber,
+}
+
+/// Provider for oracle commitments.
+pub trait OracleCommitmentProvider<FeedId, BlockNumber> {
+    fn latest_commitment(feed_id: &FeedId) -> Option<OracleCommitmentSnapshot<BlockNumber>>;
+}
+
+/// Attestation commitment snapshot used by the verifier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttestationCommitmentSnapshot<BlockNumber> {
+    pub commitment: [u8; 32],
+    pub disputed: bool,
+    pub created_at: BlockNumber,
+}
+
+/// Provider for attestation commitments.
+pub trait AttestationCommitmentProvider<CommitmentId, BlockNumber> {
+    fn commitment(
+        commitment_id: &CommitmentId,
+    ) -> Option<AttestationCommitmentSnapshot<BlockNumber>>;
+}
+
 /// Check if a nullifier is the zero value (which is invalid).
 fn is_zero_nullifier(nf: &[u8; 32]) -> bool {
     *nf == ZERO_NULLIFIER
@@ -93,8 +139,7 @@ fn is_zero_commitment(cm: &[u8; 32]) -> bool {
 /// Weight information for pallet extrinsics.
 pub trait WeightInfo {
     fn shielded_transfer(nullifiers: u32, commitments: u32) -> Weight;
-    fn shield() -> Weight;
-    fn unshield() -> Weight;
+    fn mint_coinbase() -> Weight;
     fn update_verifying_key() -> Weight;
 }
 
@@ -110,11 +155,7 @@ impl WeightInfo for DefaultWeightInfo {
         )
     }
 
-    fn shield() -> Weight {
-        Weight::from_parts(50_000_000, 0)
-    }
-
-    fn unshield() -> Weight {
+    fn mint_coinbase() -> Weight {
         Weight::from_parts(50_000_000, 0)
     }
 
@@ -124,12 +165,13 @@ impl WeightInfo for DefaultWeightInfo {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::large_enum_variant)]
 #[frame_support::pallet]
 pub mod pallet {
     use super::*;
 
     /// Current storage version.
-    pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+    pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(2);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
@@ -140,9 +182,6 @@ pub mod pallet {
         /// The overarching event type.
         #[allow(deprecated)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-
-        /// Currency for transparent balance operations.
-        type Currency: Currency<Self::AccountId>;
 
         /// Origin that can update verifying keys.
         type AdminOrigin: EnsureOrigin<Self::RuntimeOrigin>;
@@ -177,13 +216,48 @@ pub mod pallet {
         #[pallet::constant]
         type MerkleRootHistorySize: Get<u32>;
 
+        /// Maximum shielded coinbase subsidy per block (safety cap).
+        #[pallet::constant]
+        type MaxCoinbaseSubsidy: Get<u64>;
+
+        /// Asset id type for stablecoin policy lookups.
+        type StablecoinAssetId: Parameter
+            + Member
+            + MaxEncodedLen
+            + TypeInfo
+            + Copy
+            + Ord
+            + TryFrom<u64>;
+
+        /// Oracle feed id type for stablecoin policy lookups.
+        type OracleFeedId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Ord;
+
+        /// Attestation commitment id type for stablecoin policy lookups.
+        type AttestationId: Parameter + Member + MaxEncodedLen + TypeInfo + Copy + Ord;
+
+        /// Provider for stablecoin policy data.
+        type StablecoinPolicyProvider: StablecoinPolicyProvider<
+            Self::StablecoinAssetId,
+            Self::OracleFeedId,
+            Self::AttestationId,
+            BlockNumberFor<Self>,
+        >;
+
+        /// Provider for oracle commitments.
+        type OracleCommitmentProvider: OracleCommitmentProvider<
+            Self::OracleFeedId,
+            BlockNumberFor<Self>,
+        >;
+
+        /// Provider for attestation commitments.
+        type AttestationCommitmentProvider: AttestationCommitmentProvider<
+            Self::AttestationId,
+            BlockNumberFor<Self>,
+        >;
+
         /// Weight information.
         type WeightInfo: WeightInfo;
     }
-
-    /// Type alias for currency balance.
-    pub type BalanceOf<T> =
-        <<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
     /// The Merkle tree for note commitments.
     #[pallet::storage]
@@ -196,6 +270,12 @@ pub mod pallet {
     #[pallet::getter(fn merkle_roots)]
     pub type MerkleRoots<T: Config> =
         StorageMap<_, Blake2_128Concat, [u8; 32], BlockNumberFor<T>, OptionQuery>;
+
+    /// Ordered history of recent Merkle roots (bounded by MerkleRootHistorySize).
+    #[pallet::storage]
+    #[pallet::getter(fn merkle_root_history)]
+    pub type MerkleRootHistory<T: Config> =
+        StorageValue<_, BoundedVec<[u8; 32], T::MerkleRootHistorySize>, ValueQuery>;
 
     /// Current commitment index (number of commitments in the tree).
     #[pallet::storage]
@@ -302,26 +382,8 @@ pub mod pallet {
             nullifier_count: u32,
             /// Number of new commitments.
             commitment_count: u32,
-            /// Net value change (0 for shielded-to-shielded).
+            /// Net value change (must be 0 when no transparent pool is enabled).
             value_balance: i128,
-        },
-
-        /// Funds were shielded (transparent to shielded).
-        Shielded {
-            /// Account that shielded funds.
-            from: T::AccountId,
-            /// Amount shielded.
-            amount: BalanceOf<T>,
-            /// New commitment index.
-            commitment_index: u64,
-        },
-
-        /// Funds were unshielded (shielded to transparent).
-        Unshielded {
-            /// Account receiving funds.
-            to: T::AccountId,
-            /// Amount unshielded.
-            amount: BalanceOf<T>,
         },
 
         /// A new commitment was added to the tree.
@@ -415,27 +477,53 @@ pub mod pallet {
         /// Duplicate nullifier in transaction.
         DuplicateNullifierInTx,
         /// Binding signature verification failed.
-        InvalidBindingSignature,
-        /// Value balance overflow.
-        ValueBalanceOverflow,
-        /// Insufficient shielded pool balance.
-        InsufficientPoolBalance,
+        InvalidBindingHash,
         /// Merkle tree is full.
         MerkleTreeFull,
+        /// Merkle root history is full (history size too small).
+        MerkleRootHistoryFull,
         /// Invalid number of nullifiers.
         InvalidNullifierCount,
         /// Invalid number of commitments.
         InvalidCommitmentCount,
         /// Encrypted notes count doesn't match commitments.
         EncryptedNotesMismatch,
-        /// Insufficient transparent balance for shielding.
-        InsufficientBalance,
+        /// Transparent pool operations are disabled (value_balance must be zero).
+        TransparentPoolDisabled,
+        /// Stablecoin issuance is not allowed in unsigned transactions.
+        StablecoinIssuanceUnsigned,
+        /// Stablecoin asset id cannot be mapped into runtime AssetId.
+        StablecoinAssetIdInvalid,
+        /// Stablecoin policy is missing for the requested asset.
+        StablecoinPolicyMissing,
+        /// Stablecoin policy is inactive.
+        StablecoinPolicyInactive,
+        /// Stablecoin policy hash or version mismatch.
+        StablecoinPolicyMismatch,
+        /// Stablecoin policy oracle feed configuration is invalid.
+        StablecoinPolicyInvalid,
+        /// Stablecoin oracle commitment missing.
+        StablecoinOracleCommitmentMissing,
+        /// Stablecoin oracle commitment is stale.
+        StablecoinOracleCommitmentStale,
+        /// Stablecoin oracle commitment mismatch.
+        StablecoinOracleCommitmentMismatch,
+        /// Stablecoin attestation commitment missing.
+        StablecoinAttestationMissing,
+        /// Stablecoin attestation is disputed.
+        StablecoinAttestationDisputed,
+        /// Stablecoin attestation commitment mismatch.
+        StablecoinAttestationCommitmentMismatch,
+        /// Commitment bytes are not a canonical field encoding.
+        InvalidCommitmentEncoding,
         /// Verifying key not found or disabled.
         VerifyingKeyNotFound,
         /// Coinbase commitment verification failed.
         InvalidCoinbaseCommitment,
         /// Coinbase already processed for this block.
         CoinbaseAlreadyProcessed,
+        /// Coinbase amount exceeds the allowed subsidy for this height.
+        CoinbaseSubsidyExceedsLimit,
         /// Zero nullifier submitted (security violation - zero nullifiers are padding only).
         /// This error indicates a malicious attempt to bypass double-spend protection.
         ZeroNullifierSubmitted,
@@ -476,6 +564,12 @@ pub mod pallet {
 
             // Store initial root as valid
             MerkleRoots::<T>::insert(tree.root(), BlockNumberFor::<T>::from(0u32));
+            if T::MerkleRootHistorySize::get() > 0 {
+                let mut history: BoundedVec<[u8; 32], T::MerkleRootHistorySize> =
+                    BoundedVec::default();
+                let _ = history.try_push(tree.root());
+                MerkleRootHistory::<T>::put(history);
+            }
 
             // Initialize verifying key if provided
             if let Some(ref vk) = self.verifying_key {
@@ -504,8 +598,31 @@ pub mod pallet {
 
             if on_chain < STORAGE_VERSION {
                 info!(target: "shielded-pool", "Migrating from {:?} to {:?}", on_chain, STORAGE_VERSION);
+                let mut weight = Weight::zero();
+                let history_limit = T::MerkleRootHistorySize::get() as usize;
+                if history_limit > 0 {
+                    let mut roots: Vec<([u8; 32], BlockNumberFor<T>)> =
+                        MerkleRoots::<T>::iter().collect();
+                    roots.sort_by_key(|(_, block)| *block);
+                    let keep_start = roots.len().saturating_sub(history_limit);
+                    let (to_remove, to_keep) = roots.split_at(keep_start);
+                    for (root, _) in to_remove {
+                        MerkleRoots::<T>::remove(root);
+                    }
+                    let mut history: BoundedVec<[u8; 32], T::MerkleRootHistorySize> =
+                        BoundedVec::default();
+                    for (root, _) in to_keep {
+                        let _ = history.try_push(*root);
+                    }
+                    MerkleRootHistory::<T>::put(history);
+
+                    weight = weight.saturating_add(
+                        T::DbWeight::get()
+                            .reads_writes((roots.len() as u64) + 1, (to_remove.len() as u64) + 2),
+                    );
+                }
                 STORAGE_VERSION.put::<Pallet<T>>();
-                T::WeightInfo::update_verifying_key()
+                weight
             } else {
                 Weight::zero()
             }
@@ -525,7 +642,7 @@ pub mod pallet {
                 let block_num: u64 = block_number.try_into().unwrap_or(0u64);
 
                 // Check if this block ends an epoch
-                if block_num > 0 && block_num % EPOCH_SIZE == 0 {
+                if block_num > 0 && block_num.is_multiple_of(EPOCH_SIZE) {
                     let epoch_number = (block_num / EPOCH_SIZE) - 1;
                     if let Err(e) = Self::finalize_epoch_internal(epoch_number) {
                         log::error!(
@@ -548,10 +665,7 @@ pub mod pallet {
         /// Execute a shielded transfer.
         ///
         /// This is the core privacy-preserving transfer function.
-        /// It can handle:
-        /// - Shielded to shielded transfers (value_balance = 0)
-        /// - Shielding (value_balance > 0, from transparent)
-        /// - Unshielding (value_balance < 0, to transparent)
+        /// Only shielded-to-shielded transfers are supported (value_balance must be 0).
         #[pallet::call_index(0)]
         #[pallet::weight(T::WeightInfo::shielded_transfer(
             nullifiers.len() as u32,
@@ -564,11 +678,12 @@ pub mod pallet {
             commitments: BoundedVec<[u8; 32], T::MaxCommitmentsPerTx>,
             ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
             anchor: [u8; 32],
-            binding_sig: BindingSignature,
+            binding_hash: BindingHash,
+            stablecoin: Option<StablecoinPolicyBinding>,
             fee: u64,
             value_balance: i128,
         ) -> DispatchResult {
-            let who = ensure_signed(origin)?;
+            ensure_signed(origin)?;
 
             // SECURITY: Early size check to prevent DoS via oversized proofs.
             // This is the cheapest possible rejection - no deserialization or crypto ops.
@@ -594,6 +709,12 @@ pub mod pallet {
                 Error::<T>::InvalidAnchor
             );
 
+            // No transparent pool: reject any non-zero value balance.
+            ensure!(value_balance == 0, Error::<T>::TransparentPoolDisabled);
+
+            // Stablecoin issuance requires an active policy and fresh commitments.
+            Self::ensure_stablecoin_binding(&stablecoin)?;
+
             // SECURITY: Count real (non-zero) nullifiers and validate transaction structure.
             // The STARK proof commits to exact input/output counts, so we must verify
             // that the number of real nullifiers is consistent with the claimed operation.
@@ -614,10 +735,9 @@ pub mod pallet {
                 }
             }
 
-            // For unshielding (value_balance < 0) or pure transfers (value_balance == 0 with outputs),
-            // there must be at least one input nullifier to spend from
+            // Outputs require at least one input nullifier to spend from.
             if value_balance <= 0 && !commitments.is_empty() && nullifiers.is_empty() {
-                // Attempting to create outputs or unshield without any inputs
+                // Attempting to create outputs without any inputs
                 return Err(Error::<T>::InvalidNullifierCount.into());
             }
 
@@ -645,6 +765,7 @@ pub mod pallet {
                 commitments: commitments.clone().into_inner(),
                 fee,
                 value_balance,
+                stablecoin: stablecoin.clone(),
             };
 
             // Get verifying key
@@ -672,37 +793,9 @@ pub mod pallet {
 
             // Verify value balance commitment (checked in-circuit for PQC)
             ensure!(
-                verifier.verify_binding_signature(&binding_sig, &inputs),
-                Error::<T>::InvalidBindingSignature
+                verifier.verify_binding_hash(&binding_hash, &inputs),
+                Error::<T>::InvalidBindingHash
             );
-
-            // Handle value balance (shielding/unshielding)
-            if value_balance > 0 {
-                // Shielding: transfer from transparent to pool
-                let amount = Self::i128_to_balance(value_balance)?;
-                T::Currency::transfer(
-                    &who,
-                    &Self::pool_account(),
-                    amount,
-                    ExistenceRequirement::KeepAlive,
-                )?;
-                PoolBalance::<T>::mutate(|b| *b = b.saturating_add(value_balance as u128));
-            } else if value_balance < 0 {
-                // Unshielding: transfer from pool to transparent
-                let amount = Self::i128_to_balance(-value_balance)?;
-                let pool_balance = PoolBalance::<T>::get();
-                ensure!(
-                    pool_balance >= (-value_balance) as u128,
-                    Error::<T>::InsufficientPoolBalance
-                );
-                T::Currency::transfer(
-                    &Self::pool_account(),
-                    &who,
-                    amount,
-                    ExistenceRequirement::AllowDeath,
-                )?;
-                PoolBalance::<T>::mutate(|b| *b = b.saturating_sub((-value_balance) as u128));
-            }
 
             // Add nullifiers to spent set
             // Note: Zero nullifiers were already rejected above, so no skip needed
@@ -751,53 +844,6 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Shield transparent funds.
-        ///
-        /// Simplified interface for shielding - generates commitment on-chain.
-        /// In production, the commitment should be generated off-chain with proper randomness.
-        #[pallet::call_index(1)]
-        #[pallet::weight(T::WeightInfo::shield())]
-        pub fn shield(
-            origin: OriginFor<T>,
-            amount: BalanceOf<T>,
-            commitment: [u8; 32],
-            encrypted_note: EncryptedNote,
-        ) -> DispatchResult {
-            let who = ensure_signed(origin)?;
-
-            // Transfer to pool
-            T::Currency::transfer(
-                &who,
-                &Self::pool_account(),
-                amount,
-                ExistenceRequirement::KeepAlive,
-            )?;
-
-            // Update pool balance
-            let amount_u128 = Self::balance_to_u128(amount);
-            PoolBalance::<T>::mutate(|b| *b = b.saturating_add(amount_u128));
-
-            // Add commitment to tree
-            let index = CommitmentIndex::<T>::get();
-            Commitments::<T>::insert(index, commitment);
-            EncryptedNotes::<T>::insert(index, encrypted_note);
-            CommitmentIndex::<T>::put(index + 1);
-
-            // Update Merkle tree
-            let commitments =
-                BoundedVec::<[u8; 32], T::MaxCommitmentsPerTx>::try_from(vec![commitment])
-                    .map_err(|_| Error::<T>::InvalidCommitmentCount)?;
-            Self::update_merkle_tree(&commitments)?;
-
-            Self::deposit_event(Event::Shielded {
-                from: who,
-                amount,
-                commitment_index: index,
-            });
-
-            Ok(())
-        }
-
         /// Update the verifying key.
         ///
         /// Can only be called by AdminOrigin (governance).
@@ -824,7 +870,7 @@ pub mod pallet {
         /// Mint coinbase reward directly to the shielded pool.
         ///
         /// This is an inherent extrinsic that creates a shielded note for the miner.
-        /// Unlike regular shielding, this creates new coins (no transparent input).
+        /// Unlike regular shielded transfers, this creates new coins (no transparent input).
         ///
         /// # Arguments
         /// * `coinbase_data` - The coinbase note data containing encrypted note and audit info
@@ -834,7 +880,7 @@ pub mod pallet {
         /// - Can only be called once per block
         /// - Commitment is verified against plaintext data
         #[pallet::call_index(3)]
-        #[pallet::weight(T::WeightInfo::shield())]
+        #[pallet::weight(T::WeightInfo::mint_coinbase())]
         pub fn mint_coinbase(
             origin: OriginFor<T>,
             coinbase_data: types::CoinbaseNoteData,
@@ -847,6 +893,9 @@ pub mod pallet {
                 !CoinbaseProcessed::<T>::get(),
                 Error::<T>::CoinbaseAlreadyProcessed
             );
+
+            // Enforce subsidy schedule for shielded coinbase.
+            Self::ensure_coinbase_subsidy(coinbase_data.amount)?;
 
             // Verify the commitment matches the plaintext data
             // This ensures the miner can't claim more than stated
@@ -910,8 +959,7 @@ pub mod pallet {
         ///
         /// IMPORTANT: This call ONLY works for pure shielded transfers where
         /// value_balance = 0 (no value entering or leaving the shielded pool).
-        /// For shielding (transparent → shielded) or unshielding (shielded → transparent),
-        /// use the signed `shielded_transfer` call instead.
+        /// The signed `shielded_transfer` call also enforces value_balance = 0.
         #[pallet::call_index(4)]
         #[pallet::weight(T::WeightInfo::shielded_transfer(
             nullifiers.len() as u32,
@@ -924,14 +972,23 @@ pub mod pallet {
             commitments: BoundedVec<[u8; 32], T::MaxCommitmentsPerTx>,
             ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
             anchor: [u8; 32],
-            binding_sig: BindingSignature,
+            binding_hash: BindingHash,
+            stablecoin: Option<StablecoinPolicyBinding>,
             fee: u64,
         ) -> DispatchResult {
             // This is an unsigned extrinsic - no signer required
             ensure_none(origin)?;
 
+            // SECURITY: Early size check to prevent DoS via oversized proofs.
+            ensure!(
+                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
+                Error::<T>::ProofTooLarge
+            );
+
             // Pure shielded transfers have value_balance = 0
             let value_balance: i128 = 0;
+
+            ensure!(stablecoin.is_none(), Error::<T>::StablecoinIssuanceUnsigned);
 
             // Validate counts
             ensure!(
@@ -984,6 +1041,7 @@ pub mod pallet {
                 commitments: commitments.clone().into_inner(),
                 fee,
                 value_balance,
+                stablecoin: None,
             };
 
             // Get verifying key
@@ -1014,8 +1072,8 @@ pub mod pallet {
 
             // Verify value balance commitment (checked in-circuit for PQC)
             ensure!(
-                verifier.verify_binding_signature(&binding_sig, &inputs),
-                Error::<T>::InvalidBindingSignature
+                verifier.verify_binding_hash(&binding_hash, &inputs),
+                Error::<T>::InvalidBindingHash
             );
 
             // Add nullifiers to spent set
@@ -1157,6 +1215,7 @@ pub mod pallet {
                 nullifiers: nullifiers.clone().into_inner(),
                 commitments: commitments.clone().into_inner(),
                 batch_size: proof.batch_size,
+                total_fee,
             };
 
             // Get verifying key
@@ -1249,9 +1308,108 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
-        /// Get the pool account (derives from pallet ID).
-        pub fn pool_account() -> T::AccountId {
-            PALLET_ID.into_account_truncating()
+        /// Ensure the shielded coinbase amount stays within the subsidy schedule.
+        fn ensure_coinbase_subsidy(amount: u64) -> DispatchResult {
+            let block_number = frame_system::Pallet::<T>::block_number();
+            let height: u64 = block_number.try_into().unwrap_or(0);
+            let max_subsidy = pallet_coinbase::block_subsidy(height);
+            ensure!(
+                amount <= max_subsidy,
+                Error::<T>::CoinbaseSubsidyExceedsLimit
+            );
+            ensure!(
+                amount <= T::MaxCoinbaseSubsidy::get(),
+                Error::<T>::CoinbaseSubsidyExceedsLimit
+            );
+            Ok(())
+        }
+
+        fn ensure_stablecoin_binding(
+            stablecoin: &Option<StablecoinPolicyBinding>,
+        ) -> Result<(), Error<T>> {
+            let binding = match stablecoin.as_ref() {
+                Some(binding) => binding,
+                None => return Ok(()),
+            };
+
+            let asset_id: T::StablecoinAssetId = binding
+                .asset_id
+                .try_into()
+                .map_err(|_| Error::<T>::StablecoinAssetIdInvalid)?;
+
+            let policy = T::StablecoinPolicyProvider::policy(&asset_id)
+                .ok_or(Error::<T>::StablecoinPolicyMissing)?;
+            let policy_hash = T::StablecoinPolicyProvider::policy_hash(&asset_id)
+                .ok_or(Error::<T>::StablecoinPolicyMissing)?;
+
+            if policy_hash != binding.policy_hash || policy.policy_version != binding.policy_version
+            {
+                return Err(Error::<T>::StablecoinPolicyMismatch);
+            }
+            if policy.asset_id != asset_id {
+                return Err(Error::<T>::StablecoinPolicyMismatch);
+            }
+            if !policy.active {
+                return Err(Error::<T>::StablecoinPolicyInactive);
+            }
+            if policy.oracle_feeds.len() != 1 {
+                return Err(Error::<T>::StablecoinPolicyInvalid);
+            }
+
+            let oracle_feed = policy
+                .oracle_feeds
+                .first()
+                .ok_or(Error::<T>::StablecoinPolicyInvalid)?;
+            let oracle = T::OracleCommitmentProvider::latest_commitment(oracle_feed)
+                .ok_or(Error::<T>::StablecoinOracleCommitmentMissing)?;
+            if oracle.commitment != binding.oracle_commitment {
+                return Err(Error::<T>::StablecoinOracleCommitmentMismatch);
+            }
+
+            let now = frame_system::Pallet::<T>::block_number();
+            let age = now.saturating_sub(oracle.submitted_at);
+            if age > policy.oracle_max_age {
+                return Err(Error::<T>::StablecoinOracleCommitmentStale);
+            }
+
+            let attestation = T::AttestationCommitmentProvider::commitment(&policy.attestation_id)
+                .ok_or(Error::<T>::StablecoinAttestationMissing)?;
+            if attestation.commitment != binding.attestation_commitment {
+                return Err(Error::<T>::StablecoinAttestationCommitmentMismatch);
+            }
+            if attestation.disputed {
+                return Err(Error::<T>::StablecoinAttestationDisputed);
+            }
+
+            Ok(())
+        }
+
+        /// Record a new Merkle root and prune history to the configured bound.
+        fn record_merkle_root(root: [u8; 32], block: BlockNumberFor<T>) -> DispatchResult {
+            let history_limit = T::MerkleRootHistorySize::get() as usize;
+            MerkleRoots::<T>::insert(root, block);
+
+            if history_limit == 0 {
+                return Ok(());
+            }
+
+            let mut history = MerkleRootHistory::<T>::get();
+            if history.last().map(|last| *last == root).unwrap_or(false) {
+                return Ok(());
+            }
+
+            if history.len() >= history_limit {
+                if let Some(oldest) = history.first().copied() {
+                    MerkleRoots::<T>::remove(oldest);
+                }
+                history.remove(0);
+            }
+
+            history
+                .try_push(root)
+                .map_err(|_| Error::<T>::MerkleRootHistoryFull)?;
+            MerkleRootHistory::<T>::put(history);
+            Ok(())
         }
 
         /// Update the Merkle tree with new commitments.
@@ -1272,7 +1430,7 @@ pub mod pallet {
 
             // Store root in history
             let block = <frame_system::Pallet<T>>::block_number();
-            MerkleRoots::<T>::insert(new_root, block);
+            Self::record_merkle_root(new_root, block)?;
 
             Self::deposit_event(Event::MerkleRootUpdated { root: new_root });
 
@@ -1297,25 +1455,11 @@ pub mod pallet {
 
             // Store root in history
             let block = <frame_system::Pallet<T>>::block_number();
-            MerkleRoots::<T>::insert(new_root, block);
+            Self::record_merkle_root(new_root, block)?;
 
             Self::deposit_event(Event::MerkleRootUpdated { root: new_root });
 
             Ok(())
-        }
-
-        /// Convert i128 to Balance.
-        fn i128_to_balance(value: i128) -> Result<BalanceOf<T>, Error<T>> {
-            if value < 0 {
-                return Err(Error::<T>::ValueBalanceOverflow);
-            }
-            let value_u128 = value as u128;
-            BalanceOf::<T>::try_from(value_u128).map_err(|_| Error::<T>::ValueBalanceOverflow)
-        }
-
-        /// Convert Balance to u128.
-        fn balance_to_u128(balance: BalanceOf<T>) -> u128 {
-            balance.try_into().unwrap_or(0u128)
         }
 
         /// Get Merkle witness for a commitment at given index.
@@ -1559,6 +1703,14 @@ pub mod pallet {
         ) -> Result<(), Self::Error> {
             // Validate the inherent call
             if let Call::mint_coinbase { coinbase_data } = call {
+                if CoinbaseProcessed::<T>::get() {
+                    return Err(sp_inherents::MakeFatalError::from(()));
+                }
+
+                if Self::ensure_coinbase_subsidy(coinbase_data.amount).is_err() {
+                    return Err(sp_inherents::MakeFatalError::from(()));
+                }
+
                 // Verify commitment matches plaintext data
                 #[allow(deprecated)]
                 let expected = commitment::coinbase_commitment(
@@ -1607,7 +1759,8 @@ pub mod pallet {
                     commitments,
                     ciphertexts,
                     anchor,
-                    binding_sig,
+                    binding_hash,
+                    stablecoin,
                     fee,
                 } => {
                     log::info!(target: "shielded-pool", "Validating shielded_transfer_unsigned");
@@ -1616,10 +1769,22 @@ pub mod pallet {
                     log::info!(target: "shielded-pool", "  commitments.len = {}", commitments.len());
                     log::info!(target: "shielded-pool", "  ciphertexts.len = {}", ciphertexts.len());
                     log::info!(target: "shielded-pool", "  anchor = {:02x?}", &anchor[..8]);
-                    log::info!(target: "shielded-pool", "  binding_sig[0..8] = {:02x?}", &binding_sig.data[..8]);
+                    log::info!(target: "shielded-pool", "  binding_hash[0..8] = {:02x?}", &binding_hash.data[..8]);
                     log::info!(target: "shielded-pool", "  fee = {}", fee);
 
+                    if stablecoin.is_some() {
+                        log::info!(
+                            target: "shielded-pool",
+                            "  REJECTED: stablecoin issuance not allowed in unsigned transfer"
+                        );
+                        return InvalidTransaction::Custom(7).into();
+                    }
+
                     // Basic validation before accepting into pool
+                    if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                        log::info!(target: "shielded-pool", "  REJECTED: Proof exceeds max size");
+                        return InvalidTransaction::ExhaustsResources.into();
+                    }
 
                     // Check counts are valid
                     if nullifiers.is_empty() && commitments.is_empty() {
@@ -1689,6 +1854,7 @@ pub mod pallet {
                         commitments: commitments.clone().into_inner(),
                         fee: *fee,
                         value_balance: 0, // Pure shielded transfer
+                        stablecoin: None,
                     };
 
                     // Verify the STARK proof (this is the main validation)
@@ -1704,13 +1870,13 @@ pub mod pallet {
                         }
                     }
 
-                    // Verify binding signature
-                    log::info!(target: "shielded-pool", "  Verifying binding signature...");
-                    if !verifier.verify_binding_signature(binding_sig, &inputs) {
-                        log::info!(target: "shielded-pool", "  binding signature FAILED");
+                    // Verify binding hash
+                    log::info!(target: "shielded-pool", "  Verifying binding hash...");
+                    if !verifier.verify_binding_hash(binding_hash, &inputs) {
+                        log::info!(target: "shielded-pool", "  binding hash FAILED");
                         return InvalidTransaction::BadSigner.into();
                     }
-                    log::info!(target: "shielded-pool", "  binding signature PASSED");
+                    log::info!(target: "shielded-pool", "  binding hash PASSED");
                     log::info!(target: "shielded-pool", "  All validations PASSED - accepting unsigned tx");
 
                     // Create tags based on the nullifiers.
@@ -1743,7 +1909,25 @@ pub mod pallet {
                 // Inherent extrinsics are validated through ProvideInherent::check_inherent
                 // but they still need to pass ValidateUnsigned to be applied.
                 // We return a valid transaction here; the actual validation happens in check_inherent.
-                Call::mint_coinbase { .. } => {
+                Call::mint_coinbase { coinbase_data } => {
+                    if _source != TransactionSource::InBlock {
+                        return InvalidTransaction::Call.into();
+                    }
+                    if CoinbaseProcessed::<T>::get() {
+                        return InvalidTransaction::Stale.into();
+                    }
+                    if Self::ensure_coinbase_subsidy(coinbase_data.amount).is_err() {
+                        return InvalidTransaction::Custom(9).into();
+                    }
+                    #[allow(deprecated)]
+                    let expected_commitment = commitment::coinbase_commitment(
+                        &coinbase_data.recipient_address,
+                        coinbase_data.amount,
+                        &coinbase_data.public_seed,
+                    );
+                    if coinbase_data.commitment != expected_commitment {
+                        return InvalidTransaction::BadProof.into();
+                    }
                     ValidTransaction::with_tag_prefix("ShieldedPoolCoinbase")
                         .priority(TransactionPriority::MAX) // Inherents have highest priority
                         .longevity(1) // Only valid for current block
@@ -1770,11 +1954,12 @@ mod tests {
 
     #[test]
     fn note_commitment_matches_types() {
-        use commitment::note_commitment;
-        use types::Note;
+        use commitment::circuit_note_commitment;
 
-        let note = Note::with_empty_memo([1u8; 43], 1000, [2u8; 32]);
-        let cm = note_commitment(&note);
+        let pk_recipient = [1u8; 32];
+        let rho = [2u8; 32];
+        let r = [3u8; 32];
+        let cm = circuit_note_commitment(1000, 0, &pk_recipient, &rho, &r);
 
         assert_eq!(cm.len(), 32);
     }

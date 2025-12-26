@@ -4,6 +4,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use url::Url;
 
 use crate::{error::WalletError, notes::NoteCiphertext};
+use transaction_circuit::StablecoinPolicyBinding;
 
 /// Transaction bundle for submission to the node.
 ///
@@ -22,13 +23,16 @@ pub struct TransactionBundle {
     pub ciphertexts: Vec<Vec<u8>>,
     /// Merkle tree anchor (root hash).
     pub anchor: [u8; 32],
-    /// Binding signature commitment.
+    /// Binding hash commitment.
     #[serde(with = "serde_bytes_64")]
-    pub binding_sig: [u8; 64],
+    pub binding_hash: [u8; 64],
     /// Native fee encoded in the proof.
     pub fee: u64,
-    /// Value balance (positive = shielding, negative = unshielding).
+    /// Value balance (must be 0 when no transparent pool is enabled).
     pub value_balance: i128,
+    /// Optional stablecoin policy binding (disabled by default).
+    #[serde(default)]
+    pub stablecoin: StablecoinPolicyBinding,
 }
 
 impl TransactionBundle {
@@ -39,9 +43,10 @@ impl TransactionBundle {
         commitments: Vec<[u8; 32]>,
         ciphertexts: &[NoteCiphertext],
         anchor: [u8; 32],
-        binding_sig: [u8; 64],
+        binding_hash: [u8; 64],
         fee: u64,
         value_balance: i128,
+        stablecoin: StablecoinPolicyBinding,
     ) -> Result<Self, WalletError> {
         let mut encoded = Vec::with_capacity(ciphertexts.len());
         for ct in ciphertexts {
@@ -54,9 +59,10 @@ impl TransactionBundle {
             commitments,
             ciphertexts: encoded,
             anchor,
-            binding_sig,
+            binding_hash,
             fee,
             value_balance,
+            stablecoin,
         })
     }
 
@@ -121,7 +127,17 @@ impl WalletRpcClient {
         let query: Vec<(&str, String)> =
             vec![("start", start.to_string()), ("limit", limit.to_string())];
         let response: CommitmentResponse = self.get_json("/wallet/commitments", Some(&query))?;
-        Ok(response.entries)
+        response
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let value = hex_to_array32(&entry.value)?;
+                Ok(CommitmentEntry {
+                    index: entry.index,
+                    value,
+                })
+            })
+            .collect()
     }
 
     pub fn ciphertexts(
@@ -150,8 +166,9 @@ impl WalletRpcClient {
             .nullifiers
             .iter()
             .map(|hex| {
-                let bytes =
-                    hex::decode(hex).map_err(|err| WalletError::Serialization(err.to_string()))?;
+                let trimmed = hex.strip_prefix("0x").unwrap_or(hex);
+                let bytes = hex::decode(trimmed)
+                    .map_err(|err| WalletError::Serialization(err.to_string()))?;
                 if bytes.len() != 32 {
                     return Err(WalletError::Serialization(
                         "invalid nullifier length".into(),
@@ -233,19 +250,25 @@ pub struct LatestBlock {
 pub struct NoteStatusResponse {
     pub leaf_count: u64,
     pub depth: u64,
-    pub root: u64,
+    pub root: String,
     pub next_index: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 struct CommitmentResponse {
-    entries: Vec<CommitmentEntry>,
+    entries: Vec<CommitmentWireEntry>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CommitmentEntry {
+    pub index: u64,
+    pub value: [u8; 32],
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct CommitmentEntry {
+struct CommitmentWireEntry {
     pub index: u64,
-    pub value: u64,
+    pub value: String,
 }
 
 #[derive(Clone, Debug)]
@@ -277,7 +300,12 @@ struct TransactionResponse {
 }
 
 fn hex_to_array(hex_str: &str) -> Result<[u8; 32], WalletError> {
-    let bytes = hex::decode(hex_str).map_err(|err| WalletError::Serialization(err.to_string()))?;
+    hex_to_array32(hex_str)
+}
+
+fn hex_to_array32(hex_str: &str) -> Result<[u8; 32], WalletError> {
+    let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    let bytes = hex::decode(trimmed).map_err(|err| WalletError::Serialization(err.to_string()))?;
     if bytes.len() != 32 {
         return Err(WalletError::Serialization("expected 32-byte hash".into()));
     }

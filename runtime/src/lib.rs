@@ -893,7 +893,7 @@ parameter_types! {
     pub const TreasuryPayoutPeriod: u64 = 10;
     pub const PowDifficulty: u32 = 0x3f00_ffff;
     pub const PowRetargetWindow: u32 = 120;
-    pub const PowTargetBlockTime: Moment = 20_000;
+    pub const PowTargetBlockTime: Moment = 60_000;
     pub const PowFutureDrift: Moment = 90_000;
 }
 
@@ -1162,6 +1162,26 @@ impl pallet_oracles::Config for Runtime {
 }
 
 parameter_types! {
+    pub const StablecoinPolicyAdminRole: u32 = 9;
+    pub const MaxStablecoinOracleFeeds: u32 = 1;
+}
+
+impl pallet_stablecoin_policy::Config for Runtime {
+    type RuntimeEvent = RuntimeEvent;
+    type AssetId = u32;
+    type OracleFeedId = u32;
+    type AttestationId = u64;
+    type RoleId = u32;
+    type CredentialSchemaId = u32;
+    type IdentityTag = pallet_identity::pallet::IdentityTag<Runtime>;
+    type Identity = pallet_identity::Pallet<Runtime>;
+    type PolicyAdminRole = StablecoinPolicyAdminRole;
+    type AssetRegistry = pallet_asset_registry::Pallet<Runtime>;
+    type MaxOracleFeeds = MaxStablecoinOracleFeeds;
+    type WeightInfo = ();
+}
+
+parameter_types! {
     pub const DefaultAttestationVerifierParams: pallet_attestations::StarkVerifierParams =
         pallet_attestations::StarkVerifierParams {
             hash: pallet_attestations::StarkHashFunction::Blake3,
@@ -1422,51 +1442,11 @@ impl pallet_fee_model::Config for Runtime {
 
 impl pallet_difficulty::Config for Runtime {}
 
-// === Coinbase Configuration ===
+// === Shielded Coinbase Safety Cap ===
 parameter_types! {
-    /// Maximum subsidy per block - updated for new tokenomics (~5 HEG initial)
-    /// This is a safety limit - actual subsidy follows halving schedule
+    /// Maximum subsidy per block - safety limit for shielded coinbase.
+    /// Actual subsidy follows the halving schedule.
     pub const MaxSubsidy: u64 = 10 * 100_000_000; // 10 HEG safety cap
-
-    /// Reward split fractions (must sum to 100%)
-    /// α_m = 80% to miners
-    pub MinerShare: Permill = Permill::from_percent(80);
-    /// α_f = 10% to treasury
-    pub TreasuryShare: Permill = Permill::from_percent(10);
-    /// α_c = 10% to community pool
-    pub CommunityShare: Permill = Permill::from_percent(10);
-}
-
-/// Treasury account for coinbase rewards
-pub struct CoinbaseTreasuryAccount;
-impl frame_support::traits::Get<AccountId> for CoinbaseTreasuryAccount {
-    fn get() -> AccountId {
-        // Use the treasury pallet's account
-        pallet_treasury::Pallet::<Runtime>::account_id()
-    }
-}
-
-/// Community pool account for coinbase rewards
-/// In practice this could be a multisig, DAO, or grants program address
-pub struct CoinbaseCommunityAccount;
-impl frame_support::traits::Get<AccountId> for CoinbaseCommunityAccount {
-    fn get() -> AccountId {
-        // For now, use a derived account from a fixed seed
-        // This should be replaced with an actual governance-controlled address
-        let seed: &[u8] = b"hegemon/community_pool";
-        let hash = sp_io::hashing::blake2_256(seed);
-        AccountId::from(hash)
-    }
-}
-
-impl pallet_coinbase::Config for Runtime {
-    type Currency = Balances;
-    type MaxSubsidy = MaxSubsidy;
-    type MinerShare = MinerShare;
-    type TreasuryShare = TreasuryShare;
-    type CommunityShare = CommunityShare;
-    type TreasuryAccount = CoinbaseTreasuryAccount;
-    type CommunityAccount = CoinbaseCommunityAccount;
 }
 
 // === Shielded Pool Configuration ===
@@ -1485,9 +1465,78 @@ parameter_types! {
     pub const MerkleRootHistorySize: u32 = 100;
 }
 
+pub struct RuntimeStablecoinPolicyProvider;
+impl pallet_shielded_pool::StablecoinPolicyProvider<u32, u32, u64, BlockNumber>
+    for RuntimeStablecoinPolicyProvider
+{
+    fn policy(
+        asset_id: &u32,
+    ) -> Option<pallet_shielded_pool::StablecoinPolicySnapshot<u32, u32, u64, BlockNumber>> {
+        let policy = pallet_stablecoin_policy::Policies::<Runtime>::get(asset_id)?;
+        Some(pallet_shielded_pool::StablecoinPolicySnapshot {
+            asset_id: policy.asset_id,
+            oracle_feeds: policy.oracle_feeds.to_vec(),
+            attestation_id: policy.attestation_id,
+            min_collateral_ratio_ppm: policy.min_collateral_ratio_ppm,
+            max_mint_per_epoch: policy.max_mint_per_epoch,
+            oracle_max_age: policy.oracle_max_age,
+            policy_version: policy.policy_version,
+            active: policy.active,
+        })
+    }
+
+    fn policy_hash(asset_id: &u32) -> Option<[u8; 32]> {
+        pallet_stablecoin_policy::PolicyHashes::<Runtime>::get(asset_id)
+    }
+}
+
+pub struct RuntimeOracleCommitmentProvider;
+impl pallet_shielded_pool::OracleCommitmentProvider<u32, BlockNumber>
+    for RuntimeOracleCommitmentProvider
+{
+    fn latest_commitment(
+        feed_id: &u32,
+    ) -> Option<pallet_shielded_pool::OracleCommitmentSnapshot<BlockNumber>> {
+        let feed = pallet_oracles::Feeds::<Runtime>::get(feed_id)?;
+        let record = feed.latest_commitment?;
+        let bytes = record.commitment.to_vec();
+        if bytes.len() != 32 {
+            return None;
+        }
+        let mut commitment = [0u8; 32];
+        commitment.copy_from_slice(&bytes);
+        Some(pallet_shielded_pool::OracleCommitmentSnapshot {
+            commitment,
+            submitted_at: record.submitted_at,
+        })
+    }
+}
+
+pub struct RuntimeAttestationCommitmentProvider;
+impl pallet_shielded_pool::AttestationCommitmentProvider<u64, BlockNumber>
+    for RuntimeAttestationCommitmentProvider
+{
+    fn commitment(
+        commitment_id: &u64,
+    ) -> Option<pallet_shielded_pool::AttestationCommitmentSnapshot<BlockNumber>> {
+        let record = pallet_attestations::Commitments::<Runtime>::get(commitment_id)?;
+        let bytes = record.root.to_vec();
+        if bytes.len() != 32 {
+            return None;
+        }
+        let mut commitment = [0u8; 32];
+        commitment.copy_from_slice(&bytes);
+        let disputed = record.dispute != pallet_attestations::DisputeStatus::None;
+        Some(pallet_shielded_pool::AttestationCommitmentSnapshot {
+            commitment,
+            disputed,
+            created_at: record.created,
+        })
+    }
+}
+
 impl pallet_shielded_pool::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
-    type Currency = Balances;
     type AdminOrigin = frame_system::EnsureRoot<AccountId>;
     type ProofVerifier = pallet_shielded_pool::verifier::StarkVerifier;
     type BatchProofVerifier = pallet_shielded_pool::verifier::StarkBatchVerifier;
@@ -1497,6 +1546,13 @@ impl pallet_shielded_pool::Config for Runtime {
     type MaxNullifiersPerBatch = MaxNullifiersPerBatch;
     type MaxCommitmentsPerBatch = MaxCommitmentsPerBatch;
     type MerkleRootHistorySize = MerkleRootHistorySize;
+    type MaxCoinbaseSubsidy = MaxSubsidy;
+    type StablecoinAssetId = u32;
+    type OracleFeedId = u32;
+    type AttestationId = u64;
+    type StablecoinPolicyProvider = RuntimeStablecoinPolicyProvider;
+    type OracleCommitmentProvider = RuntimeOracleCommitmentProvider;
+    type AttestationCommitmentProvider = RuntimeAttestationCommitmentProvider;
     type WeightInfo = pallet_shielded_pool::DefaultWeightInfo;
 }
 
@@ -1504,17 +1560,17 @@ construct_runtime!(
     pub enum Runtime {
         System: frame_system::{Pallet, Call, Config<T>, Storage, Event<T>},
         Timestamp: pallet_timestamp::{Pallet, Call, Storage, Inherent},
-        Coinbase: pallet_coinbase::{Pallet, Call, Storage, Event<T>, Inherent},
         Pow: pow::{Pallet, Call, Storage, Event<T>},
         Difficulty: pallet_difficulty::{Pallet, Call, Storage, Event<T>, Config<T>},
         Session: pallet_session::{Pallet, Call, Storage, Event<T>, Config<T>},
-        Balances: pallet_balances::{Pallet, Call, Storage, Config<T>, Event<T>},
+        Balances: pallet_balances::{Pallet, Storage, Config<T>, Event<T>},
         TransactionPayment: pallet_transaction_payment::{Pallet, Storage, Event<T>},
         Sudo: pallet_sudo::{Pallet, Call, Storage, Event<T>, Config<T>},
         Council: pallet_collective::<Instance1>::{Pallet, Call, Storage, Origin<T>, Event<T>},
         CouncilMembership: pallet_membership::<Instance1>::{Pallet, Call, Storage, Event<T>},
         Treasury: pallet_treasury::{Pallet, Call, Storage, Event<T>},
         Oracles: pallet_oracles::{Pallet, Call, Storage, Event<T>},
+        StablecoinPolicy: pallet_stablecoin_policy::{Pallet, Call, Storage, Event<T>, Config<T>},
         Identity: pallet_identity::{Pallet, Call, Storage, Event<T>},
         Attestations: pallet_attestations::{Pallet, Call, Storage, Event<T>},
         AssetRegistry: pallet_asset_registry::{Pallet, Call, Storage, Event<T>},
