@@ -7,6 +7,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "10"
+  CARGO_HTTP_TIMEOUT: "600"
 
 jobs:
   rust-lints:
@@ -43,7 +45,25 @@ jobs:
         with:
           shared-key: "rust-tests"
       - name: Cargo test (workspace)
-        run: cargo test --workspace
+        run: |
+          set -euo pipefail
+          max_attempts=3
+          attempt=1
+          while true; do
+            echo "cargo test --workspace (attempt ${attempt}/${max_attempts})"
+            if cargo test --workspace 2>&1 | tee /tmp/cargo-test.log; then
+              exit 0
+            fi
+            status=${PIPESTATUS[0]}
+            if grep -Eiq "spurious network error|Timeout was reached|failed to download|no available hosts|HTTP.*(500|502|503|504)" /tmp/cargo-test.log; then
+              if [ "$attempt" -lt "$max_attempts" ]; then
+                sleep $((attempt * 30))
+                attempt=$((attempt + 1))
+                continue
+              fi
+            fi
+            exit "$status"
+          done
 
   network-tests:
     runs-on: ubuntu-latest
