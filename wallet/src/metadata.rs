@@ -106,9 +106,7 @@ where
         .iter()
         .find(|pallet| name_fn(pallet) == pallet_name)
         .ok_or_else(|| {
-            WalletError::Serialization(format!(
-                "runtime metadata missing pallet {pallet_name}"
-            ))
+            WalletError::Serialization(format!("runtime metadata missing pallet {pallet_name}"))
         })?;
     let calls = calls_fn(pallet).ok_or_else(|| {
         WalletError::Serialization(format!(

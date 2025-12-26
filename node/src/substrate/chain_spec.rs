@@ -2,8 +2,8 @@
 //!
 //! ONE chain spec. Difficulty retargeting handles hashrate differences.
 
-use runtime::WASM_BINARY;
 use pallet_shielded_pool::verifier::StarkVerifier;
+use runtime::WASM_BINARY;
 use sc_service::ChainType;
 
 /// Specialized `ChainSpec` for the Hegemon runtime.
