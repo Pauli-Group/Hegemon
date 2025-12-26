@@ -54,7 +54,10 @@ pub struct StarkProverConfig {
     pub enable_grinding: bool,
     /// Grinding bits (if enabled).
     pub grinding_bits: u8,
-    /// Maximum proving time before timeout.
+    /// Advisory proving time budget.
+    ///
+    /// Note: proof generation is not currently cancellable; exceeding this budget does not abort
+    /// proving. The prover may emit a debug warning when the budget is exceeded.
     pub max_proving_time: Duration,
 }
 
@@ -215,9 +218,13 @@ impl StarkProver {
 
         let proving_time = start.elapsed();
 
-        // Check if we exceeded the timeout
+        // Proof generation is not cancellable; treat max_proving_time as an advisory budget.
         if proving_time > self.config.max_proving_time {
-            return Err(WalletError::InvalidState("Proof generation timed out"));
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "WARN prover: proof generation exceeded budget (elapsed={:?}, budget={:?})",
+                proving_time, self.config.max_proving_time
+            );
         }
 
         // Serialize the proof for transmission
