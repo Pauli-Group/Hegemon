@@ -677,9 +677,7 @@ impl SubstrateRpcClient {
         })
     }
 
-    async fn get_shielded_pool_call_indices(
-        &self,
-    ) -> Result<ShieldedPoolCallIndices, WalletError> {
+    async fn get_shielded_pool_call_indices(&self) -> Result<ShieldedPoolCallIndices, WalletError> {
         let metadata_bytes = self.get_runtime_metadata_bytes().await?;
         lookup_shielded_pool_call_indices(&metadata_bytes)
     }
@@ -1146,10 +1144,8 @@ impl SubstrateRpcClient {
         };
 
         // Build the unsigned extrinsic
-        let extrinsic = build_unsigned_batch_shielded_transfer(
-            &call,
-            call_indices.batch_shielded_transfer,
-        )?;
+        let extrinsic =
+            build_unsigned_batch_shielded_transfer(&call, call_indices.batch_shielded_transfer)?;
 
         // Submit
         self.submit_extrinsic(&extrinsic).await
