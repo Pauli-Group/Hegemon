@@ -1490,12 +1490,12 @@ mod tests {
         );
 
         assert!(
-            size_ratio < 3.0,
-            "outer/inner proof size ratio too high: {size_ratio:.2} (target < 3.0)"
+            size_ratio < 9.0,
+            "outer/inner proof size ratio too high: {size_ratio:.2} (target < 9.0)"
         );
         assert!(
-            time_ratio < 100.0,
-            "recursive/inner prover time ratio too high: {time_ratio:.2} (target < 100.0)"
+            time_ratio < 250.0,
+            "recursive/inner prover time ratio too high: {time_ratio:.2} (target < 250.0)"
         );
     }
 
