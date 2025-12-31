@@ -1,7 +1,7 @@
 use crate::error::ConsensusError;
 use crate::types::{
-    BlockHash, FeeCommitment, StarkCommitment, SupplyDigest, ValidatorSetCommitment,
-    VersionCommitment,
+    BlockHash, DaParams, DaRoot, FeeCommitment, RecursiveProofHash, StarkCommitment, SupplyDigest,
+    ValidatorSetCommitment, VersionCommitment,
 };
 use crypto::hashes::sha256;
 
@@ -15,6 +15,9 @@ pub struct BlockHeader {
     pub state_root: BlockHash,
     pub nullifier_root: BlockHash,
     pub proof_commitment: StarkCommitment,
+    pub recursive_proof_hash: RecursiveProofHash,
+    pub da_root: DaRoot,
+    pub da_params: DaParams,
     pub version_commitment: VersionCommitment,
     pub tx_count: u32,
     pub fee_commitment: FeeCommitment,
@@ -83,7 +86,7 @@ impl BlockHeader {
 }
 
 fn encode_signing_fields(header: &BlockHeader) -> Vec<u8> {
-    let mut data = Vec::with_capacity(4 + 8 * 3 + 32 * 6);
+    let mut data = Vec::with_capacity(4 + 8 * 3 + 32 * 8);
     data.extend_from_slice(&header.version.to_le_bytes());
     data.extend_from_slice(&header.height.to_le_bytes());
     data.extend_from_slice(&header.view.to_le_bytes());
@@ -92,6 +95,10 @@ fn encode_signing_fields(header: &BlockHeader) -> Vec<u8> {
     data.extend_from_slice(&header.state_root);
     data.extend_from_slice(&header.nullifier_root);
     data.extend_from_slice(&header.proof_commitment);
+    data.extend_from_slice(&header.recursive_proof_hash);
+    data.extend_from_slice(&header.da_root);
+    data.extend_from_slice(&header.da_params.chunk_size.to_le_bytes());
+    data.extend_from_slice(&header.da_params.sample_count.to_le_bytes());
     data.extend_from_slice(&header.version_commitment);
     data.extend_from_slice(&header.tx_count.to_le_bytes());
     data.extend_from_slice(&header.fee_commitment);

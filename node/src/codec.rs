@@ -1,5 +1,5 @@
 use consensus::header::{BlockHeader, PowSeal};
-use consensus::types::{CoinbaseData, CoinbaseSource, ConsensusBlock, Transaction};
+use consensus::types::{CoinbaseData, CoinbaseSource, ConsensusBlock, DaParams, Transaction};
 use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +22,10 @@ struct StoredHeader {
     state_root: [u8; 32],
     nullifier_root: [u8; 32],
     proof_commitment: Vec<u8>,
+    recursive_proof_hash: [u8; 32],
+    da_root: [u8; 32],
+    da_chunk_size: u32,
+    da_sample_count: u32,
     version_commitment: [u8; 32],
     tx_count: u32,
     fee_commitment: [u8; 32],
@@ -98,6 +102,10 @@ impl From<&ConsensusBlock> for StoredBlock {
             state_root: block.header.state_root,
             nullifier_root: block.header.nullifier_root,
             proof_commitment: block.header.proof_commitment.to_vec(),
+            recursive_proof_hash: block.header.recursive_proof_hash,
+            da_root: block.header.da_root,
+            da_chunk_size: block.header.da_params.chunk_size,
+            da_sample_count: block.header.da_params.sample_count,
             version_commitment: block.header.version_commitment,
             tx_count: block.header.tx_count,
             fee_commitment: block.header.fee_commitment,
@@ -158,6 +166,12 @@ impl StoredBlock {
             state_root: self.header.state_root,
             nullifier_root: self.header.nullifier_root,
             proof_commitment,
+            recursive_proof_hash: self.header.recursive_proof_hash,
+            da_root: self.header.da_root,
+            da_params: DaParams {
+                chunk_size: self.header.da_chunk_size,
+                sample_count: self.header.da_sample_count,
+            },
             version_commitment: self.header.version_commitment,
             tx_count: self.header.tx_count,
             fee_commitment: self.header.fee_commitment,
@@ -214,6 +228,10 @@ impl From<&BlockHeader> for StoredHeader {
             state_root: header.state_root,
             nullifier_root: header.nullifier_root,
             proof_commitment: header.proof_commitment.to_vec(),
+            recursive_proof_hash: header.recursive_proof_hash,
+            da_root: header.da_root,
+            da_chunk_size: header.da_params.chunk_size,
+            da_sample_count: header.da_params.sample_count,
             version_commitment: header.version_commitment,
             tx_count: header.tx_count,
             fee_commitment: header.fee_commitment,
@@ -245,6 +263,12 @@ impl StoredHeader {
             state_root: self.state_root,
             nullifier_root: self.nullifier_root,
             proof_commitment,
+            recursive_proof_hash: self.recursive_proof_hash,
+            da_root: self.da_root,
+            da_params: DaParams {
+                chunk_size: self.da_chunk_size,
+                sample_count: self.da_sample_count,
+            },
             version_commitment: self.version_commitment,
             tx_count: self.tx_count,
             fee_commitment: self.fee_commitment,

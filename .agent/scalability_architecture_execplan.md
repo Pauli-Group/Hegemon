@@ -18,6 +18,8 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2025-12-31T02:22Z) Wrote `.agent/scalability_architecture_math.md` to quantify soundness bounds and DA sampling probabilities before implementation.
 - [x] (2025-12-31T10:05Z) Completed Milestone 1 feasibility runs (recursion spike output + transaction budget/streaming plan outputs + recursive proof bench timings) and recorded results in Surprises & Discoveries.
 - [x] (2025-12-31T10:05Z) Enabled Criterion bench harness and adjusted sample size to satisfy Criterion’s minimum-sample requirement.
+- [x] (2025-12-31T10:20Z) Updated the README whitepaper to describe recursive proof validation and data-availability sampling.
+- [x] (2025-12-31T10:30Z) Updated consensus header + types for DA parameters and recursive proof commitments, plus chain spec defaults and node header serialization/test helpers (`runtime/src/chain_spec.rs`, `node/src/substrate/chain_spec.rs`, `node/src/codec.rs`, `node/src/test_utils.rs`); re-ran `cargo test -p consensus`.
 - [x] (2025-12-31T05:03Z) Added extension-aware inner-proof parsing + public inputs and a transaction recursion budget test; captured initial width metrics.
 - [x] (2025-12-31T05:31Z) Added a Path A streaming plan estimator + test output for transaction proofs to size row/permutation costs under the 255-column cap.
 - [x] (2025-12-31T06:15Z) Started Path A streaming layout in recursion verifier by adding tape columns + coin-state save/restore masks and a minimal RpoAir tape correctness test.
@@ -25,7 +27,7 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2025-12-31T03:09Z) Chose a baseline target of ~85-bit PQ security (collision-limited by 256-bit digests) and recorded required proof-parameter implications in `.agent/scalability_architecture_math.md`.
 - [ ] (2025-12-31T03:09Z) Lock ProofOptions and recursion format for consensus-critical proofs at the chosen target (completed: transaction proofs now use quadratic extension; completed: parser supports quadratic extension metadata; remaining: recursive verifier trace accepts quadratic inner proofs and end-to-end recursion test).
 - [x] (2025-12-31T04:12Z) Updated transaction STARK proof options to quadratic extension and aligned verifiers + docs to the ~85-bit PQ collision ceiling.
-- [ ] (2025-12-31T02:04Z) Update DESIGN.md, METHODS.md, and the README.md whitepaper to match the new architecture (completed: DESIGN.md + METHODS.md security notes; remaining: README.md whitepaper alignment).
+- [x] (2025-12-31T02:04Z) Update DESIGN.md, METHODS.md, and the README.md whitepaper to match the new architecture (completed: DESIGN.md + METHODS.md security notes + README.md whitepaper alignment).
 - [ ] (2025-12-31T02:04Z) Implement recursive block proofs and wire them into consensus validation.
 - [ ] (2025-12-31T02:04Z) Implement data-availability encoding, storage, sampling, and P2P retrieval.
 - [ ] (2025-12-31T02:04Z) Integrate node, wallet, mempool, and RPC so end-to-end mining works with the new block format.
@@ -259,6 +261,8 @@ Example output from the transaction streaming plan test:
 
 Plan Update Note (2025-12-31T09:40Z): Updated Progress, Surprises & Discoveries, Decision Log, and Outcomes to reflect the recursion verifier fixes, passing heavy tests, and the incremental-cache ICE workaround.
 Plan Update Note (2025-12-31T10:05Z): Marked Milestone 1 complete, added spike/bench outputs and Criterion constraints, and updated commands to include the spike and bench output runs.
+Plan Update Note (2025-12-31T10:20Z): Updated Progress to mark the README whitepaper alignment complete and recorded the doc update milestone.
+Plan Update Note (2025-12-31T10:30Z): Recorded the consensus header/types updates for DA + recursive proof commitments and noted the remaining chain spec updates for Milestone 2.
 
 Example log line after Milestone 5:
 
@@ -349,3 +353,4 @@ Revision Note (2025-12-31T04:12Z): Updated transaction proof parameters to quadr
 Revision Note (2025-12-31T05:03Z): Recorded the recursion budget spike output, updated progress and surprises, and clarified that quadratic extension support is parser-only pending trace/AIR work.
 Revision Note (2025-12-31T05:31Z): Added the Path A streaming plan estimator + test output and captured the row budget and schedule assumptions.
 Revision Note (2025-12-31T06:55Z): Implemented replayed deep-coeff draw pairing with leaf-hash chains and updated merkle schedule masks/tests to match the new interleave.
+Revision Note (2025-12-31T11:15Z): Completed Milestone 2 chain-spec defaults and updated node header serialization/test helpers for the new DA/recursive header fields; reran consensus tests.
