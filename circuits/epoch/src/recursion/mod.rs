@@ -36,6 +36,7 @@ pub mod stark_verifier_air;
 pub mod stark_verifier_batch_air;
 pub mod stark_verifier_batch_prover;
 pub mod stark_verifier_prover;
+pub mod streaming_plan;
 
 // Re-export main types for convenience
 pub use recursive_prover::{
@@ -51,6 +52,7 @@ pub use stark_verifier_air::{StarkVerifierAir, StarkVerifierPublicInputs};
 pub use stark_verifier_batch_air::StarkVerifierBatchPublicInputs;
 pub use stark_verifier_batch_prover::{prove_batch, verify_batch, StarkVerifierBatchProver};
 pub use stark_verifier_prover::StarkVerifierProver;
+pub use streaming_plan::{StreamingPlan, StreamingPlanParams};
 
 #[cfg(test)]
 mod tests;
