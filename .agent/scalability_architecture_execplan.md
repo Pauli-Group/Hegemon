@@ -31,6 +31,7 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2025-12-31T04:12Z) Updated transaction STARK proof options to quadratic extension and aligned verifiers + docs to the ~85-bit PQ collision ceiling.
 - [x] (2025-12-31T02:04Z) Update DESIGN.md, METHODS.md, and the README.md whitepaper to match the new architecture (completed: DESIGN.md + METHODS.md security notes + README.md whitepaper alignment).
 - [x] (2025-12-31T18:45Z) Retired legacy block aggregation: `prove_block` now emits `RecursiveBlockProof` by default, added a fast proving helper for dev/tests, updated consensus test scaffolding to accept recursive proofs, and refreshed docs to remove `RecursiveAggregation`.
+- [x] (2025-12-31T19:10Z) Wired Substrate block building to optionally generate recursive block proofs from shielded transfer extrinsics and attach them to mining templates (gated by `HEGEMON_RECURSIVE_BLOCK_PROOFS`).
 - [ ] (2025-12-31T02:04Z) Implement data-availability encoding, storage, sampling, and P2P retrieval.
 - [ ] (2025-12-31T02:04Z) Integrate node, wallet, mempool, and RPC so end-to-end mining works with the new block format.
 - [ ] (2025-12-31T02:04Z) Add benchmarks, tests, and runbooks that prove the system works.
@@ -40,6 +41,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - Observation (2025-12-31T18:45Z): Recursive block proof generation fails if inner transaction proofs are Blake3-based; recursion expects RPO‑Fiat‑Shamir proofs.
   Evidence: `cargo test -p consensus -- --ignored` failed with `RecursiveProofInput { index: 0, reason: "Trace generation failed: Merkle proof is invalid" }` until the test switched to RPO proofs.
   Implication: Mining/wallet pipelines must emit RPO proofs (or we must add a Blake3-compatible recursion backend) before recursive block proofs can be produced from live bundles.
+
+- Observation (2025-12-31T19:10Z): Recursive proof test panics (debug + release) when filling OOD eval columns.
+  Evidence: `cargo test -p consensus --test recursive_proof --release -- --ignored` fails with `index out of bounds: the len is 249 but the index is 249` in `winter-prover` `col_matrix.rs`; debug points to `circuits/epoch/src/recursion/stark_verifier_prover.rs:2267` (`COL_OOD_EVALS_START + i`).
+  Implication: The verifier trace layout only reserves `VERIFIER_TRACE_WIDTH - COL_OOD_EVALS_START = 77` columns for OOD evals (fixed `OOD_EVAL_LEN` for RPO), but a transaction proof needs `2 * (trace_width + constraint_frame_width)` (188 with `trace_width=86`), so the OOD vector overflows the layout. Fix requires streaming/partitioning OOD evals or otherwise reducing width before recursion can handle transaction proofs.
 
 - Observation (2025-12-31T02:22Z): Deterministic DA sampling derived from producer-known inputs is not a security mechanism against a malicious block producer.
   Evidence: A producer can always publish only the deterministically sampled chunks and withhold the rest; see `.agent/scalability_architecture_math.md` §4.4.

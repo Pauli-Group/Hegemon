@@ -130,6 +130,7 @@ use crate::substrate::rpc::{
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
+use block_circuit::{prove_block, prove_block_fast, RecursiveBlockProof};
 use codec::Decode;
 use codec::Encode;
 use consensus::{Blake3Algorithm, Blake3Seal};
@@ -160,7 +161,14 @@ use epoch_circuit::{
 };
 
 // Import runtime APIs for difficulty queries
-use runtime::apis::ConsensusApi;
+use pallet_shielded_pool::Call as ShieldedPoolCall;
+use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
+use runtime::apis::{ConsensusApi, ShieldedPoolApi};
+use state_merkle::CommitmentTree;
+use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
+use transaction_circuit::keys::generate_keys;
+use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
+use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 
 // Import jsonrpsee for RPC server
 use jsonrpsee::server::ServerBuilder;
@@ -212,6 +220,327 @@ pub fn take_storage_changes(key: u64) -> Option<HegemonStorageChanges> {
         tracing::warn!(key, "Storage changes not found in cache");
     }
     changes
+}
+
+fn signed_parts_u64(value: i128) -> Result<(u8, u64), String> {
+    let magnitude = value.unsigned_abs();
+    let magnitude_u64 = u64::try_from(magnitude)
+        .map_err(|_| format!("value magnitude out of range: {}", magnitude))?;
+    let sign = if value < 0 { 1 } else { 0 };
+    Ok((sign, magnitude_u64))
+}
+
+fn pad_commitments(
+    mut values: Vec<[u8; 32]>,
+    max: usize,
+    label: &str,
+) -> Result<Vec<[u8; 32]>, String> {
+    if values.len() > max {
+        return Err(format!(
+            "{label} exceeds max (got {}, max {})",
+            values.len(),
+            max
+        ));
+    }
+    values.resize(max, [0u8; 32]);
+    Ok(values)
+}
+
+fn convert_stablecoin_binding(
+    binding: &pallet_shielded_pool::types::StablecoinPolicyBinding,
+) -> StablecoinPolicyBinding {
+    StablecoinPolicyBinding {
+        enabled: true,
+        asset_id: binding.asset_id,
+        policy_hash: binding.policy_hash,
+        oracle_commitment: binding.oracle_commitment,
+        attestation_commitment: binding.attestation_commitment,
+        issuance_delta: binding.issuance_delta,
+        policy_version: binding.policy_version,
+    }
+}
+
+fn build_stark_inputs(
+    input_count: usize,
+    output_count: usize,
+    anchor: [u8; 32],
+    fee: u64,
+    value_balance: i128,
+    stablecoin: Option<&StablecoinPolicyBinding>,
+) -> Result<SerializedStarkInputs, String> {
+    if input_count > MAX_INPUTS || output_count > MAX_OUTPUTS {
+        return Err(format!(
+            "input/output count out of range (inputs {}, outputs {})",
+            input_count, output_count
+        ));
+    }
+
+    let mut input_flags = Vec::with_capacity(MAX_INPUTS);
+    input_flags.extend(std::iter::repeat(1u8).take(input_count));
+    input_flags.extend(std::iter::repeat(0u8).take(MAX_INPUTS - input_count));
+
+    let mut output_flags = Vec::with_capacity(MAX_OUTPUTS);
+    output_flags.extend(std::iter::repeat(1u8).take(output_count));
+    output_flags.extend(std::iter::repeat(0u8).take(MAX_OUTPUTS - output_count));
+
+    let (value_balance_sign, value_balance_magnitude) = signed_parts_u64(value_balance)?;
+
+    let (
+        stablecoin_enabled,
+        stablecoin_asset_id,
+        stablecoin_policy_version,
+        stablecoin_issuance_sign,
+        stablecoin_issuance_magnitude,
+        stablecoin_policy_hash,
+        stablecoin_oracle_commitment,
+        stablecoin_attestation_commitment,
+    ) = match stablecoin {
+        Some(binding) if binding.enabled => {
+            let (issuance_sign, issuance_magnitude) =
+                signed_parts_u64(binding.issuance_delta)?;
+            (
+                1,
+                binding.asset_id,
+                binding.policy_version,
+                issuance_sign,
+                issuance_magnitude,
+                binding.policy_hash,
+                binding.oracle_commitment,
+                binding.attestation_commitment,
+            )
+        }
+        _ => (
+            0,
+            0,
+            0,
+            0,
+            0,
+            [0u8; 32],
+            [0u8; 32],
+            [0u8; 32],
+        ),
+    };
+
+    Ok(SerializedStarkInputs {
+        input_flags,
+        output_flags,
+        fee,
+        value_balance_sign,
+        value_balance_magnitude,
+        merkle_root: anchor,
+        stablecoin_enabled,
+        stablecoin_asset_id,
+        stablecoin_policy_version,
+        stablecoin_issuance_sign,
+        stablecoin_issuance_magnitude,
+        stablecoin_policy_hash,
+        stablecoin_oracle_commitment,
+        stablecoin_attestation_commitment,
+    })
+}
+
+fn build_transaction_proof(
+    proof_bytes: Vec<u8>,
+    nullifiers: Vec<[u8; 32]>,
+    commitments: Vec<[u8; 32]>,
+    anchor: [u8; 32],
+    stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
+    fee: u64,
+    value_balance: i128,
+) -> Result<TransactionProof, String> {
+    if proof_bytes.is_empty() {
+        return Err("shielded transfer proof bytes are empty".to_string());
+    }
+
+    let input_count = nullifiers.len();
+    let output_count = commitments.len();
+    let padded_nullifiers = pad_commitments(nullifiers, MAX_INPUTS, "nullifiers")?;
+    let padded_commitments = pad_commitments(commitments, MAX_OUTPUTS, "commitments")?;
+
+    let stablecoin_binding = stablecoin
+        .as_ref()
+        .map(convert_stablecoin_binding)
+        .unwrap_or_default();
+    let stark_public_inputs = build_stark_inputs(
+        input_count,
+        output_count,
+        anchor,
+        fee,
+        value_balance,
+        stablecoin.as_ref().map(|_| &stablecoin_binding),
+    )?;
+
+    let mut public_inputs = TransactionPublicInputs::default();
+    public_inputs.merkle_root = anchor;
+    public_inputs.nullifiers = padded_nullifiers.clone();
+    public_inputs.commitments = padded_commitments.clone();
+    public_inputs.native_fee = fee;
+    public_inputs.value_balance = value_balance;
+    public_inputs.stablecoin = stablecoin_binding;
+    public_inputs.circuit_version = DEFAULT_VERSION_BINDING.circuit;
+    public_inputs.crypto_suite = DEFAULT_VERSION_BINDING.crypto;
+
+    Ok(TransactionProof {
+        public_inputs: public_inputs.clone(),
+        nullifiers: padded_nullifiers,
+        commitments: padded_commitments,
+        balance_slots: public_inputs.balance_slots.clone(),
+        stark_proof: proof_bytes,
+        stark_public_inputs: Some(stark_public_inputs),
+    })
+}
+
+fn extract_transaction_proofs_from_extrinsics(
+    extrinsics: &[Vec<u8>],
+) -> Result<Vec<TransactionProof>, String> {
+    let mut proofs = Vec::new();
+
+    for ext_bytes in extrinsics {
+        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
+        let runtime::RuntimeCall::ShieldedPool(call) = extrinsic.function else {
+            continue;
+        };
+
+        match call {
+            ShieldedPoolCall::shielded_transfer {
+                proof,
+                nullifiers,
+                commitments,
+                anchor,
+                stablecoin,
+                fee,
+                value_balance,
+                ..
+            } => {
+                let proof = build_transaction_proof(
+                    proof.data.clone(),
+                    nullifiers.iter().copied().collect(),
+                    commitments.iter().copied().collect(),
+                    anchor,
+                    stablecoin.clone(),
+                    fee,
+                    value_balance,
+                )?;
+                proofs.push(proof);
+            }
+            ShieldedPoolCall::shielded_transfer_unsigned {
+                proof,
+                nullifiers,
+                commitments,
+                anchor,
+                stablecoin,
+                fee,
+                ..
+            } => {
+                if stablecoin.is_some() {
+                    return Err("unsigned shielded transfer includes stablecoin binding".into());
+                }
+                let proof = build_transaction_proof(
+                    proof.data.clone(),
+                    nullifiers.iter().copied().collect(),
+                    commitments.iter().copied().collect(),
+                    anchor,
+                    None,
+                    fee,
+                    0,
+                )?;
+                proofs.push(proof);
+            }
+            ShieldedPoolCall::batch_shielded_transfer { .. } => {
+                return Err("batch shielded transfers are not supported in recursive block proofs"
+                    .into());
+            }
+            _ => {}
+        }
+    }
+
+    Ok(proofs)
+}
+
+fn build_commitment_tree_from_chain(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+) -> Result<CommitmentTree, String> {
+    let api = client.runtime_api();
+    let total = api
+        .encrypted_note_count(parent_hash)
+        .map_err(|e| format!("runtime api error (encrypted_note_count): {e:?}"))?;
+    let expected_root = api
+        .merkle_root(parent_hash)
+        .map_err(|e| format!("runtime api error (merkle_root): {e:?}"))?;
+
+    let depth = pallet_shielded_pool::types::MERKLE_TREE_DEPTH as usize;
+    let mut tree = CommitmentTree::new(depth)
+        .map_err(|e| format!("commitment tree init failed: {e}"))?;
+
+    if total == 0 {
+        if tree.root() != expected_root {
+            return Err("commitment tree root mismatch for empty tree".into());
+        }
+        return Ok(tree);
+    }
+
+    let mut expected_index = 0u64;
+    while expected_index < total {
+        let batch = api
+            .get_encrypted_notes(parent_hash, expected_index, 256)
+            .map_err(|e| format!("runtime api error (get_encrypted_notes): {e:?}"))?;
+        if batch.is_empty() {
+            return Err("encrypted notes batch returned empty before expected count".into());
+        }
+        for (index, _ciphertext, _block_number, commitment) in batch {
+            if index != expected_index {
+                return Err(format!(
+                    "commitment index mismatch: expected {}, got {}",
+                    expected_index, index
+                ));
+            }
+            tree.append(commitment)
+                .map_err(|e| format!("commitment tree append failed: {e}"))?;
+            expected_index += 1;
+        }
+    }
+
+    if tree.root() != expected_root {
+        return Err(format!(
+            "commitment tree root mismatch: expected {}, got {}",
+            hex::encode(expected_root),
+            hex::encode(tree.root())
+        ));
+    }
+
+    Ok(tree)
+}
+
+fn build_recursive_block_proof(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+    extrinsics: &[Vec<u8>],
+    fast: bool,
+) -> Result<Option<RecursiveBlockProof>, String> {
+    let proofs = extract_transaction_proofs_from_extrinsics(extrinsics)?;
+    if proofs.is_empty() {
+        return Ok(None);
+    }
+
+    let mut tree = build_commitment_tree_from_chain(client, parent_hash)?;
+    let (_, verifying_key) = generate_keys();
+    let mut verifying_keys = HashMap::new();
+    verifying_keys.insert(
+        VersionBinding::new(DEFAULT_VERSION_BINDING.circuit, DEFAULT_VERSION_BINDING.crypto),
+        verifying_key,
+    );
+
+    let block_proof = if fast {
+        prove_block_fast(&mut tree, &proofs, &verifying_keys)
+            .map_err(|e| format!("fast recursive block proof failed: {e}"))?
+    } else {
+        prove_block(&mut tree, &proofs, &verifying_keys)
+            .map_err(|e| format!("recursive block proof failed: {e}"))?
+    };
+
+    Ok(Some(block_proof.recursive_proof))
 }
 
 fn parse_accumulator(bytes: [u8; 32]) -> Result<[epoch_circuit::BaseElement; 4], String> {
@@ -343,6 +672,12 @@ pub fn wire_block_builder_api(
     use sc_block_builder::BlockBuilderBuilder;
 
     let client_for_exec = client;
+    let recursive_block_proofs_enabled = std::env::var("HEGEMON_RECURSIVE_BLOCK_PROOFS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let recursive_block_fast = std::env::var("HEGEMON_RECURSIVE_BLOCK_PROOFS_FAST")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
 
     // Capture the miner's shielded address
     let miner_shielded_address = chain_state.miner_shielded_address();
@@ -532,6 +867,36 @@ pub fn wire_block_builder_api(
         let state_root = *header.state_root();
         let extrinsics_root = *header.extrinsics_root();
 
+        let recursive_proof = if recursive_block_proofs_enabled {
+            match build_recursive_block_proof(
+                client_for_exec.as_ref(),
+                parent_substrate_hash,
+                &applied,
+                recursive_block_fast,
+            ) {
+                Ok(Some(proof)) => {
+                    tracing::info!(
+                        block_number,
+                        tx_count = proof.tx_count,
+                        proof_size = proof.proof_bytes.len(),
+                        "Recursive block proof generated"
+                    );
+                    Some(proof)
+                }
+                Ok(None) => None,
+                Err(e) => {
+                    tracing::warn!(
+                        block_number,
+                        error = %e,
+                        "Failed to build recursive block proof"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         // Cache the StorageChanges for use during import
         let storage_changes_key = cache_storage_changes(built_block.storage_changes);
 
@@ -551,6 +916,7 @@ pub fn wire_block_builder_api(
             extrinsics_root,
             failed_count: failed,
             storage_changes_key: Some(storage_changes_key),
+            recursive_proof,
         })
     });
 

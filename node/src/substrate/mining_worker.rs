@@ -61,6 +61,7 @@
 
 use crate::pow::PowHandle;
 use crate::substrate::network_bridge::{BlockAnnounce, BlockState};
+use block_circuit::RecursiveBlockProof;
 use codec::Encode;
 use consensus::{Blake3Seal, MiningWork};
 use sp_core::H256;
@@ -168,6 +169,8 @@ pub struct BlockTemplate {
     /// Task 11.5.5: Key to retrieve cached StorageChanges for block import
     /// This is set during block building when using sc_block_builder::BlockBuilder
     pub storage_changes_key: Option<u64>,
+    /// Optional recursive block proof built from shielded transfer extrinsics.
+    pub recursive_proof: Option<RecursiveBlockProof>,
 }
 
 impl BlockTemplate {
@@ -192,6 +195,7 @@ impl BlockTemplate {
             difficulty_bits,
             extrinsics: Vec::new(),
             storage_changes_key: None, // Task 11.5.5: Set during block building
+            recursive_proof: None,
         }
     }
 
@@ -244,6 +248,11 @@ impl BlockTemplate {
             &self.extrinsics_root,
             &self.state_root,
         );
+        self
+    }
+
+    pub fn with_recursive_proof(mut self, recursive_proof: Option<RecursiveBlockProof>) -> Self {
+        self.recursive_proof = recursive_proof;
         self
     }
 
@@ -768,6 +777,14 @@ where
                         state_root = %hex::encode(template.state_root.as_bytes()),
                         "New mining work (Task 11.4: state execution enabled)"
                     );
+                    if let Some(proof) = template.recursive_proof.as_ref() {
+                        tracing::debug!(
+                            height = template.number,
+                            tx_count = proof.tx_count,
+                            proof_size = proof.proof_bytes.len(),
+                            "Recursive block proof attached to template"
+                        );
+                    }
                 }
 
                 current_template = Some(template);

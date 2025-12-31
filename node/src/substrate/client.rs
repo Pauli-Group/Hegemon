@@ -54,6 +54,7 @@
 //! types once the full sc-service pipeline is ready.
 
 use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
+use block_circuit::RecursiveBlockProof;
 use consensus::Blake3Seal;
 use sp_core::H256;
 use std::sync::Arc;
@@ -507,6 +508,8 @@ pub struct StateExecutionResult {
     /// If Some, storage changes were captured and can be applied during import.
     /// If None, block import will use StateAction::Skip (scaffold mode).
     pub storage_changes_key: Option<u64>,
+    /// Optional recursive proof built from shielded transfer extrinsics.
+    pub recursive_proof: Option<RecursiveBlockProof>,
 }
 
 impl std::fmt::Debug for ProductionChainStateProvider {
@@ -701,6 +704,7 @@ impl ProductionChainStateProvider {
                 extrinsics_root,
                 failed_count: 0,
                 storage_changes_key: None, // No storage changes in mock mode
+                recursive_proof: None,
             })
         } else {
             Err("state execution is not configured; refusing to run without real execution".into())
@@ -840,12 +844,14 @@ impl ChainStateProvider for ProductionChainStateProvider {
                         "Block template built with state execution (Task 11.4 + 11.5.5)"
                     );
                 }
-                template.with_executed_state(
-                    result.applied_extrinsics,
-                    result.state_root,
-                    result.extrinsics_root,
-                    result.storage_changes_key,
-                )
+                template
+                    .with_executed_state(
+                        result.applied_extrinsics,
+                        result.state_root,
+                        result.extrinsics_root,
+                        result.storage_changes_key,
+                    )
+                    .with_recursive_proof(result.recursive_proof)
             }
             Err(e) => {
                 tracing::error!(
@@ -1198,6 +1204,7 @@ mod tests {
                 extrinsics_root: custom_extrinsics_root,
                 failed_count: 0,
                 storage_changes_key: None,
+                recursive_proof: None,
             })
         });
 
@@ -1229,6 +1236,7 @@ mod tests {
                 extrinsics_root: crate::substrate::compute_extrinsics_root(extrinsics),
                 failed_count: 0,
                 storage_changes_key: None,
+                recursive_proof: None,
             })
         });
 
@@ -1257,6 +1265,7 @@ mod tests {
                 extrinsics_root: H256::zero(),
                 failed_count: 0,
                 storage_changes_key: None,
+                recursive_proof: None,
             })
         });
 
