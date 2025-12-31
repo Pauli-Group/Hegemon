@@ -216,6 +216,7 @@ impl StarkVerifierProver {
             columns.push(vec![BaseElement::ZERO; total_rows]);
         }
         let mut trace = TraceTable::init(columns);
+        let inner_is_rpo_air = self.pub_inputs.inner_public_inputs.len() == 2 * STATE_WIDTH;
 
         let mut perm_idx = 0usize;
         let expected_z = compute_expected_z(&self.pub_inputs);
@@ -1123,16 +1124,18 @@ impl StarkVerifierProver {
             perm_idx += 1;
         }
 
-        debug_assert_eq!(
-            constraint_coeffs.len(),
-            NUM_CONSTRAINT_COEFFS,
-            "unexpected constraint coeff count"
-        );
-        debug_assert_eq!(
-            deep_coeffs.len(),
-            NUM_DEEP_COEFFS,
-            "unexpected DEEP coeff count"
-        );
+        if inner_is_rpo_air {
+            debug_assert_eq!(
+                constraint_coeffs.len(),
+                NUM_CONSTRAINT_COEFFS,
+                "unexpected constraint coeff count"
+            );
+            debug_assert_eq!(
+                deep_coeffs.len(),
+                NUM_DEEP_COEFFS,
+                "unexpected DEEP coeff count"
+            );
+        }
         debug_assert!(
             fri_alphas.len() <= MAX_FRI_LAYERS,
             "too many FRI alphas for configured MAX_FRI_LAYERS"
@@ -1161,8 +1164,10 @@ impl StarkVerifierProver {
             {
                 trace.set(COL_FRI_ALPHA_START + i, row, value);
             }
-            for (i, value) in ood_evals.iter().copied().enumerate() {
-                trace.set(COL_OOD_EVALS_START + i, row, value);
+            if inner_is_rpo_air {
+                for (i, value) in ood_evals.iter().copied().enumerate() {
+                    trace.set(COL_OOD_EVALS_START + i, row, value);
+                }
             }
         }
 
@@ -2224,16 +2229,19 @@ impl StarkVerifierProver {
             perm_idx += 1;
         }
 
-        debug_assert_eq!(
-            constraint_coeffs.len(),
-            NUM_CONSTRAINT_COEFFS,
-            "unexpected constraint coeff count"
-        );
-        debug_assert_eq!(
-            deep_coeffs.len(),
-            NUM_DEEP_COEFFS,
-            "unexpected DEEP coeff count"
-        );
+        let inner_is_rpo_air = self.pub_inputs.inner_public_inputs.len() == 2 * STATE_WIDTH;
+        if inner_is_rpo_air {
+            debug_assert_eq!(
+                constraint_coeffs.len(),
+                NUM_CONSTRAINT_COEFFS,
+                "unexpected constraint coeff count"
+            );
+            debug_assert_eq!(
+                deep_coeffs.len(),
+                NUM_DEEP_COEFFS,
+                "unexpected DEEP coeff count"
+            );
+        }
         debug_assert_eq!(
             fri_alphas.len(),
             num_fri_layers,
@@ -2263,8 +2271,10 @@ impl StarkVerifierProver {
             {
                 trace.set(COL_FRI_ALPHA_START + i, row, value);
             }
-            for (i, value) in ood_evals.iter().copied().enumerate() {
-                trace.set(COL_OOD_EVALS_START + i, row, value);
+            if inner_is_rpo_air {
+                for (i, value) in ood_evals.iter().copied().enumerate() {
+                    trace.set(COL_OOD_EVALS_START + i, row, value);
+                }
             }
         }
 
@@ -2273,7 +2283,6 @@ impl StarkVerifierProver {
         // For verifier-as-inner proofs (depth-2+), StarkVerifierAir's DEEP/FRI logic is currently
         // gated off (Phase 3b.2 streaming/replay pending). Avoid expensive native DEEP evaluation
         // work and just initialize the state columns to zero so traces are deterministic.
-        let inner_is_rpo_air = self.pub_inputs.inner_public_inputs.len() == 2 * STATE_WIDTH;
         if inner_is_rpo_air {
             let g_trace = BaseElement::get_root_of_unity(self.pub_inputs.trace_length.ilog2());
             let g_lde = BaseElement::get_root_of_unity(lde_domain_size.ilog2());

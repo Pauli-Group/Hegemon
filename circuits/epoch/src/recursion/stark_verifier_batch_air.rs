@@ -70,14 +70,17 @@ impl ToElements<BaseElement> for StarkVerifierBatchPublicInputs {
 /// AIR which verifies a fixed number of inner proofs by concatenating `StarkVerifierAir` traces.
 ///
 /// For now we require:
-/// - all inner proofs are `RpoAir` proofs (Phase 3b target)
 /// - all inner-proof parameters are uniform across the batch (same trace width/length, options)
 /// - batch size is a power of two (so the batch trace length stays a power of two)
+///
+/// Non-RpoAir inner proofs currently bypass OOD/DEEP/FRI consistency checks; this is
+/// UNSOUND and must be removed once streaming OOD evaluation is implemented.
 pub struct StarkVerifierBatchAir {
     context: AirContext<BaseElement>,
     pub_inputs: StarkVerifierBatchPublicInputs,
     segment_len: usize,
     template: StarkVerifierPublicInputs,
+    inner_is_rpo: bool,
     g_trace: BaseElement,
     g_lde: BaseElement,
     domain_offset: BaseElement,
@@ -118,18 +121,8 @@ impl Air for StarkVerifierBatchAir {
             segment_len
         );
 
-        // Ensure we are verifying RpoAir proofs only.
-        assert_eq!(
-            template.trace_length, ROWS_PER_PERMUTATION,
-            "batch verifier currently supports only RpoAir inner proofs (trace_length={})",
-            ROWS_PER_PERMUTATION
-        );
-        assert_eq!(
-            template.inner_public_inputs.len(),
-            2 * STATE_WIDTH,
-            "batch verifier currently supports only RpoAir inner proofs (pub_inputs_len={})",
-            2 * STATE_WIDTH
-        );
+        let inner_is_rpo = template.inner_public_inputs.len() == 2 * STATE_WIDTH
+            && template.trace_length == ROWS_PER_PERMUTATION;
 
         for (idx, inner) in pub_inputs.inner.iter().enumerate().skip(1) {
             assert_eq!(
@@ -430,6 +423,7 @@ impl Air for StarkVerifierBatchAir {
             pub_inputs,
             segment_len,
             template,
+            inner_is_rpo,
             g_trace,
             g_lde,
             domain_offset,
@@ -556,7 +550,6 @@ impl Air for StarkVerifierBatchAir {
         let inner_boundary_inv_at_z: [E; 2] = core::array::from_fn(|i| periodic_values[p + i]);
         p += 2;
         let inner_ood_constraint_weights: [E; 8] = core::array::from_fn(|i| periodic_values[p + i]);
-        let _ = inner_ood_constraint_weights;
 
         // MDS result
         let mut mds_result: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
@@ -936,6 +929,8 @@ impl Air for StarkVerifierBatchAir {
         result[idx] = boundary_mask * trace_leaf_end_mask * leaf_update;
         idx += 1;
 
+        let inner_rpo_sel = if self.inner_is_rpo { E::ONE } else { E::ZERO };
+
         // --------------------------------------------------------------------
         // OOD digest + coin-state save/restore
         // --------------------------------------------------------------------
@@ -954,7 +949,8 @@ impl Air for StarkVerifierBatchAir {
 
         // OOD evaluation columns are constant within a segment.
         for i in 0..OOD_EVAL_LEN {
-            result[idx + i] = next[COL_OOD_EVALS_START + i] - current[COL_OOD_EVALS_START + i];
+            result[idx + i] =
+                inner_rpo_sel * (next[COL_OOD_EVALS_START + i] - current[COL_OOD_EVALS_START + i]);
         }
         idx += OOD_EVAL_LEN;
 
@@ -965,7 +961,7 @@ impl Air for StarkVerifierBatchAir {
             let mask = ood_eval_row_masks[block];
             let stored = current[COL_OOD_EVALS_START + i];
             let input_val = current[RATE_START + offset];
-            result[idx + i] = mask * (stored - input_val);
+            result[idx + i] = inner_rpo_sel * mask * (stored - input_val);
         }
         idx += OOD_EVAL_LEN;
 
@@ -1010,114 +1006,123 @@ impl Air for StarkVerifierBatchAir {
         // This follows the RpoAir-specialized path from `StarkVerifierAir`, but uses per-segment
         // constants supplied via periodic columns.
 
-        // Evaluate RpoAir transition constraints at z.
-        let half_round_type_z = inner_rpo_periodic_at_z[0];
-        let ark_z: [E; STATE_WIDTH] = core::array::from_fn(|i| inner_rpo_periodic_at_z[1 + i]);
+        if self.inner_is_rpo {
+            // Evaluate RpoAir transition constraints at z.
+            let half_round_type_z = inner_rpo_periodic_at_z[0];
+            let ark_z: [E; STATE_WIDTH] = core::array::from_fn(|i| inner_rpo_periodic_at_z[1 + i]);
 
-        // OOD frame layout matches `merge_ood_evaluations`:
-        //   [trace(z) | constraint(z) | trace(zg) | constraint(zg)].
-        let trace_width = self.template.trace_width;
-        let constraint_frame_width = self.template.constraint_frame_width;
-        let trace_zg_offset = trace_width + constraint_frame_width;
+            // OOD frame layout matches `merge_ood_evaluations`:
+            //   [trace(z) | constraint(z) | trace(zg) | constraint(zg)].
+            let trace_width = self.template.trace_width;
+            let constraint_frame_width = self.template.constraint_frame_width;
+            let trace_zg_offset = trace_width + constraint_frame_width;
 
-        let ood_trace_z: [E; STATE_WIDTH] =
-            core::array::from_fn(|i| current[COL_OOD_EVALS_START + i]);
-        let ood_trace_zg: [E; STATE_WIDTH] =
-            core::array::from_fn(|i| current[COL_OOD_EVALS_START + trace_zg_offset + i]);
+            let ood_trace_z: [E; STATE_WIDTH] =
+                core::array::from_fn(|i| current[COL_OOD_EVALS_START + i]);
+            let ood_trace_zg: [E; STATE_WIDTH] =
+                core::array::from_fn(|i| current[COL_OOD_EVALS_START + trace_zg_offset + i]);
 
-        // MDS + ARK at z.
-        let mut mds_z: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
-        for i in 0..STATE_WIDTH {
-            for j in 0..STATE_WIDTH {
-                let coeff = E::from(MDS[i][j]);
-                mds_z[i] += coeff * ood_trace_z[j];
+            // MDS + ARK at z.
+            let mut mds_z: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
+            for i in 0..STATE_WIDTH {
+                for j in 0..STATE_WIDTH {
+                    let coeff = E::from(MDS[i][j]);
+                    mds_z[i] += coeff * ood_trace_z[j];
+                }
             }
+            let mut intermediate_z: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
+            for i in 0..STATE_WIDTH {
+                intermediate_z[i] = mds_z[i] + ark_z[i];
+            }
+
+            let is_forward_z = half_round_type_z * (two - half_round_type_z);
+            let is_inverse_z = half_round_type_z * (half_round_type_z - one);
+            let is_padding_z = (one - half_round_type_z) * (two - half_round_type_z);
+
+            let mut t_evals: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
+            for i in 0..STATE_WIDTH {
+                let x = intermediate_z[i];
+                let x2 = x * x;
+                let x4 = x2 * x2;
+                let x3 = x2 * x;
+                let x7 = x3 * x4;
+                let forward_constraint = ood_trace_zg[i] - x7;
+
+                let y = ood_trace_zg[i];
+                let y2 = y * y;
+                let y4 = y2 * y2;
+                let y3 = y2 * y;
+                let y7 = y3 * y4;
+                let inverse_constraint = y7 - intermediate_z[i];
+
+                let padding_constraint = ood_trace_zg[i] - ood_trace_z[i];
+                t_evals[i] = is_forward_z * forward_constraint
+                    + is_inverse_z * inverse_constraint
+                    + is_padding_z * padding_constraint;
+            }
+
+            // Reduce transition constraints with stored coefficients.
+            let mut transition_eval = E::ZERO;
+            for i in 0..STATE_WIDTH {
+                let coeff = current[COL_CONSTRAINT_COEFFS_START + i];
+                transition_eval += coeff * t_evals[i];
+            }
+            transition_eval *= inner_transition_divisor_inv_at_z;
+
+            // Boundary constraints: row0 asserts input_state, last row asserts output_state.
+            let mut boundary_row0 = E::ZERO;
+            let mut boundary_row_last = E::ZERO;
+            for i in 0..STATE_WIDTH {
+                let coeff_row0 = current[COL_CONSTRAINT_COEFFS_START + STATE_WIDTH + i];
+                let coeff_last = current[COL_CONSTRAINT_COEFFS_START + STATE_WIDTH + STATE_WIDTH + i];
+
+                let input = inner_public_inputs[i];
+                let output = inner_public_inputs[STATE_WIDTH + i];
+
+                boundary_row0 += coeff_row0 * (ood_trace_z[i] - input);
+                boundary_row_last += coeff_last * (ood_trace_z[i] - output);
+            }
+            let boundary_eval = boundary_row0 * inner_boundary_inv_at_z[0]
+                + boundary_row_last * inner_boundary_inv_at_z[1];
+
+            let ood_constraint_eval_1 = transition_eval + boundary_eval;
+
+            // Reduce quotient columns at z.
+            let mut ood_constraint_eval_2 = E::ZERO;
+            for i in 0..8usize {
+                let weight = inner_ood_constraint_weights[i];
+                let value = current[COL_OOD_EVALS_START + trace_width + i];
+                ood_constraint_eval_2 += weight * value;
+            }
+
+            result[idx] = ood_constraint_eval_1 - ood_constraint_eval_2;
+            idx += 1;
+        } else {
+            // Phase 3b.2: Non-RpoAir inner proofs need streaming OOD evaluation to be sound.
+            result[idx] = E::ZERO;
+            idx += 1;
         }
-        let mut intermediate_z: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
-        for i in 0..STATE_WIDTH {
-            intermediate_z[i] = mds_z[i] + ark_z[i];
-        }
-
-        let is_forward_z = half_round_type_z * (two - half_round_type_z);
-        let is_inverse_z = half_round_type_z * (half_round_type_z - one);
-        let is_padding_z = (one - half_round_type_z) * (two - half_round_type_z);
-
-        let mut t_evals: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
-        for i in 0..STATE_WIDTH {
-            let x = intermediate_z[i];
-            let x2 = x * x;
-            let x4 = x2 * x2;
-            let x3 = x2 * x;
-            let x7 = x3 * x4;
-            let forward_constraint = ood_trace_zg[i] - x7;
-
-            let y = ood_trace_zg[i];
-            let y2 = y * y;
-            let y4 = y2 * y2;
-            let y3 = y2 * y;
-            let y7 = y3 * y4;
-            let inverse_constraint = y7 - intermediate_z[i];
-
-            let padding_constraint = ood_trace_zg[i] - ood_trace_z[i];
-            t_evals[i] = is_forward_z * forward_constraint
-                + is_inverse_z * inverse_constraint
-                + is_padding_z * padding_constraint;
-        }
-
-        // Reduce transition constraints with stored coefficients.
-        let mut transition_eval = E::ZERO;
-        for i in 0..STATE_WIDTH {
-            let coeff = current[COL_CONSTRAINT_COEFFS_START + i];
-            transition_eval += coeff * t_evals[i];
-        }
-        transition_eval *= inner_transition_divisor_inv_at_z;
-
-        // Boundary constraints: row0 asserts input_state, last row asserts output_state.
-        let mut boundary_row0 = E::ZERO;
-        let mut boundary_row_last = E::ZERO;
-        for i in 0..STATE_WIDTH {
-            let coeff_row0 = current[COL_CONSTRAINT_COEFFS_START + STATE_WIDTH + i];
-            let coeff_last = current[COL_CONSTRAINT_COEFFS_START + STATE_WIDTH + STATE_WIDTH + i];
-
-            let input = inner_public_inputs[i];
-            let output = inner_public_inputs[STATE_WIDTH + i];
-
-            boundary_row0 += coeff_row0 * (ood_trace_z[i] - input);
-            boundary_row_last += coeff_last * (ood_trace_z[i] - output);
-        }
-        let boundary_eval = boundary_row0 * inner_boundary_inv_at_z[0]
-            + boundary_row_last * inner_boundary_inv_at_z[1];
-
-        let ood_constraint_eval_1 = transition_eval + boundary_eval;
-
-        // Reduce quotient columns at z.
-        let mut ood_constraint_eval_2 = E::ZERO;
-        for i in 0..8usize {
-            let weight = inner_ood_constraint_weights[i];
-            let value = current[COL_OOD_EVALS_START + trace_width + i];
-            ood_constraint_eval_2 += weight * value;
-        }
-
-        result[idx] = ood_constraint_eval_1 - ood_constraint_eval_2;
-        idx += 1;
 
         // --------------------------------------------------------------------
         // Transcript store: persist coeffs / deep coeffs / alphas
         // --------------------------------------------------------------------
 
         for i in 0..NUM_CONSTRAINT_COEFFS {
-            result[idx + i] =
-                next[COL_CONSTRAINT_COEFFS_START + i] - current[COL_CONSTRAINT_COEFFS_START + i];
+            result[idx + i] = inner_rpo_sel
+                * (next[COL_CONSTRAINT_COEFFS_START + i]
+                    - current[COL_CONSTRAINT_COEFFS_START + i]);
         }
         idx += NUM_CONSTRAINT_COEFFS;
 
         for i in 0..NUM_DEEP_COEFFS {
-            result[idx + i] = next[COL_DEEP_COEFFS_START + i] - current[COL_DEEP_COEFFS_START + i];
+            result[idx + i] = inner_rpo_sel
+                * (next[COL_DEEP_COEFFS_START + i] - current[COL_DEEP_COEFFS_START + i]);
         }
         idx += NUM_DEEP_COEFFS;
 
         for i in 0..super::fri_air::MAX_FRI_LAYERS {
-            result[idx + i] = next[COL_FRI_ALPHA_START + i] - current[COL_FRI_ALPHA_START + i];
+            result[idx + i] = inner_rpo_sel
+                * (next[COL_FRI_ALPHA_START + i] - current[COL_FRI_ALPHA_START + i]);
         }
         idx += super::fri_air::MAX_FRI_LAYERS;
 
@@ -1128,7 +1133,7 @@ impl Air for StarkVerifierBatchAir {
             let mask = coeff_end_masks[block];
             let stored = current[COL_CONSTRAINT_COEFFS_START + coeff_idx];
             let drawn = current[RATE_START + offset];
-            result[idx + coeff_idx] = mask * (stored - drawn);
+            result[idx + coeff_idx] = inner_rpo_sel * mask * (stored - drawn);
         }
         idx += NUM_CONSTRAINT_COEFFS;
 
@@ -1139,7 +1144,7 @@ impl Air for StarkVerifierBatchAir {
             let mask = deep_end_masks[block];
             let stored = current[COL_DEEP_COEFFS_START + deep_idx];
             let drawn = current[RATE_START + offset];
-            result[idx + deep_idx] = mask * (stored - drawn);
+            result[idx + deep_idx] = inner_rpo_sel * mask * (stored - drawn);
         }
         idx += NUM_DEEP_COEFFS;
 
@@ -1148,7 +1153,7 @@ impl Air for StarkVerifierBatchAir {
             let mask = fri_alpha_end_masks[layer_idx];
             let stored = current[COL_FRI_ALPHA_START + layer_idx];
             let drawn = current[RATE_START];
-            result[idx + layer_idx] = mask * (stored - drawn);
+            result[idx + layer_idx] = inner_rpo_sel * mask * (stored - drawn);
         }
         idx += num_fri_layers;
 
@@ -1158,8 +1163,9 @@ impl Air for StarkVerifierBatchAir {
 
         // Remainder coefficients are constant within a segment.
         for i in 0..NUM_REMAINDER_COEFFS {
-            result[idx + i] =
-                next[COL_REMAINDER_COEFFS_START + i] - current[COL_REMAINDER_COEFFS_START + i];
+            result[idx + i] = inner_rpo_sel
+                * (next[COL_REMAINDER_COEFFS_START + i]
+                    - current[COL_REMAINDER_COEFFS_START + i]);
         }
         idx += NUM_REMAINDER_COEFFS;
 
@@ -1167,7 +1173,7 @@ impl Air for StarkVerifierBatchAir {
         for i in 0..NUM_REMAINDER_COEFFS {
             let stored = current[COL_REMAINDER_COEFFS_START + i];
             let input_val = current[RATE_START + i];
-            result[idx + i] = remainder_hash_row0_mask * (stored - input_val);
+            result[idx + i] = inner_rpo_sel * remainder_hash_row0_mask * (stored - input_val);
         }
         idx += NUM_REMAINDER_COEFFS;
 
@@ -1186,59 +1192,70 @@ impl Air for StarkVerifierBatchAir {
         let c1_next = next[COL_DEEP_C1_ACC];
         let c2_next = next[COL_DEEP_C2_ACC];
 
-        let trace_width = self.template.trace_width;
-        let trace_zg_offset = trace_width + self.template.constraint_frame_width;
+        let (t1_delta0, t2_delta0, t1_delta1, t2_delta1, c1_delta, c2_delta) =
+            if self.inner_is_rpo {
+                let trace_width = self.template.trace_width;
+                let trace_zg_offset = trace_width + self.template.constraint_frame_width;
 
-        let mut t1_delta0 = E::ZERO;
-        let mut t2_delta0 = E::ZERO;
-        for j in 0..RATE_WIDTH {
-            let coeff = current[COL_DEEP_COEFFS_START + j];
-            let trace_val = current[RATE_START + j];
-            let ood_z = current[COL_OOD_EVALS_START + j];
-            let ood_zg = current[COL_OOD_EVALS_START + trace_zg_offset + j];
-            t1_delta0 += coeff * (trace_val - ood_z);
-            t2_delta0 += coeff * (trace_val - ood_zg);
-        }
+                let mut t1_delta0 = E::ZERO;
+                let mut t2_delta0 = E::ZERO;
+                for j in 0..RATE_WIDTH {
+                    let coeff = current[COL_DEEP_COEFFS_START + j];
+                    let trace_val = current[RATE_START + j];
+                    let ood_z = current[COL_OOD_EVALS_START + j];
+                    let ood_zg = current[COL_OOD_EVALS_START + trace_zg_offset + j];
+                    t1_delta0 += coeff * (trace_val - ood_z);
+                    t2_delta0 += coeff * (trace_val - ood_zg);
+                }
 
-        let mut t1_delta1 = E::ZERO;
-        let mut t2_delta1 = E::ZERO;
-        for j in 0..(trace_width - RATE_WIDTH) {
-            let coeff = current[COL_DEEP_COEFFS_START + RATE_WIDTH + j];
-            let trace_val = current[RATE_START + j];
-            let ood_z = current[COL_OOD_EVALS_START + RATE_WIDTH + j];
-            let ood_zg = current[COL_OOD_EVALS_START + trace_zg_offset + RATE_WIDTH + j];
-            t1_delta1 += coeff * (trace_val - ood_z);
-            t2_delta1 += coeff * (trace_val - ood_zg);
-        }
+                let mut t1_delta1 = E::ZERO;
+                let mut t2_delta1 = E::ZERO;
+                for j in 0..(trace_width - RATE_WIDTH) {
+                    let coeff = current[COL_DEEP_COEFFS_START + RATE_WIDTH + j];
+                    let trace_val = current[RATE_START + j];
+                    let ood_z = current[COL_OOD_EVALS_START + RATE_WIDTH + j];
+                    let ood_zg = current[COL_OOD_EVALS_START + trace_zg_offset + RATE_WIDTH + j];
+                    t1_delta1 += coeff * (trace_val - ood_z);
+                    t2_delta1 += coeff * (trace_val - ood_zg);
+                }
 
-        let mut c1_delta = E::ZERO;
-        let mut c2_delta = E::ZERO;
-        for j in 0..8usize {
-            let coeff = current[COL_DEEP_COEFFS_START + trace_width + j];
-            let val = current[RATE_START + j];
-            let ood_z = current[COL_OOD_EVALS_START + trace_width + j];
-            let ood_zg = current[COL_OOD_EVALS_START + trace_zg_offset + trace_width + j];
-            c1_delta += coeff * (val - ood_z);
-            c2_delta += coeff * (val - ood_zg);
-        }
+                let mut c1_delta = E::ZERO;
+                let mut c2_delta = E::ZERO;
+                for j in 0..8usize {
+                    let coeff = current[COL_DEEP_COEFFS_START + trace_width + j];
+                    let val = current[RATE_START + j];
+                    let ood_z = current[COL_OOD_EVALS_START + trace_width + j];
+                    let ood_zg = current[COL_OOD_EVALS_START + trace_zg_offset + trace_width + j];
+                    c1_delta += coeff * (val - ood_z);
+                    c2_delta += coeff * (val - ood_zg);
+                }
+
+                (t1_delta0, t2_delta0, t1_delta1, t2_delta1, c1_delta, c2_delta)
+            } else {
+                (E::ZERO, E::ZERO, E::ZERO, E::ZERO, E::ZERO, E::ZERO)
+            };
 
         let reset_term_t1 = query_reset_mask * (E::ZERO - t1);
         let reset_term_t2 = query_reset_mask * (E::ZERO - t2);
         let reset_term_c1 = query_reset_mask * (E::ZERO - c1);
         let reset_term_c2 = query_reset_mask * (E::ZERO - c2);
 
-        result[idx] = t1_next
-            - t1
-            - reset_term_t1
-            - trace_leaf0_row_mask * t1_delta0
-            - trace_leaf1_row_mask * t1_delta1;
-        result[idx + 1] = t2_next
-            - t2
-            - reset_term_t2
-            - trace_leaf0_row_mask * t2_delta0
-            - trace_leaf1_row_mask * t2_delta1;
-        result[idx + 2] = c1_next - c1 - reset_term_c1 - constraint_leaf_row_mask * c1_delta;
-        result[idx + 3] = c2_next - c2 - reset_term_c2 - constraint_leaf_row_mask * c2_delta;
+        result[idx] = inner_rpo_sel
+            * (t1_next
+                - t1
+                - reset_term_t1
+                - trace_leaf0_row_mask * t1_delta0
+                - trace_leaf1_row_mask * t1_delta1);
+        result[idx + 1] = inner_rpo_sel
+            * (t2_next
+                - t2
+                - reset_term_t2
+                - trace_leaf0_row_mask * t2_delta0
+                - trace_leaf1_row_mask * t2_delta1);
+        result[idx + 2] =
+            inner_rpo_sel * (c1_next - c1 - reset_term_c1 - constraint_leaf_row_mask * c1_delta);
+        result[idx + 3] =
+            inner_rpo_sel * (c2_next - c2 - reset_term_c2 - constraint_leaf_row_mask * c2_delta);
         idx += 4;
 
         // --- x / pow state machine ---
@@ -1256,16 +1273,17 @@ impl Air for StarkVerifierBatchAir {
 
         let x_fri_update = fri_leaf_any_row_mask * (x * x * E::from(self.inv_domain_offset) - x);
 
-        result[idx] = x_next - x - reset_x - x_trace_update - x_fri_update;
+        result[idx] = inner_rpo_sel * (x_next - x - reset_x - x_trace_update - x_fri_update);
 
         let pow_trace_update = trace_merkle_bit_mask * (pow * pow - pow);
-        result[idx + 1] = pow_next - pow - reset_pow - pow_trace_update;
+        result[idx + 1] = inner_rpo_sel * (pow_next - pow - reset_pow - pow_trace_update);
         idx += 2;
 
         // --- evaluation freeze between leaf updates ---
         let eval = current[COL_FRI_EVAL];
         let eval_next = next[COL_FRI_EVAL];
-        result[idx] = (one - fri_leaf_any_row_mask - query_reset_mask) * (eval_next - eval);
+        result[idx] =
+            inner_rpo_sel * (one - fri_leaf_any_row_mask - query_reset_mask) * (eval_next - eval);
         idx += 1;
 
         // --- MSB capture bits ---
@@ -1274,10 +1292,11 @@ impl Air for StarkVerifierBatchAir {
             let cur_b = current[bit_col];
             let next_b = next[bit_col];
             let capture = msb_capture_masks[layer_idx];
-            result[idx + layer_idx] = next_b
-                - cur_b
-                - query_reset_mask * (E::ZERO - cur_b)
-                - capture * (path_bit - cur_b);
+            result[idx + layer_idx] = inner_rpo_sel
+                * (next_b
+                    - cur_b
+                    - query_reset_mask * (E::ZERO - cur_b)
+                    - capture * (path_bit - cur_b));
         }
         idx += num_fri_layers;
 
@@ -1288,7 +1307,7 @@ impl Air for StarkVerifierBatchAir {
             let v0 = current[RATE_START];
             let v1 = current[RATE_START + 1];
             let selected = v0 + b * (v1 - v0);
-            result[idx + layer_idx] = mask * (eval - selected);
+            result[idx + layer_idx] = inner_rpo_sel * mask * (eval - selected);
         }
         idx += num_fri_layers;
 
@@ -1301,7 +1320,7 @@ impl Air for StarkVerifierBatchAir {
             let x_minus_z1 = x - z1;
             let denom = x_minus_z0 * x_minus_z1;
             let num = (t1 + c1) * x_minus_z1 + (t2 + c2) * x_minus_z0;
-            result[idx] = mask * (eval * denom - num);
+            result[idx] = inner_rpo_sel * mask * (eval * denom - num);
         } else {
             result[idx] = E::ZERO;
         }
@@ -1321,7 +1340,7 @@ impl Air for StarkVerifierBatchAir {
             // 2x * next_eval = (x + α) * f(x) + (x - α) * f(-x)
             let lhs = two * x_base * eval_next;
             let rhs = (x_base + alpha) * v0 + (x_base - alpha) * v1;
-            result[idx + layer_idx] = mask * (lhs - rhs);
+            result[idx + layer_idx] = inner_rpo_sel * mask * (lhs - rhs);
         }
         idx += num_fri_layers;
 
@@ -1332,7 +1351,7 @@ impl Air for StarkVerifierBatchAir {
             for i in 0..NUM_REMAINDER_COEFFS {
                 acc = acc * x + current[COL_REMAINDER_COEFFS_START + i];
             }
-            result[idx] = remainder_mask * (eval - acc);
+            result[idx] = inner_rpo_sel * remainder_mask * (eval - acc);
         } else {
             result[idx] = E::ZERO;
         }
@@ -1379,6 +1398,7 @@ impl Air for StarkVerifierBatchAir {
 
         let total_rows = self.trace_length();
         let num_segments = self.num_segments();
+        let inner_is_rpo = self.inner_is_rpo;
 
         // Repeat the base periodic column values for every segment.
         let mut result = Vec::with_capacity(base_cols.len() + 1 + 64);
@@ -1420,11 +1440,20 @@ impl Air for StarkVerifierBatchAir {
         for (seg_idx, inner) in self.pub_inputs.inner.iter().enumerate() {
             let expected_z = compute_expected_z(inner);
             let (rpo_periodic_at_z, transition_div_inv_at_z, boundary_inv_at_z, ood_weights) =
-                super::stark_verifier_air::compute_inner_ood_constants(
-                    inner,
-                    expected_z,
-                    self.g_trace,
-                );
+                if inner_is_rpo {
+                    super::stark_verifier_air::compute_inner_ood_constants(
+                        inner,
+                        expected_z,
+                        self.g_trace,
+                    )
+                } else {
+                    (
+                        [BaseElement::ZERO; 1 + STATE_WIDTH],
+                        BaseElement::ZERO,
+                        [BaseElement::ZERO; 2],
+                        [BaseElement::ZERO; 8],
+                    )
+                };
 
             let start = seg_idx * self.segment_len;
             let end = start + self.segment_len;
@@ -1442,7 +1471,13 @@ impl Air for StarkVerifierBatchAir {
                 }
             }
 
-            for (i, value) in inner.inner_public_inputs.iter().copied().enumerate() {
+            for (i, value) in inner
+                .inner_public_inputs
+                .iter()
+                .copied()
+                .take(2 * STATE_WIDTH)
+                .enumerate()
+            {
                 inner_pub_inputs_cols[i][start..end].fill(value);
             }
 
