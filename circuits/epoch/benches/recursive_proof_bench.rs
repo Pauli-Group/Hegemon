@@ -66,7 +66,8 @@ fn bench_recursive_proofs(c: &mut Criterion) {
     }
 
     // The full proof-of-proof recursion is significantly heavier; keep sampling low.
-    group.sample_size(3);
+    // Criterion enforces a minimum sample size of 10, so we stay at that floor.
+    group.sample_size(10);
     let hashes = make_hashes(1000);
     let epoch = make_epoch(0, &hashes);
     let prover = RecursiveEpochProver::fast();

@@ -16,7 +16,8 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2025-12-31T09:40Z) Fixed EpochProver public-input wiring and re-ran `epoch-circuit` tests (including ignored heavy tests) with `CARGO_INCREMENTAL=0`.
 - [x] (2025-12-31T02:04Z) Rebuilt the ExecPlan to match .agent/PLANS.md requirements, including milestone-level commands, acceptance criteria, and file-specific edit guidance.
 - [x] (2025-12-31T02:22Z) Wrote `.agent/scalability_architecture_math.md` to quantify soundness bounds and DA sampling probabilities before implementation.
-- [ ] (2025-12-31T02:04Z) Run the recursion feasibility spike and record results in Surprises & Discoveries (completed: transaction recursion budget + streaming plan budgets; remaining: full inner/outer proof size+time spike and bench).
+- [x] (2025-12-31T10:05Z) Completed Milestone 1 feasibility runs (recursion spike output + transaction budget/streaming plan outputs + recursive proof bench timings) and recorded results in Surprises & Discoveries.
+- [x] (2025-12-31T10:05Z) Enabled Criterion bench harness and adjusted sample size to satisfy Criterion’s minimum-sample requirement.
 - [x] (2025-12-31T05:03Z) Added extension-aware inner-proof parsing + public inputs and a transaction recursion budget test; captured initial width metrics.
 - [x] (2025-12-31T05:31Z) Added a Path A streaming plan estimator + test output for transaction proofs to size row/permutation costs under the 255-column cap.
 - [x] (2025-12-31T06:15Z) Started Path A streaming layout in recursion verifier by adding tape columns + coin-state save/restore masks and a minimal RpoAir tape correctness test.
@@ -68,6 +69,22 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Evidence: `cargo test -p epoch-circuit -- --ignored` failed with a `dep_graph` panic until rerun with `CARGO_INCREMENTAL=0`.
   Implication: Use `CARGO_INCREMENTAL=0` for heavy test runs until the toolchain issue is resolved.
 
+- Observation (2025-12-31T10:05Z): Recursion spike now reports inner/outer proof sizes and times, meeting the Milestone 1 acceptance criteria.
+  Evidence: `cargo test -p epoch-circuit verifier_spike::tests::test_spike_runs_successfully -- --nocapture` reports `Inner proof size: 4012 bytes`, `Outer proof size: 7860 bytes`, `Size ratio: 1.96x`, `Prover time ratio: 1.93x`.
+  Implication: The feasibility spike satisfies the <10x size and <100x prover-time targets for the spike setup.
+
+- Observation (2025-12-31T10:05Z): `cargo bench -p epoch-circuit recursive_proof_bench` initially produced no Criterion output until a bench harness was configured.
+  Evidence: The bench binary printed only `running 0 tests` until `[[bench]] ... harness = false` was added to `circuits/epoch/Cargo.toml`.
+  Implication: Keep the bench harness configuration to ensure Criterion benches run.
+
+- Observation (2025-12-31T10:05Z): Criterion panics when `sample_size` is below 10.
+  Evidence: Running the bench raised `assertion failed: n >= 10` until the outer-proof sample size was set to 10.
+  Implication: Use the minimum sample size (10) for heavy recursion benches and expect longer runtimes.
+
+- Observation (2025-12-31T10:05Z): Recursive epoch proof bench timings show inner proofs in ~19–24ms and outer proof-of-proof in ~1.65s.
+  Evidence: `target/release/deps/recursive_proof_bench-* --bench --output-format bencher` reports `prove_epoch_inner/100 ≈ 18.9ms`, `prove_epoch_inner/1000 ≈ 24.1ms`, `prove_epoch_recursive_outer ≈ 1.65s`.
+  Implication: The outer recursion benchmark is materially slower and should be budgeted in block production latency.
+
 ## Decision Log
 
 - Decision: Treat scalability as proof-carrying blocks plus data-availability sampling, not larger blocks or faster block times.
@@ -114,9 +131,14 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Rationale: Boundary constraints only apply on permutation boundaries; keeping restore active on all rows breaks boundary relations, and replayed tape/deep witnesses must reflect the permuted state used for hashing.
   Date/Author: 2025-12-31 / Codex
 
+- Decision: Keep Criterion sample size at 10 for the outer proof-of-proof benchmark.
+  Rationale: Criterion enforces a minimum sample size of 10; lowering it causes the bench to panic.
+  Date/Author: 2025-12-31 / Codex
+
 ## Outcomes & Retrospective
 
 Outcome (2025-12-31T09:40Z): The Path A recursion verifier updates now satisfy the full `epoch-circuit` test suite, including the ignored heavy tests when run with `CARGO_INCREMENTAL=0`. Remaining work includes the recursion size/time benchmark and the README whitepaper alignment.
+Outcome (2025-12-31T10:05Z): Milestone 1 feasibility benchmarks completed with measured spike ratios and recursive proof timings; the spike acceptance criteria are met. Remaining work moves to Milestone 2 documentation alignment and consensus type updates.
 
 ## Context and Orientation
 
@@ -168,7 +190,9 @@ Milestone 1 commands:
     cargo test -p epoch-circuit verifier_spike
     cargo test -p epoch-circuit verifier_spike::tests::test_transaction_recursion_budget -- --nocapture
     cargo test -p epoch-circuit verifier_spike::tests::test_transaction_streaming_plan_budget -- --nocapture
+    cargo test -p epoch-circuit verifier_spike::tests::test_spike_runs_successfully -- --nocapture
     cargo bench -p epoch-circuit recursive_proof_bench
+    cargo bench -p epoch-circuit --bench recursive_proof_bench -- --output-format bencher
 
 Expected evidence includes a test pass, a Transaction Recursion Budget output line with ood_eval_elems vs trace_width_cap, a Transaction Streaming Plan output block with per-query and total rows, and a bench line that prints inner and outer proof sizes and times. Record those numbers in Surprises & Discoveries.
 
@@ -234,6 +258,7 @@ Example output from the transaction streaming plan test:
     total_rows: 131072
 
 Plan Update Note (2025-12-31T09:40Z): Updated Progress, Surprises & Discoveries, Decision Log, and Outcomes to reflect the recursion verifier fixes, passing heavy tests, and the incremental-cache ICE workaround.
+Plan Update Note (2025-12-31T10:05Z): Marked Milestone 1 complete, added spike/bench outputs and Criterion constraints, and updated commands to include the spike and bench output runs.
 
 Example log line after Milestone 5:
 
