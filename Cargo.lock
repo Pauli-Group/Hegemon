@@ -1116,12 +1116,15 @@ dependencies = [
 name = "block-circuit"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "epoch-circuit",
  "protocol-versioning",
  "rand 0.8.5",
  "serde",
  "state-merkle",
  "thiserror 1.0.69",
  "transaction-circuit",
+ "winterfell",
 ]
 
 [[package]]
@@ -1571,6 +1574,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "blake3",
+ "block-circuit",
  "crossbeam-channel",
  "network",
  "num-bigint",
@@ -1587,10 +1591,13 @@ dependencies = [
  "sp-consensus-pow",
  "sp-core",
  "sp-runtime",
+ "state-merkle",
  "synthetic-crypto",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "transaction-circuit",
+ "winterfell",
 ]
 
 [[package]]
@@ -9349,6 +9356,7 @@ dependencies = [
  "url",
  "wallet",
  "winter-math",
+ "winterfell",
 ]
 
 [[package]]

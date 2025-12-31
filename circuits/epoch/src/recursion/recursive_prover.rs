@@ -595,7 +595,7 @@ pub fn recursive_proof_options() -> ProofOptions {
 /// Get fast recursive proof options for testing.
 pub fn fast_recursive_proof_options() -> ProofOptions {
     ProofOptions::new(
-        8,
+        2,
         32, // Must be at least 32 for RPO constraints
         0,
         FieldExtension::None,
