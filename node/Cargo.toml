@@ -39,6 +39,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 transaction_circuit = { path = "../circuits/transaction", package = "transaction-circuit" }
 epoch_circuit = { path = "../circuits/epoch", package = "epoch-circuit" }
+block-circuit = { path = "../circuits/block", package = "block-circuit", optional = true }
 wallet = { path = "../wallet" }
 rand = "0.8"
 rust-embed = "8.0"
@@ -155,13 +156,13 @@ substrate = [
     "dep:frame-support",
     "dep:tower",
     "dep:hyper",
+    "dep:block-circuit",
     "consensus/substrate",
 ]
 
 [dev-dependencies]
 rand = "0.8"
 tempfile = "3.8"
-block-circuit = { path = "../circuits/block" }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 tokio-tungstenite = "0.21"
 
