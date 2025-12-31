@@ -13,8 +13,9 @@ use transaction_circuit::{
     TRACE_WIDTH,
 };
 use winter_air::{Air, TraceInfo};
-use winter_math::{fields::f64::BaseElement, FieldElement};
+use winter_math::{fields::f64::BaseElement, FieldElement, ToElements};
 use winterfell::FieldExtension;
+use crate::recursion::{StreamingPlan, StreamingPlanParams};
 
 /// Run the complete verifier spike and collect results.
 pub fn run_spike() -> SpikeResults {
@@ -271,4 +272,66 @@ fn test_transaction_recursion_budget() {
         ood_eval_elems > TraceInfo::MAX_TRACE_WIDTH,
         "OOD eval vector must exceed Winterfell width cap for current params"
     );
+}
+
+#[test]
+fn test_transaction_streaming_plan_budget() {
+    let mut pub_inputs = TransactionPublicInputsStark::default();
+    pub_inputs.input_flags = vec![BaseElement::ONE; MAX_INPUTS];
+    pub_inputs.output_flags = vec![BaseElement::ONE; MAX_OUTPUTS];
+    pub_inputs.nullifiers = vec![[BaseElement::ONE; 4]; MAX_INPUTS];
+    pub_inputs.commitments = vec![[BaseElement::ONE; 4]; MAX_OUTPUTS];
+
+    let options = default_proof_options();
+    let trace_info = TraceInfo::new(TRACE_WIDTH, MIN_TRACE_LENGTH);
+    let air = TransactionAirStark::new(trace_info.clone(), pub_inputs.clone(), options.clone());
+
+    let constraint_frame_width = air.context().num_constraint_composition_columns();
+    let num_transition_constraints = air.context().num_transition_constraints();
+    let num_assertions = air.get_assertions().len();
+    let inner_public_inputs_len = pub_inputs.to_elements().len();
+
+    let lde_domain_size = trace_info.length() * options.blowup_factor();
+    let fri_options = options.to_fri_options();
+    let num_fri_layers = fri_options.num_fri_layers(lde_domain_size);
+
+    let plan = StreamingPlan::new(StreamingPlanParams {
+        trace_width: trace_info.main_trace_width(),
+        constraint_frame_width,
+        num_transition_constraints,
+        num_assertions,
+        trace_length: trace_info.length(),
+        blowup_factor: options.blowup_factor(),
+        num_queries: options.num_queries(),
+        num_draws: options.num_queries(),
+        field_extension: options.field_extension(),
+        partition_options: options.partition_options(),
+        inner_public_inputs_len,
+        fri_folding_factor: fri_options.folding_factor(),
+        num_fri_layers,
+    });
+
+    println!("\n=== Transaction Streaming Plan (Path A) ===");
+    println!("field_extension: {:?} (degree {})", options.field_extension(), plan.extension_degree);
+    println!("trace_leaf_hash_perms: {}", plan.trace_leaf_hash_perms);
+    println!(
+        "constraint_leaf_hash_perms: {}",
+        plan.constraint_leaf_hash_perms
+    );
+    println!("fri_leaf_hash_perms: {}", plan.fri_leaf_hash_perms);
+    println!("merkle_depth: {}", plan.merkle_depth);
+    println!("merkle_perms_per_query: {}", plan.merkle_perms_per_query);
+    println!(
+        "coeff_draw_perms_per_query: {}",
+        plan.coeff_draw_perms_per_query
+    );
+    println!(
+        "alpha_draw_perms_per_query: {}",
+        plan.alpha_draw_perms_per_query
+    );
+    println!("per_query_perms: {}", plan.per_query_perms);
+    println!("global_perms: {}", plan.global_perms);
+    println!("total_perms: {}", plan.total_perms);
+    println!("rows_unpadded: {}", plan.rows_unpadded);
+    println!("total_rows: {}", plan.total_rows);
 }

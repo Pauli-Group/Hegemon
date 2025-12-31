@@ -14,8 +14,9 @@ This plan makes the chain fundamentally scalable by validating each block with a
 
 - [x] (2025-12-31T02:04Z) Rebuilt the ExecPlan to match .agent/PLANS.md requirements, including milestone-level commands, acceptance criteria, and file-specific edit guidance.
 - [x] (2025-12-31T02:22Z) Wrote `.agent/scalability_architecture_math.md` to quantify soundness bounds and DA sampling probabilities before implementation.
-- [ ] (2025-12-31T02:04Z) Run the recursion feasibility spike and record results in Surprises & Discoveries (completed: transaction recursion budget test with quadratic extension; remaining: full inner/outer proof size+time spike and bench).
+- [ ] (2025-12-31T02:04Z) Run the recursion feasibility spike and record results in Surprises & Discoveries (completed: transaction recursion budget + streaming plan budgets; remaining: full inner/outer proof size+time spike and bench).
 - [x] (2025-12-31T05:03Z) Added extension-aware inner-proof parsing + public inputs and a transaction recursion budget test; captured initial width metrics.
+- [x] (2025-12-31T05:31Z) Added a Path A streaming plan estimator + test output for transaction proofs to size row/permutation costs under the 255-column cap.
 - [x] (2025-12-31T03:09Z) Chose a baseline target of ~85-bit PQ security (collision-limited by 256-bit digests) and recorded required proof-parameter implications in `.agent/scalability_architecture_math.md`.
 - [ ] (2025-12-31T03:09Z) Lock ProofOptions and recursion format for consensus-critical proofs at the chosen target (completed: transaction proofs now use quadratic extension; completed: parser supports quadratic extension metadata; remaining: recursive verifier trace accepts quadratic inner proofs and end-to-end recursion test).
 - [x] (2025-12-31T04:12Z) Updated transaction STARK proof options to quadratic extension and aligned verifiers + docs to the ~85-bit PQ collision ceiling.
@@ -42,6 +43,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - Observation (2025-12-31T05:03Z): Transaction recursion budget with quadratic extension already exceeds Winterfell’s MAX_TRACE_WIDTH for OOD evaluations, so the current recursion trace layout cannot fit OOD vectors without redesign.
   Evidence: `cargo test -p epoch-circuit verifier_spike::tests::test_transaction_recursion_budget -- --nocapture` shows `ood_eval_elems: 364` vs `trace_width_cap: 255` with `field_extension: Quadratic (degree 2)`.
   Implication: Recursion will need a wider trace layout, OOD vector partitioning, or a different recursion backend before we can verify transaction proofs end-to-end.
+
+- Observation (2025-12-31T05:31Z): Path A streaming layout keeps total rows at 2^17 for transaction proofs, but per-query coefficient draw perms are a material share of the schedule.
+  Evidence: `cargo test -p epoch-circuit verifier_spike::tests::test_transaction_streaming_plan_budget -- --nocapture` prints `per_query_perms: 148`, `global_perms: 1189`, `rows_unpadded: 94800`, `total_rows: 131072`.
+  Implication: Path A is feasible on rows but requires a careful transcript/leaf interleave schedule (coin-state save/restore + coeff tape) to avoid reintroducing width growth.
 
 ## Decision Log
 
@@ -75,6 +80,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
 
 - Decision: Keep recursion trace builders rejecting non-base inner proofs while only the parser and public inputs understand quadratic extensions.
   Rationale: Accepting quadratic proofs without trace/AIR support would silently build invalid recursion traces; explicit rejection forces us to finish the verifier trace changes first.
+  Date/Author: 2025-12-31 / Codex
+
+- Decision: Use a Path A streaming schedule that pairs coefficient-draw permutations with leaf-hash permutations (coeff tape) and draws one FRI alpha per layer.
+  Rationale: This keeps trace width <255 while preserving a bounded row budget (~2^17 for transaction proofs) without forking Winterfell.
   Date/Author: 2025-12-31 / Codex
 
 ## Outcomes & Retrospective
@@ -130,9 +139,10 @@ Milestone 1 commands:
 
     cargo test -p epoch-circuit verifier_spike
     cargo test -p epoch-circuit verifier_spike::tests::test_transaction_recursion_budget -- --nocapture
+    cargo test -p epoch-circuit verifier_spike::tests::test_transaction_streaming_plan_budget -- --nocapture
     cargo bench -p epoch-circuit recursive_proof_bench
 
-Expected evidence includes a test pass, a Transaction Recursion Budget output line with ood_eval_elems vs trace_width_cap, and a bench line that prints inner and outer proof sizes and times. Record those numbers in Surprises & Discoveries.
+Expected evidence includes a test pass, a Transaction Recursion Budget output line with ood_eval_elems vs trace_width_cap, a Transaction Streaming Plan output block with per-query and total rows, and a bench line that prints inner and outer proof sizes and times. Record those numbers in Surprises & Discoveries.
 
 Milestone 2 commands:
 
@@ -186,6 +196,14 @@ Example output from the transaction recursion budget test:
     field_extension: Quadratic (degree 2)
     ood_eval_elems: 364
     trace_width_cap: 255
+
+Example output from the transaction streaming plan test:
+
+    === Transaction Streaming Plan (Path A) ===
+    per_query_perms: 148
+    global_perms: 1189
+    rows_unpadded: 94800
+    total_rows: 131072
 
 Example log line after Milestone 5:
 
@@ -274,3 +292,4 @@ Revision Note (2025-12-31T02:04Z): Rebuilt the ExecPlan to comply with .agent/PL
 Revision Note (2025-12-31T02:22Z): Added math companion reference, recorded the deterministic DA sampling flaw and updated the plan to use per-node randomized sampling (per `.agent/scalability_architecture_math.md`).
 Revision Note (2025-12-31T04:12Z): Updated transaction proof parameters to quadratic extension, aligned security notes in docs, and recorded the new proving-time impact in Surprises & Discoveries.
 Revision Note (2025-12-31T05:03Z): Recorded the recursion budget spike output, updated progress and surprises, and clarified that quadratic extension support is parser-only pending trace/AIR work.
+Revision Note (2025-12-31T05:31Z): Added the Path A streaming plan estimator + test output and captured the row budget and schedule assumptions.
