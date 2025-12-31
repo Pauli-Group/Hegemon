@@ -15,7 +15,8 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2025-12-31T02:04Z) Rebuilt the ExecPlan to match .agent/PLANS.md requirements, including milestone-level commands, acceptance criteria, and file-specific edit guidance.
 - [x] (2025-12-31T02:22Z) Wrote `.agent/scalability_architecture_math.md` to quantify soundness bounds and DA sampling probabilities before implementation.
 - [ ] (2025-12-31T02:04Z) Run the recursion feasibility spike and record results in Surprises & Discoveries.
-- [ ] (2025-12-31T02:22Z) Choose a validity-soundness target and lock ProofOptions (field extension, queries, blowup) for consensus-critical proofs, using `.agent/scalability_architecture_math.md`.
+- [x] (2025-12-31T03:09Z) Chose a baseline target of ~85-bit PQ security (collision-limited by 256-bit digests) and recorded required proof-parameter implications in `.agent/scalability_architecture_math.md`.
+- [ ] (2025-12-31T03:09Z) Lock ProofOptions and recursion format for consensus-critical proofs at the chosen target (including field extension support in recursion as needed).
 - [ ] (2025-12-31T02:04Z) Update DESIGN.md, METHODS.md, and the README.md whitepaper to match the new architecture.
 - [ ] (2025-12-31T02:04Z) Implement recursive block proofs and wire them into consensus validation.
 - [ ] (2025-12-31T02:04Z) Implement data-availability encoding, storage, sampling, and P2P retrieval.
@@ -28,9 +29,13 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Evidence: A producer can always publish only the deterministically sampled chunks and withhold the rest; see `.agent/scalability_architecture_math.md` §4.4.
   Implication: The DA milestone must use per-node randomized sampling (network-level enforcement) or introduce an unpredictability source the producer cannot bias at commitment time.
 
-- Observation (2025-12-31T02:22Z): Current STARK proof parameters in the repo do not support “~100-bit+” validity soundness because transaction proofs use a ~64-bit base field with `FieldExtension::None`.
-  Evidence: Winterfell’s own `ProofOptions` docs state extension fields are required for 100+ bits over ~64-bit base fields; see `.agent/scalability_architecture_math.md` §2.1.
-  Implication: If this chain is meant to be more than a toy, the plan must explicitly upgrade proof parameters (field extension and related proof options) for consensus-critical proofs, and accept the performance cost.
+- Observation (2025-12-31T02:22Z): Current STARK proof parameters in the repo do not support “~85-bit+” validity soundness for transaction proofs because we are on a ~64-bit base field with `FieldExtension::None`, and the field-size term is the bottleneck.
+  Evidence: For the current transaction AIR, `trace_length = 2^15` and `blowup = 2^3`, so `lde_domain_size ≈ 2^18` and the standard field-size bound is ~`deg/|F| ≈ 2^18/2^64 = 2^-46`; see `.agent/scalability_architecture_math.md` §2.1.
+  Implication: If this chain is meant to be more than a toy, the plan must upgrade proof parameters (field extension and related recursion support) for consensus-critical proofs, and accept the performance cost.
+
+- Observation (2025-12-31T03:09Z): If we keep 256-bit digests and require collision security, the PQ collision ceiling is ~85 bits, so “128-bit PQ soundness” is not achievable without widening digests.
+  Evidence: Generic quantum collision search is ~2^(n/3); for n=256 this is ~2^85; see `.agent/scalability_architecture_math.md` §0.1 and §2.4.
+  Implication: We either accept ~85-bit PQ collision security as the system ceiling or we change digest sizes and hash primitives.
 
 ## Decision Log
 
@@ -52,6 +57,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
 
 - Decision: Treat proof-parameter hardening (field extension / soundness target) as a gated design decision, not a “nice to have”.
   Rationale: Recursive block proofs inherit transaction-proof soundness; if transaction proofs are capped at ~64-bit soundness, the chain’s validity security is not credible at scale. This must be decided up front because it materially impacts prover time, proof size, and block production latency.
+  Date/Author: 2025-12-31 / Codex
+
+- Decision: Keep 256-bit digests and accept ~85-bit PQ collision security as the ceiling.
+  Rationale: 256-bit digests cannot deliver 128-bit PQ collision resistance under generic bounds; adopting 85-bit as the baseline keeps digest widths stable and makes the security target consistent across Merkle commitments, Fiat–Shamir transcripts, and DA roots.
   Date/Author: 2025-12-31 / Codex
 
 ## Outcomes & Retrospective
