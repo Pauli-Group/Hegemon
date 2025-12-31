@@ -13,8 +13,13 @@ pub struct ChainSpec {
     pub bootnodes: Vec<String>,
     pub telemetry_endpoints: Vec<String>,
     pub pow_bits: u32,
+    pub da_chunk_size: u32,
+    pub da_sample_count: u32,
     pub genesis: RuntimeGenesisConfig,
 }
+
+const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
+const DEFAULT_DA_SAMPLE_COUNT: u32 = 80;
 
 fn account(seed: u8) -> AccountId {
     AccountId::new([seed; 32])
@@ -55,6 +60,8 @@ pub fn development_config() -> ChainSpec {
         bootnodes: Vec::new(),
         telemetry_endpoints: vec!["wss://telemetry.dev.hegemon.invalid/submit".into()],
         pow_bits: PowDifficulty::get(),
+        da_chunk_size: DEFAULT_DA_CHUNK_SIZE,
+        da_sample_count: DEFAULT_DA_SAMPLE_COUNT,
         genesis: base_genesis(&endowed, sudo),
     }
 }
@@ -72,6 +79,8 @@ pub fn testnet_config() -> ChainSpec {
         ],
         telemetry_endpoints: vec!["wss://telemetry.testnet.hegemon.invalid/submit".into()],
         pow_bits: PowDifficulty::get(),
+        da_chunk_size: DEFAULT_DA_CHUNK_SIZE,
+        da_sample_count: DEFAULT_DA_SAMPLE_COUNT,
         genesis: base_genesis(&endowed, sudo),
     }
 }

@@ -29,8 +29,9 @@ pub use substrate_pow::{
     target_to_compact, verify_seal,
 };
 pub use types::{
-    BalanceTag, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, FeeCommitment, Nullifier,
-    StarkCommitment, SupplyDigest, Transaction, VersionCommitment,
+    BalanceTag, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, DaChunk, DaChunkProof,
+    DaParams, DaRoot, FeeCommitment, Nullifier, RecursiveProofHash, StarkCommitment, SupplyDigest,
+    Transaction, VersionCommitment,
 };
 pub use validator::{Validator, ValidatorSet};
 pub use version_policy::{UpgradeDirective, VersionProposal, VersionSchedule};

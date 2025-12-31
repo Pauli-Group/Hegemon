@@ -10,7 +10,7 @@ use consensus::header::{BlockHeader, PowSeal};
 use consensus::nullifier::NullifierSet;
 use consensus::reward::{block_subsidy, update_supply_digest};
 use consensus::types::{
-    ConsensusBlock, Transaction, compute_fee_commitment, compute_proof_commitment,
+    ConsensusBlock, DaParams, Transaction, compute_fee_commitment, compute_proof_commitment,
     compute_version_commitment,
 };
 use consensus::validator::{Validator, ValidatorSet};
@@ -143,6 +143,10 @@ pub fn assemble_bft_block(
     let version_commitment = compute_version_commitment(&transactions);
     let fee_commitment = compute_fee_commitment(&transactions);
     let state_root = accumulate_state(base_state_root, &transactions);
+    let da_params = DaParams {
+        chunk_size: 1024,
+        sample_count: 4,
+    };
     let validator_set = validator_set(validators);
     let mut header = BlockHeader {
         version: 1,
@@ -153,6 +157,9 @@ pub fn assemble_bft_block(
         state_root,
         nullifier_root,
         proof_commitment,
+        recursive_proof_hash: [0u8; 32],
+        da_root: [0u8; 32],
+        da_params,
         version_commitment,
         tx_count: transactions.len() as u32,
         fee_commitment,
@@ -207,6 +214,10 @@ pub fn assemble_pow_block(
     let version_commitment = compute_version_commitment(&transactions);
     let fee_commitment = compute_fee_commitment(&transactions);
     let state_root = accumulate_state(base_state_root, &transactions);
+    let da_params = DaParams {
+        chunk_size: 1024,
+        sample_count: 4,
+    };
     let mut header = BlockHeader {
         version: 1,
         height,
@@ -216,6 +227,9 @@ pub fn assemble_pow_block(
         state_root,
         nullifier_root,
         proof_commitment,
+        recursive_proof_hash: [0u8; 32],
+        da_root: [0u8; 32],
+        da_params,
         version_commitment,
         tx_count: transactions.len() as u32,
         fee_commitment,

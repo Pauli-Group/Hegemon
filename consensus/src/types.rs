@@ -11,8 +11,28 @@ pub type BlockHash = [u8; 32];
 pub type ValidatorId = [u8; 32];
 pub type StarkCommitment = [u8; 48];
 pub type VersionCommitment = [u8; 32];
+pub type RecursiveProofHash = [u8; 32];
+pub type DaRoot = [u8; 32];
 pub type SupplyDigest = u128;
 pub type Amount = u64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DaParams {
+    pub chunk_size: u32,
+    pub sample_count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DaChunk {
+    pub index: u32,
+    pub data: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DaChunkProof {
+    pub chunk: DaChunk,
+    pub merkle_path: Vec<DaRoot>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Transaction {
