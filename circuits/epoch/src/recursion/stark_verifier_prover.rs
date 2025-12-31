@@ -26,21 +26,27 @@ use super::rpo_proof::{rpo_hash_elements, rpo_merge};
 use super::stark_verifier_air::{
     build_context_prefix, compute_deep_evaluation, compute_expected_z, StarkVerifierAir,
     StarkVerifierPublicInputs, COL_CARRY_MASK, COL_COEFF_MASK, COL_COEFF_START, COL_COIN_INIT_MASK,
-    COL_CONSTRAINT_COEFFS_START, COL_DEEP_C1_ACC, COL_DEEP_C2_ACC, COL_DEEP_COEFFS_START,
-    COL_DEEP_MASK, COL_DEEP_START, COL_DEEP_T1_ACC, COL_DEEP_T2_ACC, COL_FRI_ALPHA_START,
-    COL_FRI_ALPHA_VALUE, COL_FRI_EVAL, COL_FRI_MASK, COL_FRI_MSB_BITS_START, COL_FRI_POW,
-    COL_FRI_X, COL_FULL_CARRY_MASK, COL_MERKLE_INDEX, COL_MERKLE_PATH_BIT, COL_OOD_DIGEST_START,
-    COL_OOD_EVALS_START, COL_POS_ACC, COL_POS_BIT0, COL_POS_BIT1, COL_POS_BIT2, COL_POS_BIT3,
-    COL_POS_DECOMP_MASK, COL_POS_HI_AND, COL_POS_LO_ACC, COL_POS_MASK, COL_POS_MASKED_ACC,
-    COL_POS_PERM_ACC, COL_POS_RAW, COL_POS_SORTED_VALUE, COL_POS_START, COL_REMAINDER_COEFFS_START,
-    COL_RESEED_MASK, COL_RESEED_WORD_START, COL_SAVED_COIN_START, COL_Z_MASK, COL_Z_VALUE,
-    NUM_CONSTRAINT_COEFFS, NUM_DEEP_COEFFS, NUM_FRI_MSB_BITS, NUM_REMAINDER_COEFFS, RATE_WIDTH,
-    VERIFIER_TRACE_WIDTH,
+    COL_COIN_RESTORE_MASK, COL_COIN_SAVE_MASK, COL_CONSTRAINT_COEFFS_START, COL_DEEP_C1_ACC,
+    COL_DEEP_C2_ACC, COL_DEEP_COEFFS_START, COL_DEEP_MASK, COL_DEEP_START, COL_DEEP_T1_ACC,
+    COL_DEEP_T2_ACC, COL_FRI_ALPHA_START, COL_FRI_ALPHA_VALUE, COL_FRI_EVAL, COL_FRI_MASK,
+    COL_FRI_MSB_BITS_START, COL_FRI_POW, COL_FRI_X, COL_FULL_CARRY_MASK, COL_MERKLE_INDEX,
+    COL_MERKLE_PATH_BIT, COL_OOD_DIGEST_START, COL_OOD_EVALS_START, COL_POS_ACC, COL_POS_BIT0,
+    COL_POS_BIT1, COL_POS_BIT2, COL_POS_BIT3, COL_POS_DECOMP_MASK, COL_POS_HI_AND, COL_POS_LO_ACC,
+    COL_POS_MASK, COL_POS_MASKED_ACC, COL_POS_PERM_ACC, COL_POS_RAW, COL_POS_SORTED_VALUE,
+    COL_POS_START, COL_REMAINDER_COEFFS_START, COL_RESEED_MASK, COL_RESEED_WORD_START,
+    COL_SAVED_COIN_START, COL_TAPE_INDEX, COL_TAPE_KIND, COL_TAPE_MASK, COL_TAPE_VALUES_START,
+    COL_Z_MASK, COL_Z_VALUE, NUM_CONSTRAINT_COEFFS, NUM_DEEP_COEFFS, NUM_FRI_MSB_BITS,
+    NUM_REMAINDER_COEFFS, RATE_WIDTH, TAPE_WIDTH, VERIFIER_TRACE_WIDTH,
 };
 use winter_fri::utils::map_positions_to_indexes;
 
 type Blake3 = Blake3_256<BaseElement>;
 type Blake3MerkleTree = MerkleTree<Blake3>;
+
+const TAPE_KIND_NONE: u64 = 0;
+const TAPE_KIND_COEFF: u64 = 1;
+const TAPE_KIND_DEEP: u64 = 2;
+const TAPE_KIND_ALPHA: u64 = 3;
 
 /// Prover for the minimal StarkVerifierAir.
 pub struct StarkVerifierProver {
@@ -183,9 +189,19 @@ impl StarkVerifierProver {
             self.pub_inputs.constraint_frame_width,
             self.pub_inputs.constraint_partition_size,
         );
+        let trace_leaf_chains = leaf_chain_count(
+            self.pub_inputs.trace_width,
+            self.pub_inputs.trace_partition_size,
+        );
+        let constraint_leaf_chains = leaf_chain_count(
+            self.pub_inputs.constraint_frame_width,
+            self.pub_inputs.constraint_partition_size,
+        );
         let fri_leaf_perms = 1usize;
         let mut merkle_perms_per_query =
             trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
+        let replay_draws_per_query = trace_leaf_chains + constraint_leaf_chains;
+        merkle_perms_per_query += replay_draws_per_query;
         for layer_idx in 0..num_fri_layers {
             merkle_perms_per_query += fri_leaf_perms + depth_trace.saturating_sub(layer_idx + 1);
         }
@@ -257,8 +273,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
-                perm_acc_val,
+                perm_acc_val
             );
 
             // Carry full state forward.
@@ -323,8 +341,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
-                perm_acc_val,
+                perm_acc_val
             );
 
             let last = row_offset + ROWS_PER_PERMUTATION - 1;
@@ -343,21 +363,23 @@ impl StarkVerifierProver {
         let row_offset = perm_idx * ROWS_PER_PERMUTATION;
         self.fill_rpo_trace(&mut trace, row_offset, coin_state);
         set_masks(
-            &mut trace,
-            perm_idx,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ONE,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            self.pub_inputs.trace_commitment,
-            perm_acc_val,
-        );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                self.pub_inputs.trace_commitment,
+                perm_acc_val
+            );
 
         let last = row_offset + ROWS_PER_PERMUTATION - 1;
         for (i, value) in coin_state.iter_mut().enumerate() {
@@ -389,8 +411,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 self.pub_inputs.constraint_commitment,
-                perm_acc_val,
+                perm_acc_val
             );
         } else {
             set_masks(
@@ -406,8 +430,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
-                perm_acc_val,
+                perm_acc_val
             );
         }
 
@@ -422,6 +448,8 @@ impl StarkVerifierProver {
             constraint_coeffs.push(value);
         }
         set_coeff_witness(&mut trace, perm_idx, &coin_state);
+        let tape_values = core::array::from_fn(|i| coin_state[4 + i]);
+        set_tape_meta(&mut trace, perm_idx, TAPE_KIND_COEFF, 0, tape_values);
         perm_idx += 1;
 
         // --- Additional coefficient permutations (permute-only, full-carry) ----------------
@@ -432,38 +460,42 @@ impl StarkVerifierProver {
             let is_last = coeff_idx + 1 == num_coeff_perms;
             if is_last {
                 set_masks(
-                    &mut trace,
-                    perm_idx,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    self.pub_inputs.constraint_commitment,
-                    perm_acc_val,
-                );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                self.pub_inputs.constraint_commitment,
+                perm_acc_val
+            );
             } else {
                 set_masks(
-                    &mut trace,
-                    perm_idx,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    [BaseElement::ZERO; 4],
-                    perm_acc_val,
-                );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+                perm_acc_val
+            );
             }
 
             let last = row_offset + ROWS_PER_PERMUTATION - 1;
@@ -477,6 +509,8 @@ impl StarkVerifierProver {
                 constraint_coeffs.push(value);
             }
             set_coeff_witness(&mut trace, perm_idx, &coin_state);
+            let tape_values = core::array::from_fn(|i| coin_state[4 + i]);
+            set_tape_meta(&mut trace, perm_idx, TAPE_KIND_COEFF, coeff_idx as u64, tape_values);
             perm_idx += 1;
         }
 
@@ -491,21 +525,23 @@ impl StarkVerifierProver {
         self.fill_rpo_trace(&mut trace, row_offset, coin_state);
         // Draw z. The coin is reseeded with the OOD digest in-circuit after hashing OOD frames.
         set_masks(
-            &mut trace,
-            perm_idx,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ONE,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            [BaseElement::ZERO; 4],
-            perm_acc_val,
-        );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+                perm_acc_val
+            );
 
         let last = row_offset + ROWS_PER_PERMUTATION - 1;
         for (i, value) in coin_state.iter_mut().enumerate() {
@@ -552,8 +588,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
-                perm_acc_val,
+                perm_acc_val
             );
 
             let last = row_offset + ROWS_PER_PERMUTATION - 1;
@@ -575,6 +613,11 @@ impl StarkVerifierProver {
         for deep_idx in 0..num_deep_perms {
             let row_offset = perm_idx * ROWS_PER_PERMUTATION;
             self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+            let restore_mask = if deep_idx == 0 {
+                BaseElement::ONE
+            } else {
+                BaseElement::ZERO
+            };
 
             let is_last = deep_idx + 1 == num_deep_perms;
             if is_last {
@@ -585,42 +628,46 @@ impl StarkVerifierProver {
                     [BaseElement::ZERO; 4]
                 };
                 set_masks(
-                    &mut trace,
-                    perm_idx,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    if has_fri_commitments {
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                if has_fri_commitments {
                         BaseElement::ONE
                     } else {
                         BaseElement::ZERO
                     },
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    reseed_word,
-                    perm_acc_val,
-                );
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                restore_mask,
+                reseed_word,
+                perm_acc_val
+            );
             } else {
                 set_masks(
-                    &mut trace,
-                    perm_idx,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    [BaseElement::ZERO; 4],
-                    perm_acc_val,
-                );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                restore_mask,
+                [BaseElement::ZERO; 4],
+                perm_acc_val
+            );
             }
 
             let last = row_offset + ROWS_PER_PERMUTATION - 1;
@@ -634,6 +681,8 @@ impl StarkVerifierProver {
                 deep_coeffs.push(value);
             }
             set_deep_witness(&mut trace, perm_idx, &coin_state);
+            let tape_values = core::array::from_fn(|i| coin_state[4 + i]);
+            set_tape_meta(&mut trace, perm_idx, TAPE_KIND_DEEP, deep_idx as u64, tape_values);
             perm_idx += 1;
         }
 
@@ -670,8 +719,10 @@ impl StarkVerifierProver {
                 BaseElement::ONE,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 next_commitment,
-                perm_acc_val,
+                perm_acc_val
             );
 
             let last = row_offset + ROWS_PER_PERMUTATION - 1;
@@ -682,6 +733,8 @@ impl StarkVerifierProver {
                 fri_alphas.push(coin_state[4]);
             }
             set_fri_alpha_witness(&mut trace, perm_idx, coin_state[4]);
+            let tape_values = core::array::from_fn(|i| coin_state[4 + i]);
+            set_tape_meta(&mut trace, perm_idx, TAPE_KIND_ALPHA, layer_idx as u64, tape_values);
             perm_idx += 1;
 
             for (state_value, commitment_value) in
@@ -723,8 +776,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 nonce_word,
-                perm_acc_val,
+                perm_acc_val
             );
 
             let last = row_offset + ROWS_PER_PERMUTATION - 1;
@@ -756,21 +811,23 @@ impl StarkVerifierProver {
 
                 // Carry full state into the following pos permutation (if any).
                 set_masks(
-                    &mut trace,
-                    perm_idx,
-                    BaseElement::ZERO,
-                    pos_full_carry,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    [BaseElement::ZERO; 4],
-                    perm_acc_val,
-                );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                pos_full_carry,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+                perm_acc_val
+            );
 
                 let last = row_offset + ROWS_PER_PERMUTATION - 1;
                 for (i, value) in coin_state.iter_mut().enumerate() {
@@ -870,21 +927,23 @@ impl StarkVerifierProver {
 
                     // Masks on this perm boundary: carry transcript state unless this is the final decomp.
                     set_masks(
-                        &mut trace,
-                        perm_idx,
-                        BaseElement::ZERO,
-                        full_carry,
-                        BaseElement::ZERO,
-                        BaseElement::ZERO,
-                        BaseElement::ZERO,
-                        BaseElement::ZERO,
-                        BaseElement::ZERO,
-                        BaseElement::ZERO,
-                        BaseElement::ZERO,
-                        BaseElement::ONE,
-                        [BaseElement::ZERO; 4],
-                        perm_acc_val,
-                    );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                full_carry,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+                perm_acc_val
+            );
 
                     draw_positions.push(masked_pos);
                     perm_acc_val *= p_elem + gamma;
@@ -939,7 +998,16 @@ impl StarkVerifierProver {
             "draw count must match num_queries for dummy Merkle segment"
         );
 
+        let mut replay_state = if replay_draws_per_query > 0 {
+            Some(DeepReplayState::new(replay_draws_per_query))
+        } else {
+            None
+        };
+
         for &trace_index in draw_positions.iter() {
+            if let Some(replay) = replay_state.as_mut() {
+                replay.reset(saved_coin_state, ood_digest);
+            }
             let trace_leaf = hash_row_partitioned_perms(
                 self,
                 &mut trace,
@@ -948,6 +1016,7 @@ impl StarkVerifierProver {
                 self.pub_inputs.trace_partition_size,
                 perm_acc_val,
                 trace_index,
+                replay_state.as_mut(),
             );
             perm_acc_val /= BaseElement::new(trace_index) + gamma;
             authenticate_merkle_path(
@@ -968,6 +1037,7 @@ impl StarkVerifierProver {
                 self.pub_inputs.constraint_partition_size,
                 perm_acc_val,
                 trace_index,
+                replay_state.as_mut(),
             );
             authenticate_merkle_path(
                 self,
@@ -978,6 +1048,12 @@ impl StarkVerifierProver {
                 trace_index,
                 &constraint_siblings,
             );
+            if let Some(replay) = replay_state.as_ref() {
+                debug_assert_eq!(
+                    replay.draw_idx, replay.draws_per_query,
+                    "deep replay draw count mismatch for dummy Merkle segment"
+                );
+            }
 
             for sibs in fri_siblings_by_layer.iter() {
                 let fri_index = 0u64;
@@ -1034,8 +1110,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
-                perm_acc_val,
+                perm_acc_val
             );
 
             let last = row_offset + ROWS_PER_PERMUTATION - 1;
@@ -1169,9 +1247,19 @@ impl StarkVerifierProver {
             self.pub_inputs.constraint_frame_width,
             self.pub_inputs.constraint_partition_size,
         );
+        let trace_leaf_chains = leaf_chain_count(
+            self.pub_inputs.trace_width,
+            self.pub_inputs.trace_partition_size,
+        );
+        let constraint_leaf_chains = leaf_chain_count(
+            self.pub_inputs.constraint_frame_width,
+            self.pub_inputs.constraint_partition_size,
+        );
         let fri_leaf_perms = 1usize; // 2‑element FRI leaves
         let mut merkle_perms_per_query =
             trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
+        let replay_draws_per_query = trace_leaf_chains + constraint_leaf_chains;
+        merkle_perms_per_query += replay_draws_per_query;
         for layer_idx in 0..num_fri_layers {
             merkle_perms_per_query += fri_leaf_perms + depth_trace.saturating_sub(layer_idx + 1);
         }
@@ -1252,8 +1340,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
-                perm_acc_val,
+                perm_acc_val
             );
             set_path_bit(&mut trace, perm_idx, 0);
 
@@ -1318,8 +1408,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
-                perm_acc_val,
+                perm_acc_val
             );
             set_path_bit(&mut trace, perm_idx, 0);
 
@@ -1339,21 +1431,23 @@ impl StarkVerifierProver {
         let row_offset = perm_idx * ROWS_PER_PERMUTATION;
         self.fill_rpo_trace(&mut trace, row_offset, coin_state);
         set_masks(
-            &mut trace,
-            perm_idx,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ONE,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            self.pub_inputs.trace_commitment,
-            perm_acc_val,
-        );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                self.pub_inputs.trace_commitment,
+                perm_acc_val
+            );
         set_path_bit(&mut trace, perm_idx, 0);
 
         let last = row_offset + ROWS_PER_PERMUTATION - 1;
@@ -1386,8 +1480,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 self.pub_inputs.constraint_commitment,
-                perm_acc_val,
+                perm_acc_val
             );
         } else {
             set_masks(
@@ -1403,8 +1499,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
-                perm_acc_val,
+                perm_acc_val
             );
         }
         set_path_bit(&mut trace, perm_idx, 0);
@@ -1420,6 +1518,8 @@ impl StarkVerifierProver {
             constraint_coeffs.push(value);
         }
         set_coeff_witness(&mut trace, perm_idx, &coin_state);
+        let tape_values = core::array::from_fn(|i| coin_state[4 + i]);
+        set_tape_meta(&mut trace, perm_idx, TAPE_KIND_COEFF, 0, tape_values);
         perm_idx += 1;
 
         // --- Additional coefficient permutations (permute-only, full-carry) ----------------
@@ -1430,38 +1530,42 @@ impl StarkVerifierProver {
             let is_last = coeff_idx + 1 == num_coeff_perms;
             if is_last {
                 set_masks(
-                    &mut trace,
-                    perm_idx,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    self.pub_inputs.constraint_commitment,
-                    perm_acc_val,
-                );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                self.pub_inputs.constraint_commitment,
+                perm_acc_val
+            );
             } else {
                 set_masks(
-                    &mut trace,
-                    perm_idx,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    [BaseElement::ZERO; 4],
-                    perm_acc_val,
-                );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+                perm_acc_val
+            );
             }
             set_path_bit(&mut trace, perm_idx, 0);
 
@@ -1476,6 +1580,8 @@ impl StarkVerifierProver {
                 constraint_coeffs.push(value);
             }
             set_coeff_witness(&mut trace, perm_idx, &coin_state);
+            let tape_values = core::array::from_fn(|i| coin_state[4 + i]);
+            set_tape_meta(&mut trace, perm_idx, TAPE_KIND_COEFF, coeff_idx as u64, tape_values);
             perm_idx += 1;
         }
 
@@ -1490,21 +1596,23 @@ impl StarkVerifierProver {
         self.fill_rpo_trace(&mut trace, row_offset, coin_state);
         // Draw z. The coin is reseeded with the OOD digest in-circuit after hashing OOD frames.
         set_masks(
-            &mut trace,
-            perm_idx,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ONE,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            [BaseElement::ZERO; 4],
-            perm_acc_val,
-        );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+                perm_acc_val
+            );
         set_path_bit(&mut trace, perm_idx, 0);
 
         let last = row_offset + ROWS_PER_PERMUTATION - 1;
@@ -1557,8 +1665,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
-                perm_acc_val,
+                perm_acc_val
             );
             set_path_bit(&mut trace, perm_idx, 0);
 
@@ -1581,6 +1691,11 @@ impl StarkVerifierProver {
         for deep_idx in 0..num_deep_perms {
             let row_offset = perm_idx * ROWS_PER_PERMUTATION;
             self.fill_rpo_trace(&mut trace, row_offset, coin_state);
+            let restore_mask = if deep_idx == 0 {
+                BaseElement::ONE
+            } else {
+                BaseElement::ZERO
+            };
 
             let is_last = deep_idx + 1 == num_deep_perms;
             if is_last {
@@ -1591,42 +1706,46 @@ impl StarkVerifierProver {
                     [BaseElement::ZERO; 4]
                 };
                 set_masks(
-                    &mut trace,
-                    perm_idx,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    if has_fri_commitments {
-                        BaseElement::ONE
-                    } else {
-                        BaseElement::ZERO
-                    },
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    reseed_word,
-                    perm_acc_val,
-                );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                if has_fri_commitments {
+                    BaseElement::ONE
+                } else {
+                    BaseElement::ZERO
+                },
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                restore_mask,
+                reseed_word,
+                perm_acc_val
+            );
             } else {
                 set_masks(
-                    &mut trace,
-                    perm_idx,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    [BaseElement::ZERO; 4],
-                    perm_acc_val,
-                );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                restore_mask,
+                [BaseElement::ZERO; 4],
+                perm_acc_val
+            );
             }
             set_path_bit(&mut trace, perm_idx, 0);
 
@@ -1641,6 +1760,8 @@ impl StarkVerifierProver {
                 deep_coeffs.push(value);
             }
             set_deep_witness(&mut trace, perm_idx, &coin_state);
+            let tape_values = core::array::from_fn(|i| coin_state[4 + i]);
+            set_tape_meta(&mut trace, perm_idx, TAPE_KIND_DEEP, deep_idx as u64, tape_values);
             perm_idx += 1;
         }
 
@@ -1678,8 +1799,10 @@ impl StarkVerifierProver {
                 BaseElement::ONE,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 next_commitment,
-                perm_acc_val,
+                perm_acc_val
             );
             set_path_bit(&mut trace, perm_idx, 0);
 
@@ -1691,6 +1814,8 @@ impl StarkVerifierProver {
                 fri_alphas.push(coin_state[4]);
             }
             set_fri_alpha_witness(&mut trace, perm_idx, coin_state[4]);
+            let tape_values = core::array::from_fn(|i| coin_state[4 + i]);
+            set_tape_meta(&mut trace, perm_idx, TAPE_KIND_ALPHA, layer_idx as u64, tape_values);
             perm_idx += 1;
 
             for (state_value, commitment_value) in
@@ -1730,8 +1855,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 nonce_word,
-                perm_acc_val,
+                perm_acc_val
             );
             set_path_bit(&mut trace, perm_idx, 0);
 
@@ -1762,21 +1889,23 @@ impl StarkVerifierProver {
                 };
 
                 set_masks(
-                    &mut trace,
-                    perm_idx,
-                    BaseElement::ZERO,
-                    pos_full_carry,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ZERO,
-                    BaseElement::ONE,
-                    BaseElement::ZERO,
-                    [BaseElement::ZERO; 4],
-                    perm_acc_val,
-                );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                pos_full_carry,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+                perm_acc_val
+            );
                 set_path_bit(&mut trace, perm_idx, 0);
 
                 let last = row_offset + ROWS_PER_PERMUTATION - 1;
@@ -1875,21 +2004,23 @@ impl StarkVerifierProver {
                     };
 
                     set_masks(
-                        &mut trace,
-                        perm_idx,
-                        BaseElement::ZERO,
-                        full_carry,
-                        BaseElement::ZERO,
-                        BaseElement::ZERO,
-                        BaseElement::ZERO,
-                        BaseElement::ZERO,
-                        BaseElement::ZERO,
-                        BaseElement::ZERO,
-                        BaseElement::ZERO,
-                        BaseElement::ONE,
-                        [BaseElement::ZERO; 4],
-                        perm_acc_val,
-                    );
+                &mut trace,
+                perm_idx,
+                BaseElement::ZERO,
+                full_carry,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ONE,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+                perm_acc_val
+            );
                     set_path_bit(&mut trace, perm_idx, 0);
 
                     perm_acc_val *= p_elem + gamma;
@@ -1929,6 +2060,12 @@ impl StarkVerifierProver {
             "inner query positions must match transcript draws"
         );
 
+        let mut replay_state = if replay_draws_per_query > 0 {
+            Some(DeepReplayState::new(replay_draws_per_query))
+        } else {
+            None
+        };
+
         // Pre-compute FRI leaf indexes per layer.
         let folding_factor = 2usize;
         let fri_num_partitions = inner.fri_num_partitions;
@@ -1951,6 +2088,9 @@ impl StarkVerifierProver {
         }
 
         for (q, &trace_index) in draw_positions.iter().enumerate() {
+            if let Some(replay) = replay_state.as_mut() {
+                replay.reset(saved_coin_state, ood_digest);
+            }
             // Trace leaf + path.
             let trace_row = &inner.trace_evaluations[q];
             let leaf_digest = hash_row_partitioned_perms(
@@ -1961,6 +2101,7 @@ impl StarkVerifierProver {
                 self.pub_inputs.trace_partition_size,
                 perm_acc_val,
                 trace_index,
+                replay_state.as_mut(),
             );
             perm_acc_val /= BaseElement::new(trace_index) + gamma;
             let trace_siblings = &inner.trace_auth_paths[q];
@@ -1985,6 +2126,7 @@ impl StarkVerifierProver {
                 self.pub_inputs.constraint_partition_size,
                 perm_acc_val,
                 constraint_index,
+                replay_state.as_mut(),
             );
             let constraint_siblings = &inner.constraint_auth_paths[q];
             authenticate_merkle_path(
@@ -1996,6 +2138,12 @@ impl StarkVerifierProver {
                 constraint_index,
                 constraint_siblings,
             );
+            if let Some(replay) = replay_state.as_ref() {
+                debug_assert_eq!(
+                    replay.draw_idx, replay.draws_per_query,
+                    "deep replay draw count mismatch for query {q}"
+                );
+            }
 
             // FRI layers.
             for (layer, indexes_for_layer) in inner
@@ -2062,8 +2210,10 @@ impl StarkVerifierProver {
                 BaseElement::ZERO,
                 BaseElement::ZERO,
                 BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
                 [BaseElement::ZERO; 4],
-                perm_acc_val,
+                perm_acc_val
             );
             set_path_bit(&mut trace, perm_idx, 0);
 
@@ -2197,6 +2347,24 @@ impl StarkVerifierProver {
         let total_rows = trace.length();
         let num_queries = self.pub_inputs.num_queries;
         debug_assert_eq!(deep_evals.len(), num_queries, "unexpected deep eval count");
+        let trace_leaf_chain = leaf_chain_flags(
+            self.pub_inputs.trace_width,
+            self.pub_inputs.trace_partition_size,
+        );
+        let constraint_leaf_chain = leaf_chain_flags(
+            self.pub_inputs.constraint_frame_width,
+            self.pub_inputs.constraint_partition_size,
+        );
+        debug_assert_eq!(
+            trace_leaf_chain.len(),
+            trace_leaf_perms,
+            "trace leaf chain length mismatch"
+        );
+        debug_assert_eq!(
+            constraint_leaf_chain.len(),
+            constraint_leaf_perms,
+            "constraint leaf chain length mismatch"
+        );
 
         // Fill remainder coefficients (constant across the entire verifier trace).
         let mut remainder = [BaseElement::ZERO; NUM_REMAINDER_COEFFS];
@@ -2238,7 +2406,16 @@ impl StarkVerifierProver {
             }
 
             // --- Trace leaf hashing -----------------------------------------------------
-            for rel_perm in 0..trace_leaf_perms {
+            let trace_chain_start =
+                |rel_perm: usize| rel_perm == 0 || !trace_leaf_chain[rel_perm - 1];
+            let constraint_chain_start =
+                |rel_perm: usize| rel_perm == 0 || !constraint_leaf_chain[rel_perm - 1];
+
+            let mut rel_perm = 0usize;
+            while rel_perm < trace_leaf_perms {
+                if trace_chain_start(rel_perm) {
+                    perm_idx += 1; // paired deep replay draw perm
+                }
                 let row0 = perm_idx * ROWS_PER_PERMUTATION;
                 let boundary = row0 + ROWS_PER_PERMUTATION - 1;
 
@@ -2264,6 +2441,7 @@ impl StarkVerifierProver {
                 }
 
                 perm_idx += 1;
+                rel_perm += 1;
             }
 
             // --- Trace Merkle path ------------------------------------------------------
@@ -2282,13 +2460,18 @@ impl StarkVerifierProver {
             }
 
             // --- Constraint leaf hashing ------------------------------------------------
-            for rel_perm in 0..constraint_leaf_perms {
+            let mut rel_perm = 0usize;
+            while rel_perm < constraint_leaf_perms {
+                if constraint_chain_start(rel_perm) {
+                    perm_idx += 1; // paired deep replay draw perm
+                }
                 let row0 = perm_idx * ROWS_PER_PERMUTATION;
                 if rel_perm == 0 && row0 < total_rows {
                     debug_assert!(events[row0].is_none(), "duplicate event at row {}", row0);
                     events[row0] = Some(Event::ConstraintLeaf);
                 }
                 perm_idx += 1;
+                rel_perm += 1;
             }
 
             // --- Constraint Merkle path -------------------------------------------------
@@ -2513,21 +2696,23 @@ impl StarkVerifierProver {
 }
 
 fn set_masks(
-    trace: &mut TraceTable<BaseElement>,
-    perm_idx: usize,
-    carry: BaseElement,
-    full_carry: BaseElement,
-    reseed: BaseElement,
-    coin_init: BaseElement,
-    coeff_mask: BaseElement,
-    z_mask: BaseElement,
-    deep_mask: BaseElement,
-    fri_mask: BaseElement,
-    pos_mask: BaseElement,
-    decomp_mask: BaseElement,
-    reseed_word: [BaseElement; 4],
-    perm_acc: BaseElement,
-) {
+                trace: &mut TraceTable<BaseElement>,
+                perm_idx: usize,
+                carry: BaseElement,
+                full_carry: BaseElement,
+                reseed: BaseElement,
+                coin_init: BaseElement,
+                coeff_mask: BaseElement,
+                z_mask: BaseElement,
+                deep_mask: BaseElement,
+                fri_mask: BaseElement,
+                pos_mask: BaseElement,
+                decomp_mask: BaseElement,
+                coin_save_mask: BaseElement,
+                coin_restore_mask: BaseElement,
+                reseed_word: [BaseElement; 4],
+                perm_acc: BaseElement
+            ) {
     let row_start = perm_idx * ROWS_PER_PERMUTATION;
     for r in 0..ROWS_PER_PERMUTATION {
         let row = row_start + r;
@@ -2541,9 +2726,38 @@ fn set_masks(
         trace.set(COL_FRI_MASK, row, fri_mask);
         trace.set(COL_POS_MASK, row, pos_mask);
         trace.set(COL_POS_DECOMP_MASK, row, decomp_mask);
+        trace.set(COL_COIN_SAVE_MASK, row, coin_save_mask);
+        let restore = if r == 0 {
+            coin_restore_mask
+        } else {
+            BaseElement::ZERO
+        };
+        trace.set(COL_COIN_RESTORE_MASK, row, restore);
         trace.set(COL_POS_PERM_ACC, row, perm_acc);
         for (i, value) in reseed_word.iter().copied().enumerate() {
             trace.set(COL_RESEED_WORD_START + i, row, value);
+        }
+    }
+}
+
+fn set_tape_meta(
+    trace: &mut TraceTable<BaseElement>,
+    perm_idx: usize,
+    kind: u64,
+    index: u64,
+    values: [BaseElement; TAPE_WIDTH],
+) {
+    let row_start = perm_idx * ROWS_PER_PERMUTATION;
+    let tape_mask = if kind == TAPE_KIND_NONE { BaseElement::ZERO } else { BaseElement::ONE };
+    let kind_elem = BaseElement::new(kind);
+    let index_elem = BaseElement::new(index);
+    for r in 0..ROWS_PER_PERMUTATION {
+        let row = row_start + r;
+        trace.set(COL_TAPE_MASK, row, tape_mask);
+        trace.set(COL_TAPE_KIND, row, kind_elem);
+        trace.set(COL_TAPE_INDEX, row, index_elem);
+        for i in 0..TAPE_WIDTH {
+            trace.set(COL_TAPE_VALUES_START + i, row, values[i]);
         }
     }
 }
@@ -2640,6 +2854,135 @@ fn leaf_perm_count(leaf_len: usize, partition_size: usize) -> usize {
     perms + hash_perms(merged_len)
 }
 
+fn leaf_chain_count(leaf_len: usize, partition_size: usize) -> usize {
+    if leaf_len == 0 {
+        return 0;
+    }
+    if partition_size >= leaf_len {
+        return 1;
+    }
+    let num_partitions = leaf_len.div_ceil(partition_size);
+    num_partitions + 1
+}
+
+fn leaf_chain_flags(leaf_len: usize, partition_size: usize) -> Vec<bool> {
+    let hash_perms = |input_len: usize| input_len.div_ceil(RATE_WIDTH).max(1);
+
+    if leaf_len == 0 {
+        return Vec::new();
+    }
+    if partition_size >= leaf_len {
+        let perms = hash_perms(leaf_len);
+        let mut chain = vec![false; perms];
+        for value in chain.iter_mut().take(perms.saturating_sub(1)) {
+            *value = true;
+        }
+        return chain;
+    }
+
+    let mut chain = Vec::new();
+    let mut remaining = leaf_len;
+    while remaining > 0 {
+        let part_len = remaining.min(partition_size);
+        let perms = hash_perms(part_len);
+        chain.extend((0..perms).map(|i| i + 1 < perms));
+        remaining -= part_len;
+    }
+
+    let num_partitions = leaf_len.div_ceil(partition_size);
+    let merged_len = num_partitions * DIGEST_WIDTH;
+    let merged_perms = hash_perms(merged_len);
+    chain.extend((0..merged_perms).map(|i| i + 1 < merged_perms));
+    chain
+}
+
+struct DeepReplayState {
+    coin_state: [BaseElement; STATE_WIDTH],
+    draw_idx: usize,
+    draws_per_query: usize,
+}
+
+impl DeepReplayState {
+    fn new(draws_per_query: usize) -> Self {
+        Self {
+            coin_state: [BaseElement::ZERO; STATE_WIDTH],
+            draw_idx: 0,
+            draws_per_query,
+        }
+    }
+
+    fn reset(
+        &mut self,
+        saved_coin_state: [BaseElement; STATE_WIDTH],
+        ood_digest: [BaseElement; DIGEST_WIDTH],
+    ) {
+        self.coin_state = saved_coin_state;
+        for (state_value, digest_value) in self.coin_state[4..8].iter_mut().zip(ood_digest.iter()) {
+            *state_value += *digest_value;
+        }
+        self.draw_idx = 0;
+    }
+
+    fn emit(
+        &mut self,
+        prover: &StarkVerifierProver,
+        trace: &mut TraceTable<BaseElement>,
+        perm_idx: &mut usize,
+        perm_acc: BaseElement,
+    ) {
+        debug_assert!(
+            self.draw_idx < self.draws_per_query,
+            "deep replay draw index out of bounds"
+        );
+        let row_offset = *perm_idx * ROWS_PER_PERMUTATION;
+        prover.fill_rpo_trace(trace, row_offset, self.coin_state);
+
+        let is_first = self.draw_idx == 0;
+        let full_carry = BaseElement::ZERO;
+        let coin_restore_mask = if is_first {
+            BaseElement::ONE
+        } else {
+            BaseElement::ZERO
+        };
+
+        set_masks(
+            trace,
+            *perm_idx,
+            BaseElement::ZERO,
+            full_carry,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ONE,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            BaseElement::ZERO,
+            coin_restore_mask,
+            [BaseElement::ZERO; 4],
+            perm_acc,
+        );
+        set_path_bit(trace, *perm_idx, 0);
+
+        let last = row_offset + ROWS_PER_PERMUTATION - 1;
+        for (i, value) in self.coin_state.iter_mut().enumerate() {
+            *value = trace.get(i, last);
+        }
+        set_deep_witness(trace, *perm_idx, &self.coin_state);
+        let tape_values = core::array::from_fn(|i| self.coin_state[4 + i]);
+        set_tape_meta(
+            trace,
+            *perm_idx,
+            TAPE_KIND_DEEP,
+            self.draw_idx as u64,
+            tape_values,
+        );
+        *perm_idx += 1;
+        self.draw_idx += 1;
+    }
+}
+
 fn hash_row_partitioned_perms(
     prover: &StarkVerifierProver,
     trace: &mut TraceTable<BaseElement>,
@@ -2648,8 +2991,12 @@ fn hash_row_partitioned_perms(
     partition_size: usize,
     perm_acc: BaseElement,
     merkle_index: u64,
+    mut deep_replay: Option<&mut DeepReplayState>,
 ) -> [BaseElement; DIGEST_WIDTH] {
     if partition_size >= row.len() {
+        if let Some(replay) = deep_replay.as_deref_mut() {
+            replay.emit(prover, trace, perm_idx, perm_acc);
+        }
         return hash_leaf_perms(
             prover,
             trace,
@@ -2664,10 +3011,16 @@ fn hash_row_partitioned_perms(
     let num_partitions = row.len().div_ceil(partition_size);
     let mut merged_elements = Vec::with_capacity(num_partitions * DIGEST_WIDTH);
     for chunk in row.chunks(partition_size) {
+        if let Some(replay) = deep_replay.as_deref_mut() {
+            replay.emit(prover, trace, perm_idx, perm_acc);
+        }
         let digest = hash_leaf_perms(prover, trace, perm_idx, chunk, perm_acc, 0, 0);
         merged_elements.extend_from_slice(&digest);
     }
 
+    if let Some(replay) = deep_replay.as_deref_mut() {
+        replay.emit(prover, trace, perm_idx, perm_acc);
+    }
     hash_leaf_perms(
         prover,
         trace,
@@ -2713,21 +3066,23 @@ fn hash_leaf_perms(
             BaseElement::ZERO
         };
         set_masks(
-            trace,
-            *perm_idx,
-            carry,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            [BaseElement::ZERO; 4],
-            perm_acc,
-        );
+                trace,
+                *perm_idx,
+                carry,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+                perm_acc
+            );
         let path_bit = if block + 1 == num_blocks {
             final_path_bit
         } else {
@@ -2774,21 +3129,23 @@ fn authenticate_merkle_path(
         let row_offset = *perm_idx * ROWS_PER_PERMUTATION;
         prover.fill_rpo_trace(trace, row_offset, merge_state);
         set_masks(
-            trace,
-            *perm_idx,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            BaseElement::ZERO,
-            [BaseElement::ZERO; 4],
-            perm_acc,
-        );
+                trace,
+                *perm_idx,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                BaseElement::ZERO,
+                [BaseElement::ZERO; 4],
+                perm_acc
+            );
 
         let next_bit = if level + 1 < depth {
             (index >> (level + 1)) & 1
@@ -3396,12 +3753,14 @@ mod tests {
         let pre_merkle_perms = transcript_perms + pub_inputs.num_draws;
         let trace_leaf_perms = leaf_perm_count(RPO_TRACE_WIDTH, pub_inputs.trace_partition_size);
         let constraint_leaf_perms = leaf_perm_count(8, pub_inputs.constraint_partition_size);
+        let trace_leaf_chains = leaf_chain_count(RPO_TRACE_WIDTH, pub_inputs.trace_partition_size);
+        let constraint_leaf_chains = leaf_chain_count(8, pub_inputs.constraint_partition_size);
         let depth_trace =
             (pub_inputs.trace_length * pub_inputs.blowup_factor).trailing_zeros() as usize;
 
         let mut perm_idx = pre_merkle_perms;
         for q in 0..pub_inputs.num_queries {
-            perm_idx += trace_leaf_perms;
+            perm_idx += trace_leaf_chains + trace_leaf_perms;
             if depth_trace > 0 {
                 let trace_root_perm = perm_idx + depth_trace - 1;
                 let row = trace_root_perm * ROWS_PER_PERMUTATION + (ROWS_PER_PERMUTATION - 1);
@@ -3413,7 +3772,7 @@ mod tests {
             }
             perm_idx += depth_trace;
 
-            perm_idx += constraint_leaf_perms;
+            perm_idx += constraint_leaf_chains + constraint_leaf_perms;
             if depth_trace > 0 {
                 let constraint_root_perm = perm_idx + depth_trace - 1;
                 let row = constraint_root_perm * ROWS_PER_PERMUTATION + (ROWS_PER_PERMUTATION - 1);
@@ -3507,6 +3866,63 @@ mod tests {
     }
 
     #[test]
+    fn test_coeff_tape_matches_coeff_witness() {
+        let options = super::super::rpo_proof::RpoProofOptions::fast().to_winter_options();
+
+        let inner_prover = RpoStarkProver::fast();
+        let input_state = [BaseElement::new(7); INNER_STATE_WIDTH];
+        let (inner_proof, inner_pub_inputs) = inner_prover
+            .prove_rpo_permutation(input_state)
+            .expect("inner proof generation should succeed");
+
+        let inner_data =
+            InnerProofData::from_proof::<RpoAir>(&inner_proof.to_bytes(), inner_pub_inputs)
+                .unwrap();
+        let pub_inputs = inner_data.to_stark_verifier_inputs();
+
+        let prover = StarkVerifierProver::new(options, pub_inputs);
+        let trace = prover.build_trace_from_inner(&inner_data);
+
+        let mut expected_index = 0u64;
+        let total_perms = trace.length() / ROWS_PER_PERMUTATION;
+        for perm_idx in 0..total_perms {
+            let boundary_row = (perm_idx + 1) * ROWS_PER_PERMUTATION - 1;
+            let coeff_mask = trace.get(COL_COEFF_MASK, boundary_row);
+            if coeff_mask == BaseElement::ONE {
+                assert_eq!(
+                    trace.get(COL_TAPE_MASK, boundary_row),
+                    BaseElement::ONE,
+                    "tape mask missing on coeff draw perm {perm_idx}"
+                );
+                assert_eq!(
+                    trace.get(COL_TAPE_KIND, boundary_row),
+                    BaseElement::new(super::TAPE_KIND_COEFF),
+                    "unexpected tape kind on coeff draw perm {perm_idx}"
+                );
+                assert_eq!(
+                    trace.get(COL_TAPE_INDEX, boundary_row),
+                    BaseElement::new(expected_index),
+                    "unexpected tape index on coeff draw perm {perm_idx}"
+                );
+                for i in 0..TAPE_WIDTH {
+                    let tape_val = trace.get(COL_TAPE_VALUES_START + i, boundary_row);
+                    let coeff_val = trace.get(COL_COEFF_START + i, boundary_row);
+                    assert_eq!(
+                        tape_val, coeff_val,
+                        "tape value mismatch at coeff perm {perm_idx} idx {i}"
+                    );
+                }
+                expected_index += 1;
+            }
+        }
+
+        assert!(
+            expected_index > 0,
+            "expected at least one coeff draw perm with tape"
+        );
+    }
+
+    #[test]
     fn test_merkle_sibling_tamper_fails() {
         let options = super::super::rpo_proof::RpoProofOptions::fast().to_winter_options();
 
@@ -3581,8 +3997,9 @@ mod tests {
             + 2;
         let pre_merkle_perms = transcript_perms + pub_inputs.num_draws;
         let trace_leaf_perms = leaf_perm_count(RPO_TRACE_WIDTH, pub_inputs.trace_partition_size);
+        let trace_leaf_chains = leaf_chain_count(RPO_TRACE_WIDTH, pub_inputs.trace_partition_size);
 
-        let last_trace_leaf_perm = pre_merkle_perms + trace_leaf_perms - 1;
+        let last_trace_leaf_perm = pre_merkle_perms + trace_leaf_chains + trace_leaf_perms - 1;
         let boundary_row = last_trace_leaf_perm * ROWS_PER_PERMUTATION + (ROWS_PER_PERMUTATION - 1);
         let bit = trace.get(COL_MERKLE_PATH_BIT, boundary_row);
         trace.set(COL_MERKLE_PATH_BIT, boundary_row, BaseElement::ONE - bit);
@@ -3637,8 +4054,9 @@ mod tests {
             + 2;
         let pre_merkle_perms = transcript_perms + pub_inputs.num_draws;
         let trace_leaf_perms = leaf_perm_count(RPO_TRACE_WIDTH, pub_inputs.trace_partition_size);
+        let trace_leaf_chains = leaf_chain_count(RPO_TRACE_WIDTH, pub_inputs.trace_partition_size);
 
-        let first_trace_merge_perm = pre_merkle_perms + trace_leaf_perms;
+        let first_trace_merge_perm = pre_merkle_perms + trace_leaf_chains + trace_leaf_perms;
         let row0 = first_trace_merge_perm * ROWS_PER_PERMUTATION;
         let idx = trace.get(COL_MERKLE_INDEX, row0);
         trace.set(COL_MERKLE_INDEX, row0, idx + BaseElement::ONE);
