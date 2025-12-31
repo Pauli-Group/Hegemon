@@ -78,7 +78,7 @@ fn default_acceptable_options() -> winterfell::ProofOptions {
         32,
         8,
         0,
-        winterfell::FieldExtension::None,
+        winterfell::FieldExtension::Quadratic,
         4,
         31,
         winterfell::BatchingMethod::Linear,

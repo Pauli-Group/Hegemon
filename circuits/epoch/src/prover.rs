@@ -66,7 +66,10 @@ impl EpochProver {
 
     /// Create prover with production security settings.
     ///
-    /// Uses quadratic field extension for 128-bit security.
+    /// Uses a quadratic field extension to raise soundness over a ~64-bit base field.
+    ///
+    /// Note: overall security is also bounded by the chosen ProofOptions and hash collision
+    /// resistance; do not treat "quadratic extension" as a magic "128-bit" label.
     pub fn production() -> Self {
         Self {
             options: production_epoch_options(),
@@ -263,13 +266,13 @@ pub fn default_epoch_options() -> ProofOptions {
     )
 }
 
-/// Production proof options with 128-bit security.
+/// Higher-soundness proof options for epoch proofs.
 pub fn production_epoch_options() -> ProofOptions {
     ProofOptions::new(
         8,
         16,
         4,
-        winterfell::FieldExtension::Quadratic, // 128-bit security
+        winterfell::FieldExtension::Quadratic,
         2,
         31,
         BatchingMethod::Linear,

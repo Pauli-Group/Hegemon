@@ -749,7 +749,7 @@ pub fn default_proof_options() -> ProofOptions {
         32,
         8,
         0,
-        winterfell::FieldExtension::None,
+        winterfell::FieldExtension::Quadratic,
         4,
         31,
         BatchingMethod::Linear,
