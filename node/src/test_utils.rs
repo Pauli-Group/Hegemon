@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use consensus::header::{BlockHeader, PowSeal};
 use consensus::reward::INITIAL_SUBSIDY;
 use consensus::types::{ConsensusBlock, DaParams};
+use consensus::RecursiveBlockProof;
 use crypto::hashes::sha256;
 use crypto::traits::{SigningKey, VerifyKey};
 use parking_lot::Mutex;
@@ -48,6 +49,7 @@ struct LegacyNodeState {
     config: NodeConfig,
     blocks: Vec<ConsensusBlock>,
     mempool: Vec<[u8; 32]>,
+    pending_recursive_proof: Option<RecursiveBlockProof>,
     mining_status: MinerStatus,
     height: u64,
     best_hash: [u8; 32],
@@ -104,6 +106,7 @@ impl LegacyNode {
                 config,
                 blocks: stored.blocks,
                 mempool: Vec::new(),
+                pending_recursive_proof: None,
                 mining_status: MinerStatus::default(),
                 height,
                 best_hash,
@@ -143,6 +146,11 @@ impl LegacyNode {
         let height = state.height + 1;
         state.supply_digest = state.supply_digest.saturating_add(INITIAL_SUBSIDY as u128);
         let supply_digest = state.supply_digest;
+        let recursive_proof = state.pending_recursive_proof.take();
+        let recursive_proof_hash = recursive_proof
+            .as_ref()
+            .map(|proof| proof.recursive_proof_hash)
+            .unwrap_or([0u8; 32]);
         let da_params = DaParams {
             chunk_size: DEFAULT_DA_CHUNK_SIZE,
             sample_count: DEFAULT_DA_SAMPLE_COUNT,
@@ -156,7 +164,7 @@ impl LegacyNode {
             state_root: [0u8; 32],
             nullifier_root: [0u8; 32],
             proof_commitment: state.proof_commitment,
-            recursive_proof_hash: [0u8; 32],
+            recursive_proof_hash,
             da_root: [0u8; 32],
             da_params,
             version_commitment: state.version_commitment,
@@ -175,13 +183,17 @@ impl LegacyNode {
             header,
             transactions: Vec::new(),
             coinbase: None,
-            recursive_proof: None,
+            recursive_proof,
         };
         let best_hash = block.header.hash()?;
         state.height = height;
         state.best_hash = best_hash;
         state.blocks.push(block.clone());
         Ok(Some(block))
+    }
+
+    pub fn queue_recursive_proof(&self, proof: RecursiveBlockProof) {
+        self.state.lock().pending_recursive_proof = Some(proof);
     }
 
     pub fn miner_ids(&self) -> Vec<[u8; 32]> {

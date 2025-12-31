@@ -17,6 +17,7 @@ fn base_pow_params<'a>(
         parent_hash: [0u8; 32],
         timestamp_ms: 1_000,
         transactions,
+        recursive_proof: None,
         miner,
         base_nullifiers,
         base_state_root: [0u8; 32],

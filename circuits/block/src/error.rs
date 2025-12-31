@@ -24,8 +24,6 @@ pub enum BlockError {
     DuplicateNullifier(Commitment),
     #[error(transparent)]
     Merkle(#[from] MerkleError),
-    #[error("recursive aggregation digest mismatch")]
-    AggregationMismatch,
     #[error("transaction proof at index {0} reported verifier rejection")]
     TransactionRejected(usize),
     #[error("block starting root {observed:?} does not match expected {expected:?}")]
@@ -33,8 +31,6 @@ pub enum BlockError {
         expected: Commitment,
         observed: Commitment,
     },
-    #[error("block root trace mismatch")]
-    RootTraceMismatch,
     #[error("block ending root {observed:?} does not match expected {expected:?}")]
     EndingRootMismatch {
         expected: Commitment,

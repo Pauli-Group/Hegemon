@@ -21,15 +21,16 @@ use crate::stark_prover::fast_proof_options;
 use crate::{
     constants::{MAX_INPUTS, MAX_OUTPUTS},
     stark_air::{
-        commitment_output_row, merkle_root_output_row, nullifier_output_row, TransactionAirStark,
-        TransactionPublicInputsStark, COL_FEE, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_OUT0, COL_OUT1,
-        COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_S0, COL_S1, COL_STABLECOIN_ASSET,
-        COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2,
-        COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG,
-        COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1,
-        COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3, COL_STABLECOIN_POLICY_HASH0,
-        COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2, COL_STABLECOIN_POLICY_HASH3,
-        COL_STABLECOIN_POLICY_VERSION, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN,
+        commitment_output_row, merkle_root_output_row, note_start_row_input, note_start_row_output,
+        nullifier_output_row, TransactionAirStark, TransactionPublicInputsStark, COL_FEE,
+        COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_OUT0, COL_OUT1, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1,
+        COL_S0, COL_S1, COL_STABLECOIN_ASSET, COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1,
+        COL_STABLECOIN_ATTEST2, COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ENABLED,
+        COL_STABLECOIN_ISSUANCE_MAG, COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0,
+        COL_STABLECOIN_ORACLE1, COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3,
+        COL_STABLECOIN_POLICY_HASH0, COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2,
+        COL_STABLECOIN_POLICY_HASH3, COL_STABLECOIN_POLICY_VERSION, COL_VALUE_BALANCE_MAG,
+        COL_VALUE_BALANCE_SIGN,
     },
     stark_prover::{default_proof_options, TransactionProverStark},
     witness::TransactionWitness,
@@ -92,15 +93,30 @@ impl Prover for TransactionProverStarkRpo {
         DefaultConstraintEvaluator<'a, Self::Air, E>;
 
     fn get_pub_inputs(&self, trace: &Self::Trace) -> TransactionPublicInputsStark {
-        let row = 0;
-        let input_flags = vec![
-            trace.get(COL_IN_ACTIVE0, row),
-            trace.get(COL_IN_ACTIVE1, row),
-        ];
-        let output_flags = vec![
-            trace.get(COL_OUT_ACTIVE0, row),
-            trace.get(COL_OUT_ACTIVE1, row),
-        ];
+        let trace_len = trace.length();
+        let input_rows = [note_start_row_input(0), note_start_row_input(1)];
+        let input_cols = [COL_IN_ACTIVE0, COL_IN_ACTIVE1];
+        let mut input_flags = Vec::with_capacity(MAX_INPUTS);
+        for (idx, &row) in input_rows.iter().enumerate() {
+            let flag = if row < trace_len {
+                trace.get(input_cols[idx], row)
+            } else {
+                BaseElement::ZERO
+            };
+            input_flags.push(flag);
+        }
+
+        let output_rows = [note_start_row_output(0), note_start_row_output(1)];
+        let output_cols = [COL_OUT_ACTIVE0, COL_OUT_ACTIVE1];
+        let mut output_flags = Vec::with_capacity(MAX_OUTPUTS);
+        for (idx, &row) in output_rows.iter().enumerate() {
+            let flag = if row < trace_len {
+                trace.get(output_cols[idx], row)
+            } else {
+                BaseElement::ZERO
+            };
+            output_flags.push(flag);
+        }
 
         let read_hash = |row: usize| -> [BaseElement; 4] {
             [

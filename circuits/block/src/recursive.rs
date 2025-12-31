@@ -112,7 +112,8 @@ pub fn prove_block_recursive(
     })
 }
 
-#[cfg(test)]
+/// Build a recursive block proof with faster, lower-soundness options.
+/// Intended for development and test workflows.
 pub fn prove_block_recursive_fast(
     tree: &mut CommitmentTree,
     transactions: &[TransactionProof],
@@ -642,11 +643,11 @@ mod tests {
     use transaction_circuit::note::{InputNoteWitness, OutputNoteWitness, NoteData};
     use transaction_circuit::proof::prove;
     use transaction_circuit::rpo_prover::TransactionProverStarkRpo;
+    use transaction_circuit::stark_prover::proof_options_from_config;
     use transaction_circuit::witness::TransactionWitness;
     use transaction_circuit::hashing::felts_to_bytes32;
     use transaction_circuit::constants::NATIVE_ASSET_ID;
     use transaction_circuit::public_inputs::StablecoinPolicyBinding;
-    use transaction_circuit::trace::TransactionTrace;
     use transaction_circuit::proof::SerializedStarkInputs;
     use winterfell::Prover;
 
@@ -688,7 +689,8 @@ mod tests {
     fn build_rpo_proof(witness: &TransactionWitness) -> TransactionProof {
         let (proving_key, _verifying_key) = generate_keys();
         let mut proof = prove(witness, &proving_key).expect("base proof");
-        let prover = TransactionProverStarkRpo::with_default_options();
+        let options = proof_options_from_config(32, 8, 0);
+        let prover = TransactionProverStarkRpo::new(options);
         let trace = prover.build_trace(witness).expect("trace");
         let stark_pub_inputs = prover.get_pub_inputs(&trace);
         let proof_bytes = prover.prove(trace).expect("rpo proof").to_bytes();

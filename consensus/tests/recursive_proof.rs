@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use block_circuit::prove_block_recursive;
+use block_circuit::recursive::prove_block_recursive_fast;
 use consensus::header::BlockHeader;
 use consensus::proof::{verify_commitments, RecursiveProofVerifier};
 use consensus::ProofVerifier;
@@ -16,8 +16,11 @@ use transaction_circuit::{
     hashing::{bytes32_to_felts, felt_to_bytes32, felts_to_bytes32},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
-    proof::prove,
+    proof::{SerializedStarkInputs, TransactionProof},
+    rpo_prover::TransactionProverStarkRpo,
+    trace::TransactionTrace,
 };
+use winterfell::{BatchingMethod, FieldExtension, ProofOptions, Prover};
 
 fn make_valid_witness(seed: u64, tree: &CommitmentTree) -> TransactionWitness {
     let input_note = NoteData {
@@ -62,10 +65,94 @@ fn make_valid_witness(seed: u64, tree: &CommitmentTree) -> TransactionWitness {
     }
 }
 
+fn rpo_prover() -> TransactionProverStarkRpo {
+    // Match the recursion verifier's remainder size (8 coeffs) and keep queries minimal.
+    let options = ProofOptions::new(
+        2,
+        8,
+        0,
+        FieldExtension::None,
+        2,
+        7,
+        BatchingMethod::Linear,
+        BatchingMethod::Linear,
+    );
+    TransactionProverStarkRpo::new(options)
+}
+
+fn build_rpo_proof(witness: &TransactionWitness) -> TransactionProof {
+    let public_inputs = witness.public_inputs().expect("public inputs");
+    let legacy_trace = TransactionTrace::from_witness(witness).expect("trace");
+    let prover = rpo_prover();
+    let trace = prover.build_trace(witness).expect("stark trace");
+    let stark_pub_inputs = prover.get_pub_inputs(&trace);
+    let proof_bytes = prover.prove(trace).expect("rpo proof").to_bytes();
+
+    let input_flags = stark_pub_inputs
+        .input_flags
+        .iter()
+        .map(|f| f.as_int() as u8)
+        .collect();
+    let output_flags = stark_pub_inputs
+        .output_flags
+        .iter()
+        .map(|f| f.as_int() as u8)
+        .collect();
+    let fee = stark_pub_inputs.fee.as_int();
+    let value_balance_sign = stark_pub_inputs.value_balance_sign.as_int() as u8;
+    let value_balance_magnitude = stark_pub_inputs.value_balance_magnitude.as_int();
+    let stablecoin_enabled = stark_pub_inputs.stablecoin_enabled.as_int() as u8;
+    let stablecoin_asset_id = stark_pub_inputs.stablecoin_asset.as_int();
+    let stablecoin_policy_version = stark_pub_inputs.stablecoin_policy_version.as_int() as u32;
+    let stablecoin_issuance_sign = stark_pub_inputs.stablecoin_issuance_sign.as_int() as u8;
+    let stablecoin_issuance_magnitude = stark_pub_inputs.stablecoin_issuance_magnitude.as_int();
+
+    let nullifiers = stark_pub_inputs
+        .nullifiers
+        .iter()
+        .map(felts_to_bytes32)
+        .collect();
+    let commitments = stark_pub_inputs
+        .commitments
+        .iter()
+        .map(felts_to_bytes32)
+        .collect();
+    let merkle_root = felts_to_bytes32(&stark_pub_inputs.merkle_root);
+    let stablecoin_policy_hash = felts_to_bytes32(&stark_pub_inputs.stablecoin_policy_hash);
+    let stablecoin_oracle_commitment =
+        felts_to_bytes32(&stark_pub_inputs.stablecoin_oracle_commitment);
+    let stablecoin_attestation_commitment =
+        felts_to_bytes32(&stark_pub_inputs.stablecoin_attestation_commitment);
+
+    TransactionProof {
+        public_inputs,
+        nullifiers,
+        commitments,
+        balance_slots: legacy_trace.padded_balance_slots(),
+        stark_proof: proof_bytes,
+        stark_public_inputs: Some(SerializedStarkInputs {
+            input_flags,
+            output_flags,
+            fee,
+            value_balance_sign,
+            value_balance_magnitude,
+            merkle_root,
+            stablecoin_enabled,
+            stablecoin_asset_id,
+            stablecoin_policy_version,
+            stablecoin_issuance_sign,
+            stablecoin_issuance_magnitude,
+            stablecoin_policy_hash,
+            stablecoin_oracle_commitment,
+            stablecoin_attestation_commitment,
+        }),
+    }
+}
+
 #[test]
 #[ignore = "heavy: recursive proof generation"]
 fn recursive_proof_verifier_accepts_valid_block() {
-    let (proving_key, verifying_key) = generate_keys();
+    let (_proving_key, verifying_key) = generate_keys();
     let mut verifying_keys = HashMap::new();
     verifying_keys.insert(DEFAULT_VERSION_BINDING, verifying_key);
 
@@ -81,10 +168,19 @@ fn recursive_proof_verifier_accepts_valid_block() {
         .expect("append");
 
     let witness = make_valid_witness(0, &tree);
-    let proof = prove(&witness, &proving_key).expect("transaction proof");
+    let root_felts = bytes32_to_felts(&witness.merkle_root).expect("root felts");
+    let input = &witness.inputs[0];
+    assert!(
+        input
+            .merkle_path
+            .verify(input.note.commitment(), input.position, root_felts),
+        "merkle path must match tree root"
+    );
+    let proof = build_rpo_proof(&witness);
 
     let recursive_proof =
-        prove_block_recursive(&mut tree, &[proof.clone()], &verifying_keys).expect("recursive");
+        prove_block_recursive_fast(&mut tree, &[proof.clone()], &verifying_keys)
+            .expect("recursive");
 
     let nullifiers: Vec<[u8; 32]> = proof
         .nullifiers

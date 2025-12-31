@@ -36,6 +36,7 @@ network = { path = "../network" }
 proptest = "1"
 state-merkle = { path = "../state/merkle" }
 tokio = { version = "1", features = ["macros", "rt", "time", "sync"] }
+winterfell = "0.13"
 
 [features]
 default = []

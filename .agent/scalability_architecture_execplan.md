@@ -30,12 +30,16 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [ ] (2025-12-31T03:09Z) Lock ProofOptions and recursion format for consensus-critical proofs at the chosen target (completed: transaction proofs now use quadratic extension; completed: parser supports quadratic extension metadata; remaining: recursive verifier trace accepts quadratic inner proofs and end-to-end recursion test).
 - [x] (2025-12-31T04:12Z) Updated transaction STARK proof options to quadratic extension and aligned verifiers + docs to the ~85-bit PQ collision ceiling.
 - [x] (2025-12-31T02:04Z) Update DESIGN.md, METHODS.md, and the README.md whitepaper to match the new architecture (completed: DESIGN.md + METHODS.md security notes + README.md whitepaper alignment).
-- [ ] (2025-12-31T02:04Z) Implement recursive block proofs and wire them into consensus validation (completed: recursive proof module + consensus verifier + tests; remaining: update `circuits/block/src/proof.rs` legacy aggregation path to emit recursive proof hash/proof in the canonical `BlockProof` flow, and decide whether to retire `RecursiveAggregation`).
+- [x] (2025-12-31T18:45Z) Retired legacy block aggregation: `prove_block` now emits `RecursiveBlockProof` by default, added a fast proving helper for dev/tests, updated consensus test scaffolding to accept recursive proofs, and refreshed docs to remove `RecursiveAggregation`.
 - [ ] (2025-12-31T02:04Z) Implement data-availability encoding, storage, sampling, and P2P retrieval.
 - [ ] (2025-12-31T02:04Z) Integrate node, wallet, mempool, and RPC so end-to-end mining works with the new block format.
 - [ ] (2025-12-31T02:04Z) Add benchmarks, tests, and runbooks that prove the system works.
 
 ## Surprises & Discoveries
+
+- Observation (2025-12-31T18:45Z): Recursive block proof generation fails if inner transaction proofs are Blake3-based; recursion expects RPO‑Fiat‑Shamir proofs.
+  Evidence: `cargo test -p consensus -- --ignored` failed with `RecursiveProofInput { index: 0, reason: "Trace generation failed: Merkle proof is invalid" }` until the test switched to RPO proofs.
+  Implication: Mining/wallet pipelines must emit RPO proofs (or we must add a Blake3-compatible recursion backend) before recursive block proofs can be produced from live bundles.
 
 - Observation (2025-12-31T02:22Z): Deterministic DA sampling derived from producer-known inputs is not a security mechanism against a malicious block producer.
   Evidence: A producer can always publish only the deterministically sampled chunks and withhold the rest; see `.agent/scalability_architecture_math.md` §4.4.
@@ -145,6 +149,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
 
 - Decision: Keep the legacy `circuits/block/src/proof.rs` aggregation path intact while introducing recursive block proofs as a separate, consensus-facing verification path.
   Rationale: Forcing recursive proof generation into the existing `prove_block` flow would make the current integration tests (and block builder) substantially heavier before the mining/RPC integration is ready; the recursive proof path is now available and verified in consensus, and the legacy aggregation can be retired once mining emits recursive proofs by default.
+  Date/Author: 2025-12-31 / Codex
+
+- Decision: Retire `RecursiveAggregation` and make `prove_block` emit `RecursiveBlockProof` by default, with an explicit fast helper for development tests.
+  Rationale: Mining now needs a single recursive proof artifact to populate `recursive_proof_hash`, and keeping the folded digest path adds maintenance overhead without serving consensus; the fast helper preserves test velocity without hiding the default proof format.
   Date/Author: 2025-12-31 / Codex
 
 ## Outcomes & Retrospective
@@ -365,3 +373,4 @@ Revision Note (2025-12-31T05:31Z): Added the Path A streaming plan estimator + t
 Revision Note (2025-12-31T06:55Z): Implemented replayed deep-coeff draw pairing with leaf-hash chains and updated merkle schedule masks/tests to match the new interleave.
 Revision Note (2025-12-31T11:15Z): Completed Milestone 2 chain-spec defaults and updated node header serialization/test helpers for the new DA/recursive header fields; reran consensus tests.
 Revision Note (2025-12-31T17:49Z): Added recursive block proof module + consensus verifier/test coverage, updated block serialization/types for recursive proofs, and recorded the legacy aggregation decision.
+Revision Note (2025-12-31T18:45Z): Retired `RecursiveAggregation`, made `prove_block` emit recursive proofs by default (with a fast helper), updated consensus test scaffolding to carry recursive proofs, and refreshed docs/diagrams to remove the legacy digest path.
