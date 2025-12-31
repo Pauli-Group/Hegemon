@@ -49,7 +49,7 @@
 use miden_crypto::rand::RpoRandomCoin;
 use miden_crypto::Word;
 use winter_air::{
-    Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
+    Air, AirContext, Assertion, EvaluationFrame, FieldExtension, ProofOptions, TraceInfo,
     TransitionConstraintDegree,
 };
 use winter_crypto::RandomCoin;
@@ -195,6 +195,8 @@ pub struct StarkVerifierPublicInputs {
     pub num_transition_constraints: usize,
     /// Number of boundary assertions in the inner AIR.
     pub num_assertions: usize,
+    /// Field extension used by the inner proof.
+    pub field_extension: FieldExtension,
 }
 
 impl StarkVerifierPublicInputs {
@@ -214,6 +216,7 @@ impl StarkVerifierPublicInputs {
         constraint_frame_width: usize,
         num_transition_constraints: usize,
         num_assertions: usize,
+        field_extension: FieldExtension,
     ) -> Self {
         Self {
             inner_public_inputs,
@@ -231,6 +234,7 @@ impl StarkVerifierPublicInputs {
             constraint_frame_width,
             num_transition_constraints,
             num_assertions,
+            field_extension,
         }
     }
 
@@ -246,10 +250,12 @@ impl StarkVerifierPublicInputs {
         // Layout:
         // [inner_public_inputs..., inner_pub_inputs_hash(4), trace_root(4), constraint_root(4),
         //  fri_commitments(4*k), num_queries, num_draws, trace_partition_size, constraint_partition_size,
-        //  blowup_factor, trace_length]
+        //  blowup_factor, trace_length, trace_width?, constraint_frame_width?, num_transition_constraints?,
+        //  num_assertions?, field_extension?]
         const DIGESTS_FIXED: usize = 3 * DIGEST_WIDTH; // pub_inputs_hash + trace + constraint
         const NUM_PARAMS_V1: usize = 6;
         const NUM_PARAMS_V2: usize = 10;
+        const NUM_PARAMS_V3: usize = 11;
 
         let min_len_v1 = inner_public_inputs_len + DIGESTS_FIXED + NUM_PARAMS_V1;
         if elements.len() < min_len_v1 {
@@ -274,10 +280,19 @@ impl StarkVerifierPublicInputs {
         let constraint_commitment = slice_to_digest(&elements[idx..idx + DIGEST_WIDTH]);
         idx += DIGEST_WIDTH;
 
+        let params_start_v3 = elements.len().saturating_sub(NUM_PARAMS_V3);
         let params_start_v2 = elements.len().saturating_sub(NUM_PARAMS_V2);
         let params_start_v1 = elements.len().saturating_sub(NUM_PARAMS_V1);
 
         let (params_start, num_params) = if elements.len()
+            >= min_len_v1 + (NUM_PARAMS_V3 - NUM_PARAMS_V1)
+            && params_start_v3 >= idx
+            && elements[idx..params_start_v3]
+                .len()
+                .is_multiple_of(DIGEST_WIDTH)
+        {
+            (params_start_v3, NUM_PARAMS_V3)
+        } else if elements.len()
             >= min_len_v1 + (NUM_PARAMS_V2 - NUM_PARAMS_V1)
             && params_start_v2 >= idx
             && elements[idx..params_start_v2]
@@ -309,21 +324,50 @@ impl StarkVerifierPublicInputs {
         let blowup_factor = elements[params_start + 4].as_int() as usize;
         let trace_length = elements[params_start + 5].as_int() as usize;
 
-        let (trace_width, constraint_frame_width, num_transition_constraints, num_assertions) =
-            if num_params == NUM_PARAMS_V2 {
-                (
-                    elements[params_start + 6].as_int() as usize,
-                    elements[params_start + 7].as_int() as usize,
-                    elements[params_start + 8].as_int() as usize,
-                    elements[params_start + 9].as_int() as usize,
-                )
-            } else if inner_public_inputs.len() == 2 * STATE_WIDTH {
-                (RPO_TRACE_WIDTH, 8usize, STATE_WIDTH, 2 * STATE_WIDTH)
-            } else {
-                // Best-effort fallback for legacy serialized verifier public inputs.
-                // Depth-2 decoding prefers v2-encoded public inputs.
-                (VERIFIER_TRACE_WIDTH, 0usize, 0usize, 0usize)
+        let (
+            trace_width,
+            constraint_frame_width,
+            num_transition_constraints,
+            num_assertions,
+            field_extension,
+        ) = if num_params == NUM_PARAMS_V3 {
+            let raw_extension = elements[params_start + 10].as_int() as u64;
+            let field_extension = match raw_extension {
+                1 => FieldExtension::None,
+                2 => FieldExtension::Quadratic,
+                3 => FieldExtension::Cubic,
+                _ => {
+                    return Err(format!("unknown field extension id: {raw_extension}"));
+                }
             };
+            (
+                elements[params_start + 6].as_int() as usize,
+                elements[params_start + 7].as_int() as usize,
+                elements[params_start + 8].as_int() as usize,
+                elements[params_start + 9].as_int() as usize,
+                field_extension,
+            )
+        } else if num_params == NUM_PARAMS_V2 {
+            (
+                elements[params_start + 6].as_int() as usize,
+                elements[params_start + 7].as_int() as usize,
+                elements[params_start + 8].as_int() as usize,
+                elements[params_start + 9].as_int() as usize,
+                FieldExtension::None,
+            )
+        } else if inner_public_inputs.len() == 2 * STATE_WIDTH {
+            (
+                RPO_TRACE_WIDTH,
+                8usize,
+                STATE_WIDTH,
+                2 * STATE_WIDTH,
+                FieldExtension::None,
+            )
+        } else {
+            // Best-effort fallback for legacy serialized verifier public inputs.
+            // Depth-2 decoding prefers v2-encoded public inputs.
+            (VERIFIER_TRACE_WIDTH, 0usize, 0usize, 0usize, FieldExtension::None)
+        };
 
         Ok(Self::new(
             inner_public_inputs,
@@ -341,6 +385,7 @@ impl StarkVerifierPublicInputs {
             constraint_frame_width,
             num_transition_constraints,
             num_assertions,
+            field_extension,
         ))
     }
 }
@@ -368,6 +413,7 @@ impl ToElements<BaseElement> for StarkVerifierPublicInputs {
         elements.push(BaseElement::new(self.constraint_frame_width as u64));
         elements.push(BaseElement::new(self.num_transition_constraints as u64));
         elements.push(BaseElement::new(self.num_assertions as u64));
+        elements.push(BaseElement::new(self.field_extension as u64));
 
         elements
     }
@@ -3646,7 +3692,7 @@ pub(crate) fn build_context_prefix(pub_inputs: &StarkVerifierPublicInputs) -> Ve
         pub_inputs.blowup_factor as u64
             + (7u64 << 8)
             + (2u64 << 16)
-            + ((winter_air::FieldExtension::None as u64) << 24),
+            + ((pub_inputs.field_extension as u64) << 24),
     );
 
     let grinding_factor = BaseElement::ZERO;
@@ -3727,6 +3773,7 @@ mod tests {
             8,
             STATE_WIDTH,
             2 * STATE_WIDTH,
+            FieldExtension::None,
         );
 
         assert_eq!(pub_inputs.num_queries, 32);
@@ -3823,12 +3870,13 @@ mod tests {
             8,
             STATE_WIDTH,
             2 * STATE_WIDTH,
+            FieldExtension::None,
         );
 
         let elements = pub_inputs.to_elements();
 
-        // inner_public_inputs (2) + 4 (inner hash) + 4 (trace) + 4 (constraint) + 3*4 (fri) + 10 (params)
-        assert_eq!(elements.len(), 2 + 4 + 4 + 4 + 12 + 10);
+        // inner_public_inputs (2) + 4 (inner hash) + 4 (trace) + 4 (constraint) + 3*4 (fri) + 11 (params)
+        assert_eq!(elements.len(), 2 + 4 + 4 + 4 + 12 + 11);
     }
 
     #[test]
@@ -3860,6 +3908,7 @@ mod tests {
             8,
             STATE_WIDTH,
             2 * STATE_WIDTH,
+            FieldExtension::None,
         );
 
         let elements = pub_inputs.to_elements();
@@ -3877,6 +3926,7 @@ mod tests {
         assert_eq!(decoded.constraint_partition_size, 8);
         assert_eq!(decoded.blowup_factor, 32);
         assert_eq!(decoded.trace_length, ROWS_PER_PERMUTATION);
+        assert_eq!(decoded.field_extension, FieldExtension::None);
         assert_eq!(decoded.trace_width, RPO_TRACE_WIDTH);
         assert_eq!(decoded.constraint_frame_width, 8);
         assert_eq!(decoded.num_transition_constraints, STATE_WIDTH);

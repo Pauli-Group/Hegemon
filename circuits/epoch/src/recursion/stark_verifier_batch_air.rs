@@ -161,6 +161,10 @@ impl Air for StarkVerifierBatchAir {
                 "inner proof {idx} num_draws mismatch"
             );
             assert_eq!(
+                inner.field_extension, template.field_extension,
+                "inner proof {idx} field_extension mismatch"
+            );
+            assert_eq!(
                 inner.blowup_factor, template.blowup_factor,
                 "inner proof {idx} blowup_factor mismatch"
             );

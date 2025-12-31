@@ -7,6 +7,14 @@ use super::fibonacci_air::{verify_fibonacci_proof, FibonacciProver};
 use super::fibonacci_verifier_air::{verify_verifier_proof, FibonacciVerifierProver};
 use super::*;
 use std::time::Instant;
+use transaction_circuit::{
+    constants::{MAX_INPUTS, MAX_OUTPUTS},
+    default_proof_options, TransactionAirStark, TransactionPublicInputsStark, MIN_TRACE_LENGTH,
+    TRACE_WIDTH,
+};
+use winter_air::{Air, TraceInfo};
+use winter_math::{fields::f64::BaseElement, FieldElement};
+use winterfell::FieldExtension;
 
 /// Run the complete verifier spike and collect results.
 pub fn run_spike() -> SpikeResults {
@@ -209,4 +217,58 @@ fn test_document_findings() {
     println!("   Phase 1 (Merkle accumulator) provides practical value.");
     println!("   True recursion requires significant engineering effort.");
     println!("   Consider Plonky2 migration for Phase 2c if needed.");
+}
+
+#[test]
+fn test_transaction_recursion_budget() {
+    let mut pub_inputs = TransactionPublicInputsStark::default();
+    pub_inputs.input_flags = vec![BaseElement::ONE; MAX_INPUTS];
+    pub_inputs.output_flags = vec![BaseElement::ONE; MAX_OUTPUTS];
+    pub_inputs.nullifiers = vec![[BaseElement::ONE; 4]; MAX_INPUTS];
+    pub_inputs.commitments = vec![[BaseElement::ONE; 4]; MAX_OUTPUTS];
+
+    let options = default_proof_options();
+    let trace_info = TraceInfo::new(TRACE_WIDTH, MIN_TRACE_LENGTH);
+    let air = TransactionAirStark::new(trace_info.clone(), pub_inputs, options.clone());
+
+    let trace_width = trace_info.main_trace_width();
+    let constraint_frame_width = air.context().num_constraint_composition_columns();
+    let num_transition_constraints = air.context().num_transition_constraints();
+    let num_assertions = air.get_assertions().len();
+    let num_constraints_total = num_transition_constraints + num_assertions;
+    let field_extension = options.field_extension();
+    let extension_degree = match field_extension {
+        FieldExtension::None => 1,
+        FieldExtension::Quadratic => 2,
+        FieldExtension::Cubic => 3,
+    };
+
+    let ood_eval_elems = 2 * (trace_width + constraint_frame_width) * extension_degree;
+    let deep_coeff_elems = (trace_width + constraint_frame_width) * extension_degree;
+    let constraint_coeff_elems = num_constraints_total * extension_degree;
+
+    let lde_domain_size = trace_info.length() * options.blowup_factor();
+    let fri_options = options.to_fri_options();
+    let num_fri_layers = fri_options.num_fri_layers(lde_domain_size);
+
+    println!("\n=== Transaction Recursion Budget ===");
+    println!("trace_width: {trace_width}");
+    println!("constraint_frame_width: {constraint_frame_width}");
+    println!("transition_constraints: {num_transition_constraints}");
+    println!("assertions: {num_assertions}");
+    println!("total_constraints: {num_constraints_total}");
+    println!("field_extension: {field_extension:?} (degree {extension_degree})");
+    println!("ood_eval_elems: {ood_eval_elems}");
+    println!("deep_coeff_elems: {deep_coeff_elems}");
+    println!("constraint_coeff_elems: {constraint_coeff_elems}");
+    println!("fri_layers: {num_fri_layers}");
+    println!(
+        "trace_width_cap: {}",
+        TraceInfo::MAX_TRACE_WIDTH
+    );
+
+    assert!(
+        ood_eval_elems > TraceInfo::MAX_TRACE_WIDTH,
+        "OOD eval vector must exceed Winterfell width cap for current params"
+    );
 }

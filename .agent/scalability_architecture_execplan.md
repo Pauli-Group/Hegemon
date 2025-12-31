@@ -14,9 +14,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
 
 - [x] (2025-12-31T02:04Z) Rebuilt the ExecPlan to match .agent/PLANS.md requirements, including milestone-level commands, acceptance criteria, and file-specific edit guidance.
 - [x] (2025-12-31T02:22Z) Wrote `.agent/scalability_architecture_math.md` to quantify soundness bounds and DA sampling probabilities before implementation.
-- [ ] (2025-12-31T02:04Z) Run the recursion feasibility spike and record results in Surprises & Discoveries.
+- [ ] (2025-12-31T02:04Z) Run the recursion feasibility spike and record results in Surprises & Discoveries (completed: transaction recursion budget test with quadratic extension; remaining: full inner/outer proof size+time spike and bench).
+- [x] (2025-12-31T05:03Z) Added extension-aware inner-proof parsing + public inputs and a transaction recursion budget test; captured initial width metrics.
 - [x] (2025-12-31T03:09Z) Chose a baseline target of ~85-bit PQ security (collision-limited by 256-bit digests) and recorded required proof-parameter implications in `.agent/scalability_architecture_math.md`.
-- [ ] (2025-12-31T03:09Z) Lock ProofOptions and recursion format for consensus-critical proofs at the chosen target (completed: transaction proofs now use quadratic extension; remaining: recursive verifier accepts extension proofs).
+- [ ] (2025-12-31T03:09Z) Lock ProofOptions and recursion format for consensus-critical proofs at the chosen target (completed: transaction proofs now use quadratic extension; completed: parser supports quadratic extension metadata; remaining: recursive verifier trace accepts quadratic inner proofs and end-to-end recursion test).
 - [x] (2025-12-31T04:12Z) Updated transaction STARK proof options to quadratic extension and aligned verifiers + docs to the ~85-bit PQ collision ceiling.
 - [ ] (2025-12-31T02:04Z) Update DESIGN.md, METHODS.md, and the README.md whitepaper to match the new architecture (completed: DESIGN.md + METHODS.md security notes; remaining: README.md whitepaper alignment).
 - [ ] (2025-12-31T02:04Z) Implement recursive block proofs and wire them into consensus validation.
@@ -37,6 +38,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - Observation (2025-12-31T03:09Z): If we keep 256-bit digests and require collision security, the PQ collision ceiling is ~85 bits, so “128-bit PQ soundness” is not achievable without widening digests.
   Evidence: Generic quantum collision search is ~2^(n/3); for n=256 this is ~2^85; see `.agent/scalability_architecture_math.md` §0.1 and §2.4.
   Implication: We either accept ~85-bit PQ collision security as the system ceiling or we change digest sizes and hash primitives.
+
+- Observation (2025-12-31T05:03Z): Transaction recursion budget with quadratic extension already exceeds Winterfell’s MAX_TRACE_WIDTH for OOD evaluations, so the current recursion trace layout cannot fit OOD vectors without redesign.
+  Evidence: `cargo test -p epoch-circuit verifier_spike::tests::test_transaction_recursion_budget -- --nocapture` shows `ood_eval_elems: 364` vs `trace_width_cap: 255` with `field_extension: Quadratic (degree 2)`.
+  Implication: Recursion will need a wider trace layout, OOD vector partitioning, or a different recursion backend before we can verify transaction proofs end-to-end.
 
 ## Decision Log
 
@@ -66,6 +71,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
 
 - Decision: Upgrade transaction proofs to quadratic extension and align documentation with the ~85-bit PQ collision ceiling.
   Rationale: The field-size term is no longer the bottleneck once we use quadratic extension; hash collision resistance becomes the binding limit unless we widen digests.
+  Date/Author: 2025-12-31 / Codex
+
+- Decision: Keep recursion trace builders rejecting non-base inner proofs while only the parser and public inputs understand quadratic extensions.
+  Rationale: Accepting quadratic proofs without trace/AIR support would silently build invalid recursion traces; explicit rejection forces us to finish the verifier trace changes first.
   Date/Author: 2025-12-31 / Codex
 
 ## Outcomes & Retrospective
@@ -120,9 +129,10 @@ All commands run from the repository root. For a fresh clone, you must run the s
 Milestone 1 commands:
 
     cargo test -p epoch-circuit verifier_spike
+    cargo test -p epoch-circuit verifier_spike::tests::test_transaction_recursion_budget -- --nocapture
     cargo bench -p epoch-circuit recursive_proof_bench
 
-Expected evidence includes a test pass and a bench line that prints inner and outer proof sizes and times. Record those numbers in Surprises & Discoveries.
+Expected evidence includes a test pass, a Transaction Recursion Budget output line with ood_eval_elems vs trace_width_cap, and a bench line that prints inner and outer proof sizes and times. Record those numbers in Surprises & Discoveries.
 
 Milestone 2 commands:
 
@@ -166,6 +176,16 @@ Add a block circuit test that mutates the recursive proof bytes and expects veri
 All steps are safe to rerun. Use --tmp on the dev node so state is discarded on exit. If you need to reset state for a new genesis, delete the local node database directory and any test wallet stores, then rerun the node. Keep backups of any non-test wallet keys before deletion.
 
 ## Artifacts and Notes
+
+Example output from the transaction recursion budget test:
+
+    === Transaction Recursion Budget ===
+    trace_width: 86
+    constraint_frame_width: 5
+    total_constraints: 4251
+    field_extension: Quadratic (degree 2)
+    ood_eval_elems: 364
+    trace_width_cap: 255
 
 Example log line after Milestone 5:
 
@@ -253,3 +273,4 @@ Dependencies must remain hash-based and post-quantum safe. Use the existing blak
 Revision Note (2025-12-31T02:04Z): Rebuilt the ExecPlan to comply with .agent/PLANS.md by adding milestone-level commands and acceptance, explicit file-level edits, and missing term definitions.
 Revision Note (2025-12-31T02:22Z): Added math companion reference, recorded the deterministic DA sampling flaw and updated the plan to use per-node randomized sampling (per `.agent/scalability_architecture_math.md`).
 Revision Note (2025-12-31T04:12Z): Updated transaction proof parameters to quadratic extension, aligned security notes in docs, and recorded the new proving-time impact in Surprises & Discoveries.
+Revision Note (2025-12-31T05:03Z): Recorded the recursion budget spike output, updated progress and surprises, and clarified that quadratic extension support is parser-only pending trace/AIR work.
