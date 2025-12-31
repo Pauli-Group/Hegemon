@@ -51,6 +51,20 @@ pub enum ProofError {
     FeeCommitment,
     #[error("version commitment mismatch")]
     VersionCommitment,
+    #[error("missing recursive proof payload")]
+    MissingRecursiveProof,
+    #[error("unexpected recursive proof payload")]
+    UnexpectedRecursiveProof,
+    #[error("recursive proof hash mismatch")]
+    RecursiveProofHashMismatch,
+    #[error("recursive proof verification failed: {0}")]
+    RecursiveProofVerification(String),
+    #[error("recursive proof count mismatch")]
+    RecursiveProofCountMismatch,
+    #[error("recursive proof padding mismatch")]
+    RecursiveProofPaddingMismatch,
+    #[error("recursive proof inputs mismatch at index {0}")]
+    RecursiveProofInputsMismatch(usize),
     #[error("verifier internal error: {0}")]
     Internal(&'static str),
 }

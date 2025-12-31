@@ -20,6 +20,8 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2025-12-31T10:05Z) Enabled Criterion bench harness and adjusted sample size to satisfy Criterion’s minimum-sample requirement.
 - [x] (2025-12-31T10:20Z) Updated the README whitepaper to describe recursive proof validation and data-availability sampling.
 - [x] (2025-12-31T10:30Z) Updated consensus header + types for DA parameters and recursive proof commitments, plus chain spec defaults and node header serialization/test helpers (`runtime/src/chain_spec.rs`, `node/src/substrate/chain_spec.rs`, `node/src/codec.rs`, `node/src/test_utils.rs`); re-ran `cargo test -p consensus`.
+- [x] (2025-12-31T17:49Z) Added block-circuit recursive proof module + exports and made recursion public-input parsing usable from block proofs.
+- [x] (2025-12-31T17:49Z) Added consensus recursive proof verification path (`RecursiveProofVerifier`), recursive-proof-aware block types/serialization, and an ignored heavy consensus proof test.
 - [x] (2025-12-31T05:03Z) Added extension-aware inner-proof parsing + public inputs and a transaction recursion budget test; captured initial width metrics.
 - [x] (2025-12-31T05:31Z) Added a Path A streaming plan estimator + test output for transaction proofs to size row/permutation costs under the 255-column cap.
 - [x] (2025-12-31T06:15Z) Started Path A streaming layout in recursion verifier by adding tape columns + coin-state save/restore masks and a minimal RpoAir tape correctness test.
@@ -28,7 +30,7 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [ ] (2025-12-31T03:09Z) Lock ProofOptions and recursion format for consensus-critical proofs at the chosen target (completed: transaction proofs now use quadratic extension; completed: parser supports quadratic extension metadata; remaining: recursive verifier trace accepts quadratic inner proofs and end-to-end recursion test).
 - [x] (2025-12-31T04:12Z) Updated transaction STARK proof options to quadratic extension and aligned verifiers + docs to the ~85-bit PQ collision ceiling.
 - [x] (2025-12-31T02:04Z) Update DESIGN.md, METHODS.md, and the README.md whitepaper to match the new architecture (completed: DESIGN.md + METHODS.md security notes + README.md whitepaper alignment).
-- [ ] (2025-12-31T02:04Z) Implement recursive block proofs and wire them into consensus validation.
+- [ ] (2025-12-31T02:04Z) Implement recursive block proofs and wire them into consensus validation (completed: recursive proof module + consensus verifier + tests; remaining: update `circuits/block/src/proof.rs` legacy aggregation path to emit recursive proof hash/proof in the canonical `BlockProof` flow, and decide whether to retire `RecursiveAggregation`).
 - [ ] (2025-12-31T02:04Z) Implement data-availability encoding, storage, sampling, and P2P retrieval.
 - [ ] (2025-12-31T02:04Z) Integrate node, wallet, mempool, and RPC so end-to-end mining works with the new block format.
 - [ ] (2025-12-31T02:04Z) Add benchmarks, tests, and runbooks that prove the system works.
@@ -87,6 +89,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Evidence: `target/release/deps/recursive_proof_bench-* --bench --output-format bencher` reports `prove_epoch_inner/100 ≈ 18.9ms`, `prove_epoch_inner/1000 ≈ 24.1ms`, `prove_epoch_recursive_outer ≈ 1.65s`.
   Implication: The outer recursion benchmark is materially slower and should be budgeted in block production latency.
 
+- Observation (2025-12-31T17:49Z): Recursive block proof generation is heavy enough that the consensus recursive-proof test is marked ignored to keep default test runs fast.
+  Evidence: `consensus/tests/recursive_proof.rs` uses `#[ignore = "heavy: recursive proof generation"]`.
+  Implication: Milestone 3 validation requires running ignored tests when confirming recursive proof correctness end-to-end.
+
 ## Decision Log
 
 - Decision: Treat scalability as proof-carrying blocks plus data-availability sampling, not larger blocks or faster block times.
@@ -135,6 +141,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
 
 - Decision: Keep Criterion sample size at 10 for the outer proof-of-proof benchmark.
   Rationale: Criterion enforces a minimum sample size of 10; lowering it causes the bench to panic.
+  Date/Author: 2025-12-31 / Codex
+
+- Decision: Keep the legacy `circuits/block/src/proof.rs` aggregation path intact while introducing recursive block proofs as a separate, consensus-facing verification path.
+  Rationale: Forcing recursive proof generation into the existing `prove_block` flow would make the current integration tests (and block builder) substantially heavier before the mining/RPC integration is ready; the recursive proof path is now available and verified in consensus, and the legacy aggregation can be retired once mining emits recursive proofs by default.
   Date/Author: 2025-12-31 / Codex
 
 ## Outcomes & Retrospective
@@ -354,3 +364,4 @@ Revision Note (2025-12-31T05:03Z): Recorded the recursion budget spike output, u
 Revision Note (2025-12-31T05:31Z): Added the Path A streaming plan estimator + test output and captured the row budget and schedule assumptions.
 Revision Note (2025-12-31T06:55Z): Implemented replayed deep-coeff draw pairing with leaf-hash chains and updated merkle schedule masks/tests to match the new interleave.
 Revision Note (2025-12-31T11:15Z): Completed Milestone 2 chain-spec defaults and updated node header serialization/test helpers for the new DA/recursive header fields; reran consensus tests.
+Revision Note (2025-12-31T17:49Z): Added recursive block proof module + consensus verifier/test coverage, updated block serialization/types for recursive proofs, and recorded the legacy aggregation decision.

@@ -1,5 +1,6 @@
 use consensus::header::{BlockHeader, PowSeal};
 use consensus::types::{CoinbaseData, CoinbaseSource, ConsensusBlock, DaParams, Transaction};
+use consensus::RecursiveBlockProof;
 use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +11,8 @@ struct StoredBlock {
     header: StoredHeader,
     transactions: Vec<StoredTransaction>,
     coinbase: Option<StoredCoinbase>,
+    #[serde(default)]
+    recursive_proof: Option<RecursiveBlockProof>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -145,6 +148,7 @@ impl From<&ConsensusBlock> for StoredBlock {
             header,
             transactions,
             coinbase,
+            recursive_proof: block.recursive_proof.clone(),
         }
     }
 }
@@ -213,6 +217,7 @@ impl StoredBlock {
             header,
             transactions,
             coinbase,
+            recursive_proof: self.recursive_proof,
         })
     }
 }

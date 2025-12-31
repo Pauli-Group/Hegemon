@@ -250,7 +250,7 @@ impl StarkVerifierPublicInputs {
     /// This is used for recursion depth 2+, where the inner proof is itself a `StarkVerifierAir`
     /// proof and its public inputs arrive as an opaque element vector.
     #[allow(dead_code)]
-    pub(crate) fn try_from_elements(
+    pub fn try_from_elements(
         elements: &[BaseElement],
         inner_public_inputs_len: usize,
     ) -> Result<Self, String> {

@@ -1,3 +1,4 @@
+use block_circuit::RecursiveBlockProof;
 use crypto::hashes::sha256;
 use protocol_versioning::{VersionBinding, VersionMatrix};
 use sha2::{Digest, Sha384};
@@ -147,6 +148,7 @@ pub struct Block<BH> {
     pub header: BH,
     pub transactions: Vec<Transaction>,
     pub coinbase: Option<CoinbaseData>,
+    pub recursive_proof: Option<RecursiveBlockProof>,
 }
 
 impl<BH> Block<BH> {
@@ -155,6 +157,7 @@ impl<BH> Block<BH> {
             header,
             transactions: self.transactions,
             coinbase: self.coinbase,
+            recursive_proof: self.recursive_proof,
         }
     }
 }
