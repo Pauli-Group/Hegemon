@@ -30,6 +30,10 @@ rand = { version = "0.8", features = ["std"] }
 proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 
+[[bench]]
+name = "recursive_proof_bench"
+harness = false
+
 [features]
 default = ["std"]
 std = []
