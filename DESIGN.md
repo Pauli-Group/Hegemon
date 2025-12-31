@@ -129,7 +129,7 @@ PRFs:
 
 No group operations anywhere in user-visible cryptography.
 
-STARK verifier parameters (hash function choice, query counts, blowup factors) are persisted on-chain in the attestations and settlement pallets with governance-controlled upgrade hooks so proof verification stays aligned with PQ-friendly hashes. The runtime seeds attestations with Blake3 hashing, 28 FRI queries, a 4x blowup factor, and 128-bit security; settlement uses the same hash/query/security budget but a 16x blowup factor to satisfy the Poseidon AIR degree constraints. Governance can override those `StarkVerifierParams` via `set_verifier_params` when migrating to a new hash or tighter soundness budget.
+STARK verifier parameters (hash function choice, query counts, blowup factors, field extension) are persisted on-chain in the attestations and settlement pallets with governance-controlled upgrade hooks so proof verification stays aligned with PQ-friendly hashes. The runtime seeds attestations with Blake3 hashing, 28 FRI queries, a 4x blowup factor, and quadratic extension over Goldilocks; settlement uses the same hash/query budget but a 16x blowup factor to satisfy the Poseidon AIR degree constraints. With 256-bit digests, PQ collision resistance caps at ~85 bits, so governance should treat that as the practical ceiling unless digest sizes are widened. Governance can override those `StarkVerifierParams` via `set_verifier_params` when migrating to a new hash or tighter soundness budget.
 
 ### 1.4 Reference module layout
 

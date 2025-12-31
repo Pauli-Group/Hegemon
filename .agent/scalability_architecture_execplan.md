@@ -16,8 +16,9 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2025-12-31T02:22Z) Wrote `.agent/scalability_architecture_math.md` to quantify soundness bounds and DA sampling probabilities before implementation.
 - [ ] (2025-12-31T02:04Z) Run the recursion feasibility spike and record results in Surprises & Discoveries.
 - [x] (2025-12-31T03:09Z) Chose a baseline target of ~85-bit PQ security (collision-limited by 256-bit digests) and recorded required proof-parameter implications in `.agent/scalability_architecture_math.md`.
-- [ ] (2025-12-31T03:09Z) Lock ProofOptions and recursion format for consensus-critical proofs at the chosen target (including field extension support in recursion as needed).
-- [ ] (2025-12-31T02:04Z) Update DESIGN.md, METHODS.md, and the README.md whitepaper to match the new architecture.
+- [ ] (2025-12-31T03:09Z) Lock ProofOptions and recursion format for consensus-critical proofs at the chosen target (completed: transaction proofs now use quadratic extension; remaining: recursive verifier accepts extension proofs).
+- [x] (2025-12-31T04:12Z) Updated transaction STARK proof options to quadratic extension and aligned verifiers + docs to the ~85-bit PQ collision ceiling.
+- [ ] (2025-12-31T02:04Z) Update DESIGN.md, METHODS.md, and the README.md whitepaper to match the new architecture (completed: DESIGN.md + METHODS.md security notes; remaining: README.md whitepaper alignment).
 - [ ] (2025-12-31T02:04Z) Implement recursive block proofs and wire them into consensus validation.
 - [ ] (2025-12-31T02:04Z) Implement data-availability encoding, storage, sampling, and P2P retrieval.
 - [ ] (2025-12-31T02:04Z) Integrate node, wallet, mempool, and RPC so end-to-end mining works with the new block format.
@@ -29,9 +30,9 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Evidence: A producer can always publish only the deterministically sampled chunks and withhold the rest; see `.agent/scalability_architecture_math.md` §4.4.
   Implication: The DA milestone must use per-node randomized sampling (network-level enforcement) or introduce an unpredictability source the producer cannot bias at commitment time.
 
-- Observation (2025-12-31T02:22Z): Current STARK proof parameters in the repo do not support “~85-bit+” validity soundness for transaction proofs because we are on a ~64-bit base field with `FieldExtension::None`, and the field-size term is the bottleneck.
-  Evidence: For the current transaction AIR, `trace_length = 2^15` and `blowup = 2^3`, so `lde_domain_size ≈ 2^18` and the standard field-size bound is ~`deg/|F| ≈ 2^18/2^64 = 2^-46`; see `.agent/scalability_architecture_math.md` §2.1.
-  Implication: If this chain is meant to be more than a toy, the plan must upgrade proof parameters (field extension and related recursion support) for consensus-critical proofs, and accept the performance cost.
+- Observation (2025-12-31T04:12Z): Transaction proofs now use quadratic extension, which clears the field-size bottleneck but increases proving time noticeably under current parameters.
+  Evidence: `cargo test -p transaction-circuit --test transaction proving_and_verification_succeeds` completed in ~293s after switching to `FieldExtension::Quadratic`.
+  Implication: We need a fast-profile path for developer tests and must measure release-mode proving time before wiring recursion into consensus.
 
 - Observation (2025-12-31T03:09Z): If we keep 256-bit digests and require collision security, the PQ collision ceiling is ~85 bits, so “128-bit PQ soundness” is not achievable without widening digests.
   Evidence: Generic quantum collision search is ~2^(n/3); for n=256 this is ~2^85; see `.agent/scalability_architecture_math.md` §0.1 and §2.4.
@@ -61,6 +62,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
 
 - Decision: Keep 256-bit digests and accept ~85-bit PQ collision security as the ceiling.
   Rationale: 256-bit digests cannot deliver 128-bit PQ collision resistance under generic bounds; adopting 85-bit as the baseline keeps digest widths stable and makes the security target consistent across Merkle commitments, Fiat–Shamir transcripts, and DA roots.
+  Date/Author: 2025-12-31 / Codex
+
+- Decision: Upgrade transaction proofs to quadratic extension and align documentation with the ~85-bit PQ collision ceiling.
+  Rationale: The field-size term is no longer the bottleneck once we use quadratic extension; hash collision resistance becomes the binding limit unless we widen digests.
   Date/Author: 2025-12-31 / Codex
 
 ## Outcomes & Retrospective
@@ -247,3 +252,4 @@ Dependencies must remain hash-based and post-quantum safe. Use the existing blak
 
 Revision Note (2025-12-31T02:04Z): Rebuilt the ExecPlan to comply with .agent/PLANS.md by adding milestone-level commands and acceptance, explicit file-level edits, and missing term definitions.
 Revision Note (2025-12-31T02:22Z): Added math companion reference, recorded the deterministic DA sampling flaw and updated the plan to use per-node randomized sampling (per `.agent/scalability_architecture_math.md`).
+Revision Note (2025-12-31T04:12Z): Updated transaction proof parameters to quadratic extension, aligned security notes in docs, and recorded the new proving-time impact in Surprises & Discoveries.

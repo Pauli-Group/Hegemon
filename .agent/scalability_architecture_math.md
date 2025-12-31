@@ -6,9 +6,9 @@ The intent is not “math for vibes”. The intent is: before we touch consensus
 
 ## 0. Quick Summary (what this file concludes)
 
-1. With the current Winterfell parameter choices in the repo (64-bit base field + `FieldExtension::None` for transaction proofs), the STARK soundness is not “96 bits” or “128 bits”. The limiting term is the standard field-size bound `Pr[bad passes] ≤ deg/|F|`. For the current transaction AIR, `trace_length = 2^15` and `blowup = 2^3`, so the relevant degree scale is ~`2^18`, giving a best-case ceiling of about `64 - 18 ≈ 46` bits before we even discuss post-quantum hash collisions. If we want “settlement-grade” validity, we must change proof parameters (field extension and/or base field choice) and explicitly accept the performance cost.
+1. Transaction proofs now use `FieldExtension::Quadratic` over a ~64-bit base field, which raises the field-size bound to roughly `(2*64) - 18 ≈ 110` bits for the current transaction AIR (`trace_length = 2^15`, `blowup = 2^3`, so `lde_domain_size ≈ 2^18`). This pushes the field-size term above the PQ collision ceiling for 256-bit digests. However, the recursive verifier still rejects inner proofs with any extension, so recursion is not yet aligned with these parameters.
 
-2. If we keep 256-bit hashes, then “post-quantum collision security” is ~85 bits (generic bound ~2^(n/3)). This caps the effective security level of any component that relies on collision resistance (Merkle commitments, Fiat–Shamir transcripts, DA Merkle roots). Setting a baseline target of 85-bit PQ security is internally consistent with 256-bit digests, but it still requires removing the current field-size bottleneck (which is ~46-bit-ish for the current transaction AIR on a ~64-bit base field without extensions).
+2. If we keep 256-bit hashes, then “post-quantum collision security” is ~85 bits (generic bound ~2^(n/3)). This caps the effective security level of any component that relies on collision resistance (Merkle commitments, Fiat–Shamir transcripts, DA Merkle roots). With quadratic extension, the field-size term is no longer the bottleneck for transaction proofs, so the hash-collision ceiling becomes the dominant limit unless digests are widened.
 
 3. “Deterministic DA sampling derived from producer-known data (e.g. parent hash and height)” is not a security mechanism against a malicious block producer. The producer can always ensure the deterministically sampled chunks are available and withhold the rest. In PoW it is strictly worse if sampling depends on the current block hash because the producer can grind the hash to bias samples.
 
@@ -84,12 +84,12 @@ Winterfell’s documentation (in `winter-air`’s `ProofOptions` docs) states:
 
 ### 2.1 The knobs we have in code today
 
-In this repo, transaction proofs default to:
+In this repo, transaction proofs now default to:
 
 - `num_queries = 32`
 - `blowup_factor = 8`  (so `log2(blowup_factor) = 3`)
 - `grinding_factor = 0`
-- `field_extension = None`
+- `field_extension = Quadratic`
 
 This is in:
 
@@ -116,15 +116,15 @@ For the current transaction proof:
 
 Thus the field-size term cannot be better than roughly:
 
-- `deg/|F| ≈ 2^18 / 2^64 = 2^-46` (ignoring small constants).
+- `deg/|F_ext| ≈ 2^18 / 2^128 = 2^-110` (ignoring small constants, with quadratic extension).
 
-So the “realistic ceiling” for transaction-proof validity soundness in the current configuration is on the order of ~46 bits, not ~64 and not ~96.
+So the field-size term is no longer the bottleneck; the ~85-bit PQ collision ceiling from 256-bit digests becomes the binding limit instead.
 
 Winterfell’s own docs are consistent with this. In `winter-air`’s `ProofOptions` docs, they explicitly say:
 
 - For ~64-bit base fields, quadratic extension is needed for ~100 bits; cubic for 128+.
 
-Actionable conclusion: with 64-bit base field + `FieldExtension::None`, we cannot reach ~85-bit validity soundness for the current transaction AIR. “Turn the query knob” does not fix this; it only improves the FRI-query term, not the field-size term.
+Actionable conclusion: with 64-bit base field + `FieldExtension::Quadratic`, we can clear the field-size bound for ~85-bit targets, but the recursive verifier still needs to accept extension proofs before this helps recursion. “Turn the query knob” alone does not fix the field-size term.
 
 This directly affects the scalability plan because a recursive block proof that verifies transaction proofs inherits the transaction-proof soundness ceiling.
 

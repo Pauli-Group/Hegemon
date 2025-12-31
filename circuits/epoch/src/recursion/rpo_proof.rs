@@ -56,7 +56,10 @@ impl RpoProofOptions {
         }
     }
 
-    /// Production options targeting 128-bit security
+    /// Production-ish options (high query/grinding bound).
+    ///
+    /// Note: these parameters alone do not imply "128-bit security" in general; overall soundness
+    /// is also constrained by the field-size term and hash collision resistance.
     pub fn production() -> Self {
         Self {
             num_queries: 32,
