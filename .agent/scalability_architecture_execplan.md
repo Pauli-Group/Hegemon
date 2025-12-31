@@ -12,6 +12,8 @@ This plan makes the chain fundamentally scalable by validating each block with a
 
 ## Progress
 
+- [x] (2025-12-31T09:40Z) Fixed recursion verifier replay/restore/tape handling and boundary constraint counts; recursion verifier tests now pass.
+- [x] (2025-12-31T09:40Z) Fixed EpochProver public-input wiring and re-ran `epoch-circuit` tests (including ignored heavy tests) with `CARGO_INCREMENTAL=0`.
 - [x] (2025-12-31T02:04Z) Rebuilt the ExecPlan to match .agent/PLANS.md requirements, including milestone-level commands, acceptance criteria, and file-specific edit guidance.
 - [x] (2025-12-31T02:22Z) Wrote `.agent/scalability_architecture_math.md` to quantify soundness bounds and DA sampling probabilities before implementation.
 - [ ] (2025-12-31T02:04Z) Run the recursion feasibility spike and record results in Surprises & Discoveries (completed: transaction recursion budget + streaming plan budgets; remaining: full inner/outer proof size+time spike and bench).
@@ -58,6 +60,14 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Evidence: `cargo test -p epoch-circuit stark_verifier_prover::tests::test_trace_from_inner_merkle_roundtrip -- --nocapture` fails with `stark_verifier_air.rs:1952: index out of bounds`.
   Implication: Update `base_boundary_constraints` (and any related counts) so `num_constraints` matches `evaluate_transition` before proceeding with more recursion changes.
 
+- Observation (2025-12-31T09:40Z): The constraint-count mismatch and replay/restore boundary errors are resolved.
+  Evidence: `cargo test -p epoch-circuit` and the ignored heavy tests now pass after updating `base_boundary_constraints`, gating coin-restore on row 0, and capturing replay tape/deep witnesses from post-permutation state.
+  Implication: Path A streaming changes are now stable enough to proceed to the remaining recursion feasibility benchmarks.
+
+- Observation (2025-12-31T09:40Z): Running ignored heavy tests triggered a rustc incremental-cache ICE.
+  Evidence: `cargo test -p epoch-circuit -- --ignored` failed with a `dep_graph` panic until rerun with `CARGO_INCREMENTAL=0`.
+  Implication: Use `CARGO_INCREMENTAL=0` for heavy test runs until the toolchain issue is resolved.
+
 ## Decision Log
 
 - Decision: Treat scalability as proof-carrying blocks plus data-availability sampling, not larger blocks or faster block times.
@@ -100,9 +110,13 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Rationale: The RPO leaf hash chain must remain contiguous; replay draws are inserted before each chain and bound via coin-state restore.
   Date/Author: 2025-12-31 / Codex
 
+- Decision: Restrict coin-restore masking to the first row of a replay permutation and bind tape/deep witnesses to the post-permutation state.
+  Rationale: Boundary constraints only apply on permutation boundaries; keeping restore active on all rows breaks boundary relations, and replayed tape/deep witnesses must reflect the permuted state used for hashing.
+  Date/Author: 2025-12-31 / Codex
+
 ## Outcomes & Retrospective
 
-No outcomes yet. This plan has not been executed.
+Outcome (2025-12-31T09:40Z): The Path A recursion verifier updates now satisfy the full `epoch-circuit` test suite, including the ignored heavy tests when run with `CARGO_INCREMENTAL=0`. Remaining work includes the recursion size/time benchmark and the README whitepaper alignment.
 
 ## Context and Orientation
 
@@ -218,6 +232,8 @@ Example output from the transaction streaming plan test:
     global_perms: 1189
     rows_unpadded: 94800
     total_rows: 131072
+
+Plan Update Note (2025-12-31T09:40Z): Updated Progress, Surprises & Discoveries, Decision Log, and Outcomes to reflect the recursion verifier fixes, passing heavy tests, and the incremental-cache ICE workaround.
 
 Example log line after Milestone 5:
 
