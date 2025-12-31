@@ -4,7 +4,7 @@
 //! verify the inner proof’s Merkle openings, DEEP composition, and FRI folding
 //! checks inside the AIR.
 
-use winter_air::ProofOptions;
+use winter_air::{FieldExtension, ProofOptions};
 use winter_crypto::{hashers::Blake3_256, MerkleTree};
 use winter_math::{FieldElement, StarkField};
 #[cfg(test)]
@@ -113,6 +113,7 @@ impl StarkVerifierProver {
             8,
             STATE_WIDTH,
             2 * STATE_WIDTH,
+            winter_air::FieldExtension::None,
         );
 
         let prover = StarkVerifierProver::new(options.clone(), pub_inputs.clone());
@@ -1109,6 +1110,11 @@ impl StarkVerifierProver {
     /// This extends the transcript segment with in‑circuit hashing of all queried
     /// leaves and Merkle authentication paths for trace, constraint, and FRI layers.
     pub fn build_trace_from_inner(&self, inner: &InnerProofData) -> TraceTable<BaseElement> {
+        assert_eq!(
+            inner.field_extension,
+            FieldExtension::None,
+            "StarkVerifierAir recursion currently supports only base-field inner proofs"
+        );
         let inputs = &self.pub_inputs.inner_public_inputs;
         let input_len = inputs.len();
         let num_pi_blocks = input_len.div_ceil(8).max(1);
