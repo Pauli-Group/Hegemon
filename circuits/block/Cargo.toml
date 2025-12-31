@@ -6,9 +6,12 @@ edition = "2021"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
-transaction-circuit = { path = "../transaction" }
+blake3 = "1"
+epoch-circuit = { path = "../epoch" }
+transaction-circuit = { path = "../transaction", features = ["rpo-fiat-shamir"] }
 state-merkle = { path = "../../state/merkle" }
 protocol-versioning = { path = "../../protocol/versioning" }
+winterfell = "0.13"
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }

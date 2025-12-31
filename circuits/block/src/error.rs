@@ -35,6 +35,11 @@ pub enum BlockError {
     },
     #[error("block root trace mismatch")]
     RootTraceMismatch,
+    #[error("block ending root {observed:?} does not match expected {expected:?}")]
+    EndingRootMismatch {
+        expected: Commitment,
+        observed: Commitment,
+    },
     #[error("transaction proof at index {index} declared unsupported version {version:?}")]
     UnsupportedVersion {
         index: usize,
@@ -42,4 +47,24 @@ pub enum BlockError {
     },
     #[error("reported version census does not match execution")]
     VersionMatrixMismatch,
+    #[error("transaction proof at index {index} is missing STARK proof bytes")]
+    MissingStarkProof { index: usize },
+    #[error("transaction proof at index {index} is missing STARK public inputs")]
+    MissingStarkInputs { index: usize },
+    #[error("transaction proof at index {index} has invalid STARK inputs: {reason}")]
+    InvalidStarkInputs { index: usize, reason: String },
+    #[error("transaction proof at index {index} failed recursive input parsing: {reason}")]
+    RecursiveProofInput { index: usize, reason: String },
+    #[error("recursive proof generation failed: {0}")]
+    RecursiveProofGeneration(String),
+    #[error("recursive proof verification failed: {0}")]
+    RecursiveProofVerification(String),
+    #[error("recursive proof hash mismatch")]
+    RecursiveProofHashMismatch,
+    #[error("recursive proof input count mismatch")]
+    RecursiveProofCountMismatch,
+    #[error("recursive proof padding does not match expected rule")]
+    RecursiveProofPaddingMismatch,
+    #[error("recursive proof inputs do not match transaction at index {0}")]
+    RecursiveProofInputsMismatch(usize),
 }

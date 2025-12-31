@@ -18,7 +18,8 @@ pub use header::{BlockHeader, ConsensusMode, PowSeal};
 pub use mining::{MiningCoordinator, MiningSolution, MiningStats, MiningWork, MiningWorker};
 pub use nullifier::NullifierSet;
 pub use pow::PowConsensus;
-pub use proof::{HashVerifier, ProofVerifier};
+pub use block_circuit::RecursiveBlockProof;
+pub use proof::{HashVerifier, ProofVerifier, RecursiveProofVerifier};
 pub use protocol_versioning::{
     CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CircuitVersion, CryptoSuiteId,
     DEFAULT_VERSION_BINDING, VersionBinding, VersionMatrix,

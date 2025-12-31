@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1"
 bincode = "1"
 blake3 = "1.5"
+block-circuit = { path = "../circuits/block" }
 codec = { workspace = true }
 crossbeam-channel = "0.5"
 crypto = { package = "synthetic-crypto", path = "../crypto" }
@@ -20,6 +21,7 @@ thiserror = "1"
 tracing = "0.1"
 protocol-versioning = { path = "../protocol/versioning" }
 serde = { version = "1", features = ["derive"] }
+transaction-circuit = { path = "../circuits/transaction" }
 
 # Substrate PoW consensus (optional, for full Substrate integration)
 sc-consensus-pow = { workspace = true, optional = true }
@@ -32,6 +34,7 @@ runtime = { path = "../runtime", optional = true, default-features = false, feat
 [dev-dependencies]
 network = { path = "../network" }
 proptest = "1"
+state-merkle = { path = "../state/merkle" }
 tokio = { version = "1", features = ["macros", "rt", "time", "sync"] }
 
 [features]
