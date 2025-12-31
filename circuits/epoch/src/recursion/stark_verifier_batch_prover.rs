@@ -1,7 +1,8 @@
 //! Prover for `StarkVerifierBatchAir`.
 //!
 //! This builds batch verifier traces by concatenating multiple `StarkVerifierProver` segment
-//! traces into a single batch trace, verifying N inner RpoAir proofs in one outer proof.
+//! traces into a single batch trace. Non-RpoAir inner proofs currently bypass OOD/DEEP/FRI
+//! consistency checks (unsound) until streaming OOD evaluation is implemented.
 
 use winter_air::ProofOptions;
 use winter_crypto::{hashers::Blake3_256, MerkleTree};
@@ -24,7 +25,8 @@ type Blake3MerkleTree = MerkleTree<Blake3>;
 
 /// Prover for batch STARK verifier.
 ///
-/// This generates an outer proof that verifies N inner `RpoAir` proofs in a single proof.
+/// Generates an outer proof that verifies N inner proofs in a single proof. Non-RpoAir
+/// proofs currently bypass OOD/DEEP/FRI consistency checks (unsound).
 pub struct StarkVerifierBatchProver {
     options: ProofOptions,
     pub_inputs: StarkVerifierBatchPublicInputs,
@@ -161,7 +163,7 @@ impl Prover for StarkVerifierBatchProver {
     }
 }
 
-/// Generate a batch proof verifying N inner RpoAir proofs.
+/// Generate a batch proof verifying N inner proofs.
 ///
 /// This is the main entry point for Phase 3b batch verification.
 pub fn prove_batch(
