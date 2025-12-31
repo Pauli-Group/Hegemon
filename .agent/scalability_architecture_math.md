@@ -6,18 +6,26 @@ The intent is not “math for vibes”. The intent is: before we touch consensus
 
 ## 0. Quick Summary (what this file concludes)
 
-1. With the current Winterfell parameter choices in the repo (64-bit base field + `FieldExtension::None` for transaction proofs), the best-case STARK soundness is capped by the base field size and is not 96–128 bits. This is not “maybe”; it follows from Winterfell’s own documentation. If we want “settlement-grade” validity, we must change proof parameters (field extension and/or base field choice) and explicitly accept the performance cost.
+1. With the current Winterfell parameter choices in the repo (64-bit base field + `FieldExtension::None` for transaction proofs), the STARK soundness is not “96 bits” or “128 bits”. The limiting term is the standard field-size bound `Pr[bad passes] ≤ deg/|F|`. For the current transaction AIR, `trace_length = 2^15` and `blowup = 2^3`, so the relevant degree scale is ~`2^18`, giving a best-case ceiling of about `64 - 18 ≈ 46` bits before we even discuss post-quantum hash collisions. If we want “settlement-grade” validity, we must change proof parameters (field extension and/or base field choice) and explicitly accept the performance cost.
 
-2. “Deterministic DA sampling derived from parent hash and height” is not a security mechanism against a malicious block producer. The producer can always ensure the deterministically-sampled chunks are available and withhold the rest. In PoW it is strictly worse because the producer can also grind the block hash to bias any sampling derived from the block hash itself.
+2. If we keep 256-bit hashes, then “post-quantum collision security” is ~85 bits (generic bound ~2^(n/3)). This caps the effective security level of any component that relies on collision resistance (Merkle commitments, Fiat–Shamir transcripts, DA Merkle roots). Setting a baseline target of 85-bit PQ security is internally consistent with 256-bit digests, but it still requires removing the current field-size bottleneck (which is ~46-bit-ish for the current transaction AIR on a ~64-bit base field without extensions).
 
-3. A DA scheme that actually works in an adversarial setting must use one of:
+3. “Deterministic DA sampling derived from producer-known data (e.g. parent hash and height)” is not a security mechanism against a malicious block producer. The producer can always ensure the deterministically sampled chunks are available and withhold the rest. In PoW it is strictly worse if sampling depends on the current block hash because the producer can grind the hash to bias samples.
+
+4. A DA scheme that actually works in an adversarial setting must use one of:
    - Private per-node randomized sampling (network-level enforcement: refuse to relay blocks whose sampled shares cannot be fetched/verified), or
    - An unpredictability source the block producer cannot bias at commitment time (e.g., delayed sampling from future randomness / finality), or
    - A committee / threshold randomness beacon (which is a different consensus design problem).
 
-4. Proof-carrying blocks are mathematically sound as a scaling move: verification becomes O(1) per block while prover work remains O(number of transactions). The hard constraint becomes block producer latency (how long it takes to generate the recursive proof), not verification.
+5. Proof-carrying blocks are mathematically sound as a scaling move: verification becomes O(1) per block while prover work remains O(number of transactions). The hard constraint becomes block producer latency (how long it takes to generate the recursive proof), not verification.
 
 Everything else in this file expands those statements into formulas and parameter guidance.
+
+## 0.1 Decision: “256-bit hashes” implies “~85-bit PQ collision security”
+
+If we keep 256-bit digests everywhere, then we must treat ~85 bits as the ceiling for “PQ collision security” and therefore as the realistic ceiling for STARK soundness insofar as it depends on collision resistance. This is a coherent target if we explicitly accept it.
+
+However, the repo’s current Winterfell recursion machinery does not yet support the proof parameter changes needed to reach 85 bits in the first place (it currently rejects inner proofs with field extensions). That is the main remaining math-to-implementation gap after lowering the security target from 128 to 85.
 
 ## 1. Notation and Targets
 
@@ -62,7 +70,7 @@ If we want `P(any invalid tx accepted) ≤ 2^-60`, we need `p_tx ≤ 2^-(60 + 40
 
 If we want `P(any invalid block accepted) ≤ 2^-60` over 4 years, we need `p_block ≤ 2^-(60 + 21) = 2^-81`.
 
-These are conservative (union bound), but they give you a non-handwavy goal: transaction proof soundness around ~100 bits is a sane “settlement-ish” baseline at scale. 64 bits is not.
+These are conservative (union bound), but they give you a non-handwavy goal: transaction proof soundness around ~100 bits is a sane “settlement-ish” baseline at scale. ~46 bits (current config) is not.
 
 ## 2. STARK Soundness Math (Winterfell-specific)
 
@@ -92,11 +100,31 @@ Winterfell’s bound gives:
 
 - Query/bLowup bound: `32 * 3 + 0 = 96 bits`.
 
-But with a 64-bit base field and `FieldExtension::None`, the *field-size bound* dominates. Winterfell explicitly says:
+But this “96 bits” is not the full story. STARK soundness has multiple terms; one of them is the field-size term that comes from Schwartz–Zippel style reasoning:
+
+- If a verifier samples a random challenge `z` from field `F`, then for any non-zero polynomial `P` of degree `deg(P)`, `Pr[P(z)=0] ≤ deg(P)/|F|`.
+
+In Winterfell STARKs, the degrees you are protecting against are on the order of the LDE / composition polynomial degrees, which are bounded (up to small constant factors) by the LDE domain size:
+
+- `lde_domain_size = trace_length * blowup_factor`.
+
+For the current transaction proof:
+
+- `trace_length = MIN_TRACE_LENGTH = 32768 = 2^15` (from `circuits/transaction-core/src/stark_air.rs`)
+- `blowup_factor = 8 = 2^3` (from `circuits/transaction/src/stark_prover.rs` `default_proof_options()`)
+- So `lde_domain_size = 2^15 * 2^3 = 2^18`.
+
+Thus the field-size term cannot be better than roughly:
+
+- `deg/|F| ≈ 2^18 / 2^64 = 2^-46` (ignoring small constants).
+
+So the “realistic ceiling” for transaction-proof validity soundness in the current configuration is on the order of ~46 bits, not ~64 and not ~96.
+
+Winterfell’s own docs are consistent with this. In `winter-air`’s `ProofOptions` docs, they explicitly say:
 
 - For ~64-bit base fields, quadratic extension is needed for ~100 bits; cubic for 128+.
 
-So, whatever the “96 bits” query/bLowup number is, the system is capped by the field-size term if we don’t use extensions. Treat “~64 bits” as the realistic ceiling in the current configuration.
+Actionable conclusion: with 64-bit base field + `FieldExtension::None`, we cannot reach ~85-bit validity soundness for the current transaction AIR. “Turn the query knob” does not fix this; it only improves the FRI-query term, not the field-size term.
 
 This directly affects the scalability plan because a recursive block proof that verifies transaction proofs inherits the transaction-proof soundness ceiling.
 
@@ -155,7 +183,14 @@ Example:
 
 - If `N_tx ≈ 2^40` and we want `μ = 60`, we need `λ ≥ 100`.
 
-This gives a concrete yardstick: “~100-bit validity soundness” is a plausible lifetime safety target at high volume; “~64-bit” is not.
+This gives a concrete yardstick: “~100-bit validity soundness” is a plausible lifetime safety target at high volume; “~46-bit” is not.
+
+If we instead decide to cap our target at `λ = 85` to match 256-bit PQ collision security, then:
+
+- For `N_tx ≈ 2^40`, `P(any failure) ≤ 2^40 * 2^-85 = 2^-45` (~2.8e-14).
+- For `N_tx ≈ 2^60`, `P(any failure) ≤ 2^60 * 2^-85 = 2^-25` (~3e-8).
+
+So “85-bit validity soundness” can be defensible for moderate lifetime volume, but it is not “absurdly safe forever”; the risk scales linearly with total attempted transactions.
 
 ### 2.4 Hash function bound (what “post-quantum” means here)
 
