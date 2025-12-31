@@ -17,6 +17,8 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [ ] (2025-12-31T02:04Z) Run the recursion feasibility spike and record results in Surprises & Discoveries (completed: transaction recursion budget + streaming plan budgets; remaining: full inner/outer proof size+time spike and bench).
 - [x] (2025-12-31T05:03Z) Added extension-aware inner-proof parsing + public inputs and a transaction recursion budget test; captured initial width metrics.
 - [x] (2025-12-31T05:31Z) Added a Path A streaming plan estimator + test output for transaction proofs to size row/permutation costs under the 255-column cap.
+- [x] (2025-12-31T06:15Z) Started Path A streaming layout in recursion verifier by adding tape columns + coin-state save/restore masks and a minimal RpoAir tape correctness test.
+- [x] (2025-12-31T06:55Z) Paired replayed deep-coefficient draws with leaf-hash chains in the recursion verifier, updated merkle schedule masks, and adjusted merkle-related tests.
 - [x] (2025-12-31T03:09Z) Chose a baseline target of ~85-bit PQ security (collision-limited by 256-bit digests) and recorded required proof-parameter implications in `.agent/scalability_architecture_math.md`.
 - [ ] (2025-12-31T03:09Z) Lock ProofOptions and recursion format for consensus-critical proofs at the chosen target (completed: transaction proofs now use quadratic extension; completed: parser supports quadratic extension metadata; remaining: recursive verifier trace accepts quadratic inner proofs and end-to-end recursion test).
 - [x] (2025-12-31T04:12Z) Updated transaction STARK proof options to quadratic extension and aligned verifiers + docs to the ~85-bit PQ collision ceiling.
@@ -47,6 +49,14 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - Observation (2025-12-31T05:31Z): Path A streaming layout keeps total rows at 2^17 for transaction proofs, but per-query coefficient draw perms are a material share of the schedule.
   Evidence: `cargo test -p epoch-circuit verifier_spike::tests::test_transaction_streaming_plan_budget -- --nocapture` prints `per_query_perms: 148`, `global_perms: 1189`, `rows_unpadded: 94800`, `total_rows: 131072`.
   Implication: Path A is feasible on rows but requires a careful transcript/leaf interleave schedule (coin-state save/restore + coeff tape) to avoid reintroducing width growth.
+
+- Observation (2025-12-31T06:55Z): Leaf-hash permutations cannot be interrupted without breaking the RPO sponge carry, so replay draws are inserted at leaf-hash chain boundaries (partition/merge starts) rather than between permutations.
+  Evidence: `hash_leaf_perms` requires contiguous carry masks across its permutation blocks; interleaving would invalidate the hash chain.
+  Implication: Streaming pairing is currently per leaf-hash chain. Per-permutation pairing would require extra state columns or a different hashing layout.
+
+- Observation (2025-12-31T07:10Z): The recursion verifier currently panics due to a constraint-count mismatch after adding tape + coin-save/restore checks.
+  Evidence: `cargo test -p epoch-circuit stark_verifier_prover::tests::test_trace_from_inner_merkle_roundtrip -- --nocapture` fails with `stark_verifier_air.rs:1952: index out of bounds`.
+  Implication: Update `base_boundary_constraints` (and any related counts) so `num_constraints` matches `evaluate_transition` before proceeding with more recursion changes.
 
 ## Decision Log
 
@@ -84,6 +94,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
 
 - Decision: Use a Path A streaming schedule that pairs coefficient-draw permutations with leaf-hash permutations (coeff tape) and draws one FRI alpha per layer.
   Rationale: This keeps trace width <255 while preserving a bounded row budget (~2^17 for transaction proofs) without forking Winterfell.
+  Date/Author: 2025-12-31 / Codex
+
+- Decision: Replay deep-coefficient draws per query at leaf-hash chain boundaries (partition/merge starts) instead of interleaving inside hash chains.
+  Rationale: The RPO leaf hash chain must remain contiguous; replay draws are inserted before each chain and bound via coin-state restore.
   Date/Author: 2025-12-31 / Codex
 
 ## Outcomes & Retrospective
@@ -293,3 +307,4 @@ Revision Note (2025-12-31T02:22Z): Added math companion reference, recorded the 
 Revision Note (2025-12-31T04:12Z): Updated transaction proof parameters to quadratic extension, aligned security notes in docs, and recorded the new proving-time impact in Surprises & Discoveries.
 Revision Note (2025-12-31T05:03Z): Recorded the recursion budget spike output, updated progress and surprises, and clarified that quadratic extension support is parser-only pending trace/AIR work.
 Revision Note (2025-12-31T05:31Z): Added the Path A streaming plan estimator + test output and captured the row budget and schedule assumptions.
+Revision Note (2025-12-31T06:55Z): Implemented replayed deep-coeff draw pairing with leaf-hash chains and updated merkle schedule masks/tests to match the new interleave.

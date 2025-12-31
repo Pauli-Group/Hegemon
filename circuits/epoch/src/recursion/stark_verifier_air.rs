@@ -87,7 +87,9 @@ pub(crate) const COL_DEEP_START: usize = COL_DEEP_MASK + 1;
 pub(crate) const COL_FRI_MASK: usize = COL_DEEP_START + RATE_WIDTH;
 pub(crate) const COL_FRI_ALPHA_VALUE: usize = COL_FRI_MASK + 1;
 pub(crate) const COL_POS_MASK: usize = COL_FRI_ALPHA_VALUE + 1;
-pub(crate) const COL_POS_START: usize = COL_POS_MASK + 1;
+pub(crate) const COL_COIN_SAVE_MASK: usize = COL_POS_MASK + 1;
+pub(crate) const COL_COIN_RESTORE_MASK: usize = COL_COIN_SAVE_MASK + 1;
+pub(crate) const COL_POS_START: usize = COL_COIN_RESTORE_MASK + 1;
 pub(crate) const BASE_TRANSCRIPT_TRACE_WIDTH: usize = COL_POS_START + RATE_WIDTH;
 pub(crate) const COL_MERKLE_PATH_BIT: usize = BASE_TRANSCRIPT_TRACE_WIDTH;
 // Query-position decomposition / permutation-check segment (true draw_integers modeling).
@@ -104,8 +106,13 @@ pub(crate) const COL_POS_HI_AND: usize = COL_POS_MASKED_ACC + 1;
 pub(crate) const COL_POS_SORTED_VALUE: usize = COL_POS_HI_AND + 1;
 pub(crate) const COL_POS_PERM_ACC: usize = COL_POS_SORTED_VALUE + 1;
 pub(crate) const COL_MERKLE_INDEX: usize = COL_POS_PERM_ACC + 1;
+pub(crate) const COL_TAPE_MASK: usize = COL_MERKLE_INDEX + 1;
+pub(crate) const COL_TAPE_KIND: usize = COL_TAPE_MASK + 1;
+pub(crate) const COL_TAPE_INDEX: usize = COL_TAPE_KIND + 1;
+pub(crate) const COL_TAPE_VALUES_START: usize = COL_TAPE_INDEX + 1;
+pub(crate) const TAPE_WIDTH: usize = RATE_WIDTH;
 // OOD digest and coin-state save/restore columns for true recursion.
-pub(crate) const COL_OOD_DIGEST_START: usize = COL_MERKLE_INDEX + 1;
+pub(crate) const COL_OOD_DIGEST_START: usize = COL_TAPE_VALUES_START + TAPE_WIDTH;
 pub(crate) const COL_SAVED_COIN_START: usize = COL_OOD_DIGEST_START + DIGEST_WIDTH;
 // Constraint composition coefficients (12 transition + 24 boundary for RpoAir).
 pub(crate) const NUM_CONSTRAINT_COEFFS: usize = 36;
@@ -461,14 +468,10 @@ impl Air for StarkVerifierAir {
         // Constraints:
         // - RPO permutation constraints for sponge permutations (STATE_WIDTH)
         // - Boundary relations between stacked permutations:
-        //   * capacity carryover (4)
-        //   * reseed additions / coin-init resets (8)
-        //   * mask validity + exclusivity (10)
-        //   * constraint coefficient equality checks (8)
-        //   * z equality check (1)
-        //   * deep composition coefficient equality checks (8)
-        //   * FRI alpha equality check (1)
-        //   * query draw equality checks (8)
+        //   * capacity carryover (DIGEST_WIDTH)
+        //   * rate carryover / resets (2 * DIGEST_WIDTH)
+        //   * mask validity + exclusivity (13)
+        //   * transcript draws (coeff/z/deep/fri/pos/tape)
         // - Merkle authentication segment:
         //   * leaf sponge init (capacity width)
         //   * Merkle merge init (capacity width)
@@ -516,7 +519,7 @@ impl Air for StarkVerifierAir {
         let domain_offset = BaseElement::GENERATOR;
         let inv_domain_offset = domain_offset.inv();
 
-        let base_boundary_constraints = 3 * DIGEST_WIDTH + 10 + 3 * RATE_WIDTH + 2;
+        let base_boundary_constraints = 3 * DIGEST_WIDTH + 13 + 4 * RATE_WIDTH + 2;
         let num_root_masks = 2 + num_fri_layers; // trace, constraint, and each committed FRI layer
         let merkle_constraints = 1 // intra-leaf chaining
             + 1 // path-bit binary
@@ -997,14 +1000,49 @@ impl Air for StarkVerifierAir {
             lde_domain_size.trailing_zeros() as usize
         };
 
-        let trace_leaf_blocks = pub_inputs.trace_width.div_ceil(RATE_WIDTH).max(1);
-        let constraint_leaf_blocks = pub_inputs
-            .constraint_frame_width
-            .div_ceil(RATE_WIDTH)
-            .max(1);
+        let compute_leaf_perms = |len: usize, partition_size: usize| -> usize {
+            if partition_size >= len {
+                len.div_ceil(RATE_WIDTH).max(1)
+            } else {
+                let mut perms = 0usize;
+                let mut remaining = len;
+                while remaining > 0 {
+                    let part_len = remaining.min(partition_size);
+                    perms += part_len.div_ceil(RATE_WIDTH).max(1);
+                    remaining -= part_len;
+                }
+                let num_partitions = len.div_ceil(partition_size);
+                let merged_len = num_partitions * DIGEST_WIDTH;
+                perms + merged_len.div_ceil(RATE_WIDTH).max(1)
+            }
+        };
+        let trace_leaf_blocks =
+            compute_leaf_perms(pub_inputs.trace_width, pub_inputs.trace_partition_size);
+        let constraint_leaf_blocks = compute_leaf_perms(
+            pub_inputs.constraint_frame_width,
+            pub_inputs.constraint_partition_size,
+        );
+        let leaf_chain_count = |leaf_len: usize, partition_size: usize| {
+            if leaf_len == 0 {
+                return 0usize;
+            }
+            if partition_size >= leaf_len {
+                return 1usize;
+            }
+            let num_partitions = leaf_len.div_ceil(partition_size);
+            num_partitions + 1
+        };
         let fri_leaf_blocks = 2usize.div_ceil(RATE_WIDTH).max(1);
         let mut merkle_perms_per_query =
             trace_leaf_blocks + depth_trace + constraint_leaf_blocks + depth_trace;
+        let replay_draws_per_query = leaf_chain_count(
+            pub_inputs.trace_width,
+            pub_inputs.trace_partition_size,
+        ) + leaf_chain_count(
+            pub_inputs.constraint_frame_width,
+            pub_inputs.constraint_partition_size,
+        );
+        merkle_perms_per_query += replay_draws_per_query;
         for layer_idx in 0..num_fri_layers {
             merkle_perms_per_query += fri_leaf_blocks + depth_trace.saturating_sub(layer_idx + 1);
         }
@@ -1142,7 +1180,7 @@ impl Air for StarkVerifierAir {
         let num_ood_perms = OOD_EVAL_LEN.div_ceil(RATE_WIDTH);
         let ood_eval_row_masks = &periodic_values[p..p + num_ood_perms];
         p += num_ood_perms;
-        let deep_start_row_mask = periodic_values[p];
+        let _deep_start_row_mask = periodic_values[p];
         p += 1;
         let num_coeff_perms = NUM_CONSTRAINT_COEFFS.div_ceil(RATE_WIDTH);
         let coeff_end_masks = &periodic_values[p..p + num_coeff_perms];
@@ -1277,7 +1315,14 @@ impl Air for StarkVerifierAir {
         result[idx + 1] = boundary_mask * full_carry_mask * (full_carry_mask - one);
         result[idx + 2] = boundary_mask * reseed_mask * (reseed_mask - one);
         result[idx + 3] = boundary_mask * coin_init_mask * (coin_init_mask - one);
-        idx += 4;
+        result[idx + 4] =
+            boundary_mask * current[COL_COIN_SAVE_MASK] * (current[COL_COIN_SAVE_MASK] - one);
+        result[idx + 5] = boundary_mask
+            * current[COL_COIN_RESTORE_MASK]
+            * (current[COL_COIN_RESTORE_MASK] - one);
+        result[idx + 6] =
+            boundary_mask * current[COL_TAPE_MASK] * (current[COL_TAPE_MASK] - one);
+        idx += 7;
 
         // Exclusivity of masks on boundaries.
         result[idx] = boundary_mask * carry_mask * full_carry_mask;
@@ -1292,6 +1337,8 @@ impl Air for StarkVerifierAir {
         // Transcript-derived value checks.
         let coeff_mask = current[COL_COEFF_MASK];
         let z_mask = current[COL_Z_MASK];
+        let coin_save_mask = current[COL_COIN_SAVE_MASK];
+        let coin_restore_mask = current[COL_COIN_RESTORE_MASK];
 
         for i in 0..RATE_WIDTH {
             let expected = current[COL_COEFF_START + i];
@@ -1321,6 +1368,14 @@ impl Air for StarkVerifierAir {
             result[idx + i] = boundary_mask * pos_mask * (current[RATE_START + i] - expected);
         }
         idx += RATE_WIDTH;
+
+        // Tape capture: when enabled, the tape values must match the permutation's rate output.
+        let tape_mask = current[COL_TAPE_MASK];
+        for i in 0..TAPE_WIDTH {
+            let expected = current[COL_TAPE_VALUES_START + i];
+            result[idx + i] = boundary_mask * tape_mask * (current[RATE_START + i] - expected);
+        }
+        idx += TAPE_WIDTH;
 
         // --------------------------------------------------------------------
         // Merkle authentication segment
@@ -1610,10 +1665,11 @@ impl Air for StarkVerifierAir {
         idx += DIGEST_WIDTH;
 
         // Capture coin state at the z boundary row so it can be restored after hashing OOD
-        // evaluations. This is enforced only at the permutation boundary where `z_mask = 1`.
+        // evaluations. This is enforced only at the permutation boundary where
+        // `coin_save_mask = 1`.
         for i in 0..STATE_WIDTH {
             let saved = current[COL_SAVED_COIN_START + i];
-            result[idx + i] = boundary_mask * z_mask * (saved - current[i]);
+            result[idx + i] = boundary_mask * coin_save_mask * (saved - current[i]);
         }
         idx += STATE_WIDTH;
 
@@ -1624,19 +1680,19 @@ impl Air for StarkVerifierAir {
         // while the rest of the state is preserved.
         for i in 0..CAPACITY_WIDTH {
             let saved = current[COL_SAVED_COIN_START + i];
-            result[idx + i] = deep_start_row_mask * (current[i] - saved);
+            result[idx + i] = coin_restore_mask * (current[i] - saved);
         }
         for i in 0..DIGEST_WIDTH {
             let saved = current[COL_SAVED_COIN_START + RATE_START + i];
             let digest = current[COL_OOD_DIGEST_START + i];
             let expected = saved + digest;
             result[idx + CAPACITY_WIDTH + i] =
-                deep_start_row_mask * (current[RATE_START + i] - expected);
+                coin_restore_mask * (current[RATE_START + i] - expected);
         }
         for i in 0..DIGEST_WIDTH {
             let saved = current[COL_SAVED_COIN_START + RATE_START + DIGEST_WIDTH + i];
             result[idx + CAPACITY_WIDTH + DIGEST_WIDTH + i] =
-                deep_start_row_mask * (current[RATE_START + DIGEST_WIDTH + i] - saved);
+                coin_restore_mask * (current[RATE_START + DIGEST_WIDTH + i] - saved);
         }
         idx += STATE_WIDTH;
 
@@ -2829,6 +2885,16 @@ impl Air for StarkVerifierAir {
                 perms + merged_len.div_ceil(RATE_WIDTH).max(1)
             }
         };
+        let leaf_chain_count = |len: usize, partition_size: usize| -> usize {
+            if len == 0 {
+                return 0;
+            }
+            if partition_size >= len {
+                return 1;
+            }
+            let num_partitions = len.div_ceil(partition_size);
+            num_partitions + 1
+        };
 
         let trace_leaf_perms =
             compute_leaf_perms(trace_leaf_len, self.pub_inputs.trace_partition_size);
@@ -2840,6 +2906,14 @@ impl Air for StarkVerifierAir {
 
         let mut merkle_perms_per_query =
             trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
+        let replay_draws_per_query = leaf_chain_count(
+            trace_leaf_len,
+            self.pub_inputs.trace_partition_size,
+        ) + leaf_chain_count(
+            constraint_leaf_len,
+            self.pub_inputs.constraint_partition_size,
+        );
+        merkle_perms_per_query += replay_draws_per_query;
         for layer_idx in 0..num_fri_layers {
             merkle_perms_per_query += fri_leaf_perms + depth_trace.saturating_sub(layer_idx + 1);
         }
@@ -2856,6 +2930,7 @@ impl Air for StarkVerifierAir {
              -> usize {
                 if partition_size >= len {
                     let len_mod = (len % RATE_WIDTH) as u64;
+                    perm_idx += 1; // replay draw perm before this leaf-hash chain
                     let row0 = perm_idx * ROWS_PER_PERMUTATION;
                     assertions.push(Assertion::single(0, row0, BaseElement::new(len_mod)));
                     for i in 1..CAPACITY_WIDTH {
@@ -2869,6 +2944,7 @@ impl Air for StarkVerifierAir {
                 while remaining > 0 {
                     let part_len = remaining.min(partition_size);
                     let len_mod = (part_len % RATE_WIDTH) as u64;
+                    perm_idx += 1; // replay draw perm before this partition hash
                     let row0 = perm_idx * ROWS_PER_PERMUTATION;
                     assertions.push(Assertion::single(0, row0, BaseElement::new(len_mod)));
                     for i in 1..CAPACITY_WIDTH {
@@ -2881,6 +2957,7 @@ impl Air for StarkVerifierAir {
                 let num_partitions = len.div_ceil(partition_size);
                 let merged_len = num_partitions * DIGEST_WIDTH;
                 let merged_mod = (merged_len % RATE_WIDTH) as u64;
+                perm_idx += 1; // replay draw perm before merged digest hash
                 let row0 = perm_idx * ROWS_PER_PERMUTATION;
                 assertions.push(Assertion::single(0, row0, BaseElement::new(merged_mod)));
                 for i in 1..CAPACITY_WIDTH {
@@ -3033,6 +3110,7 @@ impl Air for StarkVerifierAir {
         let mut trace_root_mask = vec![BaseElement::ZERO; total_rows];
         let mut constraint_root_mask = vec![BaseElement::ZERO; total_rows];
         let mut fri_root_masks = vec![vec![BaseElement::ZERO; total_rows]; num_fri_layers];
+        let mut deep_end_masks = vec![vec![BaseElement::ZERO; total_rows]; num_deep_perms];
 
         // DEEP + FRI masks (all sparse, full-length).
         let mut query_reset_mask = vec![BaseElement::ZERO; total_rows];
@@ -3087,6 +3165,8 @@ impl Air for StarkVerifierAir {
             self.pub_inputs.constraint_partition_size,
         );
         let fri_leaf_perms = fri_leaf_len.div_ceil(RATE_WIDTH).max(1);
+        let trace_leaf_chains = trace_leaf_chain.iter().filter(|v| !**v).count();
+        let constraint_leaf_chains = constraint_leaf_chain.iter().filter(|v| !**v).count();
 
         let lde_domain_size = self.pub_inputs.trace_length * self.pub_inputs.blowup_factor;
         let depth_trace = if lde_domain_size == 0 {
@@ -3097,6 +3177,8 @@ impl Air for StarkVerifierAir {
 
         let mut merkle_perms_per_query =
             trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
+        let replay_draws_per_query = trace_leaf_chains + constraint_leaf_chains;
+        merkle_perms_per_query += replay_draws_per_query;
         for layer_idx in 0..num_fri_layers {
             merkle_perms_per_query += fri_leaf_perms + depth_trace.saturating_sub(layer_idx + 1);
         }
@@ -3114,9 +3196,24 @@ impl Air for StarkVerifierAir {
                 if query_row0 > 0 && query_row0 - 1 < total_rows {
                     query_reset_mask[query_row0 - 1] = BaseElement::ONE;
                 }
+                let trace_chain_start =
+                    |rel_perm: usize| rel_perm == 0 || !trace_leaf_chain[rel_perm - 1];
+                let constraint_chain_start =
+                    |rel_perm: usize| rel_perm == 0 || !constraint_leaf_chain[rel_perm - 1];
+                let mut deep_draw_idx = 0usize;
 
                 // --- Trace leaf hashing -----------------------------------------------------
-                for rel_perm in 0..trace_leaf_perms {
+                let mut rel_perm = 0usize;
+                while rel_perm < trace_leaf_perms {
+                    if trace_chain_start(rel_perm) {
+                        let draw_row0 = perm_idx * ROWS_PER_PERMUTATION;
+                        let draw_boundary = draw_row0 + ROWS_PER_PERMUTATION - 1;
+                        if deep_draw_idx < num_deep_perms {
+                            deep_end_masks[deep_draw_idx][draw_boundary] = BaseElement::ONE;
+                        }
+                        perm_idx += 1;
+                        deep_draw_idx += 1;
+                    }
                     let row0 = perm_idx * ROWS_PER_PERMUTATION;
                     let boundary = row0 + ROWS_PER_PERMUTATION - 1;
                     if rel_perm == 0 && row0 < total_rows {
@@ -3145,6 +3242,7 @@ impl Air for StarkVerifierAir {
                         }
                     }
                     perm_idx += 1;
+                    rel_perm += 1;
                 }
 
                 // --- Trace Merkle path ------------------------------------------------------
@@ -3166,7 +3264,17 @@ impl Air for StarkVerifierAir {
                 }
 
                 // --- Constraint leaf hashing ------------------------------------------------
-                for rel_perm in 0..constraint_leaf_perms {
+                let mut rel_perm = 0usize;
+                while rel_perm < constraint_leaf_perms {
+                    if constraint_chain_start(rel_perm) {
+                        let draw_row0 = perm_idx * ROWS_PER_PERMUTATION;
+                        let draw_boundary = draw_row0 + ROWS_PER_PERMUTATION - 1;
+                        if deep_draw_idx < num_deep_perms {
+                            deep_end_masks[deep_draw_idx][draw_boundary] = BaseElement::ONE;
+                        }
+                        perm_idx += 1;
+                        deep_draw_idx += 1;
+                    }
                     let row0 = perm_idx * ROWS_PER_PERMUTATION;
                     let boundary = row0 + ROWS_PER_PERMUTATION - 1;
                     if rel_perm == 0 && row0 < total_rows {
@@ -3184,6 +3292,7 @@ impl Air for StarkVerifierAir {
                         merkle_chain_mask[boundary] = BaseElement::ONE;
                     }
                     perm_idx += 1;
+                    rel_perm += 1;
                 }
 
                 // --- Constraint Merkle path -------------------------------------------------
@@ -3361,7 +3470,6 @@ impl Air for StarkVerifierAir {
             }
         }
 
-        let mut deep_end_masks = vec![vec![BaseElement::ZERO; total_rows]; num_deep_perms];
         for (k, mask) in deep_end_masks.iter_mut().enumerate() {
             let perm_idx = deep_start_perm_idx + k;
             let boundary = perm_idx * ROWS_PER_PERMUTATION + (ROWS_PER_PERMUTATION - 1);
