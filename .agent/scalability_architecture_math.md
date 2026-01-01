@@ -137,6 +137,23 @@ The same ceiling shows up in the repo’s existing recursion-proof parameter cho
 
 Query/bLowup bound: `16 * 5 + 4 = 84 bits`, but with `FieldExtension::None` it is still capped by the base field size.
 
+### 2.1.1 Fold-2 vs Fold-4 (what changes, what does not)
+
+The recursion path requires `fri_folding_factor = 2`. This changes the number of FRI layers and
+therefore proof size and verifier work, but it does **not** change Winterfell’s documented
+conjectured soundness term, which is driven by `num_queries * log2(blowup_factor) + grinding_factor`.
+
+For the current transaction-proof target (`num_queries = 32`, `blowup_factor = 8`, `grinding = 0`):
+
+- Query/blowup bound: `32 * log2(8) = 32 * 3 = 96 bits`.
+- Field-size term (quadratic extension over ~64-bit base) remains ~`2^-110`.
+- Hash-collision ceiling for 256-bit digests remains ~`2^-85` (PQ collision bound).
+
+So moving to fold-2 does **not** weaken the theoretical soundness bound under Winterfell’s stated
+model, but it **does** increase prover/verifier cost and proof size. The security target of
+~85-bit PQ collision resistance is still met as long as we keep the query/blowup parameters at or
+above the current defaults.
+
 ### 2.2 FieldExtension implications (cost and benefit)
 
 `FieldExtension` in Winterfell selects the field used for the composition polynomial (not the entire trace). Increasing extension degree generally:
