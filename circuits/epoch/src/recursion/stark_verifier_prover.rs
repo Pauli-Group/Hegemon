@@ -6,12 +6,14 @@
 
 use winter_air::{DeepCompositionCoefficients, FieldExtension, ProofOptions};
 use winter_crypto::{hashers::Blake3_256, MerkleTree};
-use winter_math::{FieldElement, StarkField};
+use winter_math::{fields::QuadExtension, FieldElement, StarkField};
 #[cfg(test)]
 use winterfell::Proof;
 use winterfell::{
-    crypto::DefaultRandomCoin, math::fields::f64::BaseElement, matrix::ColMatrix, AuxRandElements,
-    CompositionPoly, CompositionPolyTrace, ConstraintCompositionCoefficients,
+    crypto::DefaultRandomCoin,
+    math::fields::f64::BaseElement,
+    matrix::ColMatrix,
+    AuxRandElements, CompositionPoly, CompositionPolyTrace, ConstraintCompositionCoefficients,
     DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions,
     Prover, StarkDomain, Trace, TracePolyTable, TraceTable,
 };
@@ -24,24 +26,46 @@ use super::rpo_air::{
 };
 use super::rpo_proof::{rpo_hash_elements, rpo_merge};
 use super::stark_verifier_air::{
-    build_context_prefix, compute_deep_evaluation, compute_expected_z, StarkVerifierAir,
-    StarkVerifierPublicInputs, COL_CARRY_MASK, COL_COEFF_MASK, COL_COEFF_START, COL_COIN_INIT_MASK,
-    COL_COIN_RESTORE_MASK, COL_COIN_SAVE_MASK, COL_CONSTRAINT_COEFFS_START, COL_DEEP_C1_ACC,
-    COL_DEEP_C2_ACC, COL_DEEP_COEFFS_START, COL_DEEP_MASK, COL_DEEP_START, COL_DEEP_T1_ACC,
-    COL_DEEP_T2_ACC, COL_FRI_ALPHA_START, COL_FRI_ALPHA_VALUE, COL_FRI_EVAL, COL_FRI_MASK,
-    COL_FRI_MSB_BITS_START, COL_FRI_POW, COL_FRI_X, COL_FULL_CARRY_MASK, COL_MERKLE_INDEX,
-    COL_MERKLE_PATH_BIT, COL_OOD_DIGEST_START, COL_OOD_EVALS_START, COL_POS_ACC, COL_POS_BIT0,
-    COL_POS_BIT1, COL_POS_BIT2, COL_POS_BIT3, COL_POS_DECOMP_MASK, COL_POS_HI_AND, COL_POS_LO_ACC,
-    COL_POS_MASK, COL_POS_MASKED_ACC, COL_POS_PERM_ACC, COL_POS_RAW, COL_POS_SORTED_VALUE,
-    COL_POS_START, COL_REMAINDER_COEFFS_START, COL_RESEED_MASK, COL_RESEED_WORD_START,
-    COL_SAVED_COIN_START, COL_TAPE_INDEX, COL_TAPE_KIND, COL_TAPE_MASK, COL_TAPE_VALUES_START,
-    COL_Z_MASK, COL_Z_VALUE, NUM_CONSTRAINT_COEFFS, NUM_DEEP_COEFFS, NUM_FRI_MSB_BITS,
-    NUM_REMAINDER_COEFFS, RATE_WIDTH, TAPE_WIDTH, VERIFIER_TRACE_WIDTH,
+    build_context_prefix, compute_deep_evaluation, compute_deep_evaluation_quadratic,
+    StarkVerifierAir, StarkVerifierPublicInputs, COL_CARRY_MASK, COL_COEFF_MASK,
+    COL_COEFF_START, COL_COIN_INIT_MASK, COL_COIN_RESTORE_MASK, COL_COIN_SAVE_MASK,
+    COL_CONSTRAINT_COEFFS_START, COL_DEEP_C1_ACC, COL_DEEP_C1_ACC_LIMB1, COL_DEEP_C2_ACC,
+    COL_DEEP_C2_ACC_LIMB1, COL_DEEP_COEFFS_START, COL_DEEP_MASK, COL_DEEP_START, COL_DEEP_T1_ACC,
+    COL_DEEP_T1_ACC_LIMB1, COL_DEEP_T2_ACC, COL_DEEP_T2_ACC_LIMB1, COL_FRI_ALPHA_START,
+    COL_FRI_ALPHA_VALUE, COL_FRI_EVAL, COL_FRI_EVAL_LIMB1, COL_FRI_MASK, COL_FRI_MSB_BITS_START,
+    COL_FRI_POW, COL_FRI_X, COL_FULL_CARRY_MASK, COL_MERKLE_INDEX, COL_MERKLE_PATH_BIT,
+    COL_OOD_DIGEST_START, COL_OOD_EVALS_START, COL_POS_ACC, COL_POS_BIT0, COL_POS_BIT1,
+    COL_POS_BIT2, COL_POS_BIT3, COL_POS_DECOMP_MASK, COL_POS_HI_AND, COL_POS_LO_ACC, COL_POS_MASK,
+    COL_POS_MASKED_ACC, COL_POS_PERM_ACC, COL_POS_PERM_ACC_LIMB1, COL_POS_RAW,
+    COL_POS_SORTED_VALUE, COL_POS_START, COL_REMAINDER_COEFFS_EXT_START,
+    COL_REMAINDER_COEFFS_START, COL_RESEED_MASK, COL_RESEED_WORD_START, COL_SAVED_COIN_START,
+    COL_TAPE_INDEX, COL_TAPE_KIND, COL_TAPE_MASK, COL_TAPE_VALUES_START, COL_Z_MASK, COL_Z_VALUE,
+    COL_Z_VALUE_LIMB1,
+    NUM_CONSTRAINT_COEFFS, NUM_DEEP_COEFFS, NUM_FRI_MSB_BITS, NUM_REMAINDER_COEFFS, RATE_WIDTH,
+    TAPE_WIDTH, VERIFIER_TRACE_WIDTH,
 };
 use winter_fri::utils::map_positions_to_indexes;
 
 type Blake3 = Blake3_256<BaseElement>;
 type Blake3MerkleTree = MerkleTree<Blake3>;
+type Quad = QuadExtension<BaseElement>;
+type ExtElem = [BaseElement; 2];
+
+const EXTENSION_LIMBS: usize = 2;
+const RESERVED_CONSTRAINT_COEFF_COLS: usize = 2;
+
+fn quad_from_ext(value: ExtElem) -> Quad {
+    Quad::new(value[0], value[1])
+}
+
+fn ext_from_base(value: BaseElement) -> ExtElem {
+    [value, BaseElement::ZERO]
+}
+
+fn ext_from_flat(values: &[BaseElement]) -> ExtElem {
+    debug_assert!(values.len() >= EXTENSION_LIMBS);
+    [values[0], values[1]]
+}
 
 const TAPE_KIND_NONE: u64 = 0;
 const TAPE_KIND_COEFF: u64 = 1;
@@ -153,11 +177,19 @@ impl StarkVerifierProver {
         let seed_len = seed_prefix.len() + input_len;
         let num_seed_blocks = seed_len.div_ceil(8).max(1);
 
-        let num_coeffs_total =
-            self.pub_inputs.num_transition_constraints + self.pub_inputs.num_assertions;
+        let extension_degree = match self.pub_inputs.field_extension {
+            FieldExtension::None => 1,
+            FieldExtension::Quadratic => 2,
+            FieldExtension::Cubic => 3,
+        };
+        let num_coeffs_total = (self.pub_inputs.num_transition_constraints
+            + self.pub_inputs.num_assertions)
+            * extension_degree;
         let num_coeff_perms = num_coeffs_total.div_ceil(RATE_WIDTH).max(1);
 
-        let num_deep_coeffs = self.pub_inputs.trace_width + self.pub_inputs.constraint_frame_width;
+        let num_deep_coeffs =
+            (self.pub_inputs.trace_width + self.pub_inputs.constraint_frame_width)
+                * extension_degree;
         let num_deep_perms = num_deep_coeffs.div_ceil(RATE_WIDTH);
 
         let ood_eval_len = 2 * num_deep_coeffs;
@@ -165,7 +197,13 @@ impl StarkVerifierProver {
         let num_fri_commitments = self.pub_inputs.fri_commitments.len();
         let num_fri_layers = num_fri_commitments.saturating_sub(1);
         let num_fri_alpha_perms = num_fri_layers;
-        let num_remainder_perms = (num_fri_commitments > 0) as usize;
+        let remainder_coeffs_len =
+            (self.pub_inputs.fri_remainder_max_degree + 1) * extension_degree;
+        let num_remainder_perms = if num_fri_commitments > 0 {
+            remainder_coeffs_len.div_ceil(RATE_WIDTH)
+        } else {
+            0
+        };
         let num_pos_perms = if self.pub_inputs.num_draws == 0 {
             0
         } else {
@@ -189,11 +227,6 @@ impl StarkVerifierProver {
         } else {
             lde_domain_size.trailing_zeros() as usize
         };
-        let extension_degree = match self.pub_inputs.field_extension {
-            FieldExtension::None => 1,
-            FieldExtension::Quadratic => 2,
-            FieldExtension::Cubic => 3,
-        };
         let trace_leaf_len = self.pub_inputs.trace_width * extension_degree;
         let constraint_leaf_len = self.pub_inputs.constraint_frame_width * extension_degree;
         let constraint_partition_size_base =
@@ -206,7 +239,8 @@ impl StarkVerifierProver {
             leaf_chain_count(trace_leaf_len, self.pub_inputs.trace_partition_size);
         let constraint_leaf_chains =
             leaf_chain_count(constraint_leaf_len, constraint_partition_size_base);
-        let fri_leaf_perms = 1usize;
+        let fri_leaf_len = 2 * extension_degree;
+        let fri_leaf_perms = fri_leaf_len.div_ceil(RATE_WIDTH).max(1);
         let mut merkle_perms_per_query =
             trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
         let replay_draws_per_query = trace_leaf_chains + constraint_leaf_chains;
@@ -215,7 +249,7 @@ impl StarkVerifierProver {
             merkle_perms_per_query += fri_leaf_perms + depth_trace.saturating_sub(layer_idx + 1);
         }
         let merkle_perms_total = self.pub_inputs.num_queries * merkle_perms_per_query;
-        let remainder_hash_perms = (!self.pub_inputs.fri_commitments.is_empty()) as usize;
+        let remainder_hash_perms = num_remainder_perms;
         let active_perms = pre_merkle_perms + merkle_perms_total + remainder_hash_perms;
         let active_rows = active_perms * ROWS_PER_PERMUTATION;
         let total_rows = active_rows.next_power_of_two();
@@ -230,13 +264,12 @@ impl StarkVerifierProver {
             self.pub_inputs.inner_public_inputs.len() == transaction_public_inputs_len();
 
         let mut perm_idx = 0usize;
-        let expected_z = compute_expected_z(&self.pub_inputs);
-        let gamma = expected_z;
-        let mut perm_acc_val = BaseElement::ONE;
+        let mut perm_acc_val = Quad::ONE;
         let mut draw_positions: Vec<u64> = Vec::with_capacity(self.pub_inputs.num_draws);
-        let mut constraint_coeffs: Vec<BaseElement> = Vec::with_capacity(NUM_CONSTRAINT_COEFFS);
-        let mut deep_coeffs: Vec<BaseElement> = Vec::with_capacity(NUM_DEEP_COEFFS);
+        let mut constraint_coeffs: Vec<BaseElement> = Vec::with_capacity(num_coeffs_total);
+        let mut deep_coeffs: Vec<BaseElement> = Vec::with_capacity(num_deep_coeffs);
         let mut fri_alphas: Vec<BaseElement> = Vec::with_capacity(num_fri_layers);
+        let mut fri_alphas_ext: Vec<Quad> = Vec::with_capacity(num_fri_layers);
 
         // --- Segment A: RPO hash of inner public inputs ------------------------------------
         let mut state = [BaseElement::ZERO; STATE_WIDTH];
@@ -454,7 +487,7 @@ impl StarkVerifierProver {
             *value = trace.get(i, last);
         }
         for value in coin_state[4..4 + RATE_WIDTH].iter().copied() {
-            if constraint_coeffs.len() >= NUM_CONSTRAINT_COEFFS {
+            if constraint_coeffs.len() >= num_coeffs_total {
                 break;
             }
             constraint_coeffs.push(value);
@@ -515,7 +548,7 @@ impl StarkVerifierProver {
                 *value = trace.get(i, last);
             }
             for value in coin_state[4..4 + RATE_WIDTH].iter().copied() {
-                if constraint_coeffs.len() >= NUM_CONSTRAINT_COEFFS {
+                if constraint_coeffs.len() >= num_coeffs_total {
                     break;
                 }
                 constraint_coeffs.push(value);
@@ -559,7 +592,13 @@ impl StarkVerifierProver {
         for (i, value) in coin_state.iter_mut().enumerate() {
             *value = trace.get(i, last);
         }
-        set_z_witness(&mut trace, perm_idx, coin_state[4]);
+        let z_ext = if extension_degree == 2 {
+            [coin_state[4], coin_state[5]]
+        } else {
+            [coin_state[4], BaseElement::ZERO]
+        };
+        let gamma = quad_from_ext(z_ext);
+        set_z_witness(&mut trace, perm_idx, z_ext);
         perm_idx += 1;
 
         // Save the coin state immediately after z draw so we can restore it after hashing
@@ -687,7 +726,7 @@ impl StarkVerifierProver {
                 *value = trace.get(i, last);
             }
             for value in coin_state[4..4 + RATE_WIDTH].iter().copied() {
-                if deep_coeffs.len() >= NUM_DEEP_COEFFS {
+                if deep_coeffs.len() >= num_deep_coeffs {
                     break;
                 }
                 deep_coeffs.push(value);
@@ -741,10 +780,16 @@ impl StarkVerifierProver {
             for (i, value) in coin_state.iter_mut().enumerate() {
                 *value = trace.get(i, last);
             }
+            let alpha_ext = if extension_degree == 2 {
+                [coin_state[4], coin_state[5]]
+            } else {
+                [coin_state[4], BaseElement::ZERO]
+            };
+            fri_alphas_ext.push(quad_from_ext(alpha_ext));
             if fri_alphas.len() < num_fri_layers {
-                fri_alphas.push(coin_state[4]);
+                fri_alphas.push(alpha_ext[0]);
             }
-            set_fri_alpha_witness(&mut trace, perm_idx, coin_state[4]);
+            set_fri_alpha_witness(&mut trace, perm_idx, alpha_ext);
             let tape_values = core::array::from_fn(|i| coin_state[4 + i]);
             set_tape_meta(&mut trace, perm_idx, TAPE_KIND_ALPHA, layer_idx as u64, tape_values);
             perm_idx += 1;
@@ -863,6 +908,7 @@ impl StarkVerifierProver {
 
                     // Decomp perm: freeze RPO state, carry buffer, and decompose raw into bits.
                     let row0 = perm_idx * ROWS_PER_PERMUTATION;
+                    let gamma_limbs = gamma.to_base_elements();
                     for r in 0..ROWS_PER_PERMUTATION {
                         let row = row0 + r;
                         for (i, value) in coin_state.iter().copied().enumerate() {
@@ -873,7 +919,7 @@ impl StarkVerifierProver {
                         for (j, value) in rate_outputs.iter().copied().enumerate() {
                             trace.set(COL_POS_START + j, row, value);
                         }
-                        trace.set(COL_Z_VALUE, row, expected_z);
+                        trace.set(COL_Z_VALUE, row, gamma_limbs[0]);
                     }
 
                     // Fill nibble bits and accumulators row-by-row.
@@ -954,7 +1000,7 @@ impl StarkVerifierProver {
             );
 
                     draw_positions.push(masked_pos);
-                    perm_acc_val *= p_elem + gamma;
+                    perm_acc_val *= Quad::from(p_elem) + gamma;
 
                     perm_idx += 1;
                     remaining_draws -= 1;
@@ -975,7 +1021,7 @@ impl StarkVerifierProver {
 
         let dummy_trace_row = vec![BaseElement::ZERO; RPO_TRACE_WIDTH];
         let dummy_constraint_row = vec![BaseElement::ZERO; 8];
-        let dummy_fri_row = vec![BaseElement::ZERO; 2];
+        let dummy_fri_row = vec![BaseElement::ZERO; 2 * extension_degree];
         let dummy_remainder = vec![BaseElement::ZERO; 8];
 
         let dummy_trace_leaf_digest = rpo_hash_elements(&dummy_trace_row);
@@ -1026,7 +1072,7 @@ impl StarkVerifierProver {
                 trace_index,
                 replay_state.as_mut(),
             );
-            perm_acc_val /= BaseElement::new(trace_index) + gamma;
+            perm_acc_val /= Quad::from(BaseElement::new(trace_index)) + gamma;
             authenticate_merkle_path(
                 self,
                 &mut trace,
@@ -1134,12 +1180,12 @@ impl StarkVerifierProver {
         if inner_is_rpo_air || inner_is_transaction_air {
             debug_assert_eq!(
                 constraint_coeffs.len(),
-                NUM_CONSTRAINT_COEFFS,
+                num_coeffs_total,
                 "unexpected constraint coeff count"
             );
             debug_assert_eq!(
                 deep_coeffs.len(),
-                NUM_DEEP_COEFFS,
+                num_deep_coeffs,
                 "unexpected DEEP coeff count"
             );
         }
@@ -1156,11 +1202,28 @@ impl StarkVerifierProver {
             for (i, value) in saved_coin_state.iter().copied().enumerate() {
                 trace.set(COL_SAVED_COIN_START + i, row, value);
             }
-            for (i, value) in constraint_coeffs.iter().copied().enumerate() {
+            for (i, value) in constraint_coeffs
+                .iter()
+                .copied()
+                .take(NUM_CONSTRAINT_COEFFS)
+                .enumerate()
+            {
+                if i < RESERVED_CONSTRAINT_COEFF_COLS {
+                    continue;
+                }
                 trace.set(COL_CONSTRAINT_COEFFS_START + i, row, value);
             }
-            for (i, value) in deep_coeffs.iter().copied().enumerate() {
+            for (i, value) in deep_coeffs
+                .iter()
+                .copied()
+                .take(NUM_DEEP_COEFFS)
+                .enumerate()
+            {
                 trace.set(COL_DEEP_COEFFS_START + i, row, value);
+            }
+            if extension_degree == 2 {
+                let gamma_limb1 = gamma.to_base_elements()[1];
+                trace.set(COL_Z_VALUE_LIMB1, row, gamma_limb1);
             }
             for (i, value) in fri_alphas
                 .iter()
@@ -1179,13 +1242,14 @@ impl StarkVerifierProver {
         }
 
         // Populate DEEP/FRI recursion state columns (TraceTable::new() leaves memory uninitialized).
-        let deep_evals = vec![BaseElement::ZERO; self.pub_inputs.num_queries];
-        let remainder_coeffs = [BaseElement::ZERO; NUM_REMAINDER_COEFFS];
-        let ood_trace = vec![BaseElement::ZERO; self.pub_inputs.trace_width];
-        let ood_quotient = vec![BaseElement::ZERO; self.pub_inputs.constraint_frame_width];
+        let deep_evals = vec![Quad::ZERO; self.pub_inputs.num_queries];
+        let remainder_coeffs = vec![BaseElement::ZERO; NUM_REMAINDER_COEFFS * extension_degree];
+        let ood_trace = vec![BaseElement::ZERO; self.pub_inputs.trace_width * extension_degree];
+        let ood_quotient =
+            vec![BaseElement::ZERO; self.pub_inputs.constraint_frame_width * extension_degree];
         let deep_coeffs = DeepCompositionCoefficients {
-            trace: vec![BaseElement::ZERO; self.pub_inputs.trace_width],
-            constraints: vec![BaseElement::ZERO; self.pub_inputs.constraint_frame_width],
+            trace: vec![BaseElement::ZERO; self.pub_inputs.trace_width * extension_degree],
+            constraints: vec![BaseElement::ZERO; self.pub_inputs.constraint_frame_width * extension_degree],
         };
         self.populate_deep_fri_state(
             &mut trace,
@@ -1195,6 +1259,7 @@ impl StarkVerifierProver {
             depth_trace,
             num_fri_layers,
             &deep_evals,
+            &fri_alphas_ext,
             &remainder_coeffs,
             &ood_trace,
             &ood_trace,
@@ -1211,10 +1276,9 @@ impl StarkVerifierProver {
     /// This extends the transcript segment with in‑circuit hashing of all queried
     /// leaves and Merkle authentication paths for trace, constraint, and FRI layers.
     pub fn build_trace_from_inner(&self, inner: &InnerProofData) -> TraceTable<BaseElement> {
-        assert_eq!(
-            inner.field_extension,
-            FieldExtension::None,
-            "StarkVerifierAir recursion currently supports only base-field inner proofs"
+        assert!(
+            matches!(inner.field_extension, FieldExtension::None | FieldExtension::Quadratic),
+            "StarkVerifierAir recursion supports only base/quadratic inner proofs"
         );
         assert_eq!(
             inner.fri_folding_factor,
@@ -1229,11 +1293,19 @@ impl StarkVerifierProver {
         let seed_len = seed_prefix.len() + input_len;
         let num_seed_blocks = seed_len.div_ceil(8).max(1);
 
-        let num_coeffs_total =
-            self.pub_inputs.num_transition_constraints + self.pub_inputs.num_assertions;
+        let extension_degree = match self.pub_inputs.field_extension {
+            FieldExtension::None => 1,
+            FieldExtension::Quadratic => 2,
+            FieldExtension::Cubic => 3,
+        };
+        let num_coeffs_total = (self.pub_inputs.num_transition_constraints
+            + self.pub_inputs.num_assertions)
+            * extension_degree;
         let num_coeff_perms = num_coeffs_total.div_ceil(RATE_WIDTH).max(1);
 
-        let num_deep_coeffs = self.pub_inputs.trace_width + self.pub_inputs.constraint_frame_width;
+        let num_deep_coeffs =
+            (self.pub_inputs.trace_width + self.pub_inputs.constraint_frame_width)
+                * extension_degree;
         let num_deep_perms = num_deep_coeffs.div_ceil(RATE_WIDTH);
 
         let ood_eval_len = 2 * num_deep_coeffs;
@@ -1241,7 +1313,13 @@ impl StarkVerifierProver {
         let num_fri_commitments = self.pub_inputs.fri_commitments.len();
         let num_fri_layers = num_fri_commitments.saturating_sub(1);
         let num_fri_alpha_perms = num_fri_layers;
-        let num_remainder_perms = (num_fri_commitments > 0) as usize;
+        let remainder_coeffs_len =
+            (self.pub_inputs.fri_remainder_max_degree + 1) * extension_degree;
+        let num_remainder_perms = if num_fri_commitments > 0 {
+            remainder_coeffs_len.div_ceil(RATE_WIDTH)
+        } else {
+            0
+        };
         let num_pos_perms = if self.pub_inputs.num_draws == 0 {
             0
         } else {
@@ -1267,11 +1345,6 @@ impl StarkVerifierProver {
         } else {
             lde_domain_size.trailing_zeros() as usize
         };
-        let extension_degree = match self.pub_inputs.field_extension {
-            FieldExtension::None => 1,
-            FieldExtension::Quadratic => 2,
-            FieldExtension::Cubic => 3,
-        };
         let trace_leaf_len = self.pub_inputs.trace_width * extension_degree;
         let constraint_leaf_len = self.pub_inputs.constraint_frame_width * extension_degree;
         let constraint_partition_size_base =
@@ -1284,7 +1357,8 @@ impl StarkVerifierProver {
             leaf_chain_count(trace_leaf_len, self.pub_inputs.trace_partition_size);
         let constraint_leaf_chains =
             leaf_chain_count(constraint_leaf_len, constraint_partition_size_base);
-        let fri_leaf_perms = 1usize; // 2‑element FRI leaves
+        let fri_leaf_len = 2 * extension_degree;
+        let fri_leaf_perms = fri_leaf_len.div_ceil(RATE_WIDTH).max(1);
         let mut merkle_perms_per_query =
             trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
         let replay_draws_per_query = trace_leaf_chains + constraint_leaf_chains;
@@ -1296,11 +1370,19 @@ impl StarkVerifierProver {
 
         let remainder_hash_perms = if num_fri_commitments > 0 {
             assert!(
-                inner.fri_remainder.len() == RATE_WIDTH,
-                "inner remainder has {} coeffs; StarkVerifierAir currently supports exactly {RATE_WIDTH}",
-                inner.fri_remainder.len()
+                inner.fri_remainder.len() == remainder_coeffs_len,
+                "inner remainder has {} coeffs; expected {} for extension degree {}",
+                inner.fri_remainder.len(),
+                remainder_coeffs_len,
+                extension_degree
             );
-            1usize
+            assert!(
+                inner.fri_remainder.len() <= NUM_REMAINDER_COEFFS * extension_degree,
+                "inner remainder has {} coeffs; recursion layout supports at most {}",
+                inner.fri_remainder.len(),
+                NUM_REMAINDER_COEFFS * extension_degree
+            );
+            num_remainder_perms
         } else {
             0usize
         };
@@ -1315,12 +1397,16 @@ impl StarkVerifierProver {
         let mut trace = TraceTable::init(columns);
 
         let mut perm_idx = 0usize;
-        let expected_z = compute_expected_z(&self.pub_inputs);
-        let gamma = expected_z;
-        let mut perm_acc_val = BaseElement::ONE;
+        let expected_z = if extension_degree == 2 {
+            ext_from_flat(&inner.z)
+        } else {
+            ext_from_base(inner.z[0])
+        };
+        let gamma = quad_from_ext(expected_z);
+        let mut perm_acc_val = Quad::ONE;
         let mut draw_positions: Vec<u64> = Vec::with_capacity(self.pub_inputs.num_draws);
-        let mut constraint_coeffs: Vec<BaseElement> = Vec::with_capacity(NUM_CONSTRAINT_COEFFS);
-        let mut deep_coeffs: Vec<BaseElement> = Vec::with_capacity(NUM_DEEP_COEFFS);
+        let mut constraint_coeffs: Vec<BaseElement> = Vec::with_capacity(num_coeffs_total);
+        let mut deep_coeffs: Vec<BaseElement> = Vec::with_capacity(num_deep_coeffs);
         let mut fri_alphas: Vec<BaseElement> = Vec::with_capacity(num_fri_layers);
 
         // --- Segment A: RPO hash of inner public inputs ------------------------------------
@@ -1541,7 +1627,7 @@ impl StarkVerifierProver {
             *value = trace.get(i, last);
         }
         for value in coin_state[4..4 + RATE_WIDTH].iter().copied() {
-            if constraint_coeffs.len() >= NUM_CONSTRAINT_COEFFS {
+            if constraint_coeffs.len() >= num_coeffs_total {
                 break;
             }
             constraint_coeffs.push(value);
@@ -1603,7 +1689,7 @@ impl StarkVerifierProver {
                 *value = trace.get(i, last);
             }
             for value in coin_state[4..4 + RATE_WIDTH].iter().copied() {
-                if constraint_coeffs.len() >= NUM_CONSTRAINT_COEFFS {
+                if constraint_coeffs.len() >= num_coeffs_total {
                     break;
                 }
                 constraint_coeffs.push(value);
@@ -1648,7 +1734,7 @@ impl StarkVerifierProver {
         for (i, value) in coin_state.iter_mut().enumerate() {
             *value = trace.get(i, last);
         }
-        set_z_witness(&mut trace, perm_idx, coin_state[4]);
+        set_z_witness(&mut trace, perm_idx, expected_z);
         perm_idx += 1;
 
         // Save the coin state immediately after z draw so we can restore it after hashing merged
@@ -1783,7 +1869,7 @@ impl StarkVerifierProver {
                 *value = trace.get(i, last);
             }
             for value in coin_state[4..4 + RATE_WIDTH].iter().copied() {
-                if deep_coeffs.len() >= NUM_DEEP_COEFFS {
+                if deep_coeffs.len() >= num_deep_coeffs {
                     break;
                 }
                 deep_coeffs.push(value);
@@ -1839,10 +1925,15 @@ impl StarkVerifierProver {
             for (i, value) in coin_state.iter_mut().enumerate() {
                 *value = trace.get(i, last);
             }
+            let alpha_ext = if extension_degree == 2 {
+                [coin_state[4], coin_state[5]]
+            } else {
+                [coin_state[4], BaseElement::ZERO]
+            };
             if fri_alphas.len() < num_fri_layers {
-                fri_alphas.push(coin_state[4]);
+                fri_alphas.push(alpha_ext[0]);
             }
-            set_fri_alpha_witness(&mut trace, perm_idx, coin_state[4]);
+            set_fri_alpha_witness(&mut trace, perm_idx, alpha_ext);
             let tape_values = core::array::from_fn(|i| coin_state[4 + i]);
             set_tape_meta(&mut trace, perm_idx, TAPE_KIND_ALPHA, layer_idx as u64, tape_values);
             perm_idx += 1;
@@ -1962,6 +2053,7 @@ impl StarkVerifierProver {
 
                     // Decomp perm: freeze RPO state and carry buffer.
                     let row0 = perm_idx * ROWS_PER_PERMUTATION;
+                    let gamma_limbs = gamma.to_base_elements();
                     for r in 0..ROWS_PER_PERMUTATION {
                         let row = row0 + r;
                         for (i, value) in coin_state.iter().copied().enumerate() {
@@ -1972,7 +2064,7 @@ impl StarkVerifierProver {
                         for (j, value) in rate_outputs.iter().copied().enumerate() {
                             trace.set(COL_POS_START + j, row, value);
                         }
-                        trace.set(COL_Z_VALUE, row, gamma);
+                        trace.set(COL_Z_VALUE, row, gamma_limbs[0]);
                     }
 
                     let mut acc = 0u64;
@@ -2048,7 +2140,7 @@ impl StarkVerifierProver {
             );
                     set_path_bit(&mut trace, perm_idx, 0);
 
-                    perm_acc_val *= p_elem + gamma;
+                    perm_acc_val *= Quad::from(p_elem) + gamma;
 
                     perm_idx += 1;
                     remaining_draws -= 1;
@@ -2128,7 +2220,7 @@ impl StarkVerifierProver {
                 trace_index,
                 replay_state.as_mut(),
             );
-            perm_acc_val /= BaseElement::new(trace_index) + gamma;
+            perm_acc_val /= Quad::from(BaseElement::new(trace_index)) + gamma;
             let trace_siblings = &inner.trace_auth_paths[q];
             authenticate_merkle_path(
                 self,
@@ -2177,8 +2269,9 @@ impl StarkVerifierProver {
                 .take(num_fri_layers)
                 .zip(fri_indexes.iter())
             {
-                let start = q * folding_factor;
-                let end = start + folding_factor;
+                let leaf_len = folding_factor * extension_degree;
+                let start = q * leaf_len;
+                let end = start + leaf_len;
                 let leaf_vals = &layer.evaluations[start..end];
                 let fri_index = indexes_for_layer[q] as u64;
                 let fri_digest = hash_leaf_perms(
@@ -2255,12 +2348,12 @@ impl StarkVerifierProver {
         if inner_is_rpo_air || inner_is_transaction_air {
             debug_assert_eq!(
                 constraint_coeffs.len(),
-                NUM_CONSTRAINT_COEFFS,
+                num_coeffs_total,
                 "unexpected constraint coeff count"
             );
             debug_assert_eq!(
                 deep_coeffs.len(),
-                NUM_DEEP_COEFFS,
+                num_deep_coeffs,
                 "unexpected DEEP coeff count"
             );
         }
@@ -2278,11 +2371,28 @@ impl StarkVerifierProver {
             for (i, value) in saved_coin_state.iter().copied().enumerate() {
                 trace.set(COL_SAVED_COIN_START + i, row, value);
             }
-            for (i, value) in constraint_coeffs.iter().copied().enumerate() {
+            for (i, value) in constraint_coeffs
+                .iter()
+                .copied()
+                .take(NUM_CONSTRAINT_COEFFS)
+                .enumerate()
+            {
+                if i < RESERVED_CONSTRAINT_COEFF_COLS {
+                    continue;
+                }
                 trace.set(COL_CONSTRAINT_COEFFS_START + i, row, value);
             }
-            for (i, value) in deep_coeffs.iter().copied().enumerate() {
+            for (i, value) in deep_coeffs
+                .iter()
+                .copied()
+                .take(NUM_DEEP_COEFFS)
+                .enumerate()
+            {
                 trace.set(COL_DEEP_COEFFS_START + i, row, value);
+            }
+            if extension_degree == 2 {
+                let gamma_limb1 = gamma.to_base_elements()[1];
+                trace.set(COL_Z_VALUE_LIMB1, row, gamma_limb1);
             }
             for (i, value) in fri_alphas
                 .iter()
@@ -2308,26 +2418,54 @@ impl StarkVerifierProver {
             let g_trace = BaseElement::get_root_of_unity(self.pub_inputs.trace_length.ilog2());
             let g_lde = BaseElement::get_root_of_unity(lde_domain_size.ilog2());
             let domain_offset = BaseElement::GENERATOR;
-            let deep_evals: Vec<BaseElement> = draw_positions
+            let deep_evals: Vec<Quad> = draw_positions
                 .iter()
                 .copied()
                 .enumerate()
                 .map(|(q, pos)| {
                     let x = domain_offset * g_lde.exp(pos);
-                    compute_deep_evaluation(
-                        x,
-                        &inner.trace_evaluations[q],
-                        &inner.constraint_evaluations[q],
-                        &inner.ood_trace_current,
-                        &inner.ood_trace_next,
-                        &inner.ood_quotient_current,
-                        &inner.ood_quotient_next,
-                        &inner.deep_coeffs,
-                        expected_z,
-                        g_trace,
-                    )
+                    if extension_degree == 2 {
+                        quad_from_ext(compute_deep_evaluation_quadratic(
+                            x,
+                            &inner.trace_evaluations[q],
+                            &inner.constraint_evaluations[q],
+                            &inner.ood_trace_current,
+                            &inner.ood_trace_next,
+                            &inner.ood_quotient_current,
+                            &inner.ood_quotient_next,
+                            &inner.deep_coeffs,
+                            expected_z,
+                            g_trace,
+                        ))
+                    } else {
+                        Quad::from(compute_deep_evaluation(
+                            x,
+                            &inner.trace_evaluations[q],
+                            &inner.constraint_evaluations[q],
+                            &inner.ood_trace_current,
+                            &inner.ood_trace_next,
+                            &inner.ood_quotient_current,
+                            &inner.ood_quotient_next,
+                            &inner.deep_coeffs,
+                            expected_z[0],
+                            g_trace,
+                        ))
+                    }
                 })
                 .collect();
+            let fri_alphas_ext: Vec<Quad> = if extension_degree == 2 {
+                inner
+                    .fri_alphas
+                    .chunks_exact(EXTENSION_LIMBS)
+                    .map(|chunk| Quad::new(chunk[0], chunk[1]))
+                    .collect()
+            } else {
+                inner.fri_alphas
+                    .iter()
+                    .copied()
+                    .map(Quad::from)
+                    .collect()
+            };
             self.populate_deep_fri_state(
                 &mut trace,
                 pre_merkle_perms,
@@ -2336,6 +2474,7 @@ impl StarkVerifierProver {
                 depth_trace,
                 num_fri_layers,
                 &deep_evals,
+                &fri_alphas_ext,
                 &inner.fri_remainder,
                 &inner.ood_trace_current,
                 &inner.ood_trace_next,
@@ -2346,11 +2485,16 @@ impl StarkVerifierProver {
         } else {
             for row in 0..trace.length() {
                 trace.set(COL_DEEP_T1_ACC, row, BaseElement::ZERO);
+                trace.set(COL_DEEP_T1_ACC_LIMB1, row, BaseElement::ZERO);
                 trace.set(COL_DEEP_T2_ACC, row, BaseElement::ZERO);
+                trace.set(COL_DEEP_T2_ACC_LIMB1, row, BaseElement::ZERO);
                 trace.set(COL_DEEP_C1_ACC, row, BaseElement::ZERO);
+                trace.set(COL_DEEP_C1_ACC_LIMB1, row, BaseElement::ZERO);
                 trace.set(COL_DEEP_C2_ACC, row, BaseElement::ZERO);
+                trace.set(COL_DEEP_C2_ACC_LIMB1, row, BaseElement::ZERO);
 
                 trace.set(COL_FRI_EVAL, row, BaseElement::ZERO);
+                trace.set(COL_FRI_EVAL_LIMB1, row, BaseElement::ZERO);
                 trace.set(COL_FRI_X, row, BaseElement::ZERO);
                 trace.set(COL_FRI_POW, row, BaseElement::ZERO);
 
@@ -2359,6 +2503,11 @@ impl StarkVerifierProver {
                 }
                 for i in 0..NUM_REMAINDER_COEFFS {
                     trace.set(COL_REMAINDER_COEFFS_START + i, row, BaseElement::ZERO);
+                }
+                if extension_degree == 2 {
+                    for i in 0..NUM_REMAINDER_COEFFS {
+                        trace.set(COL_REMAINDER_COEFFS_EXT_START + i, row, BaseElement::ZERO);
+                    }
                 }
             }
         }
@@ -2374,7 +2523,8 @@ impl StarkVerifierProver {
         constraint_leaf_perms: usize,
         depth_trace: usize,
         num_fri_layers: usize,
-        deep_evals: &[BaseElement],
+        deep_evals: &[Quad],
+        fri_alphas: &[Quad],
         remainder_coeffs: &[BaseElement],
         ood_trace_current: &[BaseElement],
         ood_trace_next: &[BaseElement],
@@ -2387,11 +2537,17 @@ impl StarkVerifierProver {
         let total_rows = trace.length();
         let num_queries = self.pub_inputs.num_queries;
         debug_assert_eq!(deep_evals.len(), num_queries, "unexpected deep eval count");
+        debug_assert_eq!(
+            fri_alphas.len(),
+            num_fri_layers,
+            "unexpected FRI alpha count"
+        );
         let extension_degree = match self.pub_inputs.field_extension {
             FieldExtension::None => 1,
             FieldExtension::Quadratic => 2,
             FieldExtension::Cubic => 3,
         };
+        let is_quadratic = extension_degree == 2;
         let trace_leaf_len = ood_trace_current.len();
         let constraint_leaf_len = ood_quotient_current.len();
         let constraint_partition_size_base =
@@ -2480,17 +2636,33 @@ impl StarkVerifierProver {
         );
 
         // Fill remainder coefficients (constant across the entire verifier trace).
-        let mut remainder = [BaseElement::ZERO; NUM_REMAINDER_COEFFS];
+        let mut remainder0 = [BaseElement::ZERO; NUM_REMAINDER_COEFFS];
+        let mut remainder1 = [BaseElement::ZERO; NUM_REMAINDER_COEFFS];
         for (i, coeff) in remainder_coeffs
             .iter()
             .take(NUM_REMAINDER_COEFFS)
             .enumerate()
         {
-            remainder[i] = *coeff;
+            remainder0[i] = *coeff;
+        }
+        if is_quadratic {
+            for (i, coeff) in remainder_coeffs
+                .iter()
+                .skip(NUM_REMAINDER_COEFFS)
+                .take(NUM_REMAINDER_COEFFS)
+                .enumerate()
+            {
+                remainder1[i] = *coeff;
+            }
         }
         for row in 0..total_rows {
-            for (i, value) in remainder.iter().copied().enumerate() {
+            for (i, value) in remainder0.iter().copied().enumerate() {
                 trace.set(COL_REMAINDER_COEFFS_START + i, row, value);
+            }
+            if is_quadratic {
+                for (i, value) in remainder1.iter().copied().enumerate() {
+                    trace.set(COL_REMAINDER_COEFFS_EXT_START + i, row, value);
+                }
             }
         }
 
@@ -2618,33 +2790,43 @@ impl StarkVerifierProver {
 
         #[derive(Clone, Debug)]
         struct State {
-            t1: BaseElement,
-            t2: BaseElement,
-            c1: BaseElement,
-            c2: BaseElement,
-            eval: BaseElement,
+            t1: Quad,
+            t2: Quad,
+            c1: Quad,
+            c2: Quad,
+            eval: Quad,
             x: BaseElement,
             pow: BaseElement,
             msb_bits: Vec<BaseElement>,
         }
 
         let mut state = State {
-            t1: BaseElement::ZERO,
-            t2: BaseElement::ZERO,
-            c1: BaseElement::ZERO,
-            c2: BaseElement::ZERO,
-            eval: BaseElement::ZERO,
+            t1: Quad::ZERO,
+            t2: Quad::ZERO,
+            c1: Quad::ZERO,
+            c2: Quad::ZERO,
+            eval: Quad::ZERO,
             x: domain_offset,
             pow: g_lde,
             msb_bits: vec![BaseElement::ZERO; num_fri_layers],
         };
 
         let write_row = |trace: &mut TraceTable<BaseElement>, row: usize, state: &State| {
-            trace.set(COL_DEEP_T1_ACC, row, state.t1);
-            trace.set(COL_DEEP_T2_ACC, row, state.t2);
-            trace.set(COL_DEEP_C1_ACC, row, state.c1);
-            trace.set(COL_DEEP_C2_ACC, row, state.c2);
-            trace.set(COL_FRI_EVAL, row, state.eval);
+            let t1 = state.t1.to_base_elements();
+            let t2 = state.t2.to_base_elements();
+            let c1 = state.c1.to_base_elements();
+            let c2 = state.c2.to_base_elements();
+            let eval = state.eval.to_base_elements();
+            trace.set(COL_DEEP_T1_ACC, row, t1[0]);
+            trace.set(COL_DEEP_T1_ACC_LIMB1, row, t1[1]);
+            trace.set(COL_DEEP_T2_ACC, row, t2[0]);
+            trace.set(COL_DEEP_T2_ACC_LIMB1, row, t2[1]);
+            trace.set(COL_DEEP_C1_ACC, row, c1[0]);
+            trace.set(COL_DEEP_C1_ACC_LIMB1, row, c1[1]);
+            trace.set(COL_DEEP_C2_ACC, row, c2[0]);
+            trace.set(COL_DEEP_C2_ACC_LIMB1, row, c2[1]);
+            trace.set(COL_FRI_EVAL, row, eval[0]);
+            trace.set(COL_FRI_EVAL_LIMB1, row, eval[1]);
             trace.set(COL_FRI_X, row, state.x);
             trace.set(COL_FRI_POW, row, state.pow);
             for i in 0..NUM_FRI_MSB_BITS {
@@ -2670,10 +2852,10 @@ impl StarkVerifierProver {
             if let Some(event) = event {
                 match event {
                     Event::QueryReset { query_idx } => {
-                        next.t1 = BaseElement::ZERO;
-                        next.t2 = BaseElement::ZERO;
-                        next.c1 = BaseElement::ZERO;
-                        next.c2 = BaseElement::ZERO;
+                        next.t1 = Quad::ZERO;
+                        next.t2 = Quad::ZERO;
+                        next.c1 = Quad::ZERO;
+                        next.c2 = Quad::ZERO;
                         next.eval = deep_evals[query_idx];
                         next.x = domain_offset;
                         next.pow = g_lde;
@@ -2682,31 +2864,79 @@ impl StarkVerifierProver {
                         }
                     }
                     Event::TraceLeaf { start_idx, block_len } => {
-                        let mut t1_delta = BaseElement::ZERO;
-                        let mut t2_delta = BaseElement::ZERO;
-                        for j in 0..block_len {
+                        let mut t1_delta = Quad::ZERO;
+                        let mut t2_delta = Quad::ZERO;
+                        let mut j = 0usize;
+                        if is_quadratic {
+                            debug_assert!(block_len.is_multiple_of(EXTENSION_LIMBS));
+                        }
+                        while j < block_len {
                             let idx = start_idx + j;
-                            let coeff = deep_coeffs.trace[idx];
-                            let trace_val = trace.get(RATE_START_COL + j, row);
-                            let ood_z = ood_trace_current[idx];
-                            let ood_zg = ood_trace_next[idx];
+                            let coeff = if is_quadratic {
+                                Quad::new(deep_coeffs.trace[idx], deep_coeffs.trace[idx + 1])
+                            } else {
+                                Quad::from(deep_coeffs.trace[idx])
+                            };
+                            let trace_val = if is_quadratic {
+                                Quad::new(
+                                    trace.get(RATE_START_COL + j, row),
+                                    trace.get(RATE_START_COL + j + 1, row),
+                                )
+                            } else {
+                                Quad::from(trace.get(RATE_START_COL + j, row))
+                            };
+                            let ood_z = if is_quadratic {
+                                Quad::new(ood_trace_current[idx], ood_trace_current[idx + 1])
+                            } else {
+                                Quad::from(ood_trace_current[idx])
+                            };
+                            let ood_zg = if is_quadratic {
+                                Quad::new(ood_trace_next[idx], ood_trace_next[idx + 1])
+                            } else {
+                                Quad::from(ood_trace_next[idx])
+                            };
                             t1_delta += coeff * (trace_val - ood_z);
                             t2_delta += coeff * (trace_val - ood_zg);
+                            j += extension_degree;
                         }
                         next.t1 += t1_delta;
                         next.t2 += t2_delta;
                     }
                     Event::ConstraintLeaf { start_idx, block_len } => {
-                        let mut c1_delta = BaseElement::ZERO;
-                        let mut c2_delta = BaseElement::ZERO;
-                        for j in 0..block_len {
+                        let mut c1_delta = Quad::ZERO;
+                        let mut c2_delta = Quad::ZERO;
+                        let mut j = 0usize;
+                        if is_quadratic {
+                            debug_assert!(block_len.is_multiple_of(EXTENSION_LIMBS));
+                        }
+                        while j < block_len {
                             let idx = start_idx + j;
-                            let coeff = deep_coeffs.constraints[idx];
-                            let val = trace.get(RATE_START_COL + j, row);
-                            let ood_z = ood_quotient_current[idx];
-                            let ood_zg = ood_quotient_next[idx];
+                            let coeff = if is_quadratic {
+                                Quad::new(deep_coeffs.constraints[idx], deep_coeffs.constraints[idx + 1])
+                            } else {
+                                Quad::from(deep_coeffs.constraints[idx])
+                            };
+                            let val = if is_quadratic {
+                                Quad::new(
+                                    trace.get(RATE_START_COL + j, row),
+                                    trace.get(RATE_START_COL + j + 1, row),
+                                )
+                            } else {
+                                Quad::from(trace.get(RATE_START_COL + j, row))
+                            };
+                            let ood_z = if is_quadratic {
+                                Quad::new(ood_quotient_current[idx], ood_quotient_current[idx + 1])
+                            } else {
+                                Quad::from(ood_quotient_current[idx])
+                            };
+                            let ood_zg = if is_quadratic {
+                                Quad::new(ood_quotient_next[idx], ood_quotient_next[idx + 1])
+                            } else {
+                                Quad::from(ood_quotient_next[idx])
+                            };
                             c1_delta += coeff * (val - ood_z);
                             c2_delta += coeff * (val - ood_zg);
+                            j += extension_degree;
                         }
                         next.c1 += c1_delta;
                         next.c2 += c2_delta;
@@ -2723,11 +2953,25 @@ impl StarkVerifierProver {
                     }
                     Event::FriLeaf { layer_idx } => {
                         let b = state.msb_bits[layer_idx];
-                        let v0 = trace.get(RATE_START_COL, row);
-                        let v1 = trace.get(RATE_START_COL + 1, row);
-                        let alpha = trace.get(COL_FRI_ALPHA_START + layer_idx, row);
+                        let v0 = if is_quadratic {
+                            Quad::new(
+                                trace.get(RATE_START_COL, row),
+                                trace.get(RATE_START_COL + 1, row),
+                            )
+                        } else {
+                            Quad::from(trace.get(RATE_START_COL, row))
+                        };
+                        let v1 = if is_quadratic {
+                            Quad::new(
+                                trace.get(RATE_START_COL + 2, row),
+                                trace.get(RATE_START_COL + 3, row),
+                            )
+                        } else {
+                            Quad::from(trace.get(RATE_START_COL + 1, row))
+                        };
+                        let alpha = fri_alphas[layer_idx];
 
-                        let selected = v0 + b * (v1 - v0);
+                        let selected = v0 + (v1 - v0) * Quad::from(b);
                         debug_assert_eq!(
                             state.eval, selected,
                             "FRI layer {layer_idx} eval mismatch at row {row}"
@@ -2735,8 +2979,10 @@ impl StarkVerifierProver {
 
                         let sign = one - two * b;
                         let x_base = state.x * sign;
-                        let rhs = (x_base + alpha) * v0 + (x_base - alpha) * v1;
-                        next.eval = rhs / (two * x_base);
+                        let x_ext = Quad::from(x_base);
+                        let rhs = (x_ext + alpha) * v0 + (x_ext - alpha) * v1;
+                        let denom = Quad::from(two * x_base);
+                        next.eval = rhs / denom;
                         next.x = state.x * state.x * inv_domain_offset;
                     }
                 }
@@ -2797,24 +3043,25 @@ impl StarkVerifierProver {
 }
 
 fn set_masks(
-                trace: &mut TraceTable<BaseElement>,
-                perm_idx: usize,
-                carry: BaseElement,
-                full_carry: BaseElement,
-                reseed: BaseElement,
-                coin_init: BaseElement,
-                coeff_mask: BaseElement,
-                z_mask: BaseElement,
-                deep_mask: BaseElement,
-                fri_mask: BaseElement,
-                pos_mask: BaseElement,
-                decomp_mask: BaseElement,
-                coin_save_mask: BaseElement,
-                coin_restore_mask: BaseElement,
-                reseed_word: [BaseElement; 4],
-                perm_acc: BaseElement
-            ) {
+    trace: &mut TraceTable<BaseElement>,
+    perm_idx: usize,
+    carry: BaseElement,
+    full_carry: BaseElement,
+    reseed: BaseElement,
+    coin_init: BaseElement,
+    coeff_mask: BaseElement,
+    z_mask: BaseElement,
+    deep_mask: BaseElement,
+    fri_mask: BaseElement,
+    pos_mask: BaseElement,
+    decomp_mask: BaseElement,
+    coin_save_mask: BaseElement,
+    coin_restore_mask: BaseElement,
+    reseed_word: [BaseElement; 4],
+    perm_acc: Quad,
+) {
     let row_start = perm_idx * ROWS_PER_PERMUTATION;
+    let perm_acc = perm_acc.to_base_elements();
     for r in 0..ROWS_PER_PERMUTATION {
         let row = row_start + r;
         trace.set(COL_CARRY_MASK, row, carry);
@@ -2834,7 +3081,8 @@ fn set_masks(
             BaseElement::ZERO
         };
         trace.set(COL_COIN_RESTORE_MASK, row, restore);
-        trace.set(COL_POS_PERM_ACC, row, perm_acc);
+        trace.set(COL_POS_PERM_ACC, row, perm_acc[0]);
+        trace.set(COL_POS_PERM_ACC_LIMB1, row, perm_acc[1]);
         for (i, value) in reseed_word.iter().copied().enumerate() {
             trace.set(COL_RESEED_WORD_START + i, row, value);
         }
@@ -2877,17 +3125,17 @@ fn set_coeff_witness(
     }
 }
 
-fn set_z_witness(trace: &mut TraceTable<BaseElement>, perm_idx: usize, z: BaseElement) {
+fn set_z_witness(trace: &mut TraceTable<BaseElement>, perm_idx: usize, z: ExtElem) {
     let row_start = perm_idx * ROWS_PER_PERMUTATION;
     for r in 0..ROWS_PER_PERMUTATION {
-        trace.set(COL_Z_VALUE, row_start + r, z);
+        trace.set(COL_Z_VALUE, row_start + r, z[0]);
     }
 }
 
-fn set_fri_alpha_witness(trace: &mut TraceTable<BaseElement>, perm_idx: usize, alpha: BaseElement) {
+fn set_fri_alpha_witness(trace: &mut TraceTable<BaseElement>, perm_idx: usize, alpha: ExtElem) {
     let row_start = perm_idx * ROWS_PER_PERMUTATION;
     for r in 0..ROWS_PER_PERMUTATION {
-        trace.set(COL_FRI_ALPHA_VALUE, row_start + r, alpha);
+        trace.set(COL_FRI_ALPHA_VALUE, row_start + r, alpha[0]);
     }
 }
 
@@ -3034,7 +3282,7 @@ impl DeepReplayState {
         prover: &StarkVerifierProver,
         trace: &mut TraceTable<BaseElement>,
         perm_idx: &mut usize,
-        perm_acc: BaseElement,
+        perm_acc: Quad,
     ) {
         debug_assert!(
             self.draw_idx < self.draws_per_query,
@@ -3095,7 +3343,7 @@ fn hash_row_partitioned_perms(
     perm_idx: &mut usize,
     row: &[BaseElement],
     partition_size: usize,
-    perm_acc: BaseElement,
+    perm_acc: Quad,
     merkle_index: u64,
     mut deep_replay: Option<&mut DeepReplayState>,
 ) -> [BaseElement; DIGEST_WIDTH] {
@@ -3143,7 +3391,7 @@ fn hash_leaf_perms(
     trace: &mut TraceTable<BaseElement>,
     perm_idx: &mut usize,
     leaf_elems: &[BaseElement],
-    perm_acc: BaseElement,
+    perm_acc: Quad,
     merkle_index: u64,
     final_path_bit: u64,
 ) -> [BaseElement; DIGEST_WIDTH] {
@@ -3212,7 +3460,7 @@ fn authenticate_merkle_path(
     prover: &StarkVerifierProver,
     trace: &mut TraceTable<BaseElement>,
     perm_idx: &mut usize,
-    perm_acc: BaseElement,
+    perm_acc: Quad,
     leaf_digest: [BaseElement; DIGEST_WIDTH],
     index: u64,
     siblings: &[[BaseElement; DIGEST_WIDTH]],

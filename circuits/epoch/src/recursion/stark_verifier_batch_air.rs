@@ -8,7 +8,7 @@
 //! built to keep trace width flat (≤255) by growing trace length with `N`.
 
 use winter_air::{
-    Air, AirContext, Assertion, EvaluationFrame, ProofOptions, TraceInfo,
+    Air, AirContext, Assertion, EvaluationFrame, FieldExtension, ProofOptions, TraceInfo,
     TransitionConstraintDegree,
 };
 use winter_math::fields::f64::BaseElement;
@@ -17,19 +17,23 @@ use winter_math::{FieldElement, StarkField, ToElements};
 use super::merkle_air::DIGEST_WIDTH;
 use super::rpo_air::{MDS, ROWS_PER_PERMUTATION, STATE_WIDTH};
 use super::stark_verifier_air::{
-    compute_expected_transcript_draws, compute_leaf_layout, compute_ood_digest,
-    compute_rpo_ood_consistency, compute_transaction_ood_consistency, field_extension_degree,
-    StarkVerifierAir, StarkVerifierPublicInputs, COL_CARRY_MASK, COL_COEFF_MASK, COL_COEFF_START,
-    COL_COIN_INIT_MASK, COL_COIN_RESTORE_MASK, COL_COIN_SAVE_MASK, COL_DEEP_C1_ACC,
-    COL_DEEP_C2_ACC, COL_DEEP_MASK, COL_DEEP_START, COL_DEEP_T1_ACC, COL_DEEP_T2_ACC,
-    COL_FRI_ALPHA_START, COL_FRI_ALPHA_VALUE, COL_FRI_EVAL, COL_FRI_MASK, COL_FRI_MSB_BITS_START,
+    compute_expected_transcript_draws, compute_expected_transcript_draws_quadratic,
+    compute_leaf_layout, compute_ood_digest, compute_rpo_ood_consistency,
+    compute_rpo_ood_consistency_quadratic, compute_transaction_ood_consistency,
+    compute_transaction_ood_consistency_quadratic, field_extension_degree, StarkVerifierAir,
+    StarkVerifierPublicInputs, COL_CARRY_MASK, COL_COEFF_MASK, COL_COEFF_START, COL_COIN_INIT_MASK,
+    COL_COIN_RESTORE_MASK, COL_COIN_SAVE_MASK, COL_DEEP_C1_ACC, COL_DEEP_C1_ACC_LIMB1,
+    COL_DEEP_C2_ACC, COL_DEEP_C2_ACC_LIMB1, COL_DEEP_MASK, COL_DEEP_START, COL_DEEP_T1_ACC,
+    COL_DEEP_T1_ACC_LIMB1, COL_DEEP_T2_ACC, COL_DEEP_T2_ACC_LIMB1, COL_FRI_ALPHA_VALUE,
+    COL_FRI_EVAL, COL_FRI_EVAL_LIMB1, COL_FRI_MASK, COL_FRI_MSB_BITS_START,
     COL_FRI_POW, COL_FRI_X, COL_FULL_CARRY_MASK, COL_MERKLE_INDEX, COL_MERKLE_PATH_BIT,
     COL_OOD_DIGEST_START, COL_POS_ACC, COL_POS_BIT0, COL_POS_BIT1, COL_POS_BIT2, COL_POS_BIT3,
     COL_POS_DECOMP_MASK, COL_POS_HI_AND, COL_POS_LO_ACC, COL_POS_MASK, COL_POS_MASKED_ACC,
-    COL_POS_PERM_ACC, COL_POS_RAW, COL_POS_SORTED_VALUE, COL_POS_START,
-    COL_REMAINDER_COEFFS_START, COL_RESEED_MASK, COL_RESEED_WORD_START, COL_SAVED_COIN_START,
-    COL_TAPE_MASK, COL_TAPE_VALUES_START, COL_Z_MASK, COL_Z_VALUE, NUM_REMAINDER_COEFFS,
-    RATE_WIDTH, TAPE_WIDTH, VERIFIER_TRACE_WIDTH,
+    COL_POS_PERM_ACC, COL_POS_PERM_ACC_LIMB1, COL_POS_RAW, COL_POS_SORTED_VALUE, COL_POS_START,
+    COL_REMAINDER_COEFFS_EXT_START, COL_REMAINDER_COEFFS_START, COL_RESEED_MASK,
+    COL_RESEED_WORD_START, COL_SAVED_COIN_START, COL_TAPE_MASK, COL_TAPE_VALUES_START, COL_Z_MASK,
+    COL_Z_VALUE, COL_Z_VALUE_LIMB1, NUM_REMAINDER_COEFFS, RATE_WIDTH, TAPE_WIDTH,
+    VERIFIER_TRACE_WIDTH,
 };
 
 #[cfg(test)]
@@ -37,6 +41,7 @@ use winter_math::{fft, polynom};
 
 const CAPACITY_WIDTH: usize = 4;
 const RATE_START: usize = CAPACITY_WIDTH;
+const EXTENSION_LIMBS: usize = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InnerProofKind {
@@ -217,6 +222,7 @@ impl Air for StarkVerifierBatchAir {
 
         let extension_degree = field_extension_degree(template.field_extension)
             .expect("unsupported field extension");
+        let is_quadratic = template.field_extension == FieldExtension::Quadratic;
         let trace_width_ext = template.trace_width * extension_degree;
         let constraint_width_ext = template.constraint_frame_width * extension_degree;
         let num_constraint_coeffs =
@@ -279,7 +285,9 @@ impl Air for StarkVerifierBatchAir {
         }
 
         // Count constraints exactly as `StarkVerifierAir`.
-        let base_boundary_constraints = 3 * DIGEST_WIDTH + 13 + 4 * RATE_WIDTH + 2;
+        let extra_draw_constraints = if is_quadratic { 2 } else { 0 };
+        let base_boundary_constraints =
+            3 * DIGEST_WIDTH + 13 + 4 * RATE_WIDTH + 2 + extra_draw_constraints;
         let num_root_masks = 2 + num_fri_layers; // trace root, constraint root, and each committed FRI layer
         let merkle_constraints = 1 // intra-leaf chaining
             + 1 // path-bit binary
@@ -287,35 +295,40 @@ impl Air for StarkVerifierBatchAir {
             + 1 // index shift (idx_cur = 2*idx_next + bit)
             + num_root_masks // index must be 0 at each root boundary
             + num_root_masks * DIGEST_WIDTH; // root digest checks
-        const POS_DECOMP_CONSTRAINTS: usize = 32;
+        let pos_decomp_constraints = 32 + if extension_degree == 2 { 5 } else { 0 };
 
         let ood_constraints = DIGEST_WIDTH // ood digest constant
             + STATE_WIDTH // saved coin state constant
             + ood_eval_len // bind OOD eval inputs
             + DIGEST_WIDTH // capture ood digest
             + STATE_WIDTH // capture coin state at z
-            + STATE_WIDTH // restore coin state (+ood reseed)
-            + 1; // ood consistency check
+            + STATE_WIDTH; // restore coin state (+ood reseed)
 
         let transcript_store_constraints = num_constraint_coeffs // capture constraint coeffs
             + num_deep_coeffs // capture deep coeffs
-            + num_fri_layers; // capture alphas
+            + num_fri_layers * extension_degree; // capture alphas
 
-        let deep_fri_constraints = NUM_REMAINDER_COEFFS // remainder coeffs constant
-            + NUM_REMAINDER_COEFFS // bind remainder coeffs to commitment hash input
-            + 4 // deep accumulators
+        let remainder_coeffs_total = (template.fri_remainder_max_degree + 1) * extension_degree;
+        assert!(
+            remainder_coeffs_total <= NUM_REMAINDER_COEFFS * extension_degree,
+            "remainder polynomial too large for recursion layout ({} coefficients)",
+            remainder_coeffs_total
+        );
+        let deep_fri_constraints = remainder_coeffs_total // remainder coeffs constant
+            + remainder_coeffs_total // bind remainder coeffs to commitment hash input
+            + 4 * extension_degree // deep accumulators
             + 2 // x/pow updates
-            + 1 // fri eval freeze
+            + extension_degree // fri eval freeze
             + num_fri_layers // msb capture
-            + num_fri_layers // layer eval selection
-            + 1 // deep composition check
-            + num_fri_layers // fri folding checks
-            + (num_fri_layers > 0) as usize; // remainder eval check
+            + num_fri_layers * extension_degree // layer eval selection
+            + extension_degree // deep composition check
+            + num_fri_layers * extension_degree // fri folding checks
+            + (num_fri_layers > 0) as usize * extension_degree; // remainder eval check
 
         let num_constraints = STATE_WIDTH
             + base_boundary_constraints
             + merkle_constraints
-            + POS_DECOMP_CONSTRAINTS
+            + pos_decomp_constraints
             + ood_constraints
             + transcript_store_constraints
             + deep_fri_constraints;
@@ -363,8 +376,14 @@ impl Air for StarkVerifierBatchAir {
         // Transcript-derived value checks.
         degrees.extend(vec![boundary_rel_degree.clone(); RATE_WIDTH]); // coeff checks
         degrees.push(boundary_rel_degree.clone()); // z check
+        if extension_degree > 1 {
+            degrees.push(boundary_rel_degree.clone()); // z limb1 check
+        }
         degrees.extend(vec![boundary_rel_degree.clone(); RATE_WIDTH]); // deep checks
         degrees.push(boundary_rel_degree.clone()); // fri alpha check
+        if extension_degree > 1 {
+            degrees.push(boundary_rel_degree.clone()); // fri alpha limb1 check
+        }
         degrees.extend(vec![boundary_rel_degree.clone(); RATE_WIDTH]); // pos checks
         degrees.extend(vec![boundary_rel_degree.clone(); RATE_WIDTH]); // tape checks
 
@@ -388,6 +407,9 @@ impl Air for StarkVerifierBatchAir {
         degrees.push(decomp_schedule_degree.clone()); // decomp mask schedule (off)
 
         degrees.push(deg!(1, vec![segment_len])); // gamma binding (z challenge)
+        if extension_degree > 1 {
+            degrees.push(deg!(1, vec![segment_len])); // gamma limb1 binding
+        }
 
         let pos_carry_degree = deg!(1, vec![ROWS_PER_PERMUTATION, segment_len, segment_len]);
         degrees.extend(vec![pos_carry_degree.clone(); RATE_WIDTH]); // carry rate buffer
@@ -436,6 +458,12 @@ impl Air for StarkVerifierBatchAir {
         degrees.push(pos_carry_degree.clone()); // perm acc freeze
         degrees.push(deg!(2, vec![ROWS_PER_PERMUTATION, segment_len])); // perm acc multiply
         degrees.push(deg!(2, boundary_and_full.clone())); // perm acc divide
+        if extension_degree > 1 {
+            degrees.push(deg!(1, vec![segment_len, segment_len])); // perm acc limb1 init
+            degrees.push(pos_carry_degree.clone()); // perm acc limb1 freeze
+            degrees.push(deg!(2, vec![ROWS_PER_PERMUTATION, segment_len])); // perm acc limb1 multiply
+            degrees.push(deg!(2, boundary_and_full.clone())); // perm acc limb1 divide
+        }
 
         // OOD digest + coin save/restore degrees.
         degrees.extend(vec![deg!(1); DIGEST_WIDTH]); // ood digest constant
@@ -444,26 +472,28 @@ impl Air for StarkVerifierBatchAir {
         degrees.extend(vec![deg!(1, vec![full_cycle]); DIGEST_WIDTH]); // capture ood digest
         degrees.extend(vec![boundary_rel_degree.clone(); STATE_WIDTH]); // capture coin at z
         degrees.extend(vec![deg!(1, vec![full_cycle]); STATE_WIDTH]); // restore coin
-        degrees.push(deg!(1)); // ood consistency
 
         // Transcript draw binding degrees.
         degrees.extend(vec![deg!(1, vec![full_cycle]); num_constraint_coeffs]);
         degrees.extend(vec![deg!(1, vec![full_cycle]); num_deep_coeffs]);
-        degrees.extend(vec![deg!(1, vec![full_cycle]); num_fri_layers]);
+        degrees.extend(vec![
+            deg!(1, vec![full_cycle]);
+            num_fri_layers * extension_degree
+        ]);
 
         // DEEP + FRI recursion degrees.
-        degrees.extend(vec![deg!(1); NUM_REMAINDER_COEFFS]);
-        degrees.extend(vec![deg!(1, vec![full_cycle]); NUM_REMAINDER_COEFFS]);
-        degrees.extend(vec![deg!(2, vec![full_cycle]); 4]); // deep accs
+        degrees.extend(vec![deg!(1); remainder_coeffs_total]);
+        degrees.extend(vec![deg!(1, vec![full_cycle]); remainder_coeffs_total]);
+        degrees.extend(vec![deg!(2, vec![full_cycle]); 4 * extension_degree]); // deep accs
         degrees.push(deg!(2, vec![full_cycle, full_cycle])); // x/pow update
         degrees.push(deg!(2, vec![full_cycle / 2])); // pow update
-        degrees.push(deg!(1, vec![full_cycle])); // eval freeze
+        degrees.extend(vec![deg!(1, vec![full_cycle]); extension_degree]); // eval freeze
         degrees.extend(vec![deg!(1, vec![full_cycle]); num_fri_layers]); // msb capture
-        degrees.extend(vec![deg!(2, vec![full_cycle]); num_fri_layers]); // eval selection
-        degrees.push(deg!(3, vec![full_cycle])); // deep composition
-        degrees.extend(vec![deg!(3, vec![full_cycle]); num_fri_layers]); // fri fold
+        degrees.extend(vec![deg!(2, vec![full_cycle]); num_fri_layers * extension_degree]); // eval selection
+        degrees.extend(vec![deg!(3, vec![full_cycle]); extension_degree]); // deep composition
+        degrees.extend(vec![deg!(3, vec![full_cycle]); num_fri_layers * extension_degree]); // fri fold
         if num_fri_layers > 0 {
-            degrees.push(deg!(8, vec![full_cycle])); // remainder eval
+            degrees.extend(vec![deg!(8, vec![full_cycle]); extension_degree]); // remainder eval
         }
 
         debug_assert_eq!(
@@ -517,6 +547,8 @@ impl Air for StarkVerifierBatchAir {
         // public-input-derived constants segment-aware by supplying them as extra periodic values.
         let current = frame.current();
         let next = frame.next();
+        let is_quadratic = self.template.field_extension == FieldExtension::Quadratic;
+        let extension_degree = if is_quadratic { 2 } else { 1 };
 
         // Parse the base periodic layout from `StarkVerifierAir`.
         let half_round_type = periodic_values[0];
@@ -559,7 +591,15 @@ impl Air for StarkVerifierBatchAir {
         let constraint_root_mask = periodic_values[p];
         p += 1;
 
-        let num_fri_layers = self.template.fri_commitments.len().saturating_sub(1);
+        let num_fri_commitments = self.template.fri_commitments.len();
+        let num_fri_layers = num_fri_commitments.saturating_sub(1);
+        let remainder_coeffs_len =
+            (self.template.fri_remainder_max_degree + 1) * extension_degree;
+        let num_remainder_perms = if num_fri_commitments > 0 {
+            remainder_coeffs_len.div_ceil(RATE_WIDTH)
+        } else {
+            0
+        };
         let fri_root_masks = &periodic_values[p..p + num_fri_layers];
         p += num_fri_layers;
         let ood_digest_capture_mask = periodic_values[p];
@@ -595,8 +635,8 @@ impl Air for StarkVerifierBatchAir {
         p += num_fri_layers;
         let fri_leaf_any_row_mask = periodic_values[p];
         p += 1;
-        let remainder_hash_row0_mask = periodic_values[p];
-        p += 1;
+        let remainder_hash_row0_masks = &periodic_values[p..p + num_remainder_perms];
+        p += num_remainder_perms;
 
         // --- Batch-only periodic values ---------------------------------------------------
         let segment_transition_mask = periodic_values[p];
@@ -608,18 +648,39 @@ impl Air for StarkVerifierBatchAir {
         p += DIGEST_WIDTH;
         let fri_commitments_flat = &periodic_values[p..p + num_fri_layers * DIGEST_WIDTH];
         p += num_fri_layers * DIGEST_WIDTH;
-        let expected_z = periodic_values[p];
+        let expected_z0 = periodic_values[p];
         p += 1;
+        let expected_z1 = if is_quadratic {
+            let limb = periodic_values[p];
+            p += 1;
+            limb
+        } else {
+            E::ZERO
+        };
         let inner_constraint_coeffs = &periodic_values[p..p + self.num_constraint_coeffs];
         p += self.num_constraint_coeffs;
         let inner_deep_coeffs = &periodic_values[p..p + self.num_deep_coeffs];
         p += self.num_deep_coeffs;
-        let inner_fri_alphas = &periodic_values[p..p + num_fri_layers];
-        p += num_fri_layers;
-        let inner_ood_constraint_eval_1 = periodic_values[p];
+        let inner_fri_alphas = &periodic_values[p..p + num_fri_layers * extension_degree];
+        p += num_fri_layers * extension_degree;
+        let _inner_ood_constraint_eval_10 = periodic_values[p];
         p += 1;
-        let inner_ood_constraint_eval_2 = periodic_values[p];
+        let _inner_ood_constraint_eval_11 = if is_quadratic {
+            let limb = periodic_values[p];
+            p += 1;
+            limb
+        } else {
+            E::ZERO
+        };
+        let _inner_ood_constraint_eval_20 = periodic_values[p];
         p += 1;
+        let _inner_ood_constraint_eval_21 = if is_quadratic {
+            let limb = periodic_values[p];
+            p += 1;
+            limb
+        } else {
+            E::ZERO
+        };
         let ood_trace_current = &periodic_values[p..p + self.trace_width_ext];
         p += self.trace_width_ext;
         let ood_quotient_current = &periodic_values[p..p + self.constraint_width_ext];
@@ -760,9 +821,14 @@ impl Air for StarkVerifierBatchAir {
         }
         idx += RATE_WIDTH;
 
-        let expected_z_val = current[COL_Z_VALUE];
-        result[idx] = boundary_mask * z_mask * (current[RATE_START] - expected_z_val);
+        let expected_z_val0 = current[COL_Z_VALUE];
+        result[idx] = boundary_mask * z_mask * (current[RATE_START] - expected_z_val0);
         idx += 1;
+        if is_quadratic {
+            let expected_z_val1 = current[COL_Z_VALUE_LIMB1];
+            result[idx] = boundary_mask * z_mask * (current[RATE_START + 1] - expected_z_val1);
+            idx += 1;
+        }
 
         let deep_mask = current[COL_DEEP_MASK];
         for i in 0..RATE_WIDTH {
@@ -772,9 +838,21 @@ impl Air for StarkVerifierBatchAir {
         idx += RATE_WIDTH;
 
         let fri_mask = current[COL_FRI_MASK];
-        let expected_alpha = current[COL_FRI_ALPHA_VALUE];
-        result[idx] = boundary_mask * fri_mask * (current[RATE_START] - expected_alpha);
+        let expected_alpha0 = current[COL_FRI_ALPHA_VALUE];
+        result[idx] = boundary_mask * fri_mask * (current[RATE_START] - expected_alpha0);
         idx += 1;
+        if is_quadratic {
+            let mut expected_alpha1 = E::ZERO;
+            for (layer_idx, mask) in fri_alpha_end_masks.iter().enumerate() {
+                if layer_idx >= num_fri_layers {
+                    break;
+                }
+                let alpha1 = inner_fri_alphas[layer_idx * extension_degree + 1];
+                expected_alpha1 += *mask * alpha1;
+            }
+            result[idx] = boundary_mask * fri_mask * (current[RATE_START + 1] - expected_alpha1);
+            idx += 1;
+        }
 
         let pos_mask = current[COL_POS_MASK];
         for i in 0..RATE_WIDTH {
@@ -878,9 +956,14 @@ impl Air for StarkVerifierBatchAir {
         idx += 1;
 
         // Bind gamma used in multiset equality to the z challenge derived from transcript.
-        let expected_gamma = expected_z;
-        result[idx] = decomp_mask * (current[COL_Z_VALUE] - expected_gamma);
+        let expected_gamma0 = expected_z0;
+        let expected_gamma1 = expected_z1;
+        result[idx] = decomp_mask * (current[COL_Z_VALUE] - expected_gamma0);
         idx += 1;
+        if is_quadratic {
+            result[idx] = decomp_mask * (current[COL_Z_VALUE_LIMB1] - expected_gamma1);
+            idx += 1;
+        }
 
         // (1) Carry the rate buffer (COL_POS_START) from the latest pos-draw into all decomp perms.
         let carry_src = pos_mask + decomp_mask;
@@ -998,26 +1081,50 @@ impl Air for StarkVerifierBatchAir {
         idx += 1;
 
         // (8) Bind transcript-derived query draws to Merkle indexes used for trace-leaf auth.
-        let perm_acc = current[COL_POS_PERM_ACC];
-        let perm_acc_next = next[COL_POS_PERM_ACC];
-        let gamma = expected_gamma;
+        let perm_acc0 = current[COL_POS_PERM_ACC];
+        let perm_acc1 = current[COL_POS_PERM_ACC_LIMB1];
+        let perm_acc_next0 = next[COL_POS_PERM_ACC];
+        let perm_acc_next1 = next[COL_POS_PERM_ACC_LIMB1];
+        let gamma0 = expected_gamma0;
+        let gamma1 = expected_gamma1;
         let trace_idx = current[COL_MERKLE_INDEX];
 
-        result[idx] = decomp_mask * pos_first_decomp_mask * (perm_acc - one);
+        result[idx] = decomp_mask * pos_first_decomp_mask * (perm_acc0 - one);
         idx += 1;
+        if is_quadratic {
+            result[idx] = decomp_mask * pos_first_decomp_mask * perm_acc1;
+            idx += 1;
+        }
 
         let freeze_sel =
             perm_mask + boundary_mask * (one - decomp_mask) * (one - trace_leaf_end_mask);
-        result[idx] = freeze_sel * (perm_acc_next - perm_acc);
+        result[idx] = freeze_sel * (perm_acc_next0 - perm_acc0);
         idx += 1;
+        if is_quadratic {
+            result[idx] = freeze_sel * (perm_acc_next1 - perm_acc1);
+            idx += 1;
+        }
 
-        let decomp_update = perm_acc_next - perm_acc * (draw_val + gamma);
-        result[idx] = boundary_mask * decomp_mask * decomp_update;
+        let (draw_plus_gamma0, draw_plus_gamma1) =
+            ext_add(draw_val, E::ZERO, gamma0, gamma1);
+        let (prod0, prod1) = ext_mul(perm_acc0, perm_acc1, draw_plus_gamma0, draw_plus_gamma1);
+        result[idx] = boundary_mask * decomp_mask * (perm_acc_next0 - prod0);
         idx += 1;
+        if is_quadratic {
+            result[idx] = boundary_mask * decomp_mask * (perm_acc_next1 - prod1);
+            idx += 1;
+        }
 
-        let leaf_update = (trace_idx + gamma) * perm_acc_next - perm_acc;
-        result[idx] = boundary_mask * trace_leaf_end_mask * leaf_update;
+        let (trace_plus_gamma0, trace_plus_gamma1) =
+            ext_add(trace_idx, E::ZERO, gamma0, gamma1);
+        let (leaf_mul0, leaf_mul1) =
+            ext_mul(perm_acc_next0, perm_acc_next1, trace_plus_gamma0, trace_plus_gamma1);
+        result[idx] = boundary_mask * trace_leaf_end_mask * (leaf_mul0 - perm_acc0);
         idx += 1;
+        if is_quadratic {
+            result[idx] = boundary_mask * trace_leaf_end_mask * (leaf_mul1 - perm_acc1);
+            idx += 1;
+        }
 
         // --------------------------------------------------------------------
         // OOD digest + coin-state save/restore
@@ -1088,12 +1195,6 @@ impl Air for StarkVerifierBatchAir {
         idx += STATE_WIDTH;
 
         // --------------------------------------------------------------------
-        // OOD consistency check
-        // --------------------------------------------------------------------
-        result[idx] = inner_ood_constraint_eval_1 - inner_ood_constraint_eval_2;
-        idx += 1;
-
-        // --------------------------------------------------------------------
         // Transcript draw binding
         // --------------------------------------------------------------------
 
@@ -1120,95 +1221,249 @@ impl Air for StarkVerifierBatchAir {
         idx += self.num_deep_coeffs;
 
         // Capture FRI alphas at their draw boundaries.
+        let mut alpha_offset = 0usize;
         for layer_idx in 0..num_fri_layers {
             let mask = fri_alpha_end_masks[layer_idx];
-            let expected = inner_fri_alphas[layer_idx];
-            let drawn = current[RATE_START];
-            result[idx + layer_idx] = mask * (drawn - expected);
+            let expected0 = inner_fri_alphas[layer_idx * extension_degree];
+            let drawn0 = current[RATE_START];
+            result[idx + alpha_offset] = mask * (drawn0 - expected0);
+            alpha_offset += 1;
+            if is_quadratic {
+                let expected1 = inner_fri_alphas[layer_idx * extension_degree + 1];
+                let drawn1 = current[RATE_START + 1];
+                result[idx + alpha_offset] = mask * (drawn1 - expected1);
+                alpha_offset += 1;
+            }
         }
-        idx += num_fri_layers;
+        idx += alpha_offset;
 
         // --------------------------------------------------------------------
         // DEEP + FRI recursion state-machine
         // --------------------------------------------------------------------
 
+        let remainder_blocks = num_remainder_perms;
+
         // Remainder coefficients are constant within a segment.
-        for i in 0..NUM_REMAINDER_COEFFS {
-            result[idx + i] =
-                next[COL_REMAINDER_COEFFS_START + i] - current[COL_REMAINDER_COEFFS_START + i];
+        for block in 0..remainder_blocks {
+            let coeff_start = if block == 0 {
+                COL_REMAINDER_COEFFS_START
+            } else {
+                COL_REMAINDER_COEFFS_EXT_START
+            };
+            for i in 0..NUM_REMAINDER_COEFFS {
+                result[idx + block * NUM_REMAINDER_COEFFS + i] =
+                    next[coeff_start + i] - current[coeff_start + i];
+            }
         }
-        idx += NUM_REMAINDER_COEFFS;
+        idx += remainder_blocks * NUM_REMAINDER_COEFFS;
 
         // Bind remainder coefficients to the remainder commitment hash input rows.
-        for i in 0..NUM_REMAINDER_COEFFS {
-            let coeff = current[COL_REMAINDER_COEFFS_START + i];
-            result[idx + i] = remainder_hash_row0_mask * (current[RATE_START + i] - coeff);
+        for block in 0..remainder_blocks {
+            let coeff_start = if block == 0 {
+                COL_REMAINDER_COEFFS_START
+            } else {
+                COL_REMAINDER_COEFFS_EXT_START
+            };
+            let mask = remainder_hash_row0_masks
+                .get(block)
+                .copied()
+                .unwrap_or(E::ZERO);
+            for i in 0..NUM_REMAINDER_COEFFS {
+                let coeff = current[coeff_start + i];
+                result[idx + block * NUM_REMAINDER_COEFFS + i] =
+                    mask * (current[RATE_START + i] - coeff);
+            }
         }
-        idx += NUM_REMAINDER_COEFFS;
+        idx += remainder_blocks * NUM_REMAINDER_COEFFS;
 
         // --- DEEP numerator accumulators ---
-        let t1 = current[COL_DEEP_T1_ACC];
-        let t2 = current[COL_DEEP_T2_ACC];
-        let c1 = current[COL_DEEP_C1_ACC];
-        let c2 = current[COL_DEEP_C2_ACC];
+        let t1_0 = current[COL_DEEP_T1_ACC];
+        let t1_1 = current[COL_DEEP_T1_ACC_LIMB1];
+        let t2_0 = current[COL_DEEP_T2_ACC];
+        let t2_1 = current[COL_DEEP_T2_ACC_LIMB1];
+        let c1_0 = current[COL_DEEP_C1_ACC];
+        let c1_1 = current[COL_DEEP_C1_ACC_LIMB1];
+        let c2_0 = current[COL_DEEP_C2_ACC];
+        let c2_1 = current[COL_DEEP_C2_ACC_LIMB1];
 
-        let t1_next = next[COL_DEEP_T1_ACC];
-        let t2_next = next[COL_DEEP_T2_ACC];
-        let c1_next = next[COL_DEEP_C1_ACC];
-        let c2_next = next[COL_DEEP_C2_ACC];
+        let t1_next0 = next[COL_DEEP_T1_ACC];
+        let t1_next1 = next[COL_DEEP_T1_ACC_LIMB1];
+        let t2_next0 = next[COL_DEEP_T2_ACC];
+        let t2_next1 = next[COL_DEEP_T2_ACC_LIMB1];
+        let c1_next0 = next[COL_DEEP_C1_ACC];
+        let c1_next1 = next[COL_DEEP_C1_ACC_LIMB1];
+        let c2_next0 = next[COL_DEEP_C2_ACC];
+        let c2_next1 = next[COL_DEEP_C2_ACC_LIMB1];
 
-        let mut t1_delta = E::ZERO;
-        let mut t2_delta = E::ZERO;
-        for (block_idx, start_idx) in self.trace_data_block_starts.iter().enumerate() {
-            let mask = trace_leaf_row_masks[block_idx];
-            let remaining = self.trace_width_ext.saturating_sub(*start_idx);
-            let block_len = remaining.min(RATE_WIDTH);
-            let mut block_t1 = E::ZERO;
-            let mut block_t2 = E::ZERO;
-            for j in 0..block_len {
-                let idx = start_idx + j;
-                let coeff = inner_deep_coeffs[idx];
-                let trace_val = current[RATE_START + j];
-                let ood_z = ood_trace_current[idx];
-                let ood_zg = ood_trace_next[idx];
-                block_t1 += coeff * (trace_val - ood_z);
-                block_t2 += coeff * (trace_val - ood_zg);
+        if is_quadratic {
+            let mut t1_delta0 = E::ZERO;
+            let mut t1_delta1 = E::ZERO;
+            let mut t2_delta0 = E::ZERO;
+            let mut t2_delta1 = E::ZERO;
+            for (block_idx, start_idx) in self.trace_data_block_starts.iter().enumerate() {
+                let mask = trace_leaf_row_masks[block_idx];
+                let remaining = self.trace_width_ext.saturating_sub(*start_idx);
+                let block_len = remaining.min(RATE_WIDTH);
+                debug_assert!(block_len.is_multiple_of(EXTENSION_LIMBS));
+                let mut block_t1_0 = E::ZERO;
+                let mut block_t1_1 = E::ZERO;
+                let mut block_t2_0 = E::ZERO;
+                let mut block_t2_1 = E::ZERO;
+                let mut j = 0usize;
+                while j < block_len {
+                    let idx = start_idx + j;
+                    let coeff0 = inner_deep_coeffs[idx];
+                    let coeff1 = inner_deep_coeffs[idx + 1];
+                    let trace0 = current[RATE_START + j];
+                    let trace1 = current[RATE_START + j + 1];
+                    let ood0 = ood_trace_current[idx];
+                    let ood1 = ood_trace_current[idx + 1];
+                    let oodg0 = ood_trace_next[idx];
+                    let oodg1 = ood_trace_next[idx + 1];
+
+                    let (diff0, diff1) = ext_sub(trace0, trace1, ood0, ood1);
+                    let (term0, term1) = ext_mul(coeff0, coeff1, diff0, diff1);
+                    block_t1_0 += term0;
+                    block_t1_1 += term1;
+
+                    let (diffg0, diffg1) = ext_sub(trace0, trace1, oodg0, oodg1);
+                    let (termg0, termg1) = ext_mul(coeff0, coeff1, diffg0, diffg1);
+                    block_t2_0 += termg0;
+                    block_t2_1 += termg1;
+
+                    j += EXTENSION_LIMBS;
+                }
+                t1_delta0 += mask * block_t1_0;
+                t1_delta1 += mask * block_t1_1;
+                t2_delta0 += mask * block_t2_0;
+                t2_delta1 += mask * block_t2_1;
             }
-            t1_delta += mask * block_t1;
-            t2_delta += mask * block_t2;
-        }
 
-        let mut c1_delta = E::ZERO;
-        let mut c2_delta = E::ZERO;
-        for (block_idx, start_idx) in self.constraint_data_block_starts.iter().enumerate() {
-            let mask = constraint_leaf_row_masks[block_idx];
-            let remaining = self.constraint_width_ext.saturating_sub(*start_idx);
-            let block_len = remaining.min(RATE_WIDTH);
-            let mut block_c1 = E::ZERO;
-            let mut block_c2 = E::ZERO;
-            for j in 0..block_len {
-                let idx = start_idx + j;
-                let coeff = inner_deep_coeffs[self.trace_width_ext + idx];
-                let val = current[RATE_START + j];
-                let ood_z = ood_quotient_current[idx];
-                let ood_zg = ood_quotient_next[idx];
-                block_c1 += coeff * (val - ood_z);
-                block_c2 += coeff * (val - ood_zg);
+            let mut c1_delta0 = E::ZERO;
+            let mut c1_delta1 = E::ZERO;
+            let mut c2_delta0 = E::ZERO;
+            let mut c2_delta1 = E::ZERO;
+            for (block_idx, start_idx) in self.constraint_data_block_starts.iter().enumerate() {
+                let mask = constraint_leaf_row_masks[block_idx];
+                let remaining = self.constraint_width_ext.saturating_sub(*start_idx);
+                let block_len = remaining.min(RATE_WIDTH);
+                debug_assert!(block_len.is_multiple_of(EXTENSION_LIMBS));
+                let mut block_c1_0 = E::ZERO;
+                let mut block_c1_1 = E::ZERO;
+                let mut block_c2_0 = E::ZERO;
+                let mut block_c2_1 = E::ZERO;
+                let mut j = 0usize;
+                while j < block_len {
+                    let idx = start_idx + j;
+                    let coeff0 = inner_deep_coeffs[self.trace_width_ext + idx];
+                    let coeff1 = inner_deep_coeffs[self.trace_width_ext + idx + 1];
+                    let val0 = current[RATE_START + j];
+                    let val1 = current[RATE_START + j + 1];
+                    let ood0 = ood_quotient_current[idx];
+                    let ood1 = ood_quotient_current[idx + 1];
+                    let oodg0 = ood_quotient_next[idx];
+                    let oodg1 = ood_quotient_next[idx + 1];
+
+                    let (diff0, diff1) = ext_sub(val0, val1, ood0, ood1);
+                    let (term0, term1) = ext_mul(coeff0, coeff1, diff0, diff1);
+                    block_c1_0 += term0;
+                    block_c1_1 += term1;
+
+                    let (diffg0, diffg1) = ext_sub(val0, val1, oodg0, oodg1);
+                    let (termg0, termg1) = ext_mul(coeff0, coeff1, diffg0, diffg1);
+                    block_c2_0 += termg0;
+                    block_c2_1 += termg1;
+
+                    j += EXTENSION_LIMBS;
+                }
+                c1_delta0 += mask * block_c1_0;
+                c1_delta1 += mask * block_c1_1;
+                c2_delta0 += mask * block_c2_0;
+                c2_delta1 += mask * block_c2_1;
             }
-            c1_delta += mask * block_c1;
-            c2_delta += mask * block_c2;
+
+            let reset_term_t1_0 = query_reset_mask * (E::ZERO - t1_0);
+            let reset_term_t1_1 = query_reset_mask * (E::ZERO - t1_1);
+            let reset_term_t2_0 = query_reset_mask * (E::ZERO - t2_0);
+            let reset_term_t2_1 = query_reset_mask * (E::ZERO - t2_1);
+            let reset_term_c1_0 = query_reset_mask * (E::ZERO - c1_0);
+            let reset_term_c1_1 = query_reset_mask * (E::ZERO - c1_1);
+            let reset_term_c2_0 = query_reset_mask * (E::ZERO - c2_0);
+            let reset_term_c2_1 = query_reset_mask * (E::ZERO - c2_1);
+
+            result[idx] = t1_next0 - t1_0 - reset_term_t1_0 - t1_delta0;
+            result[idx + 1] = t1_next1 - t1_1 - reset_term_t1_1 - t1_delta1;
+            result[idx + 2] = t2_next0 - t2_0 - reset_term_t2_0 - t2_delta0;
+            result[idx + 3] = t2_next1 - t2_1 - reset_term_t2_1 - t2_delta1;
+            result[idx + 4] = c1_next0 - c1_0 - reset_term_c1_0 - c1_delta0;
+            result[idx + 5] = c1_next1 - c1_1 - reset_term_c1_1 - c1_delta1;
+            result[idx + 6] = c2_next0 - c2_0 - reset_term_c2_0 - c2_delta0;
+            result[idx + 7] = c2_next1 - c2_1 - reset_term_c2_1 - c2_delta1;
+            idx += 8;
+        } else {
+            let t1 = t1_0;
+            let t2 = t2_0;
+            let c1 = c1_0;
+            let c2 = c2_0;
+
+            let t1_next = t1_next0;
+            let t2_next = t2_next0;
+            let c1_next = c1_next0;
+            let c2_next = c2_next0;
+
+            let mut t1_delta = E::ZERO;
+            let mut t2_delta = E::ZERO;
+            for (block_idx, start_idx) in self.trace_data_block_starts.iter().enumerate() {
+                let mask = trace_leaf_row_masks[block_idx];
+                let remaining = self.trace_width_ext.saturating_sub(*start_idx);
+                let block_len = remaining.min(RATE_WIDTH);
+                let mut block_t1 = E::ZERO;
+                let mut block_t2 = E::ZERO;
+                for j in 0..block_len {
+                    let idx = start_idx + j;
+                    let coeff = inner_deep_coeffs[idx];
+                    let trace_val = current[RATE_START + j];
+                    let ood_z = ood_trace_current[idx];
+                    let ood_zg = ood_trace_next[idx];
+                    block_t1 += coeff * (trace_val - ood_z);
+                    block_t2 += coeff * (trace_val - ood_zg);
+                }
+                t1_delta += mask * block_t1;
+                t2_delta += mask * block_t2;
+            }
+
+            let mut c1_delta = E::ZERO;
+            let mut c2_delta = E::ZERO;
+            for (block_idx, start_idx) in self.constraint_data_block_starts.iter().enumerate() {
+                let mask = constraint_leaf_row_masks[block_idx];
+                let remaining = self.constraint_width_ext.saturating_sub(*start_idx);
+                let block_len = remaining.min(RATE_WIDTH);
+                let mut block_c1 = E::ZERO;
+                let mut block_c2 = E::ZERO;
+                for j in 0..block_len {
+                    let idx = start_idx + j;
+                    let coeff = inner_deep_coeffs[self.trace_width_ext + idx];
+                    let val = current[RATE_START + j];
+                    let ood_z = ood_quotient_current[idx];
+                    let ood_zg = ood_quotient_next[idx];
+                    block_c1 += coeff * (val - ood_z);
+                    block_c2 += coeff * (val - ood_zg);
+                }
+                c1_delta += mask * block_c1;
+                c2_delta += mask * block_c2;
+            }
+
+            let reset_term_t1 = query_reset_mask * (E::ZERO - t1);
+            let reset_term_t2 = query_reset_mask * (E::ZERO - t2);
+            let reset_term_c1 = query_reset_mask * (E::ZERO - c1);
+            let reset_term_c2 = query_reset_mask * (E::ZERO - c2);
+
+            result[idx] = t1_next - t1 - reset_term_t1 - t1_delta;
+            result[idx + 1] = t2_next - t2 - reset_term_t2 - t2_delta;
+            result[idx + 2] = c1_next - c1 - reset_term_c1 - c1_delta;
+            result[idx + 3] = c2_next - c2 - reset_term_c2 - c2_delta;
+            idx += 4;
         }
-
-        let reset_term_t1 = query_reset_mask * (E::ZERO - t1);
-        let reset_term_t2 = query_reset_mask * (E::ZERO - t2);
-        let reset_term_c1 = query_reset_mask * (E::ZERO - c1);
-        let reset_term_c2 = query_reset_mask * (E::ZERO - c2);
-
-        result[idx] = t1_next - t1 - reset_term_t1 - t1_delta;
-        result[idx + 1] = t2_next - t2 - reset_term_t2 - t2_delta;
-        result[idx + 2] = c1_next - c1 - reset_term_c1 - c1_delta;
-        result[idx + 3] = c2_next - c2 - reset_term_c2 - c2_delta;
-        idx += 4;
 
         // --- x / pow state machine ---
         let x = current[COL_FRI_X];
@@ -1232,10 +1487,17 @@ impl Air for StarkVerifierBatchAir {
         idx += 2;
 
         // --- evaluation freeze between leaf updates ---
-        let eval = current[COL_FRI_EVAL];
-        let eval_next = next[COL_FRI_EVAL];
-        result[idx] = (one - fri_leaf_any_row_mask - query_reset_mask) * (eval_next - eval);
+        let eval0 = current[COL_FRI_EVAL];
+        let eval1 = current[COL_FRI_EVAL_LIMB1];
+        let eval_next0 = next[COL_FRI_EVAL];
+        let eval_next1 = next[COL_FRI_EVAL_LIMB1];
+        let freeze_mask = one - fri_leaf_any_row_mask - query_reset_mask;
+        result[idx] = freeze_mask * (eval_next0 - eval0);
         idx += 1;
+        if is_quadratic {
+            result[idx] = freeze_mask * (eval_next1 - eval1);
+            idx += 1;
+        }
 
         // --- MSB capture bits ---
         for layer_idx in 0..num_fri_layers {
@@ -1254,58 +1516,121 @@ impl Air for StarkVerifierBatchAir {
         for layer_idx in 0..num_fri_layers {
             let mask = fri_leaf_row_masks[layer_idx];
             let b = current[COL_FRI_MSB_BITS_START + layer_idx];
-            let v0 = current[RATE_START];
-            let v1 = current[RATE_START + 1];
-            let selected = v0 + b * (v1 - v0);
-            result[idx + layer_idx] = mask * (eval - selected);
+            let (v00, v01, v10, v11) = if is_quadratic {
+                (
+                    current[RATE_START],
+                    current[RATE_START + 1],
+                    current[RATE_START + 2],
+                    current[RATE_START + 3],
+                )
+            } else {
+                (current[RATE_START], E::ZERO, current[RATE_START + 1], E::ZERO)
+            };
+            let selected0 = v00 + b * (v10 - v00);
+            let selected1 = v01 + b * (v11 - v01);
+            let base_idx = idx + layer_idx * extension_degree;
+            result[base_idx] = mask * (eval0 - selected0);
+            if is_quadratic {
+                result[base_idx + 1] = mask * (eval1 - selected1);
+            }
         }
-        idx += num_fri_layers;
+        idx += num_fri_layers * extension_degree;
 
         // --- DEEP composition check (layer 0) ---
         if num_fri_layers > 0 {
             let mask = fri_leaf_row_masks[0];
-            let z = expected_z;
-            let z1 = z * E::from(self.g_trace);
-            let x_minus_z0 = x - z;
-            let x_minus_z1 = x - z1;
-            let denom = x_minus_z0 * x_minus_z1;
-            let num = (t1 + c1) * x_minus_z1 + (t2 + c2) * x_minus_z0;
-            result[idx] = mask * (eval * denom - num);
+            let (z0, z1) = (expected_z0, expected_z1);
+            let (z1_0, z1_1) = ext_mul_base(z0, z1, E::from(self.g_trace));
+            let (x0, x1) = (x, E::ZERO);
+            let (x_minus_z0_0, x_minus_z0_1) = ext_sub(x0, x1, z0, z1);
+            let (x_minus_z1_0, x_minus_z1_1) = ext_sub(x0, x1, z1_0, z1_1);
+            let (den0, den1) =
+                ext_mul(x_minus_z0_0, x_minus_z0_1, x_minus_z1_0, x_minus_z1_1);
+            let (t1c1_0, t1c1_1) = ext_add(t1_0, t1_1, c1_0, c1_1);
+            let (t2c2_0, t2c2_1) = ext_add(t2_0, t2_1, c2_0, c2_1);
+            let (term1_0, term1_1) =
+                ext_mul(t1c1_0, t1c1_1, x_minus_z1_0, x_minus_z1_1);
+            let (term2_0, term2_1) =
+                ext_mul(t2c2_0, t2c2_1, x_minus_z0_0, x_minus_z0_1);
+            let (num0, num1) = ext_add(term1_0, term1_1, term2_0, term2_1);
+            let (eval_den0, eval_den1) = ext_mul(eval0, eval1, den0, den1);
+            result[idx] = mask * (eval_den0 - num0);
+            if is_quadratic {
+                result[idx + 1] = mask * (eval_den1 - num1);
+            }
         } else {
             result[idx] = E::ZERO;
+            if is_quadratic {
+                result[idx + 1] = E::ZERO;
+            }
         }
-        idx += 1;
+        idx += extension_degree;
 
         // --- FRI folding checks ---
         for layer_idx in 0..num_fri_layers {
             let mask = fri_leaf_row_masks[layer_idx];
             let b = current[COL_FRI_MSB_BITS_START + layer_idx];
-            let alpha = current[COL_FRI_ALPHA_START + layer_idx];
-            let v0 = current[RATE_START];
-            let v1 = current[RATE_START + 1];
+            let alpha0 = inner_fri_alphas[layer_idx * extension_degree];
+            let alpha1 = if is_quadratic {
+                inner_fri_alphas[layer_idx * extension_degree + 1]
+            } else {
+                E::ZERO
+            };
+            let (v00, v01, v10, v11) = if is_quadratic {
+                (
+                    current[RATE_START],
+                    current[RATE_START + 1],
+                    current[RATE_START + 2],
+                    current[RATE_START + 3],
+                )
+            } else {
+                (current[RATE_START], E::ZERO, current[RATE_START + 1], E::ZERO)
+            };
 
             let sign = one - two * b;
             let x_base = x * sign;
-
-            // 2x * next_eval = (x + α) * f(x) + (x - α) * f(-x)
-            let lhs = two * x_base * eval_next;
-            let rhs = (x_base + alpha) * v0 + (x_base - alpha) * v1;
-            result[idx + layer_idx] = mask * (lhs - rhs);
+            let (x0, x1) = (x_base, E::ZERO);
+            let (x_plus_a0, x_plus_a1) = ext_add(x0, x1, alpha0, alpha1);
+            let (x_minus_a0, x_minus_a1) = ext_sub(x0, x1, alpha0, alpha1);
+            let (rhs1_0, rhs1_1) = ext_mul(x_plus_a0, x_plus_a1, v00, v01);
+            let (rhs2_0, rhs2_1) = ext_mul(x_minus_a0, x_minus_a1, v10, v11);
+            let (rhs0, rhs1) = ext_add(rhs1_0, rhs1_1, rhs2_0, rhs2_1);
+            let (lhs0, lhs1) = ext_mul_base(eval_next0, eval_next1, two * x_base);
+            let base_idx = idx + layer_idx * extension_degree;
+            result[base_idx] = mask * (lhs0 - rhs0);
+            if is_quadratic {
+                result[base_idx + 1] = mask * (lhs1 - rhs1);
+            }
         }
-        idx += num_fri_layers;
+        idx += num_fri_layers * extension_degree;
 
         // --- Remainder evaluation check ---
         if num_fri_layers > 0 {
             let remainder_mask = *fri_root_masks.last().unwrap_or(&E::ZERO);
-            let mut acc = E::ZERO;
-            for i in 0..NUM_REMAINDER_COEFFS {
-                acc = acc * x + current[COL_REMAINDER_COEFFS_START + i];
+            if is_quadratic {
+                let mut acc0 = E::ZERO;
+                let mut acc1 = E::ZERO;
+                for i in 0..NUM_REMAINDER_COEFFS {
+                    let (next0, next1) = ext_mul_base(acc0, acc1, x);
+                    acc0 = next0 + current[COL_REMAINDER_COEFFS_START + i];
+                    acc1 = next1 + current[COL_REMAINDER_COEFFS_EXT_START + i];
+                }
+                result[idx] = remainder_mask * (eval0 - acc0);
+                result[idx + 1] = remainder_mask * (eval1 - acc1);
+            } else {
+                let mut acc = E::ZERO;
+                for i in 0..NUM_REMAINDER_COEFFS {
+                    acc = acc * x + current[COL_REMAINDER_COEFFS_START + i];
+                }
+                result[idx] = remainder_mask * (eval0 - acc);
             }
-            result[idx] = remainder_mask * (eval - acc);
         } else {
             result[idx] = E::ZERO;
+            if is_quadratic {
+                result[idx + 1] = E::ZERO;
+            }
         }
-        idx += 1;
+        idx += extension_degree;
 
         // Disable all transition constraints on segment-boundary rows (the last row of each
         // concatenated segment), matching the transition-exemption semantics of
@@ -1349,14 +1674,16 @@ impl Air for StarkVerifierBatchAir {
         let total_rows = self.trace_length();
         let num_segments = self.num_segments();
         let num_fri_layers = self.template.fri_commitments.len().saturating_sub(1);
+        let extension_degree = field_extension_degree(self.template.field_extension)
+            .expect("unsupported field extension");
         let extra_cols = 1
             + 2 * DIGEST_WIDTH
             + num_fri_layers * DIGEST_WIDTH
-            + 1
+            + extension_degree
             + self.num_constraint_coeffs
             + self.num_deep_coeffs
-            + num_fri_layers
-            + 2
+            + num_fri_layers * extension_degree
+            + 2 * extension_degree
             + 2 * self.trace_width_ext
             + 2 * self.constraint_width_ext;
 
@@ -1387,13 +1714,14 @@ impl Air for StarkVerifierBatchAir {
             vec![vec![BaseElement::ZERO; total_rows]; DIGEST_WIDTH];
         let mut fri_commitment_cols =
             vec![vec![BaseElement::ZERO; total_rows]; num_fri_layers * DIGEST_WIDTH];
-        let mut expected_z_col = vec![BaseElement::ZERO; total_rows];
+        let mut expected_z_cols = vec![vec![BaseElement::ZERO; total_rows]; extension_degree];
         let mut constraint_coeff_cols =
             vec![vec![BaseElement::ZERO; total_rows]; self.num_constraint_coeffs];
         let mut deep_coeff_cols = vec![vec![BaseElement::ZERO; total_rows]; self.num_deep_coeffs];
-        let mut fri_alpha_cols = vec![vec![BaseElement::ZERO; total_rows]; num_fri_layers];
-        let mut ood_eval1_col = vec![BaseElement::ZERO; total_rows];
-        let mut ood_eval2_col = vec![BaseElement::ZERO; total_rows];
+        let mut fri_alpha_cols =
+            vec![vec![BaseElement::ZERO; total_rows]; num_fri_layers * extension_degree];
+        let mut ood_eval1_cols = vec![vec![BaseElement::ZERO; total_rows]; extension_degree];
+        let mut ood_eval2_cols = vec![vec![BaseElement::ZERO; total_rows]; extension_degree];
         let mut ood_trace_current_cols =
             vec![vec![BaseElement::ZERO; total_rows]; self.trace_width_ext];
         let mut ood_quotient_current_cols =
@@ -1405,25 +1733,77 @@ impl Air for StarkVerifierBatchAir {
 
         for (seg_idx, inner) in self.pub_inputs.inner.iter().enumerate() {
             let ood_digest = compute_ood_digest(inner);
-            let (constraint_coeffs, expected_z, deep_coeffs, fri_alphas) =
-                compute_expected_transcript_draws(inner, ood_digest)
-                    .expect("failed to reconstruct inner transcript");
-            let (ood_eval1, ood_eval2) = match inner_proof_kind(inner) {
-                Ok(InnerProofKind::RpoAir) => compute_rpo_ood_consistency(
-                    inner,
-                    &constraint_coeffs,
-                    expected_z,
-                    self.g_trace,
-                )
-                .expect("failed to evaluate RPO constraints at z"),
-                Ok(InnerProofKind::TransactionAir) => compute_transaction_ood_consistency(
-                    inner,
-                    &constraint_coeffs,
-                    expected_z,
-                )
-                .expect("failed to evaluate transaction constraints at z"),
-                Err(err) => panic!("unsupported inner proof kind: {err}"),
+            let (constraint_coeffs, expected_z_flat, deep_coeffs, fri_alphas_flat) =
+                match inner.field_extension {
+                    FieldExtension::None => {
+                        let (coeffs, z, deep, alphas) =
+                            compute_expected_transcript_draws(inner, ood_digest)
+                                .expect("failed to reconstruct inner transcript");
+                        (coeffs, vec![z], deep, alphas)
+                    }
+                    FieldExtension::Quadratic => {
+                        let (coeffs, z_flat, deep, alphas_flat) =
+                            compute_expected_transcript_draws_quadratic(inner, ood_digest)
+                                .expect("failed to reconstruct quadratic transcript");
+                        (coeffs, z_flat, deep, alphas_flat)
+                    }
+                    _ => panic!("unsupported field extension for batch verifier"),
+                };
+            assert_eq!(
+                expected_z_flat.len(),
+                extension_degree,
+                "inner proof {seg_idx} expected z limb count mismatch"
+            );
+            let (ood_eval1_flat, ood_eval2_flat) = match (inner_proof_kind(inner), inner.field_extension) {
+                (Ok(InnerProofKind::RpoAir), FieldExtension::None) => {
+                    let (eval1, eval2) = compute_rpo_ood_consistency(
+                        inner,
+                        &constraint_coeffs,
+                        expected_z_flat[0],
+                        self.g_trace,
+                    )
+                    .expect("failed to evaluate RPO constraints at z");
+                    (vec![eval1], vec![eval2])
+                }
+                (Ok(InnerProofKind::RpoAir), FieldExtension::Quadratic) => {
+                    let expected_z = [expected_z_flat[0], expected_z_flat[1]];
+                    let (eval1, eval2) = compute_rpo_ood_consistency_quadratic(
+                        inner,
+                        &constraint_coeffs,
+                        expected_z,
+                        self.g_trace,
+                    )
+                    .expect("failed to evaluate quadratic RPO constraints at z");
+                    (vec![eval1[0], eval1[1]], vec![eval2[0], eval2[1]])
+                }
+                (Ok(InnerProofKind::TransactionAir), FieldExtension::None) => {
+                    let (eval1, eval2) = compute_transaction_ood_consistency(
+                        inner,
+                        &constraint_coeffs,
+                        expected_z_flat[0],
+                    )
+                    .expect("failed to evaluate transaction constraints at z");
+                    (vec![eval1], vec![eval2])
+                }
+                (Ok(InnerProofKind::TransactionAir), FieldExtension::Quadratic) => {
+                    let expected_z = [expected_z_flat[0], expected_z_flat[1]];
+                    let (eval1, eval2) = compute_transaction_ood_consistency_quadratic(
+                        inner,
+                        &constraint_coeffs,
+                        expected_z,
+                    )
+                    .expect("failed to evaluate quadratic transaction constraints at z");
+                    (vec![eval1[0], eval1[1]], vec![eval2[0], eval2[1]])
+                }
+                (Err(err), _) => panic!("unsupported inner proof kind: {err}"),
+                (_, _) => panic!("unsupported field extension for batch verifier"),
             };
+            if ood_eval1_flat != ood_eval2_flat {
+                panic!(
+                    "inner proof {seg_idx} OOD constraint evaluations mismatch: {:?} vs {:?}",
+                    ood_eval1_flat, ood_eval2_flat
+                );
+            }
 
             let start = seg_idx * self.segment_len;
             let end = start + self.segment_len;
@@ -1441,9 +1821,15 @@ impl Air for StarkVerifierBatchAir {
                 }
             }
 
-            expected_z_col[start..end].fill(expected_z);
-            ood_eval1_col[start..end].fill(ood_eval1);
-            ood_eval2_col[start..end].fill(ood_eval2);
+            for (limb_idx, value) in expected_z_flat.iter().copied().enumerate() {
+                expected_z_cols[limb_idx][start..end].fill(value);
+            }
+            for (limb_idx, value) in ood_eval1_flat.iter().copied().enumerate() {
+                ood_eval1_cols[limb_idx][start..end].fill(value);
+            }
+            for (limb_idx, value) in ood_eval2_flat.iter().copied().enumerate() {
+                ood_eval2_cols[limb_idx][start..end].fill(value);
+            }
 
             let constraint_len =
                 constraint_coeffs.transition.len() + constraint_coeffs.boundary.len();
@@ -1473,7 +1859,12 @@ impl Air for StarkVerifierBatchAir {
             {
                 deep_coeff_cols[i][start..end].fill(*value);
             }
-            for (i, value) in fri_alphas.iter().copied().enumerate() {
+            assert_eq!(
+                fri_alphas_flat.len(),
+                num_fri_layers * extension_degree,
+                "inner proof {seg_idx} fri alpha limb count mismatch"
+            );
+            for (i, value) in fri_alphas_flat.iter().copied().enumerate() {
                 fri_alpha_cols[i][start..end].fill(value);
             }
 
@@ -1500,7 +1891,9 @@ impl Air for StarkVerifierBatchAir {
         for col in fri_commitment_cols {
             result.push(col);
         }
-        result.push(expected_z_col);
+        for col in expected_z_cols {
+            result.push(col);
+        }
         for col in constraint_coeff_cols {
             result.push(col);
         }
@@ -1510,8 +1903,12 @@ impl Air for StarkVerifierBatchAir {
         for col in fri_alpha_cols {
             result.push(col);
         }
-        result.push(ood_eval1_col);
-        result.push(ood_eval2_col);
+        for col in ood_eval1_cols {
+            result.push(col);
+        }
+        for col in ood_eval2_cols {
+            result.push(col);
+        }
         for col in ood_trace_current_cols {
             result.push(col);
         }
@@ -1527,6 +1924,26 @@ impl Air for StarkVerifierBatchAir {
 
         result
     }
+}
+
+fn ext_add<E: FieldElement<BaseField = BaseElement>>(a0: E, a1: E, b0: E, b1: E) -> (E, E) {
+    (a0 + b0, a1 + b1)
+}
+
+fn ext_sub<E: FieldElement<BaseField = BaseElement>>(a0: E, a1: E, b0: E, b1: E) -> (E, E) {
+    (a0 - b0, a1 - b1)
+}
+
+fn ext_mul<E: FieldElement<BaseField = BaseElement>>(a0: E, a1: E, b0: E, b1: E) -> (E, E) {
+    let a0b0 = a0 * b0;
+    let a1b1 = a1 * b1;
+    let out0 = a0b0 - (a1b1 + a1b1);
+    let out1 = (a0 + a1) * (b0 + b1) - a0b0;
+    (out0, out1)
+}
+
+fn ext_mul_base<E: FieldElement<BaseField = BaseElement>>(a0: E, a1: E, base: E) -> (E, E) {
+    (a0 * base, a1 * base)
 }
 
 #[cfg(test)]

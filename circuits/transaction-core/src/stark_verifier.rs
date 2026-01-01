@@ -79,19 +79,6 @@ fn default_acceptable_options() -> winterfell::ProofOptions {
         8,
         0,
         winterfell::FieldExtension::Quadratic,
-        4,
-        31,
-        winterfell::BatchingMethod::Linear,
-        winterfell::BatchingMethod::Linear,
-    )
-}
-
-fn base_field_acceptable_options() -> winterfell::ProofOptions {
-    winterfell::ProofOptions::new(
-        32,
-        8,
-        0,
-        winterfell::FieldExtension::None,
         2,
         31,
         winterfell::BatchingMethod::Linear,
@@ -100,21 +87,7 @@ fn base_field_acceptable_options() -> winterfell::ProofOptions {
 }
 
 fn acceptable_options() -> AcceptableOptions {
-    #[cfg(feature = "stark-fast")]
-    {
-        AcceptableOptions::OptionSet(vec![
-            default_acceptable_options(),
-            base_field_acceptable_options(),
-            fast_acceptable_options(),
-        ])
-    }
-    #[cfg(not(feature = "stark-fast"))]
-    {
-        AcceptableOptions::OptionSet(vec![
-            default_acceptable_options(),
-            base_field_acceptable_options(),
-        ])
-    }
+    AcceptableOptions::OptionSet(vec![default_acceptable_options()])
 }
 
 #[cfg(feature = "stark-fast")]

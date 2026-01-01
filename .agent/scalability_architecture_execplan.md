@@ -32,6 +32,7 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2025-12-31T02:04Z) Update DESIGN.md, METHODS.md, and the README.md whitepaper to match the new architecture (completed: DESIGN.md + METHODS.md security notes + README.md whitepaper alignment).
 - [x] (2025-12-31T18:45Z) Retired legacy block aggregation: `prove_block` now emits `RecursiveBlockProof` by default, added a fast proving helper for dev/tests, updated consensus test scaffolding to accept recursive proofs, and refreshed docs to remove `RecursiveAggregation`.
 - [x] (2025-12-31T19:10Z) Wired Substrate block building to optionally generate recursive block proofs from shielded transfer extrinsics and attach them to mining templates (gated by `HEGEMON_RECURSIVE_BLOCK_PROOFS`).
+- [x] (2026-01-01T06:49Z) Enforced quadratic-only transaction proof options (fold-2) by removing base-field verifier acceptance, updated math notes with fold-2 soundness bounds, and added quadratic transcript-draw scaffolding for recursion.
 - [ ] (2025-12-31T02:04Z) Implement data-availability encoding, storage, sampling, and P2P retrieval.
 - [ ] (2025-12-31T02:04Z) Integrate node, wallet, mempool, and RPC so end-to-end mining works with the new block format.
 - [ ] (2025-12-31T02:04Z) Add benchmarks, tests, and runbooks that prove the system works.
