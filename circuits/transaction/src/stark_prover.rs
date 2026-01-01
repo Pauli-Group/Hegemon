@@ -737,7 +737,7 @@ pub fn proof_options_from_config(
         blowup_factor,
         grinding_factor,
         winterfell::FieldExtension::None,
-        4,
+        2,
         31,
         BatchingMethod::Linear,
         BatchingMethod::Linear,
