@@ -1,19 +1,24 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
+use block_circuit::{prove_block, verify_block};
 use clap::Parser;
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use rand::RngCore;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use serde::Serialize;
+use state_merkle::CommitmentTree;
 use transaction_circuit::{
     constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS},
     hashing::{felts_to_bytes32, merkle_node, Felt, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
-    proof, StablecoinPolicyBinding, TransactionWitness,
+    proof, StablecoinPolicyBinding, TransactionProverStarkRpo, TransactionPublicInputsStark,
+    TransactionProof, TransactionWitness,
 };
+use transaction_circuit::proof::SerializedStarkInputs;
 use winterfell::math::FieldElement;
 
 #[derive(Debug, Parser)]
@@ -22,7 +27,7 @@ struct Cli {
     /// Number of synthetic transactions to benchmark.
     #[arg(long, default_value_t = 32)]
     iterations: usize,
-    /// Run block aggregation and verification after generating transaction proofs.
+    /// Run recursive block proof generation and verification.
     #[arg(long)]
     prove: bool,
     /// Emit structured JSON instead of a human summary.
@@ -45,6 +50,10 @@ struct BenchReport {
     prove_ns: u128,
     verify_ns: u128,
     block_ns: u128,
+    recursive_prove_ns: u128,
+    recursive_verify_ns: u128,
+    recursive_proof_bytes: usize,
+    recursive_tx_count: usize,
     transactions_per_second: f64,
 }
 
@@ -60,11 +69,14 @@ fn main() -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!(
-            "circuits-bench: iterations={iterations} witness_ns={} prove_ns={} verify_ns={} block_ns={} tx/s={:.2}",
+            "circuits-bench: iterations={iterations} witness_ns={} prove_ns={} verify_ns={} block_ns={} recursive_txs={} recursive_bytes={} recursive_verify_ns={} tx/s={:.2}",
             report.witness_ns,
             report.prove_ns,
             report.verify_ns,
             report.block_ns,
+            report.recursive_tx_count,
+            report.recursive_proof_bytes,
+            report.recursive_verify_ns,
             report.transactions_per_second
         );
     }
@@ -101,11 +113,42 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
         proofs.push(proof);
     }
 
-    // Block proving is disabled for now - it needs its own Merkle tree logic
-    // that's compatible with the circuit's expectations
-    let block_ns = 0u128;
+    let mut block_ns = 0u128;
+    let mut recursive_prove_ns = 0u128;
+    let mut recursive_verify_ns = 0u128;
+    let mut recursive_proof_bytes = 0usize;
+    let mut recursive_tx_count = 0usize;
     if prove {
-        eprintln!("Warning: block proving temporarily disabled pending Merkle tree alignment");
+        let (witness, input_commitments) =
+            synthetic_witness_with_commitments(&mut rng, iterations as u64 + 1);
+        let mut tree = CommitmentTree::new(CIRCUIT_MERKLE_DEPTH)
+            .context("init commitment tree for recursion")?;
+        for commitment in &input_commitments {
+            tree.append(*commitment)
+                .context("append commitment for recursion tree")?;
+        }
+        let mut verify_tree = tree.clone();
+
+        let proof = build_rpo_proof(&witness, &proving_key)?;
+        let mut verifying_keys = HashMap::new();
+        verifying_keys.insert(DEFAULT_VERSION_BINDING, verifying_key.clone());
+
+        let proofs = vec![proof];
+        let recursive_start = Instant::now();
+        let block_proof = prove_block(&mut tree, &proofs, &verifying_keys)
+            .context("prove recursive block")?;
+        recursive_prove_ns = recursive_start.elapsed().as_nanos();
+        block_ns = recursive_prove_ns;
+        recursive_proof_bytes = block_proof.recursive_proof.proof_bytes.len();
+        recursive_tx_count = block_proof.transactions.len();
+
+        let verify_start = Instant::now();
+        let report = verify_block(&mut verify_tree, &block_proof, &verifying_keys)
+            .context("verify recursive block")?;
+        if !report.verified {
+            return Err(anyhow!("recursive block proof failed verification"));
+        }
+        recursive_verify_ns = verify_start.elapsed().as_nanos();
     }
 
     let block_duration = Duration::from_nanos(block_ns.min(u64::MAX as u128) as u64);
@@ -123,6 +166,10 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
         prove_ns: prove_time.as_nanos(),
         verify_ns: verify_time.as_nanos(),
         block_ns,
+        recursive_prove_ns,
+        recursive_verify_ns,
+        recursive_proof_bytes,
+        recursive_tx_count,
         transactions_per_second: tx_per_sec,
     })
 }
@@ -258,6 +305,69 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
         version: DEFAULT_VERSION_BINDING,
+    }
+}
+
+fn synthetic_witness_with_commitments(
+    rng: &mut ChaCha20Rng,
+    counter: u64,
+) -> (TransactionWitness, Vec<[u8; 32]>) {
+    let witness = synthetic_witness(rng, counter);
+    let commitments = witness
+        .inputs
+        .iter()
+        .map(|input| felts_to_bytes32(&input.note.commitment()))
+        .collect();
+    (witness, commitments)
+}
+
+fn build_rpo_proof(
+    witness: &TransactionWitness,
+    proving_key: &transaction_circuit::ProvingKey,
+) -> Result<TransactionProof> {
+    let mut proof = proof::prove(witness, proving_key).context("prove transaction")?;
+    let prover = TransactionProverStarkRpo::with_default_options();
+    let trace = prover
+        .build_trace(witness)
+        .context("build RPO trace")?;
+    let stark_pub_inputs = prover.get_pub_inputs(&trace);
+    let proof_bytes = prover
+        .prove(trace)
+        .context("prove RPO transaction")?
+        .to_bytes();
+
+    proof.stark_proof = proof_bytes;
+    proof.stark_public_inputs = Some(serialize_stark_inputs(&stark_pub_inputs));
+    Ok(proof)
+}
+
+fn serialize_stark_inputs(inputs: &TransactionPublicInputsStark) -> SerializedStarkInputs {
+    let input_flags = inputs
+        .input_flags
+        .iter()
+        .map(|f| f.as_int() as u8)
+        .collect();
+    let output_flags = inputs
+        .output_flags
+        .iter()
+        .map(|f| f.as_int() as u8)
+        .collect();
+
+    SerializedStarkInputs {
+        input_flags,
+        output_flags,
+        fee: inputs.fee.as_int(),
+        value_balance_sign: inputs.value_balance_sign.as_int() as u8,
+        value_balance_magnitude: inputs.value_balance_magnitude.as_int(),
+        merkle_root: felts_to_bytes32(&inputs.merkle_root),
+        stablecoin_enabled: inputs.stablecoin_enabled.as_int() as u8,
+        stablecoin_asset_id: inputs.stablecoin_asset.as_int(),
+        stablecoin_policy_version: inputs.stablecoin_policy_version.as_int() as u32,
+        stablecoin_issuance_sign: inputs.stablecoin_issuance_sign.as_int() as u8,
+        stablecoin_issuance_magnitude: inputs.stablecoin_issuance_magnitude.as_int(),
+        stablecoin_policy_hash: felts_to_bytes32(&inputs.stablecoin_policy_hash),
+        stablecoin_oracle_commitment: felts_to_bytes32(&inputs.stablecoin_oracle_commitment),
+        stablecoin_attestation_commitment: felts_to_bytes32(&inputs.stablecoin_attestation_commitment),
     }
 }
 

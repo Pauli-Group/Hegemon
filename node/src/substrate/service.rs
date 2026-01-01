@@ -124,8 +124,8 @@ use crate::substrate::mining_worker::{
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
 use crate::substrate::rpc::{
-    EpochApiServer, EpochRpc, HegemonApiServer, HegemonRpc, ProductionRpcService,
-    ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
+    BlockApiServer, BlockRpc, DaApiServer, DaRpc, EpochApiServer, EpochRpc, HegemonApiServer,
+    HegemonRpc, ProductionRpcService, ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
 };
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
@@ -229,16 +229,17 @@ const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 80;
 const DEFAULT_DA_STORE_CAPACITY: usize = 128;
 const DEFAULT_DA_SAMPLE_TIMEOUT_MS: u64 = 5000;
+const DEFAULT_RECURSIVE_PROOF_STORE_CAPACITY: usize = 128;
 
 #[derive(Debug)]
-struct DaChunkStore {
+pub struct DaChunkStore {
     capacity: usize,
     order: VecDeque<DaRoot>,
     entries: HashMap<DaRoot, DaEncoding>,
 }
 
 impl DaChunkStore {
-    fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize) -> Self {
         Self {
             capacity,
             order: VecDeque::new(),
@@ -246,7 +247,7 @@ impl DaChunkStore {
         }
     }
 
-    fn insert(&mut self, root: DaRoot, encoding: DaEncoding) {
+    pub fn insert(&mut self, root: DaRoot, encoding: DaEncoding) {
         if self.capacity == 0 {
             return;
         }
@@ -268,8 +269,51 @@ impl DaChunkStore {
         self.order.push_back(root);
     }
 
-    fn get(&self, root: &DaRoot) -> Option<&DaEncoding> {
+    pub fn get(&self, root: &DaRoot) -> Option<&DaEncoding> {
         self.entries.get(root)
+    }
+}
+
+#[derive(Debug)]
+pub struct RecursiveBlockProofStore {
+    capacity: usize,
+    order: VecDeque<H256>,
+    entries: HashMap<H256, RecursiveBlockProof>,
+}
+
+impl RecursiveBlockProofStore {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            order: VecDeque::new(),
+            entries: HashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, hash: H256, proof: RecursiveBlockProof) {
+        if self.capacity == 0 {
+            return;
+        }
+
+        if self.entries.contains_key(&hash) {
+            self.entries.insert(hash, proof);
+            self.order.retain(|entry| entry != &hash);
+            self.order.push_back(hash);
+            return;
+        }
+
+        if self.entries.len() >= self.capacity {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+
+        self.entries.insert(hash, proof);
+        self.order.push_back(hash);
+    }
+
+    pub fn get(&self, hash: &H256) -> Option<&RecursiveBlockProof> {
+        self.entries.get(hash)
     }
 }
 
@@ -377,6 +421,19 @@ fn load_da_store_capacity() -> usize {
             DEFAULT_DA_STORE_CAPACITY
         );
         return DEFAULT_DA_STORE_CAPACITY;
+    }
+    capacity
+}
+
+fn load_recursive_proof_store_capacity() -> usize {
+    let capacity = env_usize("HEGEMON_RECURSIVE_PROOF_STORE_CAPACITY")
+        .unwrap_or(DEFAULT_RECURSIVE_PROOF_STORE_CAPACITY);
+    if capacity == 0 {
+        tracing::warn!(
+            "HEGEMON_RECURSIVE_PROOF_STORE_CAPACITY is zero; falling back to {}",
+            DEFAULT_RECURSIVE_PROOF_STORE_CAPACITY
+        );
+        return DEFAULT_RECURSIVE_PROOF_STORE_CAPACITY;
     }
     capacity
 }
@@ -1304,6 +1361,7 @@ use sp_runtime::DigestItem;
 /// * `pow_block_import` - The PowBlockImport wrapper for verified imports
 /// * `client` - The full Substrate client for header construction
 /// * `da_chunk_store` - In-memory DA chunk store for serving proofs
+/// * `recursive_block_proof_store` - In-memory store for recursive block proofs
 /// * `da_params` - DA parameters for encoding chunk data
 ///
 /// # Example
@@ -1315,6 +1373,7 @@ use sp_runtime::DigestItem;
 ///     pow_block_import,
 ///     client.clone(),
 ///     da_chunk_store,
+///     recursive_block_proof_store,
 ///     da_params,
 /// );
 ///
@@ -1334,6 +1393,7 @@ fn wire_pow_block_import(
     _pow_block_import: ConcretePowBlockImport,
     client: Arc<HegemonFullClient>,
     da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
+    recursive_block_proof_store: Arc<ParkingMutex<RecursiveBlockProofStore>>,
     da_params: DaParams,
 ) {
     use codec::Encode;
@@ -1436,9 +1496,27 @@ fn wire_pow_block_import(
         match import_result {
             Ok(ImportResult::Imported(_aux)) => {
                 if let Some(encoding) = da_encoding.take() {
-                    da_chunk_store
-                        .lock()
-                        .insert(encoding.root(), encoding);
+                    let da_root = encoding.root();
+                    let da_chunks = encoding.chunks().len();
+                    da_chunk_store.lock().insert(da_root, encoding);
+                    tracing::info!(
+                        block_number = template.number,
+                        da_root = %hex::encode(da_root),
+                        da_chunks,
+                        "DA encoding stored for imported block"
+                    );
+                }
+                if let Some(proof) = template.recursive_proof.clone() {
+                    let proof_size = proof.proof_bytes.len();
+                    let recursive_proof_hash = proof.recursive_proof_hash;
+                    recursive_block_proof_store.lock().insert(block_hash, proof);
+                    tracing::info!(
+                        block_number = template.number,
+                        block_hash = %hex::encode(block_hash.as_bytes()),
+                        proof_size,
+                        recursive_proof_hash = %hex::encode(recursive_proof_hash),
+                        "Recursive block proof stored for imported block"
+                    );
                 }
                 tracing::info!(
                     block_hash = %hex::encode(block_hash.as_bytes()),
@@ -1449,9 +1527,27 @@ fn wire_pow_block_import(
             }
             Ok(ImportResult::AlreadyInChain) => {
                 if let Some(encoding) = da_encoding.take() {
-                    da_chunk_store
-                        .lock()
-                        .insert(encoding.root(), encoding);
+                    let da_root = encoding.root();
+                    let da_chunks = encoding.chunks().len();
+                    da_chunk_store.lock().insert(da_root, encoding);
+                    tracing::info!(
+                        block_number = template.number,
+                        da_root = %hex::encode(da_root),
+                        da_chunks,
+                        "DA encoding stored for known block"
+                    );
+                }
+                if let Some(proof) = template.recursive_proof.clone() {
+                    let proof_size = proof.proof_bytes.len();
+                    let recursive_proof_hash = proof.recursive_proof_hash;
+                    recursive_block_proof_store.lock().insert(block_hash, proof);
+                    tracing::info!(
+                        block_number = template.number,
+                        block_hash = %hex::encode(block_hash.as_bytes()),
+                        proof_size,
+                        recursive_proof_hash = %hex::encode(recursive_proof_hash),
+                        "Recursive block proof stored for known block"
+                    );
                 }
                 tracing::warn!(
                     block_hash = %hex::encode(block_hash.as_bytes()),
@@ -2308,10 +2404,16 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let da_params = load_da_params(&chain_properties);
     let da_store_capacity = load_da_store_capacity();
     let da_sample_timeout = load_da_sample_timeout();
+    let recursive_block_proof_store_capacity = load_recursive_proof_store_capacity();
     let da_chunk_store: Arc<ParkingMutex<DaChunkStore>> =
         Arc::new(ParkingMutex::new(DaChunkStore::new(da_store_capacity)));
     let da_request_tracker: Arc<ParkingMutex<DaRequestTracker>> =
         Arc::new(ParkingMutex::new(DaRequestTracker::default()));
+    let recursive_block_proof_store: Arc<ParkingMutex<RecursiveBlockProofStore>> = Arc::new(
+        ParkingMutex::new(RecursiveBlockProofStore::new(
+            recursive_block_proof_store_capacity,
+        )),
+    );
 
     tracing::info!(
         da_chunk_size = da_params.chunk_size,
@@ -2319,6 +2421,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         da_store_capacity,
         da_sample_timeout_ms = da_sample_timeout.as_millis() as u64,
         "DA sampling configured"
+    );
+
+    tracing::info!(
+        recursive_block_proof_store_capacity,
+        "Recursive block proof store configured"
     );
 
     // =========================================================================
@@ -4310,6 +4417,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             pow_block_import,
             client.clone(),
             Arc::clone(&da_chunk_store),
+            Arc::clone(&recursive_block_proof_store),
             da_params,
         );
 
@@ -4465,6 +4573,9 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                             "author_submitAndWatchExtrinsic",
                             "author_submitExtrinsic",
                             "author_unwatchExtrinsic",
+                            "block_getRecursiveProof",
+                            "da_getChunk",
+                            "da_getParams",
                             "rpc_methods"
                         ]
                     }));
@@ -4676,6 +4787,22 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             tracing::warn!(error = %e, "Failed to merge Epoch RPC");
         } else {
             tracing::info!("Epoch RPC wired (epoch_getRecursiveProof, etc.)");
+        }
+
+        // Add Block RPC (recursive block proofs)
+        let block_rpc = BlockRpc::new(Arc::clone(&recursive_block_proof_store));
+        if let Err(e) = module.merge(block_rpc.into_rpc()) {
+            tracing::warn!(error = %e, "Failed to merge Block RPC");
+        } else {
+            tracing::info!("Block RPC wired (block_getRecursiveProof)");
+        }
+
+        // Add DA RPC (chunk retrieval + params)
+        let da_rpc = DaRpc::new(Arc::clone(&da_chunk_store), da_params);
+        if let Err(e) = module.merge(da_rpc.into_rpc()) {
+            tracing::warn!(error = %e, "Failed to merge DA RPC");
+        } else {
+            tracing::info!("DA RPC wired (da_getChunk, da_getParams)");
         }
 
         module
