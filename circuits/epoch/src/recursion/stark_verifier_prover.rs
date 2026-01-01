@@ -4,7 +4,7 @@
 //! verify the inner proof’s Merkle openings, DEEP composition, and FRI folding
 //! checks inside the AIR.
 
-use winter_air::{FieldExtension, ProofOptions};
+use winter_air::{DeepCompositionCoefficients, FieldExtension, ProofOptions};
 use winter_crypto::{hashers::Blake3_256, MerkleTree};
 use winter_math::{FieldElement, StarkField};
 #[cfg(test)]
@@ -103,17 +103,25 @@ impl StarkVerifierProver {
         let dummy_remainder = vec![BaseElement::ZERO; 8];
         let remainder_commitment = rpo_hash_elements(&dummy_remainder);
 
+        let fri_options = options.to_fri_options();
         let pub_inputs = StarkVerifierPublicInputs::new(
             inner_public_inputs.clone(),
             digest,
             trace_root,
             constraint_root,
+            vec![BaseElement::ZERO; RPO_TRACE_WIDTH],
+            vec![BaseElement::ZERO; 8],
+            vec![BaseElement::ZERO; RPO_TRACE_WIDTH],
+            vec![BaseElement::ZERO; 8],
             vec![fri_root0, remainder_commitment],
             options.num_queries(),
             options.num_queries(),
             RPO_TRACE_WIDTH,
             8,
             blowup_factor,
+            fri_options.folding_factor(),
+            fri_options.remainder_max_degree(),
+            options.grinding_factor() as usize,
             trace_length,
             RPO_TRACE_WIDTH,
             8,
@@ -181,22 +189,23 @@ impl StarkVerifierProver {
         } else {
             lde_domain_size.trailing_zeros() as usize
         };
-        let trace_leaf_perms = leaf_perm_count(
-            self.pub_inputs.trace_width,
-            self.pub_inputs.trace_partition_size,
-        );
-        let constraint_leaf_perms = leaf_perm_count(
-            self.pub_inputs.constraint_frame_width,
-            self.pub_inputs.constraint_partition_size,
-        );
-        let trace_leaf_chains = leaf_chain_count(
-            self.pub_inputs.trace_width,
-            self.pub_inputs.trace_partition_size,
-        );
-        let constraint_leaf_chains = leaf_chain_count(
-            self.pub_inputs.constraint_frame_width,
-            self.pub_inputs.constraint_partition_size,
-        );
+        let extension_degree = match self.pub_inputs.field_extension {
+            FieldExtension::None => 1,
+            FieldExtension::Quadratic => 2,
+            FieldExtension::Cubic => 3,
+        };
+        let trace_leaf_len = self.pub_inputs.trace_width * extension_degree;
+        let constraint_leaf_len = self.pub_inputs.constraint_frame_width * extension_degree;
+        let constraint_partition_size_base =
+            self.pub_inputs.constraint_partition_size * extension_degree;
+        let trace_leaf_perms =
+            leaf_perm_count(trace_leaf_len, self.pub_inputs.trace_partition_size);
+        let constraint_leaf_perms =
+            leaf_perm_count(constraint_leaf_len, constraint_partition_size_base);
+        let trace_leaf_chains =
+            leaf_chain_count(trace_leaf_len, self.pub_inputs.trace_partition_size);
+        let constraint_leaf_chains =
+            leaf_chain_count(constraint_leaf_len, constraint_partition_size_base);
         let fri_leaf_perms = 1usize;
         let mut merkle_perms_per_query =
             trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
@@ -1035,7 +1044,7 @@ impl StarkVerifierProver {
                 &mut trace,
                 &mut perm_idx,
                 &dummy_constraint_row,
-                self.pub_inputs.constraint_partition_size,
+                constraint_partition_size_base,
                 perm_acc_val,
                 trace_index,
                 replay_state.as_mut(),
@@ -1174,6 +1183,12 @@ impl StarkVerifierProver {
         // Populate DEEP/FRI recursion state columns (TraceTable::new() leaves memory uninitialized).
         let deep_evals = vec![BaseElement::ZERO; self.pub_inputs.num_queries];
         let remainder_coeffs = [BaseElement::ZERO; NUM_REMAINDER_COEFFS];
+        let ood_trace = vec![BaseElement::ZERO; self.pub_inputs.trace_width];
+        let ood_quotient = vec![BaseElement::ZERO; self.pub_inputs.constraint_frame_width];
+        let deep_coeffs = DeepCompositionCoefficients {
+            trace: vec![BaseElement::ZERO; self.pub_inputs.trace_width],
+            constraints: vec![BaseElement::ZERO; self.pub_inputs.constraint_frame_width],
+        };
         self.populate_deep_fri_state(
             &mut trace,
             pre_merkle_perms,
@@ -1183,6 +1198,11 @@ impl StarkVerifierProver {
             num_fri_layers,
             &deep_evals,
             &remainder_coeffs,
+            &ood_trace,
+            &ood_trace,
+            &ood_quotient,
+            &ood_quotient,
+            &deep_coeffs,
         );
 
         trace
@@ -1244,22 +1264,23 @@ impl StarkVerifierProver {
         } else {
             lde_domain_size.trailing_zeros() as usize
         };
-        let trace_leaf_perms = leaf_perm_count(
-            self.pub_inputs.trace_width,
-            self.pub_inputs.trace_partition_size,
-        );
-        let constraint_leaf_perms = leaf_perm_count(
-            self.pub_inputs.constraint_frame_width,
-            self.pub_inputs.constraint_partition_size,
-        );
-        let trace_leaf_chains = leaf_chain_count(
-            self.pub_inputs.trace_width,
-            self.pub_inputs.trace_partition_size,
-        );
-        let constraint_leaf_chains = leaf_chain_count(
-            self.pub_inputs.constraint_frame_width,
-            self.pub_inputs.constraint_partition_size,
-        );
+        let extension_degree = match self.pub_inputs.field_extension {
+            FieldExtension::None => 1,
+            FieldExtension::Quadratic => 2,
+            FieldExtension::Cubic => 3,
+        };
+        let trace_leaf_len = self.pub_inputs.trace_width * extension_degree;
+        let constraint_leaf_len = self.pub_inputs.constraint_frame_width * extension_degree;
+        let constraint_partition_size_base =
+            self.pub_inputs.constraint_partition_size * extension_degree;
+        let trace_leaf_perms =
+            leaf_perm_count(trace_leaf_len, self.pub_inputs.trace_partition_size);
+        let constraint_leaf_perms =
+            leaf_perm_count(constraint_leaf_len, constraint_partition_size_base);
+        let trace_leaf_chains =
+            leaf_chain_count(trace_leaf_len, self.pub_inputs.trace_partition_size);
+        let constraint_leaf_chains =
+            leaf_chain_count(constraint_leaf_len, constraint_partition_size_base);
         let fri_leaf_perms = 1usize; // 2‑element FRI leaves
         let mut merkle_perms_per_query =
             trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
@@ -2128,7 +2149,7 @@ impl StarkVerifierProver {
                 &mut trace,
                 &mut perm_idx,
                 constraint_row,
-                self.pub_inputs.constraint_partition_size,
+                constraint_partition_size_base,
                 perm_acc_val,
                 constraint_index,
                 replay_state.as_mut(),
@@ -2316,6 +2337,11 @@ impl StarkVerifierProver {
                 num_fri_layers,
                 &deep_evals,
                 &inner.fri_remainder,
+                &inner.ood_trace_current,
+                &inner.ood_trace_next,
+                &inner.ood_quotient_current,
+                &inner.ood_quotient_next,
+                &inner.deep_coeffs,
             );
         } else {
             for row in 0..trace.length() {
@@ -2350,20 +2376,30 @@ impl StarkVerifierProver {
         num_fri_layers: usize,
         deep_evals: &[BaseElement],
         remainder_coeffs: &[BaseElement],
+        ood_trace_current: &[BaseElement],
+        ood_trace_next: &[BaseElement],
+        ood_quotient_current: &[BaseElement],
+        ood_quotient_next: &[BaseElement],
+        deep_coeffs: &DeepCompositionCoefficients<BaseElement>,
     ) {
         const RATE_START_COL: usize = 4;
 
         let total_rows = trace.length();
         let num_queries = self.pub_inputs.num_queries;
         debug_assert_eq!(deep_evals.len(), num_queries, "unexpected deep eval count");
-        let trace_leaf_chain = leaf_chain_flags(
-            self.pub_inputs.trace_width,
-            self.pub_inputs.trace_partition_size,
-        );
-        let constraint_leaf_chain = leaf_chain_flags(
-            self.pub_inputs.constraint_frame_width,
-            self.pub_inputs.constraint_partition_size,
-        );
+        let extension_degree = match self.pub_inputs.field_extension {
+            FieldExtension::None => 1,
+            FieldExtension::Quadratic => 2,
+            FieldExtension::Cubic => 3,
+        };
+        let trace_leaf_len = ood_trace_current.len();
+        let constraint_leaf_len = ood_quotient_current.len();
+        let constraint_partition_size_base =
+            self.pub_inputs.constraint_partition_size * extension_degree;
+        let trace_leaf_chain =
+            leaf_chain_flags(trace_leaf_len, self.pub_inputs.trace_partition_size);
+        let constraint_leaf_chain =
+            leaf_chain_flags(constraint_leaf_len, constraint_partition_size_base);
         debug_assert_eq!(
             trace_leaf_chain.len(),
             trace_leaf_perms,
@@ -2373,6 +2409,74 @@ impl StarkVerifierProver {
             constraint_leaf_chain.len(),
             constraint_leaf_perms,
             "constraint leaf chain length mismatch"
+        );
+        debug_assert_eq!(
+            deep_coeffs.trace.len(),
+            ood_trace_current.len(),
+            "trace coeff length mismatch"
+        );
+        debug_assert_eq!(
+            deep_coeffs.constraints.len(),
+            ood_quotient_current.len(),
+            "constraint coeff length mismatch"
+        );
+
+        let build_data_perm_map = |len: usize, partition_size: usize| {
+            let hash_perms = |input_len: usize| input_len.div_ceil(RATE_WIDTH).max(1);
+            if len == 0 {
+                return (Vec::new(), Vec::new());
+            }
+
+            let mut data_perm_map = Vec::new();
+            let mut data_perm_starts = Vec::new();
+            let mut remaining = len;
+            let mut offset = 0usize;
+            let mut data_idx = 0usize;
+
+            if partition_size >= len {
+                let perms = hash_perms(len);
+                for perm in 0..perms {
+                    data_perm_map.push(Some(data_idx));
+                    data_perm_starts.push(offset + perm * RATE_WIDTH);
+                    data_idx += 1;
+                }
+                return (data_perm_map, data_perm_starts);
+            }
+
+            while remaining > 0 {
+                let part_len = remaining.min(partition_size);
+                let perms = hash_perms(part_len);
+                for perm in 0..perms {
+                    data_perm_map.push(Some(data_idx));
+                    data_perm_starts.push(offset + perm * RATE_WIDTH);
+                    data_idx += 1;
+                }
+                remaining -= part_len;
+                offset += part_len;
+            }
+
+            let num_partitions = len.div_ceil(partition_size);
+            let merged_len = num_partitions * DIGEST_WIDTH;
+            let merged_perms = hash_perms(merged_len);
+            for _ in 0..merged_perms {
+                data_perm_map.push(None);
+            }
+            (data_perm_map, data_perm_starts)
+        };
+
+        let (trace_data_perm_map, trace_data_starts) =
+            build_data_perm_map(trace_leaf_len, self.pub_inputs.trace_partition_size);
+        let (constraint_data_perm_map, constraint_data_starts) =
+            build_data_perm_map(constraint_leaf_len, constraint_partition_size_base);
+        debug_assert_eq!(
+            trace_data_perm_map.len(),
+            trace_leaf_perms,
+            "trace data perm map length mismatch"
+        );
+        debug_assert_eq!(
+            constraint_data_perm_map.len(),
+            constraint_leaf_perms,
+            "constraint data perm map length mismatch"
         );
 
         // Fill remainder coefficients (constant across the entire verifier trace).
@@ -2393,9 +2497,8 @@ impl StarkVerifierProver {
         #[derive(Clone, Copy, Debug)]
         enum Event {
             QueryReset { query_idx: usize },
-            TraceLeaf0,
-            TraceLeaf1,
-            ConstraintLeaf,
+            TraceLeaf { start_idx: usize, block_len: usize },
+            ConstraintLeaf { start_idx: usize, block_len: usize },
             TraceMerkleBit { bit_idx: usize },
             FriLeaf { layer_idx: usize },
         }
@@ -2429,14 +2532,14 @@ impl StarkVerifierProver {
                 let boundary = row0 + ROWS_PER_PERMUTATION - 1;
 
                 if row0 < total_rows {
-                    let ev = match rel_perm {
-                        0 => Some(Event::TraceLeaf0),
-                        1 => Some(Event::TraceLeaf1),
-                        _ => None,
-                    };
-                    if let Some(ev) = ev {
+                    if let Some(data_idx) = trace_data_perm_map[rel_perm] {
+                        let start_idx = trace_data_starts[data_idx];
+                        let block_len = trace_leaf_len.saturating_sub(start_idx).min(RATE_WIDTH);
                         debug_assert!(events[row0].is_none(), "duplicate event at row {}", row0);
-                        events[row0] = Some(ev);
+                        events[row0] = Some(Event::TraceLeaf {
+                            start_idx,
+                            block_len,
+                        });
                     }
                 }
 
@@ -2475,9 +2578,17 @@ impl StarkVerifierProver {
                     perm_idx += 1; // paired deep replay draw perm
                 }
                 let row0 = perm_idx * ROWS_PER_PERMUTATION;
-                if rel_perm == 0 && row0 < total_rows {
-                    debug_assert!(events[row0].is_none(), "duplicate event at row {}", row0);
-                    events[row0] = Some(Event::ConstraintLeaf);
+                if row0 < total_rows {
+                    if let Some(data_idx) = constraint_data_perm_map[rel_perm] {
+                        let start_idx = constraint_data_starts[data_idx];
+                        let block_len =
+                            constraint_leaf_len.saturating_sub(start_idx).min(RATE_WIDTH);
+                        debug_assert!(events[row0].is_none(), "duplicate event at row {}", row0);
+                        events[row0] = Some(Event::ConstraintLeaf {
+                            start_idx,
+                            block_len,
+                        });
+                    }
                 }
                 perm_idx += 1;
                 rel_perm += 1;
@@ -2570,49 +2681,30 @@ impl StarkVerifierProver {
                             *b = BaseElement::ZERO;
                         }
                     }
-                    Event::TraceLeaf0 => {
+                    Event::TraceLeaf { start_idx, block_len } => {
                         let mut t1_delta = BaseElement::ZERO;
                         let mut t2_delta = BaseElement::ZERO;
-                        for j in 0..RATE_WIDTH {
-                            let coeff = trace.get(COL_DEEP_COEFFS_START + j, row);
+                        for j in 0..block_len {
+                            let idx = start_idx + j;
+                            let coeff = deep_coeffs.trace[idx];
                             let trace_val = trace.get(RATE_START_COL + j, row);
-                            let ood_z = trace.get(COL_OOD_EVALS_START + j, row);
-                            let ood_zg =
-                                trace.get(COL_OOD_EVALS_START + (RPO_TRACE_WIDTH + 8) + j, row);
+                            let ood_z = ood_trace_current[idx];
+                            let ood_zg = ood_trace_next[idx];
                             t1_delta += coeff * (trace_val - ood_z);
                             t2_delta += coeff * (trace_val - ood_zg);
                         }
                         next.t1 += t1_delta;
                         next.t2 += t2_delta;
                     }
-                    Event::TraceLeaf1 => {
-                        let mut t1_delta = BaseElement::ZERO;
-                        let mut t2_delta = BaseElement::ZERO;
-                        for j in 0..(RPO_TRACE_WIDTH - RATE_WIDTH) {
-                            let coeff = trace.get(COL_DEEP_COEFFS_START + RATE_WIDTH + j, row);
-                            let trace_val = trace.get(RATE_START_COL + j, row);
-                            let ood_z = trace.get(COL_OOD_EVALS_START + RATE_WIDTH + j, row);
-                            let ood_zg = trace.get(
-                                COL_OOD_EVALS_START + (RPO_TRACE_WIDTH + 8) + RATE_WIDTH + j,
-                                row,
-                            );
-                            t1_delta += coeff * (trace_val - ood_z);
-                            t2_delta += coeff * (trace_val - ood_zg);
-                        }
-                        next.t1 += t1_delta;
-                        next.t2 += t2_delta;
-                    }
-                    Event::ConstraintLeaf => {
+                    Event::ConstraintLeaf { start_idx, block_len } => {
                         let mut c1_delta = BaseElement::ZERO;
                         let mut c2_delta = BaseElement::ZERO;
-                        for j in 0..8usize {
-                            let coeff = trace.get(COL_DEEP_COEFFS_START + RPO_TRACE_WIDTH + j, row);
+                        for j in 0..block_len {
+                            let idx = start_idx + j;
+                            let coeff = deep_coeffs.constraints[idx];
                             let val = trace.get(RATE_START_COL + j, row);
-                            let ood_z = trace.get(COL_OOD_EVALS_START + RPO_TRACE_WIDTH + j, row);
-                            let ood_zg = trace.get(
-                                COL_OOD_EVALS_START + (RPO_TRACE_WIDTH + 8) + RPO_TRACE_WIDTH + j,
-                                row,
-                            );
+                            let ood_z = ood_quotient_current[idx];
+                            let ood_zg = ood_quotient_next[idx];
                             c1_delta += coeff * (val - ood_z);
                             c2_delta += coeff * (val - ood_zg);
                         }
@@ -3321,6 +3413,25 @@ mod tests {
         let mut result = vec![BaseElement::ZERO; air.context().num_transition_constraints()];
         air.evaluate_transition(&frame, &periodic_values_row, &mut result);
         result
+    }
+
+    fn leaf_data_block_count(leaf_len: usize, partition_size: usize) -> usize {
+        let hash_perms = |input_len: usize| input_len.div_ceil(RATE_WIDTH).max(1);
+        if leaf_len == 0 {
+            return 0;
+        }
+        if partition_size >= leaf_len {
+            return hash_perms(leaf_len);
+        }
+
+        let mut remaining = leaf_len;
+        let mut count = 0usize;
+        while remaining > 0 {
+            let part_len = remaining.min(partition_size);
+            count += hash_perms(part_len);
+            remaining -= part_len;
+        }
+        count
     }
 
     type RpoMerkleTree = MerkleTree<Rpo256>;
@@ -4212,8 +4323,24 @@ mod tests {
         assert!(num_fri_layers > 0, "expected at least one FRI layer");
 
         // Locate the first FRI leaf row for layer 0.
-        let appended_start = periodic.len() - (7 + 2 * num_fri_layers);
-        let fri_leaf_row_mask_0 = &periodic[appended_start + 5 + num_fri_layers];
+        let extension_degree = match pub_inputs.field_extension {
+            FieldExtension::None => 1,
+            FieldExtension::Quadratic => 2,
+            FieldExtension::Cubic => 3,
+        };
+        let trace_leaf_len = pub_inputs.trace_width * extension_degree;
+        let constraint_leaf_len = pub_inputs.constraint_frame_width * extension_degree;
+        let constraint_partition_size_base =
+            pub_inputs.constraint_partition_size * extension_degree;
+        let trace_data_blocks =
+            leaf_data_block_count(trace_leaf_len, pub_inputs.trace_partition_size);
+        let constraint_data_blocks =
+            leaf_data_block_count(constraint_leaf_len, constraint_partition_size_base);
+        let appended_len = trace_data_blocks + constraint_data_blocks + 4 + 2 * num_fri_layers;
+        let appended_start = periodic.len() - appended_len;
+        let fri_leaf_row_mask_0_idx =
+            appended_start + 2 + trace_data_blocks + constraint_data_blocks + num_fri_layers;
+        let fri_leaf_row_mask_0 = &periodic[fri_leaf_row_mask_0_idx];
         let row = fri_leaf_row_mask_0
             .iter()
             .position(|v| *v == BaseElement::ONE)
@@ -4278,9 +4405,28 @@ mod tests {
         // Find the last FRI leaf row (layer = num_fri_layers - 1) and shift eval after the leaf
         // permutation ends. This avoids triggering eval-freeze constraints, but should break the
         // remainder evaluation check at `remainder_row`.
-        let appended_start = periodic.len() - (7 + 2 * num_fri_layers);
-        let fri_leaf_row_mask_last =
-            &periodic[appended_start + 5 + num_fri_layers + (num_fri_layers - 1)];
+        let extension_degree = match pub_inputs.field_extension {
+            FieldExtension::None => 1,
+            FieldExtension::Quadratic => 2,
+            FieldExtension::Cubic => 3,
+        };
+        let trace_leaf_len = pub_inputs.trace_width * extension_degree;
+        let constraint_leaf_len = pub_inputs.constraint_frame_width * extension_degree;
+        let constraint_partition_size_base =
+            pub_inputs.constraint_partition_size * extension_degree;
+        let trace_data_blocks =
+            leaf_data_block_count(trace_leaf_len, pub_inputs.trace_partition_size);
+        let constraint_data_blocks =
+            leaf_data_block_count(constraint_leaf_len, constraint_partition_size_base);
+        let appended_len = trace_data_blocks + constraint_data_blocks + 4 + 2 * num_fri_layers;
+        let appended_start = periodic.len() - appended_len;
+        let fri_leaf_row_mask_last_idx = appended_start
+            + 2
+            + trace_data_blocks
+            + constraint_data_blocks
+            + num_fri_layers
+            + (num_fri_layers - 1);
+        let fri_leaf_row_mask_last = &periodic[fri_leaf_row_mask_last_idx];
         let leaf_row0 = fri_leaf_row_mask_last
             .iter()
             .position(|v| *v == BaseElement::ONE)
