@@ -13,7 +13,6 @@ use transaction_circuit::{
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
     proof::{SerializedStarkInputs, TransactionProof},
     rpo_prover::TransactionProverStarkRpo,
-    stark_prover::proof_options_from_config,
     StablecoinPolicyBinding, TransactionWitness,
     trace::TransactionTrace,
 };
@@ -125,12 +124,30 @@ fn make_valid_witness(seed: u64) -> (TransactionWitness, Vec<HashFelt>) {
 fn rpo_prover() -> TransactionProverStarkRpo {
     #[cfg(feature = "stark-fast")]
     {
-        let options = proof_options_from_config(8, 8, 0);
+        let options = winterfell::ProofOptions::new(
+            8,
+            8,
+            0,
+            winterfell::FieldExtension::None,
+            2,
+            7,
+            winterfell::BatchingMethod::Linear,
+            winterfell::BatchingMethod::Linear,
+        );
         TransactionProverStarkRpo::new(options)
     }
     #[cfg(not(feature = "stark-fast"))]
     {
-        let options = proof_options_from_config(32, 8, 0);
+        let options = winterfell::ProofOptions::new(
+            32,
+            8,
+            0,
+            winterfell::FieldExtension::None,
+            2,
+            7,
+            winterfell::BatchingMethod::Linear,
+            winterfell::BatchingMethod::Linear,
+        );
         TransactionProverStarkRpo::new(options)
     }
 }

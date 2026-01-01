@@ -640,18 +640,19 @@ mod serde_bytes32 {
 mod tests {
     use super::*;
     use transaction_circuit::keys::generate_keys;
-    use transaction_circuit::note::{InputNoteWitness, OutputNoteWitness, NoteData};
+    use transaction_circuit::note::{
+        InputNoteWitness, OutputNoteWitness, NoteData, MerklePath, MERKLE_TREE_DEPTH,
+    };
     use transaction_circuit::proof::prove;
     use transaction_circuit::rpo_prover::TransactionProverStarkRpo;
-    use transaction_circuit::stark_prover::proof_options_from_config;
     use transaction_circuit::witness::TransactionWitness;
-    use transaction_circuit::hashing::felts_to_bytes32;
+    use transaction_circuit::hashing::{bytes32_to_felts, felts_to_bytes32};
     use transaction_circuit::constants::NATIVE_ASSET_ID;
     use transaction_circuit::public_inputs::StablecoinPolicyBinding;
     use transaction_circuit::proof::SerializedStarkInputs;
-    use winterfell::Prover;
+    use winterfell::{BatchingMethod, ProofOptions, Prover};
 
-    fn sample_witness() -> TransactionWitness {
+    fn sample_witness() -> (TransactionWitness, CommitmentTree) {
         let input_note = NoteData {
             value: 5,
             asset_id: NATIVE_ASSET_ID,
@@ -668,13 +669,24 @@ mod tests {
                 r: [11u8; 32],
             },
         };
-        let merkle_root = felts_to_bytes32(&input_note.commitment());
-        TransactionWitness {
+        let mut tree = CommitmentTree::new(MERKLE_TREE_DEPTH).expect("tree");
+        let commitment = felts_to_bytes32(&input_note.commitment());
+        let (index, _root) = tree.append(commitment).expect("append");
+        let merkle_root = tree.root();
+        let siblings = tree
+            .authentication_path(index)
+            .expect("path")
+            .into_iter()
+            .map(|bytes| bytes32_to_felts(&bytes).expect("path felts"))
+            .collect();
+        let merkle_path = MerklePath { siblings };
+
+        let witness = TransactionWitness {
             inputs: vec![InputNoteWitness {
                 note: input_note,
-                position: 0,
+                position: index as u64,
                 rho_seed: [7u8; 32],
-                merkle_path: transaction_circuit::note::MerklePath { siblings: vec![] },
+                merkle_path,
             }],
             outputs: vec![output_note],
             sk_spend: [8u8; 32],
@@ -683,13 +695,24 @@ mod tests {
             value_balance: 0,
             stablecoin: StablecoinPolicyBinding::default(),
             version: TransactionWitness::default_version_binding(),
-        }
+        };
+
+        (witness, tree)
     }
 
     fn build_rpo_proof(witness: &TransactionWitness) -> TransactionProof {
         let (proving_key, _verifying_key) = generate_keys();
         let mut proof = prove(witness, &proving_key).expect("base proof");
-        let options = proof_options_from_config(32, 8, 0);
+        let options = ProofOptions::new(
+            8,
+            8,
+            0,
+            winterfell::FieldExtension::None,
+            2,
+            7,
+            BatchingMethod::Linear,
+            BatchingMethod::Linear,
+        );
         let prover = TransactionProverStarkRpo::new(options);
         let trace = prover.build_trace(witness).expect("trace");
         let stark_pub_inputs = prover.get_pub_inputs(&trace);
@@ -733,21 +756,20 @@ mod tests {
     #[test]
     #[ignore = "heavy: recursive proof generation"]
     fn recursive_block_proof_tamper_rejects() {
-        let witness = sample_witness();
+        let (witness, mut tree) = sample_witness();
         let proof = build_rpo_proof(&witness);
-        let mut tree = CommitmentTree::new(32).expect("tree");
         let mut keys = HashMap::new();
         let (_proving_key, verifying_key) = generate_keys();
         keys.insert(proof.version_binding(), verifying_key);
 
+        let mut verify_tree = tree.clone();
+        let mut tamper_tree = tree.clone();
         let mut recursive =
             prove_block_recursive_fast(&mut tree, &[proof.clone()], &keys).expect("recursive");
-        let mut verify_tree = CommitmentTree::new(32).expect("tree");
         verify_block_recursive(&mut verify_tree, &recursive, &[proof.clone()], &keys)
             .expect("verify ok");
 
         recursive.proof_bytes[0] ^= 0x01;
-        let mut tamper_tree = CommitmentTree::new(32).expect("tree");
         let err = verify_block_recursive(&mut tamper_tree, &recursive, &[proof], &keys)
             .expect_err("tamper should fail");
         assert!(matches!(err, BlockError::RecursiveProofHashMismatch));

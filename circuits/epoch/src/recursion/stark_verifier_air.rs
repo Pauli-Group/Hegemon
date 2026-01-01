@@ -644,6 +644,11 @@ impl Air for StarkVerifierAir {
             num_fri_layers <= MAX_FRI_LAYERS,
             "inner proof requires {num_fri_layers} FRI layers, but verifier supports at most {MAX_FRI_LAYERS}"
         );
+        assert_eq!(
+            pub_inputs.fri_folding_factor,
+            2,
+            "StarkVerifierAir assumes FRI folding factor 2"
+        );
 
         let lde_domain_size = pub_inputs.trace_length * pub_inputs.blowup_factor;
         assert!(
@@ -2831,8 +2836,9 @@ impl Air for StarkVerifierAir {
         if num_pos_perms > 0 {
             let pos_start_perm_idx = fri_start_perm_idx + num_fri_layers + has_remainder as usize;
 
+            let mut perm_idx = pos_start_perm_idx;
+            let mut remaining_draws = self.pub_inputs.num_draws;
             for k in 0..num_pos_perms {
-                let perm_idx = pos_start_perm_idx + k;
                 let boundary_row = (perm_idx + 1) * ROWS_PER_PERMUTATION - 1;
                 let is_last = k + 1 == num_pos_perms;
 
@@ -2885,6 +2891,18 @@ impl Air for StarkVerifierAir {
                     boundary_row,
                     BaseElement::ONE,
                 ));
+
+                perm_idx += 1;
+                let draws_here = if k == 0 {
+                    remaining_draws.min(RATE_WIDTH - 1)
+                } else {
+                    remaining_draws.min(RATE_WIDTH)
+                };
+                remaining_draws = remaining_draws.saturating_sub(draws_here);
+                perm_idx += draws_here;
+                if remaining_draws == 0 {
+                    break;
+                }
             }
         }
 
@@ -3622,14 +3640,14 @@ impl Air for StarkVerifierAir {
 // ================================================================================================
 
 #[derive(Clone, Debug)]
-struct LeafLayout {
+pub(crate) struct LeafLayout {
     total_perms: usize,
     chain_flags: Vec<bool>,
-    data_perm_starts: Vec<usize>,
+    pub(crate) data_perm_starts: Vec<usize>,
     data_perm_map: Vec<Option<usize>>,
 }
 
-fn compute_leaf_layout(len: usize, partition_size: usize) -> LeafLayout {
+pub(crate) fn compute_leaf_layout(len: usize, partition_size: usize) -> LeafLayout {
     let hash_perms = |input_len: usize| input_len.div_ceil(RATE_WIDTH).max(1);
     if len == 0 {
         return LeafLayout {
@@ -3742,7 +3760,7 @@ pub(crate) fn compute_inner_ood_constants(
     )
 }
 
-fn field_extension_degree(field_extension: FieldExtension) -> Result<usize, String> {
+pub(crate) fn field_extension_degree(field_extension: FieldExtension) -> Result<usize, String> {
     match field_extension {
         FieldExtension::None => Ok(1),
         FieldExtension::Quadratic => Ok(2),
@@ -3945,7 +3963,9 @@ fn compute_expected_constraint_coeffs_and_z(
     (coeffs, z)
 }
 
-fn compute_ood_digest(pub_inputs: &StarkVerifierPublicInputs) -> [BaseElement; DIGEST_WIDTH] {
+pub(crate) fn compute_ood_digest(
+    pub_inputs: &StarkVerifierPublicInputs,
+) -> [BaseElement; DIGEST_WIDTH] {
     let mut ood_evals = Vec::with_capacity(
         pub_inputs.ood_trace_current.len()
             + pub_inputs.ood_quotient_current.len()
@@ -3961,7 +3981,7 @@ fn compute_ood_digest(pub_inputs: &StarkVerifierPublicInputs) -> [BaseElement; D
     [digest[0], digest[1], digest[2], digest[3]]
 }
 
-fn compute_expected_transcript_draws(
+pub(crate) fn compute_expected_transcript_draws(
     pub_inputs: &StarkVerifierPublicInputs,
     ood_digest: [BaseElement; DIGEST_WIDTH],
 ) -> Result<
@@ -4038,7 +4058,7 @@ fn compute_ood_constraint_eval_2(
     acc
 }
 
-fn compute_rpo_ood_consistency(
+pub(crate) fn compute_rpo_ood_consistency(
     pub_inputs: &StarkVerifierPublicInputs,
     constraint_coeffs: &ConstraintCompositionCoefficients<BaseElement>,
     expected_z: BaseElement,
@@ -4135,7 +4155,7 @@ fn compute_rpo_ood_consistency(
     Ok((eval1, eval2))
 }
 
-fn compute_transaction_ood_consistency(
+pub(crate) fn compute_transaction_ood_consistency(
     pub_inputs: &StarkVerifierPublicInputs,
     constraint_coeffs: &ConstraintCompositionCoefficients<BaseElement>,
     expected_z: BaseElement,
@@ -4205,6 +4225,14 @@ fn evaluate_constraints_at<A: Air<BaseField = BaseElement>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::recursion::InnerProofData;
+    use transaction_circuit::constants::NATIVE_ASSET_ID;
+    use transaction_circuit::hashing::{felts_to_bytes32, merkle_node, HashFelt};
+    use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+    use transaction_circuit::public_inputs::StablecoinPolicyBinding;
+    use transaction_circuit::rpo_prover::TransactionProverStarkRpo;
+    use transaction_circuit::witness::TransactionWitness;
+    use winterfell::Prover;
 
     #[test]
     fn test_stark_verifier_public_inputs() {
@@ -4421,5 +4449,106 @@ mod tests {
         assert_eq!(decoded.constraint_frame_width, 8);
         assert_eq!(decoded.num_transition_constraints, STATE_WIDTH);
         assert_eq!(decoded.num_assertions, 2 * STATE_WIDTH);
+    }
+
+    fn compute_merkle_root_from_path(
+        leaf: HashFelt,
+        position: u64,
+        path: &MerklePath,
+    ) -> HashFelt {
+        let mut current = leaf;
+        let mut pos = position;
+        for sibling in &path.siblings {
+            current = if pos & 1 == 0 {
+                merkle_node(current, *sibling)
+            } else {
+                merkle_node(*sibling, current)
+            };
+            pos >>= 1;
+        }
+        current
+    }
+
+    fn sample_witness() -> TransactionWitness {
+        let input_note = NoteData {
+            value: 5,
+            asset_id: NATIVE_ASSET_ID,
+            pk_recipient: [2u8; 32],
+            rho: [3u8; 32],
+            r: [4u8; 32],
+        };
+        let output_note = OutputNoteWitness {
+            note: NoteData {
+                value: 4,
+                asset_id: NATIVE_ASSET_ID,
+                pk_recipient: [9u8; 32],
+                rho: [10u8; 32],
+                r: [11u8; 32],
+            },
+        };
+
+        let merkle_path = MerklePath::default();
+        let position = 0u64;
+        let merkle_root = felts_to_bytes32(&compute_merkle_root_from_path(
+            input_note.commitment(),
+            position,
+            &merkle_path,
+        ));
+
+        TransactionWitness {
+            inputs: vec![InputNoteWitness {
+                note: input_note,
+                position,
+                rho_seed: [7u8; 32],
+                merkle_path,
+            }],
+            outputs: vec![output_note],
+            sk_spend: [8u8; 32],
+            merkle_root,
+            fee: 1,
+            value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
+    #[test]
+    #[ignore = "heavy: transaction OOD consistency check"]
+    fn test_transaction_ood_consistency_matches() {
+        let witness = sample_witness();
+        let options = ProofOptions::new(
+            8,
+            8,
+            0,
+            FieldExtension::None,
+            2,
+            7,
+            BatchingMethod::Linear,
+            BatchingMethod::Linear,
+        );
+        let prover = TransactionProverStarkRpo::new(options);
+        let trace = prover.build_trace(&witness).expect("trace");
+        let pub_inputs = prover.get_pub_inputs(&trace);
+        let proof = prover.prove(trace).expect("rpo proof");
+
+        let inner_data = InnerProofData::from_proof::<TransactionAirStark>(
+            &proof.to_bytes(),
+            pub_inputs,
+        )
+        .expect("inner proof parsing");
+        let verifier_inputs = inner_data.to_stark_verifier_inputs();
+
+        let ood_digest = compute_ood_digest(&verifier_inputs);
+        let (constraint_coeffs, expected_z, _, _) =
+            compute_expected_transcript_draws(&verifier_inputs, ood_digest)
+                .expect("transcript reconstruction");
+        let (eval1, eval2) = compute_transaction_ood_consistency(
+            &verifier_inputs,
+            &constraint_coeffs,
+            expected_z,
+        )
+        .expect("ood consistency computation");
+
+        assert_eq!(eval1, eval2, "transaction OOD consistency check failed");
     }
 }

@@ -17,26 +17,52 @@ use winter_math::{FieldElement, StarkField, ToElements};
 use super::merkle_air::DIGEST_WIDTH;
 use super::rpo_air::{MDS, ROWS_PER_PERMUTATION, STATE_WIDTH};
 use super::stark_verifier_air::{
-    compute_expected_z, StarkVerifierAir, COL_CARRY_MASK, COL_COEFF_MASK, COL_COEFF_START,
-    COL_COIN_INIT_MASK, COL_CONSTRAINT_COEFFS_START, COL_DEEP_C1_ACC, COL_DEEP_C2_ACC,
-    COL_DEEP_COEFFS_START, COL_DEEP_MASK, COL_DEEP_START, COL_DEEP_T1_ACC, COL_DEEP_T2_ACC,
+    compute_expected_transcript_draws, compute_leaf_layout, compute_ood_digest,
+    compute_rpo_ood_consistency, compute_transaction_ood_consistency, field_extension_degree,
+    StarkVerifierAir, StarkVerifierPublicInputs, COL_CARRY_MASK, COL_COEFF_MASK, COL_COEFF_START,
+    COL_COIN_INIT_MASK, COL_COIN_RESTORE_MASK, COL_COIN_SAVE_MASK, COL_DEEP_C1_ACC,
+    COL_DEEP_C2_ACC, COL_DEEP_MASK, COL_DEEP_START, COL_DEEP_T1_ACC, COL_DEEP_T2_ACC,
     COL_FRI_ALPHA_START, COL_FRI_ALPHA_VALUE, COL_FRI_EVAL, COL_FRI_MASK, COL_FRI_MSB_BITS_START,
     COL_FRI_POW, COL_FRI_X, COL_FULL_CARRY_MASK, COL_MERKLE_INDEX, COL_MERKLE_PATH_BIT,
-    COL_OOD_DIGEST_START, COL_OOD_EVALS_START, COL_POS_ACC, COL_POS_BIT0, COL_POS_BIT1,
-    COL_POS_BIT2, COL_POS_BIT3, COL_POS_DECOMP_MASK, COL_POS_HI_AND, COL_POS_LO_ACC, COL_POS_MASK,
-    COL_POS_MASKED_ACC, COL_POS_PERM_ACC, COL_POS_RAW, COL_POS_SORTED_VALUE, COL_POS_START,
+    COL_OOD_DIGEST_START, COL_POS_ACC, COL_POS_BIT0, COL_POS_BIT1, COL_POS_BIT2, COL_POS_BIT3,
+    COL_POS_DECOMP_MASK, COL_POS_HI_AND, COL_POS_LO_ACC, COL_POS_MASK, COL_POS_MASKED_ACC,
+    COL_POS_PERM_ACC, COL_POS_RAW, COL_POS_SORTED_VALUE, COL_POS_START,
     COL_REMAINDER_COEFFS_START, COL_RESEED_MASK, COL_RESEED_WORD_START, COL_SAVED_COIN_START,
-    COL_Z_MASK, COL_Z_VALUE, NUM_CONSTRAINT_COEFFS, NUM_DEEP_COEFFS, NUM_REMAINDER_COEFFS,
-    OOD_EVAL_LEN, RATE_WIDTH, VERIFIER_TRACE_WIDTH,
+    COL_TAPE_MASK, COL_TAPE_VALUES_START, COL_Z_MASK, COL_Z_VALUE, NUM_REMAINDER_COEFFS,
+    RATE_WIDTH, TAPE_WIDTH, VERIFIER_TRACE_WIDTH,
 };
-
-use super::stark_verifier_air::StarkVerifierPublicInputs;
 
 #[cfg(test)]
 use winter_math::{fft, polynom};
 
 const CAPACITY_WIDTH: usize = 4;
 const RATE_START: usize = CAPACITY_WIDTH;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InnerProofKind {
+    RpoAir,
+    TransactionAir,
+}
+
+fn transaction_public_inputs_len() -> usize {
+    (transaction_circuit::constants::MAX_INPUTS + transaction_circuit::constants::MAX_OUTPUTS) * 5
+        + 24
+}
+
+fn inner_proof_kind(
+    pub_inputs: &StarkVerifierPublicInputs,
+) -> Result<InnerProofKind, String> {
+    if pub_inputs.inner_public_inputs.len() == 2 * STATE_WIDTH {
+        Ok(InnerProofKind::RpoAir)
+    } else if pub_inputs.inner_public_inputs.len() == transaction_public_inputs_len() {
+        Ok(InnerProofKind::TransactionAir)
+    } else {
+        Err(format!(
+            "unsupported inner public input length {}",
+            pub_inputs.inner_public_inputs.len()
+        ))
+    }
+}
 
 /// Public inputs for a batch verifier proof.
 ///
@@ -73,14 +99,19 @@ impl ToElements<BaseElement> for StarkVerifierBatchPublicInputs {
 /// - all inner-proof parameters are uniform across the batch (same trace width/length, options)
 /// - batch size is a power of two (so the batch trace length stays a power of two)
 ///
-/// Non-RpoAir inner proofs currently bypass OOD/DEEP/FRI consistency checks; this is
-/// UNSOUND and must be removed once streaming OOD evaluation is implemented.
+/// OOD/DEEP/FRI consistency is enforced for all supported inner proof kinds.
 pub struct StarkVerifierBatchAir {
     context: AirContext<BaseElement>,
     pub_inputs: StarkVerifierBatchPublicInputs,
     segment_len: usize,
     template: StarkVerifierPublicInputs,
-    inner_is_rpo: bool,
+    trace_width_ext: usize,
+    constraint_width_ext: usize,
+    num_constraint_coeffs: usize,
+    num_deep_coeffs: usize,
+    ood_eval_len: usize,
+    trace_data_block_starts: Vec<usize>,
+    constraint_data_block_starts: Vec<usize>,
     g_trace: BaseElement,
     g_lde: BaseElement,
     domain_offset: BaseElement,
@@ -120,9 +151,13 @@ impl Air for StarkVerifierBatchAir {
             "segment trace length must be a power of two (got {})",
             segment_len
         );
+        assert_eq!(
+            template.fri_folding_factor,
+            2,
+            "StarkVerifierBatchAir assumes FRI folding factor 2"
+        );
 
-        let inner_is_rpo = template.inner_public_inputs.len() == 2 * STATE_WIDTH
-            && template.trace_length == ROWS_PER_PERMUTATION;
+        let inner_inputs_len = template.inner_public_inputs.len();
 
         for (idx, inner) in pub_inputs.inner.iter().enumerate().skip(1) {
             assert_eq!(
@@ -154,6 +189,11 @@ impl Air for StarkVerifierBatchAir {
                 "inner proof {idx} num_draws mismatch"
             );
             assert_eq!(
+                inner.inner_public_inputs.len(),
+                inner_inputs_len,
+                "inner proof {idx} inner_public_inputs length mismatch"
+            );
+            assert_eq!(
                 inner.field_extension, template.field_extension,
                 "inner proof {idx} field_extension mismatch"
             );
@@ -175,13 +215,51 @@ impl Air for StarkVerifierBatchAir {
         let domain_offset = BaseElement::GENERATOR;
         let inv_domain_offset = domain_offset.inv();
 
+        let extension_degree = field_extension_degree(template.field_extension)
+            .expect("unsupported field extension");
+        let trace_width_ext = template.trace_width * extension_degree;
+        let constraint_width_ext = template.constraint_frame_width * extension_degree;
+        let num_constraint_coeffs =
+            (template.num_transition_constraints + template.num_assertions) * extension_degree;
+        let num_deep_coeffs = trace_width_ext + constraint_width_ext;
+        let ood_eval_len = 2 * num_deep_coeffs;
+
+        for (idx, inner) in pub_inputs.inner.iter().enumerate() {
+            assert_eq!(
+                inner.ood_trace_current.len(),
+                trace_width_ext,
+                "inner proof {idx} OOD trace current length mismatch"
+            );
+            assert_eq!(
+                inner.ood_trace_next.len(),
+                trace_width_ext,
+                "inner proof {idx} OOD trace next length mismatch"
+            );
+            assert_eq!(
+                inner.ood_quotient_current.len(),
+                constraint_width_ext,
+                "inner proof {idx} OOD quotient current length mismatch"
+            );
+            assert_eq!(
+                inner.ood_quotient_next.len(),
+                constraint_width_ext,
+                "inner proof {idx} OOD quotient next length mismatch"
+            );
+        }
+
+        let constraint_partition_size_base = template.constraint_partition_size * extension_degree;
+        let trace_layout = compute_leaf_layout(trace_width_ext, template.trace_partition_size);
+        let constraint_layout =
+            compute_leaf_layout(constraint_width_ext, constraint_partition_size_base);
+        let trace_data_block_starts = trace_layout.data_perm_starts.clone();
+        let constraint_data_block_starts = constraint_layout.data_perm_starts.clone();
+
         // Transition degrees are identical to `StarkVerifierAir`.
         let num_fri_layers = template.fri_commitments.len().saturating_sub(1);
         // Base periodic columns come from `StarkVerifierAir` and are repeated for each segment;
         // thus their full-cycle period is the per-segment trace length, not the total batch
         // length.
         let full_cycle = segment_len;
-        let trace_len = trace_info.length();
         let boundary_and_full = vec![ROWS_PER_PERMUTATION, full_cycle];
 
         // The batch verifier concatenates per-proof traces. In the concatenated trace, the last
@@ -201,7 +279,7 @@ impl Air for StarkVerifierBatchAir {
         }
 
         // Count constraints exactly as `StarkVerifierAir`.
-        let base_boundary_constraints = 3 * DIGEST_WIDTH + 10 + 3 * RATE_WIDTH + 2;
+        let base_boundary_constraints = 3 * DIGEST_WIDTH + 13 + 4 * RATE_WIDTH + 2;
         let num_root_masks = 2 + num_fri_layers; // trace root, constraint root, and each committed FRI layer
         let merkle_constraints = 1 // intra-leaf chaining
             + 1 // path-bit binary
@@ -213,18 +291,14 @@ impl Air for StarkVerifierBatchAir {
 
         let ood_constraints = DIGEST_WIDTH // ood digest constant
             + STATE_WIDTH // saved coin state constant
-            + OOD_EVAL_LEN // ood eval constant
-            + OOD_EVAL_LEN // capture ood evals
+            + ood_eval_len // bind OOD eval inputs
             + DIGEST_WIDTH // capture ood digest
             + STATE_WIDTH // capture coin state at z
             + STATE_WIDTH // restore coin state (+ood reseed)
             + 1; // ood consistency check
 
-        let transcript_store_constraints = NUM_CONSTRAINT_COEFFS // stored constraint coeffs constant
-            + NUM_DEEP_COEFFS // stored deep coeffs constant
-            + super::fri_air::MAX_FRI_LAYERS // stored alphas constant
-            + NUM_CONSTRAINT_COEFFS // capture constraint coeffs
-            + NUM_DEEP_COEFFS // capture deep coeffs
+        let transcript_store_constraints = num_constraint_coeffs // capture constraint coeffs
+            + num_deep_coeffs // capture deep coeffs
             + num_fri_layers; // capture alphas
 
         let deep_fri_constraints = NUM_REMAINDER_COEFFS // remainder coeffs constant
@@ -284,14 +358,15 @@ impl Air for StarkVerifierBatchAir {
 
         // Capacity carryover + rate relations (3 * DIGEST_WIDTH).
         degrees.extend(vec![boundary_rel_degree.clone(); 3 * DIGEST_WIDTH]);
-        // Mask validity (4) + exclusivity (6).
-        degrees.extend(vec![boundary_pair_degree.clone(); 10]);
+        // Mask validity (7) + exclusivity (6).
+        degrees.extend(vec![boundary_pair_degree.clone(); 13]);
         // Transcript-derived value checks.
         degrees.extend(vec![boundary_rel_degree.clone(); RATE_WIDTH]); // coeff checks
         degrees.push(boundary_rel_degree.clone()); // z check
         degrees.extend(vec![boundary_rel_degree.clone(); RATE_WIDTH]); // deep checks
         degrees.push(boundary_rel_degree.clone()); // fri alpha check
         degrees.extend(vec![boundary_rel_degree.clone(); RATE_WIDTH]); // pos checks
+        degrees.extend(vec![boundary_rel_degree.clone(); RATE_WIDTH]); // tape checks
 
         // --- Merkle authentication degrees ------------------------------------------------
         // Mirror `StarkVerifierAir`'s degree accounting for sparse selectors.
@@ -365,25 +440,15 @@ impl Air for StarkVerifierBatchAir {
         // OOD digest + coin save/restore degrees.
         degrees.extend(vec![deg!(1); DIGEST_WIDTH]); // ood digest constant
         degrees.extend(vec![deg!(1); STATE_WIDTH]); // saved coin constant
-        degrees.extend(vec![deg!(1); OOD_EVAL_LEN]); // ood eval constant
-        degrees.extend(vec![deg!(1, vec![full_cycle]); OOD_EVAL_LEN]); // capture ood eval
+        degrees.extend(vec![deg!(1, vec![full_cycle]); ood_eval_len]); // bind ood evals
         degrees.extend(vec![deg!(1, vec![full_cycle]); DIGEST_WIDTH]); // capture ood digest
         degrees.extend(vec![boundary_rel_degree.clone(); STATE_WIDTH]); // capture coin at z
         degrees.extend(vec![deg!(1, vec![full_cycle]); STATE_WIDTH]); // restore coin
-        degrees.push(deg!(8, vec![trace_len, trace_len, trace_len])); // ood consistency
+        degrees.push(deg!(1)); // ood consistency
 
-        // Transcript store degrees.
-        degrees.extend(vec![deg!(1); NUM_CONSTRAINT_COEFFS]);
-        degrees.extend(vec![deg!(1); NUM_DEEP_COEFFS]);
-        // Only the first `num_fri_layers` alpha slots are populated; the remaining slots are
-        // always zeroed by the prover and thus have degree 0 in debug-degree validation.
-        degrees.extend(vec![deg!(1); num_fri_layers]);
-        degrees.extend(vec![
-            TransitionConstraintDegree::new(1);
-            super::fri_air::MAX_FRI_LAYERS - num_fri_layers
-        ]);
-        degrees.extend(vec![deg!(1, vec![full_cycle]); NUM_CONSTRAINT_COEFFS]);
-        degrees.extend(vec![deg!(1, vec![full_cycle]); NUM_DEEP_COEFFS]);
+        // Transcript draw binding degrees.
+        degrees.extend(vec![deg!(1, vec![full_cycle]); num_constraint_coeffs]);
+        degrees.extend(vec![deg!(1, vec![full_cycle]); num_deep_coeffs]);
         degrees.extend(vec![deg!(1, vec![full_cycle]); num_fri_layers]);
 
         // DEEP + FRI recursion degrees.
@@ -423,7 +488,13 @@ impl Air for StarkVerifierBatchAir {
             pub_inputs,
             segment_len,
             template,
-            inner_is_rpo,
+            trace_width_ext,
+            constraint_width_ext,
+            num_constraint_coeffs,
+            num_deep_coeffs,
+            ood_eval_len,
+            trace_data_block_starts,
+            constraint_data_block_starts,
             g_trace,
             g_lde,
             domain_offset,
@@ -493,15 +564,15 @@ impl Air for StarkVerifierBatchAir {
         p += num_fri_layers;
         let ood_digest_capture_mask = periodic_values[p];
         p += 1;
-        let num_ood_perms = OOD_EVAL_LEN.div_ceil(RATE_WIDTH);
+        let num_ood_perms = self.ood_eval_len.div_ceil(RATE_WIDTH);
         let ood_eval_row_masks = &periodic_values[p..p + num_ood_perms];
         p += num_ood_perms;
-        let deep_start_row_mask = periodic_values[p];
+        let _deep_start_row_mask = periodic_values[p];
         p += 1;
-        let num_coeff_perms = NUM_CONSTRAINT_COEFFS.div_ceil(RATE_WIDTH);
+        let num_coeff_perms = self.num_constraint_coeffs.div_ceil(RATE_WIDTH).max(1);
         let coeff_end_masks = &periodic_values[p..p + num_coeff_perms];
         p += num_coeff_perms;
-        let num_deep_perms = NUM_DEEP_COEFFS.div_ceil(RATE_WIDTH);
+        let num_deep_perms = self.num_deep_coeffs.div_ceil(RATE_WIDTH);
         let deep_end_masks = &periodic_values[p..p + num_deep_perms];
         p += num_deep_perms;
         let fri_alpha_end_masks = &periodic_values[p..p + num_fri_layers];
@@ -510,12 +581,12 @@ impl Air for StarkVerifierBatchAir {
         // --- DEEP + FRI periodic selectors ------------------------------------------------
         let query_reset_mask = periodic_values[p];
         p += 1;
-        let trace_leaf0_row_mask = periodic_values[p];
-        p += 1;
-        let trace_leaf1_row_mask = periodic_values[p];
-        p += 1;
-        let constraint_leaf_row_mask = periodic_values[p];
-        p += 1;
+        let trace_leaf_row_masks =
+            &periodic_values[p..p + self.trace_data_block_starts.len()];
+        p += self.trace_data_block_starts.len();
+        let constraint_leaf_row_masks =
+            &periodic_values[p..p + self.constraint_data_block_starts.len()];
+        p += self.constraint_data_block_starts.len();
         let trace_merkle_bit_mask = periodic_values[p];
         p += 1;
         let msb_capture_masks = &periodic_values[p..p + num_fri_layers];
@@ -537,19 +608,25 @@ impl Air for StarkVerifierBatchAir {
         p += DIGEST_WIDTH;
         let fri_commitments_flat = &periodic_values[p..p + num_fri_layers * DIGEST_WIDTH];
         p += num_fri_layers * DIGEST_WIDTH;
-        let inner_public_inputs: [E; 2 * STATE_WIDTH] =
-            core::array::from_fn(|i| periodic_values[p + i]);
-        p += 2 * STATE_WIDTH;
         let expected_z = periodic_values[p];
         p += 1;
-        let inner_rpo_periodic_at_z: [E; 1 + STATE_WIDTH] =
-            core::array::from_fn(|i| periodic_values[p + i]);
-        p += 1 + STATE_WIDTH;
-        let inner_transition_divisor_inv_at_z = periodic_values[p];
+        let inner_constraint_coeffs = &periodic_values[p..p + self.num_constraint_coeffs];
+        p += self.num_constraint_coeffs;
+        let inner_deep_coeffs = &periodic_values[p..p + self.num_deep_coeffs];
+        p += self.num_deep_coeffs;
+        let inner_fri_alphas = &periodic_values[p..p + num_fri_layers];
+        p += num_fri_layers;
+        let inner_ood_constraint_eval_1 = periodic_values[p];
         p += 1;
-        let inner_boundary_inv_at_z: [E; 2] = core::array::from_fn(|i| periodic_values[p + i]);
-        p += 2;
-        let inner_ood_constraint_weights: [E; 8] = core::array::from_fn(|i| periodic_values[p + i]);
+        let inner_ood_constraint_eval_2 = periodic_values[p];
+        p += 1;
+        let ood_trace_current = &periodic_values[p..p + self.trace_width_ext];
+        p += self.trace_width_ext;
+        let ood_quotient_current = &periodic_values[p..p + self.constraint_width_ext];
+        p += self.constraint_width_ext;
+        let ood_trace_next = &periodic_values[p..p + self.trace_width_ext];
+        p += self.trace_width_ext;
+        let ood_quotient_next = &periodic_values[p..p + self.constraint_width_ext];
 
         // MDS result
         let mut mds_result: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
@@ -611,6 +688,9 @@ impl Air for StarkVerifierBatchAir {
         let full_carry_mask = current[COL_FULL_CARRY_MASK];
         let reseed_mask = current[COL_RESEED_MASK];
         let coin_init_mask = current[COL_COIN_INIT_MASK];
+        let coin_save_mask = current[COL_COIN_SAVE_MASK];
+        let coin_restore_mask = current[COL_COIN_RESTORE_MASK];
+        let tape_mask = current[COL_TAPE_MASK];
         let reseed_word: [E; DIGEST_WIDTH] =
             core::array::from_fn(|i| current[COL_RESEED_WORD_START + i]);
 
@@ -655,7 +735,10 @@ impl Air for StarkVerifierBatchAir {
         result[idx + 1] = boundary_mask * full_carry_mask * (full_carry_mask - one);
         result[idx + 2] = boundary_mask * reseed_mask * (reseed_mask - one);
         result[idx + 3] = boundary_mask * coin_init_mask * (coin_init_mask - one);
-        idx += 4;
+        result[idx + 4] = boundary_mask * coin_save_mask * (coin_save_mask - one);
+        result[idx + 5] = boundary_mask * coin_restore_mask * (coin_restore_mask - one);
+        result[idx + 6] = boundary_mask * tape_mask * (tape_mask - one);
+        idx += 7;
 
         // Exclusivity of masks on boundaries.
         result[idx] = boundary_mask * carry_mask * full_carry_mask;
@@ -699,6 +782,13 @@ impl Air for StarkVerifierBatchAir {
             result[idx + i] = boundary_mask * pos_mask * (current[RATE_START + i] - expected);
         }
         idx += RATE_WIDTH;
+
+        // Tape capture: when enabled, the tape values must match the permutation's rate output.
+        for i in 0..TAPE_WIDTH {
+            let expected = current[COL_TAPE_VALUES_START + i];
+            result[idx + i] = boundary_mask * tape_mask * (current[RATE_START + i] - expected);
+        }
+        idx += TAPE_WIDTH;
 
         // --------------------------------------------------------------------
         // Merkle authentication segment
@@ -929,8 +1019,6 @@ impl Air for StarkVerifierBatchAir {
         result[idx] = boundary_mask * trace_leaf_end_mask * leaf_update;
         idx += 1;
 
-        let inner_rpo_sel = if self.inner_is_rpo { E::ONE } else { E::ZERO };
-
         // --------------------------------------------------------------------
         // OOD digest + coin-state save/restore
         // --------------------------------------------------------------------
@@ -947,23 +1035,23 @@ impl Air for StarkVerifierBatchAir {
         }
         idx += STATE_WIDTH;
 
-        // OOD evaluation columns are constant within a segment.
-        for i in 0..OOD_EVAL_LEN {
-            result[idx + i] =
-                inner_rpo_sel * (next[COL_OOD_EVALS_START + i] - current[COL_OOD_EVALS_START + i]);
-        }
-        idx += OOD_EVAL_LEN;
-
-        // Capture OOD evaluation values at the start of each OOD-hash permutation.
-        for i in 0..OOD_EVAL_LEN {
+        // Bind OOD evaluation inputs at the start rows of the OOD-hash segment.
+        for i in 0..self.ood_eval_len {
             let block = i / RATE_WIDTH;
             let offset = i % RATE_WIDTH;
             let mask = ood_eval_row_masks[block];
-            let stored = current[COL_OOD_EVALS_START + i];
-            let input_val = current[RATE_START + offset];
-            result[idx + i] = inner_rpo_sel * mask * (stored - input_val);
+            let expected = if i < self.trace_width_ext {
+                ood_trace_current[i]
+            } else if i < self.trace_width_ext + self.constraint_width_ext {
+                ood_quotient_current[i - self.trace_width_ext]
+            } else if i < 2 * self.trace_width_ext + self.constraint_width_ext {
+                ood_trace_next[i - self.trace_width_ext - self.constraint_width_ext]
+            } else {
+                ood_quotient_next[i - (2 * self.trace_width_ext + self.constraint_width_ext)]
+            };
+            result[idx + i] = mask * (current[RATE_START + offset] - expected);
         }
-        idx += OOD_EVAL_LEN;
+        idx += self.ood_eval_len;
 
         // Capture the OOD digest at the end of the OOD-hash segment.
         for i in 0..DIGEST_WIDTH {
@@ -976,210 +1064,87 @@ impl Air for StarkVerifierBatchAir {
         // Capture coin state at the z boundary row.
         for i in 0..STATE_WIDTH {
             let saved = current[COL_SAVED_COIN_START + i];
-            result[idx + i] = boundary_mask * z_mask * (saved - current[i]);
+            result[idx + i] = boundary_mask * coin_save_mask * (saved - current[i]);
         }
         idx += STATE_WIDTH;
 
         // Restore the coin state (and apply the OOD reseed).
         for i in 0..CAPACITY_WIDTH {
             let saved = current[COL_SAVED_COIN_START + i];
-            result[idx + i] = deep_start_row_mask * (current[i] - saved);
+            result[idx + i] = coin_restore_mask * (current[i] - saved);
         }
         for i in 0..DIGEST_WIDTH {
             let saved = current[COL_SAVED_COIN_START + RATE_START + i];
             let digest = current[COL_OOD_DIGEST_START + i];
             let expected = saved + digest;
             result[idx + CAPACITY_WIDTH + i] =
-                deep_start_row_mask * (current[RATE_START + i] - expected);
+                coin_restore_mask * (current[RATE_START + i] - expected);
         }
         for i in 0..DIGEST_WIDTH {
             let saved = current[COL_SAVED_COIN_START + RATE_START + DIGEST_WIDTH + i];
             result[idx + CAPACITY_WIDTH + DIGEST_WIDTH + i] =
-                deep_start_row_mask * (current[RATE_START + DIGEST_WIDTH + i] - saved);
+                coin_restore_mask * (current[RATE_START + DIGEST_WIDTH + i] - saved);
         }
         idx += STATE_WIDTH;
 
         // --------------------------------------------------------------------
         // OOD consistency check
         // --------------------------------------------------------------------
-        //
-        // This follows the RpoAir-specialized path from `StarkVerifierAir`, but uses per-segment
-        // constants supplied via periodic columns.
-
-        if self.inner_is_rpo {
-            // Evaluate RpoAir transition constraints at z.
-            let half_round_type_z = inner_rpo_periodic_at_z[0];
-            let ark_z: [E; STATE_WIDTH] = core::array::from_fn(|i| inner_rpo_periodic_at_z[1 + i]);
-
-            // OOD frame layout matches `merge_ood_evaluations`:
-            //   [trace(z) | constraint(z) | trace(zg) | constraint(zg)].
-            let trace_width = self.template.trace_width;
-            let constraint_frame_width = self.template.constraint_frame_width;
-            let trace_zg_offset = trace_width + constraint_frame_width;
-
-            let ood_trace_z: [E; STATE_WIDTH] =
-                core::array::from_fn(|i| current[COL_OOD_EVALS_START + i]);
-            let ood_trace_zg: [E; STATE_WIDTH] =
-                core::array::from_fn(|i| current[COL_OOD_EVALS_START + trace_zg_offset + i]);
-
-            // MDS + ARK at z.
-            let mut mds_z: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
-            for i in 0..STATE_WIDTH {
-                for j in 0..STATE_WIDTH {
-                    let coeff = E::from(MDS[i][j]);
-                    mds_z[i] += coeff * ood_trace_z[j];
-                }
-            }
-            let mut intermediate_z: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
-            for i in 0..STATE_WIDTH {
-                intermediate_z[i] = mds_z[i] + ark_z[i];
-            }
-
-            let is_forward_z = half_round_type_z * (two - half_round_type_z);
-            let is_inverse_z = half_round_type_z * (half_round_type_z - one);
-            let is_padding_z = (one - half_round_type_z) * (two - half_round_type_z);
-
-            let mut t_evals: [E; STATE_WIDTH] = [E::ZERO; STATE_WIDTH];
-            for i in 0..STATE_WIDTH {
-                let x = intermediate_z[i];
-                let x2 = x * x;
-                let x4 = x2 * x2;
-                let x3 = x2 * x;
-                let x7 = x3 * x4;
-                let forward_constraint = ood_trace_zg[i] - x7;
-
-                let y = ood_trace_zg[i];
-                let y2 = y * y;
-                let y4 = y2 * y2;
-                let y3 = y2 * y;
-                let y7 = y3 * y4;
-                let inverse_constraint = y7 - intermediate_z[i];
-
-                let padding_constraint = ood_trace_zg[i] - ood_trace_z[i];
-                t_evals[i] = is_forward_z * forward_constraint
-                    + is_inverse_z * inverse_constraint
-                    + is_padding_z * padding_constraint;
-            }
-
-            // Reduce transition constraints with stored coefficients.
-            let mut transition_eval = E::ZERO;
-            for i in 0..STATE_WIDTH {
-                let coeff = current[COL_CONSTRAINT_COEFFS_START + i];
-                transition_eval += coeff * t_evals[i];
-            }
-            transition_eval *= inner_transition_divisor_inv_at_z;
-
-            // Boundary constraints: row0 asserts input_state, last row asserts output_state.
-            let mut boundary_row0 = E::ZERO;
-            let mut boundary_row_last = E::ZERO;
-            for i in 0..STATE_WIDTH {
-                let coeff_row0 = current[COL_CONSTRAINT_COEFFS_START + STATE_WIDTH + i];
-                let coeff_last = current[COL_CONSTRAINT_COEFFS_START + STATE_WIDTH + STATE_WIDTH + i];
-
-                let input = inner_public_inputs[i];
-                let output = inner_public_inputs[STATE_WIDTH + i];
-
-                boundary_row0 += coeff_row0 * (ood_trace_z[i] - input);
-                boundary_row_last += coeff_last * (ood_trace_z[i] - output);
-            }
-            let boundary_eval = boundary_row0 * inner_boundary_inv_at_z[0]
-                + boundary_row_last * inner_boundary_inv_at_z[1];
-
-            let ood_constraint_eval_1 = transition_eval + boundary_eval;
-
-            // Reduce quotient columns at z.
-            let mut ood_constraint_eval_2 = E::ZERO;
-            for i in 0..8usize {
-                let weight = inner_ood_constraint_weights[i];
-                let value = current[COL_OOD_EVALS_START + trace_width + i];
-                ood_constraint_eval_2 += weight * value;
-            }
-
-            result[idx] = ood_constraint_eval_1 - ood_constraint_eval_2;
-            idx += 1;
-        } else {
-            // Phase 3b.2: Non-RpoAir inner proofs need streaming OOD evaluation to be sound.
-            result[idx] = E::ZERO;
-            idx += 1;
-        }
+        result[idx] = inner_ood_constraint_eval_1 - inner_ood_constraint_eval_2;
+        idx += 1;
 
         // --------------------------------------------------------------------
-        // Transcript store: persist coeffs / deep coeffs / alphas
+        // Transcript draw binding
         // --------------------------------------------------------------------
-
-        for i in 0..NUM_CONSTRAINT_COEFFS {
-            result[idx + i] = inner_rpo_sel
-                * (next[COL_CONSTRAINT_COEFFS_START + i]
-                    - current[COL_CONSTRAINT_COEFFS_START + i]);
-        }
-        idx += NUM_CONSTRAINT_COEFFS;
-
-        for i in 0..NUM_DEEP_COEFFS {
-            result[idx + i] = inner_rpo_sel
-                * (next[COL_DEEP_COEFFS_START + i] - current[COL_DEEP_COEFFS_START + i]);
-        }
-        idx += NUM_DEEP_COEFFS;
-
-        for i in 0..super::fri_air::MAX_FRI_LAYERS {
-            result[idx + i] = inner_rpo_sel
-                * (next[COL_FRI_ALPHA_START + i] - current[COL_FRI_ALPHA_START + i]);
-        }
-        idx += super::fri_air::MAX_FRI_LAYERS;
 
         // Capture constraint composition coefficients at their draw boundaries.
-        for coeff_idx in 0..NUM_CONSTRAINT_COEFFS {
+        for coeff_idx in 0..self.num_constraint_coeffs {
             let block = coeff_idx / RATE_WIDTH;
             let offset = coeff_idx % RATE_WIDTH;
             let mask = coeff_end_masks[block];
-            let stored = current[COL_CONSTRAINT_COEFFS_START + coeff_idx];
+            let expected = inner_constraint_coeffs[coeff_idx];
             let drawn = current[RATE_START + offset];
-            result[idx + coeff_idx] = inner_rpo_sel * mask * (stored - drawn);
+            result[idx + coeff_idx] = mask * (drawn - expected);
         }
-        idx += NUM_CONSTRAINT_COEFFS;
+        idx += self.num_constraint_coeffs;
 
         // Capture DEEP coefficients at their draw boundaries.
-        for deep_idx in 0..NUM_DEEP_COEFFS {
+        for deep_idx in 0..self.num_deep_coeffs {
             let block = deep_idx / RATE_WIDTH;
             let offset = deep_idx % RATE_WIDTH;
             let mask = deep_end_masks[block];
-            let stored = current[COL_DEEP_COEFFS_START + deep_idx];
+            let expected = inner_deep_coeffs[deep_idx];
             let drawn = current[RATE_START + offset];
-            result[idx + deep_idx] = inner_rpo_sel * mask * (stored - drawn);
+            result[idx + deep_idx] = mask * (drawn - expected);
         }
-        idx += NUM_DEEP_COEFFS;
+        idx += self.num_deep_coeffs;
 
         // Capture FRI alphas at their draw boundaries.
         for layer_idx in 0..num_fri_layers {
             let mask = fri_alpha_end_masks[layer_idx];
-            let stored = current[COL_FRI_ALPHA_START + layer_idx];
+            let expected = inner_fri_alphas[layer_idx];
             let drawn = current[RATE_START];
-            result[idx + layer_idx] = inner_rpo_sel * mask * (stored - drawn);
+            result[idx + layer_idx] = mask * (drawn - expected);
         }
         idx += num_fri_layers;
 
         // --------------------------------------------------------------------
-        // DEEP + FRI recursion checks (unchanged, but segment-constant columns gated above)
+        // DEEP + FRI recursion state-machine
         // --------------------------------------------------------------------
 
         // Remainder coefficients are constant within a segment.
         for i in 0..NUM_REMAINDER_COEFFS {
-            result[idx + i] = inner_rpo_sel
-                * (next[COL_REMAINDER_COEFFS_START + i]
-                    - current[COL_REMAINDER_COEFFS_START + i]);
+            result[idx + i] =
+                next[COL_REMAINDER_COEFFS_START + i] - current[COL_REMAINDER_COEFFS_START + i];
         }
         idx += NUM_REMAINDER_COEFFS;
 
         // Bind remainder coefficients to the remainder commitment hash input rows.
         for i in 0..NUM_REMAINDER_COEFFS {
-            let stored = current[COL_REMAINDER_COEFFS_START + i];
-            let input_val = current[RATE_START + i];
-            result[idx + i] = inner_rpo_sel * remainder_hash_row0_mask * (stored - input_val);
+            let coeff = current[COL_REMAINDER_COEFFS_START + i];
+            result[idx + i] = remainder_hash_row0_mask * (current[RATE_START + i] - coeff);
         }
         idx += NUM_REMAINDER_COEFFS;
-
-        // --------------------------------------------------------------------
-        // DEEP + FRI recursion checks (segment-aware version)
-        // --------------------------------------------------------------------
 
         // --- DEEP numerator accumulators ---
         let t1 = current[COL_DEEP_T1_ACC];
@@ -1192,70 +1157,57 @@ impl Air for StarkVerifierBatchAir {
         let c1_next = next[COL_DEEP_C1_ACC];
         let c2_next = next[COL_DEEP_C2_ACC];
 
-        let (t1_delta0, t2_delta0, t1_delta1, t2_delta1, c1_delta, c2_delta) =
-            if self.inner_is_rpo {
-                let trace_width = self.template.trace_width;
-                let trace_zg_offset = trace_width + self.template.constraint_frame_width;
+        let mut t1_delta = E::ZERO;
+        let mut t2_delta = E::ZERO;
+        for (block_idx, start_idx) in self.trace_data_block_starts.iter().enumerate() {
+            let mask = trace_leaf_row_masks[block_idx];
+            let remaining = self.trace_width_ext.saturating_sub(*start_idx);
+            let block_len = remaining.min(RATE_WIDTH);
+            let mut block_t1 = E::ZERO;
+            let mut block_t2 = E::ZERO;
+            for j in 0..block_len {
+                let idx = start_idx + j;
+                let coeff = inner_deep_coeffs[idx];
+                let trace_val = current[RATE_START + j];
+                let ood_z = ood_trace_current[idx];
+                let ood_zg = ood_trace_next[idx];
+                block_t1 += coeff * (trace_val - ood_z);
+                block_t2 += coeff * (trace_val - ood_zg);
+            }
+            t1_delta += mask * block_t1;
+            t2_delta += mask * block_t2;
+        }
 
-                let mut t1_delta0 = E::ZERO;
-                let mut t2_delta0 = E::ZERO;
-                for j in 0..RATE_WIDTH {
-                    let coeff = current[COL_DEEP_COEFFS_START + j];
-                    let trace_val = current[RATE_START + j];
-                    let ood_z = current[COL_OOD_EVALS_START + j];
-                    let ood_zg = current[COL_OOD_EVALS_START + trace_zg_offset + j];
-                    t1_delta0 += coeff * (trace_val - ood_z);
-                    t2_delta0 += coeff * (trace_val - ood_zg);
-                }
-
-                let mut t1_delta1 = E::ZERO;
-                let mut t2_delta1 = E::ZERO;
-                for j in 0..(trace_width - RATE_WIDTH) {
-                    let coeff = current[COL_DEEP_COEFFS_START + RATE_WIDTH + j];
-                    let trace_val = current[RATE_START + j];
-                    let ood_z = current[COL_OOD_EVALS_START + RATE_WIDTH + j];
-                    let ood_zg = current[COL_OOD_EVALS_START + trace_zg_offset + RATE_WIDTH + j];
-                    t1_delta1 += coeff * (trace_val - ood_z);
-                    t2_delta1 += coeff * (trace_val - ood_zg);
-                }
-
-                let mut c1_delta = E::ZERO;
-                let mut c2_delta = E::ZERO;
-                for j in 0..8usize {
-                    let coeff = current[COL_DEEP_COEFFS_START + trace_width + j];
-                    let val = current[RATE_START + j];
-                    let ood_z = current[COL_OOD_EVALS_START + trace_width + j];
-                    let ood_zg = current[COL_OOD_EVALS_START + trace_zg_offset + trace_width + j];
-                    c1_delta += coeff * (val - ood_z);
-                    c2_delta += coeff * (val - ood_zg);
-                }
-
-                (t1_delta0, t2_delta0, t1_delta1, t2_delta1, c1_delta, c2_delta)
-            } else {
-                (E::ZERO, E::ZERO, E::ZERO, E::ZERO, E::ZERO, E::ZERO)
-            };
+        let mut c1_delta = E::ZERO;
+        let mut c2_delta = E::ZERO;
+        for (block_idx, start_idx) in self.constraint_data_block_starts.iter().enumerate() {
+            let mask = constraint_leaf_row_masks[block_idx];
+            let remaining = self.constraint_width_ext.saturating_sub(*start_idx);
+            let block_len = remaining.min(RATE_WIDTH);
+            let mut block_c1 = E::ZERO;
+            let mut block_c2 = E::ZERO;
+            for j in 0..block_len {
+                let idx = start_idx + j;
+                let coeff = inner_deep_coeffs[self.trace_width_ext + idx];
+                let val = current[RATE_START + j];
+                let ood_z = ood_quotient_current[idx];
+                let ood_zg = ood_quotient_next[idx];
+                block_c1 += coeff * (val - ood_z);
+                block_c2 += coeff * (val - ood_zg);
+            }
+            c1_delta += mask * block_c1;
+            c2_delta += mask * block_c2;
+        }
 
         let reset_term_t1 = query_reset_mask * (E::ZERO - t1);
         let reset_term_t2 = query_reset_mask * (E::ZERO - t2);
         let reset_term_c1 = query_reset_mask * (E::ZERO - c1);
         let reset_term_c2 = query_reset_mask * (E::ZERO - c2);
 
-        result[idx] = inner_rpo_sel
-            * (t1_next
-                - t1
-                - reset_term_t1
-                - trace_leaf0_row_mask * t1_delta0
-                - trace_leaf1_row_mask * t1_delta1);
-        result[idx + 1] = inner_rpo_sel
-            * (t2_next
-                - t2
-                - reset_term_t2
-                - trace_leaf0_row_mask * t2_delta0
-                - trace_leaf1_row_mask * t2_delta1);
-        result[idx + 2] =
-            inner_rpo_sel * (c1_next - c1 - reset_term_c1 - constraint_leaf_row_mask * c1_delta);
-        result[idx + 3] =
-            inner_rpo_sel * (c2_next - c2 - reset_term_c2 - constraint_leaf_row_mask * c2_delta);
+        result[idx] = t1_next - t1 - reset_term_t1 - t1_delta;
+        result[idx + 1] = t2_next - t2 - reset_term_t2 - t2_delta;
+        result[idx + 2] = c1_next - c1 - reset_term_c1 - c1_delta;
+        result[idx + 3] = c2_next - c2 - reset_term_c2 - c2_delta;
         idx += 4;
 
         // --- x / pow state machine ---
@@ -1273,17 +1225,16 @@ impl Air for StarkVerifierBatchAir {
 
         let x_fri_update = fri_leaf_any_row_mask * (x * x * E::from(self.inv_domain_offset) - x);
 
-        result[idx] = inner_rpo_sel * (x_next - x - reset_x - x_trace_update - x_fri_update);
+        result[idx] = x_next - x - reset_x - x_trace_update - x_fri_update;
 
         let pow_trace_update = trace_merkle_bit_mask * (pow * pow - pow);
-        result[idx + 1] = inner_rpo_sel * (pow_next - pow - reset_pow - pow_trace_update);
+        result[idx + 1] = pow_next - pow - reset_pow - pow_trace_update;
         idx += 2;
 
         // --- evaluation freeze between leaf updates ---
         let eval = current[COL_FRI_EVAL];
         let eval_next = next[COL_FRI_EVAL];
-        result[idx] =
-            inner_rpo_sel * (one - fri_leaf_any_row_mask - query_reset_mask) * (eval_next - eval);
+        result[idx] = (one - fri_leaf_any_row_mask - query_reset_mask) * (eval_next - eval);
         idx += 1;
 
         // --- MSB capture bits ---
@@ -1292,11 +1243,10 @@ impl Air for StarkVerifierBatchAir {
             let cur_b = current[bit_col];
             let next_b = next[bit_col];
             let capture = msb_capture_masks[layer_idx];
-            result[idx + layer_idx] = inner_rpo_sel
-                * (next_b
-                    - cur_b
-                    - query_reset_mask * (E::ZERO - cur_b)
-                    - capture * (path_bit - cur_b));
+            result[idx + layer_idx] = next_b
+                - cur_b
+                - query_reset_mask * (E::ZERO - cur_b)
+                - capture * (path_bit - cur_b);
         }
         idx += num_fri_layers;
 
@@ -1307,7 +1257,7 @@ impl Air for StarkVerifierBatchAir {
             let v0 = current[RATE_START];
             let v1 = current[RATE_START + 1];
             let selected = v0 + b * (v1 - v0);
-            result[idx + layer_idx] = inner_rpo_sel * mask * (eval - selected);
+            result[idx + layer_idx] = mask * (eval - selected);
         }
         idx += num_fri_layers;
 
@@ -1320,7 +1270,7 @@ impl Air for StarkVerifierBatchAir {
             let x_minus_z1 = x - z1;
             let denom = x_minus_z0 * x_minus_z1;
             let num = (t1 + c1) * x_minus_z1 + (t2 + c2) * x_minus_z0;
-            result[idx] = inner_rpo_sel * mask * (eval * denom - num);
+            result[idx] = mask * (eval * denom - num);
         } else {
             result[idx] = E::ZERO;
         }
@@ -1340,7 +1290,7 @@ impl Air for StarkVerifierBatchAir {
             // 2x * next_eval = (x + α) * f(x) + (x - α) * f(-x)
             let lhs = two * x_base * eval_next;
             let rhs = (x_base + alpha) * v0 + (x_base - alpha) * v1;
-            result[idx + layer_idx] = inner_rpo_sel * mask * (lhs - rhs);
+            result[idx + layer_idx] = mask * (lhs - rhs);
         }
         idx += num_fri_layers;
 
@@ -1351,7 +1301,7 @@ impl Air for StarkVerifierBatchAir {
             for i in 0..NUM_REMAINDER_COEFFS {
                 acc = acc * x + current[COL_REMAINDER_COEFFS_START + i];
             }
-            result[idx] = inner_rpo_sel * remainder_mask * (eval - acc);
+            result[idx] = remainder_mask * (eval - acc);
         } else {
             result[idx] = E::ZERO;
         }
@@ -1398,10 +1348,20 @@ impl Air for StarkVerifierBatchAir {
 
         let total_rows = self.trace_length();
         let num_segments = self.num_segments();
-        let inner_is_rpo = self.inner_is_rpo;
+        let num_fri_layers = self.template.fri_commitments.len().saturating_sub(1);
+        let extra_cols = 1
+            + 2 * DIGEST_WIDTH
+            + num_fri_layers * DIGEST_WIDTH
+            + 1
+            + self.num_constraint_coeffs
+            + self.num_deep_coeffs
+            + num_fri_layers
+            + 2
+            + 2 * self.trace_width_ext
+            + 2 * self.constraint_width_ext;
 
         // Repeat the base periodic column values for every segment.
-        let mut result = Vec::with_capacity(base_cols.len() + 1 + 64);
+        let mut result = Vec::with_capacity(base_cols.len() + extra_cols);
         for base in &base_cols {
             debug_assert_eq!(base.len(), self.segment_len);
             let mut col = vec![BaseElement::ZERO; total_rows];
@@ -1422,38 +1382,48 @@ impl Air for StarkVerifierBatchAir {
         result.push(seg_transition);
 
         // Per-segment constants used by `evaluate_transition`.
-        let num_fri_layers = self.template.fri_commitments.len().saturating_sub(1);
-
         let mut trace_commitment_cols = vec![vec![BaseElement::ZERO; total_rows]; DIGEST_WIDTH];
         let mut constraint_commitment_cols =
             vec![vec![BaseElement::ZERO; total_rows]; DIGEST_WIDTH];
         let mut fri_commitment_cols =
             vec![vec![BaseElement::ZERO; total_rows]; num_fri_layers * DIGEST_WIDTH];
-        let mut inner_pub_inputs_cols = vec![vec![BaseElement::ZERO; total_rows]; 2 * STATE_WIDTH];
         let mut expected_z_col = vec![BaseElement::ZERO; total_rows];
-        let mut inner_rpo_periodic_cols =
-            vec![vec![BaseElement::ZERO; total_rows]; 1 + STATE_WIDTH];
-        let mut transition_div_inv_col = vec![BaseElement::ZERO; total_rows];
-        let mut boundary_inv_cols = vec![vec![BaseElement::ZERO; total_rows]; 2];
-        let mut ood_weight_cols = vec![vec![BaseElement::ZERO; total_rows]; 8];
+        let mut constraint_coeff_cols =
+            vec![vec![BaseElement::ZERO; total_rows]; self.num_constraint_coeffs];
+        let mut deep_coeff_cols = vec![vec![BaseElement::ZERO; total_rows]; self.num_deep_coeffs];
+        let mut fri_alpha_cols = vec![vec![BaseElement::ZERO; total_rows]; num_fri_layers];
+        let mut ood_eval1_col = vec![BaseElement::ZERO; total_rows];
+        let mut ood_eval2_col = vec![BaseElement::ZERO; total_rows];
+        let mut ood_trace_current_cols =
+            vec![vec![BaseElement::ZERO; total_rows]; self.trace_width_ext];
+        let mut ood_quotient_current_cols =
+            vec![vec![BaseElement::ZERO; total_rows]; self.constraint_width_ext];
+        let mut ood_trace_next_cols =
+            vec![vec![BaseElement::ZERO; total_rows]; self.trace_width_ext];
+        let mut ood_quotient_next_cols =
+            vec![vec![BaseElement::ZERO; total_rows]; self.constraint_width_ext];
 
         for (seg_idx, inner) in self.pub_inputs.inner.iter().enumerate() {
-            let expected_z = compute_expected_z(inner);
-            let (rpo_periodic_at_z, transition_div_inv_at_z, boundary_inv_at_z, ood_weights) =
-                if inner_is_rpo {
-                    super::stark_verifier_air::compute_inner_ood_constants(
-                        inner,
-                        expected_z,
-                        self.g_trace,
-                    )
-                } else {
-                    (
-                        [BaseElement::ZERO; 1 + STATE_WIDTH],
-                        BaseElement::ZERO,
-                        [BaseElement::ZERO; 2],
-                        [BaseElement::ZERO; 8],
-                    )
-                };
+            let ood_digest = compute_ood_digest(inner);
+            let (constraint_coeffs, expected_z, deep_coeffs, fri_alphas) =
+                compute_expected_transcript_draws(inner, ood_digest)
+                    .expect("failed to reconstruct inner transcript");
+            let (ood_eval1, ood_eval2) = match inner_proof_kind(inner) {
+                Ok(InnerProofKind::RpoAir) => compute_rpo_ood_consistency(
+                    inner,
+                    &constraint_coeffs,
+                    expected_z,
+                    self.g_trace,
+                )
+                .expect("failed to evaluate RPO constraints at z"),
+                Ok(InnerProofKind::TransactionAir) => compute_transaction_ood_consistency(
+                    inner,
+                    &constraint_coeffs,
+                    expected_z,
+                )
+                .expect("failed to evaluate transaction constraints at z"),
+                Err(err) => panic!("unsupported inner proof kind: {err}"),
+            };
 
             let start = seg_idx * self.segment_len;
             let end = start + self.segment_len;
@@ -1471,26 +1441,53 @@ impl Air for StarkVerifierBatchAir {
                 }
             }
 
-            for (i, value) in inner
-                .inner_public_inputs
+            expected_z_col[start..end].fill(expected_z);
+            ood_eval1_col[start..end].fill(ood_eval1);
+            ood_eval2_col[start..end].fill(ood_eval2);
+
+            let constraint_len =
+                constraint_coeffs.transition.len() + constraint_coeffs.boundary.len();
+            assert_eq!(
+                constraint_len, self.num_constraint_coeffs,
+                "inner proof {seg_idx} constraint coeff length mismatch"
+            );
+            for (i, value) in constraint_coeffs
+                .transition
                 .iter()
-                .copied()
-                .take(2 * STATE_WIDTH)
+                .chain(constraint_coeffs.boundary.iter())
                 .enumerate()
             {
-                inner_pub_inputs_cols[i][start..end].fill(value);
+                constraint_coeff_cols[i][start..end].fill(*value);
             }
 
-            expected_z_col[start..end].fill(expected_z);
-            for i in 0..1 + STATE_WIDTH {
-                inner_rpo_periodic_cols[i][start..end].fill(rpo_periodic_at_z[i]);
+            let deep_len = deep_coeffs.trace.len() + deep_coeffs.constraints.len();
+            assert_eq!(
+                deep_len, self.num_deep_coeffs,
+                "inner proof {seg_idx} deep coeff length mismatch"
+            );
+            for (i, value) in deep_coeffs
+                .trace
+                .iter()
+                .chain(deep_coeffs.constraints.iter())
+                .enumerate()
+            {
+                deep_coeff_cols[i][start..end].fill(*value);
             }
-            transition_div_inv_col[start..end].fill(transition_div_inv_at_z);
-            for i in 0..2 {
-                boundary_inv_cols[i][start..end].fill(boundary_inv_at_z[i]);
+            for (i, value) in fri_alphas.iter().copied().enumerate() {
+                fri_alpha_cols[i][start..end].fill(value);
             }
-            for i in 0..8 {
-                ood_weight_cols[i][start..end].fill(ood_weights[i]);
+
+            for (i, value) in inner.ood_trace_current.iter().copied().enumerate() {
+                ood_trace_current_cols[i][start..end].fill(value);
+            }
+            for (i, value) in inner.ood_quotient_current.iter().copied().enumerate() {
+                ood_quotient_current_cols[i][start..end].fill(value);
+            }
+            for (i, value) in inner.ood_trace_next.iter().copied().enumerate() {
+                ood_trace_next_cols[i][start..end].fill(value);
+            }
+            for (i, value) in inner.ood_quotient_next.iter().copied().enumerate() {
+                ood_quotient_next_cols[i][start..end].fill(value);
             }
         }
 
@@ -1503,18 +1500,28 @@ impl Air for StarkVerifierBatchAir {
         for col in fri_commitment_cols {
             result.push(col);
         }
-        for col in inner_pub_inputs_cols {
-            result.push(col);
-        }
         result.push(expected_z_col);
-        for col in inner_rpo_periodic_cols {
+        for col in constraint_coeff_cols {
             result.push(col);
         }
-        result.push(transition_div_inv_col);
-        for col in boundary_inv_cols {
+        for col in deep_coeff_cols {
             result.push(col);
         }
-        for col in ood_weight_cols {
+        for col in fri_alpha_cols {
+            result.push(col);
+        }
+        result.push(ood_eval1_col);
+        result.push(ood_eval2_col);
+        for col in ood_trace_current_cols {
+            result.push(col);
+        }
+        for col in ood_quotient_current_cols {
+            result.push(col);
+        }
+        for col in ood_trace_next_cols {
+            result.push(col);
+        }
+        for col in ood_quotient_next_cols {
             result.push(col);
         }
 

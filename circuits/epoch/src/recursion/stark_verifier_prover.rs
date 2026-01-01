@@ -226,6 +226,8 @@ impl StarkVerifierProver {
         }
         let mut trace = TraceTable::init(columns);
         let inner_is_rpo_air = self.pub_inputs.inner_public_inputs.len() == 2 * STATE_WIDTH;
+        let inner_is_transaction_air =
+            self.pub_inputs.inner_public_inputs.len() == transaction_public_inputs_len();
 
         let mut perm_idx = 0usize;
         let expected_z = compute_expected_z(&self.pub_inputs);
@@ -929,13 +931,9 @@ impl StarkVerifierProver {
                         trace.set(COL_POS_SORTED_VALUE, row, p_elem);
                     }
 
-                    let full_carry = if remaining_draws == 1 {
-                        BaseElement::ZERO
-                    } else {
-                        BaseElement::ONE
-                    };
+                    let full_carry = BaseElement::ZERO;
 
-                    // Masks on this perm boundary: carry transcript state unless this is the final decomp.
+                    // No boundary carry on decomp perms (RPO state is frozen inside the perm).
                     set_masks(
                 &mut trace,
                 perm_idx,
@@ -1133,7 +1131,7 @@ impl StarkVerifierProver {
             perm_idx += 1;
         }
 
-        if inner_is_rpo_air {
+        if inner_is_rpo_air || inner_is_transaction_air {
             debug_assert_eq!(
                 constraint_coeffs.len(),
                 NUM_CONSTRAINT_COEFFS,
@@ -1217,6 +1215,11 @@ impl StarkVerifierProver {
             inner.field_extension,
             FieldExtension::None,
             "StarkVerifierAir recursion currently supports only base-field inner proofs"
+        );
+        assert_eq!(
+            inner.fri_folding_factor,
+            2,
+            "StarkVerifierAir recursion currently assumes FRI folding factor 2"
         );
         let inputs = &self.pub_inputs.inner_public_inputs;
         let input_len = inputs.len();
@@ -2023,11 +2026,7 @@ impl StarkVerifierProver {
                         trace.set(COL_POS_SORTED_VALUE, row, p_elem);
                     }
 
-                    let full_carry = if remaining_draws == 1 {
-                        BaseElement::ZERO
-                    } else {
-                        BaseElement::ONE
-                    };
+                    let full_carry = BaseElement::ZERO;
 
                     set_masks(
                 &mut trace,
@@ -2251,7 +2250,9 @@ impl StarkVerifierProver {
         }
 
         let inner_is_rpo_air = self.pub_inputs.inner_public_inputs.len() == 2 * STATE_WIDTH;
-        if inner_is_rpo_air {
+        let inner_is_transaction_air =
+            self.pub_inputs.inner_public_inputs.len() == transaction_public_inputs_len();
+        if inner_is_rpo_air || inner_is_transaction_air {
             debug_assert_eq!(
                 constraint_coeffs.len(),
                 NUM_CONSTRAINT_COEFFS,
@@ -2301,10 +2302,9 @@ impl StarkVerifierProver {
 
         // Populate DEEP/FRI recursion state columns (TraceTable::new() leaves memory uninitialized).
         //
-        // For verifier-as-inner proofs (depth-2+), StarkVerifierAir's DEEP/FRI logic is currently
-        // gated off (Phase 3b.2 streaming/replay pending). Avoid expensive native DEEP evaluation
-        // work and just initialize the state columns to zero so traces are deterministic.
-        if inner_is_rpo_air {
+        // For verifier-as-inner proofs (depth-2+), DEEP/FRI logic remains gated off; for RPO and
+        // transaction proofs we compute the full state so recursion constraints are sound.
+        if inner_is_rpo_air || inner_is_transaction_air {
             let g_trace = BaseElement::get_root_of_unity(self.pub_inputs.trace_length.ilog2());
             let g_lde = BaseElement::get_root_of_unity(lde_domain_size.ilog2());
             let domain_offset = BaseElement::GENERATOR;
@@ -2935,6 +2935,11 @@ fn set_merkle_index(trace: &mut TraceTable<BaseElement>, perm_idx: usize, index:
     }
 }
 
+fn transaction_public_inputs_len() -> usize {
+    (transaction_circuit::constants::MAX_INPUTS + transaction_circuit::constants::MAX_OUTPUTS) * 5
+        + 24
+}
+
 fn leaf_perm_count(leaf_len: usize, partition_size: usize) -> usize {
     let hash_perms = |input_len: usize| input_len.div_ceil(RATE_WIDTH).max(1);
 
@@ -3371,11 +3376,19 @@ mod tests {
     use super::*;
     use miden_crypto::hash::rpo::Rpo256;
     use miden_crypto::rand::RpoRandomCoin;
+    use transaction_circuit::constants::NATIVE_ASSET_ID;
+    use transaction_circuit::hashing::{felts_to_bytes32, merkle_node, HashFelt};
+    use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
+    use transaction_circuit::public_inputs::StablecoinPolicyBinding;
+    use transaction_circuit::rpo_prover::TransactionProverStarkRpo;
+    use transaction_circuit::witness::TransactionWitness;
+    use transaction_circuit::TransactionAirStark;
     use winter_air::{AirContext, Assertion, TraceInfo, TransitionConstraintDegree};
     use winter_air::{BatchingMethod, EvaluationFrame, FieldExtension};
     use winter_crypto::MerkleTree;
     use winter_math::FieldElement;
     use winter_math::ToElements;
+    use winterfell::Prover;
     use winterfell::verify;
     use winterfell::AcceptableOptions;
     use winterfell::Air;
@@ -3432,6 +3445,67 @@ mod tests {
             remaining -= part_len;
         }
         count
+    }
+
+    fn compute_merkle_root_from_path(
+        leaf: HashFelt,
+        position: u64,
+        path: &MerklePath,
+    ) -> HashFelt {
+        let mut current = leaf;
+        let mut pos = position;
+        for sibling in &path.siblings {
+            current = if pos & 1 == 0 {
+                merkle_node(current, *sibling)
+            } else {
+                merkle_node(*sibling, current)
+            };
+            pos >>= 1;
+        }
+        current
+    }
+
+    fn sample_transaction_witness() -> TransactionWitness {
+        let input_note = NoteData {
+            value: 5,
+            asset_id: NATIVE_ASSET_ID,
+            pk_recipient: [2u8; 32],
+            rho: [3u8; 32],
+            r: [4u8; 32],
+        };
+        let output_note = OutputNoteWitness {
+            note: NoteData {
+                value: 4,
+                asset_id: NATIVE_ASSET_ID,
+                pk_recipient: [9u8; 32],
+                rho: [10u8; 32],
+                r: [11u8; 32],
+            },
+        };
+
+        let merkle_path = MerklePath::default();
+        let position = 0u64;
+        let merkle_root = felts_to_bytes32(&compute_merkle_root_from_path(
+            input_note.commitment(),
+            position,
+            &merkle_path,
+        ));
+
+        TransactionWitness {
+            inputs: vec![InputNoteWitness {
+                note: input_note,
+                position,
+                rho_seed: [7u8; 32],
+                merkle_path,
+            }],
+            outputs: vec![output_note],
+            sk_spend: [8u8; 32],
+            merkle_root,
+            fee: 1,
+            value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
+            version: TransactionWitness::default_version_binding(),
+        }
     }
 
     type RpoMerkleTree = MerkleTree<Rpo256>;
@@ -3797,7 +3871,7 @@ mod tests {
         let prover = StarkVerifierProver::new(outer_options.clone(), pub_inputs.clone());
         let trace = prover.build_trace_from_inner(&inner_data);
 
-        let air = StarkVerifierAir::new(trace.info().clone(), pub_inputs, outer_options);
+        let air = StarkVerifierAir::new(trace.info().clone(), pub_inputs.clone(), outer_options);
         let periodic = air.get_periodic_column_values();
 
         // The OOD consistency constraint should be violated on any row (it only depends on constant columns).
@@ -4269,7 +4343,7 @@ mod tests {
         // Find two decomp-boundary rows with identical draw values, and ensure transition
         // constraints hold at both boundaries.
         use std::collections::HashMap;
-        let air = StarkVerifierAir::new(trace.info().clone(), pub_inputs, outer_options);
+        let air = StarkVerifierAir::new(trace.info().clone(), pub_inputs.clone(), outer_options);
         let periodic = air.get_periodic_column_values();
 
         let mut first_by_draw: HashMap<u64, usize> = HashMap::new();
@@ -4318,7 +4392,7 @@ mod tests {
         let mut trace = prover.build_trace_from_inner(&inner_data);
 
         let num_fri_layers = pub_inputs.fri_commitments.len().saturating_sub(1);
-        let air = StarkVerifierAir::new(trace.info().clone(), pub_inputs, outer_options);
+        let air = StarkVerifierAir::new(trace.info().clone(), pub_inputs.clone(), outer_options);
         let periodic = air.get_periodic_column_values();
         assert!(num_fri_layers > 0, "expected at least one FRI layer");
 
@@ -4387,7 +4461,7 @@ mod tests {
         let mut trace = prover.build_trace_from_inner(&inner_data);
 
         let num_fri_layers = pub_inputs.fri_commitments.len().saturating_sub(1);
-        let air = StarkVerifierAir::new(trace.info().clone(), pub_inputs, outer_options);
+        let air = StarkVerifierAir::new(trace.info().clone(), pub_inputs.clone(), outer_options);
         let periodic = air.get_periodic_column_values();
         assert!(num_fri_layers > 0, "expected at least one FRI layer");
 
@@ -4459,5 +4533,77 @@ mod tests {
             bad.iter().any(|v| *v != BaseElement::ZERO),
             "expected remainder evaluation check to detect tampering at row {remainder_row}"
         );
+    }
+
+    #[test]
+    #[ignore = "heavy: transaction inner proof recursion"]
+    fn test_transaction_inner_proof_recursion() {
+        let inner_options = ProofOptions::new(
+            8,
+            8,
+            0,
+            FieldExtension::None,
+            2,
+            7,
+            BatchingMethod::Linear,
+            BatchingMethod::Linear,
+        );
+        let outer_options = test_options(1);
+
+        let witness = sample_transaction_witness();
+        let tx_prover = TransactionProverStarkRpo::new(inner_options);
+        let tx_trace = tx_prover.build_trace(&witness).expect("tx trace");
+        let tx_pub_inputs = tx_prover.get_pub_inputs(&tx_trace);
+        let tx_proof = tx_prover.prove(tx_trace).expect("tx proof");
+
+        let inner_data =
+            InnerProofData::from_proof::<TransactionAirStark>(&tx_proof.to_bytes(), tx_pub_inputs)
+                .expect("inner proof parsing");
+        let verifier_inputs = inner_data.to_stark_verifier_inputs();
+
+        let prover = StarkVerifierProver::new(outer_options.clone(), verifier_inputs.clone());
+        let trace = prover.build_trace_from_inner(&inner_data);
+
+        let air =
+            StarkVerifierAir::new(trace.info().clone(), verifier_inputs.clone(), outer_options.clone());
+
+        for assertion in air.get_assertions() {
+            let row = assertion.first_step();
+            let col = assertion.column();
+            let expected = assertion.values()[0];
+            let observed = trace.get(col, row);
+            if observed != expected {
+                let perm_idx = row / ROWS_PER_PERMUTATION;
+                let row_in_perm = row % ROWS_PER_PERMUTATION;
+                let mask_snapshot = [
+                    ("carry", trace.get(COL_CARRY_MASK, row)),
+                    ("full_carry", trace.get(COL_FULL_CARRY_MASK, row)),
+                    ("reseed", trace.get(COL_RESEED_MASK, row)),
+                    ("coin_init", trace.get(COL_COIN_INIT_MASK, row)),
+                    ("coeff", trace.get(COL_COEFF_MASK, row)),
+                    ("z", trace.get(COL_Z_MASK, row)),
+                    ("deep", trace.get(COL_DEEP_MASK, row)),
+                    ("fri", trace.get(COL_FRI_MASK, row)),
+                    ("pos", trace.get(COL_POS_MASK, row)),
+                    ("pos_decomp", trace.get(COL_POS_DECOMP_MASK, row)),
+                    ("coin_save", trace.get(COL_COIN_SAVE_MASK, row)),
+                    ("coin_restore", trace.get(COL_COIN_RESTORE_MASK, row)),
+                    ("tape", trace.get(COL_TAPE_MASK, row)),
+                ];
+                panic!(
+                    "assertion failed at row {row} (perm={perm_idx}, offset={row_in_perm}) col {col}: expected {expected}, got {observed}, masks={mask_snapshot:?}"
+                );
+            }
+        }
+
+        let proof = prover.prove(trace).expect("outer proof");
+
+        let acceptable = AcceptableOptions::OptionSet(vec![outer_options]);
+        let result = verify::<StarkVerifierAir, Blake3, DefaultRandomCoin<Blake3>, Blake3MerkleTree>(
+            proof,
+            verifier_inputs,
+            &acceptable,
+        );
+        assert!(result.is_ok(), "transaction recursion proof failed: {result:?}");
     }
 }
