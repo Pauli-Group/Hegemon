@@ -31,8 +31,9 @@ pub use substrate_pow::{
 };
 pub use types::{
     BalanceTag, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, DaChunk, DaChunkProof,
-    DaParams, DaRoot, FeeCommitment, Nullifier, RecursiveProofHash, StarkCommitment, SupplyDigest,
-    Transaction, VersionCommitment,
+    DaEncoding, DaError, DaParams, DaRoot, FeeCommitment, Nullifier, RecursiveProofHash,
+    StarkCommitment, SupplyDigest, Transaction, VersionCommitment, build_da_blob, da_root,
+    encode_da_blob, verify_da_chunk,
 };
 pub use validator::{Validator, ValidatorSet};
 pub use version_policy::{UpgradeDirective, VersionProposal, VersionSchedule};

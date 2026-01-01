@@ -33,6 +33,7 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2025-12-31T18:45Z) Retired legacy block aggregation: `prove_block` now emits `RecursiveBlockProof` by default, added a fast proving helper for dev/tests, updated consensus test scaffolding to accept recursive proofs, and refreshed docs to remove `RecursiveAggregation`.
 - [x] (2025-12-31T19:10Z) Wired Substrate block building to optionally generate recursive block proofs from shielded transfer extrinsics and attach them to mining templates (gated by `HEGEMON_RECURSIVE_BLOCK_PROOFS`).
 - [x] (2026-01-01T06:49Z) Enforced quadratic-only transaction proof options (fold-2) by removing base-field verifier acceptance, updated math notes with fold-2 soundness bounds, and added quadratic transcript-draw scaffolding for recursion.
+- [ ] (2026-01-01T09:30Z) Started Milestone 4 DA encoding and commitment checks (completed: added `state/da` erasure-coding + Merkle proof module, wired consensus `da_root` recomputation and updated tests; remaining: DA chunk storage, P2P request/response, per-node sampling enforcement in node service).
 - [ ] (2025-12-31T02:04Z) Implement data-availability encoding, storage, sampling, and P2P retrieval.
 - [ ] (2025-12-31T02:04Z) Integrate node, wallet, mempool, and RPC so end-to-end mining works with the new block format.
 - [ ] (2025-12-31T02:04Z) Add benchmarks, tests, and runbooks that prove the system works.
@@ -102,6 +103,9 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - Observation (2025-12-31T17:49Z): Recursive block proof generation is heavy enough that the consensus recursive-proof test is marked ignored to keep default test runs fast.
   Evidence: `consensus/tests/recursive_proof.rs` uses `#[ignore = "heavy: recursive proof generation"]`.
   Implication: Milestone 3 validation requires running ignored tests when confirming recursive proof correctness end-to-end.
+- Observation (2026-01-01T09:30Z): The initial DA encoder uses Reed–Solomon over GF(256), which caps total shard count at 255 and will fail on very large blobs unless chunk sizes grow or a 2D scheme lands.
+  Evidence: `state/da/src/lib.rs` enforces `MAX_SHARDS = 255` with a hard error.
+  Implication: DA parameters must keep `k + p ≤ 255` for now; future work should add 2D RS or larger-field encoding.
 
 ## Decision Log
 
@@ -164,6 +168,11 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - Decision: Temporarily gate OOD/DEEP/FRI consistency checks for non-RpoAir inner proofs in the recursion verifier to avoid OOD-column overflows.
   Rationale: Transaction proofs produce OOD evaluation vectors that exceed the fixed verifier trace width; until streaming OOD evaluation lands, we skip these constraints to keep recursive proof generation running (UNSOUND, must be removed).
   Date/Author: 2025-12-31 / Codex
+- Decision: Use 1D Reed–Solomon with parity shards `p = ceil(k/2)` and a BLAKE3 Merkle root over all shards for the initial DA encoder.
+  Rationale: This matches the math notes’ 1.5x overhead example, avoids adding new consensus parameters beyond `chunk_size`/`sample_count`, and keeps the implementation simple while we wire P2P sampling.
+  Date/Author: 2026-01-01 / Codex
+
+Note (2026-01-01T09:30Z): Updated Progress, Surprises & Discoveries, and Decision Log to record the DA encoder implementation start, shard-limit constraint, and the parity selection rationale.
 
 ## Outcomes & Retrospective
 

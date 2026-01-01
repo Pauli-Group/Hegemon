@@ -6,7 +6,7 @@ use consensus::proof::{verify_commitments, RecursiveProofVerifier};
 use consensus::ProofVerifier;
 use consensus::types::{
     ConsensusBlock, DaParams, compute_fee_commitment, compute_proof_commitment,
-    compute_version_commitment,
+    compute_version_commitment, da_root,
 };
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use state_merkle::CommitmentTree;
@@ -204,6 +204,10 @@ fn recursive_proof_verifier_accepts_valid_block() {
     );
 
     let transactions = vec![transaction];
+    let da_params = DaParams {
+        chunk_size: 1024,
+        sample_count: 4,
+    };
     let header = BlockHeader {
         version: 1,
         height: 1,
@@ -214,11 +218,8 @@ fn recursive_proof_verifier_accepts_valid_block() {
         nullifier_root: [0u8; 32],
         proof_commitment: compute_proof_commitment(&transactions),
         recursive_proof_hash: recursive_proof.recursive_proof_hash,
-        da_root: [0u8; 32],
-        da_params: DaParams {
-            chunk_size: 1024,
-            sample_count: 4,
-        },
+        da_root: da_root(&transactions, da_params).expect("da root"),
+        da_params,
         version_commitment: compute_version_commitment(&transactions),
         tx_count: transactions.len() as u32,
         fee_commitment: compute_fee_commitment(&transactions),
