@@ -139,7 +139,7 @@ use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
-use rand::{rngs::OsRng, RngCore};
+use rand::{rngs::OsRng, seq::index::sample, RngCore};
 use sc_client_api::{BlockBackend, BlockchainEvents, HeaderBackend};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
@@ -148,12 +148,13 @@ use sp_api::{ProvideRuntimeApi, StorageChanges};
 use sp_core::H256;
 use sp_inherents::{InherentData, InherentDataProvider};
 use sp_runtime::traits::Header as HeaderT;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use std::time::{Duration, Instant};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 use epoch_circuit::{
     compute_proof_root, Epoch as EpochCircuit, RecursiveEpochProver as EpochRecursiveProver,
@@ -162,6 +163,7 @@ use epoch_circuit::{
 
 // Import runtime APIs for difficulty queries
 use pallet_shielded_pool::Call as ShieldedPoolCall;
+use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_merkle::CommitmentTree;
@@ -169,6 +171,7 @@ use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
+use parking_lot::Mutex as ParkingMutex;
 
 // Import jsonrpsee for RPC server
 use jsonrpsee::server::ServerBuilder;
@@ -220,6 +223,175 @@ pub fn take_storage_changes(key: u64) -> Option<HegemonStorageChanges> {
         tracing::warn!(key, "Storage changes not found in cache");
     }
     changes
+}
+
+const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
+const DEFAULT_DA_SAMPLE_COUNT: u32 = 80;
+const DEFAULT_DA_STORE_CAPACITY: usize = 128;
+const DEFAULT_DA_SAMPLE_TIMEOUT_MS: u64 = 5000;
+
+#[derive(Debug)]
+struct DaChunkStore {
+    capacity: usize,
+    order: VecDeque<DaRoot>,
+    entries: HashMap<DaRoot, DaEncoding>,
+}
+
+impl DaChunkStore {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            order: VecDeque::new(),
+            entries: HashMap::new(),
+        }
+    }
+
+    fn insert(&mut self, root: DaRoot, encoding: DaEncoding) {
+        if self.capacity == 0 {
+            return;
+        }
+
+        if self.entries.contains_key(&root) {
+            self.entries.insert(root, encoding);
+            self.order.retain(|entry| entry != &root);
+            self.order.push_back(root);
+            return;
+        }
+
+        if self.entries.len() >= self.capacity {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+
+        self.entries.insert(root, encoding);
+        self.order.push_back(root);
+    }
+
+    fn get(&self, root: &DaRoot) -> Option<&DaEncoding> {
+        self.entries.get(root)
+    }
+}
+
+#[derive(Debug, Default)]
+struct DaRequestTracker {
+    pending: HashMap<(DaRoot, u32), oneshot::Sender<Option<DaChunkProof>>>,
+}
+
+impl DaRequestTracker {
+    fn register(
+        &mut self,
+        root: DaRoot,
+        indices: &[u32],
+    ) -> Vec<oneshot::Receiver<Option<DaChunkProof>>> {
+        let mut receivers = Vec::with_capacity(indices.len());
+        for &index in indices {
+            let (tx, rx) = oneshot::channel();
+            self.pending.insert((root, index), tx);
+            receivers.push(rx);
+        }
+        receivers
+    }
+
+    fn fulfill_proofs(&mut self, root: DaRoot, proofs: Vec<DaChunkProof>) {
+        for proof in proofs {
+            if let Some(tx) = self.pending.remove(&(root, proof.chunk.index)) {
+                let _ = tx.send(Some(proof));
+            }
+        }
+    }
+
+    fn fulfill_not_found(&mut self, root: DaRoot, indices: Vec<u32>) {
+        for index in indices {
+            if let Some(tx) = self.pending.remove(&(root, index)) {
+                let _ = tx.send(None);
+            }
+        }
+    }
+
+    fn cancel(&mut self, root: DaRoot, indices: &[u32]) {
+        for &index in indices {
+            self.pending.remove(&(root, index));
+        }
+    }
+}
+
+fn env_u32(name: &str) -> Option<u32> {
+    std::env::var(name).ok().and_then(|value| value.parse().ok())
+}
+
+fn env_u64(name: &str) -> Option<u64> {
+    std::env::var(name).ok().and_then(|value| value.parse().ok())
+}
+
+fn env_usize(name: &str) -> Option<usize> {
+    env_u64(name).and_then(|value| usize::try_from(value).ok())
+}
+
+fn chain_property_u32(
+    properties: &sc_chain_spec::Properties,
+    key: &str,
+) -> Option<u32> {
+    properties.get(key).and_then(|value| {
+        value
+            .as_u64()
+            .and_then(|num| u32::try_from(num).ok())
+            .or_else(|| value.as_str().and_then(|num| num.parse::<u32>().ok()))
+    })
+}
+
+fn load_da_params(properties: &sc_chain_spec::Properties) -> DaParams {
+    let mut chunk_size = env_u32("HEGEMON_DA_CHUNK_SIZE")
+        .or_else(|| chain_property_u32(properties, "daChunkSize"))
+        .unwrap_or(DEFAULT_DA_CHUNK_SIZE);
+    if chunk_size == 0 {
+        tracing::warn!(
+            "HEGEMON_DA_CHUNK_SIZE is zero; falling back to {}",
+            DEFAULT_DA_CHUNK_SIZE
+        );
+        chunk_size = DEFAULT_DA_CHUNK_SIZE;
+    }
+
+    let mut sample_count = env_u32("HEGEMON_DA_SAMPLE_COUNT")
+        .or_else(|| chain_property_u32(properties, "daSampleCount"))
+        .unwrap_or(DEFAULT_DA_SAMPLE_COUNT);
+    if sample_count == 0 {
+        tracing::warn!(
+            "HEGEMON_DA_SAMPLE_COUNT is zero; falling back to {}",
+            DEFAULT_DA_SAMPLE_COUNT
+        );
+        sample_count = DEFAULT_DA_SAMPLE_COUNT;
+    }
+
+    DaParams {
+        chunk_size,
+        sample_count,
+    }
+}
+
+fn load_da_store_capacity() -> usize {
+    let capacity = env_usize("HEGEMON_DA_STORE_CAPACITY").unwrap_or(DEFAULT_DA_STORE_CAPACITY);
+    if capacity == 0 {
+        tracing::warn!(
+            "HEGEMON_DA_STORE_CAPACITY is zero; falling back to {}",
+            DEFAULT_DA_STORE_CAPACITY
+        );
+        return DEFAULT_DA_STORE_CAPACITY;
+    }
+    capacity
+}
+
+fn load_da_sample_timeout() -> Duration {
+    let timeout_ms =
+        env_u64("HEGEMON_DA_SAMPLE_TIMEOUT_MS").unwrap_or(DEFAULT_DA_SAMPLE_TIMEOUT_MS);
+    if timeout_ms == 0 {
+        tracing::warn!(
+            "HEGEMON_DA_SAMPLE_TIMEOUT_MS is zero; falling back to {}",
+            DEFAULT_DA_SAMPLE_TIMEOUT_MS
+        );
+        return Duration::from_millis(DEFAULT_DA_SAMPLE_TIMEOUT_MS);
+    }
+    Duration::from_millis(timeout_ms)
 }
 
 fn signed_parts_u64(value: i128) -> Result<(u8, u64), String> {
@@ -456,6 +628,178 @@ fn extract_transaction_proofs_from_extrinsics(
     }
 
     Ok(proofs)
+}
+
+fn encrypted_note_bytes(note: &pallet_shielded_pool::types::EncryptedNote) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(note.ciphertext.len() + note.kem_ciphertext.len());
+    bytes.extend_from_slice(&note.ciphertext);
+    bytes.extend_from_slice(&note.kem_ciphertext);
+    bytes
+}
+
+fn build_da_blob_from_extrinsics(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+) -> Result<Vec<u8>, String> {
+    let mut transactions: Vec<Vec<Vec<u8>>> = Vec::new();
+
+    for extrinsic in extrinsics {
+        let runtime::RuntimeCall::ShieldedPool(call) = &extrinsic.function else {
+            continue;
+        };
+
+        let ciphertexts = match call {
+            ShieldedPoolCall::shielded_transfer { ciphertexts, .. } => Some(
+                ciphertexts
+                    .iter()
+                    .map(encrypted_note_bytes)
+                    .collect::<Vec<_>>(),
+            ),
+            ShieldedPoolCall::shielded_transfer_unsigned { ciphertexts, .. } => Some(
+                ciphertexts
+                    .iter()
+                    .map(encrypted_note_bytes)
+                    .collect::<Vec<_>>(),
+            ),
+            ShieldedPoolCall::batch_shielded_transfer { ciphertexts, .. } => Some(
+                ciphertexts
+                    .iter()
+                    .map(encrypted_note_bytes)
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        };
+
+        if let Some(ciphertexts) = ciphertexts {
+            transactions.push(ciphertexts);
+        }
+    }
+
+    let mut blob = Vec::new();
+    blob.extend_from_slice(&(transactions.len() as u32).to_le_bytes());
+    for ciphertexts in transactions {
+        blob.extend_from_slice(&(ciphertexts.len() as u32).to_le_bytes());
+        for ciphertext in ciphertexts {
+            blob.extend_from_slice(&(ciphertext.len() as u32).to_le_bytes());
+            blob.extend_from_slice(&ciphertext);
+        }
+    }
+
+    Ok(blob)
+}
+
+fn build_da_encoding_from_extrinsics(
+    extrinsics: &[runtime::UncheckedExtrinsic],
+    params: DaParams,
+) -> Result<DaEncoding, String> {
+    let blob = build_da_blob_from_extrinsics(extrinsics)?;
+    state_da::encode_da_blob(&blob, params)
+        .map_err(|err| format!("da encoding failed: {err}"))
+}
+
+fn sample_da_indices(chunk_count: usize, sample_count: u32) -> Vec<u32> {
+    if chunk_count == 0 {
+        return Vec::new();
+    }
+    let wanted = sample_count.min(chunk_count as u32) as usize;
+    if wanted >= chunk_count {
+        return (0..chunk_count as u32).collect();
+    }
+
+    let mut rng = OsRng;
+    sample(&mut rng, chunk_count, wanted)
+        .into_iter()
+        .map(|idx| idx as u32)
+        .collect()
+}
+
+async fn request_da_samples(
+    peer_id: network::PeerId,
+    root: DaRoot,
+    indices: &[u32],
+    handle: &PqNetworkHandle,
+    tracker: &Arc<ParkingMutex<DaRequestTracker>>,
+    timeout: Duration,
+) -> Result<Vec<DaChunkProof>, String> {
+    if indices.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let receivers = {
+        let mut tracker = tracker.lock();
+        tracker.register(root, indices)
+    };
+
+    let request = crate::substrate::network_bridge::DaChunkProtocolMessage::Request {
+        root,
+        indices: indices.to_vec(),
+    };
+    if let Err(err) = handle
+        .send_message(
+            peer_id,
+            crate::substrate::network_bridge::DA_CHUNKS_PROTOCOL.to_string(),
+            request.encode(),
+        )
+        .await
+    {
+        let mut tracker = tracker.lock();
+        tracker.cancel(root, indices);
+        return Err(format!("failed to request DA chunks: {err}"));
+    }
+
+    let deadline = Instant::now() + timeout;
+    let mut proofs = Vec::with_capacity(indices.len());
+
+    for (&index, rx) in indices.iter().zip(receivers.into_iter()) {
+        let now = Instant::now();
+        if now >= deadline {
+            let mut tracker = tracker.lock();
+            tracker.cancel(root, indices);
+            return Err(format!("timeout waiting for DA chunk index {}", index));
+        }
+        let remaining = deadline - now;
+        match tokio::time::timeout(remaining, rx).await {
+            Ok(Ok(Some(proof))) => proofs.push(proof),
+            Ok(Ok(None)) => {
+                let mut tracker = tracker.lock();
+                tracker.cancel(root, indices);
+                return Err(format!("peer missing DA chunk index {}", index));
+            }
+            Ok(Err(_)) => {
+                let mut tracker = tracker.lock();
+                tracker.cancel(root, indices);
+                return Err(format!("DA chunk channel dropped index {}", index));
+            }
+            Err(_) => {
+                let mut tracker = tracker.lock();
+                tracker.cancel(root, indices);
+                return Err(format!("timeout waiting for DA chunk index {}", index));
+            }
+        }
+    }
+
+    Ok(proofs)
+}
+
+async fn sample_da_for_block(
+    peer_id: network::PeerId,
+    extrinsics: &[runtime::UncheckedExtrinsic],
+    params: DaParams,
+    handle: &PqNetworkHandle,
+    tracker: &Arc<ParkingMutex<DaRequestTracker>>,
+    timeout: Duration,
+) -> Result<DaEncoding, String> {
+    let encoding = build_da_encoding_from_extrinsics(extrinsics, params)?;
+    let root = encoding.root();
+    let chunk_count = encoding.chunks().len();
+    let indices = sample_da_indices(chunk_count, params.sample_count);
+    let proofs = request_da_samples(peer_id, root, &indices, handle, tracker, timeout).await?;
+
+    for proof in &proofs {
+        state_da::verify_da_chunk(root, proof)
+            .map_err(|err| format!("invalid DA chunk proof: {err}"))?;
+    }
+
+    Ok(encoding)
 }
 
 fn build_commitment_tree_from_chain(
@@ -959,12 +1303,20 @@ use sp_runtime::DigestItem;
 /// * `chain_state` - The ProductionChainStateProvider to wire
 /// * `pow_block_import` - The PowBlockImport wrapper for verified imports
 /// * `client` - The full Substrate client for header construction
+/// * `da_chunk_store` - In-memory DA chunk store for serving proofs
+/// * `da_params` - DA parameters for encoding chunk data
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// let chain_state = Arc::new(ProductionChainStateProvider::new(config));
-/// wire_pow_block_import(&chain_state, pow_block_import, client.clone());
+/// wire_pow_block_import(
+///     &chain_state,
+///     pow_block_import,
+///     client.clone(),
+///     da_chunk_store,
+///     da_params,
+/// );
 ///
 /// // Now when mining finds a valid seal:
 /// let hash = chain_state.import_block(&template, &seal)?;
@@ -977,10 +1329,12 @@ use sp_runtime::DigestItem;
 /// phase and applies them during import using `StateAction::ApplyChanges`.
 /// This ensures that runtime state (balances, nonces, etc.) is persisted
 /// to the database after block import.
-pub fn wire_pow_block_import(
+fn wire_pow_block_import(
     chain_state: &Arc<ProductionChainStateProvider>,
     _pow_block_import: ConcretePowBlockImport,
     client: Arc<HegemonFullClient>,
+    da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
+    da_params: DaParams,
 ) {
     use codec::Encode;
     use sp_runtime::traits::Block as BlockT;
@@ -1026,6 +1380,11 @@ pub fn wire_pow_block_import(
             .iter()
             .filter_map(|tx_bytes| runtime::UncheckedExtrinsic::decode(&mut &tx_bytes[..]).ok())
             .collect();
+
+        let mut da_encoding = Some(
+            build_da_encoding_from_extrinsics(&encoded_extrinsics, da_params)
+                .map_err(|err| format!("failed to build DA encoding for mined block: {err}"))?,
+        );
 
         // Construct the block with seal in header
         let block = runtime::Block::new(header.clone(), encoded_extrinsics);
@@ -1076,6 +1435,11 @@ pub fn wire_pow_block_import(
 
         match import_result {
             Ok(ImportResult::Imported(_aux)) => {
+                if let Some(encoding) = da_encoding.take() {
+                    da_chunk_store
+                        .lock()
+                        .insert(encoding.root(), encoding);
+                }
                 tracing::info!(
                     block_hash = %hex::encode(block_hash.as_bytes()),
                     block_number = template.number,
@@ -1084,6 +1448,11 @@ pub fn wire_pow_block_import(
                 Ok(block_hash)
             }
             Ok(ImportResult::AlreadyInChain) => {
+                if let Some(encoding) = da_encoding.take() {
+                    da_chunk_store
+                        .lock()
+                        .insert(encoding.root(), encoding);
+                }
                 tracing::warn!(
                     block_hash = %hex::encode(block_hash.as_bytes()),
                     "Block already in chain"
@@ -1936,6 +2305,22 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         "Recursive epoch proof store initialized"
     );
 
+    let da_params = load_da_params(&chain_properties);
+    let da_store_capacity = load_da_store_capacity();
+    let da_sample_timeout = load_da_sample_timeout();
+    let da_chunk_store: Arc<ParkingMutex<DaChunkStore>> =
+        Arc::new(ParkingMutex::new(DaChunkStore::new(da_store_capacity)));
+    let da_request_tracker: Arc<ParkingMutex<DaRequestTracker>> =
+        Arc::new(ParkingMutex::new(DaRequestTracker::default()));
+
+    tracing::info!(
+        da_chunk_size = da_params.chunk_size,
+        da_sample_count = da_params.sample_count,
+        da_store_capacity,
+        da_sample_timeout_ms = da_sample_timeout.as_millis() as u64,
+        "DA sampling configured"
+    );
+
     // =========================================================================
     // CRITICAL: Spawn Transaction Pool Maintenance Task
     // =========================================================================
@@ -2072,11 +2457,15 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let pq_handle_for_status = pq_backend.handle(); // For sending best block on connect
                 let pq_handle_for_tx_prop = pq_backend.handle(); // For transaction propagation
                 let pq_handle_for_epoch_proofs = pq_backend.handle(); // For recursive epoch proof propagation
+                let pq_handle_for_da = pq_backend.handle(); // For DA chunk request/response
+                let pq_handle_for_da_import = pq_handle_for_da.clone();
 
                 // Clone client for the network event handler to send our best block
                 let client_for_network = client.clone();
                 let recursive_epoch_proof_store_for_handler =
                     Arc::clone(&recursive_epoch_proof_store);
+                let da_chunk_store_for_handler = Arc::clone(&da_chunk_store);
+                let da_request_tracker_for_handler = Arc::clone(&da_request_tracker);
 
                 // Spawn a single verifier worker for incoming recursive epoch proofs.
                 let recursive_epoch_proof_store_for_worker =
@@ -2437,9 +2826,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 }
                                 PqNetworkEvent::MessageReceived { peer_id, protocol, data } => {
                                     // Handle sync protocol messages
-                                    use crate::substrate::network_bridge::{SYNC_PROTOCOL, SYNC_PROTOCOL_LEGACY};
+                                    use crate::substrate::network_bridge::{
+                                        BlockAnnounce, DaChunkProtocolMessage, BLOCK_ANNOUNCE_PROTOCOL,
+                                        BLOCK_ANNOUNCE_PROTOCOL_LEGACY, DA_CHUNKS_PROTOCOL,
+                                        SYNC_PROTOCOL, SYNC_PROTOCOL_LEGACY,
+                                    };
                                     use crate::substrate::network_bridge::SyncMessage;
-                                    use crate::substrate::network_bridge::{BLOCK_ANNOUNCE_PROTOCOL, BLOCK_ANNOUNCE_PROTOCOL_LEGACY, BlockAnnounce};
                                     use crate::substrate::network_bridge::{
                                         RecursiveEpochProofMessage, RECURSIVE_EPOCH_PROOFS_PROTOCOL,
                                     };
@@ -2590,6 +2982,89 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                                     error = %e,
                                                     data_len = data.len(),
                                                     "Failed to decode v2 recursive epoch proof message"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    // Handle DA chunk request/response
+                                    else if protocol == DA_CHUNKS_PROTOCOL {
+                                        match DaChunkProtocolMessage::decode(&mut &data[..]) {
+                                            Ok(DaChunkProtocolMessage::Request { root, indices }) => {
+                                                let (proofs, missing) = {
+                                                    let store = da_chunk_store_for_handler.lock();
+                                                    match store.get(&root) {
+                                                        Some(encoding) => {
+                                                            let mut proofs = Vec::new();
+                                                            let mut missing = Vec::new();
+                                                            for index in indices.iter().copied() {
+                                                                match encoding.proof(index) {
+                                                                    Ok(proof) => proofs.push(proof),
+                                                                    Err(_) => missing.push(index),
+                                                                }
+                                                            }
+                                                            (proofs, missing)
+                                                        }
+                                                        None => (Vec::new(), indices.clone()),
+                                                    }
+                                                };
+
+                                                if !proofs.is_empty() {
+                                                    let response = DaChunkProtocolMessage::Response {
+                                                        root,
+                                                        proofs,
+                                                    };
+                                                    if let Err(e) = pq_handle_for_da
+                                                        .send_message(
+                                                            peer_id,
+                                                            DA_CHUNKS_PROTOCOL.to_string(),
+                                                            response.encode(),
+                                                        )
+                                                        .await
+                                                    {
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(peer_id),
+                                                            error = %e,
+                                                            "Failed to respond with DA chunk proofs"
+                                                        );
+                                                    }
+                                                }
+
+                                                if !missing.is_empty() {
+                                                    let response = DaChunkProtocolMessage::NotFound {
+                                                        root,
+                                                        indices: missing,
+                                                    };
+                                                    if let Err(e) = pq_handle_for_da
+                                                        .send_message(
+                                                            peer_id,
+                                                            DA_CHUNKS_PROTOCOL.to_string(),
+                                                            response.encode(),
+                                                        )
+                                                        .await
+                                                    {
+                                                        tracing::warn!(
+                                                            peer = %hex::encode(peer_id),
+                                                            error = %e,
+                                                            "Failed to respond with DA chunk not-found"
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            Ok(DaChunkProtocolMessage::Response { root, proofs }) => {
+                                                let mut tracker = da_request_tracker_for_handler.lock();
+                                                tracker.fulfill_proofs(root, proofs);
+                                            }
+                                            Ok(DaChunkProtocolMessage::NotFound { root, indices }) => {
+                                                let mut tracker = da_request_tracker_for_handler.lock();
+                                                tracker.fulfill_not_found(root, indices);
+                                            }
+                                            Err(e) => {
+                                                tracing::warn!(
+                                                    peer = %hex::encode(peer_id),
+                                                    protocol = %protocol,
+                                                    error = %e,
+                                                    data_len = data.len(),
+                                                    "Failed to decode DA chunk message"
                                                 );
                                             }
                                         }
@@ -3315,6 +3790,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let block_import_pow = pow_block_import.clone();
                 let block_import_client = client.clone();
                 let sync_service_for_import = Arc::clone(&sync_service);
+                let da_chunk_store_for_import = Arc::clone(&da_chunk_store);
+                let da_request_tracker_for_import = Arc::clone(&da_request_tracker);
+                let da_params_for_import = da_params;
+                let da_sample_timeout_for_import = da_sample_timeout;
+                let pq_handle_for_da_import = pq_handle_for_da_import.clone();
 
                 task_manager.spawn_handle().spawn(
                     "block-import-handler",
@@ -3380,6 +3860,29 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let block_number = *header.number();
                                 let parent_hash = *header.parent_hash();
 
+                                let mut da_encoding = match sample_da_for_block(
+                                    downloaded.from_peer,
+                                    &extrinsics,
+                                    da_params_for_import,
+                                    &pq_handle_for_da_import,
+                                    &da_request_tracker_for_import,
+                                    da_sample_timeout_for_import,
+                                )
+                                .await
+                                {
+                                    Ok(encoding) => Some(encoding),
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            peer = %hex::encode(&downloaded.from_peer),
+                                            block_number,
+                                            error = %err,
+                                            "Rejecting synced block (DA sampling failed)"
+                                        );
+                                        blocks_failed += 1;
+                                        continue;
+                                    }
+                                };
+
                                 // CRITICAL: Extract the seal from header digest and move to post_digests
                                 // PowBlockImport expects the seal in post_digests.last(), not in header.digest()
                                 // The seal should be the last digest item with engine ID "pow_"
@@ -3439,6 +3942,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
                                         blocks_imported += 1;
                                         sync_blocks_imported += 1;
+                                        if let Some(encoding) = da_encoding.take() {
+                                            da_chunk_store_for_import
+                                                .lock()
+                                                .insert(encoding.root(), encoding);
+                                        }
 
                                         // Notify sync service of successful import
                                         {
@@ -3463,6 +3971,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         }
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
+                                        if let Some(encoding) = da_encoding.take() {
+                                            da_chunk_store_for_import
+                                                .lock()
+                                                .insert(encoding.root(), encoding);
+                                        }
                                         tracing::trace!(
                                             block_number,
                                             "Synced block already in chain"
@@ -3562,6 +4075,29 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let block_number = *header.number();
                                 let parent_hash = *header.parent_hash();
 
+                                let mut da_encoding = match sample_da_for_block(
+                                    peer_id,
+                                    &extrinsics,
+                                    da_params_for_import,
+                                    &pq_handle_for_da_import,
+                                    &da_request_tracker_for_import,
+                                    da_sample_timeout_for_import,
+                                )
+                                .await
+                                {
+                                    Ok(encoding) => Some(encoding),
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            peer = %hex::encode(&peer_id),
+                                            block_number,
+                                            error = %err,
+                                            "Rejecting announced block (DA sampling failed)"
+                                        );
+                                        blocks_failed += 1;
+                                        continue;
+                                    }
+                                };
+
                                 // Check if we already have this block
                                 if block_import_client.chain_info().best_number >= block_number {
                                     // We might already have this block or a better one
@@ -3611,6 +4147,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 match import_result {
                                     Ok(sc_consensus::ImportResult::Imported(_)) => {
                                         blocks_imported += 1;
+                                        if let Some(encoding) = da_encoding.take() {
+                                            da_chunk_store_for_import
+                                                .lock()
+                                                .insert(encoding.root(), encoding);
+                                        }
                                         tracing::info!(
                                             peer = %hex::encode(&peer_id),
                                             block_number,
@@ -3620,6 +4161,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                     Ok(sc_consensus::ImportResult::AlreadyInChain) => {
+                                        if let Some(encoding) = da_encoding.take() {
+                                            da_chunk_store_for_import
+                                                .lock()
+                                                .insert(encoding.root(), encoding);
+                                        }
                                         tracing::trace!(
                                             block_number,
                                             "Block already in chain"
@@ -3759,7 +4305,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         // =======================================================================
         // Wire PowBlockImport for real block import
         // =======================================================================
-        wire_pow_block_import(&chain_state, pow_block_import, client.clone());
+        wire_pow_block_import(
+            &chain_state,
+            pow_block_import,
+            client.clone(),
+            Arc::clone(&da_chunk_store),
+            da_params,
+        );
 
         tracing::info!("PowBlockImport wired for real block import");
 

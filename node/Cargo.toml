@@ -32,6 +32,7 @@ serde_bytes = "0.11"
 sled = "0.34"
 sp-core = { workspace = true, features = ["std"] }
 state-merkle = { path = "../state/merkle", package = "state-merkle" }
+state-da = { path = "../state/da", package = "state-da" }
 thiserror = "1.0"
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "sync", "time", "signal", "fs"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
