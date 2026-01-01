@@ -46,11 +46,12 @@
 //!
 //! For exact offsets, see the `COL_*` constants below.
 
+use miden_crypto::hash::rpo::Rpo256;
 use miden_crypto::rand::RpoRandomCoin;
 use miden_crypto::Word;
 use winter_air::{
-    Air, AirContext, Assertion, EvaluationFrame, FieldExtension, ProofOptions, TraceInfo,
-    TransitionConstraintDegree,
+    Air, AirContext, Assertion, BatchingMethod, EvaluationFrame, FieldExtension, ProofOptions,
+    TraceInfo, TransitionConstraintDegree,
 };
 use winter_crypto::RandomCoin;
 use winter_math::{fft, polynom, FieldElement, StarkField, ToElements};
@@ -62,6 +63,7 @@ use super::rpo_air::{
     ARK1, ARK2, MDS, NUM_ROUNDS, ROWS_PER_PERMUTATION, STATE_WIDTH, TRACE_WIDTH as RPO_TRACE_WIDTH,
 };
 use winter_air::{ConstraintCompositionCoefficients, DeepCompositionCoefficients};
+use transaction_circuit::{TransactionAirStark, TransactionPublicInputsStark};
 
 const CAPACITY_WIDTH: usize = 4;
 pub(crate) const RATE_WIDTH: usize = 8;
@@ -180,6 +182,15 @@ pub struct StarkVerifierPublicInputs {
     /// Constraint commitment (Merkle root of constraint evaluations)
     pub constraint_commitment: [BaseElement; DIGEST_WIDTH],
 
+    /// Out-of-domain trace evaluations at z (current row).
+    pub ood_trace_current: Vec<BaseElement>,
+    /// Out-of-domain quotient evaluations at z (current row).
+    pub ood_quotient_current: Vec<BaseElement>,
+    /// Out-of-domain trace evaluations at z*g (next row).
+    pub ood_trace_next: Vec<BaseElement>,
+    /// Out-of-domain quotient evaluations at z*g (next row).
+    pub ood_quotient_next: Vec<BaseElement>,
+
     /// FRI layer commitments (Merkle roots)
     pub fri_commitments: Vec<[BaseElement; DIGEST_WIDTH]>,
 
@@ -192,6 +203,12 @@ pub struct StarkVerifierPublicInputs {
     /// Partition size used for constraint-evaluation Merkle leaves.
     pub constraint_partition_size: usize,
     pub blowup_factor: usize,
+    /// FRI folding factor used by the inner proof options.
+    pub fri_folding_factor: usize,
+    /// FRI remainder max degree used by the inner proof options.
+    pub fri_remainder_max_degree: usize,
+    /// Query seed grinding factor used by the inner proof options.
+    pub grinding_factor: usize,
     pub trace_length: usize,
 
     /// Main trace width of the inner proof (i.e. number of trace columns).
@@ -212,12 +229,19 @@ impl StarkVerifierPublicInputs {
         inner_pub_inputs_hash: [BaseElement; DIGEST_WIDTH],
         trace_commitment: [BaseElement; DIGEST_WIDTH],
         constraint_commitment: [BaseElement; DIGEST_WIDTH],
+        ood_trace_current: Vec<BaseElement>,
+        ood_quotient_current: Vec<BaseElement>,
+        ood_trace_next: Vec<BaseElement>,
+        ood_quotient_next: Vec<BaseElement>,
         fri_commitments: Vec<[BaseElement; DIGEST_WIDTH]>,
         num_queries: usize,
         num_draws: usize,
         trace_partition_size: usize,
         constraint_partition_size: usize,
         blowup_factor: usize,
+        fri_folding_factor: usize,
+        fri_remainder_max_degree: usize,
+        grinding_factor: usize,
         trace_length: usize,
         trace_width: usize,
         constraint_frame_width: usize,
@@ -225,17 +249,53 @@ impl StarkVerifierPublicInputs {
         num_assertions: usize,
         field_extension: FieldExtension,
     ) -> Self {
+        let extension_degree =
+            field_extension_degree(field_extension).expect("unsupported field extension");
+        let trace_ood_len = trace_width * extension_degree;
+        let constraint_ood_len = constraint_frame_width * extension_degree;
+        assert_eq!(
+            ood_trace_current.len(),
+            trace_ood_len,
+            "OOD trace current length mismatch: expected {trace_ood_len}, got {}",
+            ood_trace_current.len()
+        );
+        assert_eq!(
+            ood_trace_next.len(),
+            trace_ood_len,
+            "OOD trace next length mismatch: expected {trace_ood_len}, got {}",
+            ood_trace_next.len()
+        );
+        assert_eq!(
+            ood_quotient_current.len(),
+            constraint_ood_len,
+            "OOD quotient current length mismatch: expected {constraint_ood_len}, got {}",
+            ood_quotient_current.len()
+        );
+        assert_eq!(
+            ood_quotient_next.len(),
+            constraint_ood_len,
+            "OOD quotient next length mismatch: expected {constraint_ood_len}, got {}",
+            ood_quotient_next.len()
+        );
+
         Self {
             inner_public_inputs,
             inner_pub_inputs_hash,
             trace_commitment,
             constraint_commitment,
+            ood_trace_current,
+            ood_quotient_current,
+            ood_trace_next,
+            ood_quotient_next,
             fri_commitments,
             num_queries,
             num_draws,
             trace_partition_size,
             constraint_partition_size,
             blowup_factor,
+            fri_folding_factor,
+            fri_remainder_max_degree,
+            grinding_factor,
             trace_length,
             trace_width,
             constraint_frame_width,
@@ -256,13 +316,17 @@ impl StarkVerifierPublicInputs {
     ) -> Result<Self, String> {
         // Layout:
         // [inner_public_inputs..., inner_pub_inputs_hash(4), trace_root(4), constraint_root(4),
-        //  fri_commitments(4*k), num_queries, num_draws, trace_partition_size, constraint_partition_size,
-        //  blowup_factor, trace_length, trace_width?, constraint_frame_width?, num_transition_constraints?,
+        //  ood_trace_current, ood_quotient_current, ood_trace_next, ood_quotient_next,
+        //  fri_commitments(4*k),
+        //  num_queries, num_draws, trace_partition_size, constraint_partition_size, blowup_factor,
+        //  fri_folding_factor?, fri_remainder_max_degree?, grinding_factor?,
+        //  trace_length, trace_width?, constraint_frame_width?, num_transition_constraints?,
         //  num_assertions?, field_extension?]
         const DIGESTS_FIXED: usize = 3 * DIGEST_WIDTH; // pub_inputs_hash + trace + constraint
         const NUM_PARAMS_V1: usize = 6;
         const NUM_PARAMS_V2: usize = 10;
         const NUM_PARAMS_V3: usize = 11;
+        const NUM_PARAMS_V4: usize = 14;
 
         let min_len_v1 = inner_public_inputs_len + DIGESTS_FIXED + NUM_PARAMS_V1;
         if elements.len() < min_len_v1 {
@@ -287,11 +351,17 @@ impl StarkVerifierPublicInputs {
         let constraint_commitment = slice_to_digest(&elements[idx..idx + DIGEST_WIDTH]);
         idx += DIGEST_WIDTH;
 
+        let params_start_v4 = elements.len().saturating_sub(NUM_PARAMS_V4);
         let params_start_v3 = elements.len().saturating_sub(NUM_PARAMS_V3);
         let params_start_v2 = elements.len().saturating_sub(NUM_PARAMS_V2);
         let params_start_v1 = elements.len().saturating_sub(NUM_PARAMS_V1);
 
         let (params_start, num_params) = if elements.len()
+            >= min_len_v1 + (NUM_PARAMS_V4 - NUM_PARAMS_V1)
+            && params_start_v4 >= idx
+        {
+            (params_start_v4, NUM_PARAMS_V4)
+        } else if elements.len()
             >= min_len_v1 + (NUM_PARAMS_V3 - NUM_PARAMS_V1)
             && params_start_v3 >= idx
             && elements[idx..params_start_v3]
@@ -311,25 +381,23 @@ impl StarkVerifierPublicInputs {
             (params_start_v1, NUM_PARAMS_V1)
         };
 
-        let fri_elems = &elements[idx..params_start];
-        if !fri_elems.len().is_multiple_of(DIGEST_WIDTH) {
-            return Err(format!(
-                "invalid FRI commitments length: {} is not a multiple of {}",
-                fri_elems.len(),
-                DIGEST_WIDTH
-            ));
-        }
-        let fri_commitments = fri_elems
-            .chunks_exact(DIGEST_WIDTH)
-            .map(|chunk| slice_to_digest(chunk))
-            .collect::<Vec<_>>();
-
         let num_queries = elements[params_start].as_int() as usize;
         let num_draws = elements[params_start + 1].as_int() as usize;
         let trace_partition_size = elements[params_start + 2].as_int() as usize;
         let constraint_partition_size = elements[params_start + 3].as_int() as usize;
         let blowup_factor = elements[params_start + 4].as_int() as usize;
-        let trace_length = elements[params_start + 5].as_int() as usize;
+
+        let (fri_folding_factor, fri_remainder_max_degree, grinding_factor, trace_length) =
+            if num_params == NUM_PARAMS_V4 {
+                (
+                    elements[params_start + 5].as_int() as usize,
+                    elements[params_start + 6].as_int() as usize,
+                    elements[params_start + 7].as_int() as usize,
+                    elements[params_start + 8].as_int() as usize,
+                )
+            } else {
+                (2usize, 7usize, 0usize, elements[params_start + 5].as_int() as usize)
+            };
 
         let (
             trace_width,
@@ -337,7 +405,24 @@ impl StarkVerifierPublicInputs {
             num_transition_constraints,
             num_assertions,
             field_extension,
-        ) = if num_params == NUM_PARAMS_V3 {
+        ) = if num_params == NUM_PARAMS_V4 {
+            let raw_extension = elements[params_start + 13].as_int() as u64;
+            let field_extension = match raw_extension {
+                1 => FieldExtension::None,
+                2 => FieldExtension::Quadratic,
+                3 => FieldExtension::Cubic,
+                _ => {
+                    return Err(format!("unknown field extension id: {raw_extension}"));
+                }
+            };
+            (
+                elements[params_start + 9].as_int() as usize,
+                elements[params_start + 10].as_int() as usize,
+                elements[params_start + 11].as_int() as usize,
+                elements[params_start + 12].as_int() as usize,
+                field_extension,
+            )
+        } else if num_params == NUM_PARAMS_V3 {
             let raw_extension = elements[params_start + 10].as_int() as u64;
             let field_extension = match raw_extension {
                 1 => FieldExtension::None,
@@ -376,17 +461,77 @@ impl StarkVerifierPublicInputs {
             (VERIFIER_TRACE_WIDTH, 0usize, 0usize, 0usize, FieldExtension::None)
         };
 
+        let extension_degree = field_extension_degree(field_extension)?;
+        let trace_ood_len = trace_width * extension_degree;
+        let constraint_ood_len = constraint_frame_width * extension_degree;
+        let ood_len = 2 * (trace_ood_len + constraint_ood_len);
+
+        let (ood_trace_current, ood_quotient_current, ood_trace_next, ood_quotient_next) =
+            if num_params == NUM_PARAMS_V4 {
+                let ood_start = idx;
+                let ood_end = ood_start + ood_len;
+                if ood_end > params_start {
+                    return Err(format!(
+                        "missing OOD frame elements: expected {ood_len}, have {}",
+                        params_start.saturating_sub(ood_start)
+                    ));
+                }
+                let ood_slice = &elements[ood_start..ood_end];
+                let mut ood_idx = 0usize;
+                let take = |slice: &[BaseElement], idx: &mut usize, len: usize| -> Vec<BaseElement> {
+                    let start = *idx;
+                    let end = start + len;
+                    *idx = end;
+                    slice[start..end].to_vec()
+                };
+
+                (
+                    take(ood_slice, &mut ood_idx, trace_ood_len),
+                    take(ood_slice, &mut ood_idx, constraint_ood_len),
+                    take(ood_slice, &mut ood_idx, trace_ood_len),
+                    take(ood_slice, &mut ood_idx, constraint_ood_len),
+                )
+            } else {
+                (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+            };
+
+        let ood_end = if num_params == NUM_PARAMS_V4 {
+            idx + ood_len
+        } else {
+            idx
+        };
+
+        let fri_elems = &elements[ood_end..params_start];
+        if !fri_elems.len().is_multiple_of(DIGEST_WIDTH) {
+            return Err(format!(
+                "invalid FRI commitments length: {} is not a multiple of {}",
+                fri_elems.len(),
+                DIGEST_WIDTH
+            ));
+        }
+        let fri_commitments = fri_elems
+            .chunks_exact(DIGEST_WIDTH)
+            .map(|chunk| slice_to_digest(chunk))
+            .collect::<Vec<_>>();
+
         Ok(Self::new(
             inner_public_inputs,
             inner_pub_inputs_hash,
             trace_commitment,
             constraint_commitment,
+            ood_trace_current,
+            ood_quotient_current,
+            ood_trace_next,
+            ood_quotient_next,
             fri_commitments,
             num_queries,
             num_draws,
             trace_partition_size,
             constraint_partition_size,
             blowup_factor,
+            fri_folding_factor,
+            fri_remainder_max_degree,
+            grinding_factor,
             trace_length,
             trace_width,
             constraint_frame_width,
@@ -405,6 +550,10 @@ impl ToElements<BaseElement> for StarkVerifierPublicInputs {
         elements.extend_from_slice(&self.inner_pub_inputs_hash);
         elements.extend_from_slice(&self.trace_commitment);
         elements.extend_from_slice(&self.constraint_commitment);
+        elements.extend_from_slice(&self.ood_trace_current);
+        elements.extend_from_slice(&self.ood_quotient_current);
+        elements.extend_from_slice(&self.ood_trace_next);
+        elements.extend_from_slice(&self.ood_quotient_next);
 
         for commitment in &self.fri_commitments {
             elements.extend_from_slice(commitment);
@@ -415,6 +564,9 @@ impl ToElements<BaseElement> for StarkVerifierPublicInputs {
         elements.push(BaseElement::new(self.trace_partition_size as u64));
         elements.push(BaseElement::new(self.constraint_partition_size as u64));
         elements.push(BaseElement::new(self.blowup_factor as u64));
+        elements.push(BaseElement::new(self.fri_folding_factor as u64));
+        elements.push(BaseElement::new(self.fri_remainder_max_degree as u64));
+        elements.push(BaseElement::new(self.grinding_factor as u64));
         elements.push(BaseElement::new(self.trace_length as u64));
         elements.push(BaseElement::new(self.trace_width as u64));
         elements.push(BaseElement::new(self.constraint_frame_width as u64));
@@ -444,10 +596,17 @@ pub struct StarkVerifierAir {
     pub_inputs: StarkVerifierPublicInputs,
     expected_z: BaseElement,
     inner_constraint_coeffs: ConstraintCompositionCoefficients<BaseElement>,
-    inner_rpo_periodic_at_z: [BaseElement; 1 + STATE_WIDTH],
-    inner_transition_divisor_inv_at_z: BaseElement,
-    inner_boundary_divisor_inv_at_z: [BaseElement; 2],
-    inner_ood_constraint_weights: [BaseElement; 8],
+    inner_deep_coeffs: DeepCompositionCoefficients<BaseElement>,
+    inner_fri_alphas: Vec<BaseElement>,
+    inner_ood_constraint_eval_1: BaseElement,
+    inner_ood_constraint_eval_2: BaseElement,
+    trace_width_ext: usize,
+    constraint_width_ext: usize,
+    num_constraint_coeffs: usize,
+    num_deep_coeffs: usize,
+    ood_eval_len: usize,
+    trace_data_block_starts: Vec<usize>,
+    constraint_data_block_starts: Vec<usize>,
     g_trace: BaseElement,
     g_lde: BaseElement,
     domain_offset: BaseElement,
@@ -486,21 +645,6 @@ impl Air for StarkVerifierAir {
             "inner proof requires {num_fri_layers} FRI layers, but verifier supports at most {MAX_FRI_LAYERS}"
         );
 
-        // StarkVerifierAir currently assumes unpartitioned Merkle leaves for trace and constraint
-        // openings (i.e., each leaf is hashed as a single `hash_elements()` call).
-        assert!(
-            pub_inputs.trace_partition_size >= pub_inputs.trace_width,
-            "trace_partition_size must be >= trace_width (got {} < {})",
-            pub_inputs.trace_partition_size,
-            pub_inputs.trace_width
-        );
-        assert!(
-            pub_inputs.constraint_partition_size >= pub_inputs.constraint_frame_width,
-            "constraint_partition_size must be >= constraint_frame_width (got {} < {})",
-            pub_inputs.constraint_partition_size,
-            pub_inputs.constraint_frame_width
-        );
-
         let lde_domain_size = pub_inputs.trace_length * pub_inputs.blowup_factor;
         assert!(
             lde_domain_size.is_power_of_two(),
@@ -519,6 +663,48 @@ impl Air for StarkVerifierAir {
         let domain_offset = BaseElement::GENERATOR;
         let inv_domain_offset = domain_offset.inv();
 
+        let extension_degree = field_extension_degree(pub_inputs.field_extension)
+            .expect("unsupported field extension");
+        let trace_width_ext = pub_inputs.trace_width * extension_degree;
+        let constraint_width_ext = pub_inputs.constraint_frame_width * extension_degree;
+        let num_constraint_coeffs =
+            (pub_inputs.num_transition_constraints + pub_inputs.num_assertions) * extension_degree;
+        let num_deep_coeffs = trace_width_ext + constraint_width_ext;
+        let ood_eval_len = 2 * num_deep_coeffs;
+
+        assert_eq!(
+            pub_inputs.ood_trace_current.len(),
+            trace_width_ext,
+            "OOD trace current length mismatch: expected {trace_width_ext}, got {}",
+            pub_inputs.ood_trace_current.len()
+        );
+        assert_eq!(
+            pub_inputs.ood_trace_next.len(),
+            trace_width_ext,
+            "OOD trace next length mismatch: expected {trace_width_ext}, got {}",
+            pub_inputs.ood_trace_next.len()
+        );
+        assert_eq!(
+            pub_inputs.ood_quotient_current.len(),
+            constraint_width_ext,
+            "OOD quotient current length mismatch: expected {constraint_width_ext}, got {}",
+            pub_inputs.ood_quotient_current.len()
+        );
+        assert_eq!(
+            pub_inputs.ood_quotient_next.len(),
+            constraint_width_ext,
+            "OOD quotient next length mismatch: expected {constraint_width_ext}, got {}",
+            pub_inputs.ood_quotient_next.len()
+        );
+
+        let constraint_partition_size_base = pub_inputs.constraint_partition_size * extension_degree;
+        let trace_layout =
+            compute_leaf_layout(trace_width_ext, pub_inputs.trace_partition_size);
+        let constraint_layout =
+            compute_leaf_layout(constraint_width_ext, constraint_partition_size_base);
+        let trace_data_block_starts = trace_layout.data_perm_starts.clone();
+        let constraint_data_block_starts = constraint_layout.data_perm_starts.clone();
+
         let base_boundary_constraints = 3 * DIGEST_WIDTH + 13 + 4 * RATE_WIDTH + 2;
         let num_root_masks = 2 + num_fri_layers; // trace, constraint, and each committed FRI layer
         let merkle_constraints = 1 // intra-leaf chaining
@@ -530,20 +716,16 @@ impl Air for StarkVerifierAir {
                                              // Query-position draw_integers + binding-check constraints.
         const POS_DECOMP_CONSTRAINTS: usize = 32;
         // OOD digest + coin-state save/restore constraints.
-        const OOD_STATE_CONSTRAINTS: usize = DIGEST_WIDTH // ood digest constant columns
+        let ood_state_constraints = DIGEST_WIDTH // ood digest constant columns
             + STATE_WIDTH // saved coin-state constant columns
-            + OOD_EVAL_LEN // stored OOD evaluation elements
-            + OOD_EVAL_LEN // capture OOD evaluation elements at OOD-hash input rows
+            + ood_eval_len // bind OOD eval inputs to hash segment
             + DIGEST_WIDTH // capture digest at end of OOD hash segment
             + STATE_WIDTH // capture coin state at z boundary
             + STATE_WIDTH // restore coin state (+digest) at deep-start row
             + 1; // OOD constraint consistency check (winter-verifier step 3)
-                 // Store transcript-drawn coefficients (for later DEEP/FRI checks).
-        let transcript_store_constraints = NUM_CONSTRAINT_COEFFS // stored constraint coeffs
-            + NUM_DEEP_COEFFS // stored deep coeffs
-            + MAX_FRI_LAYERS // stored alphas (max slots)
-            + NUM_CONSTRAINT_COEFFS // capture constraint coeffs at draw boundaries
-            + NUM_DEEP_COEFFS // capture deep coeffs at draw boundaries
+
+        let transcript_store_constraints = num_constraint_coeffs // capture constraint coeffs
+            + num_deep_coeffs // capture deep coeffs
             + num_fri_layers; // capture alphas at draw boundaries
 
         // DEEP + FRI recursion checks.
@@ -562,7 +744,7 @@ impl Air for StarkVerifierAir {
             + base_boundary_constraints
             + merkle_constraints
             + POS_DECOMP_CONSTRAINTS
-            + OOD_STATE_CONSTRAINTS
+            + ood_state_constraints
             + transcript_store_constraints
             + deep_fri_constraints;
         let mut degrees = Vec::with_capacity(num_constraints);
@@ -758,58 +940,42 @@ impl Air for StarkVerifierAir {
         for _ in 0..STATE_WIDTH {
             degrees.push(TransitionConstraintDegree::new(1));
         }
-        // (c) Stored OOD evaluation elements are constant across the trace.
-        for _ in 0..OOD_EVAL_LEN {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-        // (d) Capture OOD evaluation elements at the start rows of the OOD-hash segment.
-        for _ in 0..OOD_EVAL_LEN {
+        // (c) Bind OOD evaluation inputs at the start rows of the OOD-hash segment.
+        for _ in 0..ood_eval_len {
             degrees.push(TransitionConstraintDegree::with_cycles(1, vec![full_cycle]));
         }
-        // (e) Capture OOD digest at the end of the OOD-hash segment.
+        // (d) Capture OOD digest at the end of the OOD-hash segment.
         for _ in 0..DIGEST_WIDTH {
             degrees.push(TransitionConstraintDegree::with_cycles(1, vec![full_cycle]));
         }
-        // (f) Capture coin state at the z boundary (boundary-gated).
+        // (e) Capture coin state at the z boundary (boundary-gated).
         for _ in 0..STATE_WIDTH {
             degrees.push(TransitionConstraintDegree::with_cycles(
                 2,
                 boundary_only.clone(),
             ));
         }
-        // (g) Restore coin state (+OOD digest) at the first deep-coefficient row.
+        // (f) Restore coin state (+OOD digest) at the first deep-coefficient row.
         for _ in 0..STATE_WIDTH {
             degrees.push(TransitionConstraintDegree::with_cycles(1, vec![full_cycle]));
         }
-        // (h) OOD constraint consistency check (evaluate inner constraints at z).
+        // (g) OOD constraint consistency check (evaluate inner constraints at z).
         //
         // This constraint is expressed entirely in terms of constant columns (OOD frame + drawn
         // coefficients), so its quotient polynomial is constant (degree 0) once other
         // constant-column constraints hold.
         degrees.push(TransitionConstraintDegree::new(1));
 
-        // --- Transcript store degrees -------------------------------------------------------
-        // (a) Stored constraint composition coefficients are constant across the trace.
-        for _ in 0..NUM_CONSTRAINT_COEFFS {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-        // (b) Stored DEEP coefficients are constant across the trace.
-        for _ in 0..NUM_DEEP_COEFFS {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-        // (c) Stored FRI alphas are constant across the trace.
-        for _ in 0..MAX_FRI_LAYERS {
-            degrees.push(TransitionConstraintDegree::new(1));
-        }
-        // (d) Capture constraint coefficients at their draw boundaries.
-        for _ in 0..NUM_CONSTRAINT_COEFFS {
+        // --- Transcript draw binding degrees -----------------------------------------------
+        // (a) Capture constraint coefficients at their draw boundaries.
+        for _ in 0..num_constraint_coeffs {
             degrees.push(TransitionConstraintDegree::with_cycles(1, vec![full_cycle]));
         }
-        // (e) Capture DEEP coefficients at their draw boundaries.
-        for _ in 0..NUM_DEEP_COEFFS {
+        // (b) Capture DEEP coefficients at their draw boundaries.
+        for _ in 0..num_deep_coeffs {
             degrees.push(TransitionConstraintDegree::with_cycles(1, vec![full_cycle]));
         }
-        // (f) Capture FRI alphas at their draw boundaries.
+        // (c) Capture FRI alphas at their draw boundaries.
         for _ in 0..num_fri_layers {
             degrees.push(TransitionConstraintDegree::with_cycles(1, vec![full_cycle]));
         }
@@ -908,8 +1074,7 @@ impl Air for StarkVerifierAir {
 
         // Full-carry boundaries between coefficient draw permutations. The coin draws one
         // coefficient per constraint (transition + boundary assertions).
-        let num_coeffs_total = pub_inputs.num_transition_constraints + pub_inputs.num_assertions;
-        let num_coeff_perms = num_coeffs_total.div_ceil(RATE_WIDTH).max(1);
+        let num_coeff_perms = num_constraint_coeffs.div_ceil(RATE_WIDTH).max(1);
         if num_coeff_perms > 1 {
             num_assertions += (num_coeff_perms - 1) * 4;
         }
@@ -921,8 +1086,6 @@ impl Air for StarkVerifierAir {
         num_assertions += 4;
 
         // OOD evaluation digest sponge (Rpo256::hash_elements over merged OOD evaluations).
-        let num_deep_coeffs = pub_inputs.trace_width + pub_inputs.constraint_frame_width;
-        let ood_eval_len = 2 * num_deep_coeffs;
         let num_ood_perms = ood_eval_len.div_ceil(RATE_WIDTH);
         num_assertions += CAPACITY_WIDTH; // sponge init at start of OOD hash segment
         if num_ood_perms > 0 {
@@ -1017,11 +1180,9 @@ impl Air for StarkVerifierAir {
             }
         };
         let trace_leaf_blocks =
-            compute_leaf_perms(pub_inputs.trace_width, pub_inputs.trace_partition_size);
-        let constraint_leaf_blocks = compute_leaf_perms(
-            pub_inputs.constraint_frame_width,
-            pub_inputs.constraint_partition_size,
-        );
+            compute_leaf_perms(trace_width_ext, pub_inputs.trace_partition_size);
+        let constraint_leaf_blocks =
+            compute_leaf_perms(constraint_width_ext, constraint_partition_size_base);
         let leaf_chain_count = |leaf_len: usize, partition_size: usize| {
             if leaf_len == 0 {
                 return 0usize;
@@ -1035,13 +1196,9 @@ impl Air for StarkVerifierAir {
         let fri_leaf_blocks = 2usize.div_ceil(RATE_WIDTH).max(1);
         let mut merkle_perms_per_query =
             trace_leaf_blocks + depth_trace + constraint_leaf_blocks + depth_trace;
-        let replay_draws_per_query = leaf_chain_count(
-            pub_inputs.trace_width,
-            pub_inputs.trace_partition_size,
-        ) + leaf_chain_count(
-            pub_inputs.constraint_frame_width,
-            pub_inputs.constraint_partition_size,
-        );
+        let replay_draws_per_query =
+            leaf_chain_count(trace_width_ext, pub_inputs.trace_partition_size)
+                + leaf_chain_count(constraint_width_ext, constraint_partition_size_base);
         merkle_perms_per_query += replay_draws_per_query;
         for layer_idx in 0..num_fri_layers {
             merkle_perms_per_query += fri_leaf_blocks + depth_trace.saturating_sub(layer_idx + 1);
@@ -1072,24 +1229,30 @@ impl Air for StarkVerifierAir {
         // Binding accumulator must end at 1.
         num_assertions += 1;
 
-        let (inner_constraint_coeffs, expected_z) =
-            compute_expected_constraint_coeffs_and_z(&pub_inputs);
+        let ood_digest = compute_ood_digest(&pub_inputs);
+        let (inner_constraint_coeffs, expected_z, inner_deep_coeffs, inner_fri_alphas) =
+            compute_expected_transcript_draws(&pub_inputs, ood_digest)
+                .expect("failed to reconstruct inner transcript");
 
-        let (
-            inner_rpo_periodic_at_z,
-            inner_transition_divisor_inv_at_z,
-            inner_boundary_divisor_inv_at_z,
-            inner_ood_constraint_weights,
-        ) = if inner_proof_kind(&pub_inputs) == InnerProofKind::RpoAir {
-            compute_inner_ood_constants(&pub_inputs, expected_z, g_trace)
-        } else {
-            (
-                [BaseElement::ZERO; 1 + STATE_WIDTH],
-                BaseElement::ZERO,
-                [BaseElement::ZERO; 2],
-                [BaseElement::ZERO; 8],
-            )
-        };
+        let (inner_ood_constraint_eval_1, inner_ood_constraint_eval_2) =
+            match inner_proof_kind(&pub_inputs) {
+                InnerProofKind::RpoAir => compute_rpo_ood_consistency(
+                    &pub_inputs,
+                    &inner_constraint_coeffs,
+                    expected_z,
+                    g_trace,
+                )
+                .expect("failed to evaluate RPO constraints at z"),
+                InnerProofKind::TransactionAir => compute_transaction_ood_consistency(
+                    &pub_inputs,
+                    &inner_constraint_coeffs,
+                    expected_z,
+                )
+                .expect("failed to evaluate transaction constraints at z"),
+                InnerProofKind::StarkVerifierAir => {
+                    panic!("non-RPO recursion for verifier proofs is not supported yet")
+                }
+            };
         let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
         Self {
@@ -1097,10 +1260,17 @@ impl Air for StarkVerifierAir {
             pub_inputs,
             expected_z,
             inner_constraint_coeffs,
-            inner_rpo_periodic_at_z,
-            inner_transition_divisor_inv_at_z,
-            inner_boundary_divisor_inv_at_z,
-            inner_ood_constraint_weights,
+            inner_deep_coeffs,
+            inner_fri_alphas,
+            inner_ood_constraint_eval_1,
+            inner_ood_constraint_eval_2,
+            trace_width_ext,
+            constraint_width_ext,
+            num_constraint_coeffs,
+            num_deep_coeffs,
+            ood_eval_len,
+            trace_data_block_starts,
+            constraint_data_block_starts,
             g_trace,
             g_lde,
             domain_offset,
@@ -1130,7 +1300,7 @@ impl Air for StarkVerifierAir {
         //  trace_root_mask, constraint_root_mask, fri_root_masks...,
         //  ood_digest_capture_mask, ood_eval_row_masks..., deep_start_row_mask,
         //  coeff_end_masks..., deep_end_masks..., fri_alpha_end_masks...,
-        //  query_reset_mask, trace_leaf0_row_mask, trace_leaf1_row_mask, constraint_leaf_row_mask,
+        //  query_reset_mask, trace_leaf_row_masks..., constraint_leaf_row_masks...,
         //  trace_merkle_bit_mask, msb_capture_masks..., fri_leaf_row_masks..., remainder_hash_row0]
         let half_round_type = periodic_values[0];
         let ark: [E; STATE_WIDTH] = core::array::from_fn(|i| periodic_values[1 + i]);
@@ -1177,15 +1347,15 @@ impl Air for StarkVerifierAir {
         p += num_fri_layers;
         let ood_digest_capture_mask = periodic_values[p];
         p += 1;
-        let num_ood_perms = OOD_EVAL_LEN.div_ceil(RATE_WIDTH);
+        let num_ood_perms = self.ood_eval_len.div_ceil(RATE_WIDTH);
         let ood_eval_row_masks = &periodic_values[p..p + num_ood_perms];
         p += num_ood_perms;
         let _deep_start_row_mask = periodic_values[p];
         p += 1;
-        let num_coeff_perms = NUM_CONSTRAINT_COEFFS.div_ceil(RATE_WIDTH);
+        let num_coeff_perms = self.num_constraint_coeffs.div_ceil(RATE_WIDTH);
         let coeff_end_masks = &periodic_values[p..p + num_coeff_perms];
         p += num_coeff_perms;
-        let num_deep_perms = NUM_DEEP_COEFFS.div_ceil(RATE_WIDTH);
+        let num_deep_perms = self.num_deep_coeffs.div_ceil(RATE_WIDTH);
         let deep_end_masks = &periodic_values[p..p + num_deep_perms];
         p += num_deep_perms;
         let fri_alpha_end_masks = &periodic_values[p..p + num_fri_layers];
@@ -1194,12 +1364,12 @@ impl Air for StarkVerifierAir {
         // --- DEEP + FRI periodic selectors ------------------------------------------------
         let query_reset_mask = periodic_values[p];
         p += 1;
-        let trace_leaf0_row_mask = periodic_values[p];
-        p += 1;
-        let trace_leaf1_row_mask = periodic_values[p];
-        p += 1;
-        let constraint_leaf_row_mask = periodic_values[p];
-        p += 1;
+        let trace_data_blocks = self.trace_data_block_starts.len();
+        let trace_leaf_row_masks = &periodic_values[p..p + trace_data_blocks];
+        p += trace_data_blocks;
+        let constraint_data_blocks = self.constraint_data_block_starts.len();
+        let constraint_leaf_row_masks = &periodic_values[p..p + constraint_data_blocks];
+        p += constraint_data_blocks;
         let trace_merkle_bit_mask = periodic_values[p];
         p += 1;
         let msb_capture_masks = &periodic_values[p..p + num_fri_layers];
@@ -1618,9 +1788,6 @@ impl Air for StarkVerifierAir {
         result[idx] = boundary_mask * trace_leaf_end_mask * leaf_update;
         idx += 1;
 
-        let inner_is_rpo = inner_proof_kind(&self.pub_inputs) == InnerProofKind::RpoAir;
-        let inner_rpo_sel = if inner_is_rpo { E::ONE } else { E::ZERO };
-
         // --------------------------------------------------------------------
         // OOD digest + coin-state save/restore
         // --------------------------------------------------------------------
@@ -1637,23 +1804,24 @@ impl Air for StarkVerifierAir {
         }
         idx += STATE_WIDTH;
 
-        // OOD evaluation columns are constant across the trace.
-        for i in 0..OOD_EVAL_LEN {
-            result[idx + i] =
-                inner_rpo_sel * (next[COL_OOD_EVALS_START + i] - current[COL_OOD_EVALS_START + i]);
-        }
-        idx += OOD_EVAL_LEN;
-
-        // Capture OOD evaluation values at the start of each OOD-hash permutation.
-        for i in 0..OOD_EVAL_LEN {
+        // Bind OOD evaluation inputs at the start rows of the OOD-hash segment.
+        for i in 0..self.ood_eval_len {
             let block = i / RATE_WIDTH;
             let offset = i % RATE_WIDTH;
             let mask = ood_eval_row_masks[block];
-            let stored = current[COL_OOD_EVALS_START + i];
-            let input_val = current[RATE_START + offset];
-            result[idx + i] = inner_rpo_sel * mask * (stored - input_val);
+            let expected = if i < self.trace_width_ext {
+                self.pub_inputs.ood_trace_current[i]
+            } else if i < self.trace_width_ext + self.constraint_width_ext {
+                self.pub_inputs.ood_quotient_current[i - self.trace_width_ext]
+            } else if i < 2 * self.trace_width_ext + self.constraint_width_ext {
+                self.pub_inputs.ood_trace_next[i - self.trace_width_ext - self.constraint_width_ext]
+            } else {
+                self.pub_inputs.ood_quotient_next[i
+                    - (2 * self.trace_width_ext + self.constraint_width_ext)]
+            };
+            result[idx + i] = mask * (current[RATE_START + offset] - E::from(expected));
         }
-        idx += OOD_EVAL_LEN;
+        idx += self.ood_eval_len;
 
         // Capture the OOD digest at the end of the OOD-hash segment (digest is in the first
         // half of the rate: state[4..7]).
@@ -1706,166 +1874,52 @@ impl Air for StarkVerifierAir {
         //
         // This is required for soundness; without it, a prover could commit to an arbitrary low
         // degree constraint-composition polynomial unrelated to the trace.
-        if inner_is_rpo {
-            // --- (1) Evaluate RpoAir transition constraints at z --------------------------------
-            let half_round_type = E::from(self.inner_rpo_periodic_at_z[0]);
-            let ark: [E; STATE_WIDTH] =
-                core::array::from_fn(|i| E::from(self.inner_rpo_periodic_at_z[1 + i]));
-
-            // OOD trace frame (current at z, next at z*g).
-            let ood_trace_z: [E; RPO_TRACE_WIDTH] =
-                core::array::from_fn(|i| current[COL_OOD_EVALS_START + i]);
-            let ood_trace_zg: [E; RPO_TRACE_WIDTH] =
-                core::array::from_fn(|i| current[COL_OOD_EVALS_START + (RPO_TRACE_WIDTH + 8) + i]);
-
-            let one = E::ONE;
-            let two = one + one;
-            let is_forward = half_round_type * (two - half_round_type);
-            let is_inverse = half_round_type * (half_round_type - one);
-            let is_padding = (one - half_round_type) * (two - half_round_type);
-
-            let mut t_combined = E::ZERO;
-            for i in 0..STATE_WIDTH {
-                let mut mds_res = E::ZERO;
-                for j in 0..STATE_WIDTH {
-                    mds_res += E::from(MDS[i][j]) * ood_trace_z[j];
-                }
-                let intermediate = mds_res + ark[i];
-
-                let x2 = intermediate * intermediate;
-                let x4 = x2 * x2;
-                let x3 = x2 * intermediate;
-                let x7 = x3 * x4;
-                let forward_constraint = ood_trace_zg[i] - x7;
-
-                let y = ood_trace_zg[i];
-                let y2 = y * y;
-                let y4 = y2 * y2;
-                let y3 = y2 * y;
-                let y7 = y3 * y4;
-                let inverse_constraint = y7 - intermediate;
-
-                let padding_constraint = ood_trace_zg[i] - ood_trace_z[i];
-                let t_eval = is_forward * forward_constraint
-                    + is_inverse * inverse_constraint
-                    + is_padding * padding_constraint;
-
-                let coeff = E::from(self.inner_constraint_coeffs.transition[i]);
-                t_combined += coeff * t_eval;
-            }
-
-            // Divide by the transition divisor z(x) = (x^n - 1) / (x - g^{n-1}), evaluated at z.
-            let transition_eval = t_combined * E::from(self.inner_transition_divisor_inv_at_z);
-
-            // --- (2) Boundary constraints at z (single-step assertions) --------------------------
-            //
-            // RpoAir asserts:
-            // - row 0 state == input_state (12 assertions)
-            // - row 15 state == output_state (12 assertions)
-            //
-            // These two divisor groups are (x - 1) and (x - g^{n-1}).
-            let mut boundary_row0 = E::ZERO;
-            let mut boundary_row_last = E::ZERO;
-            let (boundary_row0_coeffs, boundary_row_last_coeffs) =
-                self.inner_constraint_coeffs.boundary.split_at(STATE_WIDTH);
-            let (input_states, output_states) =
-                self.pub_inputs.inner_public_inputs.split_at(STATE_WIDTH);
-            for (i, (coeff_row0, coeff_last)) in boundary_row0_coeffs
-                .iter()
-                .zip(boundary_row_last_coeffs.iter())
-                .enumerate()
-            {
-                let coeff_row0 = E::from(*coeff_row0);
-                let coeff_last = E::from(*coeff_last);
-
-                let input = E::from(input_states[i]);
-                let output = E::from(output_states[i]);
-
-                boundary_row0 += coeff_row0 * (ood_trace_z[i] - input);
-                boundary_row_last += coeff_last * (ood_trace_z[i] - output);
-            }
-            let boundary_eval = boundary_row0 * E::from(self.inner_boundary_divisor_inv_at_z[0])
-                + boundary_row_last * E::from(self.inner_boundary_divisor_inv_at_z[1]);
-
-            let ood_constraint_eval_1 = transition_eval + boundary_eval;
-
-            // --- (3) Reduce inner quotient columns at z to a single value -----------------------
-            //
-            // H(z) = Σ_{i=0}^{m-1} z^{i * trace_length} * H_i(z)
-            //
-            // where m = 8 for RpoAir's constraint composition columns.
-            let mut ood_constraint_eval_2 = E::ZERO;
-            for i in 0..8usize {
-                let weight = E::from(self.inner_ood_constraint_weights[i]);
-                let value = current[COL_OOD_EVALS_START + RPO_TRACE_WIDTH + i];
-                ood_constraint_eval_2 += weight * value;
-            }
-
-            result[idx] = ood_constraint_eval_1 - ood_constraint_eval_2;
-            idx += 1;
-        } else {
-            // Phase 3b.2: For non-RpoAir inner proofs (e.g., verifier-as-inner or transaction
-            // proofs), the OOD consistency check still needs a streaming implementation.
-            // Until that exists, we skip this constraint rather than panic on oversized OOD
-            // vectors. This is UNSOUND and must be removed once streaming is implemented.
-            result[idx] = E::ZERO;
-            idx += 1;
-        }
+        result[idx] = E::from(self.inner_ood_constraint_eval_1)
+            - E::from(self.inner_ood_constraint_eval_2);
+        idx += 1;
 
         // --------------------------------------------------------------------
-        // Transcript store: persist coeffs / deep coeffs / alphas
+        // Transcript draw binding
         // --------------------------------------------------------------------
-
-        // Stored constraint composition coefficients are constant across the trace.
-        for i in 0..NUM_CONSTRAINT_COEFFS {
-            result[idx + i] = inner_rpo_sel
-                * (next[COL_CONSTRAINT_COEFFS_START + i]
-                    - current[COL_CONSTRAINT_COEFFS_START + i]);
-        }
-        idx += NUM_CONSTRAINT_COEFFS;
-
-        // Stored DEEP coefficients are constant across the trace.
-        for i in 0..NUM_DEEP_COEFFS {
-            result[idx + i] = inner_rpo_sel
-                * (next[COL_DEEP_COEFFS_START + i] - current[COL_DEEP_COEFFS_START + i]);
-        }
-        idx += NUM_DEEP_COEFFS;
-
-        // Stored FRI alphas are constant across the trace (unused slots are ignored).
-        for i in 0..MAX_FRI_LAYERS {
-            result[idx + i] =
-                inner_rpo_sel * (next[COL_FRI_ALPHA_START + i] - current[COL_FRI_ALPHA_START + i]);
-        }
-        idx += MAX_FRI_LAYERS;
 
         // Capture constraint composition coefficients at their draw boundaries.
-        for coeff_idx in 0..NUM_CONSTRAINT_COEFFS {
+        for coeff_idx in 0..self.num_constraint_coeffs {
             let block = coeff_idx / RATE_WIDTH;
             let offset = coeff_idx % RATE_WIDTH;
             let mask = coeff_end_masks[block];
-            let stored = current[COL_CONSTRAINT_COEFFS_START + coeff_idx];
+            let expected = if coeff_idx < self.inner_constraint_coeffs.transition.len() {
+                self.inner_constraint_coeffs.transition[coeff_idx]
+            } else {
+                let idx = coeff_idx - self.inner_constraint_coeffs.transition.len();
+                self.inner_constraint_coeffs.boundary[idx]
+            };
             let drawn = current[RATE_START + offset];
-            result[idx + coeff_idx] = inner_rpo_sel * mask * (stored - drawn);
+            result[idx + coeff_idx] = mask * (drawn - E::from(expected));
         }
-        idx += NUM_CONSTRAINT_COEFFS;
+        idx += self.num_constraint_coeffs;
 
         // Capture DEEP coefficients at their draw boundaries.
-        for deep_idx in 0..NUM_DEEP_COEFFS {
+        for deep_idx in 0..self.num_deep_coeffs {
             let block = deep_idx / RATE_WIDTH;
             let offset = deep_idx % RATE_WIDTH;
             let mask = deep_end_masks[block];
-            let stored = current[COL_DEEP_COEFFS_START + deep_idx];
+            let expected = if deep_idx < self.inner_deep_coeffs.trace.len() {
+                self.inner_deep_coeffs.trace[deep_idx]
+            } else {
+                let idx = deep_idx - self.inner_deep_coeffs.trace.len();
+                self.inner_deep_coeffs.constraints[idx]
+            };
             let drawn = current[RATE_START + offset];
-            result[idx + deep_idx] = inner_rpo_sel * mask * (stored - drawn);
+            result[idx + deep_idx] = mask * (drawn - E::from(expected));
         }
-        idx += NUM_DEEP_COEFFS;
+        idx += self.num_deep_coeffs;
 
         // Capture FRI alphas at their draw boundaries.
         for layer_idx in 0..num_fri_layers {
             let mask = fri_alpha_end_masks[layer_idx];
-            let stored = current[COL_FRI_ALPHA_START + layer_idx];
+            let expected = self.inner_fri_alphas[layer_idx];
             let drawn = current[RATE_START];
-            result[idx + layer_idx] = inner_rpo_sel * mask * (stored - drawn);
+            result[idx + layer_idx] = mask * (drawn - E::from(expected));
         }
         idx += num_fri_layers;
 
@@ -1875,16 +1929,15 @@ impl Air for StarkVerifierAir {
 
         // Remainder coefficients are constant across the trace.
         for i in 0..NUM_REMAINDER_COEFFS {
-            result[idx + i] = inner_rpo_sel
-                * (next[COL_REMAINDER_COEFFS_START + i] - current[COL_REMAINDER_COEFFS_START + i]);
+            result[idx + i] =
+                next[COL_REMAINDER_COEFFS_START + i] - current[COL_REMAINDER_COEFFS_START + i];
         }
         idx += NUM_REMAINDER_COEFFS;
 
         // Bind remainder coefficients to the remainder commitment hash input rows.
         for i in 0..NUM_REMAINDER_COEFFS {
             let coeff = current[COL_REMAINDER_COEFFS_START + i];
-            result[idx + i] =
-                inner_rpo_sel * remainder_hash_row0_mask * (current[RATE_START + i] - coeff);
+            result[idx + i] = remainder_hash_row0_mask * (current[RATE_START + i] - coeff);
         }
         idx += NUM_REMAINDER_COEFFS;
 
@@ -1899,37 +1952,46 @@ impl Air for StarkVerifierAir {
         let c1_next = next[COL_DEEP_C1_ACC];
         let c2_next = next[COL_DEEP_C2_ACC];
 
-        let mut t1_delta0 = E::ZERO;
-        let mut t2_delta0 = E::ZERO;
-        for j in 0..RATE_WIDTH {
-            let coeff = current[COL_DEEP_COEFFS_START + j];
-            let trace_val = current[RATE_START + j];
-            let ood_z = current[COL_OOD_EVALS_START + j];
-            let ood_zg = current[COL_OOD_EVALS_START + (RPO_TRACE_WIDTH + 8) + j];
-            t1_delta0 += coeff * (trace_val - ood_z);
-            t2_delta0 += coeff * (trace_val - ood_zg);
-        }
-
-        let mut t1_delta1 = E::ZERO;
-        let mut t2_delta1 = E::ZERO;
-        for j in 0..(RPO_TRACE_WIDTH - RATE_WIDTH) {
-            let coeff = current[COL_DEEP_COEFFS_START + RATE_WIDTH + j];
-            let trace_val = current[RATE_START + j];
-            let ood_z = current[COL_OOD_EVALS_START + RATE_WIDTH + j];
-            let ood_zg = current[COL_OOD_EVALS_START + (RPO_TRACE_WIDTH + 8) + RATE_WIDTH + j];
-            t1_delta1 += coeff * (trace_val - ood_z);
-            t2_delta1 += coeff * (trace_val - ood_zg);
+        let mut t1_delta = E::ZERO;
+        let mut t2_delta = E::ZERO;
+        for (block_idx, start_idx) in self.trace_data_block_starts.iter().enumerate() {
+            let mask = trace_leaf_row_masks[block_idx];
+            let remaining = self.trace_width_ext.saturating_sub(*start_idx);
+            let block_len = remaining.min(RATE_WIDTH);
+            let mut block_t1 = E::ZERO;
+            let mut block_t2 = E::ZERO;
+            for j in 0..block_len {
+                let idx = start_idx + j;
+                let coeff = E::from(self.inner_deep_coeffs.trace[idx]);
+                let trace_val = current[RATE_START + j];
+                let ood_z = E::from(self.pub_inputs.ood_trace_current[idx]);
+                let ood_zg = E::from(self.pub_inputs.ood_trace_next[idx]);
+                block_t1 += coeff * (trace_val - ood_z);
+                block_t2 += coeff * (trace_val - ood_zg);
+            }
+            t1_delta += mask * block_t1;
+            t2_delta += mask * block_t2;
         }
 
         let mut c1_delta = E::ZERO;
         let mut c2_delta = E::ZERO;
-        for j in 0..8usize {
-            let coeff = current[COL_DEEP_COEFFS_START + RPO_TRACE_WIDTH + j];
-            let val = current[RATE_START + j];
-            let ood_z = current[COL_OOD_EVALS_START + RPO_TRACE_WIDTH + j];
-            let ood_zg = current[COL_OOD_EVALS_START + (RPO_TRACE_WIDTH + 8) + RPO_TRACE_WIDTH + j];
-            c1_delta += coeff * (val - ood_z);
-            c2_delta += coeff * (val - ood_zg);
+        for (block_idx, start_idx) in self.constraint_data_block_starts.iter().enumerate() {
+            let mask = constraint_leaf_row_masks[block_idx];
+            let remaining = self.constraint_width_ext.saturating_sub(*start_idx);
+            let block_len = remaining.min(RATE_WIDTH);
+            let mut block_c1 = E::ZERO;
+            let mut block_c2 = E::ZERO;
+            for j in 0..block_len {
+                let idx = start_idx + j;
+                let coeff = E::from(self.inner_deep_coeffs.constraints[idx]);
+                let val = current[RATE_START + j];
+                let ood_z = E::from(self.pub_inputs.ood_quotient_current[idx]);
+                let ood_zg = E::from(self.pub_inputs.ood_quotient_next[idx]);
+                block_c1 += coeff * (val - ood_z);
+                block_c2 += coeff * (val - ood_zg);
+            }
+            c1_delta += mask * block_c1;
+            c2_delta += mask * block_c2;
         }
 
         let reset_term_t1 = query_reset_mask * (E::ZERO - t1);
@@ -1937,22 +1999,10 @@ impl Air for StarkVerifierAir {
         let reset_term_c1 = query_reset_mask * (E::ZERO - c1);
         let reset_term_c2 = query_reset_mask * (E::ZERO - c2);
 
-        result[idx] = inner_rpo_sel
-            * (t1_next
-                - t1
-                - reset_term_t1
-                - trace_leaf0_row_mask * t1_delta0
-                - trace_leaf1_row_mask * t1_delta1);
-        result[idx + 1] = inner_rpo_sel
-            * (t2_next
-                - t2
-                - reset_term_t2
-                - trace_leaf0_row_mask * t2_delta0
-                - trace_leaf1_row_mask * t2_delta1);
-        result[idx + 2] =
-            inner_rpo_sel * (c1_next - c1 - reset_term_c1 - constraint_leaf_row_mask * c1_delta);
-        result[idx + 3] =
-            inner_rpo_sel * (c2_next - c2 - reset_term_c2 - constraint_leaf_row_mask * c2_delta);
+        result[idx] = t1_next - t1 - reset_term_t1 - t1_delta;
+        result[idx + 1] = t2_next - t2 - reset_term_t2 - t2_delta;
+        result[idx + 2] = c1_next - c1 - reset_term_c1 - c1_delta;
+        result[idx + 3] = c2_next - c2 - reset_term_c2 - c2_delta;
         idx += 4;
 
         // --- x / pow state machine ---------------------------------------------------------
@@ -1970,17 +2020,16 @@ impl Air for StarkVerifierAir {
 
         let x_fri_update = fri_leaf_any_row_mask * (x * x * E::from(self.inv_domain_offset) - x);
 
-        result[idx] = inner_rpo_sel * (x_next - x - reset_x - x_trace_update - x_fri_update);
+        result[idx] = x_next - x - reset_x - x_trace_update - x_fri_update;
 
         let pow_trace_update = trace_merkle_bit_mask * (pow * pow - pow);
-        result[idx + 1] = inner_rpo_sel * (pow_next - pow - reset_pow - pow_trace_update);
+        result[idx + 1] = pow_next - pow - reset_pow - pow_trace_update;
         idx += 2;
 
         // --- evaluation freeze between leaf updates ---------------------------------------
         let eval = current[COL_FRI_EVAL];
         let eval_next = next[COL_FRI_EVAL];
-        result[idx] =
-            inner_rpo_sel * (one - fri_leaf_any_row_mask - query_reset_mask) * (eval_next - eval);
+        result[idx] = (one - fri_leaf_any_row_mask - query_reset_mask) * (eval_next - eval);
         idx += 1;
 
         // --- MSB capture bits --------------------------------------------------------------
@@ -1989,11 +2038,10 @@ impl Air for StarkVerifierAir {
             let cur_b = current[bit_col];
             let next_b = next[bit_col];
             let capture = msb_capture_masks[layer_idx];
-            result[idx + layer_idx] = inner_rpo_sel
-                * (next_b
-                    - cur_b
-                    - query_reset_mask * (E::ZERO - cur_b)
-                    - capture * (path_bit - cur_b));
+            result[idx + layer_idx] = next_b
+                - cur_b
+                - query_reset_mask * (E::ZERO - cur_b)
+                - capture * (path_bit - cur_b);
         }
         idx += num_fri_layers;
 
@@ -2004,7 +2052,7 @@ impl Air for StarkVerifierAir {
             let v0 = current[RATE_START];
             let v1 = current[RATE_START + 1];
             let selected = v0 + b * (v1 - v0);
-            result[idx + layer_idx] = inner_rpo_sel * mask * (eval - selected);
+            result[idx + layer_idx] = mask * (eval - selected);
         }
         idx += num_fri_layers;
 
@@ -2017,7 +2065,7 @@ impl Air for StarkVerifierAir {
             let x_minus_z1 = x - z1;
             let denom = x_minus_z0 * x_minus_z1;
             let num = (t1 + c1) * x_minus_z1 + (t2 + c2) * x_minus_z0;
-            result[idx] = inner_rpo_sel * mask * (eval * denom - num);
+            result[idx] = mask * (eval * denom - num);
         } else {
             result[idx] = E::ZERO;
         }
@@ -2027,7 +2075,7 @@ impl Air for StarkVerifierAir {
         for layer_idx in 0..num_fri_layers {
             let mask = fri_leaf_row_masks[layer_idx];
             let b = current[COL_FRI_MSB_BITS_START + layer_idx];
-            let alpha = current[COL_FRI_ALPHA_START + layer_idx];
+            let alpha = E::from(self.inner_fri_alphas[layer_idx]);
             let v0 = current[RATE_START];
             let v1 = current[RATE_START + 1];
 
@@ -2037,7 +2085,7 @@ impl Air for StarkVerifierAir {
             // 2x * next_eval = (x + α) * f(x) + (x - α) * f(-x)
             let lhs = two * x_base * eval_next;
             let rhs = (x_base + alpha) * v0 + (x_base - alpha) * v1;
-            result[idx + layer_idx] = inner_rpo_sel * mask * (lhs - rhs);
+            result[idx + layer_idx] = mask * (lhs - rhs);
         }
         idx += num_fri_layers;
 
@@ -2048,7 +2096,7 @@ impl Air for StarkVerifierAir {
             for i in 0..NUM_REMAINDER_COEFFS {
                 acc = acc * x + current[COL_REMAINDER_COEFFS_START + i];
             }
-            result[idx] = inner_rpo_sel * remainder_mask * (eval - acc);
+            result[idx] = remainder_mask * (eval - acc);
         } else {
             result[idx] = E::ZERO;
         }
@@ -2334,9 +2382,7 @@ impl Air for StarkVerifierAir {
         }
 
         // --- Coefficient draw full-carry boundaries and reseed(constraint_commitment) ---------
-        let num_coeffs_total =
-            self.pub_inputs.num_transition_constraints + self.pub_inputs.num_assertions;
-        let num_coeff_perms = num_coeffs_total.div_ceil(RATE_WIDTH).max(1);
+        let num_coeff_perms = self.num_constraint_coeffs.div_ceil(RATE_WIDTH).max(1);
         let trace_reseed_perm_idx = num_pi_blocks + num_seed_blocks + 1;
         let coeff_start_perm_idx = trace_reseed_perm_idx;
 
@@ -2501,8 +2547,8 @@ impl Air for StarkVerifierAir {
         // Winterfell reseeds the public coin with `hash_elements(merge_ood_evaluations(..))`
         // after passing the OOD consistency check. We compute the same digest in-circuit and use
         // it to restore the coin state for deep-coefficient draws.
-        let num_deep_coeffs = self.pub_inputs.trace_width + self.pub_inputs.constraint_frame_width;
-        let ood_eval_len = 2 * num_deep_coeffs;
+        let num_deep_coeffs = self.num_deep_coeffs;
+        let ood_eval_len = self.ood_eval_len;
         let num_ood_perms = ood_eval_len.div_ceil(RATE_WIDTH);
         let ood_start_perm_idx = constraint_reseed_perm_idx + 1;
         let ood_start_row = ood_start_perm_idx * ROWS_PER_PERMUTATION;
@@ -2863,8 +2909,12 @@ impl Air for StarkVerifierAir {
             lde_domain_size.trailing_zeros() as usize
         };
 
-        let trace_leaf_len = self.pub_inputs.trace_width;
-        let constraint_leaf_len = self.pub_inputs.constraint_frame_width;
+        let extension_degree = field_extension_degree(self.pub_inputs.field_extension)
+            .expect("unsupported field extension");
+        let trace_leaf_len = self.trace_width_ext;
+        let constraint_leaf_len = self.constraint_width_ext;
+        let constraint_partition_size_base =
+            self.pub_inputs.constraint_partition_size * extension_degree;
         let fri_leaf_len = 2usize;
 
         let compute_leaf_perms = |len: usize, partition_size: usize| -> usize {
@@ -2896,21 +2946,15 @@ impl Air for StarkVerifierAir {
 
         let trace_leaf_perms =
             compute_leaf_perms(trace_leaf_len, self.pub_inputs.trace_partition_size);
-        let constraint_leaf_perms = compute_leaf_perms(
-            constraint_leaf_len,
-            self.pub_inputs.constraint_partition_size,
-        );
+        let constraint_leaf_perms =
+            compute_leaf_perms(constraint_leaf_len, constraint_partition_size_base);
         let fri_leaf_perms = fri_leaf_len.div_ceil(RATE_WIDTH).max(1);
 
         let mut merkle_perms_per_query =
             trace_leaf_perms + depth_trace + constraint_leaf_perms + depth_trace;
-        let replay_draws_per_query = leaf_chain_count(
-            trace_leaf_len,
-            self.pub_inputs.trace_partition_size,
-        ) + leaf_chain_count(
-            constraint_leaf_len,
-            self.pub_inputs.constraint_partition_size,
-        );
+        let replay_draws_per_query =
+            leaf_chain_count(trace_leaf_len, self.pub_inputs.trace_partition_size)
+                + leaf_chain_count(constraint_leaf_len, constraint_partition_size_base);
         merkle_perms_per_query += replay_draws_per_query;
         for layer_idx in 0..num_fri_layers {
             merkle_perms_per_query += fri_leaf_perms + depth_trace.saturating_sub(layer_idx + 1);
@@ -2988,7 +3032,7 @@ impl Air for StarkVerifierAir {
                     &mut assertions,
                     perm_idx,
                     constraint_leaf_len,
-                    self.pub_inputs.constraint_partition_size,
+                    constraint_partition_size_base,
                 );
 
                 // Constraint merge starts.
@@ -3071,13 +3115,9 @@ impl Air for StarkVerifierAir {
         let seed_len = build_context_prefix(&self.pub_inputs).len() + input_len;
         let num_seed_blocks = seed_len.div_ceil(RATE_WIDTH).max(1);
 
-        let num_coeffs_total =
-            self.pub_inputs.num_transition_constraints + self.pub_inputs.num_assertions;
-        let num_coeff_perms = num_coeffs_total.div_ceil(RATE_WIDTH).max(1);
-        let num_deep_coeffs = self.pub_inputs.trace_width + self.pub_inputs.constraint_frame_width;
-        let num_deep_perms = num_deep_coeffs.div_ceil(RATE_WIDTH);
-        let ood_eval_len = 2 * num_deep_coeffs;
-        let num_ood_perms = ood_eval_len.div_ceil(RATE_WIDTH);
+        let num_coeff_perms = self.num_constraint_coeffs.div_ceil(RATE_WIDTH).max(1);
+        let num_deep_perms = self.num_deep_coeffs.div_ceil(RATE_WIDTH);
+        let num_ood_perms = self.ood_eval_len.div_ceil(RATE_WIDTH);
 
         let num_fri_commitments = self.pub_inputs.fri_commitments.len();
         let num_fri_layers = num_fri_commitments.saturating_sub(1);
@@ -3112,56 +3152,38 @@ impl Air for StarkVerifierAir {
 
         // DEEP + FRI masks (all sparse, full-length).
         let mut query_reset_mask = vec![BaseElement::ZERO; total_rows];
-        let mut trace_leaf0_row_mask = vec![BaseElement::ZERO; total_rows];
-        let mut trace_leaf1_row_mask = vec![BaseElement::ZERO; total_rows];
-        let mut constraint_leaf_row_mask = vec![BaseElement::ZERO; total_rows];
         let mut trace_merkle_bit_mask = vec![BaseElement::ZERO; total_rows];
         let mut msb_capture_masks = vec![vec![BaseElement::ZERO; total_rows]; num_fri_layers];
         let mut fri_leaf_row_masks = vec![vec![BaseElement::ZERO; total_rows]; num_fri_layers];
         let mut fri_leaf_any_row_mask = vec![BaseElement::ZERO; total_rows];
         let mut remainder_hash_row0_mask = vec![BaseElement::ZERO; total_rows];
 
-        let trace_leaf_len = self.pub_inputs.trace_width;
-        let constraint_leaf_len = self.pub_inputs.constraint_frame_width;
+        let extension_degree = field_extension_degree(self.pub_inputs.field_extension)
+            .expect("unsupported field extension");
+        let trace_leaf_len = self.trace_width_ext;
+        let constraint_leaf_len = self.constraint_width_ext;
+        let constraint_partition_size_base =
+            self.pub_inputs.constraint_partition_size * extension_degree;
         let fri_leaf_len = 2usize;
 
-        let compute_leaf_layout = |len: usize, partition_size: usize| -> (usize, Vec<bool>) {
-            let hash_perms = |input_len: usize| input_len.div_ceil(RATE_WIDTH).max(1);
-
-            if partition_size >= len {
-                let perms = hash_perms(len);
-                let mut chain = vec![false; perms];
-                for value in chain.iter_mut().take(perms.saturating_sub(1)) {
-                    *value = true;
-                }
-                return (perms, chain);
-            }
-
-            // Partitioned leaves: hash each partition independently, then hash the concatenated
-            // partition digests (Rpo256::merge_many == hash_elements over digest elements).
-            let mut chain = Vec::new();
-            let mut remaining = len;
-            while remaining > 0 {
-                let part_len = remaining.min(partition_size);
-                let perms = hash_perms(part_len);
-                chain.extend((0..perms).map(|i| i + 1 < perms));
-                remaining -= part_len;
-            }
-
-            let num_partitions = len.div_ceil(partition_size);
-            let merged_len = num_partitions * DIGEST_WIDTH;
-            let merged_perms = hash_perms(merged_len);
-            chain.extend((0..merged_perms).map(|i| i + 1 < merged_perms));
-
-            (chain.len(), chain)
-        };
-
-        let (trace_leaf_perms, trace_leaf_chain) =
+        let trace_layout =
             compute_leaf_layout(trace_leaf_len, self.pub_inputs.trace_partition_size);
-        let (constraint_leaf_perms, constraint_leaf_chain) = compute_leaf_layout(
-            constraint_leaf_len,
-            self.pub_inputs.constraint_partition_size,
-        );
+        let constraint_layout =
+            compute_leaf_layout(constraint_leaf_len, constraint_partition_size_base);
+        let trace_leaf_perms = trace_layout.total_perms;
+        let constraint_leaf_perms = constraint_layout.total_perms;
+        let trace_leaf_chain = &trace_layout.chain_flags;
+        let constraint_leaf_chain = &constraint_layout.chain_flags;
+        let trace_data_perm_map = &trace_layout.data_perm_map;
+        let constraint_data_perm_map = &constraint_layout.data_perm_map;
+        let mut trace_leaf_row_masks = vec![
+            vec![BaseElement::ZERO; total_rows];
+            trace_layout.data_perm_starts.len()
+        ];
+        let mut constraint_leaf_row_masks = vec![
+            vec![BaseElement::ZERO; total_rows];
+            constraint_layout.data_perm_starts.len()
+        ];
         let fri_leaf_perms = fri_leaf_len.div_ceil(RATE_WIDTH).max(1);
         let trace_leaf_chains = trace_leaf_chain.iter().filter(|v| !**v).count();
         let constraint_leaf_chains = constraint_leaf_chain.iter().filter(|v| !**v).count();
@@ -3214,11 +3236,10 @@ impl Air for StarkVerifierAir {
                     }
                     let row0 = perm_idx * ROWS_PER_PERMUTATION;
                     let boundary = row0 + ROWS_PER_PERMUTATION - 1;
-                    if rel_perm == 0 && row0 < total_rows {
-                        trace_leaf0_row_mask[row0] = BaseElement::ONE;
-                    }
-                    if rel_perm == 1 && row0 < total_rows {
-                        trace_leaf1_row_mask[row0] = BaseElement::ONE;
+                    if row0 < total_rows {
+                        if let Some(data_idx) = trace_data_perm_map[rel_perm] {
+                            trace_leaf_row_masks[data_idx][row0] = BaseElement::ONE;
+                        }
                     }
                     if trace_leaf_chain.get(rel_perm).copied().unwrap_or(false) {
                         leaf_chain_mask[boundary] = BaseElement::ONE;
@@ -3275,8 +3296,10 @@ impl Air for StarkVerifierAir {
                     }
                     let row0 = perm_idx * ROWS_PER_PERMUTATION;
                     let boundary = row0 + ROWS_PER_PERMUTATION - 1;
-                    if rel_perm == 0 && row0 < total_rows {
-                        constraint_leaf_row_mask[row0] = BaseElement::ONE;
+                    if row0 < total_rows {
+                        if let Some(data_idx) = constraint_data_perm_map[rel_perm] {
+                            constraint_leaf_row_masks[data_idx][row0] = BaseElement::ONE;
+                        }
                     }
                     if constraint_leaf_chain
                         .get(rel_perm)
@@ -3576,9 +3599,12 @@ impl Air for StarkVerifierAir {
 
         // --- DEEP + FRI periodic columns (appended) ---------------------------------------
         result.push(query_reset_mask);
-        result.push(trace_leaf0_row_mask);
-        result.push(trace_leaf1_row_mask);
-        result.push(constraint_leaf_row_mask);
+        for col in trace_leaf_row_masks {
+            result.push(col);
+        }
+        for col in constraint_leaf_row_masks {
+            result.push(col);
+        }
         result.push(trace_merkle_bit_mask);
         for col in msb_capture_masks {
             result.push(col);
@@ -3594,6 +3620,78 @@ impl Air for StarkVerifierAir {
 
 // VERIFICATION HELPERS
 // ================================================================================================
+
+#[derive(Clone, Debug)]
+struct LeafLayout {
+    total_perms: usize,
+    chain_flags: Vec<bool>,
+    data_perm_starts: Vec<usize>,
+    data_perm_map: Vec<Option<usize>>,
+}
+
+fn compute_leaf_layout(len: usize, partition_size: usize) -> LeafLayout {
+    let hash_perms = |input_len: usize| input_len.div_ceil(RATE_WIDTH).max(1);
+    if len == 0 {
+        return LeafLayout {
+            total_perms: 0,
+            chain_flags: Vec::new(),
+            data_perm_starts: Vec::new(),
+            data_perm_map: Vec::new(),
+        };
+    }
+
+    if partition_size >= len {
+        let perms = hash_perms(len);
+        let mut chain_flags = vec![false; perms];
+        for value in chain_flags.iter_mut().take(perms.saturating_sub(1)) {
+            *value = true;
+        }
+        let data_perm_starts = (0..perms).map(|i| i * RATE_WIDTH).collect::<Vec<_>>();
+        let data_perm_map = (0..perms).map(Some).collect::<Vec<_>>();
+        return LeafLayout {
+            total_perms: perms,
+            chain_flags,
+            data_perm_starts,
+            data_perm_map,
+        };
+    }
+
+    let mut chain_flags = Vec::new();
+    let mut data_perm_starts = Vec::new();
+    let mut data_perm_map = Vec::new();
+    let mut remaining = len;
+    let mut offset = 0usize;
+    let mut data_idx = 0usize;
+
+    while remaining > 0 {
+        let part_len = remaining.min(partition_size);
+        let perms = hash_perms(part_len);
+        for perm in 0..perms {
+            let start = offset + perm * RATE_WIDTH;
+            data_perm_starts.push(start);
+            data_perm_map.push(Some(data_idx));
+            data_idx += 1;
+            chain_flags.push(perm + 1 < perms);
+        }
+        remaining -= part_len;
+        offset += part_len;
+    }
+
+    let num_partitions = len.div_ceil(partition_size);
+    let merged_len = num_partitions * DIGEST_WIDTH;
+    let merged_perms = hash_perms(merged_len);
+    for perm in 0..merged_perms {
+        data_perm_map.push(None);
+        chain_flags.push(perm + 1 < merged_perms);
+    }
+
+    LeafLayout {
+        total_perms: chain_flags.len(),
+        chain_flags,
+        data_perm_starts,
+        data_perm_map,
+    }
+}
 
 pub(crate) fn compute_inner_ood_constants(
     pub_inputs: &StarkVerifierPublicInputs,
@@ -3642,6 +3740,14 @@ pub(crate) fn compute_inner_ood_constants(
         boundary_inv_at_z,
         ood_constraint_weights,
     )
+}
+
+fn field_extension_degree(field_extension: FieldExtension) -> Result<usize, String> {
+    match field_extension {
+        FieldExtension::None => Ok(1),
+        FieldExtension::Quadratic => Ok(2),
+        FieldExtension::Cubic => Ok(3),
+    }
 }
 
 fn compute_rpo_periodic_at_point(x: BaseElement) -> [BaseElement; 1 + STATE_WIDTH] {
@@ -3700,15 +3806,23 @@ fn compute_rpo_periodic_at_point(x: BaseElement) -> [BaseElement; 1 + STATE_WIDT
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InnerProofKind {
     RpoAir,
+    TransactionAir,
     StarkVerifierAir,
 }
 
 fn inner_proof_kind(pub_inputs: &StarkVerifierPublicInputs) -> InnerProofKind {
     if pub_inputs.inner_public_inputs.len() == 2 * STATE_WIDTH {
         InnerProofKind::RpoAir
+    } else if pub_inputs.inner_public_inputs.len() == transaction_public_inputs_len() {
+        InnerProofKind::TransactionAir
     } else {
         InnerProofKind::StarkVerifierAir
     }
+}
+
+fn transaction_public_inputs_len() -> usize {
+    (transaction_circuit::constants::MAX_INPUTS + transaction_circuit::constants::MAX_OUTPUTS) * 5
+        + 24
 }
 
 /// Helper to extract query positions from an RPO transcript seed.
@@ -3796,12 +3910,12 @@ pub(crate) fn build_context_prefix(pub_inputs: &StarkVerifierPublicInputs) -> Ve
     // NOTE: `FieldExtension` is 1-based in Winterfell (`None = 1`).
     let options0 = BaseElement::new(
         pub_inputs.blowup_factor as u64
-            + (7u64 << 8)
-            + (2u64 << 16)
+            + ((pub_inputs.fri_remainder_max_degree as u64) << 8)
+            + ((pub_inputs.fri_folding_factor as u64) << 16)
             + ((pub_inputs.field_extension as u64) << 24),
     );
 
-    let grinding_factor = BaseElement::ZERO;
+    let grinding_factor = BaseElement::new(pub_inputs.grinding_factor as u64);
     // Context prefix must use the original query draw count from proof options.
     let num_queries = BaseElement::new(pub_inputs.num_draws as u64);
 
@@ -3826,26 +3940,263 @@ pub(crate) fn compute_expected_z(pub_inputs: &StarkVerifierPublicInputs) -> Base
 fn compute_expected_constraint_coeffs_and_z(
     pub_inputs: &StarkVerifierPublicInputs,
 ) -> (ConstraintCompositionCoefficients<BaseElement>, BaseElement) {
+    let (coeffs, z, _, _) = compute_expected_transcript_draws(pub_inputs, compute_ood_digest(pub_inputs))
+        .expect("failed to reconstruct transcript");
+    (coeffs, z)
+}
+
+fn compute_ood_digest(pub_inputs: &StarkVerifierPublicInputs) -> [BaseElement; DIGEST_WIDTH] {
+    let mut ood_evals = Vec::with_capacity(
+        pub_inputs.ood_trace_current.len()
+            + pub_inputs.ood_quotient_current.len()
+            + pub_inputs.ood_trace_next.len()
+            + pub_inputs.ood_quotient_next.len(),
+    );
+    ood_evals.extend_from_slice(&pub_inputs.ood_trace_current);
+    ood_evals.extend_from_slice(&pub_inputs.ood_quotient_current);
+    ood_evals.extend_from_slice(&pub_inputs.ood_trace_next);
+    ood_evals.extend_from_slice(&pub_inputs.ood_quotient_next);
+
+    let digest = Rpo256::hash_elements(&ood_evals);
+    [digest[0], digest[1], digest[2], digest[3]]
+}
+
+fn compute_expected_transcript_draws(
+    pub_inputs: &StarkVerifierPublicInputs,
+    ood_digest: [BaseElement; DIGEST_WIDTH],
+) -> Result<
+    (
+        ConstraintCompositionCoefficients<BaseElement>,
+        BaseElement,
+        DeepCompositionCoefficients<BaseElement>,
+        Vec<BaseElement>,
+    ),
+    String,
+> {
+    if pub_inputs.field_extension != FieldExtension::None {
+        return Err("recursive verifier only supports base-field transcript draws".to_string());
+    }
+
     // Transcript seed = hash(context_prefix || inner_public_inputs).
-    //
-    // This must match Winterfell's `ProverChannel` seeding:
-    // `RandomCoin::new(&[context.to_elements(), pub_inputs])`.
     let mut seed_elems = build_context_prefix(pub_inputs);
     seed_elems.extend_from_slice(&pub_inputs.inner_public_inputs);
     let mut coin = <RpoRandomCoin as RandomCoin>::new(&seed_elems);
     coin.reseed(Word::new(pub_inputs.trace_commitment));
 
-    let coeffs = ConstraintCompositionCoefficients::draw_linear(
+    let constraint_coeffs = ConstraintCompositionCoefficients::draw_linear(
         &mut coin,
         pub_inputs.num_transition_constraints,
         pub_inputs.num_assertions,
     )
-    .expect("failed to draw constraint composition coefficients");
+    .map_err(|e| format!("failed to draw constraint coeffs: {e}"))?;
 
     // Reseed with constraint commitment and draw z.
     coin.reseed(Word::new(pub_inputs.constraint_commitment));
-    let z = coin.draw().expect("failed to draw z");
-    (coeffs, z)
+    let z = coin
+        .draw()
+        .map_err(|e| format!("failed to draw z: {e}"))?;
+
+    // Reseed with OOD digest and draw DEEP coefficients.
+    coin.reseed(Word::new(ood_digest));
+    let deep_coeffs = DeepCompositionCoefficients::draw_linear(
+        &mut coin,
+        pub_inputs.trace_width,
+        pub_inputs.constraint_frame_width,
+    )
+    .map_err(|e| format!("failed to draw deep coeffs: {e}"))?;
+
+    // FRI commit phase: reseed with each layer commitment and draw alpha.
+    let num_fri_layers = pub_inputs.fri_commitments.len().saturating_sub(1);
+    let mut fri_alphas = Vec::with_capacity(num_fri_layers);
+    for commitment in pub_inputs.fri_commitments.iter().take(num_fri_layers) {
+        coin.reseed(Word::new(*commitment));
+        let alpha: BaseElement = coin
+            .draw()
+            .map_err(|e| format!("failed to draw FRI alpha: {e}"))?;
+        fri_alphas.push(alpha);
+    }
+
+    Ok((constraint_coeffs, z, deep_coeffs, fri_alphas))
+}
+
+fn compute_ood_constraint_eval_2(
+    ood_quotient_current: &[BaseElement],
+    z: BaseElement,
+    trace_length: usize,
+) -> BaseElement {
+    if ood_quotient_current.is_empty() {
+        return BaseElement::ZERO;
+    }
+
+    let z_to_n = z.exp((trace_length as u64).into());
+    let mut weight = BaseElement::ONE;
+    let mut acc = BaseElement::ZERO;
+    for value in ood_quotient_current {
+        acc += weight * *value;
+        weight *= z_to_n;
+    }
+    acc
+}
+
+fn compute_rpo_ood_consistency(
+    pub_inputs: &StarkVerifierPublicInputs,
+    constraint_coeffs: &ConstraintCompositionCoefficients<BaseElement>,
+    expected_z: BaseElement,
+    g_trace: BaseElement,
+) -> Result<(BaseElement, BaseElement), String> {
+    if constraint_coeffs.transition.len() != STATE_WIDTH {
+        return Err(format!(
+            "RPO transition coeff length mismatch: expected {}, got {}",
+            STATE_WIDTH,
+            constraint_coeffs.transition.len()
+        ));
+    }
+    if constraint_coeffs.boundary.len() != 2 * STATE_WIDTH {
+        return Err(format!(
+            "RPO boundary coeff length mismatch: expected {}, got {}",
+            2 * STATE_WIDTH,
+            constraint_coeffs.boundary.len()
+        ));
+    }
+
+    let (rpo_periodic_at_z, transition_div_inv, boundary_div_inv, _ood_weights) =
+        compute_inner_ood_constants(pub_inputs, expected_z, g_trace);
+    let half_round_type = rpo_periodic_at_z[0];
+    let ark: [BaseElement; STATE_WIDTH] =
+        core::array::from_fn(|i| rpo_periodic_at_z[1 + i]);
+
+    let ood_trace_z = &pub_inputs.ood_trace_current;
+    let ood_trace_zg = &pub_inputs.ood_trace_next;
+    if ood_trace_z.len() < STATE_WIDTH || ood_trace_zg.len() < STATE_WIDTH {
+        return Err("RPO OOD trace frame is shorter than state width".to_string());
+    }
+
+    let one = BaseElement::ONE;
+    let two = one + one;
+    let is_forward = half_round_type * (two - half_round_type);
+    let is_inverse = half_round_type * (half_round_type - one);
+    let is_padding = (one - half_round_type) * (two - half_round_type);
+
+    let mut t_combined = BaseElement::ZERO;
+    for i in 0..STATE_WIDTH {
+        let mut mds_res = BaseElement::ZERO;
+        for j in 0..STATE_WIDTH {
+            mds_res += BaseElement::from(MDS[i][j]) * ood_trace_z[j];
+        }
+        let intermediate = mds_res + ark[i];
+
+        let x2 = intermediate * intermediate;
+        let x4 = x2 * x2;
+        let x3 = x2 * intermediate;
+        let x7 = x3 * x4;
+        let forward_constraint = ood_trace_zg[i] - x7;
+
+        let y = ood_trace_zg[i];
+        let y2 = y * y;
+        let y4 = y2 * y2;
+        let y3 = y2 * y;
+        let y7 = y3 * y4;
+        let inverse_constraint = y7 - intermediate;
+
+        let padding_constraint = ood_trace_zg[i] - ood_trace_z[i];
+        let t_eval = is_forward * forward_constraint
+            + is_inverse * inverse_constraint
+            + is_padding * padding_constraint;
+
+        let coeff = constraint_coeffs.transition[i];
+        t_combined += coeff * t_eval;
+    }
+
+    let transition_eval = t_combined * transition_div_inv;
+
+    let mut boundary_row0 = BaseElement::ZERO;
+    let mut boundary_row_last = BaseElement::ZERO;
+    let (boundary_row0_coeffs, boundary_row_last_coeffs) =
+        constraint_coeffs.boundary.split_at(STATE_WIDTH);
+    let (input_states, output_states) = pub_inputs.inner_public_inputs.split_at(STATE_WIDTH);
+    for (i, (coeff_row0, coeff_last)) in boundary_row0_coeffs
+        .iter()
+        .zip(boundary_row_last_coeffs.iter())
+        .enumerate()
+    {
+        let input = input_states[i];
+        let output = output_states[i];
+        boundary_row0 += *coeff_row0 * (ood_trace_z[i] - input);
+        boundary_row_last += *coeff_last * (ood_trace_z[i] - output);
+    }
+    let boundary_eval = boundary_row0 * boundary_div_inv[0] + boundary_row_last * boundary_div_inv[1];
+
+    let eval1 = transition_eval + boundary_eval;
+    let eval2 = compute_ood_constraint_eval_2(
+        &pub_inputs.ood_quotient_current,
+        expected_z,
+        pub_inputs.trace_length,
+    );
+    Ok((eval1, eval2))
+}
+
+fn compute_transaction_ood_consistency(
+    pub_inputs: &StarkVerifierPublicInputs,
+    constraint_coeffs: &ConstraintCompositionCoefficients<BaseElement>,
+    expected_z: BaseElement,
+) -> Result<(BaseElement, BaseElement), String> {
+    if pub_inputs.field_extension != FieldExtension::None {
+        return Err("transaction recursion only supports base-field proofs".to_string());
+    }
+
+    let tx_inputs = TransactionPublicInputsStark::try_from_elements(&pub_inputs.inner_public_inputs)?;
+    let trace_info = TraceInfo::new(pub_inputs.trace_width, pub_inputs.trace_length);
+    let options = ProofOptions::new(
+        pub_inputs.num_draws,
+        pub_inputs.blowup_factor,
+        pub_inputs.grinding_factor as u32,
+        pub_inputs.field_extension,
+        pub_inputs.fri_folding_factor,
+        pub_inputs.fri_remainder_max_degree,
+        BatchingMethod::Linear,
+        BatchingMethod::Linear,
+    );
+    let air = TransactionAirStark::new(trace_info, tx_inputs, options);
+    let frame = EvaluationFrame::from_rows(
+        pub_inputs.ood_trace_current.clone(),
+        pub_inputs.ood_trace_next.clone(),
+    );
+    let eval1 = evaluate_constraints_at(&air, constraint_coeffs.clone(), &frame, expected_z);
+    let eval2 = compute_ood_constraint_eval_2(
+        &pub_inputs.ood_quotient_current,
+        expected_z,
+        pub_inputs.trace_length,
+    );
+    Ok((eval1, eval2))
+}
+
+fn evaluate_constraints_at<A: Air<BaseField = BaseElement>>(
+    air: &A,
+    composition_coefficients: ConstraintCompositionCoefficients<BaseElement>,
+    main_trace_frame: &EvaluationFrame<BaseElement>,
+    x: BaseElement,
+) -> BaseElement {
+    let t_constraints = air.get_transition_constraints(&composition_coefficients.transition);
+
+    let periodic_values = air
+        .get_periodic_column_polys()
+        .iter()
+        .map(|poly| {
+            let num_cycles = air.trace_length() / poly.len();
+            let x = x.exp_vartime((num_cycles as u32).into());
+            polynom::eval(poly, x)
+        })
+        .collect::<Vec<_>>();
+
+    let mut t_evaluations = vec![BaseElement::ZERO; t_constraints.num_main_constraints()];
+    air.evaluate_transition(main_trace_frame, &periodic_values, &mut t_evaluations);
+
+    let mut result = t_constraints.combine_evaluations::<BaseElement>(&t_evaluations, &[], x);
+    let b_constraints = air.get_boundary_constraints(None, &composition_coefficients.boundary);
+    for group in b_constraints.main_constraints().iter() {
+        result += group.evaluate_at(main_trace_frame.current(), x);
+    }
+    result
 }
 
 // TESTS
@@ -3862,18 +4213,27 @@ mod tests {
         let trace_commit = [BaseElement::new(2); DIGEST_WIDTH];
         let constraint_commit = [BaseElement::new(3); DIGEST_WIDTH];
         let fri_commits = vec![[BaseElement::new(4); DIGEST_WIDTH]; 5];
+        let ood_trace = vec![BaseElement::new(5); RPO_TRACE_WIDTH];
+        let ood_quotient = vec![BaseElement::new(6); 8];
 
         let pub_inputs = StarkVerifierPublicInputs::new(
             inner_inputs,
             inner_hash,
             trace_commit,
             constraint_commit,
+            ood_trace.clone(),
+            ood_quotient.clone(),
+            ood_trace,
+            ood_quotient,
             fri_commits.clone(),
             32,
             32,
             RPO_TRACE_WIDTH,
             8,
             16,
+            2,
+            7,
+            0,
             1024,
             RPO_TRACE_WIDTH,
             8,
@@ -3965,12 +4325,19 @@ mod tests {
             [BaseElement::ONE; DIGEST_WIDTH],
             [BaseElement::new(2); DIGEST_WIDTH],
             [BaseElement::new(3); DIGEST_WIDTH],
+            vec![BaseElement::new(4); RPO_TRACE_WIDTH],
+            vec![BaseElement::new(5); 8],
+            vec![BaseElement::new(6); RPO_TRACE_WIDTH],
+            vec![BaseElement::new(7); 8],
             vec![[BaseElement::new(4); DIGEST_WIDTH]; 3],
             32,
             32,
             RPO_TRACE_WIDTH,
             8,
             16,
+            2,
+            7,
+            0,
             1024,
             RPO_TRACE_WIDTH,
             8,
@@ -3981,8 +4348,9 @@ mod tests {
 
         let elements = pub_inputs.to_elements();
 
-        // inner_public_inputs (2) + 4 (inner hash) + 4 (trace) + 4 (constraint) + 3*4 (fri) + 11 (params)
-        assert_eq!(elements.len(), 2 + 4 + 4 + 4 + 12 + 11);
+        let ood_len = 2 * (RPO_TRACE_WIDTH + 8);
+        // inner_public_inputs (2) + 4 (inner hash) + 4 (trace) + 4 (constraint) + ood + 3*4 (fri) + 14 (params)
+        assert_eq!(elements.len(), 2 + 4 + 4 + 4 + ood_len + 12 + 14);
     }
 
     #[test]
@@ -3997,18 +4365,27 @@ mod tests {
             [BaseElement::new(13); DIGEST_WIDTH],
             [BaseElement::new(14); DIGEST_WIDTH],
         ];
+        let ood_trace = vec![BaseElement::new(15); RPO_TRACE_WIDTH];
+        let ood_quotient = vec![BaseElement::new(16); 8];
 
         let pub_inputs = StarkVerifierPublicInputs::new(
             inner_inputs.clone(),
             inner_hash,
             trace_commit,
             constraint_commit,
+            ood_trace.clone(),
+            ood_quotient.clone(),
+            ood_trace,
+            ood_quotient,
             fri_commits.clone(),
             4,
             4,
             RPO_TRACE_WIDTH,
             8,
             32,
+            2,
+            7,
+            0,
             ROWS_PER_PERMUTATION,
             RPO_TRACE_WIDTH,
             8,
@@ -4025,12 +4402,19 @@ mod tests {
         assert_eq!(decoded.inner_pub_inputs_hash, inner_hash);
         assert_eq!(decoded.trace_commitment, trace_commit);
         assert_eq!(decoded.constraint_commitment, constraint_commit);
+        assert_eq!(decoded.ood_trace_current, vec![BaseElement::new(15); RPO_TRACE_WIDTH]);
+        assert_eq!(decoded.ood_quotient_current, vec![BaseElement::new(16); 8]);
+        assert_eq!(decoded.ood_trace_next, vec![BaseElement::new(15); RPO_TRACE_WIDTH]);
+        assert_eq!(decoded.ood_quotient_next, vec![BaseElement::new(16); 8]);
         assert_eq!(decoded.fri_commitments, fri_commits);
         assert_eq!(decoded.num_queries, 4);
         assert_eq!(decoded.num_draws, 4);
         assert_eq!(decoded.trace_partition_size, RPO_TRACE_WIDTH);
         assert_eq!(decoded.constraint_partition_size, 8);
         assert_eq!(decoded.blowup_factor, 32);
+        assert_eq!(decoded.fri_folding_factor, 2);
+        assert_eq!(decoded.fri_remainder_max_degree, 7);
+        assert_eq!(decoded.grinding_factor, 0);
         assert_eq!(decoded.trace_length, ROWS_PER_PERMUTATION);
         assert_eq!(decoded.field_extension, FieldExtension::None);
         assert_eq!(decoded.trace_width, RPO_TRACE_WIDTH);

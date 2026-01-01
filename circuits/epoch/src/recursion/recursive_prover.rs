@@ -632,6 +632,12 @@ pub struct InnerProofData {
     pub field_extension: FieldExtension,
     /// Blowup factor used by the inner proof.
     pub blowup_factor: usize,
+    /// FRI folding factor used by the inner proof.
+    pub fri_folding_factor: usize,
+    /// FRI remainder max degree used by the inner proof.
+    pub fri_remainder_max_degree: usize,
+    /// Query seed grinding factor used by the inner proof.
+    pub grinding_factor: usize,
     /// Partition size used for main-trace Merkle leaves.
     pub trace_partition_size: usize,
     /// Partition size used for constraint-evaluation Merkle leaves.
@@ -707,6 +713,9 @@ impl InnerProofData {
             trace_width: 0,
             field_extension: FieldExtension::None,
             blowup_factor: 0,
+            fri_folding_factor: 0,
+            fri_remainder_max_degree: 0,
+            grinding_factor: 0,
             trace_partition_size: 0,
             constraint_partition_size: 0,
             fri_num_partitions: 0,
@@ -763,6 +772,10 @@ impl InnerProofData {
         // Extract trace/options info from the proof context.
         let trace_info = proof.trace_info().clone();
         let options = proof.options().clone();
+        let fri_options = options.to_fri_options();
+        let fri_folding_factor = fri_options.folding_factor();
+        let fri_remainder_max_degree = fri_options.remainder_max_degree();
+        let grinding_factor = options.grinding_factor() as usize;
 
         // Capture public inputs as elements before moving into AIR.
         let public_inputs = pub_inputs.to_elements();
@@ -1244,6 +1257,9 @@ impl InnerProofData {
             trace_width: main_trace_width,
             field_extension,
             blowup_factor: options.blowup_factor(),
+            fri_folding_factor,
+            fri_remainder_max_degree,
+            grinding_factor,
             trace_partition_size: partition_size_main,
             constraint_partition_size: partition_size_constraint,
             fri_num_partitions,
@@ -1294,12 +1310,19 @@ impl InnerProofData {
             inner_pub_inputs_hash,
             self.trace_commitment,
             self.constraint_commitment,
+            self.ood_trace_current.clone(),
+            self.ood_quotient_current.clone(),
+            self.ood_trace_next.clone(),
+            self.ood_quotient_next.clone(),
             fri_commitments,
             self.query_positions.len(),
             self.num_draws,
             self.trace_partition_size,
             self.constraint_partition_size,
             self.blowup_factor,
+            self.fri_folding_factor,
+            self.fri_remainder_max_degree,
+            self.grinding_factor,
             self.trace_length,
             self.trace_width,
             self.constraint_frame_width,
