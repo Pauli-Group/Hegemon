@@ -7,6 +7,8 @@
 //! - Nullifier correctness
 //! - MASP balance conservation with value balance
 
+use alloc::format;
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use winterfell::{

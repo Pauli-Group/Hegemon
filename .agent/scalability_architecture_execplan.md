@@ -33,8 +33,9 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2025-12-31T18:45Z) Retired legacy block aggregation: `prove_block` now emits `RecursiveBlockProof` by default, added a fast proving helper for dev/tests, updated consensus test scaffolding to accept recursive proofs, and refreshed docs to remove `RecursiveAggregation`.
 - [x] (2025-12-31T19:10Z) Wired Substrate block building to optionally generate recursive block proofs from shielded transfer extrinsics and attach them to mining templates (gated by `HEGEMON_RECURSIVE_BLOCK_PROOFS`).
 - [x] (2026-01-01T06:49Z) Enforced quadratic-only transaction proof options (fold-2) by removing base-field verifier acceptance, updated math notes with fold-2 soundness bounds, and added quadratic transcript-draw scaffolding for recursion.
-- [ ] (2026-01-01T09:30Z) Started Milestone 4 DA encoding and commitment checks (completed: added `state/da` erasure-coding + Merkle proof module, wired consensus `da_root` recomputation and updated tests; remaining: DA chunk storage, P2P request/response, per-node sampling enforcement in node service).
-- [ ] (2025-12-31T02:04Z) Implement data-availability encoding, storage, sampling, and P2P retrieval.
+- [x] (2026-01-01T11:05Z) Completed Milestone 4 DA encoding and commitment checks (added `state/da` erasure-coding + Merkle proof module, wired consensus `da_root` recomputation and updated tests; added DA chunk store + DA chunk P2P request/response + per-node sampling enforcement in `node/src/substrate/service.rs` incl. mined block storage; added DA sampling tests in `consensus/tests/da_sampling.rs`; ran `cargo test -p consensus`).
+- [x] (2026-01-01T11:05Z) Implement data-availability encoding, storage, sampling, and P2P retrieval.
+- [x] (2026-01-01T11:20Z) `cargo check -p hegemon-node` passes when `LIBCLANG_PATH`/`DYLD_FALLBACK_LIBRARY_PATH` are set; fixed no-std `format!`/`String` imports in `circuits/transaction-core/src/stark_air.rs` and added SCALE codec derives for DA chunk types.
 - [ ] (2025-12-31T02:04Z) Integrate node, wallet, mempool, and RPC so end-to-end mining works with the new block format.
 - [ ] (2025-12-31T02:04Z) Add benchmarks, tests, and runbooks that prove the system works.
 
@@ -106,6 +107,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - Observation (2026-01-01T09:30Z): The initial DA encoder uses Reed–Solomon over GF(256), which caps total shard count at 255 and will fail on very large blobs unless chunk sizes grow or a 2D scheme lands.
   Evidence: `state/da/src/lib.rs` enforces `MAX_SHARDS = 255` with a hard error.
   Implication: DA parameters must keep `k + p ≤ 255` for now; future work should add 2D RS or larger-field encoding.
+
+- Observation (2026-01-01T11:20Z): `cargo check -p hegemon-node` requires a discoverable libclang and emits runtime warnings about the `wasm32-unknown-unknown` target.
+  Evidence: `librocksdb-sys` build fails unless `LIBCLANG_PATH`/`DYLD_FALLBACK_LIBRARY_PATH` include `/Library/Developer/CommandLineTools/usr/lib`; runtime build warns about `wasm32v1-none` support.
+  Implication: Document the libclang environment variables for local builds and consider updating the runtime builder to use `wasm32v1-none` once toolchains are aligned.
 
 ## Decision Log
 
@@ -393,3 +398,5 @@ Revision Note (2025-12-31T06:55Z): Implemented replayed deep-coeff draw pairing 
 Revision Note (2025-12-31T11:15Z): Completed Milestone 2 chain-spec defaults and updated node header serialization/test helpers for the new DA/recursive header fields; reran consensus tests.
 Revision Note (2025-12-31T17:49Z): Added recursive block proof module + consensus verifier/test coverage, updated block serialization/types for recursive proofs, and recorded the legacy aggregation decision.
 Revision Note (2025-12-31T18:45Z): Retired `RecursiveAggregation`, made `prove_block` emit recursive proofs by default (with a fast helper), updated consensus test scaffolding to carry recursive proofs, and refreshed docs/diagrams to remove the legacy digest path.
+Revision Note (2026-01-01T11:05Z): Added DA sampling tests in `consensus/tests/da_sampling.rs`, ran `cargo test -p consensus`, and marked Milestone 4 complete.
+Revision Note (2026-01-01T11:20Z): Documented the libclang environment requirement for `cargo check -p hegemon-node`, fixed no-std `format!`/`String` imports in transaction-core, and added SCALE codec derives for DA chunk types to satisfy network encoding.

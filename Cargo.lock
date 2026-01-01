@@ -3668,6 +3668,7 @@ dependencies = [
  "sp-keystore",
  "sp-runtime",
  "sp-timestamp",
+ "state-da",
  "state-merkle",
  "substrate-frame-rpc-system",
  "synthetic-crypto",
@@ -10516,6 +10517,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 name = "state-da"
 version = "0.1.0"
 dependencies = [
+ "parity-scale-codec",
  "rand 0.8.5",
  "reed-solomon-erasure",
  "synthetic-crypto",
