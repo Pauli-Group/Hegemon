@@ -25,6 +25,14 @@
 //! | `hegemon_getMerkleWitness`      | Get Poseidon Merkle path for a note      |
 //! | `hegemon_getShieldedPoolStatus` | Get shielded pool statistics             |
 //!
+//! # Block + DA RPCs
+//!
+//! | Method                    | Description                              |
+//! |---------------------------|------------------------------------------|
+//! | `block_getRecursiveProof` | Fetch recursive block proof by hash       |
+//! | `da_getChunk`             | Fetch DA chunk + Merkle proof             |
+//! | `da_getParams`            | Fetch DA parameters (chunk/sample sizes)  |
+//!
 //! # Architecture
 //!
 //! ```text
@@ -47,6 +55,8 @@
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 
+pub mod block;
+pub mod da;
 pub mod epoch;
 pub mod hegemon;
 pub mod production_service;
@@ -63,6 +73,11 @@ pub use production_service::ProductionRpcService;
 pub use shielded::{ShieldedApiServer, ShieldedPoolService, ShieldedRpc};
 pub use shielded_service::MockShieldedPoolService;
 pub use wallet::{WalletApiServer, WalletRpc, WalletService};
+pub use block::{BlockApiServer, BlockRpc};
+pub use da::{DaApiServer, DaRpc};
+
+use crate::substrate::service::{DaChunkStore, RecursiveBlockProofStore};
+use state_da::DaParams;
 
 /// Dependency container for RPC handlers.
 ///
@@ -75,6 +90,12 @@ pub struct FullDeps<S, P> {
     pub pow_handle: P,
     /// Whether to deny unsafe RPC calls
     pub deny_unsafe: bool,
+    /// In-memory recursive block proof store
+    pub recursive_block_proof_store: Arc<parking_lot::Mutex<RecursiveBlockProofStore>>,
+    /// In-memory DA chunk store
+    pub da_chunk_store: Arc<parking_lot::Mutex<DaChunkStore>>,
+    /// DA parameters
+    pub da_params: DaParams,
 }
 
 /// Creates the full RPC extensions for the Hegemon node.
@@ -109,6 +130,14 @@ where
     // Add Shielded Pool RPC (STARK proofs, encrypted notes, Merkle witnesses)
     let shielded_rpc = ShieldedRpc::new(deps.service);
     module.merge(shielded_rpc.into_rpc())?;
+
+    // Add Block RPC (recursive proofs)
+    let block_rpc = BlockRpc::new(Arc::clone(&deps.recursive_block_proof_store));
+    module.merge(block_rpc.into_rpc())?;
+
+    // Add DA RPC (chunk proofs)
+    let da_rpc = DaRpc::new(Arc::clone(&deps.da_chunk_store), deps.da_params);
+    module.merge(da_rpc.into_rpc())?;
 
     tracing::info!("RPC extensions initialized (Phase 13 - Shielded Wallet Integration)");
 

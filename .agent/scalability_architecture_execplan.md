@@ -36,6 +36,9 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2026-01-01T11:05Z) Completed Milestone 4 DA encoding and commitment checks (added `state/da` erasure-coding + Merkle proof module, wired consensus `da_root` recomputation and updated tests; added DA chunk store + DA chunk P2P request/response + per-node sampling enforcement in `node/src/substrate/service.rs` incl. mined block storage; added DA sampling tests in `consensus/tests/da_sampling.rs`; ran `cargo test -p consensus`).
 - [x] (2026-01-01T11:05Z) Implement data-availability encoding, storage, sampling, and P2P retrieval.
 - [x] (2026-01-01T11:20Z) `cargo check -p hegemon-node` passes when `LIBCLANG_PATH`/`DYLD_FALLBACK_LIBRARY_PATH` are set; fixed no-std `format!`/`String` imports in `circuits/transaction-core/src/stark_air.rs` and added SCALE codec derives for DA chunk types.
+- [x] (2026-01-01T16:05Z) Added block + DA RPC endpoints, in-memory recursive proof storage, and block-import logging for recursive proof hashes + DA roots; wired RPC modules into the Substrate RPC server.
+- [x] (2026-01-01T16:10Z) Extended circuits/bench to report recursive proof size/verification timing and updated consensus/bench netbench to account for DA-encoded payload sizes.
+- [ ] (2026-01-01T16:20Z) Run the dev-node end-to-end and exercise the new RPC endpoints (completed: release build finishes with libclang env vars; RPC server responds; remaining: `txpool-background` task failure shuts down the node before mining, so no recursive proof/DA chunk could be fetched).
 - [ ] (2025-12-31T02:04Z) Integrate node, wallet, mempool, and RPC so end-to-end mining works with the new block format.
 - [ ] (2025-12-31T02:04Z) Add benchmarks, tests, and runbooks that prove the system works.
 
@@ -111,6 +114,9 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - Observation (2026-01-01T11:20Z): `cargo check -p hegemon-node` requires a discoverable libclang and emits runtime warnings about the `wasm32-unknown-unknown` target.
   Evidence: `librocksdb-sys` build fails unless `LIBCLANG_PATH`/`DYLD_FALLBACK_LIBRARY_PATH` include `/Library/Developer/CommandLineTools/usr/lib`; runtime build warns about `wasm32v1-none` support.
   Implication: Document the libclang environment variables for local builds and consider updating the runtime builder to use `wasm32v1-none` once toolchains are aligned.
+- Observation (2026-01-01T16:20Z): The dev node shuts down during the end-to-end run because the essential `txpool-background` task fails before mining completes.
+  Evidence: `/tmp/hegemon-dev-node-debug.log` shows `ERROR ... Essential task \`txpool-background\` failed. Shutting down service.`
+  Implication: The txpool background task needs debugging (or demotion from essential) before we can mine blocks and exercise recursive proof/DA chunk RPCs end-to-end.
 
 ## Decision Log
 
@@ -175,6 +181,18 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Date/Author: 2025-12-31 / Codex
 - Decision: Use 1D Reed–Solomon with parity shards `p = ceil(k/2)` and a BLAKE3 Merkle root over all shards for the initial DA encoder.
   Rationale: This matches the math notes’ 1.5x overhead example, avoids adding new consensus parameters beyond `chunk_size`/`sample_count`, and keeps the implementation simple while we wire P2P sampling.
+  Date/Author: 2026-01-01 / Codex
+
+- Decision: Store recursive block proofs in an in-memory LRU keyed by block hash to back `block_getRecursiveProof` RPC.
+  Rationale: Substrate headers do not carry the recursive proof bytes, so the node must retain locally generated proofs for RPC access without redesigning the block format.
+  Date/Author: 2026-01-01 / Codex
+
+- Decision: Serve DA chunks over RPC by returning stored DA encodings (root + Merkle proofs) rather than recomputing from chain state.
+  Rationale: The DA encoding already exists during block import; reusing it avoids re-deriving ciphertext blobs from extrinsics and keeps RPC responses fast.
+  Date/Author: 2026-01-01 / Codex
+
+- Decision: Benchmark recursive proof sizing using a single RPO-based synthetic transaction in circuits/bench.
+  Rationale: The existing bench generates independent transaction witnesses; using a single witness avoids merkle-root drift while still producing a representative recursive proof artifact for sizing/verification timing.
   Date/Author: 2026-01-01 / Codex
 
 Note (2026-01-01T09:30Z): Updated Progress, Surprises & Discoveries, and Decision Log to record the DA encoder implementation start, shard-limit constraint, and the parity selection rationale.
@@ -305,6 +323,7 @@ Plan Update Note (2025-12-31T09:40Z): Updated Progress, Surprises & Discoveries,
 Plan Update Note (2025-12-31T10:05Z): Marked Milestone 1 complete, added spike/bench outputs and Criterion constraints, and updated commands to include the spike and bench output runs.
 Plan Update Note (2025-12-31T10:20Z): Updated Progress to mark the README whitepaper alignment complete and recorded the doc update milestone.
 Plan Update Note (2025-12-31T10:30Z): Recorded the consensus header/types updates for DA + recursive proof commitments and noted the remaining chain spec updates for Milestone 2.
+Plan Update Note (2026-01-01T16:20Z): Added Milestone 5 RPC + bench progress, recorded the txpool-background shutdown during dev-node runs, and logged decisions for recursive proof/DA RPC handling.
 
 Example log line after Milestone 5:
 
