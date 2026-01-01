@@ -23,7 +23,7 @@ blake3 = "1"
 miden-crypto = { version = "0.19", default-features = false }
 
 # Reuse Poseidon constants and helpers from transaction circuit
-transaction-circuit = { path = "../transaction" }
+transaction-circuit = { path = "../transaction", features = ["rpo-fiat-shamir"] }
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }
