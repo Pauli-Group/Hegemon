@@ -12,7 +12,7 @@ use consensus::nullifier::NullifierSet;
 use consensus::reward::{block_subsidy, update_supply_digest};
 use consensus::types::{
     ConsensusBlock, DaParams, Transaction, compute_fee_commitment, compute_proof_commitment,
-    compute_version_commitment,
+    compute_version_commitment, da_root,
 };
 use consensus::validator::{Validator, ValidatorSet};
 use crypto::hashes::sha256;
@@ -156,6 +156,7 @@ pub fn assemble_bft_block(
         sample_count: 4,
     };
     let validator_set = validator_set(validators);
+    let da_root = da_root(&transactions, da_params).expect("da root");
     let mut header = BlockHeader {
         version: 1,
         height,
@@ -166,7 +167,7 @@ pub fn assemble_bft_block(
         nullifier_root,
         proof_commitment,
         recursive_proof_hash,
-        da_root: [0u8; 32],
+        da_root,
         da_params,
         version_commitment,
         tx_count: transactions.len() as u32,
@@ -232,6 +233,7 @@ pub fn assemble_pow_block(
         chunk_size: 1024,
         sample_count: 4,
     };
+    let da_root = da_root(&transactions, da_params).expect("da root");
     let mut header = BlockHeader {
         version: 1,
         height,
@@ -242,7 +244,7 @@ pub fn assemble_pow_block(
         nullifier_root,
         proof_commitment,
         recursive_proof_hash,
-        da_root: [0u8; 32],
+        da_root,
         da_params,
         version_commitment,
         tx_count: transactions.len() as u32,

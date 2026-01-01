@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use consensus::header::{BlockHeader, PowSeal};
 use consensus::reward::INITIAL_SUBSIDY;
-use consensus::types::{ConsensusBlock, DaParams};
+use consensus::types::{ConsensusBlock, DaParams, da_root};
 use consensus::RecursiveBlockProof;
 use crypto::hashes::sha256;
 use crypto::traits::{SigningKey, VerifyKey};
@@ -155,6 +155,7 @@ impl LegacyNode {
             chunk_size: DEFAULT_DA_CHUNK_SIZE,
             sample_count: DEFAULT_DA_SAMPLE_COUNT,
         };
+        let da_root = da_root(&[], da_params).expect("da root");
         let header = BlockHeader {
             version: 1,
             height,
@@ -165,7 +166,7 @@ impl LegacyNode {
             nullifier_root: [0u8; 32],
             proof_commitment: state.proof_commitment,
             recursive_proof_hash,
-            da_root: [0u8; 32],
+            da_root,
             da_params,
             version_commitment: state.version_commitment,
             tx_count: 0,

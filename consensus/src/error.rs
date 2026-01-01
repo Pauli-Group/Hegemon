@@ -51,6 +51,10 @@ pub enum ProofError {
     FeeCommitment,
     #[error("version commitment mismatch")]
     VersionCommitment,
+    #[error("data availability root mismatch")]
+    DaRootMismatch,
+    #[error("data availability encoding failed: {0}")]
+    DaEncoding(String),
     #[error("missing recursive proof payload")]
     MissingRecursiveProof,
     #[error("unexpected recursive proof payload")]

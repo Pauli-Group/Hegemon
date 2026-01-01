@@ -1,7 +1,7 @@
 use crate::error::ProofError;
 use crate::types::{
-    Block, FeeCommitment, RecursiveProofHash, StarkCommitment, VersionCommitment,
-    compute_fee_commitment, compute_proof_commitment, compute_version_commitment,
+    Block, DaParams, DaRoot, FeeCommitment, RecursiveProofHash, StarkCommitment, VersionCommitment,
+    compute_fee_commitment, compute_proof_commitment, compute_version_commitment, da_root,
 };
 use block_circuit::{transaction_inputs_from_verifier_inputs, verify_recursive_proof};
 use transaction_circuit::hashing::felts_to_bytes32;
@@ -42,6 +42,8 @@ pub trait HeaderProofExt {
     fn transaction_count(&self) -> u32;
     fn version_commitment(&self) -> VersionCommitment;
     fn recursive_proof_hash(&self) -> RecursiveProofHash;
+    fn da_root(&self) -> DaRoot;
+    fn da_params(&self) -> DaParams;
 }
 
 impl HeaderProofExt for crate::header::BlockHeader {
@@ -64,6 +66,14 @@ impl HeaderProofExt for crate::header::BlockHeader {
     fn recursive_proof_hash(&self) -> RecursiveProofHash {
         self.recursive_proof_hash
     }
+
+    fn da_root(&self) -> DaRoot {
+        self.da_root
+    }
+
+    fn da_params(&self) -> DaParams {
+        self.da_params
+    }
 }
 
 pub fn verify_commitments<BH>(block: &Block<BH>) -> Result<(), ProofError>
@@ -84,6 +94,12 @@ where
     let computed_versions = compute_version_commitment(&block.transactions);
     if computed_versions != block.header.version_commitment() {
         return Err(ProofError::VersionCommitment);
+    }
+    let computed_da_root =
+        da_root(&block.transactions, block.header.da_params())
+            .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
+    if computed_da_root != block.header.da_root() {
+        return Err(ProofError::DaRootMismatch);
     }
     Ok(())
 }

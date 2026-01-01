@@ -252,6 +252,10 @@ The PoW fork mirrors Bitcoin/Zcash mechanics so operators can reason about liven
   Nodes update the running `supply_digest = parent_digest + minted + fees − burns` inside a 128-bit little-endian counter that
   rejects underflows/overflows and compare it against the header before accepting the block. Coinbase metadata that omits the
   balance tag or references an out-of-bounds transaction index fails validation.
+* Data availability is enforced via `da_root` and `da_params` in the header. The block’s ciphertext blob is serialized in
+  transaction order with length prefixes, erasure-coded with 1D Reed–Solomon (`p = ceil(k/2)` parity shards over `k` data shards),
+  and Merkleized with BLAKE3 under `da-leaf`/`da-node` domain tags. Validators recompute `da_root` from the payload, then sample
+  `da_params.sample_count` shard indices using per-node randomness and refuse to relay or extend blocks when any sampled proof fails.
 * Timestamp guards match the implementation: the header time must exceed the median of the prior 11 blocks and be no more than
   90 seconds into the future relative to the local clock; nodes may re-evaluate future-dated candidates as time advances but
   still reject any header that remains beyond the skew bound or fails median-time-past.

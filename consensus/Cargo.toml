@@ -14,6 +14,7 @@ crypto = { package = "synthetic-crypto", path = "../crypto" }
 num-bigint = "0.4"
 num-traits = "0.2"
 parking_lot = "0.12"
+state-da = { path = "../state/da" }
 sha2 = "0.10"
 sp-core = { workspace = true, features = ["std"] }
 sp-runtime = { workspace = true, features = ["std"] }
