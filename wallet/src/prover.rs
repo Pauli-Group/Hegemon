@@ -131,7 +131,10 @@ impl StarkProverConfig {
             cfg.grinding_bits = 0;
         }
 
-        if !cfg!(debug_assertions) {
+        let allow_fast = std::env::var("HEGEMON_WALLET_PROVER_FAST")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if !cfg!(debug_assertions) && !allow_fast {
             cfg.num_queries = cfg.num_queries.max(32);
             cfg.blowup_factor = cfg.blowup_factor.max(8);
         }

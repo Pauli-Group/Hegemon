@@ -116,10 +116,13 @@ fn default_acceptable_options() -> winterfell::ProofOptions {
 }
 
 fn acceptable_options() -> AcceptableOptions {
-    AcceptableOptions::OptionSet(vec![default_acceptable_options()])
+    let mut options = vec![default_acceptable_options()];
+    if fast_proofs_enabled() {
+        options.push(fast_acceptable_options());
+    }
+    AcceptableOptions::OptionSet(options)
 }
 
-#[cfg(feature = "stark-fast")]
 fn fast_acceptable_options() -> winterfell::ProofOptions {
     // Blowup factor must be at least 2 * constraint_degree = 2 * 5 = 10
     // Use 16 to be safe (power of 2)
@@ -127,12 +130,29 @@ fn fast_acceptable_options() -> winterfell::ProofOptions {
         8,
         16,
         0,
-        winterfell::FieldExtension::None,
+        winterfell::FieldExtension::Quadratic,
         2,
-        15,
+        7,
         winterfell::BatchingMethod::Linear,
         winterfell::BatchingMethod::Linear,
     )
+}
+
+fn fast_proofs_enabled() -> bool {
+    if cfg!(feature = "stark-fast") {
+        return true;
+    }
+
+    #[cfg(feature = "std")]
+    {
+        std::env::var("HEGEMON_ACCEPT_FAST_PROOFS")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
 }
 
 // ================================================================================================
