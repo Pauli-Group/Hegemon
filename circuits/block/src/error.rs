@@ -13,7 +13,7 @@ pub enum BlockError {
         source: TransactionCircuitError,
     },
     #[error(
-        "transaction proof at index {index} reported merkle root {reported:?} but expected {expected:?}"
+        "transaction proof at index {index} reported merkle root {reported:?} not found in anchor history (latest {expected:?})"
     )]
     UnexpectedMerkleRoot {
         index: usize,
