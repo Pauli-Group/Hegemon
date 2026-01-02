@@ -109,6 +109,7 @@ To avoid any discrete-log assumptions:
 
   * Inside the STARK, use a hash designed for Fp (e.g. Poseidon-ish / Rescue Prime / any modern STARK-friendly permutation).
   * These are *purely algebraic permutations*, so they rely on symmetric-style assumptions and are fine for PQ (again, Grover only).
+  * Recursive Fiat–Shamir transcripts should use an in-field hash (Rpo256/Rescue-style) so the recursive verifier can recompute Merkle openings in-circuit without leaving the base field.
 
 Commitments:
 

@@ -1158,17 +1158,20 @@ impl Air for StarkVerifierAir {
         let num_fri_commitments = pub_inputs.fri_commitments.len();
         let num_fri_layers = num_fri_commitments.saturating_sub(1);
         let num_fri_alpha_perms = num_fri_layers;
-        let num_remainder_perms = if num_fri_commitments > 0 {
+        let has_remainder = num_fri_commitments > 0;
+        let remainder_boundary = has_remainder as usize;
+        let num_remainder_hash_perms = if has_remainder {
             remainder_coeffs_total.div_ceil(RATE_WIDTH)
         } else {
             0
         };
+        let num_pow_nonce_perms = if has_remainder { 1 } else { 0 };
         // Reseed with the first FRI commitment after the last DEEP permutation.
         if num_fri_commitments > 0 {
             num_assertions += DIGEST_WIDTH;
         }
         num_assertions += num_fri_alpha_perms * (4 + DIGEST_WIDTH);
-        num_assertions += num_remainder_perms * 4;
+        num_assertions += remainder_boundary * 4;
 
         // Query position draw boundaries after FRI remainder.
         // `draw_integers` skips the first rate element after nonce absorption,
@@ -1191,7 +1194,7 @@ impl Air for StarkVerifierAir {
         // - z-draw + OOD-reseed boundary: 1
         // - deep coefficient boundaries: num_deep_perms
         // - FRI alpha boundaries: num_fri_alpha_perms
-        // - remainder boundary: num_remainder_perms
+        // - remainder boundary (pow nonce reseed piggybacks here): remainder_boundary
         // - query draw boundaries: num_pos_perms
         let stage_boundaries = num_pi_blocks
             + num_seed_blocks
@@ -1199,7 +1202,7 @@ impl Air for StarkVerifierAir {
             + num_ood_perms
             + num_deep_perms
             + num_fri_alpha_perms
-            + num_remainder_perms
+            + remainder_boundary
             + num_pos_perms
             + 2;
         num_assertions += stage_boundaries * 5;
@@ -1211,7 +1214,7 @@ impl Air for StarkVerifierAir {
             + num_ood_perms
             + num_deep_perms
             + num_fri_alpha_perms
-            + num_remainder_perms
+            + num_pow_nonce_perms
             + num_pos_perms
             + 2;
         let num_pos_decomp_perms = pub_inputs.num_draws;
@@ -1281,7 +1284,7 @@ impl Air for StarkVerifierAir {
 
         // Remainder polynomial commitment hash (hash remainder coeffs -> remainder commitment).
         // The remainder coefficients are flattened by extension degree.
-        let remainder_hash_perms = num_remainder_perms;
+        let remainder_hash_perms = num_remainder_hash_perms;
         if remainder_hash_perms > 0 && expected_active_perms + remainder_hash_perms <= total_perms {
             num_assertions += CAPACITY_WIDTH; // sponge init
             num_assertions += DIGEST_WIDTH; // digest == remainder commitment
@@ -3539,6 +3542,7 @@ impl Air for StarkVerifierAir {
         } else {
             0
         };
+        let num_pow_nonce_perms = if num_fri_commitments > 0 { 1 } else { 0 };
 
         let num_pos_perms = if self.pub_inputs.num_draws == 0 {
             0
@@ -3552,7 +3556,7 @@ impl Air for StarkVerifierAir {
             + num_ood_perms
             + num_deep_perms
             + num_fri_layers
-            + num_remainder_perms
+            + num_pow_nonce_perms
             + num_pos_perms
             + 2;
         let num_pos_decomp_perms = self.pub_inputs.num_draws;
@@ -4469,21 +4473,32 @@ pub fn compute_deep_evaluation_quadratic(
     let x_minus_z0 = x - z;
     let x_minus_z1 = x - z1;
 
-    assert_eq!(trace_row.len(), deep_coeffs.trace.len());
+    let trace_limbs = trace_row.len() * EXTENSION_LIMBS;
+    assert_eq!(trace_limbs, deep_coeffs.trace.len());
+    assert_eq!(trace_limbs, ood_trace_z.len());
+    assert_eq!(trace_limbs, ood_trace_zg.len());
     assert_eq!(constraint_row.len(), deep_coeffs.constraints.len());
-    assert!(trace_row.len().is_multiple_of(EXTENSION_LIMBS));
+    assert_eq!(constraint_row.len(), ood_constraints_z.len());
+    assert_eq!(constraint_row.len(), ood_constraints_zg.len());
     assert!(constraint_row.len().is_multiple_of(EXTENSION_LIMBS));
 
     let mut t1_num = QuadExtension::<BaseElement>::ZERO;
     let mut t2_num = QuadExtension::<BaseElement>::ZERO;
-    for (idx, chunk) in trace_row.chunks_exact(EXTENSION_LIMBS).enumerate() {
-        let coeff_chunk = &deep_coeffs.trace[idx * EXTENSION_LIMBS..][..EXTENSION_LIMBS];
-        let ood_z_chunk = &ood_trace_z[idx * EXTENSION_LIMBS..][..EXTENSION_LIMBS];
-        let ood_zg_chunk = &ood_trace_zg[idx * EXTENSION_LIMBS..][..EXTENSION_LIMBS];
-        let coeff = QuadExtension::new(coeff_chunk[0], coeff_chunk[1]);
-        let trace_val = QuadExtension::new(chunk[0], chunk[1]);
-        let ood_z = QuadExtension::new(ood_z_chunk[0], ood_z_chunk[1]);
-        let ood_zg = QuadExtension::new(ood_zg_chunk[0], ood_zg_chunk[1]);
+    for (idx, &trace_val_base) in trace_row.iter().enumerate() {
+        let limb_start = idx * EXTENSION_LIMBS;
+        let coeff = QuadExtension::new(
+            deep_coeffs.trace[limb_start],
+            deep_coeffs.trace[limb_start + 1],
+        );
+        let trace_val = QuadExtension::from(trace_val_base);
+        let ood_z = QuadExtension::new(
+            ood_trace_z[limb_start],
+            ood_trace_z[limb_start + 1],
+        );
+        let ood_zg = QuadExtension::new(
+            ood_trace_zg[limb_start],
+            ood_trace_zg[limb_start + 1],
+        );
         t1_num += coeff * (trace_val - ood_z);
         t2_num += coeff * (trace_val - ood_zg);
     }

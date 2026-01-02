@@ -40,9 +40,12 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2026-01-01T16:10Z) Extended circuits/bench to report recursive proof size/verification timing and updated consensus/bench netbench to account for DA-encoded payload sizes.
 - [x] (2026-01-01T17:45Z) Updated recursive block proof anchoring to accept historical Merkle roots (anchor window) and refreshed METHODS.md to match.
 - [x] (2026-01-01T17:45Z) Marked shielded coinbase inherent as mandatory (Pays::No) to avoid `ExhaustsResources` during block building.
-- [ ] (2026-01-01T16:20Z) Run the dev-node end-to-end and exercise the new RPC endpoints (completed: release build finishes with libclang env vars; RPC server responds; remaining: `txpool-background` task failure shuts down the node before mining, so no recursive proof/DA chunk could be fetched).
-- [ ] (2025-12-31T02:04Z) Integrate node, wallet, mempool, and RPC so end-to-end mining works with the new block format.
-- [ ] (2025-12-31T02:04Z) Add benchmarks, tests, and runbooks that prove the system works.
+- [x] (2026-01-01T23:40Z) Fixed the recursion transcript pre-merkle permutation count (pow-nonce reseed vs. remainder hash) and rebuilt the node so the verifier/prover schedules stay aligned.
+- [x] (2026-01-02T00:10Z) Fixed quadratic recursion deep evaluation to lift base-field trace rows into quadratic limbs, and aligned inner-proof parsing with base-field trace queries.
+- [x] (2026-01-02T00:10Z) Added an end-to-end runbook for recursive proof + DA RPC validation (`runbooks/recursive_proof_da_e2e.md`).
+- [ ] (2026-01-02T09:00Z) Run the dev-node end-to-end and exercise the new RPC endpoints (completed: node stays up with mining; shielded transfer accepted; DA encoding stored; latest run: block 6 building with tx_count=1 and recursive proof generation still in-flight after >1h, so RPC proof queries are not yet confirmed).
+- [ ] (2026-01-02T09:00Z) Integrate node, wallet, mempool, and RPC so end-to-end mining works with the new block format (completed: tx enters the pool and block builder schedules it; remaining: recursive proof completes and RPC is verified against the mined block).
+- [ ] (2026-01-02T09:00Z) Add benchmarks, tests, and runbooks that prove the system works (completed: recursive proof + DA RPC runbook; completed: heavy recursive proof tests; remaining: end-to-end RPC verification once recursive proof is stored).
 
 ## Surprises & Discoveries
 
@@ -126,6 +129,19 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Evidence: `/tmp/hegemon-dev-node-debug.log` repeatedly logs `Failed to push inherent extrinsic ... ExhaustsResources`.
   Implication: Mark coinbase inherents as `DispatchClass::Mandatory` (or adjust `BlockWeights`/`BlockLength`) so block production can include coinbase even with large shielded payloads.
 
+- Observation (2026-01-01T23:40Z): Recursive proof generation panicked because the verifier pre-merkle permutation count included remainder-hash permutations that happen after the merkle segment.
+  Evidence: `pre-merkle perm count mismatch left 1195 right 1196` in `circuits/epoch/src/recursion/stark_verifier_prover.rs`.
+  Implication: Track pow-nonce reseed permutations separately from remainder-hash permutations and keep transcript/periodic schedules aligned.
+
+- Observation (2026-01-02T00:10Z): Trace queries remain base-field elements even when proofs use quadratic extension, so quadratic recursion must lift base-field trace rows rather than re-parsing them as extension elements.
+  Evidence: Recursive block proof failed with `expected 44032 query value bytes, but was 22016` when parsing trace queries as quadratic.
+  Implication: Keep trace query parsing in `BaseElement` and adapt quadratic DEEP evaluation to combine base trace values with extension coefficients.
+- Observation (2026-01-02T08:36Z): Fast wallet proving options are rejected by the on-chain verifier.
+  Evidence: `HEGEMON_WALLET_PROVER_FAST=1 wallet substrate-send ...` fails with `VerificationFailed(UnacceptableProofOptions)`.
+  Implication: End-to-end runs must use the default proof options unless we explicitly widen acceptable options for dev-only runs.
+- Observation (2026-01-02T09:00Z): Recursive block proof generation for a real wallet transaction did not complete within a 1h E2E run.
+  Evidence: `test-logs/hegemon-dev-node-e2e-4.log` shows `block_number=6 tx_count=1` but never logs `Recursive block proof generated` before the run timed out.
+  Implication: The current recursive prover path is too slow or stalls for live transaction proofs; we need either performance work (without lowering soundness) or a redesigned integration to finish Milestone 5.
 ## Decision Log
 
 - Decision: Treat scalability as proof-carrying blocks plus data-availability sampling, not larger blocks or faster block times.
@@ -427,3 +443,5 @@ Revision Note (2025-12-31T17:49Z): Added recursive block proof module + consensu
 Revision Note (2025-12-31T18:45Z): Retired `RecursiveAggregation`, made `prove_block` emit recursive proofs by default (with a fast helper), updated consensus test scaffolding to carry recursive proofs, and refreshed docs/diagrams to remove the legacy digest path.
 Revision Note (2026-01-01T11:05Z): Added DA sampling tests in `consensus/tests/da_sampling.rs`, ran `cargo test -p consensus`, and marked Milestone 4 complete.
 Revision Note (2026-01-01T11:20Z): Documented the libclang environment requirement for `cargo check -p hegemon-node`, fixed no-std `format!`/`String` imports in transaction-core, and added SCALE codec derives for DA chunk types to satisfy network encoding.
+Revision Note (2026-01-01T23:40Z): Updated Progress/Surprises to record the recursion transcript permutation fix and node rebuild so the plan reflects the current verifier schedule work.
+Revision Note (2026-01-02T00:10Z): Recorded the quadratic trace/DEEP fix, added the recursive proof + DA RPC runbook, and updated end-to-end progress to reflect the in-flight recursive block proof build.

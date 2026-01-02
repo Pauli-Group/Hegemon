@@ -209,13 +209,14 @@ impl StarkVerifierProver {
         } else {
             (self.pub_inputs.num_draws + 1).div_ceil(8)
         };
+        let num_pow_nonce_perms = if num_fri_commitments > 0 { 1 } else { 0 };
         let transcript_perms = num_pi_blocks
             + num_seed_blocks
             + num_coeff_perms
             + num_ood_perms
             + num_deep_perms
             + num_fri_alpha_perms
-            + num_remainder_perms
+            + num_pow_nonce_perms
             + num_pos_perms
             + 2;
         let num_pos_decomp_perms = self.pub_inputs.num_draws;
@@ -1325,6 +1326,7 @@ impl StarkVerifierProver {
         } else {
             (self.pub_inputs.num_draws + 1).div_ceil(8)
         };
+        let num_pow_nonce_perms = if num_fri_commitments > 0 { 1 } else { 0 };
 
         let transcript_perms = num_pi_blocks
             + num_seed_blocks
@@ -1332,7 +1334,7 @@ impl StarkVerifierProver {
             + num_ood_perms
             + num_deep_perms
             + num_fri_alpha_perms
-            + num_remainder_perms
+            + num_pow_nonce_perms
             + num_pos_perms
             + 2;
         let num_pos_decomp_perms = self.pub_inputs.num_draws;
@@ -4181,7 +4183,7 @@ mod tests {
         let num_deep_coeffs = RPO_TRACE_WIDTH + 8;
         let num_deep_perms = num_deep_coeffs.div_ceil(8);
         let num_fri_layers = pub_inputs.fri_commitments.len().saturating_sub(1);
-        let num_remainder_perms = (!pub_inputs.fri_commitments.is_empty()) as usize;
+        let num_pow_nonce_perms = (!pub_inputs.fri_commitments.is_empty()) as usize;
         let num_pos_perms = (pub_inputs.num_draws + 1).div_ceil(8);
         let transcript_perms = num_pi_blocks
             + num_seed_blocks
@@ -4189,7 +4191,7 @@ mod tests {
             + num_ood_perms
             + num_deep_perms
             + num_fri_layers
-            + num_remainder_perms
+            + num_pow_nonce_perms
             + num_pos_perms
             + 2;
         let pre_merkle_perms = transcript_perms + pub_inputs.num_draws;
@@ -4422,7 +4424,7 @@ mod tests {
         let num_deep_coeffs = RPO_TRACE_WIDTH + 8;
         let num_deep_perms = num_deep_coeffs.div_ceil(RATE_WIDTH);
         let num_fri_layers = pub_inputs.fri_commitments.len().saturating_sub(1);
-        let num_remainder_perms = (!pub_inputs.fri_commitments.is_empty()) as usize;
+        let num_pow_nonce_perms = (!pub_inputs.fri_commitments.is_empty()) as usize;
         let num_pos_perms = if pub_inputs.num_draws == 0 {
             0
         } else {
@@ -4434,7 +4436,7 @@ mod tests {
             + num_ood_perms
             + num_deep_perms
             + num_fri_layers
-            + num_remainder_perms
+            + num_pow_nonce_perms
             + num_pos_perms
             + 2;
         let pre_merkle_perms = transcript_perms + pub_inputs.num_draws;
@@ -4479,7 +4481,7 @@ mod tests {
         let num_deep_coeffs = RPO_TRACE_WIDTH + 8;
         let num_deep_perms = num_deep_coeffs.div_ceil(RATE_WIDTH);
         let num_fri_layers = pub_inputs.fri_commitments.len().saturating_sub(1);
-        let num_remainder_perms = (!pub_inputs.fri_commitments.is_empty()) as usize;
+        let num_pow_nonce_perms = (!pub_inputs.fri_commitments.is_empty()) as usize;
         let num_pos_perms = if pub_inputs.num_draws == 0 {
             0
         } else {
@@ -4491,7 +4493,7 @@ mod tests {
             + num_ood_perms
             + num_deep_perms
             + num_fri_layers
-            + num_remainder_perms
+            + num_pow_nonce_perms
             + num_pos_perms
             + 2;
         let pre_merkle_perms = transcript_perms + pub_inputs.num_draws;

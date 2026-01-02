@@ -842,7 +842,8 @@ impl InnerProofData {
                     seg_width,
                 )
                 .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
-            trace_segment_data.push((mp, table, seg_partition));
+            let trace_rows = table.rows().map(|row| row.to_vec()).collect();
+            trace_segment_data.push((mp, trace_rows, seg_partition));
         }
 
         // --- parse constraint queries ----------------------------------------------------------
@@ -1123,12 +1124,12 @@ impl InnerProofData {
         // --- decompress trace Merkle proofs ---------------------------------------------------
         let mut trace_evaluations: Vec<Vec<BaseElement>> = Vec::new();
         let mut trace_auth_paths: Vec<Vec<[BaseElement; 4]>> = Vec::new();
-        for (seg_idx, (mp, table, seg_partition)) in trace_segment_data.into_iter().enumerate() {
+        for (seg_idx, (mp, rows, seg_partition)) in trace_segment_data.into_iter().enumerate() {
             if seg_idx > 0 {
                 // Auxiliary trace segments are not yet supported in recursion data model.
                 continue;
             }
-            trace_evaluations = table.rows().map(|r| r.to_vec()).collect();
+            trace_evaluations = rows;
             let leaves: Vec<Word> = trace_evaluations
                 .iter()
                 .map(|row| hash_row_rpo(row, seg_partition))

@@ -558,7 +558,7 @@ impl ProofVerifier for StarkVerifier {
             None => return VerificationResult::InvalidPublicInputs,
         };
 
-        match transaction_core::stark_verifier::verify_transaction_proof_bytes(
+        match transaction_core::stark_verifier::verify_transaction_proof_bytes_rpo(
             &proof.data,
             &pub_inputs,
         ) {
@@ -570,8 +570,11 @@ impl ProofVerifier for StarkVerifier {
                 _,
             )) => VerificationResult::InvalidPublicInputs,
             Err(transaction_core::stark_verifier::TransactionVerifyError::VerificationFailed(
-                _,
-            )) => VerificationResult::VerificationFailed,
+                err,
+            )) => {
+                log::info!(target: "shielded-pool", "  STARK verifier error: {:?}", err);
+                VerificationResult::VerificationFailed
+            }
         }
     }
 
