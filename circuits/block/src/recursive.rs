@@ -15,6 +15,10 @@ use crate::error::BlockError;
 
 const RECURSIVE_BLOCK_DOMAIN: &[u8] = b"hegemon-recursive-block-proof-v1";
 
+fn anchor_in_history(tree: &CommitmentTree, anchor: Commitment) -> bool {
+    tree.root_history().contains(&anchor)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SerializedVerifierInputs {
     pub inner_len: u32,
@@ -60,7 +64,7 @@ pub fn prove_block_recursive(
         }
         let stark_inputs = stark_inputs_from_proof(proof, index)?;
         let merkle_root = felts_to_bytes32(&stark_inputs.merkle_root);
-        if merkle_root != tree.root() {
+        if !anchor_in_history(tree, merkle_root) {
             return Err(BlockError::UnexpectedMerkleRoot {
                 index,
                 expected: tree.root(),
@@ -139,7 +143,7 @@ pub fn prove_block_recursive_fast(
         }
         let stark_inputs = stark_inputs_from_proof(proof, index)?;
         let merkle_root = felts_to_bytes32(&stark_inputs.merkle_root);
-        if merkle_root != tree.root() {
+        if !anchor_in_history(tree, merkle_root) {
             return Err(BlockError::UnexpectedMerkleRoot {
                 index,
                 expected: tree.root(),
@@ -241,7 +245,7 @@ pub fn verify_block_recursive(
         }
 
         let merkle_root = felts_to_bytes32(&recursive_inputs.merkle_root);
-        if merkle_root != tree.root() {
+        if !anchor_in_history(tree, merkle_root) {
             return Err(BlockError::UnexpectedMerkleRoot {
                 index,
                 expected: tree.root(),

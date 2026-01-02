@@ -45,7 +45,7 @@ use verifier::{
     BatchVerifier, ProofVerifier, ShieldedTransferInputs, VerificationResult, VerifyingKey,
 };
 
-use frame_support::dispatch::DispatchResult;
+use frame_support::dispatch::{DispatchClass, DispatchResult, Pays};
 use frame_support::pallet_prelude::*;
 use frame_support::traits::StorageVersion;
 use frame_support::weights::Weight;
@@ -880,7 +880,7 @@ pub mod pallet {
         /// - Can only be called once per block
         /// - Commitment is verified against plaintext data
         #[pallet::call_index(3)]
-        #[pallet::weight(T::WeightInfo::mint_coinbase())]
+        #[pallet::weight((T::WeightInfo::mint_coinbase(), DispatchClass::Mandatory, Pays::No))]
         pub fn mint_coinbase(
             origin: OriginFor<T>,
             coinbase_data: types::CoinbaseNoteData,

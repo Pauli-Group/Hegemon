@@ -38,6 +38,8 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2026-01-01T11:20Z) `cargo check -p hegemon-node` passes when `LIBCLANG_PATH`/`DYLD_FALLBACK_LIBRARY_PATH` are set; fixed no-std `format!`/`String` imports in `circuits/transaction-core/src/stark_air.rs` and added SCALE codec derives for DA chunk types.
 - [x] (2026-01-01T16:05Z) Added block + DA RPC endpoints, in-memory recursive proof storage, and block-import logging for recursive proof hashes + DA roots; wired RPC modules into the Substrate RPC server.
 - [x] (2026-01-01T16:10Z) Extended circuits/bench to report recursive proof size/verification timing and updated consensus/bench netbench to account for DA-encoded payload sizes.
+- [x] (2026-01-01T17:45Z) Updated recursive block proof anchoring to accept historical Merkle roots (anchor window) and refreshed METHODS.md to match.
+- [x] (2026-01-01T17:45Z) Marked shielded coinbase inherent as mandatory (Pays::No) to avoid `ExhaustsResources` during block building.
 - [ ] (2026-01-01T16:20Z) Run the dev-node end-to-end and exercise the new RPC endpoints (completed: release build finishes with libclang env vars; RPC server responds; remaining: `txpool-background` task failure shuts down the node before mining, so no recursive proof/DA chunk could be fetched).
 - [ ] (2025-12-31T02:04Z) Integrate node, wallet, mempool, and RPC so end-to-end mining works with the new block format.
 - [ ] (2025-12-31T02:04Z) Add benchmarks, tests, and runbooks that prove the system works.
@@ -117,6 +119,12 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - Observation (2026-01-01T16:20Z): The dev node shuts down during the end-to-end run because the essential `txpool-background` task fails before mining completes.
   Evidence: `/tmp/hegemon-dev-node-debug.log` shows `ERROR ... Essential task \`txpool-background\` failed. Shutting down service.`
   Implication: The txpool background task needs debugging (or demotion from essential) before we can mine blocks and exercise recursive proof/DA chunk RPCs end-to-end.
+- Observation (2026-01-01T17:45Z): Recursive block proof generation failed for shielded transactions because the block circuit required `merkle_root == tree.root()`, but runtime anchor validation accepts historical roots.
+  Evidence: `/tmp/hegemon-dev-node-debug.log` shows `Failed to build recursive block proof ... reported merkle root ... but expected ...` on blocks containing shielded transfers.
+  Implication: The block proof must validate anchors against the root history window (not just the current root) to match runtime rules.
+- Observation (2026-01-01T17:45Z): Shielded coinbase inherents failed with `InvalidTransaction::ExhaustsResources` under default block weight/length limits.
+  Evidence: `/tmp/hegemon-dev-node-debug.log` repeatedly logs `Failed to push inherent extrinsic ... ExhaustsResources`.
+  Implication: Mark coinbase inherents as `DispatchClass::Mandatory` (or adjust `BlockWeights`/`BlockLength`) so block production can include coinbase even with large shielded payloads.
 
 ## Decision Log
 
