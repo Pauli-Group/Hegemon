@@ -9,6 +9,13 @@ make node
 cargo build --release -p wallet
 ```
 
+If you plan to use `HEGEMON_WALLET_PROVER_FAST=1` / `HEGEMON_ACCEPT_FAST_PROOFS=1`, build the
+node with fast proof acceptance enabled:
+
+```bash
+cargo build --release -p hegemon-node --features substrate,fast-proofs
+```
+
 ## 2. Create miner + recipient wallets
 
 ```bash
@@ -28,6 +35,7 @@ HEGEMON_MINER_ADDRESS=$(./target/release/wallet status \
 
 ```bash
 RUST_LOG=info HEGEMON_MINE=1 HEGEMON_RECURSIVE_BLOCK_PROOFS=1 \
+  HEGEMON_ACCEPT_FAST_PROOFS=1 \
   HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
   ./target/release/hegemon-node --dev --tmp
 ```
@@ -70,13 +78,13 @@ EOF
 ## 6. Send a shielded transfer
 
 ```bash
-HEGEMON_WALLET_PROVER_FAST=1 ./target/release/wallet substrate-send \
+HEGEMON_WALLET_PROVER_FAST=1 HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/wallet substrate-send \
   --store /tmp/hegemon-wallet-a --passphrase "testwallet1" \
   --recipients /tmp/hegemon-recipients-e2e.json \
   --ws-url ws://127.0.0.1:9944
 ```
 
-Unset `HEGEMON_WALLET_PROVER_FAST` to use full-security proving parameters.
+Unset `HEGEMON_WALLET_PROVER_FAST` and `HEGEMON_ACCEPT_FAST_PROOFS` to use full-security proving parameters.
 
 Wait for the block builder to include the transaction. If recursive proof generation is slow, expect a pause before the next block is imported.
 

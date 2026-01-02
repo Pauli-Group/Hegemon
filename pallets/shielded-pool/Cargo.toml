@@ -77,6 +77,7 @@ stark-verify = [
     "transaction-core/stark-verify",
     "batch-circuit",
 ]
+fast-proofs = ["transaction-core/stark-fast"]
 # Enable epoch proofs for light client sync
 epoch-proofs = ["epoch-circuit", "blake3"]
 # Production mode: disables AcceptAllProofs and other test-only verifiers
