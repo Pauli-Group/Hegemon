@@ -738,7 +738,7 @@ pub fn proof_options_from_config(
         grinding_factor,
         winterfell::FieldExtension::Quadratic,
         2,
-        31,
+        7,
         BatchingMethod::Linear,
         BatchingMethod::Linear,
     )
@@ -751,7 +751,7 @@ pub fn default_proof_options() -> ProofOptions {
         0,
         winterfell::FieldExtension::Quadratic,
         2,
-        31,
+        7,
         BatchingMethod::Linear,
         BatchingMethod::Linear,
     )

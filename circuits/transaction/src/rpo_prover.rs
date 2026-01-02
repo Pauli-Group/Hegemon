@@ -322,4 +322,22 @@ mod tests {
 
         assert!(verify_transaction_proof_rpo(&tampered, &pub_inputs).is_err());
     }
+
+    #[test]
+    fn test_rpo_proofs_roundtrip_transaction_core_verifier() {
+        let witness = make_test_witness();
+        let prover = TransactionProverStarkRpo::new(default_proof_options());
+
+        let trace = prover.build_trace(&witness).unwrap();
+        let pub_inputs = <TransactionProverStarkRpo as Prover>::get_pub_inputs(&prover, &trace);
+        let proof = prover.prove(trace).unwrap();
+        let proof_bytes = proof.to_bytes();
+
+        let result =
+            transaction_core::stark_verifier::verify_transaction_proof_bytes_rpo(
+                &proof_bytes,
+                &pub_inputs,
+            );
+        assert!(result.is_ok(), "transaction-core verifier failed: {:?}", result);
+    }
 }

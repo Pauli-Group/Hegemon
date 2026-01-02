@@ -5624,6 +5624,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc7981c1d907bb9864e24f2bd6304c4fca03a41fc4606c09edd6a7f5a8fc80fc"
 dependencies = [
  "blake3",
+ "cc",
  "chacha20poly1305",
  "curve25519-dalek",
  "ed25519-dalek",
@@ -11366,8 +11367,10 @@ name = "transaction-core"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "miden-crypto",
  "serde",
  "winter-crypto",
+ "winter-utils",
  "winterfell",
 ]
 
@@ -11792,6 +11795,7 @@ dependencies = [
  "transaction-circuit",
  "twox-hash",
  "url",
+ "winter-prover",
  "zeroize",
 ]
 

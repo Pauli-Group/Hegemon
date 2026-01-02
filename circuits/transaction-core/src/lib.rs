@@ -14,6 +14,8 @@ pub mod hashing;
 pub mod poseidon_constants;
 pub mod stark_air;
 #[cfg(feature = "stark-verify")]
+mod rpo;
+#[cfg(feature = "stark-verify")]
 pub mod stark_verifier;
 pub mod types;
 
@@ -25,7 +27,8 @@ pub use types::{BalanceSlot, StablecoinPolicyBinding};
 
 #[cfg(feature = "stark-verify")]
 pub use stark_verifier::{
-    verify_transaction_proof, verify_transaction_proof_bytes, TransactionVerifyError,
+    verify_transaction_proof, verify_transaction_proof_bytes, verify_transaction_proof_bytes_rpo,
+    verify_transaction_proof_rpo, TransactionVerifyError,
 };
 
 pub use constants::{compute_air_hash, expected_air_hash, CIRCUIT_VERSION};

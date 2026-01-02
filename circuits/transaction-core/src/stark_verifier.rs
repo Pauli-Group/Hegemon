@@ -11,9 +11,11 @@ use winterfell::{
     verify, AcceptableOptions, Proof, VerifierError,
 };
 
+use crate::rpo::{Rpo256, RpoRandomCoin};
 use crate::stark_air::{TransactionAirStark, TransactionPublicInputsStark};
 
 type Blake3 = Blake3_256<BaseElement>;
+type RpoMerkleTree = MerkleTree<Rpo256>;
 
 // ================================================================================================
 // VERIFICATION
@@ -36,6 +38,20 @@ pub fn verify_transaction_proof(
     )
 }
 
+/// Verify an RPO‑Fiat‑Shamir transaction proof.
+pub fn verify_transaction_proof_rpo(
+    proof: &Proof,
+    pub_inputs: &TransactionPublicInputsStark,
+) -> Result<(), VerifierError> {
+    let acceptable = acceptable_options();
+
+    verify::<TransactionAirStark, Rpo256, RpoRandomCoin, RpoMerkleTree>(
+        proof.clone(),
+        pub_inputs.clone(),
+        &acceptable,
+    )
+}
+
 /// Verify from serialized proof bytes.
 pub fn verify_transaction_proof_bytes(
     proof_bytes: &[u8],
@@ -46,6 +62,19 @@ pub fn verify_transaction_proof_bytes(
         Proof::from_bytes(proof_bytes).map_err(|_| TransactionVerifyError::InvalidProofFormat)?;
 
     verify_transaction_proof(&proof, pub_inputs).map_err(TransactionVerifyError::VerificationFailed)
+}
+
+/// Verify an RPO‑Fiat‑Shamir proof from serialized bytes.
+pub fn verify_transaction_proof_bytes_rpo(
+    proof_bytes: &[u8],
+    pub_inputs: &TransactionPublicInputsStark,
+) -> Result<(), TransactionVerifyError> {
+    pub_inputs.validate()?;
+    let proof =
+        Proof::from_bytes(proof_bytes).map_err(|_| TransactionVerifyError::InvalidProofFormat)?;
+
+    verify_transaction_proof_rpo(&proof, pub_inputs)
+        .map_err(TransactionVerifyError::VerificationFailed)
 }
 
 // ================================================================================================
@@ -80,7 +109,7 @@ fn default_acceptable_options() -> winterfell::ProofOptions {
         0,
         winterfell::FieldExtension::Quadratic,
         2,
-        31,
+        7,
         winterfell::BatchingMethod::Linear,
         winterfell::BatchingMethod::Linear,
     )

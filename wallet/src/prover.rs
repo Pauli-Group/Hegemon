@@ -34,9 +34,10 @@ use serde::{Deserialize, Serialize};
 use transaction_circuit::{
     hashing::{felts_to_bytes32, Felt},
     proof_options_from_config,
+    rpo_prover::TransactionProverStarkRpo,
     witness::TransactionWitness,
-    TransactionProverStark,
 };
+use winter_prover::Prover;
 
 use crate::error::WalletError;
 
@@ -147,7 +148,7 @@ pub struct StarkProver {
     /// Prover configuration.
     config: StarkProverConfig,
     /// The actual winterfell STARK prover.
-    inner: TransactionProverStark,
+    inner: TransactionProverStarkRpo,
 }
 
 impl StarkProver {
@@ -163,7 +164,7 @@ impl StarkProver {
         };
         let options =
             proof_options_from_config(config.num_queries, config.blowup_factor, grinding_factor);
-        let inner = TransactionProverStark::new(options);
+        let inner = TransactionProverStarkRpo::new(options);
         Self { config, inner }
     }
 
@@ -195,10 +196,11 @@ impl StarkProver {
         let start = Instant::now();
 
         // Get public inputs from witness
-        let pub_inputs = self
+        let trace = self
             .inner
-            .get_public_inputs(witness)
+            .build_trace(witness)
             .map_err(|e| WalletError::InvalidArgument(Box::leak(e.to_string().into_boxed_str())))?;
+        let pub_inputs = self.inner.get_pub_inputs(&trace);
 
         // DEBUG: Print balance info
         let total_input: u64 = witness.inputs.iter().map(|i| i.note.value).sum();
@@ -212,11 +214,16 @@ impl StarkProver {
         }
 
         // Generate the real STARK proof
-        let proof = self.inner.prove_transaction(witness).map_err(|e| {
-            WalletError::Serialization(format!("STARK proof generation failed: {}", e))
-        })?;
+        let proof = self
+            .inner
+            .prove(trace)
+            .map_err(|e| WalletError::Serialization(format!("STARK proof generation failed: {}", e)))?;
 
         let proving_time = start.elapsed();
+
+        if std::env::var("HEGEMON_WALLET_DEBUG_PROOF_OPTIONS").is_ok() {
+            eprintln!("DEBUG prover: proof options = {:?}", proof.options());
+        }
 
         // Proof generation is not cancellable; treat max_proving_time as an advisory budget.
         if proving_time > self.config.max_proving_time {
@@ -231,7 +238,7 @@ impl StarkProver {
         let proof_bytes = proof.to_bytes();
 
         // Verify proof locally before returning (development check)
-        match transaction_circuit::verify_transaction_proof_bytes(&proof_bytes, &pub_inputs) {
+        match transaction_circuit::verify_transaction_proof_bytes_rpo(&proof_bytes, &pub_inputs) {
             Ok(()) => {
                 #[cfg(debug_assertions)]
                 eprintln!("DEBUG prover: Local verification PASSED");
@@ -282,13 +289,12 @@ impl StarkProver {
         proof_bytes: &[u8],
         witness: &TransactionWitness,
     ) -> Result<bool, WalletError> {
-        use transaction_circuit::verify_transaction_proof_bytes;
-
-        let pub_inputs = self
+        let trace = self
             .inner
-            .get_public_inputs(witness)
+            .build_trace(witness)
             .map_err(|e| WalletError::InvalidArgument(Box::leak(e.to_string().into_boxed_str())))?;
-        match verify_transaction_proof_bytes(proof_bytes, &pub_inputs) {
+        let pub_inputs = self.inner.get_pub_inputs(&trace);
+        match transaction_circuit::verify_transaction_proof_bytes_rpo(proof_bytes, &pub_inputs) {
             Ok(()) => Ok(true),
             Err(_) => Ok(false),
         }
