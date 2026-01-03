@@ -2711,9 +2711,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         .unwrap_or(false);
 
                 let validate_recursive_epoch_proofs =
-                    std::env::var("HEGEMON_VALIDATE_RECURSIVE_EPOCH_PROOFS")
-                        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                        .unwrap_or(true);
+                    if cfg!(feature = "production") {
+                        true
+                    } else {
+                        std::env::var("HEGEMON_VALIDATE_RECURSIVE_EPOCH_PROOFS")
+                            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                            .unwrap_or(true)
+                    };
 
                 // Verify/store incoming proofs asynchronously to avoid blocking the network event loop.
                 let (epoch_proof_rx_tx, mut epoch_proof_rx_rx) = mpsc::channel::<(
@@ -2858,8 +2862,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let epoch_clone = epoch.clone();
                                 let proof_clone = proof.clone();
                                 let ok = tokio::task::spawn_blocking(move || {
-                                    EpochRecursiveProver::fast()
-                                        .verify_epoch_proof(&proof_clone, &epoch_clone)
+                                    if cfg!(feature = "production") {
+                                        EpochRecursiveProver::production()
+                                            .verify_epoch_proof_strict(&proof_clone, &epoch_clone)
+                                    } else {
+                                        EpochRecursiveProver::fast()
+                                            .verify_epoch_proof(&proof_clone, &epoch_clone)
+                                    }
                                 })
                                 .await
                                 .unwrap_or(false);
@@ -3784,11 +3793,25 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         let epoch_for_prover = epoch_data.clone();
 
                                         let proof_result = if use_rpo_outer_backfill {
-                                            EpochRecursiveProver::fast()
-                                                .prove_epoch_recursive_rpo_outer(&epoch_for_prover, &proof_hashes_clone)
+                                            let prover = if cfg!(feature = "production") {
+                                                EpochRecursiveProver::production()
+                                            } else {
+                                                EpochRecursiveProver::fast()
+                                            };
+                                            prover.prove_epoch_recursive_rpo_outer(
+                                                &epoch_for_prover,
+                                                &proof_hashes_clone,
+                                            )
                                         } else {
-                                            EpochRecursiveProver::fast()
-                                                .prove_epoch_recursive(&epoch_for_prover, &proof_hashes_clone)
+                                            let prover = if cfg!(feature = "production") {
+                                                EpochRecursiveProver::production()
+                                            } else {
+                                                EpochRecursiveProver::fast()
+                                            };
+                                            prover.prove_epoch_recursive(
+                                                &epoch_for_prover,
+                                                &proof_hashes_clone,
+                                            )
                                         };
 
                                         match proof_result {
@@ -3946,7 +3969,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                                         .unwrap_or(false);
                                     let proof_result = tokio::task::spawn_blocking(move || {
-                                        let prover = EpochRecursiveProver::fast();
+                                        let prover = if cfg!(feature = "production") {
+                                            EpochRecursiveProver::production()
+                                        } else {
+                                            EpochRecursiveProver::fast()
+                                        };
                                         if use_rpo_outer {
                                             prover.prove_epoch_recursive_rpo_outer(
                                                 &epoch_for_prover,

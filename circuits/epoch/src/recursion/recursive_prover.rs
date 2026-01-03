@@ -52,7 +52,7 @@ use winterfell::{
     ProofOptions, Prover,
 };
 
-use super::rpo_air::STATE_WIDTH;
+use super::rpo_air::{ROWS_PER_PERMUTATION, STATE_WIDTH, TRACE_WIDTH as RPO_TRACE_WIDTH};
 use super::rpo_proof::{rpo_hash_elements, rpo_merge, RpoProofOptions};
 use super::rpo_stark_prover::{verify_epoch_with_rpo, RpoStarkProver};
 use super::rpo_stark_verifier_prover::RpoStarkVerifierProver;
@@ -444,6 +444,28 @@ impl RecursiveEpochProver {
     ///
     /// Uses the winterfell verifier with RPO-based Fiat-Shamir.
     pub fn verify_epoch_proof(&self, proof: &RecursiveEpochProof, epoch: &Epoch) -> bool {
+        let acceptable = AcceptableOptions::OptionSet(vec![
+            RpoProofOptions::fast().to_winter_options(),
+            RpoProofOptions::production().to_winter_options(),
+        ]);
+        self.verify_epoch_proof_with_acceptable_options(proof, epoch, acceptable)
+    }
+
+    /// Verify a recursive epoch proof using a strict acceptable-options policy.
+    ///
+    /// This accepts only the proof options configured on this prover instance (e.g. use
+    /// `RecursiveEpochProver::production()` in production deployments).
+    pub fn verify_epoch_proof_strict(&self, proof: &RecursiveEpochProof, epoch: &Epoch) -> bool {
+        let acceptable = AcceptableOptions::OptionSet(vec![self.options.to_winter_options()]);
+        self.verify_epoch_proof_with_acceptable_options(proof, epoch, acceptable)
+    }
+
+    fn verify_epoch_proof_with_acceptable_options(
+        &self,
+        proof: &RecursiveEpochProof,
+        epoch: &Epoch,
+        acceptable: AcceptableOptions,
+    ) -> bool {
         // Basic sanity checks
         if proof.epoch_commitment != epoch.commitment() {
             return false;
@@ -478,6 +500,9 @@ impl RecursiveEpochProver {
             Err(_) => return false,
         };
         let outer_pub_inputs = inner_data.to_stark_verifier_inputs();
+        if outer_pub_inputs.validate_for_stark_verifier_air().is_err() {
+            return false;
+        }
 
         let outer_proof = match winterfell::Proof::from_bytes(&proof.proof_bytes) {
             Ok(p) => p,
@@ -487,10 +512,6 @@ impl RecursiveEpochProver {
         // Prefer verifying the outer proof with RPO (self-recursive-friendly), and fall back to
         // the legacy Blake3 outer-proof path for backwards compatibility.
         type RpoMerkleTree = MerkleTree<Rpo256>;
-        let acceptable = AcceptableOptions::OptionSet(vec![
-            RpoProofOptions::fast().to_winter_options(),
-            RpoProofOptions::production().to_winter_options(),
-        ]);
         if verify::<StarkVerifierAir, Rpo256, RpoRandomCoin, RpoMerkleTree>(
             outer_proof.clone(),
             outer_pub_inputs.clone(),
@@ -709,21 +730,21 @@ impl InnerProofData {
             constraint_commitment: [BaseElement::ZERO; 4],
             public_inputs: vec![],
             pow_nonce: 0,
-            trace_length: 0,
-            trace_width: 0,
+            trace_length: ROWS_PER_PERMUTATION,
+            trace_width: RPO_TRACE_WIDTH,
             field_extension: FieldExtension::None,
-            blowup_factor: 0,
-            fri_folding_factor: 0,
-            fri_remainder_max_degree: 0,
+            blowup_factor: 8,
+            fri_folding_factor: 2,
+            fri_remainder_max_degree: 7,
             grinding_factor: 0,
-            trace_partition_size: 0,
-            constraint_partition_size: 0,
-            fri_num_partitions: 0,
-            constraint_frame_width: 0,
-            num_transition_constraints: 0,
+            trace_partition_size: RPO_TRACE_WIDTH,
+            constraint_partition_size: 8,
+            fri_num_partitions: 1,
+            constraint_frame_width: 8,
+            num_transition_constraints: STATE_WIDTH,
             num_assertions: 0,
-            num_draws: 0,
-            query_positions: vec![],
+            num_draws: 1,
+            query_positions: vec![0],
             unique_query_positions: vec![],
             trace_evaluations: vec![],
             trace_auth_paths: vec![],
@@ -732,10 +753,10 @@ impl InnerProofData {
             fri_layers: vec![],
             fri_remainder: vec![],
             fri_remainder_commitment: [BaseElement::ZERO; 4],
-            ood_trace_current: vec![],
-            ood_trace_next: vec![],
-            ood_quotient_current: vec![],
-            ood_quotient_next: vec![],
+            ood_trace_current: vec![BaseElement::ZERO; RPO_TRACE_WIDTH],
+            ood_trace_next: vec![BaseElement::ZERO; RPO_TRACE_WIDTH],
+            ood_quotient_current: vec![BaseElement::ZERO; 8],
+            ood_quotient_next: vec![BaseElement::ZERO; 8],
             ood_digest: [BaseElement::ZERO; 4],
             z: vec![BaseElement::ZERO],
             constraint_coeffs: ConstraintCompositionCoefficients {
@@ -946,7 +967,10 @@ impl InnerProofData {
 
         // --- parse FRI proof -------------------------------------------------------------------
         let fri_num_partitions = proof.fri_proof.num_partitions();
-        let fri_remainder_commitment = word_to_digest(*fri_roots.last().unwrap());
+        let fri_remainder_root = fri_roots.last().ok_or_else(|| {
+            EpochProverError::TraceBuildError("inner proof is missing FRI commitments".to_string())
+        })?;
+        let fri_remainder_commitment = word_to_digest(*fri_remainder_root);
         let (fri_remainder, fri_layer_queries, fri_layer_proofs) = match field_extension {
             FieldExtension::None => {
                 let remainder = proof
