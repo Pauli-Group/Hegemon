@@ -16,5 +16,9 @@ winterfell = "0.13"
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }
 
+[features]
+default = []
+fast-proofs = []
+
 [lints]
 workspace = true

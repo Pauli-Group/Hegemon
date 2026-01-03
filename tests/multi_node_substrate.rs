@@ -320,7 +320,8 @@ mod substrate_tests {
                 state_root: H256::from_slice(&state_root_bytes),
                 extrinsics_root,
                 failed_count: 0,
-                storage_changes_key: None,
+                storage_changes: None,
+                recursive_proof: None,
             })
         });
 
@@ -365,7 +366,8 @@ mod substrate_tests {
                 state_root: H256::repeat_byte(0x99),
                 extrinsics_root,
                 failed_count: failed.len(),
-                storage_changes_key: None,
+                storage_changes: None,
+                recursive_proof: None,
             })
         });
 
@@ -410,7 +412,8 @@ mod substrate_tests {
                 state_root: expected_state_root,
                 extrinsics_root,
                 failed_count: 0,
-                storage_changes_key: None,
+                storage_changes: None,
+                recursive_proof: None,
             })
         });
 
@@ -471,7 +474,8 @@ mod substrate_tests {
                 state_root: H256::repeat_byte(0xcc),
                 extrinsics_root,
                 failed_count: 0,
-                storage_changes_key: None,
+                storage_changes: None,
+                recursive_proof: None,
             })
         });
 
@@ -541,7 +545,8 @@ mod substrate_tests {
                 state_root: H256::zero(),
                 extrinsics_root: H256::zero(),
                 failed_count: 0,
-                storage_changes_key: None,
+                storage_changes: None,
+                recursive_proof: None,
             })
         });
         assert!(provider.has_state_execution());

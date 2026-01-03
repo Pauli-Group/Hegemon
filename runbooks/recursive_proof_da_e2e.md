@@ -2,6 +2,12 @@
 
 Use this runbook to verify that a dev node mines a block with a recursive proof, stores DA chunks, and serves the RPC endpoints.
 
+If you want the fully automated flow (tmux + wallet creation + RPC queries), run:
+
+```bash
+HEGEMON_E2E_FORCE=1 ./scripts/recursive_proof_da_e2e_tmux.sh
+```
+
 ## 1. Build the binaries
 
 ```bash
@@ -35,7 +41,9 @@ HEGEMON_MINER_ADDRESS=$(./target/release/wallet status \
 
 ```bash
 RUST_LOG=info HEGEMON_MINE=1 HEGEMON_RECURSIVE_BLOCK_PROOFS=1 \
+  HEGEMON_RECURSIVE_BLOCK_PROOFS_FAST=1 \
   HEGEMON_ACCEPT_FAST_PROOFS=1 \
+  HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK=1 \
   HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
   ./target/release/hegemon-node --dev --tmp
 ```
@@ -87,6 +95,8 @@ HEGEMON_WALLET_PROVER_FAST=1 HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/walle
 Unset `HEGEMON_WALLET_PROVER_FAST` and `HEGEMON_ACCEPT_FAST_PROOFS` to use full-security proving parameters.
 
 Wait for the block builder to include the transaction. If recursive proof generation is slow, expect a pause before the next block is imported.
+On current parameters, even `HEGEMON_RECURSIVE_BLOCK_PROOFS_FAST=1` can take ~15–20 minutes to
+produce a recursive proof for a single shielded transfer on a laptop.
 
 ## 7. Collect the DA root and block hash
 
@@ -114,19 +124,19 @@ curl -s -H "Content-Type: application/json" \
   http://127.0.0.1:9944
 ```
 
-DA parameters:
+DA parameters (global; no params):
 
 ```bash
 curl -s -H "Content-Type: application/json" \
-  -d '{"id":1,"jsonrpc":"2.0","method":"da_getParams","params":["<BLOCK_HASH>"]}' \
+  -d '{"id":1,"jsonrpc":"2.0","method":"da_getParams","params":[]}' \
   http://127.0.0.1:9944
 ```
 
-DA chunk (index 0 is a simple smoke check):
+DA chunk (keyed by `da_root`; index 0 is a simple smoke check):
 
 ```bash
 curl -s -H "Content-Type: application/json" \
-  -d '{"id":1,"jsonrpc":"2.0","method":"da_getChunk","params":["<BLOCK_HASH>",0]}' \
+  -d '{"id":1,"jsonrpc":"2.0","method":"da_getChunk","params":["<DA_ROOT>",0]}' \
   http://127.0.0.1:9944
 ```
 

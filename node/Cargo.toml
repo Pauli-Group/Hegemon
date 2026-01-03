@@ -102,7 +102,11 @@ frame-support = { workspace = true, features = ["std"], optional = true }
 default = ["substrate"]
 test-utils = []
 production = ["substrate", "runtime/production", "pallet-shielded-pool/production"]
-fast-proofs = ["runtime/fast-proofs", "pallet-shielded-pool/fast-proofs"]
+fast-proofs = [
+    "runtime/fast-proofs",
+    "pallet-shielded-pool/fast-proofs",
+    "block-circuit?/fast-proofs",
+]
 
 # Enable Substrate-based node implementation (Phase 2.5 with PoW + DifficultyApi)
 # 

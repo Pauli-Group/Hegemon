@@ -1272,7 +1272,11 @@ impl Air for StarkVerifierAir {
             pre_merkle_perms + pub_inputs.num_queries * merkle_perms_per_query;
 
         if expected_active_perms <= total_perms {
-            let leaf_starts_per_query = 2 + num_fri_layers;
+            let trace_leaf_starts =
+                leaf_chain_count(trace_width_ext, pub_inputs.trace_partition_size);
+            let constraint_leaf_starts =
+                leaf_chain_count(constraint_width_ext, constraint_partition_size_base);
+            let leaf_starts_per_query = trace_leaf_starts + constraint_leaf_starts + num_fri_layers;
             num_assertions += pub_inputs.num_queries * leaf_starts_per_query * CAPACITY_WIDTH;
 
             let mut merges_per_query = 2 * depth_trace;

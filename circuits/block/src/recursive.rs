@@ -285,10 +285,15 @@ pub fn verify_recursive_proof(
     let verifier_inputs = decode_verifier_inputs(proof)?;
     let batch_proof = Proof::from_bytes(&proof.proof_bytes)
         .map_err(|err| BlockError::RecursiveProofVerification(err.to_string()))?;
-    let acceptable = AcceptableOptions::OptionSet(vec![
-        recursive_proof_options(),
-        fast_recursive_proof_options(),
-    ]);
+    #[cfg(feature = "fast-proofs")]
+    let option_set = {
+        let mut option_set = vec![recursive_proof_options()];
+        option_set.push(fast_recursive_proof_options());
+        option_set
+    };
+    #[cfg(not(feature = "fast-proofs"))]
+    let option_set = vec![recursive_proof_options()];
+    let acceptable = AcceptableOptions::OptionSet(option_set);
     verify_batch(&batch_proof, verifier_inputs.clone(), acceptable)
         .map_err(BlockError::RecursiveProofVerification)?;
     Ok(verifier_inputs)

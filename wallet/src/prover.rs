@@ -82,8 +82,8 @@ impl StarkProverConfig {
     /// Create a config optimized for fast proving (lower security margin).
     pub fn fast() -> Self {
         Self {
-            blowup_factor: 16,
-            num_queries: 8,
+            blowup_factor: 8,
+            num_queries: 1,
             enable_grinding: false,
             grinding_bits: 0,
             max_proving_time: Duration::from_secs(30),
@@ -390,8 +390,8 @@ mod tests {
     #[test]
     fn test_config_fast() {
         let config = StarkProverConfig::fast();
-        assert_eq!(config.blowup_factor, 16);
-        assert_eq!(config.num_queries, 8);
+        assert_eq!(config.blowup_factor, 8);
+        assert_eq!(config.num_queries, 1);
     }
 
     #[test]
