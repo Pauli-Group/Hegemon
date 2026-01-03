@@ -1,7 +1,10 @@
 mod common;
 
 use common::{BftBlockParams, assemble_bft_block, make_validators, validator_set};
-use consensus::{BftConsensus, DEFAULT_VERSION_BINDING, HashVerifier, NullifierSet, Transaction};
+use consensus::{
+    BftConsensus, CommitmentTreeState, DEFAULT_VERSION_BINDING, HashVerifier, NullifierSet,
+    Transaction,
+};
 use proptest::prelude::*;
 
 fn has_duplicates(values: &[[u8; 32]]) -> bool {
@@ -21,7 +24,8 @@ proptest! {
         let duplicates = has_duplicates(&nullifiers);
         let validators = make_validators(3, 10);
         let validator_set = validator_set(&validators);
-        let mut consensus = BftConsensus::new(validator_set, [0u8; 32], HashVerifier);
+        let genesis_tree = CommitmentTreeState::default();
+        let mut consensus = BftConsensus::new(validator_set, genesis_tree.clone(), HashVerifier);
         let transaction = Transaction::new(
             nullifiers.clone(),
             vec![[9u8; 32]],
@@ -39,7 +43,7 @@ proptest! {
             validators: &validators,
             signer_indices: &[0, 1, 2],
             base_nullifiers: &NullifierSet::new(),
-            base_state_root: [0u8; 32],
+            base_commitment_tree: &genesis_tree,
             supply_digest: 0,
         });
         if duplicates {

@@ -1,12 +1,12 @@
 mod common;
 
 use common::{
-    PowBlockParams, assemble_pow_block, dummy_coinbase, dummy_transaction, empty_nullifier_root,
-    make_validators,
+    PowBlockParams, assemble_pow_block, dummy_coinbase, dummy_transaction, make_validators,
 };
 use consensus::nullifier::NullifierSet;
 use consensus::pow::PowConsensus;
 use consensus::proof::HashVerifier;
+use consensus::CommitmentTreeState;
 use crypto::ml_dsa::{ML_DSA_SIGNATURE_LEN, MlDsaPublicKey, MlDsaSignature};
 use crypto::traits::{SigningKey, VerifyKey};
 
@@ -17,6 +17,7 @@ fn runtime_signatures_verify_pow_blocks() {
     let mut validators = make_validators(1, 1);
     let miner = validators.pop().expect("validator exists");
     let base_nullifiers = NullifierSet::new();
+    let genesis_tree = CommitmentTreeState::default();
     let height = 1;
     let parent_hash = [0u8; 32];
     let parent_supply = 0;
@@ -30,7 +31,7 @@ fn runtime_signatures_verify_pow_blocks() {
         recursive_proof: None,
         miner: &miner,
         base_nullifiers: &base_nullifiers,
-        base_state_root: empty_nullifier_root(),
+        base_commitment_tree: &genesis_tree,
         pow_bits: EASY_POW_BITS,
         nonce,
         parent_supply,
@@ -50,7 +51,7 @@ fn runtime_signatures_verify_pow_blocks() {
 
     let mut pow = PowConsensus::with_genesis_pow_bits(
         vec![miner.secret.verify_key()],
-        empty_nullifier_root(),
+        genesis_tree.clone(),
         HashVerifier,
         EASY_POW_BITS,
     );

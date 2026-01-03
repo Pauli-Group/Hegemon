@@ -1,3 +1,4 @@
+use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
 use crate::types::{
     Block, DaParams, DaRoot, FeeCommitment, RecursiveProofHash, StarkCommitment, VersionCommitment,
@@ -7,7 +8,11 @@ use block_circuit::{transaction_inputs_from_verifier_inputs, verify_recursive_pr
 use transaction_circuit::hashing::felts_to_bytes32;
 
 pub trait ProofVerifier: Send + Sync {
-    fn verify_block<BH>(&self, block: &Block<BH>) -> Result<(), ProofError>
+    fn verify_block<BH>(
+        &self,
+        block: &Block<BH>,
+        parent_commitment_tree: &CommitmentTreeState,
+    ) -> Result<CommitmentTreeState, ProofError>
     where
         BH: HeaderProofExt;
 }
@@ -16,11 +21,16 @@ pub trait ProofVerifier: Send + Sync {
 pub struct HashVerifier;
 
 impl ProofVerifier for HashVerifier {
-    fn verify_block<BH>(&self, block: &Block<BH>) -> Result<(), ProofError>
+    fn verify_block<BH>(
+        &self,
+        block: &Block<BH>,
+        parent_commitment_tree: &CommitmentTreeState,
+    ) -> Result<CommitmentTreeState, ProofError>
     where
         BH: HeaderProofExt,
     {
-        verify_commitments(block)
+        verify_commitments(block)?;
+        apply_commitments(parent_commitment_tree, &block.transactions)
     }
 }
 
@@ -28,11 +38,15 @@ impl ProofVerifier for HashVerifier {
 pub struct RecursiveProofVerifier;
 
 impl ProofVerifier for RecursiveProofVerifier {
-    fn verify_block<BH>(&self, block: &Block<BH>) -> Result<(), ProofError>
+    fn verify_block<BH>(
+        &self,
+        block: &Block<BH>,
+        parent_commitment_tree: &CommitmentTreeState,
+    ) -> Result<CommitmentTreeState, ProofError>
     where
         BH: HeaderProofExt,
     {
-        verify_recursive_proof_payload(block)
+        verify_recursive_proof_payload(block, parent_commitment_tree)
     }
 }
 
@@ -104,7 +118,10 @@ where
     Ok(())
 }
 
-pub fn verify_recursive_proof_payload<BH>(block: &Block<BH>) -> Result<(), ProofError>
+pub fn verify_recursive_proof_payload<BH>(
+    block: &Block<BH>,
+    parent_commitment_tree: &CommitmentTreeState,
+) -> Result<CommitmentTreeState, ProofError>
 where
     BH: HeaderProofExt,
 {
@@ -113,7 +130,7 @@ where
         if block.recursive_proof.is_some() {
             return Err(ProofError::UnexpectedRecursiveProof);
         }
-        return Ok(());
+        return apply_commitments(parent_commitment_tree, &block.transactions);
     }
 
     let proof = block
@@ -165,9 +182,11 @@ where
         }
     }
 
+    let mut anchors = Vec::with_capacity(block.transactions.len());
     for (index, tx) in block.transactions.iter().enumerate() {
         let inner = transaction_inputs_from_verifier_inputs(&verifier_inputs[index])
             .map_err(map_block_error)?;
+        anchors.push(felts_to_bytes32(&inner.merkle_root));
         let expected_nullifiers: Vec<[u8; 32]> = inner
             .nullifiers
             .iter()
@@ -185,8 +204,13 @@ where
             return Err(ProofError::RecursiveProofInputsMismatch(index));
         }
     }
-
-    Ok(())
+    verify_and_apply_tree_transition(
+        parent_commitment_tree,
+        proof.starting_root,
+        proof.ending_root,
+        &block.transactions,
+        &anchors,
+    )
 }
 
 fn map_block_error(err: block_circuit::BlockError) -> ProofError {
@@ -207,5 +231,141 @@ fn map_block_error(err: block_circuit::BlockError) -> ProofError {
             ProofError::RecursiveProofInputsMismatch(index)
         }
         other => ProofError::RecursiveProofVerification(other.to_string()),
+    }
+}
+
+fn apply_commitments(
+    parent_commitment_tree: &CommitmentTreeState,
+    transactions: &[crate::types::Transaction],
+) -> Result<CommitmentTreeState, ProofError> {
+    let mut tree = parent_commitment_tree.clone();
+    for tx in transactions {
+        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 32]) {
+            tree.append(commitment)?;
+        }
+    }
+    Ok(tree)
+}
+
+fn verify_and_apply_tree_transition(
+    parent_commitment_tree: &CommitmentTreeState,
+    proof_starting_root: [u8; 32],
+    proof_ending_root: [u8; 32],
+    transactions: &[crate::types::Transaction],
+    anchors: &[[u8; 32]],
+) -> Result<CommitmentTreeState, ProofError> {
+    if anchors.len() != transactions.len() {
+        return Err(ProofError::Internal("anchor list length mismatch"));
+    }
+
+    let mut tree = parent_commitment_tree.clone();
+    if proof_starting_root != tree.root() {
+        return Err(ProofError::StartingRootMismatch {
+            expected: tree.root(),
+            observed: proof_starting_root,
+        });
+    }
+
+    for (index, (tx, anchor)) in transactions.iter().zip(anchors).enumerate() {
+        if !tree.contains_root(anchor) {
+            return Err(ProofError::InvalidAnchor {
+                index,
+                anchor: *anchor,
+            });
+        }
+        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 32]) {
+            tree.append(commitment)?;
+        }
+    }
+
+    if proof_ending_root != tree.root() {
+        return Err(ProofError::EndingRootMismatch {
+            expected: tree.root(),
+            observed: proof_ending_root,
+        });
+    }
+
+    Ok(tree)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol_versioning::DEFAULT_VERSION_BINDING;
+
+    fn tx_with_commitments(commitments: Vec<[u8; 32]>) -> crate::types::Transaction {
+        crate::types::Transaction::new(
+            Vec::new(),
+            commitments,
+            [42u8; 32],
+            DEFAULT_VERSION_BINDING,
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn tree_transition_rejects_starting_root_mismatch() {
+        let parent_tree = CommitmentTreeState::default();
+        let txs = vec![tx_with_commitments(vec![[1u8; 32]])];
+        let anchors = vec![parent_tree.root()];
+        let err = verify_and_apply_tree_transition(
+            &parent_tree,
+            [9u8; 32],
+            parent_tree.root(),
+            &txs,
+            &anchors,
+        )
+        .expect_err("starting root mismatch");
+        assert!(matches!(err, ProofError::StartingRootMismatch { .. }));
+    }
+
+    #[test]
+    fn tree_transition_rejects_invalid_anchor() {
+        let parent_tree = CommitmentTreeState::default();
+        let txs = vec![tx_with_commitments(vec![[1u8; 32]])];
+        let anchors = vec![[7u8; 32]];
+        let err = verify_and_apply_tree_transition(
+            &parent_tree,
+            parent_tree.root(),
+            parent_tree.root(),
+            &txs,
+            &anchors,
+        )
+        .expect_err("invalid anchor");
+        assert!(matches!(err, ProofError::InvalidAnchor { .. }));
+    }
+
+    #[test]
+    fn tree_transition_rejects_ending_root_mismatch() {
+        let parent_tree = CommitmentTreeState::default();
+        let txs = vec![tx_with_commitments(vec![[1u8; 32]])];
+        let anchors = vec![parent_tree.root()];
+        let err = verify_and_apply_tree_transition(
+            &parent_tree,
+            parent_tree.root(),
+            [9u8; 32],
+            &txs,
+            &anchors,
+        )
+        .expect_err("ending root mismatch");
+        assert!(matches!(err, ProofError::EndingRootMismatch { .. }));
+    }
+
+    #[test]
+    fn tree_transition_accepts_valid_update() {
+        let parent_tree = CommitmentTreeState::default();
+        let txs = vec![tx_with_commitments(vec![[1u8; 32]])];
+        let anchors = vec![parent_tree.root()];
+        let mut expected = parent_tree.clone();
+        expected.append([1u8; 32]).expect("append");
+        let updated = verify_and_apply_tree_transition(
+            &parent_tree,
+            parent_tree.root(),
+            expected.root(),
+            &txs,
+            &anchors,
+        )
+        .expect("valid transition");
+        assert_eq!(updated.root(), expected.root());
     }
 }

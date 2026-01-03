@@ -1,4 +1,5 @@
 pub mod bft;
+pub mod commitment_tree;
 pub mod error;
 pub mod header;
 pub mod mining;
@@ -13,6 +14,7 @@ pub mod validator;
 pub mod version_policy;
 
 pub use bft::{BftConsensus, ConsensusUpdate};
+pub use commitment_tree::{COMMITMENT_TREE_DEPTH, CommitmentTreeError, CommitmentTreeState, DEFAULT_ROOT_HISTORY_LIMIT};
 pub use error::{ConsensusError, ProofError, SlashingEvidence};
 pub use header::{BlockHeader, ConsensusMode, PowSeal};
 pub use mining::{MiningCoordinator, MiningSolution, MiningStats, MiningWork, MiningWorker};
