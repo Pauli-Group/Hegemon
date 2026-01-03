@@ -212,6 +212,7 @@ pub fn verify_batch(
     inner_pub_inputs: Vec<StarkVerifierPublicInputs>,
     acceptable_options: impl Into<AcceptableOptions>,
 ) -> Result<(), String> {
+    validate_batch_inputs(proof, &inner_pub_inputs)?;
     let batch_pub_inputs = StarkVerifierBatchPublicInputs {
         inner: inner_pub_inputs,
     };
@@ -222,6 +223,130 @@ pub fn verify_batch(
         &acceptable_options.into(),
     )
     .map_err(|e| format!("batch verification failed: {e:?}"))
+}
+
+fn validate_batch_inputs(
+    proof: &Proof,
+    inner_pub_inputs: &[StarkVerifierPublicInputs],
+) -> Result<(), String> {
+    if inner_pub_inputs.is_empty() {
+        return Err("batch verifier requires at least one inner proof".to_string());
+    }
+    if !inner_pub_inputs.len().is_power_of_two() {
+        return Err(format!(
+            "batch verifier requires power-of-two inner proof count (got {})",
+            inner_pub_inputs.len()
+        ));
+    }
+
+    let trace_info = proof.trace_info();
+    if trace_info.width() != VERIFIER_TRACE_WIDTH {
+        return Err(format!(
+            "batch proof trace width mismatch: expected {VERIFIER_TRACE_WIDTH}, got {}",
+            trace_info.width()
+        ));
+    }
+    let total_len = trace_info.length();
+    if total_len == 0 {
+        return Err("batch proof trace length must be non-zero".to_string());
+    }
+    if !total_len.is_power_of_two() {
+        return Err(format!(
+            "batch proof trace length must be a power of two (got {})",
+            total_len
+        ));
+    }
+    if total_len % inner_pub_inputs.len() != 0 {
+        return Err(format!(
+            "batch trace length must be divisible by num_segments (trace_len={}, num_segments={})",
+            total_len,
+            inner_pub_inputs.len()
+        ));
+    }
+    let segment_len = total_len / inner_pub_inputs.len();
+    if segment_len == 0 || !segment_len.is_power_of_two() {
+        return Err(format!(
+            "segment trace length must be a non-zero power of two (got {})",
+            segment_len
+        ));
+    }
+
+    let template = &inner_pub_inputs[0];
+    template.validate_for_stark_verifier_air()?;
+
+    for (idx, inner) in inner_pub_inputs.iter().enumerate() {
+        inner.validate_basic()?;
+        if inner.trace_length != template.trace_length {
+            return Err(format!(
+                "inner proof {idx} trace_length mismatch (expected {}, got {})",
+                template.trace_length, inner.trace_length
+            ));
+        }
+        if inner.trace_width != template.trace_width {
+            return Err(format!(
+                "inner proof {idx} trace_width mismatch (expected {}, got {})",
+                template.trace_width, inner.trace_width
+            ));
+        }
+        if inner.constraint_frame_width != template.constraint_frame_width {
+            return Err(format!(
+                "inner proof {idx} constraint_frame_width mismatch (expected {}, got {})",
+                template.constraint_frame_width, inner.constraint_frame_width
+            ));
+        }
+        if inner.num_transition_constraints != template.num_transition_constraints {
+            return Err(format!(
+                "inner proof {idx} num_transition_constraints mismatch (expected {}, got {})",
+                template.num_transition_constraints, inner.num_transition_constraints
+            ));
+        }
+        if inner.num_assertions != template.num_assertions {
+            return Err(format!(
+                "inner proof {idx} num_assertions mismatch (expected {}, got {})",
+                template.num_assertions, inner.num_assertions
+            ));
+        }
+        if inner.num_queries != template.num_queries {
+            return Err(format!(
+                "inner proof {idx} num_queries mismatch (expected {}, got {})",
+                template.num_queries, inner.num_queries
+            ));
+        }
+        if inner.num_draws != template.num_draws {
+            return Err(format!(
+                "inner proof {idx} num_draws mismatch (expected {}, got {})",
+                template.num_draws, inner.num_draws
+            ));
+        }
+        if inner.inner_public_inputs.len() != template.inner_public_inputs.len() {
+            return Err(format!(
+                "inner proof {idx} inner_public_inputs length mismatch (expected {}, got {})",
+                template.inner_public_inputs.len(),
+                inner.inner_public_inputs.len()
+            ));
+        }
+        if inner.field_extension != template.field_extension {
+            return Err(format!(
+                "inner proof {idx} field_extension mismatch (expected {:?}, got {:?})",
+                template.field_extension, inner.field_extension
+            ));
+        }
+        if inner.blowup_factor != template.blowup_factor {
+            return Err(format!(
+                "inner proof {idx} blowup_factor mismatch (expected {}, got {})",
+                template.blowup_factor, inner.blowup_factor
+            ));
+        }
+        if inner.fri_commitments.len() != template.fri_commitments.len() {
+            return Err(format!(
+                "inner proof {idx} fri_commitments length mismatch (expected {}, got {})",
+                template.fri_commitments.len(),
+                inner.fri_commitments.len()
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

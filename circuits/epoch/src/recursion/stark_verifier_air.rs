@@ -238,6 +238,72 @@ pub struct StarkVerifierPublicInputs {
 }
 
 impl StarkVerifierPublicInputs {
+    fn extension_degree_for_recursion(field_extension: FieldExtension) -> Result<usize, String> {
+        match field_extension {
+            FieldExtension::None => Ok(1),
+            FieldExtension::Quadratic => Ok(2),
+            FieldExtension::Cubic => Err("cubic extension proofs are not supported by recursion".to_string()),
+        }
+    }
+
+    /// Fallible constructor for `StarkVerifierPublicInputs`.
+    ///
+    /// This is the safe alternative to `new()` when the values come from untrusted sources (e.g.
+    /// decoded public inputs).
+    pub fn try_new(
+        inner_public_inputs: Vec<BaseElement>,
+        inner_pub_inputs_hash: [BaseElement; DIGEST_WIDTH],
+        trace_commitment: [BaseElement; DIGEST_WIDTH],
+        constraint_commitment: [BaseElement; DIGEST_WIDTH],
+        ood_trace_current: Vec<BaseElement>,
+        ood_quotient_current: Vec<BaseElement>,
+        ood_trace_next: Vec<BaseElement>,
+        ood_quotient_next: Vec<BaseElement>,
+        fri_commitments: Vec<[BaseElement; DIGEST_WIDTH]>,
+        num_queries: usize,
+        num_draws: usize,
+        trace_partition_size: usize,
+        constraint_partition_size: usize,
+        blowup_factor: usize,
+        fri_folding_factor: usize,
+        fri_remainder_max_degree: usize,
+        grinding_factor: usize,
+        trace_length: usize,
+        trace_width: usize,
+        constraint_frame_width: usize,
+        num_transition_constraints: usize,
+        num_assertions: usize,
+        field_extension: FieldExtension,
+    ) -> Result<Self, String> {
+        let candidate = Self {
+            inner_public_inputs,
+            inner_pub_inputs_hash,
+            trace_commitment,
+            constraint_commitment,
+            ood_trace_current,
+            ood_quotient_current,
+            ood_trace_next,
+            ood_quotient_next,
+            fri_commitments,
+            num_queries,
+            num_draws,
+            trace_partition_size,
+            constraint_partition_size,
+            blowup_factor,
+            fri_folding_factor,
+            fri_remainder_max_degree,
+            grinding_factor,
+            trace_length,
+            trace_width,
+            constraint_frame_width,
+            num_transition_constraints,
+            num_assertions,
+            field_extension,
+        };
+        candidate.validate_basic()?;
+        Ok(candidate)
+    }
+
     pub fn new(
         inner_public_inputs: Vec<BaseElement>,
         inner_pub_inputs_hash: [BaseElement; DIGEST_WIDTH],
@@ -263,36 +329,7 @@ impl StarkVerifierPublicInputs {
         num_assertions: usize,
         field_extension: FieldExtension,
     ) -> Self {
-        let extension_degree =
-            field_extension_degree(field_extension).expect("unsupported field extension");
-        let trace_ood_len = trace_width * extension_degree;
-        let constraint_ood_len = constraint_frame_width * extension_degree;
-        assert_eq!(
-            ood_trace_current.len(),
-            trace_ood_len,
-            "OOD trace current length mismatch: expected {trace_ood_len}, got {}",
-            ood_trace_current.len()
-        );
-        assert_eq!(
-            ood_trace_next.len(),
-            trace_ood_len,
-            "OOD trace next length mismatch: expected {trace_ood_len}, got {}",
-            ood_trace_next.len()
-        );
-        assert_eq!(
-            ood_quotient_current.len(),
-            constraint_ood_len,
-            "OOD quotient current length mismatch: expected {constraint_ood_len}, got {}",
-            ood_quotient_current.len()
-        );
-        assert_eq!(
-            ood_quotient_next.len(),
-            constraint_ood_len,
-            "OOD quotient next length mismatch: expected {constraint_ood_len}, got {}",
-            ood_quotient_next.len()
-        );
-
-        Self {
+        Self::try_new(
             inner_public_inputs,
             inner_pub_inputs_hash,
             trace_commitment,
@@ -316,7 +353,233 @@ impl StarkVerifierPublicInputs {
             num_transition_constraints,
             num_assertions,
             field_extension,
+        )
+        .unwrap_or_else(|err| panic!("invalid StarkVerifierPublicInputs: {err}"))
+    }
+
+    pub fn validate_basic(&self) -> Result<(), String> {
+        let extension_degree = Self::extension_degree_for_recursion(self.field_extension)?;
+
+        if self.num_queries == 0 {
+            return Err("num_queries must be non-zero".to_string());
         }
+        if self.num_draws == 0 {
+            return Err("num_draws must be non-zero".to_string());
+        }
+        if self.num_queries > self.num_draws {
+            return Err(format!(
+                "num_queries must be <= num_draws ({} > {})",
+                self.num_queries, self.num_draws
+            ));
+        }
+
+        if self.trace_partition_size == 0 {
+            return Err("trace_partition_size must be non-zero".to_string());
+        }
+        if self.constraint_partition_size == 0 {
+            return Err("constraint_partition_size must be non-zero".to_string());
+        }
+        if self.trace_length == 0 {
+            return Err("trace_length must be non-zero".to_string());
+        }
+        if !self.trace_length.is_power_of_two() {
+            return Err(format!(
+                "trace_length must be a power of two (got {})",
+                self.trace_length
+            ));
+        }
+        let trace_length_log2 = self.trace_length.ilog2() as usize;
+        if trace_length_log2 > MAX_TRACE_LENGTH_LOG2 {
+            return Err(format!(
+                "trace_length log2 too large: got {trace_length_log2}, max is {MAX_TRACE_LENGTH_LOG2}"
+            ));
+        }
+
+        if self.blowup_factor == 0 {
+            return Err("blowup_factor must be non-zero".to_string());
+        }
+        if !self.blowup_factor.is_power_of_two() {
+            return Err(format!(
+                "blowup_factor must be a power of two (got {})",
+                self.blowup_factor
+            ));
+        }
+        let lde_domain_size = self
+            .trace_length
+            .checked_mul(self.blowup_factor)
+            .ok_or_else(|| "trace_length * blowup_factor overflow".to_string())?;
+        if !lde_domain_size.is_power_of_two() {
+            return Err(format!(
+                "lde_domain_size must be a power of two (trace_length={}, blowup_factor={})",
+                self.trace_length, self.blowup_factor
+            ));
+        }
+
+        if self.fri_folding_factor != 2 {
+            return Err(format!(
+                "fri_folding_factor must be 2 for recursion (got {})",
+                self.fri_folding_factor
+            ));
+        }
+        let remainder_len = self
+            .fri_remainder_max_degree
+            .checked_add(1)
+            .ok_or_else(|| "fri_remainder_max_degree overflow".to_string())?;
+        if remainder_len > NUM_REMAINDER_COEFFS {
+            return Err(format!(
+                "FRI remainder polynomial too large for recursion layout: degree {} exceeds max {}",
+                self.fri_remainder_max_degree,
+                NUM_REMAINDER_COEFFS.saturating_sub(1)
+            ));
+        }
+
+        if self.grinding_factor > u32::MAX as usize {
+            return Err(format!(
+                "grinding_factor too large: {}/{}",
+                self.grinding_factor,
+                u32::MAX
+            ));
+        }
+
+        if self.num_transition_constraints > MAX_TRANSITION_CONSTRAINTS {
+            return Err(format!(
+                "num_transition_constraints too large: got {}, max is {}",
+                self.num_transition_constraints, MAX_TRANSITION_CONSTRAINTS
+            ));
+        }
+        if self.num_assertions > MAX_ASSERTIONS {
+            return Err(format!(
+                "num_assertions too large: got {}, max is {}",
+                self.num_assertions, MAX_ASSERTIONS
+            ));
+        }
+
+        let trace_ood_len = self
+            .trace_width
+            .checked_mul(extension_degree)
+            .ok_or_else(|| "trace_width * extension_degree overflow".to_string())?;
+        let constraint_ood_len = self
+            .constraint_frame_width
+            .checked_mul(extension_degree)
+            .ok_or_else(|| "constraint_frame_width * extension_degree overflow".to_string())?;
+        if self.ood_trace_current.len() != trace_ood_len {
+            return Err(format!(
+                "OOD trace current length mismatch: expected {trace_ood_len}, got {}",
+                self.ood_trace_current.len()
+            ));
+        }
+        if self.ood_trace_next.len() != trace_ood_len {
+            return Err(format!(
+                "OOD trace next length mismatch: expected {trace_ood_len}, got {}",
+                self.ood_trace_next.len()
+            ));
+        }
+        if self.ood_quotient_current.len() != constraint_ood_len {
+            return Err(format!(
+                "OOD quotient current length mismatch: expected {constraint_ood_len}, got {}",
+                self.ood_quotient_current.len()
+            ));
+        }
+        if self.ood_quotient_next.len() != constraint_ood_len {
+            return Err(format!(
+                "OOD quotient next length mismatch: expected {constraint_ood_len}, got {}",
+                self.ood_quotient_next.len()
+            ));
+        }
+
+        let num_fri_commitments = self.fri_commitments.len();
+        if num_fri_commitments == 0 {
+            return Err("missing FRI commitments".to_string());
+        }
+        let num_fri_layers = num_fri_commitments - 1;
+        if num_fri_layers > MAX_FRI_LAYERS {
+            return Err(format!(
+                "inner proof requires {num_fri_layers} FRI layers, but verifier supports at most {MAX_FRI_LAYERS}"
+            ));
+        }
+        let depth_trace = lde_domain_size.trailing_zeros() as usize;
+        if num_fri_layers > depth_trace {
+            return Err(format!(
+                "inner proof requires {num_fri_layers} FRI layers but LDE domain has only {depth_trace} bits"
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Validate that these public inputs won't trigger panics when constructing `StarkVerifierAir`.
+    pub fn validate_for_stark_verifier_air(&self) -> Result<(), String> {
+        self.validate_basic()?;
+
+        let ood_digest = compute_ood_digest(self);
+        let (constraint_coeffs, expected_z) = match self.field_extension {
+            FieldExtension::None => {
+                let (coeffs, z, _deep, _alphas) = compute_expected_transcript_draws(self, ood_digest)?;
+                (coeffs, [z, BaseElement::ZERO])
+            }
+            FieldExtension::Quadratic => {
+                let (coeffs, z_flat, _deep, _alphas_flat) =
+                    compute_expected_transcript_draws_quadratic(self, ood_digest)?;
+                let z = flat_to_ext_elem(&z_flat)
+                    .ok_or_else(|| "quadratic z must have two limbs".to_string())?;
+                (coeffs, z)
+            }
+            _ => {
+                return Err("unsupported field extension for recursion".to_string());
+            }
+        };
+
+        let g_trace = BaseElement::get_root_of_unity(self.trace_length.ilog2());
+
+        match inner_proof_kind(self) {
+            InnerProofKind::RpoAir => {
+                if self.trace_length != ROWS_PER_PERMUTATION {
+                    return Err(format!(
+                        "RpoAir recursion requires trace_length {} (got {})",
+                        ROWS_PER_PERMUTATION, self.trace_length
+                    ));
+                }
+                match self.field_extension {
+                    FieldExtension::None => {
+                        compute_rpo_ood_consistency(self, &constraint_coeffs, expected_z[0], g_trace)?;
+                    }
+                    FieldExtension::Quadratic => {
+                        compute_rpo_ood_consistency_quadratic(
+                            self,
+                            &constraint_coeffs,
+                            expected_z,
+                            g_trace,
+                        )?;
+                    }
+                    _ => unreachable!("filtered by validate_basic"),
+                }
+            }
+            InnerProofKind::TransactionAir => {
+                if self.trace_width != transaction_circuit::TRACE_WIDTH {
+                    return Err(format!(
+                        "transaction inner proof trace_width mismatch: expected {}, got {}",
+                        transaction_circuit::TRACE_WIDTH,
+                        self.trace_width
+                    ));
+                }
+                match self.field_extension {
+                    FieldExtension::None => {
+                        compute_transaction_ood_consistency(self, &constraint_coeffs, expected_z[0])?;
+                    }
+                    FieldExtension::Quadratic => {
+                        compute_transaction_ood_consistency_quadratic(self, &constraint_coeffs, expected_z)?;
+                    }
+                    _ => unreachable!("filtered by validate_basic"),
+                }
+            }
+            InnerProofKind::StarkVerifierAir => {
+                return Err(
+                    "non-RPO recursion for verifier proofs is not supported yet".to_string(),
+                );
+            }
+        }
+
+        Ok(())
     }
 
     /// Parse a `StarkVerifierPublicInputs` struct from `to_elements()` output.
@@ -395,95 +658,64 @@ impl StarkVerifierPublicInputs {
             (params_start_v1, NUM_PARAMS_V1)
         };
 
+        if num_params != NUM_PARAMS_V4 {
+            return Err(format!(
+                "unsupported StarkVerifierPublicInputs encoding version: expected v4 ({NUM_PARAMS_V4} params), got {num_params} params"
+            ));
+        }
+
         let num_queries = elements[params_start].as_int() as usize;
         let num_draws = elements[params_start + 1].as_int() as usize;
         let trace_partition_size = elements[params_start + 2].as_int() as usize;
         let constraint_partition_size = elements[params_start + 3].as_int() as usize;
         let blowup_factor = elements[params_start + 4].as_int() as usize;
 
-        let (fri_folding_factor, fri_remainder_max_degree, grinding_factor, trace_length) =
-            if num_params == NUM_PARAMS_V4 {
-                (
-                    elements[params_start + 5].as_int() as usize,
-                    elements[params_start + 6].as_int() as usize,
-                    elements[params_start + 7].as_int() as usize,
-                    elements[params_start + 8].as_int() as usize,
-                )
-            } else {
-                (2usize, 7usize, 0usize, elements[params_start + 5].as_int() as usize)
-            };
+        let (fri_folding_factor, fri_remainder_max_degree, grinding_factor, trace_length) = (
+            elements[params_start + 5].as_int() as usize,
+            elements[params_start + 6].as_int() as usize,
+            elements[params_start + 7].as_int() as usize,
+            elements[params_start + 8].as_int() as usize,
+        );
 
+        let raw_extension = elements[params_start + 13].as_int() as u64;
+        let field_extension = match raw_extension {
+            1 => FieldExtension::None,
+            2 => FieldExtension::Quadratic,
+            3 => FieldExtension::Cubic,
+            _ => {
+                return Err(format!("unknown field extension id: {raw_extension}"));
+            }
+        };
         let (
             trace_width,
             constraint_frame_width,
             num_transition_constraints,
             num_assertions,
-            field_extension,
-        ) = if num_params == NUM_PARAMS_V4 {
-            let raw_extension = elements[params_start + 13].as_int() as u64;
-            let field_extension = match raw_extension {
-                1 => FieldExtension::None,
-                2 => FieldExtension::Quadratic,
-                3 => FieldExtension::Cubic,
-                _ => {
-                    return Err(format!("unknown field extension id: {raw_extension}"));
-                }
-            };
-            (
-                elements[params_start + 9].as_int() as usize,
-                elements[params_start + 10].as_int() as usize,
-                elements[params_start + 11].as_int() as usize,
-                elements[params_start + 12].as_int() as usize,
-                field_extension,
-            )
-        } else if num_params == NUM_PARAMS_V3 {
-            let raw_extension = elements[params_start + 10].as_int() as u64;
-            let field_extension = match raw_extension {
-                1 => FieldExtension::None,
-                2 => FieldExtension::Quadratic,
-                3 => FieldExtension::Cubic,
-                _ => {
-                    return Err(format!("unknown field extension id: {raw_extension}"));
-                }
-            };
-            (
-                elements[params_start + 6].as_int() as usize,
-                elements[params_start + 7].as_int() as usize,
-                elements[params_start + 8].as_int() as usize,
-                elements[params_start + 9].as_int() as usize,
-                field_extension,
-            )
-        } else if num_params == NUM_PARAMS_V2 {
-            (
-                elements[params_start + 6].as_int() as usize,
-                elements[params_start + 7].as_int() as usize,
-                elements[params_start + 8].as_int() as usize,
-                elements[params_start + 9].as_int() as usize,
-                FieldExtension::None,
-            )
-        } else if inner_public_inputs.len() == 2 * STATE_WIDTH {
-            (
-                RPO_TRACE_WIDTH,
-                8usize,
-                STATE_WIDTH,
-                2 * STATE_WIDTH,
-                FieldExtension::None,
-            )
-        } else {
-            // Best-effort fallback for legacy serialized verifier public inputs.
-            // Depth-2 decoding prefers v2-encoded public inputs.
-            (VERIFIER_TRACE_WIDTH, 0usize, 0usize, 0usize, FieldExtension::None)
-        };
+        ) = (
+            elements[params_start + 9].as_int() as usize,
+            elements[params_start + 10].as_int() as usize,
+            elements[params_start + 11].as_int() as usize,
+            elements[params_start + 12].as_int() as usize,
+        );
 
-        let extension_degree = field_extension_degree(field_extension)?;
-        let trace_ood_len = trace_width * extension_degree;
-        let constraint_ood_len = constraint_frame_width * extension_degree;
-        let ood_len = 2 * (trace_ood_len + constraint_ood_len);
+        let extension_degree = Self::extension_degree_for_recursion(field_extension)?;
+        let trace_ood_len = trace_width
+            .checked_mul(extension_degree)
+            .ok_or_else(|| "trace_width * extension_degree overflow".to_string())?;
+        let constraint_ood_len = constraint_frame_width
+            .checked_mul(extension_degree)
+            .ok_or_else(|| "constraint_frame_width * extension_degree overflow".to_string())?;
+        let ood_len = trace_ood_len
+            .checked_add(constraint_ood_len)
+            .and_then(|v| v.checked_mul(2))
+            .ok_or_else(|| "OOD length overflow".to_string())?;
 
         let (ood_trace_current, ood_quotient_current, ood_trace_next, ood_quotient_next) =
-            if num_params == NUM_PARAMS_V4 {
+            {
                 let ood_start = idx;
-                let ood_end = ood_start + ood_len;
+                let ood_end = ood_start
+                    .checked_add(ood_len)
+                    .ok_or_else(|| "OOD range overflow".to_string())?;
                 if ood_end > params_start {
                     return Err(format!(
                         "missing OOD frame elements: expected {ood_len}, have {}",
@@ -492,12 +724,13 @@ impl StarkVerifierPublicInputs {
                 }
                 let ood_slice = &elements[ood_start..ood_end];
                 let mut ood_idx = 0usize;
-                let take = |slice: &[BaseElement], idx: &mut usize, len: usize| -> Vec<BaseElement> {
-                    let start = *idx;
-                    let end = start + len;
-                    *idx = end;
-                    slice[start..end].to_vec()
-                };
+                let take =
+                    |slice: &[BaseElement], idx: &mut usize, len: usize| -> Vec<BaseElement> {
+                        let start = *idx;
+                        let end = start + len;
+                        *idx = end;
+                        slice[start..end].to_vec()
+                    };
 
                 (
                     take(ood_slice, &mut ood_idx, trace_ood_len),
@@ -505,15 +738,11 @@ impl StarkVerifierPublicInputs {
                     take(ood_slice, &mut ood_idx, trace_ood_len),
                     take(ood_slice, &mut ood_idx, constraint_ood_len),
                 )
-            } else {
-                (Vec::new(), Vec::new(), Vec::new(), Vec::new())
             };
 
-        let ood_end = if num_params == NUM_PARAMS_V4 {
-            idx + ood_len
-        } else {
-            idx
-        };
+        let ood_end = idx
+            .checked_add(ood_len)
+            .ok_or_else(|| "OOD range overflow".to_string())?;
 
         let fri_elems = &elements[ood_end..params_start];
         if !fri_elems.len().is_multiple_of(DIGEST_WIDTH) {
@@ -528,7 +757,7 @@ impl StarkVerifierPublicInputs {
             .map(|chunk| slice_to_digest(chunk))
             .collect::<Vec<_>>();
 
-        Ok(Self::new(
+        Self::try_new(
             inner_public_inputs,
             inner_pub_inputs_hash,
             trace_commitment,
@@ -552,7 +781,7 @@ impl StarkVerifierPublicInputs {
             num_transition_constraints,
             num_assertions,
             field_extension,
-        ))
+        )
     }
 }
 
