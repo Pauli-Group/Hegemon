@@ -1,3 +1,4 @@
+use crate::commitment_tree::CommitmentTreeError;
 use crate::types::{BlockHash, Nullifier, ValidatorId};
 use protocol_versioning::VersionBinding;
 use thiserror::Error;
@@ -69,6 +70,14 @@ pub enum ProofError {
     RecursiveProofPaddingMismatch,
     #[error("recursive proof inputs mismatch at index {0}")]
     RecursiveProofInputsMismatch(usize),
+    #[error("invalid commitment-tree anchor at transaction index {index}")]
+    InvalidAnchor { index: usize, anchor: [u8; 32] },
+    #[error("recursive proof starting root mismatch")]
+    StartingRootMismatch { expected: [u8; 32], observed: [u8; 32] },
+    #[error("recursive proof ending root mismatch")]
+    EndingRootMismatch { expected: [u8; 32], observed: [u8; 32] },
+    #[error("commitment tree error: {0}")]
+    CommitmentTree(#[from] CommitmentTreeError),
     #[error("verifier internal error: {0}")]
     Internal(&'static str),
 }

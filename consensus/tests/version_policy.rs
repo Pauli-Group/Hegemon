@@ -6,8 +6,8 @@ use common::{
 };
 use consensus::nullifier::NullifierSet;
 use consensus::{
-    BftConsensus, ConsensusError, DEFAULT_VERSION_BINDING, HashVerifier, VersionProposal,
-    VersionSchedule,
+    BftConsensus, CommitmentTreeState, ConsensusError, DEFAULT_VERSION_BINDING, HashVerifier,
+    VersionProposal, VersionSchedule,
 };
 use protocol_versioning::VersionBinding;
 
@@ -15,7 +15,8 @@ use protocol_versioning::VersionBinding;
 fn version_schedule_controls_activation() {
     let validators = make_validators(4, 10);
     let validator_set = validator_set(&validators);
-    let mut consensus = BftConsensus::new(validator_set.clone(), [0u8; 32], HashVerifier);
+    let genesis_tree = CommitmentTreeState::default();
+    let mut consensus = BftConsensus::new(validator_set.clone(), genesis_tree.clone(), HashVerifier);
     let tx =
         dummy_transaction_with_version(7, VersionBinding::new(2, DEFAULT_VERSION_BINDING.crypto));
     let params = BftBlockParams {
@@ -28,7 +29,7 @@ fn version_schedule_controls_activation() {
         validators: &validators,
         signer_indices: &[0, 1, 2],
         base_nullifiers: &NullifierSet::new(),
-        base_state_root: [0u8; 32],
+        base_commitment_tree: &genesis_tree,
         supply_digest: 0,
     };
     let (block, _, _) = assemble_bft_block(params).expect("block");
@@ -46,7 +47,7 @@ fn version_schedule_controls_activation() {
         upgrade: None,
     });
     let mut consensus =
-        BftConsensus::with_schedule(validator_set, [0u8; 32], HashVerifier, schedule);
+        BftConsensus::with_schedule(validator_set, genesis_tree.clone(), HashVerifier, schedule);
     let params = BftBlockParams {
         height: 1,
         view: 1,
@@ -57,7 +58,7 @@ fn version_schedule_controls_activation() {
         validators: &validators,
         signer_indices: &[0, 1, 2],
         base_nullifiers: &NullifierSet::new(),
-        base_state_root: [0u8; 32],
+        base_commitment_tree: &genesis_tree,
         supply_digest: 0,
     };
     let (block, _, _) = assemble_bft_block(params).expect("block");

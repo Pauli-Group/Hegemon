@@ -167,6 +167,13 @@ fn recursive_proof_verifier_accepts_valid_block() {
     tree.append(felts_to_bytes32(&input_note.commitment()))
         .expect("append");
 
+    let parent_tree = consensus::CommitmentTreeState::from_leaves(
+        consensus::COMMITMENT_TREE_DEPTH,
+        consensus::DEFAULT_ROOT_HISTORY_LIMIT,
+        vec![felts_to_bytes32(&input_note.commitment())],
+    )
+    .expect("parent commitment tree");
+
     let witness = make_valid_witness(0, &tree);
     let root_felts = bytes32_to_felts(&witness.merkle_root).expect("root felts");
     let input = &witness.inputs[0];
@@ -214,7 +221,7 @@ fn recursive_proof_verifier_accepts_valid_block() {
         view: 0,
         timestamp_ms: 0,
         parent_hash: [0u8; 32],
-        state_root: [0u8; 32],
+        state_root: recursive_proof.ending_root,
         nullifier_root: [0u8; 32],
         proof_commitment: compute_proof_commitment(&transactions),
         recursive_proof_hash: recursive_proof.recursive_proof_hash,
@@ -239,6 +246,6 @@ fn recursive_proof_verifier_accepts_valid_block() {
 
     verify_commitments(&block).expect("commitments");
     RecursiveProofVerifier
-        .verify_block(&block)
+        .verify_block(&block, &parent_tree)
         .expect("recursive proof");
 }
