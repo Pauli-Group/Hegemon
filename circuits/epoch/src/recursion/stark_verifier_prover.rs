@@ -1391,6 +1391,23 @@ impl StarkVerifierProver {
         let active_perms = pre_merkle_perms + merkle_perms_total + remainder_hash_perms;
         let active_rows = active_perms * ROWS_PER_PERMUTATION;
         let total_rows = active_rows.next_power_of_two();
+        log::info!(
+            target: "recursion",
+            "StarkVerifierProver trace sizing: trace_length={} blowup={} trace_width={} constraint_width={} num_queries={} num_draws={} trace_partition_size={} constraint_partition_size={} extension_degree={} merkle_perms_per_query={} merkle_perms_total={} active_perms={} total_rows={}",
+            self.pub_inputs.trace_length,
+            self.pub_inputs.blowup_factor,
+            self.pub_inputs.trace_width,
+            self.pub_inputs.constraint_frame_width,
+            self.pub_inputs.num_queries,
+            self.pub_inputs.num_draws,
+            self.pub_inputs.trace_partition_size,
+            self.pub_inputs.constraint_partition_size,
+            extension_degree,
+            merkle_perms_per_query,
+            merkle_perms_total,
+            active_perms,
+            total_rows
+        );
 
         let mut columns = Vec::with_capacity(VERIFIER_TRACE_WIDTH);
         for _ in 0..VERIFIER_TRACE_WIDTH {

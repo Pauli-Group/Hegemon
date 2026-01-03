@@ -124,11 +124,10 @@ fn acceptable_options() -> AcceptableOptions {
 }
 
 fn fast_acceptable_options() -> winterfell::ProofOptions {
-    // Blowup factor must be at least 2 * constraint_degree = 2 * 5 = 10
-    // Use 16 to be safe (power of 2)
+    // Dev-fast: keep default blowup and minimize queries for faster recursion tests.
     winterfell::ProofOptions::new(
+        1,
         8,
-        16,
         0,
         winterfell::FieldExtension::Quadratic,
         2,

@@ -83,6 +83,15 @@ impl StarkVerifierBatchProver {
         // Concatenate into a single batch trace.
         let batch_len = segment_len * inners.len();
         let batch_len_pow2 = batch_len.next_power_of_two();
+        log::info!(
+            target: "recursion",
+            "StarkVerifierBatchProver trace sizing: segments={} segment_len={} batch_len={} batch_len_pow2={} trace_width={}",
+            inners.len(),
+            segment_len,
+            batch_len,
+            batch_len_pow2,
+            VERIFIER_TRACE_WIDTH
+        );
         let mut columns = Vec::with_capacity(VERIFIER_TRACE_WIDTH);
         for _ in 0..VERIFIER_TRACE_WIDTH {
             columns.push(vec![BaseElement::ZERO; batch_len_pow2]);

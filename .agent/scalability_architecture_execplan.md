@@ -12,6 +12,8 @@ This plan makes the chain fundamentally scalable by validating each block with a
 
 ## Progress
 
+- [x] (2026-01-03T06:21Z) Completed Milestone 5 end-to-end validation in tmux: mined a block with a shielded transfer (dev-fast proofs), observed `Recursive block proof generated`, verified `block_getRecursiveProof` returns non-empty proof bytes for the mined block hash, and `da_getChunk` returns a chunk+Merkle proof when called with the logged `da_root`; updated `scripts/recursive_proof_da_e2e_tmux.sh` + `runbooks/recursive_proof_da_e2e.md` to match actual RPC params/timeouts.
+- [x] (2026-01-03T03:31Z) Prevented runaway memory during Substrate E2E by changing StorageChanges caching to return an RAII handle stored on the mining template, bounding the cache, and taking StorageChanges early on import (fail-fast if missing); ran `cargo test -p hegemon-node --features substrate` and compiled `cargo test -p security-tests --features substrate --test multi_node_substrate --no-run`.
 - [x] (2025-12-31T09:40Z) Fixed recursion verifier replay/restore/tape handling and boundary constraint counts; recursion verifier tests now pass.
 - [x] (2025-12-31T09:40Z) Fixed EpochProver public-input wiring and re-ran `epoch-circuit` tests (including ignored heavy tests) with `CARGO_INCREMENTAL=0`.
 - [x] (2025-12-31T02:04Z) Rebuilt the ExecPlan to match .agent/PLANS.md requirements, including milestone-level commands, acceptance criteria, and file-specific edit guidance.
@@ -27,7 +29,7 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2025-12-31T06:15Z) Started Path A streaming layout in recursion verifier by adding tape columns + coin-state save/restore masks and a minimal RpoAir tape correctness test.
 - [x] (2025-12-31T06:55Z) Paired replayed deep-coefficient draws with leaf-hash chains in the recursion verifier, updated merkle schedule masks, and adjusted merkle-related tests.
 - [x] (2025-12-31T03:09Z) Chose a baseline target of ~85-bit PQ security (collision-limited by 256-bit digests) and recorded required proof-parameter implications in `.agent/scalability_architecture_math.md`.
-- [ ] (2025-12-31T03:09Z) Lock ProofOptions and recursion format for consensus-critical proofs at the chosen target (completed: transaction proofs now use quadratic extension; completed: parser supports quadratic extension metadata; remaining: recursive verifier trace accepts quadratic inner proofs and end-to-end recursion test).
+- [ ] (2025-12-31T03:09Z) Lock ProofOptions and recursion format for consensus-critical proofs at the chosen target (completed: transaction proofs now use quadratic extension; completed: parser supports quadratic extension metadata; completed: recursive verifier trace accepts quadratic inner proofs; remaining: full-security (32-query) end-to-end mining/recursion is still too slow/memory-heavy without an aggregation strategy).
 - [x] (2025-12-31T04:12Z) Updated transaction STARK proof options to quadratic extension and aligned verifiers + docs to the ~85-bit PQ collision ceiling.
 - [x] (2025-12-31T02:04Z) Update DESIGN.md, METHODS.md, and the README.md whitepaper to match the new architecture (completed: DESIGN.md + METHODS.md security notes + README.md whitepaper alignment).
 - [x] (2025-12-31T18:45Z) Retired legacy block aggregation: `prove_block` now emits `RecursiveBlockProof` by default, added a fast proving helper for dev/tests, updated consensus test scaffolding to accept recursive proofs, and refreshed docs to remove `RecursiveAggregation`.
@@ -43,9 +45,9 @@ This plan makes the chain fundamentally scalable by validating each block with a
 - [x] (2026-01-01T23:40Z) Fixed the recursion transcript pre-merkle permutation count (pow-nonce reseed vs. remainder hash) and rebuilt the node so the verifier/prover schedules stay aligned.
 - [x] (2026-01-02T00:10Z) Fixed quadratic recursion deep evaluation to lift base-field trace rows into quadratic limbs, and aligned inner-proof parsing with base-field trace queries.
 - [x] (2026-01-02T00:10Z) Added an end-to-end runbook for recursive proof + DA RPC validation (`runbooks/recursive_proof_da_e2e.md`).
-- [ ] (2026-01-02T09:00Z) Run the dev-node end-to-end and exercise the new RPC endpoints (completed: node stays up with mining; shielded transfer accepted; DA encoding stored; latest run: block 6 building with tx_count=1 and recursive proof generation still in-flight after >1h, so RPC proof queries are not yet confirmed).
-- [ ] (2026-01-02T09:00Z) Integrate node, wallet, mempool, and RPC so end-to-end mining works with the new block format (completed: tx enters the pool and block builder schedules it; remaining: recursive proof completes and RPC is verified against the mined block).
-- [ ] (2026-01-02T09:00Z) Add benchmarks, tests, and runbooks that prove the system works (completed: recursive proof + DA RPC runbook; completed: heavy recursive proof tests; remaining: end-to-end RPC verification once recursive proof is stored).
+- [x] (2026-01-03T06:21Z) Ran the dev-node end-to-end and exercised the new RPC endpoints (recursive proof generated for a mined block, `block_getRecursiveProof` returns proof bytes, and DA chunk proofs are retrievable by `da_root`).
+- [x] (2026-01-03T06:21Z) Integrated node, wallet, mempool, and RPC so end-to-end mining works with the new block format (dev-fast wallet proving requires `HEGEMON_ACCEPT_FAST_PROOFS=1`).
+- [x] (2026-01-03T06:21Z) Updated runbooks and tmux automation for repeatable end-to-end validation; remaining work is performance (not correctness) on recursive proof generation throughput.
 
 ## Surprises & Discoveries
 
@@ -73,8 +75,8 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Evidence: `cargo test -p epoch-circuit verifier_spike::tests::test_transaction_recursion_budget -- --nocapture` shows `ood_eval_elems: 364` vs `trace_width_cap: 255` with `field_extension: Quadratic (degree 2)`.
   Implication: Recursion will need a wider trace layout, OOD vector partitioning, or a different recursion backend before we can verify transaction proofs end-to-end.
 
-- Observation (2025-12-31T05:31Z): Path A streaming layout keeps total rows at 2^17 for transaction proofs, but per-query coefficient draw perms are a material share of the schedule.
-  Evidence: `cargo test -p epoch-circuit verifier_spike::tests::test_transaction_streaming_plan_budget -- --nocapture` prints `per_query_perms: 148`, `global_perms: 1189`, `rows_unpadded: 94800`, `total_rows: 131072`.
+- Observation (2025-12-31T05:31Z): Path A streaming layout keeps total rows at 2^18 for the current transaction proof options (quadratic extension + 32 queries), and per-query transcript work is still a material share of the schedule.
+  Evidence: `cargo test -p epoch-circuit verifier_spike::tests::test_transaction_streaming_plan_budget -- --nocapture` prints `per_query_perms: 240`, `global_perms: 1196`, `rows_unpadded: 142016`, `total_rows: 262144`.
   Implication: Path A is feasible on rows but requires a careful transcript/leaf interleave schedule (coin-state save/restore + coeff tape) to avoid reintroducing width growth.
 
 - Observation (2025-12-31T06:55Z): Leaf-hash permutations cannot be interrupted without breaking the RPO sponge carry, so replay draws are inserted at leaf-hash chain boundaries (partition/merge starts) rather than between permutations.
@@ -138,10 +140,13 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Implication: Keep trace query parsing in `BaseElement` and adapt quadratic DEEP evaluation to combine base trace values with extension coefficients.
 - Observation (2026-01-02T08:36Z): Fast wallet proving options are rejected by the on-chain verifier.
   Evidence: `HEGEMON_WALLET_PROVER_FAST=1 wallet substrate-send ...` fails with `VerificationFailed(UnacceptableProofOptions)`.
-  Implication: End-to-end runs must use the default proof options unless we explicitly widen acceptable options for dev-only runs.
-- Observation (2026-01-02T09:00Z): Recursive block proof generation for a real wallet transaction did not complete within a 1h E2E run.
-  Evidence: `test-logs/hegemon-dev-node-e2e-4.log` shows `block_number=6 tx_count=1` but never logs `Recursive block proof generated` before the run timed out.
-  Implication: The current recursive prover path is too slow or stalls for live transaction proofs; we need either performance work (without lowering soundness) or a redesigned integration to finish Milestone 5.
+  Implication: End-to-end runs must use the default proof options unless we explicitly widen acceptable options for dev-only runs (set `HEGEMON_ACCEPT_FAST_PROOFS=1` in both the node and wallet for fast E2E).
+- Observation (2026-01-03T06:21Z): Recursive block proof generation completes end-to-end but is slow in absolute time even in dev-fast mode.
+  Evidence: A tmux E2E run logged `Recursive block proof generated block_number=4 tx_count=1` after ~16 minutes, and `block_getRecursiveProof` returned non-empty proof bytes for the mined block hash.
+  Implication: Correctness is proven end-to-end, but the prover is now the scalability bottleneck; next work is performance profiling (per-phase timers) and a pivot if the current Winterfell prover throughput is fundamentally insufficient at the ~85-bit PQ target.
+- Observation (2026-01-03T06:21Z): DA RPC chunk retrieval is keyed by `da_root`, not by block hash, and `da_getParams` is global.
+  Evidence: `da_getChunk` returns `null` when called with a block hash but returns a chunk+Merkle path when called with the logged `da_root`; `da_getParams` ignores extra params.
+  Implication: E2E scripts/runbooks must carry forward `da_root` (or we should add a helper RPC to fetch `da_root` for a given block hash).
 ## Decision Log
 
 - Decision: Treat scalability as proof-carrying blocks plus data-availability sampling, not larger blocks or faster block times.
@@ -177,7 +182,7 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Date/Author: 2025-12-31 / Codex
 
 - Decision: Use a Path A streaming schedule that pairs coefficient-draw permutations with leaf-hash permutations (coeff tape) and draws one FRI alpha per layer.
-  Rationale: This keeps trace width <255 while preserving a bounded row budget (~2^17 for transaction proofs) without forking Winterfell.
+  Rationale: This keeps trace width <255 while preserving a bounded row budget (~2^18 for the current transaction proof options) without forking Winterfell.
   Date/Author: 2025-12-31 / Codex
 
 - Decision: Replay deep-coefficient draws per query at leaf-hash chain boundaries (partition/merge starts) instead of interleaving inside hash chains.
@@ -215,6 +220,10 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Rationale: The DA encoding already exists during block import; reusing it avoids re-deriving ciphertext blobs from extrinsics and keeps RPC responses fast.
   Date/Author: 2026-01-01 / Codex
 
+- Decision: Cap shielded transfers per block when recursive block proofs are enabled (default `HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK=1`).
+  Rationale: Recursive batch proving cost scales roughly linearly in the number of inner transaction proofs and can exceed commodity RAM (e.g. >100GB) when batching many transfers; the cap prevents runaway memory while we build a real aggregation strategy.
+  Date/Author: 2026-01-03 / Codex
+
 - Decision: Benchmark recursive proof sizing using a single RPO-based synthetic transaction in circuits/bench.
   Rationale: The existing bench generates independent transaction witnesses; using a single witness avoids merkle-root drift while still producing a representative recursive proof artifact for sizing/verification timing.
   Date/Author: 2026-01-01 / Codex
@@ -225,6 +234,7 @@ Note (2026-01-01T09:30Z): Updated Progress, Surprises & Discoveries, and Decisio
 
 Outcome (2025-12-31T09:40Z): The Path A recursion verifier updates now satisfy the full `epoch-circuit` test suite, including the ignored heavy tests when run with `CARGO_INCREMENTAL=0`. Remaining work includes the recursion size/time benchmark and the README whitepaper alignment.
 Outcome (2025-12-31T10:05Z): Milestone 1 feasibility benchmarks completed with measured spike ratios and recursive proof timings; the spike acceptance criteria are met. Remaining work moves to Milestone 2 documentation alignment and consensus type updates.
+Outcome (2026-01-03T06:21Z): Milestone 5 end-to-end validation completed: dev node mines a block with a recursive proof and DA encoding, and `block_getRecursiveProof` / `da_getChunk` return non-empty artifacts. Remaining work is proving throughput (dev-fast still takes ~15–20 minutes per recursive block proof on a laptop).
 
 ## Context and Orientation
 
@@ -308,8 +318,9 @@ Milestone 5 commands:
 
 Then query the new RPC endpoints you add:
 
-    curl -s -H "Content-Type: application/json" -d '{"id":1,"jsonrpc":"2.0","method":"block_getRecursiveProof","params":["0x..."]}' http://127.0.0.1:9944
-    curl -s -H "Content-Type: application/json" -d '{"id":2,"jsonrpc":"2.0","method":"da_getChunk","params":["0x...",0]}' http://127.0.0.1:9944
+    curl -s -H "Content-Type: application/json" -d '{"id":1,"jsonrpc":"2.0","method":"block_getRecursiveProof","params":["0x<BLOCK_HASH>"]}' http://127.0.0.1:9944
+    curl -s -H "Content-Type: application/json" -d '{"id":2,"jsonrpc":"2.0","method":"da_getParams","params":[]}' http://127.0.0.1:9944
+    curl -s -H "Content-Type: application/json" -d '{"id":3,"jsonrpc":"2.0","method":"da_getChunk","params":["0x<DA_ROOT>",0]}' http://127.0.0.1:9944
 
 Expected evidence is non-empty proof bytes, a DA chunk payload, and a Merkle proof that verifies locally.
 
@@ -338,16 +349,26 @@ Example output from the transaction recursion budget test:
 Example output from the transaction streaming plan test:
 
     === Transaction Streaming Plan (Path A) ===
-    per_query_perms: 148
-    global_perms: 1189
-    rows_unpadded: 94800
-    total_rows: 131072
+    field_extension: Quadratic (degree 2)
+    trace_leaf_hash_perms: 11
+    constraint_leaf_hash_perms: 3
+    fri_leaf_hash_perms: 1
+    merkle_depth: 18
+    merkle_perms_per_query: 200
+    coeff_draw_perms_per_query: 28
+    alpha_draw_perms_per_query: 12
+    per_query_perms: 240
+    global_perms: 1196
+    total_perms: 8876
+    rows_unpadded: 142016
+    total_rows: 262144
 
 Plan Update Note (2025-12-31T09:40Z): Updated Progress, Surprises & Discoveries, Decision Log, and Outcomes to reflect the recursion verifier fixes, passing heavy tests, and the incremental-cache ICE workaround.
 Plan Update Note (2025-12-31T10:05Z): Marked Milestone 1 complete, added spike/bench outputs and Criterion constraints, and updated commands to include the spike and bench output runs.
 Plan Update Note (2025-12-31T10:20Z): Updated Progress to mark the README whitepaper alignment complete and recorded the doc update milestone.
 Plan Update Note (2025-12-31T10:30Z): Recorded the consensus header/types updates for DA + recursive proof commitments and noted the remaining chain spec updates for Milestone 2.
 Plan Update Note (2026-01-01T16:20Z): Added Milestone 5 RPC + bench progress, recorded the txpool-background shutdown during dev-node runs, and logged decisions for recursive proof/DA RPC handling.
+Plan Update Note (2026-01-03T03:31Z): Updated the StorageChanges caching mechanism to avoid leaking state diffs when mining templates are discarded or block import fails early, and documented the new cache-capacity env var.
 
 Example log line after Milestone 5:
 
@@ -427,8 +448,8 @@ In consensus validation, add a sampler which uses local randomness (not producer
 In node RPC under node/src/substrate/rpc, add endpoints for recursive proofs and DA chunks:
 
     block_getRecursiveProof(block_hash) -> { proof_bytes, proof_hash, tx_count, starting_root, ending_root }
-    da_getChunk(block_hash, index) -> { data, proof }
-    da_getParams(block_hash) -> { data_shards, parity_shards, chunk_size, sample_count }
+    da_getChunk(da_root, index) -> { chunk, merkle_path }
+    da_getParams() -> { chunk_size, sample_count }
 
 Dependencies must remain hash-based and post-quantum safe. Use the existing blake3 hashing utilities for commitments. For erasure coding, use reed-solomon-erasure and confine it to the DA encoding path.
 

@@ -302,7 +302,8 @@ impl Air for StarkVerifierBatchAir {
             + ood_eval_len // bind OOD eval inputs
             + DIGEST_WIDTH // capture ood digest
             + STATE_WIDTH // capture coin state at z
-            + STATE_WIDTH; // restore coin state (+ood reseed)
+            + STATE_WIDTH // restore coin state (+ood reseed)
+            + extension_degree; // OOD constraint consistency check (winter-verifier step 3)
 
         let transcript_store_constraints = num_constraint_coeffs // capture constraint coeffs
             + num_deep_coeffs // capture deep coeffs
@@ -472,6 +473,7 @@ impl Air for StarkVerifierBatchAir {
         degrees.extend(vec![deg!(1, vec![full_cycle]); DIGEST_WIDTH]); // capture ood digest
         degrees.extend(vec![boundary_rel_degree.clone(); STATE_WIDTH]); // capture coin at z
         degrees.extend(vec![deg!(1, vec![full_cycle]); STATE_WIDTH]); // restore coin
+        degrees.extend(vec![TransitionConstraintDegree::new(1); extension_degree]); // ood constraint consistency check
 
         // Transcript draw binding degrees.
         degrees.extend(vec![deg!(1, vec![full_cycle]); num_constraint_coeffs]);
@@ -663,18 +665,18 @@ impl Air for StarkVerifierBatchAir {
         p += self.num_deep_coeffs;
         let inner_fri_alphas = &periodic_values[p..p + num_fri_layers * extension_degree];
         p += num_fri_layers * extension_degree;
-        let _inner_ood_constraint_eval_10 = periodic_values[p];
+        let inner_ood_constraint_eval_10 = periodic_values[p];
         p += 1;
-        let _inner_ood_constraint_eval_11 = if is_quadratic {
+        let inner_ood_constraint_eval_11 = if is_quadratic {
             let limb = periodic_values[p];
             p += 1;
             limb
         } else {
             E::ZERO
         };
-        let _inner_ood_constraint_eval_20 = periodic_values[p];
+        let inner_ood_constraint_eval_20 = periodic_values[p];
         p += 1;
-        let _inner_ood_constraint_eval_21 = if is_quadratic {
+        let inner_ood_constraint_eval_21 = if is_quadratic {
             let limb = periodic_values[p];
             p += 1;
             limb
@@ -1193,6 +1195,14 @@ impl Air for StarkVerifierBatchAir {
                 coin_restore_mask * (current[RATE_START + DIGEST_WIDTH + i] - saved);
         }
         idx += STATE_WIDTH;
+
+        // OOD constraint consistency check (evaluate inner constraints at z).
+        result[idx] = inner_ood_constraint_eval_10 - inner_ood_constraint_eval_20;
+        idx += 1;
+        if is_quadratic {
+            result[idx] = inner_ood_constraint_eval_11 - inner_ood_constraint_eval_21;
+            idx += 1;
+        }
 
         // --------------------------------------------------------------------
         // Transcript draw binding
@@ -1798,12 +1808,6 @@ impl Air for StarkVerifierBatchAir {
                 (Err(err), _) => panic!("unsupported inner proof kind: {err}"),
                 (_, _) => panic!("unsupported field extension for batch verifier"),
             };
-            if ood_eval1_flat != ood_eval2_flat {
-                panic!(
-                    "inner proof {seg_idx} OOD constraint evaluations mismatch: {:?} vs {:?}",
-                    ood_eval1_flat, ood_eval2_flat
-                );
-            }
 
             let start = seg_idx * self.segment_len;
             let end = start + self.segment_len;

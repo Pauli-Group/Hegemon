@@ -192,31 +192,125 @@ use crate::substrate::sync::ChainSyncService;
 /// Type alias for storage changes in our runtime
 pub type HegemonStorageChanges = StorageChanges<runtime::Block>;
 
-/// Global storage changes cache
-///
-/// This cache stores StorageChanges indexed by a unique key (block number + timestamp).
-/// The changes are inserted during block building and retrieved during block import.
-///
-/// Thread-safe via parking_lot::RwLock for concurrent access.
-static STORAGE_CHANGES_CACHE: once_cell::sync::Lazy<
-    parking_lot::RwLock<HashMap<u64, HegemonStorageChanges>>,
-> = once_cell::sync::Lazy::new(|| parking_lot::RwLock::new(HashMap::new()));
+const DEFAULT_STORAGE_CHANGES_CACHE_CAPACITY: usize = 64;
 
 /// Counter for generating unique cache keys
 static STORAGE_CHANGES_KEY_COUNTER: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
-/// Store storage changes in the cache and return the key
-pub fn cache_storage_changes(changes: HegemonStorageChanges) -> u64 {
+struct StorageChangesCache {
+    capacity: usize,
+    order: VecDeque<u64>,
+    entries: HashMap<u64, HegemonStorageChanges>,
+}
+
+impl StorageChangesCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            order: VecDeque::new(),
+            entries: HashMap::new(),
+        }
+    }
+
+    fn insert(&mut self, key: u64, changes: HegemonStorageChanges) {
+        if self.capacity == 0 {
+            return;
+        }
+
+        if self.entries.contains_key(&key) {
+            self.entries.insert(key, changes);
+            self.order.retain(|entry| entry != &key);
+            self.order.push_back(key);
+            return;
+        }
+
+        while self.entries.len() >= self.capacity {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+                tracing::warn!(
+                    storage_changes_key = oldest,
+                    capacity = self.capacity,
+                    "StorageChanges cache full; evicted oldest entry"
+                );
+            } else {
+                break;
+            }
+        }
+
+        self.entries.insert(key, changes);
+        self.order.push_back(key);
+    }
+
+    fn take(&mut self, key: u64) -> Option<HegemonStorageChanges> {
+        let changes = self.entries.remove(&key);
+        if changes.is_some() {
+            self.order.retain(|entry| entry != &key);
+        }
+        changes
+    }
+
+    fn discard(&mut self, key: u64) {
+        if self.entries.remove(&key).is_some() {
+            self.order.retain(|entry| entry != &key);
+        }
+    }
+}
+
+fn load_storage_changes_cache_capacity() -> usize {
+    let capacity = env_usize("HEGEMON_STORAGE_CHANGES_CACHE_CAPACITY")
+        .unwrap_or(DEFAULT_STORAGE_CHANGES_CACHE_CAPACITY);
+    if capacity == 0 {
+        return DEFAULT_STORAGE_CHANGES_CACHE_CAPACITY;
+    }
+    capacity
+}
+
+/// When a `BlockTemplate` is discarded (reorg, stale work, local shutdown), this guard ensures we
+/// don't leak the cached `StorageChanges`.
+#[derive(Debug)]
+pub struct StorageChangesGuard {
+    key: u64,
+}
+
+impl StorageChangesGuard {
+    pub fn key(&self) -> u64 {
+        self.key
+    }
+}
+
+impl Drop for StorageChangesGuard {
+    fn drop(&mut self) {
+        discard_storage_changes(self.key);
+    }
+}
+
+pub type StorageChangesHandle = Arc<StorageChangesGuard>;
+
+/// Global storage changes cache
+///
+/// This cache stores StorageChanges indexed by a unique key.
+/// The changes are inserted during block building and retrieved during block import.
+static STORAGE_CHANGES_CACHE: once_cell::sync::Lazy<ParkingMutex<StorageChangesCache>> =
+    once_cell::sync::Lazy::new(|| {
+        ParkingMutex::new(StorageChangesCache::new(load_storage_changes_cache_capacity()))
+    });
+
+fn discard_storage_changes(key: u64) {
+    STORAGE_CHANGES_CACHE.lock().discard(key);
+}
+
+/// Store storage changes in the cache and return a handle which cleans up on drop.
+pub fn cache_storage_changes(changes: HegemonStorageChanges) -> StorageChangesHandle {
     let key = STORAGE_CHANGES_KEY_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    STORAGE_CHANGES_CACHE.write().insert(key, changes);
+    STORAGE_CHANGES_CACHE.lock().insert(key, changes);
     tracing::debug!(key, "Cached storage changes for block import");
-    key
+    Arc::new(StorageChangesGuard { key })
 }
 
 /// Retrieve and remove storage changes from the cache
 pub fn take_storage_changes(key: u64) -> Option<HegemonStorageChanges> {
-    let changes = STORAGE_CHANGES_CACHE.write().remove(&key);
+    let changes = STORAGE_CHANGES_CACHE.lock().take(key);
     if changes.is_some() {
         tracing::debug!(key, "Retrieved storage changes from cache");
     } else {
@@ -1023,6 +1117,36 @@ pub fn check_wasm() -> Result<(), String> {
     Ok(())
 }
 
+fn load_max_shielded_transfers_per_block(recursive_block_proofs_enabled: bool) -> usize {
+    let configured =
+        env_usize("HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK").unwrap_or_else(|| {
+            if recursive_block_proofs_enabled {
+                1
+            } else {
+                usize::MAX
+            }
+        });
+    if configured == 0 {
+        tracing::warn!(
+            "HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK is zero; no shielded transfers will be included"
+        );
+    }
+    configured
+}
+
+fn is_recursive_shielded_transfer(call: &runtime::RuntimeCall) -> bool {
+    let runtime::RuntimeCall::ShieldedPool(call) = call else {
+        return false;
+    };
+
+    matches!(
+        call,
+        ShieldedPoolCall::shielded_transfer { .. }
+            | ShieldedPoolCall::shielded_transfer_unsigned { .. }
+            | ShieldedPoolCall::batch_shielded_transfer { .. }
+    )
+}
+
 // =============================================================================
 // Wire BlockBuilder API with StorageChanges capture
 // =============================================================================
@@ -1046,7 +1170,8 @@ pub fn check_wasm() -> Result<(), String> {
 /// 3. **Returns StorageChanges** which we cache for block import
 ///
 /// The StorageChanges are stored in a global cache (STORAGE_CHANGES_CACHE) and
-/// the cache key is returned in StateExecutionResult.storage_changes_key.
+/// an RAII handle is returned in StateExecutionResult.storage_changes (so discarded templates
+/// do not leak memory).
 /// When wire_pow_block_import imports the block, it retrieves the changes
 /// and uses StateAction::ApplyChanges instead of StateAction::Skip.
 ///
@@ -1058,8 +1183,8 @@ pub fn check_wasm() -> Result<(), String> {
 ///   → builder.create_inherents(inherent_data)
 ///   → builder.push(extrinsic) for each tx
 ///   → builder.build() → BuiltBlock { block, storage_changes, proof }
-///   → cache_storage_changes(storage_changes) → key
-///   → return StateExecutionResult { ..., storage_changes_key: Some(key) }
+///   → cache_storage_changes(storage_changes) → handle (contains key)
+///   → return StateExecutionResult { ..., storage_changes: Some(handle) }
 ///
 /// wire_pow_block_import()
 ///   → take_storage_changes(key) → Some(changes)
@@ -1076,9 +1201,21 @@ pub fn wire_block_builder_api(
     let recursive_block_proofs_enabled = std::env::var("HEGEMON_RECURSIVE_BLOCK_PROOFS")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    let recursive_block_fast = std::env::var("HEGEMON_RECURSIVE_BLOCK_PROOFS_FAST")
+    let requested_recursive_block_fast = std::env::var("HEGEMON_RECURSIVE_BLOCK_PROOFS_FAST")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+    let recursive_block_fast = if cfg!(feature = "fast-proofs") {
+        requested_recursive_block_fast
+    } else {
+        if requested_recursive_block_fast {
+            tracing::warn!(
+                "HEGEMON_RECURSIVE_BLOCK_PROOFS_FAST set but node not built with --features fast-proofs; ignoring"
+            );
+        }
+        false
+    };
+    let max_shielded_transfers_per_block =
+        load_max_shielded_transfers_per_block(recursive_block_proofs_enabled);
 
     // Capture the miner's shielded address
     let miner_shielded_address = chain_state.miner_shielded_address();
@@ -1219,11 +1356,16 @@ pub fn wire_block_builder_api(
         };
 
         // Push inherent extrinsics
+        let mut shielded_transfer_count = 0usize;
         let mut applied = Vec::new();
         for inherent_ext in inherent_extrinsics {
+            let is_shielded = is_recursive_shielded_transfer(&inherent_ext.function);
             match block_builder.push(inherent_ext.clone()) {
                 Ok(_) => {
                     applied.push(inherent_ext.encode());
+                    if is_shielded {
+                        shielded_transfer_count = shielded_transfer_count.saturating_add(1);
+                    }
                 }
                 Err(e) => {
                     tracing::warn!(error = ?e, "Failed to push inherent extrinsic");
@@ -1236,9 +1378,36 @@ pub fn wire_block_builder_api(
         for ext_bytes in extrinsics {
             match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
                 Ok(extrinsic) => {
+                    let is_shielded = recursive_block_proofs_enabled
+                        && is_recursive_shielded_transfer(&extrinsic.function);
+                    if is_shielded {
+                        if shielded_transfer_count >= max_shielded_transfers_per_block {
+                            tracing::warn!(
+                                block_number,
+                                max_shielded_transfers_per_block,
+                                "Skipping shielded transfer: block already contains {} (coinbase + transfers)",
+                                shielded_transfer_count
+                            );
+                            continue;
+                        }
+                        if matches!(
+                            extrinsic.function,
+                            runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::batch_shielded_transfer { .. })
+                        ) {
+                            tracing::warn!(
+                                block_number,
+                                "Skipping batch_shielded_transfer: recursion does not support batch transfers yet"
+                            );
+                            continue;
+                        }
+                    }
                     match block_builder.push(extrinsic) {
                         Ok(_) => {
                             applied.push(ext_bytes.clone());
+                            if is_shielded {
+                                shielded_transfer_count =
+                                    shielded_transfer_count.saturating_add(1);
+                            }
                         }
                         Err(e) => {
                             tracing::debug!(error = ?e, "Extrinsic push failed");
@@ -1298,8 +1467,10 @@ pub fn wire_block_builder_api(
             None
         };
 
-        // Cache the StorageChanges for use during import
-        let storage_changes_key = cache_storage_changes(built_block.storage_changes);
+        // Cache the StorageChanges for use during import.
+        // The returned handle cleans up automatically if the template is discarded.
+        let storage_changes = cache_storage_changes(built_block.storage_changes);
+        let storage_changes_key = storage_changes.key();
 
         tracing::info!(
             block_number,
@@ -1316,7 +1487,7 @@ pub fn wire_block_builder_api(
             state_root,
             extrinsics_root,
             failed_count: failed,
-            storage_changes_key: Some(storage_changes_key),
+            storage_changes: Some(storage_changes),
             recursive_proof,
         })
     });
@@ -1434,6 +1605,18 @@ fn wire_pow_block_import(
             "Block import: constructing block"
         );
 
+        // Take cached StorageChanges early so we don't leak memory if we fail later (e.g. DA
+        // encoding error, import error). The handle is stored in the template, but the changes
+        // themselves live in a global cache keyed by u64.
+        let storage_changes_key = template.storage_changes.as_ref().map(|handle| handle.key());
+        let storage_changes = match storage_changes_key {
+            Some(key) => Some(
+                take_storage_changes(key)
+                    .ok_or_else(|| format!("StorageChanges not found in cache for key {key}"))?,
+            ),
+            None => None,
+        };
+
         // Decode the extrinsics from template
         let encoded_extrinsics: Vec<runtime::UncheckedExtrinsic> = template
             .extrinsics
@@ -1456,32 +1639,21 @@ fn wire_pow_block_import(
         import_params.body = Some(block.extrinsics().to_vec());
         import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
 
-        // Apply StorageChanges if available
-        // The block building phase caches StorageChanges with a key stored in the template.
-        // We retrieve and apply them here so state persists after import.
-        if let Some(storage_changes_key) = template.storage_changes_key {
-            if let Some(storage_changes) = take_storage_changes(storage_changes_key) {
-                tracing::info!(
-                    block_number = template.number,
-                    storage_changes_key,
-                    "Applying cached StorageChanges during import"
-                );
-                import_params.state_action = sc_consensus::StateAction::ApplyChanges(
-                    sc_consensus::StorageChanges::Changes(storage_changes),
-                );
-            } else {
-                tracing::warn!(
-                    block_number = template.number,
-                    storage_changes_key,
-                    "StorageChanges not found in cache, falling back to Skip"
-                );
-                import_params.state_action = sc_consensus::StateAction::Skip;
-            }
+        // Apply StorageChanges if available.
+        if let Some(storage_changes) = storage_changes {
+            tracing::info!(
+                block_number = template.number,
+                storage_changes_key,
+                "Applying cached StorageChanges during import"
+            );
+            import_params.state_action = sc_consensus::StateAction::ApplyChanges(
+                sc_consensus::StorageChanges::Changes(storage_changes),
+            );
         } else {
             // Fallback for blocks built without new mechanism
             tracing::debug!(
                 block_number = template.number,
-                "No storage_changes_key in template, using StateAction::Skip"
+                "No cached StorageChanges on template, using StateAction::Skip"
             );
             import_params.state_action = sc_consensus::StateAction::Skip;
         }

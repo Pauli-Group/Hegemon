@@ -68,8 +68,8 @@ fn acceptable_options() -> AcceptableOptions {
 
 fn fast_acceptable_options() -> winterfell::ProofOptions {
     winterfell::ProofOptions::new(
+        1,
         8,
-        16,
         0,
         winterfell::FieldExtension::Quadratic,
         2,

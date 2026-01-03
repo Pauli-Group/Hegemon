@@ -128,14 +128,12 @@ Actionable conclusion: with 64-bit base field + `FieldExtension::Quadratic`, we 
 
 This directly affects the scalability plan because a recursive block proof that verifies transaction proofs inherits the transaction-proof soundness ceiling.
 
-The same ceiling shows up in the repo’s existing recursion-proof parameter choices. For example, `circuits/epoch/src/recursion/recursive_prover.rs` uses:
+The same ceiling shows up in the repo’s recursion-proof parameter choices. For example, `circuits/epoch/src/recursion/recursive_prover.rs` uses:
 
-- `num_queries = 16`
-- `blowup_factor = 32` (so `log2(blowup_factor) = 5`)
-- `grinding_factor = 4`
-- `field_extension = None`
+- Default recursion proofs: `num_queries = 22`, `blowup_factor = 16`, `grinding_factor = 4`, `field_extension = Quadratic`
+- Dev-fast recursion proofs: `num_queries = 1`, `blowup_factor = 16`, `grinding_factor = 0`, `field_extension = Quadratic`
 
-Query/bLowup bound: `16 * 5 + 4 = 84 bits`, but with `FieldExtension::None` it is still capped by the base field size.
+Query/blowup bound (default recursion proofs): `22 * log2(16) + 4 = 22 * 4 + 4 = 92 bits`, which clears the ~85-bit PQ collision ceiling for 256-bit digests.
 
 ### 2.1.1 Fold-2 vs Fold-4 (what changes, what does not)
 
@@ -271,6 +269,148 @@ If nullifiers are 32 bytes:
 - `Bytes_nf = 32 * m * i`
 
 These are small compared to ciphertext payloads and proof payloads, but they still matter for bandwidth and storage.
+
+### 3.4 Winterfell recursive proving cost (why “dev-fast queries” barely moves the needle)
+
+This section explains the “why is recursion taking forever?” symptom from first principles.
+
+Key point: **for a STARK prover, the dominant work is committing to the full LDE trace and running FRI**, not the *number of queried openings*.
+
+Reducing `num_queries` shrinks proof size and verifier work, but it does **not** stop the prover from:
+
+1. Building the LDE trace matrix of size `W_outer * (L_outer * B_outer)`.
+2. Hashing every row/leaf of that matrix to build the trace commitment Merkle tree.
+3. Repeating similar work for the constraint-evaluation commitment and each FRI layer commitment.
+
+So “dev-fast = fewer queries” does not buy you the orders-of-magnitude speedup you want. The knobs that *do* buy you large wins are:
+
+- `L_outer` (outer trace length / rows),
+- `B_outer` (outer blowup factor),
+- `W_outer` (outer trace width / columns),
+- and the commitment hash’s **throughput** (bytes/sec) and memory bandwidth.
+
+#### 3.4.1 A simple back-of-the-envelope model for the hashing lower bound
+
+Let:
+
+- `L_outer` = outer trace length (rows, power-of-two),
+- `B_outer` = blowup factor,
+- `M_outer = L_outer * B_outer` = LDE domain size,
+- `W_outer` = outer trace width (columns),
+- `b_elem` = bytes per base-field element (≈ 8 bytes for the Goldilocks base field).
+
+Winterfell’s Merkle leaves are produced by hashing the row’s field elements into a digest, i.e. hashing ~`W_outer * b_elem` bytes per row.
+That implies a lower bound on the amount of data that must be streamed through the hash for trace leaves alone:
+
+- `Bytes_leaf_data ≈ W_outer * b_elem * M_outer`
+
+This ignores:
+
+- Merkle internal-node hashing (≈ `M_outer` extra hashes, typically much smaller than the leaf cost when `W_outer` is large),
+- hashing constraint-evaluation rows,
+- hashing FRI layers,
+- FFT/LDE work.
+
+So it is a *best case* bound. If this bound is already “GBs”, the real prover time will be dominated by memory bandwidth + field arithmetic.
+
+#### 3.4.2 Plug in current recursion dimensions (why this blows up)
+
+From recent runs, the recursion batch prover uses `W_outer ≈ 254` columns (right up against Winterfell’s width cap).
+
+For a “production-like” inner transaction proof (`num_queries ≈ 32`), the recursive verifier trace length lands around:
+
+- `L_outer ≈ 2^18 = 262,144` rows (this matches `test_transaction_streaming_plan_budget` for quadratic + 32 queries).
+
+The repo’s current recursive proof options use `B_outer = 16` (both default and dev-fast), so:
+
+- `M_outer = L_outer * B_outer = 2^18 * 2^4 = 2^22 = 4,194,304`
+- `W_outer * M_outer = 254 * 4,194,304 ≈ 1.065e9` field elements committed in the trace LDE alone
+- `Bytes_trace_LDE ≈ 8 * W_outer * M_outer ≈ 8.5 GB` if elements are stored as 64-bit words (before allocator overhead)
+- `Bytes_leaf_data ≈ W_outer * 8 * M_outer ≈ 8.5 GB` hashed for trace leaves alone (before constraint + FRI commitments)
+
+Even ignoring the algebra (FFT/LDE + FRI), the prover must move and hash on the order of ~8.5GB for trace leaves alone.
+Constraint evaluation commitments and FRI layers add more GB-scale passes, so “minutes” is plausible without parallelism.
+
+This is the core reason the node “feels stuck”: the block builder is synchronously doing work that is fundamentally large under these parameters.
+
+Note on RAM blowups: the prover typically needs to hold multiple large matrices (trace LDE, constraint LDE, composition data, FRI layers).
+So `Bytes_trace_LDE` is only a floor. It is therefore completely plausible to hit multi‑tens‑of‑GB peak allocations for “outer blowup 16 + width ~254”,
+which matches the observed OS “killed due to memory pressure” events in earlier runs.
+
+Batching makes this worse: the batch prover concatenates segments, so peak allocations scale roughly linearly in `m` (the number of inner proofs).
+With the `M_outer` above, `m = 16` implies a trace-LDE floor of `~8.5GB * 16 ≈ 136GB`, matching the “>100GB RSS” screenshots.
+
+#### 3.4.2.1 Measured dev-fast E2E (why “fast” still feels slow)
+
+In a dev-fast end-to-end run (`HEGEMON_RECURSIVE_BLOCK_PROOFS_FAST=1` and fast transaction proofs with `num_queries=1`), the node logs show a
+recursion segment length of `L_outer_fast = 32,768` and `W_outer ≈ 254`.
+With the same outer blowup `B_outer = 16`, this implies:
+
+- `M_outer_fast = 32,768 * 16 = 524,288`
+- `Bytes_trace_LDE_fast ≈ 8 * 254 * 524,288 ≈ 1.0 GB` (floor, before constraints + FRI)
+
+Empirically, the recursive block proof for a single fast shielded transfer still took ~16 minutes on a laptop.
+This is consistent with the fact that STARK proving does multiple GB-scale passes (trace LDE, constraints, composition, FRI layers) and is single-threaded
+in this stack today. “Fast” here means “fewer queries/proof bytes”, not “small trace/FRI work”.
+
+#### 3.4.3 Why “lowering inner num_queries” doesn’t fix the wall
+
+Lowering the *inner* transaction proof `num_queries` reduces:
+
+- The number of Merkle openings the recursion verifier must check.
+
+But it does **not** reduce:
+
+- `W_outer` (still ~254),
+- the need to build the outer trace commitment over `W_outer * M_outer` elements,
+- or the need to run FRI over the full outer trace/constraint LDE.
+
+So the wall remains unless we reduce `W_outer`, `L_outer`, or `B_outer`, or we change the hash/commitment mechanism.
+
+#### 3.4.4 Implication: the “max_trace_width = 255” cap is not just annoying, it is a throughput limiter
+
+To make recursive proving fast, you want to trade **width** for **length** (do more work per row, fewer rows total).
+
+Winterfell’s width cap prevents widening the recursion trace, so we are forced into longer streaming schedules.
+Longer schedules increase `L_outer`, which multiplies `M_outer = L_outer * B_outer`, which multiplies the commitment/FRI work.
+
+This is why “max_trace_width” keeps recurring as the problem: it limits the most direct way to reduce prover latency.
+
+#### 3.4.5 What the math says we should change (without touching security targets)
+
+If we refuse to compromise the ~85-bit PQ collision ceiling for consensus-critical proofs, the only levers left are:
+
+1. **Lower `B_outer` to the minimum allowed by the recursion AIR’s max constraint degree**, and increase `num_queries` to keep
+   `num_queries * log2(B_outer)` ≥ 85. (Blowup multiplies prover cost; queries mostly multiply proof size.)
+2. **Reduce `L_outer` for a 32-query inner proof**, which means reducing “per-query permutations” (fewer Merkle paths / fewer hash perms).
+   That generally requires a more recursion-friendly inner proof format (smaller trace width, fewer FRI layers, or fold‑4 support).
+3. **Change the outer commitment hash** (or the outer proof system) so committing to `W_outer` columns is not “RPO-permutation bound”.
+   This is a major design choice: it may trade away the ability to recursively verify the outer proof again.
+4. **Accept that block producers need specialized resources** (parallelism / GPU / higher memory bandwidth) if we keep the current
+   proof system and parameters.
+
+Until one of these levers moves, “E2E recursive proof generation in the block builder” will remain slow by construction.
+
+#### 3.4.6 Parameter-choice principle: for fixed soundness, minimize blowup (not queries)
+
+Winterfell’s stated “query/blowup” soundness term is roughly:
+
+- `λ ≈ num_queries * log2(blowup_factor) + grinding_factor`
+
+For a fixed target `λ` (e.g. ≥ 85), prover cost is much more sensitive to `blowup_factor` than to `num_queries`, because
+`blowup_factor` multiplies the size of the LDE matrices the prover must commit to.
+
+So, subject to constraint-degree validity, a “smart” parameter strategy is:
+
+- choose the **minimum** blowup factor that the AIR supports,
+- then raise `num_queries` until `λ` clears the target.
+
+Example (same λ ballpark, very different prover cost):
+
+- `num_queries = 16`, `blowup = 32` ⇒ `λ = 80` (plus grinding), but `M_outer ∝ 32`
+- `num_queries = 24`, `blowup = 16` ⇒ `λ = 96`, and `M_outer ∝ 16` (≈2× smaller LDE; large prover win)
+
+This is the core trade-off to re-tune once we confirm the recursion AIR’s true minimum viable blowup factor.
 
 ## 4. Data Availability (DA): Reed–Solomon + Sampling Math
 

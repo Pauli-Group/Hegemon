@@ -581,10 +581,10 @@ fn build_epoch_batch_input_state(
 /// Uses higher blowup factor for recursive verification soundness.
 pub fn recursive_proof_options() -> ProofOptions {
     ProofOptions::new(
-        16, // num_queries (higher for recursion)
-        32, // blowup_factor (32 for degree-8 constraints with cycle 16)
+        22, // num_queries (≥85-bit PQ soundness with blowup 16)
+        16, // blowup_factor (minimum for current StarkVerifierAir degrees)
         4,  // grinding_factor
-        FieldExtension::None,
+        FieldExtension::Quadratic,
         2, // fri_folding_factor
         7, // fri_remainder_max_degree (must be 2^k - 1)
         BatchingMethod::Linear,
@@ -595,10 +595,10 @@ pub fn recursive_proof_options() -> ProofOptions {
 /// Get fast recursive proof options for testing.
 pub fn fast_recursive_proof_options() -> ProofOptions {
     ProofOptions::new(
-        2,
-        32, // Must be at least 32 for RPO constraints
+        1,
+        16, // Dev-fast: minimum blowup for current StarkVerifierAir degrees.
         0,
-        FieldExtension::None,
+        FieldExtension::Quadratic,
         2,
         7,
         BatchingMethod::Linear,
@@ -1643,6 +1643,48 @@ mod tests {
         let (inner1, pub_inputs1) = epoch_batch_as_inner(&prover, &batch1).expect("inner1");
         let (inner2, pub_inputs2) = epoch_batch_as_inner(&prover, &batch2).expect("inner2");
 
+        // Sanity: transcript reconstruction from `StarkVerifierPublicInputs` must match the
+        // transcript reconstruction derived from the raw inner proof bytes.
+        {
+            use super::super::stark_verifier_air::{
+                compute_expected_transcript_draws, compute_ood_digest, compute_rpo_ood_consistency,
+            };
+            use winter_math::StarkField;
+
+            let g_trace = BaseElement::get_root_of_unity(pub_inputs1.trace_length.ilog2());
+            for (idx, (inner, pub_inputs)) in
+                [(&inner1, &pub_inputs1), (&inner2, &pub_inputs2)]
+                    .into_iter()
+                    .enumerate()
+            {
+                let ood_digest = compute_ood_digest(pub_inputs);
+                let (coeffs, z, _deep, _fri_alphas) =
+                    compute_expected_transcript_draws(pub_inputs, ood_digest)
+                        .expect("failed to reconstruct transcript draws");
+                assert_eq!(inner.z, vec![z], "inner {idx} reconstructed z mismatch");
+                assert_eq!(
+                    inner.constraint_coeffs.transition, coeffs.transition,
+                    "inner {idx} reconstructed transition coeffs mismatch"
+                );
+                assert_eq!(
+                    inner.constraint_coeffs.boundary, coeffs.boundary,
+                    "inner {idx} reconstructed boundary coeffs mismatch"
+                );
+
+                let (eval1, eval2) = compute_rpo_ood_consistency(
+                    pub_inputs,
+                    &inner.constraint_coeffs,
+                    inner.z[0],
+                    g_trace,
+                )
+                .expect("failed to evaluate RPO constraints at z");
+                assert_eq!(
+                    eval1, eval2,
+                    "inner {idx} OOD constraint evaluations mismatch"
+                );
+            }
+        }
+
         let outer_options = prover.options.to_winter_options();
         let outer = prove_batch(
             &[inner1, inner2],
@@ -1856,15 +1898,17 @@ mod tests {
     fn test_recursive_proof_options() {
         let opts = recursive_proof_options();
 
-        assert!(opts.blowup_factor() >= 32);
-        assert!(opts.num_queries() >= 16);
+        assert!(opts.blowup_factor() >= 16);
+        assert!(opts.num_queries() >= 22);
+        assert_eq!(opts.field_extension(), FieldExtension::Quadratic);
     }
 
     #[test]
     fn test_fast_recursive_proof_options() {
         let opts = fast_recursive_proof_options();
 
-        assert!(opts.blowup_factor() >= 32);
+        assert!(opts.blowup_factor() >= 16);
+        assert_eq!(opts.field_extension(), FieldExtension::Quadratic);
     }
 
     #[test]
