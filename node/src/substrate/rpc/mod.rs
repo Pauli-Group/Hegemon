@@ -67,14 +67,14 @@ pub mod wallet;
 use jsonrpsee::RpcModule;
 use std::sync::Arc;
 
+pub use block::{BlockApiServer, BlockRpc};
+pub use da::{DaApiServer, DaRpc};
 pub use epoch::{EpochApiServer, EpochRpc};
 pub use hegemon::{HegemonApiServer, HegemonRpc, HegemonService, MiningHandle};
 pub use production_service::ProductionRpcService;
 pub use shielded::{ShieldedApiServer, ShieldedPoolService, ShieldedRpc};
 pub use shielded_service::MockShieldedPoolService;
 pub use wallet::{WalletApiServer, WalletRpc, WalletService};
-pub use block::{BlockApiServer, BlockRpc};
-pub use da::{DaApiServer, DaRpc};
 
 use crate::substrate::service::{DaChunkStore, RecursiveBlockProofStore};
 use state_da::DaParams;

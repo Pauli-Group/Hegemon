@@ -73,9 +73,15 @@ pub enum ProofError {
     #[error("invalid commitment-tree anchor at transaction index {index}")]
     InvalidAnchor { index: usize, anchor: [u8; 32] },
     #[error("recursive proof starting root mismatch")]
-    StartingRootMismatch { expected: [u8; 32], observed: [u8; 32] },
+    StartingRootMismatch {
+        expected: [u8; 32],
+        observed: [u8; 32],
+    },
     #[error("recursive proof ending root mismatch")]
-    EndingRootMismatch { expected: [u8; 32], observed: [u8; 32] },
+    EndingRootMismatch {
+        expected: [u8; 32],
+        observed: [u8; 32],
+    },
     #[error("commitment tree error: {0}")]
     CommitmentTree(#[from] CommitmentTreeError),
     #[error("verifier internal error: {0}")]

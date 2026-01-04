@@ -5,7 +5,9 @@ use common::{
     make_validators,
 };
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
-use consensus::{CommitmentTreeState, ConsensusError, HashVerifier, NullifierSet, PowConsensus, Transaction};
+use consensus::{
+    CommitmentTreeState, ConsensusError, HashVerifier, NullifierSet, PowConsensus, Transaction,
+};
 
 fn base_pow_params<'a>(
     miner: &'a TestValidator,

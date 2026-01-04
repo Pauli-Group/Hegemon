@@ -109,9 +109,8 @@ where
     if computed_versions != block.header.version_commitment() {
         return Err(ProofError::VersionCommitment);
     }
-    let computed_da_root =
-        da_root(&block.transactions, block.header.da_params())
-            .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
+    let computed_da_root = da_root(&block.transactions, block.header.da_params())
+        .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
     if computed_da_root != block.header.da_root() {
         return Err(ProofError::DaRootMismatch);
     }
@@ -147,8 +146,7 @@ where
         return Err(ProofError::RecursiveProofCountMismatch);
     }
 
-    let verifier_inputs =
-        verify_recursive_proof(proof).map_err(|err| map_block_error(err))?;
+    let verifier_inputs = verify_recursive_proof(proof).map_err(|err| map_block_error(err))?;
     if verifier_inputs.len() < block.transactions.len() || !verifier_inputs.len().is_power_of_two()
     {
         return Err(ProofError::RecursiveProofCountMismatch);

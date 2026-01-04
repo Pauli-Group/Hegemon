@@ -6,6 +6,7 @@
 use super::fibonacci_air::{verify_fibonacci_proof, FibonacciProver};
 use super::fibonacci_verifier_air::{verify_verifier_proof, FibonacciVerifierProver};
 use super::*;
+use crate::recursion::{StreamingPlan, StreamingPlanParams};
 use std::time::Instant;
 use transaction_circuit::{
     constants::{MAX_INPUTS, MAX_OUTPUTS},
@@ -15,7 +16,6 @@ use transaction_circuit::{
 use winter_air::{Air, TraceInfo};
 use winter_math::{fields::f64::BaseElement, FieldElement, ToElements};
 use winterfell::FieldExtension;
-use crate::recursion::{StreamingPlan, StreamingPlanParams};
 
 /// Run the complete verifier spike and collect results.
 pub fn run_spike() -> SpikeResults {
@@ -263,10 +263,7 @@ fn test_transaction_recursion_budget() {
     println!("deep_coeff_elems: {deep_coeff_elems}");
     println!("constraint_coeff_elems: {constraint_coeff_elems}");
     println!("fri_layers: {num_fri_layers}");
-    println!(
-        "trace_width_cap: {}",
-        TraceInfo::MAX_TRACE_WIDTH
-    );
+    println!("trace_width_cap: {}", TraceInfo::MAX_TRACE_WIDTH);
 
     assert!(
         ood_eval_elems > TraceInfo::MAX_TRACE_WIDTH,
@@ -312,7 +309,11 @@ fn test_transaction_streaming_plan_budget() {
     });
 
     println!("\n=== Transaction Streaming Plan (Path A) ===");
-    println!("field_extension: {:?} (degree {})", options.field_extension(), plan.extension_degree);
+    println!(
+        "field_extension: {:?} (degree {})",
+        options.field_extension(),
+        plan.extension_degree
+    );
     println!("trace_leaf_hash_perms: {}", plan.trace_leaf_hash_perms);
     println!(
         "constraint_leaf_hash_perms: {}",

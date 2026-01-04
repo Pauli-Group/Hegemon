@@ -114,8 +114,7 @@ impl CommitmentTreeState {
     }
 
     pub fn is_full(&self) -> bool {
-        let capacity =
-            1u64.checked_shl(self.depth as u32).unwrap_or(u64::MAX);
+        let capacity = 1u64.checked_shl(self.depth as u32).unwrap_or(u64::MAX);
         self.leaf_count >= capacity
     }
 

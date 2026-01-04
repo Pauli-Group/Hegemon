@@ -3,10 +3,10 @@ mod common;
 use common::{
     PowBlockParams, assemble_pow_block, dummy_coinbase, dummy_transaction, make_validators,
 };
+use consensus::CommitmentTreeState;
 use consensus::nullifier::NullifierSet;
 use consensus::pow::PowConsensus;
 use consensus::proof::HashVerifier;
-use consensus::CommitmentTreeState;
 use crypto::ml_dsa::{ML_DSA_SIGNATURE_LEN, MlDsaPublicKey, MlDsaSignature};
 use crypto::traits::{SigningKey, VerifyKey};
 

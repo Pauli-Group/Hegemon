@@ -54,16 +54,16 @@ use winter_air::{
     TraceInfo, TransitionConstraintDegree,
 };
 use winter_crypto::RandomCoin;
-use winter_math::{fft, polynom, FieldElement, StarkField, ToElements};
 use winter_math::fields::{f64::BaseElement, QuadExtension};
+use winter_math::{fft, polynom, FieldElement, StarkField, ToElements};
 
 use super::fri_air::MAX_FRI_LAYERS;
 use super::merkle_air::DIGEST_WIDTH;
 use super::rpo_air::{
     ARK1, ARK2, MDS, NUM_ROUNDS, ROWS_PER_PERMUTATION, STATE_WIDTH, TRACE_WIDTH as RPO_TRACE_WIDTH,
 };
-use winter_air::{ConstraintCompositionCoefficients, DeepCompositionCoefficients};
 use transaction_circuit::{TransactionAirStark, TransactionPublicInputsStark};
+use winter_air::{ConstraintCompositionCoefficients, DeepCompositionCoefficients};
 
 const CAPACITY_WIDTH: usize = 4;
 pub(crate) const RATE_WIDTH: usize = 8;
@@ -242,7 +242,9 @@ impl StarkVerifierPublicInputs {
         match field_extension {
             FieldExtension::None => Ok(1),
             FieldExtension::Quadratic => Ok(2),
-            FieldExtension::Cubic => Err("cubic extension proofs are not supported by recursion".to_string()),
+            FieldExtension::Cubic => {
+                Err("cubic extension proofs are not supported by recursion".to_string())
+            }
         }
     }
 
@@ -514,7 +516,8 @@ impl StarkVerifierPublicInputs {
         let ood_digest = compute_ood_digest(self);
         let (constraint_coeffs, expected_z) = match self.field_extension {
             FieldExtension::None => {
-                let (coeffs, z, _deep, _alphas) = compute_expected_transcript_draws(self, ood_digest)?;
+                let (coeffs, z, _deep, _alphas) =
+                    compute_expected_transcript_draws(self, ood_digest)?;
                 (coeffs, [z, BaseElement::ZERO])
             }
             FieldExtension::Quadratic => {
@@ -532,16 +535,21 @@ impl StarkVerifierPublicInputs {
         let g_trace = BaseElement::get_root_of_unity(self.trace_length.ilog2());
 
         match inner_proof_kind(self) {
-            InnerProofKind::RpoAir => {
+            InnerProofKind::Rpo => {
                 if self.trace_length != ROWS_PER_PERMUTATION {
                     return Err(format!(
-                        "RpoAir recursion requires trace_length {} (got {})",
+                        "Rpo recursion requires trace_length {} (got {})",
                         ROWS_PER_PERMUTATION, self.trace_length
                     ));
                 }
                 match self.field_extension {
                     FieldExtension::None => {
-                        compute_rpo_ood_consistency(self, &constraint_coeffs, expected_z[0], g_trace)?;
+                        compute_rpo_ood_consistency(
+                            self,
+                            &constraint_coeffs,
+                            expected_z[0],
+                            g_trace,
+                        )?;
                     }
                     FieldExtension::Quadratic => {
                         compute_rpo_ood_consistency_quadratic(
@@ -554,7 +562,7 @@ impl StarkVerifierPublicInputs {
                     _ => unreachable!("filtered by validate_basic"),
                 }
             }
-            InnerProofKind::TransactionAir => {
+            InnerProofKind::Transaction => {
                 if self.trace_width != transaction_circuit::TRACE_WIDTH {
                     return Err(format!(
                         "transaction inner proof trace_width mismatch: expected {}, got {}",
@@ -564,17 +572,25 @@ impl StarkVerifierPublicInputs {
                 }
                 match self.field_extension {
                     FieldExtension::None => {
-                        compute_transaction_ood_consistency(self, &constraint_coeffs, expected_z[0])?;
+                        compute_transaction_ood_consistency(
+                            self,
+                            &constraint_coeffs,
+                            expected_z[0],
+                        )?;
                     }
                     FieldExtension::Quadratic => {
-                        compute_transaction_ood_consistency_quadratic(self, &constraint_coeffs, expected_z)?;
+                        compute_transaction_ood_consistency_quadratic(
+                            self,
+                            &constraint_coeffs,
+                            expected_z,
+                        )?;
                     }
                     _ => unreachable!("filtered by validate_basic"),
                 }
             }
-            InnerProofKind::StarkVerifierAir => {
+            InnerProofKind::StarkVerifier => {
                 return Err(
-                    "non-RPO recursion for verifier proofs is not supported yet".to_string(),
+                    "non-RPO recursion for verifier proofs is not supported yet".to_string()
                 );
             }
         }
@@ -638,16 +654,14 @@ impl StarkVerifierPublicInputs {
             && params_start_v4 >= idx
         {
             (params_start_v4, NUM_PARAMS_V4)
-        } else if elements.len()
-            >= min_len_v1 + (NUM_PARAMS_V3 - NUM_PARAMS_V1)
+        } else if elements.len() >= min_len_v1 + (NUM_PARAMS_V3 - NUM_PARAMS_V1)
             && params_start_v3 >= idx
             && elements[idx..params_start_v3]
                 .len()
                 .is_multiple_of(DIGEST_WIDTH)
         {
             (params_start_v3, NUM_PARAMS_V3)
-        } else if elements.len()
-            >= min_len_v1 + (NUM_PARAMS_V2 - NUM_PARAMS_V1)
+        } else if elements.len() >= min_len_v1 + (NUM_PARAMS_V2 - NUM_PARAMS_V1)
             && params_start_v2 >= idx
             && elements[idx..params_start_v2]
                 .len()
@@ -677,7 +691,7 @@ impl StarkVerifierPublicInputs {
             elements[params_start + 8].as_int() as usize,
         );
 
-        let raw_extension = elements[params_start + 13].as_int() as u64;
+        let raw_extension = elements[params_start + 13].as_int();
         let field_extension = match raw_extension {
             1 => FieldExtension::None,
             2 => FieldExtension::Quadratic,
@@ -686,12 +700,7 @@ impl StarkVerifierPublicInputs {
                 return Err(format!("unknown field extension id: {raw_extension}"));
             }
         };
-        let (
-            trace_width,
-            constraint_frame_width,
-            num_transition_constraints,
-            num_assertions,
-        ) = (
+        let (trace_width, constraint_frame_width, num_transition_constraints, num_assertions) = (
             elements[params_start + 9].as_int() as usize,
             elements[params_start + 10].as_int() as usize,
             elements[params_start + 11].as_int() as usize,
@@ -710,35 +719,33 @@ impl StarkVerifierPublicInputs {
             .and_then(|v| v.checked_mul(2))
             .ok_or_else(|| "OOD length overflow".to_string())?;
 
-        let (ood_trace_current, ood_quotient_current, ood_trace_next, ood_quotient_next) =
-            {
-                let ood_start = idx;
-                let ood_end = ood_start
-                    .checked_add(ood_len)
-                    .ok_or_else(|| "OOD range overflow".to_string())?;
-                if ood_end > params_start {
-                    return Err(format!(
-                        "missing OOD frame elements: expected {ood_len}, have {}",
-                        params_start.saturating_sub(ood_start)
-                    ));
-                }
-                let ood_slice = &elements[ood_start..ood_end];
-                let mut ood_idx = 0usize;
-                let take =
-                    |slice: &[BaseElement], idx: &mut usize, len: usize| -> Vec<BaseElement> {
-                        let start = *idx;
-                        let end = start + len;
-                        *idx = end;
-                        slice[start..end].to_vec()
-                    };
-
-                (
-                    take(ood_slice, &mut ood_idx, trace_ood_len),
-                    take(ood_slice, &mut ood_idx, constraint_ood_len),
-                    take(ood_slice, &mut ood_idx, trace_ood_len),
-                    take(ood_slice, &mut ood_idx, constraint_ood_len),
-                )
+        let (ood_trace_current, ood_quotient_current, ood_trace_next, ood_quotient_next) = {
+            let ood_start = idx;
+            let ood_end = ood_start
+                .checked_add(ood_len)
+                .ok_or_else(|| "OOD range overflow".to_string())?;
+            if ood_end > params_start {
+                return Err(format!(
+                    "missing OOD frame elements: expected {ood_len}, have {}",
+                    params_start.saturating_sub(ood_start)
+                ));
+            }
+            let ood_slice = &elements[ood_start..ood_end];
+            let mut ood_idx = 0usize;
+            let take = |slice: &[BaseElement], idx: &mut usize, len: usize| -> Vec<BaseElement> {
+                let start = *idx;
+                let end = start + len;
+                *idx = end;
+                slice[start..end].to_vec()
             };
+
+            (
+                take(ood_slice, &mut ood_idx, trace_ood_len),
+                take(ood_slice, &mut ood_idx, constraint_ood_len),
+                take(ood_slice, &mut ood_idx, trace_ood_len),
+                take(ood_slice, &mut ood_idx, constraint_ood_len),
+            )
+        };
 
         let ood_end = idx
             .checked_add(ood_len)
@@ -888,8 +895,7 @@ impl Air for StarkVerifierAir {
             "inner proof requires {num_fri_layers} FRI layers, but verifier supports at most {MAX_FRI_LAYERS}"
         );
         assert_eq!(
-            pub_inputs.fri_folding_factor,
-            2,
+            pub_inputs.fri_folding_factor, 2,
             "StarkVerifierAir assumes FRI folding factor 2"
         );
 
@@ -945,9 +951,9 @@ impl Air for StarkVerifierAir {
             pub_inputs.ood_quotient_next.len()
         );
 
-        let constraint_partition_size_base = pub_inputs.constraint_partition_size * extension_degree;
-        let trace_layout =
-            compute_leaf_layout(trace_width_ext, pub_inputs.trace_partition_size);
+        let constraint_partition_size_base =
+            pub_inputs.constraint_partition_size * extension_degree;
+        let trace_layout = compute_leaf_layout(trace_width_ext, pub_inputs.trace_partition_size);
         let constraint_layout =
             compute_leaf_layout(constraint_width_ext, constraint_partition_size_base);
         let trace_data_block_starts = trace_layout.data_perm_starts.clone();
@@ -967,8 +973,8 @@ impl Air for StarkVerifierAir {
             + 1 // index shift relation (idx_cur = 2*idx_next + bit)
             + num_root_masks // index must be 0 at each root boundary
             + num_root_masks * DIGEST_WIDTH; // root digest checks
-        // Query-position draw_integers + binding-check constraints.
-        // Base 32 plus perm-acc limb1 (4) and gamma limb1 (1) checks for quadratic proofs.
+                                             // Query-position draw_integers + binding-check constraints.
+                                             // Base 32 plus perm-acc limb1 (4) and gamma limb1 (1) checks for quadratic proofs.
         let pos_decomp_constraints = 32 + if extension_degree == 2 { 5 } else { 0 };
         // OOD digest + coin-state save/restore constraints.
         let ood_state_constraints = DIGEST_WIDTH // ood digest constant columns
@@ -1544,8 +1550,8 @@ impl Air for StarkVerifierAir {
                     let (coeffs, z_flat, deep, alphas_flat) =
                         compute_expected_transcript_draws_quadratic(&pub_inputs, ood_digest)
                             .expect("failed to reconstruct quadratic transcript");
-                    let expected_z = flat_to_ext_elem(&z_flat)
-                        .expect("quadratic z must have two limbs");
+                    let expected_z =
+                        flat_to_ext_elem(&z_flat).expect("quadratic z must have two limbs");
                     let inner_fri_alphas = flat_to_ext_elems(&alphas_flat)
                         .expect("quadratic FRI alphas must have even limb count");
                     (coeffs, expected_z, deep, inner_fri_alphas)
@@ -1553,48 +1559,49 @@ impl Air for StarkVerifierAir {
                 _ => panic!("unsupported field extension for recursion"),
             };
 
-        let (inner_ood_constraint_eval_1, inner_ood_constraint_eval_2) = match (
-            inner_proof_kind(&pub_inputs),
-            pub_inputs.field_extension,
-        ) {
-            (InnerProofKind::RpoAir, FieldExtension::None) => {
-                let (eval1, eval2) = compute_rpo_ood_consistency(
-                    &pub_inputs,
-                    &inner_constraint_coeffs,
-                    expected_z[0],
-                    g_trace,
-                )
-                .expect("failed to evaluate RPO constraints at z");
-                ([eval1, BaseElement::ZERO], [eval2, BaseElement::ZERO])
-            }
-            (InnerProofKind::RpoAir, FieldExtension::Quadratic) => {
-                compute_rpo_ood_consistency_quadratic(
-                    &pub_inputs,
-                    &inner_constraint_coeffs,
-                    expected_z,
-                    g_trace,
-                )
-                .expect("failed to evaluate quadratic RPO constraints at z")
-            }
-            (InnerProofKind::TransactionAir, FieldExtension::None) => {
-                let (eval1, eval2) =
-                    compute_transaction_ood_consistency(&pub_inputs, &inner_constraint_coeffs, expected_z[0])
-                        .expect("failed to evaluate transaction constraints at z");
-                ([eval1, BaseElement::ZERO], [eval2, BaseElement::ZERO])
-            }
-            (InnerProofKind::TransactionAir, FieldExtension::Quadratic) => {
-                compute_transaction_ood_consistency_quadratic(
-                    &pub_inputs,
-                    &inner_constraint_coeffs,
-                    expected_z,
-                )
-                .expect("failed to evaluate quadratic transaction constraints at z")
-            }
-            (InnerProofKind::StarkVerifierAir, _) => {
-                panic!("non-RPO recursion for verifier proofs is not supported yet")
-            }
-            (_, _) => panic!("unsupported field extension for recursion"),
-        };
+        let (inner_ood_constraint_eval_1, inner_ood_constraint_eval_2) =
+            match (inner_proof_kind(&pub_inputs), pub_inputs.field_extension) {
+                (InnerProofKind::Rpo, FieldExtension::None) => {
+                    let (eval1, eval2) = compute_rpo_ood_consistency(
+                        &pub_inputs,
+                        &inner_constraint_coeffs,
+                        expected_z[0],
+                        g_trace,
+                    )
+                    .expect("failed to evaluate RPO constraints at z");
+                    ([eval1, BaseElement::ZERO], [eval2, BaseElement::ZERO])
+                }
+                (InnerProofKind::Rpo, FieldExtension::Quadratic) => {
+                    compute_rpo_ood_consistency_quadratic(
+                        &pub_inputs,
+                        &inner_constraint_coeffs,
+                        expected_z,
+                        g_trace,
+                    )
+                    .expect("failed to evaluate quadratic RPO constraints at z")
+                }
+                (InnerProofKind::Transaction, FieldExtension::None) => {
+                    let (eval1, eval2) = compute_transaction_ood_consistency(
+                        &pub_inputs,
+                        &inner_constraint_coeffs,
+                        expected_z[0],
+                    )
+                    .expect("failed to evaluate transaction constraints at z");
+                    ([eval1, BaseElement::ZERO], [eval2, BaseElement::ZERO])
+                }
+                (InnerProofKind::Transaction, FieldExtension::Quadratic) => {
+                    compute_transaction_ood_consistency_quadratic(
+                        &pub_inputs,
+                        &inner_constraint_coeffs,
+                        expected_z,
+                    )
+                    .expect("failed to evaluate quadratic transaction constraints at z")
+                }
+                (InnerProofKind::StarkVerifier, _) => {
+                    panic!("non-RPO recursion for verifier proofs is not supported yet")
+                }
+                (_, _) => panic!("unsupported field extension for recursion"),
+            };
         let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
         Self {
@@ -1838,11 +1845,9 @@ impl Air for StarkVerifierAir {
         result[idx + 3] = boundary_mask * coin_init_mask * (coin_init_mask - one);
         result[idx + 4] =
             boundary_mask * current[COL_COIN_SAVE_MASK] * (current[COL_COIN_SAVE_MASK] - one);
-        result[idx + 5] = boundary_mask
-            * current[COL_COIN_RESTORE_MASK]
-            * (current[COL_COIN_RESTORE_MASK] - one);
-        result[idx + 6] =
-            boundary_mask * current[COL_TAPE_MASK] * (current[COL_TAPE_MASK] - one);
+        result[idx + 5] =
+            boundary_mask * current[COL_COIN_RESTORE_MASK] * (current[COL_COIN_RESTORE_MASK] - one);
+        result[idx + 6] = boundary_mask * current[COL_TAPE_MASK] * (current[COL_TAPE_MASK] - one);
         idx += 7;
 
         // Exclusivity of masks on boundaries.
@@ -2162,12 +2167,7 @@ impl Air for StarkVerifierAir {
         }
 
         // Multiply by the transcript-derived draw at each decomp boundary.
-        let (draw_plus_gamma0, draw_plus_gamma1) = ext_add(
-            draw_val,
-            E::ZERO,
-            gamma0,
-            gamma1,
-        );
+        let (draw_plus_gamma0, draw_plus_gamma1) = ext_add(draw_val, E::ZERO, gamma0, gamma1);
         let (prod0, prod1) = ext_mul(perm_acc0, perm_acc1, draw_plus_gamma0, draw_plus_gamma1);
         result[idx] = boundary_mask * decomp_mask * (perm_acc_next0 - prod0);
         idx += 1;
@@ -2177,10 +2177,13 @@ impl Air for StarkVerifierAir {
         }
 
         // Divide by the Merkle index at the end of each trace-leaf hashing segment.
-        let (trace_plus_gamma0, trace_plus_gamma1) =
-            ext_add(trace_idx, E::ZERO, gamma0, gamma1);
-        let (leaf_mul0, leaf_mul1) =
-            ext_mul(perm_acc_next0, perm_acc_next1, trace_plus_gamma0, trace_plus_gamma1);
+        let (trace_plus_gamma0, trace_plus_gamma1) = ext_add(trace_idx, E::ZERO, gamma0, gamma1);
+        let (leaf_mul0, leaf_mul1) = ext_mul(
+            perm_acc_next0,
+            perm_acc_next1,
+            trace_plus_gamma0,
+            trace_plus_gamma1,
+        );
         result[idx] = boundary_mask * trace_leaf_end_mask * (leaf_mul0 - perm_acc0);
         idx += 1;
         if is_quadratic {
@@ -2216,8 +2219,8 @@ impl Air for StarkVerifierAir {
             } else if i < 2 * self.trace_width_ext + self.constraint_width_ext {
                 self.pub_inputs.ood_trace_next[i - self.trace_width_ext - self.constraint_width_ext]
             } else {
-                self.pub_inputs.ood_quotient_next[i
-                    - (2 * self.trace_width_ext + self.constraint_width_ext)]
+                self.pub_inputs.ood_quotient_next
+                    [i - (2 * self.trace_width_ext + self.constraint_width_ext)]
             };
             result[idx + i] = mask * (current[RATE_START + offset] - E::from(expected));
         }
@@ -2321,8 +2324,7 @@ impl Air for StarkVerifierAir {
 
         // Capture FRI alphas at their draw boundaries.
         let mut alpha_offset = 0usize;
-        for layer_idx in 0..num_fri_layers {
-            let mask = fri_alpha_end_masks[layer_idx];
+        for (layer_idx, &mask) in fri_alpha_end_masks.iter().enumerate().take(num_fri_layers) {
             let expected = self.inner_fri_alphas[layer_idx];
             let drawn0 = current[RATE_START];
             result[idx + alpha_offset] = mask * (drawn0 - E::from(expected[0]));
@@ -2622,7 +2624,12 @@ impl Air for StarkVerifierAir {
                     current[RATE_START + 3],
                 )
             } else {
-                (current[RATE_START], E::ZERO, current[RATE_START + 1], E::ZERO)
+                (
+                    current[RATE_START],
+                    E::ZERO,
+                    current[RATE_START + 1],
+                    E::ZERO,
+                )
             };
             let selected0 = v00 + b * (v10 - v00);
             let selected1 = v01 + b * (v11 - v01);
@@ -2642,14 +2649,11 @@ impl Air for StarkVerifierAir {
             let (x0, x1) = (x, E::ZERO);
             let (x_minus_z0_0, x_minus_z0_1) = ext_sub(x0, x1, z0, z1);
             let (x_minus_z1_0, x_minus_z1_1) = ext_sub(x0, x1, z1_0, z1_1);
-            let (den0, den1) =
-                ext_mul(x_minus_z0_0, x_minus_z0_1, x_minus_z1_0, x_minus_z1_1);
+            let (den0, den1) = ext_mul(x_minus_z0_0, x_minus_z0_1, x_minus_z1_0, x_minus_z1_1);
             let (t1c1_0, t1c1_1) = ext_add(t1_0, t1_1, c1_0, c1_1);
             let (t2c2_0, t2c2_1) = ext_add(t2_0, t2_1, c2_0, c2_1);
-            let (term1_0, term1_1) =
-                ext_mul(t1c1_0, t1c1_1, x_minus_z1_0, x_minus_z1_1);
-            let (term2_0, term2_1) =
-                ext_mul(t2c2_0, t2c2_1, x_minus_z0_0, x_minus_z0_1);
+            let (term1_0, term1_1) = ext_mul(t1c1_0, t1c1_1, x_minus_z1_0, x_minus_z1_1);
+            let (term2_0, term2_1) = ext_mul(t2c2_0, t2c2_1, x_minus_z0_0, x_minus_z0_1);
             let (num0, num1) = ext_add(term1_0, term1_1, term2_0, term2_1);
             let (eval_den0, eval_den1) = ext_mul(eval0, eval1, den0, den1);
             result[idx] = mask * (eval_den0 - num0);
@@ -2677,7 +2681,12 @@ impl Air for StarkVerifierAir {
                     current[RATE_START + 3],
                 )
             } else {
-                (current[RATE_START], E::ZERO, current[RATE_START + 1], E::ZERO)
+                (
+                    current[RATE_START],
+                    E::ZERO,
+                    current[RATE_START + 1],
+                    E::ZERO,
+                )
             };
 
             let sign = one - two * b;
@@ -3831,14 +3840,10 @@ impl Air for StarkVerifierAir {
         let constraint_leaf_chain = &constraint_layout.chain_flags;
         let trace_data_perm_map = &trace_layout.data_perm_map;
         let constraint_data_perm_map = &constraint_layout.data_perm_map;
-        let mut trace_leaf_row_masks = vec![
-            vec![BaseElement::ZERO; total_rows];
-            trace_layout.data_perm_starts.len()
-        ];
-        let mut constraint_leaf_row_masks = vec![
-            vec![BaseElement::ZERO; total_rows];
-            constraint_layout.data_perm_starts.len()
-        ];
+        let mut trace_leaf_row_masks =
+            vec![vec![BaseElement::ZERO; total_rows]; trace_layout.data_perm_starts.len()];
+        let mut constraint_leaf_row_masks =
+            vec![vec![BaseElement::ZERO; total_rows]; constraint_layout.data_perm_starts.len()];
         let fri_leaf_perms = fri_leaf_len.div_ceil(RATE_WIDTH).max(1);
         let trace_leaf_chains = trace_leaf_chain.iter().filter(|v| !**v).count();
         let constraint_leaf_chains = constraint_leaf_chain.iter().filter(|v| !**v).count();
@@ -4016,10 +4021,14 @@ impl Air for StarkVerifierAir {
 
             // Remainder commitment hash begins after all per-query Merkle permutations.
             if num_remainder_perms > 0 && expected_active_perms < total_perms {
-                for block in 0..num_remainder_perms {
+                for (block, row0_mask) in remainder_hash_row0_masks
+                    .iter_mut()
+                    .enumerate()
+                    .take(num_remainder_perms)
+                {
                     let row0 = (expected_active_perms + block) * ROWS_PER_PERMUTATION;
                     if row0 < total_rows {
-                        remainder_hash_row0_masks[block][row0] = BaseElement::ONE;
+                        row0_mask[row0] = BaseElement::ONE;
                     }
                 }
             }
@@ -4483,7 +4492,9 @@ fn flatten_deep_coeffs<E: FieldElement<BaseField = BaseElement>>(
     }
 }
 
-fn flat_to_quad_elements(values: &[BaseElement]) -> Result<Vec<QuadExtension<BaseElement>>, String> {
+fn flat_to_quad_elements(
+    values: &[BaseElement],
+) -> Result<Vec<QuadExtension<BaseElement>>, String> {
     if !values.len().is_multiple_of(EXTENSION_LIMBS) {
         return Err(format!(
             "expected even number of extension limbs, got {}",
@@ -4607,18 +4618,18 @@ fn compute_rpo_periodic_at_point(x: BaseElement) -> [BaseElement; 1 + STATE_WIDT
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum InnerProofKind {
-    RpoAir,
-    TransactionAir,
-    StarkVerifierAir,
+    Rpo,
+    Transaction,
+    StarkVerifier,
 }
 
 fn inner_proof_kind(pub_inputs: &StarkVerifierPublicInputs) -> InnerProofKind {
     if pub_inputs.inner_public_inputs.len() == 2 * STATE_WIDTH {
-        InnerProofKind::RpoAir
+        InnerProofKind::Rpo
     } else if pub_inputs.inner_public_inputs.len() == transaction_public_inputs_len() {
-        InnerProofKind::TransactionAir
+        InnerProofKind::Transaction
     } else {
-        InnerProofKind::StarkVerifierAir
+        InnerProofKind::StarkVerifier
     }
 }
 
@@ -4724,14 +4735,8 @@ pub fn compute_deep_evaluation_quadratic(
             deep_coeffs.trace[limb_start + 1],
         );
         let trace_val = QuadExtension::from(trace_val_base);
-        let ood_z = QuadExtension::new(
-            ood_trace_z[limb_start],
-            ood_trace_z[limb_start + 1],
-        );
-        let ood_zg = QuadExtension::new(
-            ood_trace_zg[limb_start],
-            ood_trace_zg[limb_start + 1],
-        );
+        let ood_z = QuadExtension::new(ood_trace_z[limb_start], ood_trace_z[limb_start + 1]);
+        let ood_zg = QuadExtension::new(ood_trace_zg[limb_start], ood_trace_zg[limb_start + 1]);
         t1_num += coeff * (trace_val - ood_z);
         t2_num += coeff * (trace_val - ood_zg);
     }
@@ -4814,8 +4819,9 @@ pub(crate) fn compute_expected_z(pub_inputs: &StarkVerifierPublicInputs) -> Base
 fn compute_expected_constraint_coeffs_and_z(
     pub_inputs: &StarkVerifierPublicInputs,
 ) -> (ConstraintCompositionCoefficients<BaseElement>, BaseElement) {
-    let (coeffs, z, _, _) = compute_expected_transcript_draws(pub_inputs, compute_ood_digest(pub_inputs))
-        .expect("failed to reconstruct transcript");
+    let (coeffs, z, _, _) =
+        compute_expected_transcript_draws(pub_inputs, compute_ood_digest(pub_inputs))
+            .expect("failed to reconstruct transcript");
     (coeffs, z)
 }
 
@@ -4868,9 +4874,7 @@ pub(crate) fn compute_expected_transcript_draws(
 
     // Reseed with constraint commitment and draw z.
     coin.reseed(Word::new(pub_inputs.constraint_commitment));
-    let z = coin
-        .draw()
-        .map_err(|e| format!("failed to draw z: {e}"))?;
+    let z = coin.draw().map_err(|e| format!("failed to draw z: {e}"))?;
 
     // Reseed with OOD digest and draw DEEP coefficients.
     coin.reseed(Word::new(ood_digest));
@@ -4917,14 +4921,13 @@ pub(crate) fn compute_expected_transcript_draws_quadratic(
     let mut coin = <RpoRandomCoin as RandomCoin>::new(&seed_elems);
     coin.reseed(Word::new(pub_inputs.trace_commitment));
 
-    let constraint_coeffs = ConstraintCompositionCoefficients::<
-        QuadExtension<BaseElement>,
-    >::draw_linear(
-        &mut coin,
-        pub_inputs.num_transition_constraints,
-        pub_inputs.num_assertions,
-    )
-    .map_err(|e| format!("failed to draw quadratic constraint coeffs: {e}"))?;
+    let constraint_coeffs =
+        ConstraintCompositionCoefficients::<QuadExtension<BaseElement>>::draw_linear(
+            &mut coin,
+            pub_inputs.num_transition_constraints,
+            pub_inputs.num_assertions,
+        )
+        .map_err(|e| format!("failed to draw quadratic constraint coeffs: {e}"))?;
     let constraint_coeffs = flatten_constraint_coeffs(constraint_coeffs);
 
     // Reseed with constraint commitment and draw z.
@@ -4936,9 +4939,7 @@ pub(crate) fn compute_expected_transcript_draws_quadratic(
 
     // Reseed with OOD digest and draw DEEP coefficients.
     coin.reseed(Word::new(ood_digest));
-    let deep_coeffs = DeepCompositionCoefficients::<
-        QuadExtension<BaseElement>,
-    >::draw_linear(
+    let deep_coeffs = DeepCompositionCoefficients::<QuadExtension<BaseElement>>::draw_linear(
         &mut coin,
         pub_inputs.trace_width,
         pub_inputs.constraint_frame_width,
@@ -5030,8 +5031,7 @@ pub(crate) fn compute_rpo_ood_consistency(
     let (rpo_periodic_at_z, transition_div_inv, boundary_div_inv, _ood_weights) =
         compute_inner_ood_constants(pub_inputs, expected_z, g_trace);
     let half_round_type = rpo_periodic_at_z[0];
-    let ark: [BaseElement; STATE_WIDTH] =
-        core::array::from_fn(|i| rpo_periodic_at_z[1 + i]);
+    let ark: [BaseElement; STATE_WIDTH] = core::array::from_fn(|i| rpo_periodic_at_z[1 + i]);
 
     let ood_trace_z = &pub_inputs.ood_trace_current;
     let ood_trace_zg = &pub_inputs.ood_trace_next;
@@ -5092,7 +5092,8 @@ pub(crate) fn compute_rpo_ood_consistency(
         boundary_row0 += *coeff_row0 * (ood_trace_z[i] - input);
         boundary_row_last += *coeff_last * (ood_trace_z[i] - output);
     }
-    let boundary_eval = boundary_row0 * boundary_div_inv[0] + boundary_row_last * boundary_div_inv[1];
+    let boundary_eval =
+        boundary_row0 * boundary_div_inv[0] + boundary_row_last * boundary_div_inv[1];
 
     let eval1 = transition_eval + boundary_eval;
     let eval2 = compute_ood_constraint_eval_2(
@@ -5150,8 +5151,7 @@ pub(crate) fn compute_rpo_ood_consistency_quadratic(
 
     let transition_coeffs = flat_to_quad_elements(&constraint_coeffs.transition)?;
     let boundary_coeffs = flat_to_quad_elements(&constraint_coeffs.boundary)?;
-    let (boundary_row0_coeffs, boundary_row_last_coeffs) =
-        boundary_coeffs.split_at(STATE_WIDTH);
+    let (boundary_row0_coeffs, boundary_row_last_coeffs) = boundary_coeffs.split_at(STATE_WIDTH);
 
     let one = QuadExtension::<BaseElement>::ONE;
     let two = one + one;
@@ -5226,7 +5226,8 @@ pub(crate) fn compute_transaction_ood_consistency(
         return Err("transaction recursion only supports base-field proofs".to_string());
     }
 
-    let tx_inputs = TransactionPublicInputsStark::try_from_elements(&pub_inputs.inner_public_inputs)?;
+    let tx_inputs =
+        TransactionPublicInputsStark::try_from_elements(&pub_inputs.inner_public_inputs)?;
     let trace_info = TraceInfo::new(pub_inputs.trace_width, pub_inputs.trace_length);
     let options = ProofOptions::new(
         pub_inputs.num_draws,
@@ -5258,10 +5259,13 @@ pub(crate) fn compute_transaction_ood_consistency_quadratic(
     expected_z: ExtElem,
 ) -> Result<(ExtElem, ExtElem), String> {
     if pub_inputs.field_extension != FieldExtension::Quadratic {
-        return Err("quadratic transaction recursion requires FieldExtension::Quadratic".to_string());
+        return Err(
+            "quadratic transaction recursion requires FieldExtension::Quadratic".to_string(),
+        );
     }
 
-    let tx_inputs = TransactionPublicInputsStark::try_from_elements(&pub_inputs.inner_public_inputs)?;
+    let tx_inputs =
+        TransactionPublicInputsStark::try_from_elements(&pub_inputs.inner_public_inputs)?;
     let trace_info = TraceInfo::new(pub_inputs.trace_width, pub_inputs.trace_length);
     let options = ProofOptions::new(
         pub_inputs.num_draws,
@@ -5284,8 +5288,11 @@ pub(crate) fn compute_transaction_ood_consistency_quadratic(
     };
     let z = QuadExtension::new(expected_z[0], expected_z[1]);
     let eval1 = evaluate_constraints_at_ext(&air, coeffs, &frame, z);
-    let eval2 =
-        compute_ood_constraint_eval_2_quadratic(&pub_inputs.ood_quotient_current, z, pub_inputs.trace_length)?;
+    let eval2 = compute_ood_constraint_eval_2_quadratic(
+        &pub_inputs.ood_quotient_current,
+        z,
+        pub_inputs.trace_length,
+    )?;
     Ok((eval1.to_base_elements(), eval2))
 }
 
@@ -5543,9 +5550,15 @@ mod tests {
         assert_eq!(decoded.inner_pub_inputs_hash, inner_hash);
         assert_eq!(decoded.trace_commitment, trace_commit);
         assert_eq!(decoded.constraint_commitment, constraint_commit);
-        assert_eq!(decoded.ood_trace_current, vec![BaseElement::new(15); RPO_TRACE_WIDTH]);
+        assert_eq!(
+            decoded.ood_trace_current,
+            vec![BaseElement::new(15); RPO_TRACE_WIDTH]
+        );
         assert_eq!(decoded.ood_quotient_current, vec![BaseElement::new(16); 8]);
-        assert_eq!(decoded.ood_trace_next, vec![BaseElement::new(15); RPO_TRACE_WIDTH]);
+        assert_eq!(
+            decoded.ood_trace_next,
+            vec![BaseElement::new(15); RPO_TRACE_WIDTH]
+        );
         assert_eq!(decoded.ood_quotient_next, vec![BaseElement::new(16); 8]);
         assert_eq!(decoded.fri_commitments, fri_commits);
         assert_eq!(decoded.num_queries, 4);
@@ -5564,11 +5577,7 @@ mod tests {
         assert_eq!(decoded.num_assertions, 2 * STATE_WIDTH);
     }
 
-    fn compute_merkle_root_from_path(
-        leaf: HashFelt,
-        position: u64,
-        path: &MerklePath,
-    ) -> HashFelt {
+    fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
         let mut current = leaf;
         let mut pos = position;
         for sibling in &path.siblings {
@@ -5644,23 +5653,18 @@ mod tests {
         let pub_inputs = prover.get_pub_inputs(&trace);
         let proof = prover.prove(trace).expect("rpo proof");
 
-        let inner_data = InnerProofData::from_proof::<TransactionAirStark>(
-            &proof.to_bytes(),
-            pub_inputs,
-        )
-        .expect("inner proof parsing");
+        let inner_data =
+            InnerProofData::from_proof::<TransactionAirStark>(&proof.to_bytes(), pub_inputs)
+                .expect("inner proof parsing");
         let verifier_inputs = inner_data.to_stark_verifier_inputs();
 
         let ood_digest = compute_ood_digest(&verifier_inputs);
         let (constraint_coeffs, expected_z, _, _) =
             compute_expected_transcript_draws(&verifier_inputs, ood_digest)
                 .expect("transcript reconstruction");
-        let (eval1, eval2) = compute_transaction_ood_consistency(
-            &verifier_inputs,
-            &constraint_coeffs,
-            expected_z,
-        )
-        .expect("ood consistency computation");
+        let (eval1, eval2) =
+            compute_transaction_ood_consistency(&verifier_inputs, &constraint_coeffs, expected_z)
+                .expect("ood consistency computation");
 
         assert_eq!(eval1, eval2, "transaction OOD consistency check failed");
     }

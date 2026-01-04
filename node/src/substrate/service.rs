@@ -163,15 +163,15 @@ use epoch_circuit::{
 
 // Import runtime APIs for difficulty queries
 use pallet_shielded_pool::Call as ShieldedPoolCall;
-use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
+use parking_lot::Mutex as ParkingMutex;
 use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
+use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use state_merkle::CommitmentTree;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
-use parking_lot::Mutex as ParkingMutex;
 
 // Import jsonrpsee for RPC server
 use jsonrpsee::server::ServerBuilder;
@@ -218,8 +218,8 @@ impl StorageChangesCache {
             return;
         }
 
-        if self.entries.contains_key(&key) {
-            self.entries.insert(key, changes);
+        if let Some(existing) = self.entries.get_mut(&key) {
+            *existing = changes;
             self.order.retain(|entry| entry != &key);
             self.order.push_back(key);
             return;
@@ -293,7 +293,9 @@ pub type StorageChangesHandle = Arc<StorageChangesGuard>;
 /// The changes are inserted during block building and retrieved during block import.
 static STORAGE_CHANGES_CACHE: once_cell::sync::Lazy<ParkingMutex<StorageChangesCache>> =
     once_cell::sync::Lazy::new(|| {
-        ParkingMutex::new(StorageChangesCache::new(load_storage_changes_cache_capacity()))
+        ParkingMutex::new(StorageChangesCache::new(
+            load_storage_changes_cache_capacity(),
+        ))
     });
 
 fn discard_storage_changes(key: u64) {
@@ -346,8 +348,8 @@ impl DaChunkStore {
             return;
         }
 
-        if self.entries.contains_key(&root) {
-            self.entries.insert(root, encoding);
+        if let Some(existing) = self.entries.get_mut(&root) {
+            *existing = encoding;
             self.order.retain(|entry| entry != &root);
             self.order.push_back(root);
             return;
@@ -389,8 +391,8 @@ impl RecursiveBlockProofStore {
             return;
         }
 
-        if self.entries.contains_key(&hash) {
-            self.entries.insert(hash, proof);
+        if let Some(existing) = self.entries.get_mut(&hash) {
+            *existing = proof;
             self.order.retain(|entry| entry != &hash);
             self.order.push_back(hash);
             return;
@@ -455,21 +457,22 @@ impl DaRequestTracker {
 }
 
 fn env_u32(name: &str) -> Option<u32> {
-    std::env::var(name).ok().and_then(|value| value.parse().ok())
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
 }
 
 fn env_u64(name: &str) -> Option<u64> {
-    std::env::var(name).ok().and_then(|value| value.parse().ok())
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
 }
 
 fn env_usize(name: &str) -> Option<usize> {
     env_u64(name).and_then(|value| usize::try_from(value).ok())
 }
 
-fn chain_property_u32(
-    properties: &sc_chain_spec::Properties,
-    key: &str,
-) -> Option<u32> {
+fn chain_property_u32(properties: &sc_chain_spec::Properties, key: &str) -> Option<u32> {
     properties.get(key).and_then(|value| {
         value
             .as_u64()
@@ -599,12 +602,12 @@ fn build_stark_inputs(
     }
 
     let mut input_flags = Vec::with_capacity(MAX_INPUTS);
-    input_flags.extend(std::iter::repeat(1u8).take(input_count));
-    input_flags.extend(std::iter::repeat(0u8).take(MAX_INPUTS - input_count));
+    input_flags.extend(std::iter::repeat_n(1u8, input_count));
+    input_flags.extend(std::iter::repeat_n(0u8, MAX_INPUTS - input_count));
 
     let mut output_flags = Vec::with_capacity(MAX_OUTPUTS);
-    output_flags.extend(std::iter::repeat(1u8).take(output_count));
-    output_flags.extend(std::iter::repeat(0u8).take(MAX_OUTPUTS - output_count));
+    output_flags.extend(std::iter::repeat_n(1u8, output_count));
+    output_flags.extend(std::iter::repeat_n(0u8, MAX_OUTPUTS - output_count));
 
     let (value_balance_sign, value_balance_magnitude) = signed_parts_u64(value_balance)?;
 
@@ -619,8 +622,7 @@ fn build_stark_inputs(
         stablecoin_attestation_commitment,
     ) = match stablecoin {
         Some(binding) if binding.enabled => {
-            let (issuance_sign, issuance_magnitude) =
-                signed_parts_u64(binding.issuance_delta)?;
+            let (issuance_sign, issuance_magnitude) = signed_parts_u64(binding.issuance_delta)?;
             (
                 1,
                 binding.asset_id,
@@ -632,16 +634,7 @@ fn build_stark_inputs(
                 binding.attestation_commitment,
             )
         }
-        _ => (
-            0,
-            0,
-            0,
-            0,
-            0,
-            [0u8; 32],
-            [0u8; 32],
-            [0u8; 32],
-        ),
+        _ => (0, 0, 0, 0, 0, [0u8; 32], [0u8; 32], [0u8; 32]),
     };
 
     Ok(SerializedStarkInputs {
@@ -771,8 +764,9 @@ fn extract_transaction_proofs_from_extrinsics(
                 proofs.push(proof);
             }
             ShieldedPoolCall::batch_shielded_transfer { .. } => {
-                return Err("batch shielded transfers are not supported in recursive block proofs"
-                    .into());
+                return Err(
+                    "batch shielded transfers are not supported in recursive block proofs".into(),
+                );
             }
             _ => {}
         }
@@ -843,8 +837,7 @@ fn build_da_encoding_from_extrinsics(
     params: DaParams,
 ) -> Result<DaEncoding, String> {
     let blob = build_da_blob_from_extrinsics(extrinsics)?;
-    state_da::encode_da_blob(&blob, params)
-        .map_err(|err| format!("da encoding failed: {err}"))
+    state_da::encode_da_blob(&blob, params).map_err(|err| format!("da encoding failed: {err}"))
 }
 
 fn sample_da_indices(chunk_count: usize, sample_count: u32) -> Vec<u32> {
@@ -966,8 +959,8 @@ fn build_commitment_tree_from_chain(
         .map_err(|e| format!("runtime api error (merkle_root): {e:?}"))?;
 
     let depth = pallet_shielded_pool::types::MERKLE_TREE_DEPTH as usize;
-    let mut tree = CommitmentTree::new(depth)
-        .map_err(|e| format!("commitment tree init failed: {e}"))?;
+    let mut tree =
+        CommitmentTree::new(depth).map_err(|e| format!("commitment tree init failed: {e}"))?;
 
     if total == 0 {
         if tree.root() != expected_root {
@@ -1023,7 +1016,10 @@ fn build_recursive_block_proof(
     let (_, verifying_key) = generate_keys();
     let mut verifying_keys = HashMap::new();
     verifying_keys.insert(
-        VersionBinding::new(DEFAULT_VERSION_BINDING.circuit, DEFAULT_VERSION_BINDING.crypto),
+        VersionBinding::new(
+            DEFAULT_VERSION_BINDING.circuit,
+            DEFAULT_VERSION_BINDING.crypto,
+        ),
         verifying_key,
     );
 
@@ -1118,14 +1114,13 @@ pub fn check_wasm() -> Result<(), String> {
 }
 
 fn load_max_shielded_transfers_per_block(recursive_block_proofs_enabled: bool) -> usize {
-    let configured =
-        env_usize("HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK").unwrap_or_else(|| {
-            if recursive_block_proofs_enabled {
-                1
-            } else {
-                usize::MAX
-            }
-        });
+    let configured = env_usize("HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK").unwrap_or(
+        if recursive_block_proofs_enabled {
+            1
+        } else {
+            usize::MAX
+        },
+    );
     if configured == 0 {
         tracing::warn!(
             "HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK is zero; no shielded transfers will be included"
@@ -2581,11 +2576,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         Arc::new(ParkingMutex::new(DaChunkStore::new(da_store_capacity)));
     let da_request_tracker: Arc<ParkingMutex<DaRequestTracker>> =
         Arc::new(ParkingMutex::new(DaRequestTracker::default()));
-    let recursive_block_proof_store: Arc<ParkingMutex<RecursiveBlockProofStore>> = Arc::new(
-        ParkingMutex::new(RecursiveBlockProofStore::new(
+    let recursive_block_proof_store: Arc<ParkingMutex<RecursiveBlockProofStore>> =
+        Arc::new(ParkingMutex::new(RecursiveBlockProofStore::new(
             recursive_block_proof_store_capacity,
-        )),
-    );
+        )));
 
     tracing::info!(
         da_chunk_size = da_params.chunk_size,
@@ -2710,14 +2704,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                         .unwrap_or(false);
 
-                let validate_recursive_epoch_proofs =
-                    if cfg!(feature = "production") {
-                        true
-                    } else {
-                        std::env::var("HEGEMON_VALIDATE_RECURSIVE_EPOCH_PROOFS")
-                            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                            .unwrap_or(true)
-                    };
+                let validate_recursive_epoch_proofs = if cfg!(feature = "production") {
+                    true
+                } else {
+                    std::env::var("HEGEMON_VALIDATE_RECURSIVE_EPOCH_PROOFS")
+                        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                        .unwrap_or(true)
+                };
 
                 // Verify/store incoming proofs asynchronously to avoid blocking the network event loop.
                 let (epoch_proof_rx_tx, mut epoch_proof_rx_rx) = mpsc::channel::<(

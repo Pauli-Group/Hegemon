@@ -10,16 +10,16 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use serde::Serialize;
 use state_merkle::CommitmentTree;
+use transaction_circuit::proof::SerializedStarkInputs;
 use transaction_circuit::{
     constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS},
     hashing::{felts_to_bytes32, merkle_node, Felt, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
-    proof, StablecoinPolicyBinding, TransactionProverStarkRpo, TransactionPublicInputsStark,
-    TransactionProof, TransactionWitness,
+    proof, StablecoinPolicyBinding, TransactionProof, TransactionProverStarkRpo,
+    TransactionPublicInputsStark, TransactionWitness,
 };
-use transaction_circuit::proof::SerializedStarkInputs;
-use winterfell::math::FieldElement;
+use winterfell::{math::FieldElement, Prover};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Benchmark transaction and block circuits", long_about = None)]
@@ -135,8 +135,8 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
 
         let proofs = vec![proof];
         let recursive_start = Instant::now();
-        let block_proof = prove_block(&mut tree, &proofs, &verifying_keys)
-            .context("prove recursive block")?;
+        let block_proof =
+            prove_block(&mut tree, &proofs, &verifying_keys).context("prove recursive block")?;
         recursive_prove_ns = recursive_start.elapsed().as_nanos();
         block_ns = recursive_prove_ns;
         recursive_proof_bytes = block_proof.recursive_proof.proof_bytes.len();
@@ -327,9 +327,7 @@ fn build_rpo_proof(
 ) -> Result<TransactionProof> {
     let mut proof = proof::prove(witness, proving_key).context("prove transaction")?;
     let prover = TransactionProverStarkRpo::with_default_options();
-    let trace = prover
-        .build_trace(witness)
-        .context("build RPO trace")?;
+    let trace = prover.build_trace(witness).context("build RPO trace")?;
     let stark_pub_inputs = prover.get_pub_inputs(&trace);
     let proof_bytes = prover
         .prove(trace)
@@ -367,7 +365,9 @@ fn serialize_stark_inputs(inputs: &TransactionPublicInputsStark) -> SerializedSt
         stablecoin_issuance_magnitude: inputs.stablecoin_issuance_magnitude.as_int(),
         stablecoin_policy_hash: felts_to_bytes32(&inputs.stablecoin_policy_hash),
         stablecoin_oracle_commitment: felts_to_bytes32(&inputs.stablecoin_oracle_commitment),
-        stablecoin_attestation_commitment: felts_to_bytes32(&inputs.stablecoin_attestation_commitment),
+        stablecoin_attestation_commitment: felts_to_bytes32(
+            &inputs.stablecoin_attestation_commitment,
+        ),
     }
 }
 

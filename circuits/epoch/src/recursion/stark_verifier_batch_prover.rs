@@ -256,7 +256,7 @@ fn validate_batch_inputs(
             total_len
         ));
     }
-    if total_len % inner_pub_inputs.len() != 0 {
+    if !total_len.is_multiple_of(inner_pub_inputs.len()) {
         return Err(format!(
             "batch trace length must be divisible by num_segments (trace_len={}, num_segments={})",
             total_len,

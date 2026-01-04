@@ -46,7 +46,10 @@ use winter_air::{Air, ConstraintCompositionCoefficients, DeepCompositionCoeffici
 use winter_crypto::{hashers::Blake3_256, Hasher, MerkleTree, RandomCoin};
 use winter_fri::folding::fold_positions;
 use winter_fri::utils::map_positions_to_indexes;
-use winter_math::{fields::{f64::BaseElement, QuadExtension}, FieldElement, ToElements};
+use winter_math::{
+    fields::{f64::BaseElement, QuadExtension},
+    FieldElement, ToElements,
+};
 use winterfell::{
     crypto::DefaultRandomCoin, verify, AcceptableOptions, BatchingMethod, FieldExtension,
     ProofOptions, Prover,
@@ -893,10 +896,7 @@ impl InnerProofData {
                         constraint_frame_width,
                     )
                     .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
-                let evaluations = table
-                    .rows()
-                    .map(|row| flatten_elements(row))
-                    .collect();
+                let evaluations = table.rows().map(|row| flatten_elements(row)).collect();
                 (mp, evaluations)
             }
             _ => {
@@ -907,62 +907,63 @@ impl InnerProofData {
         };
 
         // --- parse OOD frame -------------------------------------------------------------------
-        let (ood_trace_current, ood_trace_next, ood_quotient_current, ood_quotient_next, ood_digest_word) =
-            match field_extension {
-                FieldExtension::None => {
-                    let (ood_trace_frame, ood_constraint_frame) = proof
-                        .ood_frame
-                        .clone()
-                        .parse::<BaseElement>(
-                            main_trace_width,
-                            aux_trace_width,
-                            constraint_frame_width,
-                        )
-                        .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
-                    let ood_trace_current = ood_trace_frame.current_row().to_vec();
-                    let ood_trace_next = ood_trace_frame.next_row().to_vec();
-                    let ood_quotient_current = ood_constraint_frame.current_row().to_vec();
-                    let ood_quotient_next = ood_constraint_frame.next_row().to_vec();
-                    let ood_evals = merge_ood_evaluations(&ood_trace_frame, &ood_constraint_frame);
-                    let ood_digest_word = Rpo256::hash_elements(&ood_evals);
-                    (
-                        ood_trace_current,
-                        ood_trace_next,
-                        ood_quotient_current,
-                        ood_quotient_next,
-                        ood_digest_word,
+        let (
+            ood_trace_current,
+            ood_trace_next,
+            ood_quotient_current,
+            ood_quotient_next,
+            ood_digest_word,
+        ) = match field_extension {
+            FieldExtension::None => {
+                let (ood_trace_frame, ood_constraint_frame) = proof
+                    .ood_frame
+                    .clone()
+                    .parse::<BaseElement>(main_trace_width, aux_trace_width, constraint_frame_width)
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                let ood_trace_current = ood_trace_frame.current_row().to_vec();
+                let ood_trace_next = ood_trace_frame.next_row().to_vec();
+                let ood_quotient_current = ood_constraint_frame.current_row().to_vec();
+                let ood_quotient_next = ood_constraint_frame.next_row().to_vec();
+                let ood_evals = merge_ood_evaluations(&ood_trace_frame, &ood_constraint_frame);
+                let ood_digest_word = Rpo256::hash_elements(&ood_evals);
+                (
+                    ood_trace_current,
+                    ood_trace_next,
+                    ood_quotient_current,
+                    ood_quotient_next,
+                    ood_digest_word,
+                )
+            }
+            FieldExtension::Quadratic => {
+                let (ood_trace_frame, ood_constraint_frame) = proof
+                    .ood_frame
+                    .clone()
+                    .parse::<QuadExtension<BaseElement>>(
+                        main_trace_width,
+                        aux_trace_width,
+                        constraint_frame_width,
                     )
-                }
-                FieldExtension::Quadratic => {
-                    let (ood_trace_frame, ood_constraint_frame) = proof
-                        .ood_frame
-                        .clone()
-                        .parse::<QuadExtension<BaseElement>>(
-                            main_trace_width,
-                            aux_trace_width,
-                            constraint_frame_width,
-                        )
-                        .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
-                    let ood_trace_current = flatten_elements(ood_trace_frame.current_row());
-                    let ood_trace_next = flatten_elements(ood_trace_frame.next_row());
-                    let ood_quotient_current = flatten_elements(ood_constraint_frame.current_row());
-                    let ood_quotient_next = flatten_elements(ood_constraint_frame.next_row());
-                    let ood_evals = merge_ood_evaluations(&ood_trace_frame, &ood_constraint_frame);
-                    let ood_digest_word = Rpo256::hash_elements(&ood_evals);
-                    (
-                        ood_trace_current,
-                        ood_trace_next,
-                        ood_quotient_current,
-                        ood_quotient_next,
-                        ood_digest_word,
-                    )
-                }
-                _ => {
-                    return Err(EpochProverError::TraceBuildError(
-                        "inner proof uses unsupported field extension".to_string(),
-                    ))
-                }
-            };
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                let ood_trace_current = flatten_elements(ood_trace_frame.current_row());
+                let ood_trace_next = flatten_elements(ood_trace_frame.next_row());
+                let ood_quotient_current = flatten_elements(ood_constraint_frame.current_row());
+                let ood_quotient_next = flatten_elements(ood_constraint_frame.next_row());
+                let ood_evals = merge_ood_evaluations(&ood_trace_frame, &ood_constraint_frame);
+                let ood_digest_word = Rpo256::hash_elements(&ood_evals);
+                (
+                    ood_trace_current,
+                    ood_trace_next,
+                    ood_quotient_current,
+                    ood_quotient_next,
+                    ood_digest_word,
+                )
+            }
+            _ => {
+                return Err(EpochProverError::TraceBuildError(
+                    "inner proof uses unsupported field extension".to_string(),
+                ))
+            }
+        };
         let ood_digest = word_to_digest(ood_digest_word);
 
         // --- parse FRI proof -------------------------------------------------------------------
@@ -1080,10 +1081,9 @@ impl InnerProofData {
                 .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?,
             FieldExtension::Quadratic => {
                 let coeffs = air
-                    .get_deep_composition_coefficients::<
-                        QuadExtension<BaseElement>,
-                        RpoRandomCoin,
-                    >(&mut coin)
+                    .get_deep_composition_coefficients::<QuadExtension<BaseElement>, RpoRandomCoin>(
+                        &mut coin,
+                    )
                     .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
                 flatten_deep_coeffs(coeffs)
             }
@@ -1676,10 +1676,9 @@ mod tests {
             use winter_math::StarkField;
 
             let g_trace = BaseElement::get_root_of_unity(pub_inputs1.trace_length.ilog2());
-            for (idx, (inner, pub_inputs)) in
-                [(&inner1, &pub_inputs1), (&inner2, &pub_inputs2)]
-                    .into_iter()
-                    .enumerate()
+            for (idx, (inner, pub_inputs)) in [(&inner1, &pub_inputs1), (&inner2, &pub_inputs2)]
+                .into_iter()
+                .enumerate()
             {
                 let ood_digest = compute_ood_digest(pub_inputs);
                 let (coeffs, z, _deep, _fri_alphas) =

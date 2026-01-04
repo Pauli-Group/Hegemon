@@ -56,11 +56,7 @@ impl From<DaChunkProof> for DaChunkProofRpc {
 pub trait DaApi {
     /// Get a DA chunk proof by root and chunk index.
     #[method(name = "getChunk")]
-    async fn get_chunk(
-        &self,
-        root: String,
-        index: u32,
-    ) -> RpcResult<Option<DaChunkProofRpc>>;
+    async fn get_chunk(&self, root: String, index: u32) -> RpcResult<Option<DaChunkProofRpc>>;
 
     /// Get DA parameters for the current chain.
     #[method(name = "getParams")]
@@ -107,7 +103,11 @@ impl DaApiServer for DaRpc {
 fn parse_da_root(value: &str) -> Result<DaRoot, ErrorObjectOwned> {
     let trimmed = value.trim_start_matches("0x");
     let bytes = hex::decode(trimmed).map_err(|err| {
-        ErrorObjectOwned::owned(INVALID_PARAMS_CODE, format!("invalid hex: {err}"), None::<()>)
+        ErrorObjectOwned::owned(
+            INVALID_PARAMS_CODE,
+            format!("invalid hex: {err}"),
+            None::<()>,
+        )
     })?;
     if bytes.len() != 32 {
         return Err(ErrorObjectOwned::owned(

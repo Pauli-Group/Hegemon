@@ -1,15 +1,21 @@
 use std::collections::{HashMap, HashSet};
 
-use epoch_circuit::recursion::recursive_prover::{fast_recursive_proof_options, recursive_proof_options};
-use epoch_circuit::recursion::{prove_batch, verify_batch, InnerProofData, StarkVerifierPublicInputs};
+use epoch_circuit::recursion::recursive_prover::{
+    fast_recursive_proof_options, recursive_proof_options,
+};
+use epoch_circuit::recursion::{
+    prove_batch, verify_batch, InnerProofData, StarkVerifierPublicInputs,
+};
 use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Serialize};
 use state_merkle::CommitmentTree;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing::{bytes32_to_felts, felts_to_bytes32, Commitment, Felt};
-use transaction_circuit::{TransactionAirStark, TransactionProof, TransactionPublicInputsStark, VerifyingKey};
-use winterfell::{AcceptableOptions, Proof};
+use transaction_circuit::{
+    TransactionAirStark, TransactionProof, TransactionPublicInputsStark, VerifyingKey,
+};
 use winterfell::math::ToElements;
+use winterfell::{AcceptableOptions, Proof};
 
 use crate::error::BlockError;
 
@@ -57,7 +63,10 @@ pub fn prove_block_recursive(
     for (index, proof) in transactions.iter().enumerate() {
         let binding = proof.version_binding();
         if !verifying_keys.contains_key(&binding) {
-            return Err(BlockError::UnsupportedVersion { index, version: binding });
+            return Err(BlockError::UnsupportedVersion {
+                index,
+                version: binding,
+            });
         }
         if proof.stark_proof.is_empty() {
             return Err(BlockError::MissingStarkProof { index });
@@ -98,7 +107,11 @@ pub fn prove_block_recursive(
         inner_pub_inputs.push(verifier_inputs);
     }
 
-    pad_to_power_of_two(&mut inner_datas, &mut inner_pub_inputs, &mut serialized_inputs)?;
+    pad_to_power_of_two(
+        &mut inner_datas,
+        &mut inner_pub_inputs,
+        &mut serialized_inputs,
+    )?;
 
     let options = recursive_proof_options();
     let proof = prove_batch(&inner_datas, inner_pub_inputs.clone(), options)
@@ -136,7 +149,10 @@ pub fn prove_block_recursive_fast(
     for (index, proof) in transactions.iter().enumerate() {
         let binding = proof.version_binding();
         if !verifying_keys.contains_key(&binding) {
-            return Err(BlockError::UnsupportedVersion { index, version: binding });
+            return Err(BlockError::UnsupportedVersion {
+                index,
+                version: binding,
+            });
         }
         if proof.stark_proof.is_empty() {
             return Err(BlockError::MissingStarkProof { index });
@@ -177,7 +193,11 @@ pub fn prove_block_recursive_fast(
         inner_pub_inputs.push(verifier_inputs);
     }
 
-    pad_to_power_of_two(&mut inner_datas, &mut inner_pub_inputs, &mut serialized_inputs)?;
+    pad_to_power_of_two(
+        &mut inner_datas,
+        &mut inner_pub_inputs,
+        &mut serialized_inputs,
+    )?;
 
     let options = fast_recursive_proof_options();
     let proof = prove_batch(&inner_datas, inner_pub_inputs.clone(), options)
@@ -230,7 +250,10 @@ pub fn verify_block_recursive(
     for (index, tx) in transactions.iter().enumerate() {
         let binding = tx.version_binding();
         if !verifying_keys.contains_key(&binding) {
-            return Err(BlockError::UnsupportedVersion { index, version: binding });
+            return Err(BlockError::UnsupportedVersion {
+                index,
+                version: binding,
+            });
         }
 
         let expected_inputs = stark_inputs_from_proof(tx, index)?;
@@ -456,9 +479,8 @@ fn deserialize_verifier_inputs(
     inputs: &SerializedVerifierInputs,
 ) -> Result<StarkVerifierPublicInputs, BlockError> {
     let elements: Vec<Felt> = inputs.elements.iter().map(|v| Felt::new(*v)).collect();
-    StarkVerifierPublicInputs::try_from_elements(&elements, inputs.inner_len as usize).map_err(
-        |err| BlockError::RecursiveProofVerification(err),
-    )
+    StarkVerifierPublicInputs::try_from_elements(&elements, inputs.inner_len as usize)
+        .map_err(|err| BlockError::RecursiveProofVerification(err))
 }
 
 fn stark_inputs_from_proof(
@@ -507,19 +529,15 @@ fn stark_inputs_from_proof(
             reason: "invalid merkle root encoding".to_string(),
         }
     })?;
-    let stablecoin_policy_hash =
-        bytes32_to_felts(&stark_inputs.stablecoin_policy_hash).ok_or_else(|| {
-            BlockError::InvalidStarkInputs {
-                index,
-                reason: "invalid stablecoin policy hash encoding".to_string(),
-            }
+    let stablecoin_policy_hash = bytes32_to_felts(&stark_inputs.stablecoin_policy_hash)
+        .ok_or_else(|| BlockError::InvalidStarkInputs {
+            index,
+            reason: "invalid stablecoin policy hash encoding".to_string(),
         })?;
-    let stablecoin_oracle_commitment =
-        bytes32_to_felts(&stark_inputs.stablecoin_oracle_commitment).ok_or_else(|| {
-            BlockError::InvalidStarkInputs {
-                index,
-                reason: "invalid stablecoin oracle commitment encoding".to_string(),
-            }
+    let stablecoin_oracle_commitment = bytes32_to_felts(&stark_inputs.stablecoin_oracle_commitment)
+        .ok_or_else(|| BlockError::InvalidStarkInputs {
+            index,
+            reason: "invalid stablecoin oracle commitment encoding".to_string(),
         })?;
     let stablecoin_attestation_commitment =
         bytes32_to_felts(&stark_inputs.stablecoin_attestation_commitment).ok_or_else(|| {
@@ -578,10 +596,7 @@ fn pad_to_power_of_two(
     Ok(())
 }
 
-fn padding_matches(
-    inputs: &[StarkVerifierPublicInputs],
-    tx_count: usize,
-) -> bool {
+fn padding_matches(inputs: &[StarkVerifierPublicInputs], tx_count: usize) -> bool {
     if inputs.len() == tx_count {
         return true;
     }
@@ -648,17 +663,17 @@ mod serde_bytes32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use transaction_circuit::constants::NATIVE_ASSET_ID;
+    use transaction_circuit::hashing::{bytes32_to_felts, felts_to_bytes32};
     use transaction_circuit::keys::generate_keys;
     use transaction_circuit::note::{
-        InputNoteWitness, OutputNoteWitness, NoteData, MerklePath, MERKLE_TREE_DEPTH,
+        InputNoteWitness, MerklePath, NoteData, OutputNoteWitness, MERKLE_TREE_DEPTH,
     };
     use transaction_circuit::proof::prove;
+    use transaction_circuit::proof::SerializedStarkInputs;
+    use transaction_circuit::public_inputs::StablecoinPolicyBinding;
     use transaction_circuit::rpo_prover::TransactionProverStarkRpo;
     use transaction_circuit::witness::TransactionWitness;
-    use transaction_circuit::hashing::{bytes32_to_felts, felts_to_bytes32};
-    use transaction_circuit::constants::NATIVE_ASSET_ID;
-    use transaction_circuit::public_inputs::StablecoinPolicyBinding;
-    use transaction_circuit::proof::SerializedStarkInputs;
     use winterfell::{BatchingMethod, ProofOptions, Prover};
 
     fn sample_witness() -> (TransactionWitness, CommitmentTree) {
@@ -774,13 +789,24 @@ mod tests {
         let mut verify_tree = tree.clone();
         let mut tamper_tree = tree.clone();
         let mut recursive =
-            prove_block_recursive_fast(&mut tree, &[proof.clone()], &keys).expect("recursive");
-        verify_block_recursive(&mut verify_tree, &recursive, &[proof.clone()], &keys)
-            .expect("verify ok");
+            prove_block_recursive_fast(&mut tree, std::slice::from_ref(&proof), &keys)
+                .expect("recursive");
+        verify_block_recursive(
+            &mut verify_tree,
+            &recursive,
+            std::slice::from_ref(&proof),
+            &keys,
+        )
+        .expect("verify ok");
 
         recursive.proof_bytes[0] ^= 0x01;
-        let err = verify_block_recursive(&mut tamper_tree, &recursive, &[proof], &keys)
-            .expect_err("tamper should fail");
+        let err = verify_block_recursive(
+            &mut tamper_tree,
+            &recursive,
+            std::slice::from_ref(&proof),
+            &keys,
+        )
+        .expect_err("tamper should fail");
         assert!(matches!(err, BlockError::RecursiveProofHashMismatch));
     }
 }

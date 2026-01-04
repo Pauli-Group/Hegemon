@@ -14,13 +14,15 @@ pub mod validator;
 pub mod version_policy;
 
 pub use bft::{BftConsensus, ConsensusUpdate};
-pub use commitment_tree::{COMMITMENT_TREE_DEPTH, CommitmentTreeError, CommitmentTreeState, DEFAULT_ROOT_HISTORY_LIMIT};
+pub use block_circuit::RecursiveBlockProof;
+pub use commitment_tree::{
+    COMMITMENT_TREE_DEPTH, CommitmentTreeError, CommitmentTreeState, DEFAULT_ROOT_HISTORY_LIMIT,
+};
 pub use error::{ConsensusError, ProofError, SlashingEvidence};
 pub use header::{BlockHeader, ConsensusMode, PowSeal};
 pub use mining::{MiningCoordinator, MiningSolution, MiningStats, MiningWork, MiningWorker};
 pub use nullifier::NullifierSet;
 pub use pow::PowConsensus;
-pub use block_circuit::RecursiveBlockProof;
 pub use proof::{HashVerifier, ProofVerifier, RecursiveProofVerifier};
 pub use protocol_versioning::{
     CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CircuitVersion, CryptoSuiteId,

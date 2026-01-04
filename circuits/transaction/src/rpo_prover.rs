@@ -53,9 +53,16 @@ impl TransactionProverStarkRpo {
         Self::new(default_proof_options())
     }
 
-    #[cfg(feature = "stark-fast")]
     pub fn with_fast_options() -> Self {
-        Self::new(fast_proof_options())
+        #[cfg(feature = "stark-fast")]
+        {
+            Self::new(fast_proof_options())
+        }
+
+        #[cfg(not(feature = "stark-fast"))]
+        {
+            Self::with_default_options()
+        }
     }
 
     /// Build execution trace (identical to Blake3 prover).
@@ -288,7 +295,7 @@ mod tests {
             outputs: vec![OutputNoteWitness { note: output_note }],
             sk_spend: [7u8; 32],
             merkle_root,
-            fee: 0,
+            fee: 100,
             value_balance: 0,
             stablecoin: StablecoinPolicyBinding::default(),
             version: TransactionWitness::default_version_binding(),
@@ -333,11 +340,14 @@ mod tests {
         let proof = prover.prove(trace).unwrap();
         let proof_bytes = proof.to_bytes();
 
-        let result =
-            transaction_core::stark_verifier::verify_transaction_proof_bytes_rpo(
-                &proof_bytes,
-                &pub_inputs,
-            );
-        assert!(result.is_ok(), "transaction-core verifier failed: {:?}", result);
+        let result = transaction_core::stark_verifier::verify_transaction_proof_bytes_rpo(
+            &proof_bytes,
+            &pub_inputs,
+        );
+        assert!(
+            result.is_ok(),
+            "transaction-core verifier failed: {:?}",
+            result
+        );
     }
 }

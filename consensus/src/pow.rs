@@ -58,7 +58,11 @@ pub struct PowConsensus<V: ProofVerifier> {
 }
 
 impl<V: ProofVerifier> PowConsensus<V> {
-    pub fn new(miner_keys: Vec<MlDsaPublicKey>, genesis_tree: CommitmentTreeState, verifier: V) -> Self {
+    pub fn new(
+        miner_keys: Vec<MlDsaPublicKey>,
+        genesis_tree: CommitmentTreeState,
+        verifier: V,
+    ) -> Self {
         Self::with_schedule_and_pow_bits(
             miner_keys,
             genesis_tree,
@@ -258,8 +262,9 @@ impl<V: ProofVerifier> PowConsensus<V> {
         }
         let cumulative_work = parent_node.work.clone() + target_to_work(&target);
 
-        let commitment_tree =
-            self.verifier.verify_block(&block, &parent_node.commitment_tree)?;
+        let commitment_tree = self
+            .verifier
+            .verify_block(&block, &parent_node.commitment_tree)?;
         let computed_state_root = commitment_tree.root();
         if computed_state_root != block.header.state_root {
             return Err(ConsensusError::InvalidHeader("state root mismatch"));
