@@ -65,8 +65,7 @@ impl StreamingPlan {
             lde_domain_size.trailing_zeros() as usize
         };
 
-        let constraint_coeff_perms =
-            div_ceil(num_constraints * extension_degree, RATE_WIDTH);
+        let constraint_coeff_perms = div_ceil(num_constraints * extension_degree, RATE_WIDTH);
         let deep_coeff_perms_global = div_ceil(
             (params.trace_width + params.constraint_frame_width) * extension_degree,
             RATE_WIDTH,
@@ -82,10 +81,9 @@ impl StreamingPlan {
         };
         let num_pos_decomp_perms = params.num_draws;
 
-        let trace_partition_size =
-            params.partition_options.partition_size::<winter_math::fields::f64::BaseElement>(
-                params.trace_width,
-            );
+        let trace_partition_size = params
+            .partition_options
+            .partition_size::<winter_math::fields::f64::BaseElement>(params.trace_width);
         let constraint_partition_size = match params.field_extension {
             FieldExtension::None => params
                 .partition_options

@@ -90,7 +90,11 @@ impl BlockApiServer for BlockRpc {
 fn parse_h256(value: &str) -> Result<H256, ErrorObjectOwned> {
     let trimmed = value.trim_start_matches("0x");
     let bytes = hex::decode(trimmed).map_err(|err| {
-        ErrorObjectOwned::owned(INVALID_PARAMS_CODE, format!("invalid hex: {err}"), None::<()>)
+        ErrorObjectOwned::owned(
+            INVALID_PARAMS_CODE,
+            format!("invalid hex: {err}"),
+            None::<()>,
+        )
     })?;
     if bytes.len() != 32 {
         return Err(ErrorObjectOwned::owned(

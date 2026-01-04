@@ -1069,13 +1069,13 @@ mod tests {
     fn build_stark_fixture() -> (StarkProof, ShieldedTransferInputs, BindingHash) {
         use std::sync::OnceLock;
         use transaction_circuit::hashing::felts_to_bytes32;
-        use transaction_circuit::keys::generate_keys;
         use transaction_circuit::note::{
             InputNoteWitness, MerklePath, NoteData, OutputNoteWitness,
         };
-        use transaction_circuit::proof::prove;
+        use transaction_circuit::rpo_prover::TransactionProverStarkRpo;
         use transaction_circuit::witness::TransactionWitness;
         use transaction_circuit::StablecoinPolicyBinding;
+        use winterfell::Prover;
 
         static FIXTURE: OnceLock<(StarkProof, ShieldedTransferInputs, BindingHash)> =
             OnceLock::new();
@@ -1118,28 +1118,28 @@ mod tests {
                     version: TransactionWitness::default_version_binding(),
                 };
 
-                let (proving_key, _verifying_key) = generate_keys();
-                let proof = prove(&witness, &proving_key).expect("proof generation");
-                let stark_inputs = proof
-                    .stark_public_inputs
-                    .as_ref()
-                    .expect("stark public inputs");
+                let prover = TransactionProverStarkRpo::with_fast_options();
+                let trace = prover.build_trace(&witness).expect("trace");
+                let pub_inputs = prover.get_pub_inputs(&trace);
+                let proof = prover.prove(trace).expect("proof generation");
 
                 let inputs = ShieldedTransferInputs {
-                    anchor: stark_inputs.merkle_root,
-                    nullifiers: proof
+                    anchor: felts_to_bytes32(&pub_inputs.merkle_root),
+                    nullifiers: pub_inputs
                         .nullifiers
                         .iter()
-                        .copied()
-                        .filter(|nf| *nf != [0u8; 32])
+                        .zip(pub_inputs.input_flags.iter())
+                        .filter(|(_, flag)| flag.as_int() == 1)
+                        .map(|(nf, _)| felts_to_bytes32(nf))
                         .collect(),
-                    commitments: proof
+                    commitments: pub_inputs
                         .commitments
                         .iter()
-                        .copied()
-                        .filter(|cm| *cm != [0u8; 32])
+                        .zip(pub_inputs.output_flags.iter())
+                        .filter(|(_, flag)| flag.as_int() == 1)
+                        .map(|(cm, _)| felts_to_bytes32(cm))
                         .collect(),
-                    fee: stark_inputs.fee,
+                    fee: pub_inputs.fee.as_int(),
                     value_balance: 0,
                     stablecoin: None,
                 };
@@ -1147,7 +1147,7 @@ mod tests {
                 let binding_hash = StarkVerifier::compute_binding_hash(&inputs);
 
                 (
-                    StarkProof::from_bytes(proof.stark_proof),
+                    StarkProof::from_bytes(proof.to_bytes()),
                     inputs,
                     binding_hash,
                 )

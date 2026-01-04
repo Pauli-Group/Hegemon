@@ -147,7 +147,10 @@ pub enum DaChunkProtocolMessage {
     /// Request a set of chunk indices for a given DA root.
     Request { root: [u8; 32], indices: Vec<u32> },
     /// Respond with chunk proofs for the requested indices.
-    Response { root: [u8; 32], proofs: Vec<DaChunkProof> },
+    Response {
+        root: [u8; 32],
+        proofs: Vec<DaChunkProof>,
+    },
     /// Indicate missing chunks for a requested DA root.
     NotFound { root: [u8; 32], indices: Vec<u32> },
 }

@@ -77,7 +77,11 @@ pub mod security {
     /// We approximate `deg` by `lde_domain_size = trace_length * blowup_factor` (up to constants).
     /// This gives a conservative ceiling of:
     ///   log2(|F_ext|) - log2(lde_domain_size)
-    pub fn field_size_bound_bits(trace_length: usize, blowup_factor: usize, extension_degree: usize) -> usize {
+    pub fn field_size_bound_bits(
+        trace_length: usize,
+        blowup_factor: usize,
+        extension_degree: usize,
+    ) -> usize {
         let lde_domain_log2 = log2_pow2(trace_length) + log2_pow2(blowup_factor);
         let field_bits = BASE_FIELD_BITS_APPROX.saturating_mul(extension_degree);
         field_bits.saturating_sub(lde_domain_log2)
@@ -211,7 +215,11 @@ mod tests {
         println!("  query/grinding bound: {} bits", query_bound);
         println!("  field-size bound (base): {} bits", field_bound_base);
         println!("  field-size bound (quad): {} bits", field_bound_quad);
-        println!("  PQ collision bound (digest={}): {} bits", security::DIGEST_BITS, pq_hash_bound);
+        println!(
+            "  PQ collision bound (digest={}): {} bits",
+            security::DIGEST_BITS,
+            pq_hash_bound
+        );
         println!("  estimated PQ soundness (base): {} bits", est_base);
         println!("  estimated PQ soundness (quad): {} bits", est_quad);
 

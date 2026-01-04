@@ -25,15 +25,14 @@ use super::stark_verifier_air::{
     COL_COIN_RESTORE_MASK, COL_COIN_SAVE_MASK, COL_DEEP_C1_ACC, COL_DEEP_C1_ACC_LIMB1,
     COL_DEEP_C2_ACC, COL_DEEP_C2_ACC_LIMB1, COL_DEEP_MASK, COL_DEEP_START, COL_DEEP_T1_ACC,
     COL_DEEP_T1_ACC_LIMB1, COL_DEEP_T2_ACC, COL_DEEP_T2_ACC_LIMB1, COL_FRI_ALPHA_VALUE,
-    COL_FRI_EVAL, COL_FRI_EVAL_LIMB1, COL_FRI_MASK, COL_FRI_MSB_BITS_START,
-    COL_FRI_POW, COL_FRI_X, COL_FULL_CARRY_MASK, COL_MERKLE_INDEX, COL_MERKLE_PATH_BIT,
-    COL_OOD_DIGEST_START, COL_POS_ACC, COL_POS_BIT0, COL_POS_BIT1, COL_POS_BIT2, COL_POS_BIT3,
-    COL_POS_DECOMP_MASK, COL_POS_HI_AND, COL_POS_LO_ACC, COL_POS_MASK, COL_POS_MASKED_ACC,
-    COL_POS_PERM_ACC, COL_POS_PERM_ACC_LIMB1, COL_POS_RAW, COL_POS_SORTED_VALUE, COL_POS_START,
-    COL_REMAINDER_COEFFS_EXT_START, COL_REMAINDER_COEFFS_START, COL_RESEED_MASK,
-    COL_RESEED_WORD_START, COL_SAVED_COIN_START, COL_TAPE_MASK, COL_TAPE_VALUES_START, COL_Z_MASK,
-    COL_Z_VALUE, COL_Z_VALUE_LIMB1, NUM_REMAINDER_COEFFS, RATE_WIDTH, TAPE_WIDTH,
-    VERIFIER_TRACE_WIDTH,
+    COL_FRI_EVAL, COL_FRI_EVAL_LIMB1, COL_FRI_MASK, COL_FRI_MSB_BITS_START, COL_FRI_POW, COL_FRI_X,
+    COL_FULL_CARRY_MASK, COL_MERKLE_INDEX, COL_MERKLE_PATH_BIT, COL_OOD_DIGEST_START, COL_POS_ACC,
+    COL_POS_BIT0, COL_POS_BIT1, COL_POS_BIT2, COL_POS_BIT3, COL_POS_DECOMP_MASK, COL_POS_HI_AND,
+    COL_POS_LO_ACC, COL_POS_MASK, COL_POS_MASKED_ACC, COL_POS_PERM_ACC, COL_POS_PERM_ACC_LIMB1,
+    COL_POS_RAW, COL_POS_SORTED_VALUE, COL_POS_START, COL_REMAINDER_COEFFS_EXT_START,
+    COL_REMAINDER_COEFFS_START, COL_RESEED_MASK, COL_RESEED_WORD_START, COL_SAVED_COIN_START,
+    COL_TAPE_MASK, COL_TAPE_VALUES_START, COL_Z_MASK, COL_Z_VALUE, COL_Z_VALUE_LIMB1,
+    NUM_REMAINDER_COEFFS, RATE_WIDTH, TAPE_WIDTH, VERIFIER_TRACE_WIDTH,
 };
 
 #[cfg(test)]
@@ -54,9 +53,7 @@ fn transaction_public_inputs_len() -> usize {
         + 24
 }
 
-fn inner_proof_kind(
-    pub_inputs: &StarkVerifierPublicInputs,
-) -> Result<InnerProofKind, String> {
+fn inner_proof_kind(pub_inputs: &StarkVerifierPublicInputs) -> Result<InnerProofKind, String> {
     if pub_inputs.inner_public_inputs.len() == 2 * STATE_WIDTH {
         Ok(InnerProofKind::RpoAir)
     } else if pub_inputs.inner_public_inputs.len() == transaction_public_inputs_len() {
@@ -157,8 +154,7 @@ impl Air for StarkVerifierBatchAir {
             segment_len
         );
         assert_eq!(
-            template.fri_folding_factor,
-            2,
+            template.fri_folding_factor, 2,
             "StarkVerifierBatchAir assumes FRI folding factor 2"
         );
 
@@ -220,8 +216,8 @@ impl Air for StarkVerifierBatchAir {
         let domain_offset = BaseElement::GENERATOR;
         let inv_domain_offset = domain_offset.inv();
 
-        let extension_degree = field_extension_degree(template.field_extension)
-            .expect("unsupported field extension");
+        let extension_degree =
+            field_extension_degree(template.field_extension).expect("unsupported field extension");
         let is_quadratic = template.field_extension == FieldExtension::Quadratic;
         let trace_width_ext = template.trace_width * extension_degree;
         let constraint_width_ext = template.constraint_frame_width * extension_degree;
@@ -491,9 +487,15 @@ impl Air for StarkVerifierBatchAir {
         degrees.push(deg!(2, vec![full_cycle / 2])); // pow update
         degrees.extend(vec![deg!(1, vec![full_cycle]); extension_degree]); // eval freeze
         degrees.extend(vec![deg!(1, vec![full_cycle]); num_fri_layers]); // msb capture
-        degrees.extend(vec![deg!(2, vec![full_cycle]); num_fri_layers * extension_degree]); // eval selection
+        degrees.extend(vec![
+            deg!(2, vec![full_cycle]);
+            num_fri_layers * extension_degree
+        ]); // eval selection
         degrees.extend(vec![deg!(3, vec![full_cycle]); extension_degree]); // deep composition
-        degrees.extend(vec![deg!(3, vec![full_cycle]); num_fri_layers * extension_degree]); // fri fold
+        degrees.extend(vec![
+            deg!(3, vec![full_cycle]);
+            num_fri_layers * extension_degree
+        ]); // fri fold
         if num_fri_layers > 0 {
             degrees.extend(vec![deg!(8, vec![full_cycle]); extension_degree]); // remainder eval
         }
@@ -595,8 +597,7 @@ impl Air for StarkVerifierBatchAir {
 
         let num_fri_commitments = self.template.fri_commitments.len();
         let num_fri_layers = num_fri_commitments.saturating_sub(1);
-        let remainder_coeffs_len =
-            (self.template.fri_remainder_max_degree + 1) * extension_degree;
+        let remainder_coeffs_len = (self.template.fri_remainder_max_degree + 1) * extension_degree;
         let num_remainder_perms = if num_fri_commitments > 0 {
             remainder_coeffs_len.div_ceil(RATE_WIDTH)
         } else {
@@ -623,8 +624,7 @@ impl Air for StarkVerifierBatchAir {
         // --- DEEP + FRI periodic selectors ------------------------------------------------
         let query_reset_mask = periodic_values[p];
         p += 1;
-        let trace_leaf_row_masks =
-            &periodic_values[p..p + self.trace_data_block_starts.len()];
+        let trace_leaf_row_masks = &periodic_values[p..p + self.trace_data_block_starts.len()];
         p += self.trace_data_block_starts.len();
         let constraint_leaf_row_masks =
             &periodic_values[p..p + self.constraint_data_block_starts.len()];
@@ -1107,8 +1107,7 @@ impl Air for StarkVerifierBatchAir {
             idx += 1;
         }
 
-        let (draw_plus_gamma0, draw_plus_gamma1) =
-            ext_add(draw_val, E::ZERO, gamma0, gamma1);
+        let (draw_plus_gamma0, draw_plus_gamma1) = ext_add(draw_val, E::ZERO, gamma0, gamma1);
         let (prod0, prod1) = ext_mul(perm_acc0, perm_acc1, draw_plus_gamma0, draw_plus_gamma1);
         result[idx] = boundary_mask * decomp_mask * (perm_acc_next0 - prod0);
         idx += 1;
@@ -1117,10 +1116,13 @@ impl Air for StarkVerifierBatchAir {
             idx += 1;
         }
 
-        let (trace_plus_gamma0, trace_plus_gamma1) =
-            ext_add(trace_idx, E::ZERO, gamma0, gamma1);
-        let (leaf_mul0, leaf_mul1) =
-            ext_mul(perm_acc_next0, perm_acc_next1, trace_plus_gamma0, trace_plus_gamma1);
+        let (trace_plus_gamma0, trace_plus_gamma1) = ext_add(trace_idx, E::ZERO, gamma0, gamma1);
+        let (leaf_mul0, leaf_mul1) = ext_mul(
+            perm_acc_next0,
+            perm_acc_next1,
+            trace_plus_gamma0,
+            trace_plus_gamma1,
+        );
         result[idx] = boundary_mask * trace_leaf_end_mask * (leaf_mul0 - perm_acc0);
         idx += 1;
         if is_quadratic {
@@ -1534,7 +1536,12 @@ impl Air for StarkVerifierBatchAir {
                     current[RATE_START + 3],
                 )
             } else {
-                (current[RATE_START], E::ZERO, current[RATE_START + 1], E::ZERO)
+                (
+                    current[RATE_START],
+                    E::ZERO,
+                    current[RATE_START + 1],
+                    E::ZERO,
+                )
             };
             let selected0 = v00 + b * (v10 - v00);
             let selected1 = v01 + b * (v11 - v01);
@@ -1554,14 +1561,11 @@ impl Air for StarkVerifierBatchAir {
             let (x0, x1) = (x, E::ZERO);
             let (x_minus_z0_0, x_minus_z0_1) = ext_sub(x0, x1, z0, z1);
             let (x_minus_z1_0, x_minus_z1_1) = ext_sub(x0, x1, z1_0, z1_1);
-            let (den0, den1) =
-                ext_mul(x_minus_z0_0, x_minus_z0_1, x_minus_z1_0, x_minus_z1_1);
+            let (den0, den1) = ext_mul(x_minus_z0_0, x_minus_z0_1, x_minus_z1_0, x_minus_z1_1);
             let (t1c1_0, t1c1_1) = ext_add(t1_0, t1_1, c1_0, c1_1);
             let (t2c2_0, t2c2_1) = ext_add(t2_0, t2_1, c2_0, c2_1);
-            let (term1_0, term1_1) =
-                ext_mul(t1c1_0, t1c1_1, x_minus_z1_0, x_minus_z1_1);
-            let (term2_0, term2_1) =
-                ext_mul(t2c2_0, t2c2_1, x_minus_z0_0, x_minus_z0_1);
+            let (term1_0, term1_1) = ext_mul(t1c1_0, t1c1_1, x_minus_z1_0, x_minus_z1_1);
+            let (term2_0, term2_1) = ext_mul(t2c2_0, t2c2_1, x_minus_z0_0, x_minus_z0_1);
             let (num0, num1) = ext_add(term1_0, term1_1, term2_0, term2_1);
             let (eval_den0, eval_den1) = ext_mul(eval0, eval1, den0, den1);
             result[idx] = mask * (eval_den0 - num0);
@@ -1594,7 +1598,12 @@ impl Air for StarkVerifierBatchAir {
                     current[RATE_START + 3],
                 )
             } else {
-                (current[RATE_START], E::ZERO, current[RATE_START + 1], E::ZERO)
+                (
+                    current[RATE_START],
+                    E::ZERO,
+                    current[RATE_START + 1],
+                    E::ZERO,
+                )
             };
 
             let sign = one - two * b;
@@ -1764,50 +1773,51 @@ impl Air for StarkVerifierBatchAir {
                 extension_degree,
                 "inner proof {seg_idx} expected z limb count mismatch"
             );
-            let (ood_eval1_flat, ood_eval2_flat) = match (inner_proof_kind(inner), inner.field_extension) {
-                (Ok(InnerProofKind::RpoAir), FieldExtension::None) => {
-                    let (eval1, eval2) = compute_rpo_ood_consistency(
-                        inner,
-                        &constraint_coeffs,
-                        expected_z_flat[0],
-                        self.g_trace,
-                    )
-                    .expect("failed to evaluate RPO constraints at z");
-                    (vec![eval1], vec![eval2])
-                }
-                (Ok(InnerProofKind::RpoAir), FieldExtension::Quadratic) => {
-                    let expected_z = [expected_z_flat[0], expected_z_flat[1]];
-                    let (eval1, eval2) = compute_rpo_ood_consistency_quadratic(
-                        inner,
-                        &constraint_coeffs,
-                        expected_z,
-                        self.g_trace,
-                    )
-                    .expect("failed to evaluate quadratic RPO constraints at z");
-                    (vec![eval1[0], eval1[1]], vec![eval2[0], eval2[1]])
-                }
-                (Ok(InnerProofKind::TransactionAir), FieldExtension::None) => {
-                    let (eval1, eval2) = compute_transaction_ood_consistency(
-                        inner,
-                        &constraint_coeffs,
-                        expected_z_flat[0],
-                    )
-                    .expect("failed to evaluate transaction constraints at z");
-                    (vec![eval1], vec![eval2])
-                }
-                (Ok(InnerProofKind::TransactionAir), FieldExtension::Quadratic) => {
-                    let expected_z = [expected_z_flat[0], expected_z_flat[1]];
-                    let (eval1, eval2) = compute_transaction_ood_consistency_quadratic(
-                        inner,
-                        &constraint_coeffs,
-                        expected_z,
-                    )
-                    .expect("failed to evaluate quadratic transaction constraints at z");
-                    (vec![eval1[0], eval1[1]], vec![eval2[0], eval2[1]])
-                }
-                (Err(err), _) => panic!("unsupported inner proof kind: {err}"),
-                (_, _) => panic!("unsupported field extension for batch verifier"),
-            };
+            let (ood_eval1_flat, ood_eval2_flat) =
+                match (inner_proof_kind(inner), inner.field_extension) {
+                    (Ok(InnerProofKind::RpoAir), FieldExtension::None) => {
+                        let (eval1, eval2) = compute_rpo_ood_consistency(
+                            inner,
+                            &constraint_coeffs,
+                            expected_z_flat[0],
+                            self.g_trace,
+                        )
+                        .expect("failed to evaluate RPO constraints at z");
+                        (vec![eval1], vec![eval2])
+                    }
+                    (Ok(InnerProofKind::RpoAir), FieldExtension::Quadratic) => {
+                        let expected_z = [expected_z_flat[0], expected_z_flat[1]];
+                        let (eval1, eval2) = compute_rpo_ood_consistency_quadratic(
+                            inner,
+                            &constraint_coeffs,
+                            expected_z,
+                            self.g_trace,
+                        )
+                        .expect("failed to evaluate quadratic RPO constraints at z");
+                        (vec![eval1[0], eval1[1]], vec![eval2[0], eval2[1]])
+                    }
+                    (Ok(InnerProofKind::TransactionAir), FieldExtension::None) => {
+                        let (eval1, eval2) = compute_transaction_ood_consistency(
+                            inner,
+                            &constraint_coeffs,
+                            expected_z_flat[0],
+                        )
+                        .expect("failed to evaluate transaction constraints at z");
+                        (vec![eval1], vec![eval2])
+                    }
+                    (Ok(InnerProofKind::TransactionAir), FieldExtension::Quadratic) => {
+                        let expected_z = [expected_z_flat[0], expected_z_flat[1]];
+                        let (eval1, eval2) = compute_transaction_ood_consistency_quadratic(
+                            inner,
+                            &constraint_coeffs,
+                            expected_z,
+                        )
+                        .expect("failed to evaluate quadratic transaction constraints at z");
+                        (vec![eval1[0], eval1[1]], vec![eval2[0], eval2[1]])
+                    }
+                    (Err(err), _) => panic!("unsupported inner proof kind: {err}"),
+                    (_, _) => panic!("unsupported field extension for batch verifier"),
+                };
 
             let start = seg_idx * self.segment_len;
             let end = start + self.segment_len;

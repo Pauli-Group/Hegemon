@@ -62,7 +62,12 @@ pub fn verify_block(
     proof: &BlockProof,
     verifying_keys: &HashMap<VersionBinding, VerifyingKey>,
 ) -> Result<BlockVerificationReport, BlockError> {
-    verify_block_recursive(tree, &proof.recursive_proof, &proof.transactions, verifying_keys)?;
+    verify_block_recursive(
+        tree,
+        &proof.recursive_proof,
+        &proof.transactions,
+        verifying_keys,
+    )?;
     let version_matrix = observe_versions(&proof.transactions);
     if !version_counts_match(&proof.version_counts, &version_matrix) {
         return Err(BlockError::VersionMatrixMismatch);

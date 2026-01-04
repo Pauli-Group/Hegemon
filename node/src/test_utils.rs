@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use consensus::header::{BlockHeader, PowSeal};
 use consensus::reward::INITIAL_SUBSIDY;
-use consensus::types::{ConsensusBlock, DaParams, da_root};
+use consensus::types::{da_root, ConsensusBlock, DaParams};
 use consensus::RecursiveBlockProof;
 use crypto::hashes::sha256;
 use crypto::traits::{SigningKey, VerifyKey};

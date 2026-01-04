@@ -101,7 +101,11 @@ pub struct BftConsensus<V: ProofVerifier> {
 }
 
 impl<V: ProofVerifier> BftConsensus<V> {
-    pub fn new(validator_set: ValidatorSet, genesis_tree: CommitmentTreeState, verifier: V) -> Self {
+    pub fn new(
+        validator_set: ValidatorSet,
+        genesis_tree: CommitmentTreeState,
+        verifier: V,
+    ) -> Self {
         Self::with_schedule(
             validator_set,
             genesis_tree,
@@ -190,8 +194,9 @@ impl<V: ProofVerifier> BftConsensus<V> {
             });
         }
 
-        let commitment_tree =
-            self.verifier.verify_block(&block, &parent_node.commitment_tree)?;
+        let commitment_tree = self
+            .verifier
+            .verify_block(&block, &parent_node.commitment_tree)?;
         let computed_state_root = commitment_tree.root();
         if computed_state_root != block.header.state_root {
             return Err(ConsensusError::InvalidHeader("state root mismatch"));

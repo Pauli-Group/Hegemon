@@ -228,8 +228,14 @@ impl RandomCoin for RpoRandomCoin {
         domain_size: usize,
         nonce: u64,
     ) -> Result<Vec<usize>, RandomCoinError> {
-        assert!(domain_size.is_power_of_two(), "domain size must be a power of two");
-        assert!(num_values < domain_size, "number of values must be smaller than domain size");
+        assert!(
+            domain_size.is_power_of_two(),
+            "domain size must be a power of two"
+        );
+        assert!(
+            num_values < domain_size,
+            "number of values must be smaller than domain size"
+        );
 
         let nonce = Felt::new(nonce);
         self.state[RATE_START] += nonce;
@@ -299,8 +305,7 @@ fn hash_bytes(bytes: &[u8]) -> RpoDigest {
         (bytes.len() + BINARY_CHUNK_SIZE - 1) / BINARY_CHUNK_SIZE
     };
 
-    state[CAPACITY_RANGE.start] =
-        Felt::new((RATE_WIDTH + (num_field_elem % RATE_WIDTH)) as u64);
+    state[CAPACITY_RANGE.start] = Felt::new((RATE_WIDTH + (num_field_elem % RATE_WIDTH)) as u64);
 
     let mut buf = [0u8; 8];
     let mut current_chunk_idx = 0usize;
@@ -310,25 +315,27 @@ fn hash_bytes(bytes: &[u8]) -> RpoDigest {
         num_field_elem - 1
     };
 
-    let rate_pos = bytes.chunks(BINARY_CHUNK_SIZE).fold(0usize, |rate_pos, chunk| {
-        if current_chunk_idx != last_chunk_idx {
-            buf[..BINARY_CHUNK_SIZE].copy_from_slice(chunk);
-        } else {
-            buf.fill(0);
-            buf[..chunk.len()].copy_from_slice(chunk);
-            buf[chunk.len()] = 1;
-        }
-        current_chunk_idx += 1;
+    let rate_pos = bytes
+        .chunks(BINARY_CHUNK_SIZE)
+        .fold(0usize, |rate_pos, chunk| {
+            if current_chunk_idx != last_chunk_idx {
+                buf[..BINARY_CHUNK_SIZE].copy_from_slice(chunk);
+            } else {
+                buf.fill(0);
+                buf[..chunk.len()].copy_from_slice(chunk);
+                buf[chunk.len()] = 1;
+            }
+            current_chunk_idx += 1;
 
-        state[RATE_RANGE.start + rate_pos] = Felt::new(u64::from_le_bytes(buf));
+            state[RATE_RANGE.start + rate_pos] = Felt::new(u64::from_le_bytes(buf));
 
-        if rate_pos == RATE_WIDTH - 1 {
-            Rpo256::apply_permutation(&mut state);
-            0
-        } else {
-            rate_pos + 1
-        }
-    });
+            if rate_pos == RATE_WIDTH - 1 {
+                Rpo256::apply_permutation(&mut state);
+                0
+            } else {
+                rate_pos + 1
+            }
+        });
 
     if rate_pos != 0 {
         state[RATE_RANGE.start + rate_pos..RATE_RANGE.end].fill(Felt::ZERO);
@@ -340,7 +347,11 @@ fn hash_bytes(bytes: &[u8]) -> RpoDigest {
 
 fn merge(values: &[RpoDigest; 2]) -> RpoDigest {
     let mut state = [Felt::ZERO; STATE_WIDTH];
-    for (i, v) in values.iter().flat_map(|d| d.as_elements().iter()).enumerate() {
+    for (i, v) in values
+        .iter()
+        .flat_map(|d| d.as_elements().iter())
+        .enumerate()
+    {
         state[RATE_RANGE.start + i] = *v;
     }
 
@@ -392,7 +403,10 @@ fn apply_inv_sbox(state: &mut [Felt; STATE_WIDTH]) {
     }
 
     #[inline(always)]
-    fn exp_acc<B: StarkField, const N: usize, const M: usize>(base: [B; N], tail: [B; N]) -> [B; N] {
+    fn exp_acc<B: StarkField, const N: usize, const M: usize>(
+        base: [B; N],
+        tail: [B; N],
+    ) -> [B; N] {
         let mut result = base;
         for _ in 0..M {
             result.iter_mut().for_each(|r| *r = r.square());
@@ -486,8 +500,8 @@ const fn fft4_real(x: [u64; 4]) -> (i64, (i64, i64), i64) {
 const fn ifft4_real(y: (i64, (i64, i64), i64)) -> [u64; 4] {
     let z0 = y.0 + y.2;
     let z1 = y.0 - y.2;
-    let z2 = y.1.0;
-    let z3 = -y.1.1;
+    let z2 = y.1 .0;
+    let z3 = -y.1 .1;
 
     let [x0, x2] = ifft2_real([z0, z2]);
     let [x1, x3] = ifft2_real([z1, z3]);
@@ -937,8 +951,8 @@ mod tests {
     use super::{Felt, Rpo256, RpoRandomCoin};
     use miden_crypto::hash::rpo::Rpo256 as MidenRpo256;
     use miden_crypto::rand::RpoRandomCoin as MidenRandomCoin;
-    use winterfell::math::StarkField;
     use winter_crypto::{Digest as WinterDigest, ElementHasher, Hasher, RandomCoin};
+    use winterfell::math::StarkField;
 
     fn felts(values: &[u64]) -> Vec<Felt> {
         values.iter().copied().map(Felt::new).collect()
@@ -1005,9 +1019,7 @@ mod tests {
             assert_eq!(ours_draw, theirs_draw);
         }
 
-        let ours_vals = ours
-            .draw_integers(8, 32, 7)
-            .expect("draw integers ours");
+        let ours_vals = ours.draw_integers(8, 32, 7).expect("draw integers ours");
         let theirs_vals = theirs
             .draw_integers(8, 32, 7)
             .expect("draw integers theirs");

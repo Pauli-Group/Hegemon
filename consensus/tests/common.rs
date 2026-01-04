@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 use consensus::BalanceTag;
-use consensus::CommitmentTreeState;
 use consensus::CoinbaseData;
 use consensus::CoinbaseSource;
+use consensus::CommitmentTreeState;
 use consensus::DEFAULT_VERSION_BINDING;
 use consensus::ProofError;
 use consensus::RecursiveBlockProof;

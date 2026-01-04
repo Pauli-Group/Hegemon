@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use block_circuit::recursive::prove_block_recursive_fast;
-use consensus::header::BlockHeader;
-use consensus::proof::{verify_commitments, RecursiveProofVerifier};
 use consensus::ProofVerifier;
+use consensus::header::BlockHeader;
+use consensus::proof::{RecursiveProofVerifier, verify_commitments};
 use consensus::types::{
     ConsensusBlock, DaParams, compute_fee_commitment, compute_proof_commitment,
     compute_version_commitment, da_root,
@@ -53,7 +53,9 @@ fn make_valid_witness(seed: u64, tree: &CommitmentTree) -> TransactionWitness {
             note: input_note,
             position: 0,
             rho_seed: [seed as u8 + 4; 32],
-            merkle_path: MerklePath { siblings: merkle_path },
+            merkle_path: MerklePath {
+                siblings: merkle_path,
+            },
         }],
         outputs: vec![output_note],
         sk_spend: [seed as u8 + 12; 32],
@@ -186,7 +188,7 @@ fn recursive_proof_verifier_accepts_valid_block() {
     let proof = build_rpo_proof(&witness);
 
     let recursive_proof =
-        prove_block_recursive_fast(&mut tree, &[proof.clone()], &verifying_keys)
+        prove_block_recursive_fast(&mut tree, std::slice::from_ref(&proof), &verifying_keys)
             .expect("recursive");
 
     let nullifiers: Vec<[u8; 32]> = proof

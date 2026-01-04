@@ -217,10 +217,9 @@ impl StarkProver {
         }
 
         // Generate the real STARK proof
-        let proof = self
-            .inner
-            .prove(trace)
-            .map_err(|e| WalletError::Serialization(format!("STARK proof generation failed: {}", e)))?;
+        let proof = self.inner.prove(trace).map_err(|e| {
+            WalletError::Serialization(format!("STARK proof generation failed: {}", e))
+        })?;
 
         let proving_time = start.elapsed();
 

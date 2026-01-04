@@ -16,7 +16,8 @@ fn version_schedule_controls_activation() {
     let validators = make_validators(4, 10);
     let validator_set = validator_set(&validators);
     let genesis_tree = CommitmentTreeState::default();
-    let mut consensus = BftConsensus::new(validator_set.clone(), genesis_tree.clone(), HashVerifier);
+    let mut consensus =
+        BftConsensus::new(validator_set.clone(), genesis_tree.clone(), HashVerifier);
     let tx =
         dummy_transaction_with_version(7, VersionBinding::new(2, DEFAULT_VERSION_BINDING.crypto));
     let params = BftBlockParams {

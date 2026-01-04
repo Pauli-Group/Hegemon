@@ -1,4 +1,6 @@
-use consensus::{encode_da_blob, verify_da_chunk, DaParams, DaRoot, Transaction, DEFAULT_VERSION_BINDING};
+use consensus::{
+    DEFAULT_VERSION_BINDING, DaParams, DaRoot, Transaction, encode_da_blob, verify_da_chunk,
+};
 use std::collections::HashMap;
 
 fn build_transaction(tag_seed: u8, ciphertexts: Vec<Vec<u8>>) -> Transaction {
