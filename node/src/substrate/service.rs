@@ -168,12 +168,11 @@ use epoch_circuit::{
 // Import runtime APIs for difficulty queries
 use pallet_shielded_pool::Call as ShieldedPoolCall;
 use parking_lot::Mutex as ParkingMutex;
-use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
+use protocol_versioning::DEFAULT_VERSION_BINDING;
 use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use state_merkle::CommitmentTree;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
-use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 
@@ -1879,17 +1878,10 @@ fn wire_pow_block_import(
             "Block import: constructing block"
         );
 
-        // Take cached StorageChanges early so we don't leak memory if we fail later (e.g. DA
-        // encoding error, import error). The handle is stored in the template, but the changes
-        // themselves live in a global cache keyed by u64.
+        // StorageChanges are cached during block building and keyed by a u64. We only `take` them
+        // once we know we're ready to import the block; otherwise a failed verification attempt
+        // would consume the cache entry and poison subsequent retries for the same template.
         let storage_changes_key = template.storage_changes.as_ref().map(|handle| handle.key());
-        let storage_changes = match storage_changes_key {
-            Some(key) => Some(
-                take_storage_changes(key)
-                    .ok_or_else(|| format!("StorageChanges not found in cache for key {key}"))?,
-            ),
-            None => None,
-        };
 
         // Decode the extrinsics from template
         let encoded_extrinsics: Vec<runtime::UncheckedExtrinsic> = template
@@ -1925,6 +1917,13 @@ fn wire_pow_block_import(
         import_params.fork_choice = Some(ForkChoiceStrategy::LongestChain);
 
         // Apply StorageChanges if available.
+        let storage_changes = match storage_changes_key {
+            Some(key) => Some(
+                take_storage_changes(key)
+                    .ok_or_else(|| format!("StorageChanges not found in cache for key {key}"))?,
+            ),
+            None => None,
+        };
         if let Some(storage_changes) = storage_changes {
             tracing::info!(
                 block_number = template.number,

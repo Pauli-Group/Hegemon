@@ -52,6 +52,21 @@ p budgets.
   - `set_verifier_params(params: StarkVerifierParams)` (admin origin) updates the on-chain STARK verifier parameters.
   - Default runtime constants seed attestations with Blake3 hashing, 28 FRI queries, a 4x blowup factor, and quadratic extension over Goldilocks; settlement uses the same hash/query budget but a 16x blowup factor. With 256-bit digests, PQ collision resistance caps at ~85 bits unless digest sizes are widened. Calling `set_verifier_params` is the documented migration path for tightening soundness or swapping hashes without redeploying the pallets.
 
+## Node RPC endpoints
+
+Block validity and data-availability RPC methods exposed by the Substrate node:
+
+- `block_getCommitmentProof(block_hash: H256) -> Option<CommitmentProofResult>`
+  - Returns the commitment proof bytes and public inputs for a block, or `null` if the block has no commitment proof (e.g., coinbase-only blocks).
+  - `CommitmentProofResult`: `{ proof_bytes: Bytes, public_inputs: CommitmentProofPublicInputs }`
+- `da_getChunk(da_root: H256, chunk_index: u32) -> Option<DaChunkResult>`
+  - Returns an erasure-coded chunk and its Merkle proof for the given DA root.
+  - `DaChunkResult`: `{ chunk: Bytes, merkle_proof: Vec<H256> }`
+- `da_getParams() -> DaParams`
+  - Returns global DA parameters (chunk size, sample count, encoding scheme).
+
+Legacy RPC endpoints (`block_getRecursiveProof`, `epoch_*`) are removed from the default node and are only available when compiled with `legacy-recursion` features.
+
 ## Documentation hooks
 
 Every module README now contains a **Doc Sync** section referencing this file plus `DESIGN.md` and `METHODS.md`. When adding a new API surface, ensure:

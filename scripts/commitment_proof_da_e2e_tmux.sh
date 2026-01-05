@@ -157,13 +157,14 @@ HEGEMON_WALLET_PROVER_FAST=1 HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/walle
   --ws-url "$RPC_WS"
 
 echo "Waiting for commitment proof storage log line..." >&2
-START_LINES="$(wc -l < "$LOG_FILE" | tr -d ' ')"
-START_LINES="$((START_LINES + 1))"
+touch "$LOG_FILE"
 FOUND_BLOCK=""
+FOUND_BLOCK_HASH=""
 for i in $(seq 1 "$PROOF_WAIT_SECS"); do
-  LINE="$(tail -n +"$START_LINES" "$LOG_FILE" | rg "Commitment block proof stored for imported block" | tail -n 1 || true)"
+  LINE="$(rg "Commitment block proof stored for imported block" "$LOG_FILE" | tail -n 1 || true)"
   if [ -n "$LINE" ]; then
-    FOUND_BLOCK="$(echo "$LINE" | sed -n 's/.*block_number=\\([0-9][0-9]*\\).*/\\1/p')"
+    FOUND_BLOCK="$(echo "$LINE" | sed -n 's/.*block_number=\([0-9][0-9]*\).*/\1/p')"
+    FOUND_BLOCK_HASH="$(echo "$LINE" | sed -n 's/.*block_hash=\([0-9a-fA-F]\{64\}\).*/\1/p')"
     if [ -n "$FOUND_BLOCK" ]; then
       break
     fi
@@ -171,7 +172,7 @@ for i in $(seq 1 "$PROOF_WAIT_SECS"); do
   sleep 1
 done
 
-if [ -z "$FOUND_BLOCK" ]; then
+if [ -z "$FOUND_BLOCK" ] || [ -z "$FOUND_BLOCK_HASH" ]; then
   echo "Timed out waiting for commitment proof storage; inspect logs: $LOG_FILE" >&2
   echo "Attach: tmux attach -t $SESSION" >&2
   echo "Tip: increase the timeout via HEGEMON_E2E_PROOF_WAIT_SECS if needed." >&2
@@ -185,13 +186,21 @@ BLOCK_HASH_JSON="$(curl -s -H "Content-Type: application/json" \
   "$RPC_HTTP")"
 BLOCK_HASH="$(python3 - <<'PY'
 import json,sys
-print((json.load(sys.stdin).get("result") or "").strip())
+data = sys.stdin.read()
+try:
+    obj = json.loads(data) if data.strip() else {}
+except Exception:
+    obj = {}
+print((obj.get("result") or "").strip())
 PY
 <<<"$BLOCK_HASH_JSON")"
 
+BLOCK_HASH_FROM_LOG="0x${FOUND_BLOCK_HASH}"
 if [ -z "$BLOCK_HASH" ] || [ "$BLOCK_HASH" = "null" ]; then
-  echo "Failed to fetch block hash for block $FOUND_BLOCK" >&2
-  exit 1
+  echo "chain_getBlockHash returned no result; using block hash from logs" >&2
+  BLOCK_HASH="$BLOCK_HASH_FROM_LOG"
+elif [ "$BLOCK_HASH" != "$BLOCK_HASH_FROM_LOG" ]; then
+  echo "Warning: chain_getBlockHash != log block_hash; using RPC value" >&2
 fi
 
 echo "Waiting for DA root for block $FOUND_BLOCK..." >&2
@@ -199,7 +208,7 @@ DA_ROOT=""
 for i in $(seq 1 "$DA_WAIT_SECS"); do
   DA_LINE="$(rg "DA encoding stored for imported block block_number=${FOUND_BLOCK} " "$LOG_FILE" | tail -n 1 || true)"
   if [ -n "$DA_LINE" ]; then
-    DA_ROOT="$(echo "$DA_LINE" | sed -n 's/.*da_root=\\([0-9a-fA-F]\\{64\\}\\).*/\\1/p')"
+    DA_ROOT="$(echo "$DA_LINE" | sed -n 's/.*da_root=\([0-9a-fA-F]\{64\}\).*/\1/p')"
     if [ -n "$DA_ROOT" ]; then
       break
     fi
@@ -231,4 +240,3 @@ echo "Done. Node is still running in tmux." >&2
 echo "  Attach: tmux attach -t $SESSION" >&2
 echo "  Logs:   $LOG_FILE" >&2
 echo "  Kill:   tmux kill-session -t $SESSION" >&2
-

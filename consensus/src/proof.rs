@@ -14,7 +14,7 @@ use transaction_circuit::hashing::felt_to_bytes32;
 #[cfg(feature = "legacy-recursion")]
 use transaction_circuit::hashing::felts_to_bytes32;
 use transaction_circuit::keys::generate_keys;
-use transaction_circuit::proof::verify as verify_transaction_proof;
+use transaction_circuit::proof::verify_rpo as verify_transaction_proof;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

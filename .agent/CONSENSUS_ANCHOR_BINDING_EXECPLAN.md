@@ -1,10 +1,19 @@
-# Consensus: bind recursive proofs to commitment-tree anchors
+# Superseded: Consensus Anchor Binding (Recursive Proofs)
 
-This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
+> **This ExecPlan addressed recursive block proof anchor binding, which is no longer the production path.**
+>
+> The production block validity architecture now uses **commitment proofs + parallel transaction-proof verification** (see `.agent/scalability_architecture_execplan.md`).
+>
+> Anchor/root binding for the commitment-proof architecture is handled via:
+> - Commitment proof public inputs binding `starting_root` / `ending_root`
+> - `ParallelProofVerifier` checking transaction anchors against the root history window
+> - Consensus recomputing state transitions deterministically at import time
+>
+> This plan is preserved for historical context only.
 
-This repository contains `.agent/PLANS.md` at the repo root. This ExecPlan must be maintained in accordance with `.agent/PLANS.md`.
+---
 
-## Purpose / Big Picture
+## Original Purpose (Historical)
 
 After this change, the consensus layer rejects blocks whose recursive proof payloads are not bound to the chain’s commitment-tree state. Concretely: a recursive proof can no longer “float” over arbitrary `root_before` anchors or claim arbitrary `starting_root`/`ending_root` values while still being accepted by consensus.
 

@@ -22,7 +22,8 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
 
 ## Progress
 
-- [ ] (2026-01-05T19:57Z) Milestone 12 **IN PROGRESS**: wired commitment proofs into the production/Substrate block path by carrying commitment proof bytes on-chain via a new unsigned `ShieldedPool::submit_commitment_proof` extrinsic, attaching it during block building, and enforcing commitment-proof + parallel transaction-proof verification during block import (default `HEGEMON_PARALLEL_PROOF_VERIFICATION=1`). Derives commitment-proof public inputs from block extrinsics + parent commitment-tree snapshot at import time and stores proofs for both mined and network-imported blocks to back `block_getCommitmentProof`. Updated E2E docs/scripts to `runbooks/commitment_proof_da_e2e.md` + `scripts/commitment_proof_da_e2e_tmux.sh` (legacy wrapper retained). Validated with `cargo test -p pallet-shielded-pool`, `cargo test -p consensus`, and `cargo test -p runtime`. Remaining: execute the E2E runbook on a machine with a working libclang/RocksDB toolchain for `hegemon-node`.
+- [x] (2026-01-05T22:30Z) Documentation cleanup: updated SECURITY.md to reflect commitment-proof architecture, marked legacy runbooks (recursive_proofs_testnet.md, CONSENSUS_ANCHOR_BINDING_EXECPLAN.md) as superseded, added Node RPC endpoints to docs/API_REFERENCE.md.
+- [x] (2026-01-05T21:53Z) Completed Milestone 12: wired commitment proofs into the production/Substrate block path by carrying commitment proof bytes on-chain via an unsigned `ShieldedPool::submit_commitment_proof` extrinsic, attaching it during block building, and enforcing commitment-proof + parallel transaction-proof verification during block import (default `HEGEMON_PARALLEL_PROOF_VERIFICATION=1`). Commitment-proof public inputs (tx proof hash commitment, padded+sorted nullifier lists, DA root, commitment-tree roots) are recomputed at import time from block extrinsics + a parent commitment-tree snapshot and stored for mined/network-imported blocks to back `block_getCommitmentProof`. Validated end-to-end with `HEGEMON_E2E_FORCE=1 ./scripts/commitment_proof_da_e2e_tmux.sh`: `/tmp/hegemon-dev-node-e2e-tmux.log` shows `Commitment block proof stored for imported block block_number=8 block_hash=5bdc…c352 proof_hash=3934…8ade` and `DA encoding stored ... da_root=c101…6da6`; `block_getCommitmentProof(0x5bdc…c352)` returns non-empty `proof_bytes` + matching `public_inputs`, and `da_getChunk(0xc101…6da6, 0)` returns a chunk + Merkle path.
 - [x] (2026-01-06T21:20Z) Completed Milestone 11: removed verifier-as-inner unsound recursion by default (`epoch-circuit` panics unless `unsound-recursion` is enabled), gated legacy recursive block proof code behind `block-circuit/legacy-recursion` + `consensus/legacy-recursion`, removed `recursive_proof_hash` from consensus headers, and removed the `block_getRecursiveProof` RPC/store from the node. Validated with `cargo test -p consensus`, `cargo test -p block-circuit`, and `cargo test -p epoch-circuit` (note: `cargo test -p hegemon-node --no-run` still fails on this machine due to missing `libclang.dylib` for RocksDB build scripts).
 - [x] (2026-01-06T18:40Z) Milestone 10 wiring: added persistent per-node DA sampling secret (`<base_path>/da-secret`) and switched block-import DA sampling to `state_da::sample_indices(node_secret, block_hash, ...)`, logging sampled indices.
 - [x] (2026-01-06T12:45Z) Implemented `ParallelProofVerifier` with tx-proof commitment checks, anchor validation, and new block proof attachments; added `CommitmentBlockProver::commitment_from_proof_hashes` helper and an ignored integration test in `consensus/tests/parallel_verification.rs`.
@@ -52,7 +53,7 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
 - [x] (2025-12-31T06:15Z) Started Path A streaming layout in recursion verifier by adding tape columns + coin-state save/restore masks and a minimal RpoAir tape correctness test.
 - [x] (2025-12-31T06:55Z) Paired replayed deep-coefficient draws with leaf-hash chains in the recursion verifier, updated merkle schedule masks, and adjusted merkle-related tests.
 - [x] (2025-12-31T03:09Z) Chose a baseline target of ~85-bit PQ security (collision-limited by 256-bit digests) and recorded required proof-parameter implications in `.agent/scalability_architecture_math.md`.
-- [ ] (2025-12-31T03:09Z) Lock ProofOptions and recursion format for consensus-critical proofs at the chosen target (completed: transaction proofs now use quadratic extension; completed: parser supports quadratic extension metadata; completed: recursive verifier trace accepts quadratic inner proofs; remaining: full-security (32-query) end-to-end mining/recursion is still too slow/memory-heavy without an aggregation strategy).
+- [x] (2026-01-05T22:00Z) **SUPERSEDED**: Lock ProofOptions and recursion format for consensus-critical proofs — the remaining "full-security recursive block proof" item is obsoleted by the architecture pivot. Transaction proofs use quadratic extension at ~85-bit PQ security; block validity now uses commitment proofs + parallel verification instead of recursive block proofs, so the recursion performance problem no longer blocks shipping.
 - [x] (2025-12-31T04:12Z) Updated transaction STARK proof options to quadratic extension and aligned verifiers + docs to the ~85-bit PQ collision ceiling.
 - [x] (2025-12-31T02:04Z) Update DESIGN.md, METHODS.md, and the README.md whitepaper to match the new architecture (completed: DESIGN.md + METHODS.md security notes + README.md whitepaper alignment).
 - [x] (2025-12-31T18:45Z) Retired legacy block aggregation: `prove_block` now emits `RecursiveBlockProof` by default, added a fast proving helper for dev/tests, updated consensus test scaffolding to accept recursive proofs, and refreshed docs to remove `RecursiveAggregation`.
@@ -73,6 +74,10 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
 - [x] (2026-01-03T06:21Z) Updated runbooks and tmux automation for repeatable end-to-end validation; remaining work is performance (not correctness) on recursive proof generation throughput.
 
 ## Surprises & Discoveries
+
+- Observation (2026-01-05T21:53Z): The commitment-proof tmux E2E script initially timed out even when the node stored the proof because the script’s `sed` parsing patterns were double-escaped and never captured the `block_number` / `da_root`.
+  Evidence: The log contained `Commitment block proof stored for imported block block_number=…`, but `scripts/commitment_proof_da_e2e_tmux.sh` failed to parse the number until the sed patterns were fixed.
+  Implication: Keep the tmux script parsing minimal and prefer parsing `block_hash`/`da_root` directly from the node log lines (with RPC as a secondary check).
 
 - Observation (2026-01-06T18:10Z): The `consensus` parallel-verification integration test is *very* slow in debug because it includes full transaction proof generation; the verification path itself is not the bottleneck.
   Evidence: `cargo test -p consensus --test parallel_verification -- --ignored` passed but took ~296 seconds for a 1‑transaction case.
@@ -321,6 +326,16 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
 Note (2026-01-01T09:30Z): Updated Progress, Surprises & Discoveries, and Decision Log to record the DA encoder implementation start, shard-limit constraint, and the parity selection rationale.
 
 ## Outcomes & Retrospective
+
+**Outcome (2026-01-05T22:00Z): PHASE 2 COMPLETE — Scalability architecture shipped.** The chain now validates blocks via commitment proofs (proving tx-proof-hash commitment + nullifier uniqueness) and parallel transaction-proof verification, with cryptographic per-node DA sampling. Key artifacts:
+- Commitment proofs carried on-chain via `ShieldedPool::submit_commitment_proof` extrinsic
+- `ParallelProofVerifier` enforces commitment-proof + tx-proof validity at block import (default `HEGEMON_PARALLEL_PROOF_VERIFICATION=1`)
+- Per-node DA sampling with persistent secret at `<base_path>/da-secret`
+- RPCs: `block_getCommitmentProof`, `da_getChunk`, `da_getParams`
+- E2E validated with `scripts/commitment_proof_da_e2e_tmux.sh`
+- Unsound recursive block proofs removed from defaults (feature-gated for legacy maintenance)
+
+Outcome (2026-01-05T22:30Z): Documentation cleanup complete — updated SECURITY.md, marked legacy runbooks as superseded, added Node RPC endpoints to API_REFERENCE.md. All user-facing docs now reflect the commitment-proof + parallel-verification architecture.
 
 Outcome (2026-01-06T09:30Z): Consensus now recomputes the padded nullifier lists and checks commitment-proof public inputs against block transactions, with integration tests covering match/mismatch cases; empty/nullifier-free blocks are treated as non-proof-bearing to preserve constraint degrees.
 Outcome (2026-01-06T07:30Z): Nullifier uniqueness constraints now live in the commitment proof (permutation check + compressed adjacent inequality), with public-input nullifier lists wired through the prover/RPC/docs and tests covering rejection on mismatch. Remaining work is consensus handoff + integration validation.
@@ -752,7 +767,7 @@ This milestone removes all unsound gated checks from the codebase and deprecates
 
 ### Milestone 12: End-to-End Sound Validation
 
-**Status**: IN PROGRESS (Substrate proof-carry path implemented; E2E run pending on a machine that builds `hegemon-node`)
+**Status**: COMPLETE (commitment proofs carried in Substrate blocks, verified at import, and served via RPC)
 
 This milestone validates the complete sound architecture end-to-end.
 
@@ -804,6 +819,17 @@ Expected:
 **Commands**:
 
     HEGEMON_E2E_FORCE=1 ./scripts/commitment_proof_da_e2e_tmux.sh
+
+**Evidence (2026-01-05T21:53Z)**:
+
+    /tmp/hegemon-dev-node-e2e-tmux.log:
+      DA encoding stored for imported block block_number=8 da_root=c101ce…6da6 da_chunks=6
+      Commitment block proof stored for imported block block_number=8 block_hash=5bdce6…c352 proof_hash=393403…8ade
+
+    RPC:
+      block_getCommitmentProof(0x5bdce6…c352) -> non-empty proof_bytes, proof_hash=0x393403…8ade, public_inputs.da_root=0xc101ce…6da6, tx_count=1
+      da_getParams() -> { chunk_size: 1024, sample_count: 80 }
+      da_getChunk(0xc101ce…6da6, 0) -> chunk + merkle_path
 
 **Acceptance**:
 - End-to-end mining works with sound proofs
@@ -968,3 +994,4 @@ Revision Note (2026-01-06T02:30Z): Split Milestone 8 into 8a/8b, recorded the bi
 Revision Note (2026-01-06T03:30Z): Added Milestone 8b0 prototyping spike, implemented the Merkle update row-budget estimator test, and captured the row-count evidence in Surprises & Discoveries.
 Revision Note (2026-01-06T07:30Z): Implemented the reduced-scope Milestone 8b nullifier uniqueness constraints (permutation + compressed adjacency), updated public-input wiring/RPC/docs, and recorded the constraint-degree discovery and non-zero-nullifier requirement.
 Revision Note (2026-01-06T09:30Z): Marked Milestone 8b complete by wiring consensus nullifier-list handoff, adding commitment-proof integration tests, and documenting the empty/nullifier-free block handling decision.
+Revision Note (2026-01-05T21:53Z): Completed Milestone 12 end-to-end validation (commitment proof in block body + import-time verification + DA RPC), fixed the tmux E2E script log parsing, and updated Progress/Surprises/Milestone 12 evidence accordingly.
