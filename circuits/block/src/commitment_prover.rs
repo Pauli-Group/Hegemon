@@ -1,6 +1,6 @@
 use blake3::Hasher as Blake3Hasher;
 use state_merkle::CommitmentTree;
-use transaction_circuit::constants::POSEIDON_ROUNDS;
+use transaction_circuit::constants::{MAX_INPUTS, POSEIDON_ROUNDS};
 use transaction_circuit::hashing::{bytes32_to_felts, felts_to_bytes32, is_canonical_bytes32};
 use transaction_circuit::stark_air::{mds_mix, round_constant, sbox, CYCLE_LENGTH};
 use transaction_circuit::TransactionProof;
@@ -17,11 +17,14 @@ use winterfell::{
 };
 
 use crate::commitment_air::{
-    CommitmentBlockAir, CommitmentBlockPublicInputs, BLOCK_COMMITMENT_DOMAIN_TAG, COL_DA_ROOT0,
-    COL_DA_ROOT1, COL_DA_ROOT2, COL_DA_ROOT3, COL_END_ROOT0, COL_END_ROOT1, COL_END_ROOT2,
-    COL_END_ROOT3, COL_INPUT0, COL_INPUT1, COL_NULLIFIER_ROOT0, COL_NULLIFIER_ROOT1,
-    COL_NULLIFIER_ROOT2, COL_NULLIFIER_ROOT3, COL_S0, COL_S1, COL_S2, COL_START_ROOT0,
-    COL_START_ROOT1, COL_START_ROOT2, COL_START_ROOT3, TRACE_WIDTH,
+    derive_nullifier_challenges, CommitmentBlockAir, CommitmentBlockPublicInputs,
+    BLOCK_COMMITMENT_DOMAIN_TAG, COL_DA_ROOT0, COL_DA_ROOT1, COL_DA_ROOT2, COL_DA_ROOT3,
+    COL_END_ROOT0, COL_END_ROOT1, COL_END_ROOT2, COL_END_ROOT3, COL_INPUT0, COL_INPUT1,
+    COL_NF_DIFF_INV, COL_NF_DIFF_NZ, COL_NF_PERM, COL_NF_PERM_INV, COL_NF_S0, COL_NF_S1,
+    COL_NF_S2, COL_NF_S3, COL_NF_SORTED_INV, COL_NF_SORTED_NZ, COL_NF_U0, COL_NF_U1, COL_NF_U2,
+    COL_NF_U3, COL_NULLIFIER_ROOT0, COL_NULLIFIER_ROOT1, COL_NULLIFIER_ROOT2, COL_NULLIFIER_ROOT3,
+    COL_S0, COL_S1, COL_S2, COL_START_ROOT0, COL_START_ROOT1, COL_START_ROOT2, COL_START_ROOT3,
+    TRACE_WIDTH,
 };
 use crate::error::BlockError;
 
@@ -60,7 +63,17 @@ impl CommitmentBlockProver {
         transactions: &[TransactionProof],
     ) -> Result<CommitmentBlockProof, BlockError> {
         let proof_hashes = proof_hashes_from_transactions(transactions)?;
-        self.prove_from_hashes(&proof_hashes)
+        let nullifiers = nullifiers_from_transactions(transactions)?;
+        let sorted_nullifiers = sorted_nullifiers(&nullifiers);
+        self.prove_from_hashes_with_inputs(
+            &proof_hashes,
+            [0u8; 32],
+            [0u8; 32],
+            [0u8; 32],
+            [0u8; 32],
+            nullifiers,
+            sorted_nullifiers,
+        )
     }
 
     pub fn prove_block_commitment_with_tree(
@@ -75,6 +88,8 @@ impl CommitmentBlockProver {
 
         let starting_root = tree.root();
         let nullifier_root = nullifier_root_from_transactions(transactions)?;
+        let nullifiers = nullifiers_from_transactions(transactions)?;
+        let sorted_nullifiers = sorted_nullifiers(&nullifiers);
 
         for (index, proof) in transactions.iter().enumerate() {
             let anchor = proof.public_inputs.merkle_root;
@@ -98,6 +113,8 @@ impl CommitmentBlockProver {
             ending_root,
             nullifier_root,
             da_root,
+            nullifiers,
+            sorted_nullifiers,
         )
     }
 
@@ -105,12 +122,22 @@ impl CommitmentBlockProver {
         &self,
         proof_hashes: &[[u8; 32]],
     ) -> Result<CommitmentBlockProof, BlockError> {
+        let nullifier_count = proof_hashes.len().saturating_mul(MAX_INPUTS);
+        let mut nullifiers = Vec::with_capacity(nullifier_count);
+        for idx in 0..nullifier_count {
+            let mut nf = [0u8; 32];
+            nf[..8].copy_from_slice(&(idx as u64 + 1).to_be_bytes());
+            nullifiers.push(nf);
+        }
+        let sorted_nullifiers = sorted_nullifiers(&nullifiers);
         self.prove_from_hashes_with_inputs(
             proof_hashes,
             [0u8; 32],
             [0u8; 32],
             [0u8; 32],
             [0u8; 32],
+            nullifiers,
+            sorted_nullifiers,
         )
     }
 
@@ -121,17 +148,59 @@ impl CommitmentBlockProver {
         ending_state_root: [u8; 32],
         nullifier_root: [u8; 32],
         da_root: [u8; 32],
+        nullifiers: Vec<[u8; 32]>,
+        sorted_nullifiers: Vec<[u8; 32]>,
     ) -> Result<CommitmentBlockProof, BlockError> {
         if proof_hashes.is_empty() {
             return Err(BlockError::CommitmentProofEmptyBlock);
         }
         validate_commitment_bytes("starting_state_root", &starting_state_root)?;
         validate_commitment_bytes("ending_state_root", &ending_state_root)?;
+        let expected_nullifiers = proof_hashes.len().saturating_mul(MAX_INPUTS);
+        if nullifiers.len() != expected_nullifiers {
+            return Err(BlockError::CommitmentProofInvalidInputs(format!(
+                "nullifier length mismatch (expected {}, got {})",
+                expected_nullifiers,
+                nullifiers.len()
+            )));
+        }
+        if sorted_nullifiers.len() != expected_nullifiers {
+            return Err(BlockError::CommitmentProofInvalidInputs(format!(
+                "sorted nullifier length mismatch (expected {}, got {})",
+                expected_nullifiers,
+                sorted_nullifiers.len()
+            )));
+        }
+        if !sorted_nullifiers.windows(2).all(|pair| pair[0] <= pair[1]) {
+            return Err(BlockError::CommitmentProofInvalidInputs(
+                "sorted nullifiers are not ordered".to_string(),
+            ));
+        }
+        if nullifiers.iter().all(|nf| *nf == [0u8; 32]) {
+            return Err(BlockError::CommitmentProofInvalidInputs(
+                "nullifier list must include at least one non-zero entry".to_string(),
+            ));
+        }
+        for (idx, nf) in nullifiers.iter().enumerate() {
+            validate_commitment_bytes(&format!("nullifiers[{idx}]"), nf)?;
+        }
+        for (idx, nf) in sorted_nullifiers.iter().enumerate() {
+            validate_commitment_bytes(&format!("sorted_nullifiers[{idx}]"), nf)?;
+        }
 
         let start_root_felts = decode_commitment("starting_state_root", &starting_state_root)?;
         let end_root_felts = decode_commitment("ending_state_root", &ending_state_root)?;
         let nullifier_root_felts = hash_bytes_to_felts(&nullifier_root);
         let da_root_felts = hash_bytes_to_felts(&da_root);
+        let (perm_alpha, perm_beta) = derive_nullifier_challenges(
+            &starting_state_root,
+            &ending_state_root,
+            &nullifier_root,
+            &da_root,
+            proof_hashes.len() as u32,
+            &nullifiers,
+            &sorted_nullifiers,
+        );
 
         let (trace, commitment_felts) = self.build_trace(
             proof_hashes,
@@ -139,6 +208,10 @@ impl CommitmentBlockProver {
             &end_root_felts,
             &nullifier_root_felts,
             &da_root_felts,
+            &nullifiers,
+            &sorted_nullifiers,
+            perm_alpha,
+            perm_beta,
         )?;
         let commitment = felts_to_bytes32(&commitment_felts);
         let pub_inputs = CommitmentBlockPublicInputs {
@@ -148,6 +221,8 @@ impl CommitmentBlockProver {
             nullifier_root,
             da_root,
             tx_count: proof_hashes.len() as u32,
+            nullifiers,
+            sorted_nullifiers,
         };
 
         let prover = CommitmentBlockProver {
@@ -191,6 +266,10 @@ impl CommitmentBlockProver {
         ending_state_root: &[BaseElement; 4],
         nullifier_root: &[BaseElement; 4],
         da_root: &[BaseElement; 4],
+        nullifiers: &[[u8; 32]],
+        sorted_nullifiers: &[[u8; 32]],
+        perm_alpha: BaseElement,
+        perm_beta: BaseElement,
     ) -> Result<(TraceTable<BaseElement>, [BaseElement; 4]), BlockError> {
         let mut inputs = hashes_to_elements(proof_hashes);
 
@@ -284,6 +363,63 @@ impl CommitmentBlockProver {
         fill_column(&mut trace, COL_DA_ROOT2, da_root[2]);
         fill_column(&mut trace, COL_DA_ROOT3, da_root[3]);
 
+        let nullifier_felts = decode_nullifier_list("nullifiers", nullifiers)?;
+        let sorted_nullifier_felts =
+            decode_nullifier_list("sorted_nullifiers", sorted_nullifiers)?;
+        let nullifier_count = nullifier_felts.len();
+        if nullifier_count + 1 > trace_len {
+            return Err(BlockError::CommitmentProofInvalidInputs(format!(
+                "nullifier rows exceed trace length ({})",
+                trace_len
+            )));
+        }
+
+        for (row, limbs) in nullifier_felts.iter().enumerate() {
+            trace[COL_NF_U0][row] = limbs[0];
+            trace[COL_NF_U1][row] = limbs[1];
+            trace[COL_NF_U2][row] = limbs[2];
+            trace[COL_NF_U3][row] = limbs[3];
+        }
+        for (row, limbs) in sorted_nullifier_felts.iter().enumerate() {
+            trace[COL_NF_S0][row] = limbs[0];
+            trace[COL_NF_S1][row] = limbs[1];
+            trace[COL_NF_S2][row] = limbs[2];
+            trace[COL_NF_S3][row] = limbs[3];
+        }
+
+        let alpha2 = perm_alpha * perm_alpha;
+        let alpha3 = alpha2 * perm_alpha;
+        let mut perm = BaseElement::ONE;
+        let sorted_compressed: Vec<BaseElement> = sorted_nullifier_felts
+            .iter()
+            .map(|limbs| compress_nullifier(limbs, perm_alpha, alpha2, alpha3))
+            .collect();
+        for (row, u_limbs) in nullifier_felts.iter().enumerate() {
+            let u = compress_nullifier(u_limbs, perm_alpha, alpha2, alpha3);
+            let v = sorted_compressed[row];
+            let denom = v + perm_beta;
+            if denom == BaseElement::ZERO {
+                return Err(BlockError::CommitmentProofInvalidInputs(
+                    "nullifier permutation denominator is zero".to_string(),
+                ));
+            }
+            let (v_inv, v_nz) = invert_with_flag(v);
+            let inv = denom.inv();
+            trace[COL_NF_PERM][row] = perm;
+            trace[COL_NF_PERM_INV][row] = inv;
+            trace[COL_NF_SORTED_INV][row] = v_inv;
+            trace[COL_NF_SORTED_NZ][row] = v_nz;
+            perm = perm * (u + perm_beta) * inv;
+        }
+        trace[COL_NF_PERM][nullifier_count] = perm;
+
+        for row in 0..nullifier_count.saturating_sub(1) {
+            let next = row + 1;
+            let (inv, nz) = invert_with_flag(sorted_compressed[next] - sorted_compressed[row]);
+            trace[COL_NF_DIFF_INV][row] = inv;
+            trace[COL_NF_DIFF_NZ][row] = nz;
+        }
+
         Ok((TraceTable::init(trace), [output0, output1, output2, output3]))
     }
 }
@@ -347,6 +483,27 @@ fn proof_hashes_from_transactions(
     Ok(hashes)
 }
 
+fn nullifiers_from_transactions(
+    transactions: &[TransactionProof],
+) -> Result<Vec<[u8; 32]>, BlockError> {
+    let mut nullifiers = Vec::with_capacity(transactions.len().saturating_mul(MAX_INPUTS));
+    for (index, tx) in transactions.iter().enumerate() {
+        if tx.nullifiers.len() != MAX_INPUTS {
+            return Err(BlockError::CommitmentProofInvalidInputs(format!(
+                "transaction {index} nullifier length mismatch"
+            )));
+        }
+        nullifiers.extend_from_slice(&tx.nullifiers);
+    }
+    Ok(nullifiers)
+}
+
+fn sorted_nullifiers(nullifiers: &[[u8; 32]]) -> Vec<[u8; 32]> {
+    let mut sorted = nullifiers.to_vec();
+    sorted.sort_unstable();
+    sorted
+}
+
 fn blake3_256(data: &[u8]) -> [u8; 32] {
     let mut hasher = Blake3Hasher::new();
     hasher.update(data);
@@ -382,6 +539,39 @@ fn decode_commitment(label: &str, value: &[u8; 32]) -> Result<[BaseElement; 4], 
     })
 }
 
+fn decode_nullifier_list(
+    label: &str,
+    nullifiers: &[[u8; 32]],
+) -> Result<Vec<[BaseElement; 4]>, BlockError> {
+    let mut felts = Vec::with_capacity(nullifiers.len());
+    for (idx, nf) in nullifiers.iter().enumerate() {
+        let limbs = bytes32_to_felts(nf).ok_or_else(|| {
+            BlockError::CommitmentProofInvalidInputs(format!(
+                "{label}[{idx}] encoding is non-canonical"
+            ))
+        })?;
+        felts.push(limbs);
+    }
+    Ok(felts)
+}
+
+fn compress_nullifier(
+    limbs: &[BaseElement; 4],
+    alpha: BaseElement,
+    alpha2: BaseElement,
+    alpha3: BaseElement,
+) -> BaseElement {
+    limbs[0] + limbs[1] * alpha + limbs[2] * alpha2 + limbs[3] * alpha3
+}
+
+fn invert_with_flag(value: BaseElement) -> (BaseElement, BaseElement) {
+    if value == BaseElement::ZERO {
+        (BaseElement::ZERO, BaseElement::ZERO)
+    } else {
+        (value.inv(), BaseElement::ONE)
+    }
+}
+
 fn validate_commitment_bytes(label: &str, value: &[u8; 32]) -> Result<(), BlockError> {
     if !is_canonical_bytes32(value) {
         return Err(BlockError::CommitmentProofInvalidInputs(format!(
@@ -398,6 +588,41 @@ fn validate_commitment_inputs(inputs: &CommitmentBlockPublicInputs) -> Result<()
     validate_commitment_bytes("tx_proofs_commitment", &inputs.tx_proofs_commitment)?;
     validate_commitment_bytes("starting_state_root", &inputs.starting_state_root)?;
     validate_commitment_bytes("ending_state_root", &inputs.ending_state_root)?;
+    let expected_nullifiers = (inputs.tx_count as usize).saturating_mul(MAX_INPUTS);
+    if inputs.nullifiers.len() != expected_nullifiers {
+        return Err(BlockError::CommitmentProofInvalidInputs(format!(
+            "nullifier length mismatch (expected {}, got {})",
+            expected_nullifiers,
+            inputs.nullifiers.len()
+        )));
+    }
+    if inputs.sorted_nullifiers.len() != expected_nullifiers {
+        return Err(BlockError::CommitmentProofInvalidInputs(format!(
+            "sorted nullifier length mismatch (expected {}, got {})",
+            expected_nullifiers,
+            inputs.sorted_nullifiers.len()
+        )));
+    }
+    if !inputs
+        .sorted_nullifiers
+        .windows(2)
+        .all(|pair| pair[0] <= pair[1])
+    {
+        return Err(BlockError::CommitmentProofInvalidInputs(
+            "sorted nullifiers are not ordered".to_string(),
+        ));
+    }
+    if inputs.nullifiers.iter().all(|nf| *nf == [0u8; 32]) {
+        return Err(BlockError::CommitmentProofInvalidInputs(
+            "nullifier list must include at least one non-zero entry".to_string(),
+        ));
+    }
+    for (idx, nf) in inputs.nullifiers.iter().enumerate() {
+        validate_commitment_bytes(&format!("nullifiers[{idx}]"), nf)?;
+    }
+    for (idx, nf) in inputs.sorted_nullifiers.iter().enumerate() {
+        validate_commitment_bytes(&format!("sorted_nullifiers[{idx}]"), nf)?;
+    }
     Ok(())
 }
 
@@ -490,6 +715,14 @@ impl Prover for CommitmentBlockProver {
 mod tests {
     use super::*;
 
+    fn estimate_merkle_update_rows(tree_depth: usize, leaf_count: usize) -> (usize, usize) {
+        // Poseidon sponge over 8 inputs uses 4 absorb cycles + 1 extra cycle for output limbs.
+        let cycles_per_node = 5usize;
+        let cycles = tree_depth.saturating_mul(leaf_count).saturating_mul(cycles_per_node);
+        let rows = cycles.saturating_mul(CYCLE_LENGTH);
+        (cycles, rows)
+    }
+
     fn dummy_hashes(count: usize) -> Vec<[u8; 32]> {
         (0..count)
             .map(|i| {
@@ -503,10 +736,39 @@ mod tests {
     #[test]
     fn commitment_proof_roundtrip_100() {
         let hashes = dummy_hashes(100);
-        let prover = CommitmentBlockProver::with_fast_options();
+        let prover = CommitmentBlockProver::new();
         let proof = prover.prove_from_hashes(&hashes).expect("proof");
         prover
             .verify_block_commitment(&proof)
             .expect("verify");
+    }
+
+    #[test]
+    fn commitment_proof_rejects_nullifier_mismatch() {
+        let hashes = dummy_hashes(8);
+        let prover = CommitmentBlockProver::with_fast_options();
+        let proof = prover.prove_from_hashes(&hashes).expect("proof");
+        let mut tampered = proof.clone();
+        tampered.public_inputs.nullifiers[0] = [1u8; 32];
+        assert!(prover.verify_block_commitment(&tampered).is_err());
+    }
+
+    #[test]
+    fn commitment_merkle_budget() {
+        let depth = transaction_circuit::note::MERKLE_TREE_DEPTH;
+        let (cycles_one, rows_one) = estimate_merkle_update_rows(depth, 1);
+        println!(
+            "merkle update budget: depth={} leaves=1 cycles={} rows={}",
+            depth, cycles_one, rows_one
+        );
+
+        let tx_count = 100usize;
+        let commitments_per_tx = transaction_circuit::constants::MAX_OUTPUTS as usize;
+        let leaves = tx_count.saturating_mul(commitments_per_tx);
+        let (cycles, rows) = estimate_merkle_update_rows(depth, leaves);
+        println!(
+            "merkle update budget: depth={} leaves={} cycles={} rows={}",
+            depth, leaves, cycles, rows
+        );
     }
 }

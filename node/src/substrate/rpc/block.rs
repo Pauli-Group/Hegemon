@@ -66,6 +66,8 @@ pub struct CommitmentBlockPublicInputsRpc {
     pub nullifier_root: String,
     pub da_root: String,
     pub tx_count: u32,
+    pub nullifiers: Vec<String>,
+    pub sorted_nullifiers: Vec<String>,
 }
 
 impl From<&CommitmentBlockPublicInputs> for CommitmentBlockPublicInputsRpc {
@@ -77,6 +79,16 @@ impl From<&CommitmentBlockPublicInputs> for CommitmentBlockPublicInputsRpc {
             nullifier_root: format!("0x{}", hex::encode(value.nullifier_root)),
             da_root: format!("0x{}", hex::encode(value.da_root)),
             tx_count: value.tx_count,
+            nullifiers: value
+                .nullifiers
+                .iter()
+                .map(|nf| format!("0x{}", hex::encode(nf)))
+                .collect(),
+            sorted_nullifiers: value
+                .sorted_nullifiers
+                .iter()
+                .map(|nf| format!("0x{}", hex::encode(nf)))
+                .collect(),
         }
     }
 }

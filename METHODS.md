@@ -802,14 +802,14 @@ Data availability uses a dedicated encoder in `state/da`. The block’s cipherte
 
 Define a block commitment circuit `C_commitment` with
 
-* Public inputs: `tx_proofs_commitment`, `root_prev`, `root_new`, `nullifier_set_commitment`, `da_root`, plus `tx_count`. Milestone 8a wires these as binding inputs; Milestone 8b enforces the transition, uniqueness, and DA constraints.
-* Witness: the `tx_proof_hashes`, nullifiers, commitments, and the sequence of changes to the commitment tree (indices and sibling hashes), plus the DA-encoded ciphertext chunk list.
+* Public inputs: `tx_proofs_commitment`, `root_prev`, `root_new`, `nullifier_set_commitment`, `da_root`, `tx_count`, plus the transaction-ordered nullifier list and its sorted copy (both length `tx_count * MAX_INPUTS`). Milestone 8a wires the roots/commitment binding; Milestone 8b enforces the transition, uniqueness, and DA constraints.
+* Witness: the `tx_proof_hashes`, nullifier columns (unsorted + sorted lists), commitments, and the sequence of changes to the commitment tree (indices and sibling hashes), plus the DA-encoded ciphertext chunk list.
 
 Constraints in `C_commitment` (Milestone 8b target):
 
 1. **Commit to proof hashes** – absorb proof-hash limbs into a Poseidon sponge and enforce the 4-limb commitment equals `tx_proofs_commitment`.
 2. **Reproduce tree evolution** – start with `root = root_prev` and iteratively insert each `cm_out[j]` at the next available leaf position, recomputing the root with Poseidon Merkle nodes. After all insertions, enforce that the final root equals `root_new`.
-3. **Check nullifier uniqueness** – enforce a sorted nullifier list with no adjacent equals (sorting network or permutation argument).
+3. **Check nullifier uniqueness** – enforce a permutation check between the transaction-ordered nullifier list and its sorted copy, then require no adjacent equals in the sorted list (skipping zero padding).
 4. **Bind DA root** – compute `da_root` from the ciphertext blob and enforce it matches the public input.
 
 This yields a per-block proof `π_block` showing every transaction adheres to the join–split semantics and that the global note tree root evolves correctly from `root_prev` to `root_new`, while still allowing parallel transaction proof verification in consensus.

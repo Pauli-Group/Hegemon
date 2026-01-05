@@ -12,7 +12,7 @@ This plan makes the chain fundamentally scalable by validating each block with a
 
 **ARCHITECTURE PIVOT (2026-01-04)**: The original recursive "prove-the-verifier" approach hit fundamental limits (OOD width explosion to 364 elements vs. 255 cap, memory explosion to 100GB+, 16+ minute proving times, and gated soundness checks). The plan now pivots to a **commitment-based block proof + parallel transaction verification** architecture that is sound, practical, and shippable:
 
-1. **Block proof proves commitments** (Merkle root of tx proof hashes, state transition, nullifier uniqueness) — ~20 columns, ~2^14 rows, seconds to prove
+1. **Block proof proves commitments** (Merkle root of tx proof hashes, nullifier uniqueness) — ~20 columns, ~2^14 rows, seconds to prove. State-transition Merkle updates are deterministic and verified at import time by consensus, not inside the SNARK.
 2. **Transaction proofs verified in parallel** at block import — embarrassingly parallel, full soundness
 3. **Cryptographic per-node DA sampling** — producer cannot predict samples, sound availability enforcement
 
@@ -22,8 +22,10 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
 
 ## Progress
 
+- [x] (2026-01-06T03:30Z) Milestone 8b0 spike: added Merkle-update row budget estimator test and captured row-count output for depth 32 and 200 leaves.
 - [x] (2026-01-06T02:30Z) Completed Milestone 8a: fixed commitment-proof input absorption, bound start/end/nullifier/DA roots in public inputs, and wired commitment proof generation + LRU storage + `block_getCommitmentProof` RPC.
-- [ ] (2026-01-06T02:30Z) Milestone 8b in-circuit state transition/nullifier uniqueness/DA computation (completed: public inputs + binding proof; remaining: Merkle update constraints, nullifier sorting/permutation checks, DA-root computation in-circuit, and consensus handoff).
+- [x] (2026-01-06T07:30Z) Implemented nullifier uniqueness in the commitment proof: added transaction-ordered + sorted nullifier lists to public inputs, enforced permutation + compressed adjacent-inequality constraints, updated RPC + docs, and added tests (`cargo test -p block-circuit commitment_proof_rejects_nullifier_mismatch` + `commitment_proof_roundtrip_100`).
+- [ ] (2026-01-06T03:30Z) Milestone 8b **revised scope**: nullifier uniqueness permutation check in-circuit, DA-root binding in public inputs, consensus handoff. State-transition Merkle updates remain outside the proof (see Decision Log). Remaining: consensus handoff, integration tests.
 - [x] (2026-01-05T06:11Z) Implemented Milestone 7 commitment proof AIR/prover/verifier using a Poseidon sponge commitment over tx proof hashes; added a 100-tx roundtrip test and wired exports/errors.
 - [x] (2026-01-05T06:11Z) Documented Phase 2 as the canonical path: marked Phase 1 milestones as superseded, updated Purpose/acceptance text, and aligned interfaces with commitment proofs + parallel verification.
 - [x] (2026-01-04T12:00Z) **Architecture Pivot**: Documented the pivot from recursive "prove-the-verifier" to commitment-based block proofs + parallel transaction verification in the Purpose section. Recursive block proofs remain supported for dev/test but are no longer the scalability path.
@@ -66,6 +68,13 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
 - [x] (2026-01-03T06:21Z) Updated runbooks and tmux automation for repeatable end-to-end validation; remaining work is performance (not correctness) on recursive proof generation throughput.
 
 ## Surprises & Discoveries
+
+- Observation (2026-01-06T07:30Z): Winterfell rejects transition constraints whose degrees collapse to zero; per-limb adjacency checks on mostly-zero nullifiers triggered degree mismatches. Switched to compressed nullifier diffs + enforced at least one non-zero nullifier to keep constraint degrees stable.
+  Evidence: `cargo test -p block-circuit commitment_proof_rejects_nullifier_mismatch -- --nocapture` initially failed with `transition constraint degrees didn't match`, then passed after the compressed diff change.
+
+- Observation (2026-01-06T03:30Z): Naive Poseidon-per-level Merkle updates would add ~10,240 rows per appended leaf at depth 32.
+  Evidence: `cargo test -p block-circuit commitment_merkle_budget -- --nocapture` prints `depth=32 leaves=1 cycles=160 rows=10240` and `depth=32 leaves=200 cycles=32000 rows=2048000`.
+  Implication: A straightforward in-circuit append for 200 commitments would exceed the ~2^14 row target, so Milestone 8b needs a more optimized update strategy or tighter block-level limits.
 
 - Observation (2026-01-06T02:30Z): The initial commitment-proof AIR did not absorb input columns, so the proof was not binding to the tx hash list.
   Evidence: Transition constraints permuted the Poseidon state without adding `COL_INPUT*` values, and boundary assertions never tied inputs to the sponge.
@@ -169,8 +178,20 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
   Implication: E2E scripts/runbooks must carry forward `da_root` (or we should add a helper RPC to fetch `da_root` for a given block hash).
 ## Decision Log
 
+- Decision: Use a compressed nullifier representation for adjacency-inequality checks (single diff over a challenge-compressed value) instead of per-limb diffs.
+  Rationale: Per-limb diffs collapse constraint degrees when higher limbs are constant, causing Winterfell degree mismatches; the compressed diff keeps constraints stable while preserving soundness under a random challenge.
+  Date/Author: 2026-01-06 / Codex
+
+- Decision: Require at least one non-zero nullifier in commitment proof inputs.
+  Rationale: Winterfell expects non-zero transition-constraint degrees; an all-zero nullifier list makes the nullifier constraints identically zero, so we explicitly reject that case to keep constraints well-formed.
+  Date/Author: 2026-01-06 / Codex
+
 - Decision: Split Milestone 8 into 8a (binding public inputs + RPC integration) and 8b (in-circuit state transition, nullifier uniqueness, and DA computation).
   Rationale: Binding the inputs and wiring RPC unblocks integration work while keeping consensus checks intact; the heavier in-circuit constraints can land next without stalling shipping.
+  Date/Author: 2026-01-06 / Codex
+
+- Decision: **Keep state transition verification outside the commitment proof**; the commitment proof binds roots but consensus recomputes and enforces the actual Merkle updates.
+  Rationale: Milestone 8b0 spike shows naive in-circuit Merkle updates at depth-32 require ~10,240 rows per leaf (200 leaves → 2M rows vs. ~2^14 target). Since state transition is deterministic given valid transactions, every full node can recompute `new_root = apply(old_root, valid_txs)` at import time — no SNARK is needed. This aligns with the pivot philosophy: the commitment proof proves tx *validity* (the hard part), and cheap deterministic work stays outside the proof.
   Date/Author: 2026-01-06 / Codex
 
 - Decision: Treat Phase 2 milestones (commitment proofs + parallel verification) as the only active plan and archive Phase 1 recursion milestones for legacy maintenance only.
@@ -269,6 +290,8 @@ Note (2026-01-01T09:30Z): Updated Progress, Surprises & Discoveries, and Decisio
 
 ## Outcomes & Retrospective
 
+Outcome (2026-01-06T07:30Z): Nullifier uniqueness constraints now live in the commitment proof (permutation check + compressed adjacent inequality), with public-input nullifier lists wired through the prover/RPC/docs and tests covering rejection on mismatch. Remaining work is consensus handoff + integration validation.
+Outcome (2026-01-06T03:30Z): Milestone 8b0 spike determined that naive in-circuit Merkle updates exceed row budget by 100×; Decision Log now documents that state-transition enforcement stays outside the commitment proof. This unblocks Milestone 8b with a reduced scope (nullifier uniqueness + DA-root binding only).
 Outcome (2026-01-06T02:30Z): Milestone 8a complete: commitment proof now binds tx_proofs_commitment plus start/end roots, nullifier root, and da_root; the node stores proofs and exposes `block_getCommitmentProof`. Remaining work is the in-circuit transition/uniqueness/DA computation in Milestone 8b.
 Outcome (2026-01-05T06:11Z): Milestone 7 commitment proof implemented using a Poseidon sponge commitment over tx proof hashes; proof generation/verification succeeds on a 100-tx test with a 5-column trace. Remaining work is to extend the AIR to cover state transition, nullifier uniqueness, and DA computation in Milestone 8b.
 Outcome (2026-01-05T06:11Z): The plan now explicitly supersedes the legacy recursive block-proof milestones, and the acceptance/interface guidance aligns with the Phase 2 commitment-proof architecture.
@@ -490,6 +513,29 @@ This milestone fixes the commitment-proof AIR to actually absorb inputs and bind
 - Commitment proof verifies for the 100-tx roundtrip test.
 - `block_getCommitmentProof` returns non-empty proof bytes and public inputs for mined blocks when enabled.
 - Tampering with proof bytes or any public-input field causes verification failure.
+
+---
+
+### Milestone 8b0 (Prototype): Merkle Update Row Budget Spike
+
+**Status**: IN PROGRESS (2026-01-06)
+
+This prototyping milestone quantifies the row/cycle budget for in-circuit commitment-tree updates using the existing Poseidon sponge schedule. It produces concrete numbers (rows per leaf, rows per block) so we can decide whether to proceed with a full state-transition AIR or split the design further.
+
+**What this spike does**:
+- Adds a small estimator test in `circuits/block` that prints the cycle/row counts for Poseidon-based Merkle updates given a tree depth and commitment count.
+- Runs the estimator with a representative target (e.g., depth 32, 100 txs × 2 commitments) and records the output here.
+
+**Files to modify**:
+- `circuits/block/src/commitment_prover.rs` — add the estimator helper + test in the test module.
+
+**Commands**:
+
+    cargo test -p block-circuit commitment_merkle_budget -- --nocapture
+
+**Acceptance**:
+- The estimator prints rows-per-leaf and total rows for the target scenarios.
+- The numbers are recorded in `Surprises & Discoveries` to guide Milestone 8b.
 
 ---
 
@@ -901,3 +947,5 @@ Revision Note (2026-01-04T12:00Z): **Architecture Pivot** — Added Phase 2 mile
 Revision Note (2026-01-05T06:11Z): Marked Phase 1 milestones as superseded, clarified Phase 2 as the only active plan, and updated purpose, context, acceptance, and interfaces to align with commitment proofs + parallel verification.
 Revision Note (2026-01-05T06:11Z): Implemented Milestone 7 commitment proof with Poseidon sponge hashing, updated milestone definitions to match the new commitment scheme, and recorded the deferral of state/DA/nullifier checks to Milestone 8b.
 Revision Note (2026-01-06T02:30Z): Split Milestone 8 into 8a/8b, recorded the binding + RPC work, updated interfaces to include new public inputs, and documented the rationale in the Decision Log.
+Revision Note (2026-01-06T03:30Z): Added Milestone 8b0 prototyping spike, implemented the Merkle update row-budget estimator test, and captured the row-count evidence in Surprises & Discoveries.
+Revision Note (2026-01-06T07:30Z): Implemented the reduced-scope Milestone 8b nullifier uniqueness constraints (permutation + compressed adjacency), updated public-input wiring/RPC/docs, and recorded the constraint-degree discovery and non-zero-nullifier requirement.
