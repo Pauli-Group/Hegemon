@@ -82,6 +82,12 @@ pub enum ProofError {
         expected: [u8; 32],
         observed: [u8; 32],
     },
+    #[error("commitment proof requires at least one transaction")]
+    CommitmentProofEmptyBlock,
+    #[error("commitment proof inputs mismatch: {0}")]
+    CommitmentProofInputsMismatch(String),
+    #[error("commitment proof verification failed: {0}")]
+    CommitmentProofVerification(String),
     #[error("commitment tree error: {0}")]
     CommitmentTree(#[from] CommitmentTreeError),
     #[error("verifier internal error: {0}")]
