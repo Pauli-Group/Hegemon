@@ -1,11 +1,121 @@
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
 use crate::types::{
-    Block, DaParams, DaRoot, FeeCommitment, RecursiveProofHash, StarkCommitment, VersionCommitment,
-    compute_fee_commitment, compute_proof_commitment, compute_version_commitment, da_root,
+    Block, ConsensusBlock, DaParams, DaRoot, FeeCommitment, RecursiveProofHash, StarkCommitment,
+    VersionCommitment, compute_fee_commitment, compute_proof_commitment,
+    compute_version_commitment, da_root,
 };
-use block_circuit::{transaction_inputs_from_verifier_inputs, verify_recursive_proof};
+use block_circuit::{
+    CommitmentBlockProof, transaction_inputs_from_verifier_inputs, verify_block_commitment,
+    verify_recursive_proof,
+};
+use crypto::hashes::sha256;
+use transaction_circuit::constants::MAX_INPUTS;
 use transaction_circuit::hashing::felts_to_bytes32;
+use std::collections::BTreeSet;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommitmentNullifierLists {
+    pub nullifiers: Vec<[u8; 32]>,
+    pub sorted_nullifiers: Vec<[u8; 32]>,
+}
+
+pub fn commitment_nullifier_lists(
+    transactions: &[crate::types::Transaction],
+) -> Result<CommitmentNullifierLists, ProofError> {
+    if transactions.is_empty() {
+        return Err(ProofError::CommitmentProofEmptyBlock);
+    }
+
+    let mut nullifiers = Vec::with_capacity(transactions.len().saturating_mul(MAX_INPUTS));
+    for (index, tx) in transactions.iter().enumerate() {
+        if tx.nullifiers.len() > MAX_INPUTS {
+            return Err(ProofError::CommitmentProofInputsMismatch(format!(
+                "transaction {index} nullifier length {} exceeds MAX_INPUTS {MAX_INPUTS}",
+                tx.nullifiers.len()
+            )));
+        }
+        if tx.nullifiers.iter().any(|nf| *nf == [0u8; 32]) {
+            return Err(ProofError::CommitmentProofInputsMismatch(format!(
+                "transaction {index} includes zero nullifier"
+            )));
+        }
+        nullifiers.extend_from_slice(&tx.nullifiers);
+        nullifiers.extend(std::iter::repeat([0u8; 32]).take(MAX_INPUTS - tx.nullifiers.len()));
+    }
+
+    if nullifiers.iter().all(|nf| *nf == [0u8; 32]) {
+        return Err(ProofError::CommitmentProofInputsMismatch(
+            "nullifier list must include at least one non-zero entry".to_string(),
+        ));
+    }
+
+    let mut sorted_nullifiers = nullifiers.clone();
+    sorted_nullifiers.sort_unstable();
+
+    Ok(CommitmentNullifierLists {
+        nullifiers,
+        sorted_nullifiers,
+    })
+}
+
+pub fn verify_commitment_proof_payload(
+    block: &ConsensusBlock,
+    parent_commitment_tree: &CommitmentTreeState,
+    proof: &CommitmentBlockProof,
+) -> Result<(), ProofError> {
+    let lists = commitment_nullifier_lists(&block.transactions)?;
+
+    if proof.public_inputs.tx_count as usize != block.transactions.len() {
+        return Err(ProofError::CommitmentProofInputsMismatch(format!(
+            "tx_count mismatch (proof {}, block {})",
+            proof.public_inputs.tx_count,
+            block.transactions.len()
+        )));
+    }
+
+    if proof.public_inputs.nullifiers != lists.nullifiers {
+        return Err(ProofError::CommitmentProofInputsMismatch(
+            "nullifier list mismatch".to_string(),
+        ));
+    }
+    if proof.public_inputs.sorted_nullifiers != lists.sorted_nullifiers {
+        return Err(ProofError::CommitmentProofInputsMismatch(
+            "sorted nullifier list mismatch".to_string(),
+        ));
+    }
+
+    let expected_da_root = da_root(&block.transactions, block.header.da_params)
+        .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
+    if proof.public_inputs.da_root != expected_da_root {
+        return Err(ProofError::CommitmentProofInputsMismatch(
+            "da_root mismatch".to_string(),
+        ));
+    }
+
+    let expected_nullifier_root = nullifier_root_from_list(&lists.nullifiers)?;
+    if proof.public_inputs.nullifier_root != expected_nullifier_root {
+        return Err(ProofError::CommitmentProofInputsMismatch(
+            "nullifier root mismatch".to_string(),
+        ));
+    }
+
+    if proof.public_inputs.starting_state_root != parent_commitment_tree.root() {
+        return Err(ProofError::CommitmentProofInputsMismatch(
+            "starting state root mismatch".to_string(),
+        ));
+    }
+    let expected_tree = apply_commitments(parent_commitment_tree, &block.transactions)?;
+    if proof.public_inputs.ending_state_root != expected_tree.root() {
+        return Err(ProofError::CommitmentProofInputsMismatch(
+            "ending state root mismatch".to_string(),
+        ));
+    }
+
+    verify_block_commitment(proof)
+        .map_err(|err| ProofError::CommitmentProofVerification(err.to_string()))?;
+    Ok(())
+}
 
 pub trait ProofVerifier: Send + Sync {
     fn verify_block<BH>(
@@ -243,6 +353,27 @@ fn apply_commitments(
         }
     }
     Ok(tree)
+}
+
+fn nullifier_root_from_list(nullifiers: &[[u8; 32]]) -> Result<[u8; 32], ProofError> {
+    let mut entries = BTreeSet::new();
+    for nf in nullifiers {
+        if *nf == [0u8; 32] {
+            continue;
+        }
+        if !entries.insert(*nf) {
+            return Err(ProofError::CommitmentProofInputsMismatch(
+                "duplicate nullifier in block".to_string(),
+            ));
+        }
+    }
+
+    let mut data = Vec::with_capacity(entries.len() * 32);
+    for nf in entries {
+        data.extend_from_slice(&nf);
+    }
+
+    Ok(sha256(&data))
 }
 
 fn verify_and_apply_tree_transition(

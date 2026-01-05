@@ -25,7 +25,7 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
 - [x] (2026-01-06T03:30Z) Milestone 8b0 spike: added Merkle-update row budget estimator test and captured row-count output for depth 32 and 200 leaves.
 - [x] (2026-01-06T02:30Z) Completed Milestone 8a: fixed commitment-proof input absorption, bound start/end/nullifier/DA roots in public inputs, and wired commitment proof generation + LRU storage + `block_getCommitmentProof` RPC.
 - [x] (2026-01-06T07:30Z) Implemented nullifier uniqueness in the commitment proof: added transaction-ordered + sorted nullifier lists to public inputs, enforced permutation + compressed adjacent-inequality constraints, updated RPC + docs, and added tests (`cargo test -p block-circuit commitment_proof_rejects_nullifier_mismatch` + `commitment_proof_roundtrip_100`).
-- [ ] (2026-01-06T03:30Z) Milestone 8b **revised scope**: nullifier uniqueness permutation check in-circuit, DA-root binding in public inputs, consensus handoff. State-transition Merkle updates remain outside the proof (see Decision Log). Remaining: consensus handoff, integration tests.
+- [x] (2026-01-06T09:30Z) Milestone 8b **revised scope**: nullifier uniqueness permutation check in-circuit, DA-root binding in public inputs, consensus handoff. Added consensus-level nullifier-list handoff + commitment-proof input checks, rejected empty/nullifier-free blocks, and added integration tests for matching/mismatched nullifier lists.
 - [x] (2026-01-05T06:11Z) Implemented Milestone 7 commitment proof AIR/prover/verifier using a Poseidon sponge commitment over tx proof hashes; added a 100-tx roundtrip test and wired exports/errors.
 - [x] (2026-01-05T06:11Z) Documented Phase 2 as the canonical path: marked Phase 1 milestones as superseded, updated Purpose/acceptance text, and aligned interfaces with commitment proofs + parallel verification.
 - [x] (2026-01-04T12:00Z) **Architecture Pivot**: Documented the pivot from recursive "prove-the-verifier" to commitment-based block proofs + parallel transaction verification in the Purpose section. Recursive block proofs remain supported for dev/test but are no longer the scalability path.
@@ -178,6 +178,10 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
   Implication: E2E scripts/runbooks must carry forward `da_root` (or we should add a helper RPC to fetch `da_root` for a given block hash).
 ## Decision Log
 
+- Decision: Consensus recomputes the padded transaction-ordered nullifier list and rejects commitment proofs for empty/nullifier-free blocks.
+  Rationale: The commitment proof’s uniqueness argument is only meaningful when tied to the block’s actual nullifiers; coinbase-only blocks carry no transaction proofs, so we treat them as “no commitment proof” rather than attempting to prove an all-zero list that collapses constraint degrees.
+  Date/Author: 2026-01-06 / Codex
+
 - Decision: Use a compressed nullifier representation for adjacency-inequality checks (single diff over a challenge-compressed value) instead of per-limb diffs.
   Rationale: Per-limb diffs collapse constraint degrees when higher limbs are constant, causing Winterfell degree mismatches; the compressed diff keeps constraints stable while preserving soundness under a random challenge.
   Date/Author: 2026-01-06 / Codex
@@ -290,6 +294,7 @@ Note (2026-01-01T09:30Z): Updated Progress, Surprises & Discoveries, and Decisio
 
 ## Outcomes & Retrospective
 
+Outcome (2026-01-06T09:30Z): Consensus now recomputes the padded nullifier lists and checks commitment-proof public inputs against block transactions, with integration tests covering match/mismatch cases; empty/nullifier-free blocks are treated as non-proof-bearing to preserve constraint degrees.
 Outcome (2026-01-06T07:30Z): Nullifier uniqueness constraints now live in the commitment proof (permutation check + compressed adjacent inequality), with public-input nullifier lists wired through the prover/RPC/docs and tests covering rejection on mismatch. Remaining work is consensus handoff + integration validation.
 Outcome (2026-01-06T03:30Z): Milestone 8b0 spike determined that naive in-circuit Merkle updates exceed row budget by 100×; Decision Log now documents that state-transition enforcement stays outside the commitment proof. This unblocks Milestone 8b with a reduced scope (nullifier uniqueness + DA-root binding only).
 Outcome (2026-01-06T02:30Z): Milestone 8a complete: commitment proof now binds tx_proofs_commitment plus start/end roots, nullifier root, and da_root; the node stores proofs and exposes `block_getCommitmentProof`. Remaining work is the in-circuit transition/uniqueness/DA computation in Milestone 8b.
@@ -949,3 +954,4 @@ Revision Note (2026-01-05T06:11Z): Implemented Milestone 7 commitment proof with
 Revision Note (2026-01-06T02:30Z): Split Milestone 8 into 8a/8b, recorded the binding + RPC work, updated interfaces to include new public inputs, and documented the rationale in the Decision Log.
 Revision Note (2026-01-06T03:30Z): Added Milestone 8b0 prototyping spike, implemented the Merkle update row-budget estimator test, and captured the row-count evidence in Surprises & Discoveries.
 Revision Note (2026-01-06T07:30Z): Implemented the reduced-scope Milestone 8b nullifier uniqueness constraints (permutation + compressed adjacency), updated public-input wiring/RPC/docs, and recorded the constraint-degree discovery and non-zero-nullifier requirement.
+Revision Note (2026-01-06T09:30Z): Marked Milestone 8b complete by wiring consensus nullifier-list handoff, adding commitment-proof integration tests, and documenting the empty/nullifier-free block handling decision.
