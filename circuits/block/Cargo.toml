@@ -7,11 +7,13 @@ edition = "2021"
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 blake3 = "1"
+sha2 = "0.10"
 epoch-circuit = { path = "../epoch" }
 transaction-circuit = { path = "../transaction", features = ["rpo-fiat-shamir"] }
 state-merkle = { path = "../../state/merkle" }
 protocol-versioning = { path = "../../protocol/versioning" }
 winterfell = "0.13"
+winter-crypto = "0.13"
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }

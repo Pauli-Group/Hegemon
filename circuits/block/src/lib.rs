@@ -1,7 +1,16 @@
+pub mod commitment_air;
+pub mod commitment_prover;
+pub mod commitment_verifier;
 pub mod error;
 pub mod proof;
 pub mod recursive;
 
+pub use commitment_air::{CommitmentBlockAir, CommitmentBlockPublicInputs};
+pub use commitment_prover::{
+    CommitmentBlockProof, CommitmentBlockProver, default_commitment_options,
+    fast_commitment_options,
+};
+pub use commitment_verifier::verify_block_commitment;
 pub use error::BlockError;
 pub use proof::{prove_block, prove_block_fast, verify_block, BlockProof, BlockVerificationReport};
 pub use recursive::{

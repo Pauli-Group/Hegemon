@@ -63,4 +63,12 @@ pub enum BlockError {
     RecursiveProofPaddingMismatch,
     #[error("recursive proof inputs do not match transaction at index {0}")]
     RecursiveProofInputsMismatch(usize),
+    #[error("commitment proof requires at least one transaction")]
+    CommitmentProofEmptyBlock,
+    #[error("commitment proof generation failed: {0}")]
+    CommitmentProofGeneration(String),
+    #[error("commitment proof verification failed: {0}")]
+    CommitmentProofVerification(String),
+    #[error("commitment proof public inputs invalid: {0}")]
+    CommitmentProofInvalidInputs(String),
 }

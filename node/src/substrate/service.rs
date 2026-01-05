@@ -130,7 +130,10 @@ use crate::substrate::rpc::{
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
-use block_circuit::{prove_block, prove_block_fast, RecursiveBlockProof};
+use block_circuit::{
+    CommitmentBlockProof, CommitmentBlockProver, prove_block, prove_block_fast,
+    RecursiveBlockProof,
+};
 use codec::Decode;
 use codec::Encode;
 use consensus::{Blake3Algorithm, Blake3Seal};
@@ -326,6 +329,7 @@ const DEFAULT_DA_SAMPLE_COUNT: u32 = 80;
 const DEFAULT_DA_STORE_CAPACITY: usize = 128;
 const DEFAULT_DA_SAMPLE_TIMEOUT_MS: u64 = 5000;
 const DEFAULT_RECURSIVE_PROOF_STORE_CAPACITY: usize = 128;
+const DEFAULT_COMMITMENT_PROOF_STORE_CAPACITY: usize = 128;
 
 #[derive(Debug)]
 pub struct DaChunkStore {
@@ -409,6 +413,49 @@ impl RecursiveBlockProofStore {
     }
 
     pub fn get(&self, hash: &H256) -> Option<&RecursiveBlockProof> {
+        self.entries.get(hash)
+    }
+}
+
+#[derive(Debug)]
+pub struct CommitmentBlockProofStore {
+    capacity: usize,
+    order: VecDeque<H256>,
+    entries: HashMap<H256, CommitmentBlockProof>,
+}
+
+impl CommitmentBlockProofStore {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            order: VecDeque::new(),
+            entries: HashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, hash: H256, proof: CommitmentBlockProof) {
+        if self.capacity == 0 {
+            return;
+        }
+
+        if let Some(existing) = self.entries.get_mut(&hash) {
+            *existing = proof;
+            self.order.retain(|entry| entry != &hash);
+            self.order.push_back(hash);
+            return;
+        }
+
+        if self.entries.len() >= self.capacity {
+            if let Some(evicted) = self.order.pop_front() {
+                self.entries.remove(&evicted);
+            }
+        }
+
+        self.entries.insert(hash, proof);
+        self.order.push_back(hash);
+    }
+
+    pub fn get(&self, hash: &H256) -> Option<&CommitmentBlockProof> {
         self.entries.get(hash)
     }
 }
@@ -531,6 +578,19 @@ fn load_recursive_proof_store_capacity() -> usize {
             DEFAULT_RECURSIVE_PROOF_STORE_CAPACITY
         );
         return DEFAULT_RECURSIVE_PROOF_STORE_CAPACITY;
+    }
+    capacity
+}
+
+fn load_commitment_proof_store_capacity() -> usize {
+    let capacity = env_usize("HEGEMON_COMMITMENT_PROOF_STORE_CAPACITY")
+        .unwrap_or(DEFAULT_COMMITMENT_PROOF_STORE_CAPACITY);
+    if capacity == 0 {
+        tracing::warn!(
+            "HEGEMON_COMMITMENT_PROOF_STORE_CAPACITY is zero; falling back to {}",
+            DEFAULT_COMMITMENT_PROOF_STORE_CAPACITY
+        );
+        return DEFAULT_COMMITMENT_PROOF_STORE_CAPACITY;
     }
     capacity
 }
@@ -1034,6 +1094,40 @@ fn build_recursive_block_proof(
     Ok(Some(block_proof.recursive_proof))
 }
 
+fn build_commitment_block_proof(
+    client: &HegemonFullClient,
+    parent_hash: H256,
+    extrinsics: &[Vec<u8>],
+    da_params: DaParams,
+    fast: bool,
+) -> Result<Option<CommitmentBlockProof>, String> {
+    let proofs = extract_transaction_proofs_from_extrinsics(extrinsics)?;
+    if proofs.is_empty() {
+        return Ok(None);
+    }
+
+    let mut tree = build_commitment_tree_from_chain(client, parent_hash)?;
+    let mut decoded = Vec::with_capacity(extrinsics.len());
+    for ext_bytes in extrinsics {
+        let extrinsic = runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..])
+            .map_err(|e| format!("failed to decode extrinsic: {e:?}"))?;
+        decoded.push(extrinsic);
+    }
+    let da_root = build_da_encoding_from_extrinsics(&decoded, da_params)?.root();
+
+    let prover = if fast {
+        CommitmentBlockProver::with_fast_options()
+    } else {
+        CommitmentBlockProver::new()
+    };
+
+    let proof = prover
+        .prove_block_commitment_with_tree(&mut tree, &proofs, da_root)
+        .map_err(|e| format!("commitment block proof failed: {e}"))?;
+
+    Ok(Some(proof))
+}
+
 fn parse_accumulator(bytes: [u8; 32]) -> Result<[epoch_circuit::BaseElement; 4], String> {
     let mut elements = [epoch_circuit::BaseElement::new(0); 4];
     for i in 0..4 {
@@ -1189,6 +1283,7 @@ fn is_recursive_shielded_transfer(call: &runtime::RuntimeCall) -> bool {
 pub fn wire_block_builder_api(
     chain_state: &Arc<ProductionChainStateProvider>,
     client: Arc<HegemonFullClient>,
+    da_params: DaParams,
 ) {
     use sc_block_builder::BlockBuilderBuilder;
 
@@ -1205,6 +1300,23 @@ pub fn wire_block_builder_api(
         if requested_recursive_block_fast {
             tracing::warn!(
                 "HEGEMON_RECURSIVE_BLOCK_PROOFS_FAST set but node not built with --features fast-proofs; ignoring"
+            );
+        }
+        false
+    };
+    let commitment_block_proofs_enabled = std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let requested_commitment_block_fast =
+        std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+    let commitment_block_fast = if cfg!(feature = "fast-proofs") {
+        requested_commitment_block_fast
+    } else {
+        if requested_commitment_block_fast {
+            tracing::warn!(
+                "HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST set but node not built with --features fast-proofs; ignoring"
             );
         }
         false
@@ -1462,6 +1574,38 @@ pub fn wire_block_builder_api(
             None
         };
 
+        let commitment_proof = if commitment_block_proofs_enabled {
+            match build_commitment_block_proof(
+                client_for_exec.as_ref(),
+                parent_substrate_hash,
+                &applied,
+                da_params,
+                commitment_block_fast,
+            ) {
+                Ok(Some(proof)) => {
+                    tracing::info!(
+                        block_number,
+                        tx_count = proof.public_inputs.tx_count,
+                        proof_size = proof.proof_bytes.len(),
+                        proof_hash = %hex::encode(proof.proof_hash),
+                        "Commitment block proof generated"
+                    );
+                    Some(proof)
+                }
+                Ok(None) => None,
+                Err(e) => {
+                    tracing::warn!(
+                        block_number,
+                        error = %e,
+                        "Failed to build commitment block proof"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         // Cache the StorageChanges for use during import.
         // The returned handle cleans up automatically if the template is discarded.
         let storage_changes = cache_storage_changes(built_block.storage_changes);
@@ -1484,6 +1628,7 @@ pub fn wire_block_builder_api(
             failed_count: failed,
             storage_changes: Some(storage_changes),
             recursive_proof,
+            commitment_proof,
         })
     });
 
@@ -1528,6 +1673,7 @@ use sp_runtime::DigestItem;
 /// * `client` - The full Substrate client for header construction
 /// * `da_chunk_store` - In-memory DA chunk store for serving proofs
 /// * `recursive_block_proof_store` - In-memory store for recursive block proofs
+/// * `commitment_block_proof_store` - In-memory store for commitment block proofs
 /// * `da_params` - DA parameters for encoding chunk data
 ///
 /// # Example
@@ -1540,6 +1686,7 @@ use sp_runtime::DigestItem;
 ///     client.clone(),
 ///     da_chunk_store,
 ///     recursive_block_proof_store,
+///     commitment_block_proof_store,
 ///     da_params,
 /// );
 ///
@@ -1560,6 +1707,7 @@ fn wire_pow_block_import(
     client: Arc<HegemonFullClient>,
     da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
     recursive_block_proof_store: Arc<ParkingMutex<RecursiveBlockProofStore>>,
+    commitment_block_proof_store: Arc<ParkingMutex<CommitmentBlockProofStore>>,
     da_params: DaParams,
 ) {
     use codec::Encode;
@@ -1685,6 +1833,20 @@ fn wire_pow_block_import(
                         "Recursive block proof stored for imported block"
                     );
                 }
+                if let Some(proof) = template.commitment_proof.clone() {
+                    let proof_size = proof.proof_bytes.len();
+                    let proof_hash = proof.proof_hash;
+                    commitment_block_proof_store
+                        .lock()
+                        .insert(block_hash, proof);
+                    tracing::info!(
+                        block_number = template.number,
+                        block_hash = %hex::encode(block_hash.as_bytes()),
+                        proof_size,
+                        proof_hash = %hex::encode(proof_hash),
+                        "Commitment block proof stored for imported block"
+                    );
+                }
                 tracing::info!(
                     block_hash = %hex::encode(block_hash.as_bytes()),
                     block_number = template.number,
@@ -1714,6 +1876,20 @@ fn wire_pow_block_import(
                         proof_size,
                         recursive_proof_hash = %hex::encode(recursive_proof_hash),
                         "Recursive block proof stored for known block"
+                    );
+                }
+                if let Some(proof) = template.commitment_proof.clone() {
+                    let proof_size = proof.proof_bytes.len();
+                    let proof_hash = proof.proof_hash;
+                    commitment_block_proof_store
+                        .lock()
+                        .insert(block_hash, proof);
+                    tracing::info!(
+                        block_number = template.number,
+                        block_hash = %hex::encode(block_hash.as_bytes()),
+                        proof_size,
+                        proof_hash = %hex::encode(proof_hash),
+                        "Commitment block proof stored for known block"
                     );
                 }
                 tracing::warn!(
@@ -2572,6 +2748,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let da_store_capacity = load_da_store_capacity();
     let da_sample_timeout = load_da_sample_timeout();
     let recursive_block_proof_store_capacity = load_recursive_proof_store_capacity();
+    let commitment_block_proof_store_capacity = load_commitment_proof_store_capacity();
     let da_chunk_store: Arc<ParkingMutex<DaChunkStore>> =
         Arc::new(ParkingMutex::new(DaChunkStore::new(da_store_capacity)));
     let da_request_tracker: Arc<ParkingMutex<DaRequestTracker>> =
@@ -2579,6 +2756,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let recursive_block_proof_store: Arc<ParkingMutex<RecursiveBlockProofStore>> =
         Arc::new(ParkingMutex::new(RecursiveBlockProofStore::new(
             recursive_block_proof_store_capacity,
+        )));
+    let commitment_block_proof_store: Arc<ParkingMutex<CommitmentBlockProofStore>> =
+        Arc::new(ParkingMutex::new(CommitmentBlockProofStore::new(
+            commitment_block_proof_store_capacity,
         )));
 
     tracing::info!(
@@ -2592,6 +2773,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     tracing::info!(
         recursive_block_proof_store_capacity,
         "Recursive block proof store configured"
+    );
+
+    tracing::info!(
+        commitment_block_proof_store_capacity,
+        "Commitment block proof store configured"
     );
 
     // =========================================================================
@@ -4591,7 +4777,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         // =======================================================================
         // Wire BlockBuilder API for real state execution
         // =======================================================================
-        wire_block_builder_api(&chain_state, client.clone());
+        wire_block_builder_api(&chain_state, client.clone(), da_params);
 
         tracing::info!("BlockBuilder API wired for real state execution");
 
@@ -4610,6 +4796,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             client.clone(),
             Arc::clone(&da_chunk_store),
             Arc::clone(&recursive_block_proof_store),
+            Arc::clone(&commitment_block_proof_store),
             da_params,
         );
 
@@ -4981,12 +5168,15 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             tracing::info!("Epoch RPC wired (epoch_getRecursiveProof, etc.)");
         }
 
-        // Add Block RPC (recursive block proofs)
-        let block_rpc = BlockRpc::new(Arc::clone(&recursive_block_proof_store));
+        // Add Block RPC (recursive + commitment block proofs)
+        let block_rpc = BlockRpc::new(
+            Arc::clone(&recursive_block_proof_store),
+            Arc::clone(&commitment_block_proof_store),
+        );
         if let Err(e) = module.merge(block_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Block RPC");
         } else {
-            tracing::info!("Block RPC wired (block_getRecursiveProof)");
+            tracing::info!("Block RPC wired (block_getRecursiveProof, block_getCommitmentProof)");
         }
 
         // Add DA RPC (chunk retrieval + params)

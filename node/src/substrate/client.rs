@@ -55,7 +55,7 @@
 
 use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
 use crate::substrate::service::StorageChangesHandle;
-use block_circuit::RecursiveBlockProof;
+use block_circuit::{CommitmentBlockProof, RecursiveBlockProof};
 use consensus::Blake3Seal;
 use sp_core::H256;
 use std::sync::Arc;
@@ -512,6 +512,8 @@ pub struct StateExecutionResult {
     pub storage_changes: Option<StorageChangesHandle>,
     /// Optional recursive proof built from shielded transfer extrinsics.
     pub recursive_proof: Option<RecursiveBlockProof>,
+    /// Optional commitment proof built from shielded transfer extrinsics.
+    pub commitment_proof: Option<CommitmentBlockProof>,
 }
 
 impl std::fmt::Debug for ProductionChainStateProvider {
@@ -642,6 +644,9 @@ impl ProductionChainStateProvider {
     ///         state_root: result.state_root,
     ///         extrinsics_root: result.extrinsics_root,
     ///         failed_count: result.failed,
+    ///         storage_changes: None,
+    ///         recursive_proof: None,
+    ///         commitment_proof: None,
     ///     })
     /// });
     /// ```
@@ -707,6 +712,7 @@ impl ProductionChainStateProvider {
                 failed_count: 0,
                 storage_changes: None, // No storage changes in mock mode
                 recursive_proof: None,
+                commitment_proof: None,
             })
         } else {
             Err("state execution is not configured; refusing to run without real execution".into())
@@ -856,6 +862,7 @@ impl ChainStateProvider for ProductionChainStateProvider {
                         result.storage_changes,
                     )
                     .with_recursive_proof(result.recursive_proof)
+                    .with_commitment_proof(result.commitment_proof)
             }
             Err(e) => {
                 tracing::error!(
@@ -1209,6 +1216,7 @@ mod tests {
                 failed_count: 0,
                 storage_changes: None,
                 recursive_proof: None,
+                commitment_proof: None,
             })
         });
 
@@ -1241,6 +1249,7 @@ mod tests {
                 failed_count: 0,
                 storage_changes: None,
                 recursive_proof: None,
+                commitment_proof: None,
             })
         });
 
@@ -1270,6 +1279,7 @@ mod tests {
                 failed_count: 0,
                 storage_changes: None,
                 recursive_proof: None,
+                commitment_proof: None,
             })
         });
 
