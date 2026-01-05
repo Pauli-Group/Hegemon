@@ -30,6 +30,7 @@
 //! | Method                    | Description                              |
 //! |---------------------------|------------------------------------------|
 //! | `block_getRecursiveProof` | Fetch recursive block proof by hash       |
+//! | `block_getCommitmentProof`| Fetch commitment block proof by hash      |
 //! | `da_getChunk`             | Fetch DA chunk + Merkle proof             |
 //! | `da_getParams`            | Fetch DA parameters (chunk/sample sizes)  |
 //!
@@ -76,7 +77,9 @@ pub use shielded::{ShieldedApiServer, ShieldedPoolService, ShieldedRpc};
 pub use shielded_service::MockShieldedPoolService;
 pub use wallet::{WalletApiServer, WalletRpc, WalletService};
 
-use crate::substrate::service::{DaChunkStore, RecursiveBlockProofStore};
+use crate::substrate::service::{
+    CommitmentBlockProofStore, DaChunkStore, RecursiveBlockProofStore,
+};
 use state_da::DaParams;
 
 /// Dependency container for RPC handlers.
@@ -92,6 +95,8 @@ pub struct FullDeps<S, P> {
     pub deny_unsafe: bool,
     /// In-memory recursive block proof store
     pub recursive_block_proof_store: Arc<parking_lot::Mutex<RecursiveBlockProofStore>>,
+    /// In-memory commitment block proof store
+    pub commitment_block_proof_store: Arc<parking_lot::Mutex<CommitmentBlockProofStore>>,
     /// In-memory DA chunk store
     pub da_chunk_store: Arc<parking_lot::Mutex<DaChunkStore>>,
     /// DA parameters
@@ -131,8 +136,11 @@ where
     let shielded_rpc = ShieldedRpc::new(deps.service);
     module.merge(shielded_rpc.into_rpc())?;
 
-    // Add Block RPC (recursive proofs)
-    let block_rpc = BlockRpc::new(Arc::clone(&deps.recursive_block_proof_store));
+    // Add Block RPC (recursive + commitment proofs)
+    let block_rpc = BlockRpc::new(
+        Arc::clone(&deps.recursive_block_proof_store),
+        Arc::clone(&deps.commitment_block_proof_store),
+    );
     module.merge(block_rpc.into_rpc())?;
 
     // Add DA RPC (chunk proofs)

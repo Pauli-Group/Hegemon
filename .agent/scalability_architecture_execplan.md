@@ -22,6 +22,9 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
 
 ## Progress
 
+- [x] (2026-01-06T02:30Z) Completed Milestone 8a: fixed commitment-proof input absorption, bound start/end/nullifier/DA roots in public inputs, and wired commitment proof generation + LRU storage + `block_getCommitmentProof` RPC.
+- [ ] (2026-01-06T02:30Z) Milestone 8b in-circuit state transition/nullifier uniqueness/DA computation (completed: public inputs + binding proof; remaining: Merkle update constraints, nullifier sorting/permutation checks, DA-root computation in-circuit, and consensus handoff).
+- [x] (2026-01-05T06:11Z) Implemented Milestone 7 commitment proof AIR/prover/verifier using a Poseidon sponge commitment over tx proof hashes; added a 100-tx roundtrip test and wired exports/errors.
 - [x] (2026-01-05T06:11Z) Documented Phase 2 as the canonical path: marked Phase 1 milestones as superseded, updated Purpose/acceptance text, and aligned interfaces with commitment proofs + parallel verification.
 - [x] (2026-01-04T12:00Z) **Architecture Pivot**: Documented the pivot from recursive "prove-the-verifier" to commitment-based block proofs + parallel transaction verification in the Purpose section. Recursive block proofs remain supported for dev/test but are no longer the scalability path.
 - [x] (2026-01-04T12:00Z) **Milestone 6 COMPLETE**: Implemented cryptographic per-node DA sampling in `state/da/src/lib.rs`. Added `sample_indices(node_secret, block_hash, total_chunks, sample_count)` using ChaCha20Rng seeded with XOR of node secret and block hash. Added tests (9/9 passing). This fixes the deterministic DA sampling security flaw.
@@ -63,6 +66,10 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
 - [x] (2026-01-03T06:21Z) Updated runbooks and tmux automation for repeatable end-to-end validation; remaining work is performance (not correctness) on recursive proof generation throughput.
 
 ## Surprises & Discoveries
+
+- Observation (2026-01-06T02:30Z): The initial commitment-proof AIR did not absorb input columns, so the proof was not binding to the tx hash list.
+  Evidence: Transition constraints permuted the Poseidon state without adding `COL_INPUT*` values, and boundary assertions never tied inputs to the sponge.
+  Implication: Inputs must be absorbed per cycle and the public-input columns asserted; fixed in Milestone 8a.
 
 - Observation (2025-12-31T18:45Z): Recursive block proof generation fails if inner transaction proofs are Blake3-based; recursion expects RPO‑Fiat‑Shamir proofs.
   Evidence: `cargo test -p consensus -- --ignored` failed with `RecursiveProofInput { index: 0, reason: "Trace generation failed: Merkle proof is invalid" }` until the test switched to RPO proofs.
@@ -162,8 +169,16 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
   Implication: E2E scripts/runbooks must carry forward `da_root` (or we should add a helper RPC to fetch `da_root` for a given block hash).
 ## Decision Log
 
+- Decision: Split Milestone 8 into 8a (binding public inputs + RPC integration) and 8b (in-circuit state transition, nullifier uniqueness, and DA computation).
+  Rationale: Binding the inputs and wiring RPC unblocks integration work while keeping consensus checks intact; the heavier in-circuit constraints can land next without stalling shipping.
+  Date/Author: 2026-01-06 / Codex
+
 - Decision: Treat Phase 2 milestones (commitment proofs + parallel verification) as the only active plan and archive Phase 1 recursion milestones for legacy maintenance only.
   Rationale: The architecture pivot is now the canonical path; leaving Phase 1 as an active plan creates contradictory instructions for a novice and undermines the soundness goals.
+  Date/Author: 2026-01-05 / Codex
+
+- Decision: Start Milestone 7 with a Poseidon sponge commitment over tx proof hashes (domain tag `blkcmmt1`) and defer in-circuit state-transition/nullifier/DA computation to Milestone 8b.
+  Rationale: Reuses the existing Poseidon constants, keeps trace width at 5 columns, and yields a fast proof that can be extended later without blocking Phase 2 progress.
   Date/Author: 2026-01-05 / Codex
 
 - Decision: **Architecture Pivot** — Replace recursive "prove-the-verifier" block proofs with commitment-based block proofs + parallel transaction verification.
@@ -254,6 +269,8 @@ Note (2026-01-01T09:30Z): Updated Progress, Surprises & Discoveries, and Decisio
 
 ## Outcomes & Retrospective
 
+Outcome (2026-01-06T02:30Z): Milestone 8a complete: commitment proof now binds tx_proofs_commitment plus start/end roots, nullifier root, and da_root; the node stores proofs and exposes `block_getCommitmentProof`. Remaining work is the in-circuit transition/uniqueness/DA computation in Milestone 8b.
+Outcome (2026-01-05T06:11Z): Milestone 7 commitment proof implemented using a Poseidon sponge commitment over tx proof hashes; proof generation/verification succeeds on a 100-tx test with a 5-column trace. Remaining work is to extend the AIR to cover state transition, nullifier uniqueness, and DA computation in Milestone 8b.
 Outcome (2026-01-05T06:11Z): The plan now explicitly supersedes the legacy recursive block-proof milestones, and the acceptance/interface guidance aligns with the Phase 2 commitment-proof architecture.
 Outcome (2025-12-31T09:40Z): The Path A recursion verifier updates now satisfy the full `epoch-circuit` test suite, including the ignored heavy tests when run with `CARGO_INCREMENTAL=0`. Remaining work includes the recursion size/time benchmark and the README whitepaper alignment.
 Outcome (2025-12-31T10:05Z): Milestone 1 feasibility benchmarks completed with measured spike ratios and recursive proof timings; the spike acceptance criteria are met. Remaining work moves to Milestone 2 documentation alignment and consensus type updates.
@@ -392,24 +409,21 @@ Expected evidence: All 9 tests pass, including `sample_indices_*` tests.
 
 ### Milestone 7: Commitment Block Proof AIR Design
 
-**Status**: NOT STARTED
+**Status**: COMPLETE (2026-01-05)
 
-This milestone designs a lightweight AIR that proves block commitment correctness without verifying transaction proofs in-circuit.
+This milestone designs a lightweight AIR that proves the block’s proof-hash commitment without verifying transaction proofs in-circuit. State transition, nullifier uniqueness, and DA-root checks remain consensus responsibilities until Milestone 8b extends the AIR.
 
 **What the AIR proves**:
-1. `tx_proofs_merkle_root = rpo_merkle_root(tx_proof_hashes)` — transaction proof hashes commit correctly via in-circuit RPO Merkle tree
-2. `ending_state_root = apply(starting_state_root, commitments)` — state transition is valid
-3. All nullifiers in the block are unique (in-circuit sorting + equality check)
-4. `da_root` matches the encoded transaction ciphertexts
+1. `tx_proofs_commitment = poseidon_sponge(tx_proof_hashes)` — transaction proof hashes commit correctly via in-circuit Poseidon sponge
 
 **Hash scheme**:
-- `tx_proof_hash = rpo_256(proof_bytes)` — computed outside circuit, provided as witness
-- In-circuit: build RPO Merkle tree over `tx_proof_hashes` and constrain root equals public input
-- This matches the existing RPO-based transaction proofs and keeps everything recursion-friendly
+- `tx_proof_hash = blake3_256(proof_bytes)` — computed outside circuit, provided as witness
+- In-circuit: absorb proof-hash limbs into a Poseidon sponge and expose a 4-limb commitment (32 bytes)
+- This reuses the transaction circuit’s Poseidon constants and stays within a ~5-column trace
 
 **Key properties**:
-- Trace width: ~20-30 columns (not 254)
-- Trace length: O(N * log N) for N transactions, ~2^14 rows for 1000 txs
+- Trace width: 5 columns
+- Trace length: O(N) in the number of proof-hash limbs (padded to power-of-two cycles)
 - No OOD/DEEP/FRI verification in-circuit (that stays in transaction proofs)
 - Prover time: seconds, not minutes
 - Memory: ~1GB, not 100GB+
@@ -417,10 +431,10 @@ This milestone designs a lightweight AIR that proves block commitment correctnes
 **Public inputs**:
 
     pub struct CommitmentBlockPublicInputs {
-        pub tx_proofs_merkle_root: [u8; 32],
+        pub tx_proofs_commitment: [u8; 32],
         pub starting_state_root: [u8; 32],
         pub ending_state_root: [u8; 32],
-        pub nullifier_set_commitment: [u8; 32],
+        pub nullifier_root: [u8; 32],
         pub da_root: [u8; 32],
         pub tx_count: u32,
     }
@@ -429,9 +443,6 @@ This milestone designs a lightweight AIR that proves block commitment correctnes
 
     pub struct CommitmentBlockWitness {
         pub tx_proof_hashes: Vec<[u8; 32]>,
-        pub nullifiers: Vec<[u8; 32]>,
-        pub commitments: Vec<[u8; 32]>,
-        pub merkle_update_paths: Vec<MerkleUpdatePath>,
     }
 
 **Files to create**:
@@ -441,49 +452,74 @@ This milestone designs a lightweight AIR that proves block commitment correctnes
 
 **Commands**:
 
-    cargo test -p block-circuit commitment
+    cargo test -p block-circuit commitment_proof_roundtrip_100
 
 **Acceptance**: 
 - AIR compiles with Winterfell
 - Trace width < 50 columns
-- Test proves and verifies a 100-transaction block in < 30 seconds
+- Test proves and verifies a 100-transaction commitment proof in < 30 seconds
 
 ---
 
-### Milestone 8: Commitment Block Proof Implementation
+### Milestone 8a: Commitment Proof Input Binding + RPC Integration
+
+**Status**: COMPLETE (2026-01-06)
+
+This milestone fixes the commitment-proof AIR to actually absorb inputs and binds the starting/ending state roots, nullifier root, and DA root as public inputs. It also wires commitment proof generation into block building and exposes proofs over RPC.
+
+**What was implemented**:
+- `CommitmentBlockPublicInputs` now includes `starting_state_root`, `ending_state_root`, `nullifier_root`, and `da_root`, plus `tx_count`.
+- Commitment-proof AIR absorbs input columns (not constants) and asserts the public-input columns so proofs are binding.
+- `CommitmentBlockProver` computes nullifier root from transactions, derives ending state root from the commitment tree, and binds DA root inputs.
+- Commitment proofs are built in `wire_block_builder_api` when `HEGEMON_COMMITMENT_BLOCK_PROOFS=1` and stored on import in an LRU cache.
+- Added `block_getCommitmentProof(block_hash)` RPC to fetch proof bytes + public inputs.
+
+**Files modified**:
+- `circuits/block/src/commitment_air.rs` — bind state/nullifier/DA inputs and fix absorption schedule
+- `circuits/block/src/commitment_prover.rs` — compute roots and build commitment proofs with inputs
+- `node/src/substrate/service.rs` — commit proof generation + LRU store
+- `node/src/substrate/mining_worker.rs` — carry commitment proof in block templates
+- `node/src/substrate/rpc/block.rs` — `block_getCommitmentProof` endpoint
+
+**Commands**:
+
+    cargo test -p block-circuit commitment_proof_roundtrip_100
+    HEGEMON_COMMITMENT_BLOCK_PROOFS=1 HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
+
+**Acceptance**:
+- Commitment proof verifies for the 100-tx roundtrip test.
+- `block_getCommitmentProof` returns non-empty proof bytes and public inputs for mined blocks when enabled.
+- Tampering with proof bytes or any public-input field causes verification failure.
+
+---
+
+### Milestone 8b: In-Circuit State Transition + Nullifier Uniqueness + DA Computation
 
 **Status**: NOT STARTED
 
-This milestone implements the commitment block proof AIR from Milestone 7.
+This milestone extends the commitment proof AIR from Milestone 8a to enforce the state transition, nullifier uniqueness, and DA root computation in-circuit.
 
 **Implementation details**:
 
 The AIR should use:
-- RPO-256 for Merkle hashing (same as transaction proofs, recursion-friendly)
-- Sorting network for nullifier uniqueness (O(N log N) constraints)
+- Poseidon Merkle hashing (same Poseidon constants as transaction/state-merkle)
+- Sorting network for nullifier uniqueness (O(N log N) constraints) or a permutation-check gadget
 - Incremental Merkle update for state transition
+- Poseidon sponge for `tx_proofs_commitment` (existing Milestone 7/8a path)
 
 **Trace layout** (approximate):
 
-    Columns 0-11:  RPO state for Merkle hashing
-    Columns 12-15: Sorting network comparators
-    Columns 16-19: Merkle path verification
-    Columns 20-23: State transition accumulators
+    Columns 0-2:  Poseidon state
+    Columns 3-4:  Sponge inputs (hash limbs)
+    Columns 5-8:  Merkle update / path accumulator limbs
+    Columns 9-12: Nullifier sorting or multiset equality accumulators
 
 **Constraint count estimate**: ~500 transition constraints, ~100 boundary assertions
 
-**Files to create/modify**:
-- `circuits/block/src/lib.rs` — export commitment proof types
-- `circuits/block/Cargo.toml` — ensure Winterfell dependencies
-- `node/src/substrate/rpc/block.rs` — add `block_getCommitmentProof(block_hash)` RPC endpoint
-- `node/src/substrate/service.rs` — store commitment proofs in LRU cache (similar to existing recursive proof cache)
-
-**RPC endpoint**:
-
-    block_getCommitmentProof(block_hash) -> {
-        proof_bytes: Vec<u8>,
-        public_inputs: CommitmentBlockPublicInputs,
-    }
+**Files to modify**:
+- `circuits/block/src/commitment_air.rs` — add Merkle update + nullifier uniqueness constraints
+- `circuits/block/src/commitment_prover.rs` — build Merkle witness + sorted nullifier inputs
+- `consensus/src/proof.rs` — relax out-of-circuit checks once in-circuit constraints land
 
 **Commands**:
 
@@ -495,7 +531,7 @@ The AIR should use:
 - Proof size < 20KB
 - Verification time < 100ms
 - Tampered tx_proof_hash causes verification failure
-- Tampered nullifier causes verification failure
+- Tampered nullifier or DA root causes verification failure
 
 ---
 
@@ -526,12 +562,12 @@ This milestone adds a `ParallelProofVerifier` to consensus that verifies transac
             // 1. Verify commitment block proof (O(1), ~50ms)
             verify_commitment_proof(&block.commitment_proof, &block.header)?;
             
-            // 2. Compute tx proof hashes and verify Merkle root
+            // 2. Compute tx proof hashes and verify Poseidon commitment
             let tx_hashes: Vec<[u8; 32]> = block.transactions
                 .par_iter()
                 .map(|tx| blake3_256(&tx.stark_proof))
                 .collect();
-            verify_tx_proofs_merkle_root(&tx_hashes, block.header.tx_proofs_merkle_root())?;
+            verify_tx_proofs_commitment(&tx_hashes, block.header.tx_proofs_commitment())?;
             
             // 3. Verify transaction STARK proofs in parallel
             let results: Vec<Result<(), ProofError>> = block.transactions
@@ -549,7 +585,7 @@ This milestone adds a `ParallelProofVerifier` to consensus that verifies transac
         }
     }
 
-Use the same `tx_proof_hash` and RPO Merkle root scheme as Milestone 7/8 so consensus and the commitment proof agree exactly.
+Use the same `tx_proof_hash` and Poseidon sponge commitment scheme as Milestone 7/8 so consensus and the commitment proof agree exactly.
 
 **Files to modify**:
 - `consensus/src/proof.rs` — add `ParallelProofVerifier`
@@ -713,9 +749,9 @@ Expected:
 
 ---
 
-Acceptance requires two observable behaviors. First, a block with a valid commitment proof and a correct tx_proofs_merkle_root must be accepted only if all transaction proofs verify in parallel; a single invalid proof must reject the block with its index. Second, a block must be rejected if any sampled DA chunk is missing or fails its Merkle proof.
+Acceptance requires two observable behaviors. First, a block with a valid commitment proof and a correct tx_proofs_commitment must be accepted only if all transaction proofs verify in parallel; a single invalid proof must reject the block with its index. Second, a block must be rejected if any sampled DA chunk is missing or fails its Merkle proof.
 
-Add a block circuit test that mutates the commitment proof bytes and expects verification to fail with a commitment proof error. Add a consensus test that injects an invalid transaction proof and expects the parallel verifier to return the failing index, and another test that removes a sampled DA chunk from the store and expects a DA error. Start the dev node, mine a block, and verify that the block header includes a non-zero commitment_proof_hash (and tx_proofs_merkle_root) and da_root, and that the RPC methods return commitment proof bytes and a chunk with a valid Merkle proof.
+Add a block circuit test that mutates the commitment proof bytes and expects verification to fail with a commitment proof error. Add a consensus test that injects an invalid transaction proof and expects the parallel verifier to return the failing index, and another test that removes a sampled DA chunk from the store and expects a DA error. Start the dev node, mine a block, and verify that the block header includes a non-zero commitment_proof_hash and tx_proofs_commitment plus da_root, and that the RPC methods return commitment proof bytes and a chunk with a valid Merkle proof.
 
 ## Idempotence and Recovery
 
@@ -770,11 +806,7 @@ Example rejection log for a missing DA chunk:
 In circuits/block/src/commitment_air.rs, circuits/block/src/commitment_prover.rs, and circuits/block/src/commitment_verifier.rs, define the commitment-proof types and APIs:
 
     pub struct CommitmentBlockPublicInputs {
-        pub tx_proofs_merkle_root: [u8; 32],
-        pub starting_state_root: [u8; 32],
-        pub ending_state_root: [u8; 32],
-        pub nullifier_set_commitment: [u8; 32],
-        pub da_root: [u8; 32],
+        pub tx_proofs_commitment: [u8; 32],
         pub tx_count: u32,
     }
 
@@ -785,26 +817,25 @@ In circuits/block/src/commitment_air.rs, circuits/block/src/commitment_prover.rs
     }
 
     pub fn prove_block_commitment(
-        tree: &mut state_merkle::CommitmentTree,
         transactions: &[transaction_circuit::TransactionProof],
-        verifying_keys: &HashMap<VersionBinding, VerifyingKey>,
-        da_root: [u8; 32],
+    ) -> Result<CommitmentBlockProof, BlockError>;
+
+    pub fn prove_block_commitment_from_hashes(
+        proof_hashes: &[[u8; 32]],
     ) -> Result<CommitmentBlockProof, BlockError>;
 
     pub fn verify_block_commitment(
         proof: &CommitmentBlockProof,
-        verifying_keys: &HashMap<VersionBinding, VerifyingKey>,
     ) -> Result<(), BlockError>;
 
-The commitment proof must recompute `tx_proofs_merkle_root`, `nullifier_set_commitment`, and `da_root` in-circuit using the same hash and leaf encoding that consensus uses.
+The commitment proof must recompute `tx_proofs_commitment` in-circuit using the same Poseidon sponge and padding rules that consensus uses.
 
 In consensus/src/header.rs, extend BlockHeader so the commitment proof hash and its public inputs are covered by signing and hashing:
 
     pub struct BlockHeader {
         /* existing fields */
         pub commitment_proof_hash: [u8; 32],
-        pub tx_proofs_merkle_root: [u8; 32],
-        pub nullifier_set_commitment: [u8; 32],
+        pub tx_proofs_commitment: [u8; 32],
         pub da_root: [u8; 32],
         pub da_params: DaParams,
         pub tx_count: u32,
@@ -814,11 +845,9 @@ Legacy recursive proof fields (recursive_proof_hash) should be kept only behind 
 
 Compute `proof_hash` and `commitment_proof_hash` as `blake3_256(proof_bytes)` and keep the hash function consistent across circuits, consensus, and RPC.
 
-Define the transaction-proof commitment root as follows:
+Define the transaction-proof commitment as follows:
 - `tx_proof_hash = blake3_256(proof_bytes)` using the existing blake3 utilities.
-- `tx_proofs_merkle_root` is the RPO-256 Merkle root over those 32-byte leaves (domain-separated for leaf vs. internal nodes), and the same scheme must be used in circuits and consensus.
-
-The nullifier set commitment is the RPO-256 Merkle root of the sorted nullifiers for the block (sorting is part of the commitment-proof witness).
+- `tx_proofs_commitment` is the Poseidon sponge commitment over the 4-limb field encoding of each `tx_proof_hash`, using domain tag `blkcmmt1` and padding cycles to the next power-of-two (same rules as `CommitmentBlockAir`).
 
 In state/da, implement storage for DA chunks and Merkle proofs:
 
@@ -849,11 +878,11 @@ In consensus validation, add a sampler which uses local randomness (not producer
 
 In node RPC under node/src/substrate/rpc, add endpoints for commitment proofs and DA chunks:
 
-    block_getCommitmentProof(block_hash) -> { proof_bytes, proof_hash, tx_count, starting_root, ending_root, tx_proofs_merkle_root, nullifier_set_commitment, da_root }
+    block_getCommitmentProof(block_hash) -> { proof_bytes, proof_hash, public_inputs: { tx_proofs_commitment, starting_state_root, ending_state_root, nullifier_root, da_root, tx_count } }
     da_getChunk(da_root, index) -> { chunk, merkle_path }
     da_getParams() -> { chunk_size, sample_count }
 
-Dependencies must remain hash-based and post-quantum safe. Use blake3 for proof-byte hashing and RPO-256 for Merkle hashing inside commitment proofs. For erasure coding, use reed-solomon-erasure and confine it to the DA encoding path.
+Dependencies must remain hash-based and post-quantum safe. Use blake3 for proof-byte hashing and Poseidon (transaction-circuit constants) for the commitment sponge in commitment proofs. For erasure coding, use reed-solomon-erasure and confine it to the DA encoding path.
 
 Revision Note (2025-12-31T02:04Z): Rebuilt the ExecPlan to comply with .agent/PLANS.md by adding milestone-level commands and acceptance, explicit file-level edits, and missing term definitions.
 Revision Note (2025-12-31T02:22Z): Added math companion reference, recorded the deterministic DA sampling flaw and updated the plan to use per-node randomized sampling (per `.agent/scalability_architecture_math.md`).
@@ -870,3 +899,5 @@ Revision Note (2026-01-01T23:40Z): Updated Progress/Surprises to record the recu
 Revision Note (2026-01-02T00:10Z): Recorded the quadratic trace/DEEP fix, added the recursive proof + DA RPC runbook, and updated end-to-end progress to reflect the in-flight recursive block proof build.
 Revision Note (2026-01-04T12:00Z): **Architecture Pivot** — Added Phase 2 milestones (6-12) for sound commitment-based block proofs + parallel verification. Completed Milestone 6 (cryptographic per-node DA sampling). Updated Purpose section with pivot rationale. Marked legacy recursive block proof decision as superseded.
 Revision Note (2026-01-05T06:11Z): Marked Phase 1 milestones as superseded, clarified Phase 2 as the only active plan, and updated purpose, context, acceptance, and interfaces to align with commitment proofs + parallel verification.
+Revision Note (2026-01-05T06:11Z): Implemented Milestone 7 commitment proof with Poseidon sponge hashing, updated milestone definitions to match the new commitment scheme, and recorded the deferral of state/DA/nullifier checks to Milestone 8b.
+Revision Note (2026-01-06T02:30Z): Split Milestone 8 into 8a/8b, recorded the binding + RPC work, updated interfaces to include new public inputs, and documented the rationale in the Decision Log.

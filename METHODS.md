@@ -432,7 +432,7 @@ That’s “in‑pool recursion” for upgrades.
 The current implementation wires those abstractions into code:
 
 * `protocol-versioning` defines the canonical `VersionBinding { circuit, crypto }`, `VersionMatrix`, and helper commitments that every transaction and block now expose. `TransactionWitness` carries a binding, `TransactionPublicInputs` serializes `circuit_version`/`crypto_suite`, and `TransactionProof::version_binding()` lets the block circuit pick the right verifying key for each proof.
-* `circuits/block` accepts a `HashMap<VersionBinding, VerifyingKey>`, folds `(circuit_version, crypto_suite)` into the recursive digest, and records per-version counts so consensus can hash them into the header’s `version_commitment`.
+* `circuits/block` exposes commitment-proof helpers and keeps per-version counts so consensus can hash them into the header’s `version_commitment`; transaction proofs are verified in parallel by consensus using the same `VersionBinding` table.
 * `consensus::version_policy::VersionSchedule` stores ZIP-style `VersionProposal`s (activation height, optional retirement, optional `UpgradeDirective` that points at the special migration circuit binding). Both BFT and PoW consensus paths call `schedule.first_unsupported(...)` and surface `ConsensusError::UnsupportedVersion` if a block contains an unscheduled binding.
 * Governance documentation (`governance/VERSIONING.md`) specifies how to draft a proposal, vote on it, and publish the activation window, while the operational runbook (`runbooks/emergency_version_swap.md`) walks operators through emergency swaps: announce the swap, enable the upgrade circuit, watch `version_counts` to ensure old notes migrate, then retire the deprecated binding at the scheduled height.
 
@@ -771,7 +771,7 @@ Constraints:
 
 This MASP approach is cheaper than sorting an arbitrary `(asset_id, delta)` multiset but restricts how many assets can appear in one transaction.
 
-### 6. Tree evolution and block-level recursion
+### 6. Tree evolution and block-level commitment proofs
 
 To avoid putting Merkle tree updates in every transaction circuit, handle them at the block level.
 
@@ -792,28 +792,27 @@ The node maintains a canonical commitment tree with current root `root_state`. A
 
 #### 6.3 Block circuit and proof
 
-The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same poseidon-style hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. `TransactionProof::verify` rejects missing STARK proof bytes/public inputs in production builds; the legacy consistency checker is gated behind the `legacy-proof` feature for test fixtures only. On top of that, the `circuits/block` crate now treats recursive proofs as the default: `prove_block` checks per-transaction `merkle_root` anchors against the running tree’s anchor history window, rejects repeated nullifiers, appends every non-zero commitment through the `CommitmentTree`, and then constructs a `RecursiveBlockProof` by verifying each transaction proof inside the recursion STARK. It also emits `version_counts` so consensus can attest how many transactions used each `(circuit, crypto)` binding. The lower-level recursion helpers live in `circuits/block::recursive` and are reused by consensus when it verifies the payload.
+The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same Poseidon-style hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. `TransactionProof::verify` rejects missing STARK proof bytes/public inputs in production builds; the legacy consistency checker is gated behind the `legacy-proof` feature for test fixtures only. On top of that, the `circuits/block` crate now treats commitment proofs as the default: `CommitmentBlockProver` builds a `CommitmentBlockProof` that commits to transaction proof hashes via a Poseidon sponge, and consensus verifies the commitment proof alongside parallel transaction-proof verification. The legacy recursion helpers live in `circuits/block::recursive` and remain available for dev/test maintenance only.
 
-For recursion, transaction proofs must use the RPO Fiat‑Shamir transcript (`TransactionProverStarkRpo` + `RpoRandomCoin`) so the recursive verifier can recompute the transcript hash and Merkle openings inside the base field. The on-chain verifier therefore uses the RPO proof verifier; Blake3‑Fiat‑Shamir proofs are not recursion‑compatible.
-
-Recursive verifier public inputs include the inner proof's OOD frames (trace and constraint values at z and z*g). The recursion AIR rehashes these OOD evaluations in-circuit to reseed the transcript before DEEP coefficients and independently evaluates the inner AIR constraints at z to enforce OOD consistency, so the constraint-composition polynomial is tied to the trace. Recursion supports quadratic-extension inner proofs for transaction circuits; other extensions remain unsupported.
+The commitment-proof AIR currently binds the proof-hash commitment and exposes the starting/ending state roots, nullifier root, and DA root as public inputs; state transition, nullifier uniqueness, and DA-root computation are being added in the next milestone so consensus still enforces those checks directly.
 
 Data availability uses a dedicated encoder in `state/da`. The block’s ciphertext blob is serialized as a length-prefixed stream of ciphertexts (ordered by transaction order, then ciphertext order) and erasure-encoded into `k` data shards of size `da_params.chunk_size` plus `p = ceil(k/2)` parity shards. The Merkle root `da_root` commits to all `n = k + p` shards using BLAKE3 with domain tags `da-leaf` and `da-node`. Consensus recomputes `da_root` from the transaction list and rejects any mismatch before verifying proofs. Sampling is per-node randomized: each validator chooses `da_params.sample_count` shard indices, fetches the chunk and Merkle path over P2P, and rejects the block if any sampled proof fails.
 
-`verify_block` expects miners to supply the current tree state. It verifies the recursive proof once via `circuits/block::recursive::verify_block_recursive`, checks the embedded public inputs against the transaction list, and updates the tree to the expected ending root before matching the reported `version_counts`. Solo miners follow a simple operational loop: sync the tree, run the block verifier on any candidate they plan to extend, update their local `VersionSchedule`, and only then start hashing on top of the verified root. Pools do the same before paying shares or relaying templates so that all PoW-only participants agree on state transitions without any staking-committee style coordination. This provides a concrete path from transaction proofs to a block-level proof artifact that consensus can check in one step.
+`verify_block` expects miners to supply the current tree state. It verifies the commitment proof once via `circuits/block::commitment_verifier::verify_block_commitment`, checks the `tx_proofs_commitment` against the transaction list, verifies all transaction proofs in parallel, and updates the tree to the expected ending root. Solo miners follow a simple operational loop: sync the tree, run the block verifier on any candidate they plan to extend, update their local `VersionSchedule`, and only then start hashing on top of the verified root. Pools do the same before paying shares or relaying templates so that all PoW-only participants agree on state transitions without any staking-committee style coordination. This provides a concrete path from transaction proofs to a block-level proof artifact that consensus can check without per-transaction recursion.
 
-Define a second circuit `C_block` with
+Define a block commitment circuit `C_commitment` with
 
-* Public inputs: `root_prev` (root at start of block), `root_new` (root after applying all transactions), and a list or hash of all transaction identifiers and their `nf_in`, `cm_out`, and `root_before` values to tie things together.
-* Witness: the sequence of changes to the commitment tree (indices and sibling hashes) and the transaction-level proofs `π_tx` or their verification data.
+* Public inputs: `tx_proofs_commitment`, `root_prev`, `root_new`, `nullifier_set_commitment`, `da_root`, plus `tx_count`. Milestone 8a wires these as binding inputs; Milestone 8b enforces the transition, uniqueness, and DA constraints.
+* Witness: the `tx_proof_hashes`, nullifiers, commitments, and the sequence of changes to the commitment tree (indices and sibling hashes), plus the DA-encoded ciphertext chunk list.
 
-Constraints in `C_block`:
+Constraints in `C_commitment` (Milestone 8b target):
 
-1. **Verify each transaction proof** – for each transaction `T_i`, feed its public inputs to the embedded STARK verifier and constrain the verifier’s accept flag to 1 (using recursive STARK techniques).
-2. **Reproduce tree evolution** – start with `root = root_prev` and iteratively insert each `cm_out[j]` at the next available leaf position (or a consensus-defined position), recomputing the root with `H_f`. After all insertions, enforce that the final root equals `root_new`.
-3. **Check transaction anchors** – enforce `root_before[i]` is present in the anchor history window before applying `T_i`.
+1. **Commit to proof hashes** – absorb proof-hash limbs into a Poseidon sponge and enforce the 4-limb commitment equals `tx_proofs_commitment`.
+2. **Reproduce tree evolution** – start with `root = root_prev` and iteratively insert each `cm_out[j]` at the next available leaf position, recomputing the root with Poseidon Merkle nodes. After all insertions, enforce that the final root equals `root_new`.
+3. **Check nullifier uniqueness** – enforce a sorted nullifier list with no adjacent equals (sorting network or permutation argument).
+4. **Bind DA root** – compute `da_root` from the ciphertext blob and enforce it matches the public input.
 
-This yields a per-block proof `π_block` showing every transaction adheres to the join–split semantics and that the global note tree root evolves correctly from `root_prev` to `root_new`. Nodes can verify `π_block` once to accept the block or verify transaction proofs individually and recompute the tree themselves.
+This yields a per-block proof `π_block` showing every transaction adheres to the join–split semantics and that the global note tree root evolves correctly from `root_prev` to `root_new`, while still allowing parallel transaction proof verification in consensus.
 
 #### 6.4 Circuit versioning
 
