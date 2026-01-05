@@ -601,7 +601,9 @@ impl StarkVerifierPublicInputs {
     /// Parse a `StarkVerifierPublicInputs` struct from `to_elements()` output.
     ///
     /// This is used for recursion depth 2+, where the inner proof is itself a `StarkVerifierAir`
-    /// proof and its public inputs arrive as an opaque element vector.
+    /// proof and its public inputs arrive as an opaque element vector. Depth-2 proof generation is
+    /// intentionally disabled in default builds; see the `unsound-recursion` feature gate in the
+    /// prover for legacy experiments.
     #[allow(dead_code)]
     pub fn try_from_elements(
         elements: &[BaseElement],

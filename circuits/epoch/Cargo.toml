@@ -38,6 +38,7 @@ harness = false
 default = ["std"]
 std = []
 stark-fast = []
+unsound-recursion = []
 
 [lints]
 workspace = true

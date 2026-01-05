@@ -2536,32 +2536,41 @@ impl StarkVerifierProver {
                 &inner.deep_coeffs,
             );
         } else {
-            for row in 0..trace.length() {
-                trace.set(COL_DEEP_T1_ACC, row, BaseElement::ZERO);
-                trace.set(COL_DEEP_T1_ACC_LIMB1, row, BaseElement::ZERO);
-                trace.set(COL_DEEP_T2_ACC, row, BaseElement::ZERO);
-                trace.set(COL_DEEP_T2_ACC_LIMB1, row, BaseElement::ZERO);
-                trace.set(COL_DEEP_C1_ACC, row, BaseElement::ZERO);
-                trace.set(COL_DEEP_C1_ACC_LIMB1, row, BaseElement::ZERO);
-                trace.set(COL_DEEP_C2_ACC, row, BaseElement::ZERO);
-                trace.set(COL_DEEP_C2_ACC_LIMB1, row, BaseElement::ZERO);
+            #[cfg(feature = "unsound-recursion")]
+            {
+                for row in 0..trace.length() {
+                    trace.set(COL_DEEP_T1_ACC, row, BaseElement::ZERO);
+                    trace.set(COL_DEEP_T1_ACC_LIMB1, row, BaseElement::ZERO);
+                    trace.set(COL_DEEP_T2_ACC, row, BaseElement::ZERO);
+                    trace.set(COL_DEEP_T2_ACC_LIMB1, row, BaseElement::ZERO);
+                    trace.set(COL_DEEP_C1_ACC, row, BaseElement::ZERO);
+                    trace.set(COL_DEEP_C1_ACC_LIMB1, row, BaseElement::ZERO);
+                    trace.set(COL_DEEP_C2_ACC, row, BaseElement::ZERO);
+                    trace.set(COL_DEEP_C2_ACC_LIMB1, row, BaseElement::ZERO);
 
-                trace.set(COL_FRI_EVAL, row, BaseElement::ZERO);
-                trace.set(COL_FRI_EVAL_LIMB1, row, BaseElement::ZERO);
-                trace.set(COL_FRI_X, row, BaseElement::ZERO);
-                trace.set(COL_FRI_POW, row, BaseElement::ZERO);
+                    trace.set(COL_FRI_EVAL, row, BaseElement::ZERO);
+                    trace.set(COL_FRI_EVAL_LIMB1, row, BaseElement::ZERO);
+                    trace.set(COL_FRI_X, row, BaseElement::ZERO);
+                    trace.set(COL_FRI_POW, row, BaseElement::ZERO);
 
-                for i in 0..NUM_FRI_MSB_BITS {
-                    trace.set(COL_FRI_MSB_BITS_START + i, row, BaseElement::ZERO);
-                }
-                for i in 0..NUM_REMAINDER_COEFFS {
-                    trace.set(COL_REMAINDER_COEFFS_START + i, row, BaseElement::ZERO);
-                }
-                if extension_degree == 2 {
+                    for i in 0..NUM_FRI_MSB_BITS {
+                        trace.set(COL_FRI_MSB_BITS_START + i, row, BaseElement::ZERO);
+                    }
                     for i in 0..NUM_REMAINDER_COEFFS {
-                        trace.set(COL_REMAINDER_COEFFS_EXT_START + i, row, BaseElement::ZERO);
+                        trace.set(COL_REMAINDER_COEFFS_START + i, row, BaseElement::ZERO);
+                    }
+                    if extension_degree == 2 {
+                        for i in 0..NUM_REMAINDER_COEFFS {
+                            trace.set(COL_REMAINDER_COEFFS_EXT_START + i, row, BaseElement::ZERO);
+                        }
                     }
                 }
+            }
+            #[cfg(not(feature = "unsound-recursion"))]
+            {
+                panic!(
+                    "verifier-as-inner recursion is disabled; enable `epoch-circuit/unsound-recursion` to allow gated DEEP/FRI"
+                );
             }
         }
 

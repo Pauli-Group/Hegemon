@@ -28,7 +28,6 @@ fn runtime_signatures_verify_pow_blocks() {
         parent_hash,
         timestamp_ms,
         transactions: vec![dummy_transaction(7)],
-        recursive_proof: None,
         miner: &miner,
         base_nullifiers: &base_nullifiers,
         base_commitment_tree: &genesis_tree,

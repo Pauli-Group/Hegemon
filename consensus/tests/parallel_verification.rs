@@ -3,7 +3,10 @@ mod common;
 use block_circuit::CommitmentBlockProver;
 use common::{PowBlockParams, assemble_pow_block, dummy_coinbase, make_validators};
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
-use consensus::{CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, commitment_nullifier_lists};
+use consensus::{
+    CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
+    commitment_nullifier_lists,
+};
 use crypto::hashes::blake3_256;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing::{felt_to_bytes32, felts_to_bytes32, merkle_node, Felt, HashFelt};
@@ -31,15 +34,22 @@ fn build_two_leaf_merkle_tree(
     leaf0: HashFelt,
     leaf1: HashFelt,
 ) -> (MerklePath, MerklePath, HashFelt) {
+    let mut defaults = Vec::with_capacity(CIRCUIT_MERKLE_DEPTH + 1);
+    defaults.push([Felt::ZERO; 4]);
+    for level in 0..CIRCUIT_MERKLE_DEPTH {
+        let prev = defaults[level];
+        defaults.push(merkle_node(prev, prev));
+    }
+
     let mut siblings0 = vec![leaf1];
     let mut siblings1 = vec![leaf0];
 
     let mut current = merkle_node(leaf0, leaf1);
-    for _ in 1..CIRCUIT_MERKLE_DEPTH {
-        let zero = [Felt::ZERO; 4];
-        siblings0.push(zero);
-        siblings1.push(zero);
-        current = merkle_node(current, zero);
+    for level in 1..CIRCUIT_MERKLE_DEPTH {
+        let default_sibling = defaults[level];
+        siblings0.push(default_sibling);
+        siblings1.push(default_sibling);
+        current = merkle_node(current, default_sibling);
     }
 
     let path0 = MerklePath { siblings: siblings0 };
@@ -149,17 +159,23 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
         Vec::new(),
     );
 
+    let base_nullifiers = NullifierSet::new();
+    let mut base_tree = CommitmentTreeState::default();
+    for input in &witness.inputs {
+        base_tree
+            .append(felts_to_bytes32(&input.note.commitment()))
+            .expect("append input commitment");
+    }
+    assert_eq!(base_tree.root(), tx_proof.public_inputs.merkle_root);
+
     let mut miners = make_validators(1, 0);
     let miner = miners.remove(0);
-    let base_nullifiers = NullifierSet::new();
-    let base_tree = CommitmentTreeState::default();
 
     let params = PowBlockParams {
         height: 1,
         parent_hash: [0u8; 32],
         timestamp_ms: 1_000,
         transactions: vec![transaction],
-        recursive_proof: None,
         miner: &miner,
         base_nullifiers: &base_nullifiers,
         base_commitment_tree: &base_tree,

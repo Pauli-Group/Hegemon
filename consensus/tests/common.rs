@@ -5,7 +5,6 @@ use consensus::CoinbaseSource;
 use consensus::CommitmentTreeState;
 use consensus::DEFAULT_VERSION_BINDING;
 use consensus::ProofError;
-use consensus::RecursiveBlockProof;
 use consensus::SupplyDigest;
 use consensus::VersionBinding;
 use consensus::error::ConsensusError;
@@ -33,7 +32,6 @@ pub struct BftBlockParams<'a> {
     pub parent_hash: [u8; 32],
     pub timestamp_ms: u64,
     pub transactions: Vec<Transaction>,
-    pub recursive_proof: Option<RecursiveBlockProof>,
     pub validators: &'a [TestValidator],
     pub signer_indices: &'a [usize],
     pub base_nullifiers: &'a NullifierSet,
@@ -46,7 +44,6 @@ pub struct PowBlockParams<'a> {
     pub parent_hash: [u8; 32],
     pub timestamp_ms: u64,
     pub transactions: Vec<Transaction>,
-    pub recursive_proof: Option<RecursiveBlockProof>,
     pub miner: &'a TestValidator,
     pub base_nullifiers: &'a NullifierSet,
     pub base_commitment_tree: &'a CommitmentTreeState,
@@ -121,7 +118,6 @@ pub fn assemble_bft_block(
         parent_hash,
         timestamp_ms,
         transactions,
-        recursive_proof,
         validators,
         signer_indices,
         base_nullifiers,
@@ -140,10 +136,6 @@ pub fn assemble_bft_block(
         }
     }
     let state_root = tree.root();
-    let recursive_proof_hash = recursive_proof
-        .as_ref()
-        .map(|proof| proof.recursive_proof_hash)
-        .unwrap_or([0u8; 32]);
     let da_params = DaParams {
         chunk_size: 1024,
         sample_count: 4,
@@ -159,7 +151,6 @@ pub fn assemble_bft_block(
         state_root,
         nullifier_root,
         proof_commitment,
-        recursive_proof_hash,
         da_root,
         da_params,
         version_commitment,
@@ -187,7 +178,8 @@ pub fn assemble_bft_block(
             header,
             transactions,
             coinbase: None,
-            recursive_proof,
+            #[cfg(feature = "legacy-recursion")]
+            recursive_proof: None,
             commitment_proof: None,
             transaction_proofs: None,
         },
@@ -205,7 +197,6 @@ pub fn assemble_pow_block(
         parent_hash,
         timestamp_ms,
         transactions,
-        recursive_proof,
         miner,
         base_nullifiers,
         base_commitment_tree,
@@ -226,10 +217,6 @@ pub fn assemble_pow_block(
         }
     }
     let state_root = tree.root();
-    let recursive_proof_hash = recursive_proof
-        .as_ref()
-        .map(|proof| proof.recursive_proof_hash)
-        .unwrap_or([0u8; 32]);
     let da_params = DaParams {
         chunk_size: 1024,
         sample_count: 4,
@@ -244,7 +231,6 @@ pub fn assemble_pow_block(
         state_root,
         nullifier_root,
         proof_commitment,
-        recursive_proof_hash,
         da_root,
         da_params,
         version_commitment,
@@ -265,7 +251,8 @@ pub fn assemble_pow_block(
             header,
             transactions,
             coinbase: Some(coinbase),
-            recursive_proof,
+            #[cfg(feature = "legacy-recursion")]
+            recursive_proof: None,
             commitment_proof: None,
             transaction_proofs: None,
         },

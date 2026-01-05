@@ -39,7 +39,6 @@ proptest! {
             parent_hash: [0u8; 32],
             timestamp_ms: 1234,
             transactions: vec![transaction],
-            recursive_proof: None,
             validators: &validators,
             signer_indices: &[0, 1, 2],
             base_nullifiers: &NullifierSet::new(),

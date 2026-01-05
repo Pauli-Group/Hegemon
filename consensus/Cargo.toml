@@ -45,6 +45,7 @@ default = []
 # Enable full Substrate PowAlgorithm implementation
 substrate = ["sc-consensus-pow", "sp-consensus-pow", "sp-api", "runtime"]
 fast-proofs = ["block-circuit/fast-proofs"]
+legacy-recursion = ["block-circuit/legacy-recursion"]
 
 [lints]
 workspace = true
