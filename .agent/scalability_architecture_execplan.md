@@ -8,7 +8,7 @@ Companion math notes: `.agent/scalability_architecture_math.md` pins down soundn
 
 ## Purpose / Big Picture
 
-This plan makes the chain fundamentally scalable by validating each block with a single recursive proof and a small set of data-availability samples, while keeping full privacy and post-quantum security. After the change, a single node can mine and validate blocks without re-verifying every transaction proof, and you can see it working by starting the dev node, mining a block, and querying RPC endpoints for the recursive proof and data-availability chunks.
+This plan makes the chain fundamentally scalable by validating each block with a small commitment proof, parallel transaction-proof verification, and a small set of data-availability samples, while keeping full privacy and post-quantum security. After the change, a single node can mine and validate blocks by checking the commitment proof, verifying transaction proofs in parallel, and sampling DA chunks; you can see it working by starting the dev node, mining a block, and querying RPC endpoints for the commitment proof and data-availability chunks.
 
 **ARCHITECTURE PIVOT (2026-01-04)**: The original recursive "prove-the-verifier" approach hit fundamental limits (OOD width explosion to 364 elements vs. 255 cap, memory explosion to 100GB+, 16+ minute proving times, and gated soundness checks). The plan now pivots to a **commitment-based block proof + parallel transaction verification** architecture that is sound, practical, and shippable:
 
@@ -18,8 +18,11 @@ This plan makes the chain fundamentally scalable by validating each block with a
 
 This pivot removes all unsound gated checks while preserving PQC, privacy, and scalability.
 
+Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and is retained only for historical context and dev/test maintenance. The active implementation plan is Phase 2 below; do not execute Phase 1 steps unless explicitly maintaining the legacy path.
+
 ## Progress
 
+- [x] (2026-01-05T06:11Z) Documented Phase 2 as the canonical path: marked Phase 1 milestones as superseded, updated Purpose/acceptance text, and aligned interfaces with commitment proofs + parallel verification.
 - [x] (2026-01-04T12:00Z) **Architecture Pivot**: Documented the pivot from recursive "prove-the-verifier" to commitment-based block proofs + parallel transaction verification in the Purpose section. Recursive block proofs remain supported for dev/test but are no longer the scalability path.
 - [x] (2026-01-04T12:00Z) **Milestone 6 COMPLETE**: Implemented cryptographic per-node DA sampling in `state/da/src/lib.rs`. Added `sample_indices(node_secret, block_hash, total_chunks, sample_count)` using ChaCha20Rng seeded with XOR of node secret and block hash. Added tests (9/9 passing). This fixes the deterministic DA sampling security flaw.
 - [x] (2026-01-03T06:21Z) Completed Milestone 5 end-to-end validation in tmux: mined a block with a shielded transfer (dev-fast proofs), observed `Recursive block proof generated`, verified `block_getRecursiveProof` returns non-empty proof bytes for the mined block hash, and `da_getChunk` returns a chunk+Merkle proof when called with the logged `da_root`; updated `scripts/recursive_proof_da_e2e_tmux.sh` + `runbooks/recursive_proof_da_e2e.md` to match actual RPC params/timeouts.
@@ -159,6 +162,10 @@ This pivot removes all unsound gated checks while preserving PQC, privacy, and s
   Implication: E2E scripts/runbooks must carry forward `da_root` (or we should add a helper RPC to fetch `da_root` for a given block hash).
 ## Decision Log
 
+- Decision: Treat Phase 2 milestones (commitment proofs + parallel verification) as the only active plan and archive Phase 1 recursion milestones for legacy maintenance only.
+  Rationale: The architecture pivot is now the canonical path; leaving Phase 1 as an active plan creates contradictory instructions for a novice and undermines the soundness goals.
+  Date/Author: 2026-01-05 / Codex
+
 - Decision: **Architecture Pivot** — Replace recursive "prove-the-verifier" block proofs with commitment-based block proofs + parallel transaction verification.
   Rationale: The recursive approach hits unsolvable Winterfell width limits (364 OOD columns vs 255 cap), requires 100GB+ memory for batching, and takes 16+ minutes in dev-fast mode. Parallel verification of N transaction proofs is O(N) but bounded (seconds on 8 cores for 100 txs). The commitment block proof proves Merkle root, state transition, and nullifier uniqueness in ~20 columns and <30s. This delivers sound proofs that ship now vs. theoretical elegance that doesn't work.
   Date/Author: 2026-01-04 / Codex
@@ -247,6 +254,7 @@ Note (2026-01-01T09:30Z): Updated Progress, Surprises & Discoveries, and Decisio
 
 ## Outcomes & Retrospective
 
+Outcome (2026-01-05T06:11Z): The plan now explicitly supersedes the legacy recursive block-proof milestones, and the acceptance/interface guidance aligns with the Phase 2 commitment-proof architecture.
 Outcome (2025-12-31T09:40Z): The Path A recursion verifier updates now satisfy the full `epoch-circuit` test suite, including the ignored heavy tests when run with `CARGO_INCREMENTAL=0`. Remaining work includes the recursion size/time benchmark and the README whitepaper alignment.
 Outcome (2025-12-31T10:05Z): Milestone 1 feasibility benchmarks completed with measured spike ratios and recursive proof timings; the spike acceptance criteria are met. Remaining work moves to Milestone 2 documentation alignment and consensus type updates.
 Outcome (2026-01-03T06:21Z): Milestone 5 end-to-end validation completed: dev node mines a block with a recursive proof and DA encoding, and `block_getRecursiveProof` / `da_getChunk` return non-empty artifacts. Remaining work is proving throughput (dev-fast still takes ~15–20 minutes per recursive block proof on a laptop).
@@ -255,7 +263,7 @@ Outcome (2026-01-03T06:21Z): Milestone 5 end-to-end validation completed: dev no
 
 The current repo includes STARK transaction proofs in circuits/transaction, a block executor in circuits/block that verifies each transaction proof and records a folded digest, recursion experiments under circuits/epoch, consensus validation under consensus/src, and the Merkle commitment tree under state/merkle. The node is the Substrate-based binary under node/, and wallets generate transaction proofs locally under wallet/.
 
-A STARK is a transparent zero-knowledge proof system that relies on hash functions instead of trusted setup. A recursive proof is a STARK proof that verifies another STARK proof inside its own constraints. A proof-carrying block is a block that includes a recursive proof covering all transactions and state updates, so the node verifies one proof per block. A Merkle tree is a hash tree that commits to many items and provides membership proofs by hash paths. Data availability means all encrypted payloads for a block can be retrieved by any node. A data-availability chunk is one piece of those payloads after encoding. Sampling means a node checks a small, randomized subset of data chunks (chosen with local randomness) and rejects the block if any sampled chunk is missing or fails its Merkle proof. Erasure coding expands data into redundant chunks so missing pieces can be reconstructed, which makes sampling meaningful. Post-quantum means the system does not rely on elliptic curve or RSA assumptions.
+A STARK is a transparent zero-knowledge proof system that relies on hash functions instead of trusted setup. A recursive proof is a STARK proof that verifies another STARK proof inside its own constraints (legacy path only). A proof-carrying block is a block that includes a commitment proof of transaction commitments, state transition, and nullifier uniqueness, plus transaction STARK proofs that are verified in parallel at import, so the node does bounded work per block. A Merkle tree is a hash tree that commits to many items and provides membership proofs by hash paths. Data availability means all encrypted payloads for a block can be retrieved by any node. A data-availability chunk is one piece of those payloads after encoding. Sampling means a node checks a small, randomized subset of data chunks (chosen with local randomness) and rejects the block if any sampled chunk is missing or fails its Merkle proof. Erasure coding expands data into redundant chunks so missing pieces can be reconstructed, which makes sampling meaningful. Post-quantum means the system does not rely on elliptic curve or RSA assumptions.
 
 A mempool is the local pool of unconfirmed transactions waiting to be included in a block. A block builder is the component that selects transactions from the mempool and constructs a block. RPC (remote procedure call) is the JSON-RPC API exposed by the node for wallet and tooling queries. P2P (peer-to-peer) is the networking layer that exchanges blocks and data between nodes. Genesis is the initial chain state used to start a new chain.
 
@@ -265,7 +273,13 @@ Before making code changes, you must update DESIGN.md and METHODS.md to reflect 
 
 ## Plan of Work
 
-### Milestone 1: Recursion feasibility and parameterization
+Phase 2 is the only active implementation path. Phase 1 (Milestones 1–5) documents the legacy recursive block proof approach and is retained for historical context and dev/test maintenance only; do not execute it unless explicitly maintaining the legacy path.
+
+### Phase 1: Legacy recursive block proofs (Superseded)
+
+These milestones capture the abandoned recursive-block-proof plan and are preserved to explain prior decisions and artifacts. Do not update docs or code based on them unless you are explicitly maintaining the legacy recursion path.
+
+#### Milestone 1: Recursion feasibility and parameterization
 
 This milestone proves that we can verify a real transaction proof inside a recursive STARK without unacceptable overhead, using the proof parameters we intend to ship for consensus-critical validity. Before measuring overhead, pick a concrete validity-soundness target (see `.agent/scalability_architecture_math.md` §1.2 and §2.3.1) and configure the transaction proof system accordingly (at minimum: recursion-friendly Fiat–Shamir everywhere we plan to verify in-circuit, and an explicit decision on Winterfell `FieldExtension`).
 
@@ -273,23 +287,25 @@ Then create a reusable recursion helper crate at circuits/recursion by extractin
 
 Acceptance is that the outer proof size is under 10x the inner proof size and the outer prover time is under 100x the inner prover time at the chosen security settings; if not, update the Decision Log and pivot before continuing.
 
-### Milestone 2: Canonical docs and protocol types
+#### Milestone 2: Canonical docs and protocol types
 
 This milestone makes the architecture explicit in the canonical docs and in protocol types. Update DESIGN.md to describe proof-carrying blocks and data-availability sampling in the consensus and proving sections, and update METHODS.md to describe the new recursive block proof and DA verification steps with clear operator commands. Update the README.md whitepaper to describe that blocks are validated by a recursive proof and DA sampling before Monorepo layout and Getting started. Then update consensus/src/types.rs to define DA parameters and chunk types, and consensus/src/header.rs to include recursive_proof_hash, da_root, and da_params in the header encoding and signing hash. Update runtime/src/chain_spec.rs and node/src/substrate/chain_spec.rs so new chain specs include the new header fields and can regenerate a fresh genesis. Run rg -n "proof|data availability|da_root" DESIGN.md METHODS.md README.md and cargo test -p consensus from the repo root. Acceptance is that the docs describe the new validation flow in plain language, and consensus tests compile with the updated header fields.
 
-### Milestone 3: Recursive block proofs as consensus validity
+#### Milestone 3: Recursive block proofs as consensus validity
 
 This milestone replaces per-transaction verification in consensus with a single recursive block proof. Add circuits/block/src/recursive.rs that builds a recursive block proof by verifying each TransactionProof in-circuit, checking nullifier uniqueness, and reproducing commitment tree updates, and expose it from circuits/block/src/lib.rs. Update circuits/block/src/proof.rs to stop using the folded digest as the primary validity indicator and instead compute a recursive_proof_hash that matches the new proof bytes. Update consensus/src/pow.rs and consensus/src/validator.rs to verify only the recursive proof commitment and stop re-verifying individual transaction proofs. Update consensus/tests/common.rs to build headers with the new recursive proof commitment. Run cargo test -p block-circuit and cargo test -p consensus from the repo root. Acceptance is a new test in circuits/block that fails when recursive proof bytes are tampered and a consensus test that accepts a block when the recursive proof is valid without per-transaction verification.
 
-### Milestone 4: Data-availability encoding and sampling
+#### Milestone 4: Data-availability encoding and sampling
 
 This milestone makes data availability a block acceptance requirement. Add a new module under state/da (new crate or module inside state/) that implements erasure coding, chunk storage, Merkle roots, and Merkle proofs. Update consensus/src/types.rs with DaParams, DaChunk, and DaChunkProof and implement encode_da_blob, da_root, and verify_da_chunk in the same module or a new protocol module under protocol/. Update node/src/substrate/network_bridge.rs to add a P2P protocol for DA chunk requests and responses, and update node/src/substrate/service.rs to store chunks when blocks are built and serve them on request. Implement per-node randomized sampling so nodes request and verify a small subset of chunks chosen with local randomness before accepting and relaying a block. Run cargo test -p consensus and add a new test that removes a sampled chunk and confirms block rejection. Acceptance is a failing block when any sampled chunk is missing or fails its Merkle proof, and a passing block when all sampled chunks verify.
 
-### Milestone 5: Integration, benchmarks, and tests
+#### Milestone 5: Integration, benchmarks, and tests
 
 This milestone wires the new proof and DA flow into mining, RPC, and benchmarks. Update node/src/substrate/mining_worker.rs and node/src/substrate/service.rs so block building assembles recursive proofs and DA commitments. Update node/src/substrate/transaction_pool.rs so DA payloads are available for block building. Add RPC endpoints under node/src/substrate/rpc for block_getRecursiveProof, da_getChunk, and da_getParams, and merge them in node/src/substrate/rpc/mod.rs. Extend circuits/bench to output recursive proof size and verification time, and update consensus/bench to account for DA payload sizes. Add integration tests under tests/ or node/src/substrate to exercise the RPC endpoints and proof validation. Run HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp, submit at least one shielded transaction, and query the new RPC endpoints. Acceptance is that the RPC returns non-empty proof bytes and a DA chunk with a valid Merkle proof, and the node logs show proof size and DA root per block.
 
 ## Concrete Steps
+
+The command blocks below are retained for Phase 1 legacy milestones only. For the active Phase 2 work, use the commands embedded in Milestones 6–12 and record their evidence in this plan; skip the legacy commands unless you are explicitly maintaining the recursive block-proof path.
 
 All commands run from the repository root. For a fresh clone, you must run the setup steps before anything else:
 
@@ -343,7 +359,7 @@ Expected evidence is non-empty proof bytes, a DA chunk payload, and a Merkle pro
 
 ## PHASE 2: Sound Architecture (Commitment-Based Block Proofs)
 
-The milestones below implement the sound architecture pivot. They supersede the original recursive verifier approach for block-level proofs while preserving transaction proofs unchanged.
+The milestones below implement the sound architecture pivot and are the only active plan. They supersede the original recursive verifier approach for block-level proofs while preserving transaction proofs unchanged.
 
 ### Milestone 6: Cryptographic Per-Node DA Sampling
 
@@ -381,10 +397,15 @@ Expected evidence: All 9 tests pass, including `sample_indices_*` tests.
 This milestone designs a lightweight AIR that proves block commitment correctness without verifying transaction proofs in-circuit.
 
 **What the AIR proves**:
-1. `tx_proofs_merkle_root = merkle_root(tx_proof_hashes)` — transaction proof hashes commit correctly
+1. `tx_proofs_merkle_root = rpo_merkle_root(tx_proof_hashes)` — transaction proof hashes commit correctly via in-circuit RPO Merkle tree
 2. `ending_state_root = apply(starting_state_root, commitments)` — state transition is valid
 3. All nullifiers in the block are unique (in-circuit sorting + equality check)
 4. `da_root` matches the encoded transaction ciphertexts
+
+**Hash scheme**:
+- `tx_proof_hash = rpo_256(proof_bytes)` — computed outside circuit, provided as witness
+- In-circuit: build RPO Merkle tree over `tx_proof_hashes` and constrain root equals public input
+- This matches the existing RPO-based transaction proofs and keeps everything recursion-friendly
 
 **Key properties**:
 - Trace width: ~20-30 columns (not 254)
@@ -451,9 +472,18 @@ The AIR should use:
 
 **Constraint count estimate**: ~500 transition constraints, ~100 boundary assertions
 
-**Files to modify**:
+**Files to create/modify**:
 - `circuits/block/src/lib.rs` — export commitment proof types
 - `circuits/block/Cargo.toml` — ensure Winterfell dependencies
+- `node/src/substrate/rpc/block.rs` — add `block_getCommitmentProof(block_hash)` RPC endpoint
+- `node/src/substrate/service.rs` — store commitment proofs in LRU cache (similar to existing recursive proof cache)
+
+**RPC endpoint**:
+
+    block_getCommitmentProof(block_hash) -> {
+        proof_bytes: Vec<u8>,
+        public_inputs: CommitmentBlockPublicInputs,
+    }
 
 **Commands**:
 
@@ -518,6 +548,8 @@ This milestone adds a `ParallelProofVerifier` to consensus that verifies transac
             apply_commitments(parent_commitment_tree, &block.transactions)
         }
     }
+
+Use the same `tx_proof_hash` and RPO Merkle root scheme as Milestone 7/8 so consensus and the commitment proof agree exactly.
 
 **Files to modify**:
 - `consensus/src/proof.rs` — add `ParallelProofVerifier`
@@ -595,12 +627,18 @@ This milestone removes all unsound gated checks from the codebase and deprecates
    - Remove `RecursiveProofVerifier` from default code paths
    - Keep for optional use with feature flag
 
+4. In `consensus/src/header.rs` and node RPC:
+   - Remove `recursive_proof_hash` from default headers (keep only behind a legacy feature)
+   - Remove `block_getRecursiveProof` RPC unless legacy recursion is explicitly enabled
+
 **Files to modify**:
 - `circuits/epoch/src/recursion/stark_verifier_prover.rs`
 - `circuits/epoch/src/recursion/stark_verifier_air.rs`
 - `circuits/block/src/recursive.rs`
 - `circuits/block/src/lib.rs`
 - `consensus/src/proof.rs`
+- `consensus/src/header.rs`
+- `node/src/substrate/rpc/mod.rs`
 
 **Commands**:
 
@@ -675,9 +713,9 @@ Expected:
 
 ---
 
-Acceptance requires two observable behaviors. First, a block with a valid recursive proof must be accepted even if the node does not re-verify individual transaction proofs. Second, a block must be rejected if any sampled DA chunk is missing or fails its Merkle proof.
+Acceptance requires two observable behaviors. First, a block with a valid commitment proof and a correct tx_proofs_merkle_root must be accepted only if all transaction proofs verify in parallel; a single invalid proof must reject the block with its index. Second, a block must be rejected if any sampled DA chunk is missing or fails its Merkle proof.
 
-Add a block circuit test that mutates the recursive proof bytes and expects verification to fail with a recursive proof error. Add a consensus test that removes a sampled DA chunk from the store and expects a DA error. Start the dev node, mine a block, and verify that the block header includes a non-zero recursive_proof_hash and da_root, and that the RPC methods return proof bytes and a chunk with a valid Merkle proof.
+Add a block circuit test that mutates the commitment proof bytes and expects verification to fail with a commitment proof error. Add a consensus test that injects an invalid transaction proof and expects the parallel verifier to return the failing index, and another test that removes a sampled DA chunk from the store and expects a DA error. Start the dev node, mine a block, and verify that the block header includes a non-zero commitment_proof_hash (and tx_proofs_merkle_root) and da_root, and that the RPC methods return commitment proof bytes and a chunk with a valid Merkle proof.
 
 ## Idempotence and Recovery
 
@@ -719,7 +757,7 @@ Plan Update Note (2025-12-31T10:30Z): Recorded the consensus header/types update
 Plan Update Note (2026-01-01T16:20Z): Added Milestone 5 RPC + bench progress, recorded the txpool-background shutdown during dev-node runs, and logged decisions for recursive proof/DA RPC handling.
 Plan Update Note (2026-01-03T03:31Z): Updated the StorageChanges caching mechanism to avoid leaking state diffs when mining templates are discarded or block import fails early, and documented the new cache-capacity env var.
 
-Example log line after Milestone 5:
+Legacy example log line after Phase 1 Milestone 5:
 
     recursive block proof: bytes=48000 tx_count=4 da_root=0x9c5e... da_samples=8
 
@@ -729,43 +767,58 @@ Example rejection log for a missing DA chunk:
 
 ## Interfaces and Dependencies
 
-In circuits/recursion/src/lib.rs, define a reusable parser for inner proofs that exposes public inputs for recursive verification. This helper must be usable by both block and epoch recursion code:
+In circuits/block/src/commitment_air.rs, circuits/block/src/commitment_prover.rs, and circuits/block/src/commitment_verifier.rs, define the commitment-proof types and APIs:
 
-    pub struct InnerProofData { /* parsed verifier data */ }
-    impl InnerProofData {
-        pub fn from_proof<T: Air>(proof_bytes: &[u8], public_inputs: Vec<BaseElement>) -> Result<Self, RecursionError>;
-        pub fn to_verifier_inputs(&self) -> Vec<BaseElement>;
-    }
-
-In circuits/block/src/recursive.rs, implement recursive block proofs with explicit inputs and outputs:
-
-    pub struct RecursiveBlockProof {
-        pub proof_bytes: Vec<u8>,
-        pub proof_commitment: [u8; 32],
+    pub struct CommitmentBlockPublicInputs {
+        pub tx_proofs_merkle_root: [u8; 32],
+        pub starting_state_root: [u8; 32],
+        pub ending_state_root: [u8; 32],
+        pub nullifier_set_commitment: [u8; 32],
+        pub da_root: [u8; 32],
         pub tx_count: u32,
-        pub starting_root: [u8; 32],
-        pub ending_root: [u8; 32],
     }
 
-    pub fn prove_block_recursive(
+    pub struct CommitmentBlockProof {
+        pub proof_bytes: Vec<u8>,
+        pub proof_hash: [u8; 32],
+        pub public_inputs: CommitmentBlockPublicInputs,
+    }
+
+    pub fn prove_block_commitment(
         tree: &mut state_merkle::CommitmentTree,
         transactions: &[transaction_circuit::TransactionProof],
         verifying_keys: &HashMap<VersionBinding, VerifyingKey>,
-    ) -> Result<RecursiveBlockProof, BlockError>;
+        da_root: [u8; 32],
+    ) -> Result<CommitmentBlockProof, BlockError>;
 
-    pub fn verify_block_recursive(
-        proof: &RecursiveBlockProof,
+    pub fn verify_block_commitment(
+        proof: &CommitmentBlockProof,
         verifying_keys: &HashMap<VersionBinding, VerifyingKey>,
     ) -> Result<(), BlockError>;
 
-In consensus/src/header.rs, extend BlockHeader so the recursive proof commitment and DA root are covered by signing and hashing:
+The commitment proof must recompute `tx_proofs_merkle_root`, `nullifier_set_commitment`, and `da_root` in-circuit using the same hash and leaf encoding that consensus uses.
+
+In consensus/src/header.rs, extend BlockHeader so the commitment proof hash and its public inputs are covered by signing and hashing:
 
     pub struct BlockHeader {
         /* existing fields */
-        pub recursive_proof_hash: [u8; 32],
+        pub commitment_proof_hash: [u8; 32],
+        pub tx_proofs_merkle_root: [u8; 32],
+        pub nullifier_set_commitment: [u8; 32],
         pub da_root: [u8; 32],
         pub da_params: DaParams,
+        pub tx_count: u32,
     }
+
+Legacy recursive proof fields (recursive_proof_hash) should be kept only behind an explicit legacy feature flag and removed in Milestone 11.
+
+Compute `proof_hash` and `commitment_proof_hash` as `blake3_256(proof_bytes)` and keep the hash function consistent across circuits, consensus, and RPC.
+
+Define the transaction-proof commitment root as follows:
+- `tx_proof_hash = blake3_256(proof_bytes)` using the existing blake3 utilities.
+- `tx_proofs_merkle_root` is the RPO-256 Merkle root over those 32-byte leaves (domain-separated for leaf vs. internal nodes), and the same scheme must be used in circuits and consensus.
+
+The nullifier set commitment is the RPO-256 Merkle root of the sorted nullifiers for the block (sorting is part of the commitment-proof witness).
 
 In state/da, implement storage for DA chunks and Merkle proofs:
 
@@ -792,15 +845,15 @@ In state/da, implement storage for DA chunks and Merkle proofs:
 
 In consensus validation, add a sampler which uses local randomness (not producer-known inputs) and require that each sampled chunk is retrievable and verified:
 
-    pub fn sample_indices(seed: [u8; 32], params: DaParams) -> Vec<u32>;
+    pub fn sample_indices(node_secret: [u8; 32], block_hash: [u8; 32], total_chunks: u32, sample_count: u16) -> Vec<u32>;
 
-In node RPC under node/src/substrate/rpc, add endpoints for recursive proofs and DA chunks:
+In node RPC under node/src/substrate/rpc, add endpoints for commitment proofs and DA chunks:
 
-    block_getRecursiveProof(block_hash) -> { proof_bytes, proof_hash, tx_count, starting_root, ending_root }
+    block_getCommitmentProof(block_hash) -> { proof_bytes, proof_hash, tx_count, starting_root, ending_root, tx_proofs_merkle_root, nullifier_set_commitment, da_root }
     da_getChunk(da_root, index) -> { chunk, merkle_path }
     da_getParams() -> { chunk_size, sample_count }
 
-Dependencies must remain hash-based and post-quantum safe. Use the existing blake3 hashing utilities for commitments. For erasure coding, use reed-solomon-erasure and confine it to the DA encoding path.
+Dependencies must remain hash-based and post-quantum safe. Use blake3 for proof-byte hashing and RPO-256 for Merkle hashing inside commitment proofs. For erasure coding, use reed-solomon-erasure and confine it to the DA encoding path.
 
 Revision Note (2025-12-31T02:04Z): Rebuilt the ExecPlan to comply with .agent/PLANS.md by adding milestone-level commands and acceptance, explicit file-level edits, and missing term definitions.
 Revision Note (2025-12-31T02:22Z): Added math companion reference, recorded the deterministic DA sampling flaw and updated the plan to use per-node randomized sampling (per `.agent/scalability_architecture_math.md`).
@@ -816,3 +869,4 @@ Revision Note (2026-01-01T11:20Z): Documented the libclang environment requireme
 Revision Note (2026-01-01T23:40Z): Updated Progress/Surprises to record the recursion transcript permutation fix and node rebuild so the plan reflects the current verifier schedule work.
 Revision Note (2026-01-02T00:10Z): Recorded the quadratic trace/DEEP fix, added the recursive proof + DA RPC runbook, and updated end-to-end progress to reflect the in-flight recursive block proof build.
 Revision Note (2026-01-04T12:00Z): **Architecture Pivot** — Added Phase 2 milestones (6-12) for sound commitment-based block proofs + parallel verification. Completed Milestone 6 (cryptographic per-node DA sampling). Updated Purpose section with pivot rationale. Marked legacy recursive block proof decision as superseded.
+Revision Note (2026-01-05T06:11Z): Marked Phase 1 milestones as superseded, clarified Phase 2 as the only active plan, and updated purpose, context, acceptance, and interfaces to align with commitment proofs + parallel verification.
