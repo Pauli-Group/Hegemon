@@ -324,6 +324,12 @@ pub mod pallet {
     #[pallet::storage]
     pub type CoinbaseProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
 
+    /// Whether the commitment proof was already submitted this block.
+    ///
+    /// Reset on `on_initialize` so exactly one commitment proof can be attached per block.
+    #[pallet::storage]
+    pub type CommitmentProofProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
+
     // ========================================
     // EPOCH STORAGE (for light client sync)
     // ========================================
@@ -522,6 +528,8 @@ pub mod pallet {
         InvalidCoinbaseCommitment,
         /// Coinbase already processed for this block.
         CoinbaseAlreadyProcessed,
+        /// Commitment proof already submitted for this block.
+        CommitmentProofAlreadyProcessed,
         /// Coinbase amount exceeds the allowed subsidy for this height.
         CoinbaseSubsidyExceedsLimit,
         /// Zero nullifier submitted (security violation - zero nullifiers are padding only).
@@ -631,6 +639,7 @@ pub mod pallet {
         fn on_initialize(_n: BlockNumberFor<T>) -> Weight {
             // Reset coinbase processed flag at start of each block
             CoinbaseProcessed::<T>::kill();
+            CommitmentProofProcessed::<T>::kill();
             Weight::from_parts(1_000, 0)
         }
 
@@ -662,6 +671,31 @@ pub mod pallet {
 
     #[pallet::call]
     impl<T: Config> Pallet<T> {
+        /// Attach the commitment proof for this block.
+        ///
+        /// This is an inherent-style unsigned extrinsic (`None` origin) used to carry the
+        /// commitment proof bytes on-chain so all nodes can verify them during block import.
+        ///
+        /// The runtime does **not** verify the proof; verification is performed in the node.
+        #[pallet::call_index(1)]
+        #[pallet::weight((Weight::from_parts(1_000, 0), DispatchClass::Mandatory, Pays::No))]
+        pub fn submit_commitment_proof(origin: OriginFor<T>, proof: StarkProof) -> DispatchResult {
+            ensure_none(origin)?;
+
+            ensure!(
+                !CommitmentProofProcessed::<T>::get(),
+                Error::<T>::CommitmentProofAlreadyProcessed
+            );
+
+            ensure!(
+                proof.data.len() <= crate::types::STARK_PROOF_MAX_SIZE,
+                Error::<T>::ProofTooLarge
+            );
+
+            CommitmentProofProcessed::<T>::put(true);
+            Ok(())
+        }
+
         /// Execute a shielded transfer.
         ///
         /// This is the core privacy-preserving transfer function.
@@ -1933,6 +1967,23 @@ pub mod pallet {
                         .longevity(1) // Only valid for current block
                         .and_provides(vec![b"coinbase".to_vec()])
                         .propagate(false) // Inherents are not propagated
+                        .build()
+                }
+                Call::submit_commitment_proof { proof } => {
+                    if _source != TransactionSource::InBlock {
+                        return InvalidTransaction::Call.into();
+                    }
+                    if CommitmentProofProcessed::<T>::get() {
+                        return InvalidTransaction::Stale.into();
+                    }
+                    if proof.data.len() > crate::types::STARK_PROOF_MAX_SIZE {
+                        return InvalidTransaction::ExhaustsResources.into();
+                    }
+                    ValidTransaction::with_tag_prefix("ShieldedPoolCommitmentProof")
+                        .priority(TransactionPriority::MAX)
+                        .longevity(1)
+                        .and_provides(vec![b"commitment_proof".to_vec()])
+                        .propagate(false)
                         .build()
                 }
                 // All other calls are invalid as unsigned

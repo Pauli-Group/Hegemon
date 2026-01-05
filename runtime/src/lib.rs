@@ -1827,6 +1827,14 @@ sp_api::impl_runtime_apis! {
             // Iterate all nullifiers and collect their keys
             pallet_shielded_pool::Nullifiers::<Runtime>::iter_keys().collect()
         }
+
+        fn compact_merkle_tree() -> pallet_shielded_pool::merkle::CompactMerkleTree {
+            pallet_shielded_pool::MerkleTree::<Runtime>::get()
+        }
+
+        fn merkle_root_history() -> sp_std::vec::Vec<[u8; 32]> {
+            pallet_shielded_pool::MerkleRootHistory::<Runtime>::get().into_inner()
+        }
     }
 }
 

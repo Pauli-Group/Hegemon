@@ -131,6 +131,57 @@ impl CommitmentTreeState {
         Ok(tree)
     }
 
+    /// Construct a commitment tree state from an externally captured compact snapshot.
+    ///
+    /// This is used by the Substrate node integration to seed the consensus verifier from
+    /// runtime storage (which keeps a compact Merkle-tree frontier), without replaying all
+    /// historical commitments.
+    pub fn from_compact_parts(
+        depth: usize,
+        history_limit: usize,
+        leaf_count: u64,
+        root: Commitment,
+        frontier: Vec<Commitment>,
+        root_history: Vec<Commitment>,
+    ) -> Result<Self, CommitmentTreeError> {
+        if depth == 0 {
+            return Err(CommitmentTreeError::InvalidDepth);
+        }
+
+        let default_nodes = compute_default_nodes(depth)?;
+
+        let mut fixed_frontier = vec![[0u8; 32]; depth];
+        for (index, value) in frontier.into_iter().take(depth).enumerate() {
+            fixed_frontier[index] = value;
+        }
+
+        let mut history = VecDeque::new();
+        if history_limit == 0 {
+            for value in root_history {
+                history.push_back(value);
+            }
+        } else {
+            let keep_start = root_history.len().saturating_sub(history_limit);
+            for value in root_history.into_iter().skip(keep_start) {
+                history.push_back(value);
+            }
+        }
+
+        if history.back().is_none_or(|last| *last != root) {
+            history.push_back(root);
+        }
+
+        Ok(Self {
+            depth,
+            leaf_count,
+            root,
+            frontier: fixed_frontier,
+            default_nodes,
+            root_history: history,
+            history_limit,
+        })
+    }
+
     fn record_root(&mut self, root: Commitment) {
         if self.root_history.back().is_some_and(|last| *last == root) {
             return;
