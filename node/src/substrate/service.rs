@@ -131,8 +131,7 @@ use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
 use block_circuit::{
-    CommitmentBlockProof, CommitmentBlockProver, prove_block, prove_block_fast,
-    RecursiveBlockProof,
+    CommitmentBlockProof, CommitmentBlockProver,
 };
 use codec::Decode;
 use codec::Encode;
@@ -142,7 +141,7 @@ use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
-use rand::{rngs::OsRng, seq::index::sample, RngCore};
+use rand::{rngs::OsRng, RngCore};
 use sc_client_api::{BlockBackend, BlockchainEvents, HeaderBackend};
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
@@ -328,7 +327,6 @@ const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 80;
 const DEFAULT_DA_STORE_CAPACITY: usize = 128;
 const DEFAULT_DA_SAMPLE_TIMEOUT_MS: u64 = 5000;
-const DEFAULT_RECURSIVE_PROOF_STORE_CAPACITY: usize = 128;
 const DEFAULT_COMMITMENT_PROOF_STORE_CAPACITY: usize = 128;
 
 #[derive(Debug)]
@@ -371,49 +369,6 @@ impl DaChunkStore {
 
     pub fn get(&self, root: &DaRoot) -> Option<&DaEncoding> {
         self.entries.get(root)
-    }
-}
-
-#[derive(Debug)]
-pub struct RecursiveBlockProofStore {
-    capacity: usize,
-    order: VecDeque<H256>,
-    entries: HashMap<H256, RecursiveBlockProof>,
-}
-
-impl RecursiveBlockProofStore {
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            capacity,
-            order: VecDeque::new(),
-            entries: HashMap::new(),
-        }
-    }
-
-    pub fn insert(&mut self, hash: H256, proof: RecursiveBlockProof) {
-        if self.capacity == 0 {
-            return;
-        }
-
-        if let Some(existing) = self.entries.get_mut(&hash) {
-            *existing = proof;
-            self.order.retain(|entry| entry != &hash);
-            self.order.push_back(hash);
-            return;
-        }
-
-        if self.entries.len() >= self.capacity {
-            if let Some(evicted) = self.order.pop_front() {
-                self.entries.remove(&evicted);
-            }
-        }
-
-        self.entries.insert(hash, proof);
-        self.order.push_back(hash);
-    }
-
-    pub fn get(&self, hash: &H256) -> Option<&RecursiveBlockProof> {
-        self.entries.get(hash)
     }
 }
 
@@ -565,19 +520,6 @@ fn load_da_store_capacity() -> usize {
             DEFAULT_DA_STORE_CAPACITY
         );
         return DEFAULT_DA_STORE_CAPACITY;
-    }
-    capacity
-}
-
-fn load_recursive_proof_store_capacity() -> usize {
-    let capacity = env_usize("HEGEMON_RECURSIVE_PROOF_STORE_CAPACITY")
-        .unwrap_or(DEFAULT_RECURSIVE_PROOF_STORE_CAPACITY);
-    if capacity == 0 {
-        tracing::warn!(
-            "HEGEMON_RECURSIVE_PROOF_STORE_CAPACITY is zero; falling back to {}",
-            DEFAULT_RECURSIVE_PROOF_STORE_CAPACITY
-        );
-        return DEFAULT_RECURSIVE_PROOF_STORE_CAPACITY;
     }
     capacity
 }
@@ -900,22 +842,6 @@ fn build_da_encoding_from_extrinsics(
     state_da::encode_da_blob(&blob, params).map_err(|err| format!("da encoding failed: {err}"))
 }
 
-fn sample_da_indices(chunk_count: usize, sample_count: u32) -> Vec<u32> {
-    if chunk_count == 0 {
-        return Vec::new();
-    }
-    let wanted = sample_count.min(chunk_count as u32) as usize;
-    if wanted >= chunk_count {
-        return (0..chunk_count as u32).collect();
-    }
-
-    let mut rng = OsRng;
-    sample(&mut rng, chunk_count, wanted)
-        .into_iter()
-        .map(|idx| idx as u32)
-        .collect()
-}
-
 async fn request_da_samples(
     peer_id: network::PeerId,
     root: DaRoot,
@@ -986,6 +912,8 @@ async fn request_da_samples(
 
 async fn sample_da_for_block(
     peer_id: network::PeerId,
+    block_hash: [u8; 32],
+    node_secret: [u8; 32],
     extrinsics: &[runtime::UncheckedExtrinsic],
     params: DaParams,
     handle: &PqNetworkHandle,
@@ -995,7 +923,20 @@ async fn sample_da_for_block(
     let encoding = build_da_encoding_from_extrinsics(extrinsics, params)?;
     let root = encoding.root();
     let chunk_count = encoding.chunks().len();
-    let indices = sample_da_indices(chunk_count, params.sample_count);
+    let indices = state_da::sample_indices(
+        node_secret,
+        block_hash,
+        chunk_count as u32,
+        params.sample_count,
+    );
+    tracing::debug!(
+        root = %hex::encode(root),
+        block_hash = %hex::encode(block_hash),
+        chunk_count,
+        sample_count = params.sample_count,
+        indices = ?indices,
+        "Sampling DA chunks"
+    );
     let proofs = request_da_samples(peer_id, root, &indices, handle, tracker, timeout).await?;
 
     for proof in &proofs {
@@ -1059,39 +1000,6 @@ fn build_commitment_tree_from_chain(
     }
 
     Ok(tree)
-}
-
-fn build_recursive_block_proof(
-    client: &HegemonFullClient,
-    parent_hash: H256,
-    extrinsics: &[Vec<u8>],
-    fast: bool,
-) -> Result<Option<RecursiveBlockProof>, String> {
-    let proofs = extract_transaction_proofs_from_extrinsics(extrinsics)?;
-    if proofs.is_empty() {
-        return Ok(None);
-    }
-
-    let mut tree = build_commitment_tree_from_chain(client, parent_hash)?;
-    let (_, verifying_key) = generate_keys();
-    let mut verifying_keys = HashMap::new();
-    verifying_keys.insert(
-        VersionBinding::new(
-            DEFAULT_VERSION_BINDING.circuit,
-            DEFAULT_VERSION_BINDING.crypto,
-        ),
-        verifying_key,
-    );
-
-    let block_proof = if fast {
-        prove_block_fast(&mut tree, &proofs, &verifying_keys)
-            .map_err(|e| format!("fast recursive block proof failed: {e}"))?
-    } else {
-        prove_block(&mut tree, &proofs, &verifying_keys)
-            .map_err(|e| format!("recursive block proof failed: {e}"))?
-    };
-
-    Ok(Some(block_proof.recursive_proof))
 }
 
 fn build_commitment_block_proof(
@@ -1207,14 +1115,9 @@ pub fn check_wasm() -> Result<(), String> {
     Ok(())
 }
 
-fn load_max_shielded_transfers_per_block(recursive_block_proofs_enabled: bool) -> usize {
-    let configured = env_usize("HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK").unwrap_or(
-        if recursive_block_proofs_enabled {
-            1
-        } else {
-            usize::MAX
-        },
-    );
+fn load_max_shielded_transfers_per_block() -> usize {
+    let configured =
+        env_usize("HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK").unwrap_or(usize::MAX);
     if configured == 0 {
         tracing::warn!(
             "HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK is zero; no shielded transfers will be included"
@@ -1223,7 +1126,7 @@ fn load_max_shielded_transfers_per_block(recursive_block_proofs_enabled: bool) -
     configured
 }
 
-fn is_recursive_shielded_transfer(call: &runtime::RuntimeCall) -> bool {
+fn is_shielded_transfer_call(call: &runtime::RuntimeCall) -> bool {
     let runtime::RuntimeCall::ShieldedPool(call) = call else {
         return false;
     };
@@ -1288,22 +1191,6 @@ pub fn wire_block_builder_api(
     use sc_block_builder::BlockBuilderBuilder;
 
     let client_for_exec = client;
-    let recursive_block_proofs_enabled = std::env::var("HEGEMON_RECURSIVE_BLOCK_PROOFS")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    let requested_recursive_block_fast = std::env::var("HEGEMON_RECURSIVE_BLOCK_PROOFS_FAST")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    let recursive_block_fast = if cfg!(feature = "fast-proofs") {
-        requested_recursive_block_fast
-    } else {
-        if requested_recursive_block_fast {
-            tracing::warn!(
-                "HEGEMON_RECURSIVE_BLOCK_PROOFS_FAST set but node not built with --features fast-proofs; ignoring"
-            );
-        }
-        false
-    };
     let commitment_block_proofs_enabled = std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
@@ -1321,8 +1208,7 @@ pub fn wire_block_builder_api(
         }
         false
     };
-    let max_shielded_transfers_per_block =
-        load_max_shielded_transfers_per_block(recursive_block_proofs_enabled);
+    let max_shielded_transfers_per_block = load_max_shielded_transfers_per_block();
 
     // Capture the miner's shielded address
     let miner_shielded_address = chain_state.miner_shielded_address();
@@ -1466,7 +1352,7 @@ pub fn wire_block_builder_api(
         let mut shielded_transfer_count = 0usize;
         let mut applied = Vec::new();
         for inherent_ext in inherent_extrinsics {
-            let is_shielded = is_recursive_shielded_transfer(&inherent_ext.function);
+            let is_shielded = is_shielded_transfer_call(&inherent_ext.function);
             match block_builder.push(inherent_ext.clone()) {
                 Ok(_) => {
                     applied.push(inherent_ext.encode());
@@ -1485,8 +1371,7 @@ pub fn wire_block_builder_api(
         for ext_bytes in extrinsics {
             match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
                 Ok(extrinsic) => {
-                    let is_shielded = recursive_block_proofs_enabled
-                        && is_recursive_shielded_transfer(&extrinsic.function);
+                    let is_shielded = is_shielded_transfer_call(&extrinsic.function);
                     if is_shielded {
                         if shielded_transfer_count >= max_shielded_transfers_per_block {
                             tracing::warn!(
@@ -1494,16 +1379,6 @@ pub fn wire_block_builder_api(
                                 max_shielded_transfers_per_block,
                                 "Skipping shielded transfer: block already contains {} (coinbase + transfers)",
                                 shielded_transfer_count
-                            );
-                            continue;
-                        }
-                        if matches!(
-                            extrinsic.function,
-                            runtime::RuntimeCall::ShieldedPool(ShieldedPoolCall::batch_shielded_transfer { .. })
-                        ) {
-                            tracing::warn!(
-                                block_number,
-                                "Skipping batch_shielded_transfer: recursion does not support batch transfers yet"
                             );
                             continue;
                         }
@@ -1543,36 +1418,6 @@ pub fn wire_block_builder_api(
         let header = &block.header;
         let state_root = *header.state_root();
         let extrinsics_root = *header.extrinsics_root();
-
-        let recursive_proof = if recursive_block_proofs_enabled {
-            match build_recursive_block_proof(
-                client_for_exec.as_ref(),
-                parent_substrate_hash,
-                &applied,
-                recursive_block_fast,
-            ) {
-                Ok(Some(proof)) => {
-                    tracing::info!(
-                        block_number,
-                        tx_count = proof.tx_count,
-                        proof_size = proof.proof_bytes.len(),
-                        "Recursive block proof generated"
-                    );
-                    Some(proof)
-                }
-                Ok(None) => None,
-                Err(e) => {
-                    tracing::warn!(
-                        block_number,
-                        error = %e,
-                        "Failed to build recursive block proof"
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
 
         let commitment_proof = if commitment_block_proofs_enabled {
             match build_commitment_block_proof(
@@ -1627,7 +1472,6 @@ pub fn wire_block_builder_api(
             extrinsics_root,
             failed_count: failed,
             storage_changes: Some(storage_changes),
-            recursive_proof,
             commitment_proof,
         })
     });
@@ -1672,7 +1516,6 @@ use sp_runtime::DigestItem;
 /// * `pow_block_import` - The PowBlockImport wrapper for verified imports
 /// * `client` - The full Substrate client for header construction
 /// * `da_chunk_store` - In-memory DA chunk store for serving proofs
-/// * `recursive_block_proof_store` - In-memory store for recursive block proofs
 /// * `commitment_block_proof_store` - In-memory store for commitment block proofs
 /// * `da_params` - DA parameters for encoding chunk data
 ///
@@ -1685,7 +1528,6 @@ use sp_runtime::DigestItem;
 ///     pow_block_import,
 ///     client.clone(),
 ///     da_chunk_store,
-///     recursive_block_proof_store,
 ///     commitment_block_proof_store,
 ///     da_params,
 /// );
@@ -1706,7 +1548,6 @@ fn wire_pow_block_import(
     _pow_block_import: ConcretePowBlockImport,
     client: Arc<HegemonFullClient>,
     da_chunk_store: Arc<ParkingMutex<DaChunkStore>>,
-    recursive_block_proof_store: Arc<ParkingMutex<RecursiveBlockProofStore>>,
     commitment_block_proof_store: Arc<ParkingMutex<CommitmentBlockProofStore>>,
     da_params: DaParams,
 ) {
@@ -1821,18 +1662,6 @@ fn wire_pow_block_import(
                         "DA encoding stored for imported block"
                     );
                 }
-                if let Some(proof) = template.recursive_proof.clone() {
-                    let proof_size = proof.proof_bytes.len();
-                    let recursive_proof_hash = proof.recursive_proof_hash;
-                    recursive_block_proof_store.lock().insert(block_hash, proof);
-                    tracing::info!(
-                        block_number = template.number,
-                        block_hash = %hex::encode(block_hash.as_bytes()),
-                        proof_size,
-                        recursive_proof_hash = %hex::encode(recursive_proof_hash),
-                        "Recursive block proof stored for imported block"
-                    );
-                }
                 if let Some(proof) = template.commitment_proof.clone() {
                     let proof_size = proof.proof_bytes.len();
                     let proof_hash = proof.proof_hash;
@@ -1864,18 +1693,6 @@ fn wire_pow_block_import(
                         da_root = %hex::encode(da_root),
                         da_chunks,
                         "DA encoding stored for known block"
-                    );
-                }
-                if let Some(proof) = template.recursive_proof.clone() {
-                    let proof_size = proof.proof_bytes.len();
-                    let recursive_proof_hash = proof.recursive_proof_hash;
-                    recursive_block_proof_store.lock().insert(block_hash, proof);
-                    tracing::info!(
-                        block_number = template.number,
-                        block_hash = %hex::encode(block_hash.as_bytes()),
-                        proof_size,
-                        recursive_proof_hash = %hex::encode(recursive_proof_hash),
-                        "Recursive block proof stored for known block"
                     );
                 }
                 if let Some(proof) = template.commitment_proof.clone() {
@@ -2134,11 +1951,16 @@ impl PqServiceConfig {
 const PQ_IDENTITY_SEED_ENV: &str = "HEGEMON_PQ_IDENTITY_SEED";
 const PQ_IDENTITY_SEED_PATH_ENV: &str = "HEGEMON_PQ_IDENTITY_SEED_PATH";
 const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
+const DA_SAMPLING_SECRET_FILE: &str = "da-secret";
 
 fn pq_identity_seed_path(config: &Configuration) -> PathBuf {
     std::env::var(PQ_IDENTITY_SEED_PATH_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|_| config.base_path.path().join(PQ_IDENTITY_SEED_FILE))
+}
+
+fn da_sampling_secret_path(config: &Configuration) -> PathBuf {
+    config.base_path.path().join(DA_SAMPLING_SECRET_FILE)
 }
 
 fn parse_pq_identity_seed_hex(value: &str) -> Result<[u8; 32], ServiceError> {
@@ -2154,6 +1976,22 @@ fn parse_pq_identity_seed_hex(value: &str) -> Result<[u8; 32], ServiceError> {
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&bytes);
     Ok(seed)
+}
+
+fn parse_da_sampling_secret_hex(value: &str) -> Result<[u8; 32], ServiceError> {
+    let trimmed = value.trim().strip_prefix("0x").unwrap_or(value.trim());
+    let bytes = hex::decode(trimmed).map_err(|err| {
+        ServiceError::Other(format!("invalid DA sampling secret hex: {err}"))
+    })?;
+    if bytes.len() != 32 {
+        return Err(ServiceError::Other(format!(
+            "DA sampling secret must be 32 bytes (got {})",
+            bytes.len()
+        )));
+    }
+    let mut secret = [0u8; 32];
+    secret.copy_from_slice(&bytes);
+    Ok(secret)
 }
 
 fn derive_seed(label: &[u8], seed: &[u8; 32]) -> [u8; 32] {
@@ -2257,6 +2095,98 @@ fn load_or_create_pq_identity_seed(config: &Configuration) -> Result<[u8; 32], S
         }
         Err(err) => Err(ServiceError::Other(format!(
             "failed to read PQ identity seed {}: {err}",
+            path.display()
+        ))),
+    }
+}
+
+#[cfg(unix)]
+fn warn_if_da_secret_permissions_loose(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(metadata) = fs::metadata(path) {
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode & 0o077 != 0 {
+            tracing::warn!(
+                path = %path.display(),
+                mode = format!("{:o}", mode),
+                "DA sampling secret permissions are too open; expected 0600"
+            );
+        }
+    }
+}
+
+fn load_or_create_da_sampling_secret(config: &Configuration) -> Result<[u8; 32], ServiceError> {
+    let path = da_sampling_secret_path(config);
+    match fs::read_to_string(&path) {
+        Ok(contents) => {
+            let secret = parse_da_sampling_secret_hex(&contents)?;
+            #[cfg(unix)]
+            warn_if_da_secret_permissions_loose(&path);
+            tracing::info!(
+                path = %path.display(),
+                "Loaded DA sampling secret"
+            );
+            Ok(secret)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let secret = state_da::generate_node_secret();
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|e| {
+                    ServiceError::Other(format!(
+                        "failed to create DA sampling secret directory {}: {e}",
+                        parent.display()
+                    ))
+                })?;
+            }
+
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            match options.open(&path) {
+                Ok(mut file) => {
+                    let encoded = hex::encode(secret);
+                    file.write_all(encoded.as_bytes()).map_err(|e| {
+                        ServiceError::Other(format!(
+                            "failed to write DA sampling secret {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    file.write_all(b"\n").map_err(|e| {
+                        ServiceError::Other(format!(
+                            "failed to finalize DA sampling secret {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    tracing::info!(
+                        path = %path.display(),
+                        "Generated DA sampling secret"
+                    );
+                    Ok(secret)
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let contents = fs::read_to_string(&path).map_err(|e| {
+                        ServiceError::Other(format!(
+                            "failed to read DA sampling secret {}: {e}",
+                            path.display()
+                        ))
+                    })?;
+                    let secret = parse_da_sampling_secret_hex(&contents)?;
+                    #[cfg(unix)]
+                    warn_if_da_secret_permissions_loose(&path);
+                    Ok(secret)
+                }
+                Err(err) => Err(ServiceError::Other(format!(
+                    "failed to create DA sampling secret {}: {err}",
+                    path.display()
+                ))),
+            }
+        }
+        Err(err) => Err(ServiceError::Other(format!(
+            "failed to read DA sampling secret {}: {err}",
             path.display()
         ))),
     }
@@ -2638,6 +2568,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         pq_service_config,
     } = new_partial_with_client(&config)?;
 
+    let da_sampling_secret = load_or_create_da_sampling_secret(&config)?;
+
     let chain_name = config.chain_spec.name().to_string();
     let chain_properties = config.chain_spec.properties();
     let chain_type = config.chain_spec.chain_type();
@@ -2747,16 +2679,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let da_params = load_da_params(&chain_properties);
     let da_store_capacity = load_da_store_capacity();
     let da_sample_timeout = load_da_sample_timeout();
-    let recursive_block_proof_store_capacity = load_recursive_proof_store_capacity();
     let commitment_block_proof_store_capacity = load_commitment_proof_store_capacity();
     let da_chunk_store: Arc<ParkingMutex<DaChunkStore>> =
         Arc::new(ParkingMutex::new(DaChunkStore::new(da_store_capacity)));
     let da_request_tracker: Arc<ParkingMutex<DaRequestTracker>> =
         Arc::new(ParkingMutex::new(DaRequestTracker::default()));
-    let recursive_block_proof_store: Arc<ParkingMutex<RecursiveBlockProofStore>> =
-        Arc::new(ParkingMutex::new(RecursiveBlockProofStore::new(
-            recursive_block_proof_store_capacity,
-        )));
     let commitment_block_proof_store: Arc<ParkingMutex<CommitmentBlockProofStore>> =
         Arc::new(ParkingMutex::new(CommitmentBlockProofStore::new(
             commitment_block_proof_store_capacity,
@@ -2768,11 +2695,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         da_store_capacity,
         da_sample_timeout_ms = da_sample_timeout.as_millis() as u64,
         "DA sampling configured"
-    );
-
-    tracing::info!(
-        recursive_block_proof_store_capacity,
-        "Recursive block proof store configured"
     );
 
     tracing::info!(
@@ -4279,6 +4201,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let da_request_tracker_for_import = Arc::clone(&da_request_tracker);
                 let da_params_for_import = da_params;
                 let da_sample_timeout_for_import = da_sample_timeout;
+                let da_sampling_secret_for_import = da_sampling_secret;
                 let pq_handle_for_da_import = pq_handle_for_da_import.clone();
 
                 task_manager.spawn_handle().spawn(
@@ -4345,8 +4268,15 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let block_number = *header.number();
                                 let parent_hash = *header.parent_hash();
 
+                                use sp_runtime::traits::Header as HeaderT;
+                                let post_hash = header.hash(); // final block hash (includes seal)
+                                let mut block_hash = [0u8; 32];
+                                block_hash.copy_from_slice(post_hash.as_bytes());
+
                                 let mut da_encoding = match sample_da_for_block(
                                     downloaded.from_peer,
+                                    block_hash,
+                                    da_sampling_secret_for_import,
                                     &extrinsics,
                                     da_params_for_import,
                                     &pq_handle_for_da_import,
@@ -4371,8 +4301,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 // CRITICAL: Extract the seal from header digest and move to post_digests
                                 // PowBlockImport expects the seal in post_digests.last(), not in header.digest()
                                 // The seal should be the last digest item with engine ID "pow_"
-                                use sp_runtime::traits::Header as HeaderT;
-                                let post_hash = header.hash(); // Hash before removing seal (this is the final block hash)
                                 let seal = header.digest_mut().pop();
 
                                 let seal_item = match seal {
@@ -4560,8 +4488,13 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let block_number = *header.number();
                                 let parent_hash = *header.parent_hash();
 
+                                let mut block_hash_bytes = [0u8; 32];
+                                block_hash_bytes.copy_from_slice(block_hash.as_bytes());
+
                                 let mut da_encoding = match sample_da_for_block(
                                     peer_id,
+                                    block_hash_bytes,
+                                    da_sampling_secret_for_import,
                                     &extrinsics,
                                     da_params_for_import,
                                     &pq_handle_for_da_import,
@@ -4795,7 +4728,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             pow_block_import,
             client.clone(),
             Arc::clone(&da_chunk_store),
-            Arc::clone(&recursive_block_proof_store),
             Arc::clone(&commitment_block_proof_store),
             da_params,
         );
@@ -5168,15 +5100,12 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             tracing::info!("Epoch RPC wired (epoch_getRecursiveProof, etc.)");
         }
 
-        // Add Block RPC (recursive + commitment block proofs)
-        let block_rpc = BlockRpc::new(
-            Arc::clone(&recursive_block_proof_store),
-            Arc::clone(&commitment_block_proof_store),
-        );
+        // Add Block RPC (commitment block proofs)
+        let block_rpc = BlockRpc::new(Arc::clone(&commitment_block_proof_store));
         if let Err(e) = module.merge(block_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Block RPC");
         } else {
-            tracing::info!("Block RPC wired (block_getRecursiveProof, block_getCommitmentProof)");
+            tracing::info!("Block RPC wired (block_getCommitmentProof)");
         }
 
         // Add DA RPC (chunk retrieval + params)

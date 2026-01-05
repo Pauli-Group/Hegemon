@@ -1,3 +1,5 @@
+#![cfg(feature = "legacy-recursion")]
+
 use std::collections::HashMap;
 
 use block_circuit::recursive::prove_block_recursive_fast;
@@ -226,7 +228,6 @@ fn recursive_proof_verifier_accepts_valid_block() {
         state_root: recursive_proof.ending_root,
         nullifier_root: [0u8; 32],
         proof_commitment: compute_proof_commitment(&transactions),
-        recursive_proof_hash: recursive_proof.recursive_proof_hash,
         da_root: da_root(&transactions, da_params).expect("da root"),
         da_params,
         version_commitment: compute_version_commitment(&transactions),

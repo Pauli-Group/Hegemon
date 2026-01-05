@@ -1,18 +1,18 @@
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
 use crate::types::{
-    Block, ConsensusBlock, DaParams, DaRoot, FeeCommitment, RecursiveProofHash, StarkCommitment,
-    VersionCommitment, compute_fee_commitment, compute_proof_commitment,
-    compute_version_commitment, da_root,
+    Block, DaParams, DaRoot, FeeCommitment, StarkCommitment, VersionCommitment,
+    compute_fee_commitment, compute_proof_commitment, compute_version_commitment, da_root,
 };
-use block_circuit::{
-    CommitmentBlockProof, CommitmentBlockProver, transaction_inputs_from_verifier_inputs,
-    verify_block_commitment, verify_recursive_proof,
-};
+use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
+#[cfg(feature = "legacy-recursion")]
+use block_circuit::{transaction_inputs_from_verifier_inputs, verify_recursive_proof};
 use crypto::hashes::{blake3_256, sha256};
 use rayon::prelude::*;
 use transaction_circuit::constants::MAX_INPUTS;
-use transaction_circuit::hashing::{felt_to_bytes32, felts_to_bytes32};
+use transaction_circuit::hashing::felt_to_bytes32;
+#[cfg(feature = "legacy-recursion")]
+use transaction_circuit::hashing::felts_to_bytes32;
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::verify as verify_transaction_proof;
 use std::collections::BTreeSet;
@@ -63,7 +63,7 @@ pub fn commitment_nullifier_lists(
 }
 
 pub fn verify_commitment_proof_payload(
-    block: &ConsensusBlock,
+    block: &Block<impl HeaderProofExt>,
     parent_commitment_tree: &CommitmentTreeState,
     proof: &CommitmentBlockProof,
 ) -> Result<(), ProofError> {
@@ -88,7 +88,7 @@ pub fn verify_commitment_proof_payload(
         ));
     }
 
-    let expected_da_root = da_root(&block.transactions, block.header.da_params)
+    let expected_da_root = da_root(&block.transactions, block.header.da_params())
         .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
     if proof.public_inputs.da_root != expected_da_root {
         return Err(ProofError::CommitmentProofInputsMismatch(
@@ -147,9 +147,11 @@ impl ProofVerifier for HashVerifier {
     }
 }
 
+#[cfg(feature = "legacy-recursion")]
 #[derive(Clone, Debug, Default)]
 pub struct RecursiveProofVerifier;
 
+#[cfg(feature = "legacy-recursion")]
 impl ProofVerifier for RecursiveProofVerifier {
     fn verify_block<BH>(
         &self,
@@ -258,7 +260,6 @@ pub trait HeaderProofExt {
     fn fee_commitment(&self) -> FeeCommitment;
     fn transaction_count(&self) -> u32;
     fn version_commitment(&self) -> VersionCommitment;
-    fn recursive_proof_hash(&self) -> RecursiveProofHash;
     fn da_root(&self) -> DaRoot;
     fn da_params(&self) -> DaParams;
 }
@@ -278,10 +279,6 @@ impl HeaderProofExt for crate::header::BlockHeader {
 
     fn version_commitment(&self) -> VersionCommitment {
         self.version_commitment
-    }
-
-    fn recursive_proof_hash(&self) -> RecursiveProofHash {
-        self.recursive_proof_hash
     }
 
     fn da_root(&self) -> DaRoot {
@@ -320,6 +317,7 @@ where
     Ok(())
 }
 
+#[cfg(feature = "legacy-recursion")]
 pub fn verify_recursive_proof_payload<BH>(
     block: &Block<BH>,
     parent_commitment_tree: &CommitmentTreeState,
@@ -327,20 +325,12 @@ pub fn verify_recursive_proof_payload<BH>(
 where
     BH: HeaderProofExt,
 {
-    let header_hash = block.header.recursive_proof_hash();
-    if header_hash == [0u8; 32] {
-        if block.recursive_proof.is_some() {
-            return Err(ProofError::UnexpectedRecursiveProof);
-        }
-        return apply_commitments(parent_commitment_tree, &block.transactions);
-    }
-
-    let proof = block
-        .recursive_proof
-        .as_ref()
-        .ok_or(ProofError::MissingRecursiveProof)?;
-    if proof.recursive_proof_hash != header_hash {
-        return Err(ProofError::RecursiveProofHashMismatch);
+    let proof = match block.recursive_proof.as_ref() {
+        Some(proof) => proof,
+        None => return apply_commitments(parent_commitment_tree, &block.transactions),
+    };
+    if block.transactions.is_empty() {
+        return Err(ProofError::UnexpectedRecursiveProof);
     }
     if proof.tx_count != block.header.transaction_count() {
         return Err(ProofError::RecursiveProofCountMismatch);
@@ -414,6 +404,7 @@ where
     )
 }
 
+#[cfg(feature = "legacy-recursion")]
 fn map_block_error(err: block_circuit::BlockError) -> ProofError {
     match err {
         block_circuit::BlockError::RecursiveProofHashMismatch => {

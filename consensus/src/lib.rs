@@ -14,6 +14,7 @@ pub mod validator;
 pub mod version_policy;
 
 pub use bft::{BftConsensus, ConsensusUpdate};
+#[cfg(feature = "legacy-recursion")]
 pub use block_circuit::RecursiveBlockProof;
 pub use commitment_tree::{
     COMMITMENT_TREE_DEPTH, CommitmentTreeError, CommitmentTreeState, DEFAULT_ROOT_HISTORY_LIMIT,
@@ -25,8 +26,10 @@ pub use nullifier::NullifierSet;
 pub use pow::PowConsensus;
 pub use proof::{
     CommitmentNullifierLists, HashVerifier, ParallelProofVerifier, ProofVerifier,
-    RecursiveProofVerifier, commitment_nullifier_lists, verify_commitment_proof_payload,
+    commitment_nullifier_lists, verify_commitment_proof_payload,
 };
+#[cfg(feature = "legacy-recursion")]
+pub use proof::RecursiveProofVerifier;
 pub use protocol_versioning::{
     CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CircuitVersion, CryptoSuiteId,
     DEFAULT_VERSION_BINDING, VersionBinding, VersionMatrix,
@@ -38,7 +41,7 @@ pub use substrate_pow::{
 };
 pub use types::{
     BalanceTag, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, DaChunk, DaChunkProof,
-    DaEncoding, DaError, DaParams, DaRoot, FeeCommitment, Nullifier, RecursiveProofHash,
+    DaEncoding, DaError, DaParams, DaRoot, FeeCommitment, Nullifier,
     StarkCommitment, SupplyDigest, Transaction, VersionCommitment, build_da_blob, da_root,
     encode_da_blob, verify_da_chunk,
 };

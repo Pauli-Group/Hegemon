@@ -1,3 +1,8 @@
+#![deprecated(
+    note = "Superseded by the commitment-proof architecture (see `crate::commitment_prover`). \
+            Kept for legacy/dev-only recursive block proof experiments."
+)]
+
 use std::collections::{HashMap, HashSet};
 
 use epoch_circuit::recursion::recursive_prover::{

@@ -1,10 +1,7 @@
-//! Block-level RPC endpoints for recursive and commitment proofs.
+//! Block-level RPC endpoints for commitment proofs.
 
-use crate::substrate::service::{CommitmentBlockProofStore, RecursiveBlockProofStore};
-use block_circuit::{
-    CommitmentBlockProof, CommitmentBlockPublicInputs, RecursiveBlockProof,
-    SerializedVerifierInputs,
-};
+use crate::substrate::service::CommitmentBlockProofStore;
+use block_circuit::{CommitmentBlockProof, CommitmentBlockPublicInputs};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::error::INVALID_PARAMS_CODE;
@@ -13,50 +10,6 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::sync::Arc;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SerializedVerifierInputsRpc {
-    pub inner_len: u32,
-    pub elements: Vec<u64>,
-}
-
-impl From<&SerializedVerifierInputs> for SerializedVerifierInputsRpc {
-    fn from(value: &SerializedVerifierInputs) -> Self {
-        Self {
-            inner_len: value.inner_len,
-            elements: value.elements.clone(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RecursiveBlockProofRpc {
-    pub block_hash: String,
-    pub proof_bytes: String,
-    pub recursive_proof_hash: String,
-    pub starting_root: String,
-    pub ending_root: String,
-    pub tx_count: u32,
-    pub verifier_inputs: Vec<SerializedVerifierInputsRpc>,
-}
-
-impl RecursiveBlockProofRpc {
-    fn from_proof(block_hash: H256, proof: &RecursiveBlockProof) -> Self {
-        Self {
-            block_hash: format!("0x{}", hex::encode(block_hash.as_bytes())),
-            proof_bytes: format!("0x{}", hex::encode(&proof.proof_bytes)),
-            recursive_proof_hash: format!("0x{}", hex::encode(proof.recursive_proof_hash)),
-            starting_root: format!("0x{}", hex::encode(proof.starting_root)),
-            ending_root: format!("0x{}", hex::encode(proof.ending_root)),
-            tx_count: proof.tx_count,
-            verifier_inputs: proof
-                .verifier_inputs
-                .iter()
-                .map(SerializedVerifierInputsRpc::from)
-                .collect(),
-        }
-    }
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommitmentBlockPublicInputsRpc {
@@ -114,13 +67,6 @@ impl CommitmentBlockProofRpc {
 
 #[rpc(server, client, namespace = "block")]
 pub trait BlockApi {
-    /// Get a locally stored recursive block proof by block hash.
-    #[method(name = "getRecursiveProof")]
-    async fn get_recursive_proof(
-        &self,
-        block_hash: String,
-    ) -> RpcResult<Option<RecursiveBlockProofRpc>>;
-
     /// Get a locally stored commitment block proof by block hash.
     #[method(name = "getCommitmentProof")]
     async fn get_commitment_proof(
@@ -130,33 +76,17 @@ pub trait BlockApi {
 }
 
 pub struct BlockRpc {
-    recursive_store: Arc<Mutex<RecursiveBlockProofStore>>,
     commitment_store: Arc<Mutex<CommitmentBlockProofStore>>,
 }
 
 impl BlockRpc {
-    pub fn new(
-        recursive_store: Arc<Mutex<RecursiveBlockProofStore>>,
-        commitment_store: Arc<Mutex<CommitmentBlockProofStore>>,
-    ) -> Self {
-        Self {
-            recursive_store,
-            commitment_store,
-        }
+    pub fn new(commitment_store: Arc<Mutex<CommitmentBlockProofStore>>) -> Self {
+        Self { commitment_store }
     }
 }
 
 #[async_trait::async_trait]
 impl BlockApiServer for BlockRpc {
-    async fn get_recursive_proof(
-        &self,
-        block_hash: String,
-    ) -> RpcResult<Option<RecursiveBlockProofRpc>> {
-        let hash = parse_h256(&block_hash)?;
-        let proof = self.recursive_store.lock().get(&hash).cloned();
-        Ok(proof.map(|proof| RecursiveBlockProofRpc::from_proof(hash, &proof)))
-    }
-
     async fn get_commitment_proof(
         &self,
         block_hash: String,

@@ -832,6 +832,16 @@ mod tests {
     }
 
     #[test]
+    fn commitment_from_proof_hashes_matches_public_inputs() {
+        let hashes = dummy_hashes(8);
+        let prover = CommitmentBlockProver::with_fast_options();
+        let proof = prover.prove_from_hashes(&hashes).expect("proof");
+        let commitment =
+            CommitmentBlockProver::commitment_from_proof_hashes(&hashes).expect("commitment");
+        assert_eq!(commitment, proof.public_inputs.tx_proofs_commitment);
+    }
+
+    #[test]
     fn commitment_merkle_budget() {
         let depth = transaction_circuit::note::MERKLE_TREE_DEPTH;
         let (cycles_one, rows_one) = estimate_merkle_update_rows(depth, 1);

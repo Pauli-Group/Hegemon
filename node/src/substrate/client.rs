@@ -55,7 +55,7 @@
 
 use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
 use crate::substrate::service::StorageChangesHandle;
-use block_circuit::{CommitmentBlockProof, RecursiveBlockProof};
+use block_circuit::CommitmentBlockProof;
 use consensus::Blake3Seal;
 use sp_core::H256;
 use std::sync::Arc;
@@ -510,8 +510,6 @@ pub struct StateExecutionResult {
     /// If Some, storage changes were captured and can be applied during import.
     /// If None, block import will use StateAction::Skip (scaffold mode).
     pub storage_changes: Option<StorageChangesHandle>,
-    /// Optional recursive proof built from shielded transfer extrinsics.
-    pub recursive_proof: Option<RecursiveBlockProof>,
     /// Optional commitment proof built from shielded transfer extrinsics.
     pub commitment_proof: Option<CommitmentBlockProof>,
 }
@@ -711,7 +709,6 @@ impl ProductionChainStateProvider {
                 extrinsics_root,
                 failed_count: 0,
                 storage_changes: None, // No storage changes in mock mode
-                recursive_proof: None,
                 commitment_proof: None,
             })
         } else {
@@ -861,7 +858,6 @@ impl ChainStateProvider for ProductionChainStateProvider {
                         result.extrinsics_root,
                         result.storage_changes,
                     )
-                    .with_recursive_proof(result.recursive_proof)
                     .with_commitment_proof(result.commitment_proof)
             }
             Err(e) => {
@@ -1215,7 +1211,6 @@ mod tests {
                 extrinsics_root: custom_extrinsics_root,
                 failed_count: 0,
                 storage_changes: None,
-                recursive_proof: None,
                 commitment_proof: None,
             })
         });
@@ -1248,7 +1243,6 @@ mod tests {
                 extrinsics_root: crate::substrate::compute_extrinsics_root(extrinsics),
                 failed_count: 0,
                 storage_changes: None,
-                recursive_proof: None,
                 commitment_proof: None,
             })
         });
@@ -1278,7 +1272,6 @@ mod tests {
                 extrinsics_root: H256::zero(),
                 failed_count: 0,
                 storage_changes: None,
-                recursive_proof: None,
                 commitment_proof: None,
             })
         });

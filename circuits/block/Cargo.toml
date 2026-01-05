@@ -8,7 +8,7 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 blake3 = "1"
 sha2 = "0.10"
-epoch-circuit = { path = "../epoch" }
+epoch-circuit = { path = "../epoch", optional = true }
 transaction-circuit = { path = "../transaction", features = ["rpo-fiat-shamir"] }
 state-merkle = { path = "../../state/merkle" }
 protocol-versioning = { path = "../../protocol/versioning" }
@@ -20,7 +20,9 @@ rand = { version = "0.8", features = ["std"] }
 
 [features]
 default = []
-fast-proofs = []
+fast-proofs = ["stark-fast"]
+stark-fast = []
+legacy-recursion = ["dep:epoch-circuit"]
 
 [lints]
 workspace = true
