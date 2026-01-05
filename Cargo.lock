@@ -1121,9 +1121,11 @@ dependencies = [
  "protocol-versioning",
  "rand 0.8.5",
  "serde",
+ "sha2 0.10.9",
  "state-merkle",
  "thiserror 1.0.69",
  "transaction-circuit",
+ "winter-crypto",
  "winterfell",
 ]
 
