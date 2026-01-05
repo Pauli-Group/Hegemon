@@ -31,7 +31,7 @@ use crate::stark_prover::fast_proof_options;
 /// For full STARK verification, use:
 /// - `stark_verifier::verify_transaction_proof_bytes()` with proper `TransactionPublicInputsStark`
 /// - Or use `StarkProver::prove_transaction()` and verify directly
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransactionProof {
     pub public_inputs: TransactionPublicInputs,
     #[serde(with = "crate::public_inputs::serde_vec_bytes32")]
@@ -49,7 +49,7 @@ pub struct TransactionProof {
 }
 
 /// Serialized STARK public inputs for verification.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerializedStarkInputs {
     pub input_flags: Vec<u8>,
     pub output_flags: Vec<u8>,
@@ -76,7 +76,7 @@ pub struct SerializedStarkInputs {
     pub stablecoin_attestation_commitment: Commitment,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VerificationReport {
     pub verified: bool,
 }

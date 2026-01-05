@@ -6,12 +6,15 @@ use crate::types::{
     compute_version_commitment, da_root,
 };
 use block_circuit::{
-    CommitmentBlockProof, transaction_inputs_from_verifier_inputs, verify_block_commitment,
-    verify_recursive_proof,
+    CommitmentBlockProof, CommitmentBlockProver, transaction_inputs_from_verifier_inputs,
+    verify_block_commitment, verify_recursive_proof,
 };
-use crypto::hashes::sha256;
+use crypto::hashes::{blake3_256, sha256};
+use rayon::prelude::*;
 use transaction_circuit::constants::MAX_INPUTS;
-use transaction_circuit::hashing::felts_to_bytes32;
+use transaction_circuit::hashing::{felt_to_bytes32, felts_to_bytes32};
+use transaction_circuit::keys::generate_keys;
+use transaction_circuit::proof::verify as verify_transaction_proof;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,6 +160,96 @@ impl ProofVerifier for RecursiveProofVerifier {
         BH: HeaderProofExt,
     {
         verify_recursive_proof_payload(block, parent_commitment_tree)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ParallelProofVerifier {
+    verifying_key: transaction_circuit::keys::VerifyingKey,
+}
+
+impl ParallelProofVerifier {
+    pub fn new() -> Self {
+        let (_, verifying_key) = generate_keys();
+        Self { verifying_key }
+    }
+}
+
+impl Default for ParallelProofVerifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProofVerifier for ParallelProofVerifier {
+    fn verify_block<BH>(
+        &self,
+        block: &Block<BH>,
+        parent_commitment_tree: &CommitmentTreeState,
+    ) -> Result<CommitmentTreeState, ProofError>
+    where
+        BH: HeaderProofExt,
+    {
+        if block.transactions.is_empty() {
+            if block.commitment_proof.is_some() || block.transaction_proofs.is_some() {
+                return Err(ProofError::CommitmentProofEmptyBlock);
+            }
+            return apply_commitments(parent_commitment_tree, &block.transactions);
+        }
+
+        let commitment_proof = block
+            .commitment_proof
+            .as_ref()
+            .ok_or(ProofError::MissingCommitmentProof)?;
+        let transaction_proofs = block
+            .transaction_proofs
+            .as_ref()
+            .ok_or(ProofError::MissingTransactionProofs)?;
+        if transaction_proofs.len() != block.transactions.len() {
+            return Err(ProofError::TransactionProofCountMismatch {
+                expected: block.transactions.len(),
+                observed: transaction_proofs.len(),
+            });
+        }
+
+        verify_commitment_proof_payload(block, parent_commitment_tree, commitment_proof)?;
+
+        let proof_hashes = proof_hashes_from_transaction_proofs(transaction_proofs)?;
+        let expected_commitment = CommitmentBlockProver::commitment_from_proof_hashes(&proof_hashes)
+            .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?;
+        if expected_commitment != commitment_proof.public_inputs.tx_proofs_commitment {
+            return Err(ProofError::CommitmentProofInputsMismatch(
+                "tx_proofs_commitment mismatch".to_string(),
+            ));
+        }
+
+        transaction_proofs
+            .par_iter()
+            .zip(&block.transactions)
+            .enumerate()
+            .try_for_each(|(index, (proof, tx))| {
+                verify_transaction_proof_inputs(index, tx, proof)?;
+                verify_transaction_proof(proof, &self.verifying_key).map_err(|err| {
+                    ProofError::TransactionProofVerification {
+                        index,
+                        message: err.to_string(),
+                    }
+                })?;
+                Ok::<_, ProofError>(())
+            })?;
+
+        let anchors: Vec<[u8; 32]> = transaction_proofs
+            .iter()
+            .map(|proof| proof.public_inputs.merkle_root)
+            .collect();
+
+        verify_and_apply_tree_transition(
+            parent_commitment_tree,
+            commitment_proof.public_inputs.starting_state_root,
+            commitment_proof.public_inputs.ending_state_root,
+            &block.transactions,
+            &anchors,
+        )
     }
 }
 
@@ -353,6 +446,71 @@ fn apply_commitments(
         }
     }
     Ok(tree)
+}
+
+fn proof_hashes_from_transaction_proofs(
+    proofs: &[transaction_circuit::TransactionProof],
+) -> Result<Vec<[u8; 32]>, ProofError> {
+    let mut hashes = Vec::with_capacity(proofs.len());
+    for (index, proof) in proofs.iter().enumerate() {
+        if proof.stark_proof.is_empty() {
+            return Err(ProofError::TransactionProofInputsMismatch {
+                index,
+                message: "missing STARK proof bytes".to_string(),
+            });
+        }
+        hashes.push(blake3_256(&proof.stark_proof));
+    }
+    Ok(hashes)
+}
+
+fn verify_transaction_proof_inputs(
+    index: usize,
+    tx: &crate::types::Transaction,
+    proof: &transaction_circuit::TransactionProof,
+) -> Result<(), ProofError> {
+    if proof.version_binding() != tx.version {
+        return Err(ProofError::TransactionProofInputsMismatch {
+            index,
+            message: "version binding mismatch".to_string(),
+        });
+    }
+
+    let expected_nullifiers: Vec<[u8; 32]> = proof
+        .nullifiers
+        .iter()
+        .copied()
+        .filter(|value| *value != [0u8; 32])
+        .collect();
+    if expected_nullifiers != tx.nullifiers {
+        return Err(ProofError::TransactionProofInputsMismatch {
+            index,
+            message: "nullifier list mismatch".to_string(),
+        });
+    }
+
+    let expected_commitments: Vec<[u8; 32]> = proof
+        .commitments
+        .iter()
+        .copied()
+        .filter(|value| *value != [0u8; 32])
+        .collect();
+    if expected_commitments != tx.commitments {
+        return Err(ProofError::TransactionProofInputsMismatch {
+            index,
+            message: "commitment list mismatch".to_string(),
+        });
+    }
+
+    let expected_balance_tag = felt_to_bytes32(proof.public_inputs.balance_tag);
+    if expected_balance_tag != tx.balance_tag {
+        return Err(ProofError::TransactionProofInputsMismatch {
+            index,
+            message: "balance tag mismatch".to_string(),
+        });
+    }
+
+    Ok(())
 }
 
 fn nullifier_root_from_list(nullifiers: &[[u8; 32]]) -> Result<[u8; 32], ProofError> {

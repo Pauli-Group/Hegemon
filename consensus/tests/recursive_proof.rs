@@ -244,6 +244,8 @@ fn recursive_proof_verifier_accepts_valid_block() {
         transactions,
         coinbase: None,
         recursive_proof: Some(recursive_proof),
+        commitment_proof: None,
+        transaction_proofs: None,
     };
 
     verify_commitments(&block).expect("commitments");

@@ -24,8 +24,8 @@ pub use mining::{MiningCoordinator, MiningSolution, MiningStats, MiningWork, Min
 pub use nullifier::NullifierSet;
 pub use pow::PowConsensus;
 pub use proof::{
-    CommitmentNullifierLists, HashVerifier, ProofVerifier, RecursiveProofVerifier,
-    commitment_nullifier_lists, verify_commitment_proof_payload,
+    CommitmentNullifierLists, HashVerifier, ParallelProofVerifier, ProofVerifier,
+    RecursiveProofVerifier, commitment_nullifier_lists, verify_commitment_proof_payload,
 };
 pub use protocol_versioning::{
     CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CircuitVersion, CryptoSuiteId,

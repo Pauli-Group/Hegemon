@@ -22,6 +22,8 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
 
 ## Progress
 
+- [x] (2026-01-06T12:45Z) Implemented `ParallelProofVerifier` with tx-proof commitment checks, anchor validation, and new block proof attachments; added `CommitmentBlockProver::commitment_from_proof_hashes` helper and an ignored integration test in `consensus/tests/parallel_verification.rs`.
+- [ ] (2026-01-06T12:45Z) Milestone 9 follow-up (completed: verifier + block type wiring; remaining: run heavy test, capture perf numbers, decide default verifier wiring for PoW/BFT).
 - [x] (2026-01-06T03:30Z) Milestone 8b0 spike: added Merkle-update row budget estimator test and captured row-count output for depth 32 and 200 leaves.
 - [x] (2026-01-06T02:30Z) Completed Milestone 8a: fixed commitment-proof input absorption, bound start/end/nullifier/DA roots in public inputs, and wired commitment proof generation + LRU storage + `block_getCommitmentProof` RPC.
 - [x] (2026-01-06T07:30Z) Implemented nullifier uniqueness in the commitment proof: added transaction-ordered + sorted nullifier lists to public inputs, enforced permutation + compressed adjacent-inequality constraints, updated RPC + docs, and added tests (`cargo test -p block-circuit commitment_proof_rejects_nullifier_mismatch` + `commitment_proof_roundtrip_100`).
@@ -177,6 +179,10 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
   Evidence: `da_getChunk` returns `null` when called with a block hash but returns a chunk+Merkle path when called with the logged `da_root`; `da_getParams` ignores extra params.
   Implication: E2E scripts/runbooks must carry forward `da_root` (or we should add a helper RPC to fetch `da_root` for a given block hash).
 ## Decision Log
+
+- Decision: Parallel verification recomputes `tx_proofs_commitment` with `CommitmentBlockProver::commitment_from_proof_hashes` and reuses `verify_and_apply_tree_transition` with anchors from transaction proofs.
+  Rationale: Keeps the commitment hash identical to the block circuit’s sponge logic and enforces anchor validity against the root history without reintroducing recursion.
+  Date/Author: 2026-01-06 / Codex
 
 - Decision: Consensus recomputes the padded transaction-ordered nullifier list and rejects commitment proofs for empty/nullifier-free blocks.
   Rationale: The commitment proof’s uniqueness argument is only meaningful when tied to the block’s actual nullifiers; coinbase-only blocks carry no transaction proofs, so we treat them as “no commitment proof” rather than attempting to prove an all-zero list that collapses constraint degrees.
@@ -588,17 +594,17 @@ The AIR should use:
 
 ### Milestone 9: Parallel Transaction Proof Verification
 
-**Status**: NOT STARTED
+**Status**: IN PROGRESS
 
-This milestone adds a `ParallelProofVerifier` to consensus that verifies transaction STARK proofs in parallel, outside the block proof circuit.
+This milestone adds a `ParallelProofVerifier` to consensus that verifies transaction STARK proofs in parallel, outside the block proof circuit, and binds the commitment proof to the attached transaction proofs.
 
 **Design**:
 
     // consensus/src/proof.rs
     
-    #[derive(Clone, Debug, Default)]
+    #[derive(Clone, Debug)]
     pub struct ParallelProofVerifier {
-        thread_pool: rayon::ThreadPool,
+        verifying_key: transaction_circuit::keys::VerifyingKey,
     }
     
     impl ProofVerifier for ParallelProofVerifier {
@@ -610,49 +616,31 @@ This milestone adds a `ParallelProofVerifier` to consensus that verifies transac
         where
             BH: HeaderProofExt,
         {
-            // 1. Verify commitment block proof (O(1), ~50ms)
-            verify_commitment_proof(&block.commitment_proof, &block.header)?;
-            
-            // 2. Compute tx proof hashes and verify Poseidon commitment
-            let tx_hashes: Vec<[u8; 32]> = block.transactions
-                .par_iter()
-                .map(|tx| blake3_256(&tx.stark_proof))
-                .collect();
-            verify_tx_proofs_commitment(&tx_hashes, block.header.tx_proofs_commitment())?;
-            
-            // 3. Verify transaction STARK proofs in parallel
-            let results: Vec<Result<(), ProofError>> = block.transactions
-                .par_iter()
-                .enumerate()
-                .map(|(idx, tx)| verify_transaction_stark_proof(tx, idx))
-                .collect();
-            
-            for result in results {
-                result?;
-            }
-            
-            // 4. Apply state transition
-            apply_commitments(parent_commitment_tree, &block.transactions)
+            // 1. Verify commitment block proof payload (roots + nullifier lists + DA root).
+            // 2. Compute tx proof hashes and recompute tx_proofs_commitment with the Poseidon sponge.
+            // 3. Verify transaction proofs in parallel (public input match + STARK verification).
+            // 4. Apply commitments with anchor checks against the root history.
         }
     }
 
-Use the same `tx_proof_hash` and Poseidon sponge commitment scheme as Milestone 7/8 so consensus and the commitment proof agree exactly.
+Blocks carry `commitment_proof` and `transaction_proofs` (both optional for empty blocks). Consensus recomputes `tx_proofs_commitment` from the attached proof bytes using `CommitmentBlockProver::commitment_from_proof_hashes`, then verifies each proof in parallel and updates the commitment tree via `verify_and_apply_tree_transition`.
 
 **Files to modify**:
 - `consensus/src/proof.rs` — add `ParallelProofVerifier`
+- `consensus/src/types.rs` — include `commitment_proof` + `transaction_proofs` on `Block`
+- `circuits/block/src/commitment_prover.rs` — add `commitment_from_proof_hashes`
 - `consensus/Cargo.toml` — add `rayon` dependency
-- `consensus/src/pow.rs` — use `ParallelProofVerifier` by default
-- `consensus/src/bft.rs` — use `ParallelProofVerifier` by default
+- `consensus/tests/parallel_verification.rs` — integration coverage (ignored by default)
 
 **Commands**:
 
-    cargo test -p consensus parallel_verification
-    cargo bench -p consensus parallel_verify_bench
+    cargo test -p consensus --test parallel_verification -- --ignored
 
 **Acceptance**:
-- 100-tx block verifies in < 10 seconds on 8-core machine
-- Invalid transaction proof causes block rejection with correct index
-- Parallel verification produces same result as sequential
+- Invalid transaction proof causes block rejection with `ProofError::TransactionProofVerification { index, .. }`
+- `tx_proofs_commitment` mismatch causes `ProofError::CommitmentProofInputsMismatch`
+- Parallel verification updates the commitment tree to the expected ending root
+- Remaining: capture perf numbers and decide whether PoW/BFT defaults should switch to `ParallelProofVerifier`
 
 ---
 
