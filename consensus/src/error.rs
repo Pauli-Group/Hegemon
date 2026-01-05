@@ -88,6 +88,16 @@ pub enum ProofError {
     CommitmentProofInputsMismatch(String),
     #[error("commitment proof verification failed: {0}")]
     CommitmentProofVerification(String),
+    #[error("missing commitment proof payload")]
+    MissingCommitmentProof,
+    #[error("missing transaction proofs")]
+    MissingTransactionProofs,
+    #[error("transaction proof count mismatch: expected {expected}, got {observed}")]
+    TransactionProofCountMismatch { expected: usize, observed: usize },
+    #[error("transaction proof inputs mismatch at index {index}: {message}")]
+    TransactionProofInputsMismatch { index: usize, message: String },
+    #[error("transaction proof verification failed at index {index}: {message}")]
+    TransactionProofVerification { index: usize, message: String },
     #[error("commitment tree error: {0}")]
     CommitmentTree(#[from] CommitmentTreeError),
     #[error("verifier internal error: {0}")]

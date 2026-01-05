@@ -185,6 +185,8 @@ impl LegacyNode {
             transactions: Vec::new(),
             coinbase: None,
             recursive_proof,
+            commitment_proof: None,
+            transaction_proofs: None,
         };
         let best_hash = block.header.hash()?;
         state.height = height;

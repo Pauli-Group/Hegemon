@@ -30,7 +30,7 @@ use crate::error::BlockError;
 
 type Blake3 = Blake3_256<BaseElement>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitmentBlockProof {
     pub proof_bytes: Vec<u8>,
     pub proof_hash: [u8; 32],
@@ -240,6 +240,84 @@ impl CommitmentBlockProver {
             proof_hash,
             public_inputs: pub_inputs,
         })
+    }
+
+    pub fn commitment_from_proof_hashes(
+        proof_hashes: &[[u8; 32]],
+    ) -> Result<[u8; 32], BlockError> {
+        if proof_hashes.is_empty() {
+            return Err(BlockError::CommitmentProofEmptyBlock);
+        }
+
+        let mut inputs = hashes_to_elements(proof_hashes);
+        let tx_count = proof_hashes.len();
+        let total_cycles = CommitmentBlockAir::trace_length(tx_count) / CYCLE_LENGTH;
+        let input_cycles = tx_count.saturating_mul(2).max(1);
+        let target_len = input_cycles * 2;
+        if inputs.len() < target_len {
+            inputs.resize(target_len, BaseElement::ZERO);
+        }
+
+        let init0 = inputs.first().copied().unwrap_or(BaseElement::ZERO);
+        let init1 = inputs.get(1).copied().unwrap_or(BaseElement::ZERO);
+        let mut state = [
+            BaseElement::new(BLOCK_COMMITMENT_DOMAIN_TAG) + init0,
+            init1,
+            BaseElement::ONE,
+        ];
+
+        let mut output0 = BaseElement::ZERO;
+        let mut output1 = BaseElement::ZERO;
+        let mut output2 = BaseElement::ZERO;
+        let mut output3 = BaseElement::ZERO;
+        let trace_len = total_cycles * CYCLE_LENGTH;
+
+        for cycle in 0..total_cycles {
+            let pair_index = cycle;
+            let (_input0, _input1) = if pair_index < input_cycles {
+                let idx = pair_index * 2;
+                (inputs[idx], inputs[idx + 1])
+            } else {
+                (BaseElement::ZERO, BaseElement::ZERO)
+            };
+            let (next_input0, next_input1) = if pair_index + 1 < input_cycles {
+                let next_idx = (pair_index + 1) * 2;
+                (inputs[next_idx], inputs[next_idx + 1])
+            } else {
+                (BaseElement::ZERO, BaseElement::ZERO)
+            };
+
+            let cycle_start = cycle * CYCLE_LENGTH;
+            for step in 0..CYCLE_LENGTH {
+                let row = cycle_start + step;
+                let current = state;
+
+                if step + 1 == CYCLE_LENGTH {
+                    if cycle + 1 == input_cycles {
+                        output0 = current[0];
+                        output1 = current[1];
+                    }
+                    if cycle + 1 == total_cycles {
+                        output2 = current[0];
+                        output3 = current[1];
+                    }
+                }
+
+                if row + 1 < trace_len {
+                    if step < POSEIDON_ROUNDS {
+                        let t0 = state[0] + round_constant(step, 0);
+                        let t1 = state[1] + round_constant(step, 1);
+                        let t2 = state[2] + round_constant(step, 2);
+                        state = mds_mix(&[sbox(t0), sbox(t1), sbox(t2)]);
+                    } else {
+                        state[0] += next_input0;
+                        state[1] += next_input1;
+                    }
+                }
+            }
+        }
+
+        Ok(felts_to_bytes32(&[output0, output1, output2, output3]))
     }
 
     pub fn verify_block_commitment(

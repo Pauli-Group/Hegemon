@@ -218,6 +218,8 @@ impl StoredBlock {
             transactions,
             coinbase,
             recursive_proof: self.recursive_proof,
+            commitment_proof: None,
+            transaction_proofs: None,
         })
     }
 }

@@ -1,8 +1,9 @@
-use block_circuit::RecursiveBlockProof;
+use block_circuit::{CommitmentBlockProof, RecursiveBlockProof};
 use crypto::hashes::sha256;
 use protocol_versioning::{VersionBinding, VersionMatrix};
 use sha2::{Digest, Sha384};
 pub use state_da::{DaChunk, DaChunkProof, DaEncoding, DaError, DaParams, DaRoot};
+use transaction_circuit::TransactionProof;
 
 pub type Nullifier = [u8; 32];
 pub type Commitment = [u8; 32];
@@ -159,6 +160,8 @@ pub struct Block<BH> {
     pub transactions: Vec<Transaction>,
     pub coinbase: Option<CoinbaseData>,
     pub recursive_proof: Option<RecursiveBlockProof>,
+    pub commitment_proof: Option<CommitmentBlockProof>,
+    pub transaction_proofs: Option<Vec<TransactionProof>>,
 }
 
 impl<BH> Block<BH> {
@@ -168,6 +171,8 @@ impl<BH> Block<BH> {
             transactions: self.transactions,
             coinbase: self.coinbase,
             recursive_proof: self.recursive_proof,
+            commitment_proof: self.commitment_proof,
+            transaction_proofs: self.transaction_proofs,
         }
     }
 }

@@ -48,7 +48,7 @@ pub const COL_NF_DIFF_NZ: usize = 32;
 pub const COL_NF_SORTED_INV: usize = 33;
 pub const COL_NF_SORTED_NZ: usize = 34;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CommitmentBlockPublicInputs {
     pub tx_proofs_commitment: [u8; 32],
     pub starting_state_root: [u8; 32],

@@ -9,7 +9,7 @@ use crate::{
     hashing::{balance_commitment, Commitment, Felt},
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StablecoinPolicyBinding {
     #[serde(default)]
     pub enabled: bool,
@@ -39,7 +39,7 @@ impl Default for StablecoinPolicyBinding {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransactionPublicInputs {
     #[serde(with = "crate::public_inputs::serde_bytes32")]
     pub merkle_root: Commitment,
