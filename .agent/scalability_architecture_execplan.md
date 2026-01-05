@@ -10,8 +10,18 @@ Companion math notes: `.agent/scalability_architecture_math.md` pins down soundn
 
 This plan makes the chain fundamentally scalable by validating each block with a single recursive proof and a small set of data-availability samples, while keeping full privacy and post-quantum security. After the change, a single node can mine and validate blocks without re-verifying every transaction proof, and you can see it working by starting the dev node, mining a block, and querying RPC endpoints for the recursive proof and data-availability chunks.
 
+**ARCHITECTURE PIVOT (2026-01-04)**: The original recursive "prove-the-verifier" approach hit fundamental limits (OOD width explosion to 364 elements vs. 255 cap, memory explosion to 100GB+, 16+ minute proving times, and gated soundness checks). The plan now pivots to a **commitment-based block proof + parallel transaction verification** architecture that is sound, practical, and shippable:
+
+1. **Block proof proves commitments** (Merkle root of tx proof hashes, state transition, nullifier uniqueness) — ~20 columns, ~2^14 rows, seconds to prove
+2. **Transaction proofs verified in parallel** at block import — embarrassingly parallel, full soundness
+3. **Cryptographic per-node DA sampling** — producer cannot predict samples, sound availability enforcement
+
+This pivot removes all unsound gated checks while preserving PQC, privacy, and scalability.
+
 ## Progress
 
+- [x] (2026-01-04T12:00Z) **Architecture Pivot**: Documented the pivot from recursive "prove-the-verifier" to commitment-based block proofs + parallel transaction verification in the Purpose section. Recursive block proofs remain supported for dev/test but are no longer the scalability path.
+- [x] (2026-01-04T12:00Z) **Milestone 6 COMPLETE**: Implemented cryptographic per-node DA sampling in `state/da/src/lib.rs`. Added `sample_indices(node_secret, block_hash, total_chunks, sample_count)` using ChaCha20Rng seeded with XOR of node secret and block hash. Added tests (9/9 passing). This fixes the deterministic DA sampling security flaw.
 - [x] (2026-01-03T06:21Z) Completed Milestone 5 end-to-end validation in tmux: mined a block with a shielded transfer (dev-fast proofs), observed `Recursive block proof generated`, verified `block_getRecursiveProof` returns non-empty proof bytes for the mined block hash, and `da_getChunk` returns a chunk+Merkle proof when called with the logged `da_root`; updated `scripts/recursive_proof_da_e2e_tmux.sh` + `runbooks/recursive_proof_da_e2e.md` to match actual RPC params/timeouts.
 - [x] (2026-01-03T03:31Z) Prevented runaway memory during Substrate E2E by changing StorageChanges caching to return an RAII handle stored on the mining template, bounding the cache, and taking StorageChanges early on import (fail-fast if missing); ran `cargo test -p hegemon-node --features substrate` and compiled `cargo test -p security-tests --features substrate --test multi_node_substrate --no-run`.
 - [x] (2025-12-31T09:40Z) Fixed recursion verifier replay/restore/tape handling and boundary constraint counts; recursion verifier tests now pass.
@@ -149,12 +159,17 @@ This plan makes the chain fundamentally scalable by validating each block with a
   Implication: E2E scripts/runbooks must carry forward `da_root` (or we should add a helper RPC to fetch `da_root` for a given block hash).
 ## Decision Log
 
+- Decision: **Architecture Pivot** — Replace recursive "prove-the-verifier" block proofs with commitment-based block proofs + parallel transaction verification.
+  Rationale: The recursive approach hits unsolvable Winterfell width limits (364 OOD columns vs 255 cap), requires 100GB+ memory for batching, and takes 16+ minutes in dev-fast mode. Parallel verification of N transaction proofs is O(N) but bounded (seconds on 8 cores for 100 txs). The commitment block proof proves Merkle root, state transition, and nullifier uniqueness in ~20 columns and <30s. This delivers sound proofs that ship now vs. theoretical elegance that doesn't work.
+  Date/Author: 2026-01-04 / Codex
+
 - Decision: Treat scalability as proof-carrying blocks plus data-availability sampling, not larger blocks or faster block times.
   Rationale: Verification cost per block must be constant and bounded to scale while keeping privacy and post-quantum security.
   Date/Author: 2025-12-31 / Codex
 
 - Decision: Use recursive verification of existing transaction proofs as the main block validity path.
   Rationale: Transaction witnesses stay in the wallet; recursion only needs proof bytes and public inputs, preserving privacy.
+  Status: **SUPERSEDED** by Architecture Pivot decision (2026-01-04). Recursive block proofs remain for dev/test but parallel verification is now the production path.
   Date/Author: 2025-12-31 / Codex
 
 - Decision: Start from the existing Winterfell-based recursion code and make it reusable.
@@ -324,7 +339,341 @@ Then query the new RPC endpoints you add:
 
 Expected evidence is non-empty proof bytes, a DA chunk payload, and a Merkle proof that verifies locally.
 
-## Validation and Acceptance
+---
+
+## PHASE 2: Sound Architecture (Commitment-Based Block Proofs)
+
+The milestones below implement the sound architecture pivot. They supersede the original recursive verifier approach for block-level proofs while preserving transaction proofs unchanged.
+
+### Milestone 6: Cryptographic Per-Node DA Sampling
+
+**Status**: COMPLETE (2026-01-04)
+
+This milestone implements cryptographic per-node sampling so that block producers cannot predict which DA chunks any given validator will sample.
+
+**What was implemented**:
+- Added `sample_indices(node_secret, block_hash, total_chunks, sample_count) -> Vec<u32>` to `state/da/src/lib.rs`
+- Uses ChaCha20Rng seeded with XOR of node secret and block hash
+- Added `generate_node_secret() -> [u8; 32]` helper
+- Added comprehensive tests for determinism, uniqueness, and independence
+
+**Files modified**:
+- `state/da/Cargo.toml` — added `rand` and `rand_chacha` dependencies
+- `state/da/src/lib.rs` — added sampling functions and tests
+
+**Validation**:
+
+    cargo test -p state-da
+
+Expected evidence: All 9 tests pass, including `sample_indices_*` tests.
+
+**Remaining integration work** (for later milestones):
+- Wire `sample_indices` into `node/src/substrate/service.rs` DA validation
+- Generate and persist node secret at startup
+- Update consensus DA validation to use per-node sampling
+
+---
+
+### Milestone 7: Commitment Block Proof AIR Design
+
+**Status**: NOT STARTED
+
+This milestone designs a lightweight AIR that proves block commitment correctness without verifying transaction proofs in-circuit.
+
+**What the AIR proves**:
+1. `tx_proofs_merkle_root = merkle_root(tx_proof_hashes)` — transaction proof hashes commit correctly
+2. `ending_state_root = apply(starting_state_root, commitments)` — state transition is valid
+3. All nullifiers in the block are unique (in-circuit sorting + equality check)
+4. `da_root` matches the encoded transaction ciphertexts
+
+**Key properties**:
+- Trace width: ~20-30 columns (not 254)
+- Trace length: O(N * log N) for N transactions, ~2^14 rows for 1000 txs
+- No OOD/DEEP/FRI verification in-circuit (that stays in transaction proofs)
+- Prover time: seconds, not minutes
+- Memory: ~1GB, not 100GB+
+
+**Public inputs**:
+
+    pub struct CommitmentBlockPublicInputs {
+        pub tx_proofs_merkle_root: [u8; 32],
+        pub starting_state_root: [u8; 32],
+        pub ending_state_root: [u8; 32],
+        pub nullifier_set_commitment: [u8; 32],
+        pub da_root: [u8; 32],
+        pub tx_count: u32,
+    }
+
+**Witness**:
+
+    pub struct CommitmentBlockWitness {
+        pub tx_proof_hashes: Vec<[u8; 32]>,
+        pub nullifiers: Vec<[u8; 32]>,
+        pub commitments: Vec<[u8; 32]>,
+        pub merkle_update_paths: Vec<MerkleUpdatePath>,
+    }
+
+**Files to create**:
+- `circuits/block/src/commitment_air.rs` — AIR definition
+- `circuits/block/src/commitment_prover.rs` — trace generation and proving
+- `circuits/block/src/commitment_verifier.rs` — verification
+
+**Commands**:
+
+    cargo test -p block-circuit commitment
+
+**Acceptance**: 
+- AIR compiles with Winterfell
+- Trace width < 50 columns
+- Test proves and verifies a 100-transaction block in < 30 seconds
+
+---
+
+### Milestone 8: Commitment Block Proof Implementation
+
+**Status**: NOT STARTED
+
+This milestone implements the commitment block proof AIR from Milestone 7.
+
+**Implementation details**:
+
+The AIR should use:
+- RPO-256 for Merkle hashing (same as transaction proofs, recursion-friendly)
+- Sorting network for nullifier uniqueness (O(N log N) constraints)
+- Incremental Merkle update for state transition
+
+**Trace layout** (approximate):
+
+    Columns 0-11:  RPO state for Merkle hashing
+    Columns 12-15: Sorting network comparators
+    Columns 16-19: Merkle path verification
+    Columns 20-23: State transition accumulators
+
+**Constraint count estimate**: ~500 transition constraints, ~100 boundary assertions
+
+**Files to modify**:
+- `circuits/block/src/lib.rs` — export commitment proof types
+- `circuits/block/Cargo.toml` — ensure Winterfell dependencies
+
+**Commands**:
+
+    cargo test -p block-circuit commitment_proof
+    cargo bench -p block-circuit commitment_bench
+
+**Acceptance**:
+- 100-tx block proof generates in < 30 seconds
+- Proof size < 20KB
+- Verification time < 100ms
+- Tampered tx_proof_hash causes verification failure
+- Tampered nullifier causes verification failure
+
+---
+
+### Milestone 9: Parallel Transaction Proof Verification
+
+**Status**: NOT STARTED
+
+This milestone adds a `ParallelProofVerifier` to consensus that verifies transaction STARK proofs in parallel, outside the block proof circuit.
+
+**Design**:
+
+    // consensus/src/proof.rs
+    
+    #[derive(Clone, Debug, Default)]
+    pub struct ParallelProofVerifier {
+        thread_pool: rayon::ThreadPool,
+    }
+    
+    impl ProofVerifier for ParallelProofVerifier {
+        fn verify_block<BH>(
+            &self,
+            block: &Block<BH>,
+            parent_commitment_tree: &CommitmentTreeState,
+        ) -> Result<CommitmentTreeState, ProofError>
+        where
+            BH: HeaderProofExt,
+        {
+            // 1. Verify commitment block proof (O(1), ~50ms)
+            verify_commitment_proof(&block.commitment_proof, &block.header)?;
+            
+            // 2. Compute tx proof hashes and verify Merkle root
+            let tx_hashes: Vec<[u8; 32]> = block.transactions
+                .par_iter()
+                .map(|tx| blake3_256(&tx.stark_proof))
+                .collect();
+            verify_tx_proofs_merkle_root(&tx_hashes, block.header.tx_proofs_merkle_root())?;
+            
+            // 3. Verify transaction STARK proofs in parallel
+            let results: Vec<Result<(), ProofError>> = block.transactions
+                .par_iter()
+                .enumerate()
+                .map(|(idx, tx)| verify_transaction_stark_proof(tx, idx))
+                .collect();
+            
+            for result in results {
+                result?;
+            }
+            
+            // 4. Apply state transition
+            apply_commitments(parent_commitment_tree, &block.transactions)
+        }
+    }
+
+**Files to modify**:
+- `consensus/src/proof.rs` — add `ParallelProofVerifier`
+- `consensus/Cargo.toml` — add `rayon` dependency
+- `consensus/src/pow.rs` — use `ParallelProofVerifier` by default
+- `consensus/src/bft.rs` — use `ParallelProofVerifier` by default
+
+**Commands**:
+
+    cargo test -p consensus parallel_verification
+    cargo bench -p consensus parallel_verify_bench
+
+**Acceptance**:
+- 100-tx block verifies in < 10 seconds on 8-core machine
+- Invalid transaction proof causes block rejection with correct index
+- Parallel verification produces same result as sequential
+
+---
+
+### Milestone 10: Wire Cryptographic DA Sampling into Node
+
+**Status**: NOT STARTED
+
+This milestone integrates the cryptographic DA sampling from Milestone 6 into the node's block validation.
+
+**Implementation**:
+
+1. Generate node secret at startup:
+   - Check for existing secret at `<base_path>/da-secret`
+   - If missing, generate with `generate_node_secret()` and persist
+   - Load into service state
+
+2. Update DA validation in block import:
+   - Compute `sample_indices(node_secret, block_hash, chunk_count, sample_count)`
+   - Request those specific chunks (not sequential indices)
+   - Verify Merkle proofs against DA root
+
+3. Update P2P chunk requests to use sampled indices
+
+**Files to modify**:
+- `node/src/substrate/service.rs` — load/generate node secret, use `sample_indices`
+- `node/src/substrate/block_import.rs` — pass node secret to DA validation
+- `state/da/src/lib.rs` — ensure `sample_indices` is `pub`
+
+**Commands**:
+
+    cargo test -p hegemon-node da_sampling
+    HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
+
+**Acceptance**:
+- Node generates and persists DA secret on first run
+- Different nodes sample different chunks for same block
+- Block rejection when sampled chunk is unavailable
+- Logs show sampled indices differ from sequential
+
+---
+
+### Milestone 11: Remove Unsound Gated Checks
+
+**Status**: NOT STARTED
+
+This milestone removes all unsound gated checks from the codebase and deprecates the recursive verifier approach for block proofs.
+
+**What to remove/deprecate**:
+
+1. In `circuits/epoch/src/recursion/stark_verifier_prover.rs`:
+   - Remove or gate the code paths that skip OOD/DEEP/FRI consistency checks
+   - Add compile-time feature gate: `#[cfg(feature = "unsound-recursion")]`
+
+2. In `circuits/block/src/recursive.rs`:
+   - Keep the code but mark as `#[deprecated]`
+   - Add doc comments explaining this is superseded by commitment proofs
+
+3. In `consensus/src/proof.rs`:
+   - Remove `RecursiveProofVerifier` from default code paths
+   - Keep for optional use with feature flag
+
+**Files to modify**:
+- `circuits/epoch/src/recursion/stark_verifier_prover.rs`
+- `circuits/epoch/src/recursion/stark_verifier_air.rs`
+- `circuits/block/src/recursive.rs`
+- `circuits/block/src/lib.rs`
+- `consensus/src/proof.rs`
+
+**Commands**:
+
+    cargo build --release
+    cargo test --all
+
+**Acceptance**:
+- Build succeeds without `unsound-recursion` feature
+- All tests pass with new architecture
+- `grep -r "UNSOUND" circuits/` returns no active code (only deprecated/gated)
+
+---
+
+### Milestone 12: End-to-End Sound Validation
+
+**Status**: NOT STARTED
+
+This milestone validates the complete sound architecture end-to-end.
+
+**Validation steps**:
+
+1. Fresh build:
+   
+       make setup
+       make node
+
+2. Start dev node:
+   
+       HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp
+
+3. Send shielded transaction:
+   
+       ./target/release/wallet substrate-send --to <address> --amount 1000
+
+4. Verify block acceptance with commitment proof + parallel verification:
+   - Check logs for "Commitment block proof verified"
+   - Check logs for "Transaction proofs verified in parallel (N)"
+   - Check logs for "DA sampling passed (indices: [...])"
+
+5. Query RPC:
+   
+       curl -s -H "Content-Type: application/json" \
+         -d '{"id":1,"jsonrpc":"2.0","method":"block_getCommitmentProof","params":["0x<BLOCK_HASH>"]}' \
+         http://127.0.0.1:9944
+
+**Security validation**:
+
+1. Tamper with transaction proof → block rejected
+2. Tamper with commitment proof → block rejected  
+3. Withhold sampled DA chunk → block rejected
+4. Invalid nullifier (duplicate) → block rejected
+
+**Performance validation**:
+
+    cargo bench -p block-circuit commitment_proof
+    cargo bench -p consensus parallel_verify
+
+Expected:
+- Commitment proof: < 30s generation, < 100ms verification
+- 100-tx parallel verification: < 10s on 8 cores
+- DA sampling: < 1s for 80 samples
+
+**Commands**:
+
+    ./scripts/e2e-sound-architecture.sh
+
+**Acceptance**:
+- End-to-end mining works with sound proofs
+- No gated/unsound code paths active
+- Performance within acceptable bounds
+- Security tests all pass
+
+---
 
 Acceptance requires two observable behaviors. First, a block with a valid recursive proof must be accepted even if the node does not re-verify individual transaction proofs. Second, a block must be rejected if any sampled DA chunk is missing or fails its Merkle proof.
 
@@ -466,3 +815,4 @@ Revision Note (2026-01-01T11:05Z): Added DA sampling tests in `consensus/tests/d
 Revision Note (2026-01-01T11:20Z): Documented the libclang environment requirement for `cargo check -p hegemon-node`, fixed no-std `format!`/`String` imports in transaction-core, and added SCALE codec derives for DA chunk types to satisfy network encoding.
 Revision Note (2026-01-01T23:40Z): Updated Progress/Surprises to record the recursion transcript permutation fix and node rebuild so the plan reflects the current verifier schedule work.
 Revision Note (2026-01-02T00:10Z): Recorded the quadratic trace/DEEP fix, added the recursive proof + DA RPC runbook, and updated end-to-end progress to reflect the in-flight recursive block proof build.
+Revision Note (2026-01-04T12:00Z): **Architecture Pivot** — Added Phase 2 milestones (6-12) for sound commitment-based block proofs + parallel verification. Completed Milestone 6 (cryptographic per-node DA sampling). Updated Purpose section with pivot rationale. Marked legacy recursive block proof decision as superseded.

@@ -10521,6 +10521,7 @@ version = "0.1.0"
 dependencies = [
  "parity-scale-codec",
  "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "reed-solomon-erasure",
  "synthetic-crypto",
  "thiserror 1.0.69",
