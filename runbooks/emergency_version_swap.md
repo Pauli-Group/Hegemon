@@ -31,7 +31,7 @@ This runbook is the miner and node-operator facing checklist referenced by DESIG
    - Monitor mempool telemetry for upgrade transactions; they should start appearing immediately. Pools can expose per-miner counts in their dashboards.
    - Reject block templates that still omit the new binding; miners should treat such templates as invalid before hashing, and full nodes will enforce the rule with `ConsensusError::UnsupportedVersion`.
 3. **During the grace period:**
-   - Use the `version_counts` field in recursive block proofs and the header’s `version_commitment` to track migration progress. Pools should alert if `version_counts[old_binding]` plateaus above 0 near `retires_at`.
+   - Use per-block `version_counts` (derived from transaction bindings) and the header’s `version_commitment` (where surfaced) to track migration progress. Pools should alert if `version_counts[old_binding]` plateaus above 0 near `retires_at`.
    - Alert large custodians or exchanges that still emit old-binding proofs and broadcast notices to miners so they can prioritize upgrade transactions.
 
 ## 4. Retirement

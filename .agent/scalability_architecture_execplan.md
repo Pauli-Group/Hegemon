@@ -22,6 +22,7 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
 
 ## Progress
 
+- [ ] (2026-01-05T19:57Z) Milestone 12 **IN PROGRESS**: wired commitment proofs into the production/Substrate block path by carrying commitment proof bytes on-chain via a new unsigned `ShieldedPool::submit_commitment_proof` extrinsic, attaching it during block building, and enforcing commitment-proof + parallel transaction-proof verification during block import (default `HEGEMON_PARALLEL_PROOF_VERIFICATION=1`). Derives commitment-proof public inputs from block extrinsics + parent commitment-tree snapshot at import time and stores proofs for both mined and network-imported blocks to back `block_getCommitmentProof`. Updated E2E docs/scripts to `runbooks/commitment_proof_da_e2e.md` + `scripts/commitment_proof_da_e2e_tmux.sh` (legacy wrapper retained). Validated with `cargo test -p pallet-shielded-pool`, `cargo test -p consensus`, and `cargo test -p runtime`. Remaining: execute the E2E runbook on a machine with a working libclang/RocksDB toolchain for `hegemon-node`.
 - [x] (2026-01-06T21:20Z) Completed Milestone 11: removed verifier-as-inner unsound recursion by default (`epoch-circuit` panics unless `unsound-recursion` is enabled), gated legacy recursive block proof code behind `block-circuit/legacy-recursion` + `consensus/legacy-recursion`, removed `recursive_proof_hash` from consensus headers, and removed the `block_getRecursiveProof` RPC/store from the node. Validated with `cargo test -p consensus`, `cargo test -p block-circuit`, and `cargo test -p epoch-circuit` (note: `cargo test -p hegemon-node --no-run` still fails on this machine due to missing `libclang.dylib` for RocksDB build scripts).
 - [x] (2026-01-06T18:40Z) Milestone 10 wiring: added persistent per-node DA sampling secret (`<base_path>/da-secret`) and switched block-import DA sampling to `state_da::sample_indices(node_secret, block_hash, ...)`, logging sampled indices.
 - [x] (2026-01-06T12:45Z) Implemented `ParallelProofVerifier` with tx-proof commitment checks, anchor validation, and new block proof attachments; added `CommitmentBlockProver::commitment_from_proof_hashes` helper and an ignored integration test in `consensus/tests/parallel_verification.rs`.
@@ -194,8 +195,12 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
   Date/Author: 2026-01-06 / Codex
 
 - Decision: Do not switch PoW/BFT to `ParallelProofVerifier` by default yet.
-  Rationale: The consensus verifier is implemented, but the production/Substrate block path does not yet carry `commitment_proof` + `transaction_proofs`, so flipping defaults would break existing flows/tests without enabling real network validation.
+  Rationale: The consensus verifier is implemented, but the production/Substrate block path did not yet carry `commitment_proof` + `transaction_proofs`, so flipping defaults would break existing flows/tests without enabling real network validation. **SUPERSEDED** once Substrate blocks carried commitment proof bytes via `ShieldedPool::submit_commitment_proof` and import-time proof verification was enabled by default.
   Date/Author: 2026-01-06 / Codex
+
+- Decision: Carry commitment proof bytes on-chain via `ShieldedPool::submit_commitment_proof` and enable import-time commitment-proof + parallel transaction-proof verification by default.
+  Rationale: Substrate headers do not expose consensus header commitments; carrying the proof bytes in the block body makes verification self-contained for every validator. Default-on import verification is the production safety baseline; `HEGEMON_PARALLEL_PROOF_VERIFICATION=0` remains available for local debugging only.
+  Date/Author: 2026-01-05 / Codex
 
 - Decision: Persist a per-node DA sampling secret at `<base_path>/da-secret` and derive sampled indices as `sample_indices(node_secret, block_hash, total_chunks, sample_count)`.
   Rationale: The block producer cannot predict per-node samples without the node secret, while nodes can reproduce sampling across restarts for auditing/debugging.
@@ -747,7 +752,7 @@ This milestone removes all unsound gated checks from the codebase and deprecates
 
 ### Milestone 12: End-to-End Sound Validation
 
-**Status**: NOT STARTED
+**Status**: IN PROGRESS (Substrate proof-carry path implemented; E2E run pending on a machine that builds `hegemon-node`)
 
 This milestone validates the complete sound architecture end-to-end.
 
@@ -767,15 +772,17 @@ This milestone validates the complete sound architecture end-to-end.
        ./target/release/wallet substrate-send --to <address> --amount 1000
 
 4. Verify block acceptance with commitment proof + parallel verification:
-   - Check logs for "Commitment block proof verified"
-   - Check logs for "Transaction proofs verified in parallel (N)"
-   - Check logs for "DA sampling passed (indices: [...])"
+   - Check logs for `Commitment proof extrinsic attached` during block building.
+   - Check logs for `Commitment block proof stored for imported block` after import.
+   - Confirm there are no `Rejecting ... (proof verification failed)` warnings for the imported block.
 
 5. Query RPC:
    
        curl -s -H "Content-Type: application/json" \
          -d '{"id":1,"jsonrpc":"2.0","method":"block_getCommitmentProof","params":["0x<BLOCK_HASH>"]}' \
          http://127.0.0.1:9944
+
+   - Expect a non-empty `proof_bytes` plus `public_inputs` matching the block’s transaction count and nullifier lists.
 
 **Security validation**:
 
@@ -796,7 +803,7 @@ Expected:
 
 **Commands**:
 
-    ./scripts/e2e-sound-architecture.sh
+    HEGEMON_E2E_FORCE=1 ./scripts/commitment_proof_da_e2e_tmux.sh
 
 **Acceptance**:
 - End-to-end mining works with sound proofs
@@ -808,7 +815,7 @@ Expected:
 
 Acceptance requires two observable behaviors. First, a block with a valid commitment proof and a correct tx_proofs_commitment must be accepted only if all transaction proofs verify in parallel; a single invalid proof must reject the block with its index. Second, a block must be rejected if any sampled DA chunk is missing or fails its Merkle proof.
 
-Add a block circuit test that mutates the commitment proof bytes and expects verification to fail with a commitment proof error. Add a consensus test that injects an invalid transaction proof and expects the parallel verifier to return the failing index, and another test that removes a sampled DA chunk from the store and expects a DA error. Start the dev node, mine a block, and verify that the block header includes a non-zero commitment_proof_hash and tx_proofs_commitment plus da_root, and that the RPC methods return commitment proof bytes and a chunk with a valid Merkle proof.
+Add a block circuit test that mutates the commitment proof bytes and expects verification to fail with a commitment proof error. Add a consensus test that injects an invalid transaction proof and expects the parallel verifier to return the failing index, and another test that removes a sampled DA chunk from the store and expects a DA error. Start the dev node, mine a block, and verify that `block_getCommitmentProof` returns proof bytes and public inputs for the imported block hash, and that `da_getChunk` returns a chunk with a valid Merkle proof for the logged `da_root`.
 
 ## Idempotence and Recovery
 

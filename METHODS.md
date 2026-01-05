@@ -794,7 +794,7 @@ The node maintains a canonical commitment tree with current root `root_state`. A
 
 The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same Poseidon-style hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. `TransactionProof::verify` rejects missing STARK proof bytes/public inputs in production builds; the legacy consistency checker is gated behind the `legacy-proof` feature for test fixtures only. On top of that, the `circuits/block` crate now treats commitment proofs as the default: `CommitmentBlockProver` builds a `CommitmentBlockProof` that commits to transaction proof hashes via a Poseidon sponge, and consensus verifies the commitment proof alongside parallel transaction-proof verification. The legacy recursion helpers live in `circuits/block::recursive` and remain available for dev/test maintenance only.
 
-The commitment-proof AIR currently binds the proof-hash commitment and exposes the starting/ending state roots, nullifier root, and DA root as public inputs; state transition, nullifier uniqueness, and DA-root computation are being added in the next milestone so consensus still enforces those checks directly.
+The commitment proof binds `tx_proofs_commitment` (derived from the ordered list of transaction proof hashes) and proves nullifier uniqueness in-circuit (a permutation check between the transaction-ordered nullifier list and its sorted copy, plus adjacent-inequality constraints). The proof also exposes starting/ending state roots, nullifier root, and DA root as public inputs, but consensus recomputes those values from the block’s transactions and the parent state and rejects any mismatch; this keeps the circuit within a small row budget while preserving full soundness.
 
 Data availability uses a dedicated encoder in `state/da`. The block’s ciphertext blob is serialized as a length-prefixed stream of ciphertexts (ordered by transaction order, then ciphertext order) and erasure-encoded into `k` data shards of size `da_params.chunk_size` plus `p = ceil(k/2)` parity shards. The Merkle root `da_root` commits to all `n = k + p` shards using BLAKE3 with domain tags `da-leaf` and `da-node`. Consensus recomputes `da_root` from the transaction list and rejects any mismatch before verifying proofs. Sampling is per-node randomized: each validator chooses `da_params.sample_count` shard indices, fetches the chunk and Merkle path over P2P, and rejects the block if any sampled proof fails.
 
@@ -802,17 +802,16 @@ Data availability uses a dedicated encoder in `state/da`. The block’s cipherte
 
 Define a block commitment circuit `C_commitment` with
 
-* Public inputs: `tx_proofs_commitment`, `root_prev`, `root_new`, `nullifier_set_commitment`, `da_root`, `tx_count`, plus the transaction-ordered nullifier list and its sorted copy (both length `tx_count * MAX_INPUTS`). Milestone 8a wires the roots/commitment binding; Milestone 8b enforces the transition, uniqueness, and DA constraints.
-* Witness: the `tx_proof_hashes`, nullifier columns (unsorted + sorted lists), commitments, and the sequence of changes to the commitment tree (indices and sibling hashes), plus the DA-encoded ciphertext chunk list.
+* Public inputs: `tx_proofs_commitment`, `root_prev`, `root_new`, `nullifier_root`, `da_root`, `tx_count`, plus the transaction-ordered nullifier list and its sorted copy (both length `tx_count * MAX_INPUTS`).
+* Witness: the `tx_proof_hashes` and the nullifier columns (unsorted + sorted lists).
 
-Constraints in `C_commitment` (Milestone 8b target):
+Constraints in `C_commitment`:
 
 1. **Commit to proof hashes** – absorb proof-hash limbs into a Poseidon sponge and enforce the 4-limb commitment equals `tx_proofs_commitment`.
-2. **Reproduce tree evolution** – start with `root = root_prev` and iteratively insert each `cm_out[j]` at the next available leaf position, recomputing the root with Poseidon Merkle nodes. After all insertions, enforce that the final root equals `root_new`.
-3. **Check nullifier uniqueness** – enforce a permutation check between the transaction-ordered nullifier list and its sorted copy, then require no adjacent equals in the sorted list (skipping zero padding).
-4. **Bind DA root** – compute `da_root` from the ciphertext blob and enforce it matches the public input.
+2. **Check nullifier uniqueness** – enforce a permutation check between the transaction-ordered nullifier list and its sorted copy, then require no adjacent equals in the sorted list (skipping zero padding).
+3. **Expose roots and DA** – carry `root_prev`, `root_new`, `nullifier_root`, and `da_root` as public inputs so consensus can recompute them from the block’s transactions and parent state and reject mismatches.
 
-This yields a per-block proof `π_block` showing every transaction adheres to the join–split semantics and that the global note tree root evolves correctly from `root_prev` to `root_new`, while still allowing parallel transaction proof verification in consensus.
+This yields a per-block proof `π_block` showing that the miner committed to the exact list of transaction proof hashes and that the padded nullifier multiset is unique, while leaving deterministic state transitions (commitment tree updates and DA root reconstruction) to consensus checks outside the circuit.
 
 #### 6.4 Circuit versioning
 
