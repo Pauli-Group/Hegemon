@@ -1,6 +1,6 @@
 [package]
 name = "hegemon-node"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 edition = "2021"
 authors = ["Pauli Group Inc."]
 description = "Hegemon PQ-secure blockchain node"
