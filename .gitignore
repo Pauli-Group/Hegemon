@@ -1,6 +1,5 @@
 target/
 wallet-demo-artifacts/
-state/
 node.db/
 *.db
 *.db-shm
