@@ -7,6 +7,8 @@
 //! - Nullifier correctness
 //! - MASP balance conservation with value balance
 
+use alloc::format;
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use winterfell::{
@@ -335,6 +337,96 @@ impl ToElements<BaseElement> for TransactionPublicInputsStark {
         elements.extend_from_slice(&self.stablecoin_oracle_commitment);
         elements.extend_from_slice(&self.stablecoin_attestation_commitment);
         elements
+    }
+}
+
+impl TransactionPublicInputsStark {
+    pub fn try_from_elements(elements: &[BaseElement]) -> Result<Self, String> {
+        let expected_len = (MAX_INPUTS + MAX_OUTPUTS) * 5 + 24;
+        if elements.len() != expected_len {
+            return Err(format!(
+                "transaction public inputs length mismatch: expected {expected_len}, got {}",
+                elements.len()
+            ));
+        }
+
+        let mut idx = 0usize;
+        fn take<'a>(slice: &'a [BaseElement], idx: &mut usize, len: usize) -> &'a [BaseElement] {
+            let start = *idx;
+            let end = start + len;
+            *idx = end;
+            &slice[start..end]
+        }
+
+        let input_flags = take(elements, &mut idx, MAX_INPUTS).to_vec();
+        let output_flags = take(elements, &mut idx, MAX_OUTPUTS).to_vec();
+
+        let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
+        for _ in 0..MAX_INPUTS {
+            let nf = take(elements, &mut idx, 4);
+            nullifiers.push([nf[0], nf[1], nf[2], nf[3]]);
+        }
+
+        let mut commitments = Vec::with_capacity(MAX_OUTPUTS);
+        for _ in 0..MAX_OUTPUTS {
+            let cm = take(elements, &mut idx, 4);
+            commitments.push([cm[0], cm[1], cm[2], cm[3]]);
+        }
+
+        let fee = elements[idx];
+        idx += 1;
+        let value_balance_sign = elements[idx];
+        idx += 1;
+        let value_balance_magnitude = elements[idx];
+        idx += 1;
+
+        let merkle_root = {
+            let root = take(elements, &mut idx, 4);
+            [root[0], root[1], root[2], root[3]]
+        };
+
+        let stablecoin_enabled = elements[idx];
+        idx += 1;
+        let stablecoin_asset = elements[idx];
+        idx += 1;
+        let stablecoin_policy_version = elements[idx];
+        idx += 1;
+        let stablecoin_issuance_sign = elements[idx];
+        idx += 1;
+        let stablecoin_issuance_magnitude = elements[idx];
+        idx += 1;
+
+        let stablecoin_policy_hash = {
+            let hash = take(elements, &mut idx, 4);
+            [hash[0], hash[1], hash[2], hash[3]]
+        };
+        let stablecoin_oracle_commitment = {
+            let hash = take(elements, &mut idx, 4);
+            [hash[0], hash[1], hash[2], hash[3]]
+        };
+        let stablecoin_attestation_commitment = {
+            let hash = take(elements, &mut idx, 4);
+            [hash[0], hash[1], hash[2], hash[3]]
+        };
+
+        Ok(Self {
+            input_flags,
+            output_flags,
+            nullifiers,
+            commitments,
+            fee,
+            value_balance_sign,
+            value_balance_magnitude,
+            merkle_root,
+            stablecoin_enabled,
+            stablecoin_asset,
+            stablecoin_policy_version,
+            stablecoin_issuance_sign,
+            stablecoin_issuance_magnitude,
+            stablecoin_policy_hash,
+            stablecoin_oracle_commitment,
+            stablecoin_attestation_commitment,
+        })
     }
 }
 

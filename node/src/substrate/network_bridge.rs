@@ -35,6 +35,7 @@ use network::{
     PeerId, PqNetworkEvent, BLOCK_ANNOUNCES_LEGACY, BLOCK_ANNOUNCES_PQ, SYNC_LEGACY, SYNC_PQ,
     TRANSACTIONS_LEGACY, TRANSACTIONS_PQ,
 };
+use state_da::DaChunkProof;
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
 
@@ -49,6 +50,8 @@ pub const SYNC_PROTOCOL_LEGACY: &str = SYNC_LEGACY;
 pub const RECURSIVE_EPOCH_PROOFS_PROTOCOL: &str = "/hegemon/epoch-proofs/recursive/pq/1";
 /// Recursive epoch proof request/response protocol (PQ version).
 pub const RECURSIVE_EPOCH_PROOFS_PROTOCOL_V2: &str = "/hegemon/epoch-proofs/recursive/pq/2";
+/// Data-availability chunk request/response protocol (PQ version).
+pub const DA_CHUNKS_PROTOCOL: &str = "/hegemon/da/chunks/pq/1";
 
 /// Block state for announcements
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
@@ -136,6 +139,20 @@ pub struct RecursiveEpochProofMessage {
     /// Inner proof bytes (RPO), required to verify a recursive proof-of-proof.
     pub inner_proof_bytes: Vec<u8>,
     pub is_recursive: bool,
+}
+
+/// Data-availability chunk protocol messages.
+#[derive(Debug, Clone, Encode, Decode)]
+pub enum DaChunkProtocolMessage {
+    /// Request a set of chunk indices for a given DA root.
+    Request { root: [u8; 32], indices: Vec<u32> },
+    /// Respond with chunk proofs for the requested indices.
+    Response {
+        root: [u8; 32],
+        proofs: Vec<DaChunkProof>,
+    },
+    /// Indicate missing chunks for a requested DA root.
+    NotFound { root: [u8; 32], indices: Vec<u32> },
 }
 
 /// Recursive epoch proof protocol message.
@@ -279,6 +296,24 @@ pub enum IncomingMessage {
         peer_id: PeerId,
         response: SyncResponse,
     },
+    /// DA chunk request from a peer.
+    DaChunkRequest {
+        peer_id: PeerId,
+        root: [u8; 32],
+        indices: Vec<u32>,
+    },
+    /// DA chunk response from a peer.
+    DaChunkResponse {
+        peer_id: PeerId,
+        root: [u8; 32],
+        proofs: Vec<DaChunkProof>,
+    },
+    /// DA chunk not-found response.
+    DaChunkNotFound {
+        peer_id: PeerId,
+        root: [u8; 32],
+        indices: Vec<u32>,
+    },
 }
 
 /// Statistics for the network bridge
@@ -294,6 +329,12 @@ pub struct NetworkBridgeStats {
     pub decode_errors: u64,
     /// Unknown protocol messages
     pub unknown_protocols: u64,
+    /// DA chunk requests received
+    pub da_requests_received: u64,
+    /// DA chunk responses received
+    pub da_responses_received: u64,
+    /// DA chunk not-found messages received
+    pub da_not_found_received: u64,
 }
 
 /// Bridge between PQ network and block import
@@ -400,6 +441,9 @@ impl NetworkBridge {
             }
             p if p == SYNC_PROTOCOL || p == SYNC_PROTOCOL_LEGACY => {
                 self.handle_sync_message(peer_id, data).await;
+            }
+            p if p == DA_CHUNKS_PROTOCOL => {
+                self.handle_da_chunk_message(peer_id, data).await;
             }
             _ => {
                 self.stats.unknown_protocols += 1;
@@ -560,6 +604,66 @@ impl NetworkBridge {
             data_len = data.len(),
             "Failed to decode sync message"
         );
+    }
+
+    /// Handle data-availability chunk protocol messages.
+    async fn handle_da_chunk_message(&mut self, peer_id: &PeerId, data: &[u8]) {
+        match DaChunkProtocolMessage::decode(&mut &data[..]) {
+            Ok(msg) => {
+                match &msg {
+                    DaChunkProtocolMessage::Request { .. } => {
+                        self.stats.da_requests_received += 1;
+                    }
+                    DaChunkProtocolMessage::Response { .. } => {
+                        self.stats.da_responses_received += 1;
+                    }
+                    DaChunkProtocolMessage::NotFound { .. } => {
+                        self.stats.da_not_found_received += 1;
+                    }
+                }
+
+                if let Some(ref tx) = self.message_tx {
+                    let incoming = match msg {
+                        DaChunkProtocolMessage::Request { root, indices } => {
+                            IncomingMessage::DaChunkRequest {
+                                peer_id: *peer_id,
+                                root,
+                                indices,
+                            }
+                        }
+                        DaChunkProtocolMessage::Response { root, proofs } => {
+                            IncomingMessage::DaChunkResponse {
+                                peer_id: *peer_id,
+                                root,
+                                proofs,
+                            }
+                        }
+                        DaChunkProtocolMessage::NotFound { root, indices } => {
+                            IncomingMessage::DaChunkNotFound {
+                                peer_id: *peer_id,
+                                root,
+                                indices,
+                            }
+                        }
+                    };
+                    if let Err(e) = tx.send(incoming).await {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to send DA chunk message to channel"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                self.stats.decode_errors += 1;
+                tracing::debug!(
+                    peer_id = %hex::encode(peer_id),
+                    error = %e,
+                    data_len = data.len(),
+                    "Failed to decode DA chunk message"
+                );
+            }
+        }
     }
 
     /// Drain pending block announcements for import

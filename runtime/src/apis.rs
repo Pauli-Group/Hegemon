@@ -29,6 +29,7 @@
 
 // Note: no_std is handled by the parent crate (runtime/src/lib.rs)
 
+use pallet_shielded_pool::merkle::CompactMerkleTree;
 use sp_api::decl_runtime_apis;
 use sp_core::U256;
 use sp_std::vec::Vec;
@@ -145,5 +146,17 @@ decl_runtime_apis! {
         /// Returns all nullifiers currently in the spent set.
         /// Used by wallets to detect which of their notes have been spent.
         fn list_nullifiers() -> Vec<[u8; 32]>;
+
+        /// Fetch the compact Merkle tree state used for commitment-root computation.
+        ///
+        /// This is used by the node during block import to derive the expected commitment tree
+        /// roots without replaying all historical commitments.
+        fn compact_merkle_tree() -> CompactMerkleTree;
+
+        /// Fetch the current anchor root history window.
+        ///
+        /// This mirrors `pallet_shielded_pool::MerkleRootHistory` and is used by the node to
+        /// validate transaction anchors during block import.
+        fn merkle_root_history() -> Vec<[u8; 32]>;
     }
 }

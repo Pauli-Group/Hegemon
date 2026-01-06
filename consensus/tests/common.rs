@@ -2,7 +2,9 @@
 use consensus::BalanceTag;
 use consensus::CoinbaseData;
 use consensus::CoinbaseSource;
+use consensus::CommitmentTreeState;
 use consensus::DEFAULT_VERSION_BINDING;
+use consensus::ProofError;
 use consensus::SupplyDigest;
 use consensus::VersionBinding;
 use consensus::error::ConsensusError;
@@ -10,8 +12,8 @@ use consensus::header::{BlockHeader, PowSeal};
 use consensus::nullifier::NullifierSet;
 use consensus::reward::{block_subsidy, update_supply_digest};
 use consensus::types::{
-    ConsensusBlock, Transaction, compute_fee_commitment, compute_proof_commitment,
-    compute_version_commitment,
+    ConsensusBlock, DaParams, Transaction, compute_fee_commitment, compute_proof_commitment,
+    compute_version_commitment, da_root,
 };
 use consensus::validator::{Validator, ValidatorSet};
 use crypto::hashes::sha256;
@@ -33,7 +35,7 @@ pub struct BftBlockParams<'a> {
     pub validators: &'a [TestValidator],
     pub signer_indices: &'a [usize],
     pub base_nullifiers: &'a NullifierSet,
-    pub base_state_root: [u8; 32],
+    pub base_commitment_tree: &'a CommitmentTreeState,
     pub supply_digest: SupplyDigest,
 }
 
@@ -44,7 +46,7 @@ pub struct PowBlockParams<'a> {
     pub transactions: Vec<Transaction>,
     pub miner: &'a TestValidator,
     pub base_nullifiers: &'a NullifierSet,
-    pub base_state_root: [u8; 32],
+    pub base_commitment_tree: &'a CommitmentTreeState,
     pub pow_bits: u32,
     pub nonce: [u8; 32],
     pub parent_supply: SupplyDigest,
@@ -107,24 +109,9 @@ pub fn apply_nullifiers(
     Ok(set)
 }
 
-pub fn accumulate_state(mut root: [u8; 32], transactions: &[Transaction]) -> [u8; 32] {
-    for tx in transactions {
-        if tx.commitments.is_empty() {
-            continue;
-        }
-        let mut data = Vec::with_capacity(32 + tx.commitments.len() * 32);
-        data.extend_from_slice(&root);
-        for cm in &tx.commitments {
-            data.extend_from_slice(cm);
-        }
-        root = sha256(&data);
-    }
-    root
-}
-
 pub fn assemble_bft_block(
     params: BftBlockParams<'_>,
-) -> Result<(ConsensusBlock, NullifierSet, [u8; 32]), ConsensusError> {
+) -> Result<(ConsensusBlock, NullifierSet, CommitmentTreeState), ConsensusError> {
     let BftBlockParams {
         height,
         view,
@@ -134,7 +121,7 @@ pub fn assemble_bft_block(
         validators,
         signer_indices,
         base_nullifiers,
-        base_state_root,
+        base_commitment_tree,
         supply_digest,
     } = params;
     let new_nullifiers = apply_nullifiers(base_nullifiers, &transactions)?;
@@ -142,8 +129,19 @@ pub fn assemble_bft_block(
     let proof_commitment = compute_proof_commitment(&transactions);
     let version_commitment = compute_version_commitment(&transactions);
     let fee_commitment = compute_fee_commitment(&transactions);
-    let state_root = accumulate_state(base_state_root, &transactions);
+    let mut tree = base_commitment_tree.clone();
+    for tx in &transactions {
+        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 32]) {
+            tree.append(commitment).map_err(ProofError::from)?;
+        }
+    }
+    let state_root = tree.root();
+    let da_params = DaParams {
+        chunk_size: 1024,
+        sample_count: 4,
+    };
     let validator_set = validator_set(validators);
+    let da_root = da_root(&transactions, da_params).expect("da root");
     let mut header = BlockHeader {
         version: 1,
         height,
@@ -153,6 +151,8 @@ pub fn assemble_bft_block(
         state_root,
         nullifier_root,
         proof_commitment,
+        da_root,
+        da_params,
         version_commitment,
         tx_count: transactions.len() as u32,
         fee_commitment,
@@ -178,16 +178,20 @@ pub fn assemble_bft_block(
             header,
             transactions,
             coinbase: None,
+            #[cfg(feature = "legacy-recursion")]
+            recursive_proof: None,
+            commitment_proof: None,
+            transaction_proofs: None,
         },
         new_nullifiers,
-        state_root,
+        tree,
     ))
 }
 
 #[allow(dead_code)]
 pub fn assemble_pow_block(
     params: PowBlockParams<'_>,
-) -> Result<(ConsensusBlock, NullifierSet, [u8; 32]), ConsensusError> {
+) -> Result<(ConsensusBlock, NullifierSet, CommitmentTreeState), ConsensusError> {
     let PowBlockParams {
         height,
         parent_hash,
@@ -195,7 +199,7 @@ pub fn assemble_pow_block(
         transactions,
         miner,
         base_nullifiers,
-        base_state_root,
+        base_commitment_tree,
         pow_bits,
         nonce,
         parent_supply,
@@ -206,7 +210,18 @@ pub fn assemble_pow_block(
     let proof_commitment = compute_proof_commitment(&transactions);
     let version_commitment = compute_version_commitment(&transactions);
     let fee_commitment = compute_fee_commitment(&transactions);
-    let state_root = accumulate_state(base_state_root, &transactions);
+    let mut tree = base_commitment_tree.clone();
+    for tx in &transactions {
+        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 32]) {
+            tree.append(commitment).map_err(ProofError::from)?;
+        }
+    }
+    let state_root = tree.root();
+    let da_params = DaParams {
+        chunk_size: 1024,
+        sample_count: 4,
+    };
+    let da_root = da_root(&transactions, da_params).expect("da root");
     let mut header = BlockHeader {
         version: 1,
         height,
@@ -216,6 +231,8 @@ pub fn assemble_pow_block(
         state_root,
         nullifier_root,
         proof_commitment,
+        da_root,
+        da_params,
         version_commitment,
         tx_count: transactions.len() as u32,
         fee_commitment,
@@ -234,9 +251,13 @@ pub fn assemble_pow_block(
             header,
             transactions,
             coinbase: Some(coinbase),
+            #[cfg(feature = "legacy-recursion")]
+            recursive_proof: None,
+            commitment_proof: None,
+            transaction_proofs: None,
         },
         new_nullifiers,
-        state_root,
+        tree,
     ))
 }
 

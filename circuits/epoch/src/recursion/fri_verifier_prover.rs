@@ -4,7 +4,7 @@
 //! (1) executes a single RPO permutation to satisfy RPO transition constraints and
 //! (2) repeats one valid folding relation in the extra columns.
 
-use winter_air::ProofOptions;
+use winter_air::{FieldExtension, ProofOptions};
 use winter_crypto::{hashers::Blake3_256, MerkleTree};
 use winter_fri::folding::fold_positions;
 use winter_math::{FieldElement, StarkField};
@@ -170,6 +170,11 @@ impl FriVerifierProver {
     /// verifies folding relations between successive FRI layers and the remainder polynomial.
     /// Merkle authentication for layer openings is not yet included.
     pub fn build_trace_from_inner(&self, inner: &InnerProofData) -> TraceTable<BaseElement> {
+        assert_eq!(
+            inner.field_extension,
+            FieldExtension::None,
+            "FRI verifier trace builder currently supports only base-field inner proofs"
+        );
         let num_layers = inner.fri_layers.len();
 
         if num_layers == 0 || inner.query_positions.is_empty() {

@@ -1,4 +1,5 @@
 pub mod bft;
+pub mod commitment_tree;
 pub mod error;
 pub mod header;
 pub mod mining;
@@ -13,12 +14,22 @@ pub mod validator;
 pub mod version_policy;
 
 pub use bft::{BftConsensus, ConsensusUpdate};
+#[cfg(feature = "legacy-recursion")]
+pub use block_circuit::RecursiveBlockProof;
+pub use commitment_tree::{
+    COMMITMENT_TREE_DEPTH, CommitmentTreeError, CommitmentTreeState, DEFAULT_ROOT_HISTORY_LIMIT,
+};
 pub use error::{ConsensusError, ProofError, SlashingEvidence};
 pub use header::{BlockHeader, ConsensusMode, PowSeal};
 pub use mining::{MiningCoordinator, MiningSolution, MiningStats, MiningWork, MiningWorker};
 pub use nullifier::NullifierSet;
 pub use pow::PowConsensus;
-pub use proof::{HashVerifier, ProofVerifier};
+#[cfg(feature = "legacy-recursion")]
+pub use proof::RecursiveProofVerifier;
+pub use proof::{
+    CommitmentNullifierLists, HashVerifier, ParallelProofVerifier, ProofVerifier,
+    commitment_nullifier_lists, verify_commitment_proof_payload,
+};
 pub use protocol_versioning::{
     CIRCUIT_V1, CIRCUIT_V2, CRYPTO_SUITE_ALPHA, CRYPTO_SUITE_BETA, CircuitVersion, CryptoSuiteId,
     DEFAULT_VERSION_BINDING, VersionBinding, VersionMatrix,
@@ -29,8 +40,9 @@ pub use substrate_pow::{
     target_to_compact, verify_seal,
 };
 pub use types::{
-    BalanceTag, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, FeeCommitment, Nullifier,
-    StarkCommitment, SupplyDigest, Transaction, VersionCommitment,
+    BalanceTag, CoinbaseData, CoinbaseSource, Commitment, ConsensusBlock, DaChunk, DaChunkProof,
+    DaEncoding, DaError, DaParams, DaRoot, FeeCommitment, Nullifier, StarkCommitment, SupplyDigest,
+    Transaction, VersionCommitment, build_da_blob, da_root, encode_da_blob, verify_da_chunk,
 };
 pub use validator::{Validator, ValidatorSet};
 pub use version_policy::{UpgradeDirective, VersionProposal, VersionSchedule};

@@ -8,7 +8,7 @@ use transaction_circuit::StablecoinPolicyBinding;
 use crate::address::ShieldedAddress;
 use crate::error::WalletError;
 use crate::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
-use crate::prover::StarkProver;
+use crate::prover::{StarkProver, StarkProverConfig};
 use crate::rpc::TransactionBundle;
 use crate::store::{OutgoingDisclosureDraft, SpendableNote, WalletMode, WalletStore};
 use crate::substrate_rpc::SubstrateRpcClient;
@@ -25,6 +25,17 @@ pub struct BuiltTransaction {
     pub nullifiers: Vec<[u8; 32]>,
     pub spent_note_indexes: Vec<usize>,
     pub outgoing_disclosures: Vec<OutgoingDisclosureDraft>,
+}
+
+fn build_stark_prover() -> StarkProver {
+    let fast = std::env::var("HEGEMON_WALLET_PROVER_FAST")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if fast {
+        StarkProver::new(StarkProverConfig::fast())
+    } else {
+        StarkProver::with_defaults()
+    }
 }
 
 /// Pre-flight check: compute nullifiers for notes and verify none are spent on-chain.
@@ -288,7 +299,7 @@ pub fn build_transaction_with_binding(
     };
 
     // Generate STARK proof using the real prover
-    let prover = StarkProver::with_defaults();
+    let prover = build_stark_prover();
     let proof_result = prover.prove(&witness)?;
 
     // Debug: compare wallet-computed nullifiers vs prover nullifiers (only in debug builds)
@@ -510,7 +521,7 @@ pub fn build_stablecoin_burn(
         version: TransactionWitness::default_version_binding(),
     };
 
-    let prover = StarkProver::with_defaults();
+    let prover = build_stark_prover();
     let proof_result = prover.prove(&witness)?;
 
     let binding_hash = compute_binding_hash(

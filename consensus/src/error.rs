@@ -1,3 +1,4 @@
+use crate::commitment_tree::CommitmentTreeError;
 use crate::types::{BlockHash, Nullifier, ValidatorId};
 use protocol_versioning::VersionBinding;
 use thiserror::Error;
@@ -51,6 +52,54 @@ pub enum ProofError {
     FeeCommitment,
     #[error("version commitment mismatch")]
     VersionCommitment,
+    #[error("data availability root mismatch")]
+    DaRootMismatch,
+    #[error("data availability encoding failed: {0}")]
+    DaEncoding(String),
+    #[error("missing recursive proof payload")]
+    MissingRecursiveProof,
+    #[error("unexpected recursive proof payload")]
+    UnexpectedRecursiveProof,
+    #[error("recursive proof hash mismatch")]
+    RecursiveProofHashMismatch,
+    #[error("recursive proof verification failed: {0}")]
+    RecursiveProofVerification(String),
+    #[error("recursive proof count mismatch")]
+    RecursiveProofCountMismatch,
+    #[error("recursive proof padding mismatch")]
+    RecursiveProofPaddingMismatch,
+    #[error("recursive proof inputs mismatch at index {0}")]
+    RecursiveProofInputsMismatch(usize),
+    #[error("invalid commitment-tree anchor at transaction index {index}")]
+    InvalidAnchor { index: usize, anchor: [u8; 32] },
+    #[error("recursive proof starting root mismatch")]
+    StartingRootMismatch {
+        expected: [u8; 32],
+        observed: [u8; 32],
+    },
+    #[error("recursive proof ending root mismatch")]
+    EndingRootMismatch {
+        expected: [u8; 32],
+        observed: [u8; 32],
+    },
+    #[error("commitment proof requires at least one transaction")]
+    CommitmentProofEmptyBlock,
+    #[error("commitment proof inputs mismatch: {0}")]
+    CommitmentProofInputsMismatch(String),
+    #[error("commitment proof verification failed: {0}")]
+    CommitmentProofVerification(String),
+    #[error("missing commitment proof payload")]
+    MissingCommitmentProof,
+    #[error("missing transaction proofs")]
+    MissingTransactionProofs,
+    #[error("transaction proof count mismatch: expected {expected}, got {observed}")]
+    TransactionProofCountMismatch { expected: usize, observed: usize },
+    #[error("transaction proof inputs mismatch at index {index}: {message}")]
+    TransactionProofInputsMismatch { index: usize, message: String },
+    #[error("transaction proof verification failed at index {index}: {message}")]
+    TransactionProofVerification { index: usize, message: String },
+    #[error("commitment tree error: {0}")]
+    CommitmentTree(#[from] CommitmentTreeError),
     #[error("verifier internal error: {0}")]
     Internal(&'static str),
 }

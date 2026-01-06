@@ -46,13 +46,16 @@ use winter_air::{Air, ConstraintCompositionCoefficients, DeepCompositionCoeffici
 use winter_crypto::{hashers::Blake3_256, Hasher, MerkleTree, RandomCoin};
 use winter_fri::folding::fold_positions;
 use winter_fri::utils::map_positions_to_indexes;
-use winter_math::{fields::f64::BaseElement, FieldElement, ToElements};
+use winter_math::{
+    fields::{f64::BaseElement, QuadExtension},
+    FieldElement, ToElements,
+};
 use winterfell::{
     crypto::DefaultRandomCoin, verify, AcceptableOptions, BatchingMethod, FieldExtension,
     ProofOptions, Prover,
 };
 
-use super::rpo_air::STATE_WIDTH;
+use super::rpo_air::{ROWS_PER_PERMUTATION, STATE_WIDTH, TRACE_WIDTH as RPO_TRACE_WIDTH};
 use super::rpo_proof::{rpo_hash_elements, rpo_merge, RpoProofOptions};
 use super::rpo_stark_prover::{verify_epoch_with_rpo, RpoStarkProver};
 use super::rpo_stark_verifier_prover::RpoStarkVerifierProver;
@@ -444,6 +447,28 @@ impl RecursiveEpochProver {
     ///
     /// Uses the winterfell verifier with RPO-based Fiat-Shamir.
     pub fn verify_epoch_proof(&self, proof: &RecursiveEpochProof, epoch: &Epoch) -> bool {
+        let acceptable = AcceptableOptions::OptionSet(vec![
+            RpoProofOptions::fast().to_winter_options(),
+            RpoProofOptions::production().to_winter_options(),
+        ]);
+        self.verify_epoch_proof_with_acceptable_options(proof, epoch, acceptable)
+    }
+
+    /// Verify a recursive epoch proof using a strict acceptable-options policy.
+    ///
+    /// This accepts only the proof options configured on this prover instance (e.g. use
+    /// `RecursiveEpochProver::production()` in production deployments).
+    pub fn verify_epoch_proof_strict(&self, proof: &RecursiveEpochProof, epoch: &Epoch) -> bool {
+        let acceptable = AcceptableOptions::OptionSet(vec![self.options.to_winter_options()]);
+        self.verify_epoch_proof_with_acceptable_options(proof, epoch, acceptable)
+    }
+
+    fn verify_epoch_proof_with_acceptable_options(
+        &self,
+        proof: &RecursiveEpochProof,
+        epoch: &Epoch,
+        acceptable: AcceptableOptions,
+    ) -> bool {
         // Basic sanity checks
         if proof.epoch_commitment != epoch.commitment() {
             return false;
@@ -478,6 +503,9 @@ impl RecursiveEpochProver {
             Err(_) => return false,
         };
         let outer_pub_inputs = inner_data.to_stark_verifier_inputs();
+        if outer_pub_inputs.validate_for_stark_verifier_air().is_err() {
+            return false;
+        }
 
         let outer_proof = match winterfell::Proof::from_bytes(&proof.proof_bytes) {
             Ok(p) => p,
@@ -487,10 +515,6 @@ impl RecursiveEpochProver {
         // Prefer verifying the outer proof with RPO (self-recursive-friendly), and fall back to
         // the legacy Blake3 outer-proof path for backwards compatibility.
         type RpoMerkleTree = MerkleTree<Rpo256>;
-        let acceptable = AcceptableOptions::OptionSet(vec![
-            RpoProofOptions::fast().to_winter_options(),
-            RpoProofOptions::production().to_winter_options(),
-        ]);
         if verify::<StarkVerifierAir, Rpo256, RpoRandomCoin, RpoMerkleTree>(
             outer_proof.clone(),
             outer_pub_inputs.clone(),
@@ -581,10 +605,10 @@ fn build_epoch_batch_input_state(
 /// Uses higher blowup factor for recursive verification soundness.
 pub fn recursive_proof_options() -> ProofOptions {
     ProofOptions::new(
-        16, // num_queries (higher for recursion)
-        32, // blowup_factor (32 for degree-8 constraints with cycle 16)
+        22, // num_queries (≥85-bit PQ soundness with blowup 16)
+        16, // blowup_factor (minimum for current StarkVerifierAir degrees)
         4,  // grinding_factor
-        FieldExtension::None,
+        FieldExtension::Quadratic,
         2, // fri_folding_factor
         7, // fri_remainder_max_degree (must be 2^k - 1)
         BatchingMethod::Linear,
@@ -595,10 +619,10 @@ pub fn recursive_proof_options() -> ProofOptions {
 /// Get fast recursive proof options for testing.
 pub fn fast_recursive_proof_options() -> ProofOptions {
     ProofOptions::new(
-        8,
-        32, // Must be at least 32 for RPO constraints
+        1,
+        16, // Dev-fast: minimum blowup for current StarkVerifierAir degrees.
         0,
-        FieldExtension::None,
+        FieldExtension::Quadratic,
         2,
         7,
         BatchingMethod::Linear,
@@ -628,8 +652,16 @@ pub struct InnerProofData {
     pub trace_length: usize,
     /// Trace width (main trace segment) of the inner proof.
     pub trace_width: usize,
+    /// Field extension used by the inner proof.
+    pub field_extension: FieldExtension,
     /// Blowup factor used by the inner proof.
     pub blowup_factor: usize,
+    /// FRI folding factor used by the inner proof.
+    pub fri_folding_factor: usize,
+    /// FRI remainder max degree used by the inner proof.
+    pub fri_remainder_max_degree: usize,
+    /// Query seed grinding factor used by the inner proof.
+    pub grinding_factor: usize,
     /// Partition size used for main-trace Merkle leaves.
     pub trace_partition_size: usize,
     /// Partition size used for constraint-evaluation Merkle leaves.
@@ -672,8 +704,8 @@ pub struct InnerProofData {
     pub ood_quotient_next: Vec<BaseElement>,
     /// Digest of the merged OOD frame evaluations (used to reseed the transcript before DEEP).
     pub ood_digest: [BaseElement; 4],
-    /// Out-of-domain point z drawn from the public coin.
-    pub z: BaseElement,
+    /// Out-of-domain point z drawn from the public coin (base limbs; length = extension degree).
+    pub z: Vec<BaseElement>,
     /// Constraint composition coefficients drawn from the public coin.
     pub constraint_coeffs: ConstraintCompositionCoefficients<BaseElement>,
     /// DEEP composition coefficients drawn from the public coin.
@@ -701,17 +733,21 @@ impl InnerProofData {
             constraint_commitment: [BaseElement::ZERO; 4],
             public_inputs: vec![],
             pow_nonce: 0,
-            trace_length: 0,
-            trace_width: 0,
-            blowup_factor: 0,
-            trace_partition_size: 0,
-            constraint_partition_size: 0,
-            fri_num_partitions: 0,
-            constraint_frame_width: 0,
-            num_transition_constraints: 0,
+            trace_length: ROWS_PER_PERMUTATION,
+            trace_width: RPO_TRACE_WIDTH,
+            field_extension: FieldExtension::None,
+            blowup_factor: 8,
+            fri_folding_factor: 2,
+            fri_remainder_max_degree: 7,
+            grinding_factor: 0,
+            trace_partition_size: RPO_TRACE_WIDTH,
+            constraint_partition_size: 8,
+            fri_num_partitions: 1,
+            constraint_frame_width: 8,
+            num_transition_constraints: STATE_WIDTH,
             num_assertions: 0,
-            num_draws: 0,
-            query_positions: vec![],
+            num_draws: 1,
+            query_positions: vec![0],
             unique_query_positions: vec![],
             trace_evaluations: vec![],
             trace_auth_paths: vec![],
@@ -720,12 +756,12 @@ impl InnerProofData {
             fri_layers: vec![],
             fri_remainder: vec![],
             fri_remainder_commitment: [BaseElement::ZERO; 4],
-            ood_trace_current: vec![],
-            ood_trace_next: vec![],
-            ood_quotient_current: vec![],
-            ood_quotient_next: vec![],
+            ood_trace_current: vec![BaseElement::ZERO; RPO_TRACE_WIDTH],
+            ood_trace_next: vec![BaseElement::ZERO; RPO_TRACE_WIDTH],
+            ood_quotient_current: vec![BaseElement::ZERO; 8],
+            ood_quotient_next: vec![BaseElement::ZERO; 8],
             ood_digest: [BaseElement::ZERO; 4],
-            z: BaseElement::ZERO,
+            z: vec![BaseElement::ZERO],
             constraint_coeffs: ConstraintCompositionCoefficients {
                 transition: vec![],
                 boundary: vec![],
@@ -754,16 +790,16 @@ impl InnerProofData {
         let proof = Proof::from_bytes(proof_bytes)
             .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
 
-        // Only base field recursion is supported for now.
-        if proof.options().field_extension() != FieldExtension::None {
-            return Err(EpochProverError::TraceBuildError(
-                "inner proof uses unsupported field extension".to_string(),
-            ));
-        }
+        let field_extension = proof.options().field_extension();
+        let extension_degree = field_extension_degree(field_extension)?;
 
         // Extract trace/options info from the proof context.
         let trace_info = proof.trace_info().clone();
         let options = proof.options().clone();
+        let fri_options = options.to_fri_options();
+        let fri_folding_factor = fri_options.folding_factor();
+        let fri_remainder_max_degree = fri_options.remainder_max_degree();
+        let grinding_factor = options.grinding_factor() as usize;
 
         // Capture public inputs as elements before moving into AIR.
         let public_inputs = pub_inputs.to_elements();
@@ -786,8 +822,18 @@ impl InnerProofData {
         let partition_options = air.options().partition_options();
         let partition_size_main = partition_options.partition_size::<BaseElement>(main_trace_width);
         let partition_size_aux = partition_options.partition_size::<BaseElement>(aux_trace_width);
-        let partition_size_constraint =
-            partition_options.partition_size::<BaseElement>(constraint_frame_width);
+        let partition_size_constraint = match field_extension {
+            FieldExtension::None => {
+                partition_options.partition_size::<BaseElement>(constraint_frame_width)
+            }
+            FieldExtension::Quadratic => partition_options
+                .partition_size::<QuadExtension<BaseElement>>(constraint_frame_width),
+            _ => {
+                return Err(EpochProverError::TraceBuildError(
+                    "inner proof uses unsupported field extension".to_string(),
+                ))
+            }
+        };
 
         // --- parse commitments ----------------------------------------------------------------
         let (trace_roots, constraint_root, fri_roots) = proof
@@ -820,44 +866,154 @@ impl InnerProofData {
                     seg_width,
                 )
                 .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
-            trace_segment_data.push((mp, table, seg_partition));
+            let trace_rows = table.rows().map(|row| row.to_vec()).collect();
+            trace_segment_data.push((mp, trace_rows, seg_partition));
         }
 
         // --- parse constraint queries ----------------------------------------------------------
-        let (constraint_mp, constraint_table) = proof
-            .constraint_queries
-            .clone()
-            .parse::<BaseElement, Rpo256, RpoMerkleTree>(
-                lde_domain_size,
-                num_unique_queries,
-                constraint_frame_width,
-            )
-            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+        let (constraint_mp, constraint_evaluations) = match field_extension {
+            FieldExtension::None => {
+                let (mp, table) = proof
+                    .constraint_queries
+                    .clone()
+                    .parse::<BaseElement, Rpo256, RpoMerkleTree>(
+                        lde_domain_size,
+                        num_unique_queries,
+                        constraint_frame_width,
+                    )
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                let evaluations: Vec<Vec<BaseElement>> =
+                    table.rows().map(|row| row.to_vec()).collect();
+                (mp, evaluations)
+            }
+            FieldExtension::Quadratic => {
+                let (mp, table) = proof
+                    .constraint_queries
+                    .clone()
+                    .parse::<QuadExtension<BaseElement>, Rpo256, RpoMerkleTree>(
+                        lde_domain_size,
+                        num_unique_queries,
+                        constraint_frame_width,
+                    )
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                let evaluations = table.rows().map(|row| flatten_elements(row)).collect();
+                (mp, evaluations)
+            }
+            _ => {
+                return Err(EpochProverError::TraceBuildError(
+                    "inner proof uses unsupported field extension".to_string(),
+                ))
+            }
+        };
 
         // --- parse OOD frame -------------------------------------------------------------------
-        let (ood_trace_frame, ood_constraint_frame) = proof
-            .ood_frame
-            .clone()
-            .parse::<BaseElement>(main_trace_width, aux_trace_width, constraint_frame_width)
-            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
-        let ood_trace_current = ood_trace_frame.current_row().to_vec();
-        let ood_trace_next = ood_trace_frame.next_row().to_vec();
-        let ood_quotient_current = ood_constraint_frame.current_row().to_vec();
-        let ood_quotient_next = ood_constraint_frame.next_row().to_vec();
+        let (
+            ood_trace_current,
+            ood_trace_next,
+            ood_quotient_current,
+            ood_quotient_next,
+            ood_digest_word,
+        ) = match field_extension {
+            FieldExtension::None => {
+                let (ood_trace_frame, ood_constraint_frame) = proof
+                    .ood_frame
+                    .clone()
+                    .parse::<BaseElement>(main_trace_width, aux_trace_width, constraint_frame_width)
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                let ood_trace_current = ood_trace_frame.current_row().to_vec();
+                let ood_trace_next = ood_trace_frame.next_row().to_vec();
+                let ood_quotient_current = ood_constraint_frame.current_row().to_vec();
+                let ood_quotient_next = ood_constraint_frame.next_row().to_vec();
+                let ood_evals = merge_ood_evaluations(&ood_trace_frame, &ood_constraint_frame);
+                let ood_digest_word = Rpo256::hash_elements(&ood_evals);
+                (
+                    ood_trace_current,
+                    ood_trace_next,
+                    ood_quotient_current,
+                    ood_quotient_next,
+                    ood_digest_word,
+                )
+            }
+            FieldExtension::Quadratic => {
+                let (ood_trace_frame, ood_constraint_frame) = proof
+                    .ood_frame
+                    .clone()
+                    .parse::<QuadExtension<BaseElement>>(
+                        main_trace_width,
+                        aux_trace_width,
+                        constraint_frame_width,
+                    )
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                let ood_trace_current = flatten_elements(ood_trace_frame.current_row());
+                let ood_trace_next = flatten_elements(ood_trace_frame.next_row());
+                let ood_quotient_current = flatten_elements(ood_constraint_frame.current_row());
+                let ood_quotient_next = flatten_elements(ood_constraint_frame.next_row());
+                let ood_evals = merge_ood_evaluations(&ood_trace_frame, &ood_constraint_frame);
+                let ood_digest_word = Rpo256::hash_elements(&ood_evals);
+                (
+                    ood_trace_current,
+                    ood_trace_next,
+                    ood_quotient_current,
+                    ood_quotient_next,
+                    ood_digest_word,
+                )
+            }
+            _ => {
+                return Err(EpochProverError::TraceBuildError(
+                    "inner proof uses unsupported field extension".to_string(),
+                ))
+            }
+        };
+        let ood_digest = word_to_digest(ood_digest_word);
 
         // --- parse FRI proof -------------------------------------------------------------------
         let fri_num_partitions = proof.fri_proof.num_partitions();
-        let fri_remainder_commitment = word_to_digest(*fri_roots.last().unwrap());
-        let fri_remainder = proof
-            .fri_proof
-            .parse_remainder::<BaseElement>()
-            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
-
-        let (fri_layer_queries, fri_layer_proofs) = proof
-            .fri_proof
-            .clone()
-            .parse_layers::<BaseElement, Rpo256, RpoMerkleTree>(lde_domain_size, folding_factor)
-            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+        let fri_remainder_root = fri_roots.last().ok_or_else(|| {
+            EpochProverError::TraceBuildError("inner proof is missing FRI commitments".to_string())
+        })?;
+        let fri_remainder_commitment = word_to_digest(*fri_remainder_root);
+        let (fri_remainder, fri_layer_queries, fri_layer_proofs) = match field_extension {
+            FieldExtension::None => {
+                let remainder = proof
+                    .fri_proof
+                    .parse_remainder::<BaseElement>()
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                let (layer_queries, layer_proofs) = proof
+                    .fri_proof
+                    .clone()
+                    .parse_layers::<BaseElement, Rpo256, RpoMerkleTree>(
+                        lde_domain_size,
+                        folding_factor,
+                    )
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                (remainder, layer_queries, layer_proofs)
+            }
+            FieldExtension::Quadratic => {
+                let remainder = proof
+                    .fri_proof
+                    .parse_remainder::<QuadExtension<BaseElement>>()
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                let (layer_queries, layer_proofs) = proof
+                    .fri_proof
+                    .clone()
+                    .parse_layers::<QuadExtension<BaseElement>, Rpo256, RpoMerkleTree>(
+                        lde_domain_size,
+                        folding_factor,
+                    )
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                let flattened_layers = layer_queries
+                    .into_iter()
+                    .map(|layer| flatten_elements(&layer))
+                    .collect();
+                let remainder = flatten_elements(&remainder);
+                (remainder, flattened_layers, layer_proofs)
+            }
+            _ => {
+                return Err(EpochProverError::TraceBuildError(
+                    "inner proof uses unsupported field extension".to_string(),
+                ))
+            }
+        };
 
         // --- reconstruct Fiat‑Shamir transcript -----------------------------------------------
         let mut seed = proof.context.to_elements();
@@ -875,36 +1031,95 @@ impl InnerProofData {
             coin.reseed(trace_roots[1]);
         }
 
-        let constraint_coeffs: ConstraintCompositionCoefficients<BaseElement> = air
-            .get_constraint_composition_coefficients::<BaseElement, RpoRandomCoin>(&mut coin)
-            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+        let constraint_coeffs = match field_extension {
+            FieldExtension::None => air
+                .get_constraint_composition_coefficients::<BaseElement, RpoRandomCoin>(&mut coin)
+                .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?,
+            FieldExtension::Quadratic => {
+                let coeffs = air
+                    .get_constraint_composition_coefficients::<
+                        QuadExtension<BaseElement>,
+                        RpoRandomCoin,
+                    >(&mut coin)
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                flatten_constraint_coeffs(coeffs)
+            }
+            _ => {
+                return Err(EpochProverError::TraceBuildError(
+                    "inner proof uses unsupported field extension".to_string(),
+                ))
+            }
+        };
 
         coin.reseed(constraint_root);
-        let z: BaseElement = coin
-            .draw()
-            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+        let z = match field_extension {
+            FieldExtension::None => {
+                let elem: BaseElement = coin
+                    .draw()
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                vec![elem]
+            }
+            FieldExtension::Quadratic => {
+                let elem: QuadExtension<BaseElement> = coin
+                    .draw()
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                flatten_element(elem)
+            }
+            _ => {
+                return Err(EpochProverError::TraceBuildError(
+                    "inner proof uses unsupported field extension".to_string(),
+                ))
+            }
+        };
 
         // reseed with OOD evaluations digest (trace frame + quotient frame)
-        let ood_evals = merge_ood_evaluations(&ood_trace_frame, &ood_constraint_frame);
-        let ood_digest_word = Rpo256::hash_elements(&ood_evals);
-        let ood_digest = word_to_digest(ood_digest_word);
         coin.reseed(ood_digest_word);
 
-        let deep_coeffs: DeepCompositionCoefficients<BaseElement> = air
-            .get_deep_composition_coefficients::<BaseElement, RpoRandomCoin>(&mut coin)
-            .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+        let deep_coeffs = match field_extension {
+            FieldExtension::None => air
+                .get_deep_composition_coefficients::<BaseElement, RpoRandomCoin>(&mut coin)
+                .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?,
+            FieldExtension::Quadratic => {
+                let coeffs = air
+                    .get_deep_composition_coefficients::<QuadExtension<BaseElement>, RpoRandomCoin>(
+                        &mut coin,
+                    )
+                    .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                flatten_deep_coeffs(coeffs)
+            }
+            _ => {
+                return Err(EpochProverError::TraceBuildError(
+                    "inner proof uses unsupported field extension".to_string(),
+                ))
+            }
+        };
 
         // FRI commit phase: reseed with each layer commitment and draw alpha.
         // The final FRI commitment is the remainder commitment; it is reseeded
         // but does not have an associated alpha draw.
         let num_fri_layers = fri_roots.len().saturating_sub(1);
-        let mut fri_alphas = Vec::with_capacity(num_fri_layers);
+        let mut fri_alphas = Vec::with_capacity(num_fri_layers * extension_degree);
         for commitment in fri_roots.iter().take(num_fri_layers) {
             coin.reseed(*commitment);
-            let alpha: BaseElement = coin
-                .draw()
-                .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
-            fri_alphas.push(alpha);
+            match field_extension {
+                FieldExtension::None => {
+                    let alpha: BaseElement = coin
+                        .draw()
+                        .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                    fri_alphas.push(alpha);
+                }
+                FieldExtension::Quadratic => {
+                    let alpha: QuadExtension<BaseElement> = coin
+                        .draw()
+                        .map_err(|e| EpochProverError::TraceBuildError(e.to_string()))?;
+                    fri_alphas.extend_from_slice(&flatten_element(alpha));
+                }
+                _ => {
+                    return Err(EpochProverError::TraceBuildError(
+                        "inner proof uses unsupported field extension".to_string(),
+                    ))
+                }
+            }
         }
 
         // Reseed with remainder commitment before drawing query positions.
@@ -933,12 +1148,12 @@ impl InnerProofData {
         // --- decompress trace Merkle proofs ---------------------------------------------------
         let mut trace_evaluations: Vec<Vec<BaseElement>> = Vec::new();
         let mut trace_auth_paths: Vec<Vec<[BaseElement; 4]>> = Vec::new();
-        for (seg_idx, (mp, table, seg_partition)) in trace_segment_data.into_iter().enumerate() {
+        for (seg_idx, (mp, rows, seg_partition)) in trace_segment_data.into_iter().enumerate() {
             if seg_idx > 0 {
                 // Auxiliary trace segments are not yet supported in recursion data model.
                 continue;
             }
-            trace_evaluations = table.rows().map(|r| r.to_vec()).collect();
+            trace_evaluations = rows;
             let leaves: Vec<Word> = trace_evaluations
                 .iter()
                 .map(|row| hash_row_rpo(row, seg_partition))
@@ -953,11 +1168,10 @@ impl InnerProofData {
         }
 
         // --- decompress constraint Merkle proofs -----------------------------------------------
-        let constraint_evaluations: Vec<Vec<BaseElement>> =
-            constraint_table.rows().map(|r| r.to_vec()).collect();
+        let constraint_partition_size_base = partition_size_constraint * extension_degree;
         let constraint_leaves: Vec<Word> = constraint_evaluations
             .iter()
-            .map(|row| hash_row_rpo(row, partition_size_constraint))
+            .map(|row| hash_row_rpo(row, constraint_partition_size_base))
             .collect();
         let constraint_openings = constraint_mp
             .into_openings(&constraint_leaves, &unique_query_positions)
@@ -983,6 +1197,7 @@ impl InnerProofData {
             .enumerate()
         {
             let target_domain_size = domain_size / folding_factor;
+            let leaf_width = folding_factor * extension_degree;
 
             let folded_unique_positions =
                 fold_positions(&unique_positions, domain_size, folding_factor);
@@ -994,7 +1209,7 @@ impl InnerProofData {
             );
 
             let leaves: Vec<Word> = layer_values
-                .chunks(folding_factor)
+                .chunks(leaf_width)
                 .map(|chunk| Rpo256::hash_elements(chunk))
                 .collect();
             let openings = layer_mp
@@ -1011,7 +1226,7 @@ impl InnerProofData {
                 .map(|p| p % target_domain_size)
                 .collect();
 
-            let mut evaluations = Vec::with_capacity(query_positions.len() * folding_factor);
+            let mut evaluations = Vec::with_capacity(query_positions.len() * leaf_width);
             let mut auth_paths = Vec::with_capacity(query_positions.len());
             for pos in &draw_folded_positions {
                 let unique_idx = folded_unique_positions
@@ -1023,8 +1238,8 @@ impl InnerProofData {
                         ))
                     })?;
 
-                let start = unique_idx * folding_factor;
-                let end = start + folding_factor;
+                let start = unique_idx * leaf_width;
+                let end = start + leaf_width;
                 evaluations.extend_from_slice(&layer_values[start..end]);
                 auth_paths.push(auth_paths_unique[unique_idx].clone());
             }
@@ -1065,7 +1280,11 @@ impl InnerProofData {
             pow_nonce,
             trace_length: trace_info.length(),
             trace_width: main_trace_width,
+            field_extension,
             blowup_factor: options.blowup_factor(),
+            fri_folding_factor,
+            fri_remainder_max_degree,
+            grinding_factor,
             trace_partition_size: partition_size_main,
             constraint_partition_size: partition_size_constraint,
             fri_num_partitions,
@@ -1116,17 +1335,25 @@ impl InnerProofData {
             inner_pub_inputs_hash,
             self.trace_commitment,
             self.constraint_commitment,
+            self.ood_trace_current.clone(),
+            self.ood_quotient_current.clone(),
+            self.ood_trace_next.clone(),
+            self.ood_quotient_next.clone(),
             fri_commitments,
             self.query_positions.len(),
             self.num_draws,
             self.trace_partition_size,
             self.constraint_partition_size,
             self.blowup_factor,
+            self.fri_folding_factor,
+            self.fri_remainder_max_degree,
+            self.grinding_factor,
             self.trace_length,
             self.trace_width,
             self.constraint_frame_width,
             self.num_transition_constraints,
             self.num_assertions,
+            self.field_extension,
         )
     }
 }
@@ -1134,6 +1361,42 @@ impl InnerProofData {
 // ============================================================================
 // Helper functions
 // ============================================================================
+
+fn field_extension_degree(field_extension: FieldExtension) -> Result<usize, EpochProverError> {
+    match field_extension {
+        FieldExtension::None => Ok(1),
+        FieldExtension::Quadratic => Ok(2),
+        _ => Err(EpochProverError::TraceBuildError(
+            "inner proof uses unsupported field extension".to_string(),
+        )),
+    }
+}
+
+fn flatten_elements<E: FieldElement<BaseField = BaseElement>>(elements: &[E]) -> Vec<BaseElement> {
+    E::slice_as_base_elements(elements).to_vec()
+}
+
+fn flatten_element<E: FieldElement<BaseField = BaseElement>>(element: E) -> Vec<BaseElement> {
+    flatten_elements(std::slice::from_ref(&element))
+}
+
+fn flatten_constraint_coeffs<E: FieldElement<BaseField = BaseElement>>(
+    coeffs: ConstraintCompositionCoefficients<E>,
+) -> ConstraintCompositionCoefficients<BaseElement> {
+    ConstraintCompositionCoefficients {
+        transition: flatten_elements(&coeffs.transition),
+        boundary: flatten_elements(&coeffs.boundary),
+    }
+}
+
+fn flatten_deep_coeffs<E: FieldElement<BaseField = BaseElement>>(
+    coeffs: DeepCompositionCoefficients<E>,
+) -> DeepCompositionCoefficients<BaseElement> {
+    DeepCompositionCoefficients {
+        trace: flatten_elements(&coeffs.trace),
+        constraints: flatten_elements(&coeffs.constraints),
+    }
+}
 
 fn word_to_digest(word: Word) -> [BaseElement; 4] {
     [word[0], word[1], word[2], word[3]]
@@ -1404,6 +1667,47 @@ mod tests {
         let (inner1, pub_inputs1) = epoch_batch_as_inner(&prover, &batch1).expect("inner1");
         let (inner2, pub_inputs2) = epoch_batch_as_inner(&prover, &batch2).expect("inner2");
 
+        // Sanity: transcript reconstruction from `StarkVerifierPublicInputs` must match the
+        // transcript reconstruction derived from the raw inner proof bytes.
+        {
+            use super::super::stark_verifier_air::{
+                compute_expected_transcript_draws, compute_ood_digest, compute_rpo_ood_consistency,
+            };
+            use winter_math::StarkField;
+
+            let g_trace = BaseElement::get_root_of_unity(pub_inputs1.trace_length.ilog2());
+            for (idx, (inner, pub_inputs)) in [(&inner1, &pub_inputs1), (&inner2, &pub_inputs2)]
+                .into_iter()
+                .enumerate()
+            {
+                let ood_digest = compute_ood_digest(pub_inputs);
+                let (coeffs, z, _deep, _fri_alphas) =
+                    compute_expected_transcript_draws(pub_inputs, ood_digest)
+                        .expect("failed to reconstruct transcript draws");
+                assert_eq!(inner.z, vec![z], "inner {idx} reconstructed z mismatch");
+                assert_eq!(
+                    inner.constraint_coeffs.transition, coeffs.transition,
+                    "inner {idx} reconstructed transition coeffs mismatch"
+                );
+                assert_eq!(
+                    inner.constraint_coeffs.boundary, coeffs.boundary,
+                    "inner {idx} reconstructed boundary coeffs mismatch"
+                );
+
+                let (eval1, eval2) = compute_rpo_ood_consistency(
+                    pub_inputs,
+                    &inner.constraint_coeffs,
+                    inner.z[0],
+                    g_trace,
+                )
+                .expect("failed to evaluate RPO constraints at z");
+                assert_eq!(
+                    eval1, eval2,
+                    "inner {idx} OOD constraint evaluations mismatch"
+                );
+            }
+        }
+
         let outer_options = prover.options.to_winter_options();
         let outer = prove_batch(
             &[inner1, inner2],
@@ -1617,15 +1921,17 @@ mod tests {
     fn test_recursive_proof_options() {
         let opts = recursive_proof_options();
 
-        assert!(opts.blowup_factor() >= 32);
-        assert!(opts.num_queries() >= 16);
+        assert!(opts.blowup_factor() >= 16);
+        assert!(opts.num_queries() >= 22);
+        assert_eq!(opts.field_extension(), FieldExtension::Quadratic);
     }
 
     #[test]
     fn test_fast_recursive_proof_options() {
         let opts = fast_recursive_proof_options();
 
-        assert!(opts.blowup_factor() >= 32);
+        assert!(opts.blowup_factor() >= 16);
+        assert_eq!(opts.field_extension(), FieldExtension::Quadratic);
     }
 
     #[test]
@@ -1724,7 +2030,12 @@ mod tests {
         let recomputed_z =
             crate::recursion::stark_verifier_air::compute_expected_z(&verifier_pub_inputs);
         assert_eq!(
-            recomputed_z, outer_as_inner.z,
+            outer_as_inner.field_extension,
+            FieldExtension::None,
+            "depth-2 verifier proof tests assume base field"
+        );
+        assert_eq!(
+            recomputed_z, outer_as_inner.z[0],
             "expected_z must match transcript-derived z for StarkVerifierAir proofs"
         );
     }
@@ -1775,7 +2086,12 @@ mod tests {
 
         // Evaluate periodic columns at the OOD point z using Winterfell’s periodic-column
         // polynomial semantics (cycle-length aware).
-        let z = outer_as_inner.z;
+        assert_eq!(
+            outer_as_inner.field_extension,
+            FieldExtension::None,
+            "depth-2 verifier proof tests assume base field"
+        );
+        let z = outer_as_inner.z[0];
         let periodic_at_z = inner_air
             .get_periodic_column_polys()
             .iter()

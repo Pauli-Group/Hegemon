@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: setup fmt lint test check bench wallet-demo quickstart node
+.PHONY: setup fmt lint test check bench wallet-demo quickstart node node-fast
 
 # macOS: librocksdb-sys requires libclang.dylib at runtime during build
 # Set these environment variables for the build to find clang libraries
@@ -40,3 +40,8 @@ wallet-demo:
 # Build the Substrate-based node binary
 node:
 	cargo build -p hegemon-node --features substrate --release
+
+# Build the Substrate-based node binary with dev-fast proof acceptance enabled.
+# This is for development only; do not ship production binaries with fast proofs enabled.
+node-fast:
+	cargo build -p hegemon-node --features substrate,fast-proofs --release

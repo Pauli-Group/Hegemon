@@ -61,6 +61,8 @@
 
 use crate::pow::PowHandle;
 use crate::substrate::network_bridge::{BlockAnnounce, BlockState};
+use crate::substrate::service::StorageChangesHandle;
+use block_circuit::CommitmentBlockProof;
 use codec::Encode;
 use consensus::{Blake3Seal, MiningWork};
 use sp_core::H256;
@@ -165,9 +167,11 @@ pub struct BlockTemplate {
     pub difficulty_bits: u32,
     /// Extrinsics to include in the block
     pub extrinsics: Vec<Vec<u8>>,
-    /// Task 11.5.5: Key to retrieve cached StorageChanges for block import
-    /// This is set during block building when using sc_block_builder::BlockBuilder
-    pub storage_changes_key: Option<u64>,
+    /// Task 11.5.5: Handle for cached StorageChanges for block import.
+    /// This is set during block building when using sc_block_builder::BlockBuilder.
+    pub storage_changes: Option<StorageChangesHandle>,
+    /// Optional commitment block proof built from shielded transfer extrinsics.
+    pub commitment_proof: Option<CommitmentBlockProof>,
 }
 
 impl BlockTemplate {
@@ -191,7 +195,8 @@ impl BlockTemplate {
             pre_hash,
             difficulty_bits,
             extrinsics: Vec::new(),
-            storage_changes_key: None, // Task 11.5.5: Set during block building
+            storage_changes: None, // Task 11.5.5: Set during block building
+            commitment_proof: None,
         }
     }
 
@@ -224,18 +229,18 @@ impl BlockTemplate {
     /// * `extrinsics` - Raw SCALE-encoded extrinsics to include
     /// * `state_root` - State root after executing extrinsics
     /// * `extrinsics_root` - Merkle root of applied extrinsics
-    /// * `storage_changes_key` - Optional key to retrieve cached StorageChanges (Task 11.5.5)
+    /// * `storage_changes` - Optional handle for cached StorageChanges (Task 11.5.5)
     pub fn with_executed_state(
         mut self,
         extrinsics: Vec<Vec<u8>>,
         state_root: H256,
         extrinsics_root: H256,
-        storage_changes_key: Option<u64>,
+        storage_changes: Option<StorageChangesHandle>,
     ) -> Self {
         self.extrinsics = extrinsics;
         self.state_root = state_root;
         self.extrinsics_root = extrinsics_root;
-        self.storage_changes_key = storage_changes_key;
+        self.storage_changes = storage_changes;
         // Recompute pre-hash with actual state root
         self.pre_hash = compute_pre_hash_full(
             &self.parent_hash,
@@ -244,6 +249,11 @@ impl BlockTemplate {
             &self.extrinsics_root,
             &self.state_root,
         );
+        self
+    }
+
+    pub fn with_commitment_proof(mut self, commitment_proof: Option<CommitmentBlockProof>) -> Self {
+        self.commitment_proof = commitment_proof;
         self
     }
 
@@ -768,6 +778,14 @@ where
                         state_root = %hex::encode(template.state_root.as_bytes()),
                         "New mining work (Task 11.4: state execution enabled)"
                     );
+                    if let Some(proof) = template.commitment_proof.as_ref() {
+                        tracing::debug!(
+                            height = template.number,
+                            tx_count = proof.public_inputs.tx_count,
+                            proof_size = proof.proof_bytes.len(),
+                            "Commitment block proof attached to template"
+                        );
+                    }
                 }
 
                 current_template = Some(template);

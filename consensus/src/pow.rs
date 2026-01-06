@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::bft::ConsensusUpdate;
+use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ConsensusError;
 use crate::header::ConsensusMode;
 use crate::nullifier::NullifierSet;
@@ -27,7 +28,7 @@ pub const DEFAULT_GENESIS_POW_BITS: u32 = 0x1e21_8def;
 struct PowNode {
     height: u64,
     work: BigUint,
-    state_root: [u8; 32],
+    commitment_tree: CommitmentTreeState,
     nullifiers: NullifierSet,
     timestamp_ms: u64,
     parent: [u8; 32],
@@ -57,10 +58,14 @@ pub struct PowConsensus<V: ProofVerifier> {
 }
 
 impl<V: ProofVerifier> PowConsensus<V> {
-    pub fn new(miner_keys: Vec<MlDsaPublicKey>, genesis_state_root: [u8; 32], verifier: V) -> Self {
+    pub fn new(
+        miner_keys: Vec<MlDsaPublicKey>,
+        genesis_tree: CommitmentTreeState,
+        verifier: V,
+    ) -> Self {
         Self::with_schedule_and_pow_bits(
             miner_keys,
-            genesis_state_root,
+            genesis_tree,
             verifier,
             VersionSchedule::default(),
             DEFAULT_GENESIS_POW_BITS,
@@ -69,13 +74,13 @@ impl<V: ProofVerifier> PowConsensus<V> {
 
     pub fn with_schedule(
         miner_keys: Vec<MlDsaPublicKey>,
-        genesis_state_root: [u8; 32],
+        genesis_tree: CommitmentTreeState,
         verifier: V,
         version_schedule: VersionSchedule,
     ) -> Self {
         Self::with_schedule_and_pow_bits(
             miner_keys,
-            genesis_state_root,
+            genesis_tree,
             verifier,
             version_schedule,
             DEFAULT_GENESIS_POW_BITS,
@@ -84,13 +89,13 @@ impl<V: ProofVerifier> PowConsensus<V> {
 
     pub fn with_genesis_pow_bits(
         miner_keys: Vec<MlDsaPublicKey>,
-        genesis_state_root: [u8; 32],
+        genesis_tree: CommitmentTreeState,
         verifier: V,
         genesis_pow_bits: u32,
     ) -> Self {
         Self::with_schedule_and_pow_bits(
             miner_keys,
-            genesis_state_root,
+            genesis_tree,
             verifier,
             VersionSchedule::default(),
             genesis_pow_bits,
@@ -99,7 +104,7 @@ impl<V: ProofVerifier> PowConsensus<V> {
 
     pub fn with_schedule_and_pow_bits(
         miner_keys: Vec<MlDsaPublicKey>,
-        genesis_state_root: [u8; 32],
+        genesis_tree: CommitmentTreeState,
         verifier: V,
         version_schedule: VersionSchedule,
         genesis_pow_bits: u32,
@@ -114,7 +119,7 @@ impl<V: ProofVerifier> PowConsensus<V> {
             PowNode {
                 height: 0,
                 work: BigUint::zero(),
-                state_root: genesis_state_root,
+                commitment_tree: genesis_tree,
                 nullifiers: NullifierSet::new(),
                 timestamp_ms: 0,
                 parent: GENESIS_HASH,
@@ -154,7 +159,6 @@ impl<V: ProofVerifier> PowConsensus<V> {
                 height: block.header.height,
             });
         }
-        self.verifier.verify_block(&block)?;
 
         let pow = block
             .header
@@ -251,11 +255,6 @@ impl<V: ProofVerifier> PowConsensus<V> {
             return Err(ConsensusError::InvalidHeader("nullifier root mismatch"));
         }
 
-        let computed_state_root = accumulate_state(parent_node.state_root, &block);
-        if computed_state_root != block.header.state_root {
-            return Err(ConsensusError::InvalidHeader("state root mismatch"));
-        }
-
         let header_hash = BigUint::from_bytes_be(&block.header.hash()?);
         let target = compact_to_target(pow.pow_bits)?;
         if header_hash > target {
@@ -263,11 +262,19 @@ impl<V: ProofVerifier> PowConsensus<V> {
         }
         let cumulative_work = parent_node.work.clone() + target_to_work(&target);
 
+        let commitment_tree = self
+            .verifier
+            .verify_block(&block, &parent_node.commitment_tree)?;
+        let computed_state_root = commitment_tree.root();
+        if computed_state_root != block.header.state_root {
+            return Err(ConsensusError::InvalidHeader("state root mismatch"));
+        }
+
         let block_hash = block.header.hash()?;
         let node = PowNode {
             height: block.header.height,
             work: cumulative_work.clone(),
-            state_root: computed_state_root,
+            commitment_tree,
             nullifiers: working_nullifiers,
             timestamp_ms: block.header.timestamp_ms,
             parent: parent_hash,
@@ -452,19 +459,4 @@ fn current_time_ms() -> u64 {
         }
         Err(_) => 0,
     }
-}
-
-fn accumulate_state(mut root: [u8; 32], block: &ConsensusBlock) -> [u8; 32] {
-    for tx in &block.transactions {
-        if tx.commitments.is_empty() {
-            continue;
-        }
-        let mut data = Vec::with_capacity(32 + tx.commitments.len() * 32);
-        data.extend_from_slice(&root);
-        for cm in &tx.commitments {
-            data.extend_from_slice(cm);
-        }
-        root = sha256(&data);
-    }
-    root
 }

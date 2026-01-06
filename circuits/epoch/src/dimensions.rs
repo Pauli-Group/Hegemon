@@ -42,7 +42,7 @@ pub fn padded_leaf_count(num_proofs: usize) -> usize {
 
 /// Size of Merkle inclusion proof in bytes.
 ///
-/// Each sibling hash in the path is 32 bytes (Blake2-256).
+/// Each sibling hash in the path is 32 bytes (a 256-bit digest, e.g. BLAKE3-256).
 pub fn merkle_proof_size(num_proofs: usize) -> usize {
     let depth = merkle_depth(num_proofs);
     depth * 32 // 32 bytes per sibling hash
@@ -50,35 +50,64 @@ pub fn merkle_proof_size(num_proofs: usize) -> usize {
 
 /// Winterfell security parameters.
 pub mod security {
-    /// Number of FRI queries (affects security level).
-    pub const FRI_QUERIES: usize = 8;
+    /// Approximate base-field size (Goldilocks is ~2^64).
+    pub const BASE_FIELD_BITS_APPROX: usize = 64;
 
-    /// Log2 of blowup factor.
-    pub const BLOWUP_LOG2: usize = 4;
+    /// Digest size for hash-based commitments/transcripts in this repo (BLAKE3-256, Rpo256, etc.).
+    pub const DIGEST_BITS: usize = 256;
 
-    /// Grinding factor (PoW bits).
-    pub const GRINDING_FACTOR: usize = 4;
-
-    /// Approximate security level in bits (base field).
-    ///
-    /// Formula: queries × blowup_log2 + grinding + field_security.
-    /// For Goldilocks (64-bit prime), field_security ≈ 64.
-    /// But effective security is limited by smallest component.
-    ///
-    /// Conservative estimate for base Goldilocks field.
-    pub fn security_level_bits() -> usize {
-        // FRI security: queries × log2(blowup)
-        let fri_security = FRI_QUERIES * BLOWUP_LOG2;
-        // Total: FRI + grinding
-        let total = fri_security + GRINDING_FACTOR;
-        total // ~36 bits base, need extension field for 128
+    fn log2_pow2(value: usize) -> usize {
+        debug_assert!(value.is_power_of_two());
+        value.trailing_zeros() as usize
     }
 
-    /// Check if we need field extension for target security.
+    /// Winterfell docstring bound: `num_queries * log2(blowup_factor) + grinding_factor`.
     ///
-    /// Quadratic extension of Goldilocks provides 128-bit security.
-    pub fn needs_extension_field(target_bits: usize) -> bool {
-        security_level_bits() < target_bits
+    /// This is not the full soundness story, but it is one term which is easy to compute.
+    pub fn query_grinding_bound_bits(
+        num_queries: usize,
+        blowup_factor: usize,
+        grinding_factor: usize,
+    ) -> usize {
+        num_queries * log2_pow2(blowup_factor) + grinding_factor
+    }
+
+    /// Field-size dominated term: `Pr[bad passes] ≲ deg/|F|`.
+    ///
+    /// We approximate `deg` by `lde_domain_size = trace_length * blowup_factor` (up to constants).
+    /// This gives a conservative ceiling of:
+    ///   log2(|F_ext|) - log2(lde_domain_size)
+    pub fn field_size_bound_bits(
+        trace_length: usize,
+        blowup_factor: usize,
+        extension_degree: usize,
+    ) -> usize {
+        let lde_domain_log2 = log2_pow2(trace_length) + log2_pow2(blowup_factor);
+        let field_bits = BASE_FIELD_BITS_APPROX.saturating_mul(extension_degree);
+        field_bits.saturating_sub(lde_domain_log2)
+    }
+
+    /// Generic post-quantum collision bound for an `n`-bit digest is ~`2^(n/3)`.
+    pub fn pq_collision_bits(digest_bits: usize) -> usize {
+        digest_bits / 3
+    }
+
+    /// Very rough "min of major bottlenecks" estimate for post-quantum soundness bits.
+    ///
+    /// This is intentionally conservative and should not be treated as a formal proof. It exists
+    /// to prevent us from writing nonsense like "128-bit security" next to parameter sets whose
+    /// query/grinding bound is 36 bits.
+    pub fn estimated_pq_soundness_bits(
+        trace_length: usize,
+        num_queries: usize,
+        blowup_factor: usize,
+        grinding_factor: usize,
+        extension_degree: usize,
+    ) -> usize {
+        let query = query_grinding_bound_bits(num_queries, blowup_factor, grinding_factor);
+        let field = field_size_bound_bits(trace_length, blowup_factor, extension_degree);
+        let hash = pq_collision_bits(DIGEST_BITS);
+        query.min(field).min(hash)
     }
 }
 
@@ -152,22 +181,50 @@ mod tests {
 
     #[test]
     fn test_security_parameters() {
-        let base_security = security::security_level_bits();
-        println!("\nSecurity analysis:");
-        println!("  FRI queries: {}", security::FRI_QUERIES);
-        println!("  Blowup (log2): {}", security::BLOWUP_LOG2);
-        println!("  Grinding: {} bits", security::GRINDING_FACTOR);
-        println!("  Base security: {} bits", base_security);
-        println!(
-            "  Needs extension for 128-bit: {}",
-            security::needs_extension_field(128)
+        let num_queries = 8;
+        let blowup_factor = 16;
+        let grinding_factor = 4;
+        let trace_length = trace::epoch_trace_rows(1000);
+
+        let query_bound =
+            security::query_grinding_bound_bits(num_queries, blowup_factor, grinding_factor);
+        let field_bound_base = security::field_size_bound_bits(trace_length, blowup_factor, 1);
+        let field_bound_quad = security::field_size_bound_bits(trace_length, blowup_factor, 2);
+        let pq_hash_bound = security::pq_collision_bits(security::DIGEST_BITS);
+
+        let est_base = security::estimated_pq_soundness_bits(
+            trace_length,
+            num_queries,
+            blowup_factor,
+            grinding_factor,
+            1,
+        );
+        let est_quad = security::estimated_pq_soundness_bits(
+            trace_length,
+            num_queries,
+            blowup_factor,
+            grinding_factor,
+            2,
         );
 
-        // We should need extension field for 128-bit security
-        assert!(
-            security::needs_extension_field(128),
-            "Expected to need extension field for 128-bit security"
+        println!("\nSecurity analysis (rough, conservative):");
+        println!("  num_queries: {}", num_queries);
+        println!("  blowup_factor: {}", blowup_factor);
+        println!("  grinding_factor: {}", grinding_factor);
+        println!("  trace_length: {}", trace_length);
+        println!("  query/grinding bound: {} bits", query_bound);
+        println!("  field-size bound (base): {} bits", field_bound_base);
+        println!("  field-size bound (quad): {} bits", field_bound_quad);
+        println!(
+            "  PQ collision bound (digest={}): {} bits",
+            security::DIGEST_BITS,
+            pq_hash_bound
         );
+        println!("  estimated PQ soundness (base): {} bits", est_base);
+        println!("  estimated PQ soundness (quad): {} bits", est_quad);
+
+        assert_eq!(security::pq_collision_bits(256), 85);
+        assert!(field_bound_quad > field_bound_base);
     }
 
     #[test]

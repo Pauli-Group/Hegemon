@@ -9,6 +9,7 @@ members = [
     "circuits/block",
     "circuits/bench",
     "circuits/epoch",
+    "state/da",
     "state/merkle",
     "consensus",
     "protocol/versioning",

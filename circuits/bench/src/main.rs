@@ -1,20 +1,21 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
+use block_circuit::{verify_block_commitment, CommitmentBlockProver};
 use clap::Parser;
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use rand::RngCore;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use serde::Serialize;
+use state_merkle::CommitmentTree;
 use transaction_circuit::{
     constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS},
-    hashing::{felts_to_bytes32, merkle_node, Felt, HashFelt},
+    hashing::{bytes32_to_felts, felts_to_bytes32, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
     proof, StablecoinPolicyBinding, TransactionWitness,
 };
-use winterfell::math::FieldElement;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Benchmark transaction and block circuits", long_about = None)]
@@ -22,7 +23,7 @@ struct Cli {
     /// Number of synthetic transactions to benchmark.
     #[arg(long, default_value_t = 32)]
     iterations: usize,
-    /// Run block aggregation and verification after generating transaction proofs.
+    /// Run commitment block proof generation and verification.
     #[arg(long)]
     prove: bool,
     /// Emit structured JSON instead of a human summary.
@@ -45,6 +46,10 @@ struct BenchReport {
     prove_ns: u128,
     verify_ns: u128,
     block_ns: u128,
+    commitment_prove_ns: u128,
+    commitment_verify_ns: u128,
+    commitment_proof_bytes: usize,
+    commitment_tx_count: usize,
     transactions_per_second: f64,
 }
 
@@ -60,11 +65,14 @@ fn main() -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!(
-            "circuits-bench: iterations={iterations} witness_ns={} prove_ns={} verify_ns={} block_ns={} tx/s={:.2}",
+            "circuits-bench: iterations={iterations} witness_ns={} prove_ns={} verify_ns={} block_ns={} commitment_txs={} commitment_bytes={} commitment_verify_ns={} tx/s={:.2}",
             report.witness_ns,
             report.prove_ns,
             report.verify_ns,
             report.block_ns,
+            report.commitment_tx_count,
+            report.commitment_proof_bytes,
+            report.commitment_verify_ns,
             report.transactions_per_second
         );
     }
@@ -101,11 +109,25 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
         proofs.push(proof);
     }
 
-    // Block proving is disabled for now - it needs its own Merkle tree logic
-    // that's compatible with the circuit's expectations
-    let block_ns = 0u128;
+    let mut block_ns = 0u128;
+    let mut commitment_prove_ns = 0u128;
+    let mut commitment_verify_ns = 0u128;
+    let mut commitment_proof_bytes = 0usize;
+    let mut commitment_tx_count = 0usize;
     if prove {
-        eprintln!("Warning: block proving temporarily disabled pending Merkle tree alignment");
+        let prover = CommitmentBlockProver::new();
+        let prove_start = Instant::now();
+        let proof = prover
+            .prove_block_commitment(&proofs)
+            .context("prove commitment block proof")?;
+        commitment_prove_ns = prove_start.elapsed().as_nanos();
+        block_ns = commitment_prove_ns;
+        commitment_proof_bytes = proof.proof_bytes.len();
+        commitment_tx_count = proof.public_inputs.tx_count as usize;
+
+        let verify_start = Instant::now();
+        verify_block_commitment(&proof).context("verify commitment block proof")?;
+        commitment_verify_ns = verify_start.elapsed().as_nanos();
     }
 
     let block_duration = Duration::from_nanos(block_ns.min(u64::MAX as u128) as u64);
@@ -123,72 +145,40 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
         prove_ns: prove_time.as_nanos(),
         verify_ns: verify_time.as_nanos(),
         block_ns,
+        commitment_prove_ns,
+        commitment_verify_ns,
+        commitment_proof_bytes,
+        commitment_tx_count,
         transactions_per_second: tx_per_sec,
     })
 }
 
-/// Build a Merkle tree with N leaves, returning paths and root.
-/// Uses CIRCUIT_MERKLE_DEPTH levels with zero siblings for sparse positions.
-fn build_merkle_tree(leaves: &[HashFelt]) -> (Vec<MerklePath>, HashFelt) {
-    let zero = [Felt::ZERO; 4];
-    if leaves.is_empty() {
-        // Empty tree - all zeros
-        let path = MerklePath {
-            siblings: vec![zero; CIRCUIT_MERKLE_DEPTH],
-        };
-        let mut root = zero;
-        for _ in 0..CIRCUIT_MERKLE_DEPTH {
-            root = merkle_node(root, zero);
-        }
-        return (vec![path], root);
+/// Build a commitment tree using the same logic as the chain, returning
+/// transaction-circuit compatible authentication paths and the tree root.
+fn build_commitment_tree(leaves: &[HashFelt]) -> Result<(Vec<MerklePath>, [u8; 32])> {
+    let mut tree =
+        CommitmentTree::new(CIRCUIT_MERKLE_DEPTH).context("init commitment tree for witness")?;
+
+    for leaf in leaves {
+        tree.append(felts_to_bytes32(leaf))
+            .context("append leaf to witness commitment tree")?;
     }
 
-    // Pad leaves to next power of 2
-    let n = leaves.len().next_power_of_two().max(2);
-    let mut level: Vec<HashFelt> = leaves.to_vec();
-    level.resize(n, zero);
+    let root = tree.root();
 
-    // Store all levels for path reconstruction
-    let mut levels = vec![level.clone()];
-
-    // Build tree bottom-up
-    while levels.last().unwrap().len() > 1 {
-        let prev = levels.last().unwrap();
-        let mut next = Vec::with_capacity(prev.len() / 2);
-        for chunk in prev.chunks(2) {
-            next.push(merkle_node(chunk[0], chunk[1]));
-        }
-        levels.push(next);
-    }
-
-    // Extract paths for original leaves
     let mut paths = Vec::with_capacity(leaves.len());
-    for i in 0..leaves.len() {
-        let mut siblings = Vec::with_capacity(CIRCUIT_MERKLE_DEPTH);
-        let mut pos = i;
-
-        for level_idx in 0..CIRCUIT_MERKLE_DEPTH {
-            if level_idx < levels.len() - 1 {
-                let sibling_pos = if pos % 2 == 0 { pos + 1 } else { pos - 1 };
-                let sibling = levels[level_idx].get(sibling_pos).copied().unwrap_or(zero);
-                siblings.push(sibling);
-                pos /= 2;
-            } else {
-                // Above tree height - use zero
-                siblings.push(zero);
-            }
-        }
-
+    for index in 0..leaves.len() {
+        let siblings_bytes = tree
+            .authentication_path(index)
+            .context("commitment tree authentication path")?;
+        let siblings = siblings_bytes
+            .into_iter()
+            .map(|bytes| bytes32_to_felts(&bytes).ok_or_else(|| anyhow!("non-canonical bytes32")))
+            .collect::<Result<Vec<_>>>()?;
         paths.push(MerklePath { siblings });
     }
 
-    // Compute final root continuing to CIRCUIT_MERKLE_DEPTH
-    let mut root = levels.last().unwrap()[0];
-    for _ in levels.len()..=CIRCUIT_MERKLE_DEPTH {
-        root = merkle_node(root, zero);
-    }
-
-    (paths, root)
+    Ok((paths, root))
 }
 
 fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness {
@@ -207,7 +197,7 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
     let commitments: Vec<HashFelt> = input_notes.iter().map(|n| n.commitment()).collect();
 
     // Build Merkle tree with these leaves
-    let (paths, merkle_root) = build_merkle_tree(&commitments);
+    let (paths, merkle_root) = build_commitment_tree(&commitments).expect("commitment tree");
 
     // Create input witnesses
     let input_witnesses: Vec<InputNoteWitness> = input_notes
@@ -253,7 +243,7 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
         inputs: input_witnesses,
         outputs,
         sk_spend: random_bytes(rng),
-        merkle_root: felts_to_bytes32(&merkle_root),
+        merkle_root,
         fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),

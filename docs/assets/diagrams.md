@@ -235,7 +235,7 @@ flowchart TB
         TREE["Update Merkle tree"]
         ROOT["Compute root_new"]
         VB["Collect VersionBindings"]
-        REC["RecursiveAggregation<br/>folded digest"]
+        REC["RecursiveBlockProof<br/>recursive proof"]
     end
 
     subgraph Header["Block Header"]
