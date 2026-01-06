@@ -54,6 +54,8 @@
 //! types once the full sc-service pipeline is ready.
 
 use crate::substrate::mining_worker::{BlockTemplate, ChainStateProvider};
+use crate::substrate::service::StorageChangesHandle;
+use block_circuit::CommitmentBlockProof;
 use consensus::Blake3Seal;
 use sp_core::H256;
 use std::sync::Arc;
@@ -490,9 +492,9 @@ pub struct ProductionChainStateProvider {
 
 /// Result of executing extrinsics against runtime state (Task 11.4 + Task 11.5.5)
 ///
-/// Task 11.5.5: Added `storage_changes_key` to track storage changes for block import.
-/// The actual `StorageChanges` are stored in a global cache indexed by this key,
-/// because `StorageChanges` is not Clone and cannot be passed through callbacks easily.
+/// Task 11.5.5: Captures `StorageChanges` during block building so the block import path can
+/// persist state without re-executing the block. The storage changes are stored in a global cache
+/// and referenced by an RAII handle (so discarded templates don't leak memory).
 #[derive(Clone, Debug)]
 pub struct StateExecutionResult {
     /// Extrinsics that were successfully applied
@@ -503,10 +505,13 @@ pub struct StateExecutionResult {
     pub extrinsics_root: H256,
     /// Number of extrinsics that failed validation
     pub failed_count: usize,
-    /// Key to retrieve storage changes from cache (Task 11.5.5)
+    /// Cached storage changes handle (Task 11.5.5)
+    ///
     /// If Some, storage changes were captured and can be applied during import.
     /// If None, block import will use StateAction::Skip (scaffold mode).
-    pub storage_changes_key: Option<u64>,
+    pub storage_changes: Option<StorageChangesHandle>,
+    /// Optional commitment proof built from shielded transfer extrinsics.
+    pub commitment_proof: Option<CommitmentBlockProof>,
 }
 
 impl std::fmt::Debug for ProductionChainStateProvider {
@@ -637,6 +642,9 @@ impl ProductionChainStateProvider {
     ///         state_root: result.state_root,
     ///         extrinsics_root: result.extrinsics_root,
     ///         failed_count: result.failed,
+    ///         storage_changes: None,
+    ///         recursive_proof: None,
+    ///         commitment_proof: None,
     ///     })
     /// });
     /// ```
@@ -700,7 +708,8 @@ impl ProductionChainStateProvider {
                 state_root: H256::zero(),
                 extrinsics_root,
                 failed_count: 0,
-                storage_changes_key: None, // No storage changes in mock mode
+                storage_changes: None, // No storage changes in mock mode
+                commitment_proof: None,
             })
         } else {
             Err("state execution is not configured; refusing to run without real execution".into())
@@ -831,21 +840,25 @@ impl ChainStateProvider for ProductionChainStateProvider {
         match self.execute_extrinsics(&parent_hash, block_number, &pending) {
             Ok(result) => {
                 if self.config.verbose {
+                    let storage_changes_key =
+                        result.storage_changes.as_ref().map(|handle| handle.key());
                     tracing::debug!(
                         block_number,
                         applied = result.applied_extrinsics.len(),
                         failed = result.failed_count,
                         state_root = %hex::encode(result.state_root.as_bytes()),
-                        storage_changes_key = ?result.storage_changes_key,
+                        storage_changes_key = ?storage_changes_key,
                         "Block template built with state execution (Task 11.4 + 11.5.5)"
                     );
                 }
-                template.with_executed_state(
-                    result.applied_extrinsics,
-                    result.state_root,
-                    result.extrinsics_root,
-                    result.storage_changes_key,
-                )
+                template
+                    .with_executed_state(
+                        result.applied_extrinsics,
+                        result.state_root,
+                        result.extrinsics_root,
+                        result.storage_changes,
+                    )
+                    .with_commitment_proof(result.commitment_proof)
             }
             Err(e) => {
                 tracing::error!(
@@ -1197,7 +1210,8 @@ mod tests {
                 state_root: custom_state_root,
                 extrinsics_root: custom_extrinsics_root,
                 failed_count: 0,
-                storage_changes_key: None,
+                storage_changes: None,
+                commitment_proof: None,
             })
         });
 
@@ -1228,7 +1242,8 @@ mod tests {
                 state_root: custom_state_root,
                 extrinsics_root: crate::substrate::compute_extrinsics_root(extrinsics),
                 failed_count: 0,
-                storage_changes_key: None,
+                storage_changes: None,
+                commitment_proof: None,
             })
         });
 
@@ -1256,7 +1271,8 @@ mod tests {
                 state_root: H256::zero(),
                 extrinsics_root: H256::zero(),
                 failed_count: 0,
-                storage_changes_key: None,
+                storage_changes: None,
+                commitment_proof: None,
             })
         });
 

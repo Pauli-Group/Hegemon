@@ -121,6 +121,7 @@ production = [
     "pallet-settlement/production",
     "pallet-shielded-pool/production",
 ]
+fast-proofs = ["pallet-shielded-pool/fast-proofs"]
 
 runtime-benchmarks = [
     "frame-benchmarking",

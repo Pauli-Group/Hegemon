@@ -4,7 +4,7 @@ use common::{
     BftBlockParams, PowBlockParams, assemble_bft_block, assemble_pow_block, dummy_coinbase,
     dummy_transaction, make_validators, validator_set,
 };
-use consensus::{BftConsensus, HashVerifier, NullifierSet, PowConsensus};
+use consensus::{BftConsensus, CommitmentTreeState, HashVerifier, NullifierSet, PowConsensus};
 use network::{GossipMessage, GossipRouter, PeerIdentity, establish_secure_channel};
 use tokio::time::{Duration, timeout};
 
@@ -12,10 +12,10 @@ use tokio::time::{Duration, timeout};
 async fn bft_consensus_liveness_and_slashing() {
     let validators = make_validators(4, 10);
     let validator_set = validator_set(&validators);
-    let mut consensus = BftConsensus::new(validator_set, [0u8; 32], HashVerifier);
+    let genesis_tree = CommitmentTreeState::default();
+    let mut consensus = BftConsensus::new(validator_set, genesis_tree.clone(), HashVerifier);
 
     let base_nullifiers = NullifierSet::new();
-    let base_state_root = [0u8; 32];
     let transactions = vec![dummy_transaction(1), dummy_transaction(2)];
     let (block, _, _) = assemble_bft_block(BftBlockParams {
         height: 1,
@@ -26,7 +26,7 @@ async fn bft_consensus_liveness_and_slashing() {
         validators: &validators,
         signer_indices: &[0, 1, 2],
         base_nullifiers: &base_nullifiers,
-        base_state_root,
+        base_commitment_tree: &genesis_tree,
         supply_digest: 0,
     })
     .expect("assemble block");
@@ -74,7 +74,7 @@ async fn bft_consensus_liveness_and_slashing() {
         validators: &validators,
         signer_indices: &[0, 1, 2],
         base_nullifiers: &NullifierSet::new(),
-        base_state_root: [0u8; 32],
+        base_commitment_tree: &genesis_tree,
         supply_digest: 0,
     })
     .expect("assemble conflicting block");
@@ -90,14 +90,14 @@ fn pow_chain_accepts_valid_work() {
     let mut miners = make_validators(1, 0);
     let miner = miners.remove(0);
     let pow_bits = 0x3f00ffff; // extremely easy target
+    let genesis_tree = CommitmentTreeState::default();
     let mut consensus = PowConsensus::with_genesis_pow_bits(
         vec![miner.validator.public_key().clone()],
-        [0u8; 32],
+        genesis_tree.clone(),
         HashVerifier,
         pow_bits,
     );
     let base_nullifiers = NullifierSet::new();
-    let base_state_root = [0u8; 32];
     let transactions = vec![dummy_transaction(11)];
     let (block, _, _) = assemble_pow_block(PowBlockParams {
         height: 1,
@@ -106,7 +106,7 @@ fn pow_chain_accepts_valid_work() {
         transactions,
         miner: &miner,
         base_nullifiers: &base_nullifiers,
-        base_state_root,
+        base_commitment_tree: &genesis_tree,
         pow_bits,
         nonce: [0u8; 32],
         parent_supply: 0,

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5-alpha - 2026-01-06
+- Scalability architecture pivot: commitment block proofs + parallel transaction-proof verification (supersedes legacy recursive proofs as the default validity path).
+- Block production + RPC plumbing for commitment proofs (including `block_getCommitmentProof`) and DA chunk retrieval (`da_getParams`, `da_getChunk`).
+- Ops/runbooks refreshed for the commitment-proof flow; legacy recursive-proof docs explicitly marked as superseded.
+- Fix: keep production mining (real difficulty) enabled even if PQ networking fails to bind, instead of falling back to scaffold mining.
+
 ## v0.4-alpha - 2025-12-25
 - Production hardening: shielded-only coinbase, proof-backed transfers, legacy commitment gating + Merkle root history, and subsidy/proof size enforcement.
 - Stablecoin issuance/burn: new stablecoin-policy pallet, runtime bindings, wallet mint/burn support, and chain spec updates through 0.4.2 (genesis shielded verifying key).

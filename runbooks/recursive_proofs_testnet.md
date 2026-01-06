@@ -1,4 +1,15 @@
-# Recursive Proofs Testnet Runbook
+# Superseded: Recursive Epoch Proofs Testnet
+
+> **This runbook is for legacy recursive epoch proofs, which are no longer the default validity path.**
+>
+> The production block validity architecture uses **commitment proofs + parallel transaction-proof verification**.
+> See `runbooks/commitment_proof_da_e2e.md` for the current E2E validation flow.
+>
+> Recursive epoch proofs remain available behind feature flags for dev/test maintenance only.
+
+---
+
+## Legacy Documentation (Preserved for Reference)
 
 This runbook validates Phase 3 testnet UX for recursive epoch proofs:
 

@@ -13,7 +13,7 @@ pub enum BlockError {
         source: TransactionCircuitError,
     },
     #[error(
-        "transaction proof at index {index} reported merkle root {reported:?} but expected {expected:?}"
+        "transaction proof at index {index} reported merkle root {reported:?} not found in anchor history (latest {expected:?})"
     )]
     UnexpectedMerkleRoot {
         index: usize,
@@ -24,8 +24,6 @@ pub enum BlockError {
     DuplicateNullifier(Commitment),
     #[error(transparent)]
     Merkle(#[from] MerkleError),
-    #[error("recursive aggregation digest mismatch")]
-    AggregationMismatch,
     #[error("transaction proof at index {0} reported verifier rejection")]
     TransactionRejected(usize),
     #[error("block starting root {observed:?} does not match expected {expected:?}")]
@@ -33,8 +31,11 @@ pub enum BlockError {
         expected: Commitment,
         observed: Commitment,
     },
-    #[error("block root trace mismatch")]
-    RootTraceMismatch,
+    #[error("block ending root {observed:?} does not match expected {expected:?}")]
+    EndingRootMismatch {
+        expected: Commitment,
+        observed: Commitment,
+    },
     #[error("transaction proof at index {index} declared unsupported version {version:?}")]
     UnsupportedVersion {
         index: usize,
@@ -42,4 +43,32 @@ pub enum BlockError {
     },
     #[error("reported version census does not match execution")]
     VersionMatrixMismatch,
+    #[error("transaction proof at index {index} is missing STARK proof bytes")]
+    MissingStarkProof { index: usize },
+    #[error("transaction proof at index {index} is missing STARK public inputs")]
+    MissingStarkInputs { index: usize },
+    #[error("transaction proof at index {index} has invalid STARK inputs: {reason}")]
+    InvalidStarkInputs { index: usize, reason: String },
+    #[error("transaction proof at index {index} failed recursive input parsing: {reason}")]
+    RecursiveProofInput { index: usize, reason: String },
+    #[error("recursive proof generation failed: {0}")]
+    RecursiveProofGeneration(String),
+    #[error("recursive proof verification failed: {0}")]
+    RecursiveProofVerification(String),
+    #[error("recursive proof hash mismatch")]
+    RecursiveProofHashMismatch,
+    #[error("recursive proof input count mismatch")]
+    RecursiveProofCountMismatch,
+    #[error("recursive proof padding does not match expected rule")]
+    RecursiveProofPaddingMismatch,
+    #[error("recursive proof inputs do not match transaction at index {0}")]
+    RecursiveProofInputsMismatch(usize),
+    #[error("commitment proof requires at least one transaction")]
+    CommitmentProofEmptyBlock,
+    #[error("commitment proof generation failed: {0}")]
+    CommitmentProofGeneration(String),
+    #[error("commitment proof verification failed: {0}")]
+    CommitmentProofVerification(String),
+    #[error("commitment proof public inputs invalid: {0}")]
+    CommitmentProofInvalidInputs(String),
 }

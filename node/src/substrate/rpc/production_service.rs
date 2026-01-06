@@ -34,11 +34,15 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! let service = ProductionRpcService::new(client.clone(), transaction_pool.clone());
+//! let service = ProductionRpcService::new(client.clone());
 //! let rpc_deps = FullDeps {
 //!     service: Arc::new(service),
 //!     pow_handle: pow_handle.clone(),
 //!     deny_unsafe: false,
+//!     recursive_block_proof_store: recursive_block_proof_store.clone(),
+//!     commitment_block_proof_store: commitment_block_proof_store.clone(),
+//!     da_chunk_store: da_chunk_store.clone(),
+//!     da_params,
 //! };
 //! let rpc_module = rpc::create_full(rpc_deps)?;
 //! ```

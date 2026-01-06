@@ -21,15 +21,16 @@ use crate::stark_prover::fast_proof_options;
 use crate::{
     constants::{MAX_INPUTS, MAX_OUTPUTS},
     stark_air::{
-        commitment_output_row, merkle_root_output_row, nullifier_output_row, TransactionAirStark,
-        TransactionPublicInputsStark, COL_FEE, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_OUT0, COL_OUT1,
-        COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_S0, COL_S1, COL_STABLECOIN_ASSET,
-        COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2,
-        COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG,
-        COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1,
-        COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3, COL_STABLECOIN_POLICY_HASH0,
-        COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2, COL_STABLECOIN_POLICY_HASH3,
-        COL_STABLECOIN_POLICY_VERSION, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN,
+        commitment_output_row, merkle_root_output_row, note_start_row_input, note_start_row_output,
+        nullifier_output_row, TransactionAirStark, TransactionPublicInputsStark, COL_FEE,
+        COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_OUT0, COL_OUT1, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1,
+        COL_S0, COL_S1, COL_STABLECOIN_ASSET, COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1,
+        COL_STABLECOIN_ATTEST2, COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ENABLED,
+        COL_STABLECOIN_ISSUANCE_MAG, COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0,
+        COL_STABLECOIN_ORACLE1, COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3,
+        COL_STABLECOIN_POLICY_HASH0, COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2,
+        COL_STABLECOIN_POLICY_HASH3, COL_STABLECOIN_POLICY_VERSION, COL_VALUE_BALANCE_MAG,
+        COL_VALUE_BALANCE_SIGN,
     },
     stark_prover::{default_proof_options, TransactionProverStark},
     witness::TransactionWitness,
@@ -52,9 +53,16 @@ impl TransactionProverStarkRpo {
         Self::new(default_proof_options())
     }
 
-    #[cfg(feature = "stark-fast")]
     pub fn with_fast_options() -> Self {
-        Self::new(fast_proof_options())
+        #[cfg(feature = "stark-fast")]
+        {
+            Self::new(fast_proof_options())
+        }
+
+        #[cfg(not(feature = "stark-fast"))]
+        {
+            Self::with_default_options()
+        }
     }
 
     /// Build execution trace (identical to Blake3 prover).
@@ -92,15 +100,30 @@ impl Prover for TransactionProverStarkRpo {
         DefaultConstraintEvaluator<'a, Self::Air, E>;
 
     fn get_pub_inputs(&self, trace: &Self::Trace) -> TransactionPublicInputsStark {
-        let row = 0;
-        let input_flags = vec![
-            trace.get(COL_IN_ACTIVE0, row),
-            trace.get(COL_IN_ACTIVE1, row),
-        ];
-        let output_flags = vec![
-            trace.get(COL_OUT_ACTIVE0, row),
-            trace.get(COL_OUT_ACTIVE1, row),
-        ];
+        let trace_len = trace.length();
+        let input_rows = [note_start_row_input(0), note_start_row_input(1)];
+        let input_cols = [COL_IN_ACTIVE0, COL_IN_ACTIVE1];
+        let mut input_flags = Vec::with_capacity(MAX_INPUTS);
+        for (idx, &row) in input_rows.iter().enumerate() {
+            let flag = if row < trace_len {
+                trace.get(input_cols[idx], row)
+            } else {
+                BaseElement::ZERO
+            };
+            input_flags.push(flag);
+        }
+
+        let output_rows = [note_start_row_output(0), note_start_row_output(1)];
+        let output_cols = [COL_OUT_ACTIVE0, COL_OUT_ACTIVE1];
+        let mut output_flags = Vec::with_capacity(MAX_OUTPUTS);
+        for (idx, &row) in output_rows.iter().enumerate() {
+            let flag = if row < trace_len {
+                trace.get(output_cols[idx], row)
+            } else {
+                BaseElement::ZERO
+            };
+            output_flags.push(flag);
+        }
 
         let read_hash = |row: usize| -> [BaseElement; 4] {
             [
@@ -272,7 +295,7 @@ mod tests {
             outputs: vec![OutputNoteWitness { note: output_note }],
             sk_spend: [7u8; 32],
             merkle_root,
-            fee: 0,
+            fee: 100,
             value_balance: 0,
             stablecoin: StablecoinPolicyBinding::default(),
             version: TransactionWitness::default_version_binding(),
@@ -305,5 +328,26 @@ mod tests {
         let tampered = Proof::from_bytes(&proof_bytes).unwrap();
 
         assert!(verify_transaction_proof_rpo(&tampered, &pub_inputs).is_err());
+    }
+
+    #[test]
+    fn test_rpo_proofs_roundtrip_transaction_core_verifier() {
+        let witness = make_test_witness();
+        let prover = TransactionProverStarkRpo::new(default_proof_options());
+
+        let trace = prover.build_trace(&witness).unwrap();
+        let pub_inputs = <TransactionProverStarkRpo as Prover>::get_pub_inputs(&prover, &trace);
+        let proof = prover.prove(trace).unwrap();
+        let proof_bytes = proof.to_bytes();
+
+        let result = transaction_core::stark_verifier::verify_transaction_proof_bytes_rpo(
+            &proof_bytes,
+            &pub_inputs,
+        );
+        assert!(
+            result.is_ok(),
+            "transaction-core verifier failed: {:?}",
+            result
+        );
     }
 }

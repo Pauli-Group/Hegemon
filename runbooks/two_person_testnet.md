@@ -117,17 +117,15 @@ The command below extracts your shielded address (offline) and starts mining:
 
 ```bash
 HEGEMON_MINE=1 \
-HEGEMON_RECURSIVE_EPOCH_PROOFS=1 \
-HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1 \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --dev \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
+  --port 30333 \
   --rpc-port 9944 \
   --rpc-external \
   --rpc-methods safe \
-  --listen-addr /ip4/0.0.0.0/tcp/30333 \
   --name "AliceBootNode"
 ```
 
@@ -180,14 +178,13 @@ cargo build -p hegemon-node -p wallet --release
 mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
-HEGEMON_RECURSIVE_EPOCH_PROOFS=1 \
-HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1 \
 HEGEMON_SEEDS="hegemon.pauli.group:30333" \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "BOB_CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --dev \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
+  --port 30333 \
   --rpc-port 9944 \
   --rpc-external \
   --rpc-methods safe \
@@ -338,7 +335,20 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 
 ---
 
-## Testing Recursive Epoch Proofs (Phase 3d)
+## Verify Commitment Proofs (Current Validity Path)
+
+The production block validity architecture is:
+
+- commitment block proofs
+- parallel transaction-proof verification
+
+To validate the commitment-proof + DA RPC flow end-to-end, use:
+
+- `runbooks/commitment_proof_da_e2e.md`
+
+---
+
+## Legacy: Testing Recursive Epoch Proofs (Phase 3d)
 
 This section documents how to test the recursive STARK epoch proof system on a two-node testnet. Epoch proofs aggregate all transaction proofs within an epoch (1000 blocks) into a single compact proof using RPO-based Fiat-Shamir.
 
@@ -369,27 +379,32 @@ This section documents how to test the recursive STARK epoch proof system on a t
 **Alice (Boot Node):**
 ```bash
 HEGEMON_MINE=1 \
+HEGEMON_RECURSIVE_EPOCH_PROOFS=1 \
+HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1 \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --dev \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
+  --port 30333 \
   --rpc-port 9944 \
   --rpc-external \
   --rpc-methods safe \
-  --listen-addr /ip4/0.0.0.0/tcp/30333 \
   --name "AliceBootNode"
 ```
 
 **Bob:**
 ```bash
 HEGEMON_MINE=1 \
+HEGEMON_RECURSIVE_EPOCH_PROOFS=1 \
+HEGEMON_RECURSIVE_EPOCH_PROOFS_OUTER_RPO=1 \
 HEGEMON_SEEDS="<ALICE_IP>:30333" \
 HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "BOB_CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
 ./target/release/hegemon-node \
   --dev \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
+  --port 30333 \
   --rpc-port 9944 \
   --rpc-external \
   --rpc-methods safe \

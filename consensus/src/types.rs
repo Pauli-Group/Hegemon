@@ -1,6 +1,11 @@
+use block_circuit::CommitmentBlockProof;
+#[cfg(feature = "legacy-recursion")]
+use block_circuit::RecursiveBlockProof;
 use crypto::hashes::sha256;
 use protocol_versioning::{VersionBinding, VersionMatrix};
 use sha2::{Digest, Sha384};
+pub use state_da::{DaChunk, DaChunkProof, DaEncoding, DaError, DaParams, DaRoot};
+use transaction_circuit::TransactionProof;
 
 pub type Nullifier = [u8; 32];
 pub type Commitment = [u8; 32];
@@ -22,6 +27,34 @@ pub struct Transaction {
     pub balance_tag: BalanceTag,
     pub version: VersionBinding,
     pub ciphertexts: Vec<Vec<u8>>,
+}
+
+pub fn build_da_blob(transactions: &[Transaction]) -> Vec<u8> {
+    let mut blob = Vec::new();
+    blob.extend_from_slice(&(transactions.len() as u32).to_le_bytes());
+    for tx in transactions {
+        blob.extend_from_slice(&(tx.ciphertexts.len() as u32).to_le_bytes());
+        for ciphertext in &tx.ciphertexts {
+            blob.extend_from_slice(&(ciphertext.len() as u32).to_le_bytes());
+            blob.extend_from_slice(ciphertext);
+        }
+    }
+    blob
+}
+
+pub fn encode_da_blob(
+    transactions: &[Transaction],
+    params: DaParams,
+) -> Result<DaEncoding, DaError> {
+    state_da::encode_da_blob(&build_da_blob(transactions), params)
+}
+
+pub fn da_root(transactions: &[Transaction], params: DaParams) -> Result<DaRoot, DaError> {
+    state_da::da_root(&build_da_blob(transactions), params)
+}
+
+pub fn verify_da_chunk(root: DaRoot, proof: &DaChunkProof) -> Result<(), DaError> {
+    state_da::verify_da_chunk(root, proof)
 }
 
 impl Transaction {
@@ -127,6 +160,10 @@ pub struct Block<BH> {
     pub header: BH,
     pub transactions: Vec<Transaction>,
     pub coinbase: Option<CoinbaseData>,
+    #[cfg(feature = "legacy-recursion")]
+    pub recursive_proof: Option<RecursiveBlockProof>,
+    pub commitment_proof: Option<CommitmentBlockProof>,
+    pub transaction_proofs: Option<Vec<TransactionProof>>,
 }
 
 impl<BH> Block<BH> {
@@ -135,6 +172,10 @@ impl<BH> Block<BH> {
             header,
             transactions: self.transactions,
             coinbase: self.coinbase,
+            #[cfg(feature = "legacy-recursion")]
+            recursive_proof: self.recursive_proof,
+            commitment_proof: self.commitment_proof,
+            transaction_proofs: self.transaction_proofs,
         }
     }
 }

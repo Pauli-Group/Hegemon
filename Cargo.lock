@@ -1116,12 +1116,17 @@ dependencies = [
 name = "block-circuit"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "epoch-circuit",
  "protocol-versioning",
  "rand 0.8.5",
  "serde",
+ "sha2 0.10.9",
  "state-merkle",
  "thiserror 1.0.69",
  "transaction-circuit",
+ "winter-crypto",
+ "winterfell",
 ]
 
 [[package]]
@@ -1449,6 +1454,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "serde",
  "serde_json",
+ "state-merkle",
  "transaction-circuit",
  "winterfell",
 ]
@@ -1571,6 +1577,7 @@ dependencies = [
  "anyhow",
  "bincode",
  "blake3",
+ "block-circuit",
  "crossbeam-channel",
  "network",
  "num-bigint",
@@ -1579,6 +1586,7 @@ dependencies = [
  "parking_lot 0.12.5",
  "proptest",
  "protocol-versioning",
+ "rayon",
  "runtime",
  "sc-consensus-pow",
  "serde",
@@ -1587,10 +1595,14 @@ dependencies = [
  "sp-consensus-pow",
  "sp-core",
  "sp-runtime",
+ "state-da",
+ "state-merkle",
  "synthetic-crypto",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "transaction-circuit",
+ "winterfell",
 ]
 
 [[package]]
@@ -3591,7 +3603,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hegemon-node"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3660,6 +3672,7 @@ dependencies = [
  "sp-keystore",
  "sp-runtime",
  "sp-timestamp",
+ "state-da",
  "state-merkle",
  "substrate-frame-rpc-system",
  "synthetic-crypto",
@@ -5614,6 +5627,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc7981c1d907bb9864e24f2bd6304c4fca03a41fc4606c09edd6a7f5a8fc80fc"
 dependencies = [
  "blake3",
+ "cc",
  "chacha20poly1305",
  "curve25519-dalek",
  "ed25519-dalek",
@@ -7815,6 +7829,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "reed-solomon-erasure"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7263373d500d4d4f505d43a2a662d475a894aa94503a1ee28e9188b5f3960d4f"
+dependencies = [
+ "libm",
+ "lru 0.7.8",
+ "parking_lot 0.11.2",
+ "smallvec",
+ "spin 0.9.8",
+]
+
+[[package]]
 name = "ref-cast"
 version = "1.0.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9349,6 +9376,7 @@ dependencies = [
  "url",
  "wallet",
  "winter-math",
+ "winterfell",
 ]
 
 [[package]]
@@ -10491,6 +10519,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
+name = "state-da"
+version = "0.1.0"
+dependencies = [
+ "parity-scale-codec",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "reed-solomon-erasure",
+ "synthetic-crypto",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "state-merkle"
 version = "0.1.0"
 dependencies = [
@@ -11331,8 +11371,10 @@ name = "transaction-core"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "miden-crypto",
  "serde",
  "winter-crypto",
+ "winter-utils",
  "winterfell",
 ]
 
@@ -11717,7 +11759,7 @@ dependencies = [
 
 [[package]]
 name = "wallet"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 dependencies = [
  "anyhow",
  "argon2",
@@ -11757,6 +11799,7 @@ dependencies = [
  "transaction-circuit",
  "twox-hash",
  "url",
+ "winter-prover",
  "zeroize",
 ]
 

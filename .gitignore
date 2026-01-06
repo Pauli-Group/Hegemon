@@ -1,6 +1,5 @@
 target/
 wallet-demo-artifacts/
-state/
 node.db/
 *.db
 *.db-shm
@@ -44,3 +43,6 @@ pq-identity.seed
 
 # Debug output
 out.txt
+
+# Local dev node logs
+hegemon-dev-node*.log

@@ -50,38 +50,37 @@ fn default_acceptable_options() -> winterfell::ProofOptions {
         32,
         8,
         0,
-        winterfell::FieldExtension::None,
-        4,
-        31,
+        winterfell::FieldExtension::Quadratic,
+        2,
+        7,
         winterfell::BatchingMethod::Linear,
         winterfell::BatchingMethod::Linear,
     )
 }
 
 fn acceptable_options() -> AcceptableOptions {
-    #[cfg(feature = "stark-fast")]
-    {
-        AcceptableOptions::OptionSet(vec![
-            default_acceptable_options(),
-            fast_acceptable_options(),
-        ])
+    let mut options = vec![default_acceptable_options()];
+    if fast_proofs_enabled() {
+        options.push(fast_acceptable_options());
     }
-    #[cfg(not(feature = "stark-fast"))]
-    {
-        AcceptableOptions::OptionSet(vec![default_acceptable_options()])
-    }
+    AcceptableOptions::OptionSet(options)
 }
 
-#[cfg(feature = "stark-fast")]
 fn fast_acceptable_options() -> winterfell::ProofOptions {
     winterfell::ProofOptions::new(
+        1,
         8,
-        16,
         0,
-        winterfell::FieldExtension::None,
+        winterfell::FieldExtension::Quadratic,
         2,
-        15,
+        7,
         winterfell::BatchingMethod::Linear,
         winterfell::BatchingMethod::Linear,
     )
+}
+
+fn fast_proofs_enabled() -> bool {
+    std::env::var("HEGEMON_ACCEPT_FAST_PROOFS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }

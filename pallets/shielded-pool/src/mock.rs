@@ -236,6 +236,7 @@ mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof};
+    use frame_support::traits::Hooks;
     use frame_support::{assert_noop, assert_ok, BoundedVec};
     use sp_runtime::traits::ValidateUnsigned;
     use sp_runtime::transaction_validity::{
@@ -337,6 +338,66 @@ mod tests {
     }
 
     #[test]
+    fn validate_unsigned_submit_commitment_proof_is_in_block_only() {
+        new_test_ext().execute_with(|| {
+            let call = crate::Call::<Test>::submit_commitment_proof {
+                proof: valid_proof(),
+            };
+
+            let validity_external =
+                Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
+            assert!(matches!(
+                validity_external,
+                Err(TransactionValidityError::Invalid(InvalidTransaction::Call))
+            ));
+
+            let validity_in_block =
+                Pallet::<Test>::validate_unsigned(TransactionSource::InBlock, &call);
+            assert!(validity_in_block.is_ok());
+        });
+    }
+
+    #[test]
+    fn validate_unsigned_submit_commitment_proof_rejects_oversized() {
+        new_test_ext().execute_with(|| {
+            let call = crate::Call::<Test>::submit_commitment_proof {
+                proof: StarkProof {
+                    data: vec![0u8; crate::types::STARK_PROOF_MAX_SIZE + 1],
+                },
+            };
+
+            let validity_in_block =
+                Pallet::<Test>::validate_unsigned(TransactionSource::InBlock, &call);
+            assert!(matches!(
+                validity_in_block,
+                Err(TransactionValidityError::Invalid(
+                    InvalidTransaction::ExhaustsResources
+                ))
+            ));
+        });
+    }
+
+    #[test]
+    fn validate_unsigned_submit_commitment_proof_rejects_duplicate_in_block() {
+        new_test_ext().execute_with(|| {
+            assert_ok!(Pallet::<Test>::submit_commitment_proof(
+                RuntimeOrigin::none(),
+                valid_proof(),
+            ));
+
+            let call = crate::Call::<Test>::submit_commitment_proof {
+                proof: valid_proof(),
+            };
+            let validity_in_block =
+                Pallet::<Test>::validate_unsigned(TransactionSource::InBlock, &call);
+            assert!(matches!(
+                validity_in_block,
+                Err(TransactionValidityError::Invalid(InvalidTransaction::Stale))
+            ));
+        });
+    }
+
+    #[test]
     fn mint_coinbase_works() {
         new_test_ext().execute_with(|| {
             let amount = 1000u64;
@@ -356,6 +417,47 @@ mod tests {
             // Check Merkle root was updated
             let tree = MerkleTreeStorage::<Test>::get();
             assert_eq!(tree.len(), 1);
+        });
+    }
+
+    #[test]
+    fn submit_commitment_proof_requires_none_origin_and_is_singleton() {
+        new_test_ext().execute_with(|| {
+            // Signed origin rejected.
+            assert_noop!(
+                Pallet::<Test>::submit_commitment_proof(RuntimeOrigin::signed(1), valid_proof(),),
+                sp_runtime::DispatchError::BadOrigin
+            );
+
+            // None origin accepted once per block.
+            assert_ok!(Pallet::<Test>::submit_commitment_proof(
+                RuntimeOrigin::none(),
+                valid_proof(),
+            ));
+            assert_noop!(
+                Pallet::<Test>::submit_commitment_proof(RuntimeOrigin::none(), valid_proof(),),
+                crate::Error::<Test>::CommitmentProofAlreadyProcessed
+            );
+
+            // Reset on new block.
+            Pallet::<Test>::on_initialize(2);
+            assert_ok!(Pallet::<Test>::submit_commitment_proof(
+                RuntimeOrigin::none(),
+                valid_proof(),
+            ));
+        });
+    }
+
+    #[test]
+    fn submit_commitment_proof_respects_size_limit() {
+        new_test_ext().execute_with(|| {
+            let proof = StarkProof {
+                data: vec![0u8; crate::types::STARK_PROOF_MAX_SIZE + 1],
+            };
+            assert_noop!(
+                Pallet::<Test>::submit_commitment_proof(RuntimeOrigin::none(), proof),
+                crate::Error::<Test>::ProofTooLarge
+            );
         });
     }
 

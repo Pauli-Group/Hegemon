@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use consensus::header::{BlockHeader, PowSeal};
 use consensus::reward::INITIAL_SUBSIDY;
-use consensus::types::ConsensusBlock;
+use consensus::types::{da_root, ConsensusBlock, DaParams};
 use crypto::hashes::sha256;
 use crypto::traits::{SigningKey, VerifyKey};
 use parking_lot::Mutex;
@@ -12,6 +12,9 @@ use wallet::rpc::TransactionBundle;
 use crate::config::NodeConfig;
 use crate::error::NodeResult;
 use crate::storage::{self, StorageMeta, StorageState};
+
+const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
+const DEFAULT_DA_SAMPLE_COUNT: u32 = 80;
 
 #[derive(Clone, Copy, Debug)]
 pub enum MinerAction {
@@ -140,6 +143,11 @@ impl LegacyNode {
         let height = state.height + 1;
         state.supply_digest = state.supply_digest.saturating_add(INITIAL_SUBSIDY as u128);
         let supply_digest = state.supply_digest;
+        let da_params = DaParams {
+            chunk_size: DEFAULT_DA_CHUNK_SIZE,
+            sample_count: DEFAULT_DA_SAMPLE_COUNT,
+        };
+        let da_root = da_root(&[], da_params).expect("da root");
         let header = BlockHeader {
             version: 1,
             height,
@@ -149,6 +157,8 @@ impl LegacyNode {
             state_root: [0u8; 32],
             nullifier_root: [0u8; 32],
             proof_commitment: state.proof_commitment,
+            da_root,
+            da_params,
             version_commitment: state.version_commitment,
             tx_count: 0,
             fee_commitment: [0u8; 32],
@@ -165,6 +175,8 @@ impl LegacyNode {
             header,
             transactions: Vec::new(),
             coinbase: None,
+            commitment_proof: None,
+            transaction_proofs: None,
         };
         let best_hash = block.header.hash()?;
         state.height = height;

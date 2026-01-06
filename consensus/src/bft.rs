@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::commitment_tree::CommitmentTreeState;
 use crate::error::{ConsensusError, SlashingEvidence};
 use crate::header::ConsensusMode;
 use crate::nullifier::NullifierSet;
@@ -7,7 +8,6 @@ use crate::proof::{ProofVerifier, verify_commitments};
 use crate::types::{ConsensusBlock, ValidatorId};
 use crate::validator::ValidatorSet;
 use crate::version_policy::VersionSchedule;
-use crypto::hashes::sha256;
 
 const GENESIS_HASH: [u8; 32] = [0u8; 32];
 const TIMESTAMP_DRIFT_MS: u64 = 10 * 60 * 1000;
@@ -16,7 +16,7 @@ const TIMESTAMP_DRIFT_MS: u64 = 10 * 60 * 1000;
 struct ForkNode {
     height: u64,
     view: u64,
-    state_root: [u8; 32],
+    commitment_tree: CommitmentTreeState,
     nullifiers: NullifierSet,
     timestamp_ms: u64,
 }
@@ -39,14 +39,14 @@ struct ForkTree {
 }
 
 impl ForkTree {
-    fn new(state_root: [u8; 32]) -> Self {
+    fn new(genesis_tree: CommitmentTreeState) -> Self {
         let mut nodes = HashMap::new();
         nodes.insert(
             GENESIS_HASH,
             ForkNode {
                 height: 0,
                 view: 0,
-                state_root,
+                commitment_tree: genesis_tree,
                 nullifiers: NullifierSet::new(),
                 timestamp_ms: 0,
             },
@@ -101,10 +101,14 @@ pub struct BftConsensus<V: ProofVerifier> {
 }
 
 impl<V: ProofVerifier> BftConsensus<V> {
-    pub fn new(validator_set: ValidatorSet, genesis_state_root: [u8; 32], verifier: V) -> Self {
+    pub fn new(
+        validator_set: ValidatorSet,
+        genesis_tree: CommitmentTreeState,
+        verifier: V,
+    ) -> Self {
         Self::with_schedule(
             validator_set,
-            genesis_state_root,
+            genesis_tree,
             verifier,
             VersionSchedule::default(),
         )
@@ -112,14 +116,14 @@ impl<V: ProofVerifier> BftConsensus<V> {
 
     pub fn with_schedule(
         validator_set: ValidatorSet,
-        genesis_state_root: [u8; 32],
+        genesis_tree: CommitmentTreeState,
         verifier: V,
         version_schedule: VersionSchedule,
     ) -> Self {
         Self {
             validator_set,
             verifier,
-            fork: ForkTree::new(genesis_state_root),
+            fork: ForkTree::new(genesis_tree),
             vote_history: HashMap::new(),
             version_schedule,
         }
@@ -150,7 +154,6 @@ impl<V: ProofVerifier> BftConsensus<V> {
         if block.header.validator_set_commitment != self.validator_set.validator_set_commitment() {
             return Err(ConsensusError::ValidatorSetMismatch);
         }
-        self.verifier.verify_block(&block)?;
 
         let parent_hash = block.header.parent_hash;
         let parent_node = self
@@ -182,11 +185,6 @@ impl<V: ProofVerifier> BftConsensus<V> {
             return Err(ConsensusError::InvalidHeader("nullifier root mismatch"));
         }
 
-        let computed_state_root = accumulate_state(parent_node.state_root, &block);
-        if computed_state_root != block.header.state_root {
-            return Err(ConsensusError::InvalidHeader("state root mismatch"));
-        }
-
         let (weight, signers) = self.validator_set.verify_signatures(&block.header)?;
         let threshold = self.validator_set.quorum_threshold();
         if weight < threshold {
@@ -194,6 +192,14 @@ impl<V: ProofVerifier> BftConsensus<V> {
                 got: weight,
                 needed: threshold,
             });
+        }
+
+        let commitment_tree = self
+            .verifier
+            .verify_block(&block, &parent_node.commitment_tree)?;
+        let computed_state_root = commitment_tree.root();
+        if computed_state_root != block.header.state_root {
+            return Err(ConsensusError::InvalidHeader("state root mismatch"));
         }
 
         let block_hash = block.header.hash()?;
@@ -217,7 +223,7 @@ impl<V: ProofVerifier> BftConsensus<V> {
         let node = ForkNode {
             height: block.header.height,
             view: block.header.view,
-            state_root: computed_state_root,
+            commitment_tree,
             nullifiers: working_nullifiers.clone(),
             timestamp_ms: block.header.timestamp_ms,
         };
@@ -235,19 +241,4 @@ impl<V: ProofVerifier> BftConsensus<V> {
     pub fn best_hash(&self) -> [u8; 32] {
         self.fork.best()
     }
-}
-
-fn accumulate_state(mut root: [u8; 32], block: &ConsensusBlock) -> [u8; 32] {
-    for tx in &block.transactions {
-        if tx.commitments.is_empty() {
-            continue;
-        }
-        let mut data = Vec::with_capacity(32 + tx.commitments.len() * 32);
-        data.extend_from_slice(&root);
-        for cm in &tx.commitments {
-            data.extend_from_slice(cm);
-        }
-        root = sha256(&data);
-    }
-    root
 }

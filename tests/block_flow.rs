@@ -3,7 +3,7 @@
 //! These tests verify that the block_circuit correctly aggregates multiple
 //! transaction proofs and maintains proper Merkle tree state.
 
-use block_circuit::{prove_block, verify_block, BlockError};
+use block_circuit::{prove_block_fast, verify_block, BlockError};
 use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
 use std::collections::HashMap;
 use transaction_circuit::{
@@ -11,9 +11,12 @@ use transaction_circuit::{
     hashing::{felts_to_bytes32, merkle_node, Felt, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
-    proof::prove,
+    proof::{SerializedStarkInputs, TransactionProof},
+    rpo_prover::TransactionProverStarkRpo,
     StablecoinPolicyBinding, TransactionWitness,
+    trace::TransactionTrace,
 };
+use winterfell::Prover;
 
 /// Build a Merkle tree with 2 leaves at positions 0 and 1.
 /// Returns paths and root consistent with CIRCUIT_MERKLE_DEPTH.
@@ -118,24 +121,124 @@ fn make_valid_witness(seed: u64) -> (TransactionWitness, Vec<HashFelt>) {
     (witness, output_commitments)
 }
 
+fn rpo_prover() -> TransactionProverStarkRpo {
+    #[cfg(feature = "stark-fast")]
+    {
+        let options = winterfell::ProofOptions::new(
+            8,
+            8,
+            0,
+            winterfell::FieldExtension::None,
+            2,
+            7,
+            winterfell::BatchingMethod::Linear,
+            winterfell::BatchingMethod::Linear,
+        );
+        TransactionProverStarkRpo::new(options)
+    }
+    #[cfg(not(feature = "stark-fast"))]
+    {
+        let options = winterfell::ProofOptions::new(
+            32,
+            8,
+            0,
+            winterfell::FieldExtension::None,
+            2,
+            7,
+            winterfell::BatchingMethod::Linear,
+            winterfell::BatchingMethod::Linear,
+        );
+        TransactionProverStarkRpo::new(options)
+    }
+}
+
+fn build_rpo_proof(witness: &TransactionWitness) -> TransactionProof {
+    let public_inputs = witness.public_inputs().expect("public inputs");
+    let legacy_trace = TransactionTrace::from_witness(witness).expect("trace");
+    let prover = rpo_prover();
+    let trace = prover.build_trace(witness).expect("stark trace");
+    let stark_pub_inputs = prover.get_pub_inputs(&trace);
+    let proof_bytes = prover.prove(trace).expect("rpo proof").to_bytes();
+
+    let input_flags = stark_pub_inputs
+        .input_flags
+        .iter()
+        .map(|f| f.as_int() as u8)
+        .collect();
+    let output_flags = stark_pub_inputs
+        .output_flags
+        .iter()
+        .map(|f| f.as_int() as u8)
+        .collect();
+    let fee = stark_pub_inputs.fee.as_int();
+    let value_balance_sign = stark_pub_inputs.value_balance_sign.as_int() as u8;
+    let value_balance_magnitude = stark_pub_inputs.value_balance_magnitude.as_int();
+    let stablecoin_enabled = stark_pub_inputs.stablecoin_enabled.as_int() as u8;
+    let stablecoin_asset_id = stark_pub_inputs.stablecoin_asset.as_int();
+    let stablecoin_policy_version = stark_pub_inputs.stablecoin_policy_version.as_int() as u32;
+    let stablecoin_issuance_sign = stark_pub_inputs.stablecoin_issuance_sign.as_int() as u8;
+    let stablecoin_issuance_magnitude = stark_pub_inputs.stablecoin_issuance_magnitude.as_int();
+
+    let nullifiers = stark_pub_inputs
+        .nullifiers
+        .iter()
+        .map(felts_to_bytes32)
+        .collect();
+    let commitments = stark_pub_inputs
+        .commitments
+        .iter()
+        .map(felts_to_bytes32)
+        .collect();
+    let merkle_root = felts_to_bytes32(&stark_pub_inputs.merkle_root);
+    let stablecoin_policy_hash = felts_to_bytes32(&stark_pub_inputs.stablecoin_policy_hash);
+    let stablecoin_oracle_commitment =
+        felts_to_bytes32(&stark_pub_inputs.stablecoin_oracle_commitment);
+    let stablecoin_attestation_commitment =
+        felts_to_bytes32(&stark_pub_inputs.stablecoin_attestation_commitment);
+
+    TransactionProof {
+        public_inputs,
+        nullifiers,
+        commitments,
+        balance_slots: legacy_trace.padded_balance_slots(),
+        stark_proof: proof_bytes,
+        stark_public_inputs: Some(SerializedStarkInputs {
+            input_flags,
+            output_flags,
+            fee,
+            value_balance_sign,
+            value_balance_magnitude,
+            merkle_root,
+            stablecoin_enabled,
+            stablecoin_asset_id,
+            stablecoin_policy_version,
+            stablecoin_issuance_sign,
+            stablecoin_issuance_magnitude,
+            stablecoin_policy_hash,
+            stablecoin_oracle_commitment,
+            stablecoin_attestation_commitment,
+        }),
+    }
+}
+
 #[test]
 fn block_proof_single_transaction() {
-    let (proving_key, verifying_key) = generate_keys();
+    let (_proving_key, verifying_key) = generate_keys();
     let mut verifying_keys = HashMap::new();
     verifying_keys.insert(DEFAULT_VERSION_BINDING, verifying_key);
 
     // Create a single valid transaction
     let (witness, _commitments) = make_valid_witness(0);
-    let proof = prove(&witness, &proving_key).expect("prove transaction");
+    let proof = build_rpo_proof(&witness);
 
     let proofs = vec![proof];
 
     // Use CommitmentTree for state tracking
     let mut tree = state_merkle::CommitmentTree::new(CIRCUIT_MERKLE_DEPTH).expect("tree");
-    let block_proof = prove_block(&mut tree, &proofs, &verifying_keys).expect("block proof");
+    let block_proof = prove_block_fast(&mut tree, &proofs, &verifying_keys).expect("block proof");
 
-    assert_eq!(block_proof.root_trace.len(), 2); // start + 1 tx
-    assert!(block_proof.transactions.len() == 1);
+    assert_eq!(block_proof.recursive_proof.tx_count, 1);
+    assert_eq!(block_proof.transactions.len(), 1);
 
     // Verify the block proof
     let mut verify_tree = state_merkle::CommitmentTree::new(CIRCUIT_MERKLE_DEPTH).expect("tree");
@@ -145,26 +248,26 @@ fn block_proof_single_transaction() {
 
 #[test]
 fn duplicate_nullifiers_across_transactions_rejected() {
-    let (proving_key, verifying_key) = generate_keys();
+    let (_proving_key, verifying_key) = generate_keys();
     let mut verifying_keys = HashMap::new();
     verifying_keys.insert(DEFAULT_VERSION_BINDING, verifying_key);
 
     // Create two proofs from SAME witness = same nullifiers
     let (witness_a, _) = make_valid_witness(0);
-    let proof_a = prove(&witness_a, &proving_key).expect("prove a");
-    let proof_b = prove(&witness_a, &proving_key).expect("prove b");
+    let proof_a = build_rpo_proof(&witness_a);
+    let proof_b = build_rpo_proof(&witness_a);
 
     // The block should reject duplicate nullifiers
     let proofs = vec![proof_a, proof_b];
     let mut tree = state_merkle::CommitmentTree::new(CIRCUIT_MERKLE_DEPTH).expect("tree");
 
-    let result = prove_block(&mut tree, &proofs, &verifying_keys);
+    let result = prove_block_fast(&mut tree, &proofs, &verifying_keys);
     assert!(matches!(result, Err(BlockError::DuplicateNullifier(_))));
 }
 
 #[test]
 fn multiple_independent_transactions_aggregate() {
-    let (proving_key, verifying_key) = generate_keys();
+    let (_proving_key, verifying_key) = generate_keys();
     let mut verifying_keys = HashMap::new();
     verifying_keys.insert(DEFAULT_VERSION_BINDING, verifying_key);
 
@@ -172,16 +275,16 @@ fn multiple_independent_transactions_aggregate() {
     let (witness_0, _) = make_valid_witness(0);
     let (witness_1, _) = make_valid_witness(100);
 
-    let proof_0 = prove(&witness_0, &proving_key).expect("prove 0");
-    let proof_1 = prove(&witness_1, &proving_key).expect("prove 1");
+    let proof_0 = build_rpo_proof(&witness_0);
+    let proof_1 = build_rpo_proof(&witness_1);
 
     let proofs = vec![proof_0, proof_1];
     let mut tree = state_merkle::CommitmentTree::new(CIRCUIT_MERKLE_DEPTH).expect("tree");
 
-    let block_proof = prove_block(&mut tree, &proofs, &verifying_keys).expect("block proof");
+    let block_proof = prove_block_fast(&mut tree, &proofs, &verifying_keys).expect("block proof");
 
     // Should have tracked both transactions
-    assert_eq!(block_proof.root_trace.len(), 3); // start + 2 txs
+    assert_eq!(block_proof.recursive_proof.tx_count, 2);
     assert_eq!(block_proof.transactions.len(), 2);
 
     // Verify
@@ -192,7 +295,7 @@ fn multiple_independent_transactions_aggregate() {
 
 #[test]
 fn missing_version_key_rejected() {
-    let (proving_key, verifying_key) = generate_keys();
+    let (_proving_key, verifying_key) = generate_keys();
 
     // Only register the default version key
     let mut verifying_keys = HashMap::new();
@@ -202,18 +305,18 @@ fn missing_version_key_rejected() {
     let (mut witness, _) = make_valid_witness(0);
     witness.version = VersionBinding::new(99, DEFAULT_VERSION_BINDING.crypto);
 
-    let proof = prove(&witness, &proving_key).expect("prove");
+    let proof = build_rpo_proof(&witness);
     let proofs = vec![proof];
 
     let mut tree = state_merkle::CommitmentTree::new(CIRCUIT_MERKLE_DEPTH).expect("tree");
-    let result = prove_block(&mut tree, &proofs, &verifying_keys);
+    let result = prove_block_fast(&mut tree, &proofs, &verifying_keys);
 
     assert!(matches!(result, Err(BlockError::UnsupportedVersion { .. })));
 }
 
 #[test]
 fn mixed_versions_work_with_all_keys() {
-    let (proving_key, verifying_key) = generate_keys();
+    let (_proving_key, verifying_key) = generate_keys();
 
     // Register multiple version keys
     let mut verifying_keys = HashMap::new();
@@ -226,13 +329,13 @@ fn mixed_versions_work_with_all_keys() {
     let (mut witness_v2, _) = make_valid_witness(100);
     witness_v2.version = v2;
 
-    let proof_v1 = prove(&witness_v1, &proving_key).expect("prove v1");
-    let proof_v2 = prove(&witness_v2, &proving_key).expect("prove v2");
+    let proof_v1 = build_rpo_proof(&witness_v1);
+    let proof_v2 = build_rpo_proof(&witness_v2);
 
     let proofs = vec![proof_v1, proof_v2];
     let mut tree = state_merkle::CommitmentTree::new(CIRCUIT_MERKLE_DEPTH).expect("tree");
 
-    let block_proof = prove_block(&mut tree, &proofs, &verifying_keys).expect("block proof");
+    let block_proof = prove_block_fast(&mut tree, &proofs, &verifying_keys).expect("block proof");
 
     // Should track version counts
     assert_eq!(block_proof.version_counts.len(), 2);

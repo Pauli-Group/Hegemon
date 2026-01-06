@@ -54,6 +54,7 @@ pub enum EpochProverError {
 /// Generates STARK proofs for epoch validity.
 pub struct EpochProver {
     options: ProofOptions,
+    pub_inputs: Option<EpochPublicInputs>,
 }
 
 impl EpochProver {
@@ -61,15 +62,20 @@ impl EpochProver {
     pub fn new() -> Self {
         Self {
             options: default_epoch_options(),
+            pub_inputs: None,
         }
     }
 
     /// Create prover with production security settings.
     ///
-    /// Uses quadratic field extension for 128-bit security.
+    /// Uses a quadratic field extension to raise soundness over a ~64-bit base field.
+    ///
+    /// Note: overall security is also bounded by the chosen ProofOptions and hash collision
+    /// resistance; do not treat "quadratic extension" as a magic "128-bit" label.
     pub fn production() -> Self {
         Self {
             options: production_epoch_options(),
+            pub_inputs: None,
         }
     }
 
@@ -77,6 +83,7 @@ impl EpochProver {
     pub fn with_fast_options() -> Self {
         Self {
             options: fast_epoch_options(),
+            pub_inputs: None,
         }
     }
 
@@ -103,14 +110,18 @@ impl EpochProver {
         let (trace, proof_accumulator) = self.build_trace(proof_hashes)?;
 
         // Store public inputs for Prover trait
-        let _pub_inputs = EpochPublicInputs {
+        let pub_inputs = EpochPublicInputs {
             proof_accumulator,
             num_proofs: proof_hashes.len() as u32,
             epoch_commitment: epoch.commitment(),
         };
 
         // Generate proof using the Prover trait method
-        let proof = self
+        let prover = Self {
+            options: self.options.clone(),
+            pub_inputs: Some(pub_inputs.clone()),
+        };
+        let proof = prover
             .prove(trace)
             .map_err(|e| EpochProverError::ProofGenerationError(format!("{:?}", e)))?;
 
@@ -263,13 +274,13 @@ pub fn default_epoch_options() -> ProofOptions {
     )
 }
 
-/// Production proof options with 128-bit security.
+/// Higher-soundness proof options for epoch proofs.
 pub fn production_epoch_options() -> ProofOptions {
     ProofOptions::new(
         8,
         16,
         4,
-        winterfell::FieldExtension::Quadratic, // 128-bit security
+        winterfell::FieldExtension::Quadratic,
         2,
         31,
         BatchingMethod::Linear,
@@ -312,7 +323,7 @@ impl Prover for EpochProver {
     fn get_pub_inputs(&self, _trace: &Self::Trace) -> EpochPublicInputs {
         // Return default - actual pub_inputs are set during prove_epoch
         // This is a limitation of the Prover trait design
-        EpochPublicInputs::default()
+        self.pub_inputs.clone().unwrap_or_default()
     }
 
     fn options(&self) -> &ProofOptions {

@@ -13,7 +13,9 @@ use crate::{
     keys::{ProvingKey, VerifyingKey},
     public_inputs::{BalanceSlot, TransactionPublicInputs},
     stark_prover::TransactionProverStark,
-    stark_verifier::verify_transaction_proof_bytes,
+    stark_verifier::{
+        verify_transaction_proof_bytes, verify_transaction_proof_bytes_rpo, TransactionVerifyError,
+    },
     trace::TransactionTrace,
     witness::TransactionWitness,
 };
@@ -31,7 +33,7 @@ use crate::stark_prover::fast_proof_options;
 /// For full STARK verification, use:
 /// - `stark_verifier::verify_transaction_proof_bytes()` with proper `TransactionPublicInputsStark`
 /// - Or use `StarkProver::prove_transaction()` and verify directly
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransactionProof {
     pub public_inputs: TransactionPublicInputs,
     #[serde(with = "crate::public_inputs::serde_vec_bytes32")]
@@ -49,7 +51,7 @@ pub struct TransactionProof {
 }
 
 /// Serialized STARK public inputs for verification.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SerializedStarkInputs {
     pub input_flags: Vec<u8>,
     pub output_flags: Vec<u8>,
@@ -76,7 +78,7 @@ pub struct SerializedStarkInputs {
     pub stablecoin_attestation_commitment: Commitment,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VerificationReport {
     pub verified: bool,
 }
@@ -211,6 +213,24 @@ pub fn verify(
     proof: &TransactionProof,
     _verifying_key: &VerifyingKey,
 ) -> Result<VerificationReport, TransactionCircuitError> {
+    verify_with(proof, verify_transaction_proof_bytes)
+}
+
+/// Verify a transaction proof which used RPO Fiat‑Shamir.
+pub fn verify_rpo(
+    proof: &TransactionProof,
+    _verifying_key: &VerifyingKey,
+) -> Result<VerificationReport, TransactionCircuitError> {
+    verify_with(proof, verify_transaction_proof_bytes_rpo)
+}
+
+fn verify_with(
+    proof: &TransactionProof,
+    verify_bytes: fn(
+        &[u8],
+        &crate::stark_air::TransactionPublicInputsStark,
+    ) -> Result<(), TransactionVerifyError>,
+) -> Result<VerificationReport, TransactionCircuitError> {
     // Validate public input structure
     if proof.nullifiers.len() != MAX_INPUTS {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -329,7 +349,7 @@ pub fn verify(
         stablecoin_attestation_commitment,
     };
 
-    match verify_transaction_proof_bytes(&proof.stark_proof, &stark_pub_inputs) {
+    match verify_bytes(&proof.stark_proof, &stark_pub_inputs) {
         Ok(()) => Ok(VerificationReport { verified: true }),
         Err(e) => Err(TransactionCircuitError::ConstraintViolation(Box::leak(
             format!("STARK verification failed: {}", e).into_boxed_str(),
