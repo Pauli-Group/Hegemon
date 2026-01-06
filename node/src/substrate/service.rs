@@ -130,13 +130,11 @@ use crate::substrate::rpc::{
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
 };
-use block_circuit::{
-    CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs,
-};
+use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 use codec::Decode;
 use codec::Encode;
-use consensus::{Blake3Algorithm, Blake3Seal, ParallelProofVerifier};
 use consensus::proof::HeaderProofExt;
+use consensus::{Blake3Algorithm, Blake3Seal, ParallelProofVerifier};
 use crypto::hashes::{blake3_256, sha256};
 use futures::StreamExt;
 use network::{
@@ -1160,7 +1158,9 @@ fn extract_shielded_transfers_for_parallel_verification(
                 proofs.push(tx_proof);
             }
             ShieldedPoolCall::batch_shielded_transfer { .. } => {
-                return Err("batch shielded transfers are not supported in commitment proofs".into());
+                return Err(
+                    "batch shielded transfers are not supported in commitment proofs".into(),
+                );
             }
             _ => {}
         }
@@ -1227,7 +1227,9 @@ fn derive_commitment_block_proof_from_bytes(
     let mut proof_hashes = Vec::with_capacity(tx_proofs.len());
     for (index, proof) in tx_proofs.iter().enumerate() {
         if proof.stark_proof.is_empty() {
-            return Err(format!("transaction proof {index} missing STARK proof bytes"));
+            return Err(format!(
+                "transaction proof {index} missing STARK proof bytes"
+            ));
         }
         proof_hashes.push(blake3_256(&proof.stark_proof));
     }
@@ -1270,7 +1272,8 @@ fn verify_proof_carrying_block(
     use consensus::ProofVerifier;
 
     let commitment_proof_bytes = extract_commitment_proof_bytes(extrinsics)?;
-    let (transactions, tx_proofs) = extract_shielded_transfers_for_parallel_verification(extrinsics)?;
+    let (transactions, tx_proofs) =
+        extract_shielded_transfers_for_parallel_verification(extrinsics)?;
 
     if transactions.is_empty() {
         if commitment_proof_bytes.is_some() {
@@ -1386,8 +1389,7 @@ pub fn check_wasm() -> Result<(), String> {
 }
 
 fn load_max_shielded_transfers_per_block() -> usize {
-    let configured =
-        env_usize("HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK").unwrap_or(usize::MAX);
+    let configured = env_usize("HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK").unwrap_or(usize::MAX);
     if configured == 0 {
         tracing::warn!(
             "HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK is zero; no shielded transfers will be included"
@@ -1464,10 +1466,9 @@ pub fn wire_block_builder_api(
     let commitment_block_proofs_enabled = std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(true);
-    let requested_commitment_block_fast =
-        std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+    let requested_commitment_block_fast = std::env::var("HEGEMON_COMMITMENT_BLOCK_PROOFS_FAST")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
     let commitment_block_fast = if cfg!(feature = "fast-proofs") {
         requested_commitment_block_fast
     } else {
@@ -1642,16 +1643,14 @@ pub fn wire_block_builder_api(
             match runtime::UncheckedExtrinsic::decode(&mut &ext_bytes[..]) {
                 Ok(extrinsic) => {
                     let is_shielded = is_shielded_transfer_call(&extrinsic.function);
-                    if is_shielded {
-                        if shielded_transfer_count >= max_shielded_transfers_per_block {
-                            tracing::warn!(
-                                block_number,
-                                max_shielded_transfers_per_block,
-                                "Skipping shielded transfer: block already contains {} (coinbase + transfers)",
-                                shielded_transfer_count
-                            );
-                            continue;
-                        }
+                    if is_shielded && shielded_transfer_count >= max_shielded_transfers_per_block {
+                        tracing::warn!(
+                            block_number,
+                            max_shielded_transfers_per_block,
+                            "Skipping shielded transfer: block already contains {} (coinbase + transfers)",
+                            shielded_transfer_count
+                        );
+                        continue;
                     }
                     match block_builder.push(extrinsic) {
                         Ok(_) => {
@@ -1842,10 +1841,9 @@ fn wire_pow_block_import(
     // The mining worker already verified the PoW, so we don't need PowBlockImport
     // to re-verify (which would fail due to pre_hash computation differences)
     let block_import = client;
-    let proof_verification_enabled =
-        std::env::var("HEGEMON_PARALLEL_PROOF_VERIFICATION")
-            .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
-            .unwrap_or(true);
+    let proof_verification_enabled = std::env::var("HEGEMON_PARALLEL_PROOF_VERIFICATION")
+        .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+        .unwrap_or(true);
     let parallel_verifier = ParallelProofVerifier::new();
 
     chain_state.set_import_fn(move |template: &BlockTemplate, seal: &Blake3Seal| {
@@ -2280,9 +2278,8 @@ fn parse_pq_identity_seed_hex(value: &str) -> Result<[u8; 32], ServiceError> {
 
 fn parse_da_sampling_secret_hex(value: &str) -> Result<[u8; 32], ServiceError> {
     let trimmed = value.trim().strip_prefix("0x").unwrap_or(value.trim());
-    let bytes = hex::decode(trimmed).map_err(|err| {
-        ServiceError::Other(format!("invalid DA sampling secret hex: {err}"))
-    })?;
+    let bytes = hex::decode(trimmed)
+        .map_err(|err| ServiceError::Other(format!("invalid DA sampling secret hex: {err}")))?;
     if bytes.len() != 32 {
         return Err(ServiceError::Other(format!(
             "DA sampling secret must be 32 bytes (got {})",
@@ -4498,7 +4495,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let block_import_client = client.clone();
                 let sync_service_for_import = Arc::clone(&sync_service);
                 let da_chunk_store_for_import = Arc::clone(&da_chunk_store);
-                let commitment_block_proof_store_for_import = Arc::clone(&commitment_block_proof_store);
+                let commitment_block_proof_store_for_import =
+                    Arc::clone(&commitment_block_proof_store);
                 let da_request_tracker_for_import = Arc::clone(&da_request_tracker);
                 let da_params_for_import = da_params;
                 let da_sample_timeout_for_import = da_sample_timeout;

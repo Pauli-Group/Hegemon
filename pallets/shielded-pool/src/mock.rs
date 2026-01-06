@@ -236,8 +236,8 @@ mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
     use crate::types::{BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof};
-    use frame_support::{assert_noop, assert_ok, BoundedVec};
     use frame_support::traits::Hooks;
+    use frame_support::{assert_noop, assert_ok, BoundedVec};
     use sp_runtime::traits::ValidateUnsigned;
     use sp_runtime::transaction_validity::{
         InvalidTransaction, TransactionSource, TransactionValidityError,
@@ -344,13 +344,15 @@ mod tests {
                 proof: valid_proof(),
             };
 
-            let validity_external = Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
+            let validity_external =
+                Pallet::<Test>::validate_unsigned(TransactionSource::External, &call);
             assert!(matches!(
                 validity_external,
                 Err(TransactionValidityError::Invalid(InvalidTransaction::Call))
             ));
 
-            let validity_in_block = Pallet::<Test>::validate_unsigned(TransactionSource::InBlock, &call);
+            let validity_in_block =
+                Pallet::<Test>::validate_unsigned(TransactionSource::InBlock, &call);
             assert!(validity_in_block.is_ok());
         });
     }
@@ -364,7 +366,8 @@ mod tests {
                 },
             };
 
-            let validity_in_block = Pallet::<Test>::validate_unsigned(TransactionSource::InBlock, &call);
+            let validity_in_block =
+                Pallet::<Test>::validate_unsigned(TransactionSource::InBlock, &call);
             assert!(matches!(
                 validity_in_block,
                 Err(TransactionValidityError::Invalid(
@@ -385,7 +388,8 @@ mod tests {
             let call = crate::Call::<Test>::submit_commitment_proof {
                 proof: valid_proof(),
             };
-            let validity_in_block = Pallet::<Test>::validate_unsigned(TransactionSource::InBlock, &call);
+            let validity_in_block =
+                Pallet::<Test>::validate_unsigned(TransactionSource::InBlock, &call);
             assert!(matches!(
                 validity_in_block,
                 Err(TransactionValidityError::Invalid(InvalidTransaction::Stale))

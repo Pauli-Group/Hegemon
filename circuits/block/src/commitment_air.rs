@@ -63,7 +63,11 @@ pub struct CommitmentBlockPublicInputs {
 impl ToElements<BaseElement> for CommitmentBlockPublicInputs {
     fn to_elements(&self) -> Vec<BaseElement> {
         let mut elements = Vec::with_capacity(
-            21 + (self.nullifiers.len().saturating_add(self.sorted_nullifiers.len()) * 4),
+            21 + (self
+                .nullifiers
+                .len()
+                .saturating_add(self.sorted_nullifiers.len())
+                * 4),
         );
         elements.extend_from_slice(&commitment_to_felts(&self.tx_proofs_commitment));
         elements.extend_from_slice(&commitment_to_felts(&self.starting_state_root));
@@ -186,10 +190,8 @@ impl Air for CommitmentBlockAir {
         result[1] = init_mask * (current[COL_S1] - input1);
         result[2] = init_mask * (current[COL_S2] - E::ONE);
 
-        result[3] =
-            absorb_mask * (next[COL_S0] - (current[COL_S0] + next_input0));
-        result[4] =
-            absorb_mask * (next[COL_S1] - (current[COL_S1] + next_input1));
+        result[3] = absorb_mask * (next[COL_S0] - (current[COL_S0] + next_input0));
+        result[4] = absorb_mask * (next[COL_S1] - (current[COL_S1] + next_input1));
         result[5] = absorb_mask * (next[COL_S2] - current[COL_S2]);
 
         let t0 = current[COL_S0] + rc0;
@@ -330,10 +332,7 @@ impl Air for CommitmentBlockAir {
             result.push(column);
         }
 
-        result.push(make_perm_mask(
-            self.trace_length(),
-            self.nullifier_count,
-        ));
+        result.push(make_perm_mask(self.trace_length(), self.nullifier_count));
         result.push(make_adjacent_mask(
             self.trace_length(),
             self.nullifier_count,

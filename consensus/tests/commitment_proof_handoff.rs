@@ -1,7 +1,9 @@
 mod common;
 
 use block_circuit::CommitmentBlockProver;
-use common::{PowBlockParams, assemble_pow_block, dummy_coinbase, dummy_transaction, make_validators};
+use common::{
+    PowBlockParams, assemble_pow_block, dummy_coinbase, dummy_transaction, make_validators,
+};
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
 use consensus::{
     CommitmentTreeState, NullifierSet, ProofError, commitment_nullifier_lists,
@@ -94,10 +96,7 @@ fn commitment_proof_handoff_rejects_nullifier_mismatch() {
     block.transactions[0].nullifiers[0] = [99u8; 32];
     let err = verify_commitment_proof_payload(&block, &base_tree, &proof)
         .expect_err("nullifier mismatch should fail");
-    assert!(matches!(
-        err,
-        ProofError::CommitmentProofInputsMismatch(_)
-    ));
+    assert!(matches!(err, ProofError::CommitmentProofInputsMismatch(_)));
 }
 
 #[test]

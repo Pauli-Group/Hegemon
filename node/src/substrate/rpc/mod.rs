@@ -76,9 +76,7 @@ pub use shielded::{ShieldedApiServer, ShieldedPoolService, ShieldedRpc};
 pub use shielded_service::MockShieldedPoolService;
 pub use wallet::{WalletApiServer, WalletRpc, WalletService};
 
-use crate::substrate::service::{
-    CommitmentBlockProofStore, DaChunkStore,
-};
+use crate::substrate::service::{CommitmentBlockProofStore, DaChunkStore};
 use state_da::DaParams;
 
 /// Dependency container for RPC handlers.

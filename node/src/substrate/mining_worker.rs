@@ -252,10 +252,7 @@ impl BlockTemplate {
         self
     }
 
-    pub fn with_commitment_proof(
-        mut self,
-        commitment_proof: Option<CommitmentBlockProof>,
-    ) -> Self {
+    pub fn with_commitment_proof(mut self, commitment_proof: Option<CommitmentBlockProof>) -> Self {
         self.commitment_proof = commitment_proof;
         self
     }

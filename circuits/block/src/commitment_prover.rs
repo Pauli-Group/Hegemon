@@ -10,20 +10,20 @@ use winterfell::{
     crypto::DefaultRandomCoin,
     math::{fields::f64::BaseElement, FieldElement},
     matrix::ColMatrix,
-    verify, AuxRandElements, BatchingMethod, CompositionPoly,
-    CompositionPolyTrace, ConstraintCompositionCoefficients, DefaultConstraintCommitment,
-    DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions, Proof, ProofOptions, Prover,
-    StarkDomain, TraceInfo, TracePolyTable, TraceTable,
+    verify, AuxRandElements, BatchingMethod, CompositionPoly, CompositionPolyTrace,
+    ConstraintCompositionCoefficients, DefaultConstraintCommitment, DefaultConstraintEvaluator,
+    DefaultTraceLde, PartitionOptions, Proof, ProofOptions, Prover, StarkDomain, TraceInfo,
+    TracePolyTable, TraceTable,
 };
 
 use crate::commitment_air::{
     derive_nullifier_challenges, CommitmentBlockAir, CommitmentBlockPublicInputs,
     BLOCK_COMMITMENT_DOMAIN_TAG, COL_DA_ROOT0, COL_DA_ROOT1, COL_DA_ROOT2, COL_DA_ROOT3,
     COL_END_ROOT0, COL_END_ROOT1, COL_END_ROOT2, COL_END_ROOT3, COL_INPUT0, COL_INPUT1,
-    COL_NF_DIFF_INV, COL_NF_DIFF_NZ, COL_NF_PERM, COL_NF_PERM_INV, COL_NF_S0, COL_NF_S1,
-    COL_NF_S2, COL_NF_S3, COL_NF_SORTED_INV, COL_NF_SORTED_NZ, COL_NF_U0, COL_NF_U1, COL_NF_U2,
-    COL_NF_U3, COL_NULLIFIER_ROOT0, COL_NULLIFIER_ROOT1, COL_NULLIFIER_ROOT2, COL_NULLIFIER_ROOT3,
-    COL_S0, COL_S1, COL_S2, COL_START_ROOT0, COL_START_ROOT1, COL_START_ROOT2, COL_START_ROOT3,
+    COL_NF_DIFF_INV, COL_NF_DIFF_NZ, COL_NF_PERM, COL_NF_PERM_INV, COL_NF_S0, COL_NF_S1, COL_NF_S2,
+    COL_NF_S3, COL_NF_SORTED_INV, COL_NF_SORTED_NZ, COL_NF_U0, COL_NF_U1, COL_NF_U2, COL_NF_U3,
+    COL_NULLIFIER_ROOT0, COL_NULLIFIER_ROOT1, COL_NULLIFIER_ROOT2, COL_NULLIFIER_ROOT3, COL_S0,
+    COL_S1, COL_S2, COL_START_ROOT0, COL_START_ROOT1, COL_START_ROOT2, COL_START_ROOT3,
     TRACE_WIDTH,
 };
 use crate::error::BlockError;
@@ -93,7 +93,7 @@ impl CommitmentBlockProver {
 
         for (index, proof) in transactions.iter().enumerate() {
             let anchor = proof.public_inputs.merkle_root;
-            if !tree.root_history().iter().any(|root| *root == anchor) {
+            if !tree.root_history().contains(&anchor) {
                 return Err(BlockError::UnexpectedMerkleRoot {
                     index,
                     expected: tree.root(),
@@ -242,9 +242,7 @@ impl CommitmentBlockProver {
         })
     }
 
-    pub fn commitment_from_proof_hashes(
-        proof_hashes: &[[u8; 32]],
-    ) -> Result<[u8; 32], BlockError> {
+    pub fn commitment_from_proof_hashes(proof_hashes: &[[u8; 32]]) -> Result<[u8; 32], BlockError> {
         if proof_hashes.is_empty() {
             return Err(BlockError::CommitmentProofEmptyBlock);
         }
@@ -320,10 +318,7 @@ impl CommitmentBlockProver {
         Ok(felts_to_bytes32(&[output0, output1, output2, output3]))
     }
 
-    pub fn verify_block_commitment(
-        &self,
-        proof: &CommitmentBlockProof,
-    ) -> Result<(), BlockError> {
+    pub fn verify_block_commitment(&self, proof: &CommitmentBlockProof) -> Result<(), BlockError> {
         validate_commitment_inputs(&proof.public_inputs)?;
         let stark_proof = Proof::from_bytes(&proof.proof_bytes)
             .map_err(|err| BlockError::CommitmentProofVerification(format!("{:?}", err)))?;
@@ -442,8 +437,7 @@ impl CommitmentBlockProver {
         fill_column(&mut trace, COL_DA_ROOT3, da_root[3]);
 
         let nullifier_felts = decode_nullifier_list("nullifiers", nullifiers)?;
-        let sorted_nullifier_felts =
-            decode_nullifier_list("sorted_nullifiers", sorted_nullifiers)?;
+        let sorted_nullifier_felts = decode_nullifier_list("sorted_nullifiers", sorted_nullifiers)?;
         let nullifier_count = nullifier_felts.len();
         if nullifier_count + 1 > trace_len {
             return Err(BlockError::CommitmentProofInvalidInputs(format!(
@@ -498,7 +492,10 @@ impl CommitmentBlockProver {
             trace[COL_NF_DIFF_NZ][row] = nz;
         }
 
-        Ok((TraceTable::init(trace), [output0, output1, output2, output3]))
+        Ok((
+            TraceTable::init(trace),
+            [output0, output1, output2, output3],
+        ))
     }
 }
 
@@ -796,7 +793,9 @@ mod tests {
     fn estimate_merkle_update_rows(tree_depth: usize, leaf_count: usize) -> (usize, usize) {
         // Poseidon sponge over 8 inputs uses 4 absorb cycles + 1 extra cycle for output limbs.
         let cycles_per_node = 5usize;
-        let cycles = tree_depth.saturating_mul(leaf_count).saturating_mul(cycles_per_node);
+        let cycles = tree_depth
+            .saturating_mul(leaf_count)
+            .saturating_mul(cycles_per_node);
         let rows = cycles.saturating_mul(CYCLE_LENGTH);
         (cycles, rows)
     }
@@ -816,9 +815,7 @@ mod tests {
         let hashes = dummy_hashes(100);
         let prover = CommitmentBlockProver::new();
         let proof = prover.prove_from_hashes(&hashes).expect("proof");
-        prover
-            .verify_block_commitment(&proof)
-            .expect("verify");
+        prover.verify_block_commitment(&proof).expect("verify");
     }
 
     #[test]
@@ -851,7 +848,7 @@ mod tests {
         );
 
         let tx_count = 100usize;
-        let commitments_per_tx = transaction_circuit::constants::MAX_OUTPUTS as usize;
+        let commitments_per_tx = transaction_circuit::constants::MAX_OUTPUTS;
         let leaves = tx_count.saturating_mul(commitments_per_tx);
         let (cycles, rows) = estimate_merkle_update_rows(depth, leaves);
         println!(

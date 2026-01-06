@@ -9,11 +9,15 @@ use consensus::{
 };
 use crypto::hashes::blake3_256;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
-use transaction_circuit::hashing::{felt_to_bytes32, felts_to_bytes32, merkle_node, Felt, HashFelt};
+use transaction_circuit::hashing::{
+    Felt, HashFelt, felt_to_bytes32, felts_to_bytes32, merkle_node,
+};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
 use transaction_circuit::proof::prove;
-use transaction_circuit::{InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionWitness};
+use transaction_circuit::{
+    InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionWitness,
+};
 use winterfell::math::FieldElement;
 
 fn compute_merkle_root(leaf: HashFelt, position: u64, path: &[HashFelt]) -> HashFelt {
@@ -45,15 +49,18 @@ fn build_two_leaf_merkle_tree(
     let mut siblings1 = vec![leaf0];
 
     let mut current = merkle_node(leaf0, leaf1);
-    for level in 1..CIRCUIT_MERKLE_DEPTH {
-        let default_sibling = defaults[level];
+    for &default_sibling in defaults.iter().take(CIRCUIT_MERKLE_DEPTH).skip(1) {
         siblings0.push(default_sibling);
         siblings1.push(default_sibling);
         current = merkle_node(current, default_sibling);
     }
 
-    let path0 = MerklePath { siblings: siblings0 };
-    let path1 = MerklePath { siblings: siblings1 };
+    let path0 = MerklePath {
+        siblings: siblings0,
+    };
+    let path1 = MerklePath {
+        siblings: siblings1,
+    };
 
     (path0, path1, current)
 }

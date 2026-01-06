@@ -226,7 +226,10 @@ pub fn verify_rpo(
 
 fn verify_with(
     proof: &TransactionProof,
-    verify_bytes: fn(&[u8], &crate::stark_air::TransactionPublicInputsStark) -> Result<(), TransactionVerifyError>,
+    verify_bytes: fn(
+        &[u8],
+        &crate::stark_air::TransactionPublicInputsStark,
+    ) -> Result<(), TransactionVerifyError>,
 ) -> Result<VerificationReport, TransactionCircuitError> {
     // Validate public input structure
     if proof.nullifiers.len() != MAX_INPUTS {

@@ -29,10 +29,10 @@
 
 // Note: no_std is handled by the parent crate (runtime/src/lib.rs)
 
+use pallet_shielded_pool::merkle::CompactMerkleTree;
 use sp_api::decl_runtime_apis;
 use sp_core::U256;
 use sp_std::vec::Vec;
-use pallet_shielded_pool::merkle::CompactMerkleTree;
 
 decl_runtime_apis! {
     /// API for PoW difficulty queries
