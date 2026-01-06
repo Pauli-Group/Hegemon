@@ -138,8 +138,6 @@ cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --chain config/dev-chainspec.json \
   --port 30333 \
   --rpc-port 9944 \
-  --rpc-cors all \
-  --rpc-external \
   --name "MyNode" \
   --require-pq
 ```
@@ -166,12 +164,12 @@ PQ network listener started listen_addr=0.0.0.0:30333
 Share your bootnode address with your friend:
 
 ```
-/ip4/<YOUR_PUBLIC_IP>/tcp/30333
+<YOUR_PUBLIC_IP>:30333
 ```
 
 **Example:**
 ```
-/ip4/203.0.113.45/tcp/30333
+203.0.113.45:30333
 ```
 
 ---
@@ -186,17 +184,15 @@ mkdir -p /tmp/friend-hegemon-node
 
 # Start the node, connecting to the bootnode
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
+HEGEMON_SEEDS="<BOOTNODE_PUBLIC_IP>:30333" \
 cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --dev \
   --base-path /tmp/friend-hegemon-node \
   --chain config/dev-chainspec.json \
   --port 30333 \
   --rpc-port 9944 \
-  --rpc-cors all \
-  --rpc-external \
   --name "FriendNode" \
-  --require-pq \
-  --bootnodes /ip4/<BOOTNODE_PUBLIC_IP>/tcp/30333
+  --require-pq
 ```
 
 ---
@@ -209,8 +205,8 @@ Run on either node:
 
 ```bash
 curl -s -X POST -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"system_peers","params":[],"id":1}' \
-  http://127.0.0.1:9944 | jq '.result | length'
+  -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}' \
+  http://127.0.0.1:9944 | jq '.result.peers'
 ```
 
 **Expected:** Returns `1` (the other node is connected).
@@ -253,17 +249,15 @@ For more robust connectivity, update both nodes to know about each other.
 
 ```bash
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
+HEGEMON_SEEDS="<FRIEND_PUBLIC_IP>:30333" \
 cargo run --release -p hegemon-node --bin hegemon-node --features substrate -- \
   --dev \
   --base-path /tmp/my-hegemon-node \
   --chain config/dev-chainspec.json \
   --port 30333 \
   --rpc-port 9944 \
-  --rpc-cors all \
-  --rpc-external \
   --name "MyNode" \
-  --require-pq \
-  --bootnodes /ip4/<FRIEND_PUBLIC_IP>/tcp/30333
+  --require-pq
 ```
 
 This ensures both nodes can reconnect if either restarts.
@@ -324,6 +318,7 @@ cargo run -p wallet --bin wallet -- tx-craft \
 | `HEGEMON_MINE_THREADS` | `1` | Number of CPU threads for mining |
 | `HEGEMON_REQUIRE_PQ` | `true` | Require post-quantum secure connections |
 | `HEGEMON_PQ_VERBOSE` | `false` | Enable verbose PQ handshake logging |
+| `HEGEMON_SEEDS` | *(unset)* | Comma-separated seed peers (`IP:port`, `host:port`) |
 | `HEGEMON_BLOCK_TIME_MS` | `10000` | Target block time in milliseconds |
 
 ---
@@ -425,7 +420,7 @@ curl -s localhost:9944 -H "Content-Type: application/json" \
 
 # Get peer count
 curl -s localhost:9944 -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"system_peers","params":[],"id":1}'
+  -d '{"jsonrpc":"2.0","method":"system_health","params":[],"id":1}'
 
 # Get node health
 curl -s localhost:9944 -H "Content-Type: application/json" \
