@@ -8,6 +8,11 @@ This repository contains ExecPlan requirements in `.agent/PLANS.md` (from the re
 
 Today, many of Hegemon’s binding commitments (note commitments, nullifiers, Merkle roots, DA roots, and the STARK proof system’s Merkle commitments) are 256-bit digests. Under the best-known quantum collision attack model for random-looking hashes (Brassard–Høyer–Tapp style), collisions cost about `O(2^(n/3))` work for an `n`-bit digest. For `n = 256`, this caps collision security at ~`256/3 ≈ 85` bits. The goal of this ExecPlan is to raise collision security to ~128 bits in the same model by moving all *binding* commitments to 384-bit digests (because `384/3 = 128`).
 
+This plan explicitly treats two different “security knobs” as first-class and requires both to meet the target:
+
+1. **Hash-based binding security**: commitments and Merkle roots must be hard to collide under quantum attacks. This is where `n/3` applies and drives the 384-bit target.
+2. **IOP/STARK statistical soundness error**: the probability a cheating prover can pass verification without knowing a valid witness must be ≤ `2^-128`. This is primarily controlled by FRI parameters (query count and blowup factor) and is independent of hash collision resistance.
+
 After this change:
 
 1. The chain’s core “no double spend / consistent state transition” invariants rely on 384-bit commitments (≈128-bit quantum collision security), not 256-bit ones.
@@ -20,6 +25,8 @@ After this change:
 - [ ] Record a repo-wide “hash width inventory” (what is 256-bit today, what is already 384-bit) and lock it in with tests/docs.
 - [ ] Prototype and land a local fork of Winterfell/winter-crypto which supports 48-byte digests, plus a 384-bit hasher usable by our circuits.
 - [ ] Wire the Winterfell 384-bit hasher through all STARK circuits and adjust proof-size caps/tests accordingly.
+- [ ] Upgrade the in-circuit field hash from a 64-bit-capacity sponge to a 384-bit-capacity sponge (and update all commitment/nullifier/Merkle constructions to use it).
+- [ ] Raise FRI parameters across all circuits to ≥128-bit statistical soundness and update proof-size caps accordingly.
 - [ ] Upgrade application-level commitments (note commitments, nullifiers, Merkle roots, DA roots, commitment-proof public inputs) from 32-byte to 48-byte encodings end-to-end (runtime ↔ node ↔ wallet ↔ circuits).
 - [ ] Update chain spec / versioning and produce a demonstrably working dev network flow on the new commitment widths.
 - [ ] Update `DESIGN.md`, `METHODS.md`, `README.md`, and runbooks to make the 384-bit / PQC rationale the documented source of truth.
@@ -30,6 +37,8 @@ After this change:
   Evidence: `$HOME/.cargo/registry/src/.../winter-crypto-0.13.1/src/hash/mod.rs`.
 - Observation: We already have a 384-bit commitment in the consensus header: `consensus::StarkCommitment = [u8; 48]` computed via SHA-384 over transaction hashes.
   Evidence: `consensus/src/types.rs` (`compute_proof_commitment`).
+- Observation: Our current in-circuit sponge (`circuits/transaction-core/src/hashing.rs`) is explicitly configured as width 3 / rate 2 / capacity 1 field element over a ~64-bit field. Generic sponge collision resistance is therefore bounded by the capacity: classical ≈ `2^(64/2)=2^32`, quantum ≈ `2^(64/3)=2^21.3`, which is far below the “85-bit” figure for 256-bit digests.
+  Evidence: `METHODS.md` (“rate 2, capacity 1”) and `circuits/transaction-core/src/constants.rs` / `circuits/transaction-core/src/hashing.rs`.
 
 ## Decision Log
 
@@ -38,6 +47,9 @@ After this change:
   Date/Author: 2026-01-06 / Codex.
 - Decision: Do not “paper over” Winterfell’s 32-byte digest limit; we will fork/vendor Winterfell/winter-crypto to support 48-byte digests for Merkle commitments and Fiat–Shamir transcripts.
   Rationale: If the STARK proof system keeps 256-bit Merkle digests, the proof system’s binding commitments remain ~85-bit quantum-collision secure even if application-level hashes widen.
+  Date/Author: 2026-01-06 / Codex.
+- Decision: Replace the current width-3 / capacity-1 Poseidon-style sponge used for commitments with a construction whose capacity is at least 384 bits (6 field elements over Goldilocks).
+  Rationale: Capacity-1 over a 64-bit field caps collision resistance at ~32 classical / ~21 quantum bits regardless of output length; it cannot meet the 128-bit PQ collision target.
   Date/Author: 2026-01-06 / Codex.
 
 ## Outcomes & Retrospective
@@ -117,6 +129,49 @@ Update size caps and tests to match the new proof sizes:
 2. Update tests that assert “proof < 200_000 bytes” to reflect the new cap or to assert a bound derived from `ProofOptions`.
 
 This milestone ends when `make test` passes with the Winterfell fork and 48-byte digests, even if application-level commitments are still 32 bytes.
+
+### Milestone 2.5: Raise FRI parameters to ≥128-bit statistical soundness
+
+Hash width alone is not “STARK soundness”. Each proof system instance also has an IOP soundness error controlled by FRI parameters. A useful engineering approximation is:
+
+    security_bits ≈ num_queries * log2(blowup_factor)
+
+Today, we do not consistently meet 128 bits across circuits (for example, the commitment block proof defaults to a low query count). In this milestone we standardize proof options so that every proof type we ship targets ≥128-bit soundness error.
+
+Concrete scope:
+
+1. Inventory current `ProofOptions` for every circuit crate (`circuits/transaction`, `circuits/block`, `circuits/batch`, `circuits/settlement`, `circuits/disclosure`, and `circuits/epoch` if enabled).
+2. For each, pick a new `(num_queries, blowup_factor, extension)` that yields ≥128 by the approximation above. Two easy targets:
+   - Keep blowup at 8 (log2=3) and raise queries to 43.
+   - Raise blowup to 16 (log2=4) and set queries to 32.
+3. Update tests and on-chain proof byte caps to match the new sizes (expect proof bytes to grow significantly; 200KB caps will likely need to move).
+
+This milestone ends when `make test` passes and we can generate+verify at least one real transaction proof and one real commitment block proof under the new parameters.
+
+### Milestone 3: Replace the in-circuit field hash with a 384-bit-capacity sponge
+
+Before we widen all encodings to 48 bytes, we must ensure the *actual* in-circuit commitment hash has sufficient capacity. Over Goldilocks (≈64-bit field elements), this requires at least 6 field elements of capacity for 128-bit quantum collision security under `O(2^(c/3))`. It also requires emitting at least 6 field elements as the commitment digest.
+
+This milestone is about selecting and implementing a concrete field permutation/sponge which:
+
+1. Has a state width large enough to allocate ≥6 capacity elements.
+2. Has an arithmetization story that fits Winterfell constraints (low-degree S-box, linear layers).
+3. Has a clear parameter story (round counts, constants) which we can reproduce deterministically in-repo.
+
+Implementation approach:
+
+1. Add a new hashing module alongside the existing Poseidon-style implementation (do not delete the old one yet).
+2. Implement the chosen permutation and sponge in `circuits/transaction-core`, and expose:
+   - `note_commitment_*` returning 6 limbs
+   - `nullifier_*` returning 6 limbs
+   - `merkle_node_*` returning 6 limbs
+   - canonical encoding checks for 6 limbs
+3. Update `state/merkle` to use the new hash for tree operations in a feature-gated path so we can test in parallel.
+
+This milestone ends when we can run unit tests that:
+
+1. Prove/verify a transaction with the new commitments.
+2. Construct a Merkle tree, produce authentication paths, and verify them consistently between off-chain (`state/merkle`) and in-circuit (`circuits/transaction`).
 
 ### Milestone 3: Upgrade application-level commitments to 48 bytes end-to-end
 
@@ -228,4 +283,3 @@ At the end of this plan, the following interfaces must exist and be used consist
    - Stable serialization used by wallet and node RPC surfaces.
 
 3. Updated runtime pallet types to store 48-byte commitments/nullifiers and enforce updated size bounds for proofs/extrinsics.
-
