@@ -118,8 +118,8 @@ use crate::substrate::client::{
     DEFAULT_DIFFICULTY_BITS,
 };
 use crate::substrate::mining_worker::{
-    create_production_mining_worker, create_scaffold_mining_worker, ChainStateProvider,
-    MiningWorkerConfig,
+    create_production_mining_worker, create_production_mining_worker_mock_broadcast,
+    ChainStateProvider, MiningWorkerConfig,
 };
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
@@ -5189,8 +5189,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 "hegemon-mining-worker",
                 Some("mining"),
                 async move {
-                    let worker =
-                        create_scaffold_mining_worker(pow_handle_for_worker, worker_config);
+                    let worker = create_production_mining_worker_mock_broadcast(
+                        pow_handle_for_worker,
+                        chain_state,
+                        worker_config,
+                    );
 
                     worker.run().await;
                 },
