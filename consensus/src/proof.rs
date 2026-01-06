@@ -9,13 +9,13 @@ use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_co
 use block_circuit::{transaction_inputs_from_verifier_inputs, verify_recursive_proof};
 use crypto::hashes::{blake3_256, sha256};
 use rayon::prelude::*;
+use std::collections::BTreeSet;
 use transaction_circuit::constants::MAX_INPUTS;
 use transaction_circuit::hashing::felt_to_bytes32;
 #[cfg(feature = "legacy-recursion")]
 use transaction_circuit::hashing::felts_to_bytes32;
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::verify_rpo as verify_transaction_proof;
-use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitmentNullifierLists {
@@ -38,13 +38,16 @@ pub fn commitment_nullifier_lists(
                 tx.nullifiers.len()
             )));
         }
-        if tx.nullifiers.iter().any(|nf| *nf == [0u8; 32]) {
+        if tx.nullifiers.contains(&[0u8; 32]) {
             return Err(ProofError::CommitmentProofInputsMismatch(format!(
                 "transaction {index} includes zero nullifier"
             )));
         }
         nullifiers.extend_from_slice(&tx.nullifiers);
-        nullifiers.extend(std::iter::repeat([0u8; 32]).take(MAX_INPUTS - tx.nullifiers.len()));
+        nullifiers.extend(std::iter::repeat_n(
+            [0u8; 32],
+            MAX_INPUTS - tx.nullifiers.len(),
+        ));
     }
 
     if nullifiers.iter().all(|nf| *nf == [0u8; 32]) {
@@ -217,8 +220,9 @@ impl ProofVerifier for ParallelProofVerifier {
         verify_commitment_proof_payload(block, parent_commitment_tree, commitment_proof)?;
 
         let proof_hashes = proof_hashes_from_transaction_proofs(transaction_proofs)?;
-        let expected_commitment = CommitmentBlockProver::commitment_from_proof_hashes(&proof_hashes)
-            .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?;
+        let expected_commitment =
+            CommitmentBlockProver::commitment_from_proof_hashes(&proof_hashes)
+                .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?;
         if expected_commitment != commitment_proof.public_inputs.tx_proofs_commitment {
             return Err(ProofError::CommitmentProofInputsMismatch(
                 "tx_proofs_commitment mismatch".to_string(),

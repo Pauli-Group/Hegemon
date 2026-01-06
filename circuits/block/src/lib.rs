@@ -9,8 +9,8 @@ pub mod recursive;
 
 pub use commitment_air::{CommitmentBlockAir, CommitmentBlockPublicInputs};
 pub use commitment_prover::{
-    CommitmentBlockProof, CommitmentBlockProver, default_commitment_options,
-    fast_commitment_options,
+    default_commitment_options, fast_commitment_options, CommitmentBlockProof,
+    CommitmentBlockProver,
 };
 pub use commitment_verifier::verify_block_commitment;
 pub use error::BlockError;
