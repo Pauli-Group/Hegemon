@@ -12,8 +12,8 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, PairBuilder};
-use p3_field::PrimeCharacteristicRing;
+use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir};
+use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
@@ -151,12 +151,11 @@ pub const COL_STABLECOIN_SLOT_SEL0: usize = 89;
 pub const COL_STABLECOIN_SLOT_SEL1: usize = 90;
 pub const COL_STABLECOIN_SLOT_SEL2: usize = 91;
 pub const COL_STABLECOIN_SLOT_SEL3: usize = 92;
-
-/// Trace width (columns) for the transaction circuit.
-pub const TRACE_WIDTH: usize = COL_STABLECOIN_SLOT_SEL3 + 1;
+/// Base trace width (columns) for the transaction circuit.
+pub const BASE_TRACE_WIDTH: usize = COL_STABLECOIN_SLOT_SEL3 + 1;
 
 // ================================================================================================
-// PREPROCESSED COLUMNS (fixed schedule)
+// SCHEDULE COLUMNS (fixed schedule stored in main trace)
 // ================================================================================================
 
 /// Poseidon2 hash flag for each row (1 during permutation steps).
@@ -200,8 +199,14 @@ pub const PREP_MR1_ROW: usize = PREP_MR0_ROW + 1;
 pub const PREP_CM0_ROW: usize = PREP_MR1_ROW + 1;
 pub const PREP_CM1_ROW: usize = PREP_CM0_ROW + 1;
 
-/// Preprocessed trace width (columns).
+/// Schedule trace width (columns).
 pub const PREPROCESSED_WIDTH: usize = PREP_CM1_ROW + 1;
+
+/// Schedule columns are appended after the witness columns in the main trace.
+pub const COL_SCHEDULE_START: usize = BASE_TRACE_WIDTH;
+
+/// Trace width (columns) for the transaction circuit.
+pub const TRACE_WIDTH: usize = COL_SCHEDULE_START + PREPROCESSED_WIDTH;
 
 /// Cycle length: power of 2, must be > POSEIDON2_STEPS.
 pub const CYCLE_LENGTH: usize = 32;
@@ -623,7 +628,7 @@ pub fn note_start_row_output(output_index: usize) -> usize {
     (output_commitment_start_cycle(output_index) - 1) * CYCLE_LENGTH + (CYCLE_LENGTH - 1)
 }
 
-fn build_preprocessed_trace() -> RowMajorMatrix<Felt> {
+pub fn build_schedule_trace() -> RowMajorMatrix<Felt> {
     let trace_len = MIN_TRACE_LENGTH;
     let mut values = vec![Felt::ZERO; trace_len * PREPROCESSED_WIDTH];
 
@@ -718,66 +723,70 @@ impl BaseAir<Felt> for TransactionAirP3 {
     fn width(&self) -> usize {
         TRACE_WIDTH
     }
-
-    fn preprocessed_trace(&self) -> Option<RowMajorMatrix<Felt>> {
-        Some(build_preprocessed_trace())
-    }
 }
 
 impl<AB> Air<AB> for TransactionAirP3
 where
-    AB: AirBuilderWithPublicValues<F = Felt> + PairBuilder,
+    AB: AirBuilderWithPublicValues<F = Felt>,
 {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
         let current = main.row_slice(0).expect("trace must have >= 1 row");
         let next = main.row_slice(1).expect("trace must have >= 2 rows");
-        let preprocessed = builder.preprocessed();
-        let prep = preprocessed
-            .row_slice(0)
-            .expect("preprocessed trace must have >= 1 row");
 
         let is_first_row = builder.is_first_row();
         let one = AB::Expr::ONE;
         let two = AB::Expr::TWO;
-        let not_first_row = one.clone() - is_first_row.clone();
+        // Plonky3 row selectors are unnormalized; scale by N^{-1} for a 0/1 first-row mask.
+        let trace_len_inv = Felt::from_u64(MIN_TRACE_LENGTH as u64).inverse();
+        let first_row = is_first_row.clone()
+            * AB::Expr::from_u64(trace_len_inv.as_canonical_u64());
+        let not_first_row = one.clone() - first_row;
+        let schedule_base = COL_SCHEDULE_START;
 
-        let hash_flag: AB::Expr = prep[PREP_HASH_FLAG].clone().into();
-        let absorb_flag: AB::Expr = prep[PREP_ABSORB_FLAG].clone().into();
-        let init_round: AB::Expr = prep[PREP_INIT_ROUND].clone().into();
-        let external_round: AB::Expr = prep[PREP_EXTERNAL_ROUND].clone().into();
-        let internal_round: AB::Expr = prep[PREP_INTERNAL_ROUND].clone().into();
-        let rc0: AB::Expr = prep[PREP_RC0].clone().into();
-        let rc1: AB::Expr = prep[PREP_RC1].clone().into();
-        let rc2: AB::Expr = prep[PREP_RC2].clone().into();
-        let rc3: AB::Expr = prep[PREP_RC3].clone().into();
-        let rc4: AB::Expr = prep[PREP_RC4].clone().into();
-        let rc5: AB::Expr = prep[PREP_RC5].clone().into();
-        let rc6: AB::Expr = prep[PREP_RC6].clone().into();
-        let rc7: AB::Expr = prep[PREP_RC7].clone().into();
-        let rc8: AB::Expr = prep[PREP_RC8].clone().into();
-        let rc9: AB::Expr = prep[PREP_RC9].clone().into();
-        let rc10: AB::Expr = prep[PREP_RC10].clone().into();
-        let rc11: AB::Expr = prep[PREP_RC11].clone().into();
+        let hash_flag: AB::Expr = current[schedule_base + PREP_HASH_FLAG].clone().into();
+        let absorb_flag: AB::Expr = current[schedule_base + PREP_ABSORB_FLAG].clone().into();
+        let init_round: AB::Expr = current[schedule_base + PREP_INIT_ROUND].clone().into();
+        let external_round: AB::Expr = current[schedule_base + PREP_EXTERNAL_ROUND].clone().into();
+        let internal_round: AB::Expr = current[schedule_base + PREP_INTERNAL_ROUND].clone().into();
+        let rc0: AB::Expr = current[schedule_base + PREP_RC0].clone().into();
+        let rc1: AB::Expr = current[schedule_base + PREP_RC1].clone().into();
+        let rc2: AB::Expr = current[schedule_base + PREP_RC2].clone().into();
+        let rc3: AB::Expr = current[schedule_base + PREP_RC3].clone().into();
+        let rc4: AB::Expr = current[schedule_base + PREP_RC4].clone().into();
+        let rc5: AB::Expr = current[schedule_base + PREP_RC5].clone().into();
+        let rc6: AB::Expr = current[schedule_base + PREP_RC6].clone().into();
+        let rc7: AB::Expr = current[schedule_base + PREP_RC7].clone().into();
+        let rc8: AB::Expr = current[schedule_base + PREP_RC8].clone().into();
+        let rc9: AB::Expr = current[schedule_base + PREP_RC9].clone().into();
+        let rc10: AB::Expr = current[schedule_base + PREP_RC10].clone().into();
+        let rc11: AB::Expr = current[schedule_base + PREP_RC11].clone().into();
 
-        let prep_reset: AB::Expr = prep[PREP_RESET].clone().into();
-        let prep_domain: AB::Expr = prep[PREP_DOMAIN].clone().into();
-        let prep_merkle_left: AB::Expr = prep[PREP_MERKLE_LEFT].clone().into();
-        let prep_merkle_right: AB::Expr = prep[PREP_MERKLE_RIGHT].clone().into();
-        let prep_capture: AB::Expr = prep[PREP_CAPTURE].clone().into();
+        let prep_reset: AB::Expr = current[schedule_base + PREP_RESET].clone().into();
+        let prep_domain: AB::Expr = current[schedule_base + PREP_DOMAIN].clone().into();
+        let prep_merkle_left: AB::Expr =
+            current[schedule_base + PREP_MERKLE_LEFT].clone().into();
+        let prep_merkle_right: AB::Expr =
+            current[schedule_base + PREP_MERKLE_RIGHT].clone().into();
+        let prep_capture: AB::Expr = current[schedule_base + PREP_CAPTURE].clone().into();
 
-        let prep_note_start_in0: AB::Expr = prep[PREP_NOTE_START_IN0].clone().into();
-        let prep_note_start_in1: AB::Expr = prep[PREP_NOTE_START_IN1].clone().into();
-        let prep_note_start_out0: AB::Expr = prep[PREP_NOTE_START_OUT0].clone().into();
-        let prep_note_start_out1: AB::Expr = prep[PREP_NOTE_START_OUT1].clone().into();
+        let prep_note_start_in0: AB::Expr =
+            current[schedule_base + PREP_NOTE_START_IN0].clone().into();
+        let prep_note_start_in1: AB::Expr =
+            current[schedule_base + PREP_NOTE_START_IN1].clone().into();
+        let prep_note_start_out0: AB::Expr =
+            current[schedule_base + PREP_NOTE_START_OUT0].clone().into();
+        let prep_note_start_out1: AB::Expr =
+            current[schedule_base + PREP_NOTE_START_OUT1].clone().into();
 
-        let final_row_mask: AB::Expr = prep[PREP_FINAL_ROW].clone().into();
-        let nf0_row: AB::Expr = prep[PREP_NF0_ROW].clone().into();
-        let nf1_row: AB::Expr = prep[PREP_NF1_ROW].clone().into();
-        let mr0_row: AB::Expr = prep[PREP_MR0_ROW].clone().into();
-        let mr1_row: AB::Expr = prep[PREP_MR1_ROW].clone().into();
-        let cm0_row: AB::Expr = prep[PREP_CM0_ROW].clone().into();
-        let cm1_row: AB::Expr = prep[PREP_CM1_ROW].clone().into();
+        let final_row_mask: AB::Expr =
+            current[schedule_base + PREP_FINAL_ROW].clone().into();
+        let nf0_row: AB::Expr = current[schedule_base + PREP_NF0_ROW].clone().into();
+        let nf1_row: AB::Expr = current[schedule_base + PREP_NF1_ROW].clone().into();
+        let mr0_row: AB::Expr = current[schedule_base + PREP_MR0_ROW].clone().into();
+        let mr1_row: AB::Expr = current[schedule_base + PREP_MR1_ROW].clone().into();
+        let cm0_row: AB::Expr = current[schedule_base + PREP_CM0_ROW].clone().into();
+        let cm1_row: AB::Expr = current[schedule_base + PREP_CM1_ROW].clone().into();
 
         let public_values = builder.public_values();
         let expected_len = TransactionPublicInputsP3::expected_len();
@@ -1490,7 +1499,7 @@ pub fn poseidon_hash(domain_tag: u64, inputs: &[Felt]) -> Felt {
 
 #[cfg(all(test, feature = "plonky3"))]
 mod tests {
-    use super::{Felt, TransactionAirP3, TransactionPublicInputsP3, PREPROCESSED_WIDTH};
+    use super::{Felt, TransactionAirP3, TransactionPublicInputsP3};
     use p3_uni_stark::get_log_num_quotient_chunks;
 
     #[test]
@@ -1498,7 +1507,7 @@ mod tests {
         let num_public_values = TransactionPublicInputsP3::default().to_vec().len();
         let log_chunks = get_log_num_quotient_chunks::<Felt, _>(
             &TransactionAirP3,
-            PREPROCESSED_WIDTH,
+            0,
             num_public_values,
             0,
         );

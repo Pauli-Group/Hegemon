@@ -4,7 +4,7 @@ use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
-use p3_uni_stark::{prove_with_preprocessed, setup_preprocessed};
+use p3_uni_stark::prove;
 
 use crate::constants::{
     CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG,
@@ -19,30 +19,31 @@ use crate::TransactionCircuitError;
 use transaction_core::constants::POSEIDON2_STEPS;
 use transaction_core::poseidon2::poseidon2_step;
 use transaction_core::p3_air::{
-    commitment_output_row, cycle_is_merkle_left, cycle_is_merkle_right, cycle_is_output,
-    cycle_reset_domain, merkle_root_output_row, note_start_row_input, note_start_row_output,
-    nullifier_output_row, TransactionAirP3, TransactionPublicInputsP3, COL_DIR, COL_DOMAIN,
-    COL_FEE, COL_IN0, COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET, COL_IN1_VALUE,
-    COL_IN2, COL_IN3, COL_IN4, COL_IN5, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT,
-    COL_MERKLE_RIGHT, COL_OUT0, COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1, COL_OUT1_ASSET,
-    COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT4, COL_OUT5, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1,
-    COL_RESET, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6,
-    COL_S7, COL_S8, COL_S9, COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2,
-    COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2,
-    COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2,
-    COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2,
-    COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET, COL_SLOT0_IN, COL_SLOT0_OUT, COL_SLOT1_ASSET,
-    COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN, COL_SLOT2_OUT, COL_SLOT3_ASSET,
-    COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_ASSET, COL_STABLECOIN_ATTEST0,
-    COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2, COL_STABLECOIN_ATTEST3,
-    COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG, COL_STABLECOIN_ISSUANCE_SIGN,
-    COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1, COL_STABLECOIN_ORACLE2,
-    COL_STABLECOIN_ORACLE3, COL_STABLECOIN_POLICY_HASH0, COL_STABLECOIN_POLICY_HASH1,
-    COL_STABLECOIN_POLICY_HASH2, COL_STABLECOIN_POLICY_HASH3, COL_STABLECOIN_POLICY_VERSION,
-    COL_STABLECOIN_SLOT_SEL0, COL_STABLECOIN_SLOT_SEL1, COL_STABLECOIN_SLOT_SEL2,
-    COL_STABLECOIN_SLOT_SEL3, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN,
-    COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES, MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH,
-    NULLIFIER_ABSORB_CYCLES, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH,
+    build_schedule_trace, commitment_output_row, cycle_is_merkle_left, cycle_is_merkle_right,
+    cycle_is_output, cycle_reset_domain, merkle_root_output_row, note_start_row_input,
+    note_start_row_output, nullifier_output_row, TransactionAirP3, TransactionPublicInputsP3,
+    COL_DIR, COL_DOMAIN, COL_FEE, COL_IN0, COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET,
+    COL_IN1_VALUE, COL_IN2, COL_IN3, COL_IN4, COL_IN5, COL_IN_ACTIVE0, COL_IN_ACTIVE1,
+    COL_MERKLE_LEFT, COL_MERKLE_RIGHT, COL_OUT0, COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1,
+    COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT4, COL_OUT5, COL_OUT_ACTIVE0,
+    COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4,
+    COL_S5, COL_S6, COL_S7, COL_S8, COL_S9, COL_SCHEDULE_START, COL_SEL_IN0_SLOT0,
+    COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0,
+    COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0,
+    COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0,
+    COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET, COL_SLOT0_IN,
+    COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN,
+    COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_ASSET,
+    COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2,
+    COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG,
+    COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1,
+    COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3, COL_STABLECOIN_POLICY_HASH0,
+    COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2, COL_STABLECOIN_POLICY_HASH3,
+    COL_STABLECOIN_POLICY_VERSION, COL_STABLECOIN_SLOT_SEL0, COL_STABLECOIN_SLOT_SEL1,
+    COL_STABLECOIN_SLOT_SEL2, COL_STABLECOIN_SLOT_SEL3, COL_VALUE_BALANCE_MAG,
+    COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES,
+    MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES, PREPROCESSED_WIDTH,
+    TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH,
 };
 
 type Val = Goldilocks;
@@ -68,6 +69,14 @@ impl TransactionProverP3 {
     ) -> Result<RowMajorMatrix<Val>, TransactionCircuitError> {
         let trace_len = MIN_TRACE_LENGTH;
         let mut trace = RowMajorMatrix::new(vec![Val::ZERO; trace_len * TRACE_WIDTH], TRACE_WIDTH);
+        let schedule = build_schedule_trace();
+        debug_assert_eq!(schedule.height(), trace_len);
+        for row in 0..trace_len {
+            let schedule_row = schedule.row_slice(row).expect("schedule row missing");
+            let row_slice = trace.row_mut(row);
+            row_slice[COL_SCHEDULE_START..COL_SCHEDULE_START + PREPROCESSED_WIDTH]
+                .copy_from_slice(&*schedule_row);
+        }
 
         let (input_notes, input_flags) = pad_inputs(&witness.inputs);
         let (output_notes, output_flags) = pad_outputs(&witness.outputs);
@@ -639,15 +648,11 @@ impl TransactionProverP3 {
         pub_inputs: &TransactionPublicInputsP3,
     ) -> TransactionProofP3 {
         let config = default_config();
-        let degree_bits = trace.height().ilog2() as usize;
-        let (prep_prover, _) = setup_preprocessed(&config.config, &TransactionAirP3, degree_bits)
-            .expect("TransactionAirP3 preprocessed trace missing");
-        prove_with_preprocessed(
+        prove(
             &config.config,
             &TransactionAirP3,
             trace,
             &pub_inputs.to_vec(),
-            Some(&prep_prover),
         )
     }
 
@@ -1020,14 +1025,29 @@ mod tests {
     use crate::note::{MerklePath, MerklePathPq, NoteData};
     use crate::p3_verifier::verify_transaction_proof_p3;
     use crate::StablecoinPolicyBinding;
+    #[cfg(feature = "plonky3-e2e")]
+    use p3_air::Air;
+    #[cfg(feature = "plonky3-e2e")]
+    use p3_challenger::{CanObserve, FieldChallenger};
+    #[cfg(feature = "plonky3-e2e")]
+    use p3_commit::PolynomialSpace;
     #[cfg(debug_assertions)]
-    use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, PairBuilder};
+    use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues};
     #[cfg(debug_assertions)]
     use p3_matrix::dense::RowMajorMatrixView;
     #[cfg(debug_assertions)]
     use p3_matrix::stack::VerticalPair;
     #[cfg(debug_assertions)]
     use p3_matrix::Matrix;
+    #[cfg(feature = "plonky3-e2e")]
+    use p3_matrix::dense::RowMajorMatrixView;
+    #[cfg(feature = "plonky3-e2e")]
+    use p3_matrix::stack::VerticalPair;
+    #[cfg(feature = "plonky3-e2e")]
+    use p3_uni_stark::{
+        get_log_num_quotient_chunks, recompose_quotient_from_chunks, StarkGenericConfig,
+        VerifierConstraintFolder,
+    };
     use std::panic::catch_unwind;
 
     fn compute_merkle_root_from_path(
@@ -1106,6 +1126,17 @@ mod tests {
     }
 
     #[test]
+    fn public_inputs_match_trace_p3() {
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let trace = prover.build_trace(&witness).expect("trace build");
+        let from_trace = TransactionProverP3::get_public_inputs_from_trace(&trace);
+        let from_witness = prover.public_inputs(&witness).expect("public inputs");
+        assert_eq!(from_trace.to_vec(), from_witness.to_vec());
+    }
+
+    #[test]
     #[cfg_attr(not(feature = "plonky3-e2e"), ignore = "slow: full Plonky3 prove/verify roundtrip")]
     fn prove_verify_roundtrip_p3() {
         let witness = sample_witness();
@@ -1115,6 +1146,97 @@ mod tests {
         let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
         let proof = prover.prove(trace, &pub_inputs);
         verify_transaction_proof_p3(&proof, &pub_inputs).expect("verification should pass");
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(feature = "plonky3-e2e"),
+        ignore = "slow: full Plonky3 prove/verify roundtrip"
+    )]
+    fn prove_verify_roundtrip_p3_trace_inputs() {
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let trace = prover.build_trace(&witness).expect("trace build");
+        let pub_inputs = TransactionProverP3::get_public_inputs_from_trace(&trace);
+        let proof = prover.prove(trace, &pub_inputs);
+        verify_transaction_proof_p3(&proof, &pub_inputs).expect("verification should pass");
+    }
+
+    #[test]
+    #[cfg(feature = "plonky3-e2e")]
+    #[ignore = "debug helper for OOD mismatch"]
+    fn debug_ood_mismatch_p3() {
+        use crate::p3_config::{Challenge, Challenger, Config, Pcs};
+
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let trace = prover.build_trace(&witness).expect("trace build");
+        let pub_inputs = TransactionProverP3::get_public_inputs_from_trace(&trace);
+        let pub_inputs_vec = pub_inputs.to_vec();
+        let proof = prover.prove(trace, &pub_inputs);
+
+        let config = default_config();
+        let pcs: &Pcs = config.config.pcs();
+        let degree_bits = proof.degree_bits;
+        let degree = 1usize << degree_bits;
+        let trace_domain: p3_uni_stark::Domain<Config> =
+            <Pcs as p3_commit::Pcs<Challenge, Challenger>>::natural_domain_for_degree(
+                pcs, degree,
+            );
+        let log_num_quotient_chunks = get_log_num_quotient_chunks::<Val, _>(
+            &TransactionAirP3,
+            0,
+            pub_inputs_vec.len(),
+            config.config.is_zk(),
+        );
+        let num_quotient_chunks = 1 << (log_num_quotient_chunks + config.config.is_zk());
+        let quotient_domain =
+            trace_domain.create_disjoint_domain(1 << (degree_bits + log_num_quotient_chunks));
+        let quotient_chunks_domains = quotient_domain.split_domains(num_quotient_chunks);
+
+        let mut challenger = config.config.initialise_challenger();
+        challenger.observe(Val::from_usize(proof.degree_bits));
+        challenger.observe(Val::from_usize(proof.degree_bits - config.config.is_zk()));
+        challenger.observe(Val::from_usize(0));
+        challenger.observe(proof.commitments.trace.clone());
+        challenger.observe_slice(&pub_inputs_vec);
+        let alpha: Challenge = challenger.sample_algebra_element();
+        challenger.observe(proof.commitments.quotient_chunks.clone());
+        let zeta: Challenge = challenger.sample_algebra_element();
+
+        let quotient = recompose_quotient_from_chunks::<Config>(
+            &quotient_chunks_domains,
+            &proof.opened_values.quotient_chunks,
+            zeta,
+        );
+        let sels = trace_domain.selectors_at_point(zeta);
+        let main = VerticalPair::new(
+            RowMajorMatrixView::new_row(&proof.opened_values.trace_local),
+            RowMajorMatrixView::new_row(&proof.opened_values.trace_next),
+        );
+        let mut folder: VerifierConstraintFolder<'_, Config> = VerifierConstraintFolder {
+            main,
+            preprocessed: None,
+            public_values: &pub_inputs_vec,
+            is_first_row: sels.is_first_row,
+            is_last_row: sels.is_last_row,
+            is_transition: sels.is_transition,
+            alpha,
+            accumulator: Challenge::ZERO,
+        };
+        TransactionAirP3.eval(&mut folder);
+        let folded_constraints = folder.accumulator;
+        let lhs = folded_constraints * sels.inv_vanishing;
+
+        eprintln!("alpha={alpha:?}");
+        eprintln!("zeta={zeta:?}");
+        eprintln!("lhs={lhs:?}");
+        eprintln!("rhs={quotient:?}");
+        eprintln!("diff={:?}", lhs - quotient);
+
+        assert_eq!(lhs, quotient);
     }
 
     #[test]
@@ -1159,14 +1281,7 @@ mod tests {
     #[cfg(debug_assertions)]
     fn assert_constraints(trace: &RowMajorMatrix<Val>, public_values: &[Val]) {
         let height = trace.height();
-        let preprocessed_trace = TransactionAirP3
-            .preprocessed_trace()
-            .expect("TransactionAirP3 preprocessed trace missing");
-        assert_eq!(
-            preprocessed_trace.height(),
-            height,
-            "preprocessed trace length mismatch"
-        );
+        let first_row_value = Val::from_u64(height as u64);
         for row in 0..height {
             let next_row = (row + 1) % height;
             let local = trace.row_slice(row).expect("trace row missing");
@@ -1175,23 +1290,12 @@ mod tests {
                 RowMajorMatrixView::new_row(&*local),
                 RowMajorMatrixView::new_row(&*next),
             );
-            let prep_local = preprocessed_trace
-                .row_slice(row)
-                .expect("preprocessed row missing");
-            let prep_next = preprocessed_trace
-                .row_slice(next_row)
-                .expect("preprocessed row missing");
-            let preprocessed_pair = VerticalPair::new(
-                RowMajorMatrixView::new_row(&*prep_local),
-                RowMajorMatrixView::new_row(&*prep_next),
-            );
 
             let mut builder = DebugConstraintBuilder {
                 row_index: row,
                 main,
-                preprocessed: preprocessed_pair,
                 public_values,
-                is_first_row: Val::from_bool(row == 0),
+                is_first_row: if row == 0 { first_row_value } else { Val::ZERO },
                 is_last_row: Val::from_bool(row + 1 == height),
                 is_transition: Val::from_bool(row + 1 != height),
             };
@@ -1204,7 +1308,6 @@ mod tests {
     struct DebugConstraintBuilder<'a> {
         row_index: usize,
         main: VerticalPair<RowMajorMatrixView<'a, Val>, RowMajorMatrixView<'a, Val>>,
-        preprocessed: VerticalPair<RowMajorMatrixView<'a, Val>, RowMajorMatrixView<'a, Val>>,
         public_values: &'a [Val],
         is_first_row: Val,
         is_last_row: Val,
@@ -1267,10 +1370,4 @@ mod tests {
         }
     }
 
-    #[cfg(debug_assertions)]
-    impl<'a> PairBuilder for DebugConstraintBuilder<'a> {
-        fn preprocessed(&self) -> Self::M {
-            self.preprocessed
-        }
-    }
 }

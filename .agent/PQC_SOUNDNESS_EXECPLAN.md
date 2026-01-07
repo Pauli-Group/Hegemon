@@ -202,6 +202,10 @@ After this work, a user can:
   Rationale: Preprocessed schedule data reduces main trace width and constraint overhead, while explicit last-row gating fixes a soundness hole in the block commitment AIR.
   Date/Author: 2026-01-07 / Codex.
 
+- Decision: Keep the transaction AIR schedule selectors as explicit main-trace columns (drop preprocessed columns) to avoid OOD mismatches in the Plonky3 0.4.x proof path.
+  Rationale: The transaction circuit’s schedule selectors are fixed and deterministic; embedding them in the main trace keeps the constraints satisfiable end-to-end while we stabilize preprocessed support.
+  Date/Author: 2026-01-07 / Codex.
+
 - Decision: Upgrade `transaction-circuit` RNG dependencies to rand 0.9 to match Plonky3 Poseidon2’s RNG trait requirements.
   Rationale: `p3-poseidon2` expects rand 0.9’s `Rng`, so aligning versions avoids trait mismatches during deterministic config seeding.
   Date/Author: 2026-01-07 / Codex.
