@@ -20,10 +20,11 @@ p3-matrix = { workspace = true, optional = true }
 miden-crypto = { version = "0.19", default-features = false, features = ["std"] }
 
 [features]
-default = ["std"]
+default = ["std", "winterfell-legacy"]
 std = ["winterfell/std", "winter-crypto?/std", "winter-utils?/std", "blake3/std", "serde?/std"]
 serde = ["dep:serde"]
-stark-verify = ["winter-crypto", "winter-utils"]
+winterfell-legacy = []
+stark-verify = ["winterfell-legacy", "winter-crypto", "winter-utils"]
 stark-fast = []
 plonky3 = ["dep:p3-air", "dep:p3-field", "dep:p3-goldilocks", "dep:p3-matrix"]
 

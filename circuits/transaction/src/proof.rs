@@ -1,7 +1,7 @@
 //! Transaction proof structures and proving/verification functions.
 //!
 //! This module provides the main interface for creating and verifying
-//! transaction proofs. It uses real STARK proofs via winterfell.
+//! transaction proofs. It uses real STARK proofs via winterfell or Plonky3.
 
 use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Serialize};
@@ -9,21 +9,46 @@ use serde::{Deserialize, Serialize};
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing::{bytes32_to_felts, felts_to_bytes32, Commitment, Felt},
+    hashing::{bytes32_to_felts, Commitment, Felt},
     keys::{ProvingKey, VerifyingKey},
     public_inputs::{BalanceSlot, TransactionPublicInputs},
-    stark_prover::TransactionProverStark,
-    stark_verifier::{
-        verify_transaction_proof_bytes, verify_transaction_proof_bytes_rpo, TransactionVerifyError,
-    },
     trace::TransactionTrace,
     witness::TransactionWitness,
 };
 
-#[cfg(not(feature = "stark-fast"))]
+#[cfg(all(feature = "winterfell-legacy", not(feature = "plonky3")))]
+use crate::hashing::felts_to_bytes32;
+#[cfg(all(feature = "winterfell-legacy", not(feature = "plonky3")))]
+use crate::stark_prover::TransactionProverStark;
+#[cfg(all(feature = "winterfell-legacy", not(feature = "plonky3")))]
+use crate::stark_verifier::verify_transaction_proof_bytes;
+#[cfg(all(
+    feature = "winterfell-legacy",
+    feature = "rpo-fiat-shamir",
+    not(feature = "plonky3")
+))]
+use crate::stark_verifier::verify_transaction_proof_bytes_rpo;
+#[cfg(all(feature = "winterfell-legacy", not(feature = "plonky3")))]
+use crate::stark_verifier::TransactionVerifyError;
+#[cfg(all(
+    feature = "winterfell-legacy",
+    not(feature = "stark-fast"),
+    not(feature = "plonky3")
+))]
 use crate::stark_prover::default_proof_options;
-#[cfg(feature = "stark-fast")]
+#[cfg(all(feature = "winterfell-legacy", feature = "stark-fast", not(feature = "plonky3")))]
 use crate::stark_prover::fast_proof_options;
+
+#[cfg(feature = "plonky3")]
+use crate::p3_prover::TransactionProverP3;
+#[cfg(feature = "plonky3")]
+use crate::p3_verifier::verify_transaction_proof_bytes_p3;
+#[cfg(feature = "plonky3")]
+use p3_field::{AbstractField, PrimeField64};
+#[cfg(feature = "plonky3")]
+use p3_goldilocks::Goldilocks;
+#[cfg(feature = "plonky3")]
+use transaction_core::p3_air::TransactionPublicInputsP3;
 
 /// A transaction proof containing public inputs and the STARK proof bytes.
 ///
@@ -41,7 +66,7 @@ pub struct TransactionProof {
     #[serde(with = "crate::public_inputs::serde_vec_bytes32")]
     pub commitments: Vec<Commitment>,
     pub balance_slots: Vec<BalanceSlot>,
-    /// The actual STARK proof bytes (winterfell format).
+    /// The actual STARK proof bytes (backend-specific format).
     /// This is the cryptographic proof that the transaction is valid.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stark_proof: Vec<u8>,
@@ -94,13 +119,50 @@ impl TransactionProof {
     }
 }
 
-/// Generate a real STARK proof for a transaction.
-///
-/// This function:
-/// 1. Validates the witness
-/// 2. Builds the execution trace
-/// 3. Generates a real STARK proof using winterfell
-/// 4. Returns the proof with public inputs
+/// Generate a real STARK proof for a transaction (Plonky3 backend).
+#[cfg(feature = "plonky3")]
+pub fn prove(
+    witness: &TransactionWitness,
+    _proving_key: &ProvingKey,
+) -> Result<TransactionProof, TransactionCircuitError> {
+    witness.validate()?;
+
+    let legacy_trace = TransactionTrace::from_witness(witness)?;
+    let public_inputs = witness.public_inputs()?;
+
+    let prover = TransactionProverP3::new();
+    let stark_trace = prover.build_trace(witness).map_err(|e| {
+        TransactionCircuitError::ConstraintViolation(Box::leak(
+            format!("Trace building failed: {}", e).into_boxed_str(),
+        ))
+    })?;
+    let stark_pub_inputs = prover.public_inputs(witness)?;
+    let stark_proof = prover.prove_bytes(stark_trace, &stark_pub_inputs)?;
+
+    let serialized_inputs = serialize_p3_inputs(&stark_pub_inputs);
+    let nullifiers = stark_pub_inputs
+        .nullifiers
+        .iter()
+        .map(hash_to_bytes32)
+        .collect();
+    let commitments = stark_pub_inputs
+        .commitments
+        .iter()
+        .map(hash_to_bytes32)
+        .collect();
+
+    Ok(TransactionProof {
+        nullifiers,
+        commitments,
+        balance_slots: legacy_trace.padded_balance_slots(),
+        public_inputs,
+        stark_proof,
+        stark_public_inputs: Some(serialized_inputs),
+    })
+}
+
+/// Generate a real STARK proof for a transaction (Winterfell backend).
+#[cfg(all(not(feature = "plonky3"), feature = "winterfell-legacy"))]
 pub fn prove(
     witness: &TransactionWitness,
     _proving_key: &ProvingKey,
@@ -209,22 +271,184 @@ pub fn prove(
 ///
 /// If the proof has STARK proof bytes and public inputs, this performs real cryptographic verification.
 /// Otherwise, it falls back to checking public input consistency (for legacy proofs).
+#[cfg(feature = "plonky3")]
 pub fn verify(
     proof: &TransactionProof,
     _verifying_key: &VerifyingKey,
 ) -> Result<VerificationReport, TransactionCircuitError> {
-    verify_with(proof, verify_transaction_proof_bytes)
+    verify_with_p3(proof)
+}
+
+/// Verify a transaction proof (Winterfell backend).
+#[cfg(all(not(feature = "plonky3"), feature = "winterfell-legacy"))]
+pub fn verify(
+    proof: &TransactionProof,
+    _verifying_key: &VerifyingKey,
+) -> Result<VerificationReport, TransactionCircuitError> {
+    verify_with_stark(proof, verify_transaction_proof_bytes)
 }
 
 /// Verify a transaction proof which used RPO Fiat‑Shamir.
+#[cfg(all(
+    feature = "winterfell-legacy",
+    feature = "rpo-fiat-shamir",
+    not(feature = "plonky3")
+))]
 pub fn verify_rpo(
     proof: &TransactionProof,
     _verifying_key: &VerifyingKey,
 ) -> Result<VerificationReport, TransactionCircuitError> {
-    verify_with(proof, verify_transaction_proof_bytes_rpo)
+    verify_with_stark(proof, verify_transaction_proof_bytes_rpo)
 }
 
-fn verify_with(
+#[cfg(feature = "plonky3")]
+fn verify_with_p3(
+    proof: &TransactionProof,
+) -> Result<VerificationReport, TransactionCircuitError> {
+    // Validate public input structure
+    if proof.nullifiers.len() != MAX_INPUTS {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "invalid nullifier length",
+        ));
+    }
+    if proof.commitments.len() != MAX_OUTPUTS {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "invalid commitment length",
+        ));
+    }
+    if proof.balance_slots.len() != BALANCE_SLOTS {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "invalid balance slot length",
+        ));
+    }
+
+    // Always validate balance slots against public_inputs
+    // (STARK proofs don't cover balance_slots - they're verified separately)
+    verify_balance_slots(proof)?;
+
+    if proof.stark_proof.is_empty() || proof.stark_public_inputs.is_none() {
+        #[cfg(feature = "legacy-proof")]
+        {
+            #[allow(deprecated)] // Intentional use of legacy TransactionAir for test fixtures
+            let trace = TransactionTrace {
+                merkle_root: proof.public_inputs.merkle_root,
+                nullifiers: proof.nullifiers.clone(),
+                commitments: proof.commitments.clone(),
+                balance_slots: proof.balance_slots.clone(),
+                native_delta: proof
+                    .balance_slots
+                    .iter()
+                    .find(|slot| slot.asset_id == crate::constants::NATIVE_ASSET_ID)
+                    .map(|slot| slot.delta)
+                    .unwrap_or(0),
+                fee: proof.public_inputs.native_fee,
+            };
+            #[allow(deprecated)]
+            let air = crate::air::TransactionAir::new(trace);
+            #[allow(deprecated)]
+            air.check(&proof.public_inputs)?;
+            return Ok(VerificationReport { verified: true });
+        }
+        #[cfg(not(feature = "legacy-proof"))]
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "missing STARK proof bytes or public inputs",
+            ));
+        }
+    }
+
+    let stark_inputs = proof.stark_public_inputs.as_ref().expect("checked above");
+    let input_flags = stark_inputs
+        .input_flags
+        .iter()
+        .map(|flag| Goldilocks::from_canonical_u64(*flag as u64))
+        .collect();
+    let output_flags = stark_inputs
+        .output_flags
+        .iter()
+        .map(|flag| Goldilocks::from_canonical_u64(*flag as u64))
+        .collect();
+
+    let nullifiers = proof
+        .nullifiers
+        .iter()
+        .map(|nf| {
+            bytes32_to_felts(nf)
+                .map(hash_felt_to_gl)
+                .ok_or(TransactionCircuitError::ConstraintViolation(
+                    "invalid nullifier encoding",
+                ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let commitments = proof
+        .commitments
+        .iter()
+        .map(|cm| {
+            bytes32_to_felts(cm)
+                .map(hash_felt_to_gl)
+                .ok_or(TransactionCircuitError::ConstraintViolation(
+                    "invalid commitment encoding",
+                ))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let merkle_root = bytes32_to_felts(&stark_inputs.merkle_root)
+        .map(hash_felt_to_gl)
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "invalid merkle root encoding",
+        ))?;
+    let stablecoin_policy_hash = bytes32_to_felts(&stark_inputs.stablecoin_policy_hash)
+        .map(hash_felt_to_gl)
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "invalid stablecoin policy hash encoding",
+        ))?;
+    let stablecoin_oracle_commitment =
+        bytes32_to_felts(&stark_inputs.stablecoin_oracle_commitment)
+            .map(hash_felt_to_gl)
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "invalid stablecoin oracle commitment encoding",
+            ))?;
+    let stablecoin_attestation_commitment =
+        bytes32_to_felts(&stark_inputs.stablecoin_attestation_commitment)
+            .map(hash_felt_to_gl)
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "invalid stablecoin attestation commitment encoding",
+            ))?;
+
+    let stark_pub_inputs = TransactionPublicInputsP3 {
+        input_flags,
+        output_flags,
+        nullifiers,
+        commitments,
+        fee: Goldilocks::from_canonical_u64(stark_inputs.fee),
+        value_balance_sign: Goldilocks::from_canonical_u64(stark_inputs.value_balance_sign as u64),
+        value_balance_magnitude: Goldilocks::from_canonical_u64(stark_inputs.value_balance_magnitude),
+        merkle_root,
+        stablecoin_enabled: Goldilocks::from_canonical_u64(stark_inputs.stablecoin_enabled as u64),
+        stablecoin_asset: Goldilocks::from_canonical_u64(stark_inputs.stablecoin_asset_id),
+        stablecoin_policy_version: Goldilocks::from_canonical_u64(
+            stark_inputs.stablecoin_policy_version as u64,
+        ),
+        stablecoin_issuance_sign: Goldilocks::from_canonical_u64(
+            stark_inputs.stablecoin_issuance_sign as u64,
+        ),
+        stablecoin_issuance_magnitude: Goldilocks::from_canonical_u64(
+            stark_inputs.stablecoin_issuance_magnitude,
+        ),
+        stablecoin_policy_hash,
+        stablecoin_oracle_commitment,
+        stablecoin_attestation_commitment,
+    };
+
+    match verify_transaction_proof_bytes_p3(&proof.stark_proof, &stark_pub_inputs) {
+        Ok(()) => Ok(VerificationReport { verified: true }),
+        Err(e) => Err(TransactionCircuitError::ConstraintViolation(Box::leak(
+            format!("STARK verification failed: {}", e).into_boxed_str(),
+        ))),
+    }
+}
+
+#[cfg(all(feature = "winterfell-legacy", not(feature = "plonky3")))]
+fn verify_with_stark(
     proof: &TransactionProof,
     verify_bytes: fn(
         &[u8],
@@ -355,6 +579,59 @@ fn verify_with(
             format!("STARK verification failed: {}", e).into_boxed_str(),
         ))),
     }
+}
+
+#[cfg(feature = "plonky3")]
+fn serialize_p3_inputs(pub_inputs: &TransactionPublicInputsP3) -> SerializedStarkInputs {
+    let input_flags = pub_inputs
+        .input_flags
+        .iter()
+        .map(|flag| flag.as_canonical_u64() as u8)
+        .collect();
+    let output_flags = pub_inputs
+        .output_flags
+        .iter()
+        .map(|flag| flag.as_canonical_u64() as u8)
+        .collect();
+
+    SerializedStarkInputs {
+        input_flags,
+        output_flags,
+        fee: pub_inputs.fee.as_canonical_u64(),
+        value_balance_sign: pub_inputs.value_balance_sign.as_canonical_u64() as u8,
+        value_balance_magnitude: pub_inputs.value_balance_magnitude.as_canonical_u64(),
+        merkle_root: hash_to_bytes32(&pub_inputs.merkle_root),
+        stablecoin_enabled: pub_inputs.stablecoin_enabled.as_canonical_u64() as u8,
+        stablecoin_asset_id: pub_inputs.stablecoin_asset.as_canonical_u64(),
+        stablecoin_policy_version: pub_inputs.stablecoin_policy_version.as_canonical_u64() as u32,
+        stablecoin_issuance_sign: pub_inputs.stablecoin_issuance_sign.as_canonical_u64() as u8,
+        stablecoin_issuance_magnitude: pub_inputs.stablecoin_issuance_magnitude.as_canonical_u64(),
+        stablecoin_policy_hash: hash_to_bytes32(&pub_inputs.stablecoin_policy_hash),
+        stablecoin_oracle_commitment: hash_to_bytes32(&pub_inputs.stablecoin_oracle_commitment),
+        stablecoin_attestation_commitment: hash_to_bytes32(
+            &pub_inputs.stablecoin_attestation_commitment,
+        ),
+    }
+}
+
+#[cfg(feature = "plonky3")]
+fn hash_to_bytes32(hash: &[Goldilocks; 4]) -> Commitment {
+    let mut out = [0u8; 32];
+    for (idx, limb) in hash.iter().enumerate() {
+        let start = idx * 8;
+        out[start..start + 8].copy_from_slice(&limb.as_canonical_u64().to_be_bytes());
+    }
+    out
+}
+
+#[cfg(feature = "plonky3")]
+fn hash_felt_to_gl(hash: [Felt; 4]) -> [Goldilocks; 4] {
+    [
+        Goldilocks::from_canonical_u64(hash[0].as_int()),
+        Goldilocks::from_canonical_u64(hash[1].as_int()),
+        Goldilocks::from_canonical_u64(hash[2].as_int()),
+        Goldilocks::from_canonical_u64(hash[3].as_int()),
+    ]
 }
 
 /// Verify that balance_slots match public_inputs.balance_slots
