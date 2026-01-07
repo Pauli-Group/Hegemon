@@ -22,6 +22,24 @@ pub const POSEIDON_WIDTH: usize = 3;
 /// Full-round-only schedule with NUMS constants; must be < cycle length (power of 2).
 pub const POSEIDON_ROUNDS: usize = 63;
 
+/// Poseidon2 permutation width used by the Plonky3 in-circuit sponge.
+pub const POSEIDON2_WIDTH: usize = 12;
+/// Poseidon2 rate (number of elements absorbed/squeezed per permutation).
+pub const POSEIDON2_RATE: usize = 6;
+/// Poseidon2 capacity (remaining state elements).
+pub const POSEIDON2_CAPACITY: usize = 6;
+/// Poseidon2 S-box degree for Goldilocks (x^7).
+pub const POSEIDON2_SBOX_DEGREE: u64 = 7;
+/// Poseidon2 external (full) rounds for 128-bit security.
+pub const POSEIDON2_ROUNDS_F: usize = 8;
+/// Poseidon2 external rounds are split into initial + terminal halves.
+pub const POSEIDON2_EXTERNAL_ROUNDS: usize = POSEIDON2_ROUNDS_F / 2;
+/// Poseidon2 internal (partial) rounds for 128-bit security.
+pub const POSEIDON2_INTERNAL_ROUNDS: usize = 22;
+/// Total Poseidon2 round steps, including the initial linear layer.
+pub const POSEIDON2_STEPS: usize =
+    1 + POSEIDON2_ROUNDS_F + POSEIDON2_INTERNAL_ROUNDS;
+
 /// Domain separation tag for note commitments.
 pub const NOTE_DOMAIN_TAG: u64 = 1;
 
@@ -94,12 +112,27 @@ pub fn compute_air_hash() -> [u8; 32] {
     hasher.update(&(CIRCUIT_MERKLE_DEPTH as u32).to_le_bytes());
 
     // Poseidon configuration
-    hasher.update(&(POSEIDON_WIDTH as u32).to_le_bytes());
-    hasher.update(&(POSEIDON_ROUNDS as u32).to_le_bytes());
+    #[cfg(feature = "plonky3")]
+    {
+        hasher.update(&(POSEIDON2_WIDTH as u32).to_le_bytes());
+        hasher.update(&(POSEIDON2_RATE as u32).to_le_bytes());
+        hasher.update(&(POSEIDON2_CAPACITY as u32).to_le_bytes());
+        hasher.update(&(POSEIDON2_ROUNDS_F as u32).to_le_bytes());
+        hasher.update(&(POSEIDON2_INTERNAL_ROUNDS as u32).to_le_bytes());
+        hasher.update(&(POSEIDON2_SBOX_DEGREE as u32).to_le_bytes());
+    }
+    #[cfg(all(not(feature = "plonky3"), feature = "winterfell-legacy"))]
+    {
+        hasher.update(&(POSEIDON_WIDTH as u32).to_le_bytes());
+        hasher.update(&(POSEIDON_ROUNDS as u32).to_le_bytes());
+    }
 
-    // Constraint structure: max degree 5 (x^5)
+    // Constraint structure: max degree and transition constraint count.
+    #[cfg(feature = "plonky3")]
+    hasher.update(&(POSEIDON2_SBOX_DEGREE as u32).to_le_bytes()); // Max constraint degree
+    #[cfg(all(not(feature = "plonky3"), feature = "winterfell-legacy"))]
     hasher.update(&5u32.to_le_bytes()); // Max constraint degree
-    hasher.update(&103u32.to_le_bytes()); // Number of transition constraints
+    hasher.update(&103u32.to_le_bytes()); // Transition constraint count (update if constraints change)
 
     let hash = hasher.finalize();
     let mut result = [0u8; 32];

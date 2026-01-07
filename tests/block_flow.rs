@@ -7,7 +7,7 @@ use block_circuit::{prove_block_fast, verify_block, BlockError};
 use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
 use std::collections::HashMap;
 use transaction_circuit::{
-    constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID},
+    constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID},
     hashing::{felts_to_bytes32, merkle_node, Felt, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
@@ -17,6 +17,14 @@ use transaction_circuit::{
     trace::TransactionTrace,
 };
 use winterfell::Prover;
+
+#[cfg(feature = "plonky3")]
+use transaction_circuit::hashing_pq::{
+    felts_to_bytes48, merkle_node as merkle_node_pq, note_commitment,
+    HashFelt as HashFeltPq,
+};
+#[cfg(feature = "plonky3")]
+use transaction_circuit::note::MerklePathPq;
 
 /// Build a Merkle tree with 2 leaves at positions 0 and 1.
 /// Returns paths and root consistent with CIRCUIT_MERKLE_DEPTH.
@@ -40,6 +48,29 @@ fn build_two_leaf_merkle_tree(
     let path1 = MerklePath { siblings: siblings1 };
 
     (path0, path1, current)
+}
+
+#[cfg(feature = "plonky3")]
+fn build_two_leaf_merkle_tree_pq(
+    leaf0: HashFeltPq,
+    leaf1: HashFeltPq,
+) -> (MerklePathPq, MerklePathPq, HashFeltPq) {
+    let mut siblings0 = vec![leaf1];
+    let mut siblings1 = vec![leaf0];
+    let mut current = merkle_node_pq(leaf0, leaf1);
+
+    for _ in 1..CIRCUIT_MERKLE_DEPTH {
+        let zero = [transaction_circuit::hashing_pq::Felt::ZERO; 6];
+        siblings0.push(zero);
+        siblings1.push(zero);
+        current = merkle_node_pq(current, zero);
+    }
+
+    (
+        MerklePathPq { siblings: siblings0 },
+        MerklePathPq { siblings: siblings1 },
+        current,
+    )
 }
 
 /// Create a valid witness with proper Merkle paths for testing.
@@ -66,6 +97,24 @@ fn make_valid_witness(seed: u64) -> (TransactionWitness, Vec<HashFelt>) {
     let leaf0 = input_native.commitment();
     let leaf1 = input_asset.commitment();
     let (path0, path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
+    #[cfg(feature = "plonky3")]
+    let (path0_pq, path1_pq, merkle_root_pq) = {
+        let leaf0_pq = note_commitment(
+            input_native.value,
+            input_native.asset_id,
+            &input_native.pk_recipient,
+            &input_native.rho,
+            &input_native.r,
+        );
+        let leaf1_pq = note_commitment(
+            input_asset.value,
+            input_asset.asset_id,
+            &input_asset.pk_recipient,
+            &input_asset.rho,
+            &input_asset.r,
+        );
+        build_two_leaf_merkle_tree_pq(leaf0_pq, leaf1_pq)
+    };
 
     // Create output notes
     let output_native = OutputNoteWitness {
@@ -95,17 +144,23 @@ fn make_valid_witness(seed: u64) -> (TransactionWitness, Vec<HashFelt>) {
                 position: 0,
                 rho_seed: [seed as u8 + 4; 32],
                 merkle_path: path0,
+                #[cfg(feature = "plonky3")]
+                merkle_path_pq: Some(path0_pq),
             },
             InputNoteWitness {
                 note: input_asset,
                 position: 1,
                 rho_seed: [seed as u8 + 8; 32],
                 merkle_path: path1,
+                #[cfg(feature = "plonky3")]
+                merkle_path_pq: Some(path1_pq),
             },
         ],
         outputs: vec![output_native.clone(), output_asset.clone()],
         sk_spend: [seed as u8 + 15; 32],
         merkle_root: felts_to_bytes32(&merkle_root),
+        #[cfg(feature = "plonky3")]
+        merkle_root_pq: felts_to_bytes48(&merkle_root_pq),
         fee: 5,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
@@ -200,6 +255,10 @@ fn build_rpo_proof(witness: &TransactionWitness) -> TransactionProof {
         public_inputs,
         nullifiers,
         commitments,
+        #[cfg(feature = "plonky3")]
+        nullifiers_pq: vec![[0u8; 48]; MAX_INPUTS],
+        #[cfg(feature = "plonky3")]
+        commitments_pq: vec![[0u8; 48]; MAX_OUTPUTS],
         balance_slots: legacy_trace.padded_balance_slots(),
         stark_proof: proof_bytes,
         stark_public_inputs: Some(SerializedStarkInputs {
@@ -209,6 +268,8 @@ fn build_rpo_proof(witness: &TransactionWitness) -> TransactionProof {
             value_balance_sign,
             value_balance_magnitude,
             merkle_root,
+            #[cfg(feature = "plonky3")]
+            merkle_root_pq: [0u8; 48],
             stablecoin_enabled,
             stablecoin_asset_id,
             stablecoin_policy_version,

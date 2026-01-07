@@ -25,6 +25,8 @@ pub mod constants;
 pub mod dimensions;
 pub mod error;
 pub mod hashing;
+#[cfg(feature = "plonky3")]
+pub mod hashing_pq;
 pub mod keys;
 pub mod note;
 pub mod proof;

@@ -22,6 +22,9 @@ pub struct TransactionWitness {
     pub sk_spend: [u8; 32],
     #[serde(with = "crate::witness::serde_bytes32")]
     pub merkle_root: [u8; 32],
+    #[cfg(feature = "plonky3")]
+    #[serde(default = "crate::witness::default_bytes48", with = "crate::witness::serde_bytes48")]
+    pub merkle_root_pq: [u8; 48],
     pub fee: u64,
     #[serde(default)]
     pub value_balance: i128,
@@ -266,6 +269,38 @@ pub(crate) mod serde_bytes32 {
             return Err(serde::de::Error::custom("expected 32 bytes"));
         }
         let mut arr = [0u8; 32];
+        arr.copy_from_slice(&bytes);
+        Ok(arr)
+    }
+
+    use serde::Deserialize;
+}
+
+#[cfg(feature = "plonky3")]
+pub(crate) fn default_bytes48() -> [u8; 48] {
+    [0u8; 48]
+}
+
+#[cfg(feature = "plonky3")]
+pub(crate) mod serde_bytes48 {
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &[u8; 48], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(value)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 48], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        if bytes.len() != 48 {
+            return Err(serde::de::Error::custom("expected 48 bytes"));
+        }
+        let mut arr = [0u8; 48];
         arr.copy_from_slice(&bytes);
         Ok(arr)
     }

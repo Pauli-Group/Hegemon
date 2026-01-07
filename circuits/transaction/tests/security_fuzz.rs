@@ -39,6 +39,8 @@ fn arb_input_note() -> impl Strategy<Value = InputNoteWitness> {
             position: position as u64,
             rho_seed,
             merkle_path: MerklePath::default(),
+            #[cfg(feature = "plonky3")]
+            merkle_path_pq: None,
         }
     })
 }
@@ -99,6 +101,8 @@ fn arb_witness() -> impl Strategy<Value = TransactionWitness> {
                 outputs,
                 sk_spend,
                 merkle_root,
+                #[cfg(feature = "plonky3")]
+                merkle_root_pq: [0u8; 48],
                 fee,
                 value_balance: 0,
                 stablecoin: StablecoinPolicyBinding::default(),
@@ -149,6 +153,8 @@ fn witness_rejects_oversized_inputs() {
                 position: 0,
                 rho_seed: [4u8; 32],
                 merkle_path: MerklePath::default(),
+                #[cfg(feature = "plonky3")]
+                merkle_path_pq: None,
             };
             MAX_INPUTS + 1
         ],
@@ -163,6 +169,8 @@ fn witness_rejects_oversized_inputs() {
         }],
         sk_spend: [0u8; 32],
         merkle_root: [0u8; 32],
+        #[cfg(feature = "plonky3")]
+        merkle_root_pq: [0u8; 48],
         fee: 0,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),

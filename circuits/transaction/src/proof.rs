@@ -15,6 +15,8 @@ use crate::{
     trace::TransactionTrace,
     witness::TransactionWitness,
 };
+#[cfg(feature = "plonky3")]
+use crate::hashing_pq::bytes48_to_felts;
 
 #[cfg(all(feature = "winterfell-legacy", not(feature = "plonky3")))]
 use crate::hashing::felts_to_bytes32;
@@ -65,6 +67,20 @@ pub struct TransactionProof {
     pub nullifiers: Vec<Commitment>,
     #[serde(with = "crate::public_inputs::serde_vec_bytes32")]
     pub commitments: Vec<Commitment>,
+    #[cfg(feature = "plonky3")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        with = "crate::public_inputs::serde_vec_bytes48"
+    )]
+    pub nullifiers_pq: Vec<[u8; 48]>,
+    #[cfg(feature = "plonky3")]
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        with = "crate::public_inputs::serde_vec_bytes48"
+    )]
+    pub commitments_pq: Vec<[u8; 48]>,
     pub balance_slots: Vec<BalanceSlot>,
     /// The actual STARK proof bytes (backend-specific format).
     /// This is the cryptographic proof that the transaction is valid.
@@ -85,6 +101,12 @@ pub struct SerializedStarkInputs {
     pub value_balance_magnitude: u64,
     #[serde(with = "crate::public_inputs::serde_bytes32")]
     pub merkle_root: Commitment,
+    #[cfg(feature = "plonky3")]
+    #[serde(
+        default = "crate::public_inputs::default_bytes48",
+        with = "crate::public_inputs::serde_bytes48"
+    )]
+    pub merkle_root_pq: [u8; 48],
     #[serde(default)]
     pub stablecoin_enabled: u8,
     #[serde(default)]
@@ -140,20 +162,24 @@ pub fn prove(
     let stark_proof = prover.prove_bytes(stark_trace, &stark_pub_inputs)?;
 
     let serialized_inputs = serialize_p3_inputs(&stark_pub_inputs);
-    let nullifiers = stark_pub_inputs
+    let nullifiers = public_inputs.nullifiers.clone();
+    let commitments = public_inputs.commitments.clone();
+    let nullifiers_pq = stark_pub_inputs
         .nullifiers
         .iter()
-        .map(hash_to_bytes32)
+        .map(hash_to_bytes48)
         .collect();
-    let commitments = stark_pub_inputs
+    let commitments_pq = stark_pub_inputs
         .commitments
         .iter()
-        .map(hash_to_bytes32)
+        .map(hash_to_bytes48)
         .collect();
 
     Ok(TransactionProof {
         nullifiers,
         commitments,
+        nullifiers_pq,
+        commitments_pq,
         balance_slots: legacy_trace.padded_balance_slots(),
         public_inputs,
         stark_proof,
@@ -306,14 +332,14 @@ fn verify_with_p3(
     proof: &TransactionProof,
 ) -> Result<VerificationReport, TransactionCircuitError> {
     // Validate public input structure
-    if proof.nullifiers.len() != MAX_INPUTS {
+    if proof.nullifiers_pq.len() != MAX_INPUTS {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "invalid nullifier length",
+            "invalid PQ nullifier length",
         ));
     }
-    if proof.commitments.len() != MAX_OUTPUTS {
+    if proof.commitments_pq.len() != MAX_OUTPUTS {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "invalid commitment length",
+            "invalid PQ commitment length",
         ));
     }
     if proof.balance_slots.len() != BALANCE_SLOTS {
@@ -370,32 +396,26 @@ fn verify_with_p3(
         .collect();
 
     let nullifiers = proof
-        .nullifiers
+        .nullifiers_pq
         .iter()
         .map(|nf| {
-            bytes32_to_felts(nf)
-                .map(hash_felt_to_gl)
-                .ok_or(TransactionCircuitError::ConstraintViolation(
-                    "invalid nullifier encoding",
-                ))
+            bytes48_to_felts(nf).ok_or(TransactionCircuitError::ConstraintViolation(
+                "invalid PQ nullifier encoding",
+            ))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let commitments = proof
-        .commitments
+        .commitments_pq
         .iter()
         .map(|cm| {
-            bytes32_to_felts(cm)
-                .map(hash_felt_to_gl)
-                .ok_or(TransactionCircuitError::ConstraintViolation(
-                    "invalid commitment encoding",
-                ))
+            bytes48_to_felts(cm).ok_or(TransactionCircuitError::ConstraintViolation(
+                "invalid PQ commitment encoding",
+            ))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let merkle_root = bytes32_to_felts(&stark_inputs.merkle_root)
-        .map(hash_felt_to_gl)
-        .ok_or(TransactionCircuitError::ConstraintViolation(
-            "invalid merkle root encoding",
-        ))?;
+    let merkle_root = bytes48_to_felts(&stark_inputs.merkle_root_pq).ok_or(
+        TransactionCircuitError::ConstraintViolation("invalid PQ merkle root encoding"),
+    )?;
     let stablecoin_policy_hash = bytes32_to_felts(&stark_inputs.stablecoin_policy_hash)
         .map(hash_felt_to_gl)
         .ok_or(TransactionCircuitError::ConstraintViolation(
@@ -600,7 +620,8 @@ fn serialize_p3_inputs(pub_inputs: &TransactionPublicInputsP3) -> SerializedStar
         fee: pub_inputs.fee.as_canonical_u64(),
         value_balance_sign: pub_inputs.value_balance_sign.as_canonical_u64() as u8,
         value_balance_magnitude: pub_inputs.value_balance_magnitude.as_canonical_u64(),
-        merkle_root: hash_to_bytes32(&pub_inputs.merkle_root),
+        merkle_root: [0u8; 32],
+        merkle_root_pq: hash_to_bytes48(&pub_inputs.merkle_root),
         stablecoin_enabled: pub_inputs.stablecoin_enabled.as_canonical_u64() as u8,
         stablecoin_asset_id: pub_inputs.stablecoin_asset.as_canonical_u64(),
         stablecoin_policy_version: pub_inputs.stablecoin_policy_version.as_canonical_u64() as u32,
@@ -617,6 +638,16 @@ fn serialize_p3_inputs(pub_inputs: &TransactionPublicInputsP3) -> SerializedStar
 #[cfg(feature = "plonky3")]
 fn hash_to_bytes32(hash: &[Goldilocks; 4]) -> Commitment {
     let mut out = [0u8; 32];
+    for (idx, limb) in hash.iter().enumerate() {
+        let start = idx * 8;
+        out[start..start + 8].copy_from_slice(&limb.as_canonical_u64().to_be_bytes());
+    }
+    out
+}
+
+#[cfg(feature = "plonky3")]
+fn hash_to_bytes48(hash: &[Goldilocks; 6]) -> [u8; 48] {
+    let mut out = [0u8; 48];
     for (idx, limb) in hash.iter().enumerate() {
         let start = idx * 8;
         out[start..start + 8].copy_from_slice(&limb.as_canonical_u64().to_be_bytes());

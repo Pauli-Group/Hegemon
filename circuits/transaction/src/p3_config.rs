@@ -12,6 +12,7 @@ use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark::{Proof, StarkConfig};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+use transaction_core::poseidon2::POSEIDON2_SEED;
 
 pub const DIGEST_ELEMS: usize = 6;
 pub const POSEIDON2_WIDTH: usize = 12;
@@ -28,8 +29,6 @@ pub const FRI_NUM_QUERIES: usize = 8;
 pub const FRI_NUM_QUERIES: usize = 43;
 
 pub const FRI_POW_BITS: usize = 0;
-
-const POSEIDON2_SEED: [u8; 32] = *b"hegemon-tx-poseidon2-seed-2026!!";
 
 pub type Val = Goldilocks;
 pub type Challenge = BinomialExtensionField<Val, 2>;

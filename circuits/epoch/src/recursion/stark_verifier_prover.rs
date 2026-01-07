@@ -3817,10 +3817,14 @@ mod tests {
                 position,
                 rho_seed: [7u8; 32],
                 merkle_path,
+                #[cfg(feature = "plonky3")]
+                merkle_path_pq: None,
             }],
             outputs: vec![output_note],
             sk_spend: [8u8; 32],
             merkle_root,
+            #[cfg(feature = "plonky3")]
+            merkle_root_pq: [0u8; 48],
             fee: 1,
             value_balance: 0,
             stablecoin: StablecoinPolicyBinding::default(),

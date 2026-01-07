@@ -14,7 +14,7 @@ use protocol_versioning::DEFAULT_VERSION_BINDING;
 use state_merkle::CommitmentTree;
 use transaction_circuit::{
     StablecoinPolicyBinding, TransactionWitness,
-    constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID},
+    constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID},
     hashing::{bytes32_to_felts, felt_to_bytes32, felts_to_bytes32},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
@@ -58,10 +58,14 @@ fn make_valid_witness(seed: u64, tree: &CommitmentTree) -> TransactionWitness {
             merkle_path: MerklePath {
                 siblings: merkle_path,
             },
+            #[cfg(feature = "plonky3")]
+            merkle_path_pq: None,
         }],
         outputs: vec![output_note],
         sk_spend: [seed as u8 + 12; 32],
         merkle_root,
+        #[cfg(feature = "plonky3")]
+        merkle_root_pq: [0u8; 48],
         fee: 1,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
@@ -132,6 +136,10 @@ fn build_rpo_proof(witness: &TransactionWitness) -> TransactionProof {
         public_inputs,
         nullifiers,
         commitments,
+        #[cfg(feature = "plonky3")]
+        nullifiers_pq: vec![[0u8; 48]; MAX_INPUTS],
+        #[cfg(feature = "plonky3")]
+        commitments_pq: vec![[0u8; 48]; MAX_OUTPUTS],
         balance_slots: legacy_trace.padded_balance_slots(),
         stark_proof: proof_bytes,
         stark_public_inputs: Some(SerializedStarkInputs {
@@ -141,6 +149,8 @@ fn build_rpo_proof(witness: &TransactionWitness) -> TransactionProof {
             value_balance_sign,
             value_balance_magnitude,
             merkle_root,
+            #[cfg(feature = "plonky3")]
+            merkle_root_pq: [0u8; 48],
             stablecoin_enabled,
             stablecoin_asset_id,
             stablecoin_policy_version,

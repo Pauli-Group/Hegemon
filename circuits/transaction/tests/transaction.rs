@@ -9,6 +9,14 @@ use transaction_circuit::{
 };
 use winterfell::math::FieldElement;
 
+#[cfg(feature = "plonky3")]
+use transaction_circuit::hashing_pq::{
+    felts_to_bytes48, merkle_node as merkle_node_pq, note_commitment,
+    HashFelt as HashFeltPq,
+};
+#[cfg(feature = "plonky3")]
+use transaction_circuit::note::MerklePathPq;
+
 /// Compute the Merkle root from a leaf and path using CIRCUIT_MERKLE_DEPTH levels.
 /// This matches what the STARK circuit actually verifies.
 fn compute_merkle_root(leaf: HashFelt, position: u64, path: &[HashFelt]) -> HashFelt {
@@ -56,6 +64,32 @@ fn build_two_leaf_merkle_tree(
     (path0, path1, current)
 }
 
+#[cfg(feature = "plonky3")]
+fn build_two_leaf_merkle_tree_pq(
+    leaf0: HashFeltPq,
+    leaf1: HashFeltPq,
+) -> (MerklePathPq, MerklePathPq, HashFeltPq) {
+    let mut siblings0 = vec![leaf1];
+    let mut siblings1 = vec![leaf0];
+    let mut current = merkle_node_pq(leaf0, leaf1);
+
+    for _ in 1..CIRCUIT_MERKLE_DEPTH {
+        let zero = [transaction_circuit::hashing_pq::Felt::ZERO; 6];
+        siblings0.push(zero);
+        siblings1.push(zero);
+        current = merkle_node_pq(current, zero);
+    }
+
+    let path0 = MerklePathPq {
+        siblings: siblings0,
+    };
+    let path1 = MerklePathPq {
+        siblings: siblings1,
+    };
+
+    (path0, path1, current)
+}
+
 fn sample_witness() -> TransactionWitness {
     let input_note_native = NoteData {
         value: 8,
@@ -76,6 +110,24 @@ fn sample_witness() -> TransactionWitness {
     let leaf0 = input_note_native.commitment();
     let leaf1 = input_note_asset.commitment();
     let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
+    #[cfg(feature = "plonky3")]
+    let (merkle_path0_pq, merkle_path1_pq, merkle_root_pq) = {
+        let leaf0_pq = note_commitment(
+            input_note_native.value,
+            input_note_native.asset_id,
+            &input_note_native.pk_recipient,
+            &input_note_native.rho,
+            &input_note_native.r,
+        );
+        let leaf1_pq = note_commitment(
+            input_note_asset.value,
+            input_note_asset.asset_id,
+            &input_note_asset.pk_recipient,
+            &input_note_asset.rho,
+            &input_note_asset.r,
+        );
+        build_two_leaf_merkle_tree_pq(leaf0_pq, leaf1_pq)
+    };
 
     // Verify paths compute to root correctly
     assert_eq!(
@@ -112,17 +164,23 @@ fn sample_witness() -> TransactionWitness {
                 position: 0,
                 rho_seed: [9u8; 32],
                 merkle_path: merkle_path0,
+                #[cfg(feature = "plonky3")]
+                merkle_path_pq: Some(merkle_path0_pq),
             },
             InputNoteWitness {
                 note: input_note_asset,
                 position: 1,
                 rho_seed: [8u8; 32],
                 merkle_path: merkle_path1,
+                #[cfg(feature = "plonky3")]
+                merkle_path_pq: Some(merkle_path1_pq),
             },
         ],
         outputs: vec![output_native, output_asset],
         sk_spend: [42u8; 32],
         merkle_root: felts_to_bytes32(&merkle_root),
+        #[cfg(feature = "plonky3")]
+        merkle_root_pq: felts_to_bytes48(&merkle_root_pq),
         fee: 5,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
@@ -142,6 +200,18 @@ fn stablecoin_witness() -> TransactionWitness {
     let leaf0 = input_note_native.commitment();
     let leaf1 = [Felt::ZERO; 4];
     let (merkle_path0, _merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
+    #[cfg(feature = "plonky3")]
+    let (merkle_path0_pq, _merkle_path1_pq, merkle_root_pq) = {
+        let leaf0_pq = note_commitment(
+            input_note_native.value,
+            input_note_native.asset_id,
+            &input_note_native.pk_recipient,
+            &input_note_native.rho,
+            &input_note_native.r,
+        );
+        let leaf1_pq = [transaction_circuit::hashing_pq::Felt::ZERO; 6];
+        build_two_leaf_merkle_tree_pq(leaf0_pq, leaf1_pq)
+    };
 
     let output_stablecoin = OutputNoteWitness {
         note: NoteData {
@@ -159,10 +229,14 @@ fn stablecoin_witness() -> TransactionWitness {
             position: 0,
             rho_seed: [7u8; 32],
             merkle_path: merkle_path0,
+            #[cfg(feature = "plonky3")]
+            merkle_path_pq: Some(merkle_path0_pq),
         }],
         outputs: vec![output_stablecoin],
         sk_spend: [8u8; 32],
         merkle_root: felts_to_bytes32(&merkle_root),
+        #[cfg(feature = "plonky3")]
+        merkle_root_pq: felts_to_bytes48(&merkle_root_pq),
         fee: 5,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding {
