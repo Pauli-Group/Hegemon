@@ -18,7 +18,7 @@ pub const POSEIDON2_WIDTH: usize = 12;
 pub const POSEIDON2_RATE: usize = 6;
 // Test builds use lower FRI parameters unless the e2e feature is enabled.
 #[cfg(all(test, not(feature = "plonky3-e2e")))]
-pub const FRI_LOG_BLOWUP: usize = 2;
+pub const FRI_LOG_BLOWUP: usize = 3;
 #[cfg(any(not(test), feature = "plonky3-e2e"))]
 pub const FRI_LOG_BLOWUP: usize = 4;
 
