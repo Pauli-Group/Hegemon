@@ -4,7 +4,8 @@ use blake3::Hasher as Blake3Hasher;
 use p3_goldilocks::Goldilocks;
 use p3_field::{Field, PrimeCharacteristicRing};
 use p3_matrix::dense::RowMajorMatrix;
-use p3_uni_stark::prove;
+use p3_matrix::Matrix;
+use p3_uni_stark::{prove_with_preprocessed, setup_preprocessed};
 use state_merkle::CommitmentTree;
 use transaction_circuit::constants::{MAX_INPUTS, POSEIDON_ROUNDS};
 use transaction_circuit::hashing::is_canonical_bytes32;
@@ -21,9 +22,7 @@ use crate::commitment_air::{
     COL_S0, COL_S1, COL_S2, COL_START_ROOT0, COL_START_ROOT1, COL_START_ROOT2, COL_START_ROOT3,
 };
 use crate::p3_commitment_air::{
-    CommitmentBlockAirP3, CommitmentBlockPublicInputsP3, COL_CYCLE_BIT0, COL_INPUT_CYCLE_ACC,
-    COL_INPUT_CYCLE_MASK, COL_PERM_ACC, COL_PERM_MASK, COL_STEP_BIT0, CYCLE_BITS, STEP_BITS,
-    TRACE_WIDTH,
+    CommitmentBlockAirP3, CommitmentBlockPublicInputsP3, CYCLE_BITS, TRACE_WIDTH,
 };
 use transaction_circuit::p3_config::default_config;
 
@@ -214,7 +213,17 @@ impl CommitmentBlockProverP3 {
         };
 
         let config = default_config();
-        let proof = prove(&config.config, &CommitmentBlockAirP3, trace, &pub_inputs.to_vec());
+        let air = CommitmentBlockAirP3::new(pub_inputs.tx_count as usize);
+        let degree_bits = trace.height().ilog2() as usize;
+        let (prep_prover, _) = setup_preprocessed(&config.config, &air, degree_bits)
+            .expect("CommitmentBlockAirP3 preprocessed trace missing");
+        let proof = prove_with_preprocessed(
+            &config.config,
+            &air,
+            trace,
+            &pub_inputs.to_vec(),
+            Some(&prep_prover),
+        );
         let proof_bytes = bincode::serialize(&proof)
             .map_err(|_| BlockError::CommitmentProofGeneration("serialize failed".into()))?;
         let proof_hash = blake3_256(&proof_bytes);
@@ -240,14 +249,14 @@ impl CommitmentBlockProverP3 {
     ) -> Result<(RowMajorMatrix<Val>, [Val; 4]), BlockError> {
         let mut inputs = hashes_to_vals(proof_hashes);
         let tx_count = proof_hashes.len();
-        let total_cycles = trace_length(tx_count) / CYCLE_LENGTH;
         let input_cycles = tx_count.saturating_mul(2);
         let target_len = input_cycles * 2;
         if inputs.len() < target_len {
             inputs.resize(target_len, Val::ZERO);
         }
 
-        let trace_len = total_cycles * CYCLE_LENGTH;
+        let trace_len = CommitmentBlockAirP3::trace_length(tx_count);
+        let total_cycles = trace_len / CYCLE_LENGTH;
         if (total_cycles as u64) > (1u64 << CYCLE_BITS) {
             return Err(BlockError::CommitmentProofInvalidInputs(
                 "trace exceeds cycle counter capacity".into(),
@@ -369,37 +378,8 @@ impl CommitmentBlockProverP3 {
             row_slice[COL_NF_DIFF_NZ] = nz;
         }
 
-        let mut perm_acc = Val::ZERO;
-        let mut input_cycle_acc = Val::ZERO;
         for row in 0..trace_len {
-            let step = row % CYCLE_LENGTH;
-            let cycle = row / CYCLE_LENGTH;
             let row_slice = trace.row_mut(row);
-            for bit in 0..STEP_BITS {
-                let is_one = ((step >> bit) & 1) == 1;
-                row_slice[COL_STEP_BIT0 + bit] = Val::from_bool(is_one);
-            }
-            for bit in 0..CYCLE_BITS {
-                let is_one = ((cycle >> bit) & 1) == 1;
-                row_slice[COL_CYCLE_BIT0 + bit] = Val::from_bool(is_one);
-            }
-
-            let perm_mask = if row < nullifier_count { Val::ONE } else { Val::ZERO };
-            row_slice[COL_PERM_MASK] = perm_mask;
-            row_slice[COL_PERM_ACC] = perm_acc;
-            perm_acc += perm_mask;
-
-            let input_cycle_mask = if cycle < input_cycles {
-                Val::ONE
-            } else {
-                Val::ZERO
-            };
-            row_slice[COL_INPUT_CYCLE_MASK] = input_cycle_mask;
-            row_slice[COL_INPUT_CYCLE_ACC] = input_cycle_acc;
-            if step + 1 == CYCLE_LENGTH {
-                input_cycle_acc += input_cycle_mask;
-            }
-
             row_slice[COL_START_ROOT0] = starting_state_root[0];
             row_slice[COL_START_ROOT1] = starting_state_root[1];
             row_slice[COL_START_ROOT2] = starting_state_root[2];
@@ -420,12 +400,6 @@ impl CommitmentBlockProverP3 {
 
         Ok((trace, [output0, output1, output2, output3]))
     }
-}
-
-fn trace_length(tx_count: usize) -> usize {
-    let input_elements = tx_count.saturating_mul(4);
-    let input_cycles = ((input_elements + 1) / 2).max(1);
-    (input_cycles + 1).next_power_of_two() * CYCLE_LENGTH
 }
 
 fn proof_hashes_from_transactions(

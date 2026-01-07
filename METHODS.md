@@ -233,6 +233,8 @@ You design one “join–split” circuit with:
 
 The exact low‑level shape depends on whether you use AIR (transition function on a trace) or PLONK‑style gates, but conceptually you have one STARK proof that “this whole finite state machine” executed correctly over your witness.
 
+In the Plonky3 implementation, fixed schedule data (Poseidon round flags, cycle markers, row-specific assertions) lives in preprocessed trace columns that are committed separately from the main witness trace. The AIR reads these selectors via `builder.preprocessed()` and treats them as fixed inputs, which keeps the main trace focused on witness data and avoids counter-heavy selectors inside the constraints.
+
 You might split this into:
 
 * a “note membership + nullifier” sub‑circuit, and

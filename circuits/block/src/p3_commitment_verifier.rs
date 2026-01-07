@@ -2,6 +2,7 @@
 
 use blake3::Hasher as Blake3Hasher;
 use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
+use p3_uni_stark::{setup_preprocessed, verify_with_preprocessed};
 use transaction_circuit::constants::MAX_INPUTS;
 use transaction_circuit::p3_config::{default_config, TransactionProofP3};
 
@@ -33,11 +34,18 @@ pub fn verify_block_commitment_proof_p3(
     let proof: TransactionProofP3 = bincode::deserialize(proof_bytes)
         .map_err(|_| BlockError::CommitmentProofVerification("invalid proof format".into()))?;
     let config = default_config();
-    p3_uni_stark::verify(
+    let tx_count = pub_inputs.tx_count as usize;
+    let trace_len = CommitmentBlockAirP3::trace_length(tx_count);
+    let degree_bits = trace_len.ilog2() as usize;
+    let air = CommitmentBlockAirP3::new(tx_count);
+    let (_, prep_vk) = setup_preprocessed(&config.config, &air, degree_bits)
+        .expect("CommitmentBlockAirP3 preprocessed trace missing");
+    verify_with_preprocessed(
         &config.config,
-        &CommitmentBlockAirP3,
+        &air,
         &proof,
         &pub_inputs.to_vec(),
+        Some(&prep_vk),
     )
     .map_err(|err| BlockError::CommitmentProofVerification(format!("{err:?}")))
 }
