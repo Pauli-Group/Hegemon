@@ -1,8 +1,9 @@
 //! Plonky3 verifier for the transaction circuit.
 
-use transaction_core::p3_air::{TransactionAirP3, TransactionPublicInputsP3};
+use transaction_core::p3_air::{TransactionAirP3, TransactionPublicInputsP3, MIN_TRACE_LENGTH};
 
-use crate::p3_config::{default_config, new_challenger, TransactionProofP3};
+use crate::p3_config::{default_config, TransactionProofP3};
+use p3_uni_stark::setup_preprocessed;
 
 pub fn verify_transaction_proof_p3(
     proof: &TransactionProofP3,
@@ -13,13 +14,16 @@ pub fn verify_transaction_proof_p3(
         .map_err(TransactionVerifyErrorP3::InvalidPublicInputs)?;
 
     let config = default_config();
-    let mut challenger = new_challenger(&config.perm);
-    p3_uni_stark::verify(
+    let degree_bits = MIN_TRACE_LENGTH.ilog2() as usize;
+    let preprocessed_vk =
+        setup_preprocessed(&config.config, &TransactionAirP3, degree_bits).map(|(_, vk)| vk);
+
+    p3_uni_stark::verify_with_preprocessed(
         &config.config,
         &TransactionAirP3,
-        &mut challenger,
         proof,
         &pub_inputs.to_vec(),
+        preprocessed_vk.as_ref(),
     )
     .map_err(|err| TransactionVerifyErrorP3::VerificationFailed(format!("{err:?}")))
 }

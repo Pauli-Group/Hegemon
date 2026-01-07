@@ -1,9 +1,9 @@
 //! Plonky3 verifier for commitment block proofs.
 
 use blake3::Hasher as Blake3Hasher;
-use p3_field::{AbstractField, Field, PrimeField64};
+use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
 use transaction_circuit::constants::MAX_INPUTS;
-use transaction_circuit::p3_config::{default_config, new_challenger, TransactionProofP3};
+use transaction_circuit::p3_config::{default_config, TransactionProofP3};
 
 use crate::error::BlockError;
 use crate::p3_commitment_air::{CommitmentBlockAirP3, CommitmentBlockPublicInputsP3, Felt};
@@ -33,11 +33,9 @@ pub fn verify_block_commitment_proof_p3(
     let proof: TransactionProofP3 = bincode::deserialize(proof_bytes)
         .map_err(|_| BlockError::CommitmentProofVerification("invalid proof format".into()))?;
     let config = default_config();
-    let mut challenger = new_challenger(&config.perm);
     p3_uni_stark::verify(
         &config.config,
         &CommitmentBlockAirP3,
-        &mut challenger,
         &proof,
         &pub_inputs.to_vec(),
     )
@@ -75,17 +73,17 @@ fn derive_nullifier_challenges_inputs(
     }
     let digest = hasher.finalize();
     let bytes = digest.as_bytes();
-    let mut alpha = Felt::from_canonical_u64(u64::from_le_bytes(
+    let mut alpha = Felt::from_u64(u64::from_le_bytes(
         bytes[0..8].try_into().expect("8-byte alpha"),
     ));
-    let mut beta = Felt::from_canonical_u64(u64::from_le_bytes(
+    let mut beta = Felt::from_u64(u64::from_le_bytes(
         bytes[8..16].try_into().expect("8-byte beta"),
     ));
     if alpha.is_zero() {
-        alpha = Felt::one();
+        alpha = Felt::ONE;
     }
     if beta.is_zero() {
-        beta = Felt::from_canonical_u64(2);
+        beta = Felt::from_u64(2);
     }
     Ok((alpha, beta))
 }

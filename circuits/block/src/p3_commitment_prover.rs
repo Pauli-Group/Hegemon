@@ -2,7 +2,7 @@
 
 use blake3::Hasher as Blake3Hasher;
 use p3_goldilocks::Goldilocks;
-use p3_field::{AbstractField, Field};
+use p3_field::{Field, PrimeCharacteristicRing};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_uni_stark::prove;
 use state_merkle::CommitmentTree;
@@ -25,7 +25,7 @@ use crate::p3_commitment_air::{
     COL_INPUT_CYCLE_MASK, COL_PERM_ACC, COL_PERM_MASK, COL_STEP_BIT0, CYCLE_BITS, STEP_BITS,
     TRACE_WIDTH,
 };
-use transaction_circuit::p3_config::{default_config, new_challenger};
+use transaction_circuit::p3_config::default_config;
 
 type Val = Goldilocks;
 
@@ -214,14 +214,7 @@ impl CommitmentBlockProverP3 {
         };
 
         let config = default_config();
-        let mut challenger = new_challenger(&config.perm);
-        let proof = prove(
-            &config.config,
-            &CommitmentBlockAirP3,
-            &mut challenger,
-            trace,
-            &pub_inputs.to_vec(),
-        );
+        let proof = prove(&config.config, &CommitmentBlockAirP3, trace, &pub_inputs.to_vec());
         let proof_bytes = bincode::serialize(&proof)
             .map_err(|_| BlockError::CommitmentProofGeneration("serialize failed".into()))?;
         let proof_hash = blake3_256(&proof_bytes);
@@ -251,7 +244,7 @@ impl CommitmentBlockProverP3 {
         let input_cycles = tx_count.saturating_mul(2);
         let target_len = input_cycles * 2;
         if inputs.len() < target_len {
-            inputs.resize(target_len, Val::zero());
+            inputs.resize(target_len, Val::ZERO);
         }
 
         let trace_len = total_cycles * CYCLE_LENGTH;
@@ -261,20 +254,20 @@ impl CommitmentBlockProverP3 {
             ));
         }
 
-        let mut trace = RowMajorMatrix::new(vec![Val::zero(); trace_len * TRACE_WIDTH], TRACE_WIDTH);
+        let mut trace = RowMajorMatrix::new(vec![Val::ZERO; trace_len * TRACE_WIDTH], TRACE_WIDTH);
 
-        let init0 = inputs.first().copied().unwrap_or(Val::zero());
-        let init1 = inputs.get(1).copied().unwrap_or(Val::zero());
+        let init0 = inputs.first().copied().unwrap_or(Val::ZERO);
+        let init1 = inputs.get(1).copied().unwrap_or(Val::ZERO);
         let mut state = [
-            Val::from_canonical_u64(BLOCK_COMMITMENT_DOMAIN_TAG) + init0,
+            Val::from_u64(BLOCK_COMMITMENT_DOMAIN_TAG) + init0,
             init1,
-            Val::one(),
+            Val::ONE,
         ];
 
-        let mut output0 = Val::zero();
-        let mut output1 = Val::zero();
-        let mut output2 = Val::zero();
-        let mut output3 = Val::zero();
+        let mut output0 = Val::ZERO;
+        let mut output1 = Val::ZERO;
+        let mut output2 = Val::ZERO;
+        let mut output3 = Val::ZERO;
 
         for cycle in 0..total_cycles {
             let pair_index = cycle;
@@ -282,13 +275,13 @@ impl CommitmentBlockProverP3 {
                 let idx = pair_index * 2;
                 (inputs[idx], inputs[idx + 1])
             } else {
-                (Val::zero(), Val::zero())
+                (Val::ZERO, Val::ZERO)
             };
             let (next_input0, next_input1) = if pair_index + 1 < input_cycles {
                 let next_idx = (pair_index + 1) * 2;
                 (inputs[next_idx], inputs[next_idx + 1])
             } else {
-                (Val::zero(), Val::zero())
+                (Val::ZERO, Val::ZERO)
             };
 
             let cycle_start = cycle * CYCLE_LENGTH;
@@ -338,7 +331,7 @@ impl CommitmentBlockProverP3 {
             .iter()
             .map(|limbs| compress_nullifier(limbs, perm_alpha, alpha2, alpha3))
             .collect();
-        let mut perm = Val::one();
+        let mut perm = Val::ONE;
         for (row, u_limbs) in nullifier_felts.iter().enumerate() {
             let u = compress_nullifier(u_limbs, perm_alpha, alpha2, alpha3);
             let v = sorted_compressed[row];
@@ -376,8 +369,8 @@ impl CommitmentBlockProverP3 {
             row_slice[COL_NF_DIFF_NZ] = nz;
         }
 
-        let mut perm_acc = Val::zero();
-        let mut input_cycle_acc = Val::zero();
+        let mut perm_acc = Val::ZERO;
+        let mut input_cycle_acc = Val::ZERO;
         for row in 0..trace_len {
             let step = row % CYCLE_LENGTH;
             let cycle = row / CYCLE_LENGTH;
@@ -391,15 +384,15 @@ impl CommitmentBlockProverP3 {
                 row_slice[COL_CYCLE_BIT0 + bit] = Val::from_bool(is_one);
             }
 
-            let perm_mask = if row < nullifier_count { Val::one() } else { Val::zero() };
+            let perm_mask = if row < nullifier_count { Val::ONE } else { Val::ZERO };
             row_slice[COL_PERM_MASK] = perm_mask;
             row_slice[COL_PERM_ACC] = perm_acc;
             perm_acc += perm_mask;
 
             let input_cycle_mask = if cycle < input_cycles {
-                Val::one()
+                Val::ONE
             } else {
-                Val::zero()
+                Val::ZERO
             };
             row_slice[COL_INPUT_CYCLE_MASK] = input_cycle_mask;
             row_slice[COL_INPUT_CYCLE_ACC] = input_cycle_acc;
@@ -484,10 +477,10 @@ fn hashes_to_vals(hashes: &[[u8; 32]]) -> Vec<Val> {
 }
 
 fn hash_bytes_to_vals(bytes: &[u8; 32]) -> [Val; 4] {
-    let mut felts = [Val::zero(); 4];
+    let mut felts = [Val::ZERO; 4];
     for (idx, chunk) in bytes.chunks(8).enumerate() {
         let limb = u64::from_be_bytes(chunk.try_into().expect("8-byte chunk"));
-        felts[idx] = Val::from_canonical_u64(limb);
+        felts[idx] = Val::from_u64(limb);
     }
     felts
 }
@@ -528,9 +521,9 @@ fn compress_nullifier(
 
 fn invert_with_flag(value: Val) -> (Val, Val) {
     if value.is_zero() {
-        (Val::zero(), Val::zero())
+        (Val::ZERO, Val::ZERO)
     } else {
-        (value.inverse(), Val::one())
+        (value.inverse(), Val::ONE)
     }
 }
 
@@ -569,17 +562,17 @@ fn derive_nullifier_challenges(
     }
     let digest = hasher.finalize();
     let bytes = digest.as_bytes();
-    let mut alpha = Val::from_canonical_u64(u64::from_le_bytes(
+    let mut alpha = Val::from_u64(u64::from_le_bytes(
         bytes[0..8].try_into().expect("8-byte alpha"),
     ));
-    let mut beta = Val::from_canonical_u64(u64::from_le_bytes(
+    let mut beta = Val::from_u64(u64::from_le_bytes(
         bytes[8..16].try_into().expect("8-byte beta"),
     ));
     if alpha.is_zero() {
-        alpha = Val::one();
+        alpha = Val::ONE;
     }
     if beta.is_zero() {
-        beta = Val::from_canonical_u64(2);
+        beta = Val::from_u64(2);
     }
     (alpha, beta)
 }

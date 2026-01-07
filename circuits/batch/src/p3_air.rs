@@ -6,9 +6,10 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir};
-use p3_field::{AbstractField, PrimeField64};
+use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, PairBuilder};
+use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;
+use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
 
 use crate::public_inputs::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
@@ -16,19 +17,31 @@ use transaction_core::dimensions::{
     commitment_output_row, merkle_root_output_row, nullifier_output_row,
 };
 use transaction_core::constants::POSEIDON_ROUNDS;
-use transaction_core::p3_air::{
-    CYCLE_LENGTH, COL_CYCLE_BIT0, COL_OUT0, COL_OUT1, COL_S0, COL_S1, COL_S2, COL_STEP_BIT0,
-};
+use transaction_core::p3_air::{CYCLE_LENGTH, COL_OUT0, COL_OUT1, COL_S0, COL_S1, COL_S2};
 
 pub type Felt = Goldilocks;
 
-/// Additional cycle bits required for batch traces (16 * 32768 rows).
-pub const EXTRA_CYCLE_BITS: usize = 4;
-pub const COL_BATCH_CYCLE_BIT9: usize = transaction_core::p3_air::TRACE_WIDTH;
-pub const COL_BATCH_CYCLE_BIT10: usize = COL_BATCH_CYCLE_BIT9 + 1;
-pub const COL_BATCH_CYCLE_BIT11: usize = COL_BATCH_CYCLE_BIT9 + 2;
-pub const COL_BATCH_CYCLE_BIT12: usize = COL_BATCH_CYCLE_BIT9 + 3;
-pub const TRACE_WIDTH: usize = transaction_core::p3_air::TRACE_WIDTH + EXTRA_CYCLE_BITS;
+/// Trace width (columns) for the batch circuit.
+pub const TRACE_WIDTH: usize = transaction_core::p3_air::TRACE_WIDTH;
+
+// ================================================================================================
+// PREPROCESSED COLUMNS (fixed schedule)
+// ================================================================================================
+
+/// Poseidon hash flag for each row (1 during rounds).
+pub const PREP_HASH_FLAG: usize = 0;
+/// Poseidon round constants (per row).
+pub const PREP_RC0: usize = PREP_HASH_FLAG + 1;
+pub const PREP_RC1: usize = PREP_RC0 + 1;
+pub const PREP_RC2: usize = PREP_RC1 + 1;
+/// One-hot selectors for nullifier output rows.
+pub const PREP_NF_ROW_BASE: usize = PREP_RC2 + 1;
+/// One-hot selectors for merkle root rows.
+pub const PREP_MR_ROW_BASE: usize = PREP_NF_ROW_BASE + (MAX_BATCH_SIZE * MAX_INPUTS);
+/// One-hot selectors for commitment output rows.
+pub const PREP_CM_ROW_BASE: usize = PREP_MR_ROW_BASE + (MAX_BATCH_SIZE * MAX_INPUTS);
+/// Preprocessed trace width (columns).
+pub const PREPROCESSED_WIDTH: usize = PREP_CM_ROW_BASE + (MAX_BATCH_SIZE * MAX_OUTPUTS);
 
 #[derive(Clone, Debug)]
 pub struct BatchPublicInputsP3 {
@@ -44,7 +57,7 @@ pub struct BatchPublicInputsP3 {
 impl BatchPublicInputsP3 {
     pub fn to_vec(&self) -> Vec<Felt> {
         let mut elements = Vec::with_capacity(self.expected_len());
-        elements.push(Felt::from_canonical_u64(self.batch_size as u64));
+        elements.push(Felt::from_u64(self.batch_size as u64));
         elements.extend_from_slice(&self.anchor);
         elements.extend_from_slice(&self.tx_active);
         for nf in &self.nullifiers {
@@ -54,7 +67,7 @@ impl BatchPublicInputsP3 {
             elements.extend_from_slice(cm);
         }
         elements.push(self.total_fee);
-        elements.push(Felt::from_canonical_u64(self.circuit_version as u64));
+        elements.push(Felt::from_u64(self.circuit_version as u64));
         elements
     }
 
@@ -159,10 +172,10 @@ impl BatchPublicInputsP3 {
 
 impl Default for BatchPublicInputsP3 {
     fn default() -> Self {
-        let zero = [Felt::zero(); 4];
-        let mut tx_active = vec![Felt::zero(); MAX_BATCH_SIZE];
+        let zero = [Felt::ZERO; 4];
+        let mut tx_active = vec![Felt::ZERO; MAX_BATCH_SIZE];
         if let Some(first) = tx_active.first_mut() {
-            *first = Felt::one();
+            *first = Felt::ONE;
         }
         Self {
             batch_size: 1,
@@ -170,179 +183,129 @@ impl Default for BatchPublicInputsP3 {
             tx_active,
             nullifiers: vec![zero; MAX_BATCH_SIZE * MAX_INPUTS],
             commitments: vec![zero; MAX_BATCH_SIZE * MAX_OUTPUTS],
-            total_fee: Felt::zero(),
+            total_fee: Felt::ZERO,
             circuit_version: 1,
         }
     }
 }
 
-pub struct BatchTransactionAirP3;
+fn prep_nf_row_col(tx: usize, input: usize) -> usize {
+    PREP_NF_ROW_BASE + tx * MAX_INPUTS + input
+}
+
+fn prep_mr_row_col(tx: usize, input: usize) -> usize {
+    PREP_MR_ROW_BASE + tx * MAX_INPUTS + input
+}
+
+fn prep_cm_row_col(tx: usize, output: usize) -> usize {
+    PREP_CM_ROW_BASE + tx * MAX_OUTPUTS + output
+}
+
+fn build_preprocessed_trace(trace_len: usize) -> RowMajorMatrix<Felt> {
+    let mut values = vec![Felt::ZERO; trace_len * PREPROCESSED_WIDTH];
+
+    for row in 0..trace_len {
+        let step = row % CYCLE_LENGTH;
+        let row_slice =
+            &mut values[row * PREPROCESSED_WIDTH..(row + 1) * PREPROCESSED_WIDTH];
+
+        row_slice[PREP_HASH_FLAG] = Felt::from_bool(step < POSEIDON_ROUNDS);
+        if step < POSEIDON_ROUNDS {
+            row_slice[PREP_RC0] =
+                Felt::from_u64(transaction_core::poseidon_constants::ROUND_CONSTANTS[step][0]);
+            row_slice[PREP_RC1] =
+                Felt::from_u64(transaction_core::poseidon_constants::ROUND_CONSTANTS[step][1]);
+            row_slice[PREP_RC2] =
+                Felt::from_u64(transaction_core::poseidon_constants::ROUND_CONSTANTS[step][2]);
+        }
+    }
+
+    for tx in 0..MAX_BATCH_SIZE {
+        for input in 0..MAX_INPUTS {
+            let row = nullifier_output_row(tx, input);
+            if row < trace_len {
+                let col = prep_nf_row_col(tx, input);
+                values[row * PREPROCESSED_WIDTH + col] = Felt::ONE;
+            }
+            let row = merkle_root_output_row(tx, input);
+            if row < trace_len {
+                let col = prep_mr_row_col(tx, input);
+                values[row * PREPROCESSED_WIDTH + col] = Felt::ONE;
+            }
+        }
+        for output in 0..MAX_OUTPUTS {
+            let row = commitment_output_row(tx, output);
+            if row < trace_len {
+                let col = prep_cm_row_col(tx, output);
+                values[row * PREPROCESSED_WIDTH + col] = Felt::ONE;
+            }
+        }
+    }
+
+    RowMajorMatrix::new(values, PREPROCESSED_WIDTH)
+}
+
+pub struct BatchTransactionAirP3 {
+    trace_len: usize,
+}
+
+impl BatchTransactionAirP3 {
+    pub fn new(trace_len: usize) -> Self {
+        Self { trace_len }
+    }
+}
 
 impl BaseAir<Felt> for BatchTransactionAirP3 {
     fn width(&self) -> usize {
         TRACE_WIDTH
     }
+
+    fn preprocessed_trace(&self) -> Option<RowMajorMatrix<Felt>> {
+        Some(build_preprocessed_trace(self.trace_len))
+    }
 }
 
 impl<AB> Air<AB> for BatchTransactionAirP3
 where
-    AB: AirBuilderWithPublicValues<F = Felt>,
+    AB: AirBuilderWithPublicValues<F = Felt> + PairBuilder,
 {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
-        let current = main.row_slice(0);
-        let next = main.row_slice(1);
+        let preprocessed = builder.preprocessed();
+        let current = main.row_slice(0).expect("trace must have >= 1 row");
+        let next = main.row_slice(1).expect("trace must have >= 2 rows");
+        let prep_row = preprocessed
+            .row_slice(0)
+            .expect("preprocessed trace must have >= 1 row");
 
-        let one = AB::Expr::one();
-        let two = AB::Expr::from_canonical_u64(2);
+        let one = AB::Expr::ONE;
 
-        let step_bits = [
-            current[COL_STEP_BIT0],
-            current[COL_STEP_BIT0 + 1],
-            current[COL_STEP_BIT0 + 2],
-            current[COL_STEP_BIT0 + 3],
-            current[COL_STEP_BIT0 + 4],
-            current[COL_STEP_BIT0 + 5],
-        ];
-        let step_bits_next = [
-            next[COL_STEP_BIT0],
-            next[COL_STEP_BIT0 + 1],
-            next[COL_STEP_BIT0 + 2],
-            next[COL_STEP_BIT0 + 3],
-            next[COL_STEP_BIT0 + 4],
-            next[COL_STEP_BIT0 + 5],
-        ];
-        let cycle_bits = [
-            current[COL_CYCLE_BIT0],
-            current[COL_CYCLE_BIT0 + 1],
-            current[COL_CYCLE_BIT0 + 2],
-            current[COL_CYCLE_BIT0 + 3],
-            current[COL_CYCLE_BIT0 + 4],
-            current[COL_CYCLE_BIT0 + 5],
-            current[COL_CYCLE_BIT0 + 6],
-            current[COL_CYCLE_BIT0 + 7],
-            current[COL_CYCLE_BIT0 + 8],
-            current[COL_BATCH_CYCLE_BIT9],
-            current[COL_BATCH_CYCLE_BIT10],
-            current[COL_BATCH_CYCLE_BIT11],
-            current[COL_BATCH_CYCLE_BIT12],
-        ];
-        let cycle_bits_next = [
-            next[COL_CYCLE_BIT0],
-            next[COL_CYCLE_BIT0 + 1],
-            next[COL_CYCLE_BIT0 + 2],
-            next[COL_CYCLE_BIT0 + 3],
-            next[COL_CYCLE_BIT0 + 4],
-            next[COL_CYCLE_BIT0 + 5],
-            next[COL_CYCLE_BIT0 + 6],
-            next[COL_CYCLE_BIT0 + 7],
-            next[COL_CYCLE_BIT0 + 8],
-            next[COL_BATCH_CYCLE_BIT9],
-            next[COL_BATCH_CYCLE_BIT10],
-            next[COL_BATCH_CYCLE_BIT11],
-            next[COL_BATCH_CYCLE_BIT12],
-        ];
+        let hash_flag: AB::Expr = prep_row[PREP_HASH_FLAG].clone().into();
+        let rc0: AB::Expr = prep_row[PREP_RC0].clone().into();
+        let rc1: AB::Expr = prep_row[PREP_RC1].clone().into();
+        let rc2: AB::Expr = prep_row[PREP_RC2].clone().into();
 
-        let bit_selector = |bits: &[AB::Var], value: usize| -> AB::Expr {
-            let mut acc = one.clone();
-            for (idx, bit) in bits.iter().enumerate() {
-                let bit_expr: AB::Expr = (*bit).into();
-                if ((value >> idx) & 1) == 1 {
-                    acc = acc * bit_expr;
-                } else {
-                    acc = acc * (one.clone() - bit_expr);
-                }
-            }
-            acc
-        };
-
-        let row_selector = |row: usize| -> AB::Expr {
-            let cycle = row / CYCLE_LENGTH;
-            let step = row % CYCLE_LENGTH;
-            bit_selector(&cycle_bits, cycle) * bit_selector(&step_bits, step)
-        };
-
-        let mut hash_flag = AB::Expr::zero();
-        let mut rc0 = AB::Expr::zero();
-        let mut rc1 = AB::Expr::zero();
-        let mut rc2 = AB::Expr::zero();
-        for round in 0..POSEIDON_ROUNDS {
-            let sel = bit_selector(&step_bits, round);
-            hash_flag += sel.clone();
-            rc0 += sel.clone()
-                * AB::Expr::from_canonical_u64(transaction_core::poseidon_constants::ROUND_CONSTANTS
-                    [round][0]);
-            rc1 += sel.clone()
-                * AB::Expr::from_canonical_u64(transaction_core::poseidon_constants::ROUND_CONSTANTS
-                    [round][1]);
-            rc2 += sel
-                * AB::Expr::from_canonical_u64(transaction_core::poseidon_constants::ROUND_CONSTANTS
-                    [round][2]);
-        }
-
-        let t0 = current[COL_S0] + rc0;
-        let t1 = current[COL_S1] + rc1;
-        let t2 = current[COL_S2] + rc2;
+        let t0 = current[COL_S0].clone() + rc0;
+        let t1 = current[COL_S1].clone() + rc1;
+        let t2 = current[COL_S2].clone() + rc2;
         let s0 = t0.exp_const_u64::<5>();
         let s1 = t1.exp_const_u64::<5>();
         let s2 = t2.exp_const_u64::<5>();
 
         let mds = transaction_core::poseidon_constants::MDS_MATRIX;
-        let m00 = AB::Expr::from_canonical_u64(mds[0][0]);
-        let m01 = AB::Expr::from_canonical_u64(mds[0][1]);
-        let m02 = AB::Expr::from_canonical_u64(mds[0][2]);
-        let m10 = AB::Expr::from_canonical_u64(mds[1][0]);
-        let m11 = AB::Expr::from_canonical_u64(mds[1][1]);
-        let m12 = AB::Expr::from_canonical_u64(mds[1][2]);
-        let m20 = AB::Expr::from_canonical_u64(mds[2][0]);
-        let m21 = AB::Expr::from_canonical_u64(mds[2][1]);
-        let m22 = AB::Expr::from_canonical_u64(mds[2][2]);
+        let m00 = AB::Expr::from_u64(mds[0][0]);
+        let m01 = AB::Expr::from_u64(mds[0][1]);
+        let m02 = AB::Expr::from_u64(mds[0][2]);
+        let m10 = AB::Expr::from_u64(mds[1][0]);
+        let m11 = AB::Expr::from_u64(mds[1][1]);
+        let m12 = AB::Expr::from_u64(mds[1][2]);
+        let m20 = AB::Expr::from_u64(mds[2][0]);
+        let m21 = AB::Expr::from_u64(mds[2][1]);
+        let m22 = AB::Expr::from_u64(mds[2][2]);
 
         let hash_s0 = s0.clone() * m00 + s1.clone() * m01 + s2.clone() * m02;
         let hash_s1 = s0.clone() * m10 + s1.clone() * m11 + s2.clone() * m12;
         let hash_s2 = s0 * m20 + s1 * m21 + s2 * m22;
-
-        {
-            let mut when_first = builder.when_first_row();
-            for bit in step_bits.iter().chain(cycle_bits.iter()) {
-                when_first.assert_zero(*bit);
-            }
-        }
-
-        let mut when = builder.when_transition();
-        when.assert_zero(hash_flag.clone() * (next[COL_S0] - hash_s0));
-        when.assert_zero(hash_flag.clone() * (next[COL_S1] - hash_s1));
-        when.assert_zero(hash_flag * (next[COL_S2] - hash_s2));
-
-        for bit in step_bits.iter() {
-            when.assert_bool(*bit);
-        }
-        for bit in cycle_bits.iter() {
-            when.assert_bool(*bit);
-        }
-
-        let mut carry = one.clone();
-        for (idx, bit) in step_bits.iter().enumerate() {
-            let bit_expr: AB::Expr = (*bit).into();
-            let carry_next = carry.clone() * bit_expr.clone();
-            let next_expr: AB::Expr = step_bits_next[idx].into();
-            when.assert_zero(
-                next_expr - (bit_expr + carry.clone() - two.clone() * carry_next.clone()),
-            );
-            carry = carry_next;
-        }
-
-        let cycle_end = bit_selector(&step_bits, CYCLE_LENGTH - 1);
-        let mut carry = cycle_end.clone();
-        for (idx, bit) in cycle_bits.iter().enumerate() {
-            let bit_expr: AB::Expr = (*bit).into();
-            let carry_next = carry.clone() * bit_expr.clone();
-            let next_expr: AB::Expr = cycle_bits_next[idx].into();
-            when.assert_zero(
-                next_expr - (bit_expr + carry.clone() - two.clone() * carry_next.clone()),
-            );
-            carry = carry_next;
-        }
 
         let public_values = builder.public_values();
         let expected_len = BatchPublicInputsP3::expected_len_static();
@@ -377,6 +340,9 @@ where
 
         let is_last = builder.is_last_row();
         let mut when = builder.when_transition();
+        when.assert_zero(hash_flag.clone() * (next[COL_S0].clone() - hash_s0));
+        when.assert_zero(hash_flag.clone() * (next[COL_S1].clone() - hash_s1));
+        when.assert_zero(hash_flag * (next[COL_S2].clone() - hash_s2));
         for flag in &tx_active {
             when.assert_bool(flag.clone());
         }
@@ -386,34 +352,34 @@ where
             let nf_base = tx * MAX_INPUTS;
             let cm_base = tx * MAX_OUTPUTS;
             for nf_idx in 0..MAX_INPUTS {
-                let row = nullifier_output_row(tx, nf_idx);
-                let gate = row_selector(row) * active.clone();
+                let row_flag: AB::Expr = prep_row[prep_nf_row_col(tx, nf_idx)].clone().into();
+                let gate = row_flag * active.clone();
                 let nf = &nullifiers[nf_base + nf_idx];
-                when.assert_zero(gate.clone() * (current[COL_OUT0] - nf[0].clone()));
-                when.assert_zero(gate.clone() * (current[COL_OUT1] - nf[1].clone()));
-                when.assert_zero(gate.clone() * (current[COL_S0] - nf[2].clone()));
-                when.assert_zero(gate.clone() * (current[COL_S1] - nf[3].clone()));
+                when.assert_zero(gate.clone() * (current[COL_OUT0].clone() - nf[0].clone()));
+                when.assert_zero(gate.clone() * (current[COL_OUT1].clone() - nf[1].clone()));
+                when.assert_zero(gate.clone() * (current[COL_S0].clone() - nf[2].clone()));
+                when.assert_zero(gate.clone() * (current[COL_S1].clone() - nf[3].clone()));
 
-                let row = merkle_root_output_row(tx, nf_idx);
-                let gate = row_selector(row) * active.clone();
-                when.assert_zero(gate.clone() * (current[COL_OUT0] - anchor[0].clone()));
-                when.assert_zero(gate.clone() * (current[COL_OUT1] - anchor[1].clone()));
-                when.assert_zero(gate.clone() * (current[COL_S0] - anchor[2].clone()));
-                when.assert_zero(gate.clone() * (current[COL_S1] - anchor[3].clone()));
+                let row_flag: AB::Expr = prep_row[prep_mr_row_col(tx, nf_idx)].clone().into();
+                let gate = row_flag * active.clone();
+                when.assert_zero(gate.clone() * (current[COL_OUT0].clone() - anchor[0].clone()));
+                when.assert_zero(gate.clone() * (current[COL_OUT1].clone() - anchor[1].clone()));
+                when.assert_zero(gate.clone() * (current[COL_S0].clone() - anchor[2].clone()));
+                when.assert_zero(gate.clone() * (current[COL_S1].clone() - anchor[3].clone()));
             }
 
             for cm_idx in 0..MAX_OUTPUTS {
-                let row = commitment_output_row(tx, cm_idx);
-                let gate = row_selector(row) * active.clone();
+                let row_flag: AB::Expr = prep_row[prep_cm_row_col(tx, cm_idx)].clone().into();
+                let gate = row_flag * active.clone();
                 let cm = &commitments[cm_base + cm_idx];
-                when.assert_zero(gate.clone() * (current[COL_OUT0] - cm[0].clone()));
-                when.assert_zero(gate.clone() * (current[COL_OUT1] - cm[1].clone()));
-                when.assert_zero(gate.clone() * (current[COL_S0] - cm[2].clone()));
-                when.assert_zero(gate.clone() * (current[COL_S1] - cm[3].clone()));
+                when.assert_zero(gate.clone() * (current[COL_OUT0].clone() - cm[0].clone()));
+                when.assert_zero(gate.clone() * (current[COL_OUT1].clone() - cm[1].clone()));
+                when.assert_zero(gate.clone() * (current[COL_S0].clone() - cm[2].clone()));
+                when.assert_zero(gate.clone() * (current[COL_S1].clone() - cm[3].clone()));
             }
         }
 
-        let mut sum_active = AB::Expr::zero();
+        let mut sum_active = AB::Expr::ZERO;
         for flag in &tx_active {
             sum_active = sum_active + flag.clone();
         }
@@ -443,10 +409,9 @@ where
             }
         }
 
-        when.assert_zero(is_last.clone() * (current[transaction_core::p3_air::COL_FEE] - total_fee));
+        when.assert_zero(is_last.clone() * (current[transaction_core::p3_air::COL_FEE].clone() - total_fee));
         when.assert_zero(
-            is_last * (circuit_version - AB::Expr::from_canonical_u64(1)),
+            is_last * (circuit_version - AB::Expr::from_u64(1)),
         );
-
     }
 }
