@@ -14,6 +14,13 @@ state-merkle = { path = "../../state/merkle" }
 protocol-versioning = { path = "../../protocol/versioning" }
 winterfell = "0.13"
 winter-crypto = "0.13"
+transaction-core = { path = "../transaction-core", optional = true }
+p3-air = { workspace = true, optional = true }
+p3-field = { workspace = true, optional = true }
+p3-goldilocks = { workspace = true, optional = true }
+p3-matrix = { workspace = true, optional = true }
+p3-uni-stark = { workspace = true, optional = true }
+bincode = { version = "1", optional = true }
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }
@@ -23,6 +30,17 @@ default = []
 fast-proofs = ["stark-fast"]
 stark-fast = []
 legacy-recursion = ["dep:epoch-circuit"]
+plonky3 = [
+    "transaction-circuit/plonky3",
+    "transaction-core",
+    "transaction-core/plonky3",
+    "dep:p3-air",
+    "dep:p3-field",
+    "dep:p3-goldilocks",
+    "dep:p3-matrix",
+    "dep:p3-uni-stark",
+    "dep:bincode",
+]
 
 [lints]
 workspace = true

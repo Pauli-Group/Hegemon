@@ -42,6 +42,12 @@ extern crate alloc;
 
 pub mod air;
 pub mod error;
+#[cfg(feature = "plonky3")]
+pub mod p3_air;
+#[cfg(feature = "plonky3")]
+pub mod p3_prover;
+#[cfg(feature = "plonky3")]
+pub mod p3_verifier;
 #[cfg(feature = "std")]
 pub mod prover;
 pub mod public_inputs;
@@ -55,6 +61,12 @@ pub mod rpo_verifier;
 
 pub use air::BatchTransactionAir;
 pub use error::BatchCircuitError;
+#[cfg(feature = "plonky3")]
+pub use p3_air::{BatchPublicInputsP3, BatchTransactionAirP3, TRACE_WIDTH as P3_TRACE_WIDTH};
+#[cfg(feature = "plonky3")]
+pub use p3_prover::{BatchProofP3, BatchTransactionProverP3};
+#[cfg(feature = "plonky3")]
+pub use p3_verifier::{verify_batch_proof_bytes_p3, verify_batch_proof_p3};
 #[cfg(feature = "std")]
 pub use prover::BatchTransactionProver;
 pub use public_inputs::{BatchPublicInputs, MAX_BATCH_SIZE};

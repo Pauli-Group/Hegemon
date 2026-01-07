@@ -55,6 +55,7 @@ plonky3 = [
     "dep:rand_chacha",
     "dep:bincode",
 ]
+plonky3-e2e = ["plonky3"]
 rpo-fiat-shamir = ["miden-crypto", "winterfell-legacy"]
 legacy-proof = []
 stark-fast = ["transaction-core/stark-fast", "winterfell-legacy"]

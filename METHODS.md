@@ -802,7 +802,7 @@ Data availability uses a dedicated encoder in `state/da`. The block’s cipherte
 
 Define a block commitment circuit `C_commitment` with
 
-* Public inputs: `tx_proofs_commitment`, `root_prev`, `root_new`, `nullifier_root`, `da_root`, `tx_count`, plus the transaction-ordered nullifier list and its sorted copy (both length `tx_count * MAX_INPUTS`).
+* Public inputs: `tx_proofs_commitment`, `root_prev`, `root_new`, `nullifier_root`, `da_root`, `tx_count`, plus the transaction-ordered nullifier list and its sorted copy (both length `tx_count * MAX_INPUTS`). For Plonky3, the permutation challenges `(alpha, beta)` are included as public inputs derived from a Blake3 hash of the same inputs, and verifiers recompute them off-circuit to avoid embedding Blake3 inside the AIR.
 * Witness: the `tx_proof_hashes` and the nullifier columns (unsorted + sorted lists).
 
 Constraints in `C_commitment`:
@@ -819,7 +819,7 @@ If you introduce a new transaction circuit version, update `C_block` so its veri
 
 #### 6.5 Epoch proof hashes
 
-Epoch proofs for light client sync accumulate proof hashes that bind the STARK proof bytes to the public inputs required for verification (anchor, nullifiers, commitments, fee, and value balance). Batch proofs use the same scheme with batch metadata (`batch_size`, `total_fee`). The hash uses Blake3 with domain separation in `circuits/epoch/src/types.rs`; any change to transaction public input encoding must update that function so epoch inclusion proofs remain sound.
+Epoch proofs for light client sync accumulate proof hashes that bind the STARK proof bytes to the public inputs required for verification (anchor, nullifiers, commitments, fee, and value balance). Batch proofs use the same scheme with batch metadata (`batch_size`, `total_fee`, plus the Plonky3 `tx_active` prefix flags that mark which of the `MAX_BATCH_SIZE` slots are live). The hash uses Blake3 with domain separation in `circuits/epoch/src/types.rs`; any change to transaction public input encoding must update that function so epoch inclusion proofs remain sound.
 
 #### 6.6 Settlement batch proofs
 
