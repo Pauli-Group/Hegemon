@@ -11,6 +11,10 @@ winter-crypto = { version = "0.13", default-features = false, optional = true }
 winter-utils = { version = "0.13", default-features = false, optional = true }
 blake3 = { version = "1", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+p3-air = { workspace = true, optional = true }
+p3-field = { workspace = true, optional = true }
+p3-goldilocks = { workspace = true, optional = true }
+p3-matrix = { workspace = true, optional = true }
 
 [dev-dependencies]
 miden-crypto = { version = "0.19", default-features = false, features = ["std"] }
@@ -21,6 +25,7 @@ std = ["winterfell/std", "winter-crypto?/std", "winter-utils?/std", "blake3/std"
 serde = ["dep:serde"]
 stark-verify = ["winter-crypto", "winter-utils"]
 stark-fast = []
+plonky3 = ["dep:p3-air", "dep:p3-field", "dep:p3-goldilocks", "dep:p3-matrix"]
 
 [lints]
 workspace = true
