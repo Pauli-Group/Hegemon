@@ -19,7 +19,7 @@ After this work, a user can:
 
 ## Progress
 
-- [ ] Milestone 0: Audit Winterfell surface area and define migration scope.
+- [x] (2026-01-06 23:59Z) Milestone 0: Audit Winterfell surface area and define migration scope.
 - [ ] Milestone 1: Add Plonky3 dependencies and implement a toy circuit to validate integration.
 - [ ] Milestone 2: Port transaction circuit AIR from Winterfell to Plonky3.
 - [ ] Milestone 3: Port batch, block commitment, and settlement circuits.
@@ -46,6 +46,9 @@ After this work, a user can:
 - Observation: Plonky3's FRI soundness is configured via `FriParameters { log_blowup, num_queries, proof_of_work_bits }` with no hardcoded limits. Soundness ≈ `log_blowup × num_queries + pow_bits`.
   Evidence: Plonky3 `fri/src/config.rs`.
 
+- Observation: Epoch recursion code imports Winterfell internals (`winter_air`, `winter_fri`, `winter_crypto`, `winter_math`) directly, so a Plonky3 port will need custom recursion support rather than a drop-in replacement.
+  Evidence: `circuits/epoch/src/recursion/*.rs`.
+
 ## Decision Log
 
 - Decision: Migrate from Winterfell to Plonky3 instead of forking Winterfell.
@@ -66,6 +69,10 @@ After this work, a user can:
 
 - Decision: Keep purpose-built circuits rather than adopting a general zkVM.
   Rationale: Hegemon follows a "PQC Bitcoin" philosophy — fixed transaction/disclosure shapes are simpler to audit than a full VM. This trades flexibility for auditability and smaller proof sizes (~60–100 KB vs. Neptune's ~533 KB).
+  Date/Author: 2026-01-06 / Codex.
+
+- Decision: Define the Milestone 0 inventory scope as files with explicit `use winter*` imports; comment-only references are tracked later as doc updates.
+  Rationale: Keeps the migration scope focused on compile-time dependencies while still noting narrative updates for later milestones.
   Date/Author: 2026-01-06 / Codex.
 
 ## Outcomes & Retrospective
@@ -155,6 +162,124 @@ Before writing migration code, produce a complete inventory of every file that i
 Deliverable: A table in this section showing file → Winterfell usage → Plonky3 equivalent.
 
 Acceptance: The table is complete and reviewed; no Winterfell usage is missed.
+
+Inventory notes:
+The inventory below is grouped by subsystem. Each row lists the Winterfell types imported in the file, the Plonky3 replacement pattern to target, and the migration complexity.
+
+#### Cargo dependencies
+
+| File | Winterfell usage | Plonky3 equivalent | Complexity |
+| --- | --- | --- | --- |
+| `tests/Cargo.toml` | `winter-math`, `winterfell` | Replace with `p3-field`, `p3-goldilocks`, `p3-uni-stark` test deps | trivial |
+| `consensus/Cargo.toml` | `winterfell` | Replace with `p3-uni-stark` (plus `p3-fri`, `p3-merkle-tree` as needed) | trivial |
+| `pallets/settlement/Cargo.toml` | `winterfell`, `winter-verifier`, `winter-air`, `winter-math`, `winter-prover` | Replace with `p3-uni-stark`, `p3-air`, `p3-field`, `p3-fri`, `p3-merkle-tree`, `p3-challenger` | moderate |
+| `pallets/shielded-pool/Cargo.toml` | `winterfell`, `winter-verifier`, `winter-air`, `winter-math`, `winter-crypto`, `winter-prover` | Replace with `p3-uni-stark`, `p3-air`, `p3-field`, `p3-fri`, `p3-merkle-tree`, `p3-challenger`, `p3-symmetric` | moderate |
+| `circuits/settlement/Cargo.toml` | `winterfell`, `winter-crypto` | Replace with `p3-uni-stark`, `p3-air`, `p3-field`, `p3-merkle-tree`, `p3-challenger` | moderate |
+| `circuits/bench/Cargo.toml` | `winterfell` | Replace with `p3-field` + `p3-uni-stark` bench deps | trivial |
+| `circuits/block/Cargo.toml` | `winterfell`, `winter-crypto` | Replace with `p3-uni-stark`, `p3-air`, `p3-field`, `p3-merkle-tree`, `p3-challenger` | moderate |
+| `circuits/transaction/Cargo.toml` | `winterfell`, `winter-crypto` | Replace with `p3-uni-stark`, `p3-air`, `p3-field`, `p3-merkle-tree`, `p3-challenger` | moderate |
+| `circuits/disclosure/Cargo.toml` | `winterfell`, `winter-crypto` | Replace with `p3-uni-stark`, `p3-air`, `p3-field`, `p3-merkle-tree`, `p3-challenger` | moderate |
+| `circuits/batch/Cargo.toml` | `winterfell`, `winter-crypto`, `winter-air`, `winter-prover` | Replace with `p3-uni-stark`, `p3-air`, `p3-field`, `p3-merkle-tree`, `p3-challenger` | moderate |
+| `circuits/epoch/Cargo.toml` | `winterfell`, `winter-air`, `winter-prover`, `winter-crypto`, `winter-fri`, `winter-math` | Replace with `p3-uni-stark`, `p3-air`, `p3-field`, `p3-fri`, `p3-merkle-tree`, `p3-challenger` plus recursion helpers | complex |
+| `circuits/transaction-core/Cargo.toml` | `winterfell`, `winter-crypto`, `winter-utils` | Replace with `p3-air`, `p3-field`, `p3-symmetric`, `p3-challenger` (plus custom serialization) | moderate |
+
+#### Transaction core and transaction circuit
+
+| File | Winterfell usage | Plonky3 equivalent | Complexity |
+| --- | --- | --- | --- |
+| `circuits/transaction-core/src/stark_air.rs` | `winterfell::{Air, AirContext, Assertion, EvaluationFrame, TraceInfo, TransitionConstraintDegree}` + `winter_math::{BaseElement, FieldElement, ToElements}` | `p3_air::{BaseAir, Air}` + `p3_field::Field` + `p3_matrix::RowMajorMatrix` + `p3_uni_stark::StarkConfig` | complex |
+| `circuits/transaction-core/src/stark_verifier.rs` | `winterfell::verify`, `Proof`, `AcceptableOptions`, `ProofOptions`, `VerifierError`, `crypto::{DefaultRandomCoin, MerkleTree}`, `winter_crypto::Blake3_256` | `p3_uni_stark::verify`, `p3_fri::FriParameters`, `p3_merkle_tree`, `p3_challenger`, `p3_blake3` or `p3_poseidon2` | moderate |
+| `circuits/transaction-core/src/hashing.rs` | `winter_math::{BaseElement, FieldElement}` for Poseidon sponge | `p3_goldilocks::Goldilocks` + `p3_poseidon2` (later 384-bit sponge) | moderate |
+| `circuits/transaction-core/src/rpo.rs` | `winter_crypto::{Digest, ElementHasher, Hasher, RandomCoin}`, `winter_utils::{Serializable, Deserializable}`, `winter_math::{BaseElement, FieldElement, StarkField}` | `p3_symmetric` + `p3_challenger` + `p3_field` with custom serialization (likely replaced by Poseidon2 sponge) | complex |
+| `circuits/transaction/src/stark_prover.rs` | `winterfell::{Prover, ProofOptions, Proof, Trace, ProverError, FieldExtension, BatchingMethod}`, `winter_crypto::Blake3_256`, `DefaultRandomCoin`, `MerkleTree` | `p3_uni_stark::prove` + `p3_fri::FriParameters` + `p3_merkle_tree` + `p3_challenger` | complex |
+| `circuits/transaction/src/rpo_prover.rs` | `winterfell::Prover` + `MerkleTree` + RPO random coin | `p3_uni_stark::prove` + `p3_challenger` with Poseidon2/RPO | moderate |
+| `circuits/transaction/src/rpo_verifier.rs` | `winterfell::verify`, `AcceptableOptions`, `Proof`, `VerifierError`, `MerkleTree` | `p3_uni_stark::verify` + `p3_merkle_tree` + `p3_challenger` | moderate |
+| `circuits/transaction/src/proof.rs` | `winterfell::Prover` for proof generation helpers | Plonky3 proof helpers around `p3_uni_stark::prove` | moderate |
+| `circuits/transaction/src/public_inputs.rs` | `winter_math::FieldElement` (and `BaseElement` in tests) | `p3_field::Field` / `p3_goldilocks::Goldilocks` | trivial |
+| `circuits/transaction/src/note.rs` | `winter_math::FieldElement` | `p3_field::Field` / `p3_goldilocks::Goldilocks` | trivial |
+| `circuits/transaction/src/witness.rs` | `winter_math::FieldElement` (and `BaseElement` in tests) | `p3_field::Field` / `p3_goldilocks::Goldilocks` | moderate |
+| `circuits/transaction/tests/transaction.rs` | `winterfell::math::FieldElement` | `p3_field::Field` | trivial |
+
+#### Batch circuit
+
+| File | Winterfell usage | Plonky3 equivalent | Complexity |
+| --- | --- | --- | --- |
+| `circuits/batch/src/air.rs` | `winterfell::{Air, AirContext, Assertion, EvaluationFrame, TraceInfo, TransitionConstraintDegree}` + `winter_math::{BaseElement, FieldElement}` | `p3_air::{BaseAir, Air}` + `p3_field::Field` + `p3_matrix::RowMajorMatrix` | complex |
+| `circuits/batch/src/prover.rs` | `winterfell::{Prover, ProofOptions, Proof, Trace, FieldExtension, BatchingMethod}`, `winter_crypto::Blake3_256`, `MerkleTree` | `p3_uni_stark::prove` + `p3_fri::FriParameters` + `p3_merkle_tree` + `p3_challenger` | complex |
+| `circuits/batch/src/verifier.rs` | `winterfell::verify`, `AcceptableOptions`, `ProofOptions`, `VerifierError`, `MerkleTree` | `p3_uni_stark::verify` + `p3_merkle_tree` + `p3_challenger` | moderate |
+| `circuits/batch/src/rpo_prover.rs` | `winterfell::Prover` + `MerkleTree` + RPO random coin | `p3_uni_stark::prove` + `p3_challenger` | moderate |
+| `circuits/batch/src/rpo_verifier.rs` | `winterfell::verify`, `AcceptableOptions`, `Proof`, `MerkleTree` | `p3_uni_stark::verify` + `p3_merkle_tree` | moderate |
+| `circuits/batch/src/public_inputs.rs` | `winter_math::{BaseElement, FieldElement, ToElements}` | `p3_field::Field` + custom `to_elements` helper | trivial |
+| `circuits/batch/benches/batch_vs_individual.rs` | `winter_math::{BaseElement, FieldElement}` | `p3_field::Field` | trivial |
+
+#### Block circuit
+
+| File | Winterfell usage | Plonky3 equivalent | Complexity |
+| --- | --- | --- | --- |
+| `circuits/block/src/commitment_air.rs` | `winterfell::{Air, AirContext, Assertion, EvaluationFrame, TraceInfo, TransitionConstraintDegree}` + `winter_math::{BaseElement, FieldElement}` | `p3_air::{BaseAir, Air}` + `p3_field::Field` + `p3_matrix::RowMajorMatrix` | complex |
+| `circuits/block/src/commitment_prover.rs` | `winterfell::{Prover, ProofOptions, Proof, Trace, FieldExtension, BatchingMethod}`, `winter_crypto::Blake3_256`, `MerkleTree` | `p3_uni_stark::prove` + `p3_fri::FriParameters` + `p3_merkle_tree` + `p3_challenger` | complex |
+| `circuits/block/src/recursive.rs` | `winterfell::{Proof, AcceptableOptions, ProofOptions, Prover}` + `winter_math::ToElements` | `p3_uni_stark` proof type + recursion hooks (likely `p3_recursion` or custom) | complex |
+
+#### Settlement circuit
+
+| File | Winterfell usage | Plonky3 equivalent | Complexity |
+| --- | --- | --- | --- |
+| `circuits/settlement/src/air.rs` | `winterfell::{Air, AirContext, Assertion, EvaluationFrame, TraceInfo, TransitionConstraintDegree}` + `winter_math::{BaseElement, FieldElement}` | `p3_air::{BaseAir, Air}` + `p3_field::Field` | complex |
+| `circuits/settlement/src/prover.rs` | `winterfell::{Prover, ProofOptions, Proof, Trace, FieldExtension, BatchingMethod}`, `winter_crypto::Blake3_256`, `MerkleTree`, `verify` | `p3_uni_stark::prove`/`verify` + `p3_fri::FriParameters` + `p3_merkle_tree` | complex |
+| `circuits/settlement/src/verifier.rs` | `winterfell::verify`, `AcceptableOptions`, `ProofOptions`, `VerifierError`, `MerkleTree` | `p3_uni_stark::verify` + `p3_merkle_tree` | moderate |
+| `circuits/settlement/src/hashing.rs` | `winter_math::{BaseElement, FieldElement}` | `p3_field::Field` / `p3_goldilocks::Goldilocks` | moderate |
+
+#### Disclosure circuit
+
+| File | Winterfell usage | Plonky3 equivalent | Complexity |
+| --- | --- | --- | --- |
+| `circuits/disclosure/src/air.rs` | `winterfell::{Air, AirContext, Assertion, EvaluationFrame, TraceInfo, TransitionConstraintDegree}` + `winter_math::{BaseElement, FieldElement}` | `p3_air::{BaseAir, Air}` + `p3_field::Field` | complex |
+| `circuits/disclosure/src/prover.rs` | `winterfell::{Prover, ProofOptions, Proof, Trace, FieldExtension, BatchingMethod}`, `winter_crypto::Blake3_256`, `MerkleTree` | `p3_uni_stark::prove` + `p3_fri::FriParameters` + `p3_merkle_tree` | complex |
+| `circuits/disclosure/src/verifier.rs` | `winterfell::verify`, `AcceptableOptions`, `ProofOptions`, `VerifierError`, `MerkleTree` | `p3_uni_stark::verify` + `p3_merkle_tree` | moderate |
+| `circuits/disclosure/src/lib.rs` | `winter_math::{BaseElement, FieldElement}` + `winterfell::Prover` | `p3_field::Field` + Plonky3 proof helpers | moderate |
+
+#### Epoch circuit and recursion
+
+| File | Winterfell usage | Plonky3 equivalent | Complexity |
+| --- | --- | --- | --- |
+| `circuits/epoch/src/air.rs` | `winterfell::{Air, AirContext, Assertion, EvaluationFrame, TraceInfo, TransitionConstraintDegree}` + `winter_math::{BaseElement, FieldElement}` | `p3_air::{BaseAir, Air}` + `p3_field::Field` | complex |
+| `circuits/epoch/src/prover.rs` | `winterfell::{Prover, ProofOptions, Proof, Trace, FieldExtension, BatchingMethod}`, `winter_crypto::Blake3_256`, `MerkleTree` | `p3_uni_stark::prove` + `p3_fri::FriParameters` + `p3_merkle_tree` | complex |
+| `circuits/epoch/src/light_client.rs` | `winterfell::verify`, `AcceptableOptions`, `Proof`, `DefaultRandomCoin`, `MerkleTree` | `p3_uni_stark::verify` + `p3_merkle_tree` + `p3_challenger` | moderate |
+| `circuits/epoch/src/lib.rs` | `winterfell::Proof` re-export + `winter_math::BaseElement` | re-export Plonky3 proof type and `p3_goldilocks::Goldilocks` | moderate |
+| `circuits/epoch/src/verifier_spike/fibonacci_air.rs` | `winterfell::{Air, AirContext, Assertion, EvaluationFrame, TraceInfo, TransitionConstraintDegree}`, `winter_crypto::Blake3_256` | `p3_air` + `p3_uni_stark` spike | moderate |
+| `circuits/epoch/src/verifier_spike/fibonacci_verifier_air.rs` | `winterfell::{Air, Proof, verify, Trace}`, `winter_crypto::Blake3_256` | `p3_air` + recursion support (`p3_recursion` or custom) | complex |
+| `circuits/epoch/src/verifier_spike/tests.rs` | `winter_air::{Air, TraceInfo}`, `winter_math::{BaseElement, FieldElement, ToElements}`, `winterfell::FieldExtension` | `p3_air` + `p3_field` tests | moderate |
+| `circuits/epoch/src/recursion/rpo_stark_prover.rs` | `winter_air::{ProofOptions, TraceInfo}`, `winterfell::{Air, Prover, Trace}`, `winter_crypto::MerkleTree`, `winter_math::FieldElement` | `p3_uni_stark` + `p3_challenger` + `p3_merkle_tree` for recursive proofs | complex |
+| `circuits/epoch/src/recursion/rpo_stark_verifier_prover.rs` | `winter_air::{ProofOptions, TraceInfo}`, `winterfell::{Air, Prover, Trace, Proof}`, `winter_crypto::MerkleTree`, `winter_math::FieldElement` | `p3_uni_stark` + recursion support | complex |
+| `circuits/epoch/src/recursion/rpo_air.rs` | `winter_air::{AirContext, Assertion, EvaluationFrame, TraceInfo, TransitionConstraintDegree}`, `winter_crypto::MerkleTree`, `winter_math::{FieldElement, ToElements}`, `winterfell::{Air, Proof, Trace}` | `p3_air` + `p3_merkle_tree` + `p3_field` | complex |
+| `circuits/epoch/src/recursion/rpo_proof.rs` | `winter_air::ProofOptions`, `winter_math::FieldElement`, `winterfell::BaseElement`, `winter_crypto::RandomCoin` | `p3_fri::FriParameters` + `p3_challenger` wrapper | complex |
+| `circuits/epoch/src/recursion/merkle_air.rs` | `winter_air::{AirContext, Assertion, EvaluationFrame, TraceInfo, TransitionConstraintDegree}`, `winter_crypto::MerkleTree`, `winterfell::{verify, AcceptableOptions, Trace}` | `p3_air` + `p3_merkle_tree` + `p3_uni_stark::verify` | complex |
+| `circuits/epoch/src/recursion/fri_air.rs` | `winter_air::{AirContext, Assertion, EvaluationFrame, TraceInfo, TransitionConstraintDegree}`, `winter_math::{BaseElement, FieldElement, ToElements}` | `p3_air` + `p3_fri` internals (IOP checks) | complex |
+| `circuits/epoch/src/recursion/fri_verifier_prover.rs` | `winter_air::ProofOptions`, `winter_fri::folding`, `winter_math::{FieldElement, StarkField}`, `winterfell::{verify, AcceptableOptions, Trace}` | `p3_fri` folding + `p3_uni_stark` | complex |
+| `circuits/epoch/src/recursion/stark_verifier_air.rs` | `winter_air` + `winter_math::{fft, polynom, FieldElement, StarkField, ToElements}`, `winter_crypto::RandomCoin` | `p3_air` + `p3_dft`/`p3_poly` (or custom) + `p3_challenger` | complex |
+| `circuits/epoch/src/recursion/stark_verifier_prover.rs` | `winter_air::{ProofOptions, DeepCompositionCoefficients}`, `winter_fri::utils`, `winter_crypto::MerkleTree`, `winterfell::{verify, AcceptableOptions, Air, Prover, Trace}` | `p3_uni_stark` + `p3_fri` internals + recursion support | complex |
+| `circuits/epoch/src/recursion/stark_verifier_batch_air.rs` | `winter_air` + `winter_math::{fft, polynom, FieldElement, StarkField, ToElements}` | `p3_air` + `p3_dft`/`p3_poly` (or custom) | complex |
+| `circuits/epoch/src/recursion/stark_verifier_batch_prover.rs` | `winter_air::ProofOptions`, `winterfell::Prover`, `winter_crypto::MerkleTree`, `winter_math::FieldElement` | `p3_uni_stark` + recursion support | complex |
+| `circuits/epoch/src/recursion/recursive_prover.rs` | `winter_air::proof::*`, `winter_fri::*`, `winter_crypto::{Hasher, MerkleTree, RandomCoin}`, `winter_math::*`, `winterfell::{verify, AcceptableOptions}` | Plonky3 recursion stack (likely `p3_recursion`) or custom adapters | complex |
+| `circuits/epoch/src/recursion/streaming_plan.rs` | `winter_air::PartitionOptions`, `winter_math` extension fields | Plonky3 trace partitioning (no direct equivalent; likely custom) | complex |
+| `circuits/epoch/src/recursion/tests.rs` | `winterfell::{Prover, Trace}`, `winter_crypto::MerkleTree`, `winter_math::FieldElement` | Plonky3 tests over `p3_uni_stark` proof types | moderate |
+
+#### Pallets and wallet
+
+| File | Winterfell usage | Plonky3 equivalent | Complexity |
+| --- | --- | --- | --- |
+| `pallets/shielded-pool/src/verifier.rs` | `winter_math::FieldElement` (and winterfell proof parsing under `stark-verify`) | `p3_field::Field` + Plonky3 proof decode/verify helpers | moderate |
+| `pallets/settlement/src/lib.rs` | `winterfell::{ProofOptions, AcceptableOptions}`, `winterfell::math::FieldElement` | `p3_fri::FriParameters` + `p3_uni_stark::verify` (no_std) | complex |
+| `wallet/src/prover.rs` | `winter_prover::Prover` | Plonky3 prover wrapper around `p3_uni_stark::prove` | moderate |
+
+#### Tests and consensus
+
+| File | Winterfell usage | Plonky3 equivalent | Complexity |
+| --- | --- | --- | --- |
+| `tests/block_flow.rs` | `winterfell::{Prover, ProofOptions, FieldExtension, BatchingMethod}` | `p3_uni_stark` test harness | trivial |
+| `tests/stark_soundness.rs` | `winter_math::{BaseElement, FieldElement}` | `p3_field::Field` / `p3_goldilocks::Goldilocks` | trivial |
+| `consensus/tests/parallel_verification.rs` | `winterfell::math::FieldElement` | `p3_field::Field` | trivial |
+| `consensus/tests/recursive_proof.rs` | `winterfell::{BatchingMethod, FieldExtension, ProofOptions, Prover}` | `p3_uni_stark` recursion tests | moderate |
 
 ### Milestone 1: Plonky3 Integration Spike
 
@@ -398,3 +523,5 @@ At the end of this plan, the following must exist:
         }
 
 5. **No Winterfell dependencies** in any `Cargo.toml` (except possibly a deprecated `winterfell-legacy` feature for testing during migration).
+
+Plan change note (2026-01-06 23:59Z): Added the Milestone 0 inventory tables, recorded the recursion dependency discovery, and marked Milestone 0 complete to reflect the audit being finished.
