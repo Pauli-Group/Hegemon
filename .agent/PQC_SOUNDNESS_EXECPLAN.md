@@ -24,6 +24,7 @@ After this work, a user can:
 - [ ] Milestone 2 (in progress): Port transaction circuit AIR from Winterfell to Plonky3 (completed: `circuits/transaction-core/src/p3_air.rs` + `plonky3` feature wiring; remaining: trace/prover/verifier port + Winterfell legacy feature flag + tests).
 - [x] (2026-01-07 01:11Z) Added `plonky3`-gated `TransactionAirP3` port in `circuits/transaction-core/src/p3_air.rs` and exposed it via `circuits/transaction-core/src/lib.rs`.
 - [x] (2026-01-07 01:11Z) Added `plonky3` feature dependencies in `circuits/transaction-core/Cargo.toml` and verified `cargo check -p transaction-core --features plonky3`.
+- [x] (2026-01-07 01:41Z) Replaced Plonky3 preprocessed schedule columns with binary step/cycle counters and inline row selectors in `circuits/transaction-core/src/p3_air.rs`; removed preprocessed trace requirement and re-checked `cargo check -p transaction-core --features plonky3`.
 - [ ] Milestone 3: Port batch, block commitment, and settlement circuits.
 - [ ] Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments.
 - [ ] Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
@@ -56,6 +57,9 @@ After this work, a user can:
 
 - Observation: `p3-uni-stark` 0.2 does not pass preprocessed trace columns into the prover/verifier folders; `ProverConstraintFolder` does not implement `PairBuilder`, and `prove` hardcodes `preprocessed_width = 0`.
   Evidence: `p3-uni-stark-0.2.0/src/prover.rs` (call to `get_log_quotient_degree` with `0`), `p3-uni-stark-0.2.0/src/folder.rs` (no `PairBuilder` impl).
+
+- Observation: Plonky3 `AirBuilder` does not expose the trace-domain element `x`, so "virtual selectors" based on vanishing polynomials are not directly expressible without adding explicit counters to the trace.
+  Evidence: `p3-air-0.2.0/src/air.rs` (builder only exposes `is_first_row`, `is_last_row`, `is_transition`, no row index).
 
 ## Decision Log
 
@@ -93,6 +97,10 @@ After this work, a user can:
 
 - Decision: Model Winterfell periodic columns and assertion-only schedule constraints as Plonky3 preprocessed columns in `TransactionAirP3`.
   Rationale: Plonky3 AIR has no direct assertion API; preprocessed columns preserve fixed schedule semantics without inflating main trace width or adding extra counter columns.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Switch `TransactionAirP3` to binary step/cycle counters and inline row selectors (Option B) instead of preprocessed columns.
+  Rationale: Plonky3 `AirBuilder` does not expose the trace-domain element needed for vanishing-polynomial selectors, and `p3-uni-stark` 0.2 does not support preprocessed traces; binary counters preserve determinism on vanilla Plonky3 without forking.
   Date/Author: 2026-01-07 / Codex.
 
 ## Outcomes & Retrospective
@@ -330,7 +338,7 @@ Scope:
 4. Port verification to `p3_uni_stark::verify`.
 5. Keep Winterfell implementation under a feature flag (`winterfell-legacy`) for parallel testing.
 
-Note: The current `TransactionAirP3` uses preprocessed columns to replace Winterfell's periodic columns and assertions. Plonky3 0.2's `p3-uni-stark` does not yet carry preprocessed traces into the constraint folders, so finishing items 2–4 requires either (a) extending `p3-uni-stark` to support preprocessed columns or (b) moving schedule constraints into main-trace columns with explicit transition constraints. Decide and document the choice before wiring the prover/verifier.
+Note: `TransactionAirP3` now enforces the schedule via binary step/cycle counters and inline row selectors instead of preprocessed columns. When porting the trace/prover/verifier, the trace generator must populate these counter columns to match the constraints.
 
 Validation:
 - `cargo test -p transaction-circuit --features plonky3` passes.
@@ -578,3 +586,4 @@ At the end of this plan, the following must exist:
 Plan change note (2026-01-06 23:59Z): Added the Milestone 0 inventory tables, recorded the recursion dependency discovery, and marked Milestone 0 complete to reflect the audit being finished.
 Plan change note (2026-01-07 00:36Z): Marked Milestone 1 complete, recorded the Goldilocks extension constraint and Poseidon2 spike decisions, and captured the Plonky3 spike test output plus the `make node` timeout.
 Plan change note (2026-01-07 01:11Z): Marked Milestone 2 partial progress (Plonky3 AIR port + feature wiring), recorded the preprocessed-trace limitation in `p3-uni-stark`, and logged the transaction-core compile check.
+Plan change note (2026-01-07 01:41Z): Replaced preprocessed schedule columns in `TransactionAirP3` with binary counters and inline selectors, recorded the rationale for Option B, and re-validated the transaction-core compile check.
