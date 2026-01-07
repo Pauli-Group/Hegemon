@@ -7,7 +7,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir};
-use p3_field::AbstractField;
+use p3_field::{AbstractField, PrimeField64};
 use p3_goldilocks::Goldilocks;
 use p3_matrix::Matrix;
 
@@ -15,9 +15,9 @@ use crate::public_inputs::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_core::dimensions::{
     commitment_output_row, merkle_root_output_row, nullifier_output_row,
 };
+use transaction_core::constants::POSEIDON_ROUNDS;
 use transaction_core::p3_air::{
     CYCLE_LENGTH, COL_CYCLE_BIT0, COL_OUT0, COL_OUT1, COL_S0, COL_S1, COL_S2, COL_STEP_BIT0,
-    POSEIDON_ROUNDS,
 };
 
 pub type Felt = Goldilocks;
@@ -375,6 +375,7 @@ where
         idx += 1;
         let circuit_version = pv(idx);
 
+        let is_last = builder.is_last_row();
         let mut when = builder.when_transition();
         for flag in &tx_active {
             when.assert_bool(flag.clone());
@@ -412,7 +413,6 @@ where
             }
         }
 
-        let is_last = builder.is_last_row();
         let mut sum_active = AB::Expr::zero();
         for flag in &tx_active {
             sum_active = sum_active + flag.clone();

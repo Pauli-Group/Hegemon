@@ -906,8 +906,14 @@ checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
 name = "batch-circuit"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "criterion",
  "miden-crypto",
+ "p3-air",
+ "p3-field",
+ "p3-goldilocks",
+ "p3-matrix",
+ "p3-uni-stark",
  "proptest",
  "rand 0.8.5",
  "transaction-circuit",
@@ -1116,8 +1122,14 @@ dependencies = [
 name = "block-circuit"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "blake3",
  "epoch-circuit",
+ "p3-air",
+ "p3-field",
+ "p3-goldilocks",
+ "p3-matrix",
+ "p3-uni-stark",
  "protocol-versioning",
  "rand 0.8.5",
  "serde",
@@ -1125,6 +1137,7 @@ dependencies = [
  "state-merkle",
  "thiserror 1.0.69",
  "transaction-circuit",
+ "transaction-core",
  "winter-crypto",
  "winterfell",
 ]
@@ -9806,6 +9819,13 @@ dependencies = [
 name = "settlement-circuit"
 version = "0.1.0"
 dependencies = [
+ "bincode",
+ "p3-air",
+ "p3-field",
+ "p3-goldilocks",
+ "p3-matrix",
+ "p3-uni-stark",
+ "transaction-circuit",
  "transaction-core",
  "winter-crypto",
  "winterfell",
