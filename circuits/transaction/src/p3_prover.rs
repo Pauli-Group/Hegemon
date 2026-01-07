@@ -5,43 +5,44 @@ use p3_goldilocks::Goldilocks;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
 use p3_uni_stark::{prove_with_preprocessed, setup_preprocessed};
-use winterfell::math::FieldElement;
 
 use crate::constants::{
     CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG,
-    NULLIFIER_DOMAIN_TAG, POSEIDON_ROUNDS,
+    NULLIFIER_DOMAIN_TAG,
 };
-use crate::hashing::{bytes32_to_felts, merkle_node, prf_key, Felt, HashFelt};
-use crate::note::{InputNoteWitness, NoteData, OutputNoteWitness};
+use crate::hashing::{is_canonical_bytes32};
+use crate::hashing_pq::{bytes48_to_felts, merkle_node, note_commitment, nullifier, prf_key, HashFelt};
+use crate::note::{InputNoteWitness, MerklePathPq, NoteData, OutputNoteWitness};
 use crate::p3_config::{default_config, TransactionProofP3};
 use crate::witness::TransactionWitness;
 use crate::TransactionCircuitError;
+use transaction_core::constants::POSEIDON2_STEPS;
+use transaction_core::poseidon2::poseidon2_step;
 use transaction_core::p3_air::{
-    commitment_output_row, cycle_is_merkle_left_01, cycle_is_merkle_left_23, cycle_is_merkle_right_01,
-    cycle_is_merkle_right_23, cycle_is_squeeze, cycle_reset_domain, merkle_root_output_row,
-    note_start_row_input, note_start_row_output, nullifier_output_row, round_constant,
-    TransactionAirP3, TransactionPublicInputsP3, COL_CAPTURE, COL_CAPTURE2, COL_DIR, COL_DOMAIN,
+    commitment_output_row, cycle_is_merkle_left, cycle_is_merkle_right, cycle_is_output,
+    cycle_reset_domain, merkle_root_output_row, note_start_row_input, note_start_row_output,
+    nullifier_output_row, TransactionAirP3, TransactionPublicInputsP3, COL_DIR, COL_DOMAIN,
     COL_FEE, COL_IN0, COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET, COL_IN1_VALUE,
-    COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT_01, COL_MERKLE_LEFT_23, COL_MERKLE_RIGHT_01,
-    COL_MERKLE_RIGHT_23, COL_NOTE_START_IN0, COL_NOTE_START_IN1, COL_NOTE_START_OUT0,
-    COL_NOTE_START_OUT1, COL_OUT0, COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1, COL_OUT1_ASSET,
-    COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_RESET, COL_S0,
-    COL_S1, COL_S2, COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3,
-    COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3,
-    COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3,
-    COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3,
-    COL_SLOT0_ASSET, COL_SLOT0_IN, COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT,
-    COL_SLOT2_ASSET, COL_SLOT2_IN, COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT,
-    COL_STABLECOIN_ASSET, COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2,
-    COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG,
-    COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1,
-    COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3, COL_STABLECOIN_POLICY_HASH0,
-    COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2, COL_STABLECOIN_POLICY_HASH3,
-    COL_STABLECOIN_POLICY_VERSION, COL_STABLECOIN_SLOT_SEL0, COL_STABLECOIN_SLOT_SEL1,
-    COL_STABLECOIN_SLOT_SEL2, COL_STABLECOIN_SLOT_SEL3, COL_VALUE_BALANCE_MAG,
-    COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES,
-    MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES, TOTAL_TRACE_CYCLES,
-    TOTAL_USED_CYCLES, TRACE_WIDTH,
+    COL_IN2, COL_IN3, COL_IN4, COL_IN5, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT,
+    COL_MERKLE_RIGHT, COL_OUT0, COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1, COL_OUT1_ASSET,
+    COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT4, COL_OUT5, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1,
+    COL_RESET, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6,
+    COL_S7, COL_S8, COL_S9, COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2,
+    COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2,
+    COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2,
+    COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2,
+    COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET, COL_SLOT0_IN, COL_SLOT0_OUT, COL_SLOT1_ASSET,
+    COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN, COL_SLOT2_OUT, COL_SLOT3_ASSET,
+    COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_ASSET, COL_STABLECOIN_ATTEST0,
+    COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2, COL_STABLECOIN_ATTEST3,
+    COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG, COL_STABLECOIN_ISSUANCE_SIGN,
+    COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1, COL_STABLECOIN_ORACLE2,
+    COL_STABLECOIN_ORACLE3, COL_STABLECOIN_POLICY_HASH0, COL_STABLECOIN_POLICY_HASH1,
+    COL_STABLECOIN_POLICY_HASH2, COL_STABLECOIN_POLICY_HASH3, COL_STABLECOIN_POLICY_VERSION,
+    COL_STABLECOIN_SLOT_SEL0, COL_STABLECOIN_SLOT_SEL1, COL_STABLECOIN_SLOT_SEL2,
+    COL_STABLECOIN_SLOT_SEL3, COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN,
+    COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES, MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH,
+    NULLIFIER_ABSORB_CYCLES, TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH,
 };
 
 type Val = Goldilocks;
@@ -50,8 +51,7 @@ type Val = Goldilocks;
 struct CycleSpec {
     reset: bool,
     domain: u64,
-    in0: Val,
-    in1: Val,
+    inputs: [Val; 6],
     dir: Val,
 }
 
@@ -166,7 +166,6 @@ impl TransactionProverP3 {
         let start_row_out1 = note_start_row_output(1);
         if start_row_in0 < trace_len {
             let row_slice = trace.row_mut(start_row_in0);
-            row_slice[COL_NOTE_START_IN0] = Val::ONE;
             row_slice[COL_IN_ACTIVE0] = flag_to_felt(input_flags[0]);
             row_slice[COL_IN0_VALUE] = Val::from_u64(input_notes[0].note.value);
             row_slice[COL_IN0_ASSET] = Val::from_u64(input_notes[0].note.asset_id);
@@ -179,7 +178,6 @@ impl TransactionProverP3 {
         }
         if start_row_in1 < trace_len {
             let row_slice = trace.row_mut(start_row_in1);
-            row_slice[COL_NOTE_START_IN1] = Val::ONE;
             row_slice[COL_IN_ACTIVE1] = flag_to_felt(input_flags[1]);
             row_slice[COL_IN1_VALUE] = Val::from_u64(input_notes[1].note.value);
             row_slice[COL_IN1_ASSET] = Val::from_u64(input_notes[1].note.asset_id);
@@ -192,7 +190,6 @@ impl TransactionProverP3 {
         }
         if start_row_out0 < trace_len {
             let row_slice = trace.row_mut(start_row_out0);
-            row_slice[COL_NOTE_START_OUT0] = Val::ONE;
             row_slice[COL_OUT_ACTIVE0] = flag_to_felt(output_flags[0]);
             row_slice[COL_OUT0_VALUE] = Val::from_u64(output_notes[0].note.value);
             row_slice[COL_OUT0_ASSET] = Val::from_u64(output_notes[0].note.asset_id);
@@ -205,7 +202,6 @@ impl TransactionProverP3 {
         }
         if start_row_out1 < trace_len {
             let row_slice = trace.row_mut(start_row_out1);
-            row_slice[COL_NOTE_START_OUT1] = Val::ONE;
             row_slice[COL_OUT_ACTIVE1] = flag_to_felt(output_flags[1]);
             row_slice[COL_OUT1_VALUE] = Val::from_u64(output_notes[1].note.value);
             row_slice[COL_OUT1_ASSET] = Val::from_u64(output_notes[1].note.asset_id);
@@ -344,12 +340,10 @@ impl TransactionProverP3 {
             }
         }
 
-        let cycle_specs = build_cycle_specs(&input_notes, &output_notes, witness);
-        let mut prev_state = [Val::ZERO, Val::ZERO, Val::ONE];
-        let mut out0 = Val::ZERO;
-        let mut out1 = Val::ZERO;
-        let mut out2 = Val::ZERO;
-        let mut out3 = Val::ZERO;
+        let cycle_specs = build_cycle_specs(&input_notes, &output_notes, witness, &input_flags)?;
+        let mut prev_state = [Val::ZERO; 12];
+        prev_state[11] = Val::ONE;
+        let mut output = [Val::ZERO; 6];
 
         for cycle in 0..TOTAL_TRACE_CYCLES {
             let cycle_start = cycle * CYCLE_LENGTH;
@@ -363,48 +357,70 @@ impl TransactionProverP3 {
                 let spec = cycle_specs.get(cycle - 1).cloned().unwrap_or(CycleSpec {
                     reset: false,
                     domain: 0,
-                    in0: Val::ZERO,
-                    in1: Val::ZERO,
+                    inputs: [Val::ZERO; 6],
                     dir: Val::ZERO,
                 });
                 let state_start = if spec.reset {
                     [
-                        Val::from_u64(spec.domain) + spec.in0,
-                        spec.in1,
+                        Val::from_u64(spec.domain) + spec.inputs[0],
+                        spec.inputs[1],
+                        spec.inputs[2],
+                        spec.inputs[3],
+                        spec.inputs[4],
+                        spec.inputs[5],
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
                         Val::ONE,
                     ]
                 } else {
-                    [prev_state[0] + spec.in0, prev_state[1] + spec.in1, prev_state[2]]
+                    [
+                        prev_state[0] + spec.inputs[0],
+                        prev_state[1] + spec.inputs[1],
+                        prev_state[2] + spec.inputs[2],
+                        prev_state[3] + spec.inputs[3],
+                        prev_state[4] + spec.inputs[4],
+                        prev_state[5] + spec.inputs[5],
+                        prev_state[6],
+                        prev_state[7],
+                        prev_state[8],
+                        prev_state[9],
+                        prev_state[10],
+                        prev_state[11],
+                    ]
                 };
                 (state_start, spec.dir)
             };
 
             let mut state = state_start;
-            for round in 0..POSEIDON_ROUNDS {
-                let row = cycle_start + round;
-                let row_slice = trace.row_mut(row);
-                row_slice[COL_S0] = state[0];
-                row_slice[COL_S1] = state[1];
-                row_slice[COL_S2] = state[2];
-                row_slice[COL_OUT0] = out0;
-                row_slice[COL_OUT1] = out1;
-                row_slice[COL_OUT2] = out2;
-                row_slice[COL_OUT3] = out3;
-                row_slice[COL_DIR] = dir;
-                poseidon_round(&mut state, round);
-            }
-
-            for step in POSEIDON_ROUNDS..CYCLE_LENGTH {
+            for step in 0..CYCLE_LENGTH {
                 let row = cycle_start + step;
                 let row_slice = trace.row_mut(row);
                 row_slice[COL_S0] = state[0];
                 row_slice[COL_S1] = state[1];
                 row_slice[COL_S2] = state[2];
-                row_slice[COL_OUT0] = out0;
-                row_slice[COL_OUT1] = out1;
-                row_slice[COL_OUT2] = out2;
-                row_slice[COL_OUT3] = out3;
+                row_slice[COL_S3] = state[3];
+                row_slice[COL_S4] = state[4];
+                row_slice[COL_S5] = state[5];
+                row_slice[COL_S6] = state[6];
+                row_slice[COL_S7] = state[7];
+                row_slice[COL_S8] = state[8];
+                row_slice[COL_S9] = state[9];
+                row_slice[COL_S10] = state[10];
+                row_slice[COL_S11] = state[11];
+                row_slice[COL_OUT0] = output[0];
+                row_slice[COL_OUT1] = output[1];
+                row_slice[COL_OUT2] = output[2];
+                row_slice[COL_OUT3] = output[3];
+                row_slice[COL_OUT4] = output[4];
+                row_slice[COL_OUT5] = output[5];
                 row_slice[COL_DIR] = dir;
+
+                if step < POSEIDON2_STEPS {
+                    poseidon2_step(&mut state, step);
+                }
             }
 
             prev_state = state;
@@ -415,13 +431,16 @@ impl TransactionProverP3 {
                 let next_spec = cycle_specs.get(next_cycle - 1).cloned().unwrap_or(CycleSpec {
                     reset: false,
                     domain: 0,
-                    in0: Val::ZERO,
-                    in1: Val::ZERO,
+                    inputs: [Val::ZERO; 6],
                     dir: Val::ZERO,
                 });
                 let row_slice = trace.row_mut(end_row);
-                row_slice[COL_IN0] = next_spec.in0;
-                row_slice[COL_IN1] = next_spec.in1;
+                row_slice[COL_IN0] = next_spec.inputs[0];
+                row_slice[COL_IN1] = next_spec.inputs[1];
+                row_slice[COL_IN2] = next_spec.inputs[2];
+                row_slice[COL_IN3] = next_spec.inputs[3];
+                row_slice[COL_IN4] = next_spec.inputs[4];
+                row_slice[COL_IN5] = next_spec.inputs[5];
 
                 if let Some(domain) = cycle_reset_domain(next_cycle) {
                     row_slice[COL_RESET] = Val::ONE;
@@ -431,22 +450,11 @@ impl TransactionProverP3 {
                     row_slice[COL_DOMAIN] = Val::ZERO;
                 }
 
-                row_slice[COL_MERKLE_LEFT_23] = flag_to_felt(cycle_is_merkle_left_23(next_cycle));
-                row_slice[COL_MERKLE_LEFT_01] = flag_to_felt(cycle_is_merkle_left_01(next_cycle));
-                row_slice[COL_MERKLE_RIGHT_23] = flag_to_felt(cycle_is_merkle_right_23(next_cycle));
-                row_slice[COL_MERKLE_RIGHT_01] = flag_to_felt(cycle_is_merkle_right_01(next_cycle));
-                let capture = cycle_is_squeeze(next_cycle);
-                row_slice[COL_CAPTURE] = flag_to_felt(capture);
-                let capture2 = cycle_is_squeeze(cycle);
-                row_slice[COL_CAPTURE2] = flag_to_felt(capture2);
+                row_slice[COL_MERKLE_LEFT] = flag_to_felt(cycle_is_merkle_left(next_cycle));
+                row_slice[COL_MERKLE_RIGHT] = flag_to_felt(cycle_is_merkle_right(next_cycle));
 
-                if capture {
-                    out0 = state[0];
-                    out1 = state[1];
-                }
-                if capture2 {
-                    out2 = state[0];
-                    out3 = state[1];
+                if cycle_is_output(cycle) {
+                    output.copy_from_slice(&state[..6]);
                 }
             }
         }
@@ -468,24 +476,31 @@ impl TransactionProverP3 {
         let mut nullifiers = Vec::new();
         let prf = prf_key(&witness.sk_spend);
         for input in &witness.inputs {
-            nullifiers.push(crate::hashing::nullifier(
-                prf,
-                &input.note.rho,
-                input.position,
-            ));
+            nullifiers.push(nullifier(prf, &input.note.rho, input.position));
         }
         while nullifiers.len() < MAX_INPUTS {
-            nullifiers.push([Felt::ZERO; 4]);
+            nullifiers.push([Val::ZERO; 6]);
         }
 
-        let mut commitments: Vec<HashFelt> =
-            witness.outputs.iter().map(|note| note.note.commitment()).collect();
+        let mut commitments: Vec<HashFelt> = witness
+            .outputs
+            .iter()
+            .map(|note| {
+                note_commitment(
+                    note.note.value,
+                    note.note.asset_id,
+                    &note.note.pk_recipient,
+                    &note.note.rho,
+                    &note.note.r,
+                )
+            })
+            .collect();
         while commitments.len() < MAX_OUTPUTS {
-            commitments.push([Felt::ZERO; 4]);
+            commitments.push([Val::ZERO; 6]);
         }
 
-        let merkle_root = bytes32_to_felts(&witness.merkle_root).ok_or(
-            TransactionCircuitError::ConstraintViolation("invalid merkle root encoding"),
+        let merkle_root = bytes48_to_felts(&witness.merkle_root_pq).ok_or(
+            TransactionCircuitError::ConstraintViolation("invalid PQ merkle root encoding"),
         )?;
         let slots = witness.balance_slots()?;
         let slot_assets: Vec<u64> = slots.iter().map(|slot| slot.asset_id).collect();
@@ -495,12 +510,12 @@ impl TransactionProverP3 {
         Ok(TransactionPublicInputsP3 {
             input_flags,
             output_flags,
-            nullifiers: nullifiers.into_iter().map(hash_to_gl).collect(),
-            commitments: commitments.into_iter().map(hash_to_gl).collect(),
+            nullifiers,
+            commitments,
             fee: Val::from_u64(witness.fee),
             value_balance_sign: vb_sign,
             value_balance_magnitude: vb_mag,
-            merkle_root: hash_to_gl(merkle_root),
+            merkle_root,
             stablecoin_enabled: stablecoin_inputs.enabled,
             stablecoin_asset: stablecoin_inputs.asset,
             stablecoin_policy_version: stablecoin_inputs.policy_version,
@@ -538,12 +553,14 @@ impl TransactionProverP3 {
             output_flags.push(flag);
         }
 
-        let read_hash = |row: usize| -> [Val; 4] {
+        let read_hash = |row: usize| -> [Val; 6] {
             [
-                get_trace(trace, COL_OUT0, row),
-                get_trace(trace, COL_OUT1, row),
                 get_trace(trace, COL_S0, row),
                 get_trace(trace, COL_S1, row),
+                get_trace(trace, COL_S2, row),
+                get_trace(trace, COL_S3, row),
+                get_trace(trace, COL_S4, row),
+                get_trace(trace, COL_S5, row),
             ]
         };
 
@@ -553,7 +570,7 @@ impl TransactionProverP3 {
             let nf = if *flag == Val::ONE && row < trace_len {
                 read_hash(row)
             } else {
-                [Val::ZERO; 4]
+                [Val::ZERO; 6]
             };
             nullifiers.push(nf);
         }
@@ -564,7 +581,7 @@ impl TransactionProverP3 {
             let cm = if *flag == Val::ONE && row < trace_len {
                 read_hash(row)
             } else {
-                [Val::ZERO; 4]
+                [Val::ZERO; 6]
             };
             commitments.push(cm);
         }
@@ -574,10 +591,10 @@ impl TransactionProverP3 {
             if row < trace_len {
                 read_hash(row)
             } else {
-                [Val::ZERO; 4]
+                [Val::ZERO; 6]
             }
         } else {
-            [Val::ZERO; 4]
+            [Val::ZERO; 6]
         };
 
         let final_row = trace_len.saturating_sub(2);
@@ -678,41 +695,46 @@ fn get_trace(trace: &RowMajorMatrix<Val>, col: usize, row: usize) -> Val {
     trace.values[row * trace.width + col]
 }
 
-fn hash_to_gl(hash: HashFelt) -> [Val; 4] {
-    [
-        Val::from_u64(hash[0].as_int()),
-        Val::from_u64(hash[1].as_int()),
-        Val::from_u64(hash[2].as_int()),
-        Val::from_u64(hash[3].as_int()),
-    ]
-}
-
-fn bytes_to_felts(bytes: &[u8]) -> Vec<Felt> {
+fn bytes_to_vals(bytes: &[u8]) -> Vec<Val> {
     bytes
         .chunks(8)
         .map(|chunk| {
             let mut buf = [0u8; 8];
             buf[8 - chunk.len()..].copy_from_slice(chunk);
-            Felt::new(u64::from_be_bytes(buf))
+            Val::from_u64(u64::from_be_bytes(buf))
         })
         .collect()
 }
 
-fn commitment_inputs(note: &NoteData) -> Vec<Felt> {
+fn bytes32_to_vals(bytes: &[u8; 32]) -> Result<[Val; 4], TransactionCircuitError> {
+    if !is_canonical_bytes32(bytes) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "invalid 32-byte hash encoding",
+        ));
+    }
+    let mut out = [Val::ZERO; 4];
+    for (idx, chunk) in bytes.chunks(8).enumerate() {
+        let limb = u64::from_be_bytes(chunk.try_into().expect("8-byte chunk"));
+        out[idx] = Val::from_u64(limb);
+    }
+    Ok(out)
+}
+
+fn commitment_inputs(note: &NoteData) -> Vec<Val> {
     let mut inputs = Vec::new();
-    inputs.push(Felt::new(note.value));
-    inputs.push(Felt::new(note.asset_id));
-    inputs.extend(bytes_to_felts(&note.pk_recipient));
-    inputs.extend(bytes_to_felts(&note.rho));
-    inputs.extend(bytes_to_felts(&note.r));
+    inputs.push(Val::from_u64(note.value));
+    inputs.push(Val::from_u64(note.asset_id));
+    inputs.extend(bytes_to_vals(&note.pk_recipient));
+    inputs.extend(bytes_to_vals(&note.rho));
+    inputs.extend(bytes_to_vals(&note.r));
     inputs
 }
 
-fn nullifier_inputs(prf: Felt, input: &InputNoteWitness) -> Vec<Felt> {
+fn nullifier_inputs(prf: Val, input: &InputNoteWitness) -> Vec<Val> {
     let mut inputs = Vec::new();
     inputs.push(prf);
-    inputs.push(Felt::new(input.position));
-    inputs.extend(bytes_to_felts(&input.note.rho));
+    inputs.push(Val::from_u64(input.position));
+    inputs.extend(bytes_to_vals(&input.note.rho));
     inputs
 }
 
@@ -758,6 +780,8 @@ fn dummy_input() -> InputNoteWitness {
         position: 0xA5A5_A5A5,
         rho_seed: [0u8; 32],
         merkle_path: crate::note::MerklePath::default(),
+        #[cfg(feature = "plonky3")]
+        merkle_path_pq: Some(MerklePathPq::default()),
     }
 }
 
@@ -839,18 +863,9 @@ fn stablecoin_binding_inputs(
         });
     }
 
-    let policy_hash = bytes32_to_felts(&witness.stablecoin.policy_hash).ok_or(
-        TransactionCircuitError::ConstraintViolation("invalid stablecoin policy hash encoding"),
-    )?;
-    let oracle_commitment = bytes32_to_felts(&witness.stablecoin.oracle_commitment).ok_or(
-        TransactionCircuitError::ConstraintViolation("invalid stablecoin oracle commitment encoding"),
-    )?;
-    let attestation_commitment =
-        bytes32_to_felts(&witness.stablecoin.attestation_commitment).ok_or(
-            TransactionCircuitError::ConstraintViolation(
-                "invalid stablecoin attestation commitment encoding",
-            ),
-        )?;
+    let policy_hash = bytes32_to_vals(&witness.stablecoin.policy_hash)?;
+    let oracle_commitment = bytes32_to_vals(&witness.stablecoin.oracle_commitment)?;
+    let attestation_commitment = bytes32_to_vals(&witness.stablecoin.attestation_commitment)?;
 
     let (issuance_sign, issuance_mag) = value_balance_parts(witness.stablecoin.issuance_delta)?;
     let mut slot_selectors = [Val::ZERO; 4];
@@ -873,9 +888,9 @@ fn stablecoin_binding_inputs(
         policy_version: Val::from_u64(u64::from(witness.stablecoin.policy_version)),
         issuance_sign,
         issuance_mag,
-        policy_hash: hash_to_gl(policy_hash),
-        oracle_commitment: hash_to_gl(oracle_commitment),
-        attestation_commitment: hash_to_gl(attestation_commitment),
+        policy_hash,
+        oracle_commitment,
+        attestation_commitment,
         slot_selectors,
     })
 }
@@ -884,75 +899,72 @@ fn build_cycle_specs(
     inputs: &[InputNoteWitness],
     outputs: &[OutputNoteWitness],
     witness: &TransactionWitness,
-) -> Vec<CycleSpec> {
+    input_flags: &[bool; MAX_INPUTS],
+) -> Result<Vec<CycleSpec>, TransactionCircuitError> {
     let prf = prf_key(&witness.sk_spend);
     let mut cycles = Vec::with_capacity(TOTAL_USED_CYCLES - DUMMY_CYCLES);
 
-    for input in inputs.iter() {
+    for (idx, input) in inputs.iter().enumerate() {
         let commitment_inputs = commitment_inputs(&input.note);
         for chunk_idx in 0..COMMITMENT_ABSORB_CYCLES {
             let reset = chunk_idx == 0;
             let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
-            let in0 = commitment_inputs[chunk_idx * 2];
-            let in1 = commitment_inputs[chunk_idx * 2 + 1];
+            let mut chunk = [Val::ZERO; 6];
+            let start = chunk_idx * 6;
+            let take = commitment_inputs.len().saturating_sub(start).min(6);
+            if take > 0 {
+                chunk[..take].copy_from_slice(&commitment_inputs[start..start + take]);
+            }
             cycles.push(CycleSpec {
                 reset,
                 domain,
-                in0: Val::from_u64(in0.as_int()),
-                in1: Val::from_u64(in1.as_int()),
+                inputs: chunk,
                 dir: Val::ZERO,
             });
         }
-        cycles.push(CycleSpec {
-            reset: false,
-            domain: 0,
-            in0: Val::ZERO,
-            in1: Val::ZERO,
-            dir: Val::ZERO,
-        });
 
-        let mut current = input.note.commitment();
+        let mut current = note_commitment(
+            input.note.value,
+            input.note.asset_id,
+            &input.note.pk_recipient,
+            &input.note.rho,
+            &input.note.r,
+        );
         let mut pos = input.position;
+        let fallback_path = MerklePathPq::default();
+        let merkle_path = if input_flags[idx] {
+            input
+                .merkle_path_pq
+                .as_ref()
+                .ok_or(TransactionCircuitError::ConstraintViolation(
+                    "missing PQ merkle path",
+                ))?
+        } else {
+            input.merkle_path_pq.as_ref().unwrap_or(&fallback_path)
+        };
         for level in 0..CIRCUIT_MERKLE_DEPTH {
             let dir = if pos & 1 == 0 { Val::ZERO } else { Val::ONE };
-            let sibling = input
-                .merkle_path
+            let sibling = merkle_path
                 .siblings
                 .get(level)
                 .copied()
-                .unwrap_or([Felt::ZERO; 4]);
+                .unwrap_or([Val::ZERO; 6]);
             let (left, right) = if pos & 1 == 0 {
                 (current, sibling)
             } else {
                 (sibling, current)
             };
-            let left_ordered = [left[2], left[3], left[0], left[1]];
-            let right_ordered = [right[2], right[3], right[0], right[1]];
-            for pair_idx in 0..MERKLE_ABSORB_CYCLES {
-                let reset = pair_idx == 0;
+            for chunk_idx in 0..MERKLE_ABSORB_CYCLES {
+                let reset = chunk_idx == 0;
                 let domain = if reset { MERKLE_DOMAIN_TAG } else { 0 };
-                let (in0, in1) = if pair_idx < 2 {
-                    let idx = pair_idx * 2;
-                    (left_ordered[idx], left_ordered[idx + 1])
-                } else {
-                    let idx = (pair_idx - 2) * 2;
-                    (right_ordered[idx], right_ordered[idx + 1])
-                };
+                let inputs = if chunk_idx == 0 { left } else { right };
                 cycles.push(CycleSpec {
                     reset,
                     domain,
-                    in0: Val::from_u64(in0.as_int()),
-                    in1: Val::from_u64(in1.as_int()),
+                    inputs,
                     dir,
                 });
             }
-            cycles.push(CycleSpec {
-                reset: false,
-                domain: 0,
-                in0: Val::ZERO,
-                in1: Val::ZERO,
-                dir,
-            });
             current = merkle_node(left, right);
             pos >>= 1;
         }
@@ -961,23 +973,19 @@ fn build_cycle_specs(
         for chunk_idx in 0..NULLIFIER_ABSORB_CYCLES {
             let reset = chunk_idx == 0;
             let domain = if reset { NULLIFIER_DOMAIN_TAG } else { 0 };
-            let in0 = nullifier_inputs[chunk_idx * 2];
-            let in1 = nullifier_inputs[chunk_idx * 2 + 1];
+            let mut chunk = [Val::ZERO; 6];
+            let start = chunk_idx * 6;
+            let take = nullifier_inputs.len().saturating_sub(start).min(6);
+            if take > 0 {
+                chunk[..take].copy_from_slice(&nullifier_inputs[start..start + take]);
+            }
             cycles.push(CycleSpec {
                 reset,
                 domain,
-                in0: Val::from_u64(in0.as_int()),
-                in1: Val::from_u64(in1.as_int()),
+                inputs: chunk,
                 dir: Val::ZERO,
             });
         }
-        cycles.push(CycleSpec {
-            reset: false,
-            domain: 0,
-            in0: Val::ZERO,
-            in1: Val::ZERO,
-            dir: Val::ZERO,
-        });
     }
 
     for output in outputs.iter() {
@@ -985,43 +993,31 @@ fn build_cycle_specs(
         for chunk_idx in 0..COMMITMENT_ABSORB_CYCLES {
             let reset = chunk_idx == 0;
             let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
-            let in0 = commitment_inputs[chunk_idx * 2];
-            let in1 = commitment_inputs[chunk_idx * 2 + 1];
+            let mut chunk = [Val::ZERO; 6];
+            let start = chunk_idx * 6;
+            let take = commitment_inputs.len().saturating_sub(start).min(6);
+            if take > 0 {
+                chunk[..take].copy_from_slice(&commitment_inputs[start..start + take]);
+            }
             cycles.push(CycleSpec {
                 reset,
                 domain,
-                in0: Val::from_u64(in0.as_int()),
-                in1: Val::from_u64(in1.as_int()),
+                inputs: chunk,
                 dir: Val::ZERO,
             });
         }
-        cycles.push(CycleSpec {
-            reset: false,
-            domain: 0,
-            in0: Val::ZERO,
-            in1: Val::ZERO,
-            dir: Val::ZERO,
-        });
     }
 
-    cycles
-}
+    debug_assert_eq!(cycles.len(), TOTAL_USED_CYCLES - DUMMY_CYCLES);
 
-fn poseidon_round(state: &mut [Val; 3], round: usize) {
-    state[0] += round_constant(round, 0);
-    state[1] += round_constant(round, 1);
-    state[2] += round_constant(round, 2);
-    state[0] = transaction_core::p3_air::sbox(state[0]);
-    state[1] = transaction_core::p3_air::sbox(state[1]);
-    state[2] = transaction_core::p3_air::sbox(state[2]);
-    *state = transaction_core::p3_air::mds_mix(state);
+    Ok(cycles)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hashing::{felts_to_bytes32, merkle_node, HashFelt};
-    use crate::note::{MerklePath, NoteData};
+    use crate::hashing_pq::{felts_to_bytes48, merkle_node, note_commitment, HashFelt};
+    use crate::note::{MerklePath, MerklePathPq, NoteData};
     use crate::p3_verifier::verify_transaction_proof_p3;
     use crate::StablecoinPolicyBinding;
     #[cfg(debug_assertions)]
@@ -1034,7 +1030,11 @@ mod tests {
     use p3_matrix::Matrix;
     use std::panic::catch_unwind;
 
-    fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
+    fn compute_merkle_root_from_path(
+        leaf: HashFelt,
+        position: u64,
+        path: &MerklePathPq,
+    ) -> HashFelt {
         let mut current = leaf;
         let mut pos = position;
         for sibling in &path.siblings {
@@ -1063,20 +1063,29 @@ mod tests {
             rho: [5u8; 32],
             r: [6u8; 32],
         };
-        let merkle_path = MerklePath::default();
-        let leaf = input_note.commitment();
-        let merkle_root = felts_to_bytes32(&compute_merkle_root_from_path(leaf, 0, &merkle_path));
+        let merkle_path_pq = MerklePathPq::default();
+        let leaf = note_commitment(
+            input_note.value,
+            input_note.asset_id,
+            &input_note.pk_recipient,
+            &input_note.rho,
+            &input_note.r,
+        );
+        let merkle_root_pq =
+            felts_to_bytes48(&compute_merkle_root_from_path(leaf, 0, &merkle_path_pq));
 
         TransactionWitness {
             inputs: vec![InputNoteWitness {
                 note: input_note,
                 position: 0,
                 rho_seed: [7u8; 32],
-                merkle_path,
+                merkle_path: MerklePath::default(),
+                merkle_path_pq: Some(merkle_path_pq),
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
             sk_spend: [8u8; 32],
-            merkle_root,
+            merkle_root: [0u8; 32],
+            merkle_root_pq,
             fee: 0,
             value_balance: -20,
             stablecoin: StablecoinPolicyBinding::default(),

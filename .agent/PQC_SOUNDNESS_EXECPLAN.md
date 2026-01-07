@@ -36,7 +36,7 @@ After this work, a user can:
 - [x] (2026-01-07 10:20Z) Fixed the Plonky3 debug constraint test by wiring preprocessed rows into `DebugConstraintBuilder` (PairBuilder) and updating `row_slice` handling in `circuits/transaction/src/p3_prover.rs`.
 - [x] (2026-01-07 10:32Z) Raised the test-only Plonky3 FRI blowup to satisfy the transaction AIR quotient-domain size requirement and avoid LDE height assertions during prove/verify.
 - [x] (2026-01-07 10:43Z) Added a PQC soundness checklist section defining minimum PQ parameters, verification steps, and the formal-analysis caveat.
-- [ ] Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments.
+- [x] (2026-01-07 13:39Z) Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments (Poseidon2 width 12/rate 6/capacity 6, 48-byte outputs, PQ hashing + witness/proof plumbing, transaction/batch AIR + prover updates, docs refreshed; `cargo check -p transaction-circuit --features plonky3`, `cargo check -p batch-circuit --features plonky3`, `cargo check -p block-circuit --features plonky3`).
 - [ ] Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
 - [ ] Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits.
 - [ ] Milestone 7: Update pallets, node, wallet, and protocol versioning.
@@ -77,8 +77,14 @@ After this work, a user can:
 - Observation: Plonky3 transaction trace width increased from 86 to 112 columns (+30.2%), which will grow proof sizes, FFT work, and memory footprint.
   Evidence: `circuits/transaction-core/src/stark_air.rs`, `circuits/transaction-core/src/p3_air.rs`.
 
-- Observation: The in-circuit Poseidon sponge used by the AIR is still width 3 / capacity 1 (rate 2), so commitment/nullifier hashing inside the circuit remains ~21-bit PQ collision security until Milestone 4.
-  Evidence: `circuits/transaction-core/src/p3_air.rs` poseidon helper state initialization.
+- Observation: Poseidon2 in-circuit hashing (width 12, rate 6, capacity 6) replaced the width-3 sponge to reach 384-bit capacity; Plonky3 commitments/nullifiers now use 48-byte encodings.
+  Evidence: `circuits/transaction-core/src/poseidon2.rs`, `circuits/transaction-core/src/hashing_pq.rs`, `circuits/transaction-core/src/p3_air.rs`.
+
+- Observation: Serde does not implement `[u8; 48]` arrays in this toolchain, so PQ merkle paths/public inputs need custom serializers and explicit default functions.
+  Evidence: `circuits/transaction/src/note.rs` (`serde_merkle_path_pq`), `circuits/transaction/src/public_inputs.rs` (`serde_bytes48`).
+
+- Observation: Plonky3 `AirBuilder` distinguishes `Var` vs `Expr`, so Poseidon2 AIR transitions required explicit `.into()` conversions and typed `from_fn` arrays.
+  Evidence: `circuits/transaction-core/src/p3_air.rs`, `circuits/batch/src/p3_air.rs`.
 
 - Observation: The Plonky3 transaction E2E prove/verify test still fails with `OodEvaluationMismatch` even when per-row constraints pass, indicating a mismatch in quotient evaluation rather than a simple constraint violation.
   Evidence: `cargo test -p transaction-circuit --features plonky3-e2e --lib prove_verify_roundtrip_p3 --release`.
@@ -198,6 +204,10 @@ After this work, a user can:
 
 - Decision: Upgrade `transaction-circuit` RNG dependencies to rand 0.9 to match Plonky3 Poseidon2’s RNG trait requirements.
   Rationale: `p3-poseidon2` expects rand 0.9’s `Rng`, so aligning versions avoids trait mismatches during deterministic config seeding.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Use Poseidon2 width 12 (rate 6, capacity 6) for Plonky3 in-circuit commitments/nullifiers and carry 48-byte PQ fields alongside legacy 32-byte fields until Milestone 5 widens application types.
+  Rationale: Capacity-6 (384-bit) is the minimum for 128-bit PQ collision resistance, while keeping application-level migrations isolated to Milestone 5.
   Date/Author: 2026-01-07 / Codex.
 
 ## PQC Soundness Checklist

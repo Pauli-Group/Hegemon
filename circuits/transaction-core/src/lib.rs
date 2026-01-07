@@ -11,7 +11,13 @@ extern crate alloc;
 pub mod constants;
 pub mod dimensions;
 pub mod hashing;
+#[cfg(feature = "plonky3")]
+pub mod hashing_pq;
 pub mod poseidon_constants;
+#[cfg(feature = "plonky3")]
+pub mod poseidon2;
+#[cfg(feature = "plonky3")]
+pub mod poseidon2_constants;
 #[cfg(all(feature = "winterfell-legacy", feature = "stark-verify"))]
 mod rpo;
 #[cfg(feature = "winterfell-legacy")]

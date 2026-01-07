@@ -17,6 +17,14 @@ use transaction_circuit::{
     proof, StablecoinPolicyBinding, TransactionWitness,
 };
 
+#[cfg(feature = "plonky3")]
+use transaction_circuit::hashing_pq::{
+    felts_to_bytes48, merkle_node as merkle_node_pq, note_commitment,
+    HashFelt as HashFeltPq,
+};
+#[cfg(feature = "plonky3")]
+use transaction_circuit::note::MerklePathPq;
+
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Benchmark transaction and block circuits", long_about = None)]
 struct Cli {
@@ -181,6 +189,28 @@ fn build_commitment_tree(leaves: &[HashFelt]) -> Result<(Vec<MerklePath>, [u8; 3
     Ok((paths, root))
 }
 
+#[cfg(feature = "plonky3")]
+fn build_two_leaf_merkle_tree_pq(
+    leaf0: HashFeltPq,
+    leaf1: HashFeltPq,
+) -> (Vec<MerklePathPq>, [u8; 48]) {
+    let mut siblings0 = vec![leaf1];
+    let mut siblings1 = vec![leaf0];
+    let mut current = merkle_node_pq(leaf0, leaf1);
+
+    for _ in 1..CIRCUIT_MERKLE_DEPTH {
+        let zero = [transaction_circuit::hashing_pq::Felt::ZERO; 6];
+        siblings0.push(zero);
+        siblings1.push(zero);
+        current = merkle_node_pq(current, zero);
+    }
+
+    (
+        vec![MerklePathPq { siblings: siblings0 }, MerklePathPq { siblings: siblings1 }],
+        felts_to_bytes48(&current),
+    )
+}
+
 fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness {
     // Create input notes
     let input_notes: Vec<NoteData> = (0..MAX_INPUTS)
@@ -198,6 +228,20 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
 
     // Build Merkle tree with these leaves
     let (paths, merkle_root) = build_commitment_tree(&commitments).expect("commitment tree");
+    #[cfg(feature = "plonky3")]
+    let (paths_pq, merkle_root_pq) = {
+        let mut commitments_pq = Vec::with_capacity(input_notes.len());
+        for note in &input_notes {
+            commitments_pq.push(note_commitment(
+                note.value,
+                note.asset_id,
+                &note.pk_recipient,
+                &note.rho,
+                &note.r,
+            ));
+        }
+        build_two_leaf_merkle_tree_pq(commitments_pq[0], commitments_pq[1])
+    };
 
     // Create input witnesses
     let input_witnesses: Vec<InputNoteWitness> = input_notes
@@ -209,6 +253,8 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
             position: i as u64,
             rho_seed: random_bytes(rng),
             merkle_path,
+            #[cfg(feature = "plonky3")]
+            merkle_path_pq: paths_pq.get(i).cloned(),
         })
         .collect();
 
@@ -244,6 +290,8 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
         outputs,
         sk_spend: random_bytes(rng),
         merkle_root,
+        #[cfg(feature = "plonky3")]
+        merkle_root_pq: merkle_root_pq,
         fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),

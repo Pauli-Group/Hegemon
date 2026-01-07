@@ -645,6 +645,8 @@ fn build_stark_inputs(
         value_balance_sign,
         value_balance_magnitude,
         merkle_root: anchor,
+        #[cfg(feature = "plonky3")]
+        merkle_root_pq: [0u8; 48],
         stablecoin_enabled,
         stablecoin_asset_id,
         stablecoin_policy_version,
@@ -701,6 +703,10 @@ fn build_transaction_proof(
         public_inputs: public_inputs.clone(),
         nullifiers: padded_nullifiers,
         commitments: padded_commitments,
+        #[cfg(feature = "plonky3")]
+        nullifiers_pq: vec![[0u8; 48]; MAX_INPUTS],
+        #[cfg(feature = "plonky3")]
+        commitments_pq: vec![[0u8; 48]; MAX_OUTPUTS],
         balance_slots: public_inputs.balance_slots.clone(),
         stark_proof: proof_bytes,
         stark_public_inputs: Some(stark_public_inputs),

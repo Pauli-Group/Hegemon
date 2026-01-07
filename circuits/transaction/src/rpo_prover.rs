@@ -291,10 +291,14 @@ mod tests {
                 position: 0,
                 rho_seed: [9u8; 32],
                 merkle_path,
+                #[cfg(feature = "plonky3")]
+                merkle_path_pq: None,
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
             sk_spend: [7u8; 32],
             merkle_root,
+            #[cfg(feature = "plonky3")]
+            merkle_root_pq: [0u8; 48],
             fee: 100,
             value_balance: 0,
             stablecoin: StablecoinPolicyBinding::default(),

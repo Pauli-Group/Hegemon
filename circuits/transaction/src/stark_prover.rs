@@ -868,6 +868,8 @@ fn dummy_input() -> InputNoteWitness {
         position: 0xA5A5_A5A5,
         rho_seed: [0u8; 32],
         merkle_path: crate::note::MerklePath::default(),
+        #[cfg(feature = "plonky3")]
+        merkle_path_pq: None,
     }
 }
 
@@ -1176,10 +1178,14 @@ mod tests {
                 position: 0,
                 rho_seed: [7u8; 32],
                 merkle_path,
+                #[cfg(feature = "plonky3")]
+                merkle_path_pq: None,
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
             sk_spend: [8u8; 32],
             merkle_root,
+            #[cfg(feature = "plonky3")]
+            merkle_root_pq: [0u8; 48],
             fee: 0,
             value_balance: 0,
             stablecoin: StablecoinPolicyBinding::default(),

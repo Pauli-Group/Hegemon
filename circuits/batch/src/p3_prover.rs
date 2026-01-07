@@ -9,7 +9,7 @@ use p3_uni_stark::{prove_with_preprocessed, setup_preprocessed};
 use crate::error::BatchCircuitError;
 use crate::p3_air::{BatchPublicInputsP3, BatchTransactionAirP3, TRACE_WIDTH};
 use crate::public_inputs::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
-use transaction_circuit::hashing::{bytes32_to_felts, nullifier, prf_key, HashFelt};
+use transaction_circuit::hashing_pq::{bytes48_to_felts, note_commitment, nullifier, prf_key};
 use transaction_circuit::p3_config::{default_config, TransactionProofP3};
 use transaction_circuit::p3_prover::TransactionProverP3;
 use transaction_circuit::TransactionWitness;
@@ -39,9 +39,9 @@ impl BatchTransactionProverP3 {
             return Err(BatchCircuitError::EmptyBatch);
         }
 
-        let anchor = witnesses[0].merkle_root;
+        let anchor = witnesses[0].merkle_root_pq;
         for witness in witnesses.iter().skip(1) {
-            if witness.merkle_root != anchor {
+            if witness.merkle_root_pq != anchor {
                 return Err(BatchCircuitError::AnchorMismatch);
             }
         }
@@ -94,15 +94,14 @@ impl BatchTransactionProverP3 {
             return Err(BatchCircuitError::EmptyBatch);
         }
 
-        let anchor = witnesses[0].merkle_root;
+        let anchor = witnesses[0].merkle_root_pq;
         for witness in witnesses.iter().skip(1) {
-            if witness.merkle_root != anchor {
+            if witness.merkle_root_pq != anchor {
                 return Err(BatchCircuitError::AnchorMismatch);
             }
         }
 
-        let anchor = bytes32_to_felts(&anchor)
-            .map(hash_to_gl)
+        let anchor = bytes48_to_felts(&anchor)
             .ok_or_else(|| BatchCircuitError::InvalidPublicInputs("anchor not canonical".into()))?;
 
         let mut nullifiers = Vec::with_capacity(MAX_BATCH_SIZE * MAX_INPUTS);
@@ -112,17 +111,23 @@ impl BatchTransactionProverP3 {
         for witness in witnesses {
             let prf = prf_key(&witness.sk_spend);
             for input in witness.inputs.iter().take(MAX_INPUTS) {
-                nullifiers.push(hash_to_gl(nullifier(prf, &input.note.rho, input.position)));
+                nullifiers.push(nullifier(prf, &input.note.rho, input.position));
             }
             for _ in witness.inputs.len()..MAX_INPUTS {
-                nullifiers.push([Val::ZERO; 4]);
+                nullifiers.push([Val::ZERO; 6]);
             }
 
             for output in witness.outputs.iter().take(MAX_OUTPUTS) {
-                commitments.push(hash_to_gl(output.note.commitment()));
+                commitments.push(note_commitment(
+                    output.note.value,
+                    output.note.asset_id,
+                    &output.note.pk_recipient,
+                    &output.note.rho,
+                    &output.note.r,
+                ));
             }
             for _ in witness.outputs.len()..MAX_OUTPUTS {
-                commitments.push([Val::ZERO; 4]);
+                commitments.push([Val::ZERO; 6]);
             }
 
             total_fee += witness.fee;
@@ -130,10 +135,10 @@ impl BatchTransactionProverP3 {
 
         for _ in batch_size..MAX_BATCH_SIZE {
             for _ in 0..MAX_INPUTS {
-                nullifiers.push([Val::ZERO; 4]);
+                nullifiers.push([Val::ZERO; 6]);
             }
             for _ in 0..MAX_OUTPUTS {
-                commitments.push([Val::ZERO; 4]);
+                commitments.push([Val::ZERO; 6]);
             }
         }
 
@@ -190,13 +195,4 @@ impl BatchTransactionProverP3 {
         let pub_inputs = self.public_inputs(witnesses)?;
         Ok((self.prove(trace, &pub_inputs), pub_inputs))
     }
-}
-
-fn hash_to_gl(hash: HashFelt) -> [Val; 4] {
-    [
-        Val::from_u64(hash[0].as_int()),
-        Val::from_u64(hash[1].as_int()),
-        Val::from_u64(hash[2].as_int()),
-        Val::from_u64(hash[3].as_int()),
-    ]
 }

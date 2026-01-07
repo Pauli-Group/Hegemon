@@ -14,7 +14,7 @@ per proof. Think Sapling/Orchard style: fixed `M, N` for the base circuit, recur
 A **note** is conceptually:
 
 * `value` - integer (e.g. 64-bit, or 128-bit if you're paranoid)
-* `asset_id` - 64-bit label (u64) in the current circuit, encoded as a single field element inside the STARK. Commitments and nullifiers are serialized as 32-byte outputs with four 64-bit limbs (see §2). `0` = native coin (ZEC-like). Future circuit versions can widen this if needed.
+* `asset_id` - 64-bit label (u64) in the current circuit, encoded as a single field element inside the STARK. Commitments and nullifiers are serialized as 32-byte outputs with four 64-bit limbs in the Winterfell legacy path; the Plonky3/PQC path uses 48-byte outputs with six 64-bit limbs for 384-bit capacity. Application-level types remain 32 bytes until Milestone 5 widens them. `0` = native coin (ZEC-like).
 * `pk_recipient` – an encoding of the recipient’s “note‑receiving” public data (tied to their incoming viewing key)
 * `rho` – per‑note secret (random)
 * `r` – commitment randomness
@@ -474,14 +474,10 @@ Everything arithmetized in the STARK (commitments, Merkle hashes, PRFs) lives in
 
 #### 1.2 Internal hash / permutation
 
-Define a Poseidon-like permutation \(P: \mathbb{F}_p^t \to \mathbb{F}_p^t\):
+Define a Poseidon-like permutation \(P: \mathbb{F}_p^t \to \mathbb{F}_p^t\), with a legacy and a PQ configuration:
 
-* Width \(t = 3\) (rate 2, capacity 1) for a small, STARK-friendly state.
-* S-box is \(x^5\) applied to every state element (full rounds only).
-* Rounds: \(R_F = 63\) full rounds, no partial rounds, which is conservative for 128-bit post-Grover security in this field.
-* Round constants and MDS matrix are generated via a NUMS scheme:
-  * Round constants: SHA-256(domain || round_be32 || pos_be32 || counter_be32), rejected if the 64-bit candidate is \(\ge p\).
-  * MDS: Cauchy matrix \((x_i - y_j)^{-1}\) with distinct \(x_i, y_j\) seeds derived by SHA-256(domain || label || counter_be32).
+* **Legacy (Winterfell)**: width \(t = 3\) (rate 2, capacity 1), S-box \(x^5\) on every element, \(R_F = 63\) full rounds, NUMS-generated round constants/MDS.
+* **PQC (Plonky3)**: Poseidon2 width \(t = 12\) (rate 6, capacity 6), S-box \(x^7\), 8 full rounds + 22 partial rounds, deterministic constants generated from the fixed seed `hegemon-tx-poseidon2-seed-2026!!`.
 
 We derive a field hash by sponge:
 
@@ -489,22 +485,23 @@ We derive a field hash by sponge:
 H_f(x_0, \ldots, x_{k-1}) = \operatorname{Sponge}(P, \text{capacity}=1, \text{rate}=2, x_0, \ldots, x_{k-1})
 \]
 
-For commitments, nullifiers, and Merkle nodes we emit four field elements: take `state[0]` and
-`state[1]`, apply one more permutation, then take `state[0]` and `state[1]` again. Single-field
-values (e.g., balance tags) still use the first state word.
+For commitments, nullifiers, and Merkle nodes we emit four field elements in the legacy path and
+six field elements (48 bytes) in the Plonky3/PQC path. Single-field values (e.g., balance tags)
+still use the first state word.
 
 Outside the circuit (for block headers, addresses, etc.) we can still use standard SHA-256 as a byte-oriented hash. Inside, we stick to \(H_f\).
 
 #### 1.3 Merkle tree
 
-* Each leaf: a four-limb commitment \(cm = (cm_0, cm_1, cm_2, cm_3)\) with \(cm_i \in \mathbb{F}_p\).
-* Parent hash: for children \(L, R\) (each 4 limbs), absorb the limbs in circuit order and output four limbs:
+* Each leaf: a commitment \(cm\) represented as four limbs in the legacy path or six limbs in the Plonky3/PQC path.
+* Parent hash: for children \(L, R\) (legacy 4 limbs, PQC 6 limbs), absorb the limbs in circuit order and output the same limb count:
 
 \[
 \text{parent} = H_f(\text{domain}_{\text{merkle}}, L_0, L_1, L_2, L_3, R_0, R_1, R_2, R_3)
 \]
 
 where \(\text{domain}_{\text{merkle}}\) is a fixed field element.
+For the Plonky3/PQC path, the same formula applies with six limbs per child.
 
 * Tree depth: say 32 or 40 (gives capacity for \(2^{32}\)–\(2^{40}\) notes; you can always roll a new tree later via a transition proof).
 * Runtime keeps a bounded window of recent Merkle roots (`MerkleRootHistorySize`); anchors older than the window are invalid to cap state growth.
@@ -654,7 +651,7 @@ Sender:
 
 On chain per output:
 
-* `cm` as a 32-byte commitment (4 x 64-bit limbs, canonical encoding)
+* `cm` as a 32-byte commitment (4 x 64-bit limbs, canonical encoding) in the legacy path, or 48 bytes (6 x 64-bit limbs) in the Plonky3/PQC path
 * `ct_kem` (≈1.1 KB)
 * `ct_aead` (|note_plain| + tag, say ≈100 bytes)
 * Optional small `scan_tag` if you want faster scanning.
@@ -675,9 +672,9 @@ Assume the base circuit handles up to `M` inputs (e.g., 4) and `N` outputs (e.g.
 
 The circuit's public inputs (fed into its transcript) are:
 
-* `root_before` - Merkle root anchor encoded as four field elements (32-byte canonical encoding).
-* For each input `i`: `input_active[i] ∈ {0,1}` and `nf_in[i]` is a 4-limb nullifier (inactive inputs must use all-zero limbs).
-* For each output `j`: `output_active[j] ∈ {0,1}` and `cm_out[j]` is a 4-limb commitment (inactive outputs must use all-zero limbs).
+* `root_before` - Merkle root anchor encoded as four field elements (legacy) or six field elements (Plonky3/PQC).
+* For each input `i`: `input_active[i] ∈ {0,1}` and `nf_in[i]` is a 4-limb nullifier (legacy) or 6-limb nullifier (Plonky3/PQC), with inactive inputs using all-zero limbs.
+* For each output `j`: `output_active[j] ∈ {0,1}` and `cm_out[j]` is a 4-limb commitment (legacy) or 6-limb commitment (Plonky3/PQC), with inactive outputs using all-zero limbs.
 * `fee_native ∈ F_p` and `value_balance` split into a sign bit plus a 64-bit magnitude so all values fit in one field element.
   In production, `value_balance` is required to be zero because there is no transparent pool.
 
@@ -703,7 +700,7 @@ For each input `i`:
 * `pk_recipient_in[i]` as 4 field elements (32 bytes split into 4 x 64-bit limbs)
 * `rho_in[i]` as 4 field elements
 * `r_in[i]` as 4 field elements
-* Merkle auth path: `sibling_in[i][d]` is a 4-limb node for `d = 0 .. D-1`
+* Merkle auth path: `sibling_in[i][d]` is a 4-limb node (legacy) or 6-limb node (Plonky3/PQC) for `d = 0 .. D-1`
 * `pos_in[i]` as a 64-bit field element used by the prover to order left/right siblings
 * The nullifier secret `sk_nf` (view-derived)
 

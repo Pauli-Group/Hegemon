@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use winterfell::math::FieldElement;
 
+#[cfg(feature = "plonky3")]
+use p3_field::PrimeCharacteristicRing;
+
 use crate::{
     constants::MAX_NOTE_VALUE,
     error::TransactionCircuitError,
@@ -83,6 +86,23 @@ impl MerklePath {
     }
 }
 
+#[cfg(feature = "plonky3")]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MerklePathPq {
+    /// Sibling hashes from leaf to root (length = MERKLE_TREE_DEPTH).
+    #[serde(with = "crate::note::serde_merkle_path_pq")]
+    pub siblings: Vec<crate::hashing_pq::HashFelt>,
+}
+
+#[cfg(feature = "plonky3")]
+impl Default for MerklePathPq {
+    fn default() -> Self {
+        Self {
+            siblings: vec![[crate::hashing_pq::Felt::ZERO; 6]; MERKLE_TREE_DEPTH],
+        }
+    }
+}
+
 pub(crate) mod serde_merkle_path {
     use crate::hashing::{bytes32_to_felts, felts_to_bytes32, HashFelt};
     use serde::{de::SeqAccess, de::Visitor, ser::SerializeSeq, Deserializer, Serializer};
@@ -128,6 +148,57 @@ pub(crate) mod serde_merkle_path {
     }
 }
 
+#[cfg(feature = "plonky3")]
+pub(crate) mod serde_merkle_path_pq {
+    use crate::hashing_pq::{bytes48_to_felts, felts_to_bytes48, HashFelt};
+    use serde::{de::SeqAccess, de::Visitor, ser::SerializeSeq, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &Vec<HashFelt>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut seq = serializer.serialize_seq(Some(value.len()))?;
+        for elem in value {
+            let bytes = felts_to_bytes48(elem);
+            seq.serialize_element(&bytes.to_vec())?;
+        }
+        seq.end()
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<HashFelt>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct FeltVecVisitor;
+        impl<'de> Visitor<'de> for FeltVecVisitor {
+            type Value = Vec<HashFelt>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a sequence of 48-byte hash encodings")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut vec = Vec::new();
+                while let Some(val) = seq.next_element::<Vec<u8>>()? {
+                    if val.len() != 48 {
+                        return Err(serde::de::Error::custom("expected 48 bytes"));
+                    }
+                    let mut arr = [0u8; 48];
+                    arr.copy_from_slice(&val);
+                    let felts = bytes48_to_felts(&arr)
+                        .ok_or_else(|| serde::de::Error::custom("non-canonical hash bytes"))?;
+                    vec.push(felts);
+                }
+                Ok(vec)
+            }
+        }
+        deserializer.deserialize_seq(FeltVecVisitor)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct InputNoteWitness {
     #[serde(flatten)]
@@ -138,6 +209,9 @@ pub struct InputNoteWitness {
     /// Merkle authentication path proving note is in the tree.
     #[serde(default)]
     pub merkle_path: MerklePath,
+    #[cfg(feature = "plonky3")]
+    #[serde(default)]
+    pub merkle_path_pq: Option<MerklePathPq>,
 }
 
 impl InputNoteWitness {
