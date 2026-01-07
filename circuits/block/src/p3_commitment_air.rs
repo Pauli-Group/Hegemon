@@ -6,7 +6,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir};
-use p3_field::{AbstractField, Field, PrimeField64};
+use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
 use p3_goldilocks::Goldilocks;
 use p3_matrix::Matrix;
 
@@ -58,7 +58,7 @@ impl CommitmentBlockPublicInputsP3 {
         elements.extend_from_slice(&self.ending_state_root);
         elements.extend_from_slice(&self.nullifier_root);
         elements.extend_from_slice(&self.da_root);
-        elements.push(Felt::from_canonical_u64(self.tx_count as u64));
+        elements.push(Felt::from_u64(self.tx_count as u64));
         elements.push(self.perm_alpha);
         elements.push(self.perm_beta);
         for nf in &self.nullifiers {
@@ -158,11 +158,11 @@ where
 {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
-        let current = main.row_slice(0);
-        let next = main.row_slice(1);
+        let current = main.row_slice(0).expect("trace must have >= 1 row");
+        let next = main.row_slice(1).expect("trace must have >= 2 rows");
 
-        let one = AB::Expr::one();
-        let two = AB::Expr::from_canonical_u64(2);
+        let one = AB::Expr::ONE;
+        let two = AB::Expr::from_u64(2);
 
         let step_bits = [
             current[COL_STEP_BIT0],
@@ -207,18 +207,18 @@ where
         };
 
         let cycle_end = bit_selector(&step_bits, CYCLE_LENGTH - 1);
-        let mut hash_flag = AB::Expr::zero();
-        let mut rc0 = AB::Expr::zero();
-        let mut rc1 = AB::Expr::zero();
-        let mut rc2 = AB::Expr::zero();
+        let mut hash_flag = AB::Expr::ZERO;
+        let mut rc0 = AB::Expr::ZERO;
+        let mut rc1 = AB::Expr::ZERO;
+        let mut rc2 = AB::Expr::ZERO;
         for round in 0..POSEIDON_ROUNDS {
             let sel = bit_selector(&step_bits, round);
             hash_flag += sel.clone();
             rc0 += sel.clone()
-                * AB::Expr::from_canonical_u64(poseidon_constants::ROUND_CONSTANTS[round][0]);
+                * AB::Expr::from_u64(poseidon_constants::ROUND_CONSTANTS[round][0]);
             rc1 += sel.clone()
-                * AB::Expr::from_canonical_u64(poseidon_constants::ROUND_CONSTANTS[round][1]);
-            rc2 += sel * AB::Expr::from_canonical_u64(poseidon_constants::ROUND_CONSTANTS[round][2]);
+                * AB::Expr::from_u64(poseidon_constants::ROUND_CONSTANTS[round][1]);
+            rc2 += sel * AB::Expr::from_u64(poseidon_constants::ROUND_CONSTANTS[round][2]);
         }
 
         let t0 = current[COL_S0] + rc0;
@@ -229,15 +229,15 @@ where
         let s2 = t2.exp_const_u64::<5>();
 
         let mds = poseidon_constants::MDS_MATRIX;
-        let m00 = AB::Expr::from_canonical_u64(mds[0][0]);
-        let m01 = AB::Expr::from_canonical_u64(mds[0][1]);
-        let m02 = AB::Expr::from_canonical_u64(mds[0][2]);
-        let m10 = AB::Expr::from_canonical_u64(mds[1][0]);
-        let m11 = AB::Expr::from_canonical_u64(mds[1][1]);
-        let m12 = AB::Expr::from_canonical_u64(mds[1][2]);
-        let m20 = AB::Expr::from_canonical_u64(mds[2][0]);
-        let m21 = AB::Expr::from_canonical_u64(mds[2][1]);
-        let m22 = AB::Expr::from_canonical_u64(mds[2][2]);
+        let m00 = AB::Expr::from_u64(mds[0][0]);
+        let m01 = AB::Expr::from_u64(mds[0][1]);
+        let m02 = AB::Expr::from_u64(mds[0][2]);
+        let m10 = AB::Expr::from_u64(mds[1][0]);
+        let m11 = AB::Expr::from_u64(mds[1][1]);
+        let m12 = AB::Expr::from_u64(mds[1][2]);
+        let m20 = AB::Expr::from_u64(mds[2][0]);
+        let m21 = AB::Expr::from_u64(mds[2][1]);
+        let m22 = AB::Expr::from_u64(mds[2][2]);
 
         let hash_s0 = s0.clone() * m00 + s1.clone() * m01 + s2.clone() * m02;
         let hash_s1 = s0.clone() * m10 + s1.clone() * m11 + s2.clone() * m12;
@@ -255,7 +255,7 @@ where
             when_first.assert_zero(current[COL_NF_PERM] - one.clone());
             when_first.assert_zero(
                 current[COL_S0]
-                    - (AB::Expr::from_canonical_u64(BLOCK_COMMITMENT_DOMAIN_TAG)
+                    - (AB::Expr::from_u64(BLOCK_COMMITMENT_DOMAIN_TAG)
                         + current[COL_INPUT0]),
             );
             when_first.assert_zero(current[COL_S1] - current[COL_INPUT1]);
@@ -472,8 +472,8 @@ where
             when.assert_zero(is_last.clone() * (current[COL_S0] - output[2].clone()));
             when.assert_zero(is_last.clone() * (current[COL_S1] - output[3].clone()));
 
-            let input_cycles = tx_count.clone() * AB::Expr::from_canonical_u64(2);
-            let nullifier_count_expr = tx_count * AB::Expr::from_canonical_u64(MAX_INPUTS as u64);
+            let input_cycles = tx_count.clone() * AB::Expr::from_u64(2);
+            let nullifier_count_expr = tx_count * AB::Expr::from_u64(MAX_INPUTS as u64);
             when.assert_zero(
                 is_last.clone() * (input_cycle_acc + input_cycle_mask - input_cycles),
             );

@@ -5,8 +5,8 @@ use p3_challenger::DuplexChallenger;
 use p3_commit::ExtensionMmcs;
 use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
-use p3_field::{AbstractField, Field, PrimeField64};
-use p3_fri::{FriConfig, TwoAdicFriPcs};
+use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
+use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_goldilocks::{DiffusionMatrixGoldilocks, Goldilocks};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
@@ -44,7 +44,8 @@ impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
         let b = pis[1];
         let x = pis[2];
 
-        let (local, next) = (main.row_slice(0), main.row_slice(1));
+        let local = main.row_slice(0).expect("trace must have >= 1 row");
+        let next = main.row_slice(1).expect("trace must have >= 2 rows");
         let local: &FibonacciRow<AB::Var> = (*local).borrow();
         let next: &FibonacciRow<AB::Var> = (*next).borrow();
 
@@ -63,14 +64,15 @@ impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
 pub fn generate_trace_rows<F: PrimeField64>(a: u64, b: u64, n: usize) -> RowMajorMatrix<F> {
     assert!(n.is_power_of_two());
 
-    let mut trace = RowMajorMatrix::new(vec![F::zero(); n * NUM_FIBONACCI_COLS], NUM_FIBONACCI_COLS);
+    let mut trace =
+        RowMajorMatrix::new(vec![F::ZERO; n * NUM_FIBONACCI_COLS], NUM_FIBONACCI_COLS);
 
     let (prefix, rows, suffix) = unsafe { trace.values.align_to_mut::<FibonacciRow<F>>() };
     assert!(prefix.is_empty(), "Alignment should match");
     assert!(suffix.is_empty(), "Alignment should match");
     assert_eq!(rows.len(), n);
 
-    rows[0] = FibonacciRow::new(F::from_canonical_u64(a), F::from_canonical_u64(b));
+    rows[0] = FibonacciRow::new(F::from_u64(a), F::from_u64(b));
 
     for i in 1..n {
         rows[i].left = rows[i - 1].right;
@@ -126,14 +128,17 @@ pub fn prove_and_verify() -> FibProofStats {
     let val_mmcs = ValMmcs::new(hash, compress);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft {};
-    let fri_config = FriConfig {
+    let fri_config = FriParameters {
         log_blowup: 3,
+        log_final_poly_len: 0,
         num_queries: 43,
-        proof_of_work_bits: 0,
+        commit_proof_of_work_bits: 0,
+        query_proof_of_work_bits: 0,
         mmcs: challenge_mmcs,
     };
     let pcs = Pcs::new(dft, val_mmcs, fri_config);
-    let config = MyConfig::new(pcs);
+    let challenger = Challenger::new(perm.clone());
+    let config = MyConfig::new(pcs, challenger);
 
     let trace = generate_trace_rows::<Val>(0, 1, TRACE_ROWS);
     let last_right = {
@@ -143,20 +148,17 @@ pub fn prove_and_verify() -> FibProofStats {
         rows[TRACE_ROWS - 1].right
     };
     let pis = vec![
-        Val::from_canonical_u64(0),
-        Val::from_canonical_u64(1),
+        Val::from_u64(0),
+        Val::from_u64(1),
         last_right,
     ];
 
-    let mut challenger = Challenger::new(perm.clone());
-    let proof = prove(&config, &FibonacciAir {}, &mut challenger, trace, &pis);
+    let proof = prove(&config, &FibonacciAir {}, trace, &pis);
     let proof_bytes = bincode::serialize(&proof)
         .expect("serialize proof")
         .len();
 
-    let mut challenger = Challenger::new(perm);
-    verify(&config, &FibonacciAir {}, &mut challenger, &proof, &pis)
-        .expect("verification failed");
+    verify(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
 
     let log_trace_rows = TRACE_ROWS.trailing_zeros() as usize;
     println!(

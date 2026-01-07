@@ -1,23 +1,20 @@
 //! Plonky3 prover for batch transaction proofs.
 
 use p3_goldilocks::Goldilocks;
-use p3_field::AbstractField;
+use p3_field::PrimeCharacteristicRing;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
-use p3_uni_stark::prove;
+use p3_uni_stark::{prove_with_preprocessed, setup_preprocessed};
 
 use crate::error::BatchCircuitError;
-use crate::p3_air::{
-    BatchPublicInputsP3, BatchTransactionAirP3, COL_BATCH_CYCLE_BIT10, COL_BATCH_CYCLE_BIT11,
-    COL_BATCH_CYCLE_BIT12, COL_BATCH_CYCLE_BIT9, TRACE_WIDTH,
-};
+use crate::p3_air::{BatchPublicInputsP3, BatchTransactionAirP3, TRACE_WIDTH};
 use crate::public_inputs::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing::{bytes32_to_felts, nullifier, prf_key, HashFelt};
-use transaction_circuit::p3_config::{default_config, new_challenger, TransactionProofP3};
+use transaction_circuit::p3_config::{default_config, TransactionProofP3};
 use transaction_circuit::p3_prover::TransactionProverP3;
 use transaction_circuit::TransactionWitness;
 use transaction_core::dimensions::{batch_trace_rows, slot_start_row, validate_batch_size, ROWS_PER_TX};
-use transaction_core::p3_air::{CYCLE_LENGTH, COL_CYCLE_BIT0, COL_FEE, COL_STEP_BIT0, TRACE_WIDTH as TX_TRACE_WIDTH};
+use transaction_core::p3_air::{COL_FEE, TRACE_WIDTH as TX_TRACE_WIDTH};
 
 type Val = Goldilocks;
 
@@ -59,7 +56,8 @@ impl BatchTransactionProverP3 {
         }
 
         let trace_len = batch_trace_rows(batch_size);
-        let mut trace = RowMajorMatrix::new(vec![Val::zero(); trace_len * TRACE_WIDTH], TRACE_WIDTH);
+        let mut trace =
+            RowMajorMatrix::new(vec![Val::ZERO; trace_len * TRACE_WIDTH], TRACE_WIDTH);
         let single_prover = TransactionProverP3::new();
 
         for (tx_idx, witness) in witnesses.iter().enumerate() {
@@ -79,25 +77,7 @@ impl BatchTransactionProverP3 {
 
         let total_fee: u64 = witnesses.iter().map(|w| w.fee).sum();
         let last_row = trace_len.saturating_sub(1);
-        trace.row_mut(last_row)[COL_FEE] = Val::from_canonical_u64(total_fee);
-
-        for row in 0..trace_len {
-            let step = row % CYCLE_LENGTH;
-            let cycle = row / CYCLE_LENGTH;
-            let row_slice = trace.row_mut(row);
-            for bit in 0..6 {
-                let is_one = ((step >> bit) & 1) == 1;
-                row_slice[COL_STEP_BIT0 + bit] = Val::from_bool(is_one);
-            }
-            for bit in 0..9 {
-                let is_one = ((cycle >> bit) & 1) == 1;
-                row_slice[COL_CYCLE_BIT0 + bit] = Val::from_bool(is_one);
-            }
-            row_slice[COL_BATCH_CYCLE_BIT9] = Val::from_bool(((cycle >> 9) & 1) == 1);
-            row_slice[COL_BATCH_CYCLE_BIT10] = Val::from_bool(((cycle >> 10) & 1) == 1);
-            row_slice[COL_BATCH_CYCLE_BIT11] = Val::from_bool(((cycle >> 11) & 1) == 1);
-            row_slice[COL_BATCH_CYCLE_BIT12] = Val::from_bool(((cycle >> 12) & 1) == 1);
-        }
+        trace.row_mut(last_row)[COL_FEE] = Val::from_u64(total_fee);
 
         Ok(trace)
     }
@@ -135,14 +115,14 @@ impl BatchTransactionProverP3 {
                 nullifiers.push(hash_to_gl(nullifier(prf, &input.note.rho, input.position)));
             }
             for _ in witness.inputs.len()..MAX_INPUTS {
-                nullifiers.push([Val::zero(); 4]);
+                nullifiers.push([Val::ZERO; 4]);
             }
 
             for output in witness.outputs.iter().take(MAX_OUTPUTS) {
                 commitments.push(hash_to_gl(output.note.commitment()));
             }
             for _ in witness.outputs.len()..MAX_OUTPUTS {
-                commitments.push([Val::zero(); 4]);
+                commitments.push([Val::ZERO; 4]);
             }
 
             total_fee += witness.fee;
@@ -150,10 +130,10 @@ impl BatchTransactionProverP3 {
 
         for _ in batch_size..MAX_BATCH_SIZE {
             for _ in 0..MAX_INPUTS {
-                nullifiers.push([Val::zero(); 4]);
+                nullifiers.push([Val::ZERO; 4]);
             }
             for _ in 0..MAX_OUTPUTS {
-                commitments.push([Val::zero(); 4]);
+                commitments.push([Val::ZERO; 4]);
             }
         }
 
@@ -168,7 +148,7 @@ impl BatchTransactionProverP3 {
             tx_active,
             nullifiers,
             commitments,
-            total_fee: Val::from_canonical_u64(total_fee),
+            total_fee: Val::from_u64(total_fee),
             circuit_version: 1,
         })
     }
@@ -179,13 +159,17 @@ impl BatchTransactionProverP3 {
         pub_inputs: &BatchPublicInputsP3,
     ) -> BatchProofP3 {
         let config = default_config();
-        let mut challenger = new_challenger(&config.perm);
-        prove(
+        let degree_bits = trace.height().ilog2() as usize;
+        let air = BatchTransactionAirP3::new(trace.height());
+        let (prep_prover, _) =
+            setup_preprocessed(&config.config, &air, degree_bits)
+                .expect("BatchTransactionAirP3 preprocessed trace missing");
+        prove_with_preprocessed(
             &config.config,
-            &BatchTransactionAirP3,
-            &mut challenger,
+            &air,
             trace,
             &pub_inputs.to_vec(),
+            Some(&prep_prover),
         )
     }
 
@@ -210,9 +194,9 @@ impl BatchTransactionProverP3 {
 
 fn hash_to_gl(hash: HashFelt) -> [Val; 4] {
     [
-        Val::from_canonical_u64(hash[0].as_int()),
-        Val::from_canonical_u64(hash[1].as_int()),
-        Val::from_canonical_u64(hash[2].as_int()),
-        Val::from_canonical_u64(hash[3].as_int()),
+        Val::from_u64(hash[0].as_int()),
+        Val::from_u64(hash[1].as_int()),
+        Val::from_u64(hash[2].as_int()),
+        Val::from_u64(hash[3].as_int()),
     ]
 }

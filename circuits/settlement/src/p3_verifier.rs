@@ -1,7 +1,8 @@
 //! Plonky3 verifier for settlement commitments.
 
 use crate::p3_air::{SettlementAirP3, SettlementPublicInputsP3};
-use transaction_circuit::p3_config::{default_config, new_challenger, TransactionProofP3};
+use p3_uni_stark::{setup_preprocessed, verify_with_preprocessed};
+use transaction_circuit::p3_config::{default_config, TransactionProofP3};
 
 pub fn verify_settlement_proof_p3(
     proof: &TransactionProofP3,
@@ -12,13 +13,16 @@ pub fn verify_settlement_proof_p3(
         .map_err(SettlementVerifyErrorP3::InvalidPublicInputs)?;
 
     let config = default_config();
-    let mut challenger = new_challenger(&config.perm);
-    p3_uni_stark::verify(
+    let degree_bits = proof.degree_bits;
+    let prep_vk = setup_preprocessed(&config.config, &SettlementAirP3, degree_bits)
+        .map(|(_, vk)| vk)
+        .expect("SettlementAirP3 preprocessed trace missing");
+    verify_with_preprocessed(
         &config.config,
         &SettlementAirP3,
-        &mut challenger,
         proof,
         &pub_inputs.to_vec(),
+        Some(&prep_vk),
     )
     .map_err(|err| SettlementVerifyErrorP3::VerificationFailed(format!("{err:?}")))
 }

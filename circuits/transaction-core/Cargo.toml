@@ -18,6 +18,7 @@ p3-matrix = { workspace = true, optional = true }
 
 [dev-dependencies]
 miden-crypto = { version = "0.19", default-features = false, features = ["std"] }
+p3-uni-stark = { workspace = true }
 
 [features]
 default = ["std", "winterfell-legacy"]

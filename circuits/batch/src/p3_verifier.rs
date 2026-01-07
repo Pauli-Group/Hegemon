@@ -3,7 +3,8 @@
 use crate::error::BatchCircuitError;
 use crate::p3_air::{BatchPublicInputsP3, BatchTransactionAirP3};
 use crate::p3_prover::BatchProofP3;
-use transaction_circuit::p3_config::{default_config, new_challenger};
+use p3_uni_stark::{setup_preprocessed, verify_with_preprocessed};
+use transaction_circuit::p3_config::default_config;
 
 pub fn verify_batch_proof_p3(
     proof: &BatchProofP3,
@@ -14,13 +15,18 @@ pub fn verify_batch_proof_p3(
         .map_err(BatchCircuitError::InvalidPublicInputs)?;
 
     let config = default_config();
-    let mut challenger = new_challenger(&config.perm);
-    p3_uni_stark::verify(
+    let degree_bits = proof.degree_bits;
+    let trace_len = 1usize << degree_bits;
+    let air = BatchTransactionAirP3::new(trace_len);
+    let prep_vk = setup_preprocessed(&config.config, &air, degree_bits)
+        .map(|(_, vk)| vk)
+        .expect("BatchTransactionAirP3 preprocessed trace missing");
+    verify_with_preprocessed(
         &config.config,
-        &BatchTransactionAirP3,
-        &mut challenger,
+        &air,
         proof,
         &pub_inputs.to_vec(),
+        Some(&prep_vk),
     )
     .map_err(|err| BatchCircuitError::VerificationError(format!("{err:?}")))
 }

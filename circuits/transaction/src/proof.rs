@@ -44,7 +44,7 @@ use crate::p3_prover::TransactionProverP3;
 #[cfg(feature = "plonky3")]
 use crate::p3_verifier::verify_transaction_proof_bytes_p3;
 #[cfg(feature = "plonky3")]
-use p3_field::{AbstractField, PrimeField64};
+use p3_field::{PrimeCharacteristicRing, PrimeField64};
 #[cfg(feature = "plonky3")]
 use p3_goldilocks::Goldilocks;
 #[cfg(feature = "plonky3")]
@@ -361,12 +361,12 @@ fn verify_with_p3(
     let input_flags = stark_inputs
         .input_flags
         .iter()
-        .map(|flag| Goldilocks::from_canonical_u64(*flag as u64))
+        .map(|flag| Goldilocks::from_u64(*flag as u64))
         .collect();
     let output_flags = stark_inputs
         .output_flags
         .iter()
-        .map(|flag| Goldilocks::from_canonical_u64(*flag as u64))
+        .map(|flag| Goldilocks::from_u64(*flag as u64))
         .collect();
 
     let nullifiers = proof
@@ -419,19 +419,19 @@ fn verify_with_p3(
         output_flags,
         nullifiers,
         commitments,
-        fee: Goldilocks::from_canonical_u64(stark_inputs.fee),
-        value_balance_sign: Goldilocks::from_canonical_u64(stark_inputs.value_balance_sign as u64),
-        value_balance_magnitude: Goldilocks::from_canonical_u64(stark_inputs.value_balance_magnitude),
+        fee: Goldilocks::from_u64(stark_inputs.fee),
+        value_balance_sign: Goldilocks::from_u64(stark_inputs.value_balance_sign as u64),
+        value_balance_magnitude: Goldilocks::from_u64(stark_inputs.value_balance_magnitude),
         merkle_root,
-        stablecoin_enabled: Goldilocks::from_canonical_u64(stark_inputs.stablecoin_enabled as u64),
-        stablecoin_asset: Goldilocks::from_canonical_u64(stark_inputs.stablecoin_asset_id),
-        stablecoin_policy_version: Goldilocks::from_canonical_u64(
+        stablecoin_enabled: Goldilocks::from_u64(stark_inputs.stablecoin_enabled as u64),
+        stablecoin_asset: Goldilocks::from_u64(stark_inputs.stablecoin_asset_id),
+        stablecoin_policy_version: Goldilocks::from_u64(
             stark_inputs.stablecoin_policy_version as u64,
         ),
-        stablecoin_issuance_sign: Goldilocks::from_canonical_u64(
+        stablecoin_issuance_sign: Goldilocks::from_u64(
             stark_inputs.stablecoin_issuance_sign as u64,
         ),
-        stablecoin_issuance_magnitude: Goldilocks::from_canonical_u64(
+        stablecoin_issuance_magnitude: Goldilocks::from_u64(
             stark_inputs.stablecoin_issuance_magnitude,
         ),
         stablecoin_policy_hash,
@@ -627,10 +627,10 @@ fn hash_to_bytes32(hash: &[Goldilocks; 4]) -> Commitment {
 #[cfg(feature = "plonky3")]
 fn hash_felt_to_gl(hash: [Felt; 4]) -> [Goldilocks; 4] {
     [
-        Goldilocks::from_canonical_u64(hash[0].as_int()),
-        Goldilocks::from_canonical_u64(hash[1].as_int()),
-        Goldilocks::from_canonical_u64(hash[2].as_int()),
-        Goldilocks::from_canonical_u64(hash[3].as_int()),
+        Goldilocks::from_u64(hash[0].as_int()),
+        Goldilocks::from_u64(hash[1].as_int()),
+        Goldilocks::from_u64(hash[2].as_int()),
+        Goldilocks::from_u64(hash[3].as_int()),
     ]
 }
 

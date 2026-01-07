@@ -12,9 +12,10 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir};
-use p3_field::AbstractField;
+use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, PairBuilder};
+use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks;
+use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
 
 use crate::constants::{
@@ -28,9 +29,6 @@ pub type Felt = Goldilocks;
 // ================================================================================================
 // TRACE CONFIGURATION
 // ================================================================================================
-
-/// Trace width (columns) for the transaction circuit.
-pub const TRACE_WIDTH: usize = 101;
 
 /// Poseidon state columns.
 pub const COL_S0: usize = 0;
@@ -160,22 +158,46 @@ pub const COL_STABLECOIN_SLOT_SEL1: usize = 83;
 pub const COL_STABLECOIN_SLOT_SEL2: usize = 84;
 pub const COL_STABLECOIN_SLOT_SEL3: usize = 85;
 
-/// Schedule counters (binary).
-pub const COL_STEP_BIT0: usize = 86;
-pub const COL_STEP_BIT1: usize = 87;
-pub const COL_STEP_BIT2: usize = 88;
-pub const COL_STEP_BIT3: usize = 89;
-pub const COL_STEP_BIT4: usize = 90;
-pub const COL_STEP_BIT5: usize = 91;
-pub const COL_CYCLE_BIT0: usize = 92;
-pub const COL_CYCLE_BIT1: usize = 93;
-pub const COL_CYCLE_BIT2: usize = 94;
-pub const COL_CYCLE_BIT3: usize = 95;
-pub const COL_CYCLE_BIT4: usize = 96;
-pub const COL_CYCLE_BIT5: usize = 97;
-pub const COL_CYCLE_BIT6: usize = 98;
-pub const COL_CYCLE_BIT7: usize = 99;
-pub const COL_CYCLE_BIT8: usize = 100;
+/// Trace width (columns) for the transaction circuit.
+pub const TRACE_WIDTH: usize = COL_STABLECOIN_SLOT_SEL3 + 1;
+
+// ================================================================================================
+// PREPROCESSED COLUMNS (fixed schedule)
+// ================================================================================================
+
+/// Poseidon hash flag for each row (1 during rounds).
+pub const PREP_HASH_FLAG: usize = 0;
+/// Poseidon absorb flag for each row (1 on the absorb step).
+pub const PREP_ABSORB_FLAG: usize = PREP_HASH_FLAG + 1;
+/// Poseidon round constants (per row).
+pub const PREP_RC0: usize = PREP_ABSORB_FLAG + 1;
+pub const PREP_RC1: usize = PREP_RC0 + 1;
+pub const PREP_RC2: usize = PREP_RC1 + 1;
+/// Cycle-boundary schedule flags (precomputed at cycle end rows).
+pub const PREP_RESET: usize = PREP_RC2 + 1;
+pub const PREP_DOMAIN: usize = PREP_RESET + 1;
+pub const PREP_MERKLE_LEFT_23: usize = PREP_DOMAIN + 1;
+pub const PREP_MERKLE_LEFT_01: usize = PREP_MERKLE_LEFT_23 + 1;
+pub const PREP_MERKLE_RIGHT_23: usize = PREP_MERKLE_LEFT_01 + 1;
+pub const PREP_MERKLE_RIGHT_01: usize = PREP_MERKLE_RIGHT_23 + 1;
+pub const PREP_CAPTURE: usize = PREP_MERKLE_RIGHT_01 + 1;
+pub const PREP_CAPTURE2: usize = PREP_CAPTURE + 1;
+/// Note start flags.
+pub const PREP_NOTE_START_IN0: usize = PREP_CAPTURE2 + 1;
+pub const PREP_NOTE_START_IN1: usize = PREP_NOTE_START_IN0 + 1;
+pub const PREP_NOTE_START_OUT0: usize = PREP_NOTE_START_IN1 + 1;
+pub const PREP_NOTE_START_OUT1: usize = PREP_NOTE_START_OUT0 + 1;
+/// Row selector flags for public input assertions.
+pub const PREP_FINAL_ROW: usize = PREP_NOTE_START_OUT1 + 1;
+pub const PREP_NF0_ROW: usize = PREP_FINAL_ROW + 1;
+pub const PREP_NF1_ROW: usize = PREP_NF0_ROW + 1;
+pub const PREP_MR0_ROW: usize = PREP_NF1_ROW + 1;
+pub const PREP_MR1_ROW: usize = PREP_MR0_ROW + 1;
+pub const PREP_CM0_ROW: usize = PREP_MR1_ROW + 1;
+pub const PREP_CM1_ROW: usize = PREP_CM0_ROW + 1;
+
+/// Preprocessed trace width (columns).
+pub const PREPROCESSED_WIDTH: usize = PREP_CM1_ROW + 1;
 
 /// Cycle length: power of 2, must be > POSEIDON_ROUNDS.
 pub const CYCLE_LENGTH: usize = 64;
@@ -229,7 +251,7 @@ pub const TOTAL_TRACE_CYCLES: usize = MIN_TRACE_LENGTH / CYCLE_LENGTH;
 
 #[inline]
 pub fn round_constant(round: usize, position: usize) -> Felt {
-    Felt::from_canonical_u64(poseidon_constants::ROUND_CONSTANTS[round][position])
+    Felt::from_u64(poseidon_constants::ROUND_CONSTANTS[round][position])
 }
 
 // ================================================================================================
@@ -258,21 +280,21 @@ pub struct TransactionPublicInputsP3 {
 
 impl Default for TransactionPublicInputsP3 {
     fn default() -> Self {
-        let zero = [Felt::zero(); 4];
+        let zero = [Felt::ZERO; 4];
         Self {
-            input_flags: vec![Felt::zero(); MAX_INPUTS],
-            output_flags: vec![Felt::zero(); MAX_OUTPUTS],
+            input_flags: vec![Felt::ZERO; MAX_INPUTS],
+            output_flags: vec![Felt::ZERO; MAX_OUTPUTS],
             nullifiers: vec![zero; MAX_INPUTS],
             commitments: vec![zero; MAX_OUTPUTS],
-            fee: Felt::zero(),
-            value_balance_sign: Felt::zero(),
-            value_balance_magnitude: Felt::zero(),
+            fee: Felt::ZERO,
+            value_balance_sign: Felt::ZERO,
+            value_balance_magnitude: Felt::ZERO,
             merkle_root: zero,
-            stablecoin_enabled: Felt::zero(),
-            stablecoin_asset: Felt::zero(),
-            stablecoin_policy_version: Felt::zero(),
-            stablecoin_issuance_sign: Felt::zero(),
-            stablecoin_issuance_magnitude: Felt::zero(),
+            stablecoin_enabled: Felt::ZERO,
+            stablecoin_asset: Felt::ZERO,
+            stablecoin_policy_version: Felt::ZERO,
+            stablecoin_issuance_sign: Felt::ZERO,
+            stablecoin_issuance_magnitude: Felt::ZERO,
             stablecoin_policy_hash: zero,
             stablecoin_oracle_commitment: zero,
             stablecoin_attestation_commitment: zero,
@@ -408,8 +430,8 @@ impl TransactionPublicInputsP3 {
             return Err("commitments length mismatch".into());
         }
 
-        let zero = Felt::zero();
-        let one = Felt::one();
+        let zero = Felt::ZERO;
+        let one = Felt::ONE;
         let is_zero_hash = |value: &[Felt; 4]| value.iter().all(|elem| *elem == zero);
 
         for (idx, flag) in self.input_flags.iter().enumerate() {
@@ -604,6 +626,61 @@ pub fn note_start_row_output(output_index: usize) -> usize {
     (output_commitment_start_cycle(output_index) - 1) * CYCLE_LENGTH + (CYCLE_LENGTH - 1)
 }
 
+fn build_preprocessed_trace() -> RowMajorMatrix<Felt> {
+    let trace_len = MIN_TRACE_LENGTH;
+    let mut values = vec![Felt::ZERO; trace_len * PREPROCESSED_WIDTH];
+
+    for row in 0..trace_len {
+        let step = row % CYCLE_LENGTH;
+        let cycle = row / CYCLE_LENGTH;
+        let row_slice =
+            &mut values[row * PREPROCESSED_WIDTH..(row + 1) * PREPROCESSED_WIDTH];
+
+        row_slice[PREP_HASH_FLAG] = Felt::from_bool(step < POSEIDON_ROUNDS);
+        row_slice[PREP_ABSORB_FLAG] = Felt::from_bool(step == CYCLE_LENGTH - 1);
+        if step < POSEIDON_ROUNDS {
+            row_slice[PREP_RC0] = round_constant(step, 0);
+            row_slice[PREP_RC1] = round_constant(step, 1);
+            row_slice[PREP_RC2] = round_constant(step, 2);
+        }
+
+        if step == CYCLE_LENGTH - 1 {
+            let next_cycle = cycle + 1;
+            if next_cycle < TOTAL_TRACE_CYCLES {
+                if let Some(domain_tag) = cycle_reset_domain(next_cycle) {
+                    row_slice[PREP_RESET] = Felt::ONE;
+                    row_slice[PREP_DOMAIN] = Felt::from_u64(domain_tag);
+                }
+                row_slice[PREP_MERKLE_LEFT_23] =
+                    Felt::from_bool(cycle_is_merkle_left_23(next_cycle));
+                row_slice[PREP_MERKLE_LEFT_01] =
+                    Felt::from_bool(cycle_is_merkle_left_01(next_cycle));
+                row_slice[PREP_MERKLE_RIGHT_23] =
+                    Felt::from_bool(cycle_is_merkle_right_23(next_cycle));
+                row_slice[PREP_MERKLE_RIGHT_01] =
+                    Felt::from_bool(cycle_is_merkle_right_01(next_cycle));
+                row_slice[PREP_CAPTURE] = Felt::from_bool(cycle_is_squeeze(next_cycle));
+            }
+            row_slice[PREP_CAPTURE2] = Felt::from_bool(cycle_is_squeeze(cycle));
+        }
+
+        row_slice[PREP_NOTE_START_IN0] = Felt::from_bool(row == note_start_row_input(0));
+        row_slice[PREP_NOTE_START_IN1] = Felt::from_bool(row == note_start_row_input(1));
+        row_slice[PREP_NOTE_START_OUT0] = Felt::from_bool(row == note_start_row_output(0));
+        row_slice[PREP_NOTE_START_OUT1] = Felt::from_bool(row == note_start_row_output(1));
+
+        row_slice[PREP_FINAL_ROW] = Felt::from_bool(row == MIN_TRACE_LENGTH - 2);
+        row_slice[PREP_NF0_ROW] = Felt::from_bool(row == nullifier_output_row(0));
+        row_slice[PREP_NF1_ROW] = Felt::from_bool(row == nullifier_output_row(1));
+        row_slice[PREP_MR0_ROW] = Felt::from_bool(row == merkle_root_output_row(0));
+        row_slice[PREP_MR1_ROW] = Felt::from_bool(row == merkle_root_output_row(1));
+        row_slice[PREP_CM0_ROW] = Felt::from_bool(row == commitment_output_row(0));
+        row_slice[PREP_CM1_ROW] = Felt::from_bool(row == commitment_output_row(1));
+    }
+
+    RowMajorMatrix::new(values, PREPROCESSED_WIDTH)
+}
+
 // ================================================================================================
 // AIR IMPLEMENTATION
 // ================================================================================================
@@ -614,97 +691,57 @@ impl BaseAir<Felt> for TransactionAirP3 {
     fn width(&self) -> usize {
         TRACE_WIDTH
     }
+
+    fn preprocessed_trace(&self) -> Option<RowMajorMatrix<Felt>> {
+        Some(build_preprocessed_trace())
+    }
 }
 
 impl<AB> Air<AB> for TransactionAirP3
 where
-    AB: AirBuilderWithPublicValues<F = Felt>,
+    AB: AirBuilderWithPublicValues<F = Felt> + PairBuilder,
 {
     fn eval(&self, builder: &mut AB) {
         let main = builder.main();
-        let current = main.row_slice(0);
-        let next = main.row_slice(1);
+        let current = main.row_slice(0).expect("trace must have >= 1 row");
+        let next = main.row_slice(1).expect("trace must have >= 2 rows");
+        let preprocessed = builder.preprocessed();
+        let prep = preprocessed
+            .row_slice(0)
+            .expect("preprocessed trace must have >= 1 row");
 
         let is_first_row = builder.is_first_row();
-        let one = AB::Expr::one();
-        let two = AB::Expr::from_canonical_u64(2);
+        let one = AB::Expr::ONE;
+        let two = AB::Expr::TWO;
         let not_first_row = one.clone() - is_first_row.clone();
 
-        let step_bits = [
-            current[COL_STEP_BIT0],
-            current[COL_STEP_BIT1],
-            current[COL_STEP_BIT2],
-            current[COL_STEP_BIT3],
-            current[COL_STEP_BIT4],
-            current[COL_STEP_BIT5],
-        ];
-        let step_bits_next = [
-            next[COL_STEP_BIT0],
-            next[COL_STEP_BIT1],
-            next[COL_STEP_BIT2],
-            next[COL_STEP_BIT3],
-            next[COL_STEP_BIT4],
-            next[COL_STEP_BIT5],
-        ];
-        let cycle_bits = [
-            current[COL_CYCLE_BIT0],
-            current[COL_CYCLE_BIT1],
-            current[COL_CYCLE_BIT2],
-            current[COL_CYCLE_BIT3],
-            current[COL_CYCLE_BIT4],
-            current[COL_CYCLE_BIT5],
-            current[COL_CYCLE_BIT6],
-            current[COL_CYCLE_BIT7],
-            current[COL_CYCLE_BIT8],
-        ];
-        let cycle_bits_next = [
-            next[COL_CYCLE_BIT0],
-            next[COL_CYCLE_BIT1],
-            next[COL_CYCLE_BIT2],
-            next[COL_CYCLE_BIT3],
-            next[COL_CYCLE_BIT4],
-            next[COL_CYCLE_BIT5],
-            next[COL_CYCLE_BIT6],
-            next[COL_CYCLE_BIT7],
-            next[COL_CYCLE_BIT8],
-        ];
+        let hash_flag: AB::Expr = prep[PREP_HASH_FLAG].clone().into();
+        let absorb_flag: AB::Expr = prep[PREP_ABSORB_FLAG].clone().into();
+        let rc0: AB::Expr = prep[PREP_RC0].clone().into();
+        let rc1: AB::Expr = prep[PREP_RC1].clone().into();
+        let rc2: AB::Expr = prep[PREP_RC2].clone().into();
 
-        let bit_selector = |bits: &[AB::Var], value: usize| -> AB::Expr {
-            let mut acc = one.clone();
-            for (idx, bit) in bits.iter().enumerate() {
-                let bit_expr: AB::Expr = (*bit).into();
-                if ((value >> idx) & 1) == 1 {
-                    acc = acc * bit_expr;
-                } else {
-                    acc = acc * (one.clone() - bit_expr);
-                }
-            }
-            acc
-        };
-        let cycle_selector = |value: usize| -> AB::Expr { bit_selector(&cycle_bits, value) };
-        let row_selector = |row: usize| -> AB::Expr {
-            let cycle = row / CYCLE_LENGTH;
-            let step = row % CYCLE_LENGTH;
-            cycle_selector(cycle) * bit_selector(&step_bits, step)
-        };
+        let prep_reset: AB::Expr = prep[PREP_RESET].clone().into();
+        let prep_domain: AB::Expr = prep[PREP_DOMAIN].clone().into();
+        let prep_left_23: AB::Expr = prep[PREP_MERKLE_LEFT_23].clone().into();
+        let prep_left_01: AB::Expr = prep[PREP_MERKLE_LEFT_01].clone().into();
+        let prep_right_23: AB::Expr = prep[PREP_MERKLE_RIGHT_23].clone().into();
+        let prep_right_01: AB::Expr = prep[PREP_MERKLE_RIGHT_01].clone().into();
+        let prep_capture: AB::Expr = prep[PREP_CAPTURE].clone().into();
+        let prep_capture2: AB::Expr = prep[PREP_CAPTURE2].clone().into();
 
-        let absorb_flag = bit_selector(&step_bits, CYCLE_LENGTH - 1);
-        let hash_flag = one.clone() - absorb_flag.clone();
+        let prep_note_start_in0: AB::Expr = prep[PREP_NOTE_START_IN0].clone().into();
+        let prep_note_start_in1: AB::Expr = prep[PREP_NOTE_START_IN1].clone().into();
+        let prep_note_start_out0: AB::Expr = prep[PREP_NOTE_START_OUT0].clone().into();
+        let prep_note_start_out1: AB::Expr = prep[PREP_NOTE_START_OUT1].clone().into();
 
-        let mut rc0 = AB::Expr::zero();
-        let mut rc1 = AB::Expr::zero();
-        let mut rc2 = AB::Expr::zero();
-        for round in 0..POSEIDON_ROUNDS {
-            let sel = bit_selector(&step_bits, round);
-            rc0 += sel.clone()
-                * AB::Expr::from_canonical_u64(poseidon_constants::ROUND_CONSTANTS[round][0]);
-            rc1 += sel.clone()
-                * AB::Expr::from_canonical_u64(poseidon_constants::ROUND_CONSTANTS[round][1]);
-            rc2 += sel
-                * AB::Expr::from_canonical_u64(poseidon_constants::ROUND_CONSTANTS[round][2]);
-        }
-
-        let final_row_mask = row_selector(MIN_TRACE_LENGTH - 2);
+        let final_row_mask: AB::Expr = prep[PREP_FINAL_ROW].clone().into();
+        let nf0_row: AB::Expr = prep[PREP_NF0_ROW].clone().into();
+        let nf1_row: AB::Expr = prep[PREP_NF1_ROW].clone().into();
+        let mr0_row: AB::Expr = prep[PREP_MR0_ROW].clone().into();
+        let mr1_row: AB::Expr = prep[PREP_MR1_ROW].clone().into();
+        let cm0_row: AB::Expr = prep[PREP_CM0_ROW].clone().into();
+        let cm1_row: AB::Expr = prep[PREP_CM1_ROW].clone().into();
 
         let public_values = builder.public_values();
         let expected_len = (MAX_INPUTS + MAX_OUTPUTS) * 5 + 24;
@@ -763,150 +800,74 @@ where
             pv(idx + 3),
         ];
 
-        let expected_note_start_in0 = row_selector(note_start_row_input(0));
-        let expected_note_start_in1 = row_selector(note_start_row_input(1));
-        let expected_note_start_out0 = row_selector(note_start_row_output(0));
-        let expected_note_start_out1 = row_selector(note_start_row_output(1));
-
-        let nf0_row = row_selector(nullifier_output_row(0));
-        let nf1_row = row_selector(nullifier_output_row(1));
-        let mr0_row = row_selector(merkle_root_output_row(0));
-        let mr1_row = row_selector(merkle_root_output_row(1));
-        let cm0_row = row_selector(commitment_output_row(0));
-        let cm1_row = row_selector(commitment_output_row(1));
-
-        let mut expected_reset = AB::Expr::zero();
-        let mut expected_domain = AB::Expr::zero();
-        let mut expected_left_23 = AB::Expr::zero();
-        let mut expected_left_01 = AB::Expr::zero();
-        let mut expected_right_23 = AB::Expr::zero();
-        let mut expected_right_01 = AB::Expr::zero();
-        let mut expected_capture = AB::Expr::zero();
-        let mut expected_capture2 = AB::Expr::zero();
-
-        for cycle in 0..TOTAL_TRACE_CYCLES {
-            let row_sel = cycle_selector(cycle) * absorb_flag.clone();
-            let next_cycle = cycle + 1;
-            if next_cycle < TOTAL_TRACE_CYCLES {
-                if let Some(domain_tag) = cycle_reset_domain(next_cycle) {
-                    expected_reset += row_sel.clone();
-                    expected_domain +=
-                        row_sel.clone() * AB::Expr::from_canonical_u64(domain_tag);
-                }
-                if cycle_is_merkle_left_23(next_cycle) {
-                    expected_left_23 += row_sel.clone();
-                }
-                if cycle_is_merkle_left_01(next_cycle) {
-                    expected_left_01 += row_sel.clone();
-                }
-                if cycle_is_merkle_right_23(next_cycle) {
-                    expected_right_23 += row_sel.clone();
-                }
-                if cycle_is_merkle_right_01(next_cycle) {
-                    expected_right_01 += row_sel.clone();
-                }
-                if cycle_is_squeeze(next_cycle) {
-                    expected_capture += row_sel.clone();
-                }
-            }
-            if cycle_is_squeeze(cycle) {
-                expected_capture2 += row_sel.clone();
-            }
-        }
-
-        let t0 = current[COL_S0] + rc0;
-        let t1 = current[COL_S1] + rc1;
-        let t2 = current[COL_S2] + rc2;
+        let t0: AB::Expr = current[COL_S0].clone().into() + rc0.clone();
+        let t1: AB::Expr = current[COL_S1].clone().into() + rc1.clone();
+        let t2: AB::Expr = current[COL_S2].clone().into() + rc2.clone();
 
         let s0 = t0.exp_const_u64::<5>();
         let s1 = t1.exp_const_u64::<5>();
         let s2 = t2.exp_const_u64::<5>();
 
         let mds = poseidon_constants::MDS_MATRIX;
-        let m00 = AB::Expr::from_canonical_u64(mds[0][0]);
-        let m01 = AB::Expr::from_canonical_u64(mds[0][1]);
-        let m02 = AB::Expr::from_canonical_u64(mds[0][2]);
-        let m10 = AB::Expr::from_canonical_u64(mds[1][0]);
-        let m11 = AB::Expr::from_canonical_u64(mds[1][1]);
-        let m12 = AB::Expr::from_canonical_u64(mds[1][2]);
-        let m20 = AB::Expr::from_canonical_u64(mds[2][0]);
-        let m21 = AB::Expr::from_canonical_u64(mds[2][1]);
-        let m22 = AB::Expr::from_canonical_u64(mds[2][2]);
+        let m00 = AB::Expr::from_u64(mds[0][0]);
+        let m01 = AB::Expr::from_u64(mds[0][1]);
+        let m02 = AB::Expr::from_u64(mds[0][2]);
+        let m10 = AB::Expr::from_u64(mds[1][0]);
+        let m11 = AB::Expr::from_u64(mds[1][1]);
+        let m12 = AB::Expr::from_u64(mds[1][2]);
+        let m20 = AB::Expr::from_u64(mds[2][0]);
+        let m21 = AB::Expr::from_u64(mds[2][1]);
+        let m22 = AB::Expr::from_u64(mds[2][2]);
 
         let hash_s0 = s0.clone() * m00 + s1.clone() * m01 + s2.clone() * m02;
         let hash_s1 = s0.clone() * m10 + s1.clone() * m11 + s2.clone() * m12;
         let hash_s2 = s0 * m20 + s1 * m21 + s2 * m22;
         let copy_flag = one.clone() - hash_flag.clone() - absorb_flag.clone();
 
-        let reset = current[COL_RESET];
-        let domain = current[COL_DOMAIN];
-        let in0 = current[COL_IN0];
-        let in1 = current[COL_IN1];
+        let reset: AB::Expr = current[COL_RESET].clone().into();
+        let domain: AB::Expr = current[COL_DOMAIN].clone().into();
+        let in0: AB::Expr = current[COL_IN0].clone().into();
+        let in1: AB::Expr = current[COL_IN1].clone().into();
 
-        let start_s0 = domain + in0;
-        let start_s1 = in1;
+        let start_s0 = domain.clone() + in0.clone();
+        let start_s1 = in1.clone();
         let start_s2 = one.clone();
 
-        let cont_s0 = current[COL_S0] + in0;
-        let cont_s1 = current[COL_S1] + in1;
-        let cont_s2 = current[COL_S2];
+        let cont_s0 = current[COL_S0].clone() + in0;
+        let cont_s1 = current[COL_S1].clone() + in1;
+        let cont_s2 = current[COL_S2].clone();
 
-        let absorb_s0 = reset * start_s0 + (one.clone() - reset) * cont_s0;
-        let absorb_s1 = reset * start_s1 + (one.clone() - reset) * cont_s1;
-        let absorb_s2 = reset * start_s2 + (one.clone() - reset) * cont_s2;
+        let absorb_s0 = reset.clone() * start_s0 + (one.clone() - reset.clone()) * cont_s0;
+        let absorb_s1 = reset.clone() * start_s1 + (one.clone() - reset.clone()) * cont_s1;
+        let absorb_s2 = reset.clone() * start_s2 + (one.clone() - reset.clone()) * cont_s2;
 
         let expected_s0 = hash_flag.clone() * hash_s0
-            + copy_flag.clone() * current[COL_S0]
+            + copy_flag.clone() * current[COL_S0].clone()
             + absorb_flag.clone() * absorb_s0;
         let expected_s1 = hash_flag.clone() * hash_s1
-            + copy_flag.clone() * current[COL_S1]
+            + copy_flag.clone() * current[COL_S1].clone()
             + absorb_flag.clone() * absorb_s1;
         let expected_s2 = hash_flag * hash_s2
-            + copy_flag * current[COL_S2]
+            + copy_flag * current[COL_S2].clone()
             + absorb_flag.clone() * absorb_s2;
 
-        {
-            let mut when_first = builder.when_first_row();
-            for bit in step_bits.iter().chain(cycle_bits.iter()) {
-                when_first.assert_zero(*bit);
-            }
-        }
-
         let mut when = builder.when_transition();
-        when.assert_zero(next[COL_S0] - expected_s0);
-        when.assert_zero(next[COL_S1] - expected_s1);
-        when.assert_zero(next[COL_S2] - expected_s2);
+        when.assert_zero(next[COL_S0].clone() - expected_s0);
+        when.assert_zero(next[COL_S1].clone() - expected_s1);
+        when.assert_zero(next[COL_S2].clone() - expected_s2);
 
-        for bit in step_bits.iter() {
-            when.assert_bool(*bit);
-        }
-        for bit in cycle_bits.iter() {
-            when.assert_bool(*bit);
-        }
-
-        let mut carry = one.clone();
-        for (idx, bit) in step_bits.iter().enumerate() {
-            let bit_expr: AB::Expr = (*bit).into();
-            let carry_next = carry.clone() * bit_expr.clone();
-            let next_expr: AB::Expr = step_bits_next[idx].into();
-            when.assert_zero(
-                next_expr - (bit_expr + carry.clone() - two.clone() * carry_next.clone()),
-            );
-            carry = carry_next;
-        }
-
-        let mut carry = absorb_flag.clone();
-        for (idx, bit) in cycle_bits.iter().enumerate() {
-            let bit_expr: AB::Expr = (*bit).into();
-            let carry_next = carry.clone() * bit_expr.clone();
-            let next_expr: AB::Expr = cycle_bits_next[idx].into();
-            when.assert_zero(
-                next_expr - (bit_expr + carry.clone() - two.clone() * carry_next.clone()),
-            );
-            carry = carry_next;
-        }
-
-        when.assert_bool(reset);
+        when.assert_zero(current[COL_RESET].clone() - prep_reset);
+        when.assert_zero(current[COL_DOMAIN].clone() - prep_domain);
+        when.assert_zero(current[COL_MERKLE_LEFT_23].clone() - prep_left_23);
+        when.assert_zero(current[COL_MERKLE_LEFT_01].clone() - prep_left_01);
+        when.assert_zero(current[COL_MERKLE_RIGHT_23].clone() - prep_right_23);
+        when.assert_zero(current[COL_MERKLE_RIGHT_01].clone() - prep_right_01);
+        when.assert_zero(current[COL_CAPTURE].clone() - prep_capture);
+        when.assert_zero(current[COL_CAPTURE2].clone() - prep_capture2);
+        when.assert_zero(current[COL_NOTE_START_IN0].clone() - prep_note_start_in0.clone());
+        when.assert_zero(current[COL_NOTE_START_IN1].clone() - prep_note_start_in1.clone());
+        when.assert_zero(current[COL_NOTE_START_OUT0].clone() - prep_note_start_out0.clone());
+        when.assert_zero(current[COL_NOTE_START_OUT1].clone() - prep_note_start_out1.clone());
         when.assert_bool(value_balance_sign.clone());
         when.assert_bool(stablecoin_enabled.clone());
         when.assert_bool(stablecoin_issuance_sign.clone());
@@ -918,29 +879,29 @@ where
             COL_STABLECOIN_SLOT_SEL3,
         ];
         for &col in stablecoin_sel_cols.iter() {
-            let sel = current[col];
+            let sel = current[col].clone();
             when.assert_bool(sel);
         }
 
         let slot_assets = [
-            current[COL_SLOT0_ASSET],
-            current[COL_SLOT1_ASSET],
-            current[COL_SLOT2_ASSET],
-            current[COL_SLOT3_ASSET],
+            current[COL_SLOT0_ASSET].clone(),
+            current[COL_SLOT1_ASSET].clone(),
+            current[COL_SLOT2_ASSET].clone(),
+            current[COL_SLOT3_ASSET].clone(),
         ];
         let slot_in_cols = [COL_SLOT0_IN, COL_SLOT1_IN, COL_SLOT2_IN, COL_SLOT3_IN];
         let slot_out_cols = [COL_SLOT0_OUT, COL_SLOT1_OUT, COL_SLOT2_OUT, COL_SLOT3_OUT];
 
         let stablecoin_sel_sum = stablecoin_sel_cols
             .iter()
-            .fold(AB::Expr::zero(), |acc, col| acc + current[*col]);
+            .fold(AB::Expr::ZERO, |acc, col| acc + current[*col].clone());
         when.assert_zero(final_row_mask.clone() * (stablecoin_sel_sum - stablecoin_enabled.clone()));
 
         for slot in 0..4 {
             when.assert_zero(
                 final_row_mask.clone()
-                    * current[stablecoin_sel_cols[slot]]
-                    * (slot_assets[slot] - stablecoin_asset.clone()),
+                    * current[stablecoin_sel_cols[slot]].clone()
+                    * (slot_assets[slot].clone() - stablecoin_asset.clone()),
             );
         }
 
@@ -948,17 +909,19 @@ where
             - (stablecoin_issuance_sign.clone()
                 * stablecoin_issuance_magnitude.clone()
                 * two.clone());
-        let mut selected_delta = AB::Expr::zero();
+        let mut selected_delta = AB::Expr::ZERO;
         for slot in 0..4 {
-            let delta = current[slot_in_cols[slot]] - current[slot_out_cols[slot]];
-            selected_delta += current[stablecoin_sel_cols[slot]] * delta;
+            let delta = current[slot_in_cols[slot]].clone() - current[slot_out_cols[slot]].clone();
+            selected_delta += current[stablecoin_sel_cols[slot]].clone() * delta;
         }
         when.assert_zero(final_row_mask.clone() * (selected_delta - stablecoin_signed));
 
         for slot in 1..4 {
-            let delta = current[slot_in_cols[slot]] - current[slot_out_cols[slot]];
+            let delta = current[slot_in_cols[slot]].clone() - current[slot_out_cols[slot]].clone();
             when.assert_zero(
-                final_row_mask.clone() * delta * (one.clone() - current[stablecoin_sel_cols[slot]]),
+                final_row_mask.clone()
+                    * delta
+                    * (one.clone() - current[stablecoin_sel_cols[slot]].clone()),
             );
         }
 
@@ -982,7 +945,7 @@ where
             COL_STABLECOIN_ATTEST3,
         ];
         for &col in stablecoin_zero_cols.iter() {
-            when.assert_zero(final_row_mask.clone() * stablecoin_disabled.clone() * current[col]);
+            when.assert_zero(final_row_mask.clone() * stablecoin_disabled.clone() * current[col].clone());
         }
 
         let active_cols = [
@@ -992,74 +955,82 @@ where
             COL_OUT_ACTIVE1,
         ];
         for &col in active_cols.iter() {
-            when.assert_bool(current[col]);
+            when.assert_bool(current[col].clone());
         }
 
         for &sel_col in SELECTOR_COLUMNS.iter() {
-            when.assert_bool(current[sel_col]);
+            when.assert_bool(current[sel_col].clone());
         }
 
-        let input_active = [current[COL_IN_ACTIVE0], current[COL_IN_ACTIVE1]];
-        let output_active = [current[COL_OUT_ACTIVE0], current[COL_OUT_ACTIVE1]];
-        let note_start_in0 = current[COL_NOTE_START_IN0];
-        let note_start_in1 = current[COL_NOTE_START_IN1];
-        let note_start_out0 = current[COL_NOTE_START_OUT0];
-        let note_start_out1 = current[COL_NOTE_START_OUT1];
+        let input_active = [current[COL_IN_ACTIVE0].clone(), current[COL_IN_ACTIVE1].clone()];
+        let output_active = [current[COL_OUT_ACTIVE0].clone(), current[COL_OUT_ACTIVE1].clone()];
+        let note_start_in0 = current[COL_NOTE_START_IN0].clone();
+        let note_start_in1 = current[COL_NOTE_START_IN1].clone();
+        let note_start_out0 = current[COL_NOTE_START_OUT0].clone();
+        let note_start_out1 = current[COL_NOTE_START_OUT1].clone();
 
-        let in0_sel_sum = current[COL_SEL_IN0_SLOT0]
-            + current[COL_SEL_IN0_SLOT1]
-            + current[COL_SEL_IN0_SLOT2]
-            + current[COL_SEL_IN0_SLOT3];
-        when.assert_zero(note_start_in0 * (in0_sel_sum - input_active[0]));
+        let in0_sel_sum = current[COL_SEL_IN0_SLOT0].clone()
+            + current[COL_SEL_IN0_SLOT1].clone()
+            + current[COL_SEL_IN0_SLOT2].clone()
+            + current[COL_SEL_IN0_SLOT3].clone();
+        when.assert_zero(note_start_in0.clone() * (in0_sel_sum - input_active[0].clone()));
 
-        let in1_sel_sum = current[COL_SEL_IN1_SLOT0]
-            + current[COL_SEL_IN1_SLOT1]
-            + current[COL_SEL_IN1_SLOT2]
-            + current[COL_SEL_IN1_SLOT3];
-        when.assert_zero(note_start_in1 * (in1_sel_sum - input_active[1]));
+        let in1_sel_sum = current[COL_SEL_IN1_SLOT0].clone()
+            + current[COL_SEL_IN1_SLOT1].clone()
+            + current[COL_SEL_IN1_SLOT2].clone()
+            + current[COL_SEL_IN1_SLOT3].clone();
+        when.assert_zero(note_start_in1.clone() * (in1_sel_sum - input_active[1].clone()));
 
-        let out0_sel_sum = current[COL_SEL_OUT0_SLOT0]
-            + current[COL_SEL_OUT0_SLOT1]
-            + current[COL_SEL_OUT0_SLOT2]
-            + current[COL_SEL_OUT0_SLOT3];
-        when.assert_zero(note_start_out0 * (out0_sel_sum - output_active[0]));
+        let out0_sel_sum = current[COL_SEL_OUT0_SLOT0].clone()
+            + current[COL_SEL_OUT0_SLOT1].clone()
+            + current[COL_SEL_OUT0_SLOT2].clone()
+            + current[COL_SEL_OUT0_SLOT3].clone();
+        when.assert_zero(note_start_out0.clone() * (out0_sel_sum - output_active[0].clone()));
 
-        let out1_sel_sum = current[COL_SEL_OUT1_SLOT0]
-            + current[COL_SEL_OUT1_SLOT1]
-            + current[COL_SEL_OUT1_SLOT2]
-            + current[COL_SEL_OUT1_SLOT3];
-        when.assert_zero(note_start_out1 * (out1_sel_sum - output_active[1]));
+        let out1_sel_sum = current[COL_SEL_OUT1_SLOT0].clone()
+            + current[COL_SEL_OUT1_SLOT1].clone()
+            + current[COL_SEL_OUT1_SLOT2].clone()
+            + current[COL_SEL_OUT1_SLOT3].clone();
+        when.assert_zero(note_start_out1.clone() * (out1_sel_sum - output_active[1].clone()));
 
-        let in0_asset = current[COL_IN0_ASSET];
-        let in0_selected = current[COL_SEL_IN0_SLOT0] * slot_assets[0]
-            + current[COL_SEL_IN0_SLOT1] * slot_assets[1]
-            + current[COL_SEL_IN0_SLOT2] * slot_assets[2]
-            + current[COL_SEL_IN0_SLOT3] * slot_assets[3];
-        when.assert_zero(note_start_in0 * (in0_asset * input_active[0] - in0_selected));
+        let in0_asset = current[COL_IN0_ASSET].clone();
+        let in0_selected = current[COL_SEL_IN0_SLOT0].clone() * slot_assets[0].clone()
+            + current[COL_SEL_IN0_SLOT1].clone() * slot_assets[1].clone()
+            + current[COL_SEL_IN0_SLOT2].clone() * slot_assets[2].clone()
+            + current[COL_SEL_IN0_SLOT3].clone() * slot_assets[3].clone();
+        when.assert_zero(
+            note_start_in0.clone() * (in0_asset * input_active[0].clone() - in0_selected),
+        );
 
-        let in1_asset = current[COL_IN1_ASSET];
-        let in1_selected = current[COL_SEL_IN1_SLOT0] * slot_assets[0]
-            + current[COL_SEL_IN1_SLOT1] * slot_assets[1]
-            + current[COL_SEL_IN1_SLOT2] * slot_assets[2]
-            + current[COL_SEL_IN1_SLOT3] * slot_assets[3];
-        when.assert_zero(note_start_in1 * (in1_asset * input_active[1] - in1_selected));
+        let in1_asset = current[COL_IN1_ASSET].clone();
+        let in1_selected = current[COL_SEL_IN1_SLOT0].clone() * slot_assets[0].clone()
+            + current[COL_SEL_IN1_SLOT1].clone() * slot_assets[1].clone()
+            + current[COL_SEL_IN1_SLOT2].clone() * slot_assets[2].clone()
+            + current[COL_SEL_IN1_SLOT3].clone() * slot_assets[3].clone();
+        when.assert_zero(
+            note_start_in1.clone() * (in1_asset * input_active[1].clone() - in1_selected),
+        );
 
-        let out0_asset = current[COL_OUT0_ASSET];
-        let out0_selected = current[COL_SEL_OUT0_SLOT0] * slot_assets[0]
-            + current[COL_SEL_OUT0_SLOT1] * slot_assets[1]
-            + current[COL_SEL_OUT0_SLOT2] * slot_assets[2]
-            + current[COL_SEL_OUT0_SLOT3] * slot_assets[3];
-        when.assert_zero(note_start_out0 * (out0_asset * output_active[0] - out0_selected));
+        let out0_asset = current[COL_OUT0_ASSET].clone();
+        let out0_selected = current[COL_SEL_OUT0_SLOT0].clone() * slot_assets[0].clone()
+            + current[COL_SEL_OUT0_SLOT1].clone() * slot_assets[1].clone()
+            + current[COL_SEL_OUT0_SLOT2].clone() * slot_assets[2].clone()
+            + current[COL_SEL_OUT0_SLOT3].clone() * slot_assets[3].clone();
+        when.assert_zero(
+            note_start_out0.clone() * (out0_asset * output_active[0].clone() - out0_selected),
+        );
 
-        let out1_asset = current[COL_OUT1_ASSET];
-        let out1_selected = current[COL_SEL_OUT1_SLOT0] * slot_assets[0]
-            + current[COL_SEL_OUT1_SLOT1] * slot_assets[1]
-            + current[COL_SEL_OUT1_SLOT2] * slot_assets[2]
-            + current[COL_SEL_OUT1_SLOT3] * slot_assets[3];
-        when.assert_zero(note_start_out1 * (out1_asset * output_active[1] - out1_selected));
+        let out1_asset = current[COL_OUT1_ASSET].clone();
+        let out1_selected = current[COL_SEL_OUT1_SLOT0].clone() * slot_assets[0].clone()
+            + current[COL_SEL_OUT1_SLOT1].clone() * slot_assets[1].clone()
+            + current[COL_SEL_OUT1_SLOT2].clone() * slot_assets[2].clone()
+            + current[COL_SEL_OUT1_SLOT3].clone() * slot_assets[3].clone();
+        when.assert_zero(
+            note_start_out1.clone() * (out1_asset * output_active[1].clone() - out1_selected),
+        );
 
-        let in_values = [current[COL_IN0_VALUE], current[COL_IN1_VALUE]];
-        let out_values = [current[COL_OUT0_VALUE], current[COL_OUT1_VALUE]];
+        let in_values = [current[COL_IN0_VALUE].clone(), current[COL_IN1_VALUE].clone()];
+        let out_values = [current[COL_OUT0_VALUE].clone(), current[COL_OUT1_VALUE].clone()];
 
         let sel_in = [
             [
@@ -1089,94 +1060,136 @@ where
                 COL_SEL_OUT1_SLOT3,
             ],
         ];
-        let note_in_flags = [note_start_in0, note_start_in1];
-        let note_out_flags = [note_start_out0, note_start_out1];
+        let note_in_flags = [note_start_in0.clone(), note_start_in1.clone()];
+        let note_out_flags = [note_start_out0.clone(), note_start_out1.clone()];
 
         for slot in 0..4 {
-            let mut add_in = AB::Expr::zero();
-            let mut add_out = AB::Expr::zero();
+            let mut add_in = AB::Expr::ZERO;
+            let mut add_out = AB::Expr::ZERO;
             for note in 0..2 {
-                add_in += note_in_flags[note] * current[sel_in[note][slot]] * in_values[note];
-                add_out += note_out_flags[note] * current[sel_out[note][slot]] * out_values[note];
+                add_in += note_in_flags[note].clone()
+                    * current[sel_in[note][slot]].clone()
+                    * in_values[note].clone();
+                add_out += note_out_flags[note].clone()
+                    * current[sel_out[note][slot]].clone()
+                    * out_values[note].clone();
             }
             when.assert_zero(
                 not_first_row.clone()
-                    * (next[slot_in_cols[slot]] - (current[slot_in_cols[slot]] + add_in)),
+                    * (next[slot_in_cols[slot]].clone()
+                        - (current[slot_in_cols[slot]].clone() + add_in)),
             );
             when.assert_zero(
                 not_first_row.clone()
-                    * (next[slot_out_cols[slot]] - (current[slot_out_cols[slot]] + add_out)),
+                    * (next[slot_out_cols[slot]].clone()
+                        - (current[slot_out_cols[slot]].clone() + add_out)),
             );
         }
 
         let note_start_any = note_start_in0 + note_start_in1 + note_start_out0 + note_start_out1;
         when.assert_zero(
-            note_start_any * (current[COL_SLOT0_ASSET]
-                - AB::Expr::from_canonical_u64(NATIVE_ASSET_ID)),
+            note_start_any * (current[COL_SLOT0_ASSET].clone()
+                - AB::Expr::from_u64(NATIVE_ASSET_ID)),
         );
 
         let vb_signed = value_balance_magnitude.clone()
             - (value_balance_sign.clone() * value_balance_magnitude.clone() * two.clone());
-        let slot0_in = current[COL_SLOT0_IN];
-        let slot0_out = current[COL_SLOT0_OUT];
+        let slot0_in = current[COL_SLOT0_IN].clone();
+        let slot0_out = current[COL_SLOT0_OUT].clone();
         when.assert_zero(final_row_mask.clone() * (slot0_in + vb_signed - slot0_out - fee.clone()));
 
         for slot in 1..4 {
-            let delta = current[slot_in_cols[slot]] - current[slot_out_cols[slot]];
+            let delta = current[slot_in_cols[slot]].clone() - current[slot_out_cols[slot]].clone();
             when.assert_zero(final_row_mask.clone() * stablecoin_disabled.clone() * delta);
         }
 
-        let dir = current[COL_DIR];
+        let dir = current[COL_DIR].clone();
         when.assert_bool(dir);
-        when.assert_zero((one.clone() - reset) * (next[COL_DIR] - current[COL_DIR]));
+        when.assert_zero((one.clone() - reset) * (next[COL_DIR].clone() - current[COL_DIR].clone()));
 
-        let left_23 = current[COL_MERKLE_LEFT_23];
-        let left_01 = current[COL_MERKLE_LEFT_01];
-        let right_23 = current[COL_MERKLE_RIGHT_23];
-        let right_01 = current[COL_MERKLE_RIGHT_01];
-        let next_dir = next[COL_DIR];
-        let not_next_dir = one.clone() - next_dir;
+        let left_23 = current[COL_MERKLE_LEFT_23].clone();
+        let left_01 = current[COL_MERKLE_LEFT_01].clone();
+        let right_23 = current[COL_MERKLE_RIGHT_23].clone();
+        let right_01 = current[COL_MERKLE_RIGHT_01].clone();
+        let next_dir = next[COL_DIR].clone();
+        let not_next_dir = one.clone() - next_dir.clone();
 
         when.assert_zero(
-            absorb_flag.clone() * left_23 * not_next_dir.clone() * (current[COL_IN0] - next[COL_OUT2]),
+            absorb_flag.clone()
+                * left_23.clone()
+                * not_next_dir.clone()
+                * (current[COL_IN0].clone() - next[COL_OUT2].clone()),
         );
         when.assert_zero(
-            absorb_flag.clone() * left_23 * not_next_dir.clone() * (current[COL_IN1] - next[COL_OUT3]),
+            absorb_flag.clone()
+                * left_23
+                * not_next_dir.clone()
+                * (current[COL_IN1].clone() - next[COL_OUT3].clone()),
         );
         when.assert_zero(
-            absorb_flag.clone() * left_01 * not_next_dir.clone() * (current[COL_IN0] - next[COL_OUT0]),
+            absorb_flag.clone()
+                * left_01.clone()
+                * not_next_dir.clone()
+                * (current[COL_IN0].clone() - next[COL_OUT0].clone()),
         );
         when.assert_zero(
-            absorb_flag.clone() * left_01 * not_next_dir.clone() * (current[COL_IN1] - next[COL_OUT1]),
+            absorb_flag.clone()
+                * left_01
+                * not_next_dir.clone()
+                * (current[COL_IN1].clone() - next[COL_OUT1].clone()),
         );
-        when.assert_zero(absorb_flag.clone() * right_23 * next_dir * (current[COL_IN0] - next[COL_OUT2]));
-        when.assert_zero(absorb_flag.clone() * right_23 * next_dir * (current[COL_IN1] - next[COL_OUT3]));
-        when.assert_zero(absorb_flag.clone() * right_01 * next_dir * (current[COL_IN0] - next[COL_OUT0]));
-        when.assert_zero(absorb_flag.clone() * right_01 * next_dir * (current[COL_IN1] - next[COL_OUT1]));
+        when.assert_zero(
+            absorb_flag.clone()
+                * right_23.clone()
+                * next_dir.clone()
+                * (current[COL_IN0].clone() - next[COL_OUT2].clone()),
+        );
+        when.assert_zero(
+            absorb_flag.clone()
+                * right_23.clone()
+                * next_dir.clone()
+                * (current[COL_IN1].clone() - next[COL_OUT3].clone()),
+        );
+        when.assert_zero(
+            absorb_flag.clone()
+                * right_01.clone()
+                * next_dir.clone()
+                * (current[COL_IN0].clone() - next[COL_OUT0].clone()),
+        );
+        when.assert_zero(
+            absorb_flag.clone()
+                * right_01.clone()
+                * next_dir
+                * (current[COL_IN1].clone() - next[COL_OUT1].clone()),
+        );
 
-        let capture = current[COL_CAPTURE];
-        when.assert_bool(capture);
-        let capture_guard = current[COL_IN_ACTIVE0] + one.clone();
-        when.assert_zero(capture * (one.clone() - absorb_flag.clone()) * capture_guard.clone());
+        let capture = current[COL_CAPTURE].clone();
+        when.assert_bool(capture.clone());
+        let capture_guard = current[COL_IN_ACTIVE0].clone() + one.clone();
+        when.assert_zero(capture.clone() * (one.clone() - absorb_flag.clone()) * capture_guard.clone());
         when.assert_zero(
-            next[COL_OUT0]
-                - (capture * current[COL_S0] + (one.clone() - capture) * current[COL_OUT0]),
+            next[COL_OUT0].clone()
+                - (capture.clone() * current[COL_S0].clone()
+                    + (one.clone() - capture.clone()) * current[COL_OUT0].clone()),
         );
         when.assert_zero(
-            next[COL_OUT1]
-                - (capture * current[COL_S1] + (one.clone() - capture) * current[COL_OUT1]),
+            next[COL_OUT1].clone()
+                - (capture.clone() * current[COL_S1].clone()
+                    + (one.clone() - capture.clone()) * current[COL_OUT1].clone()),
         );
 
-        let capture2 = current[COL_CAPTURE2];
-        when.assert_bool(capture2);
-        when.assert_zero(capture2 * (one.clone() - absorb_flag.clone()) * capture_guard);
+        let capture2 = current[COL_CAPTURE2].clone();
+        when.assert_bool(capture2.clone());
+        when.assert_zero(capture2.clone() * (one.clone() - absorb_flag.clone()) * capture_guard);
         when.assert_zero(
-            next[COL_OUT2]
-                - (capture2 * current[COL_S0] + (one.clone() - capture2) * current[COL_OUT2]),
+            next[COL_OUT2].clone()
+                - (capture2.clone() * current[COL_S0].clone()
+                    + (one.clone() - capture2.clone()) * current[COL_OUT2].clone()),
         );
         when.assert_zero(
-            next[COL_OUT3]
-                - (capture2 * current[COL_S1] + (one.clone() - capture2) * current[COL_OUT3]),
+            next[COL_OUT3].clone()
+                - (capture2.clone() * current[COL_S1].clone()
+                    + (one.clone() - capture2.clone()) * current[COL_OUT3].clone()),
         );
 
         let note_flags = [
@@ -1187,88 +1200,79 @@ where
         ];
 
         for (flag_col, value_col, asset_col) in note_flags {
-            let flag = current[flag_col];
-            when.assert_zero(flag * (current[COL_IN0] - current[value_col]));
-            when.assert_zero(flag * (current[COL_IN1] - current[asset_col]));
+            let flag = current[flag_col].clone();
+            when.assert_zero(flag.clone() * (current[COL_IN0].clone() - current[value_col].clone()));
+            when.assert_zero(flag * (current[COL_IN1].clone() - current[asset_col].clone()));
         }
 
-        when.assert_zero(current[COL_RESET] - expected_reset);
-        when.assert_zero(current[COL_DOMAIN] - expected_domain);
-        when.assert_zero(current[COL_MERKLE_LEFT_23] - expected_left_23);
-        when.assert_zero(current[COL_MERKLE_LEFT_01] - expected_left_01);
-        when.assert_zero(current[COL_MERKLE_RIGHT_23] - expected_right_23);
-        when.assert_zero(current[COL_MERKLE_RIGHT_01] - expected_right_01);
-        when.assert_zero(current[COL_CAPTURE] - expected_capture);
-        when.assert_zero(current[COL_CAPTURE2] - expected_capture2);
-        when.assert_zero(current[COL_NOTE_START_IN0] - expected_note_start_in0.clone());
-        when.assert_zero(current[COL_NOTE_START_IN1] - expected_note_start_in1.clone());
-        when.assert_zero(current[COL_NOTE_START_OUT0] - expected_note_start_out0.clone());
-        when.assert_zero(current[COL_NOTE_START_OUT1] - expected_note_start_out1.clone());
-
         let nf0_gate = nf0_row * input_flags[0].clone();
-        when.assert_zero(nf0_gate.clone() * (current[COL_OUT0] - nullifiers[0][0].clone()));
-        when.assert_zero(nf0_gate.clone() * (current[COL_OUT1] - nullifiers[0][1].clone()));
-        when.assert_zero(nf0_gate.clone() * (current[COL_S0] - nullifiers[0][2].clone()));
-        when.assert_zero(nf0_gate * (current[COL_S1] - nullifiers[0][3].clone()));
+        when.assert_zero(nf0_gate.clone() * (current[COL_OUT0].clone() - nullifiers[0][0].clone()));
+        when.assert_zero(nf0_gate.clone() * (current[COL_OUT1].clone() - nullifiers[0][1].clone()));
+        when.assert_zero(nf0_gate.clone() * (current[COL_S0].clone() - nullifiers[0][2].clone()));
+        when.assert_zero(nf0_gate * (current[COL_S1].clone() - nullifiers[0][3].clone()));
 
         let nf1_gate = nf1_row * input_flags[1].clone();
-        when.assert_zero(nf1_gate.clone() * (current[COL_OUT0] - nullifiers[1][0].clone()));
-        when.assert_zero(nf1_gate.clone() * (current[COL_OUT1] - nullifiers[1][1].clone()));
-        when.assert_zero(nf1_gate.clone() * (current[COL_S0] - nullifiers[1][2].clone()));
-        when.assert_zero(nf1_gate * (current[COL_S1] - nullifiers[1][3].clone()));
+        when.assert_zero(nf1_gate.clone() * (current[COL_OUT0].clone() - nullifiers[1][0].clone()));
+        when.assert_zero(nf1_gate.clone() * (current[COL_OUT1].clone() - nullifiers[1][1].clone()));
+        when.assert_zero(nf1_gate.clone() * (current[COL_S0].clone() - nullifiers[1][2].clone()));
+        when.assert_zero(nf1_gate * (current[COL_S1].clone() - nullifiers[1][3].clone()));
 
         let mr0_gate = mr0_row * input_flags[0].clone();
-        when.assert_zero(mr0_gate.clone() * (current[COL_OUT0] - merkle_root[0].clone()));
-        when.assert_zero(mr0_gate.clone() * (current[COL_OUT1] - merkle_root[1].clone()));
-        when.assert_zero(mr0_gate.clone() * (current[COL_S0] - merkle_root[2].clone()));
-        when.assert_zero(mr0_gate * (current[COL_S1] - merkle_root[3].clone()));
+        when.assert_zero(mr0_gate.clone() * (current[COL_OUT0].clone() - merkle_root[0].clone()));
+        when.assert_zero(mr0_gate.clone() * (current[COL_OUT1].clone() - merkle_root[1].clone()));
+        when.assert_zero(mr0_gate.clone() * (current[COL_S0].clone() - merkle_root[2].clone()));
+        when.assert_zero(mr0_gate * (current[COL_S1].clone() - merkle_root[3].clone()));
 
         let mr1_gate = mr1_row * input_flags[1].clone();
-        when.assert_zero(mr1_gate.clone() * (current[COL_OUT0] - merkle_root[0].clone()));
-        when.assert_zero(mr1_gate.clone() * (current[COL_OUT1] - merkle_root[1].clone()));
-        when.assert_zero(mr1_gate.clone() * (current[COL_S0] - merkle_root[2].clone()));
-        when.assert_zero(mr1_gate * (current[COL_S1] - merkle_root[3].clone()));
+        when.assert_zero(mr1_gate.clone() * (current[COL_OUT0].clone() - merkle_root[0].clone()));
+        when.assert_zero(mr1_gate.clone() * (current[COL_OUT1].clone() - merkle_root[1].clone()));
+        when.assert_zero(mr1_gate.clone() * (current[COL_S0].clone() - merkle_root[2].clone()));
+        when.assert_zero(mr1_gate * (current[COL_S1].clone() - merkle_root[3].clone()));
 
         let cm0_gate = cm0_row * output_flags[0].clone();
-        when.assert_zero(cm0_gate.clone() * (current[COL_OUT0] - commitments[0][0].clone()));
-        when.assert_zero(cm0_gate.clone() * (current[COL_OUT1] - commitments[0][1].clone()));
-        when.assert_zero(cm0_gate.clone() * (current[COL_S0] - commitments[0][2].clone()));
-        when.assert_zero(cm0_gate * (current[COL_S1] - commitments[0][3].clone()));
+        when.assert_zero(cm0_gate.clone() * (current[COL_OUT0].clone() - commitments[0][0].clone()));
+        when.assert_zero(cm0_gate.clone() * (current[COL_OUT1].clone() - commitments[0][1].clone()));
+        when.assert_zero(cm0_gate.clone() * (current[COL_S0].clone() - commitments[0][2].clone()));
+        when.assert_zero(cm0_gate * (current[COL_S1].clone() - commitments[0][3].clone()));
 
         let cm1_gate = cm1_row * output_flags[1].clone();
-        when.assert_zero(cm1_gate.clone() * (current[COL_OUT0] - commitments[1][0].clone()));
-        when.assert_zero(cm1_gate.clone() * (current[COL_OUT1] - commitments[1][1].clone()));
-        when.assert_zero(cm1_gate.clone() * (current[COL_S0] - commitments[1][2].clone()));
-        when.assert_zero(cm1_gate * (current[COL_S1] - commitments[1][3].clone()));
+        when.assert_zero(cm1_gate.clone() * (current[COL_OUT0].clone() - commitments[1][0].clone()));
+        when.assert_zero(cm1_gate.clone() * (current[COL_OUT1].clone() - commitments[1][1].clone()));
+        when.assert_zero(cm1_gate.clone() * (current[COL_S0].clone() - commitments[1][2].clone()));
+        when.assert_zero(cm1_gate * (current[COL_S1].clone() - commitments[1][3].clone()));
 
         when.assert_zero(
-            expected_note_start_in0 * (current[COL_IN_ACTIVE0] - input_flags[0].clone()),
+            prep_note_start_in0.clone()
+                * (current[COL_IN_ACTIVE0].clone() - input_flags[0].clone()),
         );
         when.assert_zero(
-            expected_note_start_in1 * (current[COL_IN_ACTIVE1] - input_flags[1].clone()),
+            prep_note_start_in1.clone()
+                * (current[COL_IN_ACTIVE1].clone() - input_flags[1].clone()),
         );
         when.assert_zero(
-            expected_note_start_out0 * (current[COL_OUT_ACTIVE0] - output_flags[0].clone()),
+            prep_note_start_out0.clone()
+                * (current[COL_OUT_ACTIVE0].clone() - output_flags[0].clone()),
         );
         when.assert_zero(
-            expected_note_start_out1 * (current[COL_OUT_ACTIVE1] - output_flags[1].clone()),
+            prep_note_start_out1.clone()
+                * (current[COL_OUT_ACTIVE1].clone() - output_flags[1].clone()),
         );
 
-        when.assert_zero(final_row_mask.clone() * (current[COL_FEE] - fee));
-        when.assert_zero(final_row_mask.clone() * (current[COL_VALUE_BALANCE_SIGN] - value_balance_sign));
+        when.assert_zero(final_row_mask.clone() * (current[COL_FEE].clone() - fee));
+        when.assert_zero(final_row_mask.clone() * (current[COL_VALUE_BALANCE_SIGN].clone() - value_balance_sign));
         when.assert_zero(
-            final_row_mask.clone() * (current[COL_VALUE_BALANCE_MAG] - value_balance_magnitude),
+            final_row_mask.clone() * (current[COL_VALUE_BALANCE_MAG].clone() - value_balance_magnitude),
         );
-        when.assert_zero(final_row_mask.clone() * (current[COL_STABLECOIN_ENABLED] - stablecoin_enabled));
-        when.assert_zero(final_row_mask.clone() * (current[COL_STABLECOIN_ASSET] - stablecoin_asset));
+        when.assert_zero(final_row_mask.clone() * (current[COL_STABLECOIN_ENABLED].clone() - stablecoin_enabled));
+        when.assert_zero(final_row_mask.clone() * (current[COL_STABLECOIN_ASSET].clone() - stablecoin_asset));
         when.assert_zero(
-            final_row_mask.clone() * (current[COL_STABLECOIN_POLICY_VERSION] - stablecoin_policy_version),
-        );
-        when.assert_zero(
-            final_row_mask.clone() * (current[COL_STABLECOIN_ISSUANCE_SIGN] - stablecoin_issuance_sign),
+            final_row_mask.clone() * (current[COL_STABLECOIN_POLICY_VERSION].clone() - stablecoin_policy_version),
         );
         when.assert_zero(
-            final_row_mask.clone() * (current[COL_STABLECOIN_ISSUANCE_MAG] - stablecoin_issuance_magnitude),
+            final_row_mask.clone() * (current[COL_STABLECOIN_ISSUANCE_SIGN].clone() - stablecoin_issuance_sign),
+        );
+        when.assert_zero(
+            final_row_mask.clone() * (current[COL_STABLECOIN_ISSUANCE_MAG].clone() - stablecoin_issuance_magnitude),
         );
 
         for (col, value) in [
@@ -1285,7 +1289,7 @@ where
             (COL_STABLECOIN_ATTEST2, stablecoin_attestation_commitment[2].clone()),
             (COL_STABLECOIN_ATTEST3, stablecoin_attestation_commitment[3].clone()),
         ] {
-            when.assert_zero(final_row_mask.clone() * (current[col] - value));
+            when.assert_zero(final_row_mask.clone() * (current[col].clone() - value));
         }
     }
 }
@@ -1319,11 +1323,11 @@ pub fn sbox(x: Felt) -> Felt {
 }
 
 pub fn mds_mix(state: &[Felt; 3]) -> [Felt; 3] {
-    let mut out = [Felt::zero(); 3];
+    let mut out = [Felt::ZERO; 3];
     for (row_idx, out_slot) in out.iter_mut().enumerate() {
-        let mut acc = Felt::zero();
+        let mut acc = Felt::ZERO;
         for (col_idx, value) in state.iter().enumerate() {
-            let coeff = Felt::from_canonical_u64(poseidon_constants::MDS_MATRIX[row_idx][col_idx]);
+            let coeff = Felt::from_u64(poseidon_constants::MDS_MATRIX[row_idx][col_idx]);
             acc += *value * coeff;
         }
         *out_slot = acc;
@@ -1348,7 +1352,7 @@ pub fn poseidon_permutation(state: &mut [Felt; 3]) {
 }
 
 pub fn poseidon_hash(domain_tag: u64, inputs: &[Felt]) -> Felt {
-    let mut state = [Felt::from_canonical_u64(domain_tag), Felt::zero(), Felt::one()];
+    let mut state = [Felt::from_u64(domain_tag), Felt::ZERO, Felt::ONE];
     let rate = POSEIDON_WIDTH - 1;
     let mut cursor = 0;
     while cursor < inputs.len() {
@@ -1360,4 +1364,22 @@ pub fn poseidon_hash(domain_tag: u64, inputs: &[Felt]) -> Felt {
         cursor += take;
     }
     state[0]
+}
+
+#[cfg(all(test, feature = "plonky3"))]
+mod tests {
+    use super::{Felt, TransactionAirP3, TransactionPublicInputsP3, PREPROCESSED_WIDTH};
+    use p3_uni_stark::get_log_num_quotient_chunks;
+
+    #[test]
+    fn log_quotient_degree_transaction_air_p3() {
+        let num_public_values = TransactionPublicInputsP3::default().to_vec().len();
+        let log_chunks = get_log_num_quotient_chunks::<Felt, _>(
+            &TransactionAirP3,
+            PREPROCESSED_WIDTH,
+            num_public_values,
+            0,
+        );
+        println!("TransactionAirP3 log_num_quotient_chunks={}", log_chunks);
+    }
 }

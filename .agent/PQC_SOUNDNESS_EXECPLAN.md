@@ -30,6 +30,7 @@ After this work, a user can:
 - [x] (2026-01-07 03:20Z) Added Plonky3 prove/verify roundtrip test (ignored due to runtime), added a counter-tamper constraint test, and aligned the sample witness value balance in `circuits/transaction/src/p3_prover.rs`.
 - [x] (2026-01-07 03:45Z) Added `plonky3-e2e` feature to run the end-to-end Plonky3 prove/verify test with production FRI parameters, while keeping fast parameters for default unit tests.
 - [x] (2026-01-07 05:20Z) Milestone 3: Port batch, block commitment, and settlement circuits to Plonky3 (new `p3_*` AIR/prover/verifier modules + feature gating + shared Plonky3 config usage).
+- [ ] (2026-01-07 06:40Z) Milestone 3b: Upgrade to Plonky3 0.4.x with preprocessed trace support (switch from `p3-uni-stark` 0.2 to the upstream STARK backend and reintroduce preprocessed schedule columns).
 - [ ] Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments.
 - [ ] Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
 - [ ] Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits.
@@ -68,11 +69,14 @@ After this work, a user can:
 - Observation: AIR hash computation in `transaction-core` referenced Winterfell trace constants directly, so Plonky3 needed a backend-gated path to avoid mismatched circuit identifiers.
   Evidence: `circuits/transaction-core/src/constants.rs`.
 
-- Observation: Plonky3 transaction trace width increased from 86 to 101 columns (+17.4%), which will grow proof sizes, FFT work, and memory footprint.
+- Observation: Plonky3 transaction trace width increased from 86 to 112 columns (+30.2%), which will grow proof sizes, FFT work, and memory footprint.
   Evidence: `circuits/transaction-core/src/stark_air.rs`, `circuits/transaction-core/src/p3_air.rs`.
 
 - Observation: The in-circuit Poseidon sponge used by the AIR is still width 3 / capacity 1 (rate 2), so commitment/nullifier hashing inside the circuit remains ~21-bit PQ collision security until Milestone 4.
   Evidence: `circuits/transaction-core/src/p3_air.rs` poseidon helper state initialization.
+
+- Observation: The Plonky3 transaction E2E prove/verify test still fails with `OodEvaluationMismatch` even when per-row constraints pass, indicating a mismatch in quotient evaluation rather than a simple constraint violation.
+  Evidence: `cargo test -p transaction-circuit --features plonky3-e2e --lib prove_verify_roundtrip_p3 --release`.
 
 - Observation: A full Plonky3 prove/verify roundtrip is slow in unit tests, so the end-to-end test is marked ignored to avoid default test timeouts.
   Evidence: `circuits/transaction/src/p3_prover.rs` test annotations.
@@ -80,8 +84,14 @@ After this work, a user can:
 - Observation: Plonky3 AIR cannot compute Blake3-derived permutation challenges (nullifier alpha/beta) from public inputs, so the block commitment AIR exposes them as public inputs and validates them out-of-circuit.
   Evidence: `circuits/block/src/p3_commitment_air.rs`, `circuits/block/src/p3_commitment_verifier.rs`.
 
-- Observation: Plonky3 trace widths for batch/block/settlement grew due to explicit schedule counters and mask columns (batch: 105, block commitment: 57, settlement: 16), which will increase proof size and memory.
+- Observation: Plonky3 trace widths for batch/block/settlement grew due to explicit schedule counters and mask columns (batch: 109, block commitment: 57, settlement: 16), which will increase proof size and memory.
   Evidence: `circuits/batch/src/p3_air.rs`, `circuits/block/src/p3_commitment_air.rs`, `circuits/settlement/src/p3_air.rs`.
+
+- Observation: Upstream Plonky3 0.4.x adds preprocessed trace support to `p3-uni-stark`, which unblocks periodic columns and avoids the binary-counter selector workarounds required in v0.2.
+  Evidence: Upstream `plonky3/uni-stark/CHANGELOG.md` entries “Add preprocessed/transparent columns to uni-stark” and “Add Preprocessed trace setup and VKs”.
+
+- Observation: After adding explicit Poseidon round-constant columns and an absorb flag, `TransactionAirP3`’s measured `log_quotient_degree` dropped to 4 (minimum blowup 16).
+  Evidence: `circuits/transaction-core/src/p3_air.rs` test `log_quotient_degree_transaction_air_p3`.
 
 ## Decision Log
 
@@ -100,6 +110,18 @@ After this work, a user can:
 - Decision: Standardize FRI parameters to 128-bit IOP soundness: 43 queries at blowup 8 (43 × 3 = 129 bits) or 32 queries at blowup 16 (32 × 4 = 128 bits).
   Rationale: Current parameters are inconsistent (8–32 queries across circuits). Uniform 128-bit aligns with the "128-bit everywhere" security posture.
   Date/Author: 2026-01-06 / Codex.
+
+- Decision: Keep `FRI_NUM_QUERIES = 43` for Plonky3 E2E tests and set `FRI_LOG_BLOWUP` to the minimum that satisfies the AIR’s quotient-degree requirement, based on measured `log_quotient_degree` (formal soundness analysis pending).
+  Rationale: Avoid over-provisioned LDE domains while keeping a conservative query count until a formal soundness analysis is completed.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Add explicit Poseidon round-constant columns plus an absorb-flag column to decouple schedule selection from the S-box, reducing the maximum constraint degree and quotient blowup requirements.
+  Rationale: Keeping binary counters for schedule validation avoids one-hot bloat while moving round selection out of the S-box drops the quotient degree to 4.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Materialize final-row/nullifier/merkle/commitment output selectors as explicit trace columns in `TransactionAirP3`.
+  Rationale: Avoid repeated high-degree products of row selectors by constraining them once, keeping selector usage low-degree without preprocessed columns.
+  Date/Author: 2026-01-07 / Codex.
 
 - Decision: Keep purpose-built circuits rather than adopting a general zkVM.
   Rationale: Hegemon follows a "PQC Bitcoin" philosophy — fixed transaction/disclosure shapes are simpler to audit than a full VM. This trades flexibility for auditability and smaller proof sizes (~60–100 KB vs. Neptune's ~533 KB).
@@ -147,6 +169,10 @@ After this work, a user can:
 
 - Decision: Reuse the transaction circuit’s Plonky3 config (Poseidon2 + FRI parameters) for batch, settlement, and block commitment ports.
   Rationale: Keeps hash and PCS parameters consistent across circuits and avoids duplicating configuration logic during the migration.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Switch to Plonky3 0.4.x’s STARK backend with preprocessed trace support (upgrade from `p3-uni-stark` 0.2 and reintroduce periodic/preprocessed columns in the AIRs).
+  Rationale: Removes the high-degree selector/counter workarounds, restores clean schedule semantics, and uses upstream support instead of maintaining a custom fork.
   Date/Author: 2026-01-07 / Codex.
 
 ## Outcomes & Retrospective
@@ -637,3 +663,5 @@ Plan change note (2026-01-07 02:45Z): Completed Milestone 2 by wiring the Plonky
 Plan change note (2026-01-07 03:20Z): Added Plonky3 end-to-end tests (with the full prove/verify test marked ignored for runtime) and documented trace width/sponge security implications.
 Plan change note (2026-01-07 05:20Z): Added `plonky3-e2e` feature gating for production-parameter E2E tests, completed Milestone 3 Plonky3 ports for batch/block/settlement with new `p3_*` modules and feature wiring, and documented the new mask/public-input decisions plus trace width impacts.
 Plan change note (2026-01-07 06:10Z): Fixed Plonky3 compile errors in batch/block/settlement AIR/prover/verifier modules (imports, borrow scopes, constant paths), and re-validated with `cargo check -p batch-circuit --features plonky3`, `cargo check -p settlement-circuit --features plonky3`, and `cargo check -p block-circuit --features plonky3`.
+Plan change note (2026-01-07 07:25Z): Added explicit Poseidon round-constant columns plus an absorb flag to `TransactionAirP3`, reducing the measured `log_quotient_degree` to 4 and setting `FRI_LOG_BLOWUP` to 4 for E2E runs; re-ran `cargo test -p transaction-core --features plonky3 log_quotient_degree_transaction_air_p3 -- --nocapture` and attempted the full Plonky3 E2E test (still long-running).
+Plan change note (2026-01-07 08:05Z): Added a Milestone 3b to switch the Plonky3 backend to the upstream preprocessed-trace STARK path, recorded the upstream preprocessed support discovery, and logged the decision to upgrade to Plonky3 0.4.x to remove selector/counter workarounds.

@@ -1,10 +1,10 @@
 //! Plonky3 prover for the transaction circuit.
 
-use p3_field::AbstractField;
+use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
-use p3_uni_stark::prove;
+use p3_uni_stark::{prove_with_preprocessed, setup_preprocessed};
 use winterfell::math::FieldElement;
 
 use crate::constants::{
@@ -13,35 +13,35 @@ use crate::constants::{
 };
 use crate::hashing::{bytes32_to_felts, merkle_node, prf_key, Felt, HashFelt};
 use crate::note::{InputNoteWitness, NoteData, OutputNoteWitness};
-use crate::p3_config::{default_config, new_challenger, TransactionProofP3};
+use crate::p3_config::{default_config, TransactionProofP3};
 use crate::witness::TransactionWitness;
 use crate::TransactionCircuitError;
 use transaction_core::p3_air::{
     commitment_output_row, cycle_is_merkle_left_01, cycle_is_merkle_left_23, cycle_is_merkle_right_01,
     cycle_is_merkle_right_23, cycle_is_squeeze, cycle_reset_domain, merkle_root_output_row,
     note_start_row_input, note_start_row_output, nullifier_output_row, round_constant,
-    TransactionAirP3, TransactionPublicInputsP3, COL_CAPTURE, COL_CAPTURE2, COL_CYCLE_BIT0,
-    COL_DIR, COL_DOMAIN, COL_FEE, COL_IN0, COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET,
-    COL_IN1_VALUE, COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT_01, COL_MERKLE_LEFT_23,
-    COL_MERKLE_RIGHT_01, COL_MERKLE_RIGHT_23, COL_NOTE_START_IN0, COL_NOTE_START_IN1,
-    COL_NOTE_START_OUT0, COL_NOTE_START_OUT1, COL_OUT0, COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1,
-    COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_RESET,
-    COL_S0, COL_S1, COL_S2, COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2,
-    COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3,
+    TransactionAirP3, TransactionPublicInputsP3, COL_CAPTURE, COL_CAPTURE2, COL_DIR, COL_DOMAIN,
+    COL_FEE, COL_IN0, COL_IN0_ASSET, COL_IN0_VALUE, COL_IN1, COL_IN1_ASSET, COL_IN1_VALUE,
+    COL_IN_ACTIVE0, COL_IN_ACTIVE1, COL_MERKLE_LEFT_01, COL_MERKLE_LEFT_23, COL_MERKLE_RIGHT_01,
+    COL_MERKLE_RIGHT_23, COL_NOTE_START_IN0, COL_NOTE_START_IN1, COL_NOTE_START_OUT0,
+    COL_NOTE_START_OUT1, COL_OUT0, COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1, COL_OUT1_ASSET,
+    COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT_ACTIVE0, COL_OUT_ACTIVE1, COL_RESET, COL_S0,
+    COL_S1, COL_S2, COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3,
+    COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3,
     COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3,
-    COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET,
-    COL_SLOT0_IN, COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET,
-    COL_SLOT2_IN, COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT,
+    COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3,
+    COL_SLOT0_ASSET, COL_SLOT0_IN, COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT,
+    COL_SLOT2_ASSET, COL_SLOT2_IN, COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT,
     COL_STABLECOIN_ASSET, COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2,
     COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG,
     COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1,
     COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3, COL_STABLECOIN_POLICY_HASH0,
     COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2, COL_STABLECOIN_POLICY_HASH3,
     COL_STABLECOIN_POLICY_VERSION, COL_STABLECOIN_SLOT_SEL0, COL_STABLECOIN_SLOT_SEL1,
-    COL_STABLECOIN_SLOT_SEL2, COL_STABLECOIN_SLOT_SEL3, COL_STEP_BIT0,
-    COL_VALUE_BALANCE_MAG, COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH,
-    DUMMY_CYCLES, MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES,
-    TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH,
+    COL_STABLECOIN_SLOT_SEL2, COL_STABLECOIN_SLOT_SEL3, COL_VALUE_BALANCE_MAG,
+    COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES,
+    MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES, TOTAL_TRACE_CYCLES,
+    TOTAL_USED_CYCLES, TRACE_WIDTH,
 };
 
 type Val = Goldilocks;
@@ -67,21 +67,7 @@ impl TransactionProverP3 {
         witness: &TransactionWitness,
     ) -> Result<RowMajorMatrix<Val>, TransactionCircuitError> {
         let trace_len = MIN_TRACE_LENGTH;
-        let mut trace = RowMajorMatrix::new(vec![Val::zero(); trace_len * TRACE_WIDTH], TRACE_WIDTH);
-
-        for row in 0..trace_len {
-            let step = row % CYCLE_LENGTH;
-            let cycle = row / CYCLE_LENGTH;
-            let row_slice = trace.row_mut(row);
-            for bit in 0..6 {
-                let is_one = ((step >> bit) & 1) == 1;
-                row_slice[COL_STEP_BIT0 + bit] = Val::from_bool(is_one);
-            }
-            for bit in 0..9 {
-                let is_one = ((cycle >> bit) & 1) == 1;
-                row_slice[COL_CYCLE_BIT0 + bit] = Val::from_bool(is_one);
-            }
-        }
+        let mut trace = RowMajorMatrix::new(vec![Val::ZERO; trace_len * TRACE_WIDTH], TRACE_WIDTH);
 
         let (input_notes, input_flags) = pad_inputs(&witness.inputs);
         let (output_notes, output_flags) = pad_outputs(&witness.outputs);
@@ -97,7 +83,7 @@ impl TransactionProverP3 {
         );
 
         let (vb_sign, vb_mag) = value_balance_parts(witness.value_balance)?;
-        let fee = Val::from_canonical_u64(witness.fee);
+        let fee = Val::from_u64(witness.fee);
         let stablecoin_inputs = stablecoin_binding_inputs(witness, &slot_assets)?;
 
         let sentinel_row = 0;
@@ -156,21 +142,21 @@ impl TransactionProverP3 {
         {
             let row_slice = trace.row_mut(sentinel_row);
             for &col in sentinel_cols.iter() {
-                row_slice[col] = Val::one();
+                row_slice[col] = Val::ONE;
             }
             for cols in selector_cols.iter() {
                 for &col in cols.iter() {
-                    row_slice[col] = Val::one();
+                    row_slice[col] = Val::ONE;
                 }
             }
             for &col in slot_asset_cols.iter() {
-                row_slice[col] = Val::one();
+                row_slice[col] = Val::ONE;
             }
             for &col in slot_in_cols.iter() {
-                row_slice[col] = Val::one();
+                row_slice[col] = Val::ONE;
             }
             for &col in slot_out_cols.iter() {
-                row_slice[col] = Val::from_canonical_u64(2);
+                row_slice[col] = Val::from_u64(2);
             }
         }
 
@@ -180,54 +166,54 @@ impl TransactionProverP3 {
         let start_row_out1 = note_start_row_output(1);
         if start_row_in0 < trace_len {
             let row_slice = trace.row_mut(start_row_in0);
-            row_slice[COL_NOTE_START_IN0] = Val::one();
+            row_slice[COL_NOTE_START_IN0] = Val::ONE;
             row_slice[COL_IN_ACTIVE0] = flag_to_felt(input_flags[0]);
-            row_slice[COL_IN0_VALUE] = Val::from_canonical_u64(input_notes[0].note.value);
-            row_slice[COL_IN0_ASSET] = Val::from_canonical_u64(input_notes[0].note.asset_id);
+            row_slice[COL_IN0_VALUE] = Val::from_u64(input_notes[0].note.value);
+            row_slice[COL_IN0_ASSET] = Val::from_u64(input_notes[0].note.asset_id);
             for slot in 0..4 {
                 row_slice[selector_cols[0][slot]] = selectors[0][slot];
             }
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_canonical_u64(slot_assets[idx]);
+                row_slice[col] = Val::from_u64(slot_assets[idx]);
             }
         }
         if start_row_in1 < trace_len {
             let row_slice = trace.row_mut(start_row_in1);
-            row_slice[COL_NOTE_START_IN1] = Val::one();
+            row_slice[COL_NOTE_START_IN1] = Val::ONE;
             row_slice[COL_IN_ACTIVE1] = flag_to_felt(input_flags[1]);
-            row_slice[COL_IN1_VALUE] = Val::from_canonical_u64(input_notes[1].note.value);
-            row_slice[COL_IN1_ASSET] = Val::from_canonical_u64(input_notes[1].note.asset_id);
+            row_slice[COL_IN1_VALUE] = Val::from_u64(input_notes[1].note.value);
+            row_slice[COL_IN1_ASSET] = Val::from_u64(input_notes[1].note.asset_id);
             for slot in 0..4 {
                 row_slice[selector_cols[1][slot]] = selectors[1][slot];
             }
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_canonical_u64(slot_assets[idx]);
+                row_slice[col] = Val::from_u64(slot_assets[idx]);
             }
         }
         if start_row_out0 < trace_len {
             let row_slice = trace.row_mut(start_row_out0);
-            row_slice[COL_NOTE_START_OUT0] = Val::one();
+            row_slice[COL_NOTE_START_OUT0] = Val::ONE;
             row_slice[COL_OUT_ACTIVE0] = flag_to_felt(output_flags[0]);
-            row_slice[COL_OUT0_VALUE] = Val::from_canonical_u64(output_notes[0].note.value);
-            row_slice[COL_OUT0_ASSET] = Val::from_canonical_u64(output_notes[0].note.asset_id);
+            row_slice[COL_OUT0_VALUE] = Val::from_u64(output_notes[0].note.value);
+            row_slice[COL_OUT0_ASSET] = Val::from_u64(output_notes[0].note.asset_id);
             for slot in 0..4 {
                 row_slice[selector_cols[2][slot]] = selectors[2][slot];
             }
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_canonical_u64(slot_assets[idx]);
+                row_slice[col] = Val::from_u64(slot_assets[idx]);
             }
         }
         if start_row_out1 < trace_len {
             let row_slice = trace.row_mut(start_row_out1);
-            row_slice[COL_NOTE_START_OUT1] = Val::one();
+            row_slice[COL_NOTE_START_OUT1] = Val::ONE;
             row_slice[COL_OUT_ACTIVE1] = flag_to_felt(output_flags[1]);
-            row_slice[COL_OUT1_VALUE] = Val::from_canonical_u64(output_notes[1].note.value);
-            row_slice[COL_OUT1_ASSET] = Val::from_canonical_u64(output_notes[1].note.asset_id);
+            row_slice[COL_OUT1_VALUE] = Val::from_u64(output_notes[1].note.value);
+            row_slice[COL_OUT1_ASSET] = Val::from_u64(output_notes[1].note.asset_id);
             for slot in 0..4 {
                 row_slice[selector_cols[3][slot]] = selectors[3][slot];
             }
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_canonical_u64(slot_assets[idx]);
+                row_slice[col] = Val::from_u64(slot_assets[idx]);
             }
         }
 
@@ -238,7 +224,7 @@ impl TransactionProverP3 {
             row_slice[COL_VALUE_BALANCE_SIGN] = vb_sign;
             row_slice[COL_VALUE_BALANCE_MAG] = vb_mag;
             for (idx, &col) in slot_asset_cols.iter().enumerate() {
-                row_slice[col] = Val::from_canonical_u64(slot_assets[idx]);
+                row_slice[col] = Val::from_u64(slot_assets[idx]);
             }
             row_slice[COL_STABLECOIN_ENABLED] = stablecoin_inputs.enabled;
             row_slice[COL_STABLECOIN_ASSET] = stablecoin_inputs.asset;
@@ -264,7 +250,7 @@ impl TransactionProverP3 {
         }
 
         if final_row < trace_len {
-            let one = Val::one();
+            let one = Val::ONE;
             let stablecoin_sel_cols = [
                 COL_STABLECOIN_SLOT_SEL0,
                 COL_STABLECOIN_SLOT_SEL1,
@@ -320,13 +306,13 @@ impl TransactionProverP3 {
         for row in 1..trace_len {
             let row_slice = trace.row_mut(row);
             for slot in 0..4 {
-                row_slice[slot_in_cols[slot]] = Val::from_canonical_u64(slot_in_acc[slot]);
-                row_slice[slot_out_cols[slot]] = Val::from_canonical_u64(slot_out_acc[slot]);
+                row_slice[slot_in_cols[slot]] = Val::from_u64(slot_in_acc[slot]);
+                row_slice[slot_out_cols[slot]] = Val::from_u64(slot_out_acc[slot]);
             }
 
             if row == start_row_in0 && start_row_in0 < trace_len {
                 for slot in 0..4 {
-                    if selectors[0][slot] == Val::one() {
+                    if selectors[0][slot] == Val::ONE {
                         slot_in_acc[slot] =
                             slot_in_acc[slot].saturating_add(input_notes[0].note.value);
                     }
@@ -334,7 +320,7 @@ impl TransactionProverP3 {
             }
             if row == start_row_in1 && start_row_in1 < trace_len {
                 for slot in 0..4 {
-                    if selectors[1][slot] == Val::one() {
+                    if selectors[1][slot] == Val::ONE {
                         slot_in_acc[slot] =
                             slot_in_acc[slot].saturating_add(input_notes[1].note.value);
                     }
@@ -342,7 +328,7 @@ impl TransactionProverP3 {
             }
             if row == start_row_out0 && start_row_out0 < trace_len {
                 for slot in 0..4 {
-                    if selectors[2][slot] == Val::one() {
+                    if selectors[2][slot] == Val::ONE {
                         slot_out_acc[slot] =
                             slot_out_acc[slot].saturating_add(output_notes[0].note.value);
                     }
@@ -350,7 +336,7 @@ impl TransactionProverP3 {
             }
             if row == start_row_out1 && start_row_out1 < trace_len {
                 for slot in 0..4 {
-                    if selectors[3][slot] == Val::one() {
+                    if selectors[3][slot] == Val::ONE {
                         slot_out_acc[slot] =
                             slot_out_acc[slot].saturating_add(output_notes[1].note.value);
                     }
@@ -359,11 +345,11 @@ impl TransactionProverP3 {
         }
 
         let cycle_specs = build_cycle_specs(&input_notes, &output_notes, witness);
-        let mut prev_state = [Val::zero(), Val::zero(), Val::one()];
-        let mut out0 = Val::zero();
-        let mut out1 = Val::zero();
-        let mut out2 = Val::zero();
-        let mut out3 = Val::zero();
+        let mut prev_state = [Val::ZERO, Val::ZERO, Val::ONE];
+        let mut out0 = Val::ZERO;
+        let mut out1 = Val::ZERO;
+        let mut out2 = Val::ZERO;
+        let mut out3 = Val::ZERO;
 
         for cycle in 0..TOTAL_TRACE_CYCLES {
             let cycle_start = cycle * CYCLE_LENGTH;
@@ -372,20 +358,20 @@ impl TransactionProverP3 {
             }
 
             let (state_start, dir) = if cycle == 0 {
-                (prev_state, Val::zero())
+                (prev_state, Val::ZERO)
             } else {
                 let spec = cycle_specs.get(cycle - 1).cloned().unwrap_or(CycleSpec {
                     reset: false,
                     domain: 0,
-                    in0: Val::zero(),
-                    in1: Val::zero(),
-                    dir: Val::zero(),
+                    in0: Val::ZERO,
+                    in1: Val::ZERO,
+                    dir: Val::ZERO,
                 });
                 let state_start = if spec.reset {
                     [
-                        Val::from_canonical_u64(spec.domain) + spec.in0,
+                        Val::from_u64(spec.domain) + spec.in0,
                         spec.in1,
-                        Val::one(),
+                        Val::ONE,
                     ]
                 } else {
                     [prev_state[0] + spec.in0, prev_state[1] + spec.in1, prev_state[2]]
@@ -429,20 +415,20 @@ impl TransactionProverP3 {
                 let next_spec = cycle_specs.get(next_cycle - 1).cloned().unwrap_or(CycleSpec {
                     reset: false,
                     domain: 0,
-                    in0: Val::zero(),
-                    in1: Val::zero(),
-                    dir: Val::zero(),
+                    in0: Val::ZERO,
+                    in1: Val::ZERO,
+                    dir: Val::ZERO,
                 });
                 let row_slice = trace.row_mut(end_row);
                 row_slice[COL_IN0] = next_spec.in0;
                 row_slice[COL_IN1] = next_spec.in1;
 
                 if let Some(domain) = cycle_reset_domain(next_cycle) {
-                    row_slice[COL_RESET] = Val::one();
-                    row_slice[COL_DOMAIN] = Val::from_canonical_u64(domain);
+                    row_slice[COL_RESET] = Val::ONE;
+                    row_slice[COL_DOMAIN] = Val::from_u64(domain);
                 } else {
-                    row_slice[COL_RESET] = Val::zero();
-                    row_slice[COL_DOMAIN] = Val::zero();
+                    row_slice[COL_RESET] = Val::ZERO;
+                    row_slice[COL_DOMAIN] = Val::ZERO;
                 }
 
                 row_slice[COL_MERKLE_LEFT_23] = flag_to_felt(cycle_is_merkle_left_23(next_cycle));
@@ -511,7 +497,7 @@ impl TransactionProverP3 {
             output_flags,
             nullifiers: nullifiers.into_iter().map(hash_to_gl).collect(),
             commitments: commitments.into_iter().map(hash_to_gl).collect(),
-            fee: Val::from_canonical_u64(witness.fee),
+            fee: Val::from_u64(witness.fee),
             value_balance_sign: vb_sign,
             value_balance_magnitude: vb_mag,
             merkle_root: hash_to_gl(merkle_root),
@@ -535,7 +521,7 @@ impl TransactionProverP3 {
             let flag = if row < trace_len {
                 get_trace(trace, input_cols[idx], row)
             } else {
-                Val::zero()
+                Val::ZERO
             };
             input_flags.push(flag);
         }
@@ -547,7 +533,7 @@ impl TransactionProverP3 {
             let flag = if row < trace_len {
                 get_trace(trace, output_cols[idx], row)
             } else {
-                Val::zero()
+                Val::ZERO
             };
             output_flags.push(flag);
         }
@@ -564,10 +550,10 @@ impl TransactionProverP3 {
         let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
         for (i, flag) in input_flags.iter().enumerate() {
             let row = nullifier_output_row(i);
-            let nf = if *flag == Val::one() && row < trace_len {
+            let nf = if *flag == Val::ONE && row < trace_len {
                 read_hash(row)
             } else {
-                [Val::zero(); 4]
+                [Val::ZERO; 4]
             };
             nullifiers.push(nf);
         }
@@ -575,10 +561,10 @@ impl TransactionProverP3 {
         let mut commitments = Vec::with_capacity(MAX_OUTPUTS);
         for (i, flag) in output_flags.iter().enumerate() {
             let row = commitment_output_row(i);
-            let cm = if *flag == Val::one() && row < trace_len {
+            let cm = if *flag == Val::ONE && row < trace_len {
                 read_hash(row)
             } else {
-                [Val::zero(); 4]
+                [Val::ZERO; 4]
             };
             commitments.push(cm);
         }
@@ -588,10 +574,10 @@ impl TransactionProverP3 {
             if row < trace_len {
                 read_hash(row)
             } else {
-                [Val::zero(); 4]
+                [Val::ZERO; 4]
             }
         } else {
-            [Val::zero(); 4]
+            [Val::ZERO; 4]
         };
 
         let final_row = trace_len.saturating_sub(2);
@@ -636,13 +622,15 @@ impl TransactionProverP3 {
         pub_inputs: &TransactionPublicInputsP3,
     ) -> TransactionProofP3 {
         let config = default_config();
-        let mut challenger = new_challenger(&config.perm);
-        prove(
+        let degree_bits = trace.height().ilog2() as usize;
+        let (prep_prover, _) = setup_preprocessed(&config.config, &TransactionAirP3, degree_bits)
+            .expect("TransactionAirP3 preprocessed trace missing");
+        prove_with_preprocessed(
             &config.config,
             &TransactionAirP3,
-            &mut challenger,
             trace,
             &pub_inputs.to_vec(),
+            Some(&prep_prover),
         )
     }
 
@@ -673,16 +661,16 @@ fn flag_to_felt(active: bool) -> Val {
 }
 
 fn bool_trace_value(value: Val, is_final: bool) -> Val {
-    if value == Val::one() {
+    if value == Val::ONE {
         if is_final {
-            Val::one()
+            Val::ONE
         } else {
-            Val::zero()
+            Val::ZERO
         }
     } else if is_final {
-        Val::zero()
+        Val::ZERO
     } else {
-        Val::one()
+        Val::ONE
     }
 }
 
@@ -692,10 +680,10 @@ fn get_trace(trace: &RowMajorMatrix<Val>, col: usize, row: usize) -> Val {
 
 fn hash_to_gl(hash: HashFelt) -> [Val; 4] {
     [
-        Val::from_canonical_u64(hash[0].as_int()),
-        Val::from_canonical_u64(hash[1].as_int()),
-        Val::from_canonical_u64(hash[2].as_int()),
-        Val::from_canonical_u64(hash[3].as_int()),
+        Val::from_u64(hash[0].as_int()),
+        Val::from_u64(hash[1].as_int()),
+        Val::from_u64(hash[2].as_int()),
+        Val::from_u64(hash[3].as_int()),
     ]
 }
 
@@ -792,12 +780,12 @@ fn build_selectors(
     input_flags: &[bool; MAX_INPUTS],
     output_flags: &[bool; MAX_OUTPUTS],
 ) -> [[Val; 4]; 4] {
-    let mut selectors = [[Val::zero(); 4]; 4];
+    let mut selectors = [[Val::ZERO; 4]; 4];
 
     for (idx, note) in inputs.iter().enumerate() {
         if input_flags[idx] {
             if let Some(slot_idx) = slot_assets.iter().position(|id| *id == note.note.asset_id) {
-                selectors[idx][slot_idx] = Val::one();
+                selectors[idx][slot_idx] = Val::ONE;
             }
         }
     }
@@ -805,7 +793,7 @@ fn build_selectors(
     for (idx, note) in outputs.iter().enumerate() {
         if output_flags[idx] {
             if let Some(slot_idx) = slot_assets.iter().position(|id| *id == note.note.asset_id) {
-                selectors[2 + idx][slot_idx] = Val::one();
+                selectors[2 + idx][slot_idx] = Val::ONE;
             }
         }
     }
@@ -817,8 +805,8 @@ fn value_balance_parts(value_balance: i128) -> Result<(Val, Val), TransactionCir
     let magnitude = value_balance.unsigned_abs();
     let mag_u64 = u64::try_from(magnitude)
         .map_err(|_| TransactionCircuitError::ValueBalanceOutOfRange(magnitude))?;
-    let sign = if value_balance < 0 { Val::one() } else { Val::zero() };
-    Ok((sign, Val::from_canonical_u64(mag_u64)))
+    let sign = if value_balance < 0 { Val::ONE } else { Val::ZERO };
+    Ok((sign, Val::from_u64(mag_u64)))
 }
 
 struct StablecoinBindingInputs {
@@ -839,15 +827,15 @@ fn stablecoin_binding_inputs(
 ) -> Result<StablecoinBindingInputs, TransactionCircuitError> {
     if !witness.stablecoin.enabled {
         return Ok(StablecoinBindingInputs {
-            enabled: Val::zero(),
-            asset: Val::zero(),
-            policy_version: Val::zero(),
-            issuance_sign: Val::zero(),
-            issuance_mag: Val::zero(),
-            policy_hash: [Val::zero(); 4],
-            oracle_commitment: [Val::zero(); 4],
-            attestation_commitment: [Val::zero(); 4],
-            slot_selectors: [Val::zero(); 4],
+            enabled: Val::ZERO,
+            asset: Val::ZERO,
+            policy_version: Val::ZERO,
+            issuance_sign: Val::ZERO,
+            issuance_mag: Val::ZERO,
+            policy_hash: [Val::ZERO; 4],
+            oracle_commitment: [Val::ZERO; 4],
+            attestation_commitment: [Val::ZERO; 4],
+            slot_selectors: [Val::ZERO; 4],
         });
     }
 
@@ -865,7 +853,7 @@ fn stablecoin_binding_inputs(
         )?;
 
     let (issuance_sign, issuance_mag) = value_balance_parts(witness.stablecoin.issuance_delta)?;
-    let mut slot_selectors = [Val::zero(); 4];
+    let mut slot_selectors = [Val::ZERO; 4];
     let slot_index = slot_assets
         .iter()
         .position(|asset_id| *asset_id == witness.stablecoin.asset_id)
@@ -877,12 +865,12 @@ fn stablecoin_binding_inputs(
             "stablecoin slot index overflow",
         ));
     }
-    slot_selectors[slot_index] = Val::one();
+    slot_selectors[slot_index] = Val::ONE;
 
     Ok(StablecoinBindingInputs {
-        enabled: Val::one(),
-        asset: Val::from_canonical_u64(witness.stablecoin.asset_id),
-        policy_version: Val::from_canonical_u64(u64::from(witness.stablecoin.policy_version)),
+        enabled: Val::ONE,
+        asset: Val::from_u64(witness.stablecoin.asset_id),
+        policy_version: Val::from_u64(u64::from(witness.stablecoin.policy_version)),
         issuance_sign,
         issuance_mag,
         policy_hash: hash_to_gl(policy_hash),
@@ -910,23 +898,23 @@ fn build_cycle_specs(
             cycles.push(CycleSpec {
                 reset,
                 domain,
-                in0: Val::from_canonical_u64(in0.as_int()),
-                in1: Val::from_canonical_u64(in1.as_int()),
-                dir: Val::zero(),
+                in0: Val::from_u64(in0.as_int()),
+                in1: Val::from_u64(in1.as_int()),
+                dir: Val::ZERO,
             });
         }
         cycles.push(CycleSpec {
             reset: false,
             domain: 0,
-            in0: Val::zero(),
-            in1: Val::zero(),
-            dir: Val::zero(),
+            in0: Val::ZERO,
+            in1: Val::ZERO,
+            dir: Val::ZERO,
         });
 
         let mut current = input.note.commitment();
         let mut pos = input.position;
         for level in 0..CIRCUIT_MERKLE_DEPTH {
-            let dir = if pos & 1 == 0 { Val::zero() } else { Val::one() };
+            let dir = if pos & 1 == 0 { Val::ZERO } else { Val::ONE };
             let sibling = input
                 .merkle_path
                 .siblings
@@ -953,16 +941,16 @@ fn build_cycle_specs(
                 cycles.push(CycleSpec {
                     reset,
                     domain,
-                    in0: Val::from_canonical_u64(in0.as_int()),
-                    in1: Val::from_canonical_u64(in1.as_int()),
+                    in0: Val::from_u64(in0.as_int()),
+                    in1: Val::from_u64(in1.as_int()),
                     dir,
                 });
             }
             cycles.push(CycleSpec {
                 reset: false,
                 domain: 0,
-                in0: Val::zero(),
-                in1: Val::zero(),
+                in0: Val::ZERO,
+                in1: Val::ZERO,
                 dir,
             });
             current = merkle_node(left, right);
@@ -978,17 +966,17 @@ fn build_cycle_specs(
             cycles.push(CycleSpec {
                 reset,
                 domain,
-                in0: Val::from_canonical_u64(in0.as_int()),
-                in1: Val::from_canonical_u64(in1.as_int()),
-                dir: Val::zero(),
+                in0: Val::from_u64(in0.as_int()),
+                in1: Val::from_u64(in1.as_int()),
+                dir: Val::ZERO,
             });
         }
         cycles.push(CycleSpec {
             reset: false,
             domain: 0,
-            in0: Val::zero(),
-            in1: Val::zero(),
-            dir: Val::zero(),
+            in0: Val::ZERO,
+            in1: Val::ZERO,
+            dir: Val::ZERO,
         });
     }
 
@@ -1002,17 +990,17 @@ fn build_cycle_specs(
             cycles.push(CycleSpec {
                 reset,
                 domain,
-                in0: Val::from_canonical_u64(in0.as_int()),
-                in1: Val::from_canonical_u64(in1.as_int()),
-                dir: Val::zero(),
+                in0: Val::from_u64(in0.as_int()),
+                in1: Val::from_u64(in1.as_int()),
+                dir: Val::ZERO,
             });
         }
         cycles.push(CycleSpec {
             reset: false,
             domain: 0,
-            in0: Val::zero(),
-            in1: Val::zero(),
-            dir: Val::zero(),
+            in0: Val::ZERO,
+            in1: Val::ZERO,
+            dir: Val::ZERO,
         });
     }
 
@@ -1036,6 +1024,14 @@ mod tests {
     use crate::note::{MerklePath, NoteData};
     use crate::p3_verifier::verify_transaction_proof_p3;
     use crate::StablecoinPolicyBinding;
+    #[cfg(debug_assertions)]
+    use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues};
+    #[cfg(debug_assertions)]
+    use p3_matrix::dense::RowMajorMatrixView;
+    #[cfg(debug_assertions)]
+    use p3_matrix::stack::VerticalPair;
+    #[cfg(debug_assertions)]
+    use p3_matrix::Matrix;
     use std::panic::catch_unwind;
 
     fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
@@ -1113,7 +1109,7 @@ mod tests {
     }
 
     #[test]
-    fn counter_mismatch_rejected_p3() {
+    fn schedule_mismatch_rejected_p3() {
         let witness = sample_witness();
         witness.validate().expect("witness valid");
         let prover = TransactionProverP3::new();
@@ -1121,12 +1117,12 @@ mod tests {
         let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
 
         let row = 1;
-        let col = COL_STEP_BIT0;
+        let col = COL_RESET;
         let idx = row * trace.width + col;
-        trace.values[idx] = if trace.values[idx] == Val::zero() {
-            Val::one()
+        trace.values[idx] = if trace.values[idx] == Val::ZERO {
+            Val::ONE
         } else {
-            Val::zero()
+            Val::ZERO
         };
 
         let result = catch_unwind(|| prover.prove(trace, &pub_inputs));
@@ -1136,6 +1132,109 @@ mod tests {
                 "verification should fail for tampered counters"
             ),
             Err(_) => {}
+        }
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[ignore = "debug helper to locate failing constraints"]
+    fn debug_constraints_p3() {
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let trace = prover.build_trace(&witness).expect("trace build");
+        let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
+        assert_constraints(&trace, &pub_inputs.to_vec());
+    }
+
+    #[cfg(debug_assertions)]
+    fn assert_constraints(trace: &RowMajorMatrix<Val>, public_values: &[Val]) {
+        let height = trace.height();
+        for row in 0..height {
+            let next_row = (row + 1) % height;
+            let local = trace.row_slice(row);
+            let next = trace.row_slice(next_row);
+            let main = VerticalPair::new(
+                RowMajorMatrixView::new_row(&*local),
+                RowMajorMatrixView::new_row(&*next),
+            );
+
+            let mut builder = DebugConstraintBuilder {
+                row_index: row,
+                main,
+                public_values,
+                is_first_row: Val::from_bool(row == 0),
+                is_last_row: Val::from_bool(row + 1 == height),
+                is_transition: Val::from_bool(row + 1 != height),
+            };
+
+            TransactionAirP3.eval(&mut builder);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    struct DebugConstraintBuilder<'a> {
+        row_index: usize,
+        main: VerticalPair<RowMajorMatrixView<'a, Val>, RowMajorMatrixView<'a, Val>>,
+        public_values: &'a [Val],
+        is_first_row: Val,
+        is_last_row: Val,
+        is_transition: Val,
+    }
+
+    #[cfg(debug_assertions)]
+    impl<'a> AirBuilder for DebugConstraintBuilder<'a> {
+        type F = Val;
+        type Expr = Val;
+        type Var = Val;
+        type M = VerticalPair<RowMajorMatrixView<'a, Val>, RowMajorMatrixView<'a, Val>>;
+
+        fn is_first_row(&self) -> Self::Expr {
+            self.is_first_row
+        }
+
+        fn is_last_row(&self) -> Self::Expr {
+            self.is_last_row
+        }
+
+        fn is_transition_window(&self, size: usize) -> Self::Expr {
+            if size == 2 {
+                self.is_transition
+            } else {
+                panic!("unsupported transition window size: {size}");
+            }
+        }
+
+        fn main(&self) -> Self::M {
+            self.main
+        }
+
+        fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
+            assert_eq!(
+                x.into(),
+                Val::ZERO,
+                "constraint nonzero on row {}",
+                self.row_index
+            );
+        }
+
+        fn assert_eq<I1: Into<Self::Expr>, I2: Into<Self::Expr>>(&mut self, x: I1, y: I2) {
+            let x = x.into();
+            let y = y.into();
+            assert_eq!(
+                x, y,
+                "constraint mismatch on row {}: {} != {}",
+                self.row_index, x, y
+            );
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    impl<'a> AirBuilderWithPublicValues for DebugConstraintBuilder<'a> {
+        type PublicVar = Val;
+
+        fn public_values(&self) -> &[Self::PublicVar] {
+            self.public_values
         }
     }
 }
