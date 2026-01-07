@@ -172,7 +172,7 @@ Concretely:
 
 **Lesson from Zcash:** we do *not* change proving systems mid-flight if we can avoid it. We pick one transparent, STARK-ish scheme and stick with it, using recursion for evolution rather than entire new pools.
 
-Implementation detail: the Plonky3 backend uses `p3-uni-stark` (v0.4.x) with preprocessed trace columns for fixed schedule selectors (Poseidon round flags, cycle markers, and row-specific assertions). The main trace only carries witness and permutation data, while the schedule lives in a committed, deterministic preprocessed trace so we avoid custom forks or counter-heavy selectors.
+Implementation detail: the Plonky3 backend uses `p3-uni-stark` (v0.4.x). For the transaction AIR, fixed schedule selectors (Poseidon round flags, cycle markers, and row-specific assertions) are embedded as explicit schedule columns in the main trace; this keeps the schedule deterministic while avoiding preprocessed-trace OOD mismatches. Other circuits may still use preprocessed columns where stable.
 
 #### 2.1 Algebraic embeddings that claw back overhead
 
