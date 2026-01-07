@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir};
-use p3_field::AbstractField;
+use p3_field::{AbstractField, PrimeField64};
 use p3_goldilocks::Goldilocks;
 use p3_matrix::Matrix;
 
@@ -255,43 +255,6 @@ where
             }
         }
 
-        let mut when = builder.when_transition();
-        when.assert_zero(absorb_flag.clone() * (next[COL_S0] - (current[COL_S0] + next[COL_IN0])));
-        when.assert_zero(absorb_flag.clone() * (next[COL_S1] - (current[COL_S1] + next[COL_IN1])));
-        when.assert_zero(absorb_flag.clone() * (next[COL_S2] - current[COL_S2]));
-        when.assert_zero(hash_flag.clone() * (next[COL_S0] - hash_s0));
-        when.assert_zero(hash_flag.clone() * (next[COL_S1] - hash_s1));
-        when.assert_zero(hash_flag * (next[COL_S2] - hash_s2));
-
-        for bit in step_bits.iter() {
-            when.assert_bool(*bit);
-        }
-        for bit in cycle_bits.iter() {
-            when.assert_bool(*bit);
-        }
-
-        let mut carry = one.clone();
-        for (idx, bit) in step_bits.iter().enumerate() {
-            let bit_expr: AB::Expr = (*bit).into();
-            let carry_next = carry.clone() * bit_expr.clone();
-            let next_expr: AB::Expr = step_bits_next[idx].into();
-            when.assert_zero(
-                next_expr - (bit_expr + carry.clone() - two.clone() * carry_next.clone()),
-            );
-            carry = carry_next;
-        }
-
-        let mut carry = absorb_flag.clone();
-        for (idx, bit) in cycle_bits.iter().enumerate() {
-            let bit_expr: AB::Expr = (*bit).into();
-            let carry_next = carry.clone() * bit_expr.clone();
-            let next_expr: AB::Expr = cycle_bits_next[idx].into();
-            when.assert_zero(
-                next_expr - (bit_expr + carry.clone() - two.clone() * carry_next.clone()),
-            );
-            carry = carry_next;
-        }
-
         let public_values = builder.public_values();
         let expected_len = 2 + MAX_INSTRUCTIONS + (MAX_NULLIFIERS * 4) + 4;
         debug_assert_eq!(public_values.len(), expected_len);
@@ -324,34 +287,78 @@ where
         }
 
         {
+            let mut when = builder.when_transition();
+            when.assert_zero(
+                absorb_flag.clone() * (next[COL_S0] - (current[COL_S0] + next[COL_IN0])),
+            );
+            when.assert_zero(
+                absorb_flag.clone() * (next[COL_S1] - (current[COL_S1] + next[COL_IN1])),
+            );
+            when.assert_zero(absorb_flag.clone() * (next[COL_S2] - current[COL_S2]));
+            when.assert_zero(hash_flag.clone() * (next[COL_S0] - hash_s0));
+            when.assert_zero(hash_flag.clone() * (next[COL_S1] - hash_s1));
+            when.assert_zero(hash_flag * (next[COL_S2] - hash_s2));
+
+            for bit in step_bits.iter() {
+                when.assert_bool(*bit);
+            }
+            for bit in cycle_bits.iter() {
+                when.assert_bool(*bit);
+            }
+
+            let mut carry = one.clone();
+            for (idx, bit) in step_bits.iter().enumerate() {
+                let bit_expr: AB::Expr = (*bit).into();
+                let carry_next = carry.clone() * bit_expr.clone();
+                let next_expr: AB::Expr = step_bits_next[idx].into();
+                when.assert_zero(
+                    next_expr - (bit_expr + carry.clone() - two.clone() * carry_next.clone()),
+                );
+                carry = carry_next;
+            }
+
+            let mut carry = absorb_flag.clone();
+            for (idx, bit) in cycle_bits.iter().enumerate() {
+                let bit_expr: AB::Expr = (*bit).into();
+                let carry_next = carry.clone() * bit_expr.clone();
+                let next_expr: AB::Expr = cycle_bits_next[idx].into();
+                when.assert_zero(
+                    next_expr - (bit_expr + carry.clone() - two.clone() * carry_next.clone()),
+                );
+                carry = carry_next;
+            }
+
+            for cycle in 0..INPUT_PAIRS_PER_TRACE {
+                let row = cycle * CYCLE_LENGTH;
+                let pair_index = cycle + 1;
+                let (in0, in1) = if pair_index < ABSORB_CYCLES {
+                    (inputs[2 * pair_index].clone(), inputs[2 * pair_index + 1].clone())
+                } else {
+                    (AB::Expr::zero(), AB::Expr::zero())
+                };
+                let gate = row_selector(row);
+                when.assert_zero(gate.clone() * (current[COL_IN0] - in0));
+                when.assert_zero(gate * (current[COL_IN1] - in1));
+            }
+
+            let row_01 = commitment_row_01();
+            let row_23 = commitment_row_23();
+            let gate_01 = row_selector(row_01);
+            let gate_23 = row_selector(row_23);
+            when.assert_zero(gate_01.clone() * (current[COL_S0] - commitment[0].clone()));
+            when.assert_zero(gate_01 * (current[COL_S1] - commitment[1].clone()));
+            when.assert_zero(gate_23.clone() * (current[COL_S0] - commitment[2].clone()));
+            when.assert_zero(gate_23 * (current[COL_S1] - commitment[3].clone()));
+        }
+
+        {
             let mut when_first = builder.when_first_row();
             when_first.assert_zero(
-                current[COL_S0] - (AB::Expr::from_canonical_u64(SETTLEMENT_DOMAIN_TAG) + inputs[0].clone()),
+                current[COL_S0]
+                    - (AB::Expr::from_canonical_u64(SETTLEMENT_DOMAIN_TAG) + inputs[0].clone()),
             );
             when_first.assert_zero(current[COL_S1] - inputs[1].clone());
             when_first.assert_zero(current[COL_S2] - one.clone());
         }
-
-        for cycle in 0..INPUT_PAIRS_PER_TRACE {
-            let row = cycle * CYCLE_LENGTH;
-            let pair_index = cycle + 1;
-            let (in0, in1) = if pair_index < ABSORB_CYCLES {
-                (inputs[2 * pair_index].clone(), inputs[2 * pair_index + 1].clone())
-            } else {
-                (AB::Expr::zero(), AB::Expr::zero())
-            };
-            let gate = row_selector(row);
-            when.assert_zero(gate.clone() * (current[COL_IN0] - in0));
-            when.assert_zero(gate * (current[COL_IN1] - in1));
-        }
-
-        let row_01 = commitment_row_01();
-        let row_23 = commitment_row_23();
-        let gate_01 = row_selector(row_01);
-        let gate_23 = row_selector(row_23);
-        when.assert_zero(gate_01.clone() * (current[COL_S0] - commitment[0].clone()));
-        when.assert_zero(gate_01 * (current[COL_S1] - commitment[1].clone()));
-        when.assert_zero(gate_23.clone() * (current[COL_S0] - commitment[2].clone()));
-        when.assert_zero(gate_23 * (current[COL_S1] - commitment[3].clone()));
     }
 }

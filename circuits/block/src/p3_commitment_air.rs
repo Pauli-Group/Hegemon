@@ -1,10 +1,12 @@
 //! Plonky3 AIR for commitment block proofs.
 
+extern crate alloc;
+
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir};
-use p3_field::AbstractField;
+use p3_field::{AbstractField, Field, PrimeField64};
 use p3_goldilocks::Goldilocks;
 use p3_matrix::Matrix;
 
@@ -34,7 +36,7 @@ pub const COL_INPUT_CYCLE_MASK: usize = COL_PERM_ACC + 1;
 pub const COL_INPUT_CYCLE_ACC: usize = COL_INPUT_CYCLE_MASK + 1;
 pub const TRACE_WIDTH: usize = COL_INPUT_CYCLE_ACC + 1;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitmentBlockPublicInputsP3 {
     pub tx_proofs_commitment: [Felt; 4],
     pub starting_state_root: [Felt; 4],
@@ -260,63 +262,6 @@ where
             when_first.assert_zero(current[COL_S2] - one.clone());
         }
 
-        let mut when = builder.when_transition();
-        when.assert_zero(cycle_end.clone() * (next[COL_S0] - (current[COL_S0] + next[COL_INPUT0])));
-        when.assert_zero(cycle_end.clone() * (next[COL_S1] - (current[COL_S1] + next[COL_INPUT1])));
-        when.assert_zero(cycle_end.clone() * (next[COL_S2] - current[COL_S2]));
-        when.assert_zero(hash_flag.clone() * (next[COL_S0] - hash_s0));
-        when.assert_zero(hash_flag.clone() * (next[COL_S1] - hash_s1));
-        when.assert_zero(hash_flag * (next[COL_S2] - hash_s2));
-
-        for bit in step_bits.iter() {
-            when.assert_bool(*bit);
-        }
-        for bit in cycle_bits.iter() {
-            when.assert_bool(*bit);
-        }
-
-        let mut carry = one.clone();
-        for (idx, bit) in step_bits.iter().enumerate() {
-            let bit_expr: AB::Expr = (*bit).into();
-            let carry_next = carry.clone() * bit_expr.clone();
-            let next_expr: AB::Expr = step_bits_next[idx].into();
-            when.assert_zero(
-                next_expr - (bit_expr + carry.clone() - two.clone() * carry_next.clone()),
-            );
-            carry = carry_next;
-        }
-
-        let mut carry = cycle_end.clone();
-        for (idx, bit) in cycle_bits.iter().enumerate() {
-            let bit_expr: AB::Expr = (*bit).into();
-            let carry_next = carry.clone() * bit_expr.clone();
-            let next_expr: AB::Expr = cycle_bits_next[idx].into();
-            when.assert_zero(
-                next_expr - (bit_expr + carry.clone() - two.clone() * carry_next.clone()),
-            );
-            carry = carry_next;
-        }
-
-        let perm_mask = current[COL_PERM_MASK];
-        let perm_mask_next = next[COL_PERM_MASK];
-        let perm_acc = current[COL_PERM_ACC];
-        let perm_acc_next = next[COL_PERM_ACC];
-        when.assert_bool(perm_mask);
-        when.assert_zero(perm_mask_next * (one.clone() - perm_mask));
-        when.assert_zero(perm_acc_next - (perm_acc + perm_mask));
-
-        let input_cycle_mask = current[COL_INPUT_CYCLE_MASK];
-        let input_cycle_mask_next = next[COL_INPUT_CYCLE_MASK];
-        let input_cycle_acc = current[COL_INPUT_CYCLE_ACC];
-        let input_cycle_acc_next = next[COL_INPUT_CYCLE_ACC];
-        when.assert_bool(input_cycle_mask);
-        let not_cycle_end = one.clone() - cycle_end.clone();
-        when.assert_zero(not_cycle_end * (input_cycle_mask_next - input_cycle_mask));
-        when.assert_zero(cycle_end.clone() * input_cycle_mask_next * (one.clone() - input_cycle_mask));
-        when.assert_zero(
-            input_cycle_acc_next - (input_cycle_acc + cycle_end.clone() * input_cycle_mask),
-        );
-
         let public_values = builder.public_values();
         let base_len = 23;
         debug_assert!(public_values.len() >= base_len);
@@ -353,116 +298,187 @@ where
             idx += 4;
         }
 
-        let mut when_first = builder.when_first_row();
-        when_first.assert_zero(current[COL_START_ROOT0] - start_root[0].clone());
-        when_first.assert_zero(current[COL_START_ROOT1] - start_root[1].clone());
-        when_first.assert_zero(current[COL_START_ROOT2] - start_root[2].clone());
-        when_first.assert_zero(current[COL_START_ROOT3] - start_root[3].clone());
-        when_first.assert_zero(current[COL_END_ROOT0] - end_root[0].clone());
-        when_first.assert_zero(current[COL_END_ROOT1] - end_root[1].clone());
-        when_first.assert_zero(current[COL_END_ROOT2] - end_root[2].clone());
-        when_first.assert_zero(current[COL_END_ROOT3] - end_root[3].clone());
-        when_first.assert_zero(current[COL_NULLIFIER_ROOT0] - nullifier_root[0].clone());
-        when_first.assert_zero(current[COL_NULLIFIER_ROOT1] - nullifier_root[1].clone());
-        when_first.assert_zero(current[COL_NULLIFIER_ROOT2] - nullifier_root[2].clone());
-        when_first.assert_zero(current[COL_NULLIFIER_ROOT3] - nullifier_root[3].clone());
-        when_first.assert_zero(current[COL_DA_ROOT0] - da_root[0].clone());
-        when_first.assert_zero(current[COL_DA_ROOT1] - da_root[1].clone());
-        when_first.assert_zero(current[COL_DA_ROOT2] - da_root[2].clone());
-        when_first.assert_zero(current[COL_DA_ROOT3] - da_root[3].clone());
-
-        for col in [
-            COL_START_ROOT0,
-            COL_START_ROOT1,
-            COL_START_ROOT2,
-            COL_START_ROOT3,
-            COL_END_ROOT0,
-            COL_END_ROOT1,
-            COL_END_ROOT2,
-            COL_END_ROOT3,
-            COL_NULLIFIER_ROOT0,
-            COL_NULLIFIER_ROOT1,
-            COL_NULLIFIER_ROOT2,
-            COL_NULLIFIER_ROOT3,
-            COL_DA_ROOT0,
-            COL_DA_ROOT1,
-            COL_DA_ROOT2,
-            COL_DA_ROOT3,
-        ] {
-            when.assert_zero(next[col] - current[col]);
-        }
-
-        let alpha = perm_alpha;
-        let beta = perm_beta;
-        let alpha2 = alpha.clone() * alpha.clone();
-        let alpha3 = alpha2.clone() * alpha.clone();
-
-        let u0 = current[COL_NF_U0];
-        let u1 = current[COL_NF_U1];
-        let u2 = current[COL_NF_U2];
-        let u3 = current[COL_NF_U3];
-        let s0 = current[COL_NF_S0];
-        let s1 = current[COL_NF_S1];
-        let s2 = current[COL_NF_S2];
-        let s3 = current[COL_NF_S3];
-
-        let u = u0 + u1 * alpha.clone() + u2 * alpha2.clone() + u3 * alpha3.clone();
-        let v = s0 + s1 * alpha.clone() + s2 * alpha2 + s3 * alpha3;
-        let perm = current[COL_NF_PERM];
-        let perm_inv = current[COL_NF_PERM_INV];
-        let v_inv = current[COL_NF_SORTED_INV];
-        let v_nz = current[COL_NF_SORTED_NZ];
-
-        when.assert_zero(perm_mask * (next[COL_NF_PERM] - perm * (u + beta.clone()) * perm_inv));
-        when.assert_zero(perm_mask * ((v + beta.clone()) * perm_inv - one.clone()));
-        when.assert_zero(perm_mask * (v * v_inv - v_nz));
-        when.assert_zero(perm_mask * (v * (one.clone() - v_nz)));
-        when.assert_zero(perm_mask * (v_nz * (v_nz - one.clone())));
-
-        let next_v = next[COL_NF_S0]
-            + next[COL_NF_S1] * alpha.clone()
-            + next[COL_NF_S2] * alpha.clone() * alpha.clone()
-            + next[COL_NF_S3] * alpha.clone() * alpha.clone() * alpha.clone();
-        let diff = next_v - v;
-        let diff_inv = current[COL_NF_DIFF_INV];
-        let diff_nz = current[COL_NF_DIFF_NZ];
-        let adj_mask = perm_mask * perm_mask_next;
-        when.assert_zero(adj_mask * (diff * diff_inv - diff_nz));
-        when.assert_zero(adj_mask * (diff * (one.clone() - diff_nz)));
-        when.assert_zero(adj_mask * (diff_nz * (diff_nz - one.clone())));
-        when.assert_zero(adj_mask * v_nz * (one.clone() - diff_nz));
-
-        let perm_end = perm_mask * (one.clone() - perm_mask_next);
-        when.assert_zero(perm_end * (next[COL_NF_PERM] - one.clone()));
-
-        for (row, nf) in nullifiers.iter().enumerate() {
-            let gate = row_selector(row);
-            when.assert_zero(gate.clone() * (current[COL_NF_U0] - nf[0].clone()));
-            when.assert_zero(gate.clone() * (current[COL_NF_U1] - nf[1].clone()));
-            when.assert_zero(gate.clone() * (current[COL_NF_U2] - nf[2].clone()));
-            when.assert_zero(gate.clone() * (current[COL_NF_U3] - nf[3].clone()));
-        }
-        for (row, nf) in sorted_nullifiers.iter().enumerate() {
-            let gate = row_selector(row);
-            when.assert_zero(gate.clone() * (current[COL_NF_S0] - nf[0].clone()));
-            when.assert_zero(gate.clone() * (current[COL_NF_S1] - nf[1].clone()));
-            when.assert_zero(gate.clone() * (current[COL_NF_S2] - nf[2].clone()));
-            when.assert_zero(gate.clone() * (current[COL_NF_S3] - nf[3].clone()));
-        }
-
-        let output0_marker = cycle_end.clone() * input_cycle_mask.clone() * (one.clone() - input_cycle_mask_next);
-        when.assert_zero(output0_marker.clone() * (current[COL_S0] - output[0].clone()));
-        when.assert_zero(output0_marker * (current[COL_S1] - output[1].clone()));
         let is_last = builder.is_last_row();
-        when.assert_zero(is_last.clone() * (current[COL_S0] - output[2].clone()));
-        when.assert_zero(is_last.clone() * (current[COL_S1] - output[3].clone()));
 
-        let input_cycles = tx_count * AB::Expr::from_canonical_u64(2);
-        let nullifier_count_expr = tx_count * AB::Expr::from_canonical_u64(MAX_INPUTS as u64);
-        when.assert_zero(
-            is_last.clone() * (input_cycle_acc + input_cycle_mask - input_cycles),
-        );
-        when.assert_zero(is_last * (perm_acc + perm_mask - nullifier_count_expr));
+        {
+            let mut when_first = builder.when_first_row();
+            when_first.assert_zero(current[COL_START_ROOT0] - start_root[0].clone());
+            when_first.assert_zero(current[COL_START_ROOT1] - start_root[1].clone());
+            when_first.assert_zero(current[COL_START_ROOT2] - start_root[2].clone());
+            when_first.assert_zero(current[COL_START_ROOT3] - start_root[3].clone());
+            when_first.assert_zero(current[COL_END_ROOT0] - end_root[0].clone());
+            when_first.assert_zero(current[COL_END_ROOT1] - end_root[1].clone());
+            when_first.assert_zero(current[COL_END_ROOT2] - end_root[2].clone());
+            when_first.assert_zero(current[COL_END_ROOT3] - end_root[3].clone());
+            when_first.assert_zero(current[COL_NULLIFIER_ROOT0] - nullifier_root[0].clone());
+            when_first.assert_zero(current[COL_NULLIFIER_ROOT1] - nullifier_root[1].clone());
+            when_first.assert_zero(current[COL_NULLIFIER_ROOT2] - nullifier_root[2].clone());
+            when_first.assert_zero(current[COL_NULLIFIER_ROOT3] - nullifier_root[3].clone());
+            when_first.assert_zero(current[COL_DA_ROOT0] - da_root[0].clone());
+            when_first.assert_zero(current[COL_DA_ROOT1] - da_root[1].clone());
+            when_first.assert_zero(current[COL_DA_ROOT2] - da_root[2].clone());
+            when_first.assert_zero(current[COL_DA_ROOT3] - da_root[3].clone());
+        }
+
+        {
+            let mut when = builder.when_transition();
+            when.assert_zero(
+                cycle_end.clone() * (next[COL_S0] - (current[COL_S0] + next[COL_INPUT0])),
+            );
+            when.assert_zero(
+                cycle_end.clone() * (next[COL_S1] - (current[COL_S1] + next[COL_INPUT1])),
+            );
+            when.assert_zero(cycle_end.clone() * (next[COL_S2] - current[COL_S2]));
+            when.assert_zero(hash_flag.clone() * (next[COL_S0] - hash_s0));
+            when.assert_zero(hash_flag.clone() * (next[COL_S1] - hash_s1));
+            when.assert_zero(hash_flag * (next[COL_S2] - hash_s2));
+
+            for bit in step_bits.iter() {
+                when.assert_bool(*bit);
+            }
+            for bit in cycle_bits.iter() {
+                when.assert_bool(*bit);
+            }
+
+            let mut carry = one.clone();
+            for (idx, bit) in step_bits.iter().enumerate() {
+                let bit_expr: AB::Expr = (*bit).into();
+                let carry_next = carry.clone() * bit_expr.clone();
+                let next_expr: AB::Expr = step_bits_next[idx].into();
+                when.assert_zero(
+                    next_expr - (bit_expr + carry.clone() - two.clone() * carry_next.clone()),
+                );
+                carry = carry_next;
+            }
+
+            let mut carry = cycle_end.clone();
+            for (idx, bit) in cycle_bits.iter().enumerate() {
+                let bit_expr: AB::Expr = (*bit).into();
+                let carry_next = carry.clone() * bit_expr.clone();
+                let next_expr: AB::Expr = cycle_bits_next[idx].into();
+                when.assert_zero(
+                    next_expr - (bit_expr + carry.clone() - two.clone() * carry_next.clone()),
+                );
+                carry = carry_next;
+            }
+
+            let perm_mask = current[COL_PERM_MASK];
+            let perm_mask_next = next[COL_PERM_MASK];
+            let perm_acc = current[COL_PERM_ACC];
+            let perm_acc_next = next[COL_PERM_ACC];
+            when.assert_bool(perm_mask);
+            when.assert_zero(perm_mask_next * (one.clone() - perm_mask));
+            when.assert_zero(perm_acc_next - (perm_acc + perm_mask));
+
+            let input_cycle_mask = current[COL_INPUT_CYCLE_MASK];
+            let input_cycle_mask_next = next[COL_INPUT_CYCLE_MASK];
+            let input_cycle_acc = current[COL_INPUT_CYCLE_ACC];
+            let input_cycle_acc_next = next[COL_INPUT_CYCLE_ACC];
+            when.assert_bool(input_cycle_mask);
+            let not_cycle_end = one.clone() - cycle_end.clone();
+            when.assert_zero(not_cycle_end * (input_cycle_mask_next - input_cycle_mask));
+            when.assert_zero(
+                cycle_end.clone() * input_cycle_mask_next * (one.clone() - input_cycle_mask),
+            );
+            when.assert_zero(
+                input_cycle_acc_next - (input_cycle_acc + cycle_end.clone() * input_cycle_mask),
+            );
+
+            for col in [
+                COL_START_ROOT0,
+                COL_START_ROOT1,
+                COL_START_ROOT2,
+                COL_START_ROOT3,
+                COL_END_ROOT0,
+                COL_END_ROOT1,
+                COL_END_ROOT2,
+                COL_END_ROOT3,
+                COL_NULLIFIER_ROOT0,
+                COL_NULLIFIER_ROOT1,
+                COL_NULLIFIER_ROOT2,
+                COL_NULLIFIER_ROOT3,
+                COL_DA_ROOT0,
+                COL_DA_ROOT1,
+                COL_DA_ROOT2,
+                COL_DA_ROOT3,
+            ] {
+                when.assert_zero(next[col] - current[col]);
+            }
+
+            let alpha = perm_alpha;
+            let beta = perm_beta;
+            let alpha2 = alpha.clone() * alpha.clone();
+            let alpha3 = alpha2.clone() * alpha.clone();
+
+            let u0 = current[COL_NF_U0];
+            let u1 = current[COL_NF_U1];
+            let u2 = current[COL_NF_U2];
+            let u3 = current[COL_NF_U3];
+            let s0 = current[COL_NF_S0];
+            let s1 = current[COL_NF_S1];
+            let s2 = current[COL_NF_S2];
+            let s3 = current[COL_NF_S3];
+
+            let u = u0 + u1 * alpha.clone() + u2 * alpha2.clone() + u3 * alpha3.clone();
+            let v = s0 + s1 * alpha.clone() + s2 * alpha2 + s3 * alpha3;
+            let perm = current[COL_NF_PERM];
+            let perm_inv = current[COL_NF_PERM_INV];
+            let v_inv = current[COL_NF_SORTED_INV];
+            let v_nz = current[COL_NF_SORTED_NZ];
+
+            when.assert_zero(
+                perm_mask * (next[COL_NF_PERM] - perm * (u + beta.clone()) * perm_inv),
+            );
+            when.assert_zero(perm_mask * ((v.clone() + beta.clone()) * perm_inv - one.clone()));
+            when.assert_zero(perm_mask * (v.clone() * v_inv - v_nz));
+            when.assert_zero(perm_mask * (v.clone() * (one.clone() - v_nz)));
+            when.assert_zero(perm_mask * (v_nz * (v_nz - one.clone())));
+
+            let next_v = next[COL_NF_S0]
+                + next[COL_NF_S1] * alpha.clone()
+                + next[COL_NF_S2] * alpha.clone() * alpha.clone()
+                + next[COL_NF_S3] * alpha.clone() * alpha.clone() * alpha.clone();
+            let diff = next_v - v;
+            let diff_inv = current[COL_NF_DIFF_INV];
+            let diff_nz = current[COL_NF_DIFF_NZ];
+            let adj_mask = perm_mask * perm_mask_next;
+            when.assert_zero(adj_mask.clone() * (diff.clone() * diff_inv - diff_nz));
+            when.assert_zero(adj_mask.clone() * (diff * (one.clone() - diff_nz)));
+            when.assert_zero(adj_mask.clone() * (diff_nz * (diff_nz - one.clone())));
+            when.assert_zero(adj_mask * v_nz * (one.clone() - diff_nz));
+
+            let perm_end = perm_mask * (one.clone() - perm_mask_next);
+            when.assert_zero(perm_end * (next[COL_NF_PERM] - one.clone()));
+
+            for (row, nf) in nullifiers.iter().enumerate() {
+                let gate = row_selector(row);
+                when.assert_zero(gate.clone() * (current[COL_NF_U0] - nf[0].clone()));
+                when.assert_zero(gate.clone() * (current[COL_NF_U1] - nf[1].clone()));
+                when.assert_zero(gate.clone() * (current[COL_NF_U2] - nf[2].clone()));
+                when.assert_zero(gate.clone() * (current[COL_NF_U3] - nf[3].clone()));
+            }
+            for (row, nf) in sorted_nullifiers.iter().enumerate() {
+                let gate = row_selector(row);
+                when.assert_zero(gate.clone() * (current[COL_NF_S0] - nf[0].clone()));
+                when.assert_zero(gate.clone() * (current[COL_NF_S1] - nf[1].clone()));
+                when.assert_zero(gate.clone() * (current[COL_NF_S2] - nf[2].clone()));
+                when.assert_zero(gate.clone() * (current[COL_NF_S3] - nf[3].clone()));
+            }
+
+            let output0_marker =
+                cycle_end.clone() * input_cycle_mask.clone() * (one.clone() - input_cycle_mask_next);
+            when.assert_zero(output0_marker.clone() * (current[COL_S0] - output[0].clone()));
+            when.assert_zero(output0_marker * (current[COL_S1] - output[1].clone()));
+            when.assert_zero(is_last.clone() * (current[COL_S0] - output[2].clone()));
+            when.assert_zero(is_last.clone() * (current[COL_S1] - output[3].clone()));
+
+            let input_cycles = tx_count.clone() * AB::Expr::from_canonical_u64(2);
+            let nullifier_count_expr = tx_count * AB::Expr::from_canonical_u64(MAX_INPUTS as u64);
+            when.assert_zero(
+                is_last.clone() * (input_cycle_acc + input_cycle_mask - input_cycles),
+            );
+            when.assert_zero(is_last * (perm_acc + perm_mask - nullifier_count_expr));
+        }
     }
 }
 

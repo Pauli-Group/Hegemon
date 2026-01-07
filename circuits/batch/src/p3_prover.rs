@@ -131,18 +131,15 @@ impl BatchTransactionProverP3 {
 
         for witness in witnesses {
             let prf = prf_key(&witness.sk_spend);
-            for (i, input) in witness.inputs.iter().enumerate().take(MAX_INPUTS) {
+            for input in witness.inputs.iter().take(MAX_INPUTS) {
                 nullifiers.push(hash_to_gl(nullifier(prf, &input.note.rho, input.position)));
             }
             for _ in witness.inputs.len()..MAX_INPUTS {
                 nullifiers.push([Val::zero(); 4]);
             }
 
-            for (i, output) in witness.outputs.iter().enumerate().take(MAX_OUTPUTS) {
+            for output in witness.outputs.iter().take(MAX_OUTPUTS) {
                 commitments.push(hash_to_gl(output.note.commitment()));
-                if i + 1 >= MAX_OUTPUTS {
-                    break;
-                }
             }
             for _ in witness.outputs.len()..MAX_OUTPUTS {
                 commitments.push([Val::zero(); 4]);

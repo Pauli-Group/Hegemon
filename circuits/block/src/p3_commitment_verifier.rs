@@ -1,7 +1,7 @@
 //! Plonky3 verifier for commitment block proofs.
 
 use blake3::Hasher as Blake3Hasher;
-use p3_field::AbstractField;
+use p3_field::{AbstractField, Field, PrimeField64};
 use transaction_circuit::constants::MAX_INPUTS;
 use transaction_circuit::p3_config::{default_config, new_challenger, TransactionProofP3};
 

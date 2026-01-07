@@ -4,7 +4,6 @@ use blake3::Hasher as Blake3Hasher;
 use p3_goldilocks::Goldilocks;
 use p3_field::{AbstractField, Field};
 use p3_matrix::dense::RowMajorMatrix;
-use p3_matrix::Matrix;
 use p3_uni_stark::prove;
 use state_merkle::CommitmentTree;
 use transaction_circuit::constants::{MAX_INPUTS, POSEIDON_ROUNDS};
@@ -13,16 +12,18 @@ use transaction_circuit::TransactionProof;
 use transaction_core::p3_air::{poseidon_round, CYCLE_LENGTH};
 
 use crate::error::BlockError;
+use crate::commitment_air::{
+    BLOCK_COMMITMENT_DOMAIN_TAG, COL_DA_ROOT0, COL_DA_ROOT1, COL_DA_ROOT2, COL_DA_ROOT3,
+    COL_END_ROOT0, COL_END_ROOT1, COL_END_ROOT2, COL_END_ROOT3, COL_INPUT0, COL_INPUT1,
+    COL_NF_DIFF_INV, COL_NF_DIFF_NZ, COL_NF_PERM, COL_NF_PERM_INV, COL_NF_S0, COL_NF_S1,
+    COL_NF_S2, COL_NF_S3, COL_NF_SORTED_INV, COL_NF_SORTED_NZ, COL_NF_U0, COL_NF_U1, COL_NF_U2,
+    COL_NF_U3, COL_NULLIFIER_ROOT0, COL_NULLIFIER_ROOT1, COL_NULLIFIER_ROOT2, COL_NULLIFIER_ROOT3,
+    COL_S0, COL_S1, COL_S2, COL_START_ROOT0, COL_START_ROOT1, COL_START_ROOT2, COL_START_ROOT3,
+};
 use crate::p3_commitment_air::{
-    CommitmentBlockAirP3, CommitmentBlockPublicInputsP3, COL_CYCLE_BIT0, COL_INPUT0, COL_INPUT1,
-    COL_INPUT_CYCLE_ACC, COL_INPUT_CYCLE_MASK, COL_NF_DIFF_INV, COL_NF_DIFF_NZ, COL_NF_PERM,
-    COL_PERM_ACC, COL_PERM_MASK, COL_NF_PERM_INV, COL_NF_S0, COL_NF_S1, COL_NF_S2, COL_NF_S3,
-    COL_NF_SORTED_INV, COL_NF_SORTED_NZ, COL_NF_U0, COL_NF_U1, COL_NF_U2, COL_NF_U3, COL_S0,
-    COL_S1, COL_S2, COL_STEP_BIT0, COL_DA_ROOT0, COL_DA_ROOT1, COL_DA_ROOT2, COL_DA_ROOT3,
-    COL_END_ROOT0, COL_END_ROOT1, COL_END_ROOT2, COL_END_ROOT3, COL_NULLIFIER_ROOT0,
-    COL_NULLIFIER_ROOT1, COL_NULLIFIER_ROOT2, COL_NULLIFIER_ROOT3, COL_START_ROOT0, COL_START_ROOT1,
-    COL_START_ROOT2, COL_START_ROOT3, TRACE_WIDTH, CYCLE_BITS,
-    STEP_BITS,
+    CommitmentBlockAirP3, CommitmentBlockPublicInputsP3, COL_CYCLE_BIT0, COL_INPUT_CYCLE_ACC,
+    COL_INPUT_CYCLE_MASK, COL_PERM_ACC, COL_PERM_MASK, COL_STEP_BIT0, CYCLE_BITS, STEP_BITS,
+    TRACE_WIDTH,
 };
 use transaction_circuit::p3_config::{default_config, new_challenger};
 
