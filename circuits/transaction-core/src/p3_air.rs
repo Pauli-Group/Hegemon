@@ -393,6 +393,69 @@ impl TransactionPublicInputsP3 {
             stablecoin_attestation_commitment,
         })
     }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.input_flags.len() != MAX_INPUTS {
+            return Err("input_flags length mismatch".into());
+        }
+        if self.output_flags.len() != MAX_OUTPUTS {
+            return Err("output_flags length mismatch".into());
+        }
+        if self.nullifiers.len() != MAX_INPUTS {
+            return Err("nullifiers length mismatch".into());
+        }
+        if self.commitments.len() != MAX_OUTPUTS {
+            return Err("commitments length mismatch".into());
+        }
+
+        let zero = Felt::zero();
+        let one = Felt::one();
+        let is_zero_hash = |value: &[Felt; 4]| value.iter().all(|elem| *elem == zero);
+
+        for (idx, flag) in self.input_flags.iter().enumerate() {
+            if *flag != zero && *flag != one {
+                return Err("input flag must be 0 or 1".into());
+            }
+            let nf = &self.nullifiers[idx];
+            if *flag == zero && !is_zero_hash(nf) {
+                return Err("inactive input has non-zero nullifier".into());
+            }
+            if *flag == one && is_zero_hash(nf) {
+                return Err("active input has zero nullifier".into());
+            }
+        }
+
+        for (idx, flag) in self.output_flags.iter().enumerate() {
+            if *flag != zero && *flag != one {
+                return Err("output flag must be 0 or 1".into());
+            }
+            let cm = &self.commitments[idx];
+            if *flag == zero && !is_zero_hash(cm) {
+                return Err("inactive output has non-zero commitment".into());
+            }
+            if *flag == one && is_zero_hash(cm) {
+                return Err("active output has zero commitment".into());
+            }
+        }
+
+        let has_input = self.nullifiers.iter().any(|nf| !is_zero_hash(nf));
+        let has_output = self.commitments.iter().any(|cm| !is_zero_hash(cm));
+        if !has_input && !has_output {
+            return Err("Transaction has no inputs or outputs".into());
+        }
+
+        if self.value_balance_sign != zero && self.value_balance_sign != one {
+            return Err("Value balance sign must be 0 or 1".into());
+        }
+        if self.stablecoin_enabled != zero && self.stablecoin_enabled != one {
+            return Err("Stablecoin enabled flag must be 0 or 1".into());
+        }
+        if self.stablecoin_issuance_sign != zero && self.stablecoin_issuance_sign != one {
+            return Err("Stablecoin issuance sign must be 0 or 1".into());
+        }
+
+        Ok(())
+    }
 }
 
 // ================================================================================================

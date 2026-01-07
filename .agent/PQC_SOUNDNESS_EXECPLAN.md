@@ -21,10 +21,12 @@ After this work, a user can:
 
 - [x] (2026-01-06 23:59Z) Milestone 0: Audit Winterfell surface area and define migration scope.
 - [x] (2026-01-07 00:36Z) Milestone 1: Add Plonky3 dependencies and implement a toy circuit to validate integration.
-- [ ] Milestone 2 (in progress): Port transaction circuit AIR from Winterfell to Plonky3 (completed: `circuits/transaction-core/src/p3_air.rs` + `plonky3` feature wiring; remaining: trace/prover/verifier port + Winterfell legacy feature flag + tests).
+- [x] (2026-01-07 02:45Z) Milestone 2: Port transaction circuit AIR from Winterfell to Plonky3 (`circuits/transaction-core/src/p3_air.rs` + `plonky3` feature wiring + trace/prover/verifier port + Winterfell legacy feature flag + tests).
 - [x] (2026-01-07 01:11Z) Added `plonky3`-gated `TransactionAirP3` port in `circuits/transaction-core/src/p3_air.rs` and exposed it via `circuits/transaction-core/src/lib.rs`.
 - [x] (2026-01-07 01:11Z) Added `plonky3` feature dependencies in `circuits/transaction-core/Cargo.toml` and verified `cargo check -p transaction-core --features plonky3`.
 - [x] (2026-01-07 01:41Z) Replaced Plonky3 preprocessed schedule columns with binary step/cycle counters and inline row selectors in `circuits/transaction-core/src/p3_air.rs`; removed preprocessed trace requirement and re-checked `cargo check -p transaction-core --features plonky3`.
+- [x] (2026-01-07 02:45Z) Added Plonky3 transaction prover/verifier/config + trace builder in `circuits/transaction/src/p3_*.rs`, wired `winterfell-legacy`/`plonky3` features in `circuits/transaction/Cargo.toml` and `circuits/transaction-core`, and integrated Plonky3 proof generation in `circuits/transaction/src/proof.rs`.
+- [x] (2026-01-07 02:45Z) Added Plonky3 trace unit test + deterministic Poseidon2 config, switched AIR hash constants based on the active backend, and ran `cargo check -p transaction-circuit --features plonky3` plus `cargo test -p transaction-circuit --features plonky3 --lib`.
 - [ ] Milestone 3: Port batch, block commitment, and settlement circuits.
 - [ ] Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments.
 - [ ] Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
@@ -60,6 +62,9 @@ After this work, a user can:
 
 - Observation: Plonky3 `AirBuilder` does not expose the trace-domain element `x`, so "virtual selectors" based on vanishing polynomials are not directly expressible without adding explicit counters to the trace.
   Evidence: `p3-air-0.2.0/src/air.rs` (builder only exposes `is_first_row`, `is_last_row`, `is_transition`, no row index).
+
+- Observation: AIR hash computation in `transaction-core` referenced Winterfell trace constants directly, so Plonky3 needed a backend-gated path to avoid mismatched circuit identifiers.
+  Evidence: `circuits/transaction-core/src/constants.rs`.
 
 ## Decision Log
 
@@ -101,6 +106,14 @@ After this work, a user can:
 
 - Decision: Switch `TransactionAirP3` to binary step/cycle counters and inline row selectors (Option B) instead of preprocessed columns.
   Rationale: Plonky3 `AirBuilder` does not expose the trace-domain element needed for vanishing-polynomial selectors, and `p3-uni-stark` 0.2 does not support preprocessed traces; binary counters preserve determinism on vanilla Plonky3 without forking.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Use a deterministic Poseidon2 configuration (fixed ChaCha20 seed) and bincode serialization for Plonky3 transaction proofs.
+  Rationale: A fixed seed makes verifier/prover parameters reproducible across builds, and bincode matches the Plonky3 spike’s proof encoding for stable byte-level fixtures.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Gate Winterfell transaction proofs behind a `winterfell-legacy` feature while keeping it on by default during migration.
+  Rationale: This preserves existing behavior for downstream crates while allowing Plonky3 proof generation/verification to be enabled explicitly.
   Date/Author: 2026-01-07 / Codex.
 
 ## Outcomes & Retrospective
@@ -587,3 +600,4 @@ Plan change note (2026-01-06 23:59Z): Added the Milestone 0 inventory tables, re
 Plan change note (2026-01-07 00:36Z): Marked Milestone 1 complete, recorded the Goldilocks extension constraint and Poseidon2 spike decisions, and captured the Plonky3 spike test output plus the `make node` timeout.
 Plan change note (2026-01-07 01:11Z): Marked Milestone 2 partial progress (Plonky3 AIR port + feature wiring), recorded the preprocessed-trace limitation in `p3-uni-stark`, and logged the transaction-core compile check.
 Plan change note (2026-01-07 01:41Z): Replaced preprocessed schedule columns in `TransactionAirP3` with binary counters and inline selectors, recorded the rationale for Option B, and re-validated the transaction-core compile check.
+Plan change note (2026-01-07 02:45Z): Completed Milestone 2 by wiring the Plonky3 transaction prover/trace/verifier, adding the `winterfell-legacy` feature gate, updating AIR hash selection for the active backend, and validating with `cargo check` + `cargo test`.
