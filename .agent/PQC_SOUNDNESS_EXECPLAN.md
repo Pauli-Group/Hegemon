@@ -27,6 +27,7 @@ After this work, a user can:
 - [x] (2026-01-07 01:41Z) Replaced Plonky3 preprocessed schedule columns with binary step/cycle counters and inline row selectors in `circuits/transaction-core/src/p3_air.rs`; removed preprocessed trace requirement and re-checked `cargo check -p transaction-core --features plonky3`.
 - [x] (2026-01-07 02:45Z) Added Plonky3 transaction prover/verifier/config + trace builder in `circuits/transaction/src/p3_*.rs`, wired `winterfell-legacy`/`plonky3` features in `circuits/transaction/Cargo.toml` and `circuits/transaction-core`, and integrated Plonky3 proof generation in `circuits/transaction/src/proof.rs`.
 - [x] (2026-01-07 02:45Z) Added Plonky3 trace unit test + deterministic Poseidon2 config, switched AIR hash constants based on the active backend, and ran `cargo check -p transaction-circuit --features plonky3` plus `cargo test -p transaction-circuit --features plonky3 --lib`.
+- [x] (2026-01-07 03:20Z) Added Plonky3 prove/verify roundtrip test (ignored due to runtime), added a counter-tamper constraint test, and aligned the sample witness value balance in `circuits/transaction/src/p3_prover.rs`.
 - [ ] Milestone 3: Port batch, block commitment, and settlement circuits.
 - [ ] Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments.
 - [ ] Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
@@ -65,6 +66,15 @@ After this work, a user can:
 
 - Observation: AIR hash computation in `transaction-core` referenced Winterfell trace constants directly, so Plonky3 needed a backend-gated path to avoid mismatched circuit identifiers.
   Evidence: `circuits/transaction-core/src/constants.rs`.
+
+- Observation: Plonky3 transaction trace width increased from 86 to 101 columns (+17.4%), which will grow proof sizes, FFT work, and memory footprint.
+  Evidence: `circuits/transaction-core/src/stark_air.rs`, `circuits/transaction-core/src/p3_air.rs`.
+
+- Observation: The in-circuit Poseidon sponge used by the AIR is still width 3 / capacity 1 (rate 2), so commitment/nullifier hashing inside the circuit remains ~21-bit PQ collision security until Milestone 4.
+  Evidence: `circuits/transaction-core/src/p3_air.rs` poseidon helper state initialization.
+
+- Observation: A full Plonky3 prove/verify roundtrip is slow in unit tests, so the end-to-end test is marked ignored to avoid default test timeouts.
+  Evidence: `circuits/transaction/src/p3_prover.rs` test annotations.
 
 ## Decision Log
 
@@ -114,6 +124,10 @@ After this work, a user can:
 
 - Decision: Gate Winterfell transaction proofs behind a `winterfell-legacy` feature while keeping it on by default during migration.
   Rationale: This preserves existing behavior for downstream crates while allowing Plonky3 proof generation/verification to be enabled explicitly.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Mark the Plonky3 prove/verify roundtrip test as ignored by default and reduce test-only FRI queries to keep unit tests fast.
+  Rationale: A full proof over the 32,768-row trace can exceed typical unit-test timeouts; the ignored test preserves end-to-end coverage without slowing default runs.
   Date/Author: 2026-01-07 / Codex.
 
 ## Outcomes & Retrospective
@@ -601,3 +615,4 @@ Plan change note (2026-01-07 00:36Z): Marked Milestone 1 complete, recorded the 
 Plan change note (2026-01-07 01:11Z): Marked Milestone 2 partial progress (Plonky3 AIR port + feature wiring), recorded the preprocessed-trace limitation in `p3-uni-stark`, and logged the transaction-core compile check.
 Plan change note (2026-01-07 01:41Z): Replaced preprocessed schedule columns in `TransactionAirP3` with binary counters and inline selectors, recorded the rationale for Option B, and re-validated the transaction-core compile check.
 Plan change note (2026-01-07 02:45Z): Completed Milestone 2 by wiring the Plonky3 transaction prover/trace/verifier, adding the `winterfell-legacy` feature gate, updating AIR hash selection for the active backend, and validating with `cargo check` + `cargo test`.
+Plan change note (2026-01-07 03:20Z): Added Plonky3 end-to-end tests (with the full prove/verify test marked ignored for runtime) and documented trace width/sponge security implications.
