@@ -20,7 +20,7 @@ After this work, a user can:
 ## Progress
 
 - [x] (2026-01-06 23:59Z) Milestone 0: Audit Winterfell surface area and define migration scope.
-- [ ] Milestone 1: Add Plonky3 dependencies and implement a toy circuit to validate integration.
+- [x] (2026-01-07 00:36Z) Milestone 1: Add Plonky3 dependencies and implement a toy circuit to validate integration.
 - [ ] Milestone 2: Port transaction circuit AIR from Winterfell to Plonky3.
 - [ ] Milestone 3: Port batch, block commitment, and settlement circuits.
 - [ ] Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments.
@@ -49,6 +49,9 @@ After this work, a user can:
 - Observation: Epoch recursion code imports Winterfell internals (`winter_air`, `winter_fri`, `winter_crypto`, `winter_math`) directly, so a Plonky3 port will need custom recursion support rather than a drop-in replacement.
   Evidence: `circuits/epoch/src/recursion/*.rs`.
 
+- Observation: Goldilocks in Plonky3 v0.2 only provides a quadratic binomial extension, so the spike uses `BinomialExtensionField<Goldilocks, 2>`.
+  Evidence: `p3-goldilocks-0.2.0/src/extension.rs` (`BinomiallyExtendable<2>`).
+
 ## Decision Log
 
 - Decision: Migrate from Winterfell to Plonky3 instead of forking Winterfell.
@@ -74,6 +77,14 @@ After this work, a user can:
 - Decision: Define the Milestone 0 inventory scope as files with explicit `use winter*` imports; comment-only references are tracked later as doc updates.
   Rationale: Keeps the migration scope focused on compile-time dependencies while still noting narrative updates for later milestones.
   Date/Author: 2026-01-06 / Codex.
+
+- Decision: For the Plonky3 spike, use Poseidon2 width 12 with rate 6 and output 6 elements (48 bytes) to validate 128-bit PQ Merkle commitments.
+  Rationale: Width 12 with capacity 6 yields 384-bit capacity, and 6 field elements map to 48-byte digests over Goldilocks.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Use `BinomialExtensionField<Goldilocks, 2>` for the spike's challenge field.
+  Rationale: Goldilocks in Plonky3 v0.2 exposes a quadratic binomial extension; higher-degree extensions are not provided.
+  Date/Author: 2026-01-07 / Codex.
 
 ## Outcomes & Retrospective
 
@@ -417,6 +428,8 @@ Setup:
     make setup
     make node
 
+Execution notes (2026-01-07): `make setup` completed; `make node` timed out after ~20 minutes during `cargo build -p hegemon-node --features substrate --release`. Rerun `make node` to finish the release build.
+
 Run tests (baseline):
 
     cargo fmt --all
@@ -425,6 +438,10 @@ Run tests (baseline):
 Run Plonky3 spike (after Milestone 1):
 
     cargo test -p plonky3-spike --features plonky3
+
+To see the proof-size log from the spike test, run:
+
+    cargo test -p plonky3-spike --features plonky3 -- --nocapture
 
 Run transaction circuit with Plonky3 (after Milestone 2):
 
@@ -464,6 +481,18 @@ If the Plonky3 migration proves infeasible, the fallback is to fork Winterfell a
 
 ## Artifacts and Notes
 
+Plonky3 spike test run (2026-01-07):
+
+    cargo test -p plonky3-spike --features plonky3
+    running 1 test
+    test tests::fibonacci_prove_verify ... ok
+
+Node build attempt (2026-01-07):
+
+    make node
+    cargo build -p hegemon-node --features substrate --release
+    (timed out after ~20 minutes; rerun to finish)
+
 Expected proof sizes at 128-bit soundness (estimated):
 
 | Circuit | Current (Winterfell, 96-bit) | Target (Plonky3, 128-bit) |
@@ -490,6 +519,7 @@ At the end of this plan, the following must exist:
         p3-challenger = "0.2"
         p3-commit = "0.2"
         p3-fri = "0.2"
+        p3-dft = "0.2"
         p3-merkle-tree = "0.2"
         p3-uni-stark = "0.2"
         p3-symmetric = "0.2"
@@ -525,3 +555,4 @@ At the end of this plan, the following must exist:
 5. **No Winterfell dependencies** in any `Cargo.toml` (except possibly a deprecated `winterfell-legacy` feature for testing during migration).
 
 Plan change note (2026-01-06 23:59Z): Added the Milestone 0 inventory tables, recorded the recursion dependency discovery, and marked Milestone 0 complete to reflect the audit being finished.
+Plan change note (2026-01-07 00:36Z): Marked Milestone 1 complete, recorded the Goldilocks extension constraint and Poseidon2 spike decisions, and captured the Plonky3 spike test output plus the `make node` timeout.

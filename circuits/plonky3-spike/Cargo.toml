@@ -1,0 +1,46 @@
+[package]
+name = "plonky3-spike"
+version = "0.1.0"
+edition = "2021"
+authors = ["Hegemon Contributors"]
+description = "Plonky3 integration spike for Fibonacci AIR."
+
+[dependencies]
+p3-air = { workspace = true, optional = true }
+p3-field = { workspace = true, optional = true }
+p3-goldilocks = { workspace = true, optional = true }
+p3-matrix = { workspace = true, optional = true }
+p3-challenger = { workspace = true, optional = true }
+p3-commit = { workspace = true, optional = true }
+p3-fri = { workspace = true, optional = true }
+p3-dft = { workspace = true, optional = true }
+p3-merkle-tree = { workspace = true, optional = true }
+p3-uni-stark = { workspace = true, optional = true }
+p3-symmetric = { workspace = true, optional = true }
+p3-poseidon2 = { workspace = true, optional = true }
+p3-blake3 = { workspace = true, optional = true }
+rand = { version = "0.8", optional = true }
+bincode = { version = "1", optional = true }
+
+[features]
+default = []
+plonky3 = [
+    "dep:p3-air",
+    "dep:p3-field",
+    "dep:p3-goldilocks",
+    "dep:p3-matrix",
+    "dep:p3-challenger",
+    "dep:p3-commit",
+    "dep:p3-fri",
+    "dep:p3-dft",
+    "dep:p3-merkle-tree",
+    "dep:p3-uni-stark",
+    "dep:p3-symmetric",
+    "dep:p3-poseidon2",
+    "dep:p3-blake3",
+    "dep:rand",
+    "dep:bincode",
+]
+
+[lints]
+workspace = true
