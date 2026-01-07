@@ -8,7 +8,6 @@ use p3_field::Field;
 use p3_fri::{FriParameters, TwoAdicFriPcs};
 use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks};
 use p3_merkle_tree::MerkleTreeMmcs;
-use p3_poseidon2::Poseidon2;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark::{Proof, StarkConfig};
 use rand::SeedableRng;

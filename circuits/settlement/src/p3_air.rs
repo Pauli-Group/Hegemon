@@ -11,7 +11,7 @@ use p3_matrix::Matrix;
 
 use crate::constants::{
     ABSORB_CYCLES, INPUT_PAIRS_PER_TRACE, MAX_INSTRUCTIONS, MAX_NULLIFIERS, PADDED_INPUT_COUNT,
-    SETTLEMENT_DOMAIN_TAG,
+    SETTLEMENT_DOMAIN_TAG, TRACE_LENGTH,
 };
 use transaction_core::constants::POSEIDON_ROUNDS;
 use transaction_core::p3_air::CYCLE_LENGTH;

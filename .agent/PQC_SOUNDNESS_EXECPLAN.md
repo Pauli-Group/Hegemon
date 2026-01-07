@@ -30,7 +30,9 @@ After this work, a user can:
 - [x] (2026-01-07 03:20Z) Added Plonky3 prove/verify roundtrip test (ignored due to runtime), added a counter-tamper constraint test, and aligned the sample witness value balance in `circuits/transaction/src/p3_prover.rs`.
 - [x] (2026-01-07 03:45Z) Added `plonky3-e2e` feature to run the end-to-end Plonky3 prove/verify test with production FRI parameters, while keeping fast parameters for default unit tests.
 - [x] (2026-01-07 05:20Z) Milestone 3: Port batch, block commitment, and settlement circuits to Plonky3 (new `p3_*` AIR/prover/verifier modules + feature gating + shared Plonky3 config usage).
-- [ ] (2026-01-07 06:40Z) Milestone 3b: Upgrade to Plonky3 0.4.x with preprocessed trace support (switch from `p3-uni-stark` 0.2 to the upstream STARK backend and reintroduce preprocessed schedule columns).
+- [x] (2026-01-07 09:38Z) Milestone 3b: Upgrade to Plonky3 0.4.x with preprocessed trace support (switch from `p3-uni-stark` 0.2 to the upstream STARK backend and reintroduce preprocessed schedule columns).
+- [x] (2026-01-07 09:38Z) Moved block commitment schedule counters/masks into preprocessed columns, switched to `setup_preprocessed` + `prove_with_preprocessed`, and fixed last-row enforcement in `circuits/block/src/p3_commitment_air.rs`.
+- [x] (2026-01-07 09:38Z) Updated `transaction-circuit` RNG deps to rand 0.9 for Poseidon2 config seeding and rechecked Plonky3 builds (`cargo check -p transaction-circuit --features plonky3`, `cargo check -p batch-circuit --features plonky3`, `cargo check -p settlement-circuit --features plonky3`, `cargo check -p block-circuit --features plonky3`).
 - [ ] Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments.
 - [ ] Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
 - [ ] Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits.
@@ -92,6 +94,12 @@ After this work, a user can:
 
 - Observation: After adding explicit Poseidon round-constant columns and an absorb flag, `TransactionAirP3`’s measured `log_quotient_degree` dropped to 4 (minimum blowup 16).
   Evidence: `circuits/transaction-core/src/p3_air.rs` test `log_quotient_degree_transaction_air_p3`.
+
+- Observation: Plonky3 Poseidon2’s RNG helper pulls in rand 0.9, so `transaction-circuit`’s rand 0.8 dependency caused an RNG trait mismatch until the crate was upgraded.
+  Evidence: `cargo check -p block-circuit --features plonky3` error E0277 on `Perm::new_from_rng_128`.
+
+- Observation: Block commitment AIR last-row checks lived under `when_transition`, so they were never enforced on the final row.
+  Evidence: `circuits/block/src/p3_commitment_air.rs` (moved final-row assertions to `when_last_row` during preprocessed port).
 
 ## Decision Log
 
@@ -173,6 +181,14 @@ After this work, a user can:
 
 - Decision: Switch to Plonky3 0.4.x’s STARK backend with preprocessed trace support (upgrade from `p3-uni-stark` 0.2 and reintroduce periodic/preprocessed columns in the AIRs).
   Rationale: Removes the high-degree selector/counter workarounds, restores clean schedule semantics, and uses upstream support instead of maintaining a custom fork.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Move block commitment schedule counters/masks into preprocessed columns and enforce final-row checks with `when_last_row`.
+  Rationale: Preprocessed schedule data reduces main trace width and constraint overhead, while explicit last-row gating fixes a soundness hole in the block commitment AIR.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Upgrade `transaction-circuit` RNG dependencies to rand 0.9 to match Plonky3 Poseidon2’s RNG trait requirements.
+  Rationale: `p3-poseidon2` expects rand 0.9’s `Rng`, so aligning versions avoids trait mismatches during deterministic config seeding.
   Date/Author: 2026-01-07 / Codex.
 
 ## Outcomes & Retrospective
@@ -665,3 +681,4 @@ Plan change note (2026-01-07 05:20Z): Added `plonky3-e2e` feature gating for pro
 Plan change note (2026-01-07 06:10Z): Fixed Plonky3 compile errors in batch/block/settlement AIR/prover/verifier modules (imports, borrow scopes, constant paths), and re-validated with `cargo check -p batch-circuit --features plonky3`, `cargo check -p settlement-circuit --features plonky3`, and `cargo check -p block-circuit --features plonky3`.
 Plan change note (2026-01-07 07:25Z): Added explicit Poseidon round-constant columns plus an absorb flag to `TransactionAirP3`, reducing the measured `log_quotient_degree` to 4 and setting `FRI_LOG_BLOWUP` to 4 for E2E runs; re-ran `cargo test -p transaction-core --features plonky3 log_quotient_degree_transaction_air_p3 -- --nocapture` and attempted the full Plonky3 E2E test (still long-running).
 Plan change note (2026-01-07 08:05Z): Added a Milestone 3b to switch the Plonky3 backend to the upstream preprocessed-trace STARK path, recorded the upstream preprocessed support discovery, and logged the decision to upgrade to Plonky3 0.4.x to remove selector/counter workarounds.
+Plan change note (2026-01-07 09:38Z): Completed Milestone 3b by moving block commitment schedule data into preprocessed columns, switching block proofs to `setup_preprocessed`/`prove_with_preprocessed`, fixing last-row enforcement, updating rand dependencies for Poseidon2 seeding, and rechecking all Plonky3 circuit builds.
