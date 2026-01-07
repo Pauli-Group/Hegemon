@@ -1034,7 +1034,9 @@ mod tests {
     use super::*;
     use crate::hashing::{felts_to_bytes32, merkle_node, HashFelt};
     use crate::note::{MerklePath, NoteData};
+    use crate::p3_verifier::verify_transaction_proof_p3;
     use crate::StablecoinPolicyBinding;
+    use std::panic::catch_unwind;
 
     fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
         let mut current = leaf;
@@ -1050,8 +1052,7 @@ mod tests {
         current
     }
 
-    #[test]
-    fn build_trace_roundtrip_p3() {
+    fn sample_witness() -> TransactionWitness {
         let input_note = NoteData {
             value: 100,
             asset_id: 0,
@@ -1070,7 +1071,7 @@ mod tests {
         let leaf = input_note.commitment();
         let merkle_root = felts_to_bytes32(&compute_merkle_root_from_path(leaf, 0, &merkle_path));
 
-        let witness = TransactionWitness {
+        TransactionWitness {
             inputs: vec![InputNoteWitness {
                 note: input_note,
                 position: 0,
@@ -1081,16 +1082,60 @@ mod tests {
             sk_spend: [8u8; 32],
             merkle_root,
             fee: 0,
-            value_balance: 0,
+            value_balance: -20,
             stablecoin: StablecoinPolicyBinding::default(),
             version: TransactionWitness::default_version_binding(),
-        };
+        }
+    }
 
+    #[test]
+    fn build_trace_roundtrip_p3() {
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
         let prover = TransactionProverP3::new();
         let trace = prover.build_trace(&witness).expect("trace build");
         let pub_inputs = TransactionProverP3::get_public_inputs_from_trace(&trace);
         pub_inputs.validate().expect("public inputs valid");
         assert_eq!(pub_inputs.nullifiers.len(), MAX_INPUTS);
         assert_eq!(pub_inputs.commitments.len(), MAX_OUTPUTS);
+    }
+
+    #[test]
+    #[ignore = "slow: full Plonky3 prove/verify roundtrip"]
+    fn prove_verify_roundtrip_p3() {
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let trace = prover.build_trace(&witness).expect("trace build");
+        let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
+        let proof = prover.prove(trace, &pub_inputs);
+        verify_transaction_proof_p3(&proof, &pub_inputs).expect("verification should pass");
+    }
+
+    #[test]
+    fn counter_mismatch_rejected_p3() {
+        let witness = sample_witness();
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let mut trace = prover.build_trace(&witness).expect("trace build");
+        let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
+
+        let row = 1;
+        let col = COL_STEP_BIT0;
+        let idx = row * trace.width + col;
+        trace.values[idx] = if trace.values[idx] == Val::zero() {
+            Val::one()
+        } else {
+            Val::zero()
+        };
+
+        let result = catch_unwind(|| prover.prove(trace, &pub_inputs));
+        match result {
+            Ok(proof) => assert!(
+                verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
+                "verification should fail for tampered counters"
+            ),
+            Err(_) => {}
+        }
     }
 }
