@@ -1025,7 +1025,7 @@ mod tests {
     use crate::p3_verifier::verify_transaction_proof_p3;
     use crate::StablecoinPolicyBinding;
     #[cfg(debug_assertions)]
-    use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues};
+    use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues, BaseAir, PairBuilder};
     #[cfg(debug_assertions)]
     use p3_matrix::dense::RowMajorMatrixView;
     #[cfg(debug_assertions)]
@@ -1150,18 +1150,37 @@ mod tests {
     #[cfg(debug_assertions)]
     fn assert_constraints(trace: &RowMajorMatrix<Val>, public_values: &[Val]) {
         let height = trace.height();
+        let preprocessed_trace = TransactionAirP3
+            .preprocessed_trace()
+            .expect("TransactionAirP3 preprocessed trace missing");
+        assert_eq!(
+            preprocessed_trace.height(),
+            height,
+            "preprocessed trace length mismatch"
+        );
         for row in 0..height {
             let next_row = (row + 1) % height;
-            let local = trace.row_slice(row);
-            let next = trace.row_slice(next_row);
+            let local = trace.row_slice(row).expect("trace row missing");
+            let next = trace.row_slice(next_row).expect("trace row missing");
             let main = VerticalPair::new(
                 RowMajorMatrixView::new_row(&*local),
                 RowMajorMatrixView::new_row(&*next),
+            );
+            let prep_local = preprocessed_trace
+                .row_slice(row)
+                .expect("preprocessed row missing");
+            let prep_next = preprocessed_trace
+                .row_slice(next_row)
+                .expect("preprocessed row missing");
+            let preprocessed_pair = VerticalPair::new(
+                RowMajorMatrixView::new_row(&*prep_local),
+                RowMajorMatrixView::new_row(&*prep_next),
             );
 
             let mut builder = DebugConstraintBuilder {
                 row_index: row,
                 main,
+                preprocessed: preprocessed_pair,
                 public_values,
                 is_first_row: Val::from_bool(row == 0),
                 is_last_row: Val::from_bool(row + 1 == height),
@@ -1176,6 +1195,7 @@ mod tests {
     struct DebugConstraintBuilder<'a> {
         row_index: usize,
         main: VerticalPair<RowMajorMatrixView<'a, Val>, RowMajorMatrixView<'a, Val>>,
+        preprocessed: VerticalPair<RowMajorMatrixView<'a, Val>, RowMajorMatrixView<'a, Val>>,
         public_values: &'a [Val],
         is_first_row: Val,
         is_last_row: Val,
@@ -1235,6 +1255,13 @@ mod tests {
 
         fn public_values(&self) -> &[Self::PublicVar] {
             self.public_values
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    impl<'a> PairBuilder for DebugConstraintBuilder<'a> {
+        fn preprocessed(&self) -> Self::M {
+            self.preprocessed
         }
     }
 }
