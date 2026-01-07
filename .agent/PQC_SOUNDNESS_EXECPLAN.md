@@ -35,6 +35,7 @@ After this work, a user can:
 - [x] (2026-01-07 09:38Z) Updated `transaction-circuit` RNG deps to rand 0.9 for Poseidon2 config seeding and rechecked Plonky3 builds (`cargo check -p transaction-circuit --features plonky3`, `cargo check -p batch-circuit --features plonky3`, `cargo check -p settlement-circuit --features plonky3`, `cargo check -p block-circuit --features plonky3`).
 - [x] (2026-01-07 10:20Z) Fixed the Plonky3 debug constraint test by wiring preprocessed rows into `DebugConstraintBuilder` (PairBuilder) and updating `row_slice` handling in `circuits/transaction/src/p3_prover.rs`.
 - [x] (2026-01-07 10:32Z) Raised the test-only Plonky3 FRI blowup to satisfy the transaction AIR quotient-domain size requirement and avoid LDE height assertions during prove/verify.
+- [x] (2026-01-07 10:43Z) Added a PQC soundness checklist section defining minimum PQ parameters, verification steps, and the formal-analysis caveat.
 - [ ] Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments.
 - [ ] Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
 - [ ] Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits.
@@ -198,6 +199,14 @@ After this work, a user can:
 - Decision: Upgrade `transaction-circuit` RNG dependencies to rand 0.9 to match Plonky3 Poseidon2’s RNG trait requirements.
   Rationale: `p3-poseidon2` expects rand 0.9’s `Rng`, so aligning versions avoids trait mismatches during deterministic config seeding.
   Date/Author: 2026-01-07 / Codex.
+
+## PQC Soundness Checklist
+
+Minimums are explicit and non-negotiable for a 128-bit post-quantum target. The in-circuit sponge must provide at least 384-bit capacity (for Goldilocks, that means at least 6 field elements of capacity), all binding commitments must be 48 bytes (384 bits) end-to-end, and the STARK IOP must use FRI parameters that yield at least 128 bits of soundness in the engineering estimate. In addition, for every AIR the constraint system must satisfy log_blowup >= log_num_quotient_chunks; otherwise the quotient domain will exceed the LDE and the proof will fail even for valid traces.
+
+Verification should be mechanical and recorded as evidence. For every AIR, compute log_num_quotient_chunks via the existing `get_log_num_quotient_chunks` tests (for example, `TransactionAirP3 log_num_quotient_chunks`) and assert it is <= the configured FRI_LOG_BLOWUP used by that circuit. For the sponge and commitments, verify the relevant constants and output sizes in `circuits/*/p3_air.rs`, `circuits/*/hashing.rs`, and the proof encoding types, and confirm proofs still verify after widening the digest. For FRI soundness, record the exact `log_blowup`, `num_queries`, and `proof_of_work_bits` used in `circuits/transaction/src/p3_config.rs` and the analogous configs for other circuits, then compute the engineering estimate `security_bits ≈ log_blowup * num_queries + pow_bits`.
+
+Formal soundness note: unless a dedicated PQ analysis is completed and cited, all soundness claims are engineering-level estimates. The checklist above is the minimum target, not a proof; a formal analysis must be added before claiming 128-bit PQ soundness in external materials.
 
 ## Outcomes & Retrospective
 
@@ -692,3 +701,4 @@ Plan change note (2026-01-07 08:05Z): Added a Milestone 3b to switch the Plonky3
 Plan change note (2026-01-07 09:38Z): Completed Milestone 3b by moving block commitment schedule data into preprocessed columns, switching block proofs to `setup_preprocessed`/`prove_with_preprocessed`, fixing last-row enforcement, updating rand dependencies for Poseidon2 seeding, and rechecking all Plonky3 circuit builds.
 Plan change note (2026-01-07 10:20Z): Repaired the Plonky3 debug constraint helper by adding preprocessed-row support and updating to the `row_slice` API change; verified with `cargo check -p transaction-circuit --features plonky3`.
 Plan change note (2026-01-07 10:32Z): Increased the test-only Plonky3 FRI blowup to avoid LDE/domain-size assertion failures when running prove/verify in tests.
+Plan change note (2026-01-07 10:43Z): Added a PQC soundness checklist section defining minimum parameters, the log_blowup/log_num_quotient_chunks requirement, verification steps, and the formal-analysis caveat.
