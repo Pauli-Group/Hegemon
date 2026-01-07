@@ -33,6 +33,7 @@ After this work, a user can:
 - [x] (2026-01-07 09:38Z) Milestone 3b: Upgrade to Plonky3 0.4.x with preprocessed trace support (switch from `p3-uni-stark` 0.2 to the upstream STARK backend and reintroduce preprocessed schedule columns).
 - [x] (2026-01-07 09:38Z) Moved block commitment schedule counters/masks into preprocessed columns, switched to `setup_preprocessed` + `prove_with_preprocessed`, and fixed last-row enforcement in `circuits/block/src/p3_commitment_air.rs`.
 - [x] (2026-01-07 09:38Z) Updated `transaction-circuit` RNG deps to rand 0.9 for Poseidon2 config seeding and rechecked Plonky3 builds (`cargo check -p transaction-circuit --features plonky3`, `cargo check -p batch-circuit --features plonky3`, `cargo check -p settlement-circuit --features plonky3`, `cargo check -p block-circuit --features plonky3`).
+- [x] (2026-01-07 10:20Z) Fixed the Plonky3 debug constraint test by wiring preprocessed rows into `DebugConstraintBuilder` (PairBuilder) and updating `row_slice` handling in `circuits/transaction/src/p3_prover.rs`.
 - [ ] Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments.
 - [ ] Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
 - [ ] Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits.
@@ -100,6 +101,9 @@ After this work, a user can:
 
 - Observation: Block commitment AIR last-row checks lived under `when_transition`, so they were never enforced on the final row.
   Evidence: `circuits/block/src/p3_commitment_air.rs` (moved final-row assertions to `when_last_row` during preprocessed port).
+
+- Observation: Plonky3 0.4.x debug builders must implement `PairBuilder` when the AIR uses preprocessed columns, and `row_slice` now returns `Option<impl Deref>`.
+  Evidence: `circuits/transaction/src/p3_prover.rs` debug builder updates and `cargo check -p transaction-circuit --features plonky3`.
 
 ## Decision Log
 
@@ -682,3 +686,4 @@ Plan change note (2026-01-07 06:10Z): Fixed Plonky3 compile errors in batch/bloc
 Plan change note (2026-01-07 07:25Z): Added explicit Poseidon round-constant columns plus an absorb flag to `TransactionAirP3`, reducing the measured `log_quotient_degree` to 4 and setting `FRI_LOG_BLOWUP` to 4 for E2E runs; re-ran `cargo test -p transaction-core --features plonky3 log_quotient_degree_transaction_air_p3 -- --nocapture` and attempted the full Plonky3 E2E test (still long-running).
 Plan change note (2026-01-07 08:05Z): Added a Milestone 3b to switch the Plonky3 backend to the upstream preprocessed-trace STARK path, recorded the upstream preprocessed support discovery, and logged the decision to upgrade to Plonky3 0.4.x to remove selector/counter workarounds.
 Plan change note (2026-01-07 09:38Z): Completed Milestone 3b by moving block commitment schedule data into preprocessed columns, switching block proofs to `setup_preprocessed`/`prove_with_preprocessed`, fixing last-row enforcement, updating rand dependencies for Poseidon2 seeding, and rechecking all Plonky3 circuit builds.
+Plan change note (2026-01-07 10:20Z): Repaired the Plonky3 debug constraint helper by adding preprocessed-row support and updating to the `row_slice` API change; verified with `cargo check -p transaction-circuit --features plonky3`.
