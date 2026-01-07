@@ -1101,7 +1101,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "slow: full Plonky3 prove/verify roundtrip"]
+    #[cfg_attr(not(feature = "plonky3-e2e"), ignore = "slow: full Plonky3 prove/verify roundtrip")]
     fn prove_verify_roundtrip_p3() {
         let witness = sample_witness();
         witness.validate().expect("witness valid");

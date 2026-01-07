@@ -28,7 +28,8 @@ After this work, a user can:
 - [x] (2026-01-07 02:45Z) Added Plonky3 transaction prover/verifier/config + trace builder in `circuits/transaction/src/p3_*.rs`, wired `winterfell-legacy`/`plonky3` features in `circuits/transaction/Cargo.toml` and `circuits/transaction-core`, and integrated Plonky3 proof generation in `circuits/transaction/src/proof.rs`.
 - [x] (2026-01-07 02:45Z) Added Plonky3 trace unit test + deterministic Poseidon2 config, switched AIR hash constants based on the active backend, and ran `cargo check -p transaction-circuit --features plonky3` plus `cargo test -p transaction-circuit --features plonky3 --lib`.
 - [x] (2026-01-07 03:20Z) Added Plonky3 prove/verify roundtrip test (ignored due to runtime), added a counter-tamper constraint test, and aligned the sample witness value balance in `circuits/transaction/src/p3_prover.rs`.
-- [ ] Milestone 3: Port batch, block commitment, and settlement circuits.
+- [x] (2026-01-07 03:45Z) Added `plonky3-e2e` feature to run the end-to-end Plonky3 prove/verify test with production FRI parameters, while keeping fast parameters for default unit tests.
+- [x] (2026-01-07 05:20Z) Milestone 3: Port batch, block commitment, and settlement circuits to Plonky3 (new `p3_*` AIR/prover/verifier modules + feature gating + shared Plonky3 config usage).
 - [ ] Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments.
 - [ ] Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
 - [ ] Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits.
@@ -75,6 +76,12 @@ After this work, a user can:
 
 - Observation: A full Plonky3 prove/verify roundtrip is slow in unit tests, so the end-to-end test is marked ignored to avoid default test timeouts.
   Evidence: `circuits/transaction/src/p3_prover.rs` test annotations.
+
+- Observation: Plonky3 AIR cannot compute Blake3-derived permutation challenges (nullifier alpha/beta) from public inputs, so the block commitment AIR exposes them as public inputs and validates them out-of-circuit.
+  Evidence: `circuits/block/src/p3_commitment_air.rs`, `circuits/block/src/p3_commitment_verifier.rs`.
+
+- Observation: Plonky3 trace widths for batch/block/settlement grew due to explicit schedule counters and mask columns (batch: 105, block commitment: 57, settlement: 16), which will increase proof size and memory.
+  Evidence: `circuits/batch/src/p3_air.rs`, `circuits/block/src/p3_commitment_air.rs`, `circuits/settlement/src/p3_air.rs`.
 
 ## Decision Log
 
@@ -128,6 +135,18 @@ After this work, a user can:
 
 - Decision: Mark the Plonky3 prove/verify roundtrip test as ignored by default and reduce test-only FRI queries to keep unit tests fast.
   Rationale: A full proof over the 32,768-row trace can exceed typical unit-test timeouts; the ignored test preserves end-to-end coverage without slowing default runs.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Add a `plonky3-e2e` feature to run the end-to-end Plonky3 prove/verify test with production FRI parameters.
+  Rationale: Keep default unit tests fast while allowing deterministic, production-soundness coverage when requested.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: For Plonky3 block commitment proofs, include permutation challenges (alpha/beta) as public inputs and validate them in the verifier, plus add explicit perm/input-cycle mask columns to replace Winterfell periodic columns.
+  Rationale: Plonky3 AIR cannot compute Blake3-derived values inside the constraint system, and p3-uni-stark 0.2 has no preprocessed columns; explicit mask columns keep the schedule auditable and maintain soundness without forking.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Reuse the transaction circuit’s Plonky3 config (Poseidon2 + FRI parameters) for batch, settlement, and block commitment ports.
+  Rationale: Keeps hash and PCS parameters consistent across circuits and avoids duplicating configuration logic during the migration.
   Date/Author: 2026-01-07 / Codex.
 
 ## Outcomes & Retrospective
@@ -616,3 +635,4 @@ Plan change note (2026-01-07 01:11Z): Marked Milestone 2 partial progress (Plonk
 Plan change note (2026-01-07 01:41Z): Replaced preprocessed schedule columns in `TransactionAirP3` with binary counters and inline selectors, recorded the rationale for Option B, and re-validated the transaction-core compile check.
 Plan change note (2026-01-07 02:45Z): Completed Milestone 2 by wiring the Plonky3 transaction prover/trace/verifier, adding the `winterfell-legacy` feature gate, updating AIR hash selection for the active backend, and validating with `cargo check` + `cargo test`.
 Plan change note (2026-01-07 03:20Z): Added Plonky3 end-to-end tests (with the full prove/verify test marked ignored for runtime) and documented trace width/sponge security implications.
+Plan change note (2026-01-07 05:20Z): Added `plonky3-e2e` feature gating for production-parameter E2E tests, completed Milestone 3 Plonky3 ports for batch/block/settlement with new `p3_*` modules and feature wiring, and documented the new mask/public-input decisions plus trace width impacts.

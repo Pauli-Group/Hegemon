@@ -2,6 +2,12 @@ pub mod commitment_air;
 pub mod commitment_prover;
 pub mod commitment_verifier;
 pub mod error;
+#[cfg(feature = "plonky3")]
+pub mod p3_commitment_air;
+#[cfg(feature = "plonky3")]
+pub mod p3_commitment_prover;
+#[cfg(feature = "plonky3")]
+pub mod p3_commitment_verifier;
 #[cfg(feature = "legacy-recursion")]
 pub mod proof;
 #[cfg(feature = "legacy-recursion")]
@@ -14,6 +20,12 @@ pub use commitment_prover::{
 };
 pub use commitment_verifier::verify_block_commitment;
 pub use error::BlockError;
+#[cfg(feature = "plonky3")]
+pub use p3_commitment_air::{CommitmentBlockAirP3, CommitmentBlockPublicInputsP3};
+#[cfg(feature = "plonky3")]
+pub use p3_commitment_prover::{CommitmentBlockProofP3, CommitmentBlockProverP3};
+#[cfg(feature = "plonky3")]
+pub use p3_commitment_verifier::verify_block_commitment_p3;
 #[cfg(feature = "legacy-recursion")]
 pub use proof::{prove_block, prove_block_fast, verify_block, BlockProof, BlockVerificationReport};
 #[cfg(feature = "legacy-recursion")]

@@ -18,15 +18,15 @@ pub const DIGEST_ELEMS: usize = 6;
 pub const POSEIDON2_WIDTH: usize = 12;
 pub const POSEIDON2_RATE: usize = 6;
 pub const POSEIDON2_ROUNDS: u64 = 7;
-// Test builds use lower FRI parameters to keep unit tests fast.
-#[cfg(test)]
+// Test builds use lower FRI parameters unless the e2e feature is enabled.
+#[cfg(all(test, not(feature = "plonky3-e2e")))]
 pub const FRI_LOG_BLOWUP: usize = 2;
-#[cfg(not(test))]
+#[cfg(any(not(test), feature = "plonky3-e2e"))]
 pub const FRI_LOG_BLOWUP: usize = 3;
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "plonky3-e2e")))]
 pub const FRI_NUM_QUERIES: usize = 8;
-#[cfg(not(test))]
+#[cfg(any(not(test), feature = "plonky3-e2e"))]
 pub const FRI_NUM_QUERIES: usize = 43;
 
 pub const FRI_POW_BITS: usize = 0;
