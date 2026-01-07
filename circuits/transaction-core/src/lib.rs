@@ -17,12 +17,16 @@ mod rpo;
 pub mod stark_air;
 #[cfg(feature = "stark-verify")]
 pub mod stark_verifier;
+#[cfg(feature = "plonky3")]
+pub mod p3_air;
 pub mod types;
 
 pub use hashing::Felt;
 pub use stark_air::{
     TransactionAirStark, TransactionPublicInputsStark, CYCLE_LENGTH, MIN_TRACE_LENGTH, TRACE_WIDTH,
 };
+#[cfg(feature = "plonky3")]
+pub use p3_air::{TransactionAirP3, TransactionPublicInputsP3};
 pub use types::{BalanceSlot, StablecoinPolicyBinding};
 
 #[cfg(feature = "stark-verify")]

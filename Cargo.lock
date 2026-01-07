@@ -11648,6 +11648,10 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "miden-crypto",
+ "p3-air",
+ "p3-field",
+ "p3-goldilocks",
+ "p3-matrix",
  "serde",
  "winter-crypto",
  "winter-utils",

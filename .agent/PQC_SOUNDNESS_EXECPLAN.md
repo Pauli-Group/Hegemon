@@ -21,7 +21,9 @@ After this work, a user can:
 
 - [x] (2026-01-06 23:59Z) Milestone 0: Audit Winterfell surface area and define migration scope.
 - [x] (2026-01-07 00:36Z) Milestone 1: Add Plonky3 dependencies and implement a toy circuit to validate integration.
-- [ ] Milestone 2: Port transaction circuit AIR from Winterfell to Plonky3.
+- [ ] Milestone 2 (in progress): Port transaction circuit AIR from Winterfell to Plonky3 (completed: `circuits/transaction-core/src/p3_air.rs` + `plonky3` feature wiring; remaining: trace/prover/verifier port + Winterfell legacy feature flag + tests).
+- [x] (2026-01-07 01:11Z) Added `plonky3`-gated `TransactionAirP3` port in `circuits/transaction-core/src/p3_air.rs` and exposed it via `circuits/transaction-core/src/lib.rs`.
+- [x] (2026-01-07 01:11Z) Added `plonky3` feature dependencies in `circuits/transaction-core/Cargo.toml` and verified `cargo check -p transaction-core --features plonky3`.
 - [ ] Milestone 3: Port batch, block commitment, and settlement circuits.
 - [ ] Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments.
 - [ ] Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
@@ -51,6 +53,9 @@ After this work, a user can:
 
 - Observation: Goldilocks in Plonky3 v0.2 only provides a quadratic binomial extension, so the spike uses `BinomialExtensionField<Goldilocks, 2>`.
   Evidence: `p3-goldilocks-0.2.0/src/extension.rs` (`BinomiallyExtendable<2>`).
+
+- Observation: `p3-uni-stark` 0.2 does not pass preprocessed trace columns into the prover/verifier folders; `ProverConstraintFolder` does not implement `PairBuilder`, and `prove` hardcodes `preprocessed_width = 0`.
+  Evidence: `p3-uni-stark-0.2.0/src/prover.rs` (call to `get_log_quotient_degree` with `0`), `p3-uni-stark-0.2.0/src/folder.rs` (no `PairBuilder` impl).
 
 ## Decision Log
 
@@ -84,6 +89,10 @@ After this work, a user can:
 
 - Decision: Use `BinomialExtensionField<Goldilocks, 2>` for the spike's challenge field.
   Rationale: Goldilocks in Plonky3 v0.2 exposes a quadratic binomial extension; higher-degree extensions are not provided.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Model Winterfell periodic columns and assertion-only schedule constraints as Plonky3 preprocessed columns in `TransactionAirP3`.
+  Rationale: Plonky3 AIR has no direct assertion API; preprocessed columns preserve fixed schedule semantics without inflating main trace width or adding extra counter columns.
   Date/Author: 2026-01-07 / Codex.
 
 ## Outcomes & Retrospective
@@ -321,6 +330,8 @@ Scope:
 4. Port verification to `p3_uni_stark::verify`.
 5. Keep Winterfell implementation under a feature flag (`winterfell-legacy`) for parallel testing.
 
+Note: The current `TransactionAirP3` uses preprocessed columns to replace Winterfell's periodic columns and assertions. Plonky3 0.2's `p3-uni-stark` does not yet carry preprocessed traces into the constraint folders, so finishing items 2–4 requires either (a) extending `p3-uni-stark` to support preprocessed columns or (b) moving schedule constraints into main-trace columns with explicit transition constraints. Decide and document the choice before wiring the prover/verifier.
+
 Validation:
 - `cargo test -p transaction-circuit --features plonky3` passes.
 - Proof size is logged and compared to Winterfell baseline.
@@ -443,6 +454,10 @@ To see the proof-size log from the spike test, run:
 
     cargo test -p plonky3-spike --features plonky3 -- --nocapture
 
+Compile-check transaction core with Plonky3 (Milestone 2 partial):
+
+    cargo check -p transaction-core --features plonky3
+
 Run transaction circuit with Plonky3 (after Milestone 2):
 
     cargo test -p transaction-circuit --features plonky3
@@ -486,6 +501,12 @@ Plonky3 spike test run (2026-01-07):
     cargo test -p plonky3-spike --features plonky3
     running 1 test
     test tests::fibonacci_prove_verify ... ok
+
+Transaction-core Plonky3 compile check (2026-01-07):
+
+    cargo check -p transaction-core --features plonky3
+    Checking transaction-core v0.1.0 (/Users/pldd/Documents/Reflexivity/synthetic-hegemonic-currency/circuits/transaction-core)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.10s
 
 Node build attempt (2026-01-07):
 
@@ -556,3 +577,4 @@ At the end of this plan, the following must exist:
 
 Plan change note (2026-01-06 23:59Z): Added the Milestone 0 inventory tables, recorded the recursion dependency discovery, and marked Milestone 0 complete to reflect the audit being finished.
 Plan change note (2026-01-07 00:36Z): Marked Milestone 1 complete, recorded the Goldilocks extension constraint and Poseidon2 spike decisions, and captured the Plonky3 spike test output plus the `make node` timeout.
+Plan change note (2026-01-07 01:11Z): Marked Milestone 2 partial progress (Plonky3 AIR port + feature wiring), recorded the preprocessed-trace limitation in `p3-uni-stark`, and logged the transaction-core compile check.
