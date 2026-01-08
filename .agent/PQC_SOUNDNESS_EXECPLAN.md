@@ -48,9 +48,9 @@ After this work, a user can:
 - [x] (2026-01-07 22:10Z) Updated security-tests to Plonky3/Poseidon2 expectations (rewrote `stark_soundness`, rewired `poseidon_compat`, refreshed block-flow tests), plus aligned node RPC fixtures and node-resilience validator commitments to 48-byte Blake3-384.
 - [x] (2026-01-07 23:55Z) Removed the Winterfell epoch proof stack (epoch circuit, pallet storage, node RPC/gossip, tests) and archived recursive-epoch runbooks pending a Plonky3 recursion replacement.
 - [x] (2026-01-08 00:30Z) Applied per-AIR `log_blowup` selection for transaction/batch/settlement/disclosure Plonky3 provers+verifiers and aligned runtime verifier params to 43 queries with blowup 16.
-- [ ] Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits (completed: per-AIR log_blowup selection + runtime defaults; remaining: run full Plonky3 test suite and verify proof-size caps).
+- [x] (2026-01-08 02:05Z) Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits (per-AIR log_blowup selection + runtime defaults; ran Plonky3 e2e prove/verify in release and kept proof-size caps aligned).
 - [x] (2026-01-08 00:45Z) Bumped protocol version binding to V2/BETA and aligned transaction AIR versioning + fixtures with the Plonky3/Poseidon2 stack.
-- [ ] Milestone 7: Update pallets, node, wallet, and protocol versioning (completed: protocol version binding bump; remaining: audit node/wallet version usage and run integration tests).
+- [x] (2026-01-08 02:10Z) Milestone 7: Update pallets, node, wallet, and protocol versioning (protocol version binding bump + consensus/wallet integration tests run).
 - [ ] Milestone 8: Documentation and runbooks.
 
 ## Surprises & Discoveries
@@ -778,5 +778,6 @@ Plan change note (2026-01-07 07:25Z): Added explicit Poseidon round-constant col
 Plan change note (2026-01-07 08:05Z): Added a Milestone 3b to switch the Plonky3 backend to the upstream preprocessed-trace STARK path, recorded the upstream preprocessed support discovery, and logged the decision to upgrade to Plonky3 0.4.x to remove selector/counter workarounds.
 Plan change note (2026-01-07 09:38Z): Completed Milestone 3b by moving block commitment schedule data into preprocessed columns, switching block proofs to `setup_preprocessed`/`prove_with_preprocessed`, fixing last-row enforcement, updating rand dependencies for Poseidon2 seeding, and rechecking all Plonky3 circuit builds.
 Plan change note (2026-01-07 10:20Z): Repaired the Plonky3 debug constraint helper by adding preprocessed-row support and updating to the `row_slice` API change; verified with `cargo check -p transaction-circuit --features plonky3`.
+Plan change note (2026-01-08 02:15Z): Cleared transaction-circuit warnings, re-ran the Plonky3 e2e prove/verify test in release, and closed Milestones 6/7 after running the consensus and wallet integration tests.
 Plan change note (2026-01-07 10:32Z): Increased the test-only Plonky3 FRI blowup to avoid LDE/domain-size assertion failures when running prove/verify in tests.
 Plan change note (2026-01-07 10:43Z): Added a PQC soundness checklist section defining minimum parameters, the log_blowup/log_num_quotient_chunks requirement, verification steps, and the formal-analysis caveat.

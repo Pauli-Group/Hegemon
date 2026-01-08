@@ -198,37 +198,6 @@ impl TransactionPublicInputs {
     }
 }
 
-pub(crate) mod serde_vec_bytes32 {
-    use serde::{Deserializer, Serializer};
-
-    pub fn serialize<S>(values: &[[u8; 32]], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut bytes = Vec::with_capacity(values.len() * 32);
-        for value in values {
-            bytes.extend_from_slice(value);
-        }
-        serializer.serialize_bytes(&bytes)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<[u8; 32]>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        if !bytes.len().is_multiple_of(32) {
-            return Err(serde::de::Error::custom("invalid 32-byte encoding"));
-        }
-        Ok(bytes
-            .chunks(32)
-            .map(|chunk| <[u8; 32]>::try_from(chunk).expect("32-byte chunk"))
-            .collect())
-    }
-
-    use serde::Deserialize;
-}
-
 pub(crate) mod serde_vec_bytes48 {
     use serde::{Deserializer, Serializer};
 
@@ -260,32 +229,6 @@ pub(crate) mod serde_vec_bytes48 {
     use serde::Deserialize;
 }
 
-pub(crate) mod serde_bytes32 {
-    use serde::{Deserializer, Serializer};
-
-    pub fn serialize<S>(value: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_bytes(value)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
-        if bytes.len() != 32 {
-            return Err(serde::de::Error::custom("expected 32 bytes"));
-        }
-        let mut out = [0u8; 32];
-        out.copy_from_slice(&bytes);
-        Ok(out)
-    }
-
-    use serde::Deserialize;
-}
-
 pub(crate) mod serde_bytes48 {
     use serde::{Deserializer, Serializer};
 
@@ -310,10 +253,6 @@ pub(crate) mod serde_bytes48 {
     }
 
     use serde::Deserialize;
-}
-
-pub(crate) fn default_bytes48() -> [u8; 48] {
-    [0u8; 48]
 }
 fn stablecoin_binding_is_zero(binding: &StablecoinPolicyBinding) -> bool {
     !binding.enabled

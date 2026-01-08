@@ -272,10 +272,6 @@ pub(crate) mod serde_bytes32 {
     use serde::Deserialize;
 }
 
-pub(crate) fn default_bytes48() -> [u8; 48] {
-    [0u8; 48]
-}
-
 pub(crate) mod serde_bytes48 {
     use serde::{Deserializer, Serializer};
 

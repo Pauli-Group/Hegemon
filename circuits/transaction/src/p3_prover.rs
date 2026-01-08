@@ -11,8 +11,7 @@ use crate::constants::{
     NULLIFIER_DOMAIN_TAG,
 };
 use crate::hashing_pq::{
-    bytes48_to_felts, is_canonical_bytes48, merkle_node, note_commitment, nullifier, prf_key,
-    HashFelt,
+    bytes48_to_felts, merkle_node, note_commitment, nullifier, prf_key, HashFelt,
 };
 use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use crate::p3_config::{config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, TransactionProofP3};
