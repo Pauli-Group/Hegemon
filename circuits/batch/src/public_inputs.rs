@@ -4,14 +4,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use winterfell::math::{fields::f64::BaseElement, FieldElement, ToElements};
 
-/// Maximum transactions per batch (power of 2 for trace efficiency).
-pub const MAX_BATCH_SIZE: usize = 16;
-
-/// Maximum inputs per transaction.
-pub const MAX_INPUTS: usize = 2;
-
-/// Maximum outputs per transaction.
-pub const MAX_OUTPUTS: usize = 2;
+use crate::constants::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
 
 fn is_zero_hash(value: &[BaseElement; 4]) -> bool {
     value.iter().all(|elem| *elem == BaseElement::ZERO)

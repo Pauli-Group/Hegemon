@@ -7,10 +7,10 @@ description = "STARK circuit for settlement batch commitments."
 license = "Apache-2.0"
 
 [dependencies]
-winterfell = { version = "0.13.1", default-features = false }
+winterfell = { version = "0.13.1", default-features = false, optional = true }
 winter-crypto = { version = "0.13.1", default-features = false, optional = true }
 transaction-core = { path = "../transaction-core", default-features = false }
-transaction-circuit = { path = "../transaction", optional = true }
+transaction-circuit = { path = "../transaction", default-features = false, optional = true }
 p3-air = { workspace = true, optional = true }
 p3-field = { workspace = true, optional = true }
 p3-goldilocks = { workspace = true, optional = true }
@@ -20,17 +20,19 @@ bincode = { version = "1", optional = true }
 
 [features]
 default = ["std"]
-std = [
+std = ["transaction-core/std"]
+winterfell-legacy = [
+    "std",
+    "dep:winterfell",
+    "dep:winter-crypto",
     "winterfell/std",
-    "winter-crypto",
     "winter-crypto/std",
-    "transaction-core/std",
     "transaction-core/winterfell-legacy",
 ]
 plonky3 = [
     "std",
     "transaction-core/plonky3",
-    "transaction-circuit",
+    "dep:transaction-circuit",
     "transaction-circuit/plonky3",
     "dep:p3-air",
     "dep:p3-field",
@@ -39,8 +41,8 @@ plonky3 = [
     "dep:p3-uni-stark",
     "dep:bincode",
 ]
-stark-verify = ["winter-crypto", "transaction-core/winterfell-legacy"]
-stark-fast = []
+stark-verify = ["winterfell-legacy"]
+stark-fast = ["winterfell-legacy"]
 
 [lints]
 workspace = true

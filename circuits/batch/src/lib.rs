@@ -40,7 +40,9 @@
 
 extern crate alloc;
 
+#[cfg(feature = "winterfell-legacy")]
 pub mod air;
+pub mod constants;
 pub mod error;
 #[cfg(feature = "plonky3")]
 pub mod p3_air;
@@ -48,18 +50,22 @@ pub mod p3_air;
 pub mod p3_prover;
 #[cfg(feature = "plonky3")]
 pub mod p3_verifier;
-#[cfg(feature = "std")]
+#[cfg(feature = "winterfell-legacy")]
 pub mod prover;
+#[cfg(feature = "winterfell-legacy")]
 pub mod public_inputs;
+#[cfg(feature = "winterfell-legacy")]
 pub mod verifier;
 
 // Recursion-friendly RPO Fiat‑Shamir path (feature‑gated)
-#[cfg(all(feature = "rpo-fiat-shamir", feature = "std"))]
+#[cfg(all(feature = "rpo-fiat-shamir", feature = "winterfell-legacy"))]
 pub mod rpo_prover;
-#[cfg(feature = "rpo-fiat-shamir")]
+#[cfg(all(feature = "rpo-fiat-shamir", feature = "winterfell-legacy"))]
 pub mod rpo_verifier;
 
+#[cfg(feature = "winterfell-legacy")]
 pub use air::BatchTransactionAir;
+pub use constants::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
 pub use error::BatchCircuitError;
 #[cfg(feature = "plonky3")]
 pub use p3_air::{BatchPublicInputsP3, BatchTransactionAirP3, TRACE_WIDTH as P3_TRACE_WIDTH};
@@ -67,12 +73,14 @@ pub use p3_air::{BatchPublicInputsP3, BatchTransactionAirP3, TRACE_WIDTH as P3_T
 pub use p3_prover::{BatchProofP3, BatchTransactionProverP3};
 #[cfg(feature = "plonky3")]
 pub use p3_verifier::{verify_batch_proof_bytes_p3, verify_batch_proof_p3};
-#[cfg(feature = "std")]
+#[cfg(feature = "winterfell-legacy")]
 pub use prover::BatchTransactionProver;
-pub use public_inputs::{BatchPublicInputs, MAX_BATCH_SIZE};
+#[cfg(feature = "winterfell-legacy")]
+pub use public_inputs::BatchPublicInputs;
+#[cfg(feature = "winterfell-legacy")]
 pub use verifier::{verify_batch_proof, verify_batch_proof_bytes};
 
-#[cfg(all(feature = "rpo-fiat-shamir", feature = "std"))]
+#[cfg(all(feature = "rpo-fiat-shamir", feature = "winterfell-legacy"))]
 pub use rpo_prover::BatchTransactionProverRpo;
-#[cfg(feature = "rpo-fiat-shamir")]
+#[cfg(all(feature = "rpo-fiat-shamir", feature = "winterfell-legacy"))]
 pub use rpo_verifier::{verify_batch_proof_bytes_rpo, verify_batch_proof_rpo};

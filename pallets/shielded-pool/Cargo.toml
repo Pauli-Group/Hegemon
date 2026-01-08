@@ -75,7 +75,7 @@ stark-verify = [
     "winter-math",
     "winter-crypto",
     "transaction-core/stark-verify",
-    "batch-circuit",
+    "batch-circuit/winterfell-legacy",
 ]
 fast-proofs = ["transaction-core/stark-fast"]
 # Enable epoch proofs for light client sync

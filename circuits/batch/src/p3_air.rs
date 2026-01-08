@@ -12,7 +12,7 @@ use p3_goldilocks::Goldilocks;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
 
-use crate::public_inputs::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
+use crate::constants::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_core::dimensions::{
     commitment_output_row, merkle_root_output_row, nullifier_output_row,
 };

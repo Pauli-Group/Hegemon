@@ -12,6 +12,8 @@ use std::time::Duration;
 use winterfell::math::fields::f64::BaseElement;
 use winterfell::math::FieldElement;
 
+#![cfg(feature = "winterfell-legacy")]
+
 use batch_circuit::public_inputs::BatchPublicInputs;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::dimensions::{

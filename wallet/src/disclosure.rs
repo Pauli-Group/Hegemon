@@ -120,30 +120,6 @@ mod serde_hex_32 {
     }
 }
 
-mod serde_vec_hex_32 {
-    use super::{decode_hex_32, encode_hex_32};
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    pub fn serialize<S>(values: &[[u8; 32]], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let encoded: Vec<String> = values.iter().map(|v| encode_hex_32(v)).collect();
-        encoded.serialize(serializer)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<[u8; 32]>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let encoded: Vec<String> = Vec::<String>::deserialize(deserializer)?;
-        encoded
-            .into_iter()
-            .map(|value| decode_hex_32(&value).map_err(serde::de::Error::custom))
-            .collect()
-    }
-}
-
 mod serde_hex_48 {
     use super::{decode_hex_48, encode_hex_48};
     use serde::{Deserialize, Deserializer, Serializer};

@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-block-circuit = { path = "../circuits/block" }
+block-circuit = { path = "../circuits/block", features = ["winterfell-legacy"] }
 transaction-circuit = { path = "../circuits/transaction" }
 epoch-circuit = { path = "../circuits/epoch" }
 state-merkle = { path = "../state/merkle" }

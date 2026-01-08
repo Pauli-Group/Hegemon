@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1"
 bincode = "1"
 blake3 = "1.5"
-block-circuit = { path = "../circuits/block" }
+block-circuit = { path = "../circuits/block", features = ["winterfell-legacy"] }
 codec = { workspace = true }
 crossbeam-channel = "0.5"
 crypto = { package = "synthetic-crypto", path = "../crypto" }
