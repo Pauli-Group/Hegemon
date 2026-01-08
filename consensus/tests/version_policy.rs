@@ -18,14 +18,13 @@ fn version_schedule_controls_activation() {
     let genesis_tree = CommitmentTreeState::default();
     let mut consensus =
         BftConsensus::new(validator_set.clone(), genesis_tree.clone(), HashVerifier);
-    let tx =
-        dummy_transaction_with_version(
-            7,
-            VersionBinding::new(
-                DEFAULT_VERSION_BINDING.circuit.saturating_add(1),
-                DEFAULT_VERSION_BINDING.crypto,
-            ),
-        );
+    let tx = dummy_transaction_with_version(
+        7,
+        VersionBinding::new(
+            DEFAULT_VERSION_BINDING.circuit.saturating_add(1),
+            DEFAULT_VERSION_BINDING.crypto,
+        ),
+    );
     let params = BftBlockParams {
         height: 1,
         view: 1,

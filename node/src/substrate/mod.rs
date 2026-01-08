@@ -95,8 +95,8 @@ pub use mining_worker::{
 pub use network::{PqNetworkConfig, PqNetworkKeypair};
 pub use network_bridge::{
     BlockAnnounce, BlockState, IncomingMessage, NetworkBridge, NetworkBridgeBuilder,
-    NetworkBridgeStats, SyncRequest, SyncResponse, TransactionMessage,
-    BLOCK_ANNOUNCE_PROTOCOL, SYNC_PROTOCOL, TRANSACTIONS_PROTOCOL,
+    NetworkBridgeStats, SyncRequest, SyncResponse, TransactionMessage, BLOCK_ANNOUNCE_PROTOCOL,
+    SYNC_PROTOCOL, TRANSACTIONS_PROTOCOL,
 };
 pub use rpc::{HegemonApiServer, HegemonService, MiningHandle, WalletApiServer, WalletService};
 pub use service::{

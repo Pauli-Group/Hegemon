@@ -922,12 +922,8 @@ mod tests {
             instructions: vec![],
             nullifiers: vec![],
         };
-        let ok = <StarkVerifier as ProofVerifier>::verify(
-            &inputs,
-            &proof,
-            &verification_key,
-            &params,
-        );
+        let ok =
+            <StarkVerifier as ProofVerifier>::verify(&inputs, &proof, &verification_key, &params);
         assert!(!ok);
     }
 }
@@ -974,7 +970,7 @@ mod benchmarking {
             submit_batch(
                 RawOrigin::Signed(caller),
                 instructions,
-                Default::default(),
+                [0u8; 48],
                 proof,
                 nullifiers,
                 T::DefaultVerificationKey::get(),

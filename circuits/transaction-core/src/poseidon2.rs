@@ -6,7 +6,9 @@ use p3_goldilocks::Goldilocks;
 use crate::constants::{
     POSEIDON2_EXTERNAL_ROUNDS, POSEIDON2_INTERNAL_ROUNDS, POSEIDON2_STEPS, POSEIDON2_WIDTH,
 };
-use crate::poseidon2_constants::{EXTERNAL_ROUND_CONSTANTS, INTERNAL_MATRIX_DIAG, INTERNAL_ROUND_CONSTANTS};
+use crate::poseidon2_constants::{
+    EXTERNAL_ROUND_CONSTANTS, INTERNAL_MATRIX_DIAG, INTERNAL_ROUND_CONSTANTS,
+};
 
 pub type Felt = Goldilocks;
 
@@ -49,14 +51,14 @@ fn mds_light(state: &mut [Felt; POSEIDON2_WIDTH]) {
     }
 
     let mut sums = [Felt::ZERO; 4];
-    for k in 0..4 {
+    for (k, sum) in sums.iter_mut().enumerate() {
         let mut acc = Felt::ZERO;
         let mut idx = k;
         while idx < POSEIDON2_WIDTH {
             acc += state[idx];
             idx += 4;
         }
-        sums[k] = acc;
+        *sum = acc;
     }
 
     for (idx, elem) in state.iter_mut().enumerate() {

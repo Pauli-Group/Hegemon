@@ -55,6 +55,7 @@ fn test_fri_security_parameters_default() {
 }
 
 #[test]
+#[allow(clippy::assertions_on_constants)]
 fn test_poseidon2_parameters() {
     assert_eq!(POSEIDON2_WIDTH, 12);
     assert_eq!(POSEIDON2_RATE, 6);
@@ -67,6 +68,7 @@ fn test_poseidon2_parameters() {
 }
 
 #[test]
+#[allow(clippy::assertions_on_constants)]
 fn test_merkle_tree_security() {
     assert!(
         CIRCUIT_MERKLE_DEPTH >= MIN_MERKLE_DEPTH,

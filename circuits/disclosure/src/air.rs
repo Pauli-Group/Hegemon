@@ -143,8 +143,7 @@ fn build_preprocessed_trace(trace_len: usize) -> RowMajorMatrix<Felt> {
     for row in 0..trace_len {
         let step = row % CYCLE_LENGTH;
         let cycle = row / CYCLE_LENGTH;
-        let row_slice =
-            &mut values[row * PREPROCESSED_WIDTH..(row + 1) * PREPROCESSED_WIDTH];
+        let row_slice = &mut values[row * PREPROCESSED_WIDTH..(row + 1) * PREPROCESSED_WIDTH];
 
         row_slice[PREP_HASH_FLAG] = Felt::from_bool(step < POSEIDON2_STEPS);
         row_slice[PREP_ABSORB_FLAG] = Felt::from_bool(step == CYCLE_LENGTH - 1);
@@ -192,11 +191,9 @@ fn build_preprocessed_trace(trace_len: usize) -> RowMajorMatrix<Felt> {
         }
 
         if step == CYCLE_LENGTH - 1 {
-            if cycle < INPUT_CHUNKS {
-                if cycle == 0 {
-                    row_slice[PREP_RESET] = Felt::ONE;
-                    row_slice[PREP_DOMAIN] = Felt::from_u64(NOTE_DOMAIN_TAG);
-                }
+            if cycle == 0 && cycle < INPUT_CHUNKS {
+                row_slice[PREP_RESET] = Felt::ONE;
+                row_slice[PREP_DOMAIN] = Felt::from_u64(NOTE_DOMAIN_TAG);
             }
             if row == input_row {
                 row_slice[PREP_INPUT_ROW] = Felt::ONE;
@@ -309,14 +306,14 @@ where
             }
 
             let mut sums: [AB::Expr; 4] = core::array::from_fn(|_| AB::Expr::ZERO);
-            for k in 0..4 {
+            for (k, sum) in sums.iter_mut().enumerate() {
                 let mut acc = AB::Expr::ZERO;
                 let mut idx = k;
                 while idx < POSEIDON2_WIDTH {
                     acc += state[idx].clone();
                     idx += 4;
                 }
-                sums[k] = acc;
+                *sum = acc;
             }
 
             for (idx, elem) in state.iter_mut().enumerate() {
@@ -362,8 +359,7 @@ where
         matmul_internal(&mut internal_state);
 
         let round_sum = init_round.clone() + external_round.clone() + internal_round.clone();
-        let mut hash_state: [AB::Expr; POSEIDON2_WIDTH] =
-            core::array::from_fn(|_| AB::Expr::ZERO);
+        let mut hash_state: [AB::Expr; POSEIDON2_WIDTH] = core::array::from_fn(|_| AB::Expr::ZERO);
         for idx in 0..POSEIDON2_WIDTH {
             hash_state[idx] = init_round.clone() * init_state[idx].clone()
                 + external_round.clone() * external_state[idx].clone()

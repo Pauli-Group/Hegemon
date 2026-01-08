@@ -390,7 +390,6 @@ pub mod pallet {
             /// Total fee across all transactions.
             total_fee: u128,
         },
-
     }
 
     #[pallet::error]
@@ -559,7 +558,6 @@ pub mod pallet {
             CommitmentProofProcessed::<T>::kill();
             Weight::from_parts(1_000, 0)
         }
-
     }
 
     #[pallet::call]
@@ -1378,7 +1376,6 @@ pub mod pallet {
         pub fn is_nullifier_spent(nullifier: &[u8; 48]) -> bool {
             Nullifiers::<T>::contains_key(nullifier)
         }
-
     }
 
     // =========================================================================

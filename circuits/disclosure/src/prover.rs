@@ -7,19 +7,19 @@ use p3_matrix::Matrix;
 use p3_uni_stark::{get_log_num_quotient_chunks, prove_with_preprocessed, setup_preprocessed};
 
 use crate::air::{
-    DisclosureAirP3, DisclosurePublicInputsP3, PREPROCESSED_WIDTH, COL_DOMAIN, COL_IN0, COL_RESET,
-    COL_S0,
+    DisclosureAirP3, DisclosurePublicInputsP3, COL_DOMAIN, COL_IN0, COL_RESET, COL_S0,
+    PREPROCESSED_WIDTH,
 };
 use crate::constants::{
-    CYCLE_LENGTH, INPUT_CHUNKS, NOTE_DOMAIN_TAG, POSEIDON2_RATE, POSEIDON2_STEPS,
-    POSEIDON2_WIDTH, TOTAL_CYCLES, TRACE_LENGTH, TRACE_WIDTH,
+    CYCLE_LENGTH, INPUT_CHUNKS, NOTE_DOMAIN_TAG, POSEIDON2_RATE, POSEIDON2_STEPS, POSEIDON2_WIDTH,
+    TOTAL_CYCLES, TRACE_LENGTH, TRACE_WIDTH,
 };
 use crate::{DisclosureCircuitError, PaymentDisclosureClaim, PaymentDisclosureWitness};
 use transaction_core::hashing_pq::bytes48_to_felts;
-use transaction_core::poseidon2::poseidon2_step;
 use transaction_core::p3_config::{
-    config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, TransactionProofP3,
+    config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
 };
+use transaction_core::poseidon2::poseidon2_step;
 
 pub type Val = Goldilocks;
 pub type DisclosureProofP3 = TransactionProofP3;
@@ -72,8 +72,7 @@ impl DisclosureProverP3 {
         }
 
         let trace_len = TRACE_LENGTH;
-        let mut trace =
-            RowMajorMatrix::new(vec![Val::ZERO; trace_len * TRACE_WIDTH], TRACE_WIDTH);
+        let mut trace = RowMajorMatrix::new(vec![Val::ZERO; trace_len * TRACE_WIDTH], TRACE_WIDTH);
 
         let mut prev_state = [Val::ZERO; POSEIDON2_WIDTH];
 
@@ -90,15 +89,15 @@ impl DisclosureProverP3 {
                 if spec.reset {
                     let mut state = [Val::ZERO; POSEIDON2_WIDTH];
                     state[0] = Val::from_u64(spec.domain) + spec.inputs[0];
-                    for idx in 1..POSEIDON2_RATE {
-                        state[idx] = spec.inputs[idx];
-                    }
+                    state[1..POSEIDON2_RATE].copy_from_slice(&spec.inputs[1..POSEIDON2_RATE]);
                     state[POSEIDON2_WIDTH - 1] = Val::ONE;
                     state
                 } else {
                     let mut state = prev_state;
-                    for idx in 0..POSEIDON2_RATE {
-                        state[idx] += spec.inputs[idx];
+                    for (state_elem, input) in
+                        state.iter_mut().take(POSEIDON2_RATE).zip(spec.inputs)
+                    {
+                        *state_elem += input;
                     }
                     state
                 }
@@ -108,18 +107,14 @@ impl DisclosureProverP3 {
             for step in 0..POSEIDON2_STEPS {
                 let row = cycle_start + step;
                 let row_slice = trace.row_mut(row);
-                for idx in 0..POSEIDON2_WIDTH {
-                    row_slice[COL_S0 + idx] = state[idx];
-                }
+                row_slice[COL_S0..(COL_S0 + POSEIDON2_WIDTH)].copy_from_slice(&state);
                 poseidon2_step(&mut state, step);
             }
 
             for step in POSEIDON2_STEPS..CYCLE_LENGTH {
                 let row = cycle_start + step;
                 let row_slice = trace.row_mut(row);
-                for idx in 0..POSEIDON2_WIDTH {
-                    row_slice[COL_S0 + idx] = state[idx];
-                }
+                row_slice[COL_S0..(COL_S0 + POSEIDON2_WIDTH)].copy_from_slice(&state);
             }
 
             prev_state = state;
@@ -128,9 +123,7 @@ impl DisclosureProverP3 {
             let row_slice = trace.row_mut(end_row);
             if cycle < INPUT_CHUNKS {
                 let next_spec = cycle_specs[cycle];
-                for idx in 0..POSEIDON2_RATE {
-                    row_slice[COL_IN0 + idx] = next_spec.inputs[idx];
-                }
+                row_slice[COL_IN0..(COL_IN0 + POSEIDON2_RATE)].copy_from_slice(&next_spec.inputs);
                 row_slice[COL_RESET] = if next_spec.reset { Val::ONE } else { Val::ZERO };
                 row_slice[COL_DOMAIN] = if next_spec.reset {
                     Val::from_u64(next_spec.domain)
@@ -138,9 +131,7 @@ impl DisclosureProverP3 {
                     Val::ZERO
                 };
             } else {
-                for idx in 0..POSEIDON2_RATE {
-                    row_slice[COL_IN0 + idx] = Val::ZERO;
-                }
+                row_slice[COL_IN0..(COL_IN0 + POSEIDON2_RATE)].fill(Val::ZERO);
                 row_slice[COL_RESET] = Val::ZERO;
                 row_slice[COL_DOMAIN] = Val::ZERO;
             }
@@ -180,9 +171,8 @@ impl DisclosureProverP3 {
         );
         let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
         let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
-        let (prep_prover, _) =
-            setup_preprocessed(&config.config, &air, degree_bits)
-                .expect("DisclosureAirP3 preprocessed trace missing");
+        let (prep_prover, _) = setup_preprocessed(&config.config, &air, degree_bits)
+            .expect("DisclosureAirP3 preprocessed trace missing");
         prove_with_preprocessed(
             &config.config,
             &air,

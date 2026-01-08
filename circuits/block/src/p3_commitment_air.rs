@@ -16,20 +16,19 @@ use crate::commitment_constants::{
     COL_DA_ROOT4, COL_DA_ROOT5, COL_END_ROOT0, COL_END_ROOT1, COL_END_ROOT2, COL_END_ROOT3,
     COL_END_ROOT4, COL_END_ROOT5, COL_INPUT0, COL_INPUT1, COL_INPUT2, COL_INPUT3, COL_INPUT4,
     COL_INPUT5, COL_NF_DIFF_INV, COL_NF_DIFF_NZ, COL_NF_PERM, COL_NF_PERM_INV, COL_NF_S0,
-    COL_NF_S1, COL_NF_S2, COL_NF_S3, COL_NF_S4, COL_NF_S5, COL_NF_SORTED_INV,
-    COL_NF_SORTED_NZ, COL_NF_U0, COL_NF_U1, COL_NF_U2, COL_NF_U3, COL_NF_U4, COL_NF_U5,
-    COL_NULLIFIER_ROOT0, COL_NULLIFIER_ROOT1, COL_NULLIFIER_ROOT2, COL_NULLIFIER_ROOT3,
-    COL_NULLIFIER_ROOT4, COL_NULLIFIER_ROOT5, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3,
-    COL_S4, COL_S5, COL_S6, COL_S7, COL_S8, COL_S9, COL_START_ROOT0, COL_START_ROOT1,
-    COL_START_ROOT2, COL_START_ROOT3, COL_START_ROOT4, COL_START_ROOT5,
-    TRACE_WIDTH as BASE_TRACE_WIDTH,
+    COL_NF_S1, COL_NF_S2, COL_NF_S3, COL_NF_S4, COL_NF_S5, COL_NF_SORTED_INV, COL_NF_SORTED_NZ,
+    COL_NF_U0, COL_NF_U1, COL_NF_U2, COL_NF_U3, COL_NF_U4, COL_NF_U5, COL_NULLIFIER_ROOT0,
+    COL_NULLIFIER_ROOT1, COL_NULLIFIER_ROOT2, COL_NULLIFIER_ROOT3, COL_NULLIFIER_ROOT4,
+    COL_NULLIFIER_ROOT5, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6,
+    COL_S7, COL_S8, COL_S9, COL_START_ROOT0, COL_START_ROOT1, COL_START_ROOT2, COL_START_ROOT3,
+    COL_START_ROOT4, COL_START_ROOT5, TRACE_WIDTH as BASE_TRACE_WIDTH,
 };
 use transaction_circuit::constants::MAX_INPUTS;
 use transaction_core::constants::{
     POSEIDON2_EXTERNAL_ROUNDS, POSEIDON2_INTERNAL_ROUNDS, POSEIDON2_STEPS, POSEIDON2_WIDTH,
 };
-use transaction_core::poseidon2_constants;
 use transaction_core::p3_air::CYCLE_LENGTH;
+use transaction_core::poseidon2_constants;
 
 pub type Felt = Goldilocks;
 
@@ -99,7 +98,7 @@ impl CommitmentBlockPublicInputsP3 {
 
     pub fn try_from_slice(elements: &[Felt]) -> Result<Self, String> {
         let base_len = 33;
-        if elements.len() < base_len || (elements.len() - base_len) % 12 != 0 {
+        if elements.len() < base_len || !(elements.len() - base_len).is_multiple_of(12) {
             return Err("commitment public inputs length mismatch".into());
         }
         let nullifier_count = (elements.len() - base_len) / 12;
@@ -142,7 +141,8 @@ impl CommitmentBlockPublicInputsP3 {
         if self.tx_count == 0 {
             return Err("tx_count cannot be zero".into());
         }
-        let total_cycles = CommitmentBlockAirP3::trace_length(self.tx_count as usize) / CYCLE_LENGTH;
+        let total_cycles =
+            CommitmentBlockAirP3::trace_length(self.tx_count as usize) / CYCLE_LENGTH;
         if (total_cycles as u64) > (1u64 << CYCLE_BITS) {
             return Err("trace exceeds cycle counter capacity".into());
         }
@@ -214,8 +214,7 @@ fn build_preprocessed_trace(
     for row in 0..trace_len {
         let step = row % CYCLE_LENGTH;
         let cycle = row / CYCLE_LENGTH;
-        let row_slice =
-            &mut values[row * PREPROCESSED_WIDTH..(row + 1) * PREPROCESSED_WIDTH];
+        let row_slice = &mut values[row * PREPROCESSED_WIDTH..(row + 1) * PREPROCESSED_WIDTH];
 
         row_slice[PREP_HASH_FLAG] = Felt::from_bool(step < POSEIDON2_STEPS);
         if step < POSEIDON2_STEPS {
@@ -359,9 +358,9 @@ where
             let mut acc = one.clone();
             for (idx, bit) in bits.iter().enumerate() {
                 if ((value >> idx) & 1) == 1 {
-                    acc = acc * bit.clone();
+                    acc *= bit.clone();
                 } else {
-                    acc = acc * (one.clone() - bit.clone());
+                    acc *= one.clone() - bit.clone();
                 }
             }
             acc
@@ -415,14 +414,14 @@ where
             }
 
             let mut sums: [AB::Expr; 4] = core::array::from_fn(|_| AB::Expr::ZERO);
-            for k in 0..4 {
+            for (k, sum) in sums.iter_mut().enumerate() {
                 let mut acc = AB::Expr::ZERO;
                 let mut idx = k;
                 while idx < POSEIDON2_WIDTH {
                     acc += state[idx].clone();
                     idx += 4;
                 }
-                sums[k] = acc;
+                *sum = acc;
             }
 
             for (idx, elem) in state.iter_mut().enumerate() {
@@ -468,8 +467,7 @@ where
         matmul_internal(&mut internal_state);
 
         let round_sum = init_round.clone() + external_round.clone() + internal_round.clone();
-        let mut hash_state: [AB::Expr; POSEIDON2_WIDTH] =
-            core::array::from_fn(|_| AB::Expr::ZERO);
+        let mut hash_state: [AB::Expr; POSEIDON2_WIDTH] = core::array::from_fn(|_| AB::Expr::ZERO);
         for idx in 0..POSEIDON2_WIDTH {
             hash_state[idx] = init_round.clone() * init_state[idx].clone()
                 + external_round.clone() * external_state[idx].clone()
@@ -524,7 +522,7 @@ where
         let public_values = builder.public_values();
         let base_len = 33;
         debug_assert!(public_values.len() >= base_len);
-        debug_assert!((public_values.len() - base_len) % 12 == 0);
+        debug_assert!((public_values.len() - base_len).is_multiple_of(12));
         let nullifier_count = (public_values.len() - base_len) / 12;
         let pv = |index: usize| -> AB::Expr { public_values[index].into() };
 
@@ -620,24 +618,18 @@ where
             when_first.assert_zero(current[COL_END_ROOT3].clone() - end_root[3].clone());
             when_first.assert_zero(current[COL_END_ROOT4].clone() - end_root[4].clone());
             when_first.assert_zero(current[COL_END_ROOT5].clone() - end_root[5].clone());
-            when_first.assert_zero(
-                current[COL_NULLIFIER_ROOT0].clone() - nullifier_root[0].clone(),
-            );
-            when_first.assert_zero(
-                current[COL_NULLIFIER_ROOT1].clone() - nullifier_root[1].clone(),
-            );
-            when_first.assert_zero(
-                current[COL_NULLIFIER_ROOT2].clone() - nullifier_root[2].clone(),
-            );
-            when_first.assert_zero(
-                current[COL_NULLIFIER_ROOT3].clone() - nullifier_root[3].clone(),
-            );
-            when_first.assert_zero(
-                current[COL_NULLIFIER_ROOT4].clone() - nullifier_root[4].clone(),
-            );
-            when_first.assert_zero(
-                current[COL_NULLIFIER_ROOT5].clone() - nullifier_root[5].clone(),
-            );
+            when_first
+                .assert_zero(current[COL_NULLIFIER_ROOT0].clone() - nullifier_root[0].clone());
+            when_first
+                .assert_zero(current[COL_NULLIFIER_ROOT1].clone() - nullifier_root[1].clone());
+            when_first
+                .assert_zero(current[COL_NULLIFIER_ROOT2].clone() - nullifier_root[2].clone());
+            when_first
+                .assert_zero(current[COL_NULLIFIER_ROOT3].clone() - nullifier_root[3].clone());
+            when_first
+                .assert_zero(current[COL_NULLIFIER_ROOT4].clone() - nullifier_root[4].clone());
+            when_first
+                .assert_zero(current[COL_NULLIFIER_ROOT5].clone() - nullifier_root[5].clone());
             when_first.assert_zero(current[COL_DA_ROOT0].clone() - da_root[0].clone());
             when_first.assert_zero(current[COL_DA_ROOT1].clone() - da_root[1].clone());
             when_first.assert_zero(current[COL_DA_ROOT2].clone() - da_root[2].clone());
@@ -728,8 +720,7 @@ where
 
             when.assert_zero(
                 perm_mask.clone()
-                    * (next[COL_NF_PERM].clone()
-                        - perm * (u + beta.clone()) * perm_inv.clone()),
+                    * (next[COL_NF_PERM].clone() - perm * (u + beta.clone()) * perm_inv.clone()),
             );
             when.assert_zero(
                 perm_mask.clone() * ((v.clone() + beta.clone()) * perm_inv - one.clone()),
@@ -750,7 +741,9 @@ where
             let adj_mask = perm_mask.clone() * perm_mask_next.clone();
             when.assert_zero(adj_mask.clone() * (diff.clone() * diff_inv - diff_nz.clone()));
             when.assert_zero(adj_mask.clone() * (diff * (one.clone() - diff_nz.clone())));
-            when.assert_zero(adj_mask.clone() * (diff_nz.clone() * (diff_nz.clone() - one.clone())));
+            when.assert_zero(
+                adj_mask.clone() * (diff_nz.clone() * (diff_nz.clone() - one.clone())),
+            );
             when.assert_zero(adj_mask * v_nz.clone() * (one.clone() - diff_nz));
 
             let perm_end = perm_mask.clone() * (one.clone() - perm_mask_next.clone());

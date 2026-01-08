@@ -1,6 +1,7 @@
 //! Plonky3 prover for settlement commitments.
 
-use p3_goldilocks::Goldilocks;
+use alloc::{string::String, vec, vec::Vec};
+
 use p3_field::PrimeCharacteristicRing;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
@@ -14,17 +15,22 @@ use crate::p3_air::{
     COL_IN5, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6, COL_S7,
     COL_S8, COL_S9, PREPROCESSED_WIDTH, TRACE_WIDTH,
 };
-use transaction_circuit::p3_config::{
-    config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, TransactionProofP3,
-};
 use transaction_core::constants::{POSEIDON2_RATE, POSEIDON2_STEPS, POSEIDON2_WIDTH};
 use transaction_core::p3_air::CYCLE_LENGTH;
+use transaction_core::p3_config::{
+    config_with_fri, TransactionProofP3, Val, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
+};
 use transaction_core::poseidon2::poseidon2_step;
 
-type Val = Goldilocks;
 pub type SettlementProofP3 = TransactionProofP3;
 
 pub struct SettlementProverP3;
+
+impl Default for SettlementProverP3 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SettlementProverP3 {
     pub fn new() -> Self {
@@ -58,7 +64,14 @@ impl SettlementProverP3 {
                     inputs[base + 5],
                 )
             } else {
-                (Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO)
+                (
+                    Val::ZERO,
+                    Val::ZERO,
+                    Val::ZERO,
+                    Val::ZERO,
+                    Val::ZERO,
+                    Val::ZERO,
+                )
             };
             let (next_in0, next_in1, next_in2, next_in3, next_in4, next_in5) =
                 if cycle + 1 < ABSORB_CYCLES {
@@ -72,7 +85,14 @@ impl SettlementProverP3 {
                         inputs[base + 5],
                     )
                 } else {
-                    (Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO)
+                    (
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                    )
                 };
 
             for step in 0..CYCLE_LENGTH {
@@ -130,9 +150,8 @@ impl SettlementProverP3 {
         let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
         let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
         let degree_bits = trace.height().ilog2() as usize;
-        let (prep_prover, _) =
-            setup_preprocessed(&config.config, &SettlementAirP3, degree_bits)
-                .expect("SettlementAirP3 preprocessed trace missing");
+        let (prep_prover, _) = setup_preprocessed(&config.config, &SettlementAirP3, degree_bits)
+            .expect("SettlementAirP3 preprocessed trace missing");
         prove_with_preprocessed(
             &config.config,
             &SettlementAirP3,
@@ -148,7 +167,7 @@ impl SettlementProverP3 {
         pub_inputs: &SettlementPublicInputsP3,
     ) -> Result<Vec<u8>, String> {
         let proof = self.prove(trace, pub_inputs);
-        bincode::serialize(&proof).map_err(|_| "failed to serialize Plonky3 proof".into())
+        postcard::to_allocvec(&proof).map_err(|_| "failed to serialize Plonky3 proof".into())
     }
 
     pub fn prove_settlement(

@@ -13,18 +13,17 @@ use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
 
 use crate::constants::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
-use transaction_core::dimensions::{
-    commitment_output_row, merkle_root_output_row, nullifier_output_row,
-};
 use transaction_core::constants::{
     POSEIDON2_EXTERNAL_ROUNDS, POSEIDON2_INTERNAL_ROUNDS, POSEIDON2_STEPS, POSEIDON2_WIDTH,
 };
-use transaction_core::poseidon2_constants;
-use transaction_core::p3_air::{
-    CYCLE_LENGTH, COL_DOMAIN, COL_IN0, COL_IN1, COL_IN2, COL_IN3, COL_IN4, COL_IN5, COL_RESET,
-    COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6, COL_S7, COL_S8,
-    COL_S9,
+use transaction_core::dimensions::{
+    commitment_output_row, merkle_root_output_row, nullifier_output_row,
 };
+use transaction_core::p3_air::{
+    COL_DOMAIN, COL_IN0, COL_IN1, COL_IN2, COL_IN3, COL_IN4, COL_IN5, COL_RESET, COL_S0, COL_S1,
+    COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6, COL_S7, COL_S8, COL_S9, CYCLE_LENGTH,
+};
+use transaction_core::poseidon2_constants;
 
 pub type Felt = Goldilocks;
 
@@ -185,7 +184,9 @@ impl BatchPublicInputsP3 {
     }
 
     fn expected_len_static() -> usize {
-        1 + 6 + MAX_BATCH_SIZE + (MAX_BATCH_SIZE * MAX_INPUTS * 6)
+        1 + 6
+            + MAX_BATCH_SIZE
+            + (MAX_BATCH_SIZE * MAX_INPUTS * 6)
             + (MAX_BATCH_SIZE * MAX_OUTPUTS * 6)
             + 1
             + 1
@@ -228,8 +229,7 @@ fn build_preprocessed_trace(trace_len: usize) -> RowMajorMatrix<Felt> {
 
     for row in 0..trace_len {
         let step = row % CYCLE_LENGTH;
-        let row_slice =
-            &mut values[row * PREPROCESSED_WIDTH..(row + 1) * PREPROCESSED_WIDTH];
+        let row_slice = &mut values[row * PREPROCESSED_WIDTH..(row + 1) * PREPROCESSED_WIDTH];
 
         row_slice[PREP_HASH_FLAG] = Felt::from_bool(step < POSEIDON2_STEPS);
         row_slice[PREP_ABSORB_FLAG] = Felt::from_bool(step == CYCLE_LENGTH - 1);
@@ -397,14 +397,14 @@ where
             }
 
             let mut sums: [AB::Expr; 4] = core::array::from_fn(|_| AB::Expr::ZERO);
-            for k in 0..4 {
+            for (k, sum) in sums.iter_mut().enumerate() {
                 let mut acc = AB::Expr::ZERO;
                 let mut idx = k;
                 while idx < POSEIDON2_WIDTH {
                     acc += state[idx].clone();
                     idx += 4;
                 }
-                sums[k] = acc;
+                *sum = acc;
             }
 
             for (idx, elem) in state.iter_mut().enumerate() {
@@ -450,8 +450,7 @@ where
         matmul_internal(&mut internal_state);
 
         let round_sum = init_round.clone() + external_round.clone() + internal_round.clone();
-        let mut hash_state: [AB::Expr; POSEIDON2_WIDTH] =
-            core::array::from_fn(|_| AB::Expr::ZERO);
+        let mut hash_state: [AB::Expr; POSEIDON2_WIDTH] = core::array::from_fn(|_| AB::Expr::ZERO);
         for idx in 0..POSEIDON2_WIDTH {
             hash_state[idx] = init_round.clone() * init_state[idx].clone()
                 + external_round.clone() * external_state[idx].clone()
@@ -613,7 +612,7 @@ where
 
         let mut sum_active = AB::Expr::ZERO;
         for flag in &tx_active {
-            sum_active = sum_active + flag.clone();
+            sum_active += flag.clone();
         }
         when.assert_zero(is_last.clone() * (sum_active - batch_size));
 
@@ -623,8 +622,8 @@ where
             when.assert_zero(is_last.clone() * curr * (one.clone() - prev));
         }
 
-        for tx in 0..MAX_BATCH_SIZE {
-            let inactive = one.clone() - tx_active[tx].clone();
+        for (tx, active) in tx_active.iter().enumerate() {
+            let inactive = one.clone() - active.clone();
             let nf_base = tx * MAX_INPUTS;
             let cm_base = tx * MAX_OUTPUTS;
             for nf_idx in 0..MAX_INPUTS {
@@ -641,9 +640,9 @@ where
             }
         }
 
-        when.assert_zero(is_last.clone() * (current[transaction_core::p3_air::COL_FEE].clone() - total_fee));
         when.assert_zero(
-            is_last * (circuit_version - AB::Expr::from_u64(1)),
+            is_last.clone() * (current[transaction_core::p3_air::COL_FEE].clone() - total_fee),
         );
+        when.assert_zero(is_last * (circuit_version - AB::Expr::from_u64(1)));
     }
 }

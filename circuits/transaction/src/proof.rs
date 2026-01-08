@@ -67,11 +67,20 @@ pub struct SerializedStarkInputs {
     pub stablecoin_issuance_sign: u8,
     #[serde(default)]
     pub stablecoin_issuance_magnitude: u64,
-    #[serde(default = "default_bytes48", with = "crate::public_inputs::serde_bytes48")]
+    #[serde(
+        default = "default_bytes48",
+        with = "crate::public_inputs::serde_bytes48"
+    )]
     pub stablecoin_policy_hash: Commitment,
-    #[serde(default = "default_bytes48", with = "crate::public_inputs::serde_bytes48")]
+    #[serde(
+        default = "default_bytes48",
+        with = "crate::public_inputs::serde_bytes48"
+    )]
     pub stablecoin_oracle_commitment: Commitment,
-    #[serde(default = "default_bytes48", with = "crate::public_inputs::serde_bytes48")]
+    #[serde(
+        default = "default_bytes48",
+        with = "crate::public_inputs::serde_bytes48"
+    )]
     pub stablecoin_attestation_commitment: Commitment,
 }
 
@@ -134,9 +143,7 @@ pub fn verify(
 ) -> Result<VerificationReport, TransactionCircuitError> {
     verify_with_p3(proof)
 }
-fn verify_with_p3(
-    proof: &TransactionProof,
-) -> Result<VerificationReport, TransactionCircuitError> {
+fn verify_with_p3(proof: &TransactionProof) -> Result<VerificationReport, TransactionCircuitError> {
     // Validate public input structure
     if proof.nullifiers.len() != MAX_INPUTS {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -198,22 +205,18 @@ fn verify_with_p3(
         TransactionCircuitError::ConstraintViolation("invalid PQ merkle root encoding"),
     )?;
     let stablecoin_policy_hash = bytes48_to_felts(&stark_inputs.stablecoin_policy_hash).ok_or(
-        TransactionCircuitError::ConstraintViolation(
-            "invalid stablecoin policy hash encoding",
-        ),
+        TransactionCircuitError::ConstraintViolation("invalid stablecoin policy hash encoding"),
     )?;
-    let stablecoin_oracle_commitment =
-        bytes48_to_felts(&stark_inputs.stablecoin_oracle_commitment).ok_or(
-            TransactionCircuitError::ConstraintViolation(
-                "invalid stablecoin oracle commitment encoding",
-            ),
-        )?;
-    let stablecoin_attestation_commitment =
-        bytes48_to_felts(&stark_inputs.stablecoin_attestation_commitment).ok_or(
-            TransactionCircuitError::ConstraintViolation(
-                "invalid stablecoin attestation commitment encoding",
-            ),
-        )?;
+    let stablecoin_oracle_commitment = bytes48_to_felts(&stark_inputs.stablecoin_oracle_commitment)
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "invalid stablecoin oracle commitment encoding",
+        ))?;
+    let stablecoin_attestation_commitment = bytes48_to_felts(
+        &stark_inputs.stablecoin_attestation_commitment,
+    )
+    .ok_or(TransactionCircuitError::ConstraintViolation(
+        "invalid stablecoin attestation commitment encoding",
+    ))?;
 
     let stark_pub_inputs = TransactionPublicInputsP3 {
         input_flags,

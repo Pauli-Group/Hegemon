@@ -46,8 +46,16 @@ pub mod p3_air;
 pub mod p3_prover;
 pub mod p3_verifier;
 
-pub use p3_air::{BatchPublicInputsP3 as BatchPublicInputs, BatchTransactionAirP3 as BatchTransactionAir, TRACE_WIDTH as P3_TRACE_WIDTH};
 pub use constants::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
 pub use error::BatchCircuitError;
-pub use p3_prover::{BatchProofP3 as BatchProof, BatchTransactionProverP3 as BatchTransactionProver};
-pub use p3_verifier::{verify_batch_proof_bytes_p3 as verify_batch_proof_bytes, verify_batch_proof_p3 as verify_batch_proof};
+pub use p3_air::{
+    BatchPublicInputsP3 as BatchPublicInputs, BatchTransactionAirP3 as BatchTransactionAir,
+    TRACE_WIDTH as P3_TRACE_WIDTH,
+};
+pub use p3_prover::{
+    BatchProofP3 as BatchProof, BatchTransactionProverP3 as BatchTransactionProver,
+};
+pub use p3_verifier::{
+    verify_batch_proof_bytes_p3 as verify_batch_proof_bytes,
+    verify_batch_proof_p3 as verify_batch_proof,
+};

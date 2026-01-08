@@ -1,9 +1,11 @@
 //! Plonky3 verifier for settlement commitments.
 
+use alloc::{format, string::String};
+
 use crate::p3_air::{SettlementAirP3, SettlementPublicInputsP3, PREPROCESSED_WIDTH};
 use p3_uni_stark::{get_log_num_quotient_chunks, setup_preprocessed, verify_with_preprocessed};
-use transaction_circuit::p3_config::{
-    config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, TransactionProofP3, Val,
+use transaction_core::p3_config::{
+    config_with_fri, TransactionProofP3, Val, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
 };
 
 pub fn verify_settlement_proof_p3(
@@ -45,7 +47,7 @@ pub fn verify_settlement_proof_bytes_p3(
         .validate()
         .map_err(SettlementVerifyErrorP3::InvalidPublicInputs)?;
 
-    let proof: TransactionProofP3 = bincode::deserialize(proof_bytes)
+    let proof: TransactionProofP3 = postcard::from_bytes(proof_bytes)
         .map_err(|_| SettlementVerifyErrorP3::InvalidProofFormat)?;
     verify_settlement_proof_p3(&proof, pub_inputs)
 }

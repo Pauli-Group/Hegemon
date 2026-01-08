@@ -55,7 +55,6 @@ pub fn commitment_to_felt(commitment: &[u8; 48]) -> u64 {
     ])
 }
 
-
 /// Domain separator for coinbase rho derivation.
 /// MUST match crypto/src/note_encryption.rs::derive_coinbase_rho
 const COINBASE_RHO_DOMAIN: &[u8] = b"coinbase-rho";

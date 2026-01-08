@@ -1,5 +1,7 @@
 //! Plonky3 verifier helpers for transaction proofs.
 
+use alloc::{format, string::String};
+
 use crate::p3_air::{TransactionAirP3, TransactionPublicInputsP3};
 use crate::p3_config::{default_config, TransactionProofP3};
 use p3_uni_stark::verify;
@@ -30,7 +32,7 @@ pub fn verify_transaction_proof_bytes_p3(
         .validate()
         .map_err(TransactionVerifyErrorP3::InvalidPublicInputs)?;
 
-    let proof: TransactionProofP3 = bincode::deserialize(proof_bytes)
+    let proof: TransactionProofP3 = postcard::from_bytes(proof_bytes)
         .map_err(|_| TransactionVerifyErrorP3::InvalidProofFormat)?;
     verify_transaction_proof_p3(&proof, pub_inputs)
 }

@@ -31,8 +31,12 @@ fn build_two_leaf_merkle_tree(
     }
 
     (
-        MerklePath { siblings: siblings0 },
-        MerklePath { siblings: siblings1 },
+        MerklePath {
+            siblings: siblings0,
+        },
+        MerklePath {
+            siblings: siblings1,
+        },
         current,
     )
 }

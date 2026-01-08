@@ -814,11 +814,7 @@ struct WalletStateV2 {
 
 impl From<WalletStateV2> for WalletState {
     fn from(state: WalletStateV2) -> Self {
-        let commitments = state
-            .commitments
-            .iter()
-            .map(widen_bytes32)
-            .collect();
+        let commitments = state.commitments.iter().map(widen_bytes32).collect();
         WalletState {
             mode: state.mode,
             tree_depth: state.tree_depth,
@@ -933,11 +929,7 @@ impl From<WalletStateV3> for WalletState {
                 .into_iter()
                 .map(|pending| PendingTransaction {
                     tx_id: pending.tx_id,
-                    nullifiers: pending
-                        .nullifiers
-                        .iter()
-                        .map(widen_bytes32)
-                        .collect(),
+                    nullifiers: pending.nullifiers.iter().map(widen_bytes32).collect(),
                     spent_note_indexes: pending.spent_note_indexes,
                     submitted_at: pending.submitted_at,
                     status: pending.status,

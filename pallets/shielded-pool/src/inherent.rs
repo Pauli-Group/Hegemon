@@ -25,7 +25,7 @@ use scale_info::TypeInfo;
 use sp_inherents::InherentData;
 use sp_inherents::InherentIdentifier;
 
-use crate::types::{Commitment, CoinbaseNoteData, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE};
+use crate::types::{CoinbaseNoteData, Commitment, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE};
 
 /// The inherent identifier for shielded coinbase data
 pub const SHIELDED_COINBASE_INHERENT_IDENTIFIER: InherentIdentifier = *b"shldcoin";

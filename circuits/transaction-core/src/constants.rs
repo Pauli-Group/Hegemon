@@ -37,8 +37,7 @@ pub const POSEIDON2_EXTERNAL_ROUNDS: usize = POSEIDON2_ROUNDS_F / 2;
 /// Poseidon2 internal (partial) rounds for 128-bit security.
 pub const POSEIDON2_INTERNAL_ROUNDS: usize = 22;
 /// Total Poseidon2 round steps, including the initial linear layer.
-pub const POSEIDON2_STEPS: usize =
-    1 + POSEIDON2_ROUNDS_F + POSEIDON2_INTERNAL_ROUNDS;
+pub const POSEIDON2_STEPS: usize = 1 + POSEIDON2_ROUNDS_F + POSEIDON2_INTERNAL_ROUNDS;
 
 /// Domain separation tag for note commitments.
 pub const NOTE_DOMAIN_TAG: u64 = 1;

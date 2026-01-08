@@ -17,7 +17,6 @@ use transaction_circuit::{
     proof, StablecoinPolicyBinding, TransactionWitness,
 };
 
-
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Benchmark transaction and block circuits", long_about = None)]
 struct Cli {

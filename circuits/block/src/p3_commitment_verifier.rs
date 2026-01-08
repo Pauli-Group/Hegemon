@@ -5,7 +5,7 @@ use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
 use p3_uni_stark::{get_log_num_quotient_chunks, setup_preprocessed, verify_with_preprocessed};
 use transaction_circuit::constants::MAX_INPUTS;
 use transaction_circuit::p3_config::{
-    config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, TransactionProofP3,
+    config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
 };
 
 use crate::error::BlockError;
@@ -14,9 +14,7 @@ use crate::p3_commitment_air::{
 };
 use crate::p3_commitment_prover::CommitmentBlockProofP3;
 
-pub fn verify_block_commitment_p3(
-    proof: &CommitmentBlockProofP3,
-) -> Result<(), BlockError> {
+pub fn verify_block_commitment_p3(proof: &CommitmentBlockProofP3) -> Result<(), BlockError> {
     verify_block_commitment_proof_p3(&proof.proof_bytes, &proof.public_inputs)
 }
 
@@ -42,12 +40,8 @@ pub fn verify_block_commitment_proof_p3(
     let degree_bits = trace_len.ilog2() as usize;
     let air = CommitmentBlockAirP3::new(tx_count);
     let pub_inputs_vec = pub_inputs.to_vec();
-    let log_chunks = get_log_num_quotient_chunks::<Felt, _>(
-        &air,
-        PREPROCESSED_WIDTH,
-        pub_inputs_vec.len(),
-        0,
-    );
+    let log_chunks =
+        get_log_num_quotient_chunks::<Felt, _>(&air, PREPROCESSED_WIDTH, pub_inputs_vec.len(), 0);
     let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
     let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
     let (_, prep_vk) = setup_preprocessed(&config.config, &air, degree_bits)
@@ -66,8 +60,11 @@ fn derive_nullifier_challenges_inputs(
     inputs: &CommitmentBlockPublicInputsP3,
 ) -> Result<(Felt, Felt), BlockError> {
     let nullifiers: Vec<[u8; 48]> = inputs.nullifiers.iter().map(limbs_to_bytes).collect();
-    let sorted_nullifiers: Vec<[u8; 48]> =
-        inputs.sorted_nullifiers.iter().map(limbs_to_bytes).collect();
+    let sorted_nullifiers: Vec<[u8; 48]> = inputs
+        .sorted_nullifiers
+        .iter()
+        .map(limbs_to_bytes)
+        .collect();
     let tx_count = inputs.tx_count;
     let expected_nullifiers = (tx_count as usize).saturating_mul(MAX_INPUTS);
     if nullifiers.len() != expected_nullifiers || sorted_nullifiers.len() != expected_nullifiers {

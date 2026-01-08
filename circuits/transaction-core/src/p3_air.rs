@@ -640,8 +640,7 @@ pub fn build_schedule_trace() -> RowMajorMatrix<Felt> {
     for row in 0..trace_len {
         let step = row % CYCLE_LENGTH;
         let cycle = row / CYCLE_LENGTH;
-        let row_slice =
-            &mut values[row * PREPROCESSED_WIDTH..(row + 1) * PREPROCESSED_WIDTH];
+        let row_slice = &mut values[row * PREPROCESSED_WIDTH..(row + 1) * PREPROCESSED_WIDTH];
 
         row_slice[PREP_HASH_FLAG] = Felt::from_bool(step < POSEIDON2_STEPS);
         row_slice[PREP_ABSORB_FLAG] = Felt::from_bool(step == CYCLE_LENGTH - 1);
@@ -744,8 +743,7 @@ where
         let two = AB::Expr::TWO;
         // Plonky3 row selectors are unnormalized; scale by N^{-1} for a 0/1 first-row mask.
         let trace_len_inv = Felt::from_u64(MIN_TRACE_LENGTH as u64).inverse();
-        let first_row = is_first_row.clone()
-            * AB::Expr::from_u64(trace_len_inv.as_canonical_u64());
+        let first_row = is_first_row.clone() * AB::Expr::from_u64(trace_len_inv.as_canonical_u64());
         let not_first_row = one.clone() - first_row;
         let schedule_base = COL_SCHEDULE_START;
 
@@ -769,10 +767,8 @@ where
 
         let prep_reset: AB::Expr = current[schedule_base + PREP_RESET].clone().into();
         let prep_domain: AB::Expr = current[schedule_base + PREP_DOMAIN].clone().into();
-        let prep_merkle_left: AB::Expr =
-            current[schedule_base + PREP_MERKLE_LEFT].clone().into();
-        let prep_merkle_right: AB::Expr =
-            current[schedule_base + PREP_MERKLE_RIGHT].clone().into();
+        let prep_merkle_left: AB::Expr = current[schedule_base + PREP_MERKLE_LEFT].clone().into();
+        let prep_merkle_right: AB::Expr = current[schedule_base + PREP_MERKLE_RIGHT].clone().into();
         let prep_capture: AB::Expr = current[schedule_base + PREP_CAPTURE].clone().into();
 
         let prep_note_start_in0: AB::Expr =
@@ -784,8 +780,7 @@ where
         let prep_note_start_out1: AB::Expr =
             current[schedule_base + PREP_NOTE_START_OUT1].clone().into();
 
-        let final_row_mask: AB::Expr =
-            current[schedule_base + PREP_FINAL_ROW].clone().into();
+        let final_row_mask: AB::Expr = current[schedule_base + PREP_FINAL_ROW].clone().into();
         let nf0_row: AB::Expr = current[schedule_base + PREP_NF0_ROW].clone().into();
         let nf1_row: AB::Expr = current[schedule_base + PREP_NF1_ROW].clone().into();
         let mr0_row: AB::Expr = current[schedule_base + PREP_MR0_ROW].clone().into();
@@ -839,7 +834,7 @@ where
         let value_balance_magnitude = pv(idx);
         idx += 1;
 
-        let merkle_root = vec![
+        let merkle_root = [
             pv(idx),
             pv(idx + 1),
             pv(idx + 2),
@@ -860,7 +855,7 @@ where
         let stablecoin_issuance_magnitude = pv(idx);
         idx += 1;
 
-        let stablecoin_policy_hash = vec![
+        let stablecoin_policy_hash = [
             pv(idx),
             pv(idx + 1),
             pv(idx + 2),
@@ -869,7 +864,7 @@ where
             pv(idx + 5),
         ];
         idx += 6;
-        let stablecoin_oracle_commitment = vec![
+        let stablecoin_oracle_commitment = [
             pv(idx),
             pv(idx + 1),
             pv(idx + 2),
@@ -878,7 +873,7 @@ where
             pv(idx + 5),
         ];
         idx += 6;
-        let stablecoin_attestation_commitment = vec![
+        let stablecoin_attestation_commitment = [
             pv(idx),
             pv(idx + 1),
             pv(idx + 2),
@@ -929,14 +924,14 @@ where
             }
 
             let mut sums: [AB::Expr; 4] = core::array::from_fn(|_| AB::Expr::ZERO);
-            for k in 0..4 {
+            for (k, sum) in sums.iter_mut().enumerate() {
                 let mut acc = AB::Expr::ZERO;
                 let mut idx = k;
                 while idx < POSEIDON2_WIDTH {
                     acc += state[idx].clone();
                     idx += 4;
                 }
-                sums[k] = acc;
+                *sum = acc;
             }
 
             for (idx, elem) in state.iter_mut().enumerate() {
@@ -982,8 +977,7 @@ where
         matmul_internal(&mut internal_state);
 
         let round_sum = init_round.clone() + external_round.clone() + internal_round.clone();
-        let mut hash_state: [AB::Expr; POSEIDON2_WIDTH] =
-            core::array::from_fn(|_| AB::Expr::ZERO);
+        let mut hash_state: [AB::Expr; POSEIDON2_WIDTH] = core::array::from_fn(|_| AB::Expr::ZERO);
         for idx in 0..POSEIDON2_WIDTH {
             hash_state[idx] = init_round.clone() * init_state[idx].clone()
                 + external_round.clone() * external_state[idx].clone()
@@ -1090,7 +1084,9 @@ where
         let stablecoin_sel_sum = stablecoin_sel_cols
             .iter()
             .fold(AB::Expr::ZERO, |acc, col| acc + current[*col].clone());
-        when.assert_zero(final_row_mask.clone() * (stablecoin_sel_sum - stablecoin_enabled.clone()));
+        when.assert_zero(
+            final_row_mask.clone() * (stablecoin_sel_sum - stablecoin_enabled.clone()),
+        );
 
         for slot in 0..4 {
             when.assert_zero(
@@ -1146,7 +1142,9 @@ where
             COL_STABLECOIN_ATTEST5,
         ];
         for &col in stablecoin_zero_cols.iter() {
-            when.assert_zero(final_row_mask.clone() * stablecoin_disabled.clone() * current[col].clone());
+            when.assert_zero(
+                final_row_mask.clone() * stablecoin_disabled.clone() * current[col].clone(),
+            );
         }
 
         let active_cols = [
@@ -1163,8 +1161,14 @@ where
             when.assert_bool(current[sel_col].clone());
         }
 
-        let input_active = [current[COL_IN_ACTIVE0].clone(), current[COL_IN_ACTIVE1].clone()];
-        let output_active = [current[COL_OUT_ACTIVE0].clone(), current[COL_OUT_ACTIVE1].clone()];
+        let input_active = [
+            current[COL_IN_ACTIVE0].clone(),
+            current[COL_IN_ACTIVE1].clone(),
+        ];
+        let output_active = [
+            current[COL_OUT_ACTIVE0].clone(),
+            current[COL_OUT_ACTIVE1].clone(),
+        ];
         let note_start_in0 = prep_note_start_in0.clone();
         let note_start_in1 = prep_note_start_in1.clone();
         let note_start_out0 = prep_note_start_out0.clone();
@@ -1230,8 +1234,14 @@ where
             note_start_out1.clone() * (out1_asset * output_active[1].clone() - out1_selected),
         );
 
-        let in_values = [current[COL_IN0_VALUE].clone(), current[COL_IN1_VALUE].clone()];
-        let out_values = [current[COL_OUT0_VALUE].clone(), current[COL_OUT1_VALUE].clone()];
+        let in_values = [
+            current[COL_IN0_VALUE].clone(),
+            current[COL_IN1_VALUE].clone(),
+        ];
+        let out_values = [
+            current[COL_OUT0_VALUE].clone(),
+            current[COL_OUT1_VALUE].clone(),
+        ];
 
         let sel_in = [
             [
@@ -1289,8 +1299,8 @@ where
 
         let note_start_any = note_start_in0 + note_start_in1 + note_start_out0 + note_start_out1;
         when.assert_zero(
-            note_start_any * (current[COL_SLOT0_ASSET].clone()
-                - AB::Expr::from_u64(NATIVE_ASSET_ID)),
+            note_start_any
+                * (current[COL_SLOT0_ASSET].clone() - AB::Expr::from_u64(NATIVE_ASSET_ID)),
         );
 
         let vb_signed = value_balance_magnitude.clone()
@@ -1306,7 +1316,9 @@ where
 
         let dir = current[COL_DIR].clone();
         when.assert_bool(dir);
-        when.assert_zero((one.clone() - reset) * (next[COL_DIR].clone() - current[COL_DIR].clone()));
+        when.assert_zero(
+            (one.clone() - reset) * (next[COL_DIR].clone() - current[COL_DIR].clone()),
+        );
 
         let merkle_left = current[COL_MERKLE_LEFT].clone();
         let merkle_right = current[COL_MERKLE_RIGHT].clone();
@@ -1363,7 +1375,9 @@ where
         ];
 
         for (flag, value_col, asset_col) in note_flags {
-            when.assert_zero(flag.clone() * (current[COL_IN0].clone() - current[value_col].clone()));
+            when.assert_zero(
+                flag.clone() * (current[COL_IN0].clone() - current[value_col].clone()),
+            );
             when.assert_zero(flag * (current[COL_IN1].clone() - current[asset_col].clone()));
         }
 
@@ -1371,12 +1385,16 @@ where
 
         let nf0_gate = nf0_row * input_flags[0].clone();
         for (idx, col) in state_output_cols.iter().enumerate() {
-            when.assert_zero(nf0_gate.clone() * (current[*col].clone() - nullifiers[0][idx].clone()));
+            when.assert_zero(
+                nf0_gate.clone() * (current[*col].clone() - nullifiers[0][idx].clone()),
+            );
         }
 
         let nf1_gate = nf1_row * input_flags[1].clone();
         for (idx, col) in state_output_cols.iter().enumerate() {
-            when.assert_zero(nf1_gate.clone() * (current[*col].clone() - nullifiers[1][idx].clone()));
+            when.assert_zero(
+                nf1_gate.clone() * (current[*col].clone() - nullifiers[1][idx].clone()),
+            );
         }
 
         let mr0_gate = mr0_row * input_flags[0].clone();
@@ -1391,12 +1409,16 @@ where
 
         let cm0_gate = cm0_row * output_flags[0].clone();
         for (idx, col) in state_output_cols.iter().enumerate() {
-            when.assert_zero(cm0_gate.clone() * (current[*col].clone() - commitments[0][idx].clone()));
+            when.assert_zero(
+                cm0_gate.clone() * (current[*col].clone() - commitments[0][idx].clone()),
+            );
         }
 
         let cm1_gate = cm1_row * output_flags[1].clone();
         for (idx, col) in state_output_cols.iter().enumerate() {
-            when.assert_zero(cm1_gate.clone() * (current[*col].clone() - commitments[1][idx].clone()));
+            when.assert_zero(
+                cm1_gate.clone() * (current[*col].clone() - commitments[1][idx].clone()),
+            );
         }
 
         when.assert_zero(
@@ -1417,41 +1439,105 @@ where
         );
 
         when.assert_zero(final_row_mask.clone() * (current[COL_FEE].clone() - fee));
-        when.assert_zero(final_row_mask.clone() * (current[COL_VALUE_BALANCE_SIGN].clone() - value_balance_sign));
         when.assert_zero(
-            final_row_mask.clone() * (current[COL_VALUE_BALANCE_MAG].clone() - value_balance_magnitude),
-        );
-        when.assert_zero(final_row_mask.clone() * (current[COL_STABLECOIN_ENABLED].clone() - stablecoin_enabled));
-        when.assert_zero(final_row_mask.clone() * (current[COL_STABLECOIN_ASSET].clone() - stablecoin_asset));
-        when.assert_zero(
-            final_row_mask.clone() * (current[COL_STABLECOIN_POLICY_VERSION].clone() - stablecoin_policy_version),
+            final_row_mask.clone() * (current[COL_VALUE_BALANCE_SIGN].clone() - value_balance_sign),
         );
         when.assert_zero(
-            final_row_mask.clone() * (current[COL_STABLECOIN_ISSUANCE_SIGN].clone() - stablecoin_issuance_sign),
+            final_row_mask.clone()
+                * (current[COL_VALUE_BALANCE_MAG].clone() - value_balance_magnitude),
         );
         when.assert_zero(
-            final_row_mask.clone() * (current[COL_STABLECOIN_ISSUANCE_MAG].clone() - stablecoin_issuance_magnitude),
+            final_row_mask.clone() * (current[COL_STABLECOIN_ENABLED].clone() - stablecoin_enabled),
+        );
+        when.assert_zero(
+            final_row_mask.clone() * (current[COL_STABLECOIN_ASSET].clone() - stablecoin_asset),
+        );
+        when.assert_zero(
+            final_row_mask.clone()
+                * (current[COL_STABLECOIN_POLICY_VERSION].clone() - stablecoin_policy_version),
+        );
+        when.assert_zero(
+            final_row_mask.clone()
+                * (current[COL_STABLECOIN_ISSUANCE_SIGN].clone() - stablecoin_issuance_sign),
+        );
+        when.assert_zero(
+            final_row_mask.clone()
+                * (current[COL_STABLECOIN_ISSUANCE_MAG].clone() - stablecoin_issuance_magnitude),
         );
 
         for (col, value) in [
-            (COL_STABLECOIN_POLICY_HASH0, stablecoin_policy_hash[0].clone()),
-            (COL_STABLECOIN_POLICY_HASH1, stablecoin_policy_hash[1].clone()),
-            (COL_STABLECOIN_POLICY_HASH2, stablecoin_policy_hash[2].clone()),
-            (COL_STABLECOIN_POLICY_HASH3, stablecoin_policy_hash[3].clone()),
-            (COL_STABLECOIN_POLICY_HASH4, stablecoin_policy_hash[4].clone()),
-            (COL_STABLECOIN_POLICY_HASH5, stablecoin_policy_hash[5].clone()),
-            (COL_STABLECOIN_ORACLE0, stablecoin_oracle_commitment[0].clone()),
-            (COL_STABLECOIN_ORACLE1, stablecoin_oracle_commitment[1].clone()),
-            (COL_STABLECOIN_ORACLE2, stablecoin_oracle_commitment[2].clone()),
-            (COL_STABLECOIN_ORACLE3, stablecoin_oracle_commitment[3].clone()),
-            (COL_STABLECOIN_ORACLE4, stablecoin_oracle_commitment[4].clone()),
-            (COL_STABLECOIN_ORACLE5, stablecoin_oracle_commitment[5].clone()),
-            (COL_STABLECOIN_ATTEST0, stablecoin_attestation_commitment[0].clone()),
-            (COL_STABLECOIN_ATTEST1, stablecoin_attestation_commitment[1].clone()),
-            (COL_STABLECOIN_ATTEST2, stablecoin_attestation_commitment[2].clone()),
-            (COL_STABLECOIN_ATTEST3, stablecoin_attestation_commitment[3].clone()),
-            (COL_STABLECOIN_ATTEST4, stablecoin_attestation_commitment[4].clone()),
-            (COL_STABLECOIN_ATTEST5, stablecoin_attestation_commitment[5].clone()),
+            (
+                COL_STABLECOIN_POLICY_HASH0,
+                stablecoin_policy_hash[0].clone(),
+            ),
+            (
+                COL_STABLECOIN_POLICY_HASH1,
+                stablecoin_policy_hash[1].clone(),
+            ),
+            (
+                COL_STABLECOIN_POLICY_HASH2,
+                stablecoin_policy_hash[2].clone(),
+            ),
+            (
+                COL_STABLECOIN_POLICY_HASH3,
+                stablecoin_policy_hash[3].clone(),
+            ),
+            (
+                COL_STABLECOIN_POLICY_HASH4,
+                stablecoin_policy_hash[4].clone(),
+            ),
+            (
+                COL_STABLECOIN_POLICY_HASH5,
+                stablecoin_policy_hash[5].clone(),
+            ),
+            (
+                COL_STABLECOIN_ORACLE0,
+                stablecoin_oracle_commitment[0].clone(),
+            ),
+            (
+                COL_STABLECOIN_ORACLE1,
+                stablecoin_oracle_commitment[1].clone(),
+            ),
+            (
+                COL_STABLECOIN_ORACLE2,
+                stablecoin_oracle_commitment[2].clone(),
+            ),
+            (
+                COL_STABLECOIN_ORACLE3,
+                stablecoin_oracle_commitment[3].clone(),
+            ),
+            (
+                COL_STABLECOIN_ORACLE4,
+                stablecoin_oracle_commitment[4].clone(),
+            ),
+            (
+                COL_STABLECOIN_ORACLE5,
+                stablecoin_oracle_commitment[5].clone(),
+            ),
+            (
+                COL_STABLECOIN_ATTEST0,
+                stablecoin_attestation_commitment[0].clone(),
+            ),
+            (
+                COL_STABLECOIN_ATTEST1,
+                stablecoin_attestation_commitment[1].clone(),
+            ),
+            (
+                COL_STABLECOIN_ATTEST2,
+                stablecoin_attestation_commitment[2].clone(),
+            ),
+            (
+                COL_STABLECOIN_ATTEST3,
+                stablecoin_attestation_commitment[3].clone(),
+            ),
+            (
+                COL_STABLECOIN_ATTEST4,
+                stablecoin_attestation_commitment[4].clone(),
+            ),
+            (
+                COL_STABLECOIN_ATTEST5,
+                stablecoin_attestation_commitment[5].clone(),
+            ),
         ] {
             when.assert_zero(final_row_mask.clone() * (current[col].clone() - value));
         }
@@ -1538,12 +1624,8 @@ mod tests {
     #[test]
     fn log_quotient_degree_transaction_air_p3() {
         let num_public_values = TransactionPublicInputsP3::default().to_vec().len();
-        let log_chunks = get_log_num_quotient_chunks::<Felt, _>(
-            &TransactionAirP3,
-            0,
-            num_public_values,
-            0,
-        );
+        let log_chunks =
+            get_log_num_quotient_chunks::<Felt, _>(&TransactionAirP3, 0, num_public_values, 0);
         println!("TransactionAirP3 log_num_quotient_chunks={}", log_chunks);
     }
 }

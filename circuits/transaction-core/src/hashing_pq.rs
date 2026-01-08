@@ -184,7 +184,8 @@ pub fn balance_commitment_bytes(
     slots: &[BalanceSlot],
 ) -> Result<Commitment, BalanceCommitmentError> {
     Ok(felts_to_bytes48(&balance_commitment_hash(
-        native_delta, slots,
+        native_delta,
+        slots,
     )?))
 }
 

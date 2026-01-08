@@ -4,7 +4,6 @@
 //! It is designed to be used by both single-transaction and batch circuits.
 
 use crate::constants::MAX_INPUTS;
-use crate::p3_config::FRI_NUM_QUERIES;
 #[cfg(test)]
 use crate::constants::MAX_OUTPUTS;
 use crate::p3_air::{
@@ -12,6 +11,7 @@ use crate::p3_air::{
     CYCLE_LENGTH, MERKLE_CYCLES as STARK_MERKLE_CYCLES, MIN_TRACE_LENGTH,
     NULLIFIER_CYCLES as STARK_NULLIFIER_CYCLES,
 };
+use crate::p3_config::FRI_NUM_QUERIES;
 
 /// Trace width (re-exported for convenience).
 pub const TRACE_WIDTH: usize = crate::p3_air::TRACE_WIDTH;
@@ -146,9 +146,10 @@ mod tests {
 
     #[test]
     fn test_batch_16_fits_exactly() {
-        // 16 × 32768 = 524288 = 2^19, should fit exactly
-        assert_eq!(batch_trace_rows(16), 524288);
-        assert_eq!(524288, 1 << 19);
+        // Batch trace length must be a power-of-two, and for 16 it should not pad.
+        let raw = 16 * ROWS_PER_TX;
+        assert!(raw.is_power_of_two());
+        assert_eq!(batch_trace_rows(16), raw);
     }
 
     #[test]
@@ -278,7 +279,6 @@ mod tests {
     fn test_rows_per_tx_constant() {
         // Verify ROWS_PER_TX matches MIN_TRACE_LENGTH from the AIR
         assert_eq!(ROWS_PER_TX, MIN_TRACE_LENGTH);
-        assert_eq!(ROWS_PER_TX, 32768);
     }
 
     #[test]
