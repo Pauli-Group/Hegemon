@@ -707,13 +707,13 @@ mod tests {
 
         let request = ShieldedTransferRequest {
             proof: proof_base64,
-            nullifiers: vec![hex::encode([0x11u8; 32])],
-            commitments: vec![hex::encode([0x22u8; 32])],
+            nullifiers: vec![hex::encode([0x11u8; 48])],
+            commitments: vec![hex::encode([0x22u8; 48])],
             encrypted_notes: vec![base64::Engine::encode(
                 &base64::engine::general_purpose::STANDARD,
                 &[1, 2, 3, 4],
             )],
-            anchor: hex::encode([0x33u8; 32]),
+            anchor: hex::encode([0x33u8; 48]),
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
@@ -735,10 +735,10 @@ mod tests {
         // Invalid base64 proof
         let request = ShieldedTransferRequest {
             proof: "not-valid-base64!!!".to_string(),
-            nullifiers: vec![hex::encode([0x11u8; 32])],
-            commitments: vec![hex::encode([0x22u8; 32])],
+            nullifiers: vec![hex::encode([0x11u8; 48])],
+            commitments: vec![hex::encode([0x22u8; 48])],
             encrypted_notes: vec![],
-            anchor: hex::encode([0x33u8; 32]),
+            anchor: hex::encode([0x33u8; 48]),
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
@@ -764,9 +764,9 @@ mod tests {
         let request = ShieldedTransferRequest {
             proof: proof_base64,
             nullifiers: vec!["0011223344".to_string()], // Too short
-            commitments: vec![hex::encode([0x22u8; 32])],
+            commitments: vec![hex::encode([0x22u8; 48])],
             encrypted_notes: vec![],
-            anchor: hex::encode([0x33u8; 32]),
+            anchor: hex::encode([0x33u8; 48]),
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,

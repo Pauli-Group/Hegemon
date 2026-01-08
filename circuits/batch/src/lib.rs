@@ -1,8 +1,8 @@
 //! Batch transaction circuit for STARK proof aggregation.
 //!
 //! This crate provides batch proving capabilities that allow multiple
-//! transactions to be proven in a single STARK proof, reducing verification
-//! costs from O(N) to O(1).
+//! transactions to be proven in a single Plonky3 STARK proof, reducing
+//! verification costs from O(N) to O(1).
 //!
 //! ## Key Components
 //!
@@ -40,47 +40,14 @@
 
 extern crate alloc;
 
-#[cfg(feature = "winterfell-legacy")]
-pub mod air;
 pub mod constants;
 pub mod error;
-#[cfg(feature = "plonky3")]
 pub mod p3_air;
-#[cfg(feature = "plonky3")]
 pub mod p3_prover;
-#[cfg(feature = "plonky3")]
 pub mod p3_verifier;
-#[cfg(feature = "winterfell-legacy")]
-pub mod prover;
-#[cfg(feature = "winterfell-legacy")]
-pub mod public_inputs;
-#[cfg(feature = "winterfell-legacy")]
-pub mod verifier;
 
-// Recursion-friendly RPO Fiat‑Shamir path (feature‑gated)
-#[cfg(all(feature = "rpo-fiat-shamir", feature = "winterfell-legacy"))]
-pub mod rpo_prover;
-#[cfg(all(feature = "rpo-fiat-shamir", feature = "winterfell-legacy"))]
-pub mod rpo_verifier;
-
-#[cfg(feature = "winterfell-legacy")]
-pub use air::BatchTransactionAir;
+pub use p3_air::{BatchPublicInputsP3 as BatchPublicInputs, BatchTransactionAirP3 as BatchTransactionAir, TRACE_WIDTH as P3_TRACE_WIDTH};
 pub use constants::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
 pub use error::BatchCircuitError;
-#[cfg(feature = "plonky3")]
-pub use p3_air::{BatchPublicInputsP3, BatchTransactionAirP3, TRACE_WIDTH as P3_TRACE_WIDTH};
-#[cfg(feature = "plonky3")]
-pub use p3_prover::{BatchProofP3, BatchTransactionProverP3};
-#[cfg(feature = "plonky3")]
-pub use p3_verifier::{verify_batch_proof_bytes_p3, verify_batch_proof_p3};
-#[cfg(feature = "winterfell-legacy")]
-pub use prover::BatchTransactionProver;
-#[cfg(feature = "winterfell-legacy")]
-pub use public_inputs::BatchPublicInputs;
-#[cfg(feature = "winterfell-legacy")]
-pub use verifier::{verify_batch_proof, verify_batch_proof_bytes};
-
-#[cfg(all(feature = "rpo-fiat-shamir", feature = "winterfell-legacy"))]
-pub use rpo_prover::BatchTransactionProverRpo;
-#[cfg(all(feature = "rpo-fiat-shamir", feature = "winterfell-legacy"))]
-pub use rpo_verifier::{verify_batch_proof_bytes_rpo, verify_batch_proof_rpo};
+pub use p3_prover::{BatchProofP3 as BatchProof, BatchTransactionProverP3 as BatchTransactionProver};
+pub use p3_verifier::{verify_batch_proof_bytes_p3 as verify_batch_proof_bytes, verify_batch_proof_p3 as verify_batch_proof};

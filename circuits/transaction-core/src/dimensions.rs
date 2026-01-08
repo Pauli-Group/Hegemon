@@ -6,14 +6,14 @@
 use crate::constants::MAX_INPUTS;
 #[cfg(test)]
 use crate::constants::MAX_OUTPUTS;
-use crate::stark_air::{
+use crate::p3_air::{
     COMMITMENT_CYCLES as STARK_COMMITMENT_CYCLES, CYCLES_PER_INPUT as STARK_CYCLES_PER_INPUT,
     CYCLE_LENGTH, MERKLE_CYCLES as STARK_MERKLE_CYCLES, MIN_TRACE_LENGTH,
     NULLIFIER_CYCLES as STARK_NULLIFIER_CYCLES,
 };
 
 /// Trace width (re-exported for convenience).
-pub const TRACE_WIDTH: usize = crate::stark_air::TRACE_WIDTH;
+pub const TRACE_WIDTH: usize = crate::p3_air::TRACE_WIDTH;
 
 /// Rows per transaction in the trace.
 pub const ROWS_PER_TX: usize = MIN_TRACE_LENGTH;
@@ -27,7 +27,7 @@ pub const MERKLE_CYCLES: usize = STARK_MERKLE_CYCLES;
 /// Number of cycles for commitment hash computation per output.
 pub const COMMITMENT_CYCLES: usize = STARK_COMMITMENT_CYCLES;
 
-/// Maximum constraint degree allowed by winterfell.
+/// Maximum constraint degree (poseidon2 + selectors).
 pub const MAX_CONSTRAINT_DEGREE: usize = 8;
 
 /// Our Poseidon S-box is x^5, giving degree 5.
@@ -49,7 +49,7 @@ fn log2_rows(rows: usize) -> usize {
     (usize::BITS - 1 - rows.leading_zeros()) as usize
 }
 
-/// Compute batch trace row count (must be power of 2 for winterfell).
+/// Compute batch trace row count (must be power of 2 for the STARK PCS).
 pub fn batch_trace_rows(batch_size: usize) -> usize {
     let raw = batch_size * ROWS_PER_TX;
     raw.next_power_of_two()
@@ -92,7 +92,7 @@ pub fn commitment_output_row(tx_index: usize, output_index: usize) -> usize {
     slot_start + (start_cycle + COMMITMENT_CYCLES) * CYCLE_LENGTH - 1
 }
 
-/// Estimate proof size in bytes (empirical formula from winterfell).
+/// Estimate proof size in bytes (empirical formula).
 /// Actual size depends on FRI parameters, this is approximate.
 pub fn estimated_proof_size(trace_rows: usize, trace_width: usize) -> usize {
     // Base: ~50 bytes per column for commitments
@@ -255,7 +255,7 @@ mod tests {
         assert!(MERKLE_EQUALITY_DEGREE <= MAX_CONSTRAINT_DEGREE);
         assert!(BALANCE_DEGREE <= MAX_CONSTRAINT_DEGREE);
         println!(
-            "All constraint degrees within winterfell limit of {}",
+            "All constraint degrees within configured limit of {}",
             MAX_CONSTRAINT_DEGREE
         );
     }
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_rows_per_tx_constant() {
-        // Verify ROWS_PER_TX matches MIN_TRACE_LENGTH from stark_air
+        // Verify ROWS_PER_TX matches MIN_TRACE_LENGTH from the AIR
         assert_eq!(ROWS_PER_TX, MIN_TRACE_LENGTH);
         assert_eq!(ROWS_PER_TX, 32768);
     }

@@ -1,6 +1,6 @@
 use std::net::{SocketAddr, TcpListener};
 
-use crypto::hashes::sha256;
+use crypto::hashes::blake3_384;
 use crypto::traits::{SigningKey, VerifyKey};
 use hegemon_node::{config::NodeConfig, storage::Storage, NodeService};
 use network::GossipRouter;
@@ -197,7 +197,7 @@ async fn short_reorg_prefers_longer_chain() -> TestResult<()> {
     let main = NodeService::start(config_main.clone(), router_main.clone())?;
     let alt = NodeService::start(config_alt.clone(), router_alt)?;
 
-    let expected_validator = sha256(&config_main.miner_secret().verify_key().to_bytes());
+    let expected_validator = blake3_384(&config_main.miner_secret().verify_key().to_bytes());
     let known_miners_raw = main.service.miner_ids();
     let known_miners: Vec<String> = known_miners_raw.iter().copied().map(hex::encode).collect();
     eprintln!(

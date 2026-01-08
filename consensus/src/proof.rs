@@ -7,14 +7,13 @@ use crate::types::{
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
 #[cfg(feature = "legacy-recursion")]
 use block_circuit::{transaction_inputs_from_verifier_inputs, verify_recursive_proof};
-use crypto::hashes::{blake3_256, blake3_384};
+use crypto::hashes::blake3_384;
 use rayon::prelude::*;
 use std::collections::BTreeSet;
 use transaction_circuit::constants::MAX_INPUTS;
-#[cfg(feature = "legacy-recursion")]
 use transaction_circuit::hashing_pq::felts_to_bytes48;
 use transaction_circuit::keys::generate_keys;
-use transaction_circuit::proof::verify_rpo as verify_transaction_proof;
+use transaction_circuit::proof::verify as verify_transaction_proof;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitmentNullifierLists {
@@ -79,12 +78,24 @@ pub fn verify_commitment_proof_payload(
         )));
     }
 
-    if proof.public_inputs.nullifiers != lists.nullifiers {
+    let proof_nullifiers: Vec<[u8; 48]> = proof
+        .public_inputs
+        .nullifiers
+        .iter()
+        .map(felts_to_bytes48)
+        .collect();
+    if proof_nullifiers != lists.nullifiers {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "nullifier list mismatch".to_string(),
         ));
     }
-    if proof.public_inputs.sorted_nullifiers != lists.sorted_nullifiers {
+    let proof_sorted_nullifiers: Vec<[u8; 48]> = proof
+        .public_inputs
+        .sorted_nullifiers
+        .iter()
+        .map(felts_to_bytes48)
+        .collect();
+    if proof_sorted_nullifiers != lists.sorted_nullifiers {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "sorted nullifier list mismatch".to_string(),
         ));
@@ -92,26 +103,30 @@ pub fn verify_commitment_proof_payload(
 
     let expected_da_root = da_root(&block.transactions, block.header.da_params())
         .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
-    if proof.public_inputs.da_root != expected_da_root {
+    let proof_da_root = felts_to_bytes48(&proof.public_inputs.da_root);
+    if proof_da_root != expected_da_root {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "da_root mismatch".to_string(),
         ));
     }
 
     let expected_nullifier_root = nullifier_root_from_list(&lists.nullifiers)?;
-    if proof.public_inputs.nullifier_root != expected_nullifier_root {
+    let proof_nullifier_root = felts_to_bytes48(&proof.public_inputs.nullifier_root);
+    if proof_nullifier_root != expected_nullifier_root {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "nullifier root mismatch".to_string(),
         ));
     }
 
-    if proof.public_inputs.starting_state_root != parent_commitment_tree.root() {
+    let proof_starting_root = felts_to_bytes48(&proof.public_inputs.starting_state_root);
+    if proof_starting_root != parent_commitment_tree.root() {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "starting state root mismatch".to_string(),
         ));
     }
     let expected_tree = apply_commitments(parent_commitment_tree, &block.transactions)?;
-    if proof.public_inputs.ending_state_root != expected_tree.root() {
+    let proof_ending_root = felts_to_bytes48(&proof.public_inputs.ending_state_root);
+    if proof_ending_root != expected_tree.root() {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "ending state root mismatch".to_string(),
         ));
@@ -222,7 +237,9 @@ impl ProofVerifier for ParallelProofVerifier {
         let expected_commitment =
             CommitmentBlockProver::commitment_from_proof_hashes(&proof_hashes)
                 .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?;
-        if expected_commitment != commitment_proof.public_inputs.tx_proofs_commitment {
+        let proof_commitment =
+            felts_to_bytes48(&commitment_proof.public_inputs.tx_proofs_commitment);
+        if expected_commitment != proof_commitment {
             return Err(ProofError::CommitmentProofInputsMismatch(
                 "tx_proofs_commitment mismatch".to_string(),
             ));
@@ -248,10 +265,14 @@ impl ProofVerifier for ParallelProofVerifier {
             .map(|proof| proof.public_inputs.merkle_root)
             .collect();
 
+        let proof_starting_root =
+            felts_to_bytes48(&commitment_proof.public_inputs.starting_state_root);
+        let proof_ending_root =
+            felts_to_bytes48(&commitment_proof.public_inputs.ending_state_root);
         verify_and_apply_tree_transition(
             parent_commitment_tree,
-            commitment_proof.public_inputs.starting_state_root,
-            commitment_proof.public_inputs.ending_state_root,
+            proof_starting_root,
+            proof_ending_root,
             &block.transactions,
             &anchors,
         )
@@ -444,7 +465,7 @@ fn apply_commitments(
 
 fn proof_hashes_from_transaction_proofs(
     proofs: &[transaction_circuit::TransactionProof],
-) -> Result<Vec<[u8; 32]>, ProofError> {
+) -> Result<Vec<[u8; 48]>, ProofError> {
     let mut hashes = Vec::with_capacity(proofs.len());
     for (index, proof) in proofs.iter().enumerate() {
         if proof.stark_proof.is_empty() {
@@ -453,7 +474,7 @@ fn proof_hashes_from_transaction_proofs(
                 message: "missing STARK proof bytes".to_string(),
             });
         }
-        hashes.push(blake3_256(&proof.stark_proof));
+        hashes.push(blake3_384(&proof.stark_proof));
     }
     Ok(hashes)
 }

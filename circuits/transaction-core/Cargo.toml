@@ -6,28 +6,30 @@ authors = ["Hegemon Contributors"]
 description = "Shared no_std transaction circuit core logic."
 
 [dependencies]
-winterfell = { version = "0.13", default-features = false }
-winter-crypto = { version = "0.13", default-features = false, optional = true }
-winter-utils = { version = "0.13", default-features = false, optional = true }
 blake3 = { version = "1", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
-p3-air = { workspace = true, optional = true }
-p3-field = { workspace = true, optional = true }
-p3-goldilocks = { workspace = true, optional = true }
-p3-matrix = { workspace = true, optional = true }
+p3-air = { workspace = true }
+p3-field = { workspace = true }
+p3-goldilocks = { workspace = true }
+p3-matrix = { workspace = true }
+p3-challenger = { workspace = true }
+p3-commit = { workspace = true }
+p3-dft = { workspace = true }
+p3-fri = { workspace = true }
+p3-merkle-tree = { workspace = true }
+p3-poseidon2 = { workspace = true }
+p3-symmetric = { workspace = true }
+p3-uni-stark = { workspace = true }
+bincode = { version = "1", default-features = false }
 
 [dev-dependencies]
-miden-crypto = { version = "0.19", default-features = false, features = ["std"] }
 p3-uni-stark = { workspace = true }
 
 [features]
-default = ["std", "winterfell-legacy"]
-std = ["winterfell/std", "winter-crypto?/std", "winter-utils?/std", "blake3/std", "serde?/std"]
+default = ["std"]
+std = ["blake3/std", "serde?/std"]
 serde = ["dep:serde"]
-winterfell-legacy = []
-stark-verify = ["winterfell-legacy", "winter-crypto", "winter-utils"]
-stark-fast = []
-plonky3 = ["dep:p3-air", "dep:p3-field", "dep:p3-goldilocks", "dep:p3-matrix"]
+plonky3-e2e = []
 
 [lints]
 workspace = true

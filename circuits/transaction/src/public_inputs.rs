@@ -315,28 +315,6 @@ pub(crate) mod serde_bytes48 {
 pub(crate) fn default_bytes48() -> [u8; 48] {
     [0u8; 48]
 }
-pub(crate) mod serde_felt {
-    use serde::{Deserializer, Serializer};
-    use winterfell::math::fields::f64::BaseElement;
-
-    pub fn serialize<S>(value: &BaseElement, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_u64(value.as_int())
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<BaseElement, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = u64::deserialize(deserializer)?;
-        Ok(BaseElement::new(value))
-    }
-
-    use serde::Deserialize;
-}
-
 fn stablecoin_binding_is_zero(binding: &StablecoinPolicyBinding) -> bool {
     !binding.enabled
         && binding.asset_id == 0

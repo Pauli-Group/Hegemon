@@ -9,7 +9,7 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 winter-crypto = "0.13"
 winterfell = "0.13"
-transaction-core = { path = "../transaction-core", features = ["serde", "stark-verify", "plonky3"] }
+transaction-core = { path = "../transaction-core", features = ["serde"] }
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }

@@ -6,7 +6,7 @@ pub const POSEIDON2_STEPS: usize = transaction_core::constants::POSEIDON2_STEPS;
 pub const POSEIDON2_SBOX_DEGREE: u64 = transaction_core::constants::POSEIDON2_SBOX_DEGREE;
 pub const NOTE_DOMAIN_TAG: u64 = transaction_core::constants::NOTE_DOMAIN_TAG;
 
-pub const CYCLE_LENGTH: usize = transaction_core::stark_air::CYCLE_LENGTH;
+pub const CYCLE_LENGTH: usize = transaction_core::p3_air::CYCLE_LENGTH;
 
 /// Number of input chunks absorbed for a note commitment.
 pub const INPUT_CHUNKS: usize = 3;

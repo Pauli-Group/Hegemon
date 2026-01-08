@@ -4,61 +4,34 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-winterfell = "0.13"
-winter-crypto = "0.13"
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 synthetic-crypto = { path = "../../crypto" }
 hex = "0.4"
 protocol-versioning = { path = "../../protocol/versioning" }
-miden-crypto = { version = "0.19", default-features = false, optional = true }
 transaction-core = { path = "../transaction-core", features = ["serde"] }
-p3-air = { workspace = true, optional = true }
-p3-field = { workspace = true, optional = true }
-p3-goldilocks = { workspace = true, optional = true }
-p3-matrix = { workspace = true, optional = true }
-p3-challenger = { workspace = true, optional = true }
-p3-commit = { workspace = true, optional = true }
-p3-fri = { workspace = true, optional = true }
-p3-dft = { workspace = true, optional = true }
-p3-merkle-tree = { workspace = true, optional = true }
-p3-uni-stark = { workspace = true, optional = true }
-p3-symmetric = { workspace = true, optional = true }
-p3-poseidon2 = { workspace = true, optional = true }
-rand = { version = "0.9", optional = true, features = ["std"] }
-rand_chacha = { version = "0.9", optional = true }
-bincode = { version = "1", optional = true }
+p3-air = { workspace = true }
+p3-field = { workspace = true }
+p3-goldilocks = { workspace = true }
+p3-matrix = { workspace = true }
+p3-challenger = { workspace = true }
+p3-commit = { workspace = true }
+p3-fri = { workspace = true }
+p3-dft = { workspace = true }
+p3-merkle-tree = { workspace = true }
+p3-uni-stark = { workspace = true }
+p3-symmetric = { workspace = true }
+p3-poseidon2 = { workspace = true }
+bincode = { version = "1" }
 
 [dev-dependencies]
-rand = { version = "0.9", features = ["std"] }
 proptest = "1"
 
 [features]
-default = ["winterfell-legacy"]
-winterfell-legacy = ["transaction-core/winterfell-legacy", "transaction-core/stark-verify"]
-plonky3 = [
-    "transaction-core/plonky3",
-    "dep:p3-air",
-    "dep:p3-field",
-    "dep:p3-goldilocks",
-    "dep:p3-matrix",
-    "dep:p3-challenger",
-    "dep:p3-commit",
-    "dep:p3-fri",
-    "dep:p3-dft",
-    "dep:p3-merkle-tree",
-    "dep:p3-uni-stark",
-    "dep:p3-symmetric",
-    "dep:p3-poseidon2",
-    "dep:rand",
-    "dep:rand_chacha",
-    "dep:bincode",
-]
+default = ["plonky3"]
+plonky3 = []
 plonky3-e2e = ["plonky3"]
-rpo-fiat-shamir = ["miden-crypto", "winterfell-legacy"]
-legacy-proof = []
-stark-fast = ["transaction-core/stark-fast", "winterfell-legacy"]
 
 [lints]
 workspace = true

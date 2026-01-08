@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1"
 bincode = "1"
 blake3 = "1.5"
-block-circuit = { path = "../circuits/block", features = ["winterfell-legacy"] }
+block-circuit = { path = "../circuits/block" }
 codec = { workspace = true }
 crossbeam-channel = "0.5"
 crypto = { package = "synthetic-crypto", path = "../crypto" }
@@ -38,14 +38,13 @@ network = { path = "../network" }
 proptest = "1"
 state-merkle = { path = "../state/merkle" }
 tokio = { version = "1", features = ["macros", "rt", "time", "sync"] }
-winterfell = "0.13"
 
 [features]
 default = []
 # Enable full Substrate PowAlgorithm implementation
 substrate = ["sc-consensus-pow", "sp-consensus-pow", "sp-api", "runtime"]
 fast-proofs = ["block-circuit/fast-proofs"]
-legacy-recursion = ["block-circuit/legacy-recursion"]
+legacy-recursion = []
 
 [lints]
 workspace = true

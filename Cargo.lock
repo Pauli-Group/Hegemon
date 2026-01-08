@@ -908,7 +908,6 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "criterion",
- "miden-crypto",
  "p3-air",
  "p3-field",
  "p3-goldilocks",
@@ -918,10 +917,6 @@ dependencies = [
  "rand 0.8.5",
  "transaction-circuit",
  "transaction-core",
- "winter-air",
- "winter-crypto",
- "winter-prover",
- "winterfell",
 ]
 
 [[package]]
@@ -1124,7 +1119,6 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "blake3",
- "epoch-circuit",
  "p3-air",
  "p3-field",
  "p3-goldilocks",
@@ -1138,8 +1132,6 @@ dependencies = [
  "thiserror 1.0.69",
  "transaction-circuit",
  "transaction-core",
- "winter-crypto",
- "winterfell",
 ]
 
 [[package]]
@@ -1469,7 +1461,6 @@ dependencies = [
  "serde_json",
  "state-merkle",
  "transaction-circuit",
- "winterfell",
 ]
 
 [[package]]
@@ -1615,7 +1606,6 @@ dependencies = [
  "tokio",
  "tracing",
  "transaction-circuit",
- "winterfell",
 ]
 
 [[package]]
@@ -5640,7 +5630,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc7981c1d907bb9864e24f2bd6304c4fca03a41fc4606c09edd6a7f5a8fc80fc"
 dependencies = [
  "blake3",
- "cc",
  "chacha20poly1305",
  "curve25519-dalek",
  "ed25519-dalek",
@@ -6887,11 +6876,6 @@ dependencies = [
  "sp-io",
  "sp-runtime",
  "sp-std",
- "winter-air",
- "winter-math",
- "winter-prover",
- "winter-verifier",
- "winterfell",
 ]
 
 [[package]]
@@ -6906,6 +6890,7 @@ dependencies = [
  "frame-support",
  "frame-system",
  "log",
+ "p3-field",
  "pallet-balances",
  "pallet-coinbase",
  "parity-scale-codec",
@@ -6919,12 +6904,6 @@ dependencies = [
  "sp-std",
  "transaction-circuit",
  "transaction-core",
- "winter-air",
- "winter-crypto",
- "winter-math",
- "winter-prover",
- "winter-verifier",
- "winterfell",
 ]
 
 [[package]]
@@ -9657,6 +9636,9 @@ dependencies = [
  "hegemon-node",
  "hex",
  "network",
+ "p3-field",
+ "p3-goldilocks",
+ "pallet-shielded-pool",
  "protocol-versioning",
  "rand 0.8.5",
  "reqwest",
@@ -9673,8 +9655,6 @@ dependencies = [
  "transaction-circuit",
  "url",
  "wallet",
- "winter-math",
- "winterfell",
 ]
 
 [[package]]
@@ -9842,8 +9822,6 @@ dependencies = [
  "p3-uni-stark",
  "transaction-circuit",
  "transaction-core",
- "winter-crypto",
- "winterfell",
 ]
 
 [[package]]
@@ -11674,7 +11652,6 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "hex",
- "miden-crypto",
  "p3-air",
  "p3-challenger",
  "p3-commit",
@@ -11689,32 +11666,32 @@ dependencies = [
  "p3-uni-stark",
  "proptest",
  "protocol-versioning",
- "rand 0.9.2",
- "rand_chacha 0.9.0",
  "serde",
  "serde_json",
  "synthetic-crypto",
  "thiserror 1.0.69",
  "transaction-core",
- "winter-crypto",
- "winterfell",
 ]
 
 [[package]]
 name = "transaction-core"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "blake3",
- "miden-crypto",
  "p3-air",
+ "p3-challenger",
+ "p3-commit",
+ "p3-dft",
  "p3-field",
+ "p3-fri",
  "p3-goldilocks",
  "p3-matrix",
+ "p3-merkle-tree",
+ "p3-poseidon2",
+ "p3-symmetric",
  "p3-uni-stark",
  "serde",
- "winter-crypto",
- "winter-utils",
- "winterfell",
 ]
 
 [[package]]
@@ -12148,7 +12125,6 @@ dependencies = [
  "transaction-circuit",
  "twox-hash",
  "url",
- "winter-prover",
  "zeroize",
 ]
 

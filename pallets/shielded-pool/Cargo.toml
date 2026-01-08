@@ -19,15 +19,9 @@ scale-info = { workspace = true }
 log = { version = "0.4", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 sha2 = { version = "0.10", default-features = false }
+p3-field = { workspace = true }
 async-trait = { version = "0.1", optional = true }
 pallet-coinbase = { path = "../coinbase", default-features = false }
-
-# REAL STARK verification
-winterfell = { version = "0.13.1", default-features = false, optional = true }
-winter-verifier = { version = "0.13.1", default-features = false, optional = true }
-winter-air = { version = "0.13.1", default-features = false, optional = true }
-winter-math = { version = "0.13.1", default-features = false, optional = true }
-winter-crypto = { version = "0.13.1", default-features = false, optional = true }
 
 # Epoch circuit for light client sync
 epoch-circuit = { path = "../../circuits/epoch", default-features = false, optional = true }
@@ -38,7 +32,6 @@ batch-circuit = { path = "../../circuits/batch", default-features = false, optio
 [dev-dependencies]
 sp-io = { workspace = true, features = ["std"] }
 pallet-balances = { workspace = true, features = ["std"] }
-winter-prover = { version = "0.13.1" }
 transaction-circuit = { path = "../../circuits/transaction" }
 
 [features]
@@ -55,11 +48,6 @@ std = [
     "codec/std",
     "scale-info/std",
     "serde/std",
-    "winterfell?/std",
-    "winter-verifier?/std",
-    "winter-air?/std",
-    "winter-math?/std",
-    "winter-crypto?/std",
     "async-trait",
     "epoch-circuit?/std",
     "pallet-coinbase/std",
@@ -68,23 +56,12 @@ std = [
 ]
 runtime-benchmarks = ["frame-benchmarking"]
 try-runtime = ["frame-support/try-runtime"]
-stark-verify = [
-    "winterfell",
-    "winter-verifier",
-    "winter-air",
-    "winter-math",
-    "winter-crypto",
-    "transaction-core/stark-verify",
-    "batch-circuit/winterfell-legacy",
-]
-fast-proofs = ["transaction-core/stark-fast"]
+# Enable batch proof verification (requires batch-circuit).
+batch-proofs = ["batch-circuit"]
 # Enable epoch proofs for light client sync
 epoch-proofs = ["epoch-circuit", "blake3"]
 # Production mode: disables AcceptAllProofs and other test-only verifiers
 # Enable this feature for mainnet/production builds to ensure only real verification is available
-production = ["stark-verify", "batch-circuit/production"]
-# Legacy commitment/nullifier helpers (not for production)
-legacy-commitment = []
-
+production = []
 [lints]
 workspace = true

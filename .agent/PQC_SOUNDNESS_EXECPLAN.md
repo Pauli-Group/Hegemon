@@ -40,6 +40,12 @@ After this work, a user can:
 - [ ] Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
 - [x] (2026-01-07 16:02Z) Removed the ignored Plonky3 debug constraint test from `circuits/transaction/src/p3_prover.rs` to keep the default suite lean.
 - [ ] (2026-01-07 16:02Z) Updated wallet/rpc tests + disclosure package flows to 48-byte commitments and moved the disclosure circuit to Poseidon2 (Winterfell) so disclosure proofs match PQ commitments; remaining 48-byte migrations still pending in block/batch/settlement legacy paths.
+- [x] (2026-01-07 19:18Z) Aligned the settlement pallet with Poseidon2/48-byte commitments (re-exported `Felt`, updated padding and hashing, removed Winterfell deps) and fixed block commitment trace zero-checks.
+- [x] (2026-01-07 19:42Z) Cleaned up stale feature flags and dependency features blocking builds (`transaction-core` bincode features, `disclosure`/`epoch`/`state-merkle` feature mismatches, `node`/`consensus`/`tests` fast-proof flags).
+- [x] (2026-01-07 20:10Z) Updated consensus PoW/validator commitments and block commitment verification to 48-byte digests, with byte<->felt conversion at the consensus boundary and test fixtures migrated.
+- [x] (2026-01-07 20:36Z) Added `config_with_fri` + dynamic log_blowup selection for block commitment proofs (prover+verifier) and ran `cargo test -p pallet-settlement` plus `cargo test -p consensus --tests`.
+- [x] (2026-01-07 22:10Z) Removed `legacy-commitment` helpers from the shielded pool pallet and kept only circuit-compatible Poseidon2 commitment/nullifier helpers.
+- [x] (2026-01-07 22:10Z) Updated security-tests to Plonky3/Poseidon2 expectations (rewrote `stark_soundness`, rewired `poseidon_compat`, refreshed block-flow tests), plus aligned node RPC fixtures and node-resilience validator commitments to 48-byte Blake3-384.
 - [ ] Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits.
 - [ ] Milestone 7: Update pallets, node, wallet, and protocol versioning.
 - [ ] Milestone 8: Documentation and runbooks.
@@ -121,6 +127,15 @@ After this work, a user can:
 - Observation: Winterfell legacy batch/block/settlement paths still encode commitments/nullifiers as 32-byte hashes, which is now incompatible with the 48-byte application types; they need either feature-gating or a Poseidon2/Plonky3 port to stay usable.
   Evidence: `circuits/batch/src/public_inputs.rs`, `circuits/block/src/commitment_air.rs`, `circuits/settlement/src/hashing.rs`.
 
+- Observation: Block commitment proofs failed with `assertion failed: lde.height() >= domain.size()` and `InvalidOpeningArgument(WrongHeight { log_max_height: 11, num_siblings: 12 })` until the prover/verifier used a log_blowup derived from `get_log_num_quotient_chunks`.
+  Evidence: `cargo test -p consensus --tests` failures in `commitment_proof_handoff`.
+
+- Observation: Multiple crates referenced stale feature flags (`plonky3`, `stark-fast`, `legacy-recursion`, `rpo-fiat-shamir`) that no longer exist, blocking workspace builds.
+  Evidence: `cargo test -p pallet-settlement` dependency resolution errors.
+
+- Observation: Running the `security-tests` crate requires libclang to build `librocksdb-sys`; environments without libclang abort the build.
+  Evidence: `cargo test -p security-tests --test stark_soundness` failed with `Library not loaded: @rpath/libclang.dylib`.
+
 ## Decision Log
 
 - Decision: Migrate from Winterfell to Plonky3 instead of forking Winterfell.
@@ -199,6 +214,14 @@ After this work, a user can:
   Rationale: Keeps hash and PCS parameters consistent across circuits and avoids duplicating configuration logic during the migration.
   Date/Author: 2026-01-07 / Codex.
 
+- Decision: Compute block commitment proof log_blowup as `max(FRI_LOG_BLOWUP, log_num_quotient_chunks)` and use that in both prover and verifier configs.
+  Rationale: Prevent PCS height mismatches for the block AIR while preserving the shared FRI query budget.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Switch validator set commitments to 48-byte Blake3-384 digests.
+  Rationale: Validator-set commitments are part of the on-chain commitment surface and must match the 48-byte PQ posture used elsewhere.
+  Date/Author: 2026-01-07 / Codex.
+
 - Decision: Switch to Plonky3 0.4.x’s STARK backend with preprocessed trace support (upgrade from `p3-uni-stark` 0.2 and reintroduce periodic/preprocessed columns in the AIRs).
   Rationale: Removes the high-degree selector/counter workarounds, restores clean schedule semantics, and uses upstream support instead of maintaining a custom fork.
   Date/Author: 2026-01-07 / Codex.
@@ -217,6 +240,10 @@ After this work, a user can:
 
 - Decision: Use Poseidon2 width 12 (rate 6, capacity 6) for Plonky3 in-circuit commitments/nullifiers and carry 48-byte PQ fields alongside legacy 32-byte fields until Milestone 5 widens application types.
   Rationale: Capacity-6 (384-bit) is the minimum for 128-bit PQ collision resistance, while keeping application-level migrations isolated to Milestone 5.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Remove the shielded-pool legacy commitment helpers and rely exclusively on circuit-compatible Poseidon2 hashing.
+  Rationale: There is no legacy mode; keeping a Blake2-wrapped Poseidon path would reintroduce 32-byte commitments and audit ambiguity.
   Date/Author: 2026-01-07 / Codex.
 
 ## PQC Soundness Checklist
