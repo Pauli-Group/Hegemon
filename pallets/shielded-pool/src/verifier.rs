@@ -16,6 +16,7 @@
 
 
 use p3_field::PrimeCharacteristicRing;
+use transaction_core::p3_config::FRI_NUM_QUERIES;
 
 use crate::types::{BindingHash, StablecoinPolicyBinding, StarkProof};
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
@@ -378,7 +379,7 @@ impl StarkVerifier {
         }
 
         // Check proof has enough data for structure
-        let min_size = proof_structure::min_proof_size(8, num_fri_layers); // Assume 8 queries minimum
+        let min_size = proof_structure::min_proof_size(FRI_NUM_QUERIES, num_fri_layers);
         if data.len() < min_size {
             return false;
         }

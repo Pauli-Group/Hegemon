@@ -74,19 +74,27 @@ pub fn config_with_fri(log_blowup: usize, num_queries: usize) -> TransactionStar
     let val_mmcs = ValMmcs::new(hash, compress);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
     let dft = Dft::default();
-    let fri_config = FriParameters {
-        log_blowup,
-        log_final_poly_len: 0,
-        num_queries,
-        commit_proof_of_work_bits: 0,
-        query_proof_of_work_bits: FRI_POW_BITS,
-        mmcs: challenge_mmcs,
-    };
+    let fri_config = default_fri_config(challenge_mmcs, log_blowup, num_queries);
     let pcs = Pcs::new(dft, val_mmcs, fri_config);
     let challenger = new_challenger(&perm);
     let config = Config::new(pcs, challenger);
 
     TransactionStarkConfig { config }
+}
+
+pub fn default_fri_config(
+    mmcs: ChallengeMmcs,
+    log_blowup: usize,
+    num_queries: usize,
+) -> FriParameters<ChallengeMmcs> {
+    FriParameters {
+        log_blowup,
+        log_final_poly_len: 0,
+        num_queries,
+        commit_proof_of_work_bits: 0,
+        query_proof_of_work_bits: FRI_POW_BITS,
+        mmcs,
+    }
 }
 
 pub fn new_challenger(perm: &Perm) -> Challenger {

@@ -912,9 +912,9 @@ mod tests {
         let verification_key = vec![3u8; 32];
         let params = StarkVerifierParams {
             hash: StarkHashFunction::Blake3,
-            fri_queries: 1,
-            blowup_factor: 1,
-            security_bits: 32,
+            fri_queries: 43,
+            blowup_factor: 16,
+            security_bits: 128,
         };
 
         let inputs = SettlementProofInputs {

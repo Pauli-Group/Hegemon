@@ -4,7 +4,7 @@ use p3_goldilocks::Goldilocks;
 use p3_field::PrimeCharacteristicRing;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
-use p3_uni_stark::{prove_with_preprocessed, setup_preprocessed};
+use p3_uni_stark::{get_log_num_quotient_chunks, prove_with_preprocessed, setup_preprocessed};
 
 use crate::constants::{
     ABSORB_CYCLES, INPUT_CYCLES_PER_TRACE, PADDED_INPUT_COUNT, SETTLEMENT_DOMAIN_TAG, TRACE_LENGTH,
@@ -12,9 +12,11 @@ use crate::constants::{
 use crate::p3_air::{
     SettlementAirP3, SettlementPublicInputsP3, COL_IN0, COL_IN1, COL_IN2, COL_IN3, COL_IN4,
     COL_IN5, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6, COL_S7,
-    COL_S8, COL_S9, TRACE_WIDTH,
+    COL_S8, COL_S9, PREPROCESSED_WIDTH, TRACE_WIDTH,
 };
-use transaction_circuit::p3_config::{default_config, TransactionProofP3};
+use transaction_circuit::p3_config::{
+    config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, TransactionProofP3,
+};
 use transaction_core::constants::{POSEIDON2_RATE, POSEIDON2_STEPS, POSEIDON2_WIDTH};
 use transaction_core::p3_air::CYCLE_LENGTH;
 use transaction_core::poseidon2::poseidon2_step;
@@ -118,7 +120,15 @@ impl SettlementProverP3 {
         trace: RowMajorMatrix<Val>,
         pub_inputs: &SettlementPublicInputsP3,
     ) -> SettlementProofP3 {
-        let config = default_config();
+        let pub_inputs_vec = pub_inputs.to_vec();
+        let log_chunks = get_log_num_quotient_chunks::<Val, _>(
+            &SettlementAirP3,
+            PREPROCESSED_WIDTH,
+            pub_inputs_vec.len(),
+            0,
+        );
+        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
+        let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
         let degree_bits = trace.height().ilog2() as usize;
         let (prep_prover, _) =
             setup_preprocessed(&config.config, &SettlementAirP3, degree_bits)
@@ -127,7 +137,7 @@ impl SettlementProverP3 {
             &config.config,
             &SettlementAirP3,
             trace,
-            &pub_inputs.to_vec(),
+            &pub_inputs_vec,
             Some(&prep_prover),
         )
     }
