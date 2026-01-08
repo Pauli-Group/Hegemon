@@ -7,11 +7,10 @@ use p3_dft::Radix2DitParallel;
 use p3_field::extension::BinomialExtensionField;
 use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
 use p3_fri::{FriParameters, TwoAdicFriPcs};
-use p3_goldilocks::{DiffusionMatrixGoldilocks, Goldilocks};
+use p3_goldilocks::{Goldilocks, Poseidon2Goldilocks};
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
-use p3_merkle_tree::FieldMerkleTreeMmcs;
-use p3_poseidon2::{Poseidon2, Poseidon2ExternalMatrixGeneral};
+use p3_merkle_tree::MerkleTreeMmcs;
 use p3_symmetric::{PaddingFreeSponge, TruncatedPermutation};
 use p3_uni_stark::{prove, verify, StarkConfig};
 use rand::thread_rng;
@@ -50,14 +49,17 @@ impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
         let next: &FibonacciRow<AB::Var> = (*next).borrow();
 
         let mut when_first_row = builder.when_first_row();
-        when_first_row.assert_eq(local.left, a);
-        when_first_row.assert_eq(local.right, b);
+        when_first_row.assert_eq(local.left.clone(), a);
+        when_first_row.assert_eq(local.right.clone(), b);
 
         let mut when_transition = builder.when_transition();
-        when_transition.assert_eq(local.right, next.left);
-        when_transition.assert_eq(local.left + local.right, next.right);
+        when_transition.assert_eq(local.right.clone(), next.left.clone());
+        when_transition.assert_eq(
+            local.left.clone() + local.right.clone(),
+            next.right.clone(),
+        );
 
-        builder.when_last_row().assert_eq(local.right, x);
+        builder.when_last_row().assert_eq(local.right.clone(), x);
     }
 }
 
@@ -105,29 +107,26 @@ impl<F> Borrow<FibonacciRow<F>> for [F] {
 }
 
 type Val = Goldilocks;
-type Perm = Poseidon2<Val, Poseidon2ExternalMatrixGeneral, DiffusionMatrixGoldilocks, 12, 7>;
+type Perm = Poseidon2Goldilocks<12>;
 type MyHash = PaddingFreeSponge<Perm, 12, 6, DIGEST_ELEMS>;
 type MyCompress = TruncatedPermutation<Perm, 2, DIGEST_ELEMS, 12>;
 type ValMmcs =
-    FieldMerkleTreeMmcs<<Val as Field>::Packing, <Val as Field>::Packing, MyHash, MyCompress, DIGEST_ELEMS>;
+    MerkleTreeMmcs<<Val as Field>::Packing, <Val as Field>::Packing, MyHash, MyCompress, DIGEST_ELEMS>;
 type Challenge = BinomialExtensionField<Val, 2>;
 type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 type Challenger = DuplexChallenger<Val, Perm, 12, 6>;
-type Dft = Radix2DitParallel;
+type Dft = Radix2DitParallel<Val>;
 type Pcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;
 type MyConfig = StarkConfig<Pcs, Challenge, Challenger>;
 
 pub fn prove_and_verify() -> FibProofStats {
-    let perm = Perm::new_from_rng_128(
-        Poseidon2ExternalMatrixGeneral,
-        DiffusionMatrixGoldilocks::default(),
-        &mut thread_rng(),
-    );
+    let mut rng = thread_rng();
+    let perm = Perm::new_from_rng_128(&mut rng);
     let hash = MyHash::new(perm.clone());
     let compress = MyCompress::new(perm.clone());
     let val_mmcs = ValMmcs::new(hash, compress);
     let challenge_mmcs = ChallengeMmcs::new(val_mmcs.clone());
-    let dft = Dft {};
+    let dft = Dft::default();
     let fri_config = FriParameters {
         log_blowup: 3,
         log_final_poly_len: 0,
