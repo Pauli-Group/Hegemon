@@ -287,6 +287,8 @@ Verification should be mechanical and recorded as evidence. For every AIR, compu
 
 Formal soundness note: unless a dedicated PQ analysis is completed and cited, all soundness claims are engineering-level estimates. The checklist above is the minimum target, not a proof; a formal analysis must be added before claiming 128-bit PQ soundness in external materials.
 
+For the canonical engineering soundness accounting and reference links, see `SECURITY.md` (“Soundness Accounting”).
+
 ## Outcomes & Retrospective
 
 The Plonky3 migration shipped end-to-end: all circuits and pallets now use Poseidon2-384 with 48-byte commitments/nullifiers, FRI parameters are standardized to ≥128-bit engineering soundness, and Winterfell dependencies are removed. Core integration tests (transaction-circuit, disclosure-circuit, wallet disclosure package, consensus) plus the Plonky3 E2E prove/verify test passed. Remaining gaps are a formal PQ soundness analysis and any future Plonky3-native recursion reintroduction; both are explicitly out-of-scope for this execution plan.
@@ -312,7 +314,7 @@ Both must reach 128 bits for the "128-bit everywhere" target.
 
 ### Historical Architecture (Winterfell, removed)
 
-The codebase currently uses Winterfell 0.13.1, a Rust STARK library. Key crates:
+The codebase previously used Winterfell 0.13.1, a Rust STARK library. Key crates:
 - `winterfell`: Re-exports prover/verifier.
 - `winter-air`: AIR trait definitions.
 - `winter-prover` / `winter-verifier`: Prove and verify.

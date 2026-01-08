@@ -33,3 +33,27 @@ Recursive block proofs are currently disabled and the old recursion path has bee
 
 - Commitments, nullifiers, and Merkle roots use 48-byte (384-bit) digests, yielding ~128-bit post-quantum collision security under generic BHT attacks.
 - Production FRI parameters use log_blowup = 4 (16x) and num_queries = 43, giving an engineering soundness estimate ≥128 bits (see `circuits/transaction-core/src/p3_config.rs`).
+
+### Soundness Accounting (Engineering Estimate)
+
+For this repository we track soundness as the minimum of (a) hash-based binding security (Merkle commitments + Fiat–Shamir transcript), and (b) the statistical IOP soundness from FRI.
+
+Hash binding (PQ): for a sponge with capacity `c` bits, generic quantum collision search costs `O(2^{c/3})`, so the engineering security level is approximately `c/3` bits. With 6 Goldilocks field elements of capacity, `c ≈ 6 × 64 = 384` bits, giving ~128-bit post-quantum collision resistance.
+
+FRI IOP soundness (engineering): for blowup factor `2^log_blowup` and `num_queries`, the dominant term is roughly `security_bits ≈ log_blowup × num_queries + pow_bits`. With `log_blowup = 4`, `num_queries = 43`, and `pow_bits = 0`, this is ~172 bits.
+
+Therefore, with the current production parameters, the limiting factor is the hash-based binding margin: ~128-bit post-quantum (engineering estimate).
+
+Formal caveat: this is not a formal post-quantum proof in the quantum random-oracle model; it is an engineering-level accounting. A dedicated PQ analysis is required before making stronger external claims.
+
+### References (Starting Point)
+
+- Quantum collision finding (collision problem): https://arxiv.org/abs/quant-ph/9705002
+- Fiat–Shamir in the quantum random oracle model (QROM): https://eprint.iacr.org/2014/587
+- Post-quantum security of Fiat–Shamir: https://eprint.iacr.org/2017/398
+- STARK construction + ALI context (includes FRI/IOP composition): https://eprint.iacr.org/2018/046
+- DEEP-FRI soundness amplification: https://eprint.iacr.org/2019/336
+- Tip5 (Triton/Neptune) sponge capacity and PQ collision discussion: https://eprint.iacr.org/2023/107.pdf
+- RPO (Miden) security levels and 256-bit vs 384-bit capacity variants: https://eprint.iacr.org/2022/1577.pdf
+- Poseidon2 design and security discussion: https://eprint.iacr.org/2023/323.pdf
+- STARK soundness overview and common 96-bit classical target discussion (blog-level): https://www.starknet.io/blog/safe-and-sound-a-deep-dive-into-stark-security/
