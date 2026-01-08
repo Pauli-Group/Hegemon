@@ -9,11 +9,11 @@ thiserror = "1"
 blake3 = "1"
 sha2 = "0.10"
 epoch-circuit = { path = "../epoch", optional = true }
-transaction-circuit = { path = "../transaction", features = ["rpo-fiat-shamir"] }
+transaction-circuit = { path = "../transaction", default-features = false }
 state-merkle = { path = "../../state/merkle" }
 protocol-versioning = { path = "../../protocol/versioning" }
-winterfell = "0.13"
-winter-crypto = "0.13"
+winterfell = { version = "0.13", optional = true }
+winter-crypto = { version = "0.13", optional = true }
 transaction-core = { path = "../transaction-core", optional = true }
 p3-air = { workspace = true, optional = true }
 p3-field = { workspace = true, optional = true }
@@ -27,9 +27,17 @@ rand = { version = "0.8", features = ["std"] }
 
 [features]
 default = []
-fast-proofs = ["stark-fast"]
+fast-proofs = ["stark-fast", "winterfell-legacy"]
 stark-fast = []
-legacy-recursion = ["dep:epoch-circuit"]
+winterfell-legacy = [
+    "dep:winterfell",
+    "dep:winter-crypto",
+    "winterfell/std",
+    "winter-crypto/std",
+    "transaction-circuit/winterfell-legacy",
+    "transaction-circuit/rpo-fiat-shamir",
+]
+legacy-recursion = ["dep:epoch-circuit", "winterfell-legacy"]
 plonky3 = [
     "transaction-circuit/plonky3",
     "transaction-core",

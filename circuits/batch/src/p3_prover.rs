@@ -8,7 +8,7 @@ use p3_uni_stark::{prove_with_preprocessed, setup_preprocessed};
 
 use crate::error::BatchCircuitError;
 use crate::p3_air::{BatchPublicInputsP3, BatchTransactionAirP3, TRACE_WIDTH};
-use crate::public_inputs::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
+use crate::constants::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{bytes48_to_felts, note_commitment, nullifier, prf_key};
 use transaction_circuit::p3_config::{default_config, TransactionProofP3};
 use transaction_circuit::p3_prover::TransactionProverP3;

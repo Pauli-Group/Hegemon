@@ -8,12 +8,12 @@ description = "STARK batch transaction circuit for proving multiple transactions
 repository = "https://github.com/Pauli-Group/Hegemon"
 
 [dependencies]
-winterfell = { version = "0.13", default-features = false }
-winter-crypto = { version = "0.13", default-features = false }
-winter-air = { version = "0.13", default-features = false }
+winterfell = { version = "0.13", default-features = false, optional = true }
+winter-crypto = { version = "0.13", default-features = false, optional = true }
+winter-air = { version = "0.13", default-features = false, optional = true }
 winter-prover = { version = "0.13", default-features = false, optional = true }
 transaction-core = { path = "../transaction-core", default-features = false }
-transaction-circuit = { path = "../transaction", optional = true }
+transaction-circuit = { path = "../transaction", default-features = false, optional = true }
 miden-crypto = { version = "0.19", default-features = false, optional = true }
 p3-air = { workspace = true, optional = true }
 p3-field = { workspace = true, optional = true }
@@ -33,20 +33,25 @@ harness = false
 
 [features]
 default = ["std"]
-std = [
+std = ["transaction-core/std"]
+winterfell-legacy = [
+    "std",
+    "dep:winterfell",
+    "dep:winter-crypto",
+    "dep:winter-air",
+    "dep:winter-prover",
     "winterfell/std",
     "winter-crypto/std",
     "winter-air/std",
-    "winter-prover",
     "winter-prover/std",
-    "transaction-core/std",
     "transaction-core/winterfell-legacy",
-    "transaction-circuit",
+    "dep:transaction-circuit",
+    "transaction-circuit/winterfell-legacy",
 ]
 plonky3 = [
     "std",
     "transaction-core/plonky3",
-    "transaction-circuit",
+    "dep:transaction-circuit",
     "transaction-circuit/plonky3",
     "dep:p3-air",
     "dep:p3-field",
@@ -55,7 +60,7 @@ plonky3 = [
     "dep:p3-uni-stark",
     "dep:bincode",
 ]
-rpo-fiat-shamir = ["miden-crypto", "transaction-circuit/rpo-fiat-shamir", "std"]
+rpo-fiat-shamir = ["miden-crypto", "transaction-circuit/rpo-fiat-shamir", "winterfell-legacy"]
 stark-fast = []
 production = []
 

@@ -10,8 +10,13 @@ pub const NULLIFIER_LIMBS: usize = 4;
 pub const COMMITMENT_LIMBS: usize = 4;
 pub const INPUT_COUNT: usize = 2 + MAX_INSTRUCTIONS + (MAX_NULLIFIERS * NULLIFIER_LIMBS);
 
-/// Poseidon cycle length (matches transaction circuit).
+/// Poseidon cycle length (matches the active backend).
+#[cfg(feature = "plonky3")]
+pub const CYCLE_LENGTH: usize = transaction_core::p3_air::CYCLE_LENGTH;
+#[cfg(all(not(feature = "plonky3"), feature = "winterfell-legacy"))]
 pub const CYCLE_LENGTH: usize = transaction_core::stark_air::CYCLE_LENGTH;
+#[cfg(all(not(feature = "plonky3"), not(feature = "winterfell-legacy")))]
+pub const CYCLE_LENGTH: usize = 64;
 
 /// Number of input pairs processed in a full trace.
 pub const INPUT_PAIRS_PER_TRACE: usize = 32;
