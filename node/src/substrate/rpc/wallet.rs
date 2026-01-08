@@ -261,13 +261,13 @@ pub trait WalletService: Send + Sync {
     fn note_status(&self) -> NoteStatus;
 
     /// Get commitment entries
-    fn commitment_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, [u8; 32])>, String>;
+    fn commitment_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, [u8; 48])>, String>;
 
     /// Get ciphertext entries
     fn ciphertext_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, Vec<u8>)>, String>;
 
     /// Get all nullifiers
-    fn nullifier_list(&self) -> Result<Vec<[u8; 32]>, String>;
+    fn nullifier_list(&self) -> Result<Vec<[u8; 48]>, String>;
 
     /// Get latest block metadata
     fn latest_meta(&self) -> LatestBlock;
@@ -514,12 +514,12 @@ mod tests {
             &self,
             start: u64,
             limit: usize,
-        ) -> Result<Vec<(u64, [u8; 32])>, String> {
+        ) -> Result<Vec<(u64, [u8; 48])>, String> {
             let entries: Vec<_> = (start..start + limit as u64)
                 .take(100)
                 .map(|i| {
-                    let mut bytes = [0u8; 32];
-                    bytes[24..32].copy_from_slice(&(i * 2).to_be_bytes());
+                    let mut bytes = [0u8; 48];
+                    bytes[40..48].copy_from_slice(&(i * 2).to_be_bytes());
                     (i, bytes)
                 })
                 .collect();
@@ -538,8 +538,8 @@ mod tests {
             Ok(entries)
         }
 
-        fn nullifier_list(&self) -> Result<Vec<[u8; 32]>, String> {
-            Ok(vec![[0u8; 32], [1u8; 32], [2u8; 32]])
+        fn nullifier_list(&self) -> Result<Vec<[u8; 48]>, String> {
+            Ok(vec![[0u8; 48], [1u8; 48], [2u8; 48]])
         }
 
         fn latest_meta(&self) -> LatestBlock {

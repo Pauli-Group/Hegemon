@@ -1485,7 +1485,7 @@ impl pallet_shielded_pool::StablecoinPolicyProvider<u32, u32, u64, BlockNumber>
         })
     }
 
-    fn policy_hash(asset_id: &u32) -> Option<[u8; 32]> {
+    fn policy_hash(asset_id: &u32) -> Option<[u8; 48]> {
         pallet_stablecoin_policy::PolicyHashes::<Runtime>::get(asset_id)
     }
 }
@@ -1500,10 +1500,10 @@ impl pallet_shielded_pool::OracleCommitmentProvider<u32, BlockNumber>
         let feed = pallet_oracles::Feeds::<Runtime>::get(feed_id)?;
         let record = feed.latest_commitment?;
         let bytes = record.commitment.to_vec();
-        if bytes.len() != 32 {
+        if bytes.len() != 48 {
             return None;
         }
-        let mut commitment = [0u8; 32];
+        let mut commitment = [0u8; 48];
         commitment.copy_from_slice(&bytes);
         Some(pallet_shielded_pool::OracleCommitmentSnapshot {
             commitment,
@@ -1521,10 +1521,10 @@ impl pallet_shielded_pool::AttestationCommitmentProvider<u64, BlockNumber>
     ) -> Option<pallet_shielded_pool::AttestationCommitmentSnapshot<BlockNumber>> {
         let record = pallet_attestations::Commitments::<Runtime>::get(commitment_id)?;
         let bytes = record.root.to_vec();
-        if bytes.len() != 32 {
+        if bytes.len() != 48 {
             return None;
         }
-        let mut commitment = [0u8; 32];
+        let mut commitment = [0u8; 48];
         commitment.copy_from_slice(&bytes);
         let disputed = record.dispute != pallet_attestations::DisputeStatus::None;
         Some(pallet_shielded_pool::AttestationCommitmentSnapshot {
@@ -1719,7 +1719,7 @@ sp_api::impl_runtime_apis! {
         fn get_encrypted_notes(
             start: u64,
             limit: u32,
-        ) -> sp_std::vec::Vec<(u64, sp_std::vec::Vec<u8>, u64, [u8; 32])> {
+        ) -> sp_std::vec::Vec<(u64, sp_std::vec::Vec<u8>, u64, [u8; 48])> {
             // Fetch encrypted notes from ShieldedPool pallet storage
             let mut notes = sp_std::vec::Vec::new();
             let end = start.saturating_add(limit as u64);
@@ -1754,7 +1754,7 @@ sp_api::impl_runtime_apis! {
 
         fn get_merkle_witness(
             position: u64,
-        ) -> Result<(sp_std::vec::Vec<[u8; 32]>, sp_std::vec::Vec<bool>, [u8; 32]), ()> {
+        ) -> Result<(sp_std::vec::Vec<[u8; 48]>, sp_std::vec::Vec<bool>, [u8; 48]), ()> {
             // Get the Merkle tree from storage
             let tree = pallet_shielded_pool::MerkleTree::<Runtime>::get();
 
@@ -1798,11 +1798,11 @@ sp_api::impl_runtime_apis! {
             Ok((siblings, indices, root))
         }
 
-        fn is_nullifier_spent(nullifier: [u8; 32]) -> bool {
+        fn is_nullifier_spent(nullifier: [u8; 48]) -> bool {
             pallet_shielded_pool::Nullifiers::<Runtime>::contains_key(nullifier)
         }
 
-        fn is_valid_anchor(anchor: [u8; 32]) -> bool {
+        fn is_valid_anchor(anchor: [u8; 48]) -> bool {
             pallet_shielded_pool::MerkleRoots::<Runtime>::contains_key(anchor)
         }
 
@@ -1810,7 +1810,7 @@ sp_api::impl_runtime_apis! {
             pallet_shielded_pool::PoolBalance::<Runtime>::get()
         }
 
-        fn merkle_root() -> [u8; 32] {
+        fn merkle_root() -> [u8; 48] {
             pallet_shielded_pool::MerkleTree::<Runtime>::get().root()
         }
 
@@ -1823,7 +1823,7 @@ sp_api::impl_runtime_apis! {
             pallet_shielded_pool::Nullifiers::<Runtime>::iter().count() as u64
         }
 
-        fn list_nullifiers() -> Vec<[u8; 32]> {
+        fn list_nullifiers() -> Vec<[u8; 48]> {
             // Iterate all nullifiers and collect their keys
             pallet_shielded_pool::Nullifiers::<Runtime>::iter_keys().collect()
         }
@@ -1832,7 +1832,7 @@ sp_api::impl_runtime_apis! {
             pallet_shielded_pool::MerkleTree::<Runtime>::get()
         }
 
-        fn merkle_root_history() -> sp_std::vec::Vec<[u8; 32]> {
+        fn merkle_root_history() -> sp_std::vec::Vec<[u8; 48]> {
             pallet_shielded_pool::MerkleRootHistory::<Runtime>::get().into_inner()
         }
     }

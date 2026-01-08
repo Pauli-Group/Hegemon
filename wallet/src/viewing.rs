@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use transaction_circuit::hashing::{nullifier_bytes, prf_key as compute_prf_key};
+use transaction_circuit::hashing_pq::{nullifier_bytes, prf_key as compute_prf_key};
 use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData};
 
 use crate::{
@@ -106,7 +106,7 @@ impl FullViewingKey {
         self.incoming.decrypt_note(ciphertext)
     }
 
-    pub fn compute_nullifier(&self, rho: &[u8; 32], position: u64) -> [u8; 32] {
+    pub fn compute_nullifier(&self, rho: &[u8; 32], position: u64) -> [u8; 48] {
         // Use Poseidon-based nullifier matching the circuit, with view-derived nullifier key.
         let prf = compute_prf_key(&self.nullifier_key);
         nullifier_bytes(prf, rho, position)

@@ -11,6 +11,10 @@ fn arb_bytes32() -> impl Strategy<Value = [u8; 32]> {
     prop::array::uniform32(any::<u8>())
 }
 
+fn arb_bytes48() -> impl Strategy<Value = [u8; 48]> {
+    prop::array::uniform48(any::<u8>())
+}
+
 fn asset_strategy() -> impl Strategy<Value = u64> {
     prop_oneof![Just(NATIVE_ASSET_ID), (1u64..4u64)]
 }
@@ -39,8 +43,6 @@ fn arb_input_note() -> impl Strategy<Value = InputNoteWitness> {
             position: position as u64,
             rho_seed,
             merkle_path: MerklePath::default(),
-            #[cfg(feature = "plonky3")]
-            merkle_path_pq: None,
         }
     })
 }
@@ -92,7 +94,7 @@ fn arb_witness() -> impl Strategy<Value = TransactionWitness> {
         vec(arb_output_note(), 1..=MAX_OUTPUTS),
         arb_bytes32(),
         any::<u64>(),
-        arb_bytes32(),
+        arb_bytes48(),
     )
         .prop_map(|(inputs, mut outputs, sk_spend, fee_seed, merkle_root)| {
             let fee = normalize_outputs(&inputs, &mut outputs, fee_seed);
@@ -101,8 +103,6 @@ fn arb_witness() -> impl Strategy<Value = TransactionWitness> {
                 outputs,
                 sk_spend,
                 merkle_root,
-                #[cfg(feature = "plonky3")]
-                merkle_root_pq: [0u8; 48],
                 fee,
                 value_balance: 0,
                 stablecoin: StablecoinPolicyBinding::default(),
@@ -153,8 +153,6 @@ fn witness_rejects_oversized_inputs() {
                 position: 0,
                 rho_seed: [4u8; 32],
                 merkle_path: MerklePath::default(),
-                #[cfg(feature = "plonky3")]
-                merkle_path_pq: None,
             };
             MAX_INPUTS + 1
         ],
@@ -168,9 +166,7 @@ fn witness_rejects_oversized_inputs() {
             },
         }],
         sk_spend: [0u8; 32],
-        merkle_root: [0u8; 32],
-        #[cfg(feature = "plonky3")]
-        merkle_root_pq: [0u8; 48],
+        merkle_root: [0u8; 48],
         fee: 0,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),

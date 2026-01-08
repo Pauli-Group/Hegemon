@@ -11,16 +11,15 @@ use winterfell::{
 };
 
 use crate::air::{
-    commitment_row_01, commitment_row_23, DisclosureAir, DisclosurePublicInputs, COL_DOMAIN,
-    COL_IN0, COL_IN1, COL_RESET, COL_S0, COL_S1, COL_S2,
+    commitment_row, DisclosureAir, DisclosurePublicInputs, COL_DOMAIN, COL_IN0, COL_IN1, COL_IN2,
+    COL_IN3, COL_IN4, COL_IN5, COL_RESET, COL_S0,
 };
 use crate::constants::{
-    CYCLE_LENGTH, INPUT_PAIRS, NOTE_DOMAIN_TAG, POSEIDON_ROUNDS, TOTAL_CYCLES, TRACE_LENGTH,
-    TRACE_WIDTH,
+    CYCLE_LENGTH, INPUT_CHUNKS, NOTE_DOMAIN_TAG, POSEIDON2_RATE, POSEIDON2_STEPS, POSEIDON2_WIDTH,
+    TOTAL_CYCLES, TRACE_LENGTH, TRACE_WIDTH,
 };
+use crate::poseidon2::poseidon2_step;
 use crate::{DisclosureCircuitError, PaymentDisclosureClaim, PaymentDisclosureWitness};
-
-use transaction_core::stark_air::poseidon_round;
 
 type Blake3 = Blake3_256<BaseElement>;
 
@@ -28,8 +27,7 @@ type Blake3 = Blake3_256<BaseElement>;
 struct CycleSpec {
     reset: bool,
     domain: u64,
-    in0: BaseElement,
-    in1: BaseElement,
+    inputs: [BaseElement; POSEIDON2_RATE],
 }
 
 pub struct DisclosureProver {
@@ -51,28 +49,37 @@ impl DisclosureProver {
         witness: &PaymentDisclosureWitness,
     ) -> Result<TraceTable<BaseElement>, DisclosureCircuitError> {
         let inputs = commitment_inputs(claim, witness);
-        if inputs.len() != INPUT_PAIRS * 2 {
+        let expected_len = 2 + 4 + 4 + 4;
+        if inputs.len() != expected_len {
             return Err(DisclosureCircuitError::InvalidWitness(
                 "commitment input length mismatch",
             ));
         }
 
-        let mut cycle_specs = Vec::with_capacity(INPUT_PAIRS);
-        for (idx, chunk) in inputs.chunks(2).enumerate() {
+        let mut cycle_specs = Vec::with_capacity(INPUT_CHUNKS);
+        for (idx, chunk) in inputs.chunks(POSEIDON2_RATE).enumerate() {
             let reset = idx == 0;
             let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
+            let mut in_values = [BaseElement::ZERO; POSEIDON2_RATE];
+            for (pos, value) in chunk.iter().enumerate() {
+                in_values[pos] = *value;
+            }
             cycle_specs.push(CycleSpec {
                 reset,
                 domain,
-                in0: chunk[0],
-                in1: chunk[1],
+                inputs: in_values,
             });
+        }
+        if cycle_specs.len() != INPUT_CHUNKS {
+            return Err(DisclosureCircuitError::InvalidWitness(
+                "commitment input chunk mismatch",
+            ));
         }
 
         let trace_len = TRACE_LENGTH;
         let mut trace = vec![vec![BaseElement::ZERO; trace_len]; TRACE_WIDTH];
 
-        let mut prev_state = [BaseElement::ZERO; 3];
+        let mut prev_state = [BaseElement::ZERO; POSEIDON2_WIDTH];
 
         for cycle in 0..TOTAL_CYCLES {
             let cycle_start = cycle * CYCLE_LENGTH;
@@ -82,47 +89,49 @@ impl DisclosureProver {
                 let spec = cycle_specs.get(cycle - 1).copied().unwrap_or(CycleSpec {
                     reset: false,
                     domain: 0,
-                    in0: BaseElement::ZERO,
-                    in1: BaseElement::ZERO,
+                    inputs: [BaseElement::ZERO; POSEIDON2_RATE],
                 });
                 if spec.reset {
-                    [
-                        BaseElement::new(spec.domain) + spec.in0,
-                        spec.in1,
-                        BaseElement::ONE,
-                    ]
+                    let mut state = [BaseElement::ZERO; POSEIDON2_WIDTH];
+                    state[0] = BaseElement::new(spec.domain) + spec.inputs[0];
+                    for idx in 1..POSEIDON2_RATE {
+                        state[idx] = spec.inputs[idx];
+                    }
+                    state[POSEIDON2_WIDTH - 1] = BaseElement::ONE;
+                    state
                 } else {
-                    [
-                        prev_state[0] + spec.in0,
-                        prev_state[1] + spec.in1,
-                        prev_state[2],
-                    ]
+                    let mut state = prev_state;
+                    for idx in 0..POSEIDON2_RATE {
+                        state[idx] += spec.inputs[idx];
+                    }
+                    state
                 }
             };
 
             let mut state = state_start;
-            for round in 0..POSEIDON_ROUNDS {
-                let row = cycle_start + round;
-                trace[COL_S0][row] = state[0];
-                trace[COL_S1][row] = state[1];
-                trace[COL_S2][row] = state[2];
-                poseidon_round(&mut state, round);
+            for step in 0..POSEIDON2_STEPS {
+                let row = cycle_start + step;
+                for idx in 0..POSEIDON2_WIDTH {
+                    trace[COL_S0 + idx][row] = state[idx];
+                }
+                poseidon2_step(&mut state, step);
             }
 
-            for step in POSEIDON_ROUNDS..CYCLE_LENGTH {
+            for step in POSEIDON2_STEPS..CYCLE_LENGTH {
                 let row = cycle_start + step;
-                trace[COL_S0][row] = state[0];
-                trace[COL_S1][row] = state[1];
-                trace[COL_S2][row] = state[2];
+                for idx in 0..POSEIDON2_WIDTH {
+                    trace[COL_S0 + idx][row] = state[idx];
+                }
             }
 
             prev_state = state;
 
             let end_row = cycle_start + (CYCLE_LENGTH - 1);
-            if cycle < INPUT_PAIRS {
+            if cycle < INPUT_CHUNKS {
                 let next_spec = cycle_specs[cycle];
-                trace[COL_IN0][end_row] = next_spec.in0;
-                trace[COL_IN1][end_row] = next_spec.in1;
+                for idx in 0..POSEIDON2_RATE {
+                    trace[COL_IN0 + idx][end_row] = next_spec.inputs[idx];
+                }
                 trace[COL_RESET][end_row] = if next_spec.reset {
                     BaseElement::ONE
                 } else {
@@ -134,8 +143,9 @@ impl DisclosureProver {
                     BaseElement::ZERO
                 };
             } else {
-                trace[COL_IN0][end_row] = BaseElement::ZERO;
-                trace[COL_IN1][end_row] = BaseElement::ZERO;
+                for idx in 0..POSEIDON2_RATE {
+                    trace[COL_IN0 + idx][end_row] = BaseElement::ZERO;
+                }
                 trace[COL_RESET][end_row] = BaseElement::ZERO;
                 trace[COL_DOMAIN][end_row] = BaseElement::ZERO;
             }
@@ -166,19 +176,21 @@ impl Prover for DisclosureProver {
         DefaultConstraintEvaluator<'a, DisclosureAir, E>;
 
     fn get_pub_inputs(&self, trace: &Self::Trace) -> DisclosurePublicInputs {
-        let value = trace.get(COL_IN0, crate::air::absorb_row(0));
-        let asset_id = trace.get(COL_IN1, crate::air::absorb_row(0));
-        let pk0 = trace.get(COL_IN0, crate::air::absorb_row(1));
-        let pk1 = trace.get(COL_IN1, crate::air::absorb_row(1));
-        let pk2 = trace.get(COL_IN0, crate::air::absorb_row(2));
-        let pk3 = trace.get(COL_IN1, crate::air::absorb_row(2));
-        let row_01 = commitment_row_01();
-        let row_23 = commitment_row_23();
+        let row_inputs = crate::air::absorb_row(0);
+        let value = trace.get(COL_IN0, row_inputs);
+        let asset_id = trace.get(COL_IN1, row_inputs);
+        let pk0 = trace.get(COL_IN2, row_inputs);
+        let pk1 = trace.get(COL_IN3, row_inputs);
+        let pk2 = trace.get(COL_IN4, row_inputs);
+        let pk3 = trace.get(COL_IN5, row_inputs);
+        let row = commitment_row();
         let commitment = [
-            trace.get(COL_S0, row_01),
-            trace.get(COL_S1, row_01),
-            trace.get(COL_S0, row_23),
-            trace.get(COL_S1, row_23),
+            trace.get(COL_S0, row),
+            trace.get(COL_S0 + 1, row),
+            trace.get(COL_S0 + 2, row),
+            trace.get(COL_S0 + 3, row),
+            trace.get(COL_S0 + 4, row),
+            trace.get(COL_S0 + 5, row),
         ];
 
         DisclosurePublicInputs {
@@ -232,7 +244,7 @@ fn commitment_inputs(
     claim: &PaymentDisclosureClaim,
     witness: &PaymentDisclosureWitness,
 ) -> Vec<BaseElement> {
-    let mut inputs = Vec::with_capacity(INPUT_PAIRS * 2);
+    let mut inputs = Vec::with_capacity(2 + 4 + 4 + 4);
     inputs.push(BaseElement::new(claim.value));
     inputs.push(BaseElement::new(claim.asset_id));
     inputs.extend(bytes32_to_felts(&claim.pk_recipient));

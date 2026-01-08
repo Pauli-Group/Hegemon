@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha384};
 use std::collections::BTreeMap;
 
 pub type CircuitVersion = u16;
@@ -62,7 +62,7 @@ impl VersionMatrix {
         &self.counts
     }
 
-    pub fn commitment(&self) -> [u8; 32] {
+    pub fn commitment(&self) -> [u8; 48] {
         compute_version_commitment(
             self.counts
                 .iter()
@@ -71,18 +71,18 @@ impl VersionMatrix {
     }
 }
 
-pub fn compute_version_commitment<I>(pairs: I) -> [u8; 32]
+pub fn compute_version_commitment<I>(pairs: I) -> [u8; 48]
 where
     I: IntoIterator<Item = (VersionBinding, u32)>,
 {
-    let mut hasher = Sha256::new();
+    let mut hasher = Sha384::new();
     for (binding, count) in pairs.into_iter() {
         hasher.update(binding.circuit.to_le_bytes());
         hasher.update(binding.crypto.to_le_bytes());
         hasher.update(count.to_le_bytes());
     }
     let digest = hasher.finalize();
-    let mut out = [0u8; 32];
+    let mut out = [0u8; 48];
     out.copy_from_slice(&digest);
     out
 }

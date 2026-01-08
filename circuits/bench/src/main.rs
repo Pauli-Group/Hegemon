@@ -11,19 +11,12 @@ use serde::Serialize;
 use state_merkle::CommitmentTree;
 use transaction_circuit::{
     constants::{CIRCUIT_MERKLE_DEPTH, MAX_INPUTS},
-    hashing::{bytes32_to_felts, felts_to_bytes32, HashFelt},
+    hashing_pq::{bytes48_to_felts, felts_to_bytes48, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
     proof, StablecoinPolicyBinding, TransactionWitness,
 };
 
-#[cfg(feature = "plonky3")]
-use transaction_circuit::hashing_pq::{
-    felts_to_bytes48, merkle_node as merkle_node_pq, note_commitment,
-    HashFelt as HashFeltPq,
-};
-#[cfg(feature = "plonky3")]
-use transaction_circuit::note::MerklePathPq;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Benchmark transaction and block circuits", long_about = None)]
@@ -163,12 +156,12 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
 
 /// Build a commitment tree using the same logic as the chain, returning
 /// transaction-circuit compatible authentication paths and the tree root.
-fn build_commitment_tree(leaves: &[HashFelt]) -> Result<(Vec<MerklePath>, [u8; 32])> {
+fn build_commitment_tree(leaves: &[HashFelt]) -> Result<(Vec<MerklePath>, [u8; 48])> {
     let mut tree =
         CommitmentTree::new(CIRCUIT_MERKLE_DEPTH).context("init commitment tree for witness")?;
 
     for leaf in leaves {
-        tree.append(felts_to_bytes32(leaf))
+        tree.append(felts_to_bytes48(leaf))
             .context("append leaf to witness commitment tree")?;
     }
 
@@ -181,34 +174,12 @@ fn build_commitment_tree(leaves: &[HashFelt]) -> Result<(Vec<MerklePath>, [u8; 3
             .context("commitment tree authentication path")?;
         let siblings = siblings_bytes
             .into_iter()
-            .map(|bytes| bytes32_to_felts(&bytes).ok_or_else(|| anyhow!("non-canonical bytes32")))
+            .map(|bytes| bytes48_to_felts(&bytes).ok_or_else(|| anyhow!("non-canonical bytes48")))
             .collect::<Result<Vec<_>>>()?;
         paths.push(MerklePath { siblings });
     }
 
     Ok((paths, root))
-}
-
-#[cfg(feature = "plonky3")]
-fn build_two_leaf_merkle_tree_pq(
-    leaf0: HashFeltPq,
-    leaf1: HashFeltPq,
-) -> (Vec<MerklePathPq>, [u8; 48]) {
-    let mut siblings0 = vec![leaf1];
-    let mut siblings1 = vec![leaf0];
-    let mut current = merkle_node_pq(leaf0, leaf1);
-
-    for _ in 1..CIRCUIT_MERKLE_DEPTH {
-        let zero = [transaction_circuit::hashing_pq::Felt::ZERO; 6];
-        siblings0.push(zero);
-        siblings1.push(zero);
-        current = merkle_node_pq(current, zero);
-    }
-
-    (
-        vec![MerklePathPq { siblings: siblings0 }, MerklePathPq { siblings: siblings1 }],
-        felts_to_bytes48(&current),
-    )
 }
 
 fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness {
@@ -228,20 +199,6 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
 
     // Build Merkle tree with these leaves
     let (paths, merkle_root) = build_commitment_tree(&commitments).expect("commitment tree");
-    #[cfg(feature = "plonky3")]
-    let (paths_pq, merkle_root_pq) = {
-        let mut commitments_pq = Vec::with_capacity(input_notes.len());
-        for note in &input_notes {
-            commitments_pq.push(note_commitment(
-                note.value,
-                note.asset_id,
-                &note.pk_recipient,
-                &note.rho,
-                &note.r,
-            ));
-        }
-        build_two_leaf_merkle_tree_pq(commitments_pq[0], commitments_pq[1])
-    };
 
     // Create input witnesses
     let input_witnesses: Vec<InputNoteWitness> = input_notes
@@ -253,8 +210,6 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
             position: i as u64,
             rho_seed: random_bytes(rng),
             merkle_path,
-            #[cfg(feature = "plonky3")]
-            merkle_path_pq: paths_pq.get(i).cloned(),
         })
         .collect();
 
@@ -290,8 +245,6 @@ fn synthetic_witness(rng: &mut ChaCha20Rng, counter: u64) -> TransactionWitness 
         outputs,
         sk_spend: random_bytes(rng),
         merkle_root,
-        #[cfg(feature = "plonky3")]
-        merkle_root_pq: merkle_root_pq,
         fee,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),

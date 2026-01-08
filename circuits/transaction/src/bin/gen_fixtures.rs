@@ -6,23 +6,13 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use transaction_circuit::hashing::{felts_to_bytes32, merkle_node, HashFelt};
+use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::MerklePath;
 use transaction_circuit::proof::{prove, TransactionProof};
 use transaction_circuit::{
     InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionWitness,
 };
-use winterfell::math::FieldElement;
-
-#[cfg(feature = "plonky3")]
-use p3_field::PrimeCharacteristicRing;
-#[cfg(feature = "plonky3")]
-use transaction_circuit::hashing_pq::{
-    felts_to_bytes48, merkle_node as merkle_node_pq, note_commitment, HashFelt as HashFeltPq,
-};
-#[cfg(feature = "plonky3")]
-use transaction_circuit::note::MerklePathPq;
 
 fn build_two_leaf_merkle_tree(
     leaf0: HashFelt,
@@ -33,7 +23,7 @@ fn build_two_leaf_merkle_tree(
     let mut current = merkle_node(leaf0, leaf1);
 
     for _ in 1..transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH {
-        let zero = [transaction_circuit::hashing::Felt::ZERO; 4];
+        let zero = [transaction_circuit::hashing_pq::Felt::ZERO; 6];
         siblings0.push(zero);
         siblings1.push(zero);
         current = merkle_node(current, zero);
@@ -42,29 +32,6 @@ fn build_two_leaf_merkle_tree(
     (
         MerklePath { siblings: siblings0 },
         MerklePath { siblings: siblings1 },
-        current,
-    )
-}
-
-#[cfg(feature = "plonky3")]
-fn build_two_leaf_merkle_tree_pq(
-    leaf0: HashFeltPq,
-    leaf1: HashFeltPq,
-) -> (MerklePathPq, MerklePathPq, HashFeltPq) {
-    let mut siblings0 = vec![leaf1];
-    let mut siblings1 = vec![leaf0];
-    let mut current = merkle_node_pq(leaf0, leaf1);
-
-    for _ in 1..transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH {
-        let zero = [transaction_circuit::hashing_pq::Felt::ZERO; 6];
-        siblings0.push(zero);
-        siblings1.push(zero);
-        current = merkle_node_pq(current, zero);
-    }
-
-    (
-        MerklePathPq { siblings: siblings0 },
-        MerklePathPq { siblings: siblings1 },
         current,
     )
 }
@@ -88,40 +55,18 @@ fn sample_witness() -> TransactionWitness {
     let leaf0 = input_native_data.commitment();
     let leaf1 = input_asset_data.commitment();
     let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
-    #[cfg(feature = "plonky3")]
-    let (merkle_path0_pq, merkle_path1_pq, merkle_root_pq) = {
-        let leaf0_pq = note_commitment(
-            input_native_data.value,
-            input_native_data.asset_id,
-            &input_native_data.pk_recipient,
-            &input_native_data.rho,
-            &input_native_data.r,
-        );
-        let leaf1_pq = note_commitment(
-            input_asset_data.value,
-            input_asset_data.asset_id,
-            &input_asset_data.pk_recipient,
-            &input_asset_data.rho,
-            &input_asset_data.r,
-        );
-        build_two_leaf_merkle_tree_pq(leaf0_pq, leaf1_pq)
-    };
 
     let input_note_native = InputNoteWitness {
         note: input_native_data,
         position: 0,
         rho_seed: [9u8; 32],
         merkle_path: merkle_path0,
-        #[cfg(feature = "plonky3")]
-        merkle_path_pq: Some(merkle_path0_pq),
     };
     let input_note_asset = InputNoteWitness {
         note: input_asset_data,
         position: 1,
         rho_seed: [8u8; 32],
         merkle_path: merkle_path1,
-        #[cfg(feature = "plonky3")]
-        merkle_path_pq: Some(merkle_path1_pq),
     };
     let output_native = OutputNoteWitness {
         note: transaction_circuit::note::NoteData {
@@ -145,9 +90,7 @@ fn sample_witness() -> TransactionWitness {
         inputs: vec![input_note_native, input_note_asset],
         outputs: vec![output_native, output_asset],
         sk_spend: [42u8; 32],
-        merkle_root: felts_to_bytes32(&merkle_root),
-        #[cfg(feature = "plonky3")]
-        merkle_root_pq: felts_to_bytes48(&merkle_root_pq),
+        merkle_root: felts_to_bytes48(&merkle_root),
         fee: 5,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),

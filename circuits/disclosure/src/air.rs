@@ -9,7 +9,10 @@ use winterfell::{
     TransitionConstraintDegree,
 };
 
-use crate::constants::{CYCLE_LENGTH, INPUT_PAIRS, NOTE_DOMAIN_TAG, POSEIDON_ROUNDS};
+use crate::constants::{
+    CYCLE_LENGTH, INPUT_CHUNKS, NOTE_DOMAIN_TAG, POSEIDON2_SBOX_DEGREE, POSEIDON2_STEPS,
+    POSEIDON2_WIDTH,
+};
 
 // ================================================================================================
 // TRACE CONFIGURATION
@@ -18,29 +21,33 @@ use crate::constants::{CYCLE_LENGTH, INPUT_PAIRS, NOTE_DOMAIN_TAG, POSEIDON_ROUN
 pub const COL_S0: usize = 0;
 pub const COL_S1: usize = 1;
 pub const COL_S2: usize = 2;
+pub const COL_S3: usize = 3;
+pub const COL_S4: usize = 4;
+pub const COL_S5: usize = 5;
+pub const COL_S6: usize = 6;
+pub const COL_S7: usize = 7;
+pub const COL_S8: usize = 8;
+pub const COL_S9: usize = 9;
+pub const COL_S10: usize = 10;
+pub const COL_S11: usize = 11;
 
-pub const COL_IN0: usize = 3;
-pub const COL_IN1: usize = 4;
+pub const COL_IN0: usize = 12;
+pub const COL_IN1: usize = 13;
+pub const COL_IN2: usize = 14;
+pub const COL_IN3: usize = 15;
+pub const COL_IN4: usize = 16;
+pub const COL_IN5: usize = 17;
 
-pub const COL_RESET: usize = 5;
-pub const COL_DOMAIN: usize = 6;
+pub const COL_RESET: usize = 18;
+pub const COL_DOMAIN: usize = 19;
 
 pub fn absorb_row(cycle: usize) -> usize {
     cycle * CYCLE_LENGTH + (CYCLE_LENGTH - 1)
 }
 
 pub fn commitment_row() -> usize {
-    commitment_row_01()
-}
-
-pub fn commitment_row_01() -> usize {
-    let last_cycle = crate::constants::DUMMY_CYCLES + INPUT_PAIRS - 1;
+    let last_cycle = crate::constants::DUMMY_CYCLES + INPUT_CHUNKS - 1;
     absorb_row(last_cycle)
-}
-
-pub fn commitment_row_23() -> usize {
-    let squeeze_cycle = crate::constants::DUMMY_CYCLES + INPUT_PAIRS;
-    absorb_row(squeeze_cycle)
 }
 
 // ================================================================================================
@@ -52,7 +59,7 @@ pub struct DisclosurePublicInputs {
     pub value: BaseElement,
     pub asset_id: BaseElement,
     pub pk_recipient: [BaseElement; 4],
-    pub commitment: [BaseElement; 4],
+    pub commitment: [BaseElement; 6],
 }
 
 impl Default for DisclosurePublicInputs {
@@ -61,14 +68,14 @@ impl Default for DisclosurePublicInputs {
             value: BaseElement::ZERO,
             asset_id: BaseElement::ZERO,
             pk_recipient: [BaseElement::ZERO; 4],
-            commitment: [BaseElement::ZERO; 4],
+            commitment: [BaseElement::ZERO; 6],
         }
     }
 }
 
 impl ToElements<BaseElement> for DisclosurePublicInputs {
     fn to_elements(&self) -> Vec<BaseElement> {
-        let mut out = Vec::with_capacity(10);
+        let mut out = Vec::with_capacity(12);
         out.push(self.value);
         out.push(self.asset_id);
         out.extend(self.pk_recipient);
@@ -86,20 +93,21 @@ pub struct DisclosureAir {
     pub_inputs: DisclosurePublicInputs,
 }
 
-const NUM_CONSTRAINTS: usize = 4;
-const NUM_ASSERTIONS: usize = 45;
+const NUM_CONSTRAINTS: usize = 13;
+const NUM_ASSERTIONS: usize = 60;
 
 impl Air for DisclosureAir {
     type BaseField = BaseElement;
     type PublicInputs = DisclosurePublicInputs;
 
     fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
-        let degrees = vec![
-            TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
-            TransitionConstraintDegree::with_cycles(5, vec![CYCLE_LENGTH]),
-            TransitionConstraintDegree::new(2),
+        let mut degrees = vec![
+            TransitionConstraintDegree::with_cycles(POSEIDON2_SBOX_DEGREE as usize, vec![
+                CYCLE_LENGTH,
+            ]);
+            POSEIDON2_WIDTH
         ];
+        degrees.push(TransitionConstraintDegree::new(2));
         debug_assert_eq!(degrees.len(), NUM_CONSTRAINTS);
 
         Self {
@@ -123,110 +131,106 @@ impl Air for DisclosureAir {
 
         let hash_flag = periodic_values[0];
         let absorb_flag = periodic_values[1];
-        let rc0 = periodic_values[2];
-        let rc1 = periodic_values[3];
-        let rc2 = periodic_values[4];
+        let external_flag = periodic_values[2];
+        let internal_flag = periodic_values[3];
 
-        let t0 = current[COL_S0] + rc0;
-        let t1 = current[COL_S1] + rc1;
-        let t2 = current[COL_S2] + rc2;
+        let mut rc = [E::ZERO; POSEIDON2_WIDTH];
+        for i in 0..POSEIDON2_WIDTH {
+            rc[i] = periodic_values[4 + i];
+        }
 
-        let s0 = t0.exp(5u64.into());
-        let s1 = t1.exp(5u64.into());
-        let s2 = t2.exp(5u64.into());
-
-        let mds = transaction_core::poseidon_constants::MDS_MATRIX;
-        let hash_s0 = s0 * E::from(BaseElement::new(mds[0][0]))
-            + s1 * E::from(BaseElement::new(mds[0][1]))
-            + s2 * E::from(BaseElement::new(mds[0][2]));
-        let hash_s1 = s0 * E::from(BaseElement::new(mds[1][0]))
-            + s1 * E::from(BaseElement::new(mds[1][1]))
-            + s2 * E::from(BaseElement::new(mds[1][2]));
-        let hash_s2 = s0 * E::from(BaseElement::new(mds[2][0]))
-            + s1 * E::from(BaseElement::new(mds[2][1]))
-            + s2 * E::from(BaseElement::new(mds[2][2]));
+        let mut state = [E::ZERO; POSEIDON2_WIDTH];
+        for i in 0..POSEIDON2_WIDTH {
+            state[i] = current[COL_S0 + i];
+        }
 
         let one = E::ONE;
         let copy_flag = one - hash_flag - absorb_flag;
+        let mds_flag = hash_flag - external_flag - internal_flag;
+        let hash_state = poseidon2_hash_state(&state, &rc, mds_flag, external_flag, internal_flag);
 
         let reset = current[COL_RESET];
         let domain = current[COL_DOMAIN];
-        let in0 = current[COL_IN0];
-        let in1 = current[COL_IN1];
+        let inputs = [
+            current[COL_IN0],
+            current[COL_IN1],
+            current[COL_IN2],
+            current[COL_IN3],
+            current[COL_IN4],
+            current[COL_IN5],
+        ];
 
-        let start_s0 = domain + in0;
-        let start_s1 = in1;
-        let start_s2 = one;
+        let mut start_state = [E::ZERO; POSEIDON2_WIDTH];
+        start_state[0] = domain + inputs[0];
+        start_state[1] = inputs[1];
+        start_state[2] = inputs[2];
+        start_state[3] = inputs[3];
+        start_state[4] = inputs[4];
+        start_state[5] = inputs[5];
+        start_state[POSEIDON2_WIDTH - 1] = one;
 
-        let cont_s0 = current[COL_S0] + in0;
-        let cont_s1 = current[COL_S1] + in1;
-        let cont_s2 = current[COL_S2];
+        let mut cont_state = state;
+        for i in 0..inputs.len() {
+            cont_state[i] = cont_state[i] + inputs[i];
+        }
 
-        let absorb_s0 = reset * start_s0 + (one - reset) * cont_s0;
-        let absorb_s1 = reset * start_s1 + (one - reset) * cont_s1;
-        let absorb_s2 = reset * start_s2 + (one - reset) * cont_s2;
+        let mut absorb_state = [E::ZERO; POSEIDON2_WIDTH];
+        for i in 0..POSEIDON2_WIDTH {
+            let start = start_state[i];
+            let cont = cont_state[i];
+            absorb_state[i] = reset * start + (one - reset) * cont;
+        }
 
-        let expected_s0 =
-            hash_flag * hash_s0 + copy_flag * current[COL_S0] + absorb_flag * absorb_s0;
-        let expected_s1 =
-            hash_flag * hash_s1 + copy_flag * current[COL_S1] + absorb_flag * absorb_s1;
-        let expected_s2 =
-            hash_flag * hash_s2 + copy_flag * current[COL_S2] + absorb_flag * absorb_s2;
+        for i in 0..POSEIDON2_WIDTH {
+            let expected =
+                hash_flag * hash_state[i] + absorb_flag * absorb_state[i] + copy_flag * state[i];
+            result[i] = next[COL_S0 + i] - expected;
+        }
 
-        let mut idx = 0;
-        result[idx] = next[COL_S0] - expected_s0;
-        idx += 1;
-        result[idx] = next[COL_S1] - expected_s1;
-        idx += 1;
-        result[idx] = next[COL_S2] - expected_s2;
-        idx += 1;
+        result[POSEIDON2_WIDTH] = reset * (reset - one);
 
-        result[idx] = reset * (reset - one);
-        idx += 1;
-
-        debug_assert_eq!(idx, NUM_CONSTRAINTS);
+        debug_assert_eq!(POSEIDON2_WIDTH + 1, NUM_CONSTRAINTS);
     }
 
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
         let mut assertions = Vec::with_capacity(NUM_ASSERTIONS);
 
         // Initial state is zero.
-        assertions.push(Assertion::single(COL_S0, 0, BaseElement::ZERO));
-        assertions.push(Assertion::single(COL_S1, 0, BaseElement::ZERO));
-        assertions.push(Assertion::single(COL_S2, 0, BaseElement::ZERO));
+        for idx in 0..POSEIDON2_WIDTH {
+            assertions.push(Assertion::single(COL_S0 + idx, 0, BaseElement::ZERO));
+        }
 
         // Bind public inputs to absorption rows.
-        let row_value = absorb_row(0);
-        assertions.push(Assertion::single(COL_IN0, row_value, self.pub_inputs.value));
+        let row_inputs = absorb_row(0);
+        assertions.push(Assertion::single(COL_IN0, row_inputs, self.pub_inputs.value));
+        assertions.push(Assertion::single(COL_IN1, row_inputs, self.pub_inputs.asset_id));
         assertions.push(Assertion::single(
-            COL_IN1,
-            row_value,
-            self.pub_inputs.asset_id,
-        ));
-
-        let row_pk0 = absorb_row(1);
-        assertions.push(Assertion::single(
-            COL_IN0,
-            row_pk0,
+            COL_IN2,
+            row_inputs,
             self.pub_inputs.pk_recipient[0],
         ));
         assertions.push(Assertion::single(
-            COL_IN1,
-            row_pk0,
+            COL_IN3,
+            row_inputs,
             self.pub_inputs.pk_recipient[1],
         ));
-
-        let row_pk1 = absorb_row(2);
         assertions.push(Assertion::single(
-            COL_IN0,
-            row_pk1,
+            COL_IN4,
+            row_inputs,
             self.pub_inputs.pk_recipient[2],
         ));
         assertions.push(Assertion::single(
-            COL_IN1,
-            row_pk1,
+            COL_IN5,
+            row_inputs,
             self.pub_inputs.pk_recipient[3],
         ));
+
+        // Pad unused inputs in the final chunk to zero.
+        let padded_row = absorb_row(INPUT_CHUNKS - 1);
+        assertions.push(Assertion::single(COL_IN2, padded_row, BaseElement::ZERO));
+        assertions.push(Assertion::single(COL_IN3, padded_row, BaseElement::ZERO));
+        assertions.push(Assertion::single(COL_IN4, padded_row, BaseElement::ZERO));
+        assertions.push(Assertion::single(COL_IN5, padded_row, BaseElement::ZERO));
 
         // Enforce reset/domain for each absorption row.
         for cycle in 0..crate::constants::TOTAL_CYCLES {
@@ -244,44 +248,30 @@ impl Air for DisclosureAir {
             }
         }
 
-        // Final commitment output (4 limbs).
-        let row_01 = commitment_row_01();
-        let row_23 = commitment_row_23();
-        assertions.push(Assertion::single(
-            COL_S0,
-            row_01,
-            self.pub_inputs.commitment[0],
-        ));
-        assertions.push(Assertion::single(
-            COL_S1,
-            row_01,
-            self.pub_inputs.commitment[1],
-        ));
-        assertions.push(Assertion::single(
-            COL_S0,
-            row_23,
-            self.pub_inputs.commitment[2],
-        ));
-        assertions.push(Assertion::single(
-            COL_S1,
-            row_23,
-            self.pub_inputs.commitment[3],
-        ));
+        // Final commitment output (6 limbs).
+        let row = commitment_row();
+        assertions.push(Assertion::single(COL_S0, row, self.pub_inputs.commitment[0]));
+        assertions.push(Assertion::single(COL_S1, row, self.pub_inputs.commitment[1]));
+        assertions.push(Assertion::single(COL_S2, row, self.pub_inputs.commitment[2]));
+        assertions.push(Assertion::single(COL_S3, row, self.pub_inputs.commitment[3]));
+        assertions.push(Assertion::single(COL_S4, row, self.pub_inputs.commitment[4]));
+        assertions.push(Assertion::single(COL_S5, row, self.pub_inputs.commitment[5]));
 
         assertions
     }
 
     fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseField>> {
-        let mut result = vec![make_hash_mask(), make_absorb_mask()];
+        let mut result = vec![
+            make_hash_mask(),
+            make_absorb_mask(),
+            make_external_mask(),
+            make_internal_mask(),
+        ];
 
-        for pos in 0..3 {
+        for pos in 0..POSEIDON2_WIDTH {
             let mut column = Vec::with_capacity(CYCLE_LENGTH);
             for step in 0..CYCLE_LENGTH {
-                if step < POSEIDON_ROUNDS {
-                    column.push(transaction_core::stark_air::round_constant(step, pos));
-                } else {
-                    column.push(BaseElement::ZERO);
-                }
+                column.push(round_constant(step, pos));
             }
             result.push(column);
         }
@@ -290,9 +280,115 @@ impl Air for DisclosureAir {
     }
 }
 
+fn poseidon2_hash_state<E: FieldElement<BaseField = BaseElement>>(
+    state: &[E; POSEIDON2_WIDTH],
+    rc: &[E; POSEIDON2_WIDTH],
+    mds_flag: E,
+    external_flag: E,
+    internal_flag: E,
+) -> [E; POSEIDON2_WIDTH] {
+    let mds_state = mds_light(state);
+
+    let mut external_state = [E::ZERO; POSEIDON2_WIDTH];
+    for i in 0..POSEIDON2_WIDTH {
+        external_state[i] = sbox(state[i] + rc[i]);
+    }
+    let external_state = mds_light(&external_state);
+
+    let mut internal_state = [E::ZERO; POSEIDON2_WIDTH];
+    internal_state[0] = sbox(state[0] + rc[0]);
+    for i in 1..POSEIDON2_WIDTH {
+        internal_state[i] = state[i];
+    }
+    let internal_state = matmul_internal(&internal_state);
+
+    let mut out = [E::ZERO; POSEIDON2_WIDTH];
+    for i in 0..POSEIDON2_WIDTH {
+        out[i] = mds_flag * mds_state[i]
+            + external_flag * external_state[i]
+            + internal_flag * internal_state[i];
+    }
+    out
+}
+
+fn sbox<E: FieldElement<BaseField = BaseElement>>(value: E) -> E {
+    value.exp(POSEIDON2_SBOX_DEGREE)
+}
+
+fn mds_light<E: FieldElement<BaseField = BaseElement>>(
+    state: &[E; POSEIDON2_WIDTH],
+) -> [E; POSEIDON2_WIDTH] {
+    let mut out = [E::ZERO; POSEIDON2_WIDTH];
+    for chunk in 0..(POSEIDON2_WIDTH / 4) {
+        let offset = chunk * 4;
+        let mixed = apply_mds4([
+            state[offset],
+            state[offset + 1],
+            state[offset + 2],
+            state[offset + 3],
+        ]);
+        out[offset..offset + 4].copy_from_slice(&mixed);
+    }
+
+    let mut sums = [E::ZERO; 4];
+    for k in 0..4 {
+        let mut acc = E::ZERO;
+        let mut idx = k;
+        while idx < POSEIDON2_WIDTH {
+            acc += out[idx];
+            idx += 4;
+        }
+        sums[k] = acc;
+    }
+
+    for (idx, elem) in out.iter_mut().enumerate() {
+        *elem += sums[idx % 4];
+    }
+
+    out
+}
+
+fn apply_mds4<E: FieldElement<BaseField = BaseElement>>(x: [E; 4]) -> [E; 4] {
+    let x0 = x[0];
+    let x1 = x[1];
+    let x2 = x[2];
+    let x3 = x[3];
+
+    let t01 = x0 + x1;
+    let t23 = x2 + x3;
+    let t0123 = t01 + t23;
+    let t01123 = t0123 + x1;
+    let t01233 = t0123 + x3;
+
+    [
+        t01123 + t01,
+        t01123 + (x2 + x2),
+        t01233 + t23,
+        t01233 + (x0 + x0),
+    ]
+}
+
+fn matmul_internal<E: FieldElement<BaseField = BaseElement>>(
+    state: &[E; POSEIDON2_WIDTH],
+) -> [E; POSEIDON2_WIDTH] {
+    let mut sum = E::ZERO;
+    for elem in state.iter() {
+        sum += *elem;
+    }
+
+    let mut out = [E::ZERO; POSEIDON2_WIDTH];
+    for (idx, elem) in state.iter().enumerate() {
+        let diag = E::from(BaseElement::new(
+            transaction_core::poseidon2_constants::INTERNAL_MATRIX_DIAG[idx],
+        ));
+        out[idx] = *elem * diag + sum;
+    }
+    out
+}
+
 fn make_hash_mask() -> Vec<BaseElement> {
     let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
-    for value in mask.iter_mut().take(POSEIDON_ROUNDS) {
+    for value in mask.iter_mut().take(POSEIDON2_STEPS) {
         *value = BaseElement::ONE;
     }
     mask
@@ -302,6 +398,71 @@ fn make_absorb_mask() -> Vec<BaseElement> {
     let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
     mask[CYCLE_LENGTH - 1] = BaseElement::ONE;
     mask
+}
+
+fn make_external_mask() -> Vec<BaseElement> {
+    let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
+    for step in 1..POSEIDON2_STEPS {
+        let mut idx = step - 1;
+        if idx < transaction_core::constants::POSEIDON2_EXTERNAL_ROUNDS {
+            mask[step] = BaseElement::ONE;
+            continue;
+        }
+        idx -= transaction_core::constants::POSEIDON2_EXTERNAL_ROUNDS;
+        if idx < transaction_core::constants::POSEIDON2_INTERNAL_ROUNDS {
+            continue;
+        }
+        idx -= transaction_core::constants::POSEIDON2_INTERNAL_ROUNDS;
+        if idx < transaction_core::constants::POSEIDON2_EXTERNAL_ROUNDS {
+            mask[step] = BaseElement::ONE;
+        }
+    }
+    mask
+}
+
+fn make_internal_mask() -> Vec<BaseElement> {
+    let mut mask = vec![BaseElement::ZERO; CYCLE_LENGTH];
+    for step in 1..POSEIDON2_STEPS {
+        let mut idx = step - 1;
+        if idx < transaction_core::constants::POSEIDON2_EXTERNAL_ROUNDS {
+            continue;
+        }
+        idx -= transaction_core::constants::POSEIDON2_EXTERNAL_ROUNDS;
+        if idx < transaction_core::constants::POSEIDON2_INTERNAL_ROUNDS {
+            mask[step] = BaseElement::ONE;
+        }
+    }
+    mask
+}
+
+fn round_constant(step: usize, pos: usize) -> BaseElement {
+    if step == 0 || step >= POSEIDON2_STEPS {
+        return BaseElement::ZERO;
+    }
+
+    let mut idx = step - 1;
+    if idx < transaction_core::constants::POSEIDON2_EXTERNAL_ROUNDS {
+        return BaseElement::new(transaction_core::poseidon2_constants::EXTERNAL_ROUND_CONSTANTS[0]
+            [idx][pos]);
+    }
+    idx -= transaction_core::constants::POSEIDON2_EXTERNAL_ROUNDS;
+
+    if idx < transaction_core::constants::POSEIDON2_INTERNAL_ROUNDS {
+        if pos == 0 {
+            return BaseElement::new(
+                transaction_core::poseidon2_constants::INTERNAL_ROUND_CONSTANTS[idx],
+            );
+        }
+        return BaseElement::ZERO;
+    }
+    idx -= transaction_core::constants::POSEIDON2_INTERNAL_ROUNDS;
+
+    if idx < transaction_core::constants::POSEIDON2_EXTERNAL_ROUNDS {
+        return BaseElement::new(transaction_core::poseidon2_constants::EXTERNAL_ROUND_CONSTANTS[1]
+            [idx][pos]);
+    }
+
+    BaseElement::ZERO
 }
 
 #[cfg(test)]

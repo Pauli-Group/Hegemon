@@ -10849,7 +10849,7 @@ name = "state-merkle"
 version = "0.1.0"
 dependencies = [
  "thiserror 1.0.69",
- "transaction-circuit",
+ "transaction-core",
 ]
 
 [[package]]

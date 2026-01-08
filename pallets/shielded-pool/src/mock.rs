@@ -30,7 +30,7 @@ use sp_runtime::BuildStorage;
 thread_local! {
     static MOCK_POLICY: RefCell<Option<StablecoinPolicySnapshot<u32, u32, u64, u64>>> =
         const { RefCell::new(None) };
-    static MOCK_POLICY_HASH: RefCell<Option<[u8; 32]>> = const { RefCell::new(None) };
+    static MOCK_POLICY_HASH: RefCell<Option<[u8; 48]>> = const { RefCell::new(None) };
     static MOCK_ORACLE: RefCell<Option<(u32, OracleCommitmentSnapshot<u64>)>> =
         const { RefCell::new(None) };
     static MOCK_ATTESTATION: RefCell<Option<(u64, AttestationCommitmentSnapshot<u64>)>> =
@@ -48,7 +48,7 @@ impl StablecoinPolicyProvider<u32, u32, u64, u64> for MockStablecoinPolicyProvid
         })
     }
 
-    fn policy_hash(asset_id: &u32) -> Option<[u8; 32]> {
+    fn policy_hash(asset_id: &u32) -> Option<[u8; 48]> {
         let policy = MOCK_POLICY.with(|cell| cell.borrow().clone());
         if policy.as_ref().map(|p| &p.asset_id) != Some(asset_id) {
             return None;
@@ -83,7 +83,7 @@ impl AttestationCommitmentProvider<u64, u64> for MockAttestationCommitmentProvid
 
 pub fn set_mock_policy(
     policy: Option<StablecoinPolicySnapshot<u32, u32, u64, u64>>,
-    hash: Option<[u8; 32]>,
+    hash: Option<[u8; 48]>,
 ) {
     MOCK_POLICY.with(|cell| *cell.borrow_mut() = policy);
     MOCK_POLICY_HASH.with(|cell| *cell.borrow_mut() = hash);
@@ -257,7 +257,7 @@ mod tests {
 
     fn valid_coinbase_data(amount: u64) -> crate::types::CoinbaseNoteData {
         let recipient_address = [7u8; crate::types::DIVERSIFIED_ADDRESS_SIZE];
-        let public_seed = [9u8; 32];
+        let public_seed = [9u8; 48];
         #[allow(deprecated)]
         let commitment =
             crate::commitment::coinbase_commitment(&recipient_address, amount, &public_seed);
@@ -285,9 +285,9 @@ mod tests {
     }
 
     fn stablecoin_binding(
-        policy_hash: [u8; 32],
-        oracle_commitment: [u8; 32],
-        attestation_commitment: [u8; 32],
+        policy_hash: [u8; 48],
+        oracle_commitment: [u8; 48],
+        attestation_commitment: [u8; 48],
     ) -> StablecoinPolicyBinding {
         StablecoinPolicyBinding {
             asset_id: 1001,
@@ -306,13 +306,13 @@ mod tests {
             let anchor = tree.root();
 
             // One real nullifier + one padding nullifier (now rejected).
-            let real_nf = [9u8; 32];
-            let padding_nf = [0u8; 32];
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+            let real_nf = [9u8; 48];
+            let padding_nf = [0u8; 48];
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
                 vec![real_nf, padding_nf].try_into().unwrap();
 
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[2u8; 32]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
 
@@ -470,10 +470,10 @@ mod tests {
             let anchor = MerkleTreeStorage::<Test>::get().root();
 
             // Now do a shielded transfer
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32]].try_into().unwrap();
-            let new_commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[2u8; 32]].try_into().unwrap();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let new_commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![encrypted_note].try_into().unwrap();
 
@@ -491,7 +491,7 @@ mod tests {
             ));
 
             // Check nullifier was added
-            assert!(NullifiersStorage::<Test>::contains_key([1u8; 32]));
+            assert!(NullifiersStorage::<Test>::contains_key([1u8; 48]));
         });
     }
 
@@ -499,16 +499,16 @@ mod tests {
     fn shielded_transfer_rejects_missing_oracle_commitment() {
         new_test_ext().execute_with(|| {
             let anchor = MerkleTreeStorage::<Test>::get().root();
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32]].try_into().unwrap();
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[2u8; 32]].try_into().unwrap();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
 
-            let policy_hash = [10u8; 32];
-            let oracle_commitment = [11u8; 32];
-            let attestation_commitment = [12u8; 32];
+            let policy_hash = [10u8; 48];
+            let oracle_commitment = [11u8; 48];
+            let attestation_commitment = [12u8; 48];
 
             set_mock_policy(Some(stablecoin_policy_snapshot()), Some(policy_hash));
             set_mock_oracle(7, None);
@@ -551,16 +551,16 @@ mod tests {
             frame_system::Pallet::<Test>::set_block_number(10);
 
             let anchor = MerkleTreeStorage::<Test>::get().root();
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32]].try_into().unwrap();
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[2u8; 32]].try_into().unwrap();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
 
-            let policy_hash = [20u8; 32];
-            let oracle_commitment = [21u8; 32];
-            let attestation_commitment = [22u8; 32];
+            let policy_hash = [20u8; 48];
+            let oracle_commitment = [21u8; 48];
+            let attestation_commitment = [22u8; 48];
 
             set_mock_policy(Some(stablecoin_policy_snapshot()), Some(policy_hash));
             set_mock_oracle(
@@ -609,16 +609,16 @@ mod tests {
             frame_system::Pallet::<Test>::set_block_number(10);
 
             let anchor = MerkleTreeStorage::<Test>::get().root();
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32]].try_into().unwrap();
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[2u8; 32]].try_into().unwrap();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
 
-            let policy_hash = [30u8; 32];
-            let oracle_commitment = [31u8; 32];
-            let attestation_commitment = [32u8; 32];
+            let policy_hash = [30u8; 48];
+            let oracle_commitment = [31u8; 48];
+            let attestation_commitment = [32u8; 48];
 
             set_mock_policy(Some(stablecoin_policy_snapshot()), Some(policy_hash));
             set_mock_oracle(
@@ -667,16 +667,16 @@ mod tests {
             frame_system::Pallet::<Test>::set_block_number(10);
 
             let anchor = MerkleTreeStorage::<Test>::get().root();
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32]].try_into().unwrap();
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[2u8; 32]].try_into().unwrap();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
 
-            let policy_hash = [40u8; 32];
-            let oracle_commitment = [41u8; 32];
-            let attestation_commitment = [42u8; 32];
+            let policy_hash = [40u8; 48];
+            let oracle_commitment = [41u8; 48];
+            let attestation_commitment = [42u8; 48];
 
             set_mock_policy(Some(stablecoin_policy_snapshot()), Some(policy_hash));
             set_mock_oracle(
@@ -722,11 +722,11 @@ mod tests {
             let anchor = MerkleTreeStorage::<Test>::get().root();
 
             // First spend
-            let nullifier = [99u8; 32];
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+            let nullifier = [99u8; 48];
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
                 vec![nullifier].try_into().unwrap();
-            let new_commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[2u8; 32]].try_into().unwrap();
+            let new_commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
 
@@ -769,12 +769,12 @@ mod tests {
     #[test]
     fn invalid_anchor_rejected() {
         new_test_ext().execute_with(|| {
-            let invalid_anchor = [99u8; 32];
+            let invalid_anchor = [99u8; 48];
 
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32]].try_into().unwrap();
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[2u8; 32]].try_into().unwrap();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
 
@@ -802,11 +802,11 @@ mod tests {
             let anchor = MerkleTreeStorage::<Test>::get().root();
 
             // Same nullifier twice
-            let duplicate_nf = [1u8; 32];
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+            let duplicate_nf = [1u8; 48];
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
                 vec![duplicate_nf, duplicate_nf].try_into().unwrap();
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[2u8; 32], [3u8; 32]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48], [3u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note(), valid_encrypted_note()]
                     .try_into()
@@ -870,10 +870,10 @@ mod tests {
             let anchor = MerkleTreeStorage::<Test>::get().root();
 
             // 2 commitments but 1 encrypted note
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32]].try_into().unwrap();
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[2u8; 32], [3u8; 32]].try_into().unwrap();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48], [3u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
 
@@ -900,7 +900,7 @@ mod tests {
         new_test_ext().execute_with(|| {
             let tree = MerkleTreeStorage::<Test>::get();
             let valid_anchor = tree.root();
-            let invalid_anchor = [99u8; 32];
+            let invalid_anchor = [99u8; 48];
 
             assert!(Pallet::<Test>::is_valid_anchor(&valid_anchor));
             assert!(!Pallet::<Test>::is_valid_anchor(&invalid_anchor));
@@ -910,7 +910,7 @@ mod tests {
     #[test]
     fn is_nullifier_spent_helper_works() {
         new_test_ext().execute_with(|| {
-            let nf = [42u8; 32];
+            let nf = [42u8; 48];
 
             assert!(!Pallet::<Test>::is_nullifier_spent(&nf));
 
@@ -932,9 +932,9 @@ mod tests {
             let tree = MerkleTreeStorage::<Test>::get();
             let anchor = tree.root();
 
-            let empty_nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
+            let empty_nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
                 vec![].try_into().unwrap();
-            let empty_commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+            let empty_commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
                 vec![].try_into().unwrap();
             let empty_ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![].try_into().unwrap();
@@ -964,10 +964,10 @@ mod tests {
             let anchor = MerkleTreeStorage::<Test>::get().root();
 
             let empty_proof = StarkProof::from_bytes(vec![]);
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32]].try_into().unwrap();
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[2u8; 32]].try_into().unwrap();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
 
@@ -1004,10 +1004,10 @@ mod tests {
             let mut anchor = old_anchor;
             for i in 0..101u32 {
                 let byte = (i + 1) as u8;
-                let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                    vec![[byte; 32]].try_into().unwrap();
-                let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                    vec![[byte; 32]].try_into().unwrap();
+                let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                    vec![[byte; 48]].try_into().unwrap();
+                let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                    vec![[byte; 48]].try_into().unwrap();
                 let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                     vec![valid_encrypted_note()].try_into().unwrap();
 
@@ -1028,10 +1028,10 @@ mod tests {
             }
 
             // Now try to use the old anchor
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[200u8; 32]].try_into().unwrap();
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[201u8; 32]].try_into().unwrap();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[200u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[201u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
 
@@ -1063,13 +1063,13 @@ mod tests {
         // Note: Commitment replay is ALLOWED (same commitment can appear multiple times)
         // This is by design - the nullifier prevents double-spending, not the commitment
         new_test_ext().execute_with(|| {
-            let commitment = [42u8; 32];
+            let commitment = [42u8; 48];
 
             let anchor = MerkleTreeStorage::<Test>::get().root();
 
-            let nullifiers_a: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32]].try_into().unwrap();
-            let commitments_a: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+            let nullifiers_a: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments_a: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
                 vec![commitment].try_into().unwrap();
             let ciphertexts_a: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
@@ -1088,9 +1088,9 @@ mod tests {
             ));
 
             let anchor = MerkleTreeStorage::<Test>::get().root();
-            let nullifiers_b: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[2u8; 32]].try_into().unwrap();
-            let commitments_b: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
+            let nullifiers_b: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
+            let commitments_b: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
                 vec![commitment].try_into().unwrap();
             let ciphertexts_b: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
@@ -1118,10 +1118,10 @@ mod tests {
     fn adversarial_nonzero_value_balance_rejected() {
         new_test_ext().execute_with(|| {
             let anchor = MerkleTreeStorage::<Test>::get().root();
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32]].try_into().unwrap();
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[2u8; 32]].try_into().unwrap();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
 
@@ -1150,10 +1150,10 @@ mod tests {
             let anchor = MerkleTreeStorage::<Test>::get().root();
 
             // MaxNullifiersPerTx is 2
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32], [2u8; 32]].try_into().unwrap();
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[5u8; 32], [6u8; 32]].try_into().unwrap();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48], [2u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[5u8; 48], [6u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note(), valid_encrypted_note()]
                     .try_into()
@@ -1182,10 +1182,10 @@ mod tests {
             let tree = MerkleTreeStorage::<Test>::get();
             let anchor = tree.root();
 
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerTx> =
-                vec![[1u8; 32]].try_into().unwrap();
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerTx> =
-                vec![[2u8; 32]].try_into().unwrap();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerTx> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerTx> =
+                vec![[2u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx> =
                 vec![valid_encrypted_note()].try_into().unwrap();
 
@@ -1218,17 +1218,17 @@ mod tests {
             let batch_proof = BatchStarkProof::from_bytes(vec![1u8; 2048], 2);
 
             // Nullifiers: 2 per tx, 4 total
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerBatch> = vec![
-                [1u8; 32], [2u8; 32], // tx 1
-                [3u8; 32], [4u8; 32], // tx 2
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerBatch> = vec![
+                [1u8; 48], [2u8; 48], // tx 1
+                [3u8; 48], [4u8; 48], // tx 2
             ]
             .try_into()
             .unwrap();
 
             // Commitments: 2 per tx, 4 total
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerBatch> = vec![
-                [10u8; 32], [11u8; 32], // tx 1 outputs
-                [12u8; 32], [13u8; 32], // tx 2 outputs
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerBatch> = vec![
+                [10u8; 48], [11u8; 48], // tx 1 outputs
+                [12u8; 48], [13u8; 48], // tx 2 outputs
             ]
             .try_into()
             .unwrap();
@@ -1291,10 +1291,10 @@ mod tests {
             // Create invalid batch proof (batch_size = 3 is not power of 2)
             let invalid_batch_proof = BatchStarkProof::from_bytes(vec![1u8; 2048], 3);
 
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerBatch> =
-                vec![[1u8; 32]].try_into().unwrap();
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerBatch> =
-                vec![[2u8; 32]].try_into().unwrap();
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerBatch> =
+                vec![[1u8; 48]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerBatch> =
+                vec![[2u8; 48]].try_into().unwrap();
             let ciphertexts: BoundedVec<EncryptedNote, MaxCommitmentsPerBatch> =
                 vec![valid_encrypted_note()].try_into().unwrap();
 
@@ -1325,14 +1325,14 @@ mod tests {
             let batch_proof = BatchStarkProof::from_bytes(vec![1u8; 2048], 2);
 
             // Duplicate nullifier
-            let nullifiers: BoundedVec<[u8; 32], MaxNullifiersPerBatch> = vec![
-                [1u8; 32], [1u8; 32], // duplicate!
+            let nullifiers: BoundedVec<[u8; 48], MaxNullifiersPerBatch> = vec![
+                [1u8; 48], [1u8; 48], // duplicate!
             ]
             .try_into()
             .unwrap();
 
-            let commitments: BoundedVec<[u8; 32], MaxCommitmentsPerBatch> =
-                vec![[2u8; 32], [3u8; 32]].try_into().unwrap();
+            let commitments: BoundedVec<[u8; 48], MaxCommitmentsPerBatch> =
+                vec![[2u8; 48], [3u8; 48]].try_into().unwrap();
 
             let ciphertexts: BoundedVec<EncryptedNote, MaxCommitmentsPerBatch> =
                 vec![valid_encrypted_note(), valid_encrypted_note()]

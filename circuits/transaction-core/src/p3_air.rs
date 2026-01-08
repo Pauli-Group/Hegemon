@@ -139,18 +139,24 @@ pub const COL_STABLECOIN_POLICY_HASH0: usize = 77;
 pub const COL_STABLECOIN_POLICY_HASH1: usize = 78;
 pub const COL_STABLECOIN_POLICY_HASH2: usize = 79;
 pub const COL_STABLECOIN_POLICY_HASH3: usize = 80;
-pub const COL_STABLECOIN_ORACLE0: usize = 81;
-pub const COL_STABLECOIN_ORACLE1: usize = 82;
-pub const COL_STABLECOIN_ORACLE2: usize = 83;
-pub const COL_STABLECOIN_ORACLE3: usize = 84;
-pub const COL_STABLECOIN_ATTEST0: usize = 85;
-pub const COL_STABLECOIN_ATTEST1: usize = 86;
-pub const COL_STABLECOIN_ATTEST2: usize = 87;
-pub const COL_STABLECOIN_ATTEST3: usize = 88;
-pub const COL_STABLECOIN_SLOT_SEL0: usize = 89;
-pub const COL_STABLECOIN_SLOT_SEL1: usize = 90;
-pub const COL_STABLECOIN_SLOT_SEL2: usize = 91;
-pub const COL_STABLECOIN_SLOT_SEL3: usize = 92;
+pub const COL_STABLECOIN_POLICY_HASH4: usize = 81;
+pub const COL_STABLECOIN_POLICY_HASH5: usize = 82;
+pub const COL_STABLECOIN_ORACLE0: usize = 83;
+pub const COL_STABLECOIN_ORACLE1: usize = 84;
+pub const COL_STABLECOIN_ORACLE2: usize = 85;
+pub const COL_STABLECOIN_ORACLE3: usize = 86;
+pub const COL_STABLECOIN_ORACLE4: usize = 87;
+pub const COL_STABLECOIN_ORACLE5: usize = 88;
+pub const COL_STABLECOIN_ATTEST0: usize = 89;
+pub const COL_STABLECOIN_ATTEST1: usize = 90;
+pub const COL_STABLECOIN_ATTEST2: usize = 91;
+pub const COL_STABLECOIN_ATTEST3: usize = 92;
+pub const COL_STABLECOIN_ATTEST4: usize = 93;
+pub const COL_STABLECOIN_ATTEST5: usize = 94;
+pub const COL_STABLECOIN_SLOT_SEL0: usize = 95;
+pub const COL_STABLECOIN_SLOT_SEL1: usize = 96;
+pub const COL_STABLECOIN_SLOT_SEL2: usize = 97;
+pub const COL_STABLECOIN_SLOT_SEL3: usize = 98;
 /// Base trace width (columns) for the transaction circuit.
 pub const BASE_TRACE_WIDTH: usize = COL_STABLECOIN_SLOT_SEL3 + 1;
 
@@ -282,15 +288,14 @@ pub struct TransactionPublicInputsP3 {
     pub stablecoin_policy_version: Felt,
     pub stablecoin_issuance_sign: Felt,
     pub stablecoin_issuance_magnitude: Felt,
-    pub stablecoin_policy_hash: [Felt; 4],
-    pub stablecoin_oracle_commitment: [Felt; 4],
-    pub stablecoin_attestation_commitment: [Felt; 4],
+    pub stablecoin_policy_hash: [Felt; 6],
+    pub stablecoin_oracle_commitment: [Felt; 6],
+    pub stablecoin_attestation_commitment: [Felt; 6],
 }
 
 impl Default for TransactionPublicInputsP3 {
     fn default() -> Self {
         let zero6 = [Felt::ZERO; 6];
-        let zero4 = [Felt::ZERO; 4];
         Self {
             input_flags: vec![Felt::ZERO; MAX_INPUTS],
             output_flags: vec![Felt::ZERO; MAX_OUTPUTS],
@@ -305,16 +310,16 @@ impl Default for TransactionPublicInputsP3 {
             stablecoin_policy_version: Felt::ZERO,
             stablecoin_issuance_sign: Felt::ZERO,
             stablecoin_issuance_magnitude: Felt::ZERO,
-            stablecoin_policy_hash: zero4,
-            stablecoin_oracle_commitment: zero4,
-            stablecoin_attestation_commitment: zero4,
+            stablecoin_policy_hash: zero6,
+            stablecoin_oracle_commitment: zero6,
+            stablecoin_attestation_commitment: zero6,
         }
     }
 }
 
 impl TransactionPublicInputsP3 {
     pub const fn expected_len() -> usize {
-        (MAX_INPUTS + MAX_OUTPUTS) * (1 + POSEIDON2_RATE) + 26
+        (MAX_INPUTS + MAX_OUTPUTS) * (1 + POSEIDON2_RATE) + 32
     }
 
     pub fn to_vec(&self) -> Vec<Felt> {
@@ -398,16 +403,16 @@ impl TransactionPublicInputsP3 {
         idx += 1;
 
         let stablecoin_policy_hash = {
-            let hash = take(elements, &mut idx, 4);
-            [hash[0], hash[1], hash[2], hash[3]]
+            let hash = take(elements, &mut idx, 6);
+            [hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]]
         };
         let stablecoin_oracle_commitment = {
-            let hash = take(elements, &mut idx, 4);
-            [hash[0], hash[1], hash[2], hash[3]]
+            let hash = take(elements, &mut idx, 6);
+            [hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]]
         };
         let stablecoin_attestation_commitment = {
-            let hash = take(elements, &mut idx, 4);
-            [hash[0], hash[1], hash[2], hash[3]]
+            let hash = take(elements, &mut idx, 6);
+            [hash[0], hash[1], hash[2], hash[3], hash[4], hash[5]]
         };
 
         Ok(Self {
@@ -855,15 +860,31 @@ where
         let stablecoin_issuance_magnitude = pv(idx);
         idx += 1;
 
-        let stablecoin_policy_hash = vec![pv(idx), pv(idx + 1), pv(idx + 2), pv(idx + 3)];
-        idx += 4;
-        let stablecoin_oracle_commitment = vec![pv(idx), pv(idx + 1), pv(idx + 2), pv(idx + 3)];
-        idx += 4;
+        let stablecoin_policy_hash = vec![
+            pv(idx),
+            pv(idx + 1),
+            pv(idx + 2),
+            pv(idx + 3),
+            pv(idx + 4),
+            pv(idx + 5),
+        ];
+        idx += 6;
+        let stablecoin_oracle_commitment = vec![
+            pv(idx),
+            pv(idx + 1),
+            pv(idx + 2),
+            pv(idx + 3),
+            pv(idx + 4),
+            pv(idx + 5),
+        ];
+        idx += 6;
         let stablecoin_attestation_commitment = vec![
             pv(idx),
             pv(idx + 1),
             pv(idx + 2),
             pv(idx + 3),
+            pv(idx + 4),
+            pv(idx + 5),
         ];
 
         let sbox = |value: AB::Expr| -> AB::Expr {
@@ -1109,14 +1130,20 @@ where
             COL_STABLECOIN_POLICY_HASH1,
             COL_STABLECOIN_POLICY_HASH2,
             COL_STABLECOIN_POLICY_HASH3,
+            COL_STABLECOIN_POLICY_HASH4,
+            COL_STABLECOIN_POLICY_HASH5,
             COL_STABLECOIN_ORACLE0,
             COL_STABLECOIN_ORACLE1,
             COL_STABLECOIN_ORACLE2,
             COL_STABLECOIN_ORACLE3,
+            COL_STABLECOIN_ORACLE4,
+            COL_STABLECOIN_ORACLE5,
             COL_STABLECOIN_ATTEST0,
             COL_STABLECOIN_ATTEST1,
             COL_STABLECOIN_ATTEST2,
             COL_STABLECOIN_ATTEST3,
+            COL_STABLECOIN_ATTEST4,
+            COL_STABLECOIN_ATTEST5,
         ];
         for &col in stablecoin_zero_cols.iter() {
             when.assert_zero(final_row_mask.clone() * stablecoin_disabled.clone() * current[col].clone());
@@ -1411,14 +1438,20 @@ where
             (COL_STABLECOIN_POLICY_HASH1, stablecoin_policy_hash[1].clone()),
             (COL_STABLECOIN_POLICY_HASH2, stablecoin_policy_hash[2].clone()),
             (COL_STABLECOIN_POLICY_HASH3, stablecoin_policy_hash[3].clone()),
+            (COL_STABLECOIN_POLICY_HASH4, stablecoin_policy_hash[4].clone()),
+            (COL_STABLECOIN_POLICY_HASH5, stablecoin_policy_hash[5].clone()),
             (COL_STABLECOIN_ORACLE0, stablecoin_oracle_commitment[0].clone()),
             (COL_STABLECOIN_ORACLE1, stablecoin_oracle_commitment[1].clone()),
             (COL_STABLECOIN_ORACLE2, stablecoin_oracle_commitment[2].clone()),
             (COL_STABLECOIN_ORACLE3, stablecoin_oracle_commitment[3].clone()),
+            (COL_STABLECOIN_ORACLE4, stablecoin_oracle_commitment[4].clone()),
+            (COL_STABLECOIN_ORACLE5, stablecoin_oracle_commitment[5].clone()),
             (COL_STABLECOIN_ATTEST0, stablecoin_attestation_commitment[0].clone()),
             (COL_STABLECOIN_ATTEST1, stablecoin_attestation_commitment[1].clone()),
             (COL_STABLECOIN_ATTEST2, stablecoin_attestation_commitment[2].clone()),
             (COL_STABLECOIN_ATTEST3, stablecoin_attestation_commitment[3].clone()),
+            (COL_STABLECOIN_ATTEST4, stablecoin_attestation_commitment[4].clone()),
+            (COL_STABLECOIN_ATTEST5, stablecoin_attestation_commitment[5].clone()),
         ] {
             when.assert_zero(final_row_mask.clone() * (current[col].clone() - value));
         }

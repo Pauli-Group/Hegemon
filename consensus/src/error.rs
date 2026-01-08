@@ -71,16 +71,16 @@ pub enum ProofError {
     #[error("recursive proof inputs mismatch at index {0}")]
     RecursiveProofInputsMismatch(usize),
     #[error("invalid commitment-tree anchor at transaction index {index}")]
-    InvalidAnchor { index: usize, anchor: [u8; 32] },
+    InvalidAnchor { index: usize, anchor: [u8; 48] },
     #[error("recursive proof starting root mismatch")]
     StartingRootMismatch {
-        expected: [u8; 32],
-        observed: [u8; 32],
+        expected: [u8; 48],
+        observed: [u8; 48],
     },
     #[error("recursive proof ending root mismatch")]
     EndingRootMismatch {
-        expected: [u8; 32],
-        observed: [u8; 32],
+        expected: [u8; 48],
+        observed: [u8; 48],
     },
     #[error("commitment proof requires at least one transaction")]
     CommitmentProofEmptyBlock,

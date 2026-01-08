@@ -9,14 +9,12 @@ use serde::{Deserialize, Serialize};
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing::{bytes32_to_felts, Commitment, Felt},
+    hashing_pq::{bytes48_to_felts, Commitment},
     keys::{ProvingKey, VerifyingKey},
     public_inputs::{BalanceSlot, TransactionPublicInputs},
     trace::TransactionTrace,
     witness::TransactionWitness,
 };
-#[cfg(feature = "plonky3")]
-use crate::hashing_pq::bytes48_to_felts;
 
 #[cfg(all(feature = "winterfell-legacy", not(feature = "plonky3")))]
 use crate::hashing::felts_to_bytes32;
@@ -63,24 +61,10 @@ use transaction_core::p3_air::TransactionPublicInputsP3;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransactionProof {
     pub public_inputs: TransactionPublicInputs,
-    #[serde(with = "crate::public_inputs::serde_vec_bytes32")]
+    #[serde(with = "crate::public_inputs::serde_vec_bytes48")]
     pub nullifiers: Vec<Commitment>,
-    #[serde(with = "crate::public_inputs::serde_vec_bytes32")]
+    #[serde(with = "crate::public_inputs::serde_vec_bytes48")]
     pub commitments: Vec<Commitment>,
-    #[cfg(feature = "plonky3")]
-    #[serde(
-        default,
-        skip_serializing_if = "Vec::is_empty",
-        with = "crate::public_inputs::serde_vec_bytes48"
-    )]
-    pub nullifiers_pq: Vec<[u8; 48]>,
-    #[cfg(feature = "plonky3")]
-    #[serde(
-        default,
-        skip_serializing_if = "Vec::is_empty",
-        with = "crate::public_inputs::serde_vec_bytes48"
-    )]
-    pub commitments_pq: Vec<[u8; 48]>,
     pub balance_slots: Vec<BalanceSlot>,
     /// The actual STARK proof bytes (backend-specific format).
     /// This is the cryptographic proof that the transaction is valid.
@@ -99,14 +83,8 @@ pub struct SerializedStarkInputs {
     pub fee: u64,
     pub value_balance_sign: u8,
     pub value_balance_magnitude: u64,
-    #[serde(with = "crate::public_inputs::serde_bytes32")]
+    #[serde(with = "crate::public_inputs::serde_bytes48")]
     pub merkle_root: Commitment,
-    #[cfg(feature = "plonky3")]
-    #[serde(
-        default = "crate::public_inputs::default_bytes48",
-        with = "crate::public_inputs::serde_bytes48"
-    )]
-    pub merkle_root_pq: [u8; 48],
     #[serde(default)]
     pub stablecoin_enabled: u8,
     #[serde(default)]
@@ -117,11 +95,11 @@ pub struct SerializedStarkInputs {
     pub stablecoin_issuance_sign: u8,
     #[serde(default)]
     pub stablecoin_issuance_magnitude: u64,
-    #[serde(default, with = "crate::public_inputs::serde_bytes32")]
+    #[serde(default, with = "crate::public_inputs::serde_bytes48")]
     pub stablecoin_policy_hash: Commitment,
-    #[serde(default, with = "crate::public_inputs::serde_bytes32")]
+    #[serde(default, with = "crate::public_inputs::serde_bytes48")]
     pub stablecoin_oracle_commitment: Commitment,
-    #[serde(default, with = "crate::public_inputs::serde_bytes32")]
+    #[serde(default, with = "crate::public_inputs::serde_bytes48")]
     pub stablecoin_attestation_commitment: Commitment,
 }
 
@@ -164,22 +142,10 @@ pub fn prove(
     let serialized_inputs = serialize_p3_inputs(&stark_pub_inputs);
     let nullifiers = public_inputs.nullifiers.clone();
     let commitments = public_inputs.commitments.clone();
-    let nullifiers_pq = stark_pub_inputs
-        .nullifiers
-        .iter()
-        .map(hash_to_bytes48)
-        .collect();
-    let commitments_pq = stark_pub_inputs
-        .commitments
-        .iter()
-        .map(hash_to_bytes48)
-        .collect();
 
     Ok(TransactionProof {
         nullifiers,
         commitments,
-        nullifiers_pq,
-        commitments_pq,
         balance_slots: legacy_trace.padded_balance_slots(),
         public_inputs,
         stark_proof,
@@ -332,12 +298,12 @@ fn verify_with_p3(
     proof: &TransactionProof,
 ) -> Result<VerificationReport, TransactionCircuitError> {
     // Validate public input structure
-    if proof.nullifiers_pq.len() != MAX_INPUTS {
+    if proof.nullifiers.len() != MAX_INPUTS {
         return Err(TransactionCircuitError::ConstraintViolation(
             "invalid PQ nullifier length",
         ));
     }
-    if proof.commitments_pq.len() != MAX_OUTPUTS {
+    if proof.commitments.len() != MAX_OUTPUTS {
         return Err(TransactionCircuitError::ConstraintViolation(
             "invalid PQ commitment length",
         ));
@@ -396,7 +362,7 @@ fn verify_with_p3(
         .collect();
 
     let nullifiers = proof
-        .nullifiers_pq
+        .nullifiers
         .iter()
         .map(|nf| {
             bytes48_to_felts(nf).ok_or(TransactionCircuitError::ConstraintViolation(
@@ -405,7 +371,7 @@ fn verify_with_p3(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let commitments = proof
-        .commitments_pq
+        .commitments
         .iter()
         .map(|cm| {
             bytes48_to_felts(cm).ok_or(TransactionCircuitError::ConstraintViolation(
@@ -413,26 +379,26 @@ fn verify_with_p3(
             ))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let merkle_root = bytes48_to_felts(&stark_inputs.merkle_root_pq).ok_or(
+    let merkle_root = bytes48_to_felts(&stark_inputs.merkle_root).ok_or(
         TransactionCircuitError::ConstraintViolation("invalid PQ merkle root encoding"),
     )?;
-    let stablecoin_policy_hash = bytes32_to_felts(&stark_inputs.stablecoin_policy_hash)
-        .map(hash_felt_to_gl)
-        .ok_or(TransactionCircuitError::ConstraintViolation(
+    let stablecoin_policy_hash = bytes48_to_felts(&stark_inputs.stablecoin_policy_hash).ok_or(
+        TransactionCircuitError::ConstraintViolation(
             "invalid stablecoin policy hash encoding",
-        ))?;
+        ),
+    )?;
     let stablecoin_oracle_commitment =
-        bytes32_to_felts(&stark_inputs.stablecoin_oracle_commitment)
-            .map(hash_felt_to_gl)
-            .ok_or(TransactionCircuitError::ConstraintViolation(
+        bytes48_to_felts(&stark_inputs.stablecoin_oracle_commitment).ok_or(
+            TransactionCircuitError::ConstraintViolation(
                 "invalid stablecoin oracle commitment encoding",
-            ))?;
+            ),
+        )?;
     let stablecoin_attestation_commitment =
-        bytes32_to_felts(&stark_inputs.stablecoin_attestation_commitment)
-            .map(hash_felt_to_gl)
-            .ok_or(TransactionCircuitError::ConstraintViolation(
+        bytes48_to_felts(&stark_inputs.stablecoin_attestation_commitment).ok_or(
+            TransactionCircuitError::ConstraintViolation(
                 "invalid stablecoin attestation commitment encoding",
-            ))?;
+            ),
+        )?;
 
     let stark_pub_inputs = TransactionPublicInputsP3 {
         input_flags,
@@ -620,29 +586,18 @@ fn serialize_p3_inputs(pub_inputs: &TransactionPublicInputsP3) -> SerializedStar
         fee: pub_inputs.fee.as_canonical_u64(),
         value_balance_sign: pub_inputs.value_balance_sign.as_canonical_u64() as u8,
         value_balance_magnitude: pub_inputs.value_balance_magnitude.as_canonical_u64(),
-        merkle_root: [0u8; 32],
-        merkle_root_pq: hash_to_bytes48(&pub_inputs.merkle_root),
+        merkle_root: hash_to_bytes48(&pub_inputs.merkle_root),
         stablecoin_enabled: pub_inputs.stablecoin_enabled.as_canonical_u64() as u8,
         stablecoin_asset_id: pub_inputs.stablecoin_asset.as_canonical_u64(),
         stablecoin_policy_version: pub_inputs.stablecoin_policy_version.as_canonical_u64() as u32,
         stablecoin_issuance_sign: pub_inputs.stablecoin_issuance_sign.as_canonical_u64() as u8,
         stablecoin_issuance_magnitude: pub_inputs.stablecoin_issuance_magnitude.as_canonical_u64(),
-        stablecoin_policy_hash: hash_to_bytes32(&pub_inputs.stablecoin_policy_hash),
-        stablecoin_oracle_commitment: hash_to_bytes32(&pub_inputs.stablecoin_oracle_commitment),
-        stablecoin_attestation_commitment: hash_to_bytes32(
+        stablecoin_policy_hash: hash_to_bytes48(&pub_inputs.stablecoin_policy_hash),
+        stablecoin_oracle_commitment: hash_to_bytes48(&pub_inputs.stablecoin_oracle_commitment),
+        stablecoin_attestation_commitment: hash_to_bytes48(
             &pub_inputs.stablecoin_attestation_commitment,
         ),
     }
-}
-
-#[cfg(feature = "plonky3")]
-fn hash_to_bytes32(hash: &[Goldilocks; 4]) -> Commitment {
-    let mut out = [0u8; 32];
-    for (idx, limb) in hash.iter().enumerate() {
-        let start = idx * 8;
-        out[start..start + 8].copy_from_slice(&limb.as_canonical_u64().to_be_bytes());
-    }
-    out
 }
 
 #[cfg(feature = "plonky3")]
@@ -653,16 +608,6 @@ fn hash_to_bytes48(hash: &[Goldilocks; 6]) -> [u8; 48] {
         out[start..start + 8].copy_from_slice(&limb.as_canonical_u64().to_be_bytes());
     }
     out
-}
-
-#[cfg(feature = "plonky3")]
-fn hash_felt_to_gl(hash: [Felt; 4]) -> [Goldilocks; 4] {
-    [
-        Goldilocks::from_u64(hash[0].as_int()),
-        Goldilocks::from_u64(hash[1].as_int()),
-        Goldilocks::from_u64(hash[2].as_int()),
-        Goldilocks::from_u64(hash[3].as_int()),
-    ]
 }
 
 /// Verify that balance_slots match public_inputs.balance_slots

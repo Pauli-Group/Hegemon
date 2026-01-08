@@ -21,7 +21,7 @@ use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::runtime::Builder as RuntimeBuilder;
 use transaction_circuit::{
-    hashing::{bytes32_to_felts, is_canonical_bytes32, note_commitment_bytes},
+    hashing_pq::{bytes48_to_felts, is_canonical_bytes48, note_commitment_bytes},
     note::{InputNoteWitness, MerklePath, OutputNoteWitness},
     witness::TransactionWitness,
     StablecoinPolicyBinding,
@@ -1053,10 +1053,10 @@ fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
         anyhow::bail!("recipient address does not match pk_recipient");
     }
 
-    ensure_canonical_bytes32("commitment", &package.claim.commitment)?;
-    ensure_canonical_bytes32("anchor", &package.confirmation.anchor)?;
+    ensure_canonical_bytes48("commitment", &package.claim.commitment)?;
+    ensure_canonical_bytes48("anchor", &package.confirmation.anchor)?;
     for (idx, sibling) in package.confirmation.siblings.iter().enumerate() {
-        ensure_canonical_bytes32(&format!("siblings[{idx}]"), sibling)?;
+        ensure_canonical_bytes48(&format!("siblings[{idx}]"), sibling)?;
     }
 
     if package.confirmation.siblings.len() != transaction_circuit::note::MERKLE_TREE_DEPTH {
@@ -1067,15 +1067,15 @@ fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
         );
     }
 
-    let commitment_felt = bytes32_to_felts(&package.claim.commitment)
+    let commitment_felt = bytes48_to_felts(&package.claim.commitment)
         .ok_or_else(|| anyhow!("commitment is not a canonical field encoding"))?;
-    let anchor_felt = bytes32_to_felts(&package.confirmation.anchor)
+    let anchor_felt = bytes48_to_felts(&package.confirmation.anchor)
         .ok_or_else(|| anyhow!("anchor is not a canonical field encoding"))?;
     let sibling_felts = package
         .confirmation
         .siblings
         .iter()
-        .map(|bytes| bytes32_to_felts(bytes).ok_or_else(|| anyhow!("non-canonical merkle sibling")))
+        .map(|bytes| bytes48_to_felts(bytes).ok_or_else(|| anyhow!("non-canonical merkle sibling")))
         .collect::<Result<_, _>>()?;
 
     let merkle_path = MerklePath {
@@ -1186,8 +1186,8 @@ fn memo_to_disclosed_string(record: &OutgoingDisclosureRecord) -> Option<String>
     }
 }
 
-fn ensure_canonical_bytes32(label: &str, bytes: &[u8; 32]) -> Result<()> {
-    if !is_canonical_bytes32(bytes) {
+fn ensure_canonical_bytes48(label: &str, bytes: &[u8; 48]) -> Result<()> {
+    if !is_canonical_bytes48(bytes) {
         anyhow::bail!("{} is not a canonical field encoding", label);
     }
     Ok(())
@@ -1204,25 +1204,36 @@ fn parse_hex_32(input: &str) -> Result<[u8; 32]> {
     Ok(out)
 }
 
-fn parse_merkle_root(input: &str) -> Result<[u8; 32]> {
+fn parse_hex_48(input: &str) -> Result<[u8; 48]> {
+    let trimmed = input.strip_prefix("0x").unwrap_or(input);
+    let bytes = hex::decode(trimmed).map_err(|e| anyhow!("invalid hex: {e}"))?;
+    if bytes.len() != 48 {
+        anyhow::bail!("expected 48-byte hex value");
+    }
+    let mut out = [0u8; 48];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn parse_merkle_root(input: &str) -> Result<[u8; 48]> {
     let trimmed = input.trim();
     if trimmed.chars().all(|c| c.is_ascii_digit()) && trimmed.len() <= 16 {
         let value: u64 = trimmed
             .parse()
             .map_err(|e| anyhow!("invalid merkle root: {e}"))?;
-        let mut out = [0u8; 32];
-        out[24..32].copy_from_slice(&value.to_be_bytes());
+        let mut out = [0u8; 48];
+        out[40..48].copy_from_slice(&value.to_be_bytes());
         return Ok(out);
     }
     let hex = trimmed.strip_prefix("0x").unwrap_or(trimmed);
     if hex.len() <= 16 {
         let value =
             u64::from_str_radix(hex, 16).map_err(|e| anyhow!("invalid merkle root hex: {e}"))?;
-        let mut out = [0u8; 32];
-        out[24..32].copy_from_slice(&value.to_be_bytes());
+        let mut out = [0u8; 48];
+        out[40..48].copy_from_slice(&value.to_be_bytes());
         return Ok(out);
     }
-    parse_hex_32(trimmed)
+    parse_hex_48(trimmed)
 }
 
 fn append_credit_record(

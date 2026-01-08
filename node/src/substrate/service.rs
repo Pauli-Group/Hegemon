@@ -135,7 +135,7 @@ use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{Blake3Algorithm, Blake3Seal, ParallelProofVerifier};
-use crypto::hashes::{blake3_256, sha256};
+use crypto::hashes::{blake3_256, blake3_384};
 use futures::StreamExt;
 use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
@@ -558,10 +558,10 @@ fn signed_parts_u64(value: i128) -> Result<(u8, u64), String> {
 }
 
 fn pad_commitments(
-    mut values: Vec<[u8; 32]>,
+    mut values: Vec<[u8; 48]>,
     max: usize,
     label: &str,
-) -> Result<Vec<[u8; 32]>, String> {
+) -> Result<Vec<[u8; 48]>, String> {
     if values.len() > max {
         return Err(format!(
             "{label} exceeds max (got {}, max {})",
@@ -569,7 +569,7 @@ fn pad_commitments(
             max
         ));
     }
-    values.resize(max, [0u8; 32]);
+    values.resize(max, [0u8; 48]);
     Ok(values)
 }
 
@@ -590,7 +590,7 @@ fn convert_stablecoin_binding(
 fn build_stark_inputs(
     input_count: usize,
     output_count: usize,
-    anchor: [u8; 32],
+    anchor: [u8; 48],
     fee: u64,
     value_balance: i128,
     stablecoin: Option<&StablecoinPolicyBinding>,
@@ -635,7 +635,7 @@ fn build_stark_inputs(
                 binding.attestation_commitment,
             )
         }
-        _ => (0, 0, 0, 0, 0, [0u8; 32], [0u8; 32], [0u8; 32]),
+        _ => (0, 0, 0, 0, 0, [0u8; 48], [0u8; 48], [0u8; 48]),
     };
 
     Ok(SerializedStarkInputs {
@@ -645,8 +645,6 @@ fn build_stark_inputs(
         value_balance_sign,
         value_balance_magnitude,
         merkle_root: anchor,
-        #[cfg(feature = "plonky3")]
-        merkle_root_pq: [0u8; 48],
         stablecoin_enabled,
         stablecoin_asset_id,
         stablecoin_policy_version,
@@ -660,9 +658,9 @@ fn build_stark_inputs(
 
 fn build_transaction_proof(
     proof_bytes: Vec<u8>,
-    nullifiers: Vec<[u8; 32]>,
-    commitments: Vec<[u8; 32]>,
-    anchor: [u8; 32],
+    nullifiers: Vec<[u8; 48]>,
+    commitments: Vec<[u8; 48]>,
+    anchor: [u8; 48],
     stablecoin: Option<pallet_shielded_pool::types::StablecoinPolicyBinding>,
     fee: u64,
     value_balance: i128,
@@ -703,10 +701,6 @@ fn build_transaction_proof(
         public_inputs: public_inputs.clone(),
         nullifiers: padded_nullifiers,
         commitments: padded_commitments,
-        #[cfg(feature = "plonky3")]
-        nullifiers_pq: vec![[0u8; 48]; MAX_INPUTS],
-        #[cfg(feature = "plonky3")]
-        commitments_pq: vec![[0u8; 48]; MAX_OUTPUTS],
         balance_slots: public_inputs.balance_slots.clone(),
         stark_proof: proof_bytes,
         stark_public_inputs: Some(stark_public_inputs),
@@ -1052,7 +1046,7 @@ impl HeaderProofExt for SubstrateProofHeader {
     }
 
     fn fee_commitment(&self) -> consensus::FeeCommitment {
-        [0u8; 32]
+        [0u8; 48]
     }
 
     fn transaction_count(&self) -> u32 {
@@ -1060,11 +1054,11 @@ impl HeaderProofExt for SubstrateProofHeader {
     }
 
     fn version_commitment(&self) -> consensus::VersionCommitment {
-        [0u8; 32]
+        [0u8; 48]
     }
 
     fn da_root(&self) -> consensus::DaRoot {
-        [0u8; 32]
+        [0u8; 48]
     }
 
     fn da_params(&self) -> consensus::DaParams {
@@ -1198,10 +1192,10 @@ fn load_parent_commitment_tree_state(
     .map_err(|err| format!("commitment tree snapshot invalid: {err}"))
 }
 
-fn nullifier_root_from_list(nullifiers: &[[u8; 32]]) -> Result<[u8; 32], String> {
+fn nullifier_root_from_list(nullifiers: &[[u8; 48]]) -> Result<[u8; 48], String> {
     let mut entries = BTreeSet::new();
     for nf in nullifiers {
-        if *nf == [0u8; 32] {
+        if *nf == [0u8; 48] {
             continue;
         }
         if !entries.insert(*nf) {
@@ -1209,12 +1203,12 @@ fn nullifier_root_from_list(nullifiers: &[[u8; 32]]) -> Result<[u8; 32], String>
         }
     }
 
-    let mut data = Vec::with_capacity(entries.len() * 32);
+    let mut data = Vec::with_capacity(entries.len() * 48);
     for nf in entries {
         data.extend_from_slice(&nf);
     }
 
-    Ok(sha256(&data))
+    Ok(blake3_384(&data))
 }
 
 fn derive_commitment_block_proof_from_bytes(
@@ -1244,7 +1238,7 @@ fn derive_commitment_block_proof_from_bytes(
 
     let mut tree = parent_tree.clone();
     for tx in transactions {
-        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 32]) {
+        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 48]) {
             tree.append(commitment)
                 .map_err(|err| format!("commitment tree append failed: {err}"))?;
         }

@@ -14,15 +14,15 @@ pub struct TransactionBundle {
     /// STARK proof bytes (serialized winterfell proof).
     #[serde(with = "serde_bytes_vec")]
     pub proof_bytes: Vec<u8>,
-    /// Nullifiers (32 bytes each, left-padded field elements).
-    pub nullifiers: Vec<[u8; 32]>,
-    /// Commitments (32 bytes each, left-padded field elements).
-    pub commitments: Vec<[u8; 32]>,
+    /// Nullifiers (48 bytes each, left-padded field elements).
+    pub nullifiers: Vec<[u8; 48]>,
+    /// Commitments (48 bytes each, left-padded field elements).
+    pub commitments: Vec<[u8; 48]>,
     /// Encrypted note ciphertexts.
     #[serde(with = "serde_ciphertexts")]
     pub ciphertexts: Vec<Vec<u8>>,
     /// Merkle tree anchor (root hash).
-    pub anchor: [u8; 32],
+    pub anchor: [u8; 48],
     /// Binding hash commitment.
     #[serde(with = "serde_bytes_64")]
     pub binding_hash: [u8; 64],
@@ -39,10 +39,10 @@ impl TransactionBundle {
     /// Create a new transaction bundle from proof components.
     pub fn new(
         proof_bytes: Vec<u8>,
-        nullifiers: Vec<[u8; 32]>,
-        commitments: Vec<[u8; 32]>,
+        nullifiers: Vec<[u8; 48]>,
+        commitments: Vec<[u8; 48]>,
         ciphertexts: &[NoteCiphertext],
-        anchor: [u8; 32],
+        anchor: [u8; 48],
         binding_hash: [u8; 64],
         fee: u64,
         value_balance: i128,
@@ -131,7 +131,7 @@ impl WalletRpcClient {
             .entries
             .into_iter()
             .map(|entry| {
-                let value = hex_to_array32(&entry.value)?;
+                let value = hex_to_array48(&entry.value)?;
                 Ok(CommitmentEntry {
                     index: entry.index,
                     value,
@@ -160,7 +160,7 @@ impl WalletRpcClient {
         Ok(entries)
     }
 
-    pub fn nullifiers(&self) -> Result<Vec<[u8; 32]>, WalletError> {
+    pub fn nullifiers(&self) -> Result<Vec<[u8; 48]>, WalletError> {
         let response: NullifierResponse = self.get_json("/wallet/nullifiers", None)?;
         response
             .nullifiers
@@ -169,12 +169,12 @@ impl WalletRpcClient {
                 let trimmed = hex.strip_prefix("0x").unwrap_or(hex);
                 let bytes = hex::decode(trimmed)
                     .map_err(|err| WalletError::Serialization(err.to_string()))?;
-                if bytes.len() != 32 {
+                if bytes.len() != 48 {
                     return Err(WalletError::Serialization(
                         "invalid nullifier length".into(),
                     ));
                 }
-                let mut out = [0u8; 32];
+                let mut out = [0u8; 48];
                 out.copy_from_slice(&bytes);
                 Ok(out)
             })
@@ -262,7 +262,7 @@ struct CommitmentResponse {
 #[derive(Clone, Debug)]
 pub struct CommitmentEntry {
     pub index: u64,
-    pub value: [u8; 32],
+    pub value: [u8; 48],
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -310,6 +310,17 @@ fn hex_to_array32(hex_str: &str) -> Result<[u8; 32], WalletError> {
         return Err(WalletError::Serialization("expected 32-byte hash".into()));
     }
     let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn hex_to_array48(hex_str: &str) -> Result<[u8; 48], WalletError> {
+    let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    let bytes = hex::decode(trimmed).map_err(|err| WalletError::Serialization(err.to_string()))?;
+    if bytes.len() != 48 {
+        return Err(WalletError::Serialization("expected 48-byte hash".into()));
+    }
+    let mut out = [0u8; 48];
     out.copy_from_slice(&bytes);
     Ok(out)
 }
