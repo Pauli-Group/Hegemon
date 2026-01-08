@@ -134,11 +134,11 @@ pub trait ProofVerifier {
 /// This type is only available when the `std` feature is enabled AND
 /// the `production` feature is NOT enabled. This prevents accidental
 /// use in release binaries.
-#[cfg(all(feature = "std", not(feature = "production")))]
+#[cfg(all(feature = "std", any(test, not(feature = "production"))))]
 #[derive(Clone, Debug, Default)]
 pub struct AcceptAllProofs;
 
-#[cfg(all(feature = "std", not(feature = "production")))]
+#[cfg(all(feature = "std", any(test, not(feature = "production"))))]
 impl ProofVerifier for AcceptAllProofs {
     fn verify_stark(
         &self,
@@ -171,11 +171,11 @@ impl ProofVerifier for AcceptAllProofs {
 /// Reject-all proof verifier for testing.
 ///
 /// This type is only available in test/dev builds.
-#[cfg(all(feature = "std", not(feature = "production")))]
+#[cfg(all(feature = "std", any(test, not(feature = "production"))))]
 #[derive(Clone, Debug, Default)]
 pub struct RejectAllProofs;
 
-#[cfg(all(feature = "std", not(feature = "production")))]
+#[cfg(all(feature = "std", any(test, not(feature = "production"))))]
 impl ProofVerifier for RejectAllProofs {
     fn verify_stark(
         &self,
@@ -768,11 +768,11 @@ pub trait BatchVerifier {
 /// Accept-all batch proof verifier for testing/development.
 ///
 /// WARNING: This should NEVER be used in production!
-#[cfg(all(feature = "std", not(feature = "production")))]
+#[cfg(all(feature = "std", any(test, not(feature = "production"))))]
 #[derive(Clone, Debug, Default)]
 pub struct AcceptAllBatchProofs;
 
-#[cfg(all(feature = "std", not(feature = "production")))]
+#[cfg(all(feature = "std", any(test, not(feature = "production"))))]
 impl BatchVerifier for AcceptAllBatchProofs {
     fn verify_batch(
         &self,

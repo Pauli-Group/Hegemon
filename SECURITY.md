@@ -25,17 +25,11 @@ State-transition Merkle updates are deterministic and computed by consensus at i
 - **Row budget constraints**: In-circuit Merkle updates exceed the ~2^14 row target (each depth-32 append costs ~10k rows), so state transitions are verified outside the proof. This is sound because state updates are deterministic given valid transactions.
 - **Nullifier-free blocks**: Blocks with no shielded transactions (coinbase-only) do not carry a commitment proof; they are validated via standard consensus rules.
 
-### Legacy Recursive Proofs (Feature-Gated)
+### Recursive Proofs (Removed)
 
-Recursive block proofs are **no longer the default** and are retained only for dev/test maintenance behind `block-circuit/legacy-recursion` + `consensus/legacy-recursion` feature flags.
+Recursive block proofs are currently disabled and the old recursion path has been removed. Reintroducing recursion requires a Plonky3-native design and new AIRs; no legacy recursion feature flags remain.
 
-Known limitations of the legacy path:
+### PQ Security Margins
 
-- **OOD width overflow**: Transaction proofs require 364 OOD evaluation columns vs Winterfell's 255 cap, making "prove-the-verifier" recursion infeasible without trace redesign.
-- **Unsound gated checks**: The legacy recursion path skipped OOD/DEEP/FRI consistency checks due to width limits; these are explicitly unsound and panic by default.
-- **Memory/time**: Recursive block proof generation required 100GB+ RAM and 16+ minutes even in dev-fast mode.
-
-### PQ Security Ceiling
-
-- The system uses 256-bit digests and targets ~85-bit post-quantum collision security (limited by generic 2^(n/3) quantum collision search bounds).
-- Transaction proofs use quadratic field extension for ~85-bit PQ soundness.
+- Commitments, nullifiers, and Merkle roots use 48-byte (384-bit) digests, yielding ~128-bit post-quantum collision security under generic BHT attacks.
+- Production FRI parameters use log_blowup = 4 (16x) and num_queries = 43, giving an engineering soundness estimate ≥128 bits (see `circuits/transaction-core/src/p3_config.rs`).

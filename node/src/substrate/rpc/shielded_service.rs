@@ -385,7 +385,7 @@ mod tests {
         let service = MockShieldedPoolService::new();
 
         // Add a note
-        service.add_note(vec![1, 2, 3], [0xaa; 32]);
+        service.add_note(vec![1, 2, 3], [0xaa; 48]);
 
         assert_eq!(service.encrypted_note_count(), 1);
 
@@ -399,13 +399,13 @@ mod tests {
     fn test_mock_service_nullifiers() {
         let service = MockShieldedPoolService::new();
 
-        let nf = [0xcc; 32];
+        let nf = [0xcc; 48];
 
         // Not spent initially
         assert!(!service.is_nullifier_spent(&nf));
 
         // Add initial anchor for the transfer
-        service.add_anchor([0; 32]);
+        service.add_anchor([0; 48]);
 
         // Submit transfer with nullifier
         service
@@ -414,7 +414,7 @@ mod tests {
                 vec![nf],
                 vec![],
                 vec![],
-                [0; 32], // Use valid anchor
+                [0; 48], // Use valid anchor
                 [0; 64],
                 None,
                 0,
@@ -441,11 +441,11 @@ mod tests {
     fn test_mock_service_anchors() {
         let service = MockShieldedPoolService::new();
 
-        let anchor1 = [0x11; 32];
-        let anchor2 = [0x22; 32];
+        let anchor1 = [0x11; 48];
+        let anchor2 = [0x22; 48];
 
         // Initial anchor is valid (zero root)
-        assert!(service.is_valid_anchor(&[0; 32]));
+        assert!(service.is_valid_anchor(&[0; 48]));
 
         // Unknown anchor is invalid
         assert!(!service.is_valid_anchor(&anchor1));

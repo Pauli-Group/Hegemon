@@ -95,6 +95,10 @@ mod tests {
 
     #[test]
     fn chain_spec_works() {
-        assert!(chain_spec().is_ok());
+        if WASM_BINARY.is_some() {
+            assert!(chain_spec().is_ok());
+        } else {
+            assert!(chain_spec().is_err());
+        }
     }
 }

@@ -130,7 +130,7 @@ PRFs:
 
 No group operations anywhere in user-visible cryptography.
 
-STARK verifier parameters (hash function choice, query counts, blowup factors, field extension) are persisted on-chain in the attestations and settlement pallets with governance-controlled upgrade hooks so proof verification stays aligned with PQ-friendly hashes. The runtime seeds attestations with Blake3 hashing, 28 FRI queries, a 4x blowup factor, and quadratic extension over Goldilocks; settlement uses the same hash/query budget but a 16x blowup factor to satisfy the Poseidon AIR degree constraints. With 256-bit digests, PQ collision resistance caps at ~85 bits for application-level commitments, so governance should treat that as the practical ceiling unless digest sizes are widened. The Plonky3 transaction AIR now uses a 384-bit-capacity Poseidon2 sponge internally (48-byte commitments), and Milestone 5 widens application-level types to match.
+STARK verifier parameters (hash function choice, query counts, blowup factors, field extension) are persisted on-chain in the attestations and settlement pallets with governance-controlled upgrade hooks so proof verification stays aligned with PQ-friendly hashes. The runtime seeds attestations with Poseidon2-based hashing (48-byte digests), 43 FRI queries, a 16x blowup factor (log_blowup 4), and quadratic extension over Goldilocks; settlement uses the same hash/query budget. With 384-bit digests, PQ collision resistance reaches ~128 bits for application-level commitments, and 48-byte encodings are used end-to-end.
 
 ### 1.4 Reference module layout
 
@@ -206,9 +206,9 @@ We keep the Zcash mental model, but trimmed:
   * `r` (commitment randomness)
 * The chain stores only:
 
-  * a **commitment** `cm = Com(value, asset_id, pk_view, rho; r)` (32-byte, 4-limb encoding),
+  * a **commitment** `cm = Com(value, asset_id, pk_view, rho; r)` (48-byte, 6-limb encoding),
   * a Merkle tree of note commitments,
-  * a **nullifier** `nf` when the note is spent (32-byte, 4-limb encoding).
+  * a **nullifier** `nf` when the note is spent (48-byte, 6-limb encoding).
 
 The ZK proof shows:
 
@@ -221,7 +221,7 @@ The ZK proof shows:
 
 No ECDSA/EdDSA/RedDSA anywhere; the “authorization” is just knowledge of `sk_nf` inside the ZK proof.
 
-Note: the switch to 4-limb 32-byte commitment/nullifier encodings is protocol-breaking. Any chain spec
+Note: the switch to 6-limb 48-byte commitment/nullifier encodings is protocol-breaking. Any chain spec
 that adopts this encoding requires a fresh genesis and wiping `node.db` plus wallet stores.
 
 ### 3.2 Transaction structure
@@ -273,7 +273,7 @@ The workspace-level test `tests/node_wallet_daemon.rs` keeps the HTTP API, miner
 
 ### 3.3 Shielded stablecoin issuance
 
-Stablecoin issuance and burn are modeled as a non-native MASP asset that lives entirely inside the shielded pool. Instead of exposing a transparent mint, the transaction circuit allows a single asset id to carry a non-zero net delta, but only when the proof binds to an on-chain policy hash plus the latest oracle and attestation commitments. The policy lives in `pallets/stablecoin-policy` and is hashed with BLAKE3 under the `stablecoin-policy-v1` domain so the circuit can consume a single 32-byte value. The verifier in `pallets/shielded-pool` checks that the policy hash, policy version, oracle commitment freshness, and attestation dispute status match chain state before accepting the proof.
+Stablecoin issuance and burn are modeled as a non-native MASP asset that lives entirely inside the shielded pool. Instead of exposing a transparent mint, the transaction circuit allows a single asset id to carry a non-zero net delta, but only when the proof binds to an on-chain policy hash plus the latest oracle and attestation commitments. The policy lives in `pallets/stablecoin-policy` and is hashed with BLAKE3 under the `stablecoin-policy-v1` domain so the circuit can consume a single 48-byte value. The verifier in `pallets/shielded-pool` checks that the policy hash, policy version, oracle commitment freshness, and attestation dispute status match chain state before accepting the proof.
 
 Issuance and burn therefore stay shielded: the proof shows `inputs - outputs = issuance_delta` for the stablecoin asset, and the runtime rejects any stablecoin binding supplied via the unsigned path. Wallet tooling assembles the binding by reading `StablecoinPolicy`, `Oracles::Feeds`, and `Attestations::Commitments`, then submits a signed `shielded_transfer` extrinsic so role checks and replay protection remain in place. Normal stablecoin transfers do not require a binding, but they still ride the same MASP rules and never leave the privacy pool.
 

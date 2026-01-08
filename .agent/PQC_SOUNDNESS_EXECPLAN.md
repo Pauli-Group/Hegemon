@@ -51,7 +51,8 @@ After this work, a user can:
 - [x] (2026-01-08 02:05Z) Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits (per-AIR log_blowup selection + runtime defaults; ran Plonky3 e2e prove/verify in release and kept proof-size caps aligned).
 - [x] (2026-01-08 00:45Z) Bumped protocol version binding to V2/BETA and aligned transaction AIR versioning + fixtures with the Plonky3/Poseidon2 stack.
 - [x] (2026-01-08 02:10Z) Milestone 7: Update pallets, node, wallet, and protocol versioning (protocol version binding bump + consensus/wallet integration tests run).
-- [ ] Milestone 8: Documentation and runbooks.
+- [x] (2026-01-08 04:05Z) Re-ran Plonky3 transaction-circuit tests, disclosure-circuit tests, wallet disclosure-package tests, consensus tests, and the Plonky3 e2e prove/verify test in release.
+- [x] (2026-01-08 04:15Z) Milestone 8: Documentation and runbooks (updated DESIGN/METHODS/README/SECURITY/docs/runbooks for Poseidon2-384, 48-byte commitments, and Plonky3 soundness parameters).
 
 ## Surprises & Discoveries
 
@@ -97,8 +98,11 @@ After this work, a user can:
 - Observation: Plonky3 `AirBuilder` distinguishes `Var` vs `Expr`, so Poseidon2 AIR transitions required explicit `.into()` conversions and typed `from_fn` arrays.
   Evidence: `circuits/transaction-core/src/p3_air.rs`, `circuits/batch/src/p3_air.rs`.
 
-- Observation: The Plonky3 transaction E2E prove/verify test still fails with `OodEvaluationMismatch` even when per-row constraints pass, indicating a mismatch in quotient evaluation rather than a simple constraint violation.
-  Evidence: `cargo test -p transaction-circuit --features plonky3-e2e --lib prove_verify_roundtrip_p3 --release`.
+- Observation: The Plonky3 transaction E2E prove/verify test initially failed with `OodEvaluationMismatch` until log_blowup and preprocessed wiring were aligned; the current release E2E test passes and completes quickly.
+  Evidence: `cargo test -p transaction-circuit --features plonky3-e2e --lib prove_verify_roundtrip_p3 --release -- --nocapture` (finished in ~9s).
+
+- Observation: The debug-mode transaction-circuit test suite is slow because full prove/verify still runs in `tests/transaction.rs`; plan time budgets accordingly.
+  Evidence: `cargo test -p transaction-circuit --features plonky3` (tests/transaction took ~539s).
 
 - Observation: A full Plonky3 prove/verify roundtrip is slow in unit tests, so the end-to-end test is marked ignored to avoid default test timeouts.
   Evidence: `circuits/transaction/src/p3_prover.rs` test annotations.
@@ -285,7 +289,7 @@ Formal soundness note: unless a dedicated PQ analysis is completed and cited, al
 
 ## Outcomes & Retrospective
 
-Not started yet. This section must summarize what shipped and what did not once milestones complete.
+The Plonky3 migration shipped end-to-end: all circuits and pallets now use Poseidon2-384 with 48-byte commitments/nullifiers, FRI parameters are standardized to ≥128-bit engineering soundness, and Winterfell dependencies are removed. Core integration tests (transaction-circuit, disclosure-circuit, wallet disclosure package, consensus) plus the Plonky3 E2E prove/verify test passed. Remaining gaps are a formal PQ soundness analysis and any future Plonky3-native recursion reintroduction; both are explicitly out-of-scope for this execution plan.
 
 ## Context and Orientation
 
@@ -781,3 +785,4 @@ Plan change note (2026-01-07 10:20Z): Repaired the Plonky3 debug constraint help
 Plan change note (2026-01-08 02:15Z): Cleared transaction-circuit warnings, re-ran the Plonky3 e2e prove/verify test in release, and closed Milestones 6/7 after running the consensus and wallet integration tests.
 Plan change note (2026-01-07 10:32Z): Increased the test-only Plonky3 FRI blowup to avoid LDE/domain-size assertion failures when running prove/verify in tests.
 Plan change note (2026-01-07 10:43Z): Added a PQC soundness checklist section defining minimum parameters, the log_blowup/log_num_quotient_chunks requirement, verification steps, and the formal-analysis caveat.
+Plan change note (2026-01-08 04:20Z): Updated documentation and runbooks for Poseidon2-384/48-byte commitments and current FRI parameters, removed remaining Winterfell mentions, reran core Plonky3/consensus/wallet tests plus the release E2E prove/verify, and marked Milestone 8 complete.

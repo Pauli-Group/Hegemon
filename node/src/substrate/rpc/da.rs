@@ -109,14 +109,14 @@ fn parse_da_root(value: &str) -> Result<DaRoot, ErrorObjectOwned> {
             None::<()>,
         )
     })?;
-    if bytes.len() != 32 {
+    if bytes.len() != 48 {
         return Err(ErrorObjectOwned::owned(
             INVALID_PARAMS_CODE,
-            format!("expected 32-byte root, got {}", bytes.len()),
+            format!("expected 48-byte root, got {}", bytes.len()),
             None::<()>,
         ));
     }
-    let mut out = [0u8; 32];
+    let mut out = [0u8; 48];
     out.copy_from_slice(&bytes);
     Ok(out)
 }

@@ -590,7 +590,7 @@ mod concurrent_tests {
 
         // Add notes
         for i in 0u8..100 {
-            service.add_note(vec![i], [i; 32]).await;
+            service.add_note(vec![i], [i; 48]).await;
         }
 
         let mut tasks = JoinSet::new();
