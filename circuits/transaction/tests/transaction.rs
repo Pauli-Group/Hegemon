@@ -1,3 +1,4 @@
+use p3_field::PrimeCharacteristicRing;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;

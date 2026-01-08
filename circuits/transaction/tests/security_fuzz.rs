@@ -12,7 +12,11 @@ fn arb_bytes32() -> impl Strategy<Value = [u8; 32]> {
 }
 
 fn arb_bytes48() -> impl Strategy<Value = [u8; 48]> {
-    prop::array::uniform48(any::<u8>())
+    vec(any::<u8>(), 48).prop_map(|bytes| {
+        let mut out = [0u8; 48];
+        out.copy_from_slice(&bytes);
+        out
+    })
 }
 
 fn asset_strategy() -> impl Strategy<Value = u64> {
