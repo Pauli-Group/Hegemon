@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use p3_field::PrimeCharacteristicRing;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     constants::MAX_NOTE_VALUE,

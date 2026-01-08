@@ -142,7 +142,7 @@ use network::{
     PqTransportConfig, SubstratePqTransport, SubstratePqTransportConfig,
 };
 use rand::{rngs::OsRng, RngCore};
-use sc_client_api::{BlockBackend, BlockchainEvents, HeaderBackend};
+use sc_client_api::BlockchainEvents;
 use sc_service::{error::Error as ServiceError, Configuration, KeystoreContainer, TaskManager};
 use sc_transaction_pool_api::MaintainedTransactionPool;
 use sha2::{Digest as ShaDigest, Sha256};
@@ -156,7 +156,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{oneshot, Mutex};
 
 // Import runtime APIs for difficulty queries
 use pallet_shielded_pool::Call as ShieldedPoolCall;
@@ -1213,14 +1213,10 @@ fn hash_bytes_to_felts(bytes: &[u8; 48]) -> [Felt; 6] {
 }
 
 fn bytes48_to_felts_checked(label: &str, value: &[u8; 48]) -> Result<[Felt; 6], String> {
-    bytes48_to_felts(value)
-        .ok_or_else(|| format!("{label} encoding is non-canonical"))
+    bytes48_to_felts(value).ok_or_else(|| format!("{label} encoding is non-canonical"))
 }
 
-fn decode_nullifier_list(
-    label: &str,
-    nullifiers: &[[u8; 48]],
-) -> Result<Vec<[Felt; 6]>, String> {
+fn decode_nullifier_list(label: &str, nullifiers: &[[u8; 48]]) -> Result<Vec<[Felt; 6]>, String> {
     let mut felts = Vec::with_capacity(nullifiers.len());
     for (idx, nf) in nullifiers.iter().enumerate() {
         let value = bytes48_to_felts_checked(&format!("{label}[{idx}]"), nf)?;
@@ -1317,7 +1313,10 @@ fn derive_commitment_block_proof_from_bytes(
     );
 
     let public_inputs = CommitmentBlockPublicInputs {
-        tx_proofs_commitment: bytes48_to_felts_checked("tx_proofs_commitment", &tx_proofs_commitment)?,
+        tx_proofs_commitment: bytes48_to_felts_checked(
+            "tx_proofs_commitment",
+            &tx_proofs_commitment,
+        )?,
         starting_state_root: bytes48_to_felts_checked("starting_state_root", &starting_state_root)?,
         ending_state_root: bytes48_to_felts_checked("ending_state_root", &ending_state_root)?,
         nullifier_root: hash_bytes_to_felts(&nullifier_root),

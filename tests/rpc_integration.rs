@@ -201,10 +201,7 @@ impl MockRpcService {
     }
 
     /// Get Merkle witness for a position
-    pub async fn get_merkle_witness(
-        &self,
-        _position: u64,
-    ) -> (Vec<[u8; 48]>, Vec<bool>, [u8; 48]) {
+    pub async fn get_merkle_witness(&self, _position: u64) -> (Vec<[u8; 48]>, Vec<bool>, [u8; 48]) {
         // Mock witness with 32 levels
         let siblings: Vec<[u8; 48]> = (0..32).map(|i| [i; 48]).collect();
         let indices: Vec<bool> = (0..32).map(|_| false).collect();
@@ -338,10 +335,7 @@ impl TestRpcClient {
     }
 
     /// Get Merkle witness
-    pub async fn get_merkle_witness(
-        &self,
-        position: u64,
-    ) -> (Vec<[u8; 48]>, Vec<bool>, [u8; 48]) {
+    pub async fn get_merkle_witness(&self, position: u64) -> (Vec<[u8; 48]>, Vec<bool>, [u8; 48]) {
         if let Some(mock) = &self.mock {
             mock.get_merkle_witness(position).await
         } else {

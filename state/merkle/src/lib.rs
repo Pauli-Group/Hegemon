@@ -157,11 +157,11 @@ mod tests {
         let mut tree = CommitmentTree::new(4).unwrap();
         let values: Vec<Commitment> = (0..8)
             .map(|v| {
-            let mut bytes = [0u8; 48];
-            bytes[40..48].copy_from_slice(&(v as u64 + 1).to_be_bytes());
-            bytes
-        })
-        .collect();
+                let mut bytes = [0u8; 48];
+                bytes[40..48].copy_from_slice(&(v as u64 + 1).to_be_bytes());
+                bytes
+            })
+            .collect();
         for value in &values {
             tree.append(*value).unwrap();
         }

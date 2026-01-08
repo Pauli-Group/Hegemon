@@ -8,13 +8,12 @@ license = "Apache-2.0"
 
 [dependencies]
 transaction-core = { path = "../transaction-core", default-features = false }
-transaction-circuit = { path = "../transaction", default-features = false }
 p3-air = { workspace = true }
 p3-field = { workspace = true }
 p3-goldilocks = { workspace = true }
 p3-matrix = { workspace = true }
 p3-uni-stark = { workspace = true }
-bincode = { version = "1" }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 
 [features]
 default = ["plonky3"]

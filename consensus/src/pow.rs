@@ -11,7 +11,9 @@ use crate::reward::{
     MAX_FUTURE_SKEW_MS, MEDIAN_TIME_WINDOW, RETARGET_WINDOW, block_subsidy, retarget_target,
     update_supply_digest,
 };
-use crate::types::{CoinbaseSource, ConsensusBlock, SupplyDigest, ValidatorId, ValidatorSetCommitment};
+use crate::types::{
+    CoinbaseSource, ConsensusBlock, SupplyDigest, ValidatorId, ValidatorSetCommitment,
+};
 use crate::version_policy::VersionSchedule;
 use crypto::hashes::{blake3_384, sha256};
 use crypto::ml_dsa::{ML_DSA_SIGNATURE_LEN, MlDsaPublicKey, MlDsaSignature};

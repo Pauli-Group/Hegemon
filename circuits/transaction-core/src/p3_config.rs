@@ -36,13 +36,8 @@ pub type Challenge = BinomialExtensionField<Val, 2>;
 pub type Perm = Poseidon2Goldilocks<POSEIDON2_WIDTH>;
 pub type Hash = PaddingFreeSponge<Perm, POSEIDON2_WIDTH, POSEIDON2_RATE, DIGEST_ELEMS>;
 pub type Compress = TruncatedPermutation<Perm, 2, DIGEST_ELEMS, POSEIDON2_WIDTH>;
-pub type ValMmcs = MerkleTreeMmcs<
-    <Val as Field>::Packing,
-    <Val as Field>::Packing,
-    Hash,
-    Compress,
-    DIGEST_ELEMS,
->;
+pub type ValMmcs =
+    MerkleTreeMmcs<<Val as Field>::Packing, <Val as Field>::Packing, Hash, Compress, DIGEST_ELEMS>;
 pub type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 pub type Dft = Radix2DitParallel<Val>;
 pub type Pcs = TwoAdicFriPcs<Val, Dft, ValMmcs, ChallengeMmcs>;
@@ -55,10 +50,11 @@ pub struct TransactionStarkConfig {
 }
 
 fn poseidon2_perm() -> Perm {
-    let external_constants = ExternalLayerConstants::<Goldilocks, POSEIDON2_WIDTH>::new_from_saved_array(
-        EXTERNAL_ROUND_CONSTANTS,
-        Goldilocks::new_array,
-    );
+    let external_constants =
+        ExternalLayerConstants::<Goldilocks, POSEIDON2_WIDTH>::new_from_saved_array(
+            EXTERNAL_ROUND_CONSTANTS,
+            Goldilocks::new_array,
+        );
     let internal_constants = Goldilocks::new_array(INTERNAL_ROUND_CONSTANTS).to_vec();
     Perm::new(external_constants, internal_constants)
 }

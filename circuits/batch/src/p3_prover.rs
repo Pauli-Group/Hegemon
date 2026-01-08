@@ -1,21 +1,23 @@
 //! Plonky3 prover for batch transaction proofs.
 
-use p3_goldilocks::Goldilocks;
 use p3_field::PrimeCharacteristicRing;
+use p3_goldilocks::Goldilocks;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
 use p3_uni_stark::{get_log_num_quotient_chunks, prove_with_preprocessed, setup_preprocessed};
 
+use crate::constants::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
 use crate::error::BatchCircuitError;
 use crate::p3_air::{BatchPublicInputsP3, BatchTransactionAirP3, PREPROCESSED_WIDTH, TRACE_WIDTH};
-use crate::constants::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{bytes48_to_felts, note_commitment, nullifier, prf_key};
 use transaction_circuit::p3_config::{
-    config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, TransactionProofP3,
+    config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
 };
 use transaction_circuit::p3_prover::TransactionProverP3;
 use transaction_circuit::TransactionWitness;
-use transaction_core::dimensions::{batch_trace_rows, slot_start_row, validate_batch_size, ROWS_PER_TX};
+use transaction_core::dimensions::{
+    batch_trace_rows, slot_start_row, validate_batch_size, ROWS_PER_TX,
+};
 use transaction_core::p3_air::{COL_FEE, TRACE_WIDTH as TX_TRACE_WIDTH};
 
 type Val = Goldilocks;
@@ -23,6 +25,12 @@ type Val = Goldilocks;
 pub type BatchProofP3 = TransactionProofP3;
 
 pub struct BatchTransactionProverP3;
+
+impl Default for BatchTransactionProverP3 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl BatchTransactionProverP3 {
     pub fn new() -> Self {
@@ -58,8 +66,7 @@ impl BatchTransactionProverP3 {
         }
 
         let trace_len = batch_trace_rows(batch_size);
-        let mut trace =
-            RowMajorMatrix::new(vec![Val::ZERO; trace_len * TRACE_WIDTH], TRACE_WIDTH);
+        let mut trace = RowMajorMatrix::new(vec![Val::ZERO; trace_len * TRACE_WIDTH], TRACE_WIDTH);
         let single_prover = TransactionProverP3::new();
 
         for (tx_idx, witness) in witnesses.iter().enumerate() {
@@ -176,9 +183,8 @@ impl BatchTransactionProverP3 {
         );
         let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
         let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
-        let (prep_prover, _) =
-            setup_preprocessed(&config.config, &air, degree_bits)
-                .expect("BatchTransactionAirP3 preprocessed trace missing");
+        let (prep_prover, _) = setup_preprocessed(&config.config, &air, degree_bits)
+            .expect("BatchTransactionAirP3 preprocessed trace missing");
         prove_with_preprocessed(
             &config.config,
             &air,

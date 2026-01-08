@@ -1,8 +1,5 @@
 use std::collections::BTreeMap;
 
-use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
-use serde::{Deserialize, Serialize};
-use p3_field::PrimeCharacteristicRing;
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
@@ -10,6 +7,9 @@ use crate::{
     note::{InputNoteWitness, OutputNoteWitness},
     public_inputs::{BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs},
 };
+use p3_field::PrimeCharacteristicRing;
+use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionWitness {

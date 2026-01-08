@@ -267,8 +267,7 @@ impl ProofVerifier for ParallelProofVerifier {
 
         let proof_starting_root =
             felts_to_bytes48(&commitment_proof.public_inputs.starting_state_root);
-        let proof_ending_root =
-            felts_to_bytes48(&commitment_proof.public_inputs.ending_state_root);
+        let proof_ending_root = felts_to_bytes48(&commitment_proof.public_inputs.ending_state_root);
         verify_and_apply_tree_transition(
             parent_commitment_tree,
             proof_starting_root,

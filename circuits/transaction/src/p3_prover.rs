@@ -14,11 +14,10 @@ use crate::hashing_pq::{
     bytes48_to_felts, merkle_node, note_commitment, nullifier, prf_key, HashFelt,
 };
 use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
-use crate::p3_config::{config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, TransactionProofP3};
+use crate::p3_config::{config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES};
 use crate::witness::TransactionWitness;
 use crate::TransactionCircuitError;
 use transaction_core::constants::POSEIDON2_STEPS;
-use transaction_core::poseidon2::poseidon2_step;
 use transaction_core::p3_air::{
     build_schedule_trace, commitment_output_row, cycle_is_merkle_left, cycle_is_merkle_right,
     cycle_is_output, cycle_reset_domain, merkle_root_output_row, note_start_row_input,
@@ -27,19 +26,18 @@ use transaction_core::p3_air::{
     COL_IN1_VALUE, COL_IN2, COL_IN3, COL_IN4, COL_IN5, COL_IN_ACTIVE0, COL_IN_ACTIVE1,
     COL_MERKLE_LEFT, COL_MERKLE_RIGHT, COL_OUT0, COL_OUT0_ASSET, COL_OUT0_VALUE, COL_OUT1,
     COL_OUT1_ASSET, COL_OUT1_VALUE, COL_OUT2, COL_OUT3, COL_OUT4, COL_OUT5, COL_OUT_ACTIVE0,
-    COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4,
-    COL_S5, COL_S6, COL_S7, COL_S8, COL_S9, COL_SCHEDULE_START, COL_SEL_IN0_SLOT0,
-    COL_SEL_IN0_SLOT1, COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0,
-    COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2, COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0,
-    COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2, COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0,
-    COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2, COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET, COL_SLOT0_IN,
-    COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN,
-    COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_ASSET,
-    COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2,
-    COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ATTEST4, COL_STABLECOIN_ATTEST5,
-    COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG, COL_STABLECOIN_ISSUANCE_SIGN,
-    COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1, COL_STABLECOIN_ORACLE2,
-    COL_STABLECOIN_ORACLE3, COL_STABLECOIN_ORACLE4, COL_STABLECOIN_ORACLE5,
+    COL_OUT_ACTIVE1, COL_RESET, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5,
+    COL_S6, COL_S7, COL_S8, COL_S9, COL_SCHEDULE_START, COL_SEL_IN0_SLOT0, COL_SEL_IN0_SLOT1,
+    COL_SEL_IN0_SLOT2, COL_SEL_IN0_SLOT3, COL_SEL_IN1_SLOT0, COL_SEL_IN1_SLOT1, COL_SEL_IN1_SLOT2,
+    COL_SEL_IN1_SLOT3, COL_SEL_OUT0_SLOT0, COL_SEL_OUT0_SLOT1, COL_SEL_OUT0_SLOT2,
+    COL_SEL_OUT0_SLOT3, COL_SEL_OUT1_SLOT0, COL_SEL_OUT1_SLOT1, COL_SEL_OUT1_SLOT2,
+    COL_SEL_OUT1_SLOT3, COL_SLOT0_ASSET, COL_SLOT0_IN, COL_SLOT0_OUT, COL_SLOT1_ASSET,
+    COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN, COL_SLOT2_OUT, COL_SLOT3_ASSET,
+    COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_ASSET, COL_STABLECOIN_ATTEST0,
+    COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2, COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ATTEST4,
+    COL_STABLECOIN_ATTEST5, COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG,
+    COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1,
+    COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3, COL_STABLECOIN_ORACLE4, COL_STABLECOIN_ORACLE5,
     COL_STABLECOIN_POLICY_HASH0, COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2,
     COL_STABLECOIN_POLICY_HASH3, COL_STABLECOIN_POLICY_HASH4, COL_STABLECOIN_POLICY_HASH5,
     COL_STABLECOIN_POLICY_VERSION, COL_STABLECOIN_SLOT_SEL0, COL_STABLECOIN_SLOT_SEL1,
@@ -48,6 +46,7 @@ use transaction_core::p3_air::{
     MERKLE_ABSORB_CYCLES, MIN_TRACE_LENGTH, NULLIFIER_ABSORB_CYCLES, PREPROCESSED_WIDTH,
     TOTAL_TRACE_CYCLES, TOTAL_USED_CYCLES, TRACE_WIDTH,
 };
+use transaction_core::poseidon2::poseidon2_step;
 
 type Val = Goldilocks;
 
@@ -60,6 +59,12 @@ struct CycleSpec {
 }
 
 pub struct TransactionProverP3;
+
+impl Default for TransactionProverP3 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl TransactionProverP3 {
     pub fn new() -> Self {
@@ -273,7 +278,8 @@ impl TransactionProverP3 {
                 row_slice[COL_STABLECOIN_ENABLED] = enabled;
                 row_slice[COL_STABLECOIN_ISSUANCE_SIGN] = issuance_sign;
                 for (idx, &col) in stablecoin_sel_cols.iter().enumerate() {
-                    row_slice[col] = bool_trace_value(stablecoin_inputs.slot_selectors[idx], is_final);
+                    row_slice[col] =
+                        bool_trace_value(stablecoin_inputs.slot_selectors[idx], is_final);
                 }
 
                 if !is_final {
@@ -281,18 +287,12 @@ impl TransactionProverP3 {
                     row_slice[COL_STABLECOIN_POLICY_VERSION] =
                         stablecoin_inputs.policy_version + one;
                     row_slice[COL_STABLECOIN_ISSUANCE_MAG] = stablecoin_inputs.issuance_mag + one;
-                    row_slice[COL_STABLECOIN_POLICY_HASH0] =
-                        stablecoin_inputs.policy_hash[0] + one;
-                    row_slice[COL_STABLECOIN_POLICY_HASH1] =
-                        stablecoin_inputs.policy_hash[1] + one;
-                    row_slice[COL_STABLECOIN_POLICY_HASH2] =
-                        stablecoin_inputs.policy_hash[2] + one;
-                    row_slice[COL_STABLECOIN_POLICY_HASH3] =
-                        stablecoin_inputs.policy_hash[3] + one;
-                    row_slice[COL_STABLECOIN_POLICY_HASH4] =
-                        stablecoin_inputs.policy_hash[4] + one;
-                    row_slice[COL_STABLECOIN_POLICY_HASH5] =
-                        stablecoin_inputs.policy_hash[5] + one;
+                    row_slice[COL_STABLECOIN_POLICY_HASH0] = stablecoin_inputs.policy_hash[0] + one;
+                    row_slice[COL_STABLECOIN_POLICY_HASH1] = stablecoin_inputs.policy_hash[1] + one;
+                    row_slice[COL_STABLECOIN_POLICY_HASH2] = stablecoin_inputs.policy_hash[2] + one;
+                    row_slice[COL_STABLECOIN_POLICY_HASH3] = stablecoin_inputs.policy_hash[3] + one;
+                    row_slice[COL_STABLECOIN_POLICY_HASH4] = stablecoin_inputs.policy_hash[4] + one;
+                    row_slice[COL_STABLECOIN_POLICY_HASH5] = stablecoin_inputs.policy_hash[5] + one;
                     row_slice[COL_STABLECOIN_ORACLE0] =
                         stablecoin_inputs.oracle_commitment[0] + one;
                     row_slice[COL_STABLECOIN_ORACLE1] =
@@ -452,12 +452,15 @@ impl TransactionProverP3 {
             let end_row = cycle_start + (CYCLE_LENGTH - 1);
             if end_row < trace_len {
                 let next_cycle = cycle + 1;
-                let next_spec = cycle_specs.get(next_cycle - 1).cloned().unwrap_or(CycleSpec {
-                    reset: false,
-                    domain: 0,
-                    inputs: [Val::ZERO; 6],
-                    dir: Val::ZERO,
-                });
+                let next_spec = cycle_specs
+                    .get(next_cycle - 1)
+                    .cloned()
+                    .unwrap_or(CycleSpec {
+                        reset: false,
+                        domain: 0,
+                        inputs: [Val::ZERO; 6],
+                        dir: Val::ZERO,
+                    });
                 let row_slice = trace.row_mut(end_row);
                 row_slice[COL_IN0] = next_spec.inputs[0];
                 row_slice[COL_IN1] = next_spec.inputs[1];
@@ -682,7 +685,7 @@ impl TransactionProverP3 {
         pub_inputs: &TransactionPublicInputsP3,
     ) -> Result<Vec<u8>, TransactionCircuitError> {
         let proof = self.prove(trace, pub_inputs);
-        bincode::serialize(&proof).map_err(|_| {
+        postcard::to_allocvec(&proof).map_err(|_| {
             TransactionCircuitError::ConstraintViolation("failed to serialize Plonky3 proof")
         })
     }
@@ -844,7 +847,11 @@ fn value_balance_parts(value_balance: i128) -> Result<(Val, Val), TransactionCir
     let magnitude = value_balance.unsigned_abs();
     let mag_u64 = u64::try_from(magnitude)
         .map_err(|_| TransactionCircuitError::ValueBalanceOutOfRange(magnitude))?;
-    let sign = if value_balance < 0 { Val::ONE } else { Val::ZERO };
+    let sign = if value_balance < 0 {
+        Val::ONE
+    } else {
+        Val::ZERO
+    };
     Ok((sign, Val::from_u64(mag_u64)))
 }
 
@@ -1032,11 +1039,7 @@ mod tests {
     use crate::StablecoinPolicyBinding;
     use std::panic::catch_unwind;
 
-    fn compute_merkle_root_from_path(
-        leaf: HashFelt,
-        position: u64,
-        path: &MerklePath,
-    ) -> HashFelt {
+    fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
         let mut current = leaf;
         let mut pos = position;
         for sibling in &path.siblings {
@@ -1116,7 +1119,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(not(feature = "plonky3-e2e"), ignore = "slow: full Plonky3 prove/verify roundtrip")]
+    #[cfg_attr(
+        not(feature = "plonky3-e2e"),
+        ignore = "slow: full Plonky3 prove/verify roundtrip"
+    )]
     fn prove_verify_roundtrip_p3() {
         let witness = sample_witness();
         witness.validate().expect("witness valid");
@@ -1160,13 +1166,11 @@ mod tests {
         };
 
         let result = catch_unwind(|| prover.prove(trace, &pub_inputs));
-        match result {
-            Ok(proof) => assert!(
+        if let Ok(proof) = result {
+            assert!(
                 verify_transaction_proof_p3(&proof, &pub_inputs).is_err(),
                 "verification should fail for tampered counters"
-            ),
-            Err(_) => {}
+            );
         }
     }
-
 }

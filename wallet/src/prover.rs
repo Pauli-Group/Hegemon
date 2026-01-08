@@ -208,9 +208,8 @@ impl StarkProver {
             );
         }
 
-        let report = proof::verify(&proof, &self.verifying_key).map_err(|e| {
-            WalletError::Serialization(format!("Proof verification failed: {e}"))
-        })?;
+        let report = proof::verify(&proof, &self.verifying_key)
+            .map_err(|e| WalletError::Serialization(format!("Proof verification failed: {e}")))?;
         if !report.verified {
             return Err(WalletError::Serialization(
                 "Proof verification failed".to_string(),

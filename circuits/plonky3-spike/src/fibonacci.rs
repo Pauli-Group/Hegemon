@@ -54,10 +54,7 @@ impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
 
         let mut when_transition = builder.when_transition();
         when_transition.assert_eq(local.right.clone(), next.left.clone());
-        when_transition.assert_eq(
-            local.left.clone() + local.right.clone(),
-            next.right.clone(),
-        );
+        when_transition.assert_eq(local.left.clone() + local.right.clone(), next.right.clone());
 
         builder.when_last_row().assert_eq(local.right.clone(), x);
     }
@@ -66,8 +63,7 @@ impl<AB: AirBuilderWithPublicValues> Air<AB> for FibonacciAir {
 pub fn generate_trace_rows<F: PrimeField64>(a: u64, b: u64, n: usize) -> RowMajorMatrix<F> {
     assert!(n.is_power_of_two());
 
-    let mut trace =
-        RowMajorMatrix::new(vec![F::ZERO; n * NUM_FIBONACCI_COLS], NUM_FIBONACCI_COLS);
+    let mut trace = RowMajorMatrix::new(vec![F::ZERO; n * NUM_FIBONACCI_COLS], NUM_FIBONACCI_COLS);
 
     let (prefix, rows, suffix) = unsafe { trace.values.align_to_mut::<FibonacciRow<F>>() };
     assert!(prefix.is_empty(), "Alignment should match");
@@ -110,8 +106,13 @@ type Val = Goldilocks;
 type Perm = Poseidon2Goldilocks<12>;
 type MyHash = PaddingFreeSponge<Perm, 12, 6, DIGEST_ELEMS>;
 type MyCompress = TruncatedPermutation<Perm, 2, DIGEST_ELEMS, 12>;
-type ValMmcs =
-    MerkleTreeMmcs<<Val as Field>::Packing, <Val as Field>::Packing, MyHash, MyCompress, DIGEST_ELEMS>;
+type ValMmcs = MerkleTreeMmcs<
+    <Val as Field>::Packing,
+    <Val as Field>::Packing,
+    MyHash,
+    MyCompress,
+    DIGEST_ELEMS,
+>;
 type Challenge = BinomialExtensionField<Val, 2>;
 type ChallengeMmcs = ExtensionMmcs<Val, Challenge, ValMmcs>;
 type Challenger = DuplexChallenger<Val, Perm, 12, 6>;
@@ -146,16 +147,10 @@ pub fn prove_and_verify() -> FibProofStats {
         assert!(suffix.is_empty(), "Alignment should match");
         rows[TRACE_ROWS - 1].right
     };
-    let pis = vec![
-        Val::from_u64(0),
-        Val::from_u64(1),
-        last_right,
-    ];
+    let pis = vec![Val::from_u64(0), Val::from_u64(1), last_right];
 
     let proof = prove(&config, &FibonacciAir {}, trace, &pis);
-    let proof_bytes = bincode::serialize(&proof)
-        .expect("serialize proof")
-        .len();
+    let proof_bytes = bincode::serialize(&proof).expect("serialize proof").len();
 
     verify(&config, &FibonacciAir {}, &proof, &pis).expect("verification failed");
 

@@ -26,8 +26,7 @@ pub const SQUEEZE_CYCLES: usize = 1;
 pub const ABSORB_CYCLES: usize = INPUT_CYCLES_PER_TRACE - SQUEEZE_CYCLES;
 
 /// Input elements padded to fill the full trace.
-pub const PADDED_INPUT_COUNT: usize =
-    ABSORB_CYCLES * transaction_core::constants::POSEIDON2_RATE;
+pub const PADDED_INPUT_COUNT: usize = ABSORB_CYCLES * transaction_core::constants::POSEIDON2_RATE;
 
 /// Execution trace width.
 pub const TRACE_WIDTH: usize = transaction_core::p3_air::COL_IN5 + 1;

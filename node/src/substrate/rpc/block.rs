@@ -39,10 +39,7 @@ impl From<&CommitmentBlockPublicInputs> for CommitmentBlockPublicInputsRpc {
                 "0x{}",
                 hex::encode(felts_to_bytes48(&value.ending_state_root))
             ),
-            nullifier_root: format!(
-                "0x{}",
-                hex::encode(felts_to_bytes48(&value.nullifier_root))
-            ),
+            nullifier_root: format!("0x{}", hex::encode(felts_to_bytes48(&value.nullifier_root))),
             da_root: format!("0x{}", hex::encode(felts_to_bytes48(&value.da_root))),
             tx_count: value.tx_count,
             nullifiers: value

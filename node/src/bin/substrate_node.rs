@@ -57,7 +57,6 @@ mod cli {
         /// Number of mining threads (0 = no mining).
         #[arg(long, default_value = "0")]
         pub mine_threads: usize,
-
     }
 
     /// PQ network configuration derived from CLI arguments

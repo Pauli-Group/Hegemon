@@ -14,7 +14,6 @@
 //!
 //! - Real verification is always enabled (Plonky3 backend).
 
-
 use p3_field::PrimeCharacteristicRing;
 use transaction_core::p3_config::FRI_NUM_QUERIES;
 
@@ -303,8 +302,7 @@ impl StarkVerifier {
             attestation_commitment,
         ) = match inputs.stablecoin.as_ref() {
             Some(binding) => {
-                let (sign, mag) =
-                    Self::signed_parts(binding.issuance_delta).unwrap_or((0u8, 0u64));
+                let (sign, mag) = Self::signed_parts(binding.issuance_delta).unwrap_or((0u8, 0u64));
                 (
                     1u8,
                     binding.asset_id,
@@ -669,8 +667,9 @@ impl StarkVerifier {
                     transaction_core::hashing_pq::bytes48_to_felts(&binding.policy_hash)?;
                 let oracle_commitment =
                     transaction_core::hashing_pq::bytes48_to_felts(&binding.oracle_commitment)?;
-                let attestation_commitment =
-                    transaction_core::hashing_pq::bytes48_to_felts(&binding.attestation_commitment)?;
+                let attestation_commitment = transaction_core::hashing_pq::bytes48_to_felts(
+                    &binding.attestation_commitment,
+                )?;
                 (
                     transaction_core::Felt::ONE,
                     transaction_core::Felt::from_u64(binding.asset_id),
@@ -886,8 +885,8 @@ impl BatchVerifier for StarkBatchVerifier {
         #[cfg(feature = "batch-proofs")]
         {
             use batch_circuit::{
-                verify_batch_proof_bytes, BatchCircuitError, BatchPublicInputs as CircuitBatchPublicInputs,
-                MAX_BATCH_SIZE,
+                verify_batch_proof_bytes, BatchCircuitError,
+                BatchPublicInputs as CircuitBatchPublicInputs, MAX_BATCH_SIZE,
             };
             use transaction_core::hashing_pq::bytes48_to_felts;
 
@@ -938,17 +937,24 @@ impl BatchVerifier for StarkBatchVerifier {
             return match verify_batch_proof_bytes(&proof.data, &batch_inputs) {
                 Ok(()) => BatchVerificationResult::Valid,
                 Err(err) => match err {
-                    BatchCircuitError::InvalidProofFormat => BatchVerificationResult::InvalidProofFormat,
+                    BatchCircuitError::InvalidProofFormat => {
+                        BatchVerificationResult::InvalidProofFormat
+                    }
                     BatchCircuitError::InvalidBatchSize(_) | BatchCircuitError::EmptyBatch => {
                         BatchVerificationResult::InvalidBatchSize
                     }
-                    BatchCircuitError::InvalidPublicInputs(_) | BatchCircuitError::AnchorMismatch => {
+                    BatchCircuitError::InvalidPublicInputs(_)
+                    | BatchCircuitError::AnchorMismatch => {
                         BatchVerificationResult::InvalidPublicInputs
                     }
-                    BatchCircuitError::VerificationError(_) => BatchVerificationResult::VerificationFailed,
+                    BatchCircuitError::VerificationError(_) => {
+                        BatchVerificationResult::VerificationFailed
+                    }
                     BatchCircuitError::InvalidWitness { .. }
                     | BatchCircuitError::TraceBuildError(_)
-                    | BatchCircuitError::ProofGenerationError(_) => BatchVerificationResult::VerificationFailed,
+                    | BatchCircuitError::ProofGenerationError(_) => {
+                        BatchVerificationResult::VerificationFailed
+                    }
                 },
             };
         }
@@ -988,7 +994,6 @@ mod tests {
     fn sample_vk() -> VerifyingKey {
         StarkVerifier::create_verifying_key(0)
     }
-
 
     #[test]
     #[cfg(not(feature = "production"))]
@@ -1260,5 +1265,4 @@ mod tests {
         assert!(verifier.verify_binding_hash(&sig_max, &inputs_max));
         assert!(verifier.verify_binding_hash(&sig_min, &inputs_min));
     }
-
 }

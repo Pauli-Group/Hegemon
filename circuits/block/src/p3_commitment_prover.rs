@@ -1,8 +1,8 @@
 //! Plonky3 prover for commitment block proofs.
 
 use blake3::Hasher as Blake3Hasher;
-use p3_goldilocks::Goldilocks;
 use p3_field::{Field, PrimeCharacteristicRing};
+use p3_goldilocks::Goldilocks;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
 use p3_uni_stark::{get_log_num_quotient_chunks, prove_with_preprocessed, setup_preprocessed};
@@ -14,19 +14,19 @@ use transaction_core::hashing_pq::{felts_to_bytes48, is_canonical_bytes48, Commi
 use transaction_core::p3_air::CYCLE_LENGTH;
 use transaction_core::poseidon2::poseidon2_step;
 
-use crate::error::BlockError;
 use crate::commitment_constants::{
     BLOCK_COMMITMENT_DOMAIN_TAG, COL_DA_ROOT0, COL_DA_ROOT1, COL_DA_ROOT2, COL_DA_ROOT3,
     COL_DA_ROOT4, COL_DA_ROOT5, COL_END_ROOT0, COL_END_ROOT1, COL_END_ROOT2, COL_END_ROOT3,
     COL_END_ROOT4, COL_END_ROOT5, COL_INPUT0, COL_INPUT1, COL_INPUT2, COL_INPUT3, COL_INPUT4,
     COL_INPUT5, COL_NF_DIFF_INV, COL_NF_DIFF_NZ, COL_NF_PERM, COL_NF_PERM_INV, COL_NF_S0,
-    COL_NF_S1, COL_NF_S2, COL_NF_S3, COL_NF_S4, COL_NF_S5, COL_NF_SORTED_INV,
-    COL_NF_SORTED_NZ, COL_NF_U0, COL_NF_U1, COL_NF_U2, COL_NF_U3, COL_NF_U4, COL_NF_U5,
-    COL_NULLIFIER_ROOT0, COL_NULLIFIER_ROOT1, COL_NULLIFIER_ROOT2, COL_NULLIFIER_ROOT3,
-    COL_NULLIFIER_ROOT4, COL_NULLIFIER_ROOT5, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3,
-    COL_S4, COL_S5, COL_S6, COL_S7, COL_S8, COL_S9, COL_START_ROOT0, COL_START_ROOT1,
-    COL_START_ROOT2, COL_START_ROOT3, COL_START_ROOT4, COL_START_ROOT5,
+    COL_NF_S1, COL_NF_S2, COL_NF_S3, COL_NF_S4, COL_NF_S5, COL_NF_SORTED_INV, COL_NF_SORTED_NZ,
+    COL_NF_U0, COL_NF_U1, COL_NF_U2, COL_NF_U3, COL_NF_U4, COL_NF_U5, COL_NULLIFIER_ROOT0,
+    COL_NULLIFIER_ROOT1, COL_NULLIFIER_ROOT2, COL_NULLIFIER_ROOT3, COL_NULLIFIER_ROOT4,
+    COL_NULLIFIER_ROOT5, COL_S0, COL_S1, COL_S10, COL_S11, COL_S2, COL_S3, COL_S4, COL_S5, COL_S6,
+    COL_S7, COL_S8, COL_S9, COL_START_ROOT0, COL_START_ROOT1, COL_START_ROOT2, COL_START_ROOT3,
+    COL_START_ROOT4, COL_START_ROOT5,
 };
+use crate::error::BlockError;
 use crate::p3_commitment_air::{
     CommitmentBlockAirP3, CommitmentBlockPublicInputsP3, CYCLE_BITS, PREPROCESSED_WIDTH,
     TRACE_WIDTH,
@@ -43,6 +43,12 @@ pub struct CommitmentBlockProofP3 {
 }
 
 pub struct CommitmentBlockProverP3;
+
+impl Default for CommitmentBlockProverP3 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl CommitmentBlockProverP3 {
     pub fn new() -> Self {
@@ -173,7 +179,14 @@ impl CommitmentBlockProverP3 {
                         inputs[next_idx + 5],
                     )
                 } else {
-                    (Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO)
+                    (
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                    )
                 };
 
             for step in 0..CYCLE_LENGTH {
@@ -287,12 +300,8 @@ impl CommitmentBlockProverP3 {
         let air = CommitmentBlockAirP3::new(pub_inputs.tx_count as usize);
         let pub_inputs_vec = pub_inputs.to_vec();
         let num_public_values = pub_inputs_vec.len();
-        let log_chunks = get_log_num_quotient_chunks::<Val, _>(
-            &air,
-            PREPROCESSED_WIDTH,
-            num_public_values,
-            0,
-        );
+        let log_chunks =
+            get_log_num_quotient_chunks::<Val, _>(&air, PREPROCESSED_WIDTH, num_public_values, 0);
         let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
         let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
         let degree_bits = trace.height().ilog2() as usize;
@@ -370,7 +379,14 @@ impl CommitmentBlockProverP3 {
                     inputs[idx + 5],
                 )
             } else {
-                (Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO)
+                (
+                    Val::ZERO,
+                    Val::ZERO,
+                    Val::ZERO,
+                    Val::ZERO,
+                    Val::ZERO,
+                    Val::ZERO,
+                )
             };
             let (next_input0, next_input1, next_input2, next_input3, next_input4, next_input5) =
                 if chunk_index + 1 < input_cycles {
@@ -384,7 +400,14 @@ impl CommitmentBlockProverP3 {
                         inputs[next_idx + 5],
                     )
                 } else {
-                    (Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO, Val::ZERO)
+                    (
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                        Val::ZERO,
+                    )
                 };
 
             let cycle_start = cycle * CYCLE_LENGTH;
@@ -423,17 +446,15 @@ impl CommitmentBlockProverP3 {
                     }
                 }
 
-                if step + 1 == CYCLE_LENGTH {
-                    if cycle + 1 == total_cycles {
-                        output = [
-                            row_slice[COL_S0],
-                            row_slice[COL_S1],
-                            row_slice[COL_S2],
-                            row_slice[COL_S3],
-                            row_slice[COL_S4],
-                            row_slice[COL_S5],
-                        ];
-                    }
+                if step + 1 == CYCLE_LENGTH && cycle + 1 == total_cycles {
+                    output = [
+                        row_slice[COL_S0],
+                        row_slice[COL_S1],
+                        row_slice[COL_S2],
+                        row_slice[COL_S3],
+                        row_slice[COL_S4],
+                        row_slice[COL_S5],
+                    ];
                 }
             }
         }
