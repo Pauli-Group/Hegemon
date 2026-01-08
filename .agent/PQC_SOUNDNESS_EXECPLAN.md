@@ -37,15 +37,16 @@ After this work, a user can:
 - [x] (2026-01-07 10:32Z) Raised the test-only Plonky3 FRI blowup to satisfy the transaction AIR quotient-domain size requirement and avoid LDE height assertions during prove/verify.
 - [x] (2026-01-07 10:43Z) Added a PQC soundness checklist section defining minimum PQ parameters, verification steps, and the formal-analysis caveat.
 - [x] (2026-01-07 13:39Z) Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments (Poseidon2 width 12/rate 6/capacity 6, 48-byte outputs, PQ hashing + witness/proof plumbing, transaction/batch AIR + prover updates, docs refreshed; `cargo check -p transaction-circuit --features plonky3`, `cargo check -p batch-circuit --features plonky3`, `cargo check -p block-circuit --features plonky3`).
-- [ ] Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
+- [x] (2026-01-07 23:55Z) Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
 - [x] (2026-01-07 16:02Z) Removed the ignored Plonky3 debug constraint test from `circuits/transaction/src/p3_prover.rs` to keep the default suite lean.
-- [ ] (2026-01-07 16:02Z) Updated wallet/rpc tests + disclosure package flows to 48-byte commitments and moved the disclosure circuit to Poseidon2 (Winterfell) so disclosure proofs match PQ commitments; remaining 48-byte migrations still pending in block/batch/settlement legacy paths.
+- [x] (2026-01-07 23:55Z) Ported disclosure circuit to Plonky3 (preprocessed schedule) and aligned payment-proof flows with 48-byte commitments end-to-end.
 - [x] (2026-01-07 19:18Z) Aligned the settlement pallet with Poseidon2/48-byte commitments (re-exported `Felt`, updated padding and hashing, removed Winterfell deps) and fixed block commitment trace zero-checks.
 - [x] (2026-01-07 19:42Z) Cleaned up stale feature flags and dependency features blocking builds (`transaction-core` bincode features, `disclosure`/`epoch`/`state-merkle` feature mismatches, `node`/`consensus`/`tests` fast-proof flags).
 - [x] (2026-01-07 20:10Z) Updated consensus PoW/validator commitments and block commitment verification to 48-byte digests, with byte<->felt conversion at the consensus boundary and test fixtures migrated.
 - [x] (2026-01-07 20:36Z) Added `config_with_fri` + dynamic log_blowup selection for block commitment proofs (prover+verifier) and ran `cargo test -p pallet-settlement` plus `cargo test -p consensus --tests`.
 - [x] (2026-01-07 22:10Z) Removed `legacy-commitment` helpers from the shielded pool pallet and kept only circuit-compatible Poseidon2 commitment/nullifier helpers.
 - [x] (2026-01-07 22:10Z) Updated security-tests to Plonky3/Poseidon2 expectations (rewrote `stark_soundness`, rewired `poseidon_compat`, refreshed block-flow tests), plus aligned node RPC fixtures and node-resilience validator commitments to 48-byte Blake3-384.
+- [x] (2026-01-07 23:55Z) Removed the Winterfell epoch proof stack (epoch circuit, pallet storage, node RPC/gossip, tests) and archived recursive-epoch runbooks pending a Plonky3 recursion replacement.
 - [ ] Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits.
 - [ ] Milestone 7: Update pallets, node, wallet, and protocol versioning.
 - [ ] Milestone 8: Documentation and runbooks.
@@ -67,8 +68,8 @@ After this work, a user can:
 - Observation: Plonky3's FRI soundness is configured via `FriParameters { log_blowup, num_queries, proof_of_work_bits }` with no hardcoded limits. Soundness ≈ `log_blowup × num_queries + pow_bits`.
   Evidence: Plonky3 `fri/src/config.rs`.
 
-- Observation: Epoch recursion code imports Winterfell internals (`winter_air`, `winter_fri`, `winter_crypto`, `winter_math`) directly, so a Plonky3 port will need custom recursion support rather than a drop-in replacement.
-  Evidence: `circuits/epoch/src/recursion/*.rs`.
+- Observation: Recursive epoch proofs were removed alongside the Winterfell epoch circuit; reintroducing recursion will require a native Plonky3 path (no drop-in replacement).
+  Evidence: `node/src/substrate/service.rs` removal + archived `runbooks/recursive_proofs_testnet.md`.
 
 - Observation: Goldilocks in Plonky3 v0.2 only provides a quadratic binomial extension, so the spike uses `BinomialExtensionField<Goldilocks, 2>`.
   Evidence: `p3-goldilocks-0.2.0/src/extension.rs` (`BinomiallyExtendable<2>`).
@@ -124,8 +125,8 @@ After this work, a user can:
 - Observation: With `log_num_quotient_chunks=3` for `TransactionAirP3`, a test-only `FRI_LOG_BLOWUP=2` makes the LDE shorter than the quotient domain, triggering `assertion failed: lde.height() >= domain.size()`.
   Evidence: `circuits/transaction-core/src/p3_air.rs` log chunk test and `p3-fri-0.4.2/src/two_adic_pcs.rs:271`.
 
-- Observation: Winterfell legacy batch/block/settlement paths still encode commitments/nullifiers as 32-byte hashes, which is now incompatible with the 48-byte application types; they need either feature-gating or a Poseidon2/Plonky3 port to stay usable.
-  Evidence: `circuits/batch/src/public_inputs.rs`, `circuits/block/src/commitment_air.rs`, `circuits/settlement/src/hashing.rs`.
+- Observation: Winterfell legacy batch/block/settlement paths were removed; all commitment/nullifier paths now use 48-byte Poseidon2 digests.
+  Evidence: `circuits/disclosure/src`, `pallets/shielded-pool/src/lib.rs`, `node/src/substrate/service.rs` cleanup.
 
 - Observation: Block commitment proofs failed with `assertion failed: lde.height() >= domain.size()` and `InvalidOpeningArgument(WrongHeight { log_max_height: 11, num_siblings: 12 })` until the prover/verifier used a log_blowup derived from `get_log_num_quotient_chunks`.
   Evidence: `cargo test -p consensus --tests` failures in `commitment_proof_handoff`.
@@ -196,6 +197,10 @@ After this work, a user can:
 
 - Decision: Gate Winterfell transaction proofs behind a `winterfell-legacy` feature while keeping it on by default during migration.
   Rationale: This preserves existing behavior for downstream crates while allowing Plonky3 proof generation/verification to be enabled explicitly.
+  Date/Author: 2026-01-07 / Codex.
+
+- Decision: Remove Winterfell legacy circuits and recursive epoch proofs instead of keeping a legacy feature flag.
+  Rationale: The migration goal is a single Plonky3 backend; retaining Winterfell paths adds audit surface and blocks full PQ-only cleanup. Recursion will be reintroduced with a native Plonky3 design.
   Date/Author: 2026-01-07 / Codex.
 
 - Decision: Mark the Plonky3 prove/verify roundtrip test as ignored by default and reduce test-only FRI queries to keep unit tests fast.
@@ -277,7 +282,7 @@ For STARK IOP soundness, the dominant term is:
 
 Both must reach 128 bits for the "128-bit everywhere" target.
 
-### Current Architecture (Winterfell)
+### Historical Architecture (Winterfell, removed)
 
 The codebase currently uses Winterfell 0.13.1, a Rust STARK library. Key crates:
 - `winterfell`: Re-exports prover/verifier.

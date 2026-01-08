@@ -14,7 +14,7 @@ per proof. Think Sapling/Orchard style: fixed `M, N` for the base circuit, recur
 A **note** is conceptually:
 
 * `value` - integer (e.g. 64-bit, or 128-bit if you're paranoid)
-* `asset_id` - 64-bit label (u64) in the current circuit, encoded as a single field element inside the STARK. Commitments and nullifiers are serialized as 32-byte outputs with four 64-bit limbs in the Winterfell legacy path; the Plonky3/PQC path uses 48-byte outputs with six 64-bit limbs for 384-bit capacity. Application-level types remain 32 bytes until Milestone 5 widens them. `0` = native coin (ZEC-like).
+* `asset_id` - 64-bit label (u64) in the current circuit, encoded as a single field element inside the STARK. Commitments and nullifiers are serialized as 48-byte outputs with six 64-bit limbs for 384-bit capacity, and application-level types use 48-byte digests end-to-end. `0` = native coin (ZEC-like).
 * `pk_recipient` – an encoding of the recipient’s “note‑receiving” public data (tied to their incoming viewing key)
 * `rho` – per‑note secret (random)
 * `r` – commitment randomness
@@ -193,7 +193,7 @@ receipt alongside miner telemetry to keep the Go benchmarking harness under `con
 
 ## 3. The STARK arithmetization
 
-We don’t need to pick a specific scheme (Plonky2/Winterfell/etc.), but we do need the rough structure.
+We don’t need to pick a specific scheme (Plonky2/Plonky3/etc.), but we do need the rough structure.
 
 ### 3.1 Field and hash choices
 
@@ -474,34 +474,29 @@ Everything arithmetized in the STARK (commitments, Merkle hashes, PRFs) lives in
 
 #### 1.2 Internal hash / permutation
 
-Define a Poseidon-like permutation \(P: \mathbb{F}_p^t \to \mathbb{F}_p^t\), with a legacy and a PQ configuration:
-
-* **Legacy (Winterfell)**: width \(t = 3\) (rate 2, capacity 1), S-box \(x^5\) on every element, \(R_F = 63\) full rounds, NUMS-generated round constants/MDS.
-* **PQC (Plonky3)**: Poseidon2 width \(t = 12\) (rate 6, capacity 6), S-box \(x^7\), 8 full rounds + 22 partial rounds, deterministic constants generated from the fixed seed `hegemon-tx-poseidon2-seed-2026!!`.
+Define a Poseidon2 permutation \(P: \mathbb{F}_p^t \to \mathbb{F}_p^t\) with width \(t = 12\) (rate 6, capacity 6), S-box \(x^7\), 8 full rounds + 22 partial rounds, and deterministic constants generated from the fixed seed `hegemon-tx-poseidon2-seed-2026!!`.
 
 We derive a field hash by sponge:
 
 \[
-H_f(x_0, \ldots, x_{k-1}) = \operatorname{Sponge}(P, \text{capacity}=1, \text{rate}=2, x_0, \ldots, x_{k-1})
+H_f(x_0, \ldots, x_{k-1}) = \operatorname{Sponge}(P, \text{capacity}=6, \text{rate}=6, x_0, \ldots, x_{k-1})
 \]
 
-For commitments, nullifiers, and Merkle nodes we emit four field elements in the legacy path and
-six field elements (48 bytes) in the Plonky3/PQC path. Single-field values (e.g., balance tags)
-still use the first state word.
+For commitments, nullifiers, and Merkle nodes we emit six field elements (48 bytes). Single-field values (e.g., balance tags) still use the first state word.
 
 Outside the circuit (for block headers, addresses, etc.) we can still use standard SHA-256 as a byte-oriented hash. Inside, we stick to \(H_f\).
 
 #### 1.3 Merkle tree
 
-* Each leaf: a commitment \(cm\) represented as four limbs in the legacy path or six limbs in the Plonky3/PQC path.
-* Parent hash: for children \(L, R\) (legacy 4 limbs, PQC 6 limbs), absorb the limbs in circuit order and output the same limb count:
+* Each leaf: a commitment \(cm\) represented as six limbs (48 bytes).
+* Parent hash: for children \(L, R\) (each 6 limbs), absorb the limbs in circuit order and output the same limb count:
 
 \[
 \text{parent} = H_f(\text{domain}_{\text{merkle}}, L_0, L_1, L_2, L_3, R_0, R_1, R_2, R_3)
 \]
 
 where \(\text{domain}_{\text{merkle}}\) is a fixed field element.
-For the Plonky3/PQC path, the same formula applies with six limbs per child.
+This formula applies with six limbs per child.
 
 * Tree depth: say 32 or 40 (gives capacity for \(2^{32}\)–\(2^{40}\) notes; you can always roll a new tree later via a transition proof).
 * Runtime keeps a bounded window of recent Merkle roots (`MerkleRootHistorySize`); anchors older than the window are invalid to cap state growth.

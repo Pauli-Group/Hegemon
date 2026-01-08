@@ -30,7 +30,7 @@ pub const TRACE_WIDTH: usize = 20;
 pub const TRACE_LENGTH: usize = TOTAL_CYCLES * CYCLE_LENGTH;
 
 /// Circuit version (increment on constraint changes).
-pub const CIRCUIT_VERSION: u32 = 4;
+pub const CIRCUIT_VERSION: u32 = 5;
 
 /// AIR domain tag for hash binding.
 pub const AIR_DOMAIN_TAG: &[u8] = b"SHPC-DISCLOSURE-AIR-V1";
@@ -56,7 +56,7 @@ pub fn compute_air_hash() -> [u8; 32] {
 
     // Max constraint degree and number of transition constraints.
     hasher.update(&7u32.to_le_bytes());
-    hasher.update(&13u32.to_le_bytes());
+    hasher.update(&14u32.to_le_bytes());
 
     let hash = hasher.finalize();
     let mut out = [0u8; 32];
