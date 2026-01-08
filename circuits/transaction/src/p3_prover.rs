@@ -165,12 +165,6 @@ impl TransactionProverP3 {
             for &col in slot_asset_cols.iter() {
                 row_slice[col] = Val::ONE;
             }
-            for &col in slot_in_cols.iter() {
-                row_slice[col] = Val::ONE;
-            }
-            for &col in slot_out_cols.iter() {
-                row_slice[col] = Val::from_u64(2);
-            }
         }
 
         let start_row_in0 = note_start_row_input(0);
