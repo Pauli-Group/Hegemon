@@ -7,6 +7,7 @@ use transaction_core::poseidon2_constants::{
     EXTERNAL_ROUND_CONSTANTS, INTERNAL_MATRIX_DIAG, INTERNAL_ROUND_CONSTANTS,
 };
 use winterfell::math::fields::f64::BaseElement;
+use winterfell::math::FieldElement;
 
 #[inline(always)]
 fn sbox(x: BaseElement) -> BaseElement {

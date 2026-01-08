@@ -22,6 +22,7 @@ pub struct PaymentDisclosureClaim {
     pub value: u64,
     pub asset_id: u64,
     pub pk_recipient: [u8; 32],
+    #[serde(with = "serde_bytes48")]
     pub commitment: [u8; 48],
 }
 
@@ -141,4 +142,28 @@ fn bytes48_to_field_elements(bytes: &[u8; 48]) -> Option<[BaseElement; 6]> {
         out[idx] = BaseElement::new(u64::from_be_bytes(buf));
     }
     Some(out)
+}
+
+mod serde_bytes48 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &[u8; 48], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(value)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 48], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        if bytes.len() != 48 {
+            return Err(serde::de::Error::custom("expected 48 bytes"));
+        }
+        let mut out = [0u8; 48];
+        out.copy_from_slice(&bytes);
+        Ok(out)
+    }
 }

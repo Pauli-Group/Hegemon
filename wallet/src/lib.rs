@@ -14,6 +14,7 @@ pub mod scanner;
 pub mod shielded_tx;
 pub mod store;
 pub mod substrate_rpc;
+mod serde_bytes48;
 pub mod sync;
 pub mod tx_builder;
 pub mod viewing;
