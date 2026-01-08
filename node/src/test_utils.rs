@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use consensus::header::{BlockHeader, PowSeal};
 use consensus::reward::INITIAL_SUBSIDY;
 use consensus::types::{da_root, ConsensusBlock, DaParams};
-use crypto::hashes::sha256;
+use crypto::hashes::{blake3_384, sha256};
 use crypto::traits::{SigningKey, VerifyKey};
 use parking_lot::Mutex;
 use wallet::rpc::TransactionBundle;
@@ -185,7 +185,7 @@ impl LegacyNode {
         Ok(Some(block))
     }
 
-    pub fn miner_ids(&self) -> Vec<[u8; 32]> {
+    pub fn miner_ids(&self) -> Vec<[u8; 48]> {
         let state = self.state.lock();
         vec![miner_id(&state.config)]
     }
@@ -284,8 +284,8 @@ impl LegacyNode {
     }
 }
 
-fn miner_id(config: &NodeConfig) -> [u8; 32] {
-    sha256(&config.miner_secret().verify_key().to_bytes())
+fn miner_id(config: &NodeConfig) -> [u8; 48] {
+    blake3_384(&config.miner_secret().verify_key().to_bytes())
 }
 
 fn current_time_ms() -> u64 {

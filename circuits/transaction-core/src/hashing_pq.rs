@@ -187,3 +187,11 @@ pub fn balance_commitment_bytes(
         native_delta, slots,
     )?))
 }
+
+/// Split a signed balance into a sign flag and magnitude field element.
+pub fn signed_parts(value: i128) -> Option<(Felt, Felt)> {
+    let magnitude = value.unsigned_abs();
+    let mag_u64 = u64::try_from(magnitude).ok()?;
+    let sign = if value < 0 { Felt::ONE } else { Felt::ZERO };
+    Some((sign, Felt::from_u64(mag_u64)))
+}

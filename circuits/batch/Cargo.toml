@@ -8,59 +8,24 @@ description = "STARK batch transaction circuit for proving multiple transactions
 repository = "https://github.com/Pauli-Group/Hegemon"
 
 [dependencies]
-winterfell = { version = "0.13", default-features = false, optional = true }
-winter-crypto = { version = "0.13", default-features = false, optional = true }
-winter-air = { version = "0.13", default-features = false, optional = true }
-winter-prover = { version = "0.13", default-features = false, optional = true }
 transaction-core = { path = "../transaction-core", default-features = false }
-transaction-circuit = { path = "../transaction", default-features = false, optional = true }
-miden-crypto = { version = "0.19", default-features = false, optional = true }
-p3-air = { workspace = true, optional = true }
-p3-field = { workspace = true, optional = true }
-p3-goldilocks = { workspace = true, optional = true }
-p3-matrix = { workspace = true, optional = true }
-p3-uni-stark = { workspace = true, optional = true }
-bincode = { version = "1", optional = true }
+transaction-circuit = { path = "../transaction", default-features = false }
+p3-air = { workspace = true }
+p3-field = { workspace = true }
+p3-goldilocks = { workspace = true }
+p3-matrix = { workspace = true }
+p3-uni-stark = { workspace = true }
+bincode = { version = "1" }
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }
 proptest = "1"
 criterion = { version = "0.5", features = ["html_reports"] }
 
-[[bench]]
-name = "batch_vs_individual"
-harness = false
-
 [features]
-default = ["std"]
+default = ["plonky3"]
 std = ["transaction-core/std"]
-winterfell-legacy = [
-    "std",
-    "dep:winterfell",
-    "dep:winter-crypto",
-    "dep:winter-air",
-    "dep:winter-prover",
-    "winterfell/std",
-    "winter-crypto/std",
-    "winter-air/std",
-    "winter-prover/std",
-    "transaction-core/winterfell-legacy",
-    "dep:transaction-circuit",
-    "transaction-circuit/winterfell-legacy",
-]
-plonky3 = [
-    "std",
-    "transaction-core/plonky3",
-    "dep:transaction-circuit",
-    "transaction-circuit/plonky3",
-    "dep:p3-air",
-    "dep:p3-field",
-    "dep:p3-goldilocks",
-    "dep:p3-matrix",
-    "dep:p3-uni-stark",
-    "dep:bincode",
-]
-rpo-fiat-shamir = ["miden-crypto", "transaction-circuit/rpo-fiat-shamir", "winterfell-legacy"]
+plonky3 = ["std"]
 stark-fast = []
 production = []
 

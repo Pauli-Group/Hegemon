@@ -11,7 +11,7 @@ use transaction_circuit::StablecoinPolicyBinding;
 /// This contains all data needed to submit a shielded transfer to the chain.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionBundle {
-    /// STARK proof bytes (serialized winterfell proof).
+    /// STARK proof bytes (serialized Plonky3 proof).
     #[serde(with = "serde_bytes_vec")]
     pub proof_bytes: Vec<u8>,
     /// Nullifiers (48 bytes each, left-padded field elements).

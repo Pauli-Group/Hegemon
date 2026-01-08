@@ -7,7 +7,7 @@ use consensus::{
     CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
     commitment_nullifier_lists,
 };
-use crypto::hashes::blake3_256;
+use crypto::hashes::blake3_384;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{Felt, HashFelt, felts_to_bytes48, merkle_node};
 use transaction_circuit::keys::generate_keys;
@@ -16,7 +16,6 @@ use transaction_circuit::proof::prove;
 use transaction_circuit::{
     InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionWitness,
 };
-use winterfell::math::FieldElement;
 
 fn compute_merkle_root(leaf: HashFelt, position: u64, path: &[HashFelt]) -> HashFelt {
     let mut current = leaf;
@@ -37,7 +36,7 @@ fn build_two_leaf_merkle_tree(
     leaf1: HashFelt,
 ) -> (MerklePath, MerklePath, HashFelt) {
     let mut defaults = Vec::with_capacity(CIRCUIT_MERKLE_DEPTH + 1);
-    defaults.push([Felt::ZERO; 4]);
+    defaults.push([Felt::new(0); 6]);
     for level in 0..CIRCUIT_MERKLE_DEPTH {
         let prev = defaults[level];
         defaults.push(merkle_node(prev, prev));
@@ -194,7 +193,7 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
         assemble_pow_block(params).expect("assemble block");
 
     let lists = commitment_nullifier_lists(&block.transactions).expect("nullifier lists");
-    let proof_hashes = vec![blake3_256(&tx_proof.stark_proof)];
+    let proof_hashes = vec![blake3_384(&tx_proof.stark_proof)];
     let prover = CommitmentBlockProver::new();
     let commitment_proof = prover
         .prove_from_hashes_with_inputs(

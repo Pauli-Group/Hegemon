@@ -135,7 +135,7 @@ use codec::Decode;
 use codec::Encode;
 use consensus::proof::HeaderProofExt;
 use consensus::{Blake3Algorithm, Blake3Seal, ParallelProofVerifier};
-use crypto::hashes::{blake3_256, blake3_384};
+use crypto::hashes::blake3_384;
 use futures::StreamExt;
 use network::{
     PqNetworkBackend, PqNetworkBackendConfig, PqNetworkEvent, PqNetworkHandle, PqPeerIdentity,
@@ -1231,7 +1231,7 @@ fn derive_commitment_block_proof_from_bytes(
                 "transaction proof {index} missing STARK proof bytes"
             ));
         }
-        proof_hashes.push(blake3_256(&proof.stark_proof));
+        proof_hashes.push(blake3_384(&proof.stark_proof));
     }
     let tx_proofs_commitment = CommitmentBlockProver::commitment_from_proof_hashes(&proof_hashes)
         .map_err(|err| format!("tx_proofs_commitment failed: {err}"))?;
@@ -1256,7 +1256,7 @@ fn derive_commitment_block_proof_from_bytes(
     };
 
     Ok(CommitmentBlockProof {
-        proof_hash: blake3_256(&proof_bytes),
+        proof_hash: blake3_384(&proof_bytes),
         proof_bytes,
         public_inputs,
     })

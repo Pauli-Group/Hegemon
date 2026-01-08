@@ -187,7 +187,7 @@ pub type ConsensusBlock = Block<crate::header::BlockHeader>;
 pub fn compute_fee_commitment(transactions: &[Transaction]) -> FeeCommitment {
     let mut tags: Vec<BalanceTag> = transactions.iter().map(|tx| tx.balance_tag).collect();
     tags.sort_unstable();
-    let mut data = Vec::with_capacity(tags.len() * BalanceTag::default().len());
+    let mut data = Vec::with_capacity(tags.len() * 48);
     for tag in tags {
         data.extend_from_slice(&tag);
     }

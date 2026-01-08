@@ -7,7 +7,7 @@ use consensus::{
 };
 use proptest::prelude::*;
 
-fn has_duplicates(values: &[[u8; 32]]) -> bool {
+fn has_duplicates(values: &[[u8; 48]]) -> bool {
     use std::collections::BTreeSet;
     let mut set = BTreeSet::new();
     for value in values {
@@ -20,7 +20,7 @@ fn has_duplicates(values: &[[u8; 32]]) -> bool {
 
 proptest! {
     #[test]
-    fn duplicate_nullifiers_cause_rejection(nullifiers in proptest::collection::vec(any::<[u8; 32]>(), 2..5)) {
+    fn duplicate_nullifiers_cause_rejection(nullifiers in proptest::collection::vec(any::<[u8; 48]>(), 2..5)) {
         let duplicates = has_duplicates(&nullifiers);
         let validators = make_validators(3, 10);
         let validator_set = validator_set(&validators);
@@ -28,8 +28,8 @@ proptest! {
         let mut consensus = BftConsensus::new(validator_set, genesis_tree.clone(), HashVerifier);
         let transaction = Transaction::new(
             nullifiers.clone(),
-            vec![[9u8; 32]],
-            [7u8; 32],
+            vec![[9u8; 48]],
+            [7u8; 48],
             DEFAULT_VERSION_BINDING,
             vec![],
         );

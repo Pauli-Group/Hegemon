@@ -52,14 +52,14 @@ pallet-sudo = { workspace = true }
 pallet-identity = { path = "../pallets/identity", default-features = false }
 pallet-attestations = { path = "../pallets/attestations", default-features = false }
 pallet-asset-registry = { path = "../pallets/asset-registry", default-features = false }
-pallet-settlement = { path = "../pallets/settlement", default-features = false, features = ["stark-verify"] }
+pallet-settlement = { path = "../pallets/settlement", default-features = false, features = ["production"] }
 pallet-oracles = { path = "../pallets/oracles", default-features = false }
 pallet-stablecoin-policy = { path = "../pallets/stablecoin-policy", default-features = false }
 pallet-fee-model = { path = "../pallets/fee-model", default-features = false }
 pallet-feature-flags = { path = "../pallets/feature-flags", default-features = false }
 pallet-observability = { path = "../pallets/observability", default-features = false }
 pallet-difficulty = { path = "../pallets/difficulty", default-features = false }
-pallet-shielded-pool = { path = "../pallets/shielded-pool", default-features = false, features = ["stark-verify"] }
+pallet-shielded-pool = { path = "../pallets/shielded-pool", default-features = false, features = ["production"] }
 
 [dev-dependencies]
 sp-runtime = { workspace = true, features = ["std"] }
@@ -121,7 +121,6 @@ production = [
     "pallet-settlement/production",
     "pallet-shielded-pool/production",
 ]
-fast-proofs = ["pallet-shielded-pool/fast-proofs"]
 
 runtime-benchmarks = [
     "frame-benchmarking",

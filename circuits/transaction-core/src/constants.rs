@@ -91,47 +91,25 @@ pub fn compute_air_hash() -> [u8; 32] {
     hasher.update(&CIRCUIT_VERSION.to_le_bytes());
 
     // Trace configuration
-    #[cfg(feature = "plonky3")]
-    {
-        hasher.update(&(crate::p3_air::TRACE_WIDTH as u32).to_le_bytes());
-        hasher.update(&(crate::p3_air::CYCLE_LENGTH as u32).to_le_bytes());
-        hasher.update(&(crate::p3_air::MIN_TRACE_LENGTH as u32).to_le_bytes());
-    }
-    #[cfg(all(not(feature = "plonky3"), feature = "winterfell-legacy"))]
-    {
-        hasher.update(&(crate::stark_air::TRACE_WIDTH as u32).to_le_bytes());
-        hasher.update(&(crate::stark_air::CYCLE_LENGTH as u32).to_le_bytes());
-        hasher.update(&(crate::stark_air::MIN_TRACE_LENGTH as u32).to_le_bytes());
-    }
-    #[cfg(all(not(feature = "plonky3"), not(feature = "winterfell-legacy")))]
-    compile_error!("Enable either the \"plonky3\" or \"winterfell-legacy\" feature to compute AIR hash.");
+    hasher.update(&(crate::p3_air::TRACE_WIDTH as u32).to_le_bytes());
+    hasher.update(&(crate::p3_air::CYCLE_LENGTH as u32).to_le_bytes());
+    hasher.update(&(crate::p3_air::MIN_TRACE_LENGTH as u32).to_le_bytes());
 
     // Circuit parameters
     hasher.update(&(MAX_INPUTS as u32).to_le_bytes());
     hasher.update(&(MAX_OUTPUTS as u32).to_le_bytes());
     hasher.update(&(CIRCUIT_MERKLE_DEPTH as u32).to_le_bytes());
 
-    // Poseidon configuration
-    #[cfg(feature = "plonky3")]
-    {
-        hasher.update(&(POSEIDON2_WIDTH as u32).to_le_bytes());
-        hasher.update(&(POSEIDON2_RATE as u32).to_le_bytes());
-        hasher.update(&(POSEIDON2_CAPACITY as u32).to_le_bytes());
-        hasher.update(&(POSEIDON2_ROUNDS_F as u32).to_le_bytes());
-        hasher.update(&(POSEIDON2_INTERNAL_ROUNDS as u32).to_le_bytes());
-        hasher.update(&(POSEIDON2_SBOX_DEGREE as u32).to_le_bytes());
-    }
-    #[cfg(all(not(feature = "plonky3"), feature = "winterfell-legacy"))]
-    {
-        hasher.update(&(POSEIDON_WIDTH as u32).to_le_bytes());
-        hasher.update(&(POSEIDON_ROUNDS as u32).to_le_bytes());
-    }
+    // Poseidon configuration (Poseidon2)
+    hasher.update(&(POSEIDON2_WIDTH as u32).to_le_bytes());
+    hasher.update(&(POSEIDON2_RATE as u32).to_le_bytes());
+    hasher.update(&(POSEIDON2_CAPACITY as u32).to_le_bytes());
+    hasher.update(&(POSEIDON2_ROUNDS_F as u32).to_le_bytes());
+    hasher.update(&(POSEIDON2_INTERNAL_ROUNDS as u32).to_le_bytes());
+    hasher.update(&(POSEIDON2_SBOX_DEGREE as u32).to_le_bytes());
 
     // Constraint structure: max degree and transition constraint count.
-    #[cfg(feature = "plonky3")]
     hasher.update(&(POSEIDON2_SBOX_DEGREE as u32).to_le_bytes()); // Max constraint degree
-    #[cfg(all(not(feature = "plonky3"), feature = "winterfell-legacy"))]
-    hasher.update(&5u32.to_le_bytes()); // Max constraint degree
     hasher.update(&103u32.to_le_bytes()); // Transition constraint count (update if constraints change)
 
     let hash = hasher.finalize();

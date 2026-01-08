@@ -1530,7 +1530,7 @@ pub fn poseidon_hash(domain_tag: u64, inputs: &[Felt]) -> Felt {
     state[0]
 }
 
-#[cfg(all(test, feature = "plonky3"))]
+#[cfg(all(test, feature = "plonky3-e2e"))]
 mod tests {
     use super::{Felt, TransactionAirP3, TransactionPublicInputsP3};
     use p3_uni_stark::get_log_num_quotient_chunks;

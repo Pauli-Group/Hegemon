@@ -1,13 +1,8 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(all(feature = "production", not(feature = "stark-verify")))]
-compile_error!("feature \"production\" requires \"stark-verify\" for real proof verification");
-
 pub use pallet::*;
 
 use codec::{Decode, DecodeWithMemTracking, Encode};
-#[cfg(feature = "stark-verify")]
-use core::convert::TryInto;
 use frame_support::pallet_prelude::*;
 use frame_support::pallet_prelude::{
     InvalidTransaction, TransactionPriority, TransactionValidity, ValidTransaction,
@@ -22,9 +17,6 @@ use sp_runtime::traits::AtLeast32BitUnsigned;
 use sp_runtime::RuntimeDebug;
 use sp_std::vec;
 use sp_std::vec::Vec;
-
-#[cfg(feature = "stark-verify")]
-use winterfell::math::FieldElement;
 
 #[cfg(test)]
 mod mock;
@@ -169,155 +161,18 @@ impl ProofVerifier for AcceptAllProofs {
 /// concrete settlement circuit is available and wired into runtime verification.
 pub struct StarkVerifier;
 
-/// Proof structure constants for settlement STARK proofs.
-#[allow(dead_code)]
-mod settlement_proof_structure {
-    /// Minimum number of FRI layers for 128-bit security
-    pub const MIN_FRI_LAYERS: usize = 4;
-
-    /// Each FRI layer commitment is 32 bytes (hash output)
-    pub const FRI_LAYER_COMMITMENT_SIZE: usize = 32;
-
-    /// Proof header size: version (1) + num_fri_layers (1) + trace_length (4) + options (2)
-    pub const PROOF_HEADER_SIZE: usize = 8;
-
-    /// Minimum query response size per query
-    pub const MIN_QUERY_SIZE: usize = 64;
-
-    /// Calculate minimum valid proof size for given parameters
-    pub fn min_proof_size(fri_queries: usize, fri_layers: usize) -> usize {
-        PROOF_HEADER_SIZE
-            + (fri_layers * FRI_LAYER_COMMITMENT_SIZE) // FRI layer commitments
-            + (fri_queries * MIN_QUERY_SIZE)           // Query responses
-            + 32 // Final polynomial commitment
-    }
-}
-
-impl StarkVerifier {
-    /// Validate proof structure without full cryptographic verification.
-    #[allow(dead_code)]
-    fn validate_proof_structure(proof: &[u8], params: &StarkVerifierParams) -> bool {
-        // Check minimum size for header
-        if proof.len() < settlement_proof_structure::PROOF_HEADER_SIZE {
-            return false;
-        }
-
-        // Parse header
-        let version = proof[0];
-        let num_fri_layers = proof[1] as usize;
-
-        // Validate version (currently only version 1 supported)
-        if version != 1 {
-            return false;
-        }
-
-        // Validate FRI layer count
-        if num_fri_layers < settlement_proof_structure::MIN_FRI_LAYERS {
-            return false;
-        }
-
-        // Check proof has enough data for structure based on params
-        let min_size =
-            settlement_proof_structure::min_proof_size(params.fri_queries as usize, num_fri_layers);
-        if proof.len() < min_size {
-            return false;
-        }
-
-        true
-    }
-
-    /// Compute a challenge hash binding proof to commitment.
-    #[allow(dead_code)]
-    fn compute_challenge(commitment: &[u8], proof: &[u8]) -> [u8; 32] {
-        use sp_core::hashing::blake2_256;
-
-        let mut data = Vec::new();
-
-        // Domain separator
-        data.extend_from_slice(b"SETTLEMENT-STARK-V1");
-
-        // Commitment
-        data.extend_from_slice(commitment);
-
-        // Proof commitment (first 64 bytes)
-        let commitment_size = core::cmp::min(64, proof.len());
-        data.extend_from_slice(&proof[..commitment_size]);
-
-        blake2_256(&data)
-    }
-}
-
-#[cfg(feature = "stark-verify")]
-fn hash_to_felts(_commitment: &CommitmentHash) -> Option<settlement_circuit::HashFelt> {
-    // Settlement circuit still expects 32-byte commitments; reject 48-byte inputs for now.
-    None
-}
-
-#[cfg(feature = "stark-verify")]
-fn acceptable_options(params: &StarkVerifierParams) -> Option<winterfell::AcceptableOptions> {
-    if params.fri_queries == 0 {
-        return None;
-    }
-    let blowup = params.blowup_factor as usize;
-    if blowup < 16 || !blowup.is_power_of_two() {
-        return None;
-    }
-
-    let options = winterfell::ProofOptions::new(
-        params.fri_queries as usize,
-        blowup,
-        0,
-        winterfell::FieldExtension::None,
-        4,
-        31,
-        winterfell::BatchingMethod::Linear,
-        winterfell::BatchingMethod::Linear,
-    );
-    Some(winterfell::AcceptableOptions::OptionSet(vec![options]))
-}
-
-#[cfg(not(feature = "stark-verify"))]
-impl ProofVerifier for StarkVerifier {
-    fn verify(
-        _inputs: &SettlementProofInputs,
-        _proof: &[u8],
-        _verification_key: &[u8],
-        _params: &StarkVerifierParams,
-    ) -> bool {
-        log::warn!(
-            target: "settlement",
-            "Settlement STARK verifier not implemented; rejecting proof"
-        );
-        false
-    }
-}
-
-#[cfg(feature = "stark-verify")]
 impl ProofVerifier for StarkVerifier {
     fn verify(
         inputs: &SettlementProofInputs,
         proof: &[u8],
-        verification_key: &[u8],
-        params: &StarkVerifierParams,
+        _verification_key: &[u8],
+        _params: &StarkVerifierParams,
     ) -> bool {
-        if verification_key.is_empty() {
-            log::warn!(target: "settlement", "Settlement verification key missing");
-            return false;
-        }
-
         if proof.is_empty() {
             return false;
         }
 
-        if params.hash != StarkHashFunction::Blake3 {
-            log::warn!(
-                target: "settlement",
-                "Settlement verifier only supports Blake3 hashing"
-            );
-            return false;
-        }
-
-        let commitment = match hash_to_felts(&inputs.commitment) {
+        let commitment = match settlement_circuit::bytes48_to_felts(&inputs.commitment) {
             Some(value) => value,
             None => return false,
         };
@@ -330,7 +185,7 @@ impl ProofVerifier for StarkVerifier {
             instructions.push(settlement_circuit::Felt::new(id));
         }
         while instructions.len() < settlement_circuit::constants::MAX_INSTRUCTIONS {
-            instructions.push(settlement_circuit::Felt::ZERO);
+            instructions.push(settlement_circuit::Felt::new(0));
         }
 
         let mut nullifiers = Vec::with_capacity(settlement_circuit::constants::MAX_NULLIFIERS);
@@ -338,14 +193,14 @@ impl ProofVerifier for StarkVerifier {
             return false;
         }
         for nf in &inputs.nullifiers {
-            let felt = match hash_to_felts(nf) {
+            let felt = match settlement_circuit::bytes48_to_felts(nf) {
                 Some(value) => value,
                 None => return false,
             };
             nullifiers.push(felt);
         }
         while nullifiers.len() < settlement_circuit::constants::MAX_NULLIFIERS {
-            nullifiers.push([settlement_circuit::Felt::ZERO; 4]);
+            nullifiers.push([settlement_circuit::Felt::new(0); 6]);
         }
 
         let pub_inputs = settlement_circuit::SettlementPublicInputs {
@@ -360,17 +215,7 @@ impl ProofVerifier for StarkVerifier {
             return false;
         }
 
-        let acceptable = match acceptable_options(params) {
-            Some(options) => options,
-            None => return false,
-        };
-
-        settlement_circuit::verify_settlement_proof_bytes_with_options(
-            proof,
-            &pub_inputs,
-            acceptable,
-        )
-        .is_ok()
+        settlement_circuit::verify_settlement_proof_bytes_p3(proof, &pub_inputs).is_ok()
     }
 }
 
@@ -562,24 +407,24 @@ pub mod pallet {
 
             let max_nullifiers = T::MaxNullifiers::get() as usize;
             let nullifier_count = queue.len().min(max_nullifiers);
-            let mut nullifier_felts =
-                Vec::with_capacity(settlement_circuit::constants::MAX_NULLIFIERS);
+            let circuit_max_nullifiers = settlement_circuit::constants::MAX_NULLIFIERS;
+            let circuit_max_instructions = settlement_circuit::constants::MAX_INSTRUCTIONS;
+            let mut nullifier_felts = Vec::with_capacity(circuit_max_nullifiers);
             for (idx, instruction_id) in queue.iter().take(nullifier_count).enumerate() {
                 nullifier_felts.push(settlement_circuit::nullifier_from_instruction(
                     *instruction_id,
                     idx as u64,
                 ));
             }
-            while nullifier_felts.len() < settlement_circuit::constants::MAX_NULLIFIERS {
-                nullifier_felts.push([settlement_circuit::Felt::new(0); 4]);
+            while nullifier_felts.len() < circuit_max_nullifiers {
+                nullifier_felts.push([settlement_circuit::Felt::new(0); 6]);
             }
 
-            let mut instructions_felts =
-                Vec::with_capacity(settlement_circuit::constants::MAX_INSTRUCTIONS);
+            let mut instructions_felts = Vec::with_capacity(circuit_max_instructions);
             for instruction_id in queue.iter() {
                 instructions_felts.push(settlement_circuit::Felt::new(*instruction_id));
             }
-            while instructions_felts.len() < settlement_circuit::constants::MAX_INSTRUCTIONS {
+            while instructions_felts.len() < circuit_max_instructions {
                 instructions_felts.push(settlement_circuit::Felt::new(0));
             }
 
@@ -588,7 +433,7 @@ pub mod pallet {
                 nullifier_count: nullifier_count as u32,
                 instructions: instructions_felts,
                 nullifiers: nullifier_felts,
-                commitment: [settlement_circuit::Felt::new(0); 4],
+                commitment: [settlement_circuit::Felt::new(0); 6],
             };
             let inputs = pub_inputs.input_elements();
             let commitment_felts = settlement_circuit::commitment_from_inputs(&inputs);
@@ -1016,11 +861,7 @@ pub mod pallet {
         }
 
         fn hash_from_felt(value: settlement_circuit::HashFelt) -> CommitmentHash {
-            // Settlement circuit still outputs 32-byte hashes; widen to 48 bytes.
-            let bytes32 = settlement_circuit::felts_to_bytes32(&value);
-            let mut out = [0u8; 48];
-            out[16..].copy_from_slice(&bytes32);
-            out
+            settlement_circuit::felts_to_bytes48(&value)
         }
     }
 }
