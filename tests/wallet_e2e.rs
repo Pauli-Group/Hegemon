@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use transaction_circuit::constants::NATIVE_ASSET_ID;
-use transaction_circuit::hashing::felts_to_bytes32;
+use transaction_circuit::hashing_pq::felts_to_bytes48;
 use wallet::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 use wallet::viewing::IncomingViewingKey;
 use wallet::{
@@ -43,18 +43,18 @@ struct MockNode {
 }
 
 struct MockState {
-    commitments: Mutex<Vec<[u8; 32]>>,
+    commitments: Mutex<Vec<[u8; 48]>>,
     ciphertexts: Mutex<Vec<Vec<u8>>>,
-    nullifiers: Mutex<HashSet<[u8; 32]>>,
+    nullifiers: Mutex<HashSet<[u8; 48]>>,
     pending: Mutex<Vec<PendingTx>>,
     height: Mutex<u64>,
     token: String,
 }
 
 struct PendingTx {
-    commitments: Vec<[u8; 32]>,
+    commitments: Vec<[u8; 48]>,
     ciphertexts: Vec<Vec<u8>>,
-    nullifiers: Vec<[u8; 32]>,
+    nullifiers: Vec<[u8; 48]>,
 }
 
 impl MockState {
@@ -162,7 +162,7 @@ impl MockNode {
                     require_auth(&headers, &state.token)?;
                     let mut commitments = Vec::new();
                     for bytes in &bundle.commitments {
-                        if *bytes != [0u8; 32] {
+                        if *bytes != [0u8; 48] {
                             commitments.push(*bytes);
                         }
                     }
@@ -323,7 +323,7 @@ impl MockNode {
         let mut commitments = self.state.commitments.lock().unwrap();
         let mut ciphertexts = self.state.ciphertexts.lock().unwrap();
         let note_data = note.to_note_data(address.pk_recipient);
-        commitments.push(felts_to_bytes32(&note_data.commitment()));
+        commitments.push(felts_to_bytes48(&note_data.commitment()));
         ciphertexts.push(bincode::serialize(&ciphertext).unwrap());
         drop(commitments);
         drop(ciphertexts);

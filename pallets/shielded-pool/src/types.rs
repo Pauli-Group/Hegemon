@@ -166,12 +166,12 @@ impl Default for BindingHash {
 pub struct StablecoinPolicyBinding {
     /// Stablecoin asset identifier (MASP asset id).
     pub asset_id: u64,
-    /// Deterministic policy hash (BLAKE3-256).
-    pub policy_hash: [u8; 32],
+    /// Deterministic policy hash (BLAKE3-384).
+    pub policy_hash: [u8; 48],
     /// Latest oracle commitment bound into the proof.
-    pub oracle_commitment: [u8; 32],
+    pub oracle_commitment: [u8; 48],
     /// Latest attestation commitment bound into the proof.
-    pub attestation_commitment: [u8; 32],
+    pub attestation_commitment: [u8; 48],
     /// Signed issuance delta (positive for mint, negative for burn).
     pub issuance_delta: i128,
     /// Policy version to make upgrades explicit.
@@ -182,9 +182,9 @@ impl Default for StablecoinPolicyBinding {
     fn default() -> Self {
         Self {
             asset_id: 0,
-            policy_hash: [0u8; 32],
-            oracle_commitment: [0u8; 32],
-            attestation_commitment: [0u8; 32],
+            policy_hash: [0u8; 48],
+            oracle_commitment: [0u8; 48],
+            attestation_commitment: [0u8; 48],
             issuance_delta: 0,
             policy_version: 0,
         }
@@ -195,7 +195,7 @@ impl Default for StablecoinPolicyBinding {
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
 pub struct MerklePath {
     /// Sibling hashes from leaf to root.
-    pub siblings: Vec<[u8; 32]>,
+    pub siblings: Vec<[u8; 48]>,
     /// Position bits indicating left/right at each level.
     pub position_bits: Vec<bool>,
 }
@@ -210,7 +210,7 @@ pub struct MerklePath {
 )]
 pub struct CoinbaseNoteData {
     /// The note commitment (H(note_contents))
-    pub commitment: [u8; 32],
+    pub commitment: [u8; 48],
     /// Encrypted note for the miner (only they can decrypt)
     pub encrypted_note: EncryptedNote,
     /// Plaintext recipient address (for audit)
@@ -224,7 +224,7 @@ pub struct CoinbaseNoteData {
 
 impl MerklePath {
     /// Create a new Merkle path.
-    pub fn new(siblings: Vec<[u8; 32]>, position_bits: Vec<bool>) -> Self {
+    pub fn new(siblings: Vec<[u8; 48]>, position_bits: Vec<bool>) -> Self {
         Self {
             siblings,
             position_bits,

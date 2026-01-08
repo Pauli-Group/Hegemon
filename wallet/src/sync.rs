@@ -29,7 +29,7 @@ impl<'a> WalletSyncEngine<'a> {
             if entries.is_empty() {
                 break;
             }
-            let pairs: Vec<(u64, [u8; 32])> = entries
+            let pairs: Vec<(u64, [u8; 48])> = entries
                 .iter()
                 .map(|entry| (entry.index, entry.value))
                 .collect();
@@ -52,7 +52,7 @@ impl<'a> WalletSyncEngine<'a> {
         }
 
         let nullifiers = self.rpc.nullifiers()?;
-        let nullifier_set: HashSet<[u8; 32]> = nullifiers.into_iter().collect();
+        let nullifier_set: HashSet<[u8; 48]> = nullifiers.into_iter().collect();
         outcome.spent += self.store.mark_nullifiers(&nullifier_set)?;
         let latest = self.rpc.latest_block()?;
         self.store.refresh_pending(latest.height, &nullifier_set)?;

@@ -10,9 +10,11 @@ use crate::constants::{
     CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG,
     NULLIFIER_DOMAIN_TAG,
 };
-use crate::hashing::{is_canonical_bytes32};
-use crate::hashing_pq::{bytes48_to_felts, merkle_node, note_commitment, nullifier, prf_key, HashFelt};
-use crate::note::{InputNoteWitness, MerklePathPq, NoteData, OutputNoteWitness};
+use crate::hashing_pq::{
+    bytes48_to_felts, is_canonical_bytes48, merkle_node, note_commitment, nullifier, prf_key,
+    HashFelt,
+};
+use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use crate::p3_config::{default_config, TransactionProofP3};
 use crate::witness::TransactionWitness;
 use crate::TransactionCircuitError;
@@ -35,10 +37,12 @@ use transaction_core::p3_air::{
     COL_SLOT0_OUT, COL_SLOT1_ASSET, COL_SLOT1_IN, COL_SLOT1_OUT, COL_SLOT2_ASSET, COL_SLOT2_IN,
     COL_SLOT2_OUT, COL_SLOT3_ASSET, COL_SLOT3_IN, COL_SLOT3_OUT, COL_STABLECOIN_ASSET,
     COL_STABLECOIN_ATTEST0, COL_STABLECOIN_ATTEST1, COL_STABLECOIN_ATTEST2,
-    COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG,
-    COL_STABLECOIN_ISSUANCE_SIGN, COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1,
-    COL_STABLECOIN_ORACLE2, COL_STABLECOIN_ORACLE3, COL_STABLECOIN_POLICY_HASH0,
-    COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2, COL_STABLECOIN_POLICY_HASH3,
+    COL_STABLECOIN_ATTEST3, COL_STABLECOIN_ATTEST4, COL_STABLECOIN_ATTEST5,
+    COL_STABLECOIN_ENABLED, COL_STABLECOIN_ISSUANCE_MAG, COL_STABLECOIN_ISSUANCE_SIGN,
+    COL_STABLECOIN_ORACLE0, COL_STABLECOIN_ORACLE1, COL_STABLECOIN_ORACLE2,
+    COL_STABLECOIN_ORACLE3, COL_STABLECOIN_ORACLE4, COL_STABLECOIN_ORACLE5,
+    COL_STABLECOIN_POLICY_HASH0, COL_STABLECOIN_POLICY_HASH1, COL_STABLECOIN_POLICY_HASH2,
+    COL_STABLECOIN_POLICY_HASH3, COL_STABLECOIN_POLICY_HASH4, COL_STABLECOIN_POLICY_HASH5,
     COL_STABLECOIN_POLICY_VERSION, COL_STABLECOIN_SLOT_SEL0, COL_STABLECOIN_SLOT_SEL1,
     COL_STABLECOIN_SLOT_SEL2, COL_STABLECOIN_SLOT_SEL3, COL_VALUE_BALANCE_MAG,
     COL_VALUE_BALANCE_SIGN, COMMITMENT_ABSORB_CYCLES, CYCLE_LENGTH, DUMMY_CYCLES,
@@ -240,14 +244,20 @@ impl TransactionProverP3 {
             row_slice[COL_STABLECOIN_POLICY_HASH1] = stablecoin_inputs.policy_hash[1];
             row_slice[COL_STABLECOIN_POLICY_HASH2] = stablecoin_inputs.policy_hash[2];
             row_slice[COL_STABLECOIN_POLICY_HASH3] = stablecoin_inputs.policy_hash[3];
+            row_slice[COL_STABLECOIN_POLICY_HASH4] = stablecoin_inputs.policy_hash[4];
+            row_slice[COL_STABLECOIN_POLICY_HASH5] = stablecoin_inputs.policy_hash[5];
             row_slice[COL_STABLECOIN_ORACLE0] = stablecoin_inputs.oracle_commitment[0];
             row_slice[COL_STABLECOIN_ORACLE1] = stablecoin_inputs.oracle_commitment[1];
             row_slice[COL_STABLECOIN_ORACLE2] = stablecoin_inputs.oracle_commitment[2];
             row_slice[COL_STABLECOIN_ORACLE3] = stablecoin_inputs.oracle_commitment[3];
+            row_slice[COL_STABLECOIN_ORACLE4] = stablecoin_inputs.oracle_commitment[4];
+            row_slice[COL_STABLECOIN_ORACLE5] = stablecoin_inputs.oracle_commitment[5];
             row_slice[COL_STABLECOIN_ATTEST0] = stablecoin_inputs.attestation_commitment[0];
             row_slice[COL_STABLECOIN_ATTEST1] = stablecoin_inputs.attestation_commitment[1];
             row_slice[COL_STABLECOIN_ATTEST2] = stablecoin_inputs.attestation_commitment[2];
             row_slice[COL_STABLECOIN_ATTEST3] = stablecoin_inputs.attestation_commitment[3];
+            row_slice[COL_STABLECOIN_ATTEST4] = stablecoin_inputs.attestation_commitment[4];
+            row_slice[COL_STABLECOIN_ATTEST5] = stablecoin_inputs.attestation_commitment[5];
             row_slice[COL_STABLECOIN_SLOT_SEL0] = stablecoin_inputs.slot_selectors[0];
             row_slice[COL_STABLECOIN_SLOT_SEL1] = stablecoin_inputs.slot_selectors[1];
             row_slice[COL_STABLECOIN_SLOT_SEL2] = stablecoin_inputs.slot_selectors[2];
@@ -286,6 +296,10 @@ impl TransactionProverP3 {
                         stablecoin_inputs.policy_hash[2] + one;
                     row_slice[COL_STABLECOIN_POLICY_HASH3] =
                         stablecoin_inputs.policy_hash[3] + one;
+                    row_slice[COL_STABLECOIN_POLICY_HASH4] =
+                        stablecoin_inputs.policy_hash[4] + one;
+                    row_slice[COL_STABLECOIN_POLICY_HASH5] =
+                        stablecoin_inputs.policy_hash[5] + one;
                     row_slice[COL_STABLECOIN_ORACLE0] =
                         stablecoin_inputs.oracle_commitment[0] + one;
                     row_slice[COL_STABLECOIN_ORACLE1] =
@@ -294,6 +308,10 @@ impl TransactionProverP3 {
                         stablecoin_inputs.oracle_commitment[2] + one;
                     row_slice[COL_STABLECOIN_ORACLE3] =
                         stablecoin_inputs.oracle_commitment[3] + one;
+                    row_slice[COL_STABLECOIN_ORACLE4] =
+                        stablecoin_inputs.oracle_commitment[4] + one;
+                    row_slice[COL_STABLECOIN_ORACLE5] =
+                        stablecoin_inputs.oracle_commitment[5] + one;
                     row_slice[COL_STABLECOIN_ATTEST0] =
                         stablecoin_inputs.attestation_commitment[0] + one;
                     row_slice[COL_STABLECOIN_ATTEST1] =
@@ -302,6 +320,10 @@ impl TransactionProverP3 {
                         stablecoin_inputs.attestation_commitment[2] + one;
                     row_slice[COL_STABLECOIN_ATTEST3] =
                         stablecoin_inputs.attestation_commitment[3] + one;
+                    row_slice[COL_STABLECOIN_ATTEST4] =
+                        stablecoin_inputs.attestation_commitment[4] + one;
+                    row_slice[COL_STABLECOIN_ATTEST5] =
+                        stablecoin_inputs.attestation_commitment[5] + one;
                 }
             }
         }
@@ -508,8 +530,8 @@ impl TransactionProverP3 {
             commitments.push([Val::ZERO; 6]);
         }
 
-        let merkle_root = bytes48_to_felts(&witness.merkle_root_pq).ok_or(
-            TransactionCircuitError::ConstraintViolation("invalid PQ merkle root encoding"),
+        let merkle_root = bytes48_to_felts(&witness.merkle_root).ok_or(
+            TransactionCircuitError::ConstraintViolation("invalid merkle root encoding"),
         )?;
         let slots = witness.balance_slots()?;
         let slot_assets: Vec<u64> = slots.iter().map(|slot| slot.asset_id).collect();
@@ -626,18 +648,24 @@ impl TransactionProverP3 {
                 get_trace(trace, COL_STABLECOIN_POLICY_HASH1, final_row),
                 get_trace(trace, COL_STABLECOIN_POLICY_HASH2, final_row),
                 get_trace(trace, COL_STABLECOIN_POLICY_HASH3, final_row),
+                get_trace(trace, COL_STABLECOIN_POLICY_HASH4, final_row),
+                get_trace(trace, COL_STABLECOIN_POLICY_HASH5, final_row),
             ],
             stablecoin_oracle_commitment: [
                 get_trace(trace, COL_STABLECOIN_ORACLE0, final_row),
                 get_trace(trace, COL_STABLECOIN_ORACLE1, final_row),
                 get_trace(trace, COL_STABLECOIN_ORACLE2, final_row),
                 get_trace(trace, COL_STABLECOIN_ORACLE3, final_row),
+                get_trace(trace, COL_STABLECOIN_ORACLE4, final_row),
+                get_trace(trace, COL_STABLECOIN_ORACLE5, final_row),
             ],
             stablecoin_attestation_commitment: [
                 get_trace(trace, COL_STABLECOIN_ATTEST0, final_row),
                 get_trace(trace, COL_STABLECOIN_ATTEST1, final_row),
                 get_trace(trace, COL_STABLECOIN_ATTEST2, final_row),
                 get_trace(trace, COL_STABLECOIN_ATTEST3, final_row),
+                get_trace(trace, COL_STABLECOIN_ATTEST4, final_row),
+                get_trace(trace, COL_STABLECOIN_ATTEST5, final_row),
             ],
         }
     }
@@ -711,18 +739,10 @@ fn bytes_to_vals(bytes: &[u8]) -> Vec<Val> {
         .collect()
 }
 
-fn bytes32_to_vals(bytes: &[u8; 32]) -> Result<[Val; 4], TransactionCircuitError> {
-    if !is_canonical_bytes32(bytes) {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "invalid 32-byte hash encoding",
-        ));
-    }
-    let mut out = [Val::ZERO; 4];
-    for (idx, chunk) in bytes.chunks(8).enumerate() {
-        let limb = u64::from_be_bytes(chunk.try_into().expect("8-byte chunk"));
-        out[idx] = Val::from_u64(limb);
-    }
-    Ok(out)
+fn bytes48_to_vals(bytes: &[u8; 48]) -> Result<[Val; 6], TransactionCircuitError> {
+    bytes48_to_felts(bytes).ok_or(TransactionCircuitError::ConstraintViolation(
+        "invalid 48-byte hash encoding",
+    ))
 }
 
 fn commitment_inputs(note: &NoteData) -> Vec<Val> {
@@ -785,8 +805,6 @@ fn dummy_input() -> InputNoteWitness {
         position: 0xA5A5_A5A5,
         rho_seed: [0u8; 32],
         merkle_path: crate::note::MerklePath::default(),
-        #[cfg(feature = "plonky3")]
-        merkle_path_pq: Some(MerklePathPq::default()),
     }
 }
 
@@ -844,9 +862,9 @@ struct StablecoinBindingInputs {
     policy_version: Val,
     issuance_sign: Val,
     issuance_mag: Val,
-    policy_hash: [Val; 4],
-    oracle_commitment: [Val; 4],
-    attestation_commitment: [Val; 4],
+    policy_hash: [Val; 6],
+    oracle_commitment: [Val; 6],
+    attestation_commitment: [Val; 6],
     slot_selectors: [Val; 4],
 }
 
@@ -861,16 +879,16 @@ fn stablecoin_binding_inputs(
             policy_version: Val::ZERO,
             issuance_sign: Val::ZERO,
             issuance_mag: Val::ZERO,
-            policy_hash: [Val::ZERO; 4],
-            oracle_commitment: [Val::ZERO; 4],
-            attestation_commitment: [Val::ZERO; 4],
+            policy_hash: [Val::ZERO; 6],
+            oracle_commitment: [Val::ZERO; 6],
+            attestation_commitment: [Val::ZERO; 6],
             slot_selectors: [Val::ZERO; 4],
         });
     }
 
-    let policy_hash = bytes32_to_vals(&witness.stablecoin.policy_hash)?;
-    let oracle_commitment = bytes32_to_vals(&witness.stablecoin.oracle_commitment)?;
-    let attestation_commitment = bytes32_to_vals(&witness.stablecoin.attestation_commitment)?;
+    let policy_hash = bytes48_to_vals(&witness.stablecoin.policy_hash)?;
+    let oracle_commitment = bytes48_to_vals(&witness.stablecoin.oracle_commitment)?;
+    let attestation_commitment = bytes48_to_vals(&witness.stablecoin.attestation_commitment)?;
 
     let (issuance_sign, issuance_mag) = value_balance_parts(witness.stablecoin.issuance_delta)?;
     let mut slot_selectors = [Val::ZERO; 4];
@@ -936,16 +954,11 @@ fn build_cycle_specs(
             &input.note.r,
         );
         let mut pos = input.position;
-        let fallback_path = MerklePathPq::default();
+        let fallback_path = MerklePath::default();
         let merkle_path = if input_flags[idx] {
-            input
-                .merkle_path_pq
-                .as_ref()
-                .ok_or(TransactionCircuitError::ConstraintViolation(
-                    "missing PQ merkle path",
-                ))?
+            &input.merkle_path
         } else {
-            input.merkle_path_pq.as_ref().unwrap_or(&fallback_path)
+            &fallback_path
         };
         for level in 0..CIRCUIT_MERKLE_DEPTH {
             let dir = if pos & 1 == 0 { Val::ZERO } else { Val::ONE };
@@ -1022,38 +1035,15 @@ fn build_cycle_specs(
 mod tests {
     use super::*;
     use crate::hashing_pq::{felts_to_bytes48, merkle_node, note_commitment, HashFelt};
-    use crate::note::{MerklePath, MerklePathPq, NoteData};
+    use crate::note::{MerklePath, NoteData};
     use crate::p3_verifier::verify_transaction_proof_p3;
     use crate::StablecoinPolicyBinding;
-    #[cfg(feature = "plonky3-e2e")]
-    use p3_air::Air;
-    #[cfg(feature = "plonky3-e2e")]
-    use p3_challenger::{CanObserve, FieldChallenger};
-    #[cfg(feature = "plonky3-e2e")]
-    use p3_commit::PolynomialSpace;
-    #[cfg(debug_assertions)]
-    use p3_air::{Air, AirBuilder, AirBuilderWithPublicValues};
-    #[cfg(debug_assertions)]
-    use p3_matrix::dense::RowMajorMatrixView;
-    #[cfg(debug_assertions)]
-    use p3_matrix::stack::VerticalPair;
-    #[cfg(debug_assertions)]
-    use p3_matrix::Matrix;
-    #[cfg(feature = "plonky3-e2e")]
-    use p3_matrix::dense::RowMajorMatrixView;
-    #[cfg(feature = "plonky3-e2e")]
-    use p3_matrix::stack::VerticalPair;
-    #[cfg(feature = "plonky3-e2e")]
-    use p3_uni_stark::{
-        get_log_num_quotient_chunks, recompose_quotient_from_chunks, StarkGenericConfig,
-        VerifierConstraintFolder,
-    };
     use std::panic::catch_unwind;
 
     fn compute_merkle_root_from_path(
         leaf: HashFelt,
         position: u64,
-        path: &MerklePathPq,
+        path: &MerklePath,
     ) -> HashFelt {
         let mut current = leaf;
         let mut pos = position;
@@ -1083,7 +1073,7 @@ mod tests {
             rho: [5u8; 32],
             r: [6u8; 32],
         };
-        let merkle_path_pq = MerklePathPq::default();
+        let merkle_path = MerklePath::default();
         let leaf = note_commitment(
             input_note.value,
             input_note.asset_id,
@@ -1091,21 +1081,18 @@ mod tests {
             &input_note.rho,
             &input_note.r,
         );
-        let merkle_root_pq =
-            felts_to_bytes48(&compute_merkle_root_from_path(leaf, 0, &merkle_path_pq));
+        let merkle_root = felts_to_bytes48(&compute_merkle_root_from_path(leaf, 0, &merkle_path));
 
         TransactionWitness {
             inputs: vec![InputNoteWitness {
                 note: input_note,
                 position: 0,
                 rho_seed: [7u8; 32],
-                merkle_path: MerklePath::default(),
-                merkle_path_pq: Some(merkle_path_pq),
+                merkle_path,
             }],
             outputs: vec![OutputNoteWitness { note: output_note }],
             sk_spend: [8u8; 32],
-            merkle_root: [0u8; 32],
-            merkle_root_pq,
+            merkle_root,
             fee: 0,
             value_balance: -20,
             stablecoin: StablecoinPolicyBinding::default(),
@@ -1164,82 +1151,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "plonky3-e2e")]
-    #[ignore = "debug helper for OOD mismatch"]
-    fn debug_ood_mismatch_p3() {
-        use crate::p3_config::{Challenge, Challenger, Config, Pcs};
-
-        let witness = sample_witness();
-        witness.validate().expect("witness valid");
-        let prover = TransactionProverP3::new();
-        let trace = prover.build_trace(&witness).expect("trace build");
-        let pub_inputs = TransactionProverP3::get_public_inputs_from_trace(&trace);
-        let pub_inputs_vec = pub_inputs.to_vec();
-        let proof = prover.prove(trace, &pub_inputs);
-
-        let config = default_config();
-        let pcs: &Pcs = config.config.pcs();
-        let degree_bits = proof.degree_bits;
-        let degree = 1usize << degree_bits;
-        let trace_domain: p3_uni_stark::Domain<Config> =
-            <Pcs as p3_commit::Pcs<Challenge, Challenger>>::natural_domain_for_degree(
-                pcs, degree,
-            );
-        let log_num_quotient_chunks = get_log_num_quotient_chunks::<Val, _>(
-            &TransactionAirP3,
-            0,
-            pub_inputs_vec.len(),
-            config.config.is_zk(),
-        );
-        let num_quotient_chunks = 1 << (log_num_quotient_chunks + config.config.is_zk());
-        let quotient_domain =
-            trace_domain.create_disjoint_domain(1 << (degree_bits + log_num_quotient_chunks));
-        let quotient_chunks_domains = quotient_domain.split_domains(num_quotient_chunks);
-
-        let mut challenger = config.config.initialise_challenger();
-        challenger.observe(Val::from_usize(proof.degree_bits));
-        challenger.observe(Val::from_usize(proof.degree_bits - config.config.is_zk()));
-        challenger.observe(Val::from_usize(0));
-        challenger.observe(proof.commitments.trace.clone());
-        challenger.observe_slice(&pub_inputs_vec);
-        let alpha: Challenge = challenger.sample_algebra_element();
-        challenger.observe(proof.commitments.quotient_chunks.clone());
-        let zeta: Challenge = challenger.sample_algebra_element();
-
-        let quotient = recompose_quotient_from_chunks::<Config>(
-            &quotient_chunks_domains,
-            &proof.opened_values.quotient_chunks,
-            zeta,
-        );
-        let sels = trace_domain.selectors_at_point(zeta);
-        let main = VerticalPair::new(
-            RowMajorMatrixView::new_row(&proof.opened_values.trace_local),
-            RowMajorMatrixView::new_row(&proof.opened_values.trace_next),
-        );
-        let mut folder: VerifierConstraintFolder<'_, Config> = VerifierConstraintFolder {
-            main,
-            preprocessed: None,
-            public_values: &pub_inputs_vec,
-            is_first_row: sels.is_first_row,
-            is_last_row: sels.is_last_row,
-            is_transition: sels.is_transition,
-            alpha,
-            accumulator: Challenge::ZERO,
-        };
-        TransactionAirP3.eval(&mut folder);
-        let folded_constraints = folder.accumulator;
-        let lhs = folded_constraints * sels.inv_vanishing;
-
-        eprintln!("alpha={alpha:?}");
-        eprintln!("zeta={zeta:?}");
-        eprintln!("lhs={lhs:?}");
-        eprintln!("rhs={quotient:?}");
-        eprintln!("diff={:?}", lhs - quotient);
-
-        assert_eq!(lhs, quotient);
-    }
-
-    #[test]
     fn schedule_mismatch_rejected_p3() {
         let witness = sample_witness();
         witness.validate().expect("witness valid");
@@ -1263,110 +1174,6 @@ mod tests {
                 "verification should fail for tampered counters"
             ),
             Err(_) => {}
-        }
-    }
-
-    #[test]
-    #[cfg(debug_assertions)]
-    #[ignore = "debug helper to locate failing constraints"]
-    fn debug_constraints_p3() {
-        let witness = sample_witness();
-        witness.validate().expect("witness valid");
-        let prover = TransactionProverP3::new();
-        let trace = prover.build_trace(&witness).expect("trace build");
-        let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
-        assert_constraints(&trace, &pub_inputs.to_vec());
-    }
-
-    #[cfg(debug_assertions)]
-    fn assert_constraints(trace: &RowMajorMatrix<Val>, public_values: &[Val]) {
-        let height = trace.height();
-        let first_row_value = Val::from_u64(height as u64);
-        for row in 0..height {
-            let next_row = (row + 1) % height;
-            let local = trace.row_slice(row).expect("trace row missing");
-            let next = trace.row_slice(next_row).expect("trace row missing");
-            let main = VerticalPair::new(
-                RowMajorMatrixView::new_row(&*local),
-                RowMajorMatrixView::new_row(&*next),
-            );
-
-            let mut builder = DebugConstraintBuilder {
-                row_index: row,
-                main,
-                public_values,
-                is_first_row: if row == 0 { first_row_value } else { Val::ZERO },
-                is_last_row: Val::from_bool(row + 1 == height),
-                is_transition: Val::from_bool(row + 1 != height),
-            };
-
-            TransactionAirP3.eval(&mut builder);
-        }
-    }
-
-    #[cfg(debug_assertions)]
-    struct DebugConstraintBuilder<'a> {
-        row_index: usize,
-        main: VerticalPair<RowMajorMatrixView<'a, Val>, RowMajorMatrixView<'a, Val>>,
-        public_values: &'a [Val],
-        is_first_row: Val,
-        is_last_row: Val,
-        is_transition: Val,
-    }
-
-    #[cfg(debug_assertions)]
-    impl<'a> AirBuilder for DebugConstraintBuilder<'a> {
-        type F = Val;
-        type Expr = Val;
-        type Var = Val;
-        type M = VerticalPair<RowMajorMatrixView<'a, Val>, RowMajorMatrixView<'a, Val>>;
-
-        fn is_first_row(&self) -> Self::Expr {
-            self.is_first_row
-        }
-
-        fn is_last_row(&self) -> Self::Expr {
-            self.is_last_row
-        }
-
-        fn is_transition_window(&self, size: usize) -> Self::Expr {
-            if size == 2 {
-                self.is_transition
-            } else {
-                panic!("unsupported transition window size: {size}");
-            }
-        }
-
-        fn main(&self) -> Self::M {
-            self.main
-        }
-
-        fn assert_zero<I: Into<Self::Expr>>(&mut self, x: I) {
-            assert_eq!(
-                x.into(),
-                Val::ZERO,
-                "constraint nonzero on row {}",
-                self.row_index
-            );
-        }
-
-        fn assert_eq<I1: Into<Self::Expr>, I2: Into<Self::Expr>>(&mut self, x: I1, y: I2) {
-            let x = x.into();
-            let y = y.into();
-            assert_eq!(
-                x, y,
-                "constraint mismatch on row {}: {} != {}",
-                self.row_index, x, y
-            );
-        }
-    }
-
-    #[cfg(debug_assertions)]
-    impl<'a> AirBuilderWithPublicValues for DebugConstraintBuilder<'a> {
-        type PublicVar = Val;
-
-        fn public_values(&self) -> &[Self::PublicVar] {
-            self.public_values
         }
     }
 

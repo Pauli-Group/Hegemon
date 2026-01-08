@@ -7,20 +7,19 @@ use crate::types::{
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
 #[cfg(feature = "legacy-recursion")]
 use block_circuit::{transaction_inputs_from_verifier_inputs, verify_recursive_proof};
-use crypto::hashes::{blake3_256, sha256};
+use crypto::hashes::{blake3_256, blake3_384};
 use rayon::prelude::*;
 use std::collections::BTreeSet;
 use transaction_circuit::constants::MAX_INPUTS;
-use transaction_circuit::hashing::felt_to_bytes32;
 #[cfg(feature = "legacy-recursion")]
-use transaction_circuit::hashing::felts_to_bytes32;
+use transaction_circuit::hashing_pq::felts_to_bytes48;
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::proof::verify_rpo as verify_transaction_proof;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitmentNullifierLists {
-    pub nullifiers: Vec<[u8; 32]>,
-    pub sorted_nullifiers: Vec<[u8; 32]>,
+    pub nullifiers: Vec<[u8; 48]>,
+    pub sorted_nullifiers: Vec<[u8; 48]>,
 }
 
 pub fn commitment_nullifier_lists(
@@ -38,19 +37,19 @@ pub fn commitment_nullifier_lists(
                 tx.nullifiers.len()
             )));
         }
-        if tx.nullifiers.contains(&[0u8; 32]) {
+        if tx.nullifiers.contains(&[0u8; 48]) {
             return Err(ProofError::CommitmentProofInputsMismatch(format!(
                 "transaction {index} includes zero nullifier"
             )));
         }
         nullifiers.extend_from_slice(&tx.nullifiers);
         nullifiers.extend(std::iter::repeat_n(
-            [0u8; 32],
+            [0u8; 48],
             MAX_INPUTS - tx.nullifiers.len(),
         ));
     }
 
-    if nullifiers.iter().all(|nf| *nf == [0u8; 32]) {
+    if nullifiers.iter().all(|nf| *nf == [0u8; 48]) {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "nullifier list must include at least one non-zero entry".to_string(),
         ));
@@ -244,7 +243,7 @@ impl ProofVerifier for ParallelProofVerifier {
                 Ok::<_, ProofError>(())
             })?;
 
-        let anchors: Vec<[u8; 32]> = transaction_proofs
+        let anchors: Vec<[u8; 48]> = transaction_proofs
             .iter()
             .map(|proof| proof.public_inputs.merkle_root)
             .collect();
@@ -381,18 +380,18 @@ where
     for (index, tx) in block.transactions.iter().enumerate() {
         let inner = transaction_inputs_from_verifier_inputs(&verifier_inputs[index])
             .map_err(map_block_error)?;
-        anchors.push(felts_to_bytes32(&inner.merkle_root));
-        let expected_nullifiers: Vec<[u8; 32]> = inner
+        anchors.push(felts_to_bytes48(&inner.merkle_root));
+        let expected_nullifiers: Vec<[u8; 48]> = inner
             .nullifiers
             .iter()
-            .map(felts_to_bytes32)
-            .filter(|value| *value != [0u8; 32])
+            .map(felts_to_bytes48)
+            .filter(|value| *value != [0u8; 48])
             .collect();
-        let expected_commitments: Vec<[u8; 32]> = inner
+        let expected_commitments: Vec<[u8; 48]> = inner
             .commitments
             .iter()
-            .map(felts_to_bytes32)
-            .filter(|value| *value != [0u8; 32])
+            .map(felts_to_bytes48)
+            .filter(|value| *value != [0u8; 48])
             .collect();
 
         if expected_nullifiers != tx.nullifiers || expected_commitments != tx.commitments {
@@ -436,7 +435,7 @@ fn apply_commitments(
 ) -> Result<CommitmentTreeState, ProofError> {
     let mut tree = parent_commitment_tree.clone();
     for tx in transactions {
-        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 32]) {
+        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 48]) {
             tree.append(commitment)?;
         }
     }
@@ -471,11 +470,11 @@ fn verify_transaction_proof_inputs(
         });
     }
 
-    let expected_nullifiers: Vec<[u8; 32]> = proof
+    let expected_nullifiers: Vec<[u8; 48]> = proof
         .nullifiers
         .iter()
         .copied()
-        .filter(|value| *value != [0u8; 32])
+        .filter(|value| *value != [0u8; 48])
         .collect();
     if expected_nullifiers != tx.nullifiers {
         return Err(ProofError::TransactionProofInputsMismatch {
@@ -484,11 +483,11 @@ fn verify_transaction_proof_inputs(
         });
     }
 
-    let expected_commitments: Vec<[u8; 32]> = proof
+    let expected_commitments: Vec<[u8; 48]> = proof
         .commitments
         .iter()
         .copied()
-        .filter(|value| *value != [0u8; 32])
+        .filter(|value| *value != [0u8; 48])
         .collect();
     if expected_commitments != tx.commitments {
         return Err(ProofError::TransactionProofInputsMismatch {
@@ -497,8 +496,7 @@ fn verify_transaction_proof_inputs(
         });
     }
 
-    let expected_balance_tag = felt_to_bytes32(proof.public_inputs.balance_tag);
-    if expected_balance_tag != tx.balance_tag {
+    if proof.public_inputs.balance_tag != tx.balance_tag {
         return Err(ProofError::TransactionProofInputsMismatch {
             index,
             message: "balance tag mismatch".to_string(),
@@ -508,10 +506,10 @@ fn verify_transaction_proof_inputs(
     Ok(())
 }
 
-fn nullifier_root_from_list(nullifiers: &[[u8; 32]]) -> Result<[u8; 32], ProofError> {
+fn nullifier_root_from_list(nullifiers: &[[u8; 48]]) -> Result<[u8; 48], ProofError> {
     let mut entries = BTreeSet::new();
     for nf in nullifiers {
-        if *nf == [0u8; 32] {
+        if *nf == [0u8; 48] {
             continue;
         }
         if !entries.insert(*nf) {
@@ -521,20 +519,20 @@ fn nullifier_root_from_list(nullifiers: &[[u8; 32]]) -> Result<[u8; 32], ProofEr
         }
     }
 
-    let mut data = Vec::with_capacity(entries.len() * 32);
+    let mut data = Vec::with_capacity(entries.len() * 48);
     for nf in entries {
         data.extend_from_slice(&nf);
     }
 
-    Ok(sha256(&data))
+    Ok(blake3_384(&data))
 }
 
 fn verify_and_apply_tree_transition(
     parent_commitment_tree: &CommitmentTreeState,
-    proof_starting_root: [u8; 32],
-    proof_ending_root: [u8; 32],
+    proof_starting_root: [u8; 48],
+    proof_ending_root: [u8; 48],
     transactions: &[crate::types::Transaction],
-    anchors: &[[u8; 32]],
+    anchors: &[[u8; 48]],
 ) -> Result<CommitmentTreeState, ProofError> {
     if anchors.len() != transactions.len() {
         return Err(ProofError::Internal("anchor list length mismatch"));
@@ -555,7 +553,7 @@ fn verify_and_apply_tree_transition(
                 anchor: *anchor,
             });
         }
-        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 32]) {
+        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 48]) {
             tree.append(commitment)?;
         }
     }
@@ -575,11 +573,11 @@ mod tests {
     use super::*;
     use protocol_versioning::DEFAULT_VERSION_BINDING;
 
-    fn tx_with_commitments(commitments: Vec<[u8; 32]>) -> crate::types::Transaction {
+    fn tx_with_commitments(commitments: Vec<[u8; 48]>) -> crate::types::Transaction {
         crate::types::Transaction::new(
             Vec::new(),
             commitments,
-            [42u8; 32],
+            [42u8; 48],
             DEFAULT_VERSION_BINDING,
             Vec::new(),
         )
@@ -588,11 +586,11 @@ mod tests {
     #[test]
     fn tree_transition_rejects_starting_root_mismatch() {
         let parent_tree = CommitmentTreeState::default();
-        let txs = vec![tx_with_commitments(vec![[1u8; 32]])];
+        let txs = vec![tx_with_commitments(vec![[1u8; 48]])];
         let anchors = vec![parent_tree.root()];
         let err = verify_and_apply_tree_transition(
             &parent_tree,
-            [9u8; 32],
+            [9u8; 48],
             parent_tree.root(),
             &txs,
             &anchors,
@@ -604,8 +602,8 @@ mod tests {
     #[test]
     fn tree_transition_rejects_invalid_anchor() {
         let parent_tree = CommitmentTreeState::default();
-        let txs = vec![tx_with_commitments(vec![[1u8; 32]])];
-        let anchors = vec![[7u8; 32]];
+        let txs = vec![tx_with_commitments(vec![[1u8; 48]])];
+        let anchors = vec![[7u8; 48]];
         let err = verify_and_apply_tree_transition(
             &parent_tree,
             parent_tree.root(),
@@ -620,12 +618,12 @@ mod tests {
     #[test]
     fn tree_transition_rejects_ending_root_mismatch() {
         let parent_tree = CommitmentTreeState::default();
-        let txs = vec![tx_with_commitments(vec![[1u8; 32]])];
+        let txs = vec![tx_with_commitments(vec![[1u8; 48]])];
         let anchors = vec![parent_tree.root()];
         let err = verify_and_apply_tree_transition(
             &parent_tree,
             parent_tree.root(),
-            [9u8; 32],
+            [9u8; 48],
             &txs,
             &anchors,
         )
@@ -636,10 +634,10 @@ mod tests {
     #[test]
     fn tree_transition_accepts_valid_update() {
         let parent_tree = CommitmentTreeState::default();
-        let txs = vec![tx_with_commitments(vec![[1u8; 32]])];
+        let txs = vec![tx_with_commitments(vec![[1u8; 48]])];
         let anchors = vec![parent_tree.root()];
         let mut expected = parent_tree.clone();
-        expected.append([1u8; 32]).expect("append");
+        expected.append([1u8; 48]).expect("append");
         let updated = verify_and_apply_tree_transition(
             &parent_tree,
             parent_tree.root(),

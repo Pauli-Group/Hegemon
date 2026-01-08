@@ -1,12 +1,11 @@
 use protocol_versioning::{CircuitVersion, CryptoSuiteId, VersionBinding, DEFAULT_VERSION_BINDING};
 use serde::{Deserialize, Serialize};
 pub use transaction_core::BalanceSlot;
-use winterfell::math::FieldElement;
 
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID},
     error::TransactionCircuitError,
-    hashing::{balance_commitment, Commitment, Felt},
+    hashing_pq::{balance_commitment_bytes, Commitment},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -14,11 +13,11 @@ pub struct StablecoinPolicyBinding {
     #[serde(default)]
     pub enabled: bool,
     pub asset_id: u64,
-    #[serde(with = "crate::public_inputs::serde_bytes32")]
+    #[serde(with = "crate::public_inputs::serde_bytes48")]
     pub policy_hash: Commitment,
-    #[serde(with = "crate::public_inputs::serde_bytes32")]
+    #[serde(with = "crate::public_inputs::serde_bytes48")]
     pub oracle_commitment: Commitment,
-    #[serde(with = "crate::public_inputs::serde_bytes32")]
+    #[serde(with = "crate::public_inputs::serde_bytes48")]
     pub attestation_commitment: Commitment,
     #[serde(default)]
     pub issuance_delta: i128,
@@ -30,9 +29,9 @@ impl Default for StablecoinPolicyBinding {
         Self {
             enabled: false,
             asset_id: 0,
-            policy_hash: [0u8; 32],
-            oracle_commitment: [0u8; 32],
-            attestation_commitment: [0u8; 32],
+            policy_hash: [0u8; 48],
+            oracle_commitment: [0u8; 48],
+            attestation_commitment: [0u8; 48],
             issuance_delta: 0,
             policy_version: 0,
         }
@@ -41,11 +40,11 @@ impl Default for StablecoinPolicyBinding {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TransactionPublicInputs {
-    #[serde(with = "crate::public_inputs::serde_bytes32")]
+    #[serde(with = "crate::public_inputs::serde_bytes48")]
     pub merkle_root: Commitment,
-    #[serde(with = "crate::public_inputs::serde_vec_bytes32")]
+    #[serde(with = "crate::public_inputs::serde_vec_bytes48")]
     pub nullifiers: Vec<Commitment>,
-    #[serde(with = "crate::public_inputs::serde_vec_bytes32")]
+    #[serde(with = "crate::public_inputs::serde_vec_bytes48")]
     pub commitments: Vec<Commitment>,
     pub balance_slots: Vec<BalanceSlot>,
     pub native_fee: u64,
@@ -53,16 +52,16 @@ pub struct TransactionPublicInputs {
     pub value_balance: i128,
     #[serde(default)]
     pub stablecoin: StablecoinPolicyBinding,
-    #[serde(with = "crate::public_inputs::serde_felt")]
-    pub balance_tag: Felt,
+    #[serde(with = "crate::public_inputs::serde_bytes48")]
+    pub balance_tag: Commitment,
     pub circuit_version: CircuitVersion,
     pub crypto_suite: CryptoSuiteId,
 }
 
 impl Default for TransactionPublicInputs {
     fn default() -> Self {
-        let nullifiers = vec![[0u8; 32]; MAX_INPUTS];
-        let commitments = vec![[0u8; 32]; MAX_OUTPUTS];
+        let nullifiers = vec![[0u8; 48]; MAX_INPUTS];
+        let commitments = vec![[0u8; 48]; MAX_OUTPUTS];
         let balance_slots = (0..BALANCE_SLOTS)
             .map(|_| BalanceSlot {
                 asset_id: u64::MAX,
@@ -71,14 +70,14 @@ impl Default for TransactionPublicInputs {
             .collect();
 
         Self {
-            merkle_root: [0u8; 32],
+            merkle_root: [0u8; 48],
             nullifiers,
             commitments,
             balance_slots,
             native_fee: 0,
             value_balance: 0,
             stablecoin: StablecoinPolicyBinding::default(),
-            balance_tag: Felt::ZERO,
+            balance_tag: [0u8; 48],
             circuit_version: DEFAULT_VERSION_BINDING.circuit,
             crypto_suite: DEFAULT_VERSION_BINDING.crypto,
         }
@@ -110,14 +109,14 @@ impl TransactionPublicInputs {
             ));
         }
 
-        if !transaction_core::hashing::is_canonical_bytes32(&merkle_root) {
+        if !transaction_core::hashing_pq::is_canonical_bytes48(&merkle_root) {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "merkle root encoding is non-canonical",
             ));
         }
         if nullifiers
             .iter()
-            .any(|nf| !transaction_core::hashing::is_canonical_bytes32(nf))
+            .any(|nf| !transaction_core::hashing_pq::is_canonical_bytes48(nf))
         {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "nullifier encoding is non-canonical",
@@ -125,7 +124,7 @@ impl TransactionPublicInputs {
         }
         if commitments
             .iter()
-            .any(|cm| !transaction_core::hashing::is_canonical_bytes32(cm))
+            .any(|cm| !transaction_core::hashing_pq::is_canonical_bytes48(cm))
         {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "commitment encoding is non-canonical",
@@ -137,9 +136,11 @@ impl TransactionPublicInputs {
                     "stablecoin asset id invalid",
                 ));
             }
-            if !transaction_core::hashing::is_canonical_bytes32(&stablecoin.policy_hash)
-                || !transaction_core::hashing::is_canonical_bytes32(&stablecoin.oracle_commitment)
-                || !transaction_core::hashing::is_canonical_bytes32(
+            if !transaction_core::hashing_pq::is_canonical_bytes48(&stablecoin.policy_hash)
+                || !transaction_core::hashing_pq::is_canonical_bytes48(
+                    &stablecoin.oracle_commitment,
+                )
+                || !transaction_core::hashing_pq::is_canonical_bytes48(
                     &stablecoin.attestation_commitment,
                 )
             {
@@ -163,11 +164,10 @@ impl TransactionPublicInputs {
             .find(|slot| slot.asset_id == NATIVE_ASSET_ID)
             .map(|slot| slot.delta)
             .unwrap_or(0);
-        let expected_balance_tag =
-            balance_commitment(native_delta, &balance_slots).map_err(|err| {
+        let balance_tag =
+            balance_commitment_bytes(native_delta, &balance_slots).map_err(|err| {
                 TransactionCircuitError::BalanceDeltaOutOfRange(err.asset_id, err.magnitude)
             })?;
-        let balance_tag = expected_balance_tag;
 
         if stablecoin.enabled
             && !balance_slots
@@ -229,7 +229,6 @@ pub(crate) mod serde_vec_bytes32 {
     use serde::Deserialize;
 }
 
-#[cfg(feature = "plonky3")]
 pub(crate) mod serde_vec_bytes48 {
     use serde::{Deserializer, Serializer};
 
@@ -287,7 +286,6 @@ pub(crate) mod serde_bytes32 {
     use serde::Deserialize;
 }
 
-#[cfg(feature = "plonky3")]
 pub(crate) mod serde_bytes48 {
     use serde::{Deserializer, Serializer};
 
@@ -314,7 +312,6 @@ pub(crate) mod serde_bytes48 {
     use serde::Deserialize;
 }
 
-#[cfg(feature = "plonky3")]
 pub(crate) fn default_bytes48() -> [u8; 48] {
     [0u8; 48]
 }
@@ -343,9 +340,9 @@ pub(crate) mod serde_felt {
 fn stablecoin_binding_is_zero(binding: &StablecoinPolicyBinding) -> bool {
     !binding.enabled
         && binding.asset_id == 0
-        && binding.policy_hash == [0u8; 32]
-        && binding.oracle_commitment == [0u8; 32]
-        && binding.attestation_commitment == [0u8; 32]
+        && binding.policy_hash == [0u8; 48]
+        && binding.oracle_commitment == [0u8; 48]
+        && binding.attestation_commitment == [0u8; 48]
         && binding.issuance_delta == 0
         && binding.policy_version == 0
 }

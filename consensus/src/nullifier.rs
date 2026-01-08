@@ -2,11 +2,11 @@ use std::collections::BTreeSet;
 
 use crate::error::ConsensusError;
 use crate::types::Nullifier;
-use crypto::hashes::sha256;
+use crypto::hashes::blake3_384;
 
 #[derive(Clone, Debug)]
 pub struct NullifierSet {
-    entries: BTreeSet<[u8; 32]>,
+    entries: BTreeSet<[u8; 48]>,
 }
 
 impl NullifierSet {
@@ -37,12 +37,12 @@ impl NullifierSet {
         Ok(())
     }
 
-    pub fn commitment(&self) -> [u8; 32] {
-        let mut data = Vec::with_capacity(self.entries.len() * 32);
+    pub fn commitment(&self) -> [u8; 48] {
+        let mut data = Vec::with_capacity(self.entries.len() * 48);
         for nf in &self.entries {
             data.extend_from_slice(nf);
         }
-        sha256(&data)
+        blake3_384(&data)
     }
 }
 

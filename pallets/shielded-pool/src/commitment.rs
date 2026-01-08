@@ -106,44 +106,45 @@ pub fn circuit_note_commitment(
     pk_recipient: &[u8; 32],
     rho: &[u8; 32],
     r: &[u8; 32],
-) -> [u8; 32] {
-    transaction_core::hashing::note_commitment_bytes(value, asset_id, pk_recipient, rho, r)
+) -> [u8; 48] {
+    transaction_core::hashing_pq::note_commitment_bytes(value, asset_id, pk_recipient, rho, r)
 }
 
 /// Compute nullifier exactly as the ZK circuit does.
 ///
 /// This matches `circuits/transaction/src/hashing.rs::nullifier` exactly.
-pub fn circuit_nullifier(prf_key: u64, rho: &[u8; 32], position: u64) -> [u8; 32] {
-    transaction_core::hashing::nullifier_bytes(transaction_core::Felt::new(prf_key), rho, position)
+pub fn circuit_nullifier(prf_key: u64, rho: &[u8; 32], position: u64) -> [u8; 48] {
+    let felt = transaction_core::hashing_pq::Felt::from_u64(prf_key);
+    transaction_core::hashing_pq::nullifier_bytes(felt, rho, position)
 }
 
 /// Compute PRF key exactly as the ZK circuit does.
 ///
 /// This matches `circuits/transaction/src/hashing.rs::prf_key` exactly.
 pub fn circuit_prf_key(sk_spend: &[u8; 32]) -> u64 {
-    transaction_core::hashing::prf_key(sk_spend).as_int()
+    transaction_core::hashing_pq::prf_key(sk_spend).as_canonical_u64()
 }
 
 /// Convert a circuit Felt (u64) to a 32-byte commitment.
 /// The Felt is stored in the last 8 bytes as big-endian.
-pub fn felt_to_commitment(felt: u64) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out[24..32].copy_from_slice(&felt.to_be_bytes());
+pub fn felt_to_commitment(felt: u64) -> [u8; 48] {
+    let mut out = [0u8; 48];
+    out[40..48].copy_from_slice(&felt.to_be_bytes());
     out
 }
 
 /// Extract a circuit Felt (u64) from a 32-byte commitment.
 /// The Felt is stored in the last 8 bytes as big-endian.
-pub fn commitment_to_felt(commitment: &[u8; 32]) -> u64 {
+pub fn commitment_to_felt(commitment: &[u8; 48]) -> u64 {
     u64::from_be_bytes([
-        commitment[24],
-        commitment[25],
-        commitment[26],
-        commitment[27],
-        commitment[28],
-        commitment[29],
-        commitment[30],
-        commitment[31],
+        commitment[40],
+        commitment[41],
+        commitment[42],
+        commitment[43],
+        commitment[44],
+        commitment[45],
+        commitment[46],
+        commitment[47],
     ])
 }
 
@@ -299,7 +300,7 @@ pub fn coinbase_commitment(
     recipient: &[u8; DIVERSIFIED_ADDRESS_SIZE],
     value: u64,
     public_seed: &[u8; 32],
-) -> [u8; 32] {
+) -> [u8; 48] {
     // Extract pk_recipient from the 43-byte recipient format
     // Layout: version(1) + diversifier_index(4) + pk_recipient(32) + tag(6)
     let mut pk_recipient = [0u8; 32];
@@ -320,13 +321,13 @@ pub fn coinbase_commitment(
 /// - public_seed: 32-byte seed used to derive rho and r
 /// - asset_id: Asset identifier (0 for native)
 ///
-/// Returns: 32-byte commitment encoding (4 x 64-bit limbs)
+/// Returns: 48-byte commitment encoding (6 x 64-bit limbs)
 pub fn circuit_coinbase_commitment(
     pk_recipient: &[u8; 32],
     value: u64,
     public_seed: &[u8; 32],
     asset_id: u64,
-) -> [u8; 32] {
+) -> [u8; 48] {
     // Derive rho and r from public seed
     let rho = derive_coinbase_rho(public_seed);
     let r = derive_coinbase_r(public_seed);

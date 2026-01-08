@@ -37,17 +37,17 @@ use transaction_circuit::StablecoinPolicyBinding;
 /// Mock RPC service that simulates node responses
 pub struct MockRpcService {
     /// Encrypted notes: (index, ciphertext, block_height, commitment)
-    notes: RwLock<Vec<(u64, Vec<u8>, u64, [u8; 32])>>,
+    notes: RwLock<Vec<(u64, Vec<u8>, u64, [u8; 48])>>,
     /// Spent nullifiers
-    nullifiers: RwLock<Vec<[u8; 32]>>,
+    nullifiers: RwLock<Vec<[u8; 48]>>,
     /// Valid anchors (Merkle roots)
-    anchors: RwLock<Vec<[u8; 32]>>,
+    anchors: RwLock<Vec<[u8; 48]>>,
     /// Pool balance
     balance: RwLock<u128>,
     /// Current block height
     height: RwLock<u64>,
     /// Current merkle root
-    merkle_root: RwLock<[u8; 32]>,
+    merkle_root: RwLock<[u8; 48]>,
     /// Transaction history
     transactions: RwLock<Vec<MockTransaction>>,
 }
@@ -63,8 +63,8 @@ pub struct MockTransaction {
 #[derive(Clone, Debug)]
 pub enum MockTxType {
     ShieldedTransfer {
-        nullifiers: Vec<[u8; 32]>,
-        commitments: Vec<[u8; 32]>,
+        nullifiers: Vec<[u8; 48]>,
+        commitments: Vec<[u8; 48]>,
     },
 }
 
@@ -77,7 +77,7 @@ impl Default for MockRpcService {
 impl MockRpcService {
     /// Create a new mock RPC service
     pub fn new() -> Self {
-        let initial_root = [0u8; 32];
+        let initial_root = [0u8; 48];
         Self {
             notes: RwLock::new(Vec::new()),
             nullifiers: RwLock::new(Vec::new()),
@@ -90,7 +90,7 @@ impl MockRpcService {
     }
 
     /// Add an encrypted note
-    pub async fn add_note(&self, ciphertext: Vec<u8>, commitment: [u8; 32]) -> u64 {
+    pub async fn add_note(&self, ciphertext: Vec<u8>, commitment: [u8; 48]) -> u64 {
         let mut notes = self.notes.write().await;
         let height = *self.height.read().await;
         let index = notes.len() as u64;
@@ -104,7 +104,7 @@ impl MockRpcService {
     }
 
     /// Add a valid anchor (Merkle root)
-    pub async fn add_anchor(&self, anchor: [u8; 32]) {
+    pub async fn add_anchor(&self, anchor: [u8; 48]) {
         self.anchors.write().await.push(anchor);
     }
 
@@ -112,10 +112,10 @@ impl MockRpcService {
     pub async fn submit_shielded_transfer(
         &self,
         _proof: Vec<u8>,
-        nullifiers: Vec<[u8; 32]>,
-        commitments: Vec<[u8; 32]>,
+        nullifiers: Vec<[u8; 48]>,
+        commitments: Vec<[u8; 48]>,
         encrypted_notes: Vec<Vec<u8>>,
-        anchor: [u8; 32],
+        anchor: [u8; 48],
         _binding_hash: [u8; 64],
         _stablecoin: Option<StablecoinPolicyBinding>,
         value_balance: i128,
@@ -185,7 +185,7 @@ impl MockRpcService {
         limit: usize,
         from_block: Option<u64>,
         to_block: Option<u64>,
-    ) -> Vec<(u64, Vec<u8>, u64, [u8; 32])> {
+    ) -> Vec<(u64, Vec<u8>, u64, [u8; 48])> {
         let notes = self.notes.read().await;
         notes
             .iter()
@@ -201,9 +201,12 @@ impl MockRpcService {
     }
 
     /// Get Merkle witness for a position
-    pub async fn get_merkle_witness(&self, _position: u64) -> (Vec<[u8; 32]>, Vec<bool>, [u8; 32]) {
+    pub async fn get_merkle_witness(
+        &self,
+        _position: u64,
+    ) -> (Vec<[u8; 48]>, Vec<bool>, [u8; 48]) {
         // Mock witness with 32 levels
-        let siblings: Vec<[u8; 32]> = (0..32).map(|i| [i; 32]).collect();
+        let siblings: Vec<[u8; 48]> = (0..32).map(|i| [i; 48]).collect();
         let indices: Vec<bool> = (0..32).map(|_| false).collect();
         let root = *self.merkle_root.read().await;
         (siblings, indices, root)
@@ -228,12 +231,12 @@ impl MockRpcService {
     }
 
     /// Check if nullifier is spent
-    pub async fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
+    pub async fn is_nullifier_spent(&self, nullifier: &[u8; 48]) -> bool {
         self.nullifiers.read().await.contains(nullifier)
     }
 
     /// Check if anchor is valid
-    pub async fn is_valid_anchor(&self, anchor: &[u8; 32]) -> bool {
+    pub async fn is_valid_anchor(&self, anchor: &[u8; 48]) -> bool {
         self.anchors.read().await.contains(anchor)
     }
 
@@ -263,7 +266,7 @@ impl MockRpcService {
 pub struct MockPoolStatus {
     pub total_notes: u64,
     pub total_nullifiers: u64,
-    pub merkle_root: [u8; 32],
+    pub merkle_root: [u8; 48],
     pub tree_depth: u32,
     pub pool_balance: u128,
     pub last_update_block: u64,
@@ -293,10 +296,10 @@ impl TestRpcClient {
     pub async fn submit_shielded_transfer(
         &self,
         proof: Vec<u8>,
-        nullifiers: Vec<[u8; 32]>,
-        commitments: Vec<[u8; 32]>,
+        nullifiers: Vec<[u8; 48]>,
+        commitments: Vec<[u8; 48]>,
         encrypted_notes: Vec<Vec<u8>>,
-        anchor: [u8; 32],
+        anchor: [u8; 48],
         binding_hash: [u8; 64],
         stablecoin: Option<StablecoinPolicyBinding>,
         value_balance: i128,
@@ -325,7 +328,7 @@ impl TestRpcClient {
         limit: usize,
         from_block: Option<u64>,
         to_block: Option<u64>,
-    ) -> Vec<(u64, Vec<u8>, u64, [u8; 32])> {
+    ) -> Vec<(u64, Vec<u8>, u64, [u8; 48])> {
         if let Some(mock) = &self.mock {
             mock.get_encrypted_notes(start, limit, from_block, to_block)
                 .await
@@ -335,11 +338,14 @@ impl TestRpcClient {
     }
 
     /// Get Merkle witness
-    pub async fn get_merkle_witness(&self, position: u64) -> (Vec<[u8; 32]>, Vec<bool>, [u8; 32]) {
+    pub async fn get_merkle_witness(
+        &self,
+        position: u64,
+    ) -> (Vec<[u8; 48]>, Vec<bool>, [u8; 48]) {
         if let Some(mock) = &self.mock {
             mock.get_merkle_witness(position).await
         } else {
-            (Vec::new(), Vec::new(), [0u8; 32])
+            (Vec::new(), Vec::new(), [0u8; 48])
         }
     }
 
@@ -351,7 +357,7 @@ impl TestRpcClient {
             MockPoolStatus {
                 total_notes: 0,
                 total_nullifiers: 0,
-                merkle_root: [0u8; 32],
+                merkle_root: [0u8; 48],
                 tree_depth: 32,
                 pool_balance: 0,
                 last_update_block: 0,
@@ -360,7 +366,7 @@ impl TestRpcClient {
     }
 
     /// Check if nullifier is spent
-    pub async fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
+    pub async fn is_nullifier_spent(&self, nullifier: &[u8; 48]) -> bool {
         if let Some(mock) = &self.mock {
             mock.is_nullifier_spent(nullifier).await
         } else {
@@ -369,7 +375,7 @@ impl TestRpcClient {
     }
 
     /// Check if anchor is valid
-    pub async fn is_valid_anchor(&self, anchor: &[u8; 32]) -> bool {
+    pub async fn is_valid_anchor(&self, anchor: &[u8; 48]) -> bool {
         if let Some(mock) = &self.mock {
             mock.is_valid_anchor(anchor).await
         } else {
@@ -404,7 +410,7 @@ mod basic_rpc_tests {
 
         // Add some notes
         for i in 0u8..5 {
-            service.add_note(vec![i], [i; 32]).await;
+            service.add_note(vec![i], [i; 48]).await;
         }
 
         // Get all notes
@@ -431,9 +437,9 @@ mod basic_rpc_tests {
     #[tokio::test]
     async fn test_nullifier_tracking() {
         let service = MockRpcService::new();
-        service.add_anchor([0; 32]).await; // Add valid anchor
+        service.add_anchor([0; 48]).await; // Add valid anchor
 
-        let nullifier = [0xcc; 32];
+        let nullifier = [0xcc; 48];
 
         // Not spent initially
         assert!(!service.is_nullifier_spent(&nullifier).await);
@@ -443,9 +449,9 @@ mod basic_rpc_tests {
             .submit_shielded_transfer(
                 vec![0u8; 10000], // fake proof
                 vec![nullifier],
-                vec![[0xdd; 32]],
+                vec![[0xdd; 48]],
                 vec![vec![1, 2, 3]],
-                [0; 32], // valid anchor
+                [0; 48], // valid anchor
                 [0; 64],
                 None,
                 0,
@@ -462,14 +468,14 @@ mod basic_rpc_tests {
         let service = MockRpcService::new();
 
         // Initial anchor (zero) is valid
-        assert!(service.is_valid_anchor(&[0; 32]).await);
+        assert!(service.is_valid_anchor(&[0; 48]).await);
 
         // Unknown anchor is invalid
-        assert!(!service.is_valid_anchor(&[0xff; 32]).await);
+        assert!(!service.is_valid_anchor(&[0xff; 48]).await);
 
         // Add custom anchor
-        service.add_anchor([0xab; 32]).await;
-        assert!(service.is_valid_anchor(&[0xab; 32]).await);
+        service.add_anchor([0xab; 48]).await;
+        assert!(service.is_valid_anchor(&[0xab; 48]).await);
     }
 }
 
@@ -484,16 +490,16 @@ mod shielded_transfer_tests {
     #[tokio::test]
     async fn test_shielded_transfer_success() {
         let (client, service) = TestRpcClient::mock();
-        service.add_anchor([0; 32]).await;
+        service.add_anchor([0; 48]).await;
 
         // Submit shielded transfer
         let tx_hash = client
             .submit_shielded_transfer(
                 vec![0u8; 15000],    // fake proof
-                vec![[0x11; 32]],    // nullifier
-                vec![[0x22; 32]],    // new commitment
+                vec![[0x11; 48]],    // nullifier
+                vec![[0x22; 48]],    // new commitment
                 vec![vec![2, 3, 4]], // encrypted note
-                [0; 32],             // anchor
+                [0; 48],             // anchor
                 [0; 64],             // binding sig
                 None,
                 0, // value balance
@@ -512,18 +518,18 @@ mod shielded_transfer_tests {
     #[tokio::test]
     async fn test_double_spend_rejected() {
         let (client, service) = TestRpcClient::mock();
-        service.add_anchor([0; 32]).await;
+        service.add_anchor([0; 48]).await;
 
-        let nullifier = [0x99; 32];
+        let nullifier = [0x99; 48];
 
         // First transfer succeeds
         let result = client
             .submit_shielded_transfer(
                 vec![0u8; 15000],
                 vec![nullifier],
-                vec![[0x22; 32]],
+                vec![[0x22; 48]],
                 vec![vec![2]],
-                [0; 32],
+                [0; 48],
                 [0; 64],
                 None,
                 0,
@@ -536,9 +542,9 @@ mod shielded_transfer_tests {
             .submit_shielded_transfer(
                 vec![0u8; 15000],
                 vec![nullifier], // Same nullifier
-                vec![[0x33; 32]],
+                vec![[0x33; 48]],
                 vec![vec![3]],
-                [0; 32],
+                [0; 48],
                 [0; 64],
                 None,
                 0,
@@ -555,10 +561,10 @@ mod shielded_transfer_tests {
         let result = client
             .submit_shielded_transfer(
                 vec![0u8; 15000],
-                vec![[0x11; 32]],
-                vec![[0x22; 32]],
+                vec![[0x11; 48]],
+                vec![[0x22; 48]],
                 vec![vec![2]],
-                [0xff; 32], // Invalid anchor
+                [0xff; 48], // Invalid anchor
                 [0; 64],
                 None,
                 0,
@@ -606,17 +612,17 @@ mod concurrent_tests {
     #[tokio::test]
     async fn test_concurrent_nullifier_checks() {
         let service = Arc::new(MockRpcService::new());
-        service.add_anchor([0; 32]).await;
+        service.add_anchor([0; 48]).await;
 
         // Add some spent nullifiers
         for i in 0..50 {
             service
                 .submit_shielded_transfer(
                     vec![0u8; 15000],
-                    vec![[i; 32]],
-                    vec![[i + 100; 32]],
+                    vec![[i; 48]],
+                    vec![[i + 100; 48]],
                     vec![vec![i]],
-                    [0; 32],
+                    [0; 48],
                     [0; 64],
                     None,
                     0,
@@ -631,7 +637,7 @@ mod concurrent_tests {
         for i in 0..100 {
             let svc = service.clone();
             tasks.spawn(async move {
-                let nf = [i; 32];
+                let nf = [i; 48];
                 (i, svc.is_nullifier_spent(&nf).await)
             });
         }
@@ -665,7 +671,7 @@ mod full_flow_tests {
     #[tokio::test]
     async fn test_full_rpc_shielded_flow() {
         let (client, service) = TestRpcClient::mock();
-        service.add_anchor([0; 32]).await;
+        service.add_anchor([0; 48]).await;
 
         // 1. Check initial pool status
         let status = client.get_pool_status().await;
@@ -673,7 +679,7 @@ mod full_flow_tests {
         assert_eq!(status.total_notes, 0);
 
         // 2. Seed a note for the mock pool
-        let seed_commitment = [0xaa; 32];
+        let seed_commitment = [0xaa; 48];
         service.add_note(vec![1, 2, 3, 4], seed_commitment).await;
 
         // 3. Verify note was recorded
@@ -694,8 +700,8 @@ mod full_flow_tests {
         service.add_anchor(root).await;
 
         // 6. Build and submit shielded transfer
-        let nullifier = [0xbb; 32];
-        let new_commitment = [0xcc; 32];
+        let nullifier = [0xbb; 48];
+        let new_commitment = [0xcc; 48];
         let _transfer_tx = client
             .submit_shielded_transfer(
                 vec![0u8; 20000], // fake proof
@@ -723,11 +729,11 @@ mod full_flow_tests {
     #[tokio::test]
     async fn test_multi_party_rpc_flow() {
         let (client, service) = TestRpcClient::mock();
-        service.add_anchor([0; 32]).await;
+        service.add_anchor([0; 48]).await;
 
         // Seed Alice and Bob notes
-        service.add_note(vec![1], [0xa0; 32]).await;
-        service.add_note(vec![2], [0xb0; 32]).await;
+        service.add_note(vec![1], [0xa0; 48]).await;
+        service.add_note(vec![2], [0xb0; 48]).await;
 
         let status = client.get_pool_status().await;
         assert_eq!(status.total_notes, 2);
@@ -736,10 +742,10 @@ mod full_flow_tests {
         let transfer_result = client
             .submit_shielded_transfer(
                 vec![0u8; 15000],
-                vec![[0xa1; 32]], // Alice's nullifier
-                vec![[0xc0; 32]], // Charlie's new note
+                vec![[0xa1; 48]], // Alice's nullifier
+                vec![[0xc0; 48]], // Charlie's new note
                 vec![vec![3]],
-                [0; 32],
+                [0; 48],
                 [0; 64],
                 None,
                 0,

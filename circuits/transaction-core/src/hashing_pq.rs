@@ -155,3 +155,35 @@ pub fn balance_commitment(
     }
     Ok(sponge_single(BALANCE_DOMAIN_TAG, &inputs))
 }
+
+pub fn balance_commitment_hash(
+    native_delta: i128,
+    slots: &[BalanceSlot],
+) -> Result<HashFelt, BalanceCommitmentError> {
+    let mut inputs = Vec::with_capacity(1 + slots.len() * 2);
+    let native_mag = native_delta.unsigned_abs();
+    let native_mag_u64 = u64::try_from(native_mag).map_err(|_| BalanceCommitmentError {
+        asset_id: crate::constants::NATIVE_ASSET_ID,
+        magnitude: native_mag,
+    })?;
+    inputs.push(Felt::from_u64(native_mag_u64));
+    for slot in slots {
+        let magnitude = slot.delta.unsigned_abs();
+        let magnitude_u64 = u64::try_from(magnitude).map_err(|_| BalanceCommitmentError {
+            asset_id: slot.asset_id,
+            magnitude,
+        })?;
+        inputs.push(Felt::from_u64(slot.asset_id));
+        inputs.push(Felt::from_u64(magnitude_u64));
+    }
+    Ok(sponge_hash(BALANCE_DOMAIN_TAG, &inputs))
+}
+
+pub fn balance_commitment_bytes(
+    native_delta: i128,
+    slots: &[BalanceSlot],
+) -> Result<Commitment, BalanceCommitmentError> {
+    Ok(felts_to_bytes48(&balance_commitment_hash(
+        native_delta, slots,
+    )?))
+}

@@ -38,6 +38,8 @@ After this work, a user can:
 - [x] (2026-01-07 10:43Z) Added a PQC soundness checklist section defining minimum PQ parameters, verification steps, and the formal-analysis caveat.
 - [x] (2026-01-07 13:39Z) Milestone 4: Implement 384-bit capacity sponge for in-circuit commitments (Poseidon2 width 12/rate 6/capacity 6, 48-byte outputs, PQ hashing + witness/proof plumbing, transaction/batch AIR + prover updates, docs refreshed; `cargo check -p transaction-circuit --features plonky3`, `cargo check -p batch-circuit --features plonky3`, `cargo check -p block-circuit --features plonky3`).
 - [ ] Milestone 5: Upgrade application-level commitments to 48 bytes end-to-end.
+- [x] (2026-01-07 16:02Z) Removed the ignored Plonky3 debug constraint test from `circuits/transaction/src/p3_prover.rs` to keep the default suite lean.
+- [ ] (2026-01-07 16:02Z) Updated wallet/rpc tests + disclosure package flows to 48-byte commitments and moved the disclosure circuit to Poseidon2 (Winterfell) so disclosure proofs match PQ commitments; remaining 48-byte migrations still pending in block/batch/settlement legacy paths.
 - [ ] Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits.
 - [ ] Milestone 7: Update pallets, node, wallet, and protocol versioning.
 - [ ] Milestone 8: Documentation and runbooks.
@@ -115,6 +117,9 @@ After this work, a user can:
 
 - Observation: With `log_num_quotient_chunks=3` for `TransactionAirP3`, a test-only `FRI_LOG_BLOWUP=2` makes the LDE shorter than the quotient domain, triggering `assertion failed: lde.height() >= domain.size()`.
   Evidence: `circuits/transaction-core/src/p3_air.rs` log chunk test and `p3-fri-0.4.2/src/two_adic_pcs.rs:271`.
+
+- Observation: Winterfell legacy batch/block/settlement paths still encode commitments/nullifiers as 32-byte hashes, which is now incompatible with the 48-byte application types; they need either feature-gating or a Poseidon2/Plonky3 port to stay usable.
+  Evidence: `circuits/batch/src/public_inputs.rs`, `circuits/block/src/commitment_air.rs`, `circuits/settlement/src/hashing.rs`.
 
 ## Decision Log
 

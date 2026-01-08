@@ -1,21 +1,23 @@
 use block_circuit::CommitmentBlockProof;
 #[cfg(feature = "legacy-recursion")]
 use block_circuit::RecursiveBlockProof;
-use crypto::hashes::sha256;
+use crypto::hashes::{blake3_384, sha256};
 use protocol_versioning::{VersionBinding, VersionMatrix};
 use sha2::{Digest, Sha384};
 pub use state_da::{DaChunk, DaChunkProof, DaEncoding, DaError, DaParams, DaRoot};
 use transaction_circuit::TransactionProof;
 
-pub type Nullifier = [u8; 32];
-pub type Commitment = [u8; 32];
-pub type BalanceTag = [u8; 32];
-pub type FeeCommitment = [u8; 32];
-pub type ValidatorSetCommitment = [u8; 32];
+pub type Nullifier = [u8; 48];
+pub type Commitment = [u8; 48];
+pub type BalanceTag = [u8; 48];
+pub type FeeCommitment = [u8; 48];
+pub type ValidatorSetCommitment = [u8; 48];
 pub type BlockHash = [u8; 32];
 pub type ValidatorId = [u8; 32];
 pub type StarkCommitment = [u8; 48];
-pub type VersionCommitment = [u8; 32];
+pub type VersionCommitment = [u8; 48];
+pub type StateRoot = [u8; 48];
+pub type NullifierRoot = [u8; 48];
 pub type SupplyDigest = u128;
 pub type Amount = u64;
 
@@ -189,7 +191,7 @@ pub fn compute_fee_commitment(transactions: &[Transaction]) -> FeeCommitment {
     for tag in tags {
         data.extend_from_slice(&tag);
     }
-    sha256(&data)
+    blake3_384(&data)
 }
 
 pub fn compute_proof_commitment(transactions: &[Transaction]) -> StarkCommitment {
@@ -224,9 +226,9 @@ mod tests {
     #[test]
     fn transaction_id_is_deterministic() {
         let tx = Transaction::new(
-            vec![[1u8; 32]],
-            vec![[2u8; 32]],
-            [3u8; 32],
+            vec![[1u8; 48]],
+            vec![[2u8; 48]],
+            [3u8; 48],
             DEFAULT_VERSION_BINDING,
             vec![],
         );
@@ -235,9 +237,9 @@ mod tests {
 
     #[test]
     fn transaction_version_changes_hash() {
-        let base_nullifiers = vec![[1u8; 32]];
-        let base_commitments = vec![[2u8; 32]];
-        let base_tag = [3u8; 32];
+        let base_nullifiers = vec![[1u8; 48]];
+        let base_commitments = vec![[2u8; 48]];
+        let base_tag = [3u8; 48];
         let v1 = Transaction::new(
             base_nullifiers.clone(),
             base_commitments.clone(),
@@ -259,16 +261,16 @@ mod tests {
     #[test]
     fn fee_commitment_sorted() {
         let tx_a = Transaction::new(
-            vec![[1u8; 32]],
+            vec![[1u8; 48]],
             vec![],
-            [3u8; 32],
+            [3u8; 48],
             DEFAULT_VERSION_BINDING,
             vec![],
         );
         let tx_b = Transaction::new(
-            vec![[2u8; 32]],
+            vec![[2u8; 48]],
             vec![],
-            [1u8; 32],
+            [1u8; 48],
             DEFAULT_VERSION_BINDING,
             vec![],
         );
@@ -280,16 +282,16 @@ mod tests {
     #[test]
     fn proof_commitment_depends_on_transaction_order() {
         let tx_a = Transaction::new(
-            vec![[1u8; 32]],
+            vec![[1u8; 48]],
             vec![],
-            [3u8; 32],
+            [3u8; 48],
             DEFAULT_VERSION_BINDING,
             vec![],
         );
         let tx_b = Transaction::new(
-            vec![[2u8; 32]],
+            vec![[2u8; 48]],
             vec![],
-            [4u8; 32],
+            [4u8; 48],
             DEFAULT_VERSION_BINDING,
             vec![],
         );
@@ -301,16 +303,16 @@ mod tests {
     #[test]
     fn version_commitment_tracks_counts() {
         let tx_v1 = Transaction::new(
-            vec![[1u8; 32]],
+            vec![[1u8; 48]],
             vec![],
-            [3u8; 32],
+            [3u8; 48],
             DEFAULT_VERSION_BINDING,
             vec![],
         );
         let tx_v2 = Transaction::new(
-            vec![[4u8; 32]],
+            vec![[4u8; 48]],
             vec![],
-            [5u8; 32],
+            [5u8; 48],
             VersionBinding::new(2, DEFAULT_VERSION_BINDING.crypto),
             vec![],
         );
@@ -319,6 +321,6 @@ mod tests {
         assert_eq!(counts.get(&DEFAULT_VERSION_BINDING), Some(&2));
         assert_eq!(counts.get(&tx_v2.version), Some(&1));
         let commitment = compute_version_commitment(&[tx_v1, tx_v2]);
-        assert_ne!(commitment, [0u8; 32]);
+        assert_ne!(commitment, [0u8; 48]);
     }
 }

@@ -76,23 +76,25 @@ pub struct Instruction<AccountId, AssetId, Balance, BlockNumber> {
     pub submitted_at: BlockNumber,
 }
 
+pub type CommitmentHash = [u8; 48];
+
 #[derive(Encode, Decode, DecodeWithMemTracking, Clone, Eq, PartialEq, RuntimeDebug, TypeInfo)]
-pub struct BatchCommitment<Hash, AccountId> {
+pub struct BatchCommitment<AccountId> {
     pub id: u64,
     pub instructions: Vec<u64>,
-    pub commitment: Hash,
-    pub nullifiers: Vec<Hash>,
+    pub commitment: CommitmentHash,
+    pub nullifiers: Vec<CommitmentHash>,
     pub proof: Vec<u8>,
     pub submitted_by: AccountId,
     pub disputed: bool,
 }
 
 #[derive(Encode, Decode, DecodeWithMemTracking, Clone, Eq, PartialEq, RuntimeDebug, TypeInfo)]
-pub struct StateChannelCommitment<AccountId, Hash, BlockNumber> {
-    pub channel_id: Hash,
+pub struct StateChannelCommitment<AccountId, ChannelId, BlockNumber> {
+    pub channel_id: ChannelId,
     pub participants: Vec<AccountId>,
     pub version: u32,
-    pub balance_root: Hash,
+    pub balance_root: CommitmentHash,
     pub closing_height: BlockNumber,
     pub signature: Vec<u8>,
     pub disputed: bool,
@@ -118,8 +120,7 @@ pub type InstructionRecord<T> = Instruction<
     BlockNumberFor<T>,
 >;
 
-pub type BatchRecord<T> =
-    BatchCommitment<<T as frame_system::Config>::Hash, <T as frame_system::Config>::AccountId>;
+pub type BatchRecord<T> = BatchCommitment<<T as frame_system::Config>::AccountId>;
 
 pub type StateChannelRecord<T> = StateChannelCommitment<
     <T as frame_system::Config>::AccountId,
@@ -129,9 +130,9 @@ pub type StateChannelRecord<T> = StateChannelCommitment<
 
 pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(3);
 
-pub trait ProofVerifier<Hash> {
+pub trait ProofVerifier {
     fn verify(
-        inputs: &SettlementProofInputs<Hash>,
+        inputs: &SettlementProofInputs,
         proof: &[u8],
         verification_key: &[u8],
         params: &StarkVerifierParams,
@@ -139,19 +140,19 @@ pub trait ProofVerifier<Hash> {
 }
 
 #[derive(Clone, Eq, PartialEq, RuntimeDebug, TypeInfo)]
-pub struct SettlementProofInputs<Hash> {
-    pub commitment: Hash,
+pub struct SettlementProofInputs {
+    pub commitment: CommitmentHash,
     pub instructions: Vec<u64>,
-    pub nullifiers: Vec<Hash>,
+    pub nullifiers: Vec<CommitmentHash>,
 }
 
 #[cfg(all(feature = "std", not(feature = "production")))]
 pub struct AcceptAllProofs;
 
 #[cfg(all(feature = "std", not(feature = "production")))]
-impl<Hash> ProofVerifier<Hash> for AcceptAllProofs {
+impl ProofVerifier for AcceptAllProofs {
     fn verify(
-        _inputs: &SettlementProofInputs<Hash>,
+        _inputs: &SettlementProofInputs,
         _proof: &[u8],
         _verification_key: &[u8],
         _params: &StarkVerifierParams,
@@ -247,9 +248,9 @@ impl StarkVerifier {
 }
 
 #[cfg(feature = "stark-verify")]
-fn hash_to_felts<Hash: AsRef<[u8]>>(hash: &Hash) -> Option<settlement_circuit::HashFelt> {
-    let bytes: [u8; 32] = hash.as_ref().try_into().ok()?;
-    settlement_circuit::bytes32_to_felts(&bytes)
+fn hash_to_felts(_commitment: &CommitmentHash) -> Option<settlement_circuit::HashFelt> {
+    // Settlement circuit still expects 32-byte commitments; reject 48-byte inputs for now.
+    None
 }
 
 #[cfg(feature = "stark-verify")]
@@ -276,9 +277,9 @@ fn acceptable_options(params: &StarkVerifierParams) -> Option<winterfell::Accept
 }
 
 #[cfg(not(feature = "stark-verify"))]
-impl<Hash: AsRef<[u8]>> ProofVerifier<Hash> for StarkVerifier {
+impl ProofVerifier for StarkVerifier {
     fn verify(
-        _inputs: &SettlementProofInputs<Hash>,
+        _inputs: &SettlementProofInputs,
         _proof: &[u8],
         _verification_key: &[u8],
         _params: &StarkVerifierParams,
@@ -292,9 +293,9 @@ impl<Hash: AsRef<[u8]>> ProofVerifier<Hash> for StarkVerifier {
 }
 
 #[cfg(feature = "stark-verify")]
-impl<Hash: AsRef<[u8]>> ProofVerifier<Hash> for StarkVerifier {
+impl ProofVerifier for StarkVerifier {
     fn verify(
-        inputs: &SettlementProofInputs<Hash>,
+        inputs: &SettlementProofInputs,
         proof: &[u8],
         verification_key: &[u8],
         params: &StarkVerifierParams,
@@ -394,7 +395,7 @@ pub mod pallet {
         type ReferendaOrigin: EnsureOrigin<Self::RuntimeOrigin>;
         type Currency: Currency<Self::AccountId>;
         type AuthorityId: AppCrypto<Self::Public, Self::Signature>;
-        type ProofVerifier: ProofVerifier<Self::Hash>;
+        type ProofVerifier: ProofVerifier;
         type WeightInfo: WeightInfo;
         type DefaultVerifierParams: Get<StarkVerifierParams>;
         #[pallet::constant]
@@ -461,7 +462,8 @@ pub mod pallet {
 
     #[pallet::storage]
     #[pallet::getter(fn nullifier_used)]
-    pub type Nullifiers<T: Config> = StorageMap<_, Blake2_128Concat, T::Hash, bool, ValueQuery>;
+    pub type Nullifiers<T: Config> =
+        StorageMap<_, Blake2_128Concat, CommitmentHash, bool, ValueQuery>;
 
     #[pallet::storage]
     #[pallet::getter(fn state_channels)]
@@ -495,7 +497,7 @@ pub mod pallet {
             params: StarkVerifierParams,
         },
         NullifierConsumed {
-            nullifier: T::Hash,
+            nullifier: CommitmentHash,
         },
         StateChannelCommitted {
             channel: T::Hash,
@@ -551,10 +553,7 @@ pub mod pallet {
     }
 
     #[pallet::hooks]
-    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T>
-    where
-        T::Hash: From<[u8; 32]>,
-    {
+    impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
         fn offchain_worker(_n: BlockNumberFor<T>) {
             let queue = PendingQueue::<T>::get();
             if queue.is_empty() {
@@ -596,14 +595,14 @@ pub mod pallet {
             pub_inputs.commitment = commitment_felts;
 
             let commitment_hash = Self::hash_from_felt(commitment_felts);
-            let nullifiers: Vec<T::Hash> = pub_inputs
+            let nullifiers: Vec<CommitmentHash> = pub_inputs
                 .nullifiers
                 .iter()
                 .take(nullifier_count)
                 .map(|felt| Self::hash_from_felt(*felt))
                 .collect();
             let proof: BoundedVec<u8, T::MaxProofSize> = BoundedVec::truncate_from(Vec::new());
-            let nullifiers: BoundedVec<T::Hash, T::MaxNullifiers> =
+            let nullifiers: BoundedVec<CommitmentHash, T::MaxNullifiers> =
                 BoundedVec::truncate_from(nullifiers);
 
             if proof.is_empty() {
@@ -725,9 +724,9 @@ pub mod pallet {
         pub fn submit_batch(
             origin: OriginFor<T>,
             instructions: BoundedVec<u64, T::MaxPendingInstructions>,
-            commitment: T::Hash,
+            commitment: CommitmentHash,
             proof: BoundedVec<u8, T::MaxProofSize>,
-            nullifiers: BoundedVec<T::Hash, T::MaxNullifiers>,
+            nullifiers: BoundedVec<CommitmentHash, T::MaxNullifiers>,
             key: T::VerificationKeyId,
         ) -> DispatchResult {
             let who = ensure_signed(origin)?;
@@ -841,7 +840,7 @@ pub mod pallet {
             channel_id: T::Hash,
             participants: BoundedVec<T::AccountId, T::MaxParticipants>,
             version: u32,
-            balance_root: T::Hash,
+            balance_root: CommitmentHash,
             closing_height: BlockNumberFor<T>,
             signature: BoundedVec<u8, T::MaxProofSize>,
         ) -> DispatchResult {
@@ -1016,11 +1015,12 @@ pub mod pallet {
             Ok(())
         }
 
-        fn hash_from_felt(value: settlement_circuit::HashFelt) -> T::Hash
-        where
-            T::Hash: From<[u8; 32]>,
-        {
-            T::Hash::from(settlement_circuit::felts_to_bytes32(&value))
+        fn hash_from_felt(value: settlement_circuit::HashFelt) -> CommitmentHash {
+            // Settlement circuit still outputs 32-byte hashes; widen to 48 bytes.
+            let bytes32 = settlement_circuit::felts_to_bytes32(&value);
+            let mut out = [0u8; 48];
+            out[16..].copy_from_slice(&bytes32);
+            out
         }
     }
 }
@@ -1066,7 +1066,7 @@ mod tests {
 
     #[test]
     fn stark_verifier_rejects_until_circuit_exists() {
-        let commitment = [1u8; 32];
+        let commitment = [1u8; 48];
         let proof = vec![2u8; 64];
         let verification_key = vec![3u8; 32];
         let params = StarkVerifierParams {
@@ -1081,7 +1081,7 @@ mod tests {
             instructions: vec![],
             nullifiers: vec![],
         };
-        let ok = <StarkVerifier as ProofVerifier<[u8; 32]>>::verify(
+        let ok = <StarkVerifier as ProofVerifier>::verify(
             &inputs,
             &proof,
             &verification_key,

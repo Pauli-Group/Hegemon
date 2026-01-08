@@ -2,12 +2,10 @@ use std::collections::BTreeMap;
 
 use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
 use serde::{Deserialize, Serialize};
-use winterfell::math::FieldElement;
-
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing::{felts_to_bytes32, nullifier, prf_key, HashFelt},
+    hashing_pq::{felts_to_bytes48, nullifier, prf_key, HashFelt},
     note::{InputNoteWitness, OutputNoteWitness},
     public_inputs::{BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs},
 };
@@ -20,11 +18,8 @@ pub struct TransactionWitness {
     pub outputs: Vec<OutputNoteWitness>,
     #[serde(with = "crate::witness::serde_bytes32")]
     pub sk_spend: [u8; 32],
-    #[serde(with = "crate::witness::serde_bytes32")]
-    pub merkle_root: [u8; 32],
-    #[cfg(feature = "plonky3")]
-    #[serde(default = "crate::witness::default_bytes48", with = "crate::witness::serde_bytes48")]
-    pub merkle_root_pq: [u8; 48],
+    #[serde(with = "crate::witness::serde_bytes48")]
+    pub merkle_root: [u8; 48],
     pub fee: u64,
     #[serde(default)]
     pub value_balance: i128,
@@ -55,7 +50,7 @@ impl TransactionWitness {
         // which would allow that note to be spent multiple times.
         let nullifiers = self.nullifiers();
         for (i, nf) in nullifiers.iter().enumerate() {
-            if nf.iter().all(|elem| *elem == crate::hashing::Felt::ZERO) {
+            if nf.iter().all(|elem| *elem == crate::hashing_pq::Felt::ZERO) {
                 return Err(TransactionCircuitError::ZeroNullifier(i));
             }
         }
@@ -185,13 +180,13 @@ impl TransactionWitness {
 
     pub fn public_inputs(&self) -> Result<TransactionPublicInputs, TransactionCircuitError> {
         let nullifiers = {
-            let mut list: Vec<[u8; 32]> = self.nullifiers().iter().map(felts_to_bytes32).collect();
-            list.resize(MAX_INPUTS, [0u8; 32]);
+            let mut list: Vec<[u8; 48]> = self.nullifiers().iter().map(felts_to_bytes48).collect();
+            list.resize(MAX_INPUTS, [0u8; 48]);
             list
         };
         let commitments = {
-            let mut list: Vec<[u8; 32]> = self.commitments().iter().map(felts_to_bytes32).collect();
-            list.resize(MAX_OUTPUTS, [0u8; 32]);
+            let mut list: Vec<[u8; 48]> = self.commitments().iter().map(felts_to_bytes48).collect();
+            list.resize(MAX_OUTPUTS, [0u8; 48]);
             list
         };
         let balance_slots = self.balance_slots()?;
@@ -276,12 +271,10 @@ pub(crate) mod serde_bytes32 {
     use serde::Deserialize;
 }
 
-#[cfg(feature = "plonky3")]
 pub(crate) fn default_bytes48() -> [u8; 48] {
     [0u8; 48]
 }
 
-#[cfg(feature = "plonky3")]
 pub(crate) mod serde_bytes48 {
     use serde::{Deserializer, Serializer};
 
@@ -311,9 +304,9 @@ pub(crate) mod serde_bytes48 {
 fn stablecoin_binding_is_zero(binding: &StablecoinPolicyBinding) -> bool {
     !binding.enabled
         && binding.asset_id == 0
-        && binding.policy_hash == [0u8; 32]
-        && binding.oracle_commitment == [0u8; 32]
-        && binding.attestation_commitment == [0u8; 32]
+        && binding.policy_hash == [0u8; 48]
+        && binding.oracle_commitment == [0u8; 48]
+        && binding.attestation_commitment == [0u8; 48]
         && binding.issuance_delta == 0
         && binding.policy_version == 0
 }

@@ -230,7 +230,7 @@ async fn wait_for_nullifiers_spent(
     engine: &AsyncWalletSyncEngine,
     rpc: &Arc<SubstrateRpcClient>,
     store: &Arc<WalletStore>,
-    nullifiers: &[[u8; 32]],
+    nullifiers: &[[u8; 48]],
 ) -> Result<u64, WalletError> {
     let start = std::time::Instant::now();
     let timeout = tokio::time::Duration::from_secs(CONFIRMATION_TIMEOUT_SECS);

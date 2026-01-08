@@ -4,7 +4,7 @@ use disclosure_circuit::{
 };
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
-use transaction_core::hashing::note_commitment_bytes;
+use transaction_core::hashing_pq::note_commitment_bytes;
 
 fn sample_claim_and_witness() -> (PaymentDisclosureClaim, PaymentDisclosureWitness) {
     let mut rng = StdRng::seed_from_u64(42);
@@ -65,14 +65,14 @@ fn tamper_pk_recipient_rejects() {
 fn tamper_commitment_rejects() {
     let (claim, witness) = sample_claim_and_witness();
     let mut bundle = prove_payment_disclosure(&claim, &witness).expect("proof");
-    bundle.claim.commitment[31] ^= 0x01;
+    bundle.claim.commitment[47] ^= 0x01;
     assert!(verify_payment_disclosure(&bundle).is_err());
 }
 
 #[test]
 fn reject_non_canonical_commitment() {
     let (mut claim, witness) = sample_claim_and_witness();
-    claim.commitment = [0xFF; 32];
+    claim.commitment = [0xFF; 48];
     let err = prove_payment_disclosure(&claim, &witness).unwrap_err();
     match err {
         DisclosureCircuitError::NonCanonicalCommitment => {}

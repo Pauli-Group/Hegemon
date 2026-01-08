@@ -35,7 +35,7 @@ pub use stark_air::{
 };
 #[cfg(feature = "plonky3")]
 pub use p3_air::{TransactionAirP3, TransactionPublicInputsP3};
-pub use types::{BalanceSlot, StablecoinPolicyBinding};
+pub use types::{BalanceSlot, Commitment48, MerkleRoot48, Nullifier48, StablecoinPolicyBinding};
 
 #[cfg(all(feature = "winterfell-legacy", feature = "stark-verify"))]
 pub use stark_verifier::{

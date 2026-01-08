@@ -32,12 +32,10 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
-    hashing::{felts_to_bytes32, Felt},
-    proof_options_from_config,
-    rpo_prover::TransactionProverStarkRpo,
+    keys::{generate_keys, ProvingKey, VerifyingKey},
+    proof,
     witness::TransactionWitness,
 };
-use winter_prover::Prover;
 
 use crate::error::WalletError;
 
@@ -150,8 +148,8 @@ impl StarkProverConfig {
 pub struct StarkProver {
     /// Prover configuration.
     config: StarkProverConfig,
-    /// The actual winterfell STARK prover.
-    inner: TransactionProverStarkRpo,
+    proving_key: ProvingKey,
+    verifying_key: VerifyingKey,
 }
 
 impl StarkProver {
@@ -160,15 +158,12 @@ impl StarkProver {
     /// Note: Key generation is deterministic and requires no trusted setup.
     pub fn new(config: StarkProverConfig) -> Self {
         let config = config.normalized();
-        let grinding_factor = if config.enable_grinding {
-            config.grinding_bits as u32
-        } else {
-            0
-        };
-        let options =
-            proof_options_from_config(config.num_queries, config.blowup_factor, grinding_factor);
-        let inner = TransactionProverStarkRpo::new(options);
-        Self { config, inner }
+        let (proving_key, verifying_key) = generate_keys();
+        Self {
+            config,
+            proving_key,
+            verifying_key,
+        }
     }
 
     /// Create a prover with default configuration.
@@ -198,34 +193,11 @@ impl StarkProver {
 
         let start = Instant::now();
 
-        // Get public inputs from witness
-        let trace = self
-            .inner
-            .build_trace(witness)
-            .map_err(|e| WalletError::InvalidArgument(Box::leak(e.to_string().into_boxed_str())))?;
-        let pub_inputs = self.inner.get_pub_inputs(&trace);
-
-        // DEBUG: Print balance info
-        let total_input: u64 = witness.inputs.iter().map(|i| i.note.value).sum();
-        let total_output: u64 = witness.outputs.iter().map(|o| o.note.value).sum();
-        // eprintln!("DEBUG prover: inputs.len()={} outputs.len()={}", witness.inputs.len(), witness.outputs.len());
-        // eprintln!("DEBUG prover: total_input={} total_output={} fee={}", total_input, total_output, witness.fee);
-        // eprintln!("DEBUG prover: balance check: total_input ({}) = total_output ({}) + fee ({})?",
-        //     total_input, total_output, witness.fee);
-        if total_input != total_output + witness.fee {
-            // eprintln!("DEBUG prover: BALANCE MISMATCH! {} != {} + {}", total_input, total_output, witness.fee);
-        }
-
-        // Generate the real STARK proof
-        let proof = self.inner.prove(trace).map_err(|e| {
-            WalletError::Serialization(format!("STARK proof generation failed: {}", e))
+        let proof = proof::prove(witness, &self.proving_key).map_err(|e| {
+            WalletError::Serialization(format!("STARK proof generation failed: {e}"))
         })?;
 
         let proving_time = start.elapsed();
-
-        if std::env::var("HEGEMON_WALLET_DEBUG_PROOF_OPTIONS").is_ok() {
-            eprintln!("DEBUG prover: proof options = {:?}", proof.options());
-        }
 
         // Proof generation is not cancellable; treat max_proving_time as an advisory budget.
         if proving_time > self.config.max_proving_time {
@@ -236,50 +208,23 @@ impl StarkProver {
             );
         }
 
-        // Serialize the proof for transmission
-        let proof_bytes = proof.to_bytes();
-
-        // Verify proof locally before returning (development check)
-        match transaction_circuit::verify_transaction_proof_bytes_rpo(&proof_bytes, &pub_inputs) {
-            Ok(()) => {
-                #[cfg(debug_assertions)]
-                eprintln!("DEBUG prover: Local verification PASSED");
-            }
-            Err(e) => {
-                #[cfg(debug_assertions)]
-                eprintln!("DEBUG prover: Local verification FAILED: {:?}", e);
-                return Err(WalletError::Serialization(format!(
-                    "Proof verification failed: {:?}",
-                    e
-                )));
-            }
+        let report = proof::verify(&proof, &self.verifying_key).map_err(|e| {
+            WalletError::Serialization(format!("Proof verification failed: {e}"))
+        })?;
+        if !report.verified {
+            return Err(WalletError::Serialization(
+                "Proof verification failed".to_string(),
+            ));
         }
 
-        // Convert field elements to 32-byte arrays for active slots only.
-        let nullifiers: Vec<[u8; 32]> = pub_inputs
-            .nullifiers
-            .iter()
-            .zip(pub_inputs.input_flags.iter())
-            .filter(|(_, flag)| **flag == Felt::new(1))
-            .map(|(f, _)| felts_to_bytes32(f))
-            .collect();
-        let commitments: Vec<[u8; 32]> = pub_inputs
-            .commitments
-            .iter()
-            .zip(pub_inputs.output_flags.iter())
-            .filter(|(_, flag)| **flag == Felt::new(1))
-            .map(|(f, _)| felts_to_bytes32(f))
-            .collect();
-        let anchor = felts_to_bytes32(&pub_inputs.merkle_root);
-
         Ok(ProofResult {
-            proof_bytes,
-            nullifiers,
-            commitments,
-            anchor,
+            proof_bytes: proof.stark_proof.clone(),
+            nullifiers: proof.nullifiers.clone(),
+            commitments: proof.commitments.clone(),
+            anchor: proof.public_inputs.merkle_root,
             proving_time,
-            fee: witness.fee,
-            value_balance: witness.value_balance,
+            fee: proof.public_inputs.native_fee,
+            value_balance: proof.public_inputs.value_balance,
         })
     }
 
@@ -291,15 +236,25 @@ impl StarkProver {
         proof_bytes: &[u8],
         witness: &TransactionWitness,
     ) -> Result<bool, WalletError> {
-        let trace = self
-            .inner
-            .build_trace(witness)
+        let public_inputs = witness
+            .public_inputs()
             .map_err(|e| WalletError::InvalidArgument(Box::leak(e.to_string().into_boxed_str())))?;
-        let pub_inputs = self.inner.get_pub_inputs(&trace);
-        match transaction_circuit::verify_transaction_proof_bytes_rpo(proof_bytes, &pub_inputs) {
-            Ok(()) => Ok(true),
-            Err(_) => Ok(false),
-        }
+        let balance_slots = witness
+            .balance_slots()
+            .map_err(|e| WalletError::InvalidArgument(Box::leak(e.to_string().into_boxed_str())))?;
+
+        let proof = transaction_circuit::TransactionProof {
+            nullifiers: public_inputs.nullifiers.clone(),
+            commitments: public_inputs.commitments.clone(),
+            balance_slots,
+            public_inputs,
+            stark_proof: proof_bytes.to_vec(),
+            stark_public_inputs: None,
+        };
+
+        Ok(proof::verify(&proof, &self.verifying_key)
+            .map(|report| report.verified)
+            .unwrap_or(false))
     }
 }
 
@@ -312,14 +267,14 @@ impl Default for StarkProver {
 /// Result of proof generation.
 #[derive(Clone, Debug)]
 pub struct ProofResult {
-    /// Serialized STARK proof bytes (winterfell proof format).
+    /// Serialized STARK proof bytes (Plonky3 format).
     pub proof_bytes: Vec<u8>,
-    /// Nullifiers from the transaction (32-byte arrays).
-    pub nullifiers: Vec<[u8; 32]>,
-    /// Commitments from the transaction (32-byte arrays).
-    pub commitments: Vec<[u8; 32]>,
-    /// Merkle root anchor (32-byte array).
-    pub anchor: [u8; 32],
+    /// Nullifiers from the transaction (48-byte arrays).
+    pub nullifiers: Vec<[u8; 48]>,
+    /// Commitments from the transaction (48-byte arrays).
+    pub commitments: Vec<[u8; 48]>,
+    /// Merkle root anchor (48-byte array).
+    pub anchor: [u8; 48],
     /// Time taken to generate the proof.
     pub proving_time: Duration,
     /// Native fee encoded in the proof.
@@ -335,12 +290,12 @@ impl ProofResult {
     }
 
     /// Get nullifiers as bytes (already in correct format).
-    pub fn nullifiers_bytes(&self) -> &[[u8; 32]] {
+    pub fn nullifiers_bytes(&self) -> &[[u8; 48]] {
         &self.nullifiers
     }
 
     /// Get commitments as bytes (already in correct format).
-    pub fn commitments_bytes(&self) -> &[[u8; 32]] {
+    pub fn commitments_bytes(&self) -> &[[u8; 48]] {
         &self.commitments
     }
 }
@@ -416,7 +371,7 @@ mod tests {
             proof_bytes: vec![0u8; 1000],
             nullifiers: vec![],
             commitments: vec![],
-            anchor: [0u8; 32],
+            anchor: [0u8; 48],
             proving_time: Duration::from_millis(500),
             fee: 0,
             value_balance: 0,

@@ -13,7 +13,7 @@ use scale_info::TypeInfo;
 use sp_std::vec::Vec;
 
 use crate::types::MERKLE_TREE_DEPTH;
-use transaction_core::hashing::{merkle_node_bytes, Commitment};
+use transaction_core::hashing_pq::{merkle_node_bytes, Commitment};
 
 // ================================================================================================
 // MERKLE HASHING (circuit-compatible)
@@ -21,7 +21,7 @@ use transaction_core::hashing::{merkle_node_bytes, Commitment};
 
 /// Hash two child nodes to produce parent node.
 ///
-/// Uses the circuit-compatible Poseidon sponge and 32-byte limb encoding.
+/// Uses the circuit-compatible Poseidon sponge and 48-byte limb encoding.
 pub fn merkle_hash(left: &Commitment, right: &Commitment) -> Commitment {
     merkle_node_bytes(left, right).expect("canonical merkle node")
 }
@@ -29,9 +29,9 @@ pub fn merkle_hash(left: &Commitment, right: &Commitment) -> Commitment {
 /// Compute the default (empty) hash for a given tree level.
 ///
 /// Level 0 is the leaf level, level MERKLE_TREE_DEPTH is the root.
-pub fn default_hash_for_level(level: u32) -> [u8; 32] {
+pub fn default_hash_for_level(level: u32) -> [u8; 48] {
     if level == 0 {
-        [0u8; 32] // Empty leaf is zero
+        [0u8; 48] // Empty leaf is zero
     } else {
         let child = default_hash_for_level(level - 1);
         merkle_hash(&child, &child)
@@ -43,7 +43,7 @@ pub fn default_hash_for_level(level: u32) -> [u8; 32] {
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
 pub struct DefaultHashes {
     /// Default hash at each level (0 = leaf, DEPTH = root).
-    pub hashes: Vec<[u8; 32]>,
+    pub hashes: Vec<[u8; 48]>,
 }
 
 impl DefaultHashes {
@@ -57,11 +57,11 @@ impl DefaultHashes {
     }
 
     /// Get the default hash at a given level.
-    pub fn at_level(&self, level: u32) -> [u8; 32] {
+    pub fn at_level(&self, level: u32) -> [u8; 48] {
         self.hashes
             .get(level as usize)
             .copied()
-            .unwrap_or([0u8; 32])
+            .unwrap_or([0u8; 48])
     }
 }
 
@@ -83,11 +83,11 @@ impl Default for DefaultHashes {
 pub struct IncrementalMerkleTree {
     /// Current frontier (rightmost non-default nodes at each level).
     /// Index 0 is the leaf level.
-    pub frontier: Vec<[u8; 32]>,
+    pub frontier: Vec<[u8; 48]>,
     /// Number of leaves in the tree.
     pub leaf_count: u64,
     /// Current root hash.
-    pub root: [u8; 32],
+    pub root: [u8; 48],
     /// Tree depth.
     pub depth: u32,
 }
@@ -105,7 +105,7 @@ impl IncrementalMerkleTree {
     }
 
     /// Get the current root.
-    pub fn root(&self) -> [u8; 32] {
+    pub fn root(&self) -> [u8; 48] {
         self.root
     }
 
@@ -127,7 +127,7 @@ impl IncrementalMerkleTree {
     /// Append a new leaf to the tree.
     ///
     /// Returns the new root hash, or an error if the tree is full.
-    pub fn append(&mut self, leaf: [u8; 32]) -> Result<[u8; 32], MerkleTreeError> {
+    pub fn append(&mut self, leaf: [u8; 48]) -> Result<[u8; 48], MerkleTreeError> {
         if self.is_full() {
             return Err(MerkleTreeError::TreeFull);
         }
@@ -141,7 +141,7 @@ impl IncrementalMerkleTree {
 
         // Ensure frontier has enough levels
         while self.frontier.len() <= self.depth as usize {
-            self.frontier.push([0u8; 32]);
+            self.frontier.push([0u8; 48]);
         }
 
         for level in 0..self.depth {
@@ -206,7 +206,7 @@ impl IncrementalMerkleTree {
 
     /// Get a node at a specific level and position.
     /// This is a simplified implementation that recomputes from leaves.
-    fn get_node_at(&self, level: u32, position: u64) -> [u8; 32] {
+    fn get_node_at(&self, level: u32, position: u64) -> [u8; 48] {
         // For the simplified implementation, we only have the frontier
         // In a full implementation, we'd store more intermediate nodes
         if level < self.frontier.len() as u32 {
@@ -238,18 +238,18 @@ pub struct CompactMerkleTree {
     #[codec(compact)]
     pub leaf_count: u64,
     /// Current root hash.
-    pub root: [u8; 32],
+    pub root: [u8; 48],
     /// Frontier: the rightmost non-default node at each level.
     /// This enables O(log n) appends without storing all leaves.
     /// Vec is bounded by MERKLE_TREE_DEPTH (32).
-    pub frontier: Vec<[u8; 32]>,
+    pub frontier: Vec<[u8; 48]>,
 }
 
 // Manual MaxEncodedLen implementation since Vec doesn't impl it
 impl MaxEncodedLen for CompactMerkleTree {
     fn max_encoded_len() -> usize {
-        // compact u64 + [u8;32] + Vec<[u8;32]> with max 33 entries
-        9 + 32 + 4 + (33 * 32) // ~1100 bytes max
+        // compact u64 + [u8;48] + Vec<[u8;48]> with max 33 entries
+        9 + 48 + 4 + (33 * 48) // ~1650 bytes max
     }
 }
 
@@ -265,7 +265,7 @@ impl CompactMerkleTree {
     }
 
     /// Get the current root.
-    pub fn root(&self) -> [u8; 32] {
+    pub fn root(&self) -> [u8; 48] {
         self.root
     }
 
@@ -287,7 +287,7 @@ impl CompactMerkleTree {
     /// Append a new leaf to the tree.
     ///
     /// Returns the new root hash.
-    pub fn append(&mut self, leaf: [u8; 32]) -> Result<[u8; 32], MerkleTreeError> {
+    pub fn append(&mut self, leaf: [u8; 48]) -> Result<[u8; 48], MerkleTreeError> {
         if self.is_full() {
             return Err(MerkleTreeError::TreeFull);
         }
@@ -297,7 +297,7 @@ impl CompactMerkleTree {
 
         // Ensure frontier has enough levels
         while self.frontier.len() <= MERKLE_TREE_DEPTH as usize {
-            self.frontier.push([0u8; 32]);
+            self.frontier.push([0u8; 48]);
         }
 
         let mut current = leaf;
@@ -343,7 +343,7 @@ impl Default for CompactMerkleTree {
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
 pub struct MerkleWitness {
     /// Sibling hashes from leaf to root.
-    pub siblings: Vec<[u8; 32]>,
+    pub siblings: Vec<[u8; 48]>,
     /// Whether we're the right child at each level.
     pub indices: Vec<bool>,
     /// Position of the leaf.
@@ -352,7 +352,7 @@ pub struct MerkleWitness {
 
 impl MerkleWitness {
     /// Verify this witness against a leaf and root.
-    pub fn verify(&self, leaf: &[u8; 32], root: &[u8; 32]) -> bool {
+    pub fn verify(&self, leaf: &[u8; 48], root: &[u8; 48]) -> bool {
         if self.siblings.len() != self.indices.len() {
             return false;
         }
@@ -400,7 +400,7 @@ mod tests {
         let mut tree = IncrementalMerkleTree::new(4);
         let initial_root = tree.root();
 
-        let leaf = [1u8; 32];
+        let leaf = [1u8; 48];
         let new_root = tree.append(leaf).unwrap();
 
         assert_ne!(new_root, initial_root);
@@ -412,7 +412,7 @@ mod tests {
         let mut tree1 = IncrementalMerkleTree::new(4);
         let mut tree2 = IncrementalMerkleTree::new(4);
 
-        let leaf = [1u8; 32];
+        let leaf = [1u8; 48];
         tree1.append(leaf).unwrap();
         tree2.append(leaf).unwrap();
 
@@ -424,7 +424,7 @@ mod tests {
         let mut tree = IncrementalMerkleTree::new(4);
 
         for i in 0..8 {
-            let leaf = [i; 32];
+            let leaf = [i; 48];
             tree.append(leaf).unwrap();
         }
 
@@ -436,20 +436,20 @@ mod tests {
         let mut tree = IncrementalMerkleTree::new(2); // Capacity: 4 leaves
 
         for i in 0..4 {
-            tree.append([i; 32]).unwrap();
+            tree.append([i; 48]).unwrap();
         }
 
         assert!(tree.is_full());
         assert!(matches!(
-            tree.append([5; 32]),
+            tree.append([5; 48]),
             Err(MerkleTreeError::TreeFull)
         ));
     }
 
     #[test]
     fn merkle_hash_is_deterministic() {
-        let left = [1u8; 32];
-        let right = [2u8; 32];
+        let left = [1u8; 48];
+        let right = [2u8; 48];
 
         let hash1 = merkle_hash(&left, &right);
         let hash2 = merkle_hash(&left, &right);
@@ -459,8 +459,8 @@ mod tests {
 
     #[test]
     fn merkle_hash_is_asymmetric() {
-        let left = [1u8; 32];
-        let right = [2u8; 32];
+        let left = [1u8; 48];
+        let right = [2u8; 48];
 
         let hash1 = merkle_hash(&left, &right);
         let hash2 = merkle_hash(&right, &left);
@@ -481,7 +481,7 @@ mod tests {
     #[test]
     fn compact_tree_stores_root() {
         let mut tree = IncrementalMerkleTree::new(4);
-        tree.append([1u8; 32]).unwrap();
+        tree.append([1u8; 48]).unwrap();
 
         let compact = CompactMerkleTree::from_full(&tree);
 
@@ -494,13 +494,13 @@ mod tests {
         // Both must use the same depth - CompactMerkleTree uses MERKLE_TREE_DEPTH
         let mut full_tree = IncrementalMerkleTree::new(MERKLE_TREE_DEPTH);
         for i in 0..8 {
-            full_tree.append([i; 32]).unwrap();
+            full_tree.append([i; 48]).unwrap();
         }
 
         // Build compact tree incrementally
         let mut compact_tree = CompactMerkleTree::new();
         for i in 0..8 {
-            compact_tree.append([i; 32]).unwrap();
+            compact_tree.append([i; 48]).unwrap();
         }
 
         // Roots should match!
@@ -513,9 +513,9 @@ mod tests {
         let mut tree = CompactMerkleTree::new();
 
         let root0 = tree.root();
-        tree.append([1u8; 32]).unwrap();
+        tree.append([1u8; 48]).unwrap();
         let root1 = tree.root();
-        tree.append([2u8; 32]).unwrap();
+        tree.append([2u8; 48]).unwrap();
         let root2 = tree.root();
 
         // Each append should change the root
@@ -529,7 +529,7 @@ mod tests {
         let mut tree = IncrementalMerkleTree::new(4);
 
         // Add a single leaf
-        let leaf0 = [1u8; 32];
+        let leaf0 = [1u8; 48];
         tree.append(leaf0).unwrap();
 
         // Get witness for leaf0
@@ -540,7 +540,7 @@ mod tests {
         assert!(witness.verify(&leaf0, &tree.root()));
 
         // Wrong leaf should fail
-        let wrong_leaf = [99u8; 32];
+        let wrong_leaf = [99u8; 48];
         assert!(!witness.verify(&wrong_leaf, &tree.root()));
     }
 }

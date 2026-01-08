@@ -96,8 +96,8 @@ pub struct NoteStatus {
 pub struct CommitmentEntry {
     /// Index in the commitment tree
     pub index: u64,
-    /// Commitment value (32-byte encoding)
-    pub value: [u8; 32],
+    /// Commitment value (48-byte encoding)
+    pub value: [u8; 48],
 }
 
 /// Paginated commitment response
@@ -413,7 +413,7 @@ impl SubstrateRpcClient {
             .entries
             .into_iter()
             .map(|entry| {
-                let value = hex_to_array(&entry.value)?;
+                let value = hex_to_array48(&entry.value)?;
                 Ok(CommitmentEntry {
                     index: entry.index,
                     value,
@@ -471,7 +471,7 @@ impl SubstrateRpcClient {
     /// Get all spent nullifiers
     ///
     /// Returns the list of spent nullifiers from the node.
-    pub async fn nullifiers(&self) -> Result<Vec<[u8; 32]>, WalletError> {
+    pub async fn nullifiers(&self) -> Result<Vec<[u8; 48]>, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
 
@@ -487,12 +487,12 @@ impl SubstrateRpcClient {
                 let bytes = hex::decode(hex).map_err(|e| {
                     WalletError::Serialization(format!("Invalid hex nullifier: {}", e))
                 })?;
-                if bytes.len() != 32 {
+                if bytes.len() != 48 {
                     return Err(WalletError::Serialization(
                         "invalid nullifier length".into(),
                     ));
                 }
-                let mut out = [0u8; 32];
+                let mut out = [0u8; 48];
                 out.copy_from_slice(&bytes);
                 Ok(out)
             })
@@ -885,12 +885,12 @@ impl SubstrateRpcClient {
     ///
     /// # Arguments
     ///
-    /// * `nullifier` - 32-byte nullifier to check
+    /// * `nullifier` - 48-byte nullifier to check
     ///
     /// # Returns
     ///
     /// `true` if the nullifier is in the spent set, `false` otherwise.
-    pub async fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> Result<bool, WalletError> {
+    pub async fn is_nullifier_spent(&self, nullifier: &[u8; 48]) -> Result<bool, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
 
@@ -915,14 +915,14 @@ impl SubstrateRpcClient {
     ///
     /// # Arguments
     ///
-    /// * `nullifiers` - Slice of 32-byte nullifiers to check
+    /// * `nullifiers` - Slice of 48-byte nullifiers to check
     ///
     /// # Returns
     ///
     /// Vector of booleans, one per nullifier. `true` means spent.
     pub async fn check_nullifiers_spent(
         &self,
-        nullifiers: &[[u8; 32]],
+        nullifiers: &[[u8; 48]],
     ) -> Result<Vec<bool>, WalletError> {
         let mut results = Vec::with_capacity(nullifiers.len());
         for nullifier in nullifiers {
@@ -934,7 +934,7 @@ impl SubstrateRpcClient {
     /// Check if an anchor is valid according to the chain.
     ///
     /// Calls the `hegemon_isValidAnchor` RPC.
-    pub async fn is_valid_anchor(&self, anchor: &[u8; 32]) -> Result<bool, WalletError> {
+    pub async fn is_valid_anchor(&self, anchor: &[u8; 48]) -> Result<bool, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
         // `hegemon_isValidAnchor` expects hex without a 0x prefix.
@@ -1116,10 +1116,10 @@ impl SubstrateRpcClient {
     pub async fn submit_batch_shielded_transfer(
         &self,
         batch_size: u32,
-        nullifiers: Vec<[u8; 32]>,
-        commitments: Vec<[u8; 32]>,
+        nullifiers: Vec<[u8; 48]>,
+        commitments: Vec<[u8; 48]>,
         ciphertexts: Vec<Vec<u8>>,
-        anchor: [u8; 32],
+        anchor: [u8; 48],
         total_fee: u128,
     ) -> Result<[u8; 32], WalletError> {
         use crate::extrinsic::{build_unsigned_batch_shielded_transfer, BatchShieldedTransferCall};
@@ -1185,12 +1185,12 @@ impl SubstrateRpcClient {
     async fn fetch_stablecoin_policy_hash(
         &self,
         asset_id: u32,
-    ) -> Result<Option<[u8; 32]>, WalletError> {
+    ) -> Result<Option<[u8; 48]>, WalletError> {
         let key = build_storage_map_key(b"StablecoinPolicy", b"PolicyHashes", &asset_id.encode());
         let Some(data) = self.storage_value(key).await? else {
             return Ok(None);
         };
-        <[u8; 32]>::decode(&mut &data[..])
+        <[u8; 48]>::decode(&mut &data[..])
             .map(Some)
             .map_err(|e| WalletError::Rpc(format!("policy hash decode failed: {}", e)))
     }
@@ -1209,7 +1209,7 @@ impl SubstrateRpcClient {
             Some(record) => record,
             None => return Ok(None),
         };
-        let commitment = bytes32_from_vec(record.commitment, "oracle commitment")?;
+        let commitment = bytes48_from_vec(record.commitment, "oracle commitment")?;
         Ok(Some(OracleCommitmentSnapshot {
             commitment,
             submitted_at: record.submitted_at,
@@ -1227,7 +1227,7 @@ impl SubstrateRpcClient {
         let record = AttestationCommitmentRecord::decode(&mut &data[..]).map_err(|e| {
             WalletError::Rpc(format!("attestation commitment decode failed: {}", e))
         })?;
-        let commitment = bytes32_from_vec(record.root, "attestation commitment")?;
+        let commitment = bytes48_from_vec(record.root, "attestation commitment")?;
         let disputed = record.dispute != DisputeStatus::None;
         Ok(Some(AttestationCommitmentSnapshot {
             commitment,
@@ -1363,15 +1363,27 @@ fn hex_to_array(hex_str: &str) -> Result<[u8; 32], WalletError> {
     Ok(out)
 }
 
-fn bytes32_from_vec(bytes: Vec<u8>, label: &'static str) -> Result<[u8; 32], WalletError> {
-    if bytes.len() != 32 {
+fn hex_to_array48(hex_str: &str) -> Result<[u8; 48], WalletError> {
+    let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    let bytes = hex::decode(trimmed)
+        .map_err(|e| WalletError::Serialization(format!("Invalid hex: {}", e)))?;
+    if bytes.len() != 48 {
+        return Err(WalletError::Serialization("expected 48-byte hash".into()));
+    }
+    let mut out = [0u8; 48];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
+fn bytes48_from_vec(bytes: Vec<u8>, label: &'static str) -> Result<[u8; 48], WalletError> {
+    if bytes.len() != 48 {
         return Err(WalletError::Rpc(format!(
-            "{} length {} != 32",
+            "{} length {} != 48",
             label,
             bytes.len()
         )));
     }
-    let mut out = [0u8; 32];
+    let mut out = [0u8; 48];
     out.copy_from_slice(&bytes);
     Ok(out)
 }
@@ -1457,14 +1469,14 @@ struct AssetDetailsStorage {
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct OracleCommitmentSnapshot {
-    commitment: [u8; 32],
+    commitment: [u8; 48],
     submitted_at: u64,
 }
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 struct AttestationCommitmentSnapshot {
-    commitment: [u8; 32],
+    commitment: [u8; 48],
     disputed: bool,
     created_at: u64,
 }
@@ -1535,7 +1547,7 @@ impl BlockingSubstrateRpcClient {
     }
 
     /// Get nullifiers
-    pub fn nullifiers(&self) -> Result<Vec<[u8; 32]>, WalletError> {
+    pub fn nullifiers(&self) -> Result<Vec<[u8; 48]>, WalletError> {
         self.runtime.block_on(self.inner.nullifiers())
     }
 
@@ -1581,7 +1593,7 @@ fn build_system_account_key(account_id: &[u8; 32]) -> Vec<u8> {
 /// Build the storage key for ShieldedPool.Nullifiers(nullifier)
 ///
 /// Key format: twox_128("ShieldedPool") ++ twox_128("Nullifiers") ++ blake2_128_concat(nullifier)
-fn build_nullifier_storage_key(nullifier: &[u8; 32]) -> Vec<u8> {
+fn build_nullifier_storage_key(nullifier: &[u8; 48]) -> Vec<u8> {
     // twox_128("ShieldedPool")
     let pallet_hash = twox_128(b"ShieldedPool");
 
@@ -1592,7 +1604,7 @@ fn build_nullifier_storage_key(nullifier: &[u8; 32]) -> Vec<u8> {
     let blake2_hash = blake2_128(nullifier);
 
     // Concatenate all parts
-    let mut key = Vec::with_capacity(16 + 16 + 16 + 32);
+    let mut key = Vec::with_capacity(16 + 16 + 16 + 48);
     key.extend_from_slice(&pallet_hash);
     key.extend_from_slice(&storage_hash);
     key.extend_from_slice(&blake2_hash);

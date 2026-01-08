@@ -2,6 +2,7 @@
 
 pub mod air;
 pub mod constants;
+mod poseidon2;
 mod prover;
 mod verifier;
 
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use winterfell::math::{fields::f64::BaseElement, FieldElement};
 use winterfell::Prover;
 
-use transaction_core::hashing::{bytes32_to_felts, note_commitment_bytes};
+use transaction_core::hashing_pq::{is_canonical_bytes48, note_commitment_bytes};
 
 use crate::air::DisclosurePublicInputs;
 use crate::constants::expected_air_hash;
@@ -21,7 +22,7 @@ pub struct PaymentDisclosureClaim {
     pub value: u64,
     pub asset_id: u64,
     pub pk_recipient: [u8; 32],
-    pub commitment: [u8; 32],
+    pub commitment: [u8; 48],
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -65,7 +66,7 @@ pub fn prove_payment_disclosure(
     claim: &PaymentDisclosureClaim,
     witness: &PaymentDisclosureWitness,
 ) -> Result<PaymentDisclosureProofBundle, DisclosureCircuitError> {
-    if bytes32_to_felts(&claim.commitment).is_none() {
+    if !is_canonical_bytes48(&claim.commitment) {
         return Err(DisclosureCircuitError::NonCanonicalCommitment);
     }
 
@@ -107,7 +108,7 @@ pub fn verify_payment_disclosure(
 pub(crate) fn claim_to_public_inputs(
     claim: &PaymentDisclosureClaim,
 ) -> Result<DisclosurePublicInputs, DisclosureVerifyError> {
-    let commitment = bytes32_to_felts(&claim.commitment).ok_or(
+    let commitment = bytes48_to_field_elements(&claim.commitment).ok_or(
         DisclosureVerifyError::InvalidPublicInputs("commitment bytes are not canonical".into()),
     )?;
 
@@ -127,4 +128,17 @@ fn bytes32_to_field_elements(bytes: &[u8; 32]) -> [BaseElement; 4] {
         out[idx] = BaseElement::new(u64::from_be_bytes(buf));
     }
     out
+}
+
+fn bytes48_to_field_elements(bytes: &[u8; 48]) -> Option<[BaseElement; 6]> {
+    if !is_canonical_bytes48(bytes) {
+        return None;
+    }
+    let mut out = [BaseElement::ZERO; 6];
+    for (idx, chunk) in bytes.chunks(8).enumerate() {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(chunk);
+        out[idx] = BaseElement::new(u64::from_be_bytes(buf));
+    }
+    Some(out)
 }

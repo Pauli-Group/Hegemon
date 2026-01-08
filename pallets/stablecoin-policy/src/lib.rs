@@ -36,11 +36,13 @@ pub struct StablecoinPolicy<T: Config> {
 impl<T: Config> DecodeWithMemTracking for StablecoinPolicy<T> {}
 
 impl<T: Config> StablecoinPolicy<T> {
-    pub fn policy_hash(&self) -> [u8; 32] {
+    pub fn policy_hash(&self) -> [u8; 48] {
         let mut hasher = blake3::Hasher::new();
         hasher.update(POLICY_HASH_DOMAIN);
         hasher.update(&self.encode());
-        *hasher.finalize().as_bytes()
+        let mut out = [0u8; 48];
+        hasher.finalize_xof().fill(&mut out);
+        out
     }
 }
 
@@ -83,7 +85,7 @@ pub trait StablecoinPolicyProvider<AssetId> {
     type Policy;
 
     fn policy(asset_id: &AssetId) -> Option<Self::Policy>;
-    fn policy_hash(asset_id: &AssetId) -> Option<[u8; 32]>;
+    fn policy_hash(asset_id: &AssetId) -> Option<[u8; 48]>;
 }
 
 pub trait WeightInfo {
@@ -167,7 +169,7 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::getter(fn policy_hashes)]
     pub type PolicyHashes<T: Config> =
-        StorageMap<_, Blake2_128Concat, T::AssetId, [u8; 32], OptionQuery>;
+        StorageMap<_, Blake2_128Concat, T::AssetId, [u8; 48], OptionQuery>;
 
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
@@ -175,13 +177,13 @@ pub mod pallet {
         PolicySet {
             asset_id: T::AssetId,
             who: T::AccountId,
-            policy_hash: [u8; 32],
+            policy_hash: [u8; 48],
             active: bool,
         },
         PolicyActiveSet {
             asset_id: T::AssetId,
             who: T::AccountId,
-            policy_hash: [u8; 32],
+            policy_hash: [u8; 48],
             active: bool,
         },
         StorageMigrated {
@@ -344,7 +346,7 @@ impl<T: Config> StablecoinPolicyProvider<T::AssetId> for Pallet<T> {
         Policies::<T>::get(asset_id)
     }
 
-    fn policy_hash(asset_id: &T::AssetId) -> Option<[u8; 32]> {
+    fn policy_hash(asset_id: &T::AssetId) -> Option<[u8; 48]> {
         PolicyHashes::<T>::get(asset_id)
             .or_else(|| Policies::<T>::get(asset_id).map(|policy| policy.policy_hash()))
     }

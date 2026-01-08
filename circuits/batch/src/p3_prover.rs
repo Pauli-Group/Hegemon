@@ -39,9 +39,9 @@ impl BatchTransactionProverP3 {
             return Err(BatchCircuitError::EmptyBatch);
         }
 
-        let anchor = witnesses[0].merkle_root_pq;
+        let anchor = witnesses[0].merkle_root;
         for witness in witnesses.iter().skip(1) {
-            if witness.merkle_root_pq != anchor {
+            if witness.merkle_root != anchor {
                 return Err(BatchCircuitError::AnchorMismatch);
             }
         }
@@ -94,9 +94,9 @@ impl BatchTransactionProverP3 {
             return Err(BatchCircuitError::EmptyBatch);
         }
 
-        let anchor = witnesses[0].merkle_root_pq;
+        let anchor = witnesses[0].merkle_root;
         for witness in witnesses.iter().skip(1) {
-            if witness.merkle_root_pq != anchor {
+            if witness.merkle_root != anchor {
                 return Err(BatchCircuitError::AnchorMismatch);
             }
         }

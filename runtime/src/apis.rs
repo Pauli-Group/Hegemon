@@ -107,7 +107,7 @@ decl_runtime_apis! {
         fn get_encrypted_notes(
             start: u64,
             limit: u32,
-        ) -> Vec<(u64, Vec<u8>, u64, [u8; 32])>;
+        ) -> Vec<(u64, Vec<u8>, u64, [u8; 48])>;
 
         /// Get total number of encrypted notes.
         fn encrypted_note_count() -> u64;
@@ -121,19 +121,19 @@ decl_runtime_apis! {
         #[allow(clippy::type_complexity, clippy::result_unit_err)]
         fn get_merkle_witness(
             position: u64,
-        ) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), ()>;
+        ) -> Result<(Vec<[u8; 48]>, Vec<bool>, [u8; 48]), ()>;
 
         /// Check if a nullifier has been spent.
-        fn is_nullifier_spent(nullifier: [u8; 32]) -> bool;
+        fn is_nullifier_spent(nullifier: [u8; 48]) -> bool;
 
         /// Check if an anchor (Merkle root) is valid.
-        fn is_valid_anchor(anchor: [u8; 32]) -> bool;
+        fn is_valid_anchor(anchor: [u8; 48]) -> bool;
 
         /// Get shielded pool balance.
         fn pool_balance() -> u128;
 
         /// Get current Merkle root.
-        fn merkle_root() -> [u8; 32];
+        fn merkle_root() -> [u8; 48];
 
         /// Get Merkle tree depth.
         fn tree_depth() -> u32;
@@ -145,7 +145,7 @@ decl_runtime_apis! {
         ///
         /// Returns all nullifiers currently in the spent set.
         /// Used by wallets to detect which of their notes have been spent.
-        fn list_nullifiers() -> Vec<[u8; 32]>;
+        fn list_nullifiers() -> Vec<[u8; 48]>;
 
         /// Fetch the compact Merkle tree state used for commitment-root computation.
         ///
@@ -157,6 +157,6 @@ decl_runtime_apis! {
         ///
         /// This mirrors `pallet_shielded_pool::MerkleRootHistory` and is used by the node to
         /// validate transaction anchors during block import.
-        fn merkle_root_history() -> Vec<[u8; 32]>;
+        fn merkle_root_history() -> Vec<[u8; 48]>;
     }
 }
