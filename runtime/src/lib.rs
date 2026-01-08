@@ -24,7 +24,7 @@ use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::traits::{
     ConstU128, ConstU32, ConstU64, ConstU8, Currency as CurrencyTrait, VariantCount,
 };
-use frame_support::weights::IdentityFee;
+use frame_support::weights::{constants::WEIGHT_REF_TIME_PER_SECOND, IdentityFee, Weight};
 use frame_support::BoundedVec;
 pub use frame_support::{construct_runtime, parameter_types};
 use frame_system as system;
@@ -39,7 +39,7 @@ use sp_runtime::traits::{
     SaturatedConversion, Verify,
 };
 use sp_runtime::{
-    generic, AccountId32, DispatchError, FixedU128, MultiAddress, Permill, RuntimeDebug,
+    generic, AccountId32, DispatchError, FixedU128, MultiAddress, Perbill, Permill, RuntimeDebug,
 };
 use sp_std::vec::Vec;
 
@@ -884,6 +884,14 @@ parameter_types! {
     pub const BlockHashCount: u64 = 250;
     #[allow(deprecated)]
     pub const Version: sp_version::RuntimeVersion = VERSION;
+    pub RuntimeBlockWeights: system::limits::BlockWeights = system::limits::BlockWeights::with_sensible_defaults(
+        Weight::from_parts(4u64 * WEIGHT_REF_TIME_PER_SECOND, u64::MAX),
+        Perbill::from_percent(75),
+    );
+    pub RuntimeBlockLength: system::limits::BlockLength = system::limits::BlockLength::max_with_normal_ratio(
+        16 * 1024 * 1024,
+        Perbill::from_percent(75),
+    );
     pub const SS58Prefix: u16 = 42;
     pub const MinimumPeriod: u64 = 5;
     pub const ExistentialDeposit: u128 = 1;
@@ -899,8 +907,8 @@ parameter_types! {
 
 impl system::Config for Runtime {
     type BaseCallFilter = frame_support::traits::Everything;
-    type BlockWeights = ();
-    type BlockLength = ();
+    type BlockWeights = RuntimeBlockWeights;
+    type BlockLength = RuntimeBlockLength;
     type DbWeight = frame_support::weights::constants::RocksDbWeight;
     type RuntimeOrigin = RuntimeOrigin;
     type RuntimeCall = RuntimeCall;
