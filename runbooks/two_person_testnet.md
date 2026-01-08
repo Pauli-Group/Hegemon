@@ -310,6 +310,7 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 - Re-sync wallet
 - Check node logs for extrinsic errors
 - If you hit `Need X notes but max is 2`, re-run `wallet substrate-send` with `--auto-consolidate` (it submits X-2 consolidation txs and can take multiple blocks)
+- If you hit `Invalid Transaction: Transaction would exhaust the block limits`, your shielded transfer extrinsic (mostly the STARK proof bytes) exceeded the runtime max extrinsic size. Fix: rebuild the node/runtime, regenerate `config/dev-chainspec.json`, and restart with a fresh `--base-path` (or `--tmp`).
 
 ### Invalid Transaction: `Custom error: 6`
 - The shielded verifying key is disabled in genesis, so unsigned transfers are rejected.
