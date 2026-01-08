@@ -4,10 +4,11 @@ use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
-use p3_uni_stark::{prove_with_preprocessed, setup_preprocessed};
+use p3_uni_stark::{get_log_num_quotient_chunks, prove_with_preprocessed, setup_preprocessed};
 
 use crate::air::{
-    DisclosureAirP3, DisclosurePublicInputsP3, COL_DOMAIN, COL_IN0, COL_RESET, COL_S0,
+    DisclosureAirP3, DisclosurePublicInputsP3, PREPROCESSED_WIDTH, COL_DOMAIN, COL_IN0, COL_RESET,
+    COL_S0,
 };
 use crate::constants::{
     CYCLE_LENGTH, INPUT_CHUNKS, NOTE_DOMAIN_TAG, POSEIDON2_RATE, POSEIDON2_STEPS,
@@ -16,7 +17,9 @@ use crate::constants::{
 use crate::{DisclosureCircuitError, PaymentDisclosureClaim, PaymentDisclosureWitness};
 use transaction_core::hashing_pq::bytes48_to_felts;
 use transaction_core::poseidon2::poseidon2_step;
-use transaction_core::p3_config::{default_config, TransactionProofP3};
+use transaction_core::p3_config::{
+    config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, TransactionProofP3,
+};
 
 pub type Val = Goldilocks;
 pub type DisclosureProofP3 = TransactionProofP3;
@@ -166,9 +169,17 @@ impl DisclosureProverP3 {
         trace: RowMajorMatrix<Val>,
         pub_inputs: &DisclosurePublicInputsP3,
     ) -> DisclosureProofP3 {
-        let config = default_config();
+        let pub_inputs_vec = pub_inputs.to_vec();
         let degree_bits = trace.height().ilog2() as usize;
         let air = DisclosureAirP3::new(trace.height());
+        let log_chunks = get_log_num_quotient_chunks::<Val, _>(
+            &air,
+            PREPROCESSED_WIDTH,
+            pub_inputs_vec.len(),
+            0,
+        );
+        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
+        let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
         let (prep_prover, _) =
             setup_preprocessed(&config.config, &air, degree_bits)
                 .expect("DisclosureAirP3 preprocessed trace missing");
@@ -176,7 +187,7 @@ impl DisclosureProverP3 {
             &config.config,
             &air,
             trace,
-            &pub_inputs.to_vec(),
+            &pub_inputs_vec,
             Some(&prep_prover),
         )
     }

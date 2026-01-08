@@ -4,7 +4,7 @@ use p3_field::PrimeCharacteristicRing;
 use p3_goldilocks::Goldilocks;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
-use p3_uni_stark::prove;
+use p3_uni_stark::{get_log_num_quotient_chunks, prove};
 
 use crate::constants::{
     CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_OUTPUTS, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG,
@@ -15,7 +15,7 @@ use crate::hashing_pq::{
     HashFelt,
 };
 use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
-use crate::p3_config::{default_config, TransactionProofP3};
+use crate::p3_config::{config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, TransactionProofP3};
 use crate::witness::TransactionWitness;
 use crate::TransactionCircuitError;
 use transaction_core::constants::POSEIDON2_STEPS;
@@ -675,13 +675,12 @@ impl TransactionProverP3 {
         trace: RowMajorMatrix<Val>,
         pub_inputs: &TransactionPublicInputsP3,
     ) -> TransactionProofP3 {
-        let config = default_config();
-        prove(
-            &config.config,
-            &TransactionAirP3,
-            trace,
-            &pub_inputs.to_vec(),
-        )
+        let pub_inputs_vec = pub_inputs.to_vec();
+        let log_chunks =
+            get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_vec.len(), 0);
+        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
+        let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+        prove(&config.config, &TransactionAirP3, trace, &pub_inputs_vec)
     }
 
     pub fn prove_bytes(

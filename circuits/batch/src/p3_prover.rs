@@ -4,13 +4,15 @@ use p3_goldilocks::Goldilocks;
 use p3_field::PrimeCharacteristicRing;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
-use p3_uni_stark::{prove_with_preprocessed, setup_preprocessed};
+use p3_uni_stark::{get_log_num_quotient_chunks, prove_with_preprocessed, setup_preprocessed};
 
 use crate::error::BatchCircuitError;
-use crate::p3_air::{BatchPublicInputsP3, BatchTransactionAirP3, TRACE_WIDTH};
+use crate::p3_air::{BatchPublicInputsP3, BatchTransactionAirP3, PREPROCESSED_WIDTH, TRACE_WIDTH};
 use crate::constants::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{bytes48_to_felts, note_commitment, nullifier, prf_key};
-use transaction_circuit::p3_config::{default_config, TransactionProofP3};
+use transaction_circuit::p3_config::{
+    config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, TransactionProofP3,
+};
 use transaction_circuit::p3_prover::TransactionProverP3;
 use transaction_circuit::TransactionWitness;
 use transaction_core::dimensions::{batch_trace_rows, slot_start_row, validate_batch_size, ROWS_PER_TX};
@@ -163,9 +165,17 @@ impl BatchTransactionProverP3 {
         trace: RowMajorMatrix<Val>,
         pub_inputs: &BatchPublicInputsP3,
     ) -> BatchProofP3 {
-        let config = default_config();
+        let pub_inputs_vec = pub_inputs.to_vec();
         let degree_bits = trace.height().ilog2() as usize;
         let air = BatchTransactionAirP3::new(trace.height());
+        let log_chunks = get_log_num_quotient_chunks::<Val, _>(
+            &air,
+            PREPROCESSED_WIDTH,
+            pub_inputs_vec.len(),
+            0,
+        );
+        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
+        let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
         let (prep_prover, _) =
             setup_preprocessed(&config.config, &air, degree_bits)
                 .expect("BatchTransactionAirP3 preprocessed trace missing");
@@ -173,7 +183,7 @@ impl BatchTransactionProverP3 {
             &config.config,
             &air,
             trace,
-            &pub_inputs.to_vec(),
+            &pub_inputs_vec,
             Some(&prep_prover),
         )
     }

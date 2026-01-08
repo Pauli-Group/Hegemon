@@ -4,6 +4,7 @@
 //! It is designed to be used by both single-transaction and batch circuits.
 
 use crate::constants::MAX_INPUTS;
+use crate::p3_config::FRI_NUM_QUERIES;
 #[cfg(test)]
 use crate::constants::MAX_OUTPUTS;
 use crate::p3_air::{
@@ -96,12 +97,12 @@ pub fn commitment_output_row(tx_index: usize, output_index: usize) -> usize {
 /// Actual size depends on FRI parameters, this is approximate.
 pub fn estimated_proof_size(trace_rows: usize, trace_width: usize) -> usize {
     // Base: ~50 bytes per column for commitments
-    // FRI layers: ~log2(rows) × 32 bytes per query × 8 queries
-    // Query proofs: ~8 × log2(rows) × 32 bytes
+    // FRI layers: ~log2(rows) × 32 bytes per query × FRI_NUM_QUERIES
+    // Query proofs: ~FRI_NUM_QUERIES × log2(rows) × 32 bytes
     let log_rows = log2_rows(trace_rows);
     let base = trace_width * 50;
-    let fri = log_rows * 32 * 8;
-    let queries = 8 * log_rows * 32;
+    let fri = log_rows * 32 * FRI_NUM_QUERIES;
+    let queries = FRI_NUM_QUERIES * log_rows * 32;
     base + fri + queries + 500 // 500 bytes overhead
 }
 

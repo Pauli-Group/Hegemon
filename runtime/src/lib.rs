@@ -1185,14 +1185,14 @@ parameter_types! {
     pub const DefaultAttestationVerifierParams: pallet_attestations::StarkVerifierParams =
         pallet_attestations::StarkVerifierParams {
             hash: pallet_attestations::StarkHashFunction::Blake3,
-            fri_queries: 28,
-            blowup_factor: 4,
+            fri_queries: 43,
+            blowup_factor: 16,
             security_bits: 128,
         };
     pub const DefaultSettlementVerifierParams: pallet_settlement::StarkVerifierParams =
         pallet_settlement::StarkVerifierParams {
             hash: pallet_settlement::StarkHashFunction::Blake3,
-            fri_queries: 28,
+            fri_queries: 43,
             blowup_factor: 16,
             security_bits: 128,
         };
@@ -1366,7 +1366,7 @@ parameter_types! {
     pub const MaxPendingInstructions: u32 = 16;
     pub const MaxParticipants: u32 = 8;
     pub const MaxNullifiers: u32 = 4;
-    pub const MaxSettlementProof: u32 = 16384;
+    pub const MaxSettlementProof: u32 = 65536;
     pub const DefaultVerificationKey: u32 = 0;
 }
 

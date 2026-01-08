@@ -247,7 +247,10 @@ mod tests {
             DEFAULT_VERSION_BINDING,
             vec![],
         );
-        let upgraded_version = VersionBinding::new(2, DEFAULT_VERSION_BINDING.crypto);
+        let upgraded_version = VersionBinding::new(
+            DEFAULT_VERSION_BINDING.circuit.saturating_add(1),
+            DEFAULT_VERSION_BINDING.crypto,
+        );
         let v2 = Transaction::new(
             base_nullifiers,
             base_commitments,
@@ -313,7 +316,10 @@ mod tests {
             vec![[4u8; 48]],
             vec![],
             [5u8; 48],
-            VersionBinding::new(2, DEFAULT_VERSION_BINDING.crypto),
+            VersionBinding::new(
+                DEFAULT_VERSION_BINDING.circuit.saturating_add(1),
+                DEFAULT_VERSION_BINDING.crypto,
+            ),
             vec![],
         );
         let matrix = compute_version_matrix(&[tx_v1.clone(), tx_v1.clone(), tx_v2.clone()]);

@@ -94,6 +94,6 @@ pub const CRYPTO_SUITE_ALPHA: CryptoSuiteId = 1;
 pub const CRYPTO_SUITE_BETA: CryptoSuiteId = 2;
 
 pub const DEFAULT_VERSION_BINDING: VersionBinding = VersionBinding {
-    circuit: CIRCUIT_V1,
-    crypto: CRYPTO_SUITE_ALPHA,
+    circuit: CIRCUIT_V2,
+    crypto: CRYPTO_SUITE_BETA,
 };

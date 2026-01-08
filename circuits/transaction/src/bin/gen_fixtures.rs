@@ -4,6 +4,7 @@ use std::io::BufWriter;
 use std::io::Write;
 use std::path::Path;
 
+use p3_field::PrimeCharacteristicRing;
 use serde::Serialize;
 
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};

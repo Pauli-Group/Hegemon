@@ -47,8 +47,10 @@ After this work, a user can:
 - [x] (2026-01-07 22:10Z) Removed `legacy-commitment` helpers from the shielded pool pallet and kept only circuit-compatible Poseidon2 commitment/nullifier helpers.
 - [x] (2026-01-07 22:10Z) Updated security-tests to Plonky3/Poseidon2 expectations (rewrote `stark_soundness`, rewired `poseidon_compat`, refreshed block-flow tests), plus aligned node RPC fixtures and node-resilience validator commitments to 48-byte Blake3-384.
 - [x] (2026-01-07 23:55Z) Removed the Winterfell epoch proof stack (epoch circuit, pallet storage, node RPC/gossip, tests) and archived recursive-epoch runbooks pending a Plonky3 recursion replacement.
-- [ ] Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits.
-- [ ] Milestone 7: Update pallets, node, wallet, and protocol versioning.
+- [x] (2026-01-08 00:30Z) Applied per-AIR `log_blowup` selection for transaction/batch/settlement/disclosure Plonky3 provers+verifiers and aligned runtime verifier params to 43 queries with blowup 16.
+- [ ] Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits (completed: per-AIR log_blowup selection + runtime defaults; remaining: run full Plonky3 test suite and verify proof-size caps).
+- [x] (2026-01-08 00:45Z) Bumped protocol version binding to V2/BETA and aligned transaction AIR versioning + fixtures with the Plonky3/Poseidon2 stack.
+- [ ] Milestone 7: Update pallets, node, wallet, and protocol versioning (completed: protocol version binding bump; remaining: audit node/wallet version usage and run integration tests).
 - [ ] Milestone 8: Documentation and runbooks.
 
 ## Surprises & Discoveries
@@ -136,6 +138,12 @@ After this work, a user can:
 
 - Observation: Running the `security-tests` crate requires libclang to build `librocksdb-sys`; environments without libclang abort the build.
   Evidence: `cargo test -p security-tests --test stark_soundness` failed with `Library not loaded: @rpath/libclang.dylib`.
+
+- Observation: Plonky3 proofs with preprocessed AIRs still require `log_blowup >= log_num_quotient_chunks`; enforcing this per AIR avoids LDE height mismatches.
+  Evidence: `get_log_num_quotient_chunks` is now applied in transaction/batch/settlement/disclosure provers and verifiers.
+
+- Observation: Duplicate `* 2.rs` files with Winterfell imports were present and had to be removed to keep the codebase Winterfell-free.
+  Evidence: `rg "winter"` flagged `tests/stark_soundness 2.rs`, `tests/block_flow 2.rs`, `circuits/*/hashing 2.rs` prior to removal.
 
 ## Decision Log
 
@@ -238,6 +246,22 @@ After this work, a user can:
 - Decision: Keep the transaction AIR schedule selectors as explicit main-trace columns (drop preprocessed columns) to avoid OOD mismatches in the Plonky3 0.4.x proof path.
   Rationale: The transaction circuit’s schedule selectors are fixed and deterministic; embedding them in the main trace keeps the constraints satisfiable end-to-end while we stabilize preprocessed support.
   Date/Author: 2026-01-07 / Codex.
+
+- Decision: Clamp Plonky3 `log_blowup` per AIR to `max(FRI_LOG_BLOWUP, log_num_quotient_chunks)` and reuse the result in all provers/verifiers (including preprocessed AIRs).
+  Rationale: Prevents LDE height mismatches and makes the FRI configuration soundness-safe across differing AIR constraint degrees.
+  Date/Author: 2026-01-08 / Codex.
+
+- Decision: Standardize runtime-facing verifier params to 43 queries and blowup 16 for 128-bit PQ soundness.
+  Rationale: Keeps on-chain settings consistent with Plonky3 production parameters and avoids misleading security metadata.
+  Date/Author: 2026-01-08 / Codex.
+
+- Decision: Remove stray `* 2.rs` Winterfell duplicates instead of keeping them as references.
+  Rationale: These files are untracked artifacts that reintroduced Winterfell imports; the migration goal is a fully Winterfell-free tree.
+  Date/Author: 2026-01-08 / Codex.
+
+- Decision: Bump the default protocol `VersionBinding` to `(CIRCUIT_V2, CRYPTO_SUITE_BETA)` and increment the transaction AIR version to 2.
+  Rationale: The Plonky3 + Poseidon2/48-byte commitment transition is a protocol-level change that must be reflected in versioned public inputs and AIR hashes.
+  Date/Author: 2026-01-08 / Codex.
 
 - Decision: Upgrade `transaction-circuit` RNG dependencies to rand 0.9 to match Plonky3 Poseidon2’s RNG trait requirements.
   Rationale: `p3-poseidon2` expects rand 0.9’s `Rng`, so aligning versions avoids trait mismatches during deterministic config seeding.
@@ -564,9 +588,10 @@ Target: 43 queries × blowup 8 = 129 bits, or 32 queries × blowup 16 = 128 bits
 
 Scope:
 1. Define a shared `default_fri_config()` function returning `FriParameters`.
-2. Apply to all circuit provers.
-3. Update on-chain proof size caps in pallets.
-4. Update benchmark/test assertions.
+2. For every Plonky3 prover/verifier, compute `log_num_quotient_chunks` from its AIR and clamp `log_blowup = max(FRI_LOG_BLOWUP, log_num_quotient_chunks)` to prevent LDE height mismatches.
+3. Apply the shared FRI config across all circuit provers.
+4. Update on-chain verifier params and proof size caps in pallets/runtime.
+5. Update benchmark/test assertions.
 
 Acceptance: All circuits use ≥128-bit FRI soundness; `make test` passes.
 
@@ -718,6 +743,8 @@ At the end of this plan, the following must exist:
         pub type MerkleRoot48 = [u8; 48];
 
 3. **384-bit capacity sponge** in `circuits/transaction-core/src/poseidon2.rs`:
+
+Plan update (2026-01-08): Recorded Milestone 6 progress for per-AIR `log_blowup` enforcement and runtime verifier parameter alignment, noted removal of stray Winterfell duplicate files, and bumped protocol version bindings to reflect the Plonky3/Poseidon2 transition.
 
         pub const POSEIDON2_WIDTH: usize = 12;
         pub const POSEIDON2_RATE: usize = 6;
