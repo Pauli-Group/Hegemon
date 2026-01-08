@@ -57,7 +57,6 @@
 
 pub mod block;
 pub mod da;
-pub mod epoch;
 pub mod hegemon;
 pub mod production_service;
 pub mod shielded;
@@ -69,7 +68,6 @@ use std::sync::Arc;
 
 pub use block::{BlockApiServer, BlockRpc};
 pub use da::{DaApiServer, DaRpc};
-pub use epoch::{EpochApiServer, EpochRpc};
 pub use hegemon::{HegemonApiServer, HegemonRpc, HegemonService, MiningHandle};
 pub use production_service::ProductionRpcService;
 pub use shielded::{ShieldedApiServer, ShieldedPoolService, ShieldedRpc};

@@ -1,77 +1,42 @@
-//! Disclosure circuit verifier.
+//! Plonky3 verifier for disclosure proofs.
 
-use winter_crypto::hashers::Blake3_256;
-use winterfell::{
-    crypto::{DefaultRandomCoin, MerkleTree},
-    verify, AcceptableOptions, Proof, VerifierError,
-};
+use p3_uni_stark::{setup_preprocessed, verify_with_preprocessed};
+use transaction_core::p3_config::default_config;
 
-use crate::air::{DisclosureAir, DisclosurePublicInputs};
+use crate::air::{DisclosureAirP3, DisclosurePublicInputsP3};
+use crate::prover::DisclosureProofP3;
 use crate::DisclosureVerifyError;
 
-type Blake3 = Blake3_256<winterfell::math::fields::f64::BaseElement>;
-
-/// Verify a disclosure STARK proof.
 pub fn verify_disclosure_proof(
-    proof: &Proof,
-    pub_inputs: &DisclosurePublicInputs,
-) -> Result<(), VerifierError> {
-    let acceptable = acceptable_options();
+    proof: &DisclosureProofP3,
+    pub_inputs: &DisclosurePublicInputsP3,
+) -> Result<(), DisclosureVerifyError> {
+    pub_inputs
+        .validate()
+        .map_err(DisclosureVerifyError::InvalidPublicInputs)?;
 
-    verify::<DisclosureAir, Blake3, DefaultRandomCoin<Blake3>, MerkleTree<Blake3>>(
-        proof.clone(),
-        pub_inputs.clone(),
-        &acceptable,
+    let config = default_config();
+    let degree_bits = proof.degree_bits;
+    let trace_len = 1usize << degree_bits;
+    let air = DisclosureAirP3::new(trace_len);
+    let prep_vk = setup_preprocessed(&config.config, &air, degree_bits)
+        .map(|(_, vk)| vk)
+        .expect("DisclosureAirP3 preprocessed trace missing");
+    verify_with_preprocessed(
+        &config.config,
+        &air,
+        proof,
+        &pub_inputs.to_vec(),
+        Some(&prep_vk),
     )
+    .map_err(|err| DisclosureVerifyError::VerificationFailed(format!("{err:?}")))
 }
 
-/// Verify from serialized proof bytes.
 pub fn verify_disclosure_proof_bytes(
     proof_bytes: &[u8],
-    pub_inputs: &DisclosurePublicInputs,
+    pub_inputs: &DisclosurePublicInputsP3,
 ) -> Result<(), DisclosureVerifyError> {
-    let proof =
-        Proof::from_bytes(proof_bytes).map_err(|_| DisclosureVerifyError::InvalidProofFormat)?;
-    verify_disclosure_proof(&proof, pub_inputs).map_err(DisclosureVerifyError::VerificationFailed)
-}
-
-fn default_acceptable_options() -> winterfell::ProofOptions {
-    winterfell::ProofOptions::new(
-        32,
-        16,
-        0,
-        winterfell::FieldExtension::None,
-        4,
-        31,
-        winterfell::BatchingMethod::Linear,
-        winterfell::BatchingMethod::Linear,
-    )
-}
-
-fn acceptable_options() -> AcceptableOptions {
-    #[cfg(feature = "stark-fast")]
-    {
-        AcceptableOptions::OptionSet(vec![
-            default_acceptable_options(),
-            fast_acceptable_options(),
-        ])
-    }
-    #[cfg(not(feature = "stark-fast"))]
-    {
-        AcceptableOptions::OptionSet(vec![default_acceptable_options()])
-    }
-}
-
-#[cfg(feature = "stark-fast")]
-fn fast_acceptable_options() -> winterfell::ProofOptions {
-    winterfell::ProofOptions::new(
-        8,
-        16,
-        0,
-        winterfell::FieldExtension::None,
-        2,
-        15,
-        winterfell::BatchingMethod::Linear,
-        winterfell::BatchingMethod::Linear,
-    )
+    let proof: DisclosureProofP3 =
+        bincode::deserialize(proof_bytes).map_err(|_| DisclosureVerifyError::InvalidProofFormat)?;
+    verify_disclosure_proof(&proof, pub_inputs)
 }

@@ -21,7 +21,7 @@ This reference summarizes the public APIs of the monorepo components and points 
 
 ## `circuits/`
 
-- `transaction-circuit` crate exposes `proof::prove(witness, proving_key) -> TransactionProof` and `proof::verify(proof, verifying_key) -> VerificationReport`. The direct STARK path is `TransactionProverStark::prove_transaction(witness)` and `stark_verifier::verify_transaction_proof_bytes(proof_bytes, pub_inputs)`. Production verification rejects missing STARK proof bytes/public inputs unless compiled with `legacy-proof`, and commitment/nullifier encodings are 32-byte values with four canonical limbs (validated via `hashing::is_canonical_bytes32`).
+- `transaction-circuit` crate exposes `proof::prove(witness, proving_key) -> TransactionProof` and `proof::verify(proof, verifying_key) -> VerificationReport`. The direct STARK path is `TransactionProverStark::prove_transaction(witness)` and `stark_verifier::verify_transaction_proof_bytes(proof_bytes, pub_inputs)`. Production verification rejects missing STARK proof bytes/public inputs unless compiled with `legacy-proof`, and commitment/nullifier encodings are 48-byte values with six canonical limbs (validated via `hashing_pq::is_canonical_bytes48`).
 - `disclosure-circuit` crate exposes `prove_payment_disclosure(claim, witness) -> PaymentDisclosureProofBundle` and `verify_payment_disclosure(bundle)`. The claim binds `value`, `asset_id`, `pk_recipient`, and `commitment`; the witness supplies `rho` and `r`. `PaymentDisclosureProofBundle` carries `proof_bytes` plus the `air_hash` used for verifier binding.
 - `block-circuit` crate aggregates multiple transaction proofs via `BlockCircuit::prove(block_inputs)`.
 - `circuits/bench` binary crate (`circuits-bench`) provides `cargo run -p circuits-bench -- --iterations N --prove` to compile circuits, generate witnesses, and optionally verify proofs. Output includes constraint rows, hash rounds, and per-proof latency.
@@ -65,7 +65,7 @@ Block validity and data-availability RPC methods exposed by the Substrate node:
 - `da_getParams() -> DaParams`
   - Returns global DA parameters (chunk size, sample count, encoding scheme).
 
-Legacy RPC endpoints (`block_getRecursiveProof`, `epoch_*`) are removed from the default node and are only available when compiled with `legacy-recursion` features.
+Legacy RPC endpoints (`block_getRecursiveProof`, `epoch_*`) are removed; recursive epoch proofs are temporarily disabled until a Plonky3 recursion path is reintroduced.
 
 ## Documentation hooks
 

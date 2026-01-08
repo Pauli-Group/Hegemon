@@ -139,7 +139,7 @@ The repository now includes a standalone Rust crate at `crypto/` that collects t
 * `ml_dsa` – deterministic key generation, signing, verification, and serialization helpers sized to ML-DSA-65 (Dilithium3) keys (pk = 1952 B, sk = 4000 B, sig = 3293 B).
 * `slh_dsa` – the analogous interface for SLH-DSA (SPHINCS+-SHA2-128f) with pk = 32 B, sk = 64 B, signature = 17088 B.
 * `ml_kem` – Kyber-768-style encapsulation/decapsulation with pk = 1184 B, sk = 2400 B, ciphertext = 1088 B, shared secret = 32 B.
-* `hashes` – SHA-256, SHA3-256, BLAKE3-256, and a Poseidon-inspired permutation over the Goldilocks prime using width 3, 63 full rounds, and NUMS-generated round constants/MDS (SHA-256 domain separation + Cauchy matrix), plus helpers for commitments (`b"c"` tag), PRF key derivation (`b"nk"`), and nullifiers (`b"nf"`) that default to BLAKE3 with SHA3 fallbacks for STARK-friendly domains. The Plonky3 transaction AIR now uses Poseidon2 (width 12, rate 6, capacity 6) for in-circuit commitments and nullifiers, producing 48-byte outputs for PQ soundness; the Winterfell legacy path remains width-3 Poseidon until Milestone 5 widens application-level types.
+* `hashes` – SHA-256, SHA3-256, BLAKE3-256, and a Poseidon-inspired permutation over the Goldilocks prime using width 3, 63 full rounds, and NUMS-generated round constants/MDS (SHA-256 domain separation + Cauchy matrix), plus helpers for commitments (`b"c"` tag), PRF key derivation (`b"nk"`), and nullifiers (`b"nf"`) that default to BLAKE3 with SHA3 fallbacks for STARK-friendly domains. The Plonky3 transaction AIR uses Poseidon2 (width 12, rate 6, capacity 6) for in-circuit commitments and nullifiers, producing 48-byte outputs for PQ soundness; application-level types now use 48-byte digests end-to-end.
 
 Everything derives deterministic test vectors using a ChaCha20-based RNG seeded via SHA-256 so that serialization and domain separation match the simple hash-based definitions above. Integration tests under `crypto/tests/` lock in the byte-level expectations for key generation, signing, verification, KEM encapsulation/decapsulation, and commitment/nullifier derivation.
 
@@ -157,7 +157,7 @@ Properties:
 
 * **Transparent**: no trusted setup (only hash assumptions). ([C# Corner][2])
 * **Post-quantum**: soundness reduces to collision resistance of the hashes + random oracle, so Shor has nothing to grab; Grover just reduces effective hash security by ~½.
-* **Recursive-friendly**: pick something in the Plonky2/Plonky3 / Winterfell space that supports efficient recursion and aggregation. ([C# Corner][2])
+* **Recursive-friendly**: pick something in the Plonky2/Plonky3 space that supports efficient recursion and aggregation. ([C# Corner][2])
 
 Concretely:
 
@@ -178,7 +178,7 @@ Implementation detail: the Plonky3 backend uses `p3-uni-stark` (v0.4.x). For the
 
 The transparent stack above is heavier than Groth16/Halo2, but a few circuit-level embeddings keep it manageable:
 
-* **Goldilocks-friendly encodings** – Express the note/balance logic directly in the 64-bit-friendly base field instead of relying on binary gadgets. Packing `(value, asset_id)` pairs into two 64-bit limbs each lets the AIR use cheap addition/multiplication constraints with no Boolean decomposition. This matches Winterfell/Plonky3’s "Goldilocks" optimizations and avoids the \((\times 32\) blow-up you’d get from bit-constraining every register.
+* **Goldilocks-friendly encodings** – Express the note/balance logic directly in the 64-bit-friendly base field instead of relying on binary gadgets. Packing `(value, asset_id)` pairs into two 64-bit limbs each lets the AIR use cheap addition/multiplication constraints with no Boolean decomposition. This matches Plonky3’s Goldilocks optimizations and avoids the \((\times 32\) blow-up you’d get from bit-constraining every register.
 * **Permutation/Ishai–Kushilevitz style lookups** – MASP balance checks need large-domain comparisons (e.g., `asset_id` equality during the in-circuit sort). Encoding those comparisons as STARK-friendly permutation arguments—rather than explicit comparator circuits—reuses the same algebraic lookup table that the prover already commits to for Poseidon rounds. Empirically this trims ~15–20 % of the trace width relative to naive comparison gadgets while remaining transparent.
 * **Batched range proofs via radix embeddings** – Instead of per-note binary range proofs, embed values in radix-`2^16` limbs and reuse a single low-degree check `limb < 2^16` over the entire column. A single lookup table enforces limb bounds, and the batched sum-check amortizes across all limbs, driving the marginal cost per constrained value close to 1–2 constraints.
 * **Folded multi-openings for recursion** – Recursively verifying child proofs requires many polynomial openings; batching them through a single FRI transcript with linear-combination challenges keeps the verifier time in the "tens of ms" bucket despite the larger STARK proofs.

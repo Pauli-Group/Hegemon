@@ -2,19 +2,16 @@
 
 pub mod air;
 pub mod constants;
-mod poseidon2;
 mod prover;
 mod verifier;
 
+use p3_field::PrimeCharacteristicRing;
 use serde::{Deserialize, Serialize};
-use winterfell::math::{fields::f64::BaseElement, FieldElement};
-use winterfell::Prover;
+use transaction_core::hashing_pq::{bytes48_to_felts, is_canonical_bytes48, note_commitment_bytes};
 
-use transaction_core::hashing_pq::{is_canonical_bytes48, note_commitment_bytes};
-
-use crate::air::DisclosurePublicInputs;
+use crate::air::DisclosurePublicInputsP3;
 use crate::constants::expected_air_hash;
-use crate::prover::DisclosureProver;
+use crate::prover::DisclosureProverP3;
 use crate::verifier::verify_disclosure_proof_bytes;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -57,8 +54,8 @@ pub enum DisclosureVerifyError {
     InvalidAirHash,
     #[error("invalid proof format")]
     InvalidProofFormat,
-    #[error("verification failed: {0:?}")]
-    VerificationFailed(winterfell::VerifierError),
+    #[error("verification failed: {0}")]
+    VerificationFailed(String),
     #[error("invalid public inputs: {0}")]
     InvalidPublicInputs(String),
 }
@@ -82,15 +79,14 @@ pub fn prove_payment_disclosure(
         return Err(DisclosureCircuitError::CommitmentMismatch);
     }
 
-    let prover = DisclosureProver::with_defaults();
+    let prover = DisclosureProverP3::new();
     let trace = prover.build_trace(claim, witness)?;
-    let proof = prover
-        .prove(trace)
-        .map_err(|e| DisclosureCircuitError::ProofGenerationFailed(format!("{:?}", e)))?;
+    let pub_inputs = prover.public_inputs(claim)?;
+    let proof_bytes = prover.prove_bytes(trace, &pub_inputs)?;
 
     Ok(PaymentDisclosureProofBundle {
         claim: claim.clone(),
-        proof_bytes: proof.to_bytes(),
+        proof_bytes,
         air_hash: expected_air_hash(),
     })
 }
@@ -108,40 +104,27 @@ pub fn verify_payment_disclosure(
 
 pub(crate) fn claim_to_public_inputs(
     claim: &PaymentDisclosureClaim,
-) -> Result<DisclosurePublicInputs, DisclosureVerifyError> {
-    let commitment = bytes48_to_field_elements(&claim.commitment).ok_or(
+) -> Result<DisclosurePublicInputsP3, DisclosureVerifyError> {
+    let commitment = bytes48_to_felts(&claim.commitment).ok_or(
         DisclosureVerifyError::InvalidPublicInputs("commitment bytes are not canonical".into()),
     )?;
 
-    Ok(DisclosurePublicInputs {
-        value: BaseElement::new(claim.value),
-        asset_id: BaseElement::new(claim.asset_id),
+    Ok(DisclosurePublicInputsP3 {
+        value: transaction_core::hashing_pq::Felt::from_u64(claim.value),
+        asset_id: transaction_core::hashing_pq::Felt::from_u64(claim.asset_id),
         pk_recipient: bytes32_to_field_elements(&claim.pk_recipient),
         commitment,
     })
 }
 
-fn bytes32_to_field_elements(bytes: &[u8; 32]) -> [BaseElement; 4] {
-    let mut out = [BaseElement::ZERO; 4];
+fn bytes32_to_field_elements(bytes: &[u8; 32]) -> [transaction_core::hashing_pq::Felt; 4] {
+    let mut out = [transaction_core::hashing_pq::Felt::ZERO; 4];
     for (idx, chunk) in bytes.chunks(8).enumerate() {
         let mut buf = [0u8; 8];
         buf.copy_from_slice(chunk);
-        out[idx] = BaseElement::new(u64::from_be_bytes(buf));
+        out[idx] = transaction_core::hashing_pq::Felt::from_u64(u64::from_be_bytes(buf));
     }
     out
-}
-
-fn bytes48_to_field_elements(bytes: &[u8; 48]) -> Option<[BaseElement; 6]> {
-    if !is_canonical_bytes48(bytes) {
-        return None;
-    }
-    let mut out = [BaseElement::ZERO; 6];
-    for (idx, chunk) in bytes.chunks(8).enumerate() {
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(chunk);
-        out[idx] = BaseElement::new(u64::from_be_bytes(buf));
-    }
-    Some(out)
 }
 
 mod serde_bytes48 {
