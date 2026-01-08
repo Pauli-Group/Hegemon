@@ -38,7 +38,7 @@ pub fn verify_disclosure_proof_bytes(
 fn default_acceptable_options() -> winterfell::ProofOptions {
     winterfell::ProofOptions::new(
         32,
-        8,
+        16,
         0,
         winterfell::FieldExtension::None,
         4,

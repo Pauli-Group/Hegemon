@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
 use serde::{Deserialize, Serialize};
+use p3_field::PrimeCharacteristicRing;
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
@@ -124,7 +125,7 @@ impl TransactionWitness {
         Ok(())
     }
 
-    pub fn prf_key(&self) -> crate::hashing::Felt {
+    pub fn prf_key(&self) -> crate::hashing_pq::Felt {
         prf_key(&self.sk_spend)
     }
 

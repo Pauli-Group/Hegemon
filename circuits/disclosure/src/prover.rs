@@ -266,7 +266,7 @@ fn bytes32_to_felts(bytes: &[u8; 32]) -> [BaseElement; 4] {
 fn default_proof_options() -> ProofOptions {
     ProofOptions::new(
         32,
-        8,
+        16,
         0,
         winterfell::FieldExtension::None,
         4,

@@ -981,6 +981,7 @@ struct WalletState {
     next_address_index: u32,
     notes: Vec<TrackedNote>,
     pending: Vec<PendingTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
     commitments: Vec<Commitment>,
     next_commitment_index: u64,
     next_ciphertext_index: u64,

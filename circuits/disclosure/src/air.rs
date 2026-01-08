@@ -11,7 +11,7 @@ use winterfell::{
 
 use crate::constants::{
     CYCLE_LENGTH, INPUT_CHUNKS, NOTE_DOMAIN_TAG, POSEIDON2_SBOX_DEGREE, POSEIDON2_STEPS,
-    POSEIDON2_WIDTH,
+    POSEIDON2_WIDTH, TRACE_LENGTH,
 };
 
 // ================================================================================================
@@ -101,17 +101,23 @@ impl Air for DisclosureAir {
     type PublicInputs = DisclosurePublicInputs;
 
     fn new(trace_info: TraceInfo, pub_inputs: Self::PublicInputs, options: ProofOptions) -> Self {
+        // Dominant transition term is degree-6 once periodic masks/constants are accounted for.
+        let base_degree = 6;
+        let transition_exemptions =
+            POSEIDON2_STEPS + (TRACE_LENGTH / CYCLE_LENGTH).saturating_sub(1);
         let mut degrees = vec![
-            TransitionConstraintDegree::with_cycles(POSEIDON2_SBOX_DEGREE as usize, vec![
-                CYCLE_LENGTH,
-            ]);
+            TransitionConstraintDegree::with_cycles(
+                base_degree,
+                vec![CYCLE_LENGTH, CYCLE_LENGTH, TRACE_LENGTH, TRACE_LENGTH],
+            );
             POSEIDON2_WIDTH
         ];
-        degrees.push(TransitionConstraintDegree::new(2));
+        degrees.push(TransitionConstraintDegree::with_cycles(2, vec![TRACE_LENGTH]));
         debug_assert_eq!(degrees.len(), NUM_CONSTRAINTS);
 
         Self {
-            context: AirContext::new(trace_info, degrees, NUM_ASSERTIONS, options),
+            context: AirContext::new(trace_info, degrees, NUM_ASSERTIONS, options)
+                .set_num_transition_exemptions(transition_exemptions),
             pub_inputs,
         }
     }
@@ -138,6 +144,7 @@ impl Air for DisclosureAir {
         for i in 0..POSEIDON2_WIDTH {
             rc[i] = periodic_values[4 + i];
         }
+        let transition_mask = periodic_values[4 + POSEIDON2_WIDTH];
 
         let mut state = [E::ZERO; POSEIDON2_WIDTH];
         for i in 0..POSEIDON2_WIDTH {
@@ -184,10 +191,10 @@ impl Air for DisclosureAir {
         for i in 0..POSEIDON2_WIDTH {
             let expected =
                 hash_flag * hash_state[i] + absorb_flag * absorb_state[i] + copy_flag * state[i];
-            result[i] = next[COL_S0 + i] - expected;
+            result[i] = transition_mask * (next[COL_S0 + i] - expected);
         }
 
-        result[POSEIDON2_WIDTH] = reset * (reset - one);
+        result[POSEIDON2_WIDTH] = transition_mask * reset * (reset - one);
 
         debug_assert_eq!(POSEIDON2_WIDTH + 1, NUM_CONSTRAINTS);
     }
@@ -275,6 +282,7 @@ impl Air for DisclosureAir {
             }
             result.push(column);
         }
+        result.push(make_transition_mask());
 
         result
     }
@@ -312,7 +320,7 @@ fn poseidon2_hash_state<E: FieldElement<BaseField = BaseElement>>(
 }
 
 fn sbox<E: FieldElement<BaseField = BaseElement>>(value: E) -> E {
-    value.exp(POSEIDON2_SBOX_DEGREE)
+    value.exp(POSEIDON2_SBOX_DEGREE.into())
 }
 
 fn mds_light<E: FieldElement<BaseField = BaseElement>>(
@@ -431,6 +439,16 @@ fn make_internal_mask() -> Vec<BaseElement> {
         if idx < transaction_core::constants::POSEIDON2_INTERNAL_ROUNDS {
             mask[step] = BaseElement::ONE;
         }
+    }
+    mask
+}
+
+fn make_transition_mask() -> Vec<BaseElement> {
+    let mut mask = vec![BaseElement::ONE; TRACE_LENGTH];
+    let exemptions = POSEIDON2_STEPS + (TRACE_LENGTH / CYCLE_LENGTH).saturating_sub(1);
+    for idx in 0..exemptions {
+        let pos = TRACE_LENGTH - 1 - idx;
+        mask[pos] = BaseElement::ZERO;
     }
     mask
 }

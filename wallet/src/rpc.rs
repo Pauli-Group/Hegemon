@@ -15,13 +15,16 @@ pub struct TransactionBundle {
     #[serde(with = "serde_bytes_vec")]
     pub proof_bytes: Vec<u8>,
     /// Nullifiers (48 bytes each, left-padded field elements).
+    #[serde(with = "crate::serde_bytes48::vec_bytes48")]
     pub nullifiers: Vec<[u8; 48]>,
     /// Commitments (48 bytes each, left-padded field elements).
+    #[serde(with = "crate::serde_bytes48::vec_bytes48")]
     pub commitments: Vec<[u8; 48]>,
     /// Encrypted note ciphertexts.
     #[serde(with = "serde_ciphertexts")]
     pub ciphertexts: Vec<Vec<u8>>,
     /// Merkle tree anchor (root hash).
+    #[serde(with = "crate::serde_bytes48::bytes48")]
     pub anchor: [u8; 48],
     /// Binding hash commitment.
     #[serde(with = "serde_bytes_64")]

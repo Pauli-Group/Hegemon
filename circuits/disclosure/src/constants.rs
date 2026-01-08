@@ -30,7 +30,7 @@ pub const TRACE_WIDTH: usize = 20;
 pub const TRACE_LENGTH: usize = TOTAL_CYCLES * CYCLE_LENGTH;
 
 /// Circuit version (increment on constraint changes).
-pub const CIRCUIT_VERSION: u32 = 3;
+pub const CIRCUIT_VERSION: u32 = 4;
 
 /// AIR domain tag for hash binding.
 pub const AIR_DOMAIN_TAG: &[u8] = b"SHPC-DISCLOSURE-AIR-V1";

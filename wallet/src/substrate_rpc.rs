@@ -97,6 +97,7 @@ pub struct CommitmentEntry {
     /// Index in the commitment tree
     pub index: u64,
     /// Commitment value (48-byte encoding)
+    #[serde(with = "crate::serde_bytes48::bytes48")]
     pub value: [u8; 48],
 }
 

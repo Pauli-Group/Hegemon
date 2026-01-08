@@ -95,11 +95,11 @@ pub struct SerializedStarkInputs {
     pub stablecoin_issuance_sign: u8,
     #[serde(default)]
     pub stablecoin_issuance_magnitude: u64,
-    #[serde(default, with = "crate::public_inputs::serde_bytes48")]
+    #[serde(default = "default_bytes48", with = "crate::public_inputs::serde_bytes48")]
     pub stablecoin_policy_hash: Commitment,
-    #[serde(default, with = "crate::public_inputs::serde_bytes48")]
+    #[serde(default = "default_bytes48", with = "crate::public_inputs::serde_bytes48")]
     pub stablecoin_oracle_commitment: Commitment,
-    #[serde(default, with = "crate::public_inputs::serde_bytes48")]
+    #[serde(default = "default_bytes48", with = "crate::public_inputs::serde_bytes48")]
     pub stablecoin_attestation_commitment: Commitment,
 }
 
@@ -608,6 +608,10 @@ fn hash_to_bytes48(hash: &[Goldilocks; 6]) -> [u8; 48] {
         out[start..start + 8].copy_from_slice(&limb.as_canonical_u64().to_be_bytes());
     }
     out
+}
+
+fn default_bytes48() -> Commitment {
+    [0u8; 48]
 }
 
 /// Verify that balance_slots match public_inputs.balance_slots
