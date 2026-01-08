@@ -208,7 +208,7 @@ fn compute_coinbase_commitment(
     recipient: &[u8; DIVERSIFIED_ADDRESS_SIZE],
     amount: u64,
     public_seed: &[u8; 32],
-) -> [u8; 32] {
+) -> [u8; 48] {
     // Use the pallet's commitment function directly
     pallet_coinbase_commitment(recipient, amount, public_seed)
 }
@@ -268,7 +268,7 @@ mod tests {
 
         let note_data = result.unwrap();
         assert_eq!(note_data.amount, amount);
-        assert_eq!(note_data.commitment.len(), 32);
+        assert_eq!(note_data.commitment.len(), 48);
     }
 
     #[test]

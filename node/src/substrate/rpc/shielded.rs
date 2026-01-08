@@ -662,7 +662,7 @@ mod tests {
         assert!(spent);
 
         // Nullifier starting with 1 is not spent
-        let mut nf = [0u8; 32];
+        let mut nf = [0u8; 48];
         nf[0] = 1;
         let not_spent = rpc.is_nullifier_spent(hex::encode(nf)).await.unwrap();
         assert!(!not_spent);
@@ -674,7 +674,7 @@ mod tests {
         let rpc = ShieldedRpc::new(service);
 
         // Anchor starting with non-zero is valid
-        let mut anchor = [0u8; 32];
+        let mut anchor = [0u8; 48];
         anchor[0] = 1;
         let valid = rpc.is_valid_anchor(hex::encode(anchor)).await.unwrap();
         assert!(valid);

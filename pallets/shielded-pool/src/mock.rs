@@ -6,14 +6,14 @@ use crate::{
     OracleCommitmentSnapshot, StablecoinPolicyProvider, StablecoinPolicySnapshot,
 };
 // AcceptAllProofs is only available in test builds (not production)
-#[cfg(not(feature = "production"))]
+#[cfg(any(test, not(feature = "production")))]
 type TestProofVerifier = crate::verifier::AcceptAllProofs;
-#[cfg(feature = "production")]
+#[cfg(all(not(test), feature = "production"))]
 type TestProofVerifier = crate::verifier::StarkVerifier;
 
-#[cfg(not(feature = "production"))]
+#[cfg(any(test, not(feature = "production")))]
 type TestBatchProofVerifier = crate::verifier::AcceptAllBatchProofs;
-#[cfg(feature = "production")]
+#[cfg(all(not(test), feature = "production"))]
 type TestBatchProofVerifier = crate::verifier::StarkBatchVerifier;
 
 use crate::verifier::StarkVerifier;
@@ -257,7 +257,7 @@ mod tests {
 
     fn valid_coinbase_data(amount: u64) -> crate::types::CoinbaseNoteData {
         let recipient_address = [7u8; crate::types::DIVERSIFIED_ADDRESS_SIZE];
-        let public_seed = [9u8; 48];
+        let public_seed = [9u8; 32];
         #[allow(deprecated)]
         let commitment =
             crate::commitment::coinbase_commitment(&recipient_address, amount, &public_seed);

@@ -14,14 +14,14 @@ This reference summarizes the public APIs of the monorepo components and points 
   - `SecretKey::decapsulate(&self, ct: &Ciphertext) -> SharedSecret`
   - Security margin: ML-KEM-768; shared secrets truncated to 32 bytes.
 - `hashes` module
-  - `commit_note(payload: &[u8]) -> [u8; 32]` (BLAKE3-256 by default) and `commit_note_with(.., CommitmentHash::Sha3)` for SHA3-256 commitments.
-  - `sha3_256`, `blake3_256`, and Poseidon-style field hashing helpers. BLAKE3-256 is the new default digest for PQ addresses, note commitments, and STARK parameter domains; SHA3-256 remains available for compatibility with older circuits.
-  - `derive_nullifier(nk: &[u8; 32], position: u64, rho: &[u8; 32]) -> [u8; 32]` and `derive_prf_key` use the same domain tags.
+  - `commit_note(message: &[u8], randomness: &[u8]) -> [u8; 48]` (BLAKE3-384 by default) and `commit_note_with(.., CommitmentHash::Sha3)` for SHA3-384 commitments.
+  - `sha3_256`, `blake3_256`, `blake3_384`, and Poseidon-style field hashing helpers. `commit_note_with` uses SHA3-384 when requested. BLAKE3-384 is the default digest for commitments/nullifiers, while BLAKE3-256 remains the default for PQ address tagging and other 32-byte identifiers.
+  - `derive_nullifier(nk: &[u8; 32], position: u64, rho: &[u8; 32]) -> [u8; 48]` and `derive_prf_key` use the same domain tags.
   - Domain separation constants `b"c"`, `b"nk"`, `b"nf"` are enforced to avoid cross-protocol collisions.
 
 ## `circuits/`
 
-- `transaction-circuit` crate exposes `proof::prove(witness, proving_key) -> TransactionProof` and `proof::verify(proof, verifying_key) -> VerificationReport`. The direct STARK path is `TransactionProverStark::prove_transaction(witness)` and `stark_verifier::verify_transaction_proof_bytes(proof_bytes, pub_inputs)`. Production verification rejects missing STARK proof bytes/public inputs unless compiled with `legacy-proof`, and commitment/nullifier encodings are 48-byte values with six canonical limbs (validated via `hashing_pq::is_canonical_bytes48`).
+- `transaction-circuit` crate exposes `proof::prove(witness, proving_key) -> TransactionProof` and `proof::verify(proof, verifying_key) -> VerificationReport`. The direct STARK path is `TransactionProverP3::prove_transaction(witness)` and `p3_verifier::verify_transaction_proof_bytes_p3(proof_bytes, pub_inputs)`. Production verification rejects missing STARK proof bytes/public inputs unless compiled with `legacy-proof`, and commitment/nullifier encodings are 48-byte values with six canonical limbs (validated via `hashing_pq::is_canonical_bytes48`).
 - `disclosure-circuit` crate exposes `prove_payment_disclosure(claim, witness) -> PaymentDisclosureProofBundle` and `verify_payment_disclosure(bundle)`. The claim binds `value`, `asset_id`, `pk_recipient`, and `commitment`; the witness supplies `rho` and `r`. `PaymentDisclosureProofBundle` carries `proof_bytes` plus the `air_hash` used for verifier binding.
 - `block-circuit` crate aggregates multiple transaction proofs via `BlockCircuit::prove(block_inputs)`.
 - `circuits/bench` binary crate (`circuits-bench`) provides `cargo run -p circuits-bench -- --iterations N --prove` to compile circuits, generate witnesses, and optionally verify proofs. Output includes constraint rows, hash rounds, and per-proof latency.
@@ -50,7 +50,7 @@ p budgets.
   - `register_did(document: Vec<u8>, tags: Vec<IdentityTag>, session_key: Option<SessionKey>)` stores the DID document, identity tags, and an optional session key variant (legacy AuthorityId or PQ-only Dilithium/Falcon). The `on_runtime_upgrade` hook maps any pre-upgrade `AuthorityId` into `SessionKey::Legacy` so operators inherit existing keys before rotating into PQ-only bundles.
 - `pallet-attestations` / `pallet-settlement`
   - `set_verifier_params(params: StarkVerifierParams)` (admin origin) updates the on-chain STARK verifier parameters.
-  - Default runtime constants seed attestations with Blake3 hashing, 28 FRI queries, a 4x blowup factor, and quadratic extension over Goldilocks; settlement uses the same hash/query budget but a 16x blowup factor. With 256-bit digests, PQ collision resistance caps at ~85 bits unless digest sizes are widened. Calling `set_verifier_params` is the documented migration path for tightening soundness or swapping hashes without redeploying the pallets.
+  - Default runtime constants seed attestations with Poseidon2-384 hashing, 43 FRI queries, a 16x blowup factor, and quadratic extension over Goldilocks. With 384-bit digests, PQ collision resistance reaches ~128 bits. Calling `set_verifier_params` is the documented migration path for tightening soundness or swapping hashes without redeploying the pallets.
 
 ## Node RPC endpoints
 

@@ -10,6 +10,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sp_core::H256;
 use std::sync::Arc;
+use transaction_circuit::hashing_pq::felts_to_bytes48;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommitmentBlockPublicInputsRpc {
@@ -26,21 +27,33 @@ pub struct CommitmentBlockPublicInputsRpc {
 impl From<&CommitmentBlockPublicInputs> for CommitmentBlockPublicInputsRpc {
     fn from(value: &CommitmentBlockPublicInputs) -> Self {
         Self {
-            tx_proofs_commitment: format!("0x{}", hex::encode(value.tx_proofs_commitment)),
-            starting_state_root: format!("0x{}", hex::encode(value.starting_state_root)),
-            ending_state_root: format!("0x{}", hex::encode(value.ending_state_root)),
-            nullifier_root: format!("0x{}", hex::encode(value.nullifier_root)),
-            da_root: format!("0x{}", hex::encode(value.da_root)),
+            tx_proofs_commitment: format!(
+                "0x{}",
+                hex::encode(felts_to_bytes48(&value.tx_proofs_commitment))
+            ),
+            starting_state_root: format!(
+                "0x{}",
+                hex::encode(felts_to_bytes48(&value.starting_state_root))
+            ),
+            ending_state_root: format!(
+                "0x{}",
+                hex::encode(felts_to_bytes48(&value.ending_state_root))
+            ),
+            nullifier_root: format!(
+                "0x{}",
+                hex::encode(felts_to_bytes48(&value.nullifier_root))
+            ),
+            da_root: format!("0x{}", hex::encode(felts_to_bytes48(&value.da_root))),
             tx_count: value.tx_count,
             nullifiers: value
                 .nullifiers
                 .iter()
-                .map(|nf| format!("0x{}", hex::encode(nf)))
+                .map(|nf| format!("0x{}", hex::encode(felts_to_bytes48(nf))))
                 .collect(),
             sorted_nullifiers: value
                 .sorted_nullifiers
                 .iter()
-                .map(|nf| format!("0x{}", hex::encode(nf)))
+                .map(|nf| format!("0x{}", hex::encode(felts_to_bytes48(nf))))
                 .collect(),
         }
     }

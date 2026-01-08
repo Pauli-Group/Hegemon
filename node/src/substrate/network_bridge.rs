@@ -116,14 +116,14 @@ pub struct TransactionMessage {
 #[derive(Debug, Clone, Encode, Decode)]
 pub enum DaChunkProtocolMessage {
     /// Request a set of chunk indices for a given DA root.
-    Request { root: [u8; 32], indices: Vec<u32> },
+    Request { root: [u8; 48], indices: Vec<u32> },
     /// Respond with chunk proofs for the requested indices.
     Response {
-        root: [u8; 32],
+        root: [u8; 48],
         proofs: Vec<DaChunkProof>,
     },
     /// Indicate missing chunks for a requested DA root.
-    NotFound { root: [u8; 32], indices: Vec<u32> },
+    NotFound { root: [u8; 48], indices: Vec<u32> },
 }
 
 impl TransactionMessage {
@@ -257,19 +257,19 @@ pub enum IncomingMessage {
     /// DA chunk request from a peer.
     DaChunkRequest {
         peer_id: PeerId,
-        root: [u8; 32],
+        root: [u8; 48],
         indices: Vec<u32>,
     },
     /// DA chunk response from a peer.
     DaChunkResponse {
         peer_id: PeerId,
-        root: [u8; 32],
+        root: [u8; 48],
         proofs: Vec<DaChunkProof>,
     },
     /// DA chunk not-found response.
     DaChunkNotFound {
         peer_id: PeerId,
-        root: [u8; 32],
+        root: [u8; 48],
         indices: Vec<u32>,
     },
 }

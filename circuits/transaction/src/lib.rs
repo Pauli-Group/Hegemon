@@ -15,7 +15,7 @@
 //!
 //! ## Legacy API
 //!
-//! Winterfell-backed modules have been removed. Plonky3 is the sole backend.
+//! Legacy backend modules have been removed. Plonky3 is the sole backend.
 
 pub mod constants;
 pub mod dimensions;

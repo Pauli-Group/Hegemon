@@ -166,6 +166,7 @@ use runtime::apis::{ConsensusApi, ShieldedPoolApi};
 use state_da::{DaChunkProof, DaEncoding, DaParams, DaRoot};
 use state_merkle::CommitmentTree;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
+use transaction_circuit::hashing_pq::{bytes48_to_felts, Felt};
 use transaction_circuit::proof::{SerializedStarkInputs, TransactionProof};
 use transaction_circuit::public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 
@@ -1001,7 +1002,7 @@ fn build_commitment_block_proof(
     parent_hash: H256,
     extrinsics: &[Vec<u8>],
     da_params: DaParams,
-    fast: bool,
+    _fast: bool,
 ) -> Result<Option<CommitmentBlockProof>, String> {
     let proofs = extract_transaction_proofs_from_extrinsics(extrinsics)?;
     if proofs.is_empty() {
@@ -1017,11 +1018,7 @@ fn build_commitment_block_proof(
     }
     let da_root = build_da_encoding_from_extrinsics(&decoded, da_params)?.root();
 
-    let prover = if fast {
-        CommitmentBlockProver::with_fast_options()
-    } else {
-        CommitmentBlockProver::new()
-    };
+    let prover = CommitmentBlockProver::new();
 
     let proof = prover
         .prove_block_commitment_with_tree(&mut tree, &proofs, da_root)
@@ -1206,6 +1203,73 @@ fn nullifier_root_from_list(nullifiers: &[[u8; 48]]) -> Result<[u8; 48], String>
     Ok(blake3_384(&data))
 }
 
+fn hash_bytes_to_felts(bytes: &[u8; 48]) -> [Felt; 6] {
+    let mut felts = [Felt::new(0); 6];
+    for (idx, chunk) in bytes.chunks(8).enumerate() {
+        let limb = u64::from_be_bytes(chunk.try_into().expect("8-byte chunk"));
+        felts[idx] = Felt::new(limb);
+    }
+    felts
+}
+
+fn bytes48_to_felts_checked(label: &str, value: &[u8; 48]) -> Result<[Felt; 6], String> {
+    bytes48_to_felts(value)
+        .ok_or_else(|| format!("{label} encoding is non-canonical"))
+}
+
+fn decode_nullifier_list(
+    label: &str,
+    nullifiers: &[[u8; 48]],
+) -> Result<Vec<[Felt; 6]>, String> {
+    let mut felts = Vec::with_capacity(nullifiers.len());
+    for (idx, nf) in nullifiers.iter().enumerate() {
+        let value = bytes48_to_felts_checked(&format!("{label}[{idx}]"), nf)?;
+        felts.push(value);
+    }
+    Ok(felts)
+}
+
+fn derive_nullifier_challenges(
+    starting_state_root: &[u8; 48],
+    ending_state_root: &[u8; 48],
+    nullifier_root: &[u8; 48],
+    da_root: &[u8; 48],
+    tx_count: u32,
+    nullifiers: &[[u8; 48]],
+    sorted_nullifiers: &[[u8; 48]],
+) -> (Felt, Felt) {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"blk-nullifier-perm-v1");
+    hasher.update(starting_state_root);
+    hasher.update(ending_state_root);
+    hasher.update(nullifier_root);
+    hasher.update(da_root);
+    hasher.update(&tx_count.to_le_bytes());
+    hasher.update(&(nullifiers.len() as u64).to_le_bytes());
+    hasher.update(&(sorted_nullifiers.len() as u64).to_le_bytes());
+    for nullifier in nullifiers {
+        hasher.update(nullifier);
+    }
+    for nullifier in sorted_nullifiers {
+        hasher.update(nullifier);
+    }
+    let digest = hasher.finalize();
+    let bytes = digest.as_bytes();
+    let mut alpha = Felt::new(u64::from_le_bytes(
+        bytes[0..8].try_into().expect("8-byte alpha"),
+    ));
+    let mut beta = Felt::new(u64::from_le_bytes(
+        bytes[8..16].try_into().expect("8-byte beta"),
+    ));
+    if alpha == Felt::new(0) {
+        alpha = Felt::new(1);
+    }
+    if beta == Felt::new(0) {
+        beta = Felt::new(2);
+    }
+    (alpha, beta)
+}
+
 fn derive_commitment_block_proof_from_bytes(
     proof_bytes: Vec<u8>,
     transactions: &[consensus::types::Transaction],
@@ -1239,15 +1303,30 @@ fn derive_commitment_block_proof_from_bytes(
         }
     }
 
+    let starting_state_root = parent_tree.root();
+    let ending_state_root = tree.root();
+    let tx_count = transactions.len() as u32;
+    let (perm_alpha, perm_beta) = derive_nullifier_challenges(
+        &starting_state_root,
+        &ending_state_root,
+        &nullifier_root,
+        &da_root,
+        tx_count,
+        &lists.nullifiers,
+        &lists.sorted_nullifiers,
+    );
+
     let public_inputs = CommitmentBlockPublicInputs {
-        tx_proofs_commitment,
-        starting_state_root: parent_tree.root(),
-        ending_state_root: tree.root(),
-        nullifier_root,
-        da_root,
-        tx_count: transactions.len() as u32,
-        nullifiers: lists.nullifiers,
-        sorted_nullifiers: lists.sorted_nullifiers,
+        tx_proofs_commitment: bytes48_to_felts_checked("tx_proofs_commitment", &tx_proofs_commitment)?,
+        starting_state_root: bytes48_to_felts_checked("starting_state_root", &starting_state_root)?,
+        ending_state_root: bytes48_to_felts_checked("ending_state_root", &ending_state_root)?,
+        nullifier_root: hash_bytes_to_felts(&nullifier_root),
+        da_root: hash_bytes_to_felts(&da_root),
+        tx_count,
+        perm_alpha,
+        perm_beta,
+        nullifiers: decode_nullifier_list("nullifiers", &lists.nullifiers)?,
+        sorted_nullifiers: decode_nullifier_list("sorted_nullifiers", &lists.sorted_nullifiers)?,
     };
 
     Ok(CommitmentBlockProof {
