@@ -5,8 +5,7 @@ import { usePathname } from "next/navigation";
 import { 
   Blocks, 
   Pickaxe, 
-  Shield, 
-  KeyRound,
+  Shield,
   Settings 
 } from "lucide-react";
 import { clsx } from "clsx";
@@ -15,7 +14,6 @@ const navItems = [
   { href: "/", label: "Explorer", icon: Blocks },
   { href: "/mining", label: "Mining", icon: Pickaxe },
   { href: "/shielded", label: "Shielded Pool", icon: Shield },
-  { href: "/pq-status", label: "PQ Status", icon: KeyRound },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

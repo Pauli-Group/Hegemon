@@ -21,11 +21,11 @@ Observable outcome: running `npm run dev` in `dashboard-ui/` opens a local site 
 - [x] (2026-01-08 22:55Z) Milestone 4: Shielded pool panel (Merkle root, nullifiers)
 - [x] (2026-01-08 22:55Z) Milestone 5: PQ crypto status (ML-DSA, ML-KEM, STARK params)
 - [x] (2026-01-08 22:56Z) Milestone 6: Documentation and runbook
-- [ ] Milestone 2: Block explorer page (events, blocks, transactions)
-- [ ] Milestone 3: Mining dashboard (difficulty, hash rate, coinbase events)
-- [ ] Milestone 4: Shielded pool panel (Merkle root, nullifier count, recent events)
-- [ ] Milestone 5: PQ crypto status panel (signature/KEM scheme, verifier params)
-- [ ] Milestone 6: Documentation and runbook
+- [x] (2026-01-08 23:40Z) Bugfix: Fixed subscription API (use polling instead of subscribeNewHeads)
+- [x] (2026-01-08 23:42Z) Bugfix: Fixed decimal precision (use 10^8 not 10^12 for HGM units)
+- [ ] Polish: Add `.gitignore` entries for dashboard-ui build artifacts
+- [ ] Polish: Mobile responsive refinements
+- [ ] Polish: Real logo asset (currently placeholder "H" icon)
 
 
 ## Surprises & Discoveries
@@ -36,8 +36,13 @@ Observable outcome: running `npm run dev` in `dashboard-ui/` opens a local site 
 - Observation: The `coinbase` pallet is exposed as `pow` in storage queries but events come from `shieldedPool.CoinbaseMinted`.
   Evidence: Pallets list shows `pow` not `coinbase`, but shieldedPool has `coinbaseNotes`, `coinbaseProcessed` storage.
 
-- Observation: Subscription API changed — `api.rpc.chain.subscribeNewHeads` is not a function in @polkadot/api v14. Use `api.derive.chain.subscribeNewHeads` instead.
+- Observation: Subscription API changed — `api.rpc.chain.subscribeNewHeads` is not a function in @polkadot/api v14+. Must use polling with `api.rpc.chain.getHeader()` instead.
   Evidence: `Error: api.rpc.chain.subscribeNewHeads is not a function`
+  Resolution: Changed to 2-second polling interval for block updates.
+
+- Observation: Chain metadata reports 12 decimals but INITIAL_REWARD uses 8 decimal places (Bitcoin-style satoshis).
+  Evidence: `chain.decimals: [12]` but `INITIAL_REWARD = 498287671` which is ~5 HGM with 10^8 base units.
+  Resolution: Dashboard uses 10^8 divisor for display, not 10^12.
 
 
 ## Decision Log

@@ -46,3 +46,8 @@ out.txt
 
 # Local dev node logs
 hegemon-dev-node*.log
+# Dashboard UI build artifacts
+dashboard-ui/node_modules/
+dashboard-ui/.next/
+dashboard-ui/out/
+dashboard-ui/scripts/*.js
