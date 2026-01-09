@@ -51,6 +51,11 @@ impl TransactionBundle {
         value_balance: i128,
         stablecoin: StablecoinPolicyBinding,
     ) -> Result<Self, WalletError> {
+        if commitments.len() != ciphertexts.len() {
+            return Err(WalletError::InvalidState(
+                "ciphertexts count must match commitments count",
+            ));
+        }
         let mut encoded = Vec::with_capacity(ciphertexts.len());
         for ct in ciphertexts {
             // Use pallet-compatible format (1699 bytes) instead of bincode
