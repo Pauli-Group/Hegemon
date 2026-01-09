@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { NodeManager } from './nodeManager';
 import { WalletdClient } from './walletdClient';
 import type {
+  NodeMiningRequest,
   NodeStartOptions,
+  NodeSummaryRequest,
   WalletDisclosureCreateResult,
   WalletDisclosureVerifyResult,
   WalletSendRequest,
@@ -60,22 +62,22 @@ ipcMain.handle('node:stop', async () => {
   await nodeManager.stopNode();
 });
 
-ipcMain.handle('node:summary', async () => {
-  return nodeManager.getSummary();
+ipcMain.handle('node:summary', async (_event, request: NodeSummaryRequest) => {
+  return nodeManager.getSummary(request);
 });
 
-ipcMain.handle('node:setMining', async (_event, enabled: boolean, threads?: number) => {
-  await nodeManager.setMiningEnabled(enabled, threads);
+ipcMain.handle('node:setMining', async (_event, request: NodeMiningRequest) => {
+  await nodeManager.setMiningEnabled(request.enabled, request.threads, request.httpUrl);
 });
 
 ipcMain.handle('node:logs', async () => nodeManager.getLogs());
 
 ipcMain.handle('wallet:init', async (_event, storePath: string, passphrase: string) => {
-  return walletdClient.status(storePath, passphrase) as Promise<WalletStatus>;
+  return walletdClient.init(storePath, passphrase) as Promise<WalletStatus>;
 });
 
 ipcMain.handle('wallet:restore', async (_event, storePath: string, passphrase: string) => {
-  return walletdClient.status(storePath, passphrase) as Promise<WalletStatus>;
+  return walletdClient.restore(storePath, passphrase) as Promise<WalletStatus>;
 });
 
 ipcMain.handle('wallet:status', async (_event, storePath: string, passphrase: string, noSync = false) => {

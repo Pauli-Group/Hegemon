@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "package": "electron-vite build && electron-builder --dir",
+    "dist": "electron-vite build && electron-builder",
     "preview": "electron-vite preview",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
@@ -22,10 +24,53 @@
     "@types/react-dom": "^18.3.5",
     "autoprefixer": "^10.4.20",
     "electron": "^31.2.0",
+    "electron-builder": "^24.13.3",
     "electron-vite": "^2.1.0",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.2",
     "vite": "^5.4.12"
+  },
+  "build": {
+    "appId": "com.hegemon.desktop",
+    "productName": "Hegemon",
+    "directories": {
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**",
+      "node_modules/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../target/release/hegemon-node",
+        "to": "bin/hegemon-node"
+      },
+      {
+        "from": "../target/release/walletd",
+        "to": "bin/walletd"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.finance"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Finance"
+    }
   }
 }

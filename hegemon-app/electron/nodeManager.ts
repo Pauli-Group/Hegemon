@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { resolve } from 'node:path';
-import type { NodeStartOptions, NodeSummary } from '../src/types';
+import type { NodeStartOptions, NodeSummary, NodeSummaryRequest } from '../src/types';
+import { resolveBinaryPath } from './binPaths';
 
 const DEFAULT_RPC_PORT = 9944;
 
@@ -27,7 +27,7 @@ export class NodeManager extends EventEmitter {
       return;
     }
 
-    const nodePath = resolve(process.cwd(), 'target/release/hegemon-node');
+    const nodePath = resolveBinaryPath('hegemon-node');
     const args: string[] = [];
 
     if (options.chainSpecPath) {
@@ -55,10 +55,15 @@ export class NodeManager extends EventEmitter {
       args.push('--port', String(options.p2pPort));
     }
 
+    const mineFlag = options.mineOnStart ? '1' : '0';
     const env = {
       ...process.env,
       HEGEMON_MINER_ADDRESS: options.minerAddress ?? process.env.HEGEMON_MINER_ADDRESS,
-      HEGEMON_SEEDS: options.seeds ?? process.env.HEGEMON_SEEDS
+      HEGEMON_SEEDS: options.seeds ?? process.env.HEGEMON_SEEDS,
+      HEGEMON_MINE: mineFlag,
+      HEGEMON_MINE_THREADS: options.mineThreads
+        ? String(options.mineThreads)
+        : process.env.HEGEMON_MINE_THREADS
     };
 
     this.process = spawn(nodePath, args, { env });
@@ -79,29 +84,109 @@ export class NodeManager extends EventEmitter {
     this.process = null;
   }
 
-  async getSummary(): Promise<NodeSummary> {
-    const consensus = await this.rpcCall('hegemon_consensusStatus', []);
-    const mining = await this.rpcCall('hegemon_miningStatus', []);
+  async getSummary(request: NodeSummaryRequest): Promise<NodeSummary> {
+    const isLocal = request.isLocal;
+    const reachable = await this.ping(request.httpUrl);
+
+    if (!reachable) {
+      return {
+        connectionId: request.connectionId,
+        label: request.label,
+        reachable: false,
+        isLocal,
+        peers: null,
+        isSyncing: null,
+        bestBlock: null,
+        bestNumber: null,
+        genesisHash: null,
+        mining: null,
+        miningThreads: null,
+        hashRate: null,
+        blocksFound: null,
+        difficulty: null,
+        blockHeight: null,
+        supplyDigest: null,
+        storage: null,
+        telemetry: null,
+        updatedAt: new Date().toISOString(),
+        error: 'RPC unreachable'
+      };
+    }
+
+    const consensus = await this.safeRpcCall('hegemon_consensusStatus', [], request.httpUrl);
+    const mining = await this.safeRpcCall('hegemon_miningStatus', [], request.httpUrl);
+    const health = await this.safeRpcCall('system_health', [], request.httpUrl);
+    const storage = await this.safeRpcCall('hegemon_storageFootprint', [], request.httpUrl);
+    const telemetry = await this.safeRpcCall('hegemon_telemetry', [], request.httpUrl);
+    const genesisHash = await this.safeRpcCall('chain_getBlockHash', [0], request.httpUrl);
 
     return {
-      peers: Number(consensus.peers ?? 0),
-      isSyncing: Boolean(consensus.syncing),
-      bestBlock: consensus.best_hash ?? null,
-      bestNumber: consensus.height ? Number(consensus.height) : null,
-      mining: Boolean(mining.is_mining),
-      miningThreads: mining.threads ? Number(mining.threads) : null
+      connectionId: request.connectionId,
+      label: request.label,
+      reachable: true,
+      isLocal,
+      peers: Number(consensus?.peers ?? health?.peers ?? 0),
+      isSyncing: Boolean(consensus?.syncing ?? health?.isSyncing ?? false),
+      bestBlock: consensus?.best_hash ?? null,
+      bestNumber: consensus?.height ?? null,
+      genesisHash: genesisHash ?? null,
+      mining: mining ? Boolean(mining.is_mining) : null,
+      miningThreads: mining?.threads ?? null,
+      hashRate: mining?.hash_rate ?? null,
+      blocksFound: mining?.blocks_found ?? null,
+      difficulty: mining?.difficulty ?? null,
+      blockHeight: mining?.block_height ?? null,
+      supplyDigest: consensus?.supply_digest ? String(consensus.supply_digest) : null,
+      storage: storage
+        ? {
+            totalBytes: Number(storage.total_bytes ?? 0),
+            blocksBytes: Number(storage.blocks_bytes ?? 0),
+            stateBytes: Number(storage.state_bytes ?? 0),
+            transactionsBytes: Number(storage.transactions_bytes ?? 0),
+            nullifiersBytes: Number(storage.nullifiers_bytes ?? 0)
+          }
+        : null,
+      telemetry: telemetry
+        ? {
+            uptimeSecs: Number(telemetry.uptime_secs ?? 0),
+            txCount: Number(telemetry.tx_count ?? 0),
+            blocksImported: Number(telemetry.blocks_imported ?? 0),
+            blocksMined: Number(telemetry.blocks_mined ?? 0),
+            memoryBytes: Number(telemetry.memory_bytes ?? 0),
+            networkRxBytes: Number(telemetry.network_rx_bytes ?? 0),
+            networkTxBytes: Number(telemetry.network_tx_bytes ?? 0)
+          }
+        : null,
+      updatedAt: new Date().toISOString()
     };
   }
 
-  async setMiningEnabled(enabled: boolean, threads?: number): Promise<void> {
+  async setMiningEnabled(enabled: boolean, threads: number | undefined, httpUrl?: string): Promise<void> {
     if (enabled) {
-      await this.rpcCall('hegemon_startMining', [threads ? { threads } : {}]);
+      await this.rpcCall('hegemon_startMining', [threads ? { threads } : {}], httpUrl);
     } else {
-      await this.rpcCall('hegemon_stopMining', []);
+      await this.rpcCall('hegemon_stopMining', [], httpUrl);
     }
   }
 
-  private async rpcCall(method: string, params: unknown[] = []): Promise<any> {
+  private async safeRpcCall(method: string, params: unknown[], httpUrl: string): Promise<any | null> {
+    try {
+      return await this.rpcCall(method, params, httpUrl);
+    } catch {
+      return null;
+    }
+  }
+
+  private async ping(httpUrl: string): Promise<boolean> {
+    try {
+      await this.rpcCall('system_health', [], httpUrl);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async rpcCall(method: string, params: unknown[] = [], httpUrl?: string): Promise<any> {
     const body: RpcRequest = {
       jsonrpc: '2.0',
       id: ++this.requestId,
@@ -109,7 +194,8 @@ export class NodeManager extends EventEmitter {
       params
     };
 
-    const response = await fetch(`http://127.0.0.1:${this.rpcPort}`, {
+    const endpoint = httpUrl ?? `http://127.0.0.1:${this.rpcPort}`;
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)

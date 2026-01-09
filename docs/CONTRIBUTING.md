@@ -6,7 +6,7 @@ This repository is a single monorepo that houses the cryptography primitives (`c
 2. Update the relevant section in `DESIGN.md` (architecture/intent) and `METHODS.md` (operational procedures/testing strategy).
 3. Update the affected doc(s) inside `docs/` so downstream contributors can find the new behavior quickly.
 
-The unified `hegemon` binary is the canonical way to exercise the node, wallet, and dashboard. Legacy Python proxies and standalone dashboards have been removed; new work should focus on the embedded UI and CLI surfaces.
+The unified `hegemon` binary is the canonical way to exercise the node and wallet. Legacy Python proxies and standalone dashboards have been removed; new work should focus on the desktop app and CLI surfaces.
 
 ## Toolchains and workflows
 

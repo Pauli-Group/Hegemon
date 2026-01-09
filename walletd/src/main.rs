@@ -30,6 +30,20 @@ use wallet::{
     ConsolidationPlan, MAX_INPUTS,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WalletdMode {
+    Open,
+    Create,
+}
+
+fn parse_mode(value: &str) -> Result<WalletdMode> {
+    match value {
+        "open" => Ok(WalletdMode::Open),
+        "create" => Ok(WalletdMode::Create),
+        _ => anyhow::bail!("invalid mode {value} (expected open or create)"),
+    }
+}
+
 #[derive(Deserialize)]
 struct RequestEnvelope {
     id: Value,
@@ -49,15 +63,18 @@ struct ResponseEnvelope {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct WalletStatusResponse {
     primary_address: String,
     last_synced_height: u64,
     balances: Vec<BalanceEntry>,
     pending: Vec<PendingEntry>,
     notes: Option<NoteSummary>,
+    genesis_hash: Option<String>,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct BalanceEntry {
     asset_id: u64,
     label: String,
@@ -67,6 +84,7 @@ struct BalanceEntry {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PendingEntry {
     id: String,
     tx_id: String,
@@ -81,6 +99,7 @@ struct PendingEntry {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct NoteSummary {
     asset_id: u64,
     spendable_count: usize,
@@ -90,6 +109,7 @@ struct NoteSummary {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ConsolidationPlanSummary {
     txs_needed: u64,
     blocks_needed: u64,
@@ -103,6 +123,7 @@ struct SyncParams {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SyncResponse {
     new_height: u64,
     commitments: usize,
@@ -121,6 +142,7 @@ struct SendParams {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SendResponse {
     tx_hash: String,
     recipients: Vec<TransferRecipient>,
@@ -151,7 +173,7 @@ struct DisclosureVerifyResponse {
 }
 
 fn main() -> Result<()> {
-    let store_path = parse_store_path()?;
+    let (store_path, mode) = parse_args()?;
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
     let passphrase = lines
@@ -164,7 +186,7 @@ fn main() -> Result<()> {
         anyhow::bail!("passphrase is empty");
     }
 
-    let store = Arc::new(open_or_init_store(&store_path, &passphrase)?);
+    let store = Arc::new(open_store(&store_path, &passphrase, mode)?);
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
         .build()
@@ -204,23 +226,47 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn parse_store_path() -> Result<String> {
+fn parse_args() -> Result<(String, WalletdMode)> {
     let mut args = std::env::args().skip(1);
+    let mut store_path: Option<String> = None;
+    let mut mode = WalletdMode::Open;
     while let Some(arg) = args.next() {
-        if arg == "--store" {
-            return args
-                .next()
-                .ok_or_else(|| anyhow!("--store requires a path"));
+        match arg.as_str() {
+            "--store" => {
+                store_path = Some(
+                    args.next()
+                        .ok_or_else(|| anyhow!("--store requires a path"))?,
+                );
+            }
+            "--mode" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| anyhow!("--mode requires a value"))?;
+                mode = parse_mode(&value)?;
+            }
+            _ => {}
         }
     }
-    anyhow::bail!("usage: walletd --store <PATH>");
+    let store_path =
+        store_path.ok_or_else(|| anyhow!("usage: walletd --store <PATH> [--mode open|create]"))?;
+    Ok((store_path, mode))
 }
 
-fn open_or_init_store(store_path: &str, passphrase: &str) -> Result<WalletStore> {
-    if Path::new(store_path).exists() {
-        WalletStore::open(store_path, passphrase).context("failed to open wallet store")
-    } else {
-        WalletStore::create_full(store_path, passphrase).context("failed to create wallet store")
+fn open_store(store_path: &str, passphrase: &str, mode: WalletdMode) -> Result<WalletStore> {
+    let exists = Path::new(store_path).exists();
+    match mode {
+        WalletdMode::Open => {
+            if !exists {
+                anyhow::bail!("wallet store not found");
+            }
+            WalletStore::open(store_path, passphrase).context("failed to open wallet store")
+        }
+        WalletdMode::Create => {
+            if exists {
+                anyhow::bail!("wallet store already exists");
+            }
+            WalletStore::create_full(store_path, passphrase).context("failed to create wallet store")
+        }
     }
 }
 
@@ -332,6 +378,9 @@ fn status_get(store: &Arc<WalletStore>) -> Result<WalletStatusResponse> {
         .collect();
 
     let notes = summarize_notes(store)?;
+    let genesis_hash = store
+        .genesis_hash()?
+        .map(|hash| format!("0x{}", hex::encode(hash)));
 
     Ok(WalletStatusResponse {
         primary_address,
@@ -339,6 +388,7 @@ fn status_get(store: &Arc<WalletStore>) -> Result<WalletStatusResponse> {
         balances: balance_entries,
         pending: pending_entries,
         notes,
+        genesis_hash,
     })
 }
 

@@ -1,10 +1,63 @@
+export type NodeConnectionMode = 'local' | 'remote';
+
+export type NodeConnection = {
+  id: string;
+  label: string;
+  mode: NodeConnectionMode;
+  wsUrl: string;
+  httpUrl?: string;
+  chainSpecPath?: string;
+  dev?: boolean;
+  tmp?: boolean;
+  basePath?: string;
+  rpcPort?: number;
+  p2pPort?: number;
+  seeds?: string;
+  minerAddress?: string;
+  mineThreads?: number;
+  miningIntent?: boolean;
+  allowRemoteMining?: boolean;
+};
+
+export type NodeStorageFootprint = {
+  totalBytes: number;
+  blocksBytes: number;
+  stateBytes: number;
+  transactionsBytes: number;
+  nullifiersBytes: number;
+};
+
+export type NodeTelemetry = {
+  uptimeSecs: number;
+  txCount: number;
+  blocksImported: number;
+  blocksMined: number;
+  memoryBytes: number;
+  networkRxBytes: number;
+  networkTxBytes: number;
+};
+
 export type NodeSummary = {
-  peers: number;
-  isSyncing: boolean;
+  connectionId: string;
+  label: string;
+  reachable: boolean;
+  isLocal: boolean;
+  peers: number | null;
+  isSyncing: boolean | null;
   bestBlock: string | null;
   bestNumber: number | null;
-  mining: boolean;
-  miningThreads?: number | null;
+  genesisHash: string | null;
+  mining: boolean | null;
+  miningThreads: number | null;
+  hashRate: number | null;
+  blocksFound: number | null;
+  difficulty: number | null;
+  blockHeight: number | null;
+  supplyDigest: string | null;
+  storage: NodeStorageFootprint | null;
+  telemetry: NodeTelemetry | null;
+  updatedAt: string;
+  error?: string | null;
 };
 
 export type WalletBalance = {
@@ -42,6 +95,7 @@ export type WalletStatus = {
   balances: WalletBalance[];
   pending: WalletPending[];
   notes?: WalletNotes | null;
+  genesisHash?: string | null;
 };
 
 export type WalletSyncResult = {
@@ -77,6 +131,7 @@ export type WalletDisclosureVerifyResult = {
 };
 
 export type NodeStartOptions = {
+  connectionId?: string;
   chainSpecPath?: string;
   dev?: boolean;
   tmp?: boolean;
@@ -85,7 +140,21 @@ export type NodeStartOptions = {
   p2pPort?: number;
   minerAddress?: string;
   mineThreads?: number;
+  mineOnStart?: boolean;
   seeds?: string;
+};
+
+export type NodeSummaryRequest = {
+  connectionId: string;
+  label: string;
+  isLocal: boolean;
+  httpUrl: string;
+};
+
+export type NodeMiningRequest = {
+  enabled: boolean;
+  threads?: number;
+  httpUrl?: string;
 };
 
 export type WalletSendRequest = {

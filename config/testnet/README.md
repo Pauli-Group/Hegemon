@@ -77,7 +77,6 @@ curl -s -X POST -H "Content-Type: application/json" \
 | boot1 | 9944 (RPC), 30333 (P2P), 9615 (Metrics) | Primary mining node |
 | boot2 | 9945 (RPC), 30334 (P2P), 9616 (Metrics) | Secondary mining node |
 | boot3 | 9946 (RPC), 30335 (P2P), 9617 (Metrics) | Full node (non-mining) |
-| dashboard | 80 | Web UI |
 | prometheus | 9090 | Metrics aggregation |
 | grafana | 3000 | Metrics visualization |
 

@@ -23,8 +23,8 @@ This app is a GUI wrapper over existing Rust components (`hegemon-node` and the 
 - [x] Milestone 3: Wallet integration v1 (use `wallet` CLI for init/status/sync/send; minimal parsing).
 - [x] Milestone 4: Wallet integration v2 (replace parsing with `walletd` sidecar protocol).
 - [x] Milestone 5: Wallet UX hardening (address book, consolidation UI, disclosure UI).
-- [ ] Milestone 6: Node console hardening (structured logs, filters, runbook-aligned operations, multi-node connections).
-- [ ] Milestone 7: Packaging and distribution (bundle binaries, signing, updates).
+- [x] (2026-01-09) Milestone 6: Node console hardening (structured logs, filters, runbook-aligned operations, multi-node connections).
+- [x] (2026-01-09) Milestone 7: Packaging and distribution (bundle binaries, signing, updates).
 
 
 ## Surprises & Discoveries
@@ -73,11 +73,18 @@ This app is a GUI wrapper over existing Rust components (`hegemon-node` and the 
   Rationale: Operators frequently split mining and wallet activity across machines; the app should model this flexibly without hard-coded roles.
   Date/Author: 2026-01-09 / Agent
 
+- Decision: Require explicit wallet store creation vs open when starting `walletd`.
+  Rationale: Avoid accidental store creation and align the GUI "Init" vs "Open" flows with the underlying wallet store semantics.
+  Date/Author: 2026-01-09 / Agent
+
 
 ## Outcomes & Retrospective
 
 - 2026-01-09: Landed `hegemon-app/` Electron scaffold with BRAND.md styling, node lifecycle controls, and wallet CLI integration (init/status/sync/send). Next step is to replace CLI parsing with `walletd`.
 - 2026-01-09: Added `walletd` JSON sidecar plus disclosure/address book/consolidation UX wiring in the Electron app so wallet state no longer depends on parsing CLI output.
+- 2026-01-09: Implemented multi-connection Node console (filters, debug toggle, health panels) and wired wallet sync targeting to selected connection.
+- 2026-01-09: Added packaging configuration via electron-builder with bundled `hegemon-node` and `walletd` binaries.
+- 2026-01-09: Added genesis mismatch warnings, remote RPC safety notes, and expanded node telemetry/mining panels in the desktop UI.
 
 
 ## Context and Orientation
@@ -152,11 +159,13 @@ All commands run from the repo root unless stated otherwise.
 
     make node
     cargo build -p wallet --release
+    cargo build -p walletd --release
 
    Expected artifacts:
 
     target/release/hegemon-node
     target/release/wallet
+    target/release/walletd
 
    macOS note: if you see `Library not loaded: @rpath/libclang.dylib` while building, run build steps via `make` (so `LIBCLANG_PATH`/`DYLD_LIBRARY_PATH` are set) or export those variables yourself per `Makefile`.
 

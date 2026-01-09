@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { resolve } from 'node:path';
 import type {
   WalletDisclosureCreateResult,
   WalletDisclosureVerifyResult,
@@ -9,6 +9,7 @@ import type {
   WalletStatus,
   WalletSyncResult
 } from '../src/types';
+import { resolveBinaryPath } from './binPaths';
 
 type PendingRequest = {
   resolve: (value: any) => void;
@@ -22,15 +23,26 @@ type WalletdResponse = {
   error?: string;
 };
 
+type WalletdMode = 'open' | 'create';
+
 export class WalletdClient {
   private process: ChildProcessWithoutNullStreams | null = null;
   private pending = new Map<number, PendingRequest>();
   private requestId = 0;
   private storePath: string | null = null;
   private passphrase: string | null = null;
+  private mode: WalletdMode | null = null;
 
   async status(storePath: string, passphrase: string): Promise<WalletStatus> {
-    return this.request('status.get', {}, storePath, passphrase);
+    return this.request('status.get', {}, storePath, passphrase, 'open');
+  }
+
+  async init(storePath: string, passphrase: string): Promise<WalletStatus> {
+    return this.request('status.get', {}, storePath, passphrase, 'create');
+  }
+
+  async restore(storePath: string, passphrase: string): Promise<WalletStatus> {
+    return this.request('status.get', {}, storePath, passphrase, 'open');
   }
 
   async sync(
@@ -39,7 +51,13 @@ export class WalletdClient {
     wsUrl: string,
     forceRescan: boolean
   ): Promise<WalletSyncResult> {
-    return this.request('sync.once', { ws_url: wsUrl, force_rescan: forceRescan }, storePath, passphrase);
+    return this.request(
+      'sync.once',
+      { ws_url: wsUrl, force_rescan: forceRescan },
+      storePath,
+      passphrase,
+      'open'
+    );
   }
 
   async send(request: WalletSendRequest): Promise<WalletSendResult> {
@@ -52,7 +70,8 @@ export class WalletdClient {
         auto_consolidate: request.autoConsolidate
       },
       request.storePath,
-      request.passphrase
+      request.passphrase,
+      'open'
     );
   }
 
@@ -67,7 +86,8 @@ export class WalletdClient {
       'disclosure.create',
       { ws_url: wsUrl, tx_id: txId, output },
       storePath,
-      passphrase
+      passphrase,
+      'open'
     );
   }
 
@@ -81,7 +101,8 @@ export class WalletdClient {
       'disclosure.verify',
       { ws_url: wsUrl, package: packageJson },
       storePath,
-      passphrase
+      passphrase,
+      'open'
     );
   }
 
@@ -89,10 +110,11 @@ export class WalletdClient {
     method: string,
     params: object,
     storePath: string | null,
-    passphrase: string | null
+    passphrase: string | null,
+    mode: WalletdMode
   ): Promise<any> {
     if (storePath && passphrase) {
-      await this.ensureProcess(storePath, passphrase);
+      await this.ensureProcess(storePath, passphrase, mode);
     } else if (!this.process) {
       throw new Error('walletd process not running');
     }
@@ -110,17 +132,30 @@ export class WalletdClient {
     });
   }
 
-  private async ensureProcess(storePath: string, passphrase: string): Promise<void> {
-    if (this.process && this.storePath === storePath && this.passphrase === passphrase) {
+  private async ensureProcess(storePath: string, passphrase: string, mode: WalletdMode): Promise<void> {
+    if (
+      this.process &&
+      this.storePath === storePath &&
+      this.passphrase === passphrase &&
+      this.mode === mode
+    ) {
       return;
+    }
+
+    if (mode === 'open' && !existsSync(storePath)) {
+      throw new Error('Wallet store not found.');
+    }
+    if (mode === 'create' && existsSync(storePath)) {
+      throw new Error('Wallet store already exists.');
     }
 
     await this.stop();
 
-    const walletdPath = resolve(process.cwd(), 'target/release/walletd');
-    this.process = spawn(walletdPath, ['--store', storePath]);
+    const walletdPath = resolveBinaryPath('walletd');
+    this.process = spawn(walletdPath, ['--store', storePath, '--mode', mode]);
     this.storePath = storePath;
     this.passphrase = passphrase;
+    this.mode = mode;
 
     this.process.stdin.write(`${passphrase}\n`);
 
@@ -140,6 +175,7 @@ export class WalletdClient {
       this.process = null;
       this.storePath = null;
       this.passphrase = null;
+      this.mode = null;
     });
   }
 
@@ -172,5 +208,8 @@ export class WalletdClient {
       this.process = null;
     }
     this.pending.clear();
+    this.storePath = null;
+    this.passphrase = null;
+    this.mode = null;
   }
 }
