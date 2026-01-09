@@ -20,13 +20,13 @@ use transaction_circuit::{
 use wallet::{
     api::{parse_recipients, transfer_recipients_from_specs, RecipientSpec},
     async_sync::AsyncWalletSyncEngine,
+    build_transaction,
     disclosure::{
         decode_base64, encode_base64, DisclosureChainInfo, DisclosureClaim, DisclosureConfirmation,
         DisclosurePackage, DisclosureProof,
     },
-    build_transaction,
-    precheck_nullifiers,
     notes::MemoPlaintext,
+    precheck_nullifiers,
     store::{PendingStatus, TransferRecipient, WalletMode, WalletStore},
     substrate_rpc::SubstrateRpcClient,
     ConsolidationPlan, MAX_INPUTS,
@@ -371,6 +371,7 @@ fn acquire_store_lock(store_path: &Path) -> WalletdResult<StoreLock> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(&lock_path)
         .map_err(WalletdError::internal)?;
     if let Err(err) = file.try_lock_exclusive() {
@@ -455,9 +456,7 @@ fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<Walle
     let mode = store.mode().map_err(WalletdError::internal)?;
     let balances = store.balances().map_err(WalletdError::internal)?;
     let pending_balances = store.pending_balances().map_err(WalletdError::internal)?;
-    let latest = store
-        .last_synced_height()
-        .map_err(WalletdError::internal)?;
+    let latest = store.last_synced_height().map_err(WalletdError::internal)?;
     let pending_txs = store
         .pending_transactions()
         .map_err(WalletdError::internal)?;
@@ -623,12 +622,11 @@ fn sync_once(
 
         let engine = AsyncWalletSyncEngine::new(client, store.clone())
             .with_skip_genesis_check(params.force_rescan);
-        let outcome = engine.sync_once().await.map_err(|e| {
-            WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string())
-        })?;
-        let new_height = store
-            .last_synced_height()
-            .map_err(WalletdError::internal)?;
+        let outcome = engine
+            .sync_once()
+            .await
+            .map_err(|e| WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string()))?;
+        let new_height = store.last_synced_height().map_err(WalletdError::internal)?;
         Ok(SyncResponse {
             new_height,
             commitments: outcome.commitments,
@@ -644,11 +642,7 @@ fn tx_send(
     store: Arc<WalletStore>,
     params: SendParams,
 ) -> WalletdResult<SendResponse> {
-    if store
-        .mode()
-        .map_err(WalletdError::internal)?
-        == WalletMode::WatchOnly
-    {
+    if store.mode().map_err(WalletdError::internal)? == WalletMode::WatchOnly {
         return Err(WalletdError::new(
             WalletdErrorCode::WatchOnly,
             "watch-only wallets cannot send",
@@ -667,13 +661,13 @@ fn tx_send(
                 })?,
         );
         let engine = AsyncWalletSyncEngine::new(client.clone(), store.clone());
-        engine.sync_once().await.map_err(|e| {
-            WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string())
-        })?;
+        engine
+            .sync_once()
+            .await
+            .map_err(|e| WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string()))?;
 
-        let recipients = parse_recipients(&params.recipients).map_err(|err| {
-            WalletdError::new(WalletdErrorCode::InvalidParams, err.to_string())
-        })?;
+        let recipients = parse_recipients(&params.recipients)
+            .map_err(|err| WalletdError::new(WalletdErrorCode::InvalidParams, err.to_string()))?;
         let metadata = transfer_recipients_from_specs(&params.recipients);
         let output_asset = recipients
             .first()
@@ -681,9 +675,7 @@ fn tx_send(
             .unwrap_or(transaction_circuit::constants::NATIVE_ASSET_ID);
 
         if output_asset == transaction_circuit::constants::NATIVE_ASSET_ID {
-            let mut notes = store
-                .spendable_notes(0)
-                .map_err(WalletdError::internal)?;
+            let mut notes = store.spendable_notes(0).map_err(WalletdError::internal)?;
             notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
             let total_needed = recipients.iter().map(|r| r.value).sum::<u64>() + params.fee;
             let mut selected_count = 0;
@@ -703,22 +695,26 @@ fn tx_send(
                         "note consolidation required before sending",
                     ));
                 }
-                wallet::execute_consolidation(store.clone(), &client, total_needed, params.fee, true)
-                    .await
-                    .map_err(|e| {
-                        WalletdError::new(
-                            WalletdErrorCode::TransactionFailed,
-                            format!("Consolidation failed: {e}"),
-                        )
-                    })?;
+                wallet::execute_consolidation(
+                    store.clone(),
+                    &client,
+                    total_needed,
+                    params.fee,
+                    true,
+                )
+                .await
+                .map_err(|e| {
+                    WalletdError::new(
+                        WalletdErrorCode::TransactionFailed,
+                        format!("Consolidation failed: {e}"),
+                    )
+                })?;
             }
         }
 
         precheck_nullifiers(&store, &client, &recipients, params.fee)
             .await
-            .map_err(|e| {
-                WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
-            })?;
+            .map_err(|e| WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string()))?;
 
         let built = build_transaction(&store, &recipients, params.fee)
             .map_err(|e| WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string()))?;
@@ -736,10 +732,7 @@ fn tx_send(
                     Some(hash) => hash,
                     None => {
                         let metadata = client.get_chain_metadata().await.map_err(|e| {
-                            WalletdError::new(
-                                WalletdErrorCode::RpcConnectionFailed,
-                                e.to_string(),
-                            )
+                            WalletdError::new(WalletdErrorCode::RpcConnectionFailed, e.to_string())
                         })?;
                         store
                             .set_genesis_hash(metadata.genesis_hash)
@@ -747,20 +740,22 @@ fn tx_send(
                         metadata.genesis_hash
                     }
                 };
-                store.record_outgoing_disclosures(
-                    tx_hash,
-                    genesis_hash,
-                    built.outgoing_disclosures.clone(),
-                )
-                .map_err(WalletdError::internal)?;
-                store.record_pending_submission(
-                    tx_hash,
-                    built.nullifiers.clone(),
-                    built.spent_note_indexes.clone(),
-                    metadata.clone(),
-                    params.fee,
-                )
-                .map_err(WalletdError::internal)?;
+                store
+                    .record_outgoing_disclosures(
+                        tx_hash,
+                        genesis_hash,
+                        built.outgoing_disclosures.clone(),
+                    )
+                    .map_err(WalletdError::internal)?;
+                store
+                    .record_pending_submission(
+                        tx_hash,
+                        built.nullifiers.clone(),
+                        built.spent_note_indexes.clone(),
+                        metadata.clone(),
+                        params.fee,
+                    )
+                    .map_err(WalletdError::internal)?;
                 Ok(SendResponse {
                     tx_hash: format!("0x{}", hex::encode(tx_hash)),
                     recipients: metadata,
@@ -784,11 +779,7 @@ fn disclosure_create(
     store: Arc<WalletStore>,
     params: DisclosureCreateParams,
 ) -> WalletdResult<DisclosurePackage> {
-    if store
-        .mode()
-        .map_err(WalletdError::internal)?
-        == WalletMode::WatchOnly
-    {
+    if store.mode().map_err(WalletdError::internal)? == WalletMode::WatchOnly {
         return Err(WalletdError::new(
             WalletdErrorCode::WatchOnly,
             "watch-only wallets cannot create payment proofs",
@@ -848,13 +839,12 @@ fn disclosure_create(
             rho: record.note.rho,
             r: record.note.r,
         };
-        let proof_bundle = prove_payment_disclosure(&claim, &witness)
-            .map_err(|e| {
-                WalletdError::new(
-                    WalletdErrorCode::ProofInvalid,
-                    format!("proof generation failed: {e}"),
-                )
-            })?;
+        let proof_bundle = prove_payment_disclosure(&claim, &witness).map_err(|e| {
+            WalletdError::new(
+                WalletdErrorCode::ProofInvalid,
+                format!("proof generation failed: {e}"),
+            )
+        })?;
 
         let leaf_index = store
             .find_commitment_index(record.commitment)
@@ -866,14 +856,12 @@ fn disclosure_create(
                 )
             })?;
         let tree = store.commitment_tree().map_err(WalletdError::internal)?;
-        let auth_path = tree
-            .authentication_path(leaf_index as usize)
-            .map_err(|e| {
-                WalletdError::new(
-                    WalletdErrorCode::ProofInvalid,
-                    format!("merkle path error: {e}"),
-                )
-            })?;
+        let auth_path = tree.authentication_path(leaf_index as usize).map_err(|e| {
+            WalletdError::new(
+                WalletdErrorCode::ProofInvalid,
+                format!("merkle path error: {e}"),
+            )
+        })?;
         let anchor = tree.root();
         let siblings = auth_path;
 
@@ -909,20 +897,18 @@ fn disclosure_verify(
 ) -> WalletdResult<DisclosureVerifyResponse> {
     let package = params.package;
 
-    let commitment_felt = bytes48_to_felts(&package.claim.commitment)
-        .ok_or_else(|| {
-            WalletdError::new(
-                WalletdErrorCode::InvalidParams,
-                "commitment is not a canonical field encoding",
-            )
-        })?;
-    let anchor_felt = bytes48_to_felts(&package.confirmation.anchor)
-        .ok_or_else(|| {
-            WalletdError::new(
-                WalletdErrorCode::InvalidParams,
-                "anchor is not a canonical field encoding",
-            )
-        })?;
+    let commitment_felt = bytes48_to_felts(&package.claim.commitment).ok_or_else(|| {
+        WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            "commitment is not a canonical field encoding",
+        )
+    })?;
+    let anchor_felt = bytes48_to_felts(&package.confirmation.anchor).ok_or_else(|| {
+        WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            "anchor is not a canonical field encoding",
+        )
+    })?;
     let sibling_felts = package
         .confirmation
         .siblings
@@ -960,9 +946,10 @@ fn disclosure_verify(
                     format!("Failed to connect: {e}"),
                 )
             })?;
-        let metadata = client.get_chain_metadata().await.map_err(|e| {
-            WalletdError::new(WalletdErrorCode::RpcConnectionFailed, e.to_string())
-        })?;
+        let metadata = client
+            .get_chain_metadata()
+            .await
+            .map_err(|e| WalletdError::new(WalletdErrorCode::RpcConnectionFailed, e.to_string()))?;
         if metadata.genesis_hash != package.chain.genesis_hash {
             return Err(WalletdError::new(
                 WalletdErrorCode::GenesisMismatch,
@@ -972,9 +959,7 @@ fn disclosure_verify(
         let anchor_valid = client
             .is_valid_anchor(&package.confirmation.anchor)
             .await
-            .map_err(|e| {
-                WalletdError::new(WalletdErrorCode::RpcConnectionFailed, e.to_string())
-            })?;
+            .map_err(|e| WalletdError::new(WalletdErrorCode::RpcConnectionFailed, e.to_string()))?;
         if !anchor_valid {
             return Err(WalletdError::new(
                 WalletdErrorCode::AnchorInvalid,
@@ -984,9 +969,8 @@ fn disclosure_verify(
         Ok::<_, WalletdError>(())
     })?;
 
-    let proof_bytes = decode_base64(&package.proof.bytes).map_err(|e| {
-        WalletdError::new(WalletdErrorCode::InvalidParams, e.to_string())
-    })?;
+    let proof_bytes = decode_base64(&package.proof.bytes)
+        .map_err(|e| WalletdError::new(WalletdErrorCode::InvalidParams, e.to_string()))?;
     let bundle = PaymentDisclosureProofBundle {
         claim: PaymentDisclosureClaim {
             value: package.claim.value,
@@ -998,9 +982,8 @@ fn disclosure_verify(
         air_hash: package.proof.air_hash,
     };
 
-    verify_payment_disclosure(&bundle).map_err(|e| {
-        WalletdError::new(WalletdErrorCode::ProofInvalid, e.to_string())
-    })?;
+    verify_payment_disclosure(&bundle)
+        .map_err(|e| WalletdError::new(WalletdErrorCode::ProofInvalid, e.to_string()))?;
 
     Ok(DisclosureVerifyResponse {
         verified: true,
