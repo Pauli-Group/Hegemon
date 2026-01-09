@@ -127,6 +127,7 @@ export class NodeManager extends EventEmitter {
         supplyDigest: null,
         storage: null,
         telemetry: null,
+        config: null,
         updatedAt: new Date().toISOString(),
         error: 'RPC unreachable'
       };
@@ -137,6 +138,7 @@ export class NodeManager extends EventEmitter {
     const health = await this.safeRpcCall('system_health', [], request.httpUrl);
     const storage = await this.safeRpcCall('hegemon_storageFootprint', [], request.httpUrl);
     const telemetry = await this.safeRpcCall('hegemon_telemetry', [], request.httpUrl);
+    const nodeConfig = await this.safeRpcCall('hegemon_nodeConfig', [], request.httpUrl);
     const genesisHash = await this.safeRpcCall('chain_getBlockHash', [0], request.httpUrl);
 
     return {
@@ -174,6 +176,23 @@ export class NodeManager extends EventEmitter {
             memoryBytes: Number(telemetry.memory_bytes ?? 0),
             networkRxBytes: Number(telemetry.network_rx_bytes ?? 0),
             networkTxBytes: Number(telemetry.network_tx_bytes ?? 0)
+          }
+        : null,
+      config: nodeConfig
+        ? {
+            nodeName: String(nodeConfig.nodeName ?? ''),
+            chainSpecId: String(nodeConfig.chainSpecId ?? ''),
+            chainSpecName: String(nodeConfig.chainSpecName ?? ''),
+            chainType: String(nodeConfig.chainType ?? ''),
+            basePath: String(nodeConfig.basePath ?? ''),
+            p2pListenAddr: String(nodeConfig.p2pListenAddr ?? ''),
+            rpcListenAddr: String(nodeConfig.rpcListenAddr ?? ''),
+            rpcMethods: String(nodeConfig.rpcMethods ?? ''),
+            rpcExternal: Boolean(nodeConfig.rpcExternal ?? false),
+            bootstrapNodes: Array.isArray(nodeConfig.bootstrapNodes) ? nodeConfig.bootstrapNodes : [],
+            requirePq: Boolean(nodeConfig.requirePq ?? false),
+            pqVerbose: Boolean(nodeConfig.pqVerbose ?? false),
+            maxPeers: Number(nodeConfig.maxPeers ?? 0)
           }
         : null,
       updatedAt: new Date().toISOString()

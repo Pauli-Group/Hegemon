@@ -318,6 +318,67 @@ impl WalletStore {
         })
     }
 
+    /// Apply a contiguous batch of ciphertext sync results in one store write.
+    ///
+    /// This advances the ciphertext cursor and records any decrypted notes.
+    /// `start_index` must match the current cursor, and the batch is assumed to
+    /// correspond to ciphertext indices `start_index..start_index+len`.
+    ///
+    /// Returns the number of newly-added notes (deduped by position).
+    pub fn apply_ciphertext_batch(
+        &self,
+        start_index: u64,
+        recovered: Vec<Option<RecoveredNote>>,
+    ) -> Result<usize, WalletError> {
+        if recovered.is_empty() {
+            return Ok(0);
+        }
+
+        self.with_mut(|state| {
+            if state.next_ciphertext_index != start_index {
+                return Err(WalletError::InvalidState("ciphertext index mismatch"));
+            }
+
+            let mut added = 0usize;
+            for (offset, maybe_note) in recovered.into_iter().enumerate() {
+                let index = start_index
+                    .checked_add(offset as u64)
+                    .ok_or(WalletError::InvalidState("ciphertext index overflow"))?;
+
+                if index != state.next_ciphertext_index {
+                    return Err(WalletError::InvalidState("ciphertext index mismatch"));
+                }
+
+                if let Some(note) = maybe_note {
+                    if !state.notes.iter().any(|n| n.position == index) {
+                        let nullifier = state
+                            .full_viewing_key
+                            .as_ref()
+                            .map(|fvk| fvk.compute_nullifier(&note.note.rho, index));
+                        state.notes.push(TrackedNote {
+                            note,
+                            position: index,
+                            ciphertext_index: index,
+                            nullifier,
+                            spent: false,
+                            pending_spend: false,
+                        });
+                        added = added
+                            .checked_add(1)
+                            .ok_or(WalletError::InvalidState("note count overflow"))?;
+                    }
+                }
+
+                state.next_ciphertext_index = state
+                    .next_ciphertext_index
+                    .checked_add(1)
+                    .ok_or(WalletError::InvalidState("ciphertext index overflow"))?;
+            }
+
+            Ok(added)
+        })
+    }
+
     pub fn record_recovered_note(
         &self,
         note: RecoveredNote,

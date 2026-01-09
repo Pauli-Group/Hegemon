@@ -41,6 +41,22 @@ export type NodeTelemetry = {
   networkTxBytes: number;
 };
 
+export type NodeConfigSnapshot = {
+  nodeName: string;
+  chainSpecId: string;
+  chainSpecName: string;
+  chainType: string;
+  basePath: string;
+  p2pListenAddr: string;
+  rpcListenAddr: string;
+  rpcMethods: string;
+  rpcExternal: boolean;
+  bootstrapNodes: string[];
+  requirePq: boolean;
+  pqVerbose: boolean;
+  maxPeers: number;
+};
+
 export type NodeSummary = {
   connectionId: string;
   label: string;
@@ -60,6 +76,7 @@ export type NodeSummary = {
   supplyDigest: string | null;
   storage: NodeStorageFootprint | null;
   telemetry: NodeTelemetry | null;
+  config: NodeConfigSnapshot | null;
   updatedAt: string;
   error?: string | null;
 };

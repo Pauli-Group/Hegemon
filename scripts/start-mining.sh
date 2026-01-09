@@ -103,11 +103,21 @@ NODE_ARGS=(
     --base-path "$NODE_PATH"
     --chain config/dev-chainspec.json
     --rpc-port 9944
-    --rpc-cors all
-    --unsafe-rpc-external
+    --rpc-methods "${HEGEMON_RPC_METHODS:-safe}"
     --listen-addr /ip4/0.0.0.0/tcp/30333
     --name "HegemonMiner"
 )
+
+# RPC hardening: default is localhost-only, safe methods.
+# To explicitly expose RPC beyond localhost (not recommended), set:
+#   HEGEMON_RPC_EXTERNAL=1 HEGEMON_RPC_CORS=<origin> ./scripts/start-mining.sh
+if [[ "${HEGEMON_RPC_EXTERNAL:-0}" == "1" || "${HEGEMON_RPC_EXTERNAL:-}" == "true" ]]; then
+    echo "WARNING: RPC is exposed beyond localhost. Use firewalls/VPN and keep --rpc-methods safe." >&2
+    NODE_ARGS+=(--rpc-external)
+fi
+if [[ -n "${HEGEMON_RPC_CORS:-}" ]]; then
+    NODE_ARGS+=(--rpc-cors "${HEGEMON_RPC_CORS}")
+fi
 
 # Handle bootnode connection
 # BOOTNODE can be either:

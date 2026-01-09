@@ -35,5 +35,5 @@ HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
   --base-path "$HOME/.hegemon-node" \
   --chain config/dev-chainspec.json \
   --rpc-port 9944 \
-  --rpc-cors all \
+  --rpc-methods safe \
   --name "MyNode"

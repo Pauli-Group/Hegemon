@@ -37,7 +37,7 @@ use tokio::sync::RwLock;
 
 use crate::error::WalletError;
 use crate::store::WalletStore;
-use crate::substrate_rpc::{CiphertextEntry, SubstrateRpcClient};
+use crate::substrate_rpc::SubstrateRpcClient;
 use crate::sync::SyncOutcome;
 
 /// Async wallet synchronization engine
@@ -146,10 +146,60 @@ impl AsyncWalletSyncEngine {
             if entries.is_empty() {
                 break;
             }
+
+            let start_index = ciphertext_cursor;
+            let mut expected = start_index;
+            let mut recovered = Vec::with_capacity(entries.len());
+            let ivk = self.store.incoming_key()?;
+
             for entry in entries {
+                if entry.index != expected {
+                    return Err(WalletError::InvalidState("ciphertext index mismatch"));
+                }
                 outcome.ciphertexts += 1;
-                self.process_ciphertext(entry, &mut outcome)?;
+
+                // Debug: log ciphertext details vs expected
+                if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
+                    let material = ivk.address_material(entry.ciphertext.diversifier_index)?;
+                    eprintln!(
+                        "[DEBUG] Ciphertext #{}: version={} div_idx={}",
+                        entry.index, entry.ciphertext.version, entry.ciphertext.diversifier_index
+                    );
+                    eprintln!("  hint_tag: {}", hex::encode(&entry.ciphertext.hint_tag));
+                    eprintln!("  expected addr_tag: {}", hex::encode(&material.addr_tag));
+                    eprintln!("  expected version: {}", material.version());
+                    eprintln!(
+                        "  version match: {}",
+                        entry.ciphertext.version == material.version()
+                    );
+                    eprintln!(
+                        "  div_idx match: {}",
+                        entry.ciphertext.diversifier_index == material.diversifier_index
+                    );
+                    eprintln!(
+                        "  tag match: {}",
+                        entry.ciphertext.hint_tag == material.addr_tag
+                    );
+                }
+
+                recovered.push(match ivk.decrypt_note(&entry.ciphertext) {
+                    Ok(note) => Some(note),
+                    Err(WalletError::NoteMismatch(reason)) => {
+                        // Note not for this wallet, skip
+                        if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
+                            eprintln!("  -> NoteMismatch: {}", reason);
+                        }
+                        None
+                    }
+                    Err(err) => return Err(err),
+                });
+
+                expected = expected
+                    .checked_add(1)
+                    .ok_or(WalletError::InvalidState("ciphertext index overflow"))?;
             }
+
+            outcome.recovered += self.store.apply_ciphertext_batch(start_index, recovered)?;
             ciphertext_cursor = self.store.next_ciphertext_index()?;
         }
 
@@ -164,55 +214,6 @@ impl AsyncWalletSyncEngine {
         self.store.set_last_synced_height(latest.height)?;
 
         Ok(outcome)
-    }
-
-    /// Process a single ciphertext entry
-    fn process_ciphertext(
-        &self,
-        entry: CiphertextEntry,
-        outcome: &mut SyncOutcome,
-    ) -> Result<(), WalletError> {
-        let CiphertextEntry { index, ciphertext } = entry;
-        let ivk = self.store.incoming_key()?;
-
-        // Debug: log ciphertext details vs expected
-        if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
-            let material = ivk.address_material(ciphertext.diversifier_index)?;
-            eprintln!(
-                "[DEBUG] Ciphertext #{}: version={} div_idx={}",
-                index, ciphertext.version, ciphertext.diversifier_index
-            );
-            eprintln!("  hint_tag: {}", hex::encode(&ciphertext.hint_tag));
-            eprintln!("  expected addr_tag: {}", hex::encode(&material.addr_tag));
-            eprintln!("  expected version: {}", material.version());
-            eprintln!(
-                "  version match: {}",
-                ciphertext.version == material.version()
-            );
-            eprintln!(
-                "  div_idx match: {}",
-                ciphertext.diversifier_index == material.diversifier_index
-            );
-            eprintln!("  tag match: {}", ciphertext.hint_tag == material.addr_tag);
-        }
-
-        match ivk.decrypt_note(&ciphertext) {
-            Ok(recovered) => {
-                if self.store.record_recovered_note(recovered, index, index)? {
-                    outcome.recovered += 1;
-                }
-            }
-            Err(WalletError::NoteMismatch(reason)) => {
-                // Note not for this wallet, skip
-                if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
-                    eprintln!("  -> NoteMismatch: {}", reason);
-                }
-            }
-            Err(err) => return Err(err),
-        }
-
-        self.store.register_ciphertext_index(index)?;
-        Ok(())
     }
 
     /// Run continuous synchronization with block subscriptions
