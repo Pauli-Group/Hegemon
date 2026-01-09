@@ -227,10 +227,23 @@ impl StarkProver {
             ));
         }
 
+        let nullifiers = proof
+            .nullifiers
+            .iter()
+            .copied()
+            .filter(|nf| *nf != [0u8; 48])
+            .collect();
+        let commitments = proof
+            .commitments
+            .iter()
+            .copied()
+            .filter(|cm| *cm != [0u8; 48])
+            .collect();
+
         Ok(ProofResult {
             proof_bytes: proof.stark_proof.clone(),
-            nullifiers: proof.nullifiers.clone(),
-            commitments: proof.commitments.clone(),
+            nullifiers,
+            commitments,
             anchor: proof.public_inputs.merkle_root,
             proving_time,
             fee: proof.public_inputs.native_fee,
