@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-midnight text-surface;
+}
+
+input, textarea, select {
+  @apply bg-surfaceMuted/10 border border-surfaceMuted/20 text-surface rounded-lg px-3 py-2;
+}
+
+button {
+  @apply rounded-lg px-4 py-2 font-medium transition;
+}
+
+button.primary {
+  @apply bg-ionosphere text-midnight hover:bg-ionosphere/80;
+}
+
+button.secondary {
+  @apply bg-surfaceMuted/10 text-surface hover:bg-surfaceMuted/20;
+}
+
+button.danger {
+  @apply bg-guard text-surface hover:bg-guard/80;
+}
+
+.card {
+  @apply bg-surfaceMuted/10 border border-surfaceMuted/15 rounded-2xl p-6 shadow-panel;
+}
+
+.label {
+  @apply text-xs uppercase tracking-[0.18em] text-surfaceMuted;
+}
+
+.mono {
+  @apply font-mono text-sm;
+}

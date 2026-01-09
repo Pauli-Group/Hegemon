@@ -18,11 +18,11 @@ This app is a GUI wrapper over existing Rust components (`hegemon-node` and the 
 
 - [x] (2026-01-09) Rewrite ExecPlan to align with current `hegemon-node` + `wallet` code and runbooks.
 - [ ] Milestone 0: Validate node + wallet CLI flows end-to-end.
-- [ ] Milestone 1: Scaffold `hegemon-app/` (Electron + Vite + React + Tailwind + BRAND.md tokens).
-- [ ] Milestone 2: Node manager (spawn/stop `hegemon-node`, RPC health, mining controls via RPC).
-- [ ] Milestone 3: Wallet integration v1 (use `wallet` CLI for init/status/sync/send; minimal parsing).
-- [ ] Milestone 4: Wallet integration v2 (replace parsing with `walletd` sidecar protocol).
-- [ ] Milestone 5: Wallet UX hardening (address book, consolidation UI, disclosure UI).
+- [x] Milestone 1: Scaffold `hegemon-app/` (Electron + Vite + React + Tailwind + BRAND.md tokens).
+- [x] Milestone 2: Node manager (spawn/stop `hegemon-node`, RPC health, mining controls via RPC).
+- [x] Milestone 3: Wallet integration v1 (use `wallet` CLI for init/status/sync/send; minimal parsing).
+- [x] Milestone 4: Wallet integration v2 (replace parsing with `walletd` sidecar protocol).
+- [x] Milestone 5: Wallet UX hardening (address book, consolidation UI, disclosure UI).
 - [ ] Milestone 6: Explorer + mining dashboard tab (port key views from `dashboard-ui/`).
 - [ ] Milestone 7: Packaging and distribution (bundle binaries, signing, updates).
 
@@ -68,7 +68,8 @@ This app is a GUI wrapper over existing Rust components (`hegemon-node` and the 
 
 ## Outcomes & Retrospective
 
-(Keep updated as milestones land.)
+- 2026-01-09: Landed `hegemon-app/` Electron scaffold with BRAND.md styling, node lifecycle controls, and wallet CLI integration (init/status/sync/send). Next step is to replace CLI parsing with `walletd`.
+- 2026-01-09: Added `walletd` JSON sidecar plus disclosure/address book/consolidation UX wiring in the Electron app so wallet state no longer depends on parsing CLI output.
 
 
 ## Context and Orientation
