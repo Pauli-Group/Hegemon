@@ -8,7 +8,10 @@ use transaction_circuit::constants::{
     CIRCUIT_MERKLE_DEPTH, POSEIDON2_CAPACITY, POSEIDON2_RATE, POSEIDON2_ROUNDS_F,
     POSEIDON2_SBOX_DEGREE, POSEIDON2_WIDTH,
 };
-use transaction_circuit::p3_config::{DIGEST_ELEMS, FRI_LOG_BLOWUP, FRI_NUM_QUERIES};
+use transaction_circuit::p3_config::{
+    DIGEST_ELEMS, FRI_LOG_BLOWUP, FRI_LOG_BLOWUP_FAST, FRI_LOG_BLOWUP_PROD, FRI_NUM_QUERIES,
+    FRI_NUM_QUERIES_FAST, FRI_NUM_QUERIES_PROD,
+};
 
 /// The Goldilocks prime: p = 2^64 - 2^32 + 1.
 const GOLDILOCKS_PRIME: u64 = 0xFFFF_FFFF_0000_0001;
@@ -36,6 +39,8 @@ fn test_fri_security_parameters_default() {
     let blowup_factor = 1usize << FRI_LOG_BLOWUP;
     let soundness_bits = FRI_LOG_BLOWUP * FRI_NUM_QUERIES;
 
+    let production_soundness_bits = FRI_LOG_BLOWUP_PROD * FRI_NUM_QUERIES_PROD;
+
     println!(
         "FRI params: log_blowup={}, num_queries={}, estimated_soundness_bits={}",
         FRI_LOG_BLOWUP, FRI_NUM_QUERIES, soundness_bits
@@ -46,6 +51,23 @@ fn test_fri_security_parameters_default() {
         "FRI blowup factor {} < minimum 8",
         blowup_factor
     );
+    assert!(
+        production_soundness_bits >= MIN_FRI_SOUNDNESS_BITS,
+        "Production FRI soundness {} < minimum {} bits",
+        production_soundness_bits,
+        MIN_FRI_SOUNDNESS_BITS
+    );
+
+    let is_fast_config =
+        FRI_LOG_BLOWUP == FRI_LOG_BLOWUP_FAST && FRI_NUM_QUERIES == FRI_NUM_QUERIES_FAST;
+    if is_fast_config {
+        println!(
+            "FRI config is in debug-fast mode; production config is log_blowup={}, num_queries={}, estimated_soundness_bits={}",
+            FRI_LOG_BLOWUP_PROD, FRI_NUM_QUERIES_PROD, production_soundness_bits
+        );
+        return;
+    }
+
     assert!(
         soundness_bits >= MIN_FRI_SOUNDNESS_BITS,
         "FRI soundness {} < minimum {} bits",
