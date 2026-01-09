@@ -1,118 +1,120 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useApi } from "@/providers/ApiProvider";
 import { StatCard } from "@/components/StatCard";
 import { BlockList } from "@/components/BlockList";
 import { EventFeed } from "@/components/EventFeed";
-import { Blocks, Clock, Coins, Hash } from "lucide-react";
+import { Blocks, Clock, Shield, Zap } from "lucide-react";
 import type { BlockInfo, ShieldedEvent } from "@/lib/types";
 
 export default function ExplorerPage() {
   const { api, isConnected, isConnecting, error } = useApi();
   const [lastBlock, setLastBlock] = useState<number>(0);
   const [avgBlockTime, setAvgBlockTime] = useState<number>(0);
-  const [totalIssuance, setTotalIssuance] = useState<string>("0");
-  const [sessionIndex, setSessionIndex] = useState<number>(0);
+  const [poolBalance, setPoolBalance] = useState<string>("0");
+  const [commitmentCount, setCommitmentCount] = useState<number>(0);
   const [blocks, setBlocks] = useState<BlockInfo[]>([]);
   const [events, setEvents] = useState<ShieldedEvent[]>([]);
+  
+  // Track block times for averaging
+  const blockTimesRef = useRef<number[]>([]);
+  const lastBlockTimeRef = useRef<number>(Date.now());
+  const lastBlockNumRef = useRef<number>(0);
 
   useEffect(() => {
     if (!api || !isConnected) return;
 
-    let unsubBlocks: (() => void) | null = null;
-    let unsubEvents: (() => void) | null = null;
-    const blockTimes: number[] = [];
-    let lastBlockTime = Date.now();
+    let pollInterval: NodeJS.Timeout | null = null;
 
-    async function subscribe() {
+    async function pollChainData() {
       if (!api) return;
 
-      // Subscribe to new block headers
-      unsubBlocks = await api.derive.chain.subscribeNewHeads(async (header) => {
+      try {
+        // Get current block header
+        const header = await api.rpc.chain.getHeader();
         const blockNum = header.number.toNumber();
-        setLastBlock(blockNum);
-
-        // Calculate average block time
-        const now = Date.now();
-        const timeDiff = (now - lastBlockTime) / 1000;
-        lastBlockTime = now;
         
-        if (timeDiff > 0 && timeDiff < 120) {
-          blockTimes.push(timeDiff);
-          if (blockTimes.length > 10) blockTimes.shift();
-          const avg = blockTimes.reduce((a, b) => a + b, 0) / blockTimes.length;
-          setAvgBlockTime(Math.round(avg));
-        }
+        // Only update if block changed
+        if (blockNum !== lastBlockNumRef.current) {
+          const now = Date.now();
+          
+          // Calculate block time
+          if (lastBlockNumRef.current > 0) {
+            const timeDiff = (now - lastBlockTimeRef.current) / 1000;
+            if (timeDiff > 0 && timeDiff < 120) {
+              blockTimesRef.current.push(timeDiff);
+              if (blockTimesRef.current.length > 10) blockTimesRef.current.shift();
+              const avg = blockTimesRef.current.reduce((a, b) => a + b, 0) / blockTimesRef.current.length;
+              setAvgBlockTime(Math.round(avg));
+            }
+          }
+          
+          lastBlockTimeRef.current = now;
+          lastBlockNumRef.current = blockNum;
+          setLastBlock(blockNum);
 
-        // Add block to list
-        setBlocks((prev) => {
+          // Add block to list
           const newBlock: BlockInfo = {
             number: blockNum,
             hash: header.hash.toHex(),
             parentHash: header.parentHash.toHex(),
-            timestamp: Date.now(),
+            timestamp: now,
             extrinsicCount: 0,
           };
-          const updated = [newBlock, ...prev].slice(0, 20);
-          return updated;
-        });
-      });
+          setBlocks((prev) => [newBlock, ...prev].slice(0, 20));
 
-      // Subscribe to events
-      const eventUnsub = await api.query.system.events((eventRecords: unknown) => {
-        const shieldedEvents: ShieldedEvent[] = [];
-        const records = eventRecords as { event: { section: string; method: string; data: { toJSON: () => unknown }[] } }[];
-        
-        records.forEach((record, idx) => {
-          const { event } = record;
-          if (event.section === "shieldedPool") {
-            shieldedEvents.push({
-              block: lastBlock,
-              eventIndex: idx,
-              method: event.method,
-              data: event.data.map((d) => d.toJSON()) as unknown as Record<string, unknown>,
+          // Fetch events for this block
+          try {
+            const blockHash = await api.rpc.chain.getBlockHash(blockNum);
+            const apiAt = await api.at(blockHash);
+            const eventRecords = await apiAt.query.system.events();
+            const records = eventRecords as unknown as { event: { section: string; method: string; data: { toJSON: () => unknown }[] } }[];
+            
+            const shieldedEvents: ShieldedEvent[] = [];
+            records.forEach((record, idx) => {
+              const { event } = record;
+              if (event.section === "shieldedPool") {
+                shieldedEvents.push({
+                  block: blockNum,
+                  eventIndex: idx,
+                  method: event.method,
+                  data: event.data.map((d) => d.toJSON()) as unknown as Record<string, unknown>,
+                });
+              }
             });
+
+            if (shieldedEvents.length > 0) {
+              setEvents((prev) => [...shieldedEvents, ...prev].slice(0, 50));
+            }
+          } catch {
+            // Events fetch may fail for older blocks
           }
-        });
-
-        if (shieldedEvents.length > 0) {
-          setEvents((prev) => [...shieldedEvents, ...prev].slice(0, 50));
         }
-      });
-      unsubEvents = eventUnsub as unknown as () => void;
 
-      // Get session index
-      try {
-        const session = await api.query.session?.currentIndex?.() as { toNumber?: () => number } | undefined;
-        if (session?.toNumber) {
-          setSessionIndex(session.toNumber());
-        }
-      } catch {
-        // Session pallet may not exist
+        // Get shielded pool stats
+        const poolBal = await api.query.shieldedPool.poolBalance();
+        const formatted = (BigInt(poolBal.toString()) / BigInt(10 ** 12)).toLocaleString();
+        setPoolBalance(formatted);
+
+        const commitIdx = await api.query.shieldedPool.commitmentIndex();
+        setCommitmentCount((commitIdx as unknown as { toNumber: () => number }).toNumber());
+
+      } catch (err) {
+        console.error("Poll error:", err);
       }
     }
 
-    subscribe();
+    // Initial fetch
+    pollChainData();
 
-    // Poll total issuance
-    const issuanceInterval = setInterval(async () => {
-      if (!api) return;
-      try {
-        const issuance = await api.query.balances.totalIssuance();
-        const formatted = (BigInt(issuance.toString()) / BigInt(10 ** 12)).toString();
-        setTotalIssuance(formatted);
-      } catch {
-        // Ignore errors
-      }
-    }, 5000);
+    // Poll every 2 seconds (faster than block time to catch new blocks quickly)
+    pollInterval = setInterval(pollChainData, 2000);
 
     return () => {
-      if (unsubBlocks) unsubBlocks();
-      if (unsubEvents) unsubEvents();
-      clearInterval(issuanceInterval);
+      if (pollInterval) clearInterval(pollInterval);
     };
-  }, [api, isConnected, lastBlock]);
+  }, [api, isConnected]);
 
   if (isConnecting) {
     return (
@@ -154,14 +156,14 @@ export default function ExplorerPage() {
           icon={Clock}
         />
         <StatCard
-          label="Total Issuance"
-          value={`${totalIssuance} HGM`}
-          icon={Coins}
+          label="Pool Balance"
+          value={`${poolBalance} HGM`}
+          icon={Shield}
         />
         <StatCard
-          label="Session"
-          value={`#${sessionIndex}`}
-          icon={Hash}
+          label="Commitments"
+          value={commitmentCount.toLocaleString()}
+          icon={Zap}
         />
       </div>
 
