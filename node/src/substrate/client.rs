@@ -643,7 +643,6 @@ impl ProductionChainStateProvider {
     ///         extrinsics_root: result.extrinsics_root,
     ///         failed_count: result.failed,
     ///         storage_changes: None,
-    ///         recursive_proof: None,
     ///         commitment_proof: None,
     ///     })
     /// });

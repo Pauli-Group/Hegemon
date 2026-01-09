@@ -1,6 +1,4 @@
 use block_circuit::CommitmentBlockProof;
-#[cfg(feature = "legacy-recursion")]
-use block_circuit::RecursiveBlockProof;
 use crypto::hashes::{blake3_384, sha256};
 use protocol_versioning::{VersionBinding, VersionMatrix};
 use sha2::{Digest, Sha384};
@@ -162,8 +160,6 @@ pub struct Block<BH> {
     pub header: BH,
     pub transactions: Vec<Transaction>,
     pub coinbase: Option<CoinbaseData>,
-    #[cfg(feature = "legacy-recursion")]
-    pub recursive_proof: Option<RecursiveBlockProof>,
     pub commitment_proof: Option<CommitmentBlockProof>,
     pub transaction_proofs: Option<Vec<TransactionProof>>,
 }
@@ -174,8 +170,6 @@ impl<BH> Block<BH> {
             header,
             transactions: self.transactions,
             coinbase: self.coinbase,
-            #[cfg(feature = "legacy-recursion")]
-            recursive_proof: self.recursive_proof,
             commitment_proof: self.commitment_proof,
             transaction_proofs: self.transaction_proofs,
         }

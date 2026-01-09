@@ -178,8 +178,6 @@ pub fn assemble_bft_block(
             header,
             transactions,
             coinbase: None,
-            #[cfg(feature = "legacy-recursion")]
-            recursive_proof: None,
             commitment_proof: None,
             transaction_proofs: None,
         },
@@ -251,8 +249,6 @@ pub fn assemble_pow_block(
             header,
             transactions,
             coinbase: Some(coinbase),
-            #[cfg(feature = "legacy-recursion")]
-            recursive_proof: None,
             commitment_proof: None,
             transaction_proofs: None,
         },
