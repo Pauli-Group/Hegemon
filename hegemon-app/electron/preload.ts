@@ -1,12 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { NodeStartOptions, WalletSendRequest } from '../src/types';
+import type { NodeMiningRequest, NodeStartOptions, NodeSummaryRequest, WalletSendRequest } from '../src/types';
 
 contextBridge.exposeInMainWorld('hegemon', {
   node: {
     start: (options: NodeStartOptions) => ipcRenderer.invoke('node:start', options),
     stop: () => ipcRenderer.invoke('node:stop'),
-    summary: () => ipcRenderer.invoke('node:summary'),
-    setMining: (enabled: boolean, threads?: number) => ipcRenderer.invoke('node:setMining', enabled, threads),
+    summary: (request: NodeSummaryRequest) => ipcRenderer.invoke('node:summary', request),
+    setMining: (request: NodeMiningRequest) => ipcRenderer.invoke('node:setMining', request),
     logs: () => ipcRenderer.invoke('node:logs')
   },
   wallet: {

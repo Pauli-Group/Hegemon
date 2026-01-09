@@ -889,7 +889,7 @@ All jobs operate on Ubuntu runners with Rust stable, Go 1.21, and clang-format i
 Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) whenever you need a reproducible demo:
 
 1. Launch the Substrate-based `hegemon-node` binary with `HEGEMON_MINE=1` and `--dev` for fast block times. The node exposes JSON-RPC on port 9944 and P2P on port 30333 by default. Run `make node` to build.
-2. Connect the dashboard UI to the node RPC endpoint to view live telemetry.
+2. Connect the desktop app or Polkadot.js Apps to the node RPC endpoint to view live telemetry.
 3. For multi-node setups, start additional nodes with `--bootnodes /ip4/127.0.0.1/tcp/30333` pointing to the first node.
 
 ### Security assurance workflow

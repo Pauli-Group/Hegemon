@@ -266,18 +266,13 @@ This ensures both nodes can reconnect if either restarts.
 
 ## Sending Transactions
 
-### Option A: Using the Dashboard
+### Option A: Using the Desktop App
 
-The embedded dashboard is served on the RPC port. Open in your browser:
+Use the Hegemon desktop app (`hegemon-app/`) from your local machine:
 
-```
-http://127.0.0.1:9944
-```
-
-Use the wallet tab to:
-1. Generate or import a wallet
-2. View your shielded balance (from mining rewards)
-3. Send funds to your friend's address
+1. Add a remote connection to the node's RPC endpoint (for example `ws://<NODE_IP>:9944`).
+2. Create or open a wallet store.
+3. Sync the wallet and send funds to your friend's address.
 
 ### Option B: Using the Wallet CLI
 

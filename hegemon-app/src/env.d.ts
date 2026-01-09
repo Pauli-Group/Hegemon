@@ -1,6 +1,8 @@
 import type {
+  NodeMiningRequest,
   NodeStartOptions,
   NodeSummary,
+  NodeSummaryRequest,
   WalletDisclosureCreateResult,
   WalletDisclosureVerifyResult,
   WalletSendRequest,
@@ -13,8 +15,8 @@ export type HegemonApi = {
   node: {
     start: (options: NodeStartOptions) => Promise<void>;
     stop: () => Promise<void>;
-    summary: () => Promise<NodeSummary>;
-    setMining: (enabled: boolean, threads?: number) => Promise<void>;
+    summary: (request: NodeSummaryRequest) => Promise<NodeSummary>;
+    setMining: (request: NodeMiningRequest) => Promise<void>;
     logs: () => Promise<string[]>;
   };
   wallet: {

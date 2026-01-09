@@ -172,7 +172,7 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 | `docs/` | Contributor docs (`CONTRIBUTING.md`), threat model, and API references that stay in sync with `DESIGN.md`/`METHODS.md`. |
 | `governance/` | Governance documentation and versioning policies. |
-| `hegemon-app/` | Electron desktop app for node + wallet control and explorer views. |
+| `hegemon-app/` | Electron desktop app for node + wallet control. |
 | network/ | P2P networking stack and connectivity logic. |
 | node/ | Substrate-based node binary (`hegemon-node`) and custom RPC endpoints. |
 | protocol/ | Protocol definitions, transaction formats, and versioning logic. |
