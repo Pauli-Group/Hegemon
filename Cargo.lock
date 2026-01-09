@@ -12023,6 +12023,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "walletd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "disclosure-circuit",
+ "hex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "transaction-circuit",
+ "wallet",
+]
+
+[[package]]
 name = "want"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
