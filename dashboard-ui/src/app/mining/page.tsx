@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useApi } from "@/providers/ApiProvider";
 import { StatCard } from "@/components/StatCard";
 import { Pickaxe, Gauge, Clock, Coins, TrendingUp } from "lucide-react";
@@ -16,18 +16,41 @@ export default function MiningPage() {
   const [difficultyData, setDifficultyData] = useState<DifficultyData | null>(null);
   const [blockTimes, setBlockTimes] = useState<number[]>([]);
   const [avgBlockTime, setAvgBlockTime] = useState<number>(0);
+  
+  const lastBlockTimeRef = useRef<number>(Date.now());
+  const lastBlockNumRef = useRef<number>(0);
 
   useEffect(() => {
     if (!api || !isConnected) return;
 
-    let unsubBlocks: (() => void) | null = null;
-    let lastBlockTime = Date.now();
-
-    async function fetchDifficulty() {
+    async function pollMiningData() {
       if (!api) return;
       
       try {
-        // Try to get difficulty data
+        // Get current block for timing
+        const header = await api.rpc.chain.getHeader();
+        const blockNum = header.number.toNumber();
+        
+        // Track block times
+        if (blockNum !== lastBlockNumRef.current && lastBlockNumRef.current > 0) {
+          const now = Date.now();
+          const timeDiff = (now - lastBlockTimeRef.current) / 1000;
+          lastBlockTimeRef.current = now;
+          lastBlockNumRef.current = blockNum;
+
+          if (timeDiff > 0 && timeDiff < 120) {
+            setBlockTimes((prev) => {
+              const updated = [...prev, timeDiff].slice(-20);
+              const avg = updated.reduce((a, b) => a + b, 0) / updated.length;
+              setAvgBlockTime(Math.round(avg * 10) / 10);
+              return updated;
+            });
+          }
+        } else if (lastBlockNumRef.current === 0) {
+          lastBlockNumRef.current = blockNum;
+        }
+        
+        // Get difficulty data
         if (api.query.difficulty) {
           const difficulty = await api.query.difficulty.difficulty();
           const difficultyBits = await api.query.difficulty.difficultyBits?.() as { toNumber?: () => number } | undefined;
@@ -40,38 +63,17 @@ export default function MiningPage() {
           });
         }
       } catch (err) {
-        console.error("Failed to fetch difficulty:", err);
+        console.error("Failed to fetch mining data:", err);
       }
     }
 
-    async function subscribe() {
-      if (!api) return;
+    // Initial fetch
+    pollMiningData();
 
-      // Subscribe to blocks for timing
-      unsubBlocks = await api.derive.chain.subscribeNewHeads(() => {
-        const now = Date.now();
-        const timeDiff = (now - lastBlockTime) / 1000;
-        lastBlockTime = now;
-
-        if (timeDiff > 0 && timeDiff < 120) {
-          setBlockTimes((prev) => {
-            const updated = [...prev, timeDiff].slice(-20);
-            const avg = updated.reduce((a, b) => a + b, 0) / updated.length;
-            setAvgBlockTime(Math.round(avg * 10) / 10);
-            return updated;
-          });
-        }
-      });
-    }
-
-    fetchDifficulty();
-    subscribe();
-
-    // Refresh difficulty every 30 seconds
-    const interval = setInterval(fetchDifficulty, 30000);
+    // Poll every 2 seconds
+    const interval = setInterval(pollMiningData, 2000);
 
     return () => {
-      if (unsubBlocks) unsubBlocks();
       clearInterval(interval);
     };
   }, [api, isConnected]);

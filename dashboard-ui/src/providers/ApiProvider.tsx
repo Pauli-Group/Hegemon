@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { ApiPromise, WsProvider } from "@polkadot/api";
-import { typesBundle } from "@/lib/types";
+import { cryptoWaitReady } from "@polkadot/util-crypto";
 
 interface ApiContextValue {
   api: ApiPromise | null;
@@ -40,24 +40,30 @@ export function ApiProvider({
 
   useEffect(() => {
     let mounted = true;
-    let apiInstance: ApiPromise | null = null;
 
     async function connect() {
       try {
         setIsConnecting(true);
         setError(null);
+        
+        console.log("[ApiProvider] Initializing crypto...");
+        await cryptoWaitReady();
+        console.log("[ApiProvider] Crypto ready, connecting to", endpoint);
 
         const provider = new WsProvider(endpoint);
-        apiInstance = await ApiPromise.create({ 
-          provider, 
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          typesBundle: typesBundle as any
+        
+        // Create API - this waits for connection and metadata
+        const apiInstance = await ApiPromise.create({ 
+          provider,
+          noInitWarn: true,
         });
 
         if (!mounted) {
           await apiInstance.disconnect();
           return;
         }
+        
+        console.log("[ApiProvider] API ready, chain:", apiInstance.runtimeChain.toString());
 
         setApi(apiInstance);
         setIsConnected(true);
@@ -79,6 +85,7 @@ export function ApiProvider({
         });
 
       } catch (err) {
+        console.error("[ApiProvider] Connection error:", err);
         if (mounted) {
           setError(err instanceof Error ? err.message : "Connection failed");
           setIsConnecting(false);
@@ -90,11 +97,18 @@ export function ApiProvider({
 
     return () => {
       mounted = false;
-      if (apiInstance) {
-        apiInstance.disconnect();
-      }
+      // Cleanup will happen via api state - component unmounts
     };
   }, [endpoint]);
+
+  // Cleanup api on unmount
+  useEffect(() => {
+    return () => {
+      if (api) {
+        api.disconnect();
+      }
+    };
+  }, [api]);
 
   return (
     <ApiContext.Provider value={{ api, isConnected, isConnecting, error, endpoint }}>
