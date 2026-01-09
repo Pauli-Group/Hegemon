@@ -934,7 +934,7 @@ impl BatchVerifier for StarkBatchVerifier {
                 circuit_version: transaction_core::CIRCUIT_VERSION,
             };
 
-            return match verify_batch_proof_bytes(&proof.data, &batch_inputs) {
+            match verify_batch_proof_bytes(&proof.data, &batch_inputs) {
                 Ok(()) => BatchVerificationResult::Valid,
                 Err(err) => match err {
                     BatchCircuitError::InvalidProofFormat => {
@@ -956,7 +956,7 @@ impl BatchVerifier for StarkBatchVerifier {
                         BatchVerificationResult::VerificationFailed
                     }
                 },
-            };
+            }
         }
 
         #[cfg(not(feature = "batch-proofs"))]
