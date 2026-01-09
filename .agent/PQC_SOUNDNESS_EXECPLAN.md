@@ -286,6 +286,8 @@ Minimums are explicit and non-negotiable for a 128-bit post-quantum target. The 
 
 Verification should be mechanical and recorded as evidence. For every AIR, compute log_num_quotient_chunks via the existing `get_log_num_quotient_chunks` tests (for example, `TransactionAirP3 log_num_quotient_chunks`) and assert it is <= the configured FRI_LOG_BLOWUP used by that circuit. For the sponge and commitments, verify the relevant constants and output sizes in `circuits/*/p3_air.rs`, `circuits/*/hashing.rs`, and the proof encoding types, and confirm proofs still verify after widening the digest. For FRI soundness, record the exact `log_blowup`, `num_queries`, and `proof_of_work_bits` used in `circuits/transaction/src/p3_config.rs` and the analogous configs for other circuits, then compute the engineering estimate `security_bits ≈ log_blowup * num_queries + pow_bits`.
 
+Concrete evidence command (transaction): `cargo run -p circuits-bench --release -- --iterations 1 --json` prints the measured transaction proof bytes alongside `tx_log_num_quotient_chunks`, `tx_log_blowup_used`, and `fri_conjectured_soundness_bits` (matching `p3_fri::FriParameters::conjectured_soundness_bits`).
+
 Formal soundness note: unless a dedicated PQ analysis is completed and cited, all soundness claims are engineering-level estimates. The checklist above is the minimum target, not a proof; a formal analysis must be added before claiming 128-bit PQ soundness in external materials.
 
 For the canonical engineering soundness accounting and reference links, see `SECURITY.md` (“Soundness Accounting”).

@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
 use block_circuit::{verify_block_commitment, CommitmentBlockProver};
 use clap::Parser;
+use p3_goldilocks::Goldilocks;
+use p3_uni_stark::get_log_num_quotient_chunks;
 use protocol_versioning::DEFAULT_VERSION_BINDING;
 use rand::RngCore;
 use rand::{Rng, SeedableRng};
@@ -14,8 +16,10 @@ use transaction_circuit::{
     hashing_pq::{bytes48_to_felts, felts_to_bytes48, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
-    proof, StablecoinPolicyBinding, TransactionWitness,
+    p3_config::{DIGEST_ELEMS, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, FRI_POW_BITS},
+    proof, StablecoinPolicyBinding, TransactionProverP3, TransactionWitness,
 };
+use transaction_circuit::{TransactionAirP3, TransactionPublicInputsP3};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Benchmark transaction and block circuits", long_about = None)]
@@ -50,6 +54,21 @@ struct BenchReport {
     commitment_verify_ns: u128,
     commitment_proof_bytes: usize,
     commitment_tx_count: usize,
+    tx_proof_bytes_avg: usize,
+    tx_proof_bytes_min: usize,
+    tx_proof_bytes_max: usize,
+    tx_log_num_quotient_chunks: usize,
+    tx_log_blowup_used: usize,
+    fri_log_blowup_config: usize,
+    fri_num_queries: usize,
+    fri_query_pow_bits: usize,
+    fri_conjectured_soundness_bits: usize,
+    digest_bytes: usize,
+    poseidon2_width: usize,
+    poseidon2_rate: usize,
+    poseidon2_capacity_elems: usize,
+    poseidon2_capacity_bits: usize,
+    poseidon2_bht_pq_collision_bits: usize,
     transactions_per_second: f64,
 }
 
@@ -65,7 +84,9 @@ fn main() -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!(
-            "circuits-bench: iterations={iterations} witness_ns={} prove_ns={} verify_ns={} block_ns={} commitment_txs={} commitment_bytes={} commitment_verify_ns={} tx/s={:.2}",
+            "circuits-bench: iterations={iterations} tx_proof_avg={}B tx_proof_max={}B witness_ns={} prove_ns={} verify_ns={} block_ns={} commitment_txs={} commitment_bytes={} commitment_verify_ns={} tx/s={:.2}",
+            report.tx_proof_bytes_avg,
+            report.tx_proof_bytes_max,
             report.witness_ns,
             report.prove_ns,
             report.verify_ns,
@@ -88,6 +109,10 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
     let mut witness_time = Duration::default();
     let mut prove_time = Duration::default();
     let mut verify_time = Duration::default();
+    let mut tx_proof_bytes_total: usize = 0;
+    let mut tx_proof_bytes_min: usize = usize::MAX;
+    let mut tx_proof_bytes_max: usize = 0;
+    let mut tx_log_chunks: Option<usize> = None;
     let mut rng = ChaCha20Rng::seed_from_u64(0xC1C01E75);
 
     for idx in 0..iterations {
@@ -95,9 +120,27 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
         let witness = synthetic_witness(&mut rng, idx as u64);
         witness_time += witness_start.elapsed();
 
+        if tx_log_chunks.is_none() {
+            let prover = TransactionProverP3::new();
+            let pub_inputs: TransactionPublicInputsP3 = prover
+                .public_inputs(&witness)
+                .context("build Plonky3 public inputs")?;
+            let pub_inputs_vec = pub_inputs.to_vec();
+            tx_log_chunks = Some(get_log_num_quotient_chunks::<Goldilocks, _>(
+                &TransactionAirP3,
+                0,
+                pub_inputs_vec.len(),
+                0,
+            ));
+        }
+
         let prove_start = Instant::now();
         let proof = proof::prove(&witness, &proving_key).context("prove transaction")?;
         prove_time += prove_start.elapsed();
+        let tx_proof_bytes = proof.stark_proof.len();
+        tx_proof_bytes_total = tx_proof_bytes_total.saturating_add(tx_proof_bytes);
+        tx_proof_bytes_min = tx_proof_bytes_min.min(tx_proof_bytes);
+        tx_proof_bytes_max = tx_proof_bytes_max.max(tx_proof_bytes);
 
         let verify_start = Instant::now();
         let report = proof::verify(&proof, &verifying_key).context("verify transaction")?;
@@ -138,6 +181,17 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
         0.0
     };
 
+    let tx_log_num_quotient_chunks = tx_log_chunks.unwrap_or(0);
+    let tx_log_blowup_used = FRI_LOG_BLOWUP.max(tx_log_num_quotient_chunks);
+    let fri_conjectured_soundness_bits =
+        tx_log_blowup_used * FRI_NUM_QUERIES + FRI_POW_BITS;
+
+    let poseidon2_width = transaction_circuit::constants::POSEIDON2_WIDTH;
+    let poseidon2_rate = transaction_circuit::constants::POSEIDON2_RATE;
+    let poseidon2_capacity_elems = transaction_circuit::constants::POSEIDON2_CAPACITY;
+    let poseidon2_capacity_bits = poseidon2_capacity_elems * 64;
+    let poseidon2_bht_pq_collision_bits = poseidon2_capacity_bits / 3;
+
     Ok(BenchReport {
         iterations,
         prove,
@@ -149,6 +203,21 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
         commitment_verify_ns,
         commitment_proof_bytes,
         commitment_tx_count,
+        tx_proof_bytes_avg: tx_proof_bytes_total / iterations,
+        tx_proof_bytes_min: tx_proof_bytes_min,
+        tx_proof_bytes_max: tx_proof_bytes_max,
+        tx_log_num_quotient_chunks,
+        tx_log_blowup_used,
+        fri_log_blowup_config: FRI_LOG_BLOWUP,
+        fri_num_queries: FRI_NUM_QUERIES,
+        fri_query_pow_bits: FRI_POW_BITS,
+        fri_conjectured_soundness_bits,
+        digest_bytes: DIGEST_ELEMS * 8,
+        poseidon2_width,
+        poseidon2_rate,
+        poseidon2_capacity_elems,
+        poseidon2_capacity_bits,
+        poseidon2_bht_pq_collision_bits,
         transactions_per_second: tx_per_sec,
     })
 }

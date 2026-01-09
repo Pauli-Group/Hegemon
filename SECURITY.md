@@ -32,7 +32,7 @@ Recursive block proofs are currently disabled and the old recursion path has bee
 ### PQ Security Margins
 
 - Commitments, nullifiers, and Merkle roots use 48-byte (384-bit) digests, yielding ~128-bit post-quantum collision security under generic BHT attacks.
-- Production FRI parameters use log_blowup = 4 (16x) and num_queries = 43, giving an engineering soundness estimate ≥128 bits (see `circuits/transaction-core/src/p3_config.rs`).
+- Production FRI parameters use log_blowup = 4 (16x) and num_queries = 32, giving an engineering soundness estimate of 128 bits under the ethSTARK conjecture (see `circuits/transaction-core/src/p3_config.rs` and `p3_fri::FriParameters::conjectured_soundness_bits`).
 
 ### Soundness Accounting (Engineering Estimate)
 
@@ -40,9 +40,9 @@ For this repository we track soundness as the minimum of (a) hash-based binding 
 
 Hash binding (PQ): for a sponge with capacity `c` bits, generic quantum collision search costs `O(2^{c/3})`, so the engineering security level is approximately `c/3` bits. With 6 Goldilocks field elements of capacity, `c ≈ 6 × 64 = 384` bits, giving ~128-bit post-quantum collision resistance.
 
-FRI IOP soundness (engineering): for blowup factor `2^log_blowup` and `num_queries`, the dominant term is roughly `security_bits ≈ log_blowup × num_queries + pow_bits`. With `log_blowup = 4`, `num_queries = 43`, and `pow_bits = 0`, this is ~172 bits.
+FRI IOP soundness (engineering, current): Plonky3’s `p3-fri` exposes this directly as `FriParameters::conjectured_soundness_bits()` (based on the ethSTARK conjecture). With `log_blowup = 4`, `num_queries = 32`, and `pow_bits = 0`, this is 128 bits.
 
-Therefore, with the current production parameters, the limiting factor is the hash-based binding margin: ~128-bit post-quantum (engineering estimate).
+Therefore, with the current production parameters, the limiting factor is the shared 128-bit target itself: hash binding ≈128-bit PQ and FRI IOP ≈128-bit (engineering estimate).
 
 Formal caveat: this is not a formal post-quantum proof in the quantum random-oracle model; it is an engineering-level accounting. A dedicated PQ analysis is required before making stronger external claims.
 
@@ -53,6 +53,7 @@ Formal caveat: this is not a formal post-quantum proof in the quantum random-ora
 - Post-quantum security of Fiat–Shamir: https://eprint.iacr.org/2017/398
 - STARK construction + ALI context (includes FRI/IOP composition): https://eprint.iacr.org/2018/046
 - DEEP-FRI soundness amplification: https://eprint.iacr.org/2019/336
+- ethSTARK conjectured FRI soundness accounting (used by `p3-fri`): https://eprint.iacr.org/2021/582
 - Tip5 (Triton/Neptune) sponge capacity and PQ collision discussion: https://eprint.iacr.org/2023/107.pdf
 - RPO (Miden) security levels and 256-bit vs 384-bit capacity variants: https://eprint.iacr.org/2022/1577.pdf
 - Poseidon2 design and security discussion: https://eprint.iacr.org/2023/323.pdf

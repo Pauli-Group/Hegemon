@@ -1454,6 +1454,8 @@ dependencies = [
  "anyhow",
  "block-circuit",
  "clap",
+ "p3-goldilocks",
+ "p3-uni-stark",
  "protocol-versioning",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
