@@ -32,27 +32,29 @@ This runbook describes how to run and develop the Hegemon Explorer dashboard.
 | `/` | Block explorer with recent blocks and shielded pool events |
 | `/mining` | PoW mining metrics: difficulty, block time chart, coinbase info |
 | `/shielded` | Shielded pool status: Merkle root, tree size, nullifier count |
-| `/pq-status` | Post-quantum cryptography status: ML-DSA, ML-KEM, STARK params |
 | `/settings` | Connection settings and endpoint configuration |
 
 ## Connecting to Different Networks
 
-### Local Development Node
-```
-ws://127.0.0.1:9944
+You can configure the node endpoint via environment variable:
+
+```bash
+# Create .env.local from the example
+cp .env.example .env.local
+
+# Edit to point to your node
+echo "NEXT_PUBLIC_NODE_ENDPOINT=wss://testnet.hegemon.network:9944" > .env.local
 ```
 
-### Testnet
-```
-wss://testnet.hegemon.network
-```
+### Default Endpoints
 
-### Mainnet
-```
-wss://rpc.hegemon.network
-```
+| Network | Endpoint |
+|---------|----------|
+| Local dev | `ws://127.0.0.1:9944` |
+| Testnet | `wss://testnet.hegemon.network:9944` |
+| Mainnet | `wss://rpc.hegemon.network:9944` |
 
-To change the endpoint, visit the Settings page or modify the `endpoint` prop passed to `<ApiProvider>` in `src/app/layout.tsx`.
+To change the endpoint at runtime, visit the Settings page.
 
 ## Development
 
@@ -77,10 +79,13 @@ dashboard-ui/
 │   │   └── types.ts            # Custom types bundle for @polkadot/api
 │   └── providers/
 │       └── ApiProvider.tsx     # React context for API connection
+├── public/
+│   ├── hegemon-atlas-emblem.svg  # Logo emblem
+│   └── hegemon-wordmark.svg      # Full wordmark
 ├── tailwind.config.ts          # Tailwind with Hegemon brand tokens
+├── .env.example                # Environment variable template
 ├── package.json
-└── scripts/
-    └── api-test.js             # Standalone API connection test
+└── scripts/                    # Debug/test scripts (gitignored)
 ```
 
 ### Brand Colors (from BRAND.md)
