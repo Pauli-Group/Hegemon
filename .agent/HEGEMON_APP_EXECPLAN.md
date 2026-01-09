@@ -25,6 +25,7 @@ This app is a GUI wrapper over existing Rust components (`hegemon-node` and the 
 - [x] Milestone 5: Wallet UX hardening (address book, consolidation UI, disclosure UI).
 - [x] (2026-01-09) Milestone 6: Node console hardening (structured logs, filters, runbook-aligned operations, multi-node connections).
 - [x] (2026-01-09) Milestone 7: Packaging and distribution (bundle binaries, signing, updates).
+- [x] (2026-01-09) Backend integration hardening (walletd protocol versioning + error codes + store lock, node config RPC snapshot).
 
 
 ## Surprises & Discoveries
@@ -77,6 +78,18 @@ This app is a GUI wrapper over existing Rust components (`hegemon-node` and the 
   Rationale: Avoid accidental store creation and align the GUI "Init" vs "Open" flows with the underlying wallet store semantics.
   Date/Author: 2026-01-09 / Agent
 
+- Decision: Expose `--listen-addr`, RPC exposure flags, and node naming in the local connection settings, and warn when using temp storage.
+  Rationale: Operators need deterministic IPv4 binding, explicit RPC hardening, and persistence guarantees for long-lived chains.
+  Date/Author: 2026-01-09 / Agent
+
+- Decision: Version the `walletd` protocol, include capability discovery + structured error codes, and enforce exclusive store locks.
+  Rationale: The desktop app needs stable introspection and safer error handling while preventing concurrent wallet access from corrupting state.
+  Date/Author: 2026-01-09 / Agent
+
+- Decision: Add a `hegemon_nodeConfig` RPC for a config snapshot (chain spec identity, base path, listen addresses, PQ settings).
+  Rationale: The app should be able to introspect the running node without scraping logs or guessing CLI flags.
+  Date/Author: 2026-01-09 / Agent
+
 
 ## Outcomes & Retrospective
 
@@ -85,6 +98,8 @@ This app is a GUI wrapper over existing Rust components (`hegemon-node` and the 
 - 2026-01-09: Implemented multi-connection Node console (filters, debug toggle, health panels) and wired wallet sync targeting to selected connection.
 - 2026-01-09: Added packaging configuration via electron-builder with bundled `hegemon-node` and `walletd` binaries.
 - 2026-01-09: Added genesis mismatch warnings, remote RPC safety notes, and expanded node telemetry/mining panels in the desktop UI.
+- 2026-01-09: Added explicit listen-addr and RPC exposure controls plus persistent base-path defaults to keep node data safe.
+- 2026-01-09: Added walletd protocol versioning/error codes with store locking and a node config RPC snapshot to harden app ↔ backend integration.
 
 
 ## Context and Orientation
@@ -333,7 +348,6 @@ The desktop app introduces a new Node project:
     hegemon-app/electron/main.ts        Main process entry
     hegemon-app/electron/preload.ts     Secure IPC bridge (renderer -> main)
     hegemon-app/electron/nodeManager.ts
-    hegemon-app/electron/walletCli.ts   (wallet v1 integration)
     hegemon-app/electron/walletdClient.ts
     hegemon-app/src/                   Renderer React app
 
@@ -345,3 +359,4 @@ Core JS dependencies belong in `hegemon-app/package.json` and should stay minima
 
 Change note (2026-01-09): updated the plan to remove the standalone explorer/mining page and focus on a Node console + Wallet-only app, per the latest product direction.
 Change note (2026-01-09): added flexible multi-node connection support to match varied deployment workflows without hard-coded roles.
+Change note (2026-01-09): recorded backend integration hardening (walletd protocol versioning/error codes/locks, node config RPC) so the plan reflects the current app-facing contracts.

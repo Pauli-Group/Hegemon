@@ -12,11 +12,15 @@ export type NodeConnection = {
   basePath?: string;
   rpcPort?: number;
   p2pPort?: number;
+  listenAddr?: string;
   seeds?: string;
   minerAddress?: string;
   mineThreads?: number;
   miningIntent?: boolean;
   allowRemoteMining?: boolean;
+  rpcExternal?: boolean;
+  rpcMethods?: 'safe' | 'unsafe';
+  nodeName?: string;
 };
 
 export type NodeStorageFootprint = {
@@ -90,6 +94,15 @@ export type WalletNotes = {
 };
 
 export type WalletStatus = {
+  protocolVersion?: number;
+  capabilities?: {
+    disclosure: boolean;
+    autoConsolidate: boolean;
+    notesSummary: boolean;
+    errorCodes: boolean;
+  };
+  walletMode?: 'full' | 'watch_only';
+  storePath?: string;
   primaryAddress: string;
   lastSyncedHeight: number;
   balances: WalletBalance[];
@@ -138,10 +151,14 @@ export type NodeStartOptions = {
   basePath?: string;
   rpcPort?: number;
   p2pPort?: number;
+  listenAddr?: string;
   minerAddress?: string;
   mineThreads?: number;
   mineOnStart?: boolean;
   seeds?: string;
+  rpcExternal?: boolean;
+  rpcMethods?: 'safe' | 'unsafe';
+  nodeName?: string;
 };
 
 export type NodeSummaryRequest = {

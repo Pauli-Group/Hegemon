@@ -12029,6 +12029,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "disclosure-circuit",
+ "fs2",
  "hex",
  "serde",
  "serde_json",

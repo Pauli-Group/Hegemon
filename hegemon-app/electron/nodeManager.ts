@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { NodeStartOptions, NodeSummary, NodeSummaryRequest } from '../src/types';
 import { resolveBinaryPath } from './binPaths';
 
@@ -29,9 +31,11 @@ export class NodeManager extends EventEmitter {
 
     const nodePath = resolveBinaryPath('hegemon-node');
     const args: string[] = [];
+    const chainSpecPath = expandHomePath(options.chainSpecPath);
+    const basePath = expandHomePath(options.basePath);
 
-    if (options.chainSpecPath) {
-      args.push('--chain', options.chainSpecPath);
+    if (chainSpecPath) {
+      args.push('--chain', chainSpecPath);
     } else if (options.dev) {
       args.push('--dev');
     }
@@ -40,8 +44,8 @@ export class NodeManager extends EventEmitter {
       args.push('--tmp');
     }
 
-    if (options.basePath) {
-      args.push('--base-path', options.basePath);
+    if (basePath) {
+      args.push('--base-path', basePath);
     }
 
     if (options.rpcPort) {
@@ -51,8 +55,23 @@ export class NodeManager extends EventEmitter {
       this.rpcPort = DEFAULT_RPC_PORT;
     }
 
-    if (options.p2pPort) {
+    if (options.listenAddr) {
+      args.push('--listen-addr', options.listenAddr);
+    } else if (options.p2pPort) {
       args.push('--port', String(options.p2pPort));
+    }
+
+    if (options.rpcExternal) {
+      args.push('--rpc-external');
+    }
+
+    const rpcMethods = options.rpcMethods ?? (options.rpcExternal ? 'safe' : undefined);
+    if (rpcMethods) {
+      args.push('--rpc-methods', rpcMethods);
+    }
+
+    if (options.nodeName) {
+      args.push('--name', options.nodeName);
     }
 
     const mineFlag = options.mineOnStart ? '1' : '0';
@@ -224,3 +243,16 @@ export class NodeManager extends EventEmitter {
     this.emit('logs', this.getLogs());
   }
 }
+
+const expandHomePath = (value?: string) => {
+  if (!value) {
+    return undefined;
+  }
+  if (value === '~') {
+    return homedir();
+  }
+  if (value.startsWith('~/')) {
+    return join(homedir(), value.slice(2));
+  }
+  return value;
+};
