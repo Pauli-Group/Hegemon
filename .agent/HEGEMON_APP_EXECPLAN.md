@@ -7,7 +7,7 @@ Maintained in accordance with `.agent/PLANS.md`.
 
 ## Purpose / Big Picture
 
-After this work, users can run one desktop application that acts like “Bitcoin Core for Hegemon”: it creates/unlocks a shielded wallet, starts/stops a local `hegemon-node`, and shows chain + wallet state (including mining) without needing the CLI.
+After this work, users can run one desktop application that acts like "Bitcoin Core for Hegemon": it creates/unlocks a shielded wallet, starts/stops a local `hegemon-node`, and shows chain + wallet state (including mining) without needing the CLI.
 
 Observable outcome: from a clean dev environment, running `npm run dev` in `hegemon-app/` opens an Electron window where a user can (1) create a wallet store and copy the primary `shca1...` address, (2) start a local dev node and enable mining to that address, (3) watch block height advance and see wallet balance rise after syncing, (4) send a shielded transfer, and (5) generate/verify a disclosure package for that payment.
 
@@ -23,7 +23,7 @@ This app is a GUI wrapper over existing Rust components (`hegemon-node` and the 
 - [x] Milestone 3: Wallet integration v1 (use `wallet` CLI for init/status/sync/send; minimal parsing).
 - [x] Milestone 4: Wallet integration v2 (replace parsing with `walletd` sidecar protocol).
 - [x] Milestone 5: Wallet UX hardening (address book, consolidation UI, disclosure UI).
-- [ ] Milestone 6: Explorer + mining dashboard tab (port key views from `dashboard-ui/`).
+- [ ] Milestone 6: Explorer + mining dashboard tab (build views directly from RPC data).
 - [ ] Milestone 7: Packaging and distribution (bundle binaries, signing, updates).
 
 
@@ -32,10 +32,10 @@ This app is a GUI wrapper over existing Rust components (`hegemon-node` and the 
 - Observation: Multi-machine dev networks require a shared raw chainspec; `--chain dev` produces incompatible genesis hashes across platforms.
   Evidence: `runbooks/two_person_testnet.md`.
 
-- Observation: Chain properties advertise `tokenDecimals=12`, but the wallet and native-asset UX use 10^8 base units (“8 decimals”) in practice.
+- Observation: Chain properties advertise `tokenDecimals=12`, but the wallet and native-asset UX use 10^8 base units ("8 decimals") in practice.
   Evidence: `config/dev-chainspec.json` vs balance formatting in `wallet/src/bin/wallet.rs` and reward constants like `runtime/src/lib.rs` `MaxSubsidy`.
 
-- Observation: The wallet binary’s Substrate daemon HTTP API is currently a stub (`/health` only), so a GUI cannot use it for balances/txs yet.
+- Observation: The wallet binary's Substrate daemon HTTP API is currently a stub (`/health` only), so a GUI cannot use it for balances/txs yet.
   Evidence: `wallet/src/bin/wallet.rs` function `spawn_substrate_wallet_api`.
 
 
@@ -45,19 +45,19 @@ This app is a GUI wrapper over existing Rust components (`hegemon-node` and the 
   Rationale: This matches Electron security best practices (context isolation + least-privilege IPC) and reduces the blast radius of renderer bugs.
   Date/Author: 2026-01-09 / Agent
 
-- Decision: Use Substrate JSON-RPC (WebSocket at `ws://127.0.0.1:9944` by default) plus Hegemon’s custom RPC namespace (`hegemon_*`) for node status and mining control.
-  Rationale: This matches how `wallet substrate-*` and `dashboard-ui/` already interact with the node and avoids fragile log scraping.
+- Decision: Use Substrate JSON-RPC (WebSocket at `ws://127.0.0.1:9944` by default) plus Hegemon's custom RPC namespace (`hegemon_*`) for node status and mining control.
+  Rationale: This matches how `wallet substrate-*` already interact with the node and avoids fragile log scraping.
   Date/Author: 2026-01-09 / Agent
 
-- Decision: Display the native asset as “HGM” with 10^8 base units in the UI, even if chain properties claim 12 decimals.
-  Rationale: This matches the wallet’s current UX and avoids users seeing inconsistent balances between CLI and app.
+- Decision: Display the native asset as "HGM" with 10^8 base units in the UI, even if chain properties claim 12 decimals.
+  Rationale: This matches the wallet's current UX and avoids users seeing inconsistent balances between CLI and app.
   Date/Author: 2026-01-09 / Agent
 
 - Decision: Use `HEGEMON_SEEDS` (IP:port, comma-separated) for PQ bootstrap peers rather than relying on Substrate `--bootnodes` multiaddrs.
   Rationale: The Substrate service reads `HEGEMON_SEEDS` for PQ-Noise bootstrapping (`node/src/substrate/service.rs`).
   Date/Author: 2026-01-09 / Agent
 
-- Decision: Start with a “ship it” wallet integration that spawns the existing `wallet` binary, then replace parsing with a stable programmatic interface once UX is proven.
+- Decision: Start with a "ship it" wallet integration that spawns the existing `wallet` binary, then replace parsing with a stable programmatic interface once UX is proven.
   Rationale: The Rust wallet already implements the hard parts (encrypted store, sync engine, proving, disclosure). Spawning it gets a working product quickly; `walletd` removes parsing brittleness without blocking the first usable app.
   Date/Author: 2026-01-09 / Agent
 
@@ -78,7 +78,7 @@ Hegemon has three user-facing surfaces that this desktop app must integrate with
 
 1. The Substrate-based node binary `hegemon-node` (build via `make node`). It exposes JSON-RPC (HTTP + WebSocket) on port 9944 by default, and can mine PoW blocks when configured.
 2. The Rust wallet (`wallet` crate and `wallet` binary). It stores shielded keys/notes in an encrypted local file and talks to a node over WebSocket RPC for sync and transaction submission (`wallet substrate-sync`, `wallet substrate-send`, disclosure tooling, etc).
-3. The existing explorer/mining web UI under `dashboard-ui/`, which already renders chain state via `@polkadot/api` and a custom types bundle.
+3. The desktop UI surface (`hegemon-app/`), which will render chain state via JSON-RPC with optional `@polkadot/api` usage if needed.
 
 Key files and directories for this plan:
 
@@ -87,7 +87,7 @@ Key files and directories for this plan:
     BRAND.md                           Visual system for the desktop app
     node/                              `hegemon-node` crate + custom RPC endpoints
     wallet/                            Wallet store, sync engine, proving, disclosure
-    dashboard-ui/                      Existing explorer/mining UI to port
+    hegemon-app/                       Electron desktop app (this plan)
     runbooks/two_person_testnet.md     Chainspec + bootstrapping constraints
 
 Important Hegemon-specific behaviors the app must respect:
@@ -98,10 +98,10 @@ Important Hegemon-specific behaviors the app must respect:
 
 Terms used in this plan:
 
-- “Node”: `hegemon-node` process, run locally by the app (child process) or externally by the user (remote node).
-- “Wallet store”: an encrypted file managed by the Rust `wallet` crate that contains derived keys, tracked notes, pending transactions, and sync cursors.
-- “Shielded address”: a bech32m string starting with `shca1...` produced by the wallet and used for receiving funds (including coinbase rewards).
-- “RPC”: JSON-RPC endpoints exposed by the node over HTTP/WebSocket; includes standard Substrate RPCs (`system_*`, `chain_*`) and Hegemon custom methods (`hegemon_*`).
+- "Node": `hegemon-node` process, run locally by the app (child process) or externally by the user (remote node).
+- "Wallet store": an encrypted file managed by the Rust `wallet` crate that contains derived keys, tracked notes, pending transactions, and sync cursors.
+- "Shielded address": a bech32m string starting with `shca1...` produced by the wallet and used for receiving funds (including coinbase rewards).
+- "RPC": JSON-RPC endpoints exposed by the node over HTTP/WebSocket; includes standard Substrate RPCs (`system_*`, `chain_*`) and Hegemon custom methods (`hegemon_*`).
 
 
 ## Plan of Work
@@ -112,7 +112,7 @@ Milestone 0 establishes ground truth by running existing CLI flows end-to-end: m
 
 Milestone 1 scaffolds an Electron app and applies BRAND.md tokens (colors, typography, spacing) so subsequent work is done in the real UI environment.
 
-Milestone 2 implements node lifecycle management and RPC-driven status (height, peers, mining status). The app is already useful as a “node launcher + dashboard” even before wallet integration.
+Milestone 2 implements node lifecycle management and RPC-driven status (height, peers, mining status). The app is already useful as a "node launcher + dashboard" even before wallet integration.
 
 Milestone 3 implements a first wallet integration by calling the `wallet` binary as a subprocess. This is intentionally pragmatic: it gets wallet creation, syncing, and sending working quickly. Parsing must be minimal and defensive (only parse stable label lines like `Shielded Address:`).
 
@@ -120,7 +120,7 @@ Milestone 4 replaces parsing with `walletd`: a Rust binary that uses the `wallet
 
 Milestone 5 hardens wallet UX around Hegemon realities: long addresses, anti-poisoning UX, `MAX_INPUTS=2` consolidation, and disclosure-on-demand.
 
-Milestone 6 ports the explorer/mining views from `dashboard-ui/` into the Electron renderer (or factors them into shareable components), preserving the same chain queries and 10^8 base-unit formatting used by the wallet.
+Milestone 6 builds the explorer/mining views directly against node RPCs, preserving the same chain queries and 10^8 base-unit formatting used by the wallet.
 
 Milestone 7 packages the desktop app for macOS/Windows/Linux and bundles the appropriate `hegemon-node` and `walletd` binaries (per-platform), including code signing and a coherent update strategy.
 
@@ -176,7 +176,7 @@ All commands run from the repo root unless stated otherwise.
 
 5. Apply BRAND.md tokens:
 
-   Mirror the dashboard’s token choices (Deep Midnight background `#0E1C36`, Ionosphere accent `#1BE7FF`, Space Grotesk + JetBrains Mono, 8px grid). Keep the renderer purely presentational; privileged work happens in the main process.
+   Mirror the dashboard's token choices (Deep Midnight background `#0E1C36`, Ionosphere accent `#1BE7FF`, Space Grotesk + JetBrains Mono, 8px grid). Keep the renderer purely presentational; privileged work happens in the main process.
 
 6. Implement node lifecycle in the Electron main process:
 
@@ -218,7 +218,7 @@ All commands run from the repo root unless stated otherwise.
       {"address":"shca1...","value":100000000,"asset_id":0,"memo":null}
     ]
 
-   Values are base units. For the native asset, display `value / 100_000_000` as “HGM”.
+   Values are base units. For the native asset, display `value / 100_000_000` as "HGM".
 
 8. Implement wallet lifecycle v2 (`walletd`) and switch the app to it:
 
@@ -234,7 +234,7 @@ All commands run from the repo root unless stated otherwise.
    - `status.get` -> returns primary address, balances, pending tx summaries, last synced height
    - `sync.once` with `{ ws_url, force_rescan }` -> runs one sync and returns counts + new height
    - `tx.send` with `{ ws_url, recipients: RecipientSpec[], fee, auto_consolidate }` -> builds + submits and returns tx hash
-   - `disclosure.create` / `disclosure.verify` -> wraps the wallet’s payment-proof tooling
+   - `disclosure.create` / `disclosure.verify` -> wraps the wallet's payment-proof tooling
 
    The Electron main process replaces `walletCli.ts` calls with a `walletdClient.ts` that manages the child process and maps requests/responses into typed results for the renderer.
 
@@ -257,7 +257,7 @@ Milestone 3 is accepted when the app can:
 
 Milestone 4 is accepted when all Milestone 3 behaviors still work, but the app no longer parses human CLI output for wallet state. Wallet state must come from the `walletd` protocol.
 
-Milestone 6 is accepted when the Explorer tab shows the same core data as `dashboard-ui/` against a local node: recent blocks, shielded pool events, difficulty/hashrate, and shielded pool stats.
+Milestone 6 is accepted when the Explorer tab shows core data against a local node: recent blocks, shielded pool events, difficulty/hashrate, and shielded pool stats.
 
 
 ## Idempotence and Recovery
@@ -298,4 +298,4 @@ Wallet integration v2 introduces:
 
     walletd/                            New Rust binary crate (sidecar daemon)
 
-Core JS dependencies belong in `hegemon-app/package.json` and should stay minimal: Electron, React, router, Tailwind, and a small JSON-RPC client. Only pull in `@polkadot/api` if directly porting `dashboard-ui/` logic; otherwise prefer raw JSON-RPC calls for the small set of methods we need.
+Core JS dependencies belong in `hegemon-app/package.json` and should stay minimal: Electron, React, router, Tailwind, and a small JSON-RPC client. Only pull in `@polkadot/api` if the node RPCs are insufficient for required data; otherwise prefer raw JSON-RPC calls for the small set of methods we need.

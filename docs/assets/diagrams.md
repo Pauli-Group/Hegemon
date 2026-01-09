@@ -10,7 +10,7 @@ This file contains Mermaid diagrams that visualize key architectural concepts fr
 flowchart TB
     subgraph User["User Layer"]
         W[wallet/]
-        UI[dashboard-ui/]
+        UI[hegemon-app/]
     end
 
     subgraph Proving["Proving Layer"]
