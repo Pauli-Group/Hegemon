@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use thiserror::Error;
-use transaction_circuit::hashing::merkle_node_bytes;
+use transaction_circuit::hashing_pq::merkle_node_bytes;
 
 use crate::types::Commitment;
 
@@ -42,7 +42,7 @@ impl CommitmentTreeState {
             depth,
             leaf_count: 0,
             root,
-            frontier: vec![[0u8; 32]; depth],
+            frontier: vec![[0u8; 48]; depth],
             default_nodes,
             root_history,
             history_limit,
@@ -150,7 +150,7 @@ impl CommitmentTreeState {
 
         let default_nodes = compute_default_nodes(depth)?;
 
-        let mut fixed_frontier = vec![[0u8; 32]; depth];
+        let mut fixed_frontier = vec![[0u8; 48]; depth];
         for (index, value) in frontier.into_iter().take(depth).enumerate() {
             fixed_frontier[index] = value;
         }
@@ -206,7 +206,7 @@ impl Default for CommitmentTreeState {
 
 fn compute_default_nodes(depth: usize) -> Result<Vec<Commitment>, CommitmentTreeError> {
     let mut default_nodes = Vec::with_capacity(depth + 1);
-    default_nodes.push([0u8; 32]);
+    default_nodes.push([0u8; 48]);
     for level in 0..depth {
         let prev = default_nodes[level];
         let next = merkle_node_bytes(&prev, &prev)

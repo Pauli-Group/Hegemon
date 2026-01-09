@@ -130,17 +130,17 @@ else
     echo "⚠️ WARNING: Could not verify ML-DSA in crypto crate"
 fi
 
-# 11. Verify winterfell STARK (not Groth16)
-echo -n "Checking STARK uses winterfell... "
+# 11. Verify Plonky3 STARK (not Groth16)
+echo -n "Checking STARK uses Plonky3... "
 if grep -q "bellman\|ark-groth16\|halo2" Cargo.lock 2>/dev/null; then
     echo "❌ FAILED"
     echo "Found Groth16/Halo2 dependencies in Cargo.lock!"
     exit 1
 fi
-if grep -q "winterfell" circuits/transaction/Cargo.toml 2>/dev/null; then
+if grep -q "p3-uni-stark" Cargo.lock 2>/dev/null; then
     echo "✅ PASS"
 else
-    echo "⚠️ WARNING: Could not verify winterfell in circuits"
+    echo "⚠️ WARNING: Could not verify Plonky3 in Cargo.lock"
 fi
 
 # 12. Verify no AcceptAllProofs in runtime config

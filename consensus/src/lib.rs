@@ -14,8 +14,6 @@ pub mod validator;
 pub mod version_policy;
 
 pub use bft::{BftConsensus, ConsensusUpdate};
-#[cfg(feature = "legacy-recursion")]
-pub use block_circuit::RecursiveBlockProof;
 pub use commitment_tree::{
     COMMITMENT_TREE_DEPTH, CommitmentTreeError, CommitmentTreeState, DEFAULT_ROOT_HISTORY_LIMIT,
 };
@@ -24,8 +22,6 @@ pub use header::{BlockHeader, ConsensusMode, PowSeal};
 pub use mining::{MiningCoordinator, MiningSolution, MiningStats, MiningWork, MiningWorker};
 pub use nullifier::NullifierSet;
 pub use pow::PowConsensus;
-#[cfg(feature = "legacy-recursion")]
-pub use proof::RecursiveProofVerifier;
 pub use proof::{
     CommitmentNullifierLists, HashVerifier, ParallelProofVerifier, ProofVerifier,
     commitment_nullifier_lists, verify_commitment_proof_payload,

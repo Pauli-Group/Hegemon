@@ -7,7 +7,7 @@
 //! ## Design Principles
 //!
 //! 1. **No Pre-funded Accounts**: All funds come from mining rewards
-//! 2. **Real STARK Proofs**: Uses actual winterfell prover (not mocks)
+//! 2. **Real STARK Proofs**: Uses actual Plonky3 prover (not mocks)
 //! 3. **Post-Quantum Security**: ML-KEM-768 for encryption, ML-DSA-65 for signatures
 //! 4. **Full Transaction Flow**: Shield → Transfer → Unshield tested end-to-end
 //!
@@ -291,11 +291,11 @@ pub struct MockChainState {
     /// Difficulty bits for mining
     pub difficulty_bits: u32,
     /// Merkle root of commitments
-    pub merkle_root: [u8; 32],
+    pub merkle_root: [u8; 48],
     /// Set of spent nullifiers
-    pub nullifiers: std::collections::HashSet<[u8; 32]>,
+    pub nullifiers: std::collections::HashSet<[u8; 48]>,
     /// List of note commitments
-    pub commitments: Vec<[u8; 32]>,
+    pub commitments: Vec<[u8; 48]>,
     /// Account balances (transparent)
     pub balances: std::collections::HashMap<[u8; 32], u64>,
     /// Shielded pool value
@@ -311,7 +311,7 @@ impl MockChainState {
             best_number: 0,
             best_hash: [0u8; 32],
             difficulty_bits: TEST_DIFFICULTY_BITS,
-            merkle_root: [0u8; 32],
+            merkle_root: [0u8; 48],
             nullifiers: std::collections::HashSet::new(),
             commitments: Vec::new(),
             balances: std::collections::HashMap::new(),
@@ -340,7 +340,7 @@ impl MockChainState {
         &mut self,
         from: &[u8; 32],
         amount: u64,
-        commitment: [u8; 32],
+        commitment: [u8; 48],
         encrypted_note: Vec<u8>,
     ) -> Result<(), &'static str> {
         // Check balance
@@ -370,7 +370,7 @@ impl MockChainState {
         &mut self,
         to: &[u8; 32],
         amount: u64,
-        nullifier: [u8; 32],
+        nullifier: [u8; 48],
     ) -> Result<(), &'static str> {
         // Check nullifier not spent
         if self.nullifiers.contains(&nullifier) {
@@ -396,7 +396,7 @@ impl MockChainState {
     }
 
     /// Check if a nullifier has been spent.
-    pub fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
+    pub fn is_nullifier_spent(&self, nullifier: &[u8; 48]) -> bool {
         self.nullifiers.contains(nullifier)
     }
 
@@ -411,19 +411,17 @@ impl MockChainState {
     }
 
     /// Compute the Merkle root of commitments.
-    fn compute_merkle_root(&self) -> [u8; 32] {
+    fn compute_merkle_root(&self) -> [u8; 48] {
         if self.commitments.is_empty() {
-            return [0u8; 32];
+            return [0u8; 48];
         }
         // Simplified: just hash all commitments together
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
+        use crypto::hashes::blake3_384;
+        let mut data = Vec::new();
         for c in &self.commitments {
-            hasher.update(c);
+            data.extend_from_slice(c);
         }
-        let mut root = [0u8; 32];
-        root.copy_from_slice(&hasher.finalize());
-        root
+        blake3_384(&data)
     }
 }
 
@@ -513,7 +511,7 @@ mod infrastructure_tests {
 
         // Shield some funds
         let shield_amount = TEST_BLOCK_REWARD / 2;
-        let commitment = [1u8; 32];
+        let commitment = [1u8; 48];
         let encrypted_note = vec![2u8; 100];
 
         let result = state.process_shield(
@@ -543,7 +541,7 @@ mod infrastructure_tests {
         state.mine_block(miner.account_id());
         state.pool_balance = TEST_BLOCK_REWARD;
 
-        let nullifier = [42u8; 32];
+        let nullifier = [42u8; 48];
 
         // First unshield should succeed
         let result = state.process_unshield(recipient.account_id(), 1000, nullifier);
@@ -643,7 +641,7 @@ mod shield_tests {
 
         // Shield half the balance
         let shield_amount = TEST_BLOCK_REWARD / 2;
-        let commitment = [0xaa; 32]; // Mock commitment
+        let commitment = [0xaa; 48]; // Mock commitment
         let encrypted_note = vec![0xbb; 100]; // Mock encrypted note
 
         let result = state.process_shield(
@@ -679,7 +677,7 @@ mod shield_tests {
 
         // Try to shield more than available
         let result =
-            state.process_shield(miner.account_id(), TEST_BLOCK_REWARD * 2, [0; 32], vec![]);
+            state.process_shield(miner.account_id(), TEST_BLOCK_REWARD * 2, [0; 48], vec![]);
         assert!(result.is_err());
 
         // Balance should be unchanged
@@ -705,7 +703,7 @@ mod shield_tests {
             TEST_BLOCK_REWARD / 4,
         ];
         for (i, &amount) in amounts.iter().enumerate() {
-            let commitment = [(i + 1) as u8; 32];
+            let commitment = [(i + 1) as u8; 48];
             let result = state.process_shield(miner.account_id(), amount, commitment, vec![]);
             assert!(result.is_ok());
         }
@@ -740,12 +738,12 @@ mod unshield_tests {
         state.mine_block(miner.account_id());
         let shield_amount = TEST_BLOCK_REWARD / 2;
         state
-            .process_shield(miner.account_id(), shield_amount, [1; 32], vec![])
+            .process_shield(miner.account_id(), shield_amount, [1; 48], vec![])
             .unwrap();
 
         // Unshield to recipient
         let unshield_amount = shield_amount / 2;
-        let nullifier = [42u8; 32];
+        let nullifier = [42u8; 48];
 
         let result = state.process_unshield(recipient.account_id(), unshield_amount, nullifier);
         assert!(result.is_ok());
@@ -768,10 +766,10 @@ mod unshield_tests {
         // Setup pool with funds
         state.mine_block(miner.account_id());
         state
-            .process_shield(miner.account_id(), TEST_BLOCK_REWARD, [1; 32], vec![])
+            .process_shield(miner.account_id(), TEST_BLOCK_REWARD, [1; 48], vec![])
             .unwrap();
 
-        let nullifier = [99u8; 32];
+        let nullifier = [99u8; 48];
 
         // First unshield succeeds
         let result = state.process_unshield(recipient.account_id(), 1000, nullifier);
@@ -792,7 +790,7 @@ mod unshield_tests {
         state.pool_balance = 100;
 
         // Try to unshield more than pool has
-        let result = state.process_unshield(recipient.account_id(), 1000, [1; 32]);
+        let result = state.process_unshield(recipient.account_id(), 1000, [1; 48]);
         assert!(result.is_err());
     }
 }
@@ -842,7 +840,7 @@ mod full_flow_tests {
         // Step 2: Shield funds
         let shield_amount = TEST_BLOCK_REWARD * 2;
         state
-            .process_shield(miner.account_id(), shield_amount, [1; 32], vec![])
+            .process_shield(miner.account_id(), shield_amount, [1; 48], vec![])
             .unwrap();
         assert_eq!(state.pool_balance, shield_amount);
         assert_eq!(
@@ -853,7 +851,7 @@ mod full_flow_tests {
         // Step 3: Unshield to recipient
         let unshield_amount = TEST_BLOCK_REWARD;
         state
-            .process_unshield(recipient.account_id(), unshield_amount, [2; 32])
+            .process_unshield(recipient.account_id(), unshield_amount, [2; 48])
             .unwrap();
 
         // Final state verification
@@ -877,17 +875,17 @@ mod full_flow_tests {
 
         // Alice shields
         state
-            .process_shield(alice.account_id(), TEST_BLOCK_REWARD, [0xaa; 32], vec![])
+            .process_shield(alice.account_id(), TEST_BLOCK_REWARD, [0xaa; 48], vec![])
             .unwrap();
 
         // Bob shields
         state
-            .process_shield(bob.account_id(), TEST_BLOCK_REWARD / 2, [0xbb; 32], vec![])
+            .process_shield(bob.account_id(), TEST_BLOCK_REWARD / 2, [0xbb; 48], vec![])
             .unwrap();
 
         // Charlie receives unshield
         state
-            .process_unshield(charlie.account_id(), TEST_BLOCK_REWARD / 4, [0x01; 32])
+            .process_unshield(charlie.account_id(), TEST_BLOCK_REWARD / 4, [0x01; 48])
             .unwrap();
 
         // Verify final state

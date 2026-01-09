@@ -6,14 +6,15 @@
 use crate::constants::MAX_INPUTS;
 #[cfg(test)]
 use crate::constants::MAX_OUTPUTS;
-use crate::stark_air::{
+use crate::p3_air::{
     COMMITMENT_CYCLES as STARK_COMMITMENT_CYCLES, CYCLES_PER_INPUT as STARK_CYCLES_PER_INPUT,
     CYCLE_LENGTH, MERKLE_CYCLES as STARK_MERKLE_CYCLES, MIN_TRACE_LENGTH,
     NULLIFIER_CYCLES as STARK_NULLIFIER_CYCLES,
 };
+use crate::p3_config::FRI_NUM_QUERIES;
 
 /// Trace width (re-exported for convenience).
-pub const TRACE_WIDTH: usize = crate::stark_air::TRACE_WIDTH;
+pub const TRACE_WIDTH: usize = crate::p3_air::TRACE_WIDTH;
 
 /// Rows per transaction in the trace.
 pub const ROWS_PER_TX: usize = MIN_TRACE_LENGTH;
@@ -27,7 +28,7 @@ pub const MERKLE_CYCLES: usize = STARK_MERKLE_CYCLES;
 /// Number of cycles for commitment hash computation per output.
 pub const COMMITMENT_CYCLES: usize = STARK_COMMITMENT_CYCLES;
 
-/// Maximum constraint degree allowed by winterfell.
+/// Maximum constraint degree (poseidon2 + selectors).
 pub const MAX_CONSTRAINT_DEGREE: usize = 8;
 
 /// Our Poseidon S-box is x^5, giving degree 5.
@@ -49,7 +50,7 @@ fn log2_rows(rows: usize) -> usize {
     (usize::BITS - 1 - rows.leading_zeros()) as usize
 }
 
-/// Compute batch trace row count (must be power of 2 for winterfell).
+/// Compute batch trace row count (must be power of 2 for the STARK PCS).
 pub fn batch_trace_rows(batch_size: usize) -> usize {
     let raw = batch_size * ROWS_PER_TX;
     raw.next_power_of_two()
@@ -92,16 +93,16 @@ pub fn commitment_output_row(tx_index: usize, output_index: usize) -> usize {
     slot_start + (start_cycle + COMMITMENT_CYCLES) * CYCLE_LENGTH - 1
 }
 
-/// Estimate proof size in bytes (empirical formula from winterfell).
+/// Estimate proof size in bytes (empirical formula).
 /// Actual size depends on FRI parameters, this is approximate.
 pub fn estimated_proof_size(trace_rows: usize, trace_width: usize) -> usize {
     // Base: ~50 bytes per column for commitments
-    // FRI layers: ~log2(rows) × 32 bytes per query × 8 queries
-    // Query proofs: ~8 × log2(rows) × 32 bytes
+    // FRI layers: ~log2(rows) × 32 bytes per query × FRI_NUM_QUERIES
+    // Query proofs: ~FRI_NUM_QUERIES × log2(rows) × 32 bytes
     let log_rows = log2_rows(trace_rows);
     let base = trace_width * 50;
-    let fri = log_rows * 32 * 8;
-    let queries = 8 * log_rows * 32;
+    let fri = log_rows * 32 * FRI_NUM_QUERIES;
+    let queries = FRI_NUM_QUERIES * log_rows * 32;
     base + fri + queries + 500 // 500 bytes overhead
 }
 
@@ -145,9 +146,10 @@ mod tests {
 
     #[test]
     fn test_batch_16_fits_exactly() {
-        // 16 × 32768 = 524288 = 2^19, should fit exactly
-        assert_eq!(batch_trace_rows(16), 524288);
-        assert_eq!(524288, 1 << 19);
+        // Batch trace length must be a power-of-two, and for 16 it should not pad.
+        let raw = 16 * ROWS_PER_TX;
+        assert!(raw.is_power_of_two());
+        assert_eq!(batch_trace_rows(16), raw);
     }
 
     #[test]
@@ -255,7 +257,7 @@ mod tests {
         assert!(MERKLE_EQUALITY_DEGREE <= MAX_CONSTRAINT_DEGREE);
         assert!(BALANCE_DEGREE <= MAX_CONSTRAINT_DEGREE);
         println!(
-            "All constraint degrees within winterfell limit of {}",
+            "All constraint degrees within configured limit of {}",
             MAX_CONSTRAINT_DEGREE
         );
     }
@@ -275,9 +277,8 @@ mod tests {
 
     #[test]
     fn test_rows_per_tx_constant() {
-        // Verify ROWS_PER_TX matches MIN_TRACE_LENGTH from stark_air
+        // Verify ROWS_PER_TX matches MIN_TRACE_LENGTH from the AIR
         assert_eq!(ROWS_PER_TX, MIN_TRACE_LENGTH);
-        assert_eq!(ROWS_PER_TX, 32768);
     }
 
     #[test]

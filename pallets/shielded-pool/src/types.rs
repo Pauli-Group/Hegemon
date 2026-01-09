@@ -23,9 +23,13 @@ pub const MAX_COMMITMENTS_PER_TX: u32 = 2;
 
 /// Maximum size of a STARK proof in bytes.
 /// STARK proofs require NO trusted setup.
-/// Typical range: 20KB-100KB depending on circuit complexity.
-/// Cap is set higher to accommodate real proofs under default security settings.
-pub const STARK_PROOF_MAX_SIZE: usize = 200_000;
+/// Proof size is configuration-dependent (FRI params, trace width/rows, hash digest).
+/// We cap proofs to prevent DoS via oversized extrinsics while still allowing
+/// production Plonky3 proofs to fit within runtime block length limits.
+///
+/// Note: Production Plonky3 transaction proofs are ~350–500KB today; this limit is a DoS
+/// guardrail, not a target size.
+pub const STARK_PROOF_MAX_SIZE: usize = 2 * 1024 * 1024;
 
 /// Size of a binding hash.
 pub const BINDING_HASH_SIZE: usize = 64;
@@ -42,6 +46,13 @@ pub const ML_KEM_CIPHERTEXT_LEN: usize = 1088;
 
 /// Diversified address size (post-quantum compatible).
 pub const DIVERSIFIED_ADDRESS_SIZE: usize = 43;
+
+/// Commitment bytes (48-byte PQ sponge output).
+pub type Commitment = [u8; 48];
+/// Nullifier bytes (48-byte PQ sponge output).
+pub type Nullifier = [u8; 48];
+/// Merkle root bytes (48-byte PQ sponge output).
+pub type MerkleRoot = [u8; 48];
 
 /// A shielded note representing a unit of value.
 ///
@@ -166,12 +177,12 @@ impl Default for BindingHash {
 pub struct StablecoinPolicyBinding {
     /// Stablecoin asset identifier (MASP asset id).
     pub asset_id: u64,
-    /// Deterministic policy hash (BLAKE3-256).
-    pub policy_hash: [u8; 32],
+    /// Deterministic policy hash (BLAKE3-384).
+    pub policy_hash: [u8; 48],
     /// Latest oracle commitment bound into the proof.
-    pub oracle_commitment: [u8; 32],
+    pub oracle_commitment: [u8; 48],
     /// Latest attestation commitment bound into the proof.
-    pub attestation_commitment: [u8; 32],
+    pub attestation_commitment: [u8; 48],
     /// Signed issuance delta (positive for mint, negative for burn).
     pub issuance_delta: i128,
     /// Policy version to make upgrades explicit.
@@ -182,9 +193,9 @@ impl Default for StablecoinPolicyBinding {
     fn default() -> Self {
         Self {
             asset_id: 0,
-            policy_hash: [0u8; 32],
-            oracle_commitment: [0u8; 32],
-            attestation_commitment: [0u8; 32],
+            policy_hash: [0u8; 48],
+            oracle_commitment: [0u8; 48],
+            attestation_commitment: [0u8; 48],
             issuance_delta: 0,
             policy_version: 0,
         }
@@ -195,7 +206,7 @@ impl Default for StablecoinPolicyBinding {
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
 pub struct MerklePath {
     /// Sibling hashes from leaf to root.
-    pub siblings: Vec<[u8; 32]>,
+    pub siblings: Vec<Commitment>,
     /// Position bits indicating left/right at each level.
     pub position_bits: Vec<bool>,
 }
@@ -210,7 +221,7 @@ pub struct MerklePath {
 )]
 pub struct CoinbaseNoteData {
     /// The note commitment (H(note_contents))
-    pub commitment: [u8; 32],
+    pub commitment: [u8; 48],
     /// Encrypted note for the miner (only they can decrypt)
     pub encrypted_note: EncryptedNote,
     /// Plaintext recipient address (for audit)
@@ -224,7 +235,7 @@ pub struct CoinbaseNoteData {
 
 impl MerklePath {
     /// Create a new Merkle path.
-    pub fn new(siblings: Vec<[u8; 32]>, position_bits: Vec<bool>) -> Self {
+    pub fn new(siblings: Vec<Commitment>, position_bits: Vec<bool>) -> Self {
         Self {
             siblings,
             position_bits,
@@ -251,13 +262,13 @@ pub struct ShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u32>> {
     /// STARK proof (FRI-based, no trusted setup).
     pub proof: StarkProof,
     /// Nullifiers for spent notes.
-    pub nullifiers: BoundedVec<[u8; 32], MaxNullifiers>,
+    pub nullifiers: BoundedVec<Nullifier, MaxNullifiers>,
     /// New note commitments.
-    pub commitments: BoundedVec<[u8; 32], MaxCommitments>,
+    pub commitments: BoundedVec<Commitment, MaxCommitments>,
     /// Encrypted notes for recipients.
     pub ciphertexts: BoundedVec<EncryptedNote, MaxCommitments>,
     /// Merkle root the proof was generated against.
-    pub anchor: [u8; 32],
+    pub anchor: MerkleRoot,
     /// Value balance commitment (verified in STARK circuit).
     pub binding_hash: BindingHash,
     /// Optional stablecoin policy binding (required for issuance/burn).
@@ -339,13 +350,13 @@ pub struct BatchShieldedTransfer<MaxNullifiers: Get<u32>, MaxCommitments: Get<u3
     /// STARK batch proof (covers all transactions).
     pub proof: BatchStarkProof,
     /// All nullifiers from all transactions in the batch.
-    pub nullifiers: BoundedVec<[u8; 32], MaxNullifiers>,
+    pub nullifiers: BoundedVec<Nullifier, MaxNullifiers>,
     /// All new note commitments from all transactions.
-    pub commitments: BoundedVec<[u8; 32], MaxCommitments>,
+    pub commitments: BoundedVec<Commitment, MaxCommitments>,
     /// Encrypted notes for all recipients.
     pub ciphertexts: BoundedVec<EncryptedNote, MaxCommitments>,
     /// Shared Merkle root all transactions were proven against.
-    pub anchor: [u8; 32],
+    pub anchor: MerkleRoot,
     /// Total fee across all transactions.
     pub total_fee: u128,
 }
@@ -387,7 +398,7 @@ mod tests {
 
     #[test]
     fn merkle_path_depth_works() {
-        let siblings = vec![[0u8; 32]; 5];
+        let siblings = vec![[0u8; 48]; 5];
         let position_bits = vec![true, false, true, false, true];
         let path = MerklePath::new(siblings, position_bits);
         assert_eq!(path.depth(), 5);

@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use transaction_circuit::constants::NATIVE_ASSET_ID;
-use transaction_circuit::hashing::{felts_to_bytes32, Commitment};
+use transaction_circuit::hashing_pq::{felts_to_bytes48, Commitment};
 use wallet::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 use wallet::viewing::IncomingViewingKey;
 use wallet::{
@@ -168,7 +168,7 @@ impl TestNode {
         let mut commitments = self.state.commitments.lock().unwrap();
         let mut ciphertexts = self.state.ciphertexts.lock().unwrap();
         let commitment = note.to_note_data(address.pk_recipient).commitment();
-        commitments.push(felts_to_bytes32(&commitment));
+        commitments.push(felts_to_bytes48(&commitment));
         // Use to_pallet_bytes() to match the format expected by from_pallet_bytes()
         ciphertexts.push(ciphertext.to_pallet_bytes().expect("pallet bytes"));
         drop(commitments);
@@ -212,7 +212,7 @@ impl Drop for TestNode {
 struct TestState {
     commitments: Mutex<Vec<Commitment>>,
     ciphertexts: Mutex<Vec<Vec<u8>>>,
-    nullifiers: Mutex<HashSet<[u8; 32]>>,
+    nullifiers: Mutex<HashSet<[u8; 48]>>,
     pending: Mutex<Vec<PendingTx>>,
     height: Mutex<u64>,
     token: String,
@@ -234,7 +234,7 @@ impl TestState {
 struct PendingTx {
     commitments: Vec<Commitment>,
     ciphertexts: Vec<Vec<u8>>,
-    nullifiers: Vec<[u8; 32]>,
+    nullifiers: Vec<[u8; 48]>,
 }
 
 #[derive(Deserialize)]
@@ -254,15 +254,15 @@ async fn handle_transaction(
     let commitments: Vec<Commitment> = bundle
         .commitments
         .iter()
-        .filter(|cm| *cm != &[0u8; 32])
+        .filter(|cm| *cm != &[0u8; 48])
         .copied()
         .collect();
 
     // Nullifiers are now already in the correct format
-    let nullifiers: Vec<[u8; 32]> = bundle
+    let nullifiers: Vec<[u8; 48]> = bundle
         .nullifiers
         .iter()
-        .filter(|nf| *nf != &[0u8; 32])
+        .filter(|nf| *nf != &[0u8; 48])
         .cloned()
         .collect();
 

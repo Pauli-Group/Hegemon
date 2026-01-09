@@ -1,6 +1,6 @@
 [package]
 name = "hegemon-node"
-version = "0.5.0-alpha"
+version = "0.5.1-alpha"
 edition = "2021"
 authors = ["Pauli Group Inc."]
 description = "Hegemon PQ-secure blockchain node"
@@ -39,7 +39,6 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 transaction_circuit = { path = "../circuits/transaction", package = "transaction-circuit" }
-epoch_circuit = { path = "../circuits/epoch", package = "epoch-circuit" }
 block-circuit = { path = "../circuits/block", package = "block-circuit", optional = true }
 wallet = { path = "../wallet" }
 rand = "0.8"
@@ -102,11 +101,7 @@ frame-support = { workspace = true, features = ["std"], optional = true }
 default = ["substrate"]
 test-utils = []
 production = ["substrate", "runtime/production", "pallet-shielded-pool/production"]
-fast-proofs = [
-    "runtime/fast-proofs",
-    "pallet-shielded-pool/fast-proofs",
-    "block-circuit?/fast-proofs",
-]
+fast-proofs = ["block-circuit?/fast-proofs"]
 
 # Enable Substrate-based node implementation (Phase 2.5 with PoW + DifficultyApi)
 # 

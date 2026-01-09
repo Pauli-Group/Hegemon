@@ -1,16 +1,15 @@
 use std::collections::BTreeMap;
 
-use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
-use serde::{Deserialize, Serialize};
-use winterfell::math::FieldElement;
-
 use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
-    hashing::{felts_to_bytes32, nullifier, prf_key, HashFelt},
+    hashing_pq::{felts_to_bytes48, nullifier, prf_key, HashFelt},
     note::{InputNoteWitness, OutputNoteWitness},
     public_inputs::{BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs},
 };
+use p3_field::PrimeCharacteristicRing;
+use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionWitness {
@@ -20,8 +19,8 @@ pub struct TransactionWitness {
     pub outputs: Vec<OutputNoteWitness>,
     #[serde(with = "crate::witness::serde_bytes32")]
     pub sk_spend: [u8; 32],
-    #[serde(with = "crate::witness::serde_bytes32")]
-    pub merkle_root: [u8; 32],
+    #[serde(with = "crate::witness::serde_bytes48")]
+    pub merkle_root: [u8; 48],
     pub fee: u64,
     #[serde(default)]
     pub value_balance: i128,
@@ -52,7 +51,7 @@ impl TransactionWitness {
         // which would allow that note to be spent multiple times.
         let nullifiers = self.nullifiers();
         for (i, nf) in nullifiers.iter().enumerate() {
-            if nf.iter().all(|elem| *elem == crate::hashing::Felt::ZERO) {
+            if nf.iter().all(|elem| *elem == crate::hashing_pq::Felt::ZERO) {
                 return Err(TransactionCircuitError::ZeroNullifier(i));
             }
         }
@@ -126,7 +125,7 @@ impl TransactionWitness {
         Ok(())
     }
 
-    pub fn prf_key(&self) -> crate::hashing::Felt {
+    pub fn prf_key(&self) -> crate::hashing_pq::Felt {
         prf_key(&self.sk_spend)
     }
 
@@ -182,13 +181,13 @@ impl TransactionWitness {
 
     pub fn public_inputs(&self) -> Result<TransactionPublicInputs, TransactionCircuitError> {
         let nullifiers = {
-            let mut list: Vec<[u8; 32]> = self.nullifiers().iter().map(felts_to_bytes32).collect();
-            list.resize(MAX_INPUTS, [0u8; 32]);
+            let mut list: Vec<[u8; 48]> = self.nullifiers().iter().map(felts_to_bytes48).collect();
+            list.resize(MAX_INPUTS, [0u8; 48]);
             list
         };
         let commitments = {
-            let mut list: Vec<[u8; 32]> = self.commitments().iter().map(felts_to_bytes32).collect();
-            list.resize(MAX_OUTPUTS, [0u8; 32]);
+            let mut list: Vec<[u8; 48]> = self.commitments().iter().map(felts_to_bytes48).collect();
+            list.resize(MAX_OUTPUTS, [0u8; 48]);
             list
         };
         let balance_slots = self.balance_slots()?;
@@ -273,34 +272,38 @@ pub(crate) mod serde_bytes32 {
     use serde::Deserialize;
 }
 
-fn stablecoin_binding_is_zero(binding: &StablecoinPolicyBinding) -> bool {
-    !binding.enabled
-        && binding.asset_id == 0
-        && binding.policy_hash == [0u8; 32]
-        && binding.oracle_commitment == [0u8; 32]
-        && binding.attestation_commitment == [0u8; 32]
-        && binding.issuance_delta == 0
-        && binding.policy_version == 0
-}
-#[allow(dead_code)]
-pub(crate) mod serde_felt {
+pub(crate) mod serde_bytes48 {
     use serde::{Deserializer, Serializer};
-    use winterfell::math::fields::f64::BaseElement;
 
-    pub fn serialize<S>(value: &BaseElement, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(value: &[u8; 48], serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        serializer.serialize_u64(value.as_int())
+        serializer.serialize_bytes(value)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<BaseElement, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 48], D::Error>
     where
         D: Deserializer<'de>,
     {
-        let value = u64::deserialize(deserializer)?;
-        Ok(BaseElement::new(value))
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        if bytes.len() != 48 {
+            return Err(serde::de::Error::custom("expected 48 bytes"));
+        }
+        let mut arr = [0u8; 48];
+        arr.copy_from_slice(&bytes);
+        Ok(arr)
     }
 
     use serde::Deserialize;
+}
+
+fn stablecoin_binding_is_zero(binding: &StablecoinPolicyBinding) -> bool {
+    !binding.enabled
+        && binding.asset_id == 0
+        && binding.policy_hash == [0u8; 48]
+        && binding.oracle_commitment == [0u8; 48]
+        && binding.attestation_commitment == [0u8; 48]
+        && binding.issuance_delta == 0
+        && binding.policy_version == 0
 }

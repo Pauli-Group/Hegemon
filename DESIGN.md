@@ -130,7 +130,7 @@ PRFs:
 
 No group operations anywhere in user-visible cryptography.
 
-STARK verifier parameters (hash function choice, query counts, blowup factors, field extension) are persisted on-chain in the attestations and settlement pallets with governance-controlled upgrade hooks so proof verification stays aligned with PQ-friendly hashes. The runtime seeds attestations with Blake3 hashing, 28 FRI queries, a 4x blowup factor, and quadratic extension over Goldilocks; settlement uses the same hash/query budget but a 16x blowup factor to satisfy the Poseidon AIR degree constraints. With 256-bit digests, PQ collision resistance caps at ~85 bits, so governance should treat that as the practical ceiling unless digest sizes are widened. Governance can override those `StarkVerifierParams` via `set_verifier_params` when migrating to a new hash or tighter soundness budget.
+STARK verifier parameters (hash function choice, query counts, blowup factors, field extension) are persisted on-chain in the attestations and settlement pallets with governance-controlled upgrade hooks so proof verification stays aligned with PQ-friendly hashes. The runtime seeds attestations with Poseidon2-based hashing (48-byte digests), 43 FRI queries, a 16x blowup factor (log_blowup 4), and quadratic extension over Goldilocks; settlement uses the same hash/query budget. With 384-bit digests, PQ collision resistance reaches ~128 bits for application-level commitments, and 48-byte encodings are used end-to-end.
 
 ### 1.4 Reference module layout
 
@@ -139,13 +139,13 @@ The repository now includes a standalone Rust crate at `crypto/` that collects t
 * `ml_dsa` – deterministic key generation, signing, verification, and serialization helpers sized to ML-DSA-65 (Dilithium3) keys (pk = 1952 B, sk = 4000 B, sig = 3293 B).
 * `slh_dsa` – the analogous interface for SLH-DSA (SPHINCS+-SHA2-128f) with pk = 32 B, sk = 64 B, signature = 17088 B.
 * `ml_kem` – Kyber-768-style encapsulation/decapsulation with pk = 1184 B, sk = 2400 B, ciphertext = 1088 B, shared secret = 32 B.
-* `hashes` – SHA-256, SHA3-256, BLAKE3-256, and a Poseidon-inspired permutation over the Goldilocks prime using width 3, 63 full rounds, and NUMS-generated round constants/MDS (SHA-256 domain separation + Cauchy matrix), plus helpers for commitments (`b"c"` tag), PRF key derivation (`b"nk"`), and nullifiers (`b"nf"`) that default to BLAKE3 with SHA3 fallbacks for STARK-friendly domains. Poseidon2 is under evaluation but not yet adopted in the circuit AIR.
+* `hashes` – SHA-256, SHA3-256, BLAKE3-256, and a Poseidon-inspired permutation over the Goldilocks prime using width 3, 63 full rounds, and NUMS-generated round constants/MDS (SHA-256 domain separation + Cauchy matrix), plus helpers for commitments (`b"c"` tag), PRF key derivation (`b"nk"`), and nullifiers (`b"nf"`) that default to BLAKE3 with SHA3 fallbacks for STARK-friendly domains. The Plonky3 transaction AIR uses Poseidon2 (width 12, rate 6, capacity 6) for in-circuit commitments and nullifiers, producing 48-byte outputs for PQ soundness; application-level types now use 48-byte digests end-to-end.
 
 Everything derives deterministic test vectors using a ChaCha20-based RNG seeded via SHA-256 so that serialization and domain separation match the simple hash-based definitions above. Integration tests under `crypto/tests/` lock in the byte-level expectations for key generation, signing, verification, KEM encapsulation/decapsulation, and commitment/nullifier derivation.
 
 ### 1.5 External cryptanalysis cadence
 
-Every time we tweak the parameter sets above—or annually even without code drift—we commission an external lattice/hash review as captured in `docs/SECURITY_REVIEWS.md`. Vendors receive `DESIGN.md §1`, `METHODS.md`, and the relevant source paths (`crypto/`, `circuits/transaction/src/hashing.rs`) so they can re-derive the Poseidon constants and deterministic RNG taps we use for ML-DSA, ML-KEM, and SLH-DSA. Findings are logged using the JSON template in the same doc and each accepted change must reference that ID inside this file plus `METHODS.md`. This keeps the declared parameter choices in sync with the state of the art in lattice reduction and ensures that side-channel or collision discoveries are reflected in our primitives immediately.
+Every time we tweak the parameter sets above—or annually even without code drift—we commission an external lattice/hash review as captured in `docs/SECURITY_REVIEWS.md`. Vendors receive `DESIGN.md §1`, `METHODS.md`, and the relevant source paths (`crypto/`, `circuits/transaction-core/src/hashing_pq.rs`, `circuits/transaction-core/src/poseidon2_constants.rs`) so they can re-derive the Poseidon/Poseidon2 constants and deterministic RNG taps we use for ML-DSA, ML-KEM, and SLH-DSA. Findings are logged using the JSON template in the same doc and each accepted change must reference that ID inside this file plus `METHODS.md`. This keeps the declared parameter choices in sync with the state of the art in lattice reduction and ensures that side-channel or collision discoveries are reflected in our primitives immediately.
 
 ---
 
@@ -157,7 +157,7 @@ Properties:
 
 * **Transparent**: no trusted setup (only hash assumptions). ([C# Corner][2])
 * **Post-quantum**: soundness reduces to collision resistance of the hashes + random oracle, so Shor has nothing to grab; Grover just reduces effective hash security by ~½.
-* **Recursive-friendly**: pick something in the Plonky2/Plonky3 / Winterfell space that supports efficient recursion and aggregation. ([C# Corner][2])
+* **Recursive-friendly**: pick something in the Plonky2/Plonky3 space that supports efficient recursion and aggregation. ([C# Corner][2])
 
 Concretely:
 
@@ -168,15 +168,17 @@ Concretely:
   * Highly parallelizable (good for GPU/prover markets).
 * Verifier:
 
-  * Maybe ~tens of milliseconds, proof sizes in the tens of kB (we accept ZK/STARK size inflation vs SNARK).
+  * Proof sizes are materially larger than SNARKs; with 48-byte digests and a 128-bit PQ target, single-transaction Plonky3 proofs are currently hundreds of kB (≈357KB for the release `TransactionAirP3` e2e test).
 
 **Lesson from Zcash:** we do *not* change proving systems mid-flight if we can avoid it. We pick one transparent, STARK-ish scheme and stick with it, using recursion for evolution rather than entire new pools.
+
+Implementation detail: the Plonky3 backend uses `p3-uni-stark` (v0.4.x). For the transaction AIR, fixed schedule selectors (Poseidon round flags, cycle markers, and row-specific assertions) are embedded as explicit schedule columns in the main trace; this keeps the schedule deterministic while avoiding preprocessed-trace OOD mismatches. Other circuits may still use preprocessed columns where stable.
 
 #### 2.1 Algebraic embeddings that claw back overhead
 
 The transparent stack above is heavier than Groth16/Halo2, but a few circuit-level embeddings keep it manageable:
 
-* **Goldilocks-friendly encodings** – Express the note/balance logic directly in the 64-bit-friendly base field instead of relying on binary gadgets. Packing `(value, asset_id)` pairs into two 64-bit limbs each lets the AIR use cheap addition/multiplication constraints with no Boolean decomposition. This matches Winterfell/Plonky3’s "Goldilocks" optimizations and avoids the \((\times 32\) blow-up you’d get from bit-constraining every register.
+* **Goldilocks-friendly encodings** – Express the note/balance logic directly in the 64-bit-friendly base field instead of relying on binary gadgets. Packing `(value, asset_id)` pairs into two 64-bit limbs each lets the AIR use cheap addition/multiplication constraints with no Boolean decomposition. This matches Plonky3’s Goldilocks optimizations and avoids the \((\times 32\) blow-up you’d get from bit-constraining every register.
 * **Permutation/Ishai–Kushilevitz style lookups** – MASP balance checks need large-domain comparisons (e.g., `asset_id` equality during the in-circuit sort). Encoding those comparisons as STARK-friendly permutation arguments—rather than explicit comparator circuits—reuses the same algebraic lookup table that the prover already commits to for Poseidon rounds. Empirically this trims ~15–20 % of the trace width relative to naive comparison gadgets while remaining transparent.
 * **Batched range proofs via radix embeddings** – Instead of per-note binary range proofs, embed values in radix-`2^16` limbs and reuse a single low-degree check `limb < 2^16` over the entire column. A single lookup table enforces limb bounds, and the batched sum-check amortizes across all limbs, driving the marginal cost per constrained value close to 1–2 constraints.
 * **Folded multi-openings for recursion** – Recursively verifying child proofs requires many polynomial openings; batching them through a single FRI transcript with linear-combination challenges keeps the verifier time in the "tens of ms" bucket despite the larger STARK proofs.
@@ -204,9 +206,9 @@ We keep the Zcash mental model, but trimmed:
   * `r` (commitment randomness)
 * The chain stores only:
 
-  * a **commitment** `cm = Com(value, asset_id, pk_view, rho; r)` (32-byte, 4-limb encoding),
+  * a **commitment** `cm = Com(value, asset_id, pk_view, rho; r)` (48-byte, 6-limb encoding),
   * a Merkle tree of note commitments,
-  * a **nullifier** `nf` when the note is spent (32-byte, 4-limb encoding).
+  * a **nullifier** `nf` when the note is spent (48-byte, 6-limb encoding).
 
 The ZK proof shows:
 
@@ -219,7 +221,7 @@ The ZK proof shows:
 
 No ECDSA/EdDSA/RedDSA anywhere; the “authorization” is just knowledge of `sk_nf` inside the ZK proof.
 
-Note: the switch to 4-limb 32-byte commitment/nullifier encodings is protocol-breaking. Any chain spec
+Note: the switch to 6-limb 48-byte commitment/nullifier encodings is protocol-breaking. Any chain spec
 that adopts this encoding requires a fresh genesis and wiping `node.db` plus wallet stores.
 
 ### 3.2 Transaction structure
@@ -271,7 +273,7 @@ The workspace-level test `tests/node_wallet_daemon.rs` keeps the HTTP API, miner
 
 ### 3.3 Shielded stablecoin issuance
 
-Stablecoin issuance and burn are modeled as a non-native MASP asset that lives entirely inside the shielded pool. Instead of exposing a transparent mint, the transaction circuit allows a single asset id to carry a non-zero net delta, but only when the proof binds to an on-chain policy hash plus the latest oracle and attestation commitments. The policy lives in `pallets/stablecoin-policy` and is hashed with BLAKE3 under the `stablecoin-policy-v1` domain so the circuit can consume a single 32-byte value. The verifier in `pallets/shielded-pool` checks that the policy hash, policy version, oracle commitment freshness, and attestation dispute status match chain state before accepting the proof.
+Stablecoin issuance and burn are modeled as a non-native MASP asset that lives entirely inside the shielded pool. Instead of exposing a transparent mint, the transaction circuit allows a single asset id to carry a non-zero net delta, but only when the proof binds to an on-chain policy hash plus the latest oracle and attestation commitments. The policy lives in `pallets/stablecoin-policy` and is hashed with BLAKE3 under the `stablecoin-policy-v1` domain so the circuit can consume a single 48-byte value. The verifier in `pallets/shielded-pool` checks that the policy hash, policy version, oracle commitment freshness, and attestation dispute status match chain state before accepting the proof.
 
 Issuance and burn therefore stay shielded: the proof shows `inputs - outputs = issuance_delta` for the stablecoin asset, and the runtime rejects any stablecoin binding supplied via the unsigned path. Wallet tooling assembles the binding by reading `StablecoinPolicy`, `Oracles::Feeds`, and `Attestations::Commitments`, then submits a signed `shielded_transfer` extrinsic so role checks and replay protection remain in place. Normal stablecoin transfers do not require a binding, but they still ride the same MASP rules and never leave the privacy pool.
 

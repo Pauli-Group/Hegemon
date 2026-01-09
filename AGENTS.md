@@ -10,6 +10,15 @@ When writing complex features or significant refactors, use an ExecPlan (as desc
 
 Every fresh clone must begin with `make setup` followed by `make node`. The setup command installs toolchains, and `make node` builds the Substrate-based `hegemon-node` binary. Run `HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp` to start a dev node with mining enabled.
 
+# macOS libclang
+
+On macOS, `librocksdb-sys` needs `libclang.dylib` available at build time. The `Makefile` exports `LIBCLANG_PATH` and `DYLD_LIBRARY_PATH` by checking:
+
+- `/Library/Developer/CommandLineTools/usr/lib`
+- `/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib`
+
+If you run `cargo` directly and hit `Library not loaded: @rpath/libclang.dylib`, export those variables yourself (matching the paths above) or run through `make` targets so the environment is set.
+
 # Design and Methods Docs
 
 Always consult DESIGN.md and METHODS.md before making code changes to ensure the implementation aligns with the documented plans, and update those documents whenever the architecture or methods evolve.

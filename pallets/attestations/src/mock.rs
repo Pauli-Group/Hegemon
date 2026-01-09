@@ -46,9 +46,9 @@ impl Get<u32> for MaxPendingEvents {
 
 pub const DEFAULT_PARAMS: StarkVerifierParams = StarkVerifierParams {
     hash: StarkHashFunction::Blake3,
-    fri_queries: 1,
-    blowup_factor: 1,
-    security_bits: 32,
+    fri_queries: 43,
+    blowup_factor: 16,
+    security_bits: 128,
 };
 
 impl system::Config for Test {

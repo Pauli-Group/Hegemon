@@ -1,7 +1,7 @@
 use blake3::Hasher as Blake3Hasher;
 use sha2::Sha256;
 use sha3::digest::Digest;
-use sha3::Sha3_256;
+use sha3::{Sha3_256, Sha3_384};
 
 const FIELD_MODULUS: u128 = 0xffffffff00000001;
 const POSEIDON_WIDTH: usize = 3;
@@ -204,6 +204,14 @@ pub fn blake3_256(data: &[u8]) -> [u8; 32] {
     out
 }
 
+pub fn blake3_384(data: &[u8]) -> [u8; 48] {
+    let mut hasher = Blake3Hasher::new();
+    hasher.update(data);
+    let mut out = [0u8; 48];
+    hasher.finalize_xof().fill(&mut out);
+    out
+}
+
 pub fn sha256(data: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(data);
@@ -216,27 +224,30 @@ pub fn sha3_256(data: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-pub fn commit_note(message: &[u8], randomness: &[u8]) -> [u8; 32] {
+pub fn commit_note(message: &[u8], randomness: &[u8]) -> [u8; 48] {
     commit_note_with(message, randomness, CommitmentHash::Blake3)
 }
 
-pub fn commit_note_with(message: &[u8], randomness: &[u8], hash: CommitmentHash) -> [u8; 32] {
+pub fn commit_note_with(message: &[u8], randomness: &[u8], hash: CommitmentHash) -> [u8; 48] {
     match hash {
         CommitmentHash::Blake3 => {
             let mut hasher = Blake3Hasher::new();
             hasher.update(b"c");
             hasher.update(message);
             hasher.update(randomness);
-            let mut out = [0u8; 32];
+            let mut out = [0u8; 48];
             hasher.finalize_xof().fill(&mut out);
             out
         }
         CommitmentHash::Sha3 => {
-            let mut hasher = Sha3_256::new();
+            let mut hasher = Sha3_384::new();
             hasher.update(b"c");
             hasher.update(message);
             hasher.update(randomness);
-            hasher.finalize().into()
+            let digest = hasher.finalize();
+            let mut out = [0u8; 48];
+            out.copy_from_slice(&digest);
+            out
         }
     }
 }
@@ -250,13 +261,13 @@ pub fn derive_prf_key(sk_spend: &[u8]) -> [u8; 32] {
     out
 }
 
-pub fn derive_nullifier(prf_key: &[u8], note_position: u64, rho: &[u8]) -> [u8; 32] {
+pub fn derive_nullifier(prf_key: &[u8], note_position: u64, rho: &[u8]) -> [u8; 48] {
     let mut hasher = Blake3Hasher::new();
     hasher.update(b"nf");
     hasher.update(prf_key);
     hasher.update(&note_position.to_be_bytes());
     hasher.update(rho);
-    let mut out = [0u8; 32];
+    let mut out = [0u8; 48];
     hasher.finalize_xof().fill(&mut out);
     out
 }

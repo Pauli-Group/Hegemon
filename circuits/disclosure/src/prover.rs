@@ -1,78 +1,80 @@
-//! Disclosure circuit prover.
+//! Plonky3 prover for disclosure proofs.
 
-use winter_crypto::hashers::Blake3_256;
-use winterfell::{
-    crypto::{DefaultRandomCoin, MerkleTree},
-    math::{fields::f64::BaseElement, FieldElement},
-    matrix::ColMatrix,
-    AuxRandElements, CompositionPoly, CompositionPolyTrace, ConstraintCompositionCoefficients,
-    DefaultConstraintCommitment, DefaultConstraintEvaluator, DefaultTraceLde, PartitionOptions,
-    ProofOptions, Prover, StarkDomain, TraceInfo, TracePolyTable, TraceTable,
-};
+use p3_field::PrimeCharacteristicRing;
+use p3_goldilocks::Goldilocks;
+use p3_matrix::dense::RowMajorMatrix;
+use p3_matrix::Matrix;
+use p3_uni_stark::{get_log_num_quotient_chunks, prove_with_preprocessed, setup_preprocessed};
 
 use crate::air::{
-    commitment_row_01, commitment_row_23, DisclosureAir, DisclosurePublicInputs, COL_DOMAIN,
-    COL_IN0, COL_IN1, COL_RESET, COL_S0, COL_S1, COL_S2,
+    DisclosureAirP3, DisclosurePublicInputsP3, COL_DOMAIN, COL_IN0, COL_RESET, COL_S0,
+    PREPROCESSED_WIDTH,
 };
 use crate::constants::{
-    CYCLE_LENGTH, INPUT_PAIRS, NOTE_DOMAIN_TAG, POSEIDON_ROUNDS, TOTAL_CYCLES, TRACE_LENGTH,
-    TRACE_WIDTH,
+    CYCLE_LENGTH, INPUT_CHUNKS, NOTE_DOMAIN_TAG, POSEIDON2_RATE, POSEIDON2_STEPS, POSEIDON2_WIDTH,
+    TOTAL_CYCLES, TRACE_LENGTH, TRACE_WIDTH,
 };
 use crate::{DisclosureCircuitError, PaymentDisclosureClaim, PaymentDisclosureWitness};
+use transaction_core::hashing_pq::bytes48_to_felts;
+use transaction_core::p3_config::{
+    config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
+};
+use transaction_core::poseidon2::poseidon2_step;
 
-use transaction_core::stark_air::poseidon_round;
-
-type Blake3 = Blake3_256<BaseElement>;
+pub type Val = Goldilocks;
+pub type DisclosureProofP3 = TransactionProofP3;
 
 #[derive(Clone, Copy, Debug)]
 struct CycleSpec {
     reset: bool,
     domain: u64,
-    in0: BaseElement,
-    in1: BaseElement,
+    inputs: [Val; POSEIDON2_RATE],
 }
 
-pub struct DisclosureProver {
-    options: ProofOptions,
-}
+pub struct DisclosureProverP3;
 
-impl DisclosureProver {
-    pub fn new(options: ProofOptions) -> Self {
-        Self { options }
-    }
-
-    pub fn with_defaults() -> Self {
-        Self::new(default_proof_options())
+impl DisclosureProverP3 {
+    pub fn new() -> Self {
+        Self
     }
 
     pub fn build_trace(
         &self,
         claim: &PaymentDisclosureClaim,
         witness: &PaymentDisclosureWitness,
-    ) -> Result<TraceTable<BaseElement>, DisclosureCircuitError> {
+    ) -> Result<RowMajorMatrix<Val>, DisclosureCircuitError> {
         let inputs = commitment_inputs(claim, witness);
-        if inputs.len() != INPUT_PAIRS * 2 {
+        let expected_len = 2 + 4 + 4 + 4;
+        if inputs.len() != expected_len {
             return Err(DisclosureCircuitError::InvalidWitness(
                 "commitment input length mismatch",
             ));
         }
 
-        let mut cycle_specs = Vec::with_capacity(INPUT_PAIRS);
-        for (idx, chunk) in inputs.chunks(2).enumerate() {
+        let mut cycle_specs = Vec::with_capacity(INPUT_CHUNKS);
+        for (idx, chunk) in inputs.chunks(POSEIDON2_RATE).enumerate() {
             let reset = idx == 0;
             let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
+            let mut in_values = [Val::ZERO; POSEIDON2_RATE];
+            for (pos, value) in chunk.iter().enumerate() {
+                in_values[pos] = *value;
+            }
             cycle_specs.push(CycleSpec {
                 reset,
                 domain,
-                in0: chunk[0],
-                in1: chunk[1],
+                inputs: in_values,
             });
+        }
+        if cycle_specs.len() != INPUT_CHUNKS {
+            return Err(DisclosureCircuitError::InvalidWitness(
+                "commitment input chunk mismatch",
+            ));
         }
 
         let trace_len = TRACE_LENGTH;
-        let mut trace = vec![vec![BaseElement::ZERO; trace_len]; TRACE_WIDTH];
+        let mut trace = RowMajorMatrix::new(vec![Val::ZERO; trace_len * TRACE_WIDTH], TRACE_WIDTH);
 
-        let mut prev_state = [BaseElement::ZERO; 3];
+        let mut prev_state = [Val::ZERO; POSEIDON2_WIDTH];
 
         for cycle in 0..TOTAL_CYCLES {
             let cycle_start = cycle * CYCLE_LENGTH;
@@ -82,184 +84,134 @@ impl DisclosureProver {
                 let spec = cycle_specs.get(cycle - 1).copied().unwrap_or(CycleSpec {
                     reset: false,
                     domain: 0,
-                    in0: BaseElement::ZERO,
-                    in1: BaseElement::ZERO,
+                    inputs: [Val::ZERO; POSEIDON2_RATE],
                 });
                 if spec.reset {
-                    [
-                        BaseElement::new(spec.domain) + spec.in0,
-                        spec.in1,
-                        BaseElement::ONE,
-                    ]
+                    let mut state = [Val::ZERO; POSEIDON2_WIDTH];
+                    state[0] = Val::from_u64(spec.domain) + spec.inputs[0];
+                    state[1..POSEIDON2_RATE].copy_from_slice(&spec.inputs[1..POSEIDON2_RATE]);
+                    state[POSEIDON2_WIDTH - 1] = Val::ONE;
+                    state
                 } else {
-                    [
-                        prev_state[0] + spec.in0,
-                        prev_state[1] + spec.in1,
-                        prev_state[2],
-                    ]
+                    let mut state = prev_state;
+                    for (state_elem, input) in
+                        state.iter_mut().take(POSEIDON2_RATE).zip(spec.inputs)
+                    {
+                        *state_elem += input;
+                    }
+                    state
                 }
             };
 
             let mut state = state_start;
-            for round in 0..POSEIDON_ROUNDS {
-                let row = cycle_start + round;
-                trace[COL_S0][row] = state[0];
-                trace[COL_S1][row] = state[1];
-                trace[COL_S2][row] = state[2];
-                poseidon_round(&mut state, round);
+            for step in 0..POSEIDON2_STEPS {
+                let row = cycle_start + step;
+                let row_slice = trace.row_mut(row);
+                row_slice[COL_S0..(COL_S0 + POSEIDON2_WIDTH)].copy_from_slice(&state);
+                poseidon2_step(&mut state, step);
             }
 
-            for step in POSEIDON_ROUNDS..CYCLE_LENGTH {
+            for step in POSEIDON2_STEPS..CYCLE_LENGTH {
                 let row = cycle_start + step;
-                trace[COL_S0][row] = state[0];
-                trace[COL_S1][row] = state[1];
-                trace[COL_S2][row] = state[2];
+                let row_slice = trace.row_mut(row);
+                row_slice[COL_S0..(COL_S0 + POSEIDON2_WIDTH)].copy_from_slice(&state);
             }
 
             prev_state = state;
 
             let end_row = cycle_start + (CYCLE_LENGTH - 1);
-            if cycle < INPUT_PAIRS {
+            let row_slice = trace.row_mut(end_row);
+            if cycle < INPUT_CHUNKS {
                 let next_spec = cycle_specs[cycle];
-                trace[COL_IN0][end_row] = next_spec.in0;
-                trace[COL_IN1][end_row] = next_spec.in1;
-                trace[COL_RESET][end_row] = if next_spec.reset {
-                    BaseElement::ONE
+                row_slice[COL_IN0..(COL_IN0 + POSEIDON2_RATE)].copy_from_slice(&next_spec.inputs);
+                row_slice[COL_RESET] = if next_spec.reset { Val::ONE } else { Val::ZERO };
+                row_slice[COL_DOMAIN] = if next_spec.reset {
+                    Val::from_u64(next_spec.domain)
                 } else {
-                    BaseElement::ZERO
-                };
-                trace[COL_DOMAIN][end_row] = if next_spec.reset {
-                    BaseElement::new(next_spec.domain)
-                } else {
-                    BaseElement::ZERO
+                    Val::ZERO
                 };
             } else {
-                trace[COL_IN0][end_row] = BaseElement::ZERO;
-                trace[COL_IN1][end_row] = BaseElement::ZERO;
-                trace[COL_RESET][end_row] = BaseElement::ZERO;
-                trace[COL_DOMAIN][end_row] = BaseElement::ZERO;
+                row_slice[COL_IN0..(COL_IN0 + POSEIDON2_RATE)].fill(Val::ZERO);
+                row_slice[COL_RESET] = Val::ZERO;
+                row_slice[COL_DOMAIN] = Val::ZERO;
             }
         }
 
-        Ok(TraceTable::init(trace))
+        Ok(trace)
     }
-}
 
-impl Default for DisclosureProver {
-    fn default() -> Self {
-        Self::with_defaults()
-    }
-}
+    pub fn public_inputs(
+        &self,
+        claim: &PaymentDisclosureClaim,
+    ) -> Result<DisclosurePublicInputsP3, DisclosureCircuitError> {
+        let commitment = bytes48_to_felts(&claim.commitment)
+            .ok_or(DisclosureCircuitError::NonCanonicalCommitment)?;
 
-impl Prover for DisclosureProver {
-    type BaseField = BaseElement;
-    type Air = DisclosureAir;
-    type Trace = TraceTable<BaseElement>;
-    type HashFn = Blake3;
-    type VC = MerkleTree<Blake3>;
-    type RandomCoin = DefaultRandomCoin<Blake3>;
-    type TraceLde<E: FieldElement<BaseField = Self::BaseField>> =
-        DefaultTraceLde<E, Self::HashFn, Self::VC>;
-    type ConstraintCommitment<E: FieldElement<BaseField = Self::BaseField>> =
-        DefaultConstraintCommitment<E, Self::HashFn, Self::VC>;
-    type ConstraintEvaluator<'a, E: FieldElement<BaseField = Self::BaseField>> =
-        DefaultConstraintEvaluator<'a, DisclosureAir, E>;
-
-    fn get_pub_inputs(&self, trace: &Self::Trace) -> DisclosurePublicInputs {
-        let value = trace.get(COL_IN0, crate::air::absorb_row(0));
-        let asset_id = trace.get(COL_IN1, crate::air::absorb_row(0));
-        let pk0 = trace.get(COL_IN0, crate::air::absorb_row(1));
-        let pk1 = trace.get(COL_IN1, crate::air::absorb_row(1));
-        let pk2 = trace.get(COL_IN0, crate::air::absorb_row(2));
-        let pk3 = trace.get(COL_IN1, crate::air::absorb_row(2));
-        let row_01 = commitment_row_01();
-        let row_23 = commitment_row_23();
-        let commitment = [
-            trace.get(COL_S0, row_01),
-            trace.get(COL_S1, row_01),
-            trace.get(COL_S0, row_23),
-            trace.get(COL_S1, row_23),
-        ];
-
-        DisclosurePublicInputs {
-            value,
-            asset_id,
-            pk_recipient: [pk0, pk1, pk2, pk3],
+        Ok(DisclosurePublicInputsP3 {
+            value: Val::from_u64(claim.value),
+            asset_id: Val::from_u64(claim.asset_id),
+            pk_recipient: bytes32_to_felts(&claim.pk_recipient),
             commitment,
-        }
+        })
     }
 
-    fn options(&self) -> &ProofOptions {
-        &self.options
-    }
-
-    fn new_trace_lde<E: FieldElement<BaseField = Self::BaseField>>(
+    pub fn prove(
         &self,
-        trace_info: &TraceInfo,
-        main_trace: &ColMatrix<Self::BaseField>,
-        domain: &StarkDomain<Self::BaseField>,
-        partition_options: PartitionOptions,
-    ) -> (Self::TraceLde<E>, TracePolyTable<E>) {
-        DefaultTraceLde::new(trace_info, main_trace, domain, partition_options)
-    }
-
-    fn new_evaluator<'a, E: FieldElement<BaseField = Self::BaseField>>(
-        &self,
-        air: &'a Self::Air,
-        aux_rand_elements: Option<AuxRandElements<E>>,
-        composition_coefficients: ConstraintCompositionCoefficients<E>,
-    ) -> Self::ConstraintEvaluator<'a, E> {
-        DefaultConstraintEvaluator::new(air, aux_rand_elements, composition_coefficients)
-    }
-
-    fn build_constraint_commitment<E: FieldElement<BaseField = Self::BaseField>>(
-        &self,
-        composition_poly_trace: CompositionPolyTrace<E>,
-        num_trace_poly_columns: usize,
-        domain: &StarkDomain<Self::BaseField>,
-        partition_options: PartitionOptions,
-    ) -> (Self::ConstraintCommitment<E>, CompositionPoly<E>) {
-        DefaultConstraintCommitment::new(
-            composition_poly_trace,
-            num_trace_poly_columns,
-            domain,
-            partition_options,
+        trace: RowMajorMatrix<Val>,
+        pub_inputs: &DisclosurePublicInputsP3,
+    ) -> DisclosureProofP3 {
+        let pub_inputs_vec = pub_inputs.to_vec();
+        let degree_bits = trace.height().ilog2() as usize;
+        let air = DisclosureAirP3::new(trace.height());
+        let log_chunks = get_log_num_quotient_chunks::<Val, _>(
+            &air,
+            PREPROCESSED_WIDTH,
+            pub_inputs_vec.len(),
+            0,
+        );
+        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
+        let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+        let (prep_prover, _) = setup_preprocessed(&config.config, &air, degree_bits)
+            .expect("DisclosureAirP3 preprocessed trace missing");
+        prove_with_preprocessed(
+            &config.config,
+            &air,
+            trace,
+            &pub_inputs_vec,
+            Some(&prep_prover),
         )
+    }
+
+    pub fn prove_bytes(
+        &self,
+        trace: RowMajorMatrix<Val>,
+        pub_inputs: &DisclosurePublicInputsP3,
+    ) -> Result<Vec<u8>, DisclosureCircuitError> {
+        let proof = self.prove(trace, pub_inputs);
+        bincode::serialize(&proof)
+            .map_err(|_| DisclosureCircuitError::ProofGenerationFailed("serialize".into()))
     }
 }
 
 fn commitment_inputs(
     claim: &PaymentDisclosureClaim,
     witness: &PaymentDisclosureWitness,
-) -> Vec<BaseElement> {
-    let mut inputs = Vec::with_capacity(INPUT_PAIRS * 2);
-    inputs.push(BaseElement::new(claim.value));
-    inputs.push(BaseElement::new(claim.asset_id));
+) -> Vec<Val> {
+    let mut inputs = Vec::with_capacity(2 + 4 + 4 + 4);
+    inputs.push(Val::from_u64(claim.value));
+    inputs.push(Val::from_u64(claim.asset_id));
     inputs.extend(bytes32_to_felts(&claim.pk_recipient));
     inputs.extend(bytes32_to_felts(&witness.rho));
     inputs.extend(bytes32_to_felts(&witness.r));
     inputs
 }
 
-fn bytes32_to_felts(bytes: &[u8; 32]) -> [BaseElement; 4] {
-    let mut out = [BaseElement::ZERO; 4];
+fn bytes32_to_felts(bytes: &[u8; 32]) -> [Val; 4] {
+    let mut out = [Val::ZERO; 4];
     for (idx, chunk) in bytes.chunks(8).enumerate() {
         let mut buf = [0u8; 8];
         buf.copy_from_slice(chunk);
-        out[idx] = BaseElement::new(u64::from_be_bytes(buf));
+        out[idx] = Val::from_u64(u64::from_be_bytes(buf));
     }
     out
-}
-
-fn default_proof_options() -> ProofOptions {
-    ProofOptions::new(
-        32,
-        8,
-        0,
-        winterfell::FieldExtension::None,
-        4,
-        31,
-        winterfell::BatchingMethod::Linear,
-        winterfell::BatchingMethod::Linear,
-    )
 }

@@ -216,7 +216,7 @@ where
         let best_hash = self.best_hash();
 
         let leaf_count = api.encrypted_note_count(best_hash).unwrap_or(0);
-        let merkle_root = api.merkle_root(best_hash).unwrap_or([0u8; 32]);
+        let merkle_root = api.merkle_root(best_hash).unwrap_or([0u8; 48]);
         let tree_depth = api.tree_depth(best_hash).unwrap_or(32);
 
         NoteStatus {
@@ -227,7 +227,7 @@ where
         }
     }
 
-    fn commitment_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, [u8; 32])>, String> {
+    fn commitment_slice(&self, start: u64, limit: usize) -> Result<Vec<(u64, [u8; 48])>, String> {
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
 
@@ -254,7 +254,7 @@ where
         }
     }
 
-    fn nullifier_list(&self) -> Result<Vec<[u8; 32]>, String> {
+    fn nullifier_list(&self) -> Result<Vec<[u8; 48]>, String> {
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
 
@@ -339,10 +339,10 @@ where
     fn submit_shielded_transfer(
         &self,
         proof: Vec<u8>,
-        nullifiers: Vec<[u8; 32]>,
-        commitments: Vec<[u8; 32]>,
+        nullifiers: Vec<[u8; 48]>,
+        commitments: Vec<[u8; 48]>,
         encrypted_notes: Vec<Vec<u8>>,
-        anchor: [u8; 32],
+        anchor: [u8; 48],
         binding_hash: [u8; 64],
         stablecoin: Option<StablecoinPolicyBinding>,
         fee: u64,
@@ -383,13 +383,13 @@ where
         }
 
         // Convert nullifiers to BoundedVec
-        let bounded_nullifiers: frame_support::BoundedVec<[u8; 32], runtime::MaxNullifiersPerTx> =
+        let bounded_nullifiers: frame_support::BoundedVec<[u8; 48], runtime::MaxNullifiersPerTx> =
             nullifiers
                 .try_into()
                 .map_err(|_| "Failed to convert nullifiers")?;
 
         // Convert commitments to BoundedVec
-        let bounded_commitments: frame_support::BoundedVec<[u8; 32], runtime::MaxCommitmentsPerTx> =
+        let bounded_commitments: frame_support::BoundedVec<[u8; 48], runtime::MaxCommitmentsPerTx> =
             commitments
                 .try_into()
                 .map_err(|_| "Failed to convert commitments")?;
@@ -478,7 +478,7 @@ where
         limit: usize,
         _from_block: Option<u64>,
         _to_block: Option<u64>,
-    ) -> Result<Vec<(u64, Vec<u8>, u64, [u8; 32])>, String> {
+    ) -> Result<Vec<(u64, Vec<u8>, u64, [u8; 48])>, String> {
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
 
@@ -496,7 +496,7 @@ where
     fn get_merkle_witness(
         &self,
         position: u64,
-    ) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), String> {
+    ) -> Result<(Vec<[u8; 48]>, Vec<bool>, [u8; 48]), String> {
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
 
@@ -511,7 +511,7 @@ where
 
         let total_notes = api.encrypted_note_count(best_hash).unwrap_or(0);
         let total_nullifiers = api.nullifier_count(best_hash).unwrap_or(0);
-        let merkle_root = api.merkle_root(best_hash).unwrap_or([0u8; 32]);
+        let merkle_root = api.merkle_root(best_hash).unwrap_or([0u8; 48]);
         let tree_depth = api.tree_depth(best_hash).unwrap_or(32);
         let pool_balance = api.pool_balance(best_hash).unwrap_or(0);
 
@@ -525,7 +525,7 @@ where
         }
     }
 
-    fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
+    fn is_nullifier_spent(&self, nullifier: &[u8; 48]) -> bool {
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
 
@@ -533,7 +533,7 @@ where
             .unwrap_or(false)
     }
 
-    fn is_valid_anchor(&self, anchor: &[u8; 32]) -> bool {
+    fn is_valid_anchor(&self, anchor: &[u8; 48]) -> bool {
         let api = self.client.runtime_api();
         let best_hash = self.best_hash();
 

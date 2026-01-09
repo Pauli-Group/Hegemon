@@ -1,0 +1,13 @@
+[package]
+name = "poseidon2-constants-gen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+p3-goldilocks = "0.4.2"
+p3-poseidon2 = "0.4.2"
+p3-field = "0.4.2"
+rand = "0.9"
+rand_chacha = "0.9"
+
+[workspace]

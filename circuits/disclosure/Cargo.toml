@@ -5,11 +5,15 @@ edition = "2021"
 
 [dependencies]
 blake3 = "1"
+bincode = "1.3"
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
-winter-crypto = "0.13"
-winterfell = "0.13"
-transaction-core = { path = "../transaction-core", features = ["serde", "stark-verify"] }
+p3-air = { workspace = true }
+p3-field = { workspace = true }
+p3-goldilocks = { workspace = true }
+p3-matrix = { workspace = true }
+p3-uni-stark = { workspace = true }
+transaction-core = { path = "../transaction-core", features = ["serde"] }
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }

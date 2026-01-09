@@ -7,18 +7,15 @@ use consensus::{
     CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
     commitment_nullifier_lists,
 };
-use crypto::hashes::blake3_256;
+use crypto::hashes::blake3_384;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
-use transaction_circuit::hashing::{
-    Felt, HashFelt, felt_to_bytes32, felts_to_bytes32, merkle_node,
-};
+use transaction_circuit::hashing_pq::{Felt, HashFelt, felts_to_bytes48, merkle_node};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
 use transaction_circuit::proof::prove;
 use transaction_circuit::{
     InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionWitness,
 };
-use winterfell::math::FieldElement;
 
 fn compute_merkle_root(leaf: HashFelt, position: u64, path: &[HashFelt]) -> HashFelt {
     let mut current = leaf;
@@ -39,7 +36,7 @@ fn build_two_leaf_merkle_tree(
     leaf1: HashFelt,
 ) -> (MerklePath, MerklePath, HashFelt) {
     let mut defaults = Vec::with_capacity(CIRCUIT_MERKLE_DEPTH + 1);
-    defaults.push([Felt::ZERO; 4]);
+    defaults.push([Felt::new(0); 6]);
     for level in 0..CIRCUIT_MERKLE_DEPTH {
         let prev = defaults[level];
         defaults.push(merkle_node(prev, prev));
@@ -130,7 +127,7 @@ fn sample_witness() -> TransactionWitness {
         ],
         outputs: vec![output_native, output_asset],
         sk_spend: [42u8; 32],
-        merkle_root: felts_to_bytes32(&merkle_root),
+        merkle_root: felts_to_bytes48(&merkle_root),
         fee: 5,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
@@ -145,19 +142,19 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
     let (proving_key, _verifying_key) = generate_keys();
     let tx_proof = prove(&witness, &proving_key).expect("transaction proof");
 
-    let nullifiers: Vec<[u8; 32]> = tx_proof
+    let nullifiers: Vec<[u8; 48]> = tx_proof
         .nullifiers
         .iter()
         .copied()
-        .filter(|value| *value != [0u8; 32])
+        .filter(|value| *value != [0u8; 48])
         .collect();
-    let commitments: Vec<[u8; 32]> = tx_proof
+    let commitments: Vec<[u8; 48]> = tx_proof
         .commitments
         .iter()
         .copied()
-        .filter(|value| *value != [0u8; 32])
+        .filter(|value| *value != [0u8; 48])
         .collect();
-    let balance_tag = felt_to_bytes32(tx_proof.public_inputs.balance_tag);
+    let balance_tag = tx_proof.public_inputs.balance_tag;
     let transaction = consensus::Transaction::new(
         nullifiers,
         commitments,
@@ -170,7 +167,7 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
     let mut base_tree = CommitmentTreeState::default();
     for input in &witness.inputs {
         base_tree
-            .append(felts_to_bytes32(&input.note.commitment()))
+            .append(felts_to_bytes48(&input.note.commitment()))
             .expect("append input commitment");
     }
     assert_eq!(base_tree.root(), tx_proof.public_inputs.merkle_root);
@@ -196,7 +193,7 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
         assemble_pow_block(params).expect("assemble block");
 
     let lists = commitment_nullifier_lists(&block.transactions).expect("nullifier lists");
-    let proof_hashes = vec![blake3_256(&tx_proof.stark_proof)];
+    let proof_hashes = vec![blake3_384(&tx_proof.stark_proof)];
     let prover = CommitmentBlockProver::new();
     let commitment_proof = prover
         .prove_from_hashes_with_inputs(

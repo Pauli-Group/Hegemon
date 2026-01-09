@@ -1,8 +1,8 @@
 //! Batch transaction circuit for STARK proof aggregation.
 //!
 //! This crate provides batch proving capabilities that allow multiple
-//! transactions to be proven in a single STARK proof, reducing verification
-//! costs from O(N) to O(1).
+//! transactions to be proven in a single Plonky3 STARK proof, reducing
+//! verification costs from O(N) to O(1).
 //!
 //! ## Key Components
 //!
@@ -40,27 +40,22 @@
 
 extern crate alloc;
 
-pub mod air;
+pub mod constants;
 pub mod error;
-#[cfg(feature = "std")]
-pub mod prover;
-pub mod public_inputs;
-pub mod verifier;
+pub mod p3_air;
+pub mod p3_prover;
+pub mod p3_verifier;
 
-// Recursion-friendly RPO Fiat‑Shamir path (feature‑gated)
-#[cfg(all(feature = "rpo-fiat-shamir", feature = "std"))]
-pub mod rpo_prover;
-#[cfg(feature = "rpo-fiat-shamir")]
-pub mod rpo_verifier;
-
-pub use air::BatchTransactionAir;
+pub use constants::{MAX_BATCH_SIZE, MAX_INPUTS, MAX_OUTPUTS};
 pub use error::BatchCircuitError;
-#[cfg(feature = "std")]
-pub use prover::BatchTransactionProver;
-pub use public_inputs::{BatchPublicInputs, MAX_BATCH_SIZE};
-pub use verifier::{verify_batch_proof, verify_batch_proof_bytes};
-
-#[cfg(all(feature = "rpo-fiat-shamir", feature = "std"))]
-pub use rpo_prover::BatchTransactionProverRpo;
-#[cfg(feature = "rpo-fiat-shamir")]
-pub use rpo_verifier::{verify_batch_proof_bytes_rpo, verify_batch_proof_rpo};
+pub use p3_air::{
+    BatchPublicInputsP3 as BatchPublicInputs, BatchTransactionAirP3 as BatchTransactionAir,
+    TRACE_WIDTH as P3_TRACE_WIDTH,
+};
+pub use p3_prover::{
+    BatchProofP3 as BatchProof, BatchTransactionProverP3 as BatchTransactionProver,
+};
+pub use p3_verifier::{
+    verify_batch_proof_bytes_p3 as verify_batch_proof_bytes,
+    verify_batch_proof_p3 as verify_batch_proof,
+};

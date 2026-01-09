@@ -25,7 +25,7 @@ use scale_info::TypeInfo;
 use sp_inherents::InherentData;
 use sp_inherents::InherentIdentifier;
 
-use crate::types::{CoinbaseNoteData, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE};
+use crate::types::{CoinbaseNoteData, Commitment, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE};
 
 /// The inherent identifier for shielded coinbase data
 pub const SHIELDED_COINBASE_INHERENT_IDENTIFIER: InherentIdentifier = *b"shldcoin";
@@ -46,7 +46,7 @@ pub struct ShieldedCoinbaseInherentData {
 impl ShieldedCoinbaseInherentData {
     /// Create new shielded coinbase inherent data
     pub fn new(
-        commitment: [u8; 32],
+        commitment: Commitment,
         encrypted_note: EncryptedNote,
         recipient_address: [u8; DIVERSIFIED_ADDRESS_SIZE],
         amount: u64,
@@ -84,7 +84,7 @@ pub struct ShieldedCoinbaseInherentDataProvider {
 impl ShieldedCoinbaseInherentDataProvider {
     /// Create a new shielded coinbase inherent data provider
     pub fn new(
-        commitment: [u8; 32],
+        commitment: Commitment,
         encrypted_note: EncryptedNote,
         recipient_address: [u8; DIVERSIFIED_ADDRESS_SIZE],
         amount: u64,

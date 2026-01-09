@@ -4,26 +4,34 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-winterfell = "0.13"
-winter-crypto = "0.13"
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 synthetic-crypto = { path = "../../crypto" }
 hex = "0.4"
 protocol-versioning = { path = "../../protocol/versioning" }
-miden-crypto = { version = "0.19", default-features = false, optional = true }
-transaction-core = { path = "../transaction-core", features = ["serde", "stark-verify"] }
+transaction-core = { path = "../transaction-core", features = ["serde"] }
+p3-air = { workspace = true }
+p3-field = { workspace = true }
+p3-goldilocks = { workspace = true }
+p3-matrix = { workspace = true }
+p3-challenger = { workspace = true }
+p3-commit = { workspace = true }
+p3-fri = { workspace = true }
+p3-dft = { workspace = true }
+p3-merkle-tree = { workspace = true }
+p3-uni-stark = { workspace = true }
+p3-symmetric = { workspace = true }
+p3-poseidon2 = { workspace = true }
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
-rand = { version = "0.8", features = ["std"] }
 proptest = "1"
 
 [features]
-default = []
-rpo-fiat-shamir = ["miden-crypto"]
-legacy-proof = []
-stark-fast = ["transaction-core/stark-fast"]
+default = ["plonky3"]
+plonky3 = []
+plonky3-e2e = ["plonky3"]
 
 [lints]
 workspace = true

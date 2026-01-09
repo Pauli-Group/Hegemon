@@ -8,21 +8,33 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 blake3 = "1"
 sha2 = "0.10"
-epoch-circuit = { path = "../epoch", optional = true }
-transaction-circuit = { path = "../transaction", features = ["rpo-fiat-shamir"] }
+transaction-circuit = { path = "../transaction", default-features = false }
 state-merkle = { path = "../../state/merkle" }
 protocol-versioning = { path = "../../protocol/versioning" }
-winterfell = "0.13"
-winter-crypto = "0.13"
+transaction-core = { path = "../transaction-core", optional = true }
+p3-air = { workspace = true, optional = true }
+p3-field = { workspace = true, optional = true }
+p3-goldilocks = { workspace = true, optional = true }
+p3-matrix = { workspace = true, optional = true }
+p3-uni-stark = { workspace = true, optional = true }
+bincode = { version = "1", optional = true }
 
 [dev-dependencies]
 rand = { version = "0.8", features = ["std"] }
 
 [features]
-default = []
+default = ["plonky3"]
 fast-proofs = ["stark-fast"]
 stark-fast = []
-legacy-recursion = ["dep:epoch-circuit"]
+plonky3 = [
+    "transaction-core",
+    "dep:p3-air",
+    "dep:p3-field",
+    "dep:p3-goldilocks",
+    "dep:p3-matrix",
+    "dep:p3-uni-stark",
+    "dep:bincode",
+]
 
 [lints]
 workspace = true

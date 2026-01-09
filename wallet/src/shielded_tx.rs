@@ -42,7 +42,7 @@ use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
     constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID},
-    hashing::bytes32_to_felts,
+    hashing_pq::bytes48_to_felts,
     note::OutputNoteWitness,
     witness::TransactionWitness,
     StablecoinPolicyBinding,
@@ -106,9 +106,9 @@ pub struct BuiltShieldedTx {
     /// Transaction bundle with proof and ciphertexts.
     pub bundle: TransactionBundle,
     /// Nullifiers for spent notes.
-    pub nullifiers: Vec<[u8; 32]>,
+    pub nullifiers: Vec<[u8; 48]>,
     /// New commitments.
-    pub commitments: Vec<[u8; 32]>,
+    pub commitments: Vec<[u8; 48]>,
     /// Indices of spent notes in the wallet store.
     pub spent_note_indices: Vec<usize>,
     /// Value balance (must be 0 when no transparent pool is enabled).
@@ -469,7 +469,7 @@ impl<'a> ShieldedTxBuilder<'a> {
 
             let mut siblings = Vec::with_capacity(auth_path.len());
             for sibling in auth_path.iter() {
-                let felts = bytes32_to_felts(sibling).ok_or(WalletError::InvalidState(
+                let felts = bytes48_to_felts(sibling).ok_or(WalletError::InvalidState(
                     "non-canonical merkle sibling encoding",
                 ))?;
                 siblings.push(felts);
@@ -502,9 +502,9 @@ impl<'a> ShieldedTxBuilder<'a> {
     /// Blake2_256(domain || 0 || message) || Blake2_256(domain || 1 || message)
     fn compute_binding_hash(
         &self,
-        anchor: &[u8; 32],
-        nullifiers: &[[u8; 32]],
-        commitments: &[[u8; 32]],
+        anchor: &[u8; 48],
+        nullifiers: &[[u8; 48]],
+        commitments: &[[u8; 48]],
         fee: u64,
         value_balance: i128,
     ) -> [u8; 64] {
@@ -542,7 +542,7 @@ impl<'a> ShieldedTxBuilder<'a> {
         &self,
         fvk: &FullViewingKey,
         selection: &[SpendableNote],
-    ) -> Vec<[u8; 32]> {
+    ) -> Vec<[u8; 48]> {
         selection
             .iter()
             .map(|note| fvk.compute_nullifier(&note.recovered.note.rho, note.position))

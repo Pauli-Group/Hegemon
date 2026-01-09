@@ -4,7 +4,9 @@ use disclosure_circuit::{
 };
 use rand::{rngs::StdRng, SeedableRng};
 use state_merkle::CommitmentTree;
-use transaction_circuit::hashing::{bytes32_to_felts, is_canonical_bytes32, note_commitment_bytes};
+use transaction_circuit::hashing_pq::{
+    bytes48_to_felts, is_canonical_bytes48, note_commitment_bytes,
+};
 use transaction_circuit::note::{MerklePath, MERKLE_TREE_DEPTH};
 use wallet::address::ShieldedAddress;
 use wallet::disclosure::{
@@ -91,14 +93,14 @@ fn verify_package(
         return Err("recipient address does not match pk_recipient".to_string());
     }
 
-    if !is_canonical_bytes32(&package.claim.commitment) {
+    if !is_canonical_bytes48(&package.claim.commitment) {
         return Err("commitment is not a canonical field encoding".to_string());
     }
-    if !is_canonical_bytes32(&package.confirmation.anchor) {
+    if !is_canonical_bytes48(&package.confirmation.anchor) {
         return Err("anchor is not a canonical field encoding".to_string());
     }
     for (idx, sibling) in package.confirmation.siblings.iter().enumerate() {
-        if !is_canonical_bytes32(sibling) {
+        if !is_canonical_bytes48(sibling) {
             return Err(format!("siblings[{idx}] is not a canonical field encoding"));
         }
     }
@@ -106,15 +108,15 @@ fn verify_package(
         return Err("merkle path length mismatch".to_string());
     }
 
-    let commitment_felt = bytes32_to_felts(&package.claim.commitment)
+    let commitment_felt = bytes48_to_felts(&package.claim.commitment)
         .ok_or_else(|| "commitment is not canonical".to_string())?;
-    let anchor_felt = bytes32_to_felts(&package.confirmation.anchor)
+    let anchor_felt = bytes48_to_felts(&package.confirmation.anchor)
         .ok_or_else(|| "anchor is not canonical".to_string())?;
     let sibling_felts = package
         .confirmation
         .siblings
         .iter()
-        .map(|bytes| bytes32_to_felts(bytes).ok_or_else(|| "non-canonical sibling".to_string()))
+        .map(|bytes| bytes48_to_felts(bytes).ok_or_else(|| "non-canonical sibling".to_string()))
         .collect::<Result<_, _>>()?;
 
     let merkle_path = MerklePath {

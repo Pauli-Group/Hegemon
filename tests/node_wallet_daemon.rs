@@ -265,14 +265,14 @@ async fn post_funding_transaction(
         version: TransactionWitness::default_version_binding(),
     };
     let proof = prove(&witness, &proving_key).expect("prove funding");
-    let zero = [0u8; 32];
-    let nullifiers: Vec<[u8; 32]> = proof
+    let zero = [0u8; 48];
+    let nullifiers: Vec<[u8; 48]> = proof
         .nullifiers
         .iter()
         .copied()
         .filter(|value| *value != zero)
         .collect();
-    let commitments: Vec<[u8; 32]> = proof
+    let commitments: Vec<[u8; 48]> = proof
         .commitments
         .iter()
         .copied()

@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use consensus::header::{BlockHeader, PowSeal};
 use consensus::reward::INITIAL_SUBSIDY;
 use consensus::types::{da_root, ConsensusBlock, DaParams};
-use crypto::hashes::sha256;
+use crypto::hashes::{blake3_384, sha256};
 use crypto::traits::{SigningKey, VerifyKey};
 use parking_lot::Mutex;
 use wallet::rpc::TransactionBundle;
@@ -34,7 +34,7 @@ pub struct ConsensusStatus {
     pub height: u64,
     pub best_hash: [u8; 32],
     pub pow_bits: u32,
-    pub version_commitment: [u8; 32],
+    pub version_commitment: [u8; 48],
     pub proof_commitment: Vec<u8>,
 }
 
@@ -51,10 +51,10 @@ struct LegacyNodeState {
     mining_status: MinerStatus,
     height: u64,
     best_hash: [u8; 32],
-    version_commitment: [u8; 32],
+    version_commitment: [u8; 48],
     proof_commitment: [u8; 48],
     supply_digest: u128,
-    merkle_root: [u8; 32],
+    merkle_root: [u8; 48],
 }
 
 pub struct NodeService {
@@ -97,7 +97,7 @@ impl LegacyNode {
                     block.header.proof_commitment,
                 )
             })
-            .unwrap_or(([0u8; 32], [0u8; 48]));
+            .unwrap_or(([0u8; 48], [0u8; 48]));
 
         Self {
             state: Arc::new(Mutex::new(LegacyNodeState {
@@ -110,7 +110,7 @@ impl LegacyNode {
                 version_commitment,
                 proof_commitment,
                 supply_digest,
-                merkle_root: [0u8; 32],
+                merkle_root: [0u8; 48],
             })),
         }
     }
@@ -130,7 +130,7 @@ impl LegacyNode {
         self.state.lock().config.api_addr
     }
 
-    pub fn merkle_root(&self) -> [u8; 32] {
+    pub fn merkle_root(&self) -> [u8; 48] {
         self.state.lock().merkle_root
     }
 
@@ -154,14 +154,14 @@ impl LegacyNode {
             view: 0,
             timestamp_ms: current_time_ms(),
             parent_hash: state.best_hash,
-            state_root: [0u8; 32],
-            nullifier_root: [0u8; 32],
+            state_root: [0u8; 48],
+            nullifier_root: [0u8; 48],
             proof_commitment: state.proof_commitment,
             da_root,
             da_params,
             version_commitment: state.version_commitment,
             tx_count: 0,
-            fee_commitment: [0u8; 32],
+            fee_commitment: [0u8; 48],
             supply_digest,
             validator_set_commitment: miner_id(&state.config),
             signature_aggregate: Vec::new(),
@@ -185,7 +185,7 @@ impl LegacyNode {
         Ok(Some(block))
     }
 
-    pub fn miner_ids(&self) -> Vec<[u8; 32]> {
+    pub fn miner_ids(&self) -> Vec<[u8; 48]> {
         let state = self.state.lock();
         vec![miner_id(&state.config)]
     }
@@ -284,8 +284,8 @@ impl LegacyNode {
     }
 }
 
-fn miner_id(config: &NodeConfig) -> [u8; 32] {
-    sha256(&config.miner_secret().verify_key().to_bytes())
+fn miner_id(config: &NodeConfig) -> [u8; 48] {
+    blake3_384(&config.miner_secret().verify_key().to_bytes())
 }
 
 fn current_time_ms() -> u64 {

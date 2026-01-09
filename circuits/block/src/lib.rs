@@ -1,23 +1,19 @@
-pub mod commitment_air;
-pub mod commitment_prover;
-pub mod commitment_verifier;
+pub mod commitment_constants;
 pub mod error;
-#[cfg(feature = "legacy-recursion")]
-pub mod proof;
-#[cfg(feature = "legacy-recursion")]
-pub mod recursive;
+pub mod p3_commitment_air;
+pub mod p3_commitment_prover;
+pub mod p3_commitment_verifier;
 
-pub use commitment_air::{CommitmentBlockAir, CommitmentBlockPublicInputs};
-pub use commitment_prover::{
-    default_commitment_options, fast_commitment_options, CommitmentBlockProof,
-    CommitmentBlockProver,
-};
-pub use commitment_verifier::verify_block_commitment;
 pub use error::BlockError;
-#[cfg(feature = "legacy-recursion")]
-pub use proof::{prove_block, prove_block_fast, verify_block, BlockProof, BlockVerificationReport};
-#[cfg(feature = "legacy-recursion")]
-pub use recursive::{
-    decode_verifier_inputs, prove_block_recursive, transaction_inputs_from_verifier_inputs,
-    verify_block_recursive, verify_recursive_proof, RecursiveBlockProof, SerializedVerifierInputs,
+pub use p3_commitment_air::{
+    CommitmentBlockAirP3 as CommitmentBlockAir,
+    CommitmentBlockPublicInputsP3 as CommitmentBlockPublicInputs,
 };
+pub use p3_commitment_air::{CommitmentBlockAirP3, CommitmentBlockPublicInputsP3};
+pub use p3_commitment_prover::{
+    CommitmentBlockProofP3 as CommitmentBlockProof,
+    CommitmentBlockProverP3 as CommitmentBlockProver,
+};
+pub use p3_commitment_prover::{CommitmentBlockProofP3, CommitmentBlockProverP3};
+pub use p3_commitment_verifier::verify_block_commitment_p3 as verify_block_commitment;
+pub use p3_commitment_verifier::verify_block_commitment_p3;

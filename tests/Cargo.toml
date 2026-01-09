@@ -7,11 +7,11 @@ publish = false
 [dependencies]
 block-circuit = { path = "../circuits/block" }
 transaction-circuit = { path = "../circuits/transaction" }
-epoch-circuit = { path = "../circuits/epoch" }
 state-merkle = { path = "../state/merkle" }
 crypto = { path = "../crypto", package = "synthetic-crypto" }
 network = { path = "../network" }
 wallet = { path = "../wallet" }
+pallet-shielded-pool = { path = "../pallets/shielded-pool" }
 protocol-versioning = { path = "../protocol/versioning" }
 hegemon-node = { path = "../node", features = ["test-utils"] }
 consensus = { path = "../consensus" }
@@ -28,9 +28,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_bytes = "0.11"
 axum = "0.7"
-winter-math = "0.13"
-winterfell = "0.13"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+p3-field = { workspace = true }
+p3-goldilocks = { workspace = true }
 sp-core = { workspace = true, features = ["std"], optional = true }
 
 [features]
@@ -40,7 +40,7 @@ substrate = ["sp-core", "hegemon-node/substrate"]
 # Enable legacy node integration tests (require refactored NodeService API)
 legacy-node-tests = []
 # Enable fast STARK options in transaction-circuit (development only).
-stark-fast = ["transaction-circuit/stark-fast"]
+stark-fast = []
 
 [[test]]
 name = "security_pipeline"
@@ -115,12 +115,6 @@ path = "pq_params_audit.rs"
 name = "poseidon_compat"
 path = "poseidon_compat.rs"
 # Verify pallet and circuit Poseidon implementations match
-
-[[test]]
-name = "epoch_sync"
-path = "epoch_sync.rs"
-# Light client epoch sync integration tests (Phase 1g: Recursive Proofs)
-
 
 [lints]
 workspace = true

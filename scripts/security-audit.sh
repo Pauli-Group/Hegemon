@@ -245,9 +245,9 @@ fi
 
 # Check shielded-pool uses STARK (not Groth16)
 echo -n "Checking shielded-pool uses STARK proofs... "
-if grep -q "winterfell\|STARK\|stark" "$PROJECT_ROOT/pallets/shielded-pool/Cargo.toml" 2>/dev/null || \
+if grep -q "STARK\|stark" "$PROJECT_ROOT/pallets/shielded-pool/Cargo.toml" 2>/dev/null || \
    grep -q "StarkVerifier" "$PROJECT_ROOT/runtime/src/lib.rs" 2>/dev/null; then
-    echo -e "${GREEN}✅ Uses STARK (winterfell)${NC}"
+    echo -e "${GREEN}✅ Uses STARK (Plonky3)${NC}"
 else
     echo -e "${YELLOW}⚠️  Could not verify STARK usage${NC}"
     WARNINGS=$((WARNINGS + 1))
@@ -307,8 +307,8 @@ else
     echo -e "${YELLOW}⚠️  Not found (optional)${NC}"
 fi
 
-echo -n "Winterfell (STARK proofs)... "
-if grep -q "winterfell" "$PROJECT_ROOT/Cargo.lock" 2>/dev/null; then
+echo -n "Plonky3 (STARK proofs)... "
+if grep -q "p3-uni-stark" "$PROJECT_ROOT/Cargo.lock" 2>/dev/null; then
     echo -e "${GREEN}✅ Present${NC}"
     APPROVED_FOUND=$((APPROVED_FOUND + 1))
 else
@@ -362,7 +362,7 @@ else
         echo "Suggested Fixes:"
         echo "  - Replace Ed25519 → ML-DSA-65"
         echo "  - Replace X25519 → ML-KEM-768"
-        echo "  - Replace Groth16 → STARK (winterfell)"
+        echo "  - Replace Groth16 → STARK (Plonky3)"
         echo "  - Replace ECDSA → ML-DSA-65"
         echo "  - Remove all *-dalek crates"
         echo "  - Remove all ark-* ECC crates"

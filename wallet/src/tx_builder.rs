@@ -1,6 +1,6 @@
 use rand::rngs::OsRng;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
-use transaction_circuit::hashing::{bytes32_to_felts, felts_to_bytes32, merkle_node};
+use transaction_circuit::hashing_pq::{bytes48_to_felts, felts_to_bytes48, merkle_node};
 use transaction_circuit::note::OutputNoteWitness;
 use transaction_circuit::witness::TransactionWitness;
 use transaction_circuit::StablecoinPolicyBinding;
@@ -22,7 +22,7 @@ pub struct Recipient {
 
 pub struct BuiltTransaction {
     pub bundle: TransactionBundle,
-    pub nullifiers: Vec<[u8; 32]>,
+    pub nullifiers: Vec<[u8; 48]>,
     pub spent_note_indexes: Vec<usize>,
     pub outgoing_disclosures: Vec<OutgoingDisclosureDraft>,
 }
@@ -70,7 +70,7 @@ pub async fn precheck_nullifiers_with_binding(
     let inputs = plan.inputs();
 
     // Compute nullifiers for selected notes
-    let nullifiers: Vec<[u8; 32]> = inputs
+    let nullifiers: Vec<[u8; 48]> = inputs
         .iter()
         .map(|note| fvk.compute_nullifier(&note.recovered.note.rho, note.position))
         .collect();
@@ -142,7 +142,7 @@ pub fn build_transaction_with_binding(
         } else {
             Some(note.memo.clone())
         };
-        let commitment = felts_to_bytes32(&output.note.commitment());
+        let commitment = felts_to_bytes48(&output.note.commitment());
         outgoing_disclosures.push(OutgoingDisclosureDraft {
             output_index,
             recipient_address,
@@ -176,7 +176,7 @@ pub fn build_transaction_with_binding(
         } else {
             Some(note.memo.clone())
         };
-        let commitment = felts_to_bytes32(&note_data.commitment());
+        let commitment = felts_to_bytes48(&note_data.commitment());
         outgoing_disclosures.push(OutgoingDisclosureDraft {
             output_index,
             recipient_address,
@@ -210,7 +210,7 @@ pub fn build_transaction_with_binding(
         } else {
             Some(note.memo.clone())
         };
-        let commitment = felts_to_bytes32(&note_data.commitment());
+        let commitment = felts_to_bytes48(&note_data.commitment());
         outgoing_disclosures.push(OutgoingDisclosureDraft {
             output_index,
             recipient_address,
@@ -259,7 +259,7 @@ pub fn build_transaction_with_binding(
         let mut pos = note.position;
         let mut siblings = Vec::with_capacity(auth_path.len());
         for sibling in auth_path.iter() {
-            let felts = bytes32_to_felts(sibling).ok_or(WalletError::InvalidState(
+            let felts = bytes48_to_felts(sibling).ok_or(WalletError::InvalidState(
                 "non-canonical merkle sibling encoding",
             ))?;
             siblings.push(felts);
@@ -273,7 +273,7 @@ pub fn build_transaction_with_binding(
         }
         // eprintln!("DEBUG: computed_root = {:?}", current);
         // eprintln!("DEBUG: expected_root = {:?}", wallet_root);
-        if felts_to_bytes32(&current) != wallet_root {
+        if felts_to_bytes48(&current) != wallet_root {
             // eprintln!("DEBUG: ROOT MISMATCH!");
         }
 
@@ -438,7 +438,7 @@ pub fn build_stablecoin_burn(
         } else {
             Some(note.memo.clone())
         };
-        let commitment = felts_to_bytes32(&note_data.commitment());
+        let commitment = felts_to_bytes48(&note_data.commitment());
         outgoing_disclosures.push(OutgoingDisclosureDraft {
             output_index,
             recipient_address,
@@ -467,7 +467,7 @@ pub fn build_stablecoin_burn(
         } else {
             Some(note.memo.clone())
         };
-        let commitment = felts_to_bytes32(&note_data.commitment());
+        let commitment = felts_to_bytes48(&note_data.commitment());
         outgoing_disclosures.push(OutgoingDisclosureDraft {
             output_index,
             recipient_address,
@@ -497,7 +497,7 @@ pub fn build_stablecoin_burn(
 
         let mut siblings = Vec::with_capacity(auth_path.len());
         for sibling in auth_path.iter() {
-            let felts = bytes32_to_felts(sibling).ok_or(WalletError::InvalidState(
+            let felts = bytes48_to_felts(sibling).ok_or(WalletError::InvalidState(
                 "non-canonical merkle sibling encoding",
             ))?;
             siblings.push(felts);
@@ -558,9 +558,9 @@ pub fn build_stablecoin_burn(
 /// Returns the 64-byte binding hash of the public inputs:
 /// Blake2_256(domain || 0 || message) || Blake2_256(domain || 1 || message)
 fn compute_binding_hash(
-    anchor: &[u8; 32],
-    nullifiers: &[[u8; 32]],
-    commitments: &[[u8; 32]],
+    anchor: &[u8; 48],
+    nullifiers: &[[u8; 48]],
+    commitments: &[[u8; 48]],
     fee: u64,
     value_balance: i128,
 ) -> [u8; 64] {

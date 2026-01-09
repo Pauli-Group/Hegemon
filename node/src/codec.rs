@@ -19,17 +19,17 @@ struct StoredHeader {
     view: u64,
     timestamp_ms: u64,
     parent_hash: [u8; 32],
-    state_root: [u8; 32],
-    nullifier_root: [u8; 32],
+    state_root: [u8; 48],
+    nullifier_root: [u8; 48],
     proof_commitment: Vec<u8>,
-    da_root: [u8; 32],
+    da_root: [u8; 48],
     da_chunk_size: u32,
     da_sample_count: u32,
-    version_commitment: [u8; 32],
+    version_commitment: [u8; 48],
     tx_count: u32,
-    fee_commitment: [u8; 32],
+    fee_commitment: [u8; 48],
     supply_digest: u128,
-    validator_set_commitment: [u8; 32],
+    validator_set_commitment: [u8; 48],
     signature_aggregate: Vec<u8>,
     signature_bitmap: Option<Vec<u8>>,
     pow: Option<StoredPowSeal>,
@@ -43,9 +43,9 @@ struct StoredPowSeal {
 
 #[derive(Serialize, Deserialize)]
 struct StoredTransaction {
-    nullifiers: Vec<[u8; 32]>,
-    commitments: Vec<[u8; 32]>,
-    balance_tag: [u8; 32],
+    nullifiers: Vec<[u8; 48]>,
+    commitments: Vec<[u8; 48]>,
+    balance_tag: [u8; 48],
     version_circuit: u16,
     version_crypto: u16,
     ciphertexts: Vec<Vec<u8>>,
@@ -62,7 +62,7 @@ struct StoredCoinbase {
 #[derive(Serialize, Deserialize)]
 enum StoredCoinbaseSource {
     TransactionIndex(usize),
-    BalanceTag([u8; 32]),
+    BalanceTag([u8; 48]),
 }
 
 pub fn serialize_block(block: &ConsensusBlock) -> NodeResult<Vec<u8>> {

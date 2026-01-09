@@ -127,7 +127,7 @@ impl AsyncWalletSyncEngine {
             if entries.is_empty() {
                 break;
             }
-            let pairs: Vec<(u64, [u8; 32])> = entries
+            let pairs: Vec<(u64, [u8; 48])> = entries
                 .iter()
                 .map(|entry| (entry.index, entry.value))
                 .collect();
@@ -155,7 +155,7 @@ impl AsyncWalletSyncEngine {
 
         // Sync nullifiers
         let nullifiers = self.client.nullifiers().await?;
-        let nullifier_set: HashSet<[u8; 32]> = nullifiers.into_iter().collect();
+        let nullifier_set: HashSet<[u8; 48]> = nullifiers.into_iter().collect();
         outcome.spent += self.store.mark_nullifiers(&nullifier_set)?;
 
         // Update pending transactions

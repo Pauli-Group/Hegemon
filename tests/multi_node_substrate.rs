@@ -321,7 +321,7 @@ mod substrate_tests {
                 extrinsics_root,
                 failed_count: 0,
                 storage_changes: None,
-                recursive_proof: None,
+                commitment_proof: None,
             })
         });
 
@@ -367,7 +367,7 @@ mod substrate_tests {
                 extrinsics_root,
                 failed_count: failed.len(),
                 storage_changes: None,
-                recursive_proof: None,
+                commitment_proof: None,
             })
         });
 
@@ -413,7 +413,7 @@ mod substrate_tests {
                 extrinsics_root,
                 failed_count: 0,
                 storage_changes: None,
-                recursive_proof: None,
+                commitment_proof: None,
             })
         });
 
@@ -475,7 +475,7 @@ mod substrate_tests {
                 extrinsics_root,
                 failed_count: 0,
                 storage_changes: None,
-                recursive_proof: None,
+                commitment_proof: None,
             })
         });
 
@@ -546,7 +546,7 @@ mod substrate_tests {
                 extrinsics_root: H256::zero(),
                 failed_count: 0,
                 storage_changes: None,
-                recursive_proof: None,
+                commitment_proof: None,
             })
         });
         assert!(provider.has_state_execution());

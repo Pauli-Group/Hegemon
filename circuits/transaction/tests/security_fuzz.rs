@@ -11,6 +11,14 @@ fn arb_bytes32() -> impl Strategy<Value = [u8; 32]> {
     prop::array::uniform32(any::<u8>())
 }
 
+fn arb_bytes48() -> impl Strategy<Value = [u8; 48]> {
+    vec(any::<u8>(), 48).prop_map(|bytes| {
+        let mut out = [0u8; 48];
+        out.copy_from_slice(&bytes);
+        out
+    })
+}
+
 fn asset_strategy() -> impl Strategy<Value = u64> {
     prop_oneof![Just(NATIVE_ASSET_ID), (1u64..4u64)]
 }
@@ -90,7 +98,7 @@ fn arb_witness() -> impl Strategy<Value = TransactionWitness> {
         vec(arb_output_note(), 1..=MAX_OUTPUTS),
         arb_bytes32(),
         any::<u64>(),
-        arb_bytes32(),
+        arb_bytes48(),
     )
         .prop_map(|(inputs, mut outputs, sk_spend, fee_seed, merkle_root)| {
             let fee = normalize_outputs(&inputs, &mut outputs, fee_seed);
@@ -162,7 +170,7 @@ fn witness_rejects_oversized_inputs() {
             },
         }],
         sk_spend: [0u8; 32],
-        merkle_root: [0u8; 32],
+        merkle_root: [0u8; 48],
         fee: 0,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),

@@ -1,7 +1,7 @@
 use crate::error::ConsensusError;
 use crate::types::{
-    BlockHash, DaParams, DaRoot, FeeCommitment, StarkCommitment, SupplyDigest,
-    ValidatorSetCommitment, VersionCommitment,
+    BlockHash, DaParams, DaRoot, FeeCommitment, NullifierRoot, StarkCommitment, StateRoot,
+    SupplyDigest, ValidatorSetCommitment, VersionCommitment,
 };
 use crypto::hashes::sha256;
 
@@ -12,8 +12,8 @@ pub struct BlockHeader {
     pub view: u64,
     pub timestamp_ms: u64,
     pub parent_hash: BlockHash,
-    pub state_root: BlockHash,
-    pub nullifier_root: BlockHash,
+    pub state_root: StateRoot,
+    pub nullifier_root: NullifierRoot,
     pub proof_commitment: StarkCommitment,
     pub da_root: DaRoot,
     pub da_params: DaParams,
@@ -85,7 +85,7 @@ impl BlockHeader {
 }
 
 fn encode_signing_fields(header: &BlockHeader) -> Vec<u8> {
-    let mut data = Vec::with_capacity(4 + 8 * 3 + 32 * 8);
+    let mut data = Vec::with_capacity(432);
     data.extend_from_slice(&header.version.to_le_bytes());
     data.extend_from_slice(&header.height.to_le_bytes());
     data.extend_from_slice(&header.view.to_le_bytes());

@@ -47,17 +47,17 @@ use std::sync::{Arc, RwLock};
 /// nested runtime issues when called from synchronous trait methods.
 pub struct MockShieldedPoolService {
     /// Notes storage: (index, ciphertext, block_height, commitment)
-    notes: RwLock<Vec<(u64, Vec<u8>, u64, [u8; 32])>>,
+    notes: RwLock<Vec<(u64, Vec<u8>, u64, [u8; 48])>>,
     /// Spent nullifiers
-    nullifiers: RwLock<Vec<[u8; 32]>>,
+    nullifiers: RwLock<Vec<[u8; 48]>>,
     /// Valid anchors (Merkle roots)
-    anchors: RwLock<Vec<[u8; 32]>>,
+    anchors: RwLock<Vec<[u8; 48]>>,
     /// Pool balance
     balance: RwLock<u128>,
     /// Mock height
     height: RwLock<u64>,
     /// Current merkle root
-    merkle_root: RwLock<[u8; 32]>,
+    merkle_root: RwLock<[u8; 48]>,
 }
 
 impl Default for MockShieldedPoolService {
@@ -69,7 +69,7 @@ impl Default for MockShieldedPoolService {
 impl MockShieldedPoolService {
     /// Create a new mock service
     pub fn new() -> Self {
-        let initial_root = [0u8; 32];
+        let initial_root = [0u8; 48];
         Self {
             notes: RwLock::new(Vec::new()),
             nullifiers: RwLock::new(Vec::new()),
@@ -81,7 +81,7 @@ impl MockShieldedPoolService {
     }
 
     /// Add a mock note for testing (synchronous)
-    pub fn add_note(&self, ciphertext: Vec<u8>, commitment: [u8; 32]) {
+    pub fn add_note(&self, ciphertext: Vec<u8>, commitment: [u8; 48]) {
         let mut notes = self.notes.write().expect("notes lock poisoned");
         let height = *self.height.read().expect("height lock poisoned");
         let index = notes.len() as u64;
@@ -94,7 +94,7 @@ impl MockShieldedPoolService {
     }
 
     /// Add a valid anchor (synchronous)
-    pub fn add_anchor(&self, anchor: [u8; 32]) {
+    pub fn add_anchor(&self, anchor: [u8; 48]) {
         let mut anchors = self.anchors.write().expect("anchors lock poisoned");
         anchors.push(anchor);
     }
@@ -104,10 +104,10 @@ impl ShieldedPoolService for MockShieldedPoolService {
     fn submit_shielded_transfer(
         &self,
         _proof: Vec<u8>,
-        nullifiers: Vec<[u8; 32]>,
-        commitments: Vec<[u8; 32]>,
+        nullifiers: Vec<[u8; 48]>,
+        commitments: Vec<[u8; 48]>,
         encrypted_notes: Vec<Vec<u8>>,
-        _anchor: [u8; 32],
+        _anchor: [u8; 48],
         _binding_hash: [u8; 64],
         _stablecoin: Option<StablecoinPolicyBinding>,
         _fee: u64,
@@ -160,7 +160,7 @@ impl ShieldedPoolService for MockShieldedPoolService {
         limit: usize,
         from_block: Option<u64>,
         to_block: Option<u64>,
-    ) -> Result<Vec<(u64, Vec<u8>, u64, [u8; 32])>, String> {
+    ) -> Result<Vec<(u64, Vec<u8>, u64, [u8; 48])>, String> {
         let notes = self.notes.read().expect("notes lock poisoned");
         Ok(notes
             .iter()
@@ -182,9 +182,9 @@ impl ShieldedPoolService for MockShieldedPoolService {
     fn get_merkle_witness(
         &self,
         _position: u64,
-    ) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), String> {
+    ) -> Result<(Vec<[u8; 48]>, Vec<bool>, [u8; 48]), String> {
         // Return mock witness with 32 levels
-        let siblings: Vec<[u8; 32]> = (0..32).map(|i| [i; 32]).collect();
+        let siblings: Vec<[u8; 48]> = (0..32).map(|i| [i; 48]).collect();
         let indices: Vec<bool> = (0..32).map(|_| false).collect();
         let root = *self.merkle_root.read().expect("merkle_root lock poisoned");
 
@@ -208,12 +208,12 @@ impl ShieldedPoolService for MockShieldedPoolService {
         }
     }
 
-    fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
+    fn is_nullifier_spent(&self, nullifier: &[u8; 48]) -> bool {
         let nfs = self.nullifiers.read().expect("nullifiers lock poisoned");
         nfs.contains(nullifier)
     }
 
-    fn is_valid_anchor(&self, anchor: &[u8; 32]) -> bool {
+    fn is_valid_anchor(&self, anchor: &[u8; 48]) -> bool {
         let anchors = self.anchors.read().expect("anchors lock poisoned");
         anchors.contains(anchor)
     }
@@ -286,10 +286,10 @@ where
     fn submit_shielded_transfer(
         &self,
         _proof: Vec<u8>,
-        _nullifiers: Vec<[u8; 32]>,
-        _commitments: Vec<[u8; 32]>,
+        _nullifiers: Vec<[u8; 48]>,
+        _commitments: Vec<[u8; 48]>,
         _encrypted_notes: Vec<Vec<u8>>,
-        _anchor: [u8; 32],
+        _anchor: [u8; 48],
         _binding_hash: [u8; 64],
         _stablecoin: Option<StablecoinPolicyBinding>,
         _fee: u64,
@@ -309,7 +309,7 @@ where
         limit: usize,
         _from_block: Option<u64>,
         _to_block: Option<u64>,
-    ) -> Result<Vec<(u64, Vec<u8>, u64, [u8; 32])>, String> {
+    ) -> Result<Vec<(u64, Vec<u8>, u64, [u8; 48])>, String> {
         let api = self.client.runtime_api();
         let hash = self.best_hash();
 
@@ -327,7 +327,7 @@ where
     fn get_merkle_witness(
         &self,
         position: u64,
-    ) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), String> {
+    ) -> Result<(Vec<[u8; 48]>, Vec<bool>, [u8; 48]), String> {
         let api = self.client.runtime_api();
         let hash = self.best_hash();
 
@@ -342,7 +342,7 @@ where
 
         let total_notes = api.encrypted_note_count(hash).unwrap_or(0);
         let total_nullifiers = api.nullifier_count(hash).unwrap_or(0);
-        let merkle_root = api.merkle_root(hash).unwrap_or([0u8; 32]);
+        let merkle_root = api.merkle_root(hash).unwrap_or([0u8; 48]);
         let tree_depth = api.tree_depth(hash).unwrap_or(32);
         let pool_balance = api.pool_balance(hash).unwrap_or(0);
         let last_update_block = self.client.info().best_number.try_into().unwrap_or(0);
@@ -357,14 +357,14 @@ where
         }
     }
 
-    fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
+    fn is_nullifier_spent(&self, nullifier: &[u8; 48]) -> bool {
         let api = self.client.runtime_api();
         let hash = self.best_hash();
 
         api.is_nullifier_spent(hash, *nullifier).unwrap_or(false)
     }
 
-    fn is_valid_anchor(&self, anchor: &[u8; 32]) -> bool {
+    fn is_valid_anchor(&self, anchor: &[u8; 48]) -> bool {
         let api = self.client.runtime_api();
         let hash = self.best_hash();
 
@@ -385,7 +385,7 @@ mod tests {
         let service = MockShieldedPoolService::new();
 
         // Add a note
-        service.add_note(vec![1, 2, 3], [0xaa; 32]);
+        service.add_note(vec![1, 2, 3], [0xaa; 48]);
 
         assert_eq!(service.encrypted_note_count(), 1);
 
@@ -399,13 +399,13 @@ mod tests {
     fn test_mock_service_nullifiers() {
         let service = MockShieldedPoolService::new();
 
-        let nf = [0xcc; 32];
+        let nf = [0xcc; 48];
 
         // Not spent initially
         assert!(!service.is_nullifier_spent(&nf));
 
         // Add initial anchor for the transfer
-        service.add_anchor([0; 32]);
+        service.add_anchor([0; 48]);
 
         // Submit transfer with nullifier
         service
@@ -414,7 +414,7 @@ mod tests {
                 vec![nf],
                 vec![],
                 vec![],
-                [0; 32], // Use valid anchor
+                [0; 48], // Use valid anchor
                 [0; 64],
                 None,
                 0,
@@ -441,11 +441,11 @@ mod tests {
     fn test_mock_service_anchors() {
         let service = MockShieldedPoolService::new();
 
-        let anchor1 = [0x11; 32];
-        let anchor2 = [0x22; 32];
+        let anchor1 = [0x11; 48];
+        let anchor2 = [0x22; 48];
 
         // Initial anchor is valid (zero root)
-        assert!(service.is_valid_anchor(&[0; 32]));
+        assert!(service.is_valid_anchor(&[0; 48]));
 
         // Unknown anchor is invalid
         assert!(!service.is_valid_anchor(&anchor1));

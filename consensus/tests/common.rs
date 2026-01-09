@@ -16,7 +16,7 @@ use consensus::types::{
     compute_version_commitment, da_root,
 };
 use consensus::validator::{Validator, ValidatorSet};
-use crypto::hashes::sha256;
+use crypto::hashes::blake3_384;
 use crypto::ml_dsa::{ML_DSA_SIGNATURE_LEN, MlDsaSecretKey};
 use crypto::traits::{SigningKey, VerifyKey};
 
@@ -75,9 +75,9 @@ pub fn dummy_transaction(tag_seed: u8) -> Transaction {
 }
 
 pub fn dummy_transaction_with_version(tag_seed: u8, version: VersionBinding) -> Transaction {
-    let nullifier = [tag_seed; 32];
-    let commitment = [tag_seed.wrapping_add(1); 32];
-    let balance_tag: BalanceTag = [tag_seed.wrapping_add(2); 32];
+    let nullifier = [tag_seed; 48];
+    let commitment = [tag_seed.wrapping_add(1); 48];
+    let balance_tag: BalanceTag = [tag_seed.wrapping_add(2); 48];
     Transaction::new(
         vec![nullifier],
         vec![commitment],
@@ -92,7 +92,7 @@ pub fn dummy_coinbase(height: u64) -> CoinbaseData {
         minted: block_subsidy(height),
         fees: 0,
         burns: 0,
-        source: CoinbaseSource::BalanceTag([0u8; 32]),
+        source: CoinbaseSource::BalanceTag([0u8; 48]),
     }
 }
 
@@ -131,7 +131,7 @@ pub fn assemble_bft_block(
     let fee_commitment = compute_fee_commitment(&transactions);
     let mut tree = base_commitment_tree.clone();
     for tx in &transactions {
-        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 32]) {
+        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 48]) {
             tree.append(commitment).map_err(ProofError::from)?;
         }
     }
@@ -178,8 +178,6 @@ pub fn assemble_bft_block(
             header,
             transactions,
             coinbase: None,
-            #[cfg(feature = "legacy-recursion")]
-            recursive_proof: None,
             commitment_proof: None,
             transaction_proofs: None,
         },
@@ -212,7 +210,7 @@ pub fn assemble_pow_block(
     let fee_commitment = compute_fee_commitment(&transactions);
     let mut tree = base_commitment_tree.clone();
     for tx in &transactions {
-        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 32]) {
+        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 48]) {
             tree.append(commitment).map_err(ProofError::from)?;
         }
     }
@@ -238,7 +236,7 @@ pub fn assemble_pow_block(
         fee_commitment,
         supply_digest: update_supply_digest(parent_supply, coinbase.net_native_delta())
             .expect("supply digest"),
-        validator_set_commitment: sha256(&miner.validator.public_key().to_bytes()),
+        validator_set_commitment: blake3_384(&miner.validator.public_key().to_bytes()),
         signature_aggregate: Vec::new(),
         signature_bitmap: None,
         pow: Some(PowSeal { nonce, pow_bits }),
@@ -251,8 +249,6 @@ pub fn assemble_pow_block(
             header,
             transactions,
             coinbase: Some(coinbase),
-            #[cfg(feature = "legacy-recursion")]
-            recursive_proof: None,
             commitment_proof: None,
             transaction_proofs: None,
         },
@@ -262,6 +258,6 @@ pub fn assemble_pow_block(
 }
 
 #[allow(dead_code)]
-pub fn empty_nullifier_root() -> [u8; 32] {
+pub fn empty_nullifier_root() -> [u8; 48] {
     NullifierSet::new().commitment()
 }

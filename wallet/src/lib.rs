@@ -11,6 +11,7 @@ pub mod notes;
 pub mod prover;
 pub mod rpc;
 pub mod scanner;
+mod serde_bytes48;
 pub mod shielded_tx;
 pub mod store;
 pub mod substrate_rpc;
