@@ -28,7 +28,7 @@ The HGN protocol consists of four tightly-coupled subsystems:
 flowchart TB
     subgraph User["User Layer"]
         W[wallet/]
-        UI[dashboard-ui/]
+        UI[hegemon-app/]
     end
 
     subgraph Proving["Proving Layer"]
@@ -172,11 +172,12 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 | `docs/` | Contributor docs (`CONTRIBUTING.md`), threat model, and API references that stay in sync with `DESIGN.md`/`METHODS.md`. |
 | `governance/` | Governance documentation and versioning policies. |
+| `hegemon-app/` | Electron desktop app for node + wallet control and explorer views. |
 | network/ | P2P networking stack and connectivity logic. |
-| node/ | Unified `hegemon` binary (Node + Wallet + UI). |
+| node/ | Substrate-based node binary (`hegemon-node`) and custom RPC endpoints. |
 | protocol/ | Protocol definitions, transaction formats, and versioning logic. |
 | `runbooks/` | Operational guides for miners, emergency procedures, and security testing. |
-| `scripts/` | Shell scripts for dev setup, dashboard asset refresh, and automation. |
+| `scripts/` | Shell scripts for dev setup and automation. |
 | `state/` | Merkle tree storage and state management. |
 | `tests/` | Integration tests and the security pipeline suite. |
 | `wallet/` | CLI wallet plus the `wallet-bench` binary for note/key performance measurements. |
