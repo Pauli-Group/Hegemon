@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.6.0 - 2026-01-09
+- Interface release: branded Hegemon Explorer/Dashboard UI shipped in `dashboard-ui/` (see `runbooks/dashboard_ui.md`).
+- Version bump: `hegemon-node`, `wallet`, and `dashboard-ui` are now `0.6.0`.
+
 ## v0.5-alpha - 2026-01-06
 - Scalability architecture pivot: commitment block proofs + parallel transaction-proof verification (supersedes legacy recursive proofs as the default validity path).
 - Block production + RPC plumbing for commitment proofs (including `block_getCommitmentProof`) and DA chunk retrieval (`da_getParams`, `da_getChunk`).
