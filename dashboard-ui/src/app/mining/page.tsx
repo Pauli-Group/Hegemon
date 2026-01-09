@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useApi } from "@/providers/ApiProvider";
 import { StatCard } from "@/components/StatCard";
-import { Pickaxe, Gauge, Clock, Coins, TrendingUp } from "lucide-react";
+import { Gauge, Clock, Hash, Cpu } from "lucide-react";
 
 interface DifficultyData {
   difficulty: string;
@@ -16,6 +16,7 @@ export default function MiningPage() {
   const [difficultyData, setDifficultyData] = useState<DifficultyData | null>(null);
   const [blockTimes, setBlockTimes] = useState<number[]>([]);
   const [avgBlockTime, setAvgBlockTime] = useState<number>(0);
+  const [currentBlock, setCurrentBlock] = useState<number>(0);
   
   const lastBlockTimeRef = useRef<number>(Date.now());
   const lastBlockNumRef = useRef<number>(0);
@@ -30,6 +31,7 @@ export default function MiningPage() {
         // Get current block for timing
         const header = await api.rpc.chain.getHeader();
         const blockNum = header.number.toNumber();
+        setCurrentBlock(blockNum);
         
         // Track block times
         if (blockNum !== lastBlockNumRef.current && lastBlockNumRef.current > 0) {
@@ -40,7 +42,7 @@ export default function MiningPage() {
 
           if (timeDiff > 0 && timeDiff < 120) {
             setBlockTimes((prev) => {
-              const updated = [...prev, timeDiff].slice(-20);
+              const updated = [...prev, timeDiff].slice(-30);
               const avg = updated.reduce((a, b) => a + b, 0) / updated.length;
               setAvgBlockTime(Math.round(avg * 10) / 10);
               return updated;
@@ -48,6 +50,7 @@ export default function MiningPage() {
           }
         } else if (lastBlockNumRef.current === 0) {
           lastBlockNumRef.current = blockNum;
+          lastBlockTimeRef.current = Date.now();
         }
         
         // Get difficulty data
@@ -103,110 +106,80 @@ export default function MiningPage() {
     );
   }
 
+  const blocksSinceRetarget = difficultyData ? currentBlock - difficultyData.lastRetargetBlock : 0;
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
-      <div className="flex items-center gap-3 mb-8">
-        <div className="w-10 h-10 rounded-lg bg-ionosphere/10 flex items-center justify-center">
-          <Pickaxe size={24} className="text-ionosphere" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-semibold text-neutral-light">Mining Dashboard</h1>
-          <p className="text-neutral-mid text-sm">Proof-of-Work metrics and network statistics</p>
-        </div>
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="text-2xl font-semibold text-neutral-light">Mining</h1>
+        <p className="text-neutral-mid text-sm mt-1">Blake3 proof-of-work consensus</p>
       </div>
 
       {/* Stats Row */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         <StatCard
-          label="Current Difficulty"
+          label="Difficulty"
           value={difficultyData ? formatDifficulty(difficultyData.difficulty) : "—"}
           icon={Gauge}
         />
         <StatCard
           label="Difficulty Bits"
           value={difficultyData?.difficultyBits?.toString() || "—"}
-          icon={TrendingUp}
+          icon={Cpu}
         />
         <StatCard
           label="Avg Block Time"
-          value={`${avgBlockTime}s`}
+          value={avgBlockTime > 0 ? `${avgBlockTime}s` : "—"}
           icon={Clock}
         />
         <StatCard
-          label="Last Retarget"
-          value={difficultyData ? `#${difficultyData.lastRetargetBlock}` : "—"}
-          icon={Coins}
+          label="Since Retarget"
+          value={difficultyData ? `${blocksSinceRetarget} blocks` : "—"}
+          icon={Hash}
         />
       </div>
 
       {/* Block Time Chart */}
-      <div className="bg-midnight border border-neutral-mid/20 rounded-lg p-6 mb-8">
-        <h2 className="text-lg font-semibold text-neutral-light mb-4">Block Time History</h2>
-        <div className="h-32 flex items-end gap-1">
+      <div className="bg-midnight border border-neutral-mid/20 rounded-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-neutral-light">Block Times</h2>
+          <span className="text-sm text-neutral-mid font-mono">
+            Last {blockTimes.length} blocks
+          </span>
+        </div>
+        <div className="h-40 flex items-end gap-[2px]">
           {blockTimes.length === 0 ? (
             <div className="flex-1 flex items-center justify-center">
-              <p className="text-neutral-mid text-sm">Collecting block time data...</p>
+              <p className="text-neutral-mid text-sm">Waiting for blocks...</p>
             </div>
           ) : (
             blockTimes.map((time, idx) => {
               const maxTime = Math.max(...blockTimes, 30);
-              const height = (time / maxTime) * 100;
+              const height = Math.max((time / maxTime) * 100, 4);
               const isRecent = idx === blockTimes.length - 1;
               return (
                 <div
                   key={idx}
-                  className={`flex-1 rounded-t transition-all duration-300 ${
-                    isRecent ? "bg-ionosphere" : "bg-ionosphere/40"
-                  }`}
-                  style={{ height: `${height}%` }}
-                  title={`${time.toFixed(1)}s`}
-                />
+                  className="flex-1 group relative"
+                >
+                  <div
+                    className={`w-full rounded-t transition-all duration-200 ${
+                      isRecent ? "bg-ionosphere" : "bg-ionosphere/50 hover:bg-ionosphere/70"
+                    }`}
+                    style={{ height: `${height}%` }}
+                  />
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-midnight-deep border border-neutral-mid/30 rounded text-xs text-neutral-light font-mono opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                    {time.toFixed(1)}s
+                  </div>
+                </div>
               );
             })
           )}
         </div>
-        <div className="flex justify-between mt-2 text-xs text-neutral-mid">
-          <span>Older</span>
-          <span>Recent</span>
-        </div>
-      </div>
-
-      {/* Info Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="bg-midnight border border-neutral-mid/20 rounded-lg p-6">
-          <h3 className="text-lg font-semibold text-neutral-light mb-4">PoW Algorithm</h3>
-          <div className="space-y-3">
-            <div className="flex justify-between py-2 border-b border-neutral-mid/10">
-              <span className="text-neutral-mid">Algorithm</span>
-              <span className="text-neutral-light font-mono">RandomX</span>
-            </div>
-            <div className="flex justify-between py-2 border-b border-neutral-mid/10">
-              <span className="text-neutral-mid">Target Block Time</span>
-              <span className="text-neutral-light font-mono">30s</span>
-            </div>
-            <div className="flex justify-between py-2">
-              <span className="text-neutral-mid">Difficulty Adjustment</span>
-              <span className="text-neutral-light font-mono">Every epoch</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-midnight border border-neutral-mid/20 rounded-lg p-6">
-          <h3 className="text-lg font-semibold text-neutral-light mb-4">Coinbase Rewards</h3>
-          <div className="space-y-3">
-            <div className="flex justify-between py-2 border-b border-neutral-mid/10">
-              <span className="text-neutral-mid">Reward Type</span>
-              <span className="text-neutral-light font-mono">Shielded Note</span>
-            </div>
-            <div className="flex justify-between py-2 border-b border-neutral-mid/10">
-              <span className="text-neutral-mid">Destination</span>
-              <span className="text-neutral-light font-mono">Shielded Pool</span>
-            </div>
-            <div className="flex justify-between py-2">
-              <span className="text-neutral-mid">Privacy</span>
-              <span className="text-proof-green font-mono">Private</span>
-            </div>
-          </div>
+        <div className="flex justify-between mt-3 text-xs text-neutral-mid">
+          <span>← Older</span>
+          <span>Newer →</span>
         </div>
       </div>
     </div>
