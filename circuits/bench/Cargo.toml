@@ -14,7 +14,8 @@ transaction-circuit = { path = "../transaction" }
 block-circuit = { path = "../block" }
 protocol-versioning = { path = "../../protocol/versioning" }
 state-merkle = { path = "../../state/merkle" }
-winterfell = "0.13"
+p3-goldilocks = { workspace = true }
+p3-uni-stark = { workspace = true }
 
 [lints]
 workspace = true

@@ -81,13 +81,13 @@ pub struct ShieldedTransferCall {
     /// STARK proof bytes
     pub proof: Vec<u8>,
     /// Nullifiers (spent note identifiers)
-    pub nullifiers: Vec<[u8; 32]>,
+    pub nullifiers: Vec<[u8; 48]>,
     /// New note commitments
-    pub commitments: Vec<[u8; 32]>,
+    pub commitments: Vec<[u8; 48]>,
     /// Encrypted notes for recipients
     pub encrypted_notes: Vec<Vec<u8>>,
     /// Merkle tree anchor (root hash)
-    pub anchor: [u8; 32],
+    pub anchor: [u8; 48],
     /// Binding signature
     pub binding_hash: [u8; 64],
     /// Optional stablecoin policy binding
@@ -192,10 +192,10 @@ impl ExtrinsicBuilder {
     /// - pallet_index (1 byte) = ShieldedPool index from runtime metadata
     /// - call_index (1 byte) = shielded_transfer call index from metadata
     /// - proof: StarkProof (Vec<u8> prefixed with compact length)
-    /// - nullifiers: BoundedVec<[u8;32], MaxNullifiersPerTx>
-    /// - commitments: BoundedVec<[u8;32], MaxCommitmentsPerTx>
+    /// - nullifiers: BoundedVec<[u8;48], MaxNullifiersPerTx>
+    /// - commitments: BoundedVec<[u8;48], MaxCommitmentsPerTx>
     /// - ciphertexts: BoundedVec<EncryptedNote, MaxEncryptedNotesPerTx>
-    /// - anchor: [u8; 32]
+    /// - anchor: [u8; 48]
     /// - binding_hash: BindingHash
     /// - stablecoin: Option<StablecoinPolicyBinding>
     /// - fee: u64
@@ -224,7 +224,7 @@ impl ExtrinsicBuilder {
         }
         // eprintln!("DEBUG CALL: after nullifiers, encoded size = {}", encoded.len());
 
-        // Encode commitments (BoundedVec<[u8;32], _>)
+        // Encode commitments (BoundedVec<[u8;48], _>)
         // eprintln!("DEBUG CALL: commitments count = {}", call.commitments.len());
         encode_compact_len(call.commitments.len(), &mut encoded);
         for commitment in &call.commitments {
@@ -250,7 +250,7 @@ impl ExtrinsicBuilder {
         }
         // eprintln!("DEBUG CALL: after encrypted_notes, encoded size = {}", encoded.len());
 
-        // Encode anchor ([u8; 32])
+        // Encode anchor ([u8; 48])
         encoded.extend_from_slice(&call.anchor);
         // eprintln!("DEBUG CALL: after anchor, encoded size = {}", encoded.len());
 
@@ -646,13 +646,13 @@ pub struct BatchShieldedTransferCall {
     /// Batch size (2, 4, 8, or 16)
     pub batch_size: u32,
     /// All nullifiers from all transactions
-    pub nullifiers: Vec<[u8; 32]>,
+    pub nullifiers: Vec<[u8; 48]>,
     /// All commitments from all transactions
-    pub commitments: Vec<[u8; 32]>,
+    pub commitments: Vec<[u8; 48]>,
     /// All encrypted notes from all transactions
     pub encrypted_notes: Vec<Vec<u8>>,
     /// Shared Merkle anchor
-    pub anchor: [u8; 32],
+    pub anchor: [u8; 48],
     /// Total fee for entire batch
     pub total_fee: u128,
 }
@@ -684,13 +684,13 @@ pub fn encode_batch_shielded_transfer_call(
     encode_compact_vec(&proof_data, &mut encoded);
     encoded.extend_from_slice(&call.batch_size.to_le_bytes());
 
-    // Encode nullifiers (BoundedVec<[u8;32], MaxNullifiersPerBatch>)
+    // Encode nullifiers (BoundedVec<[u8;48], MaxNullifiersPerBatch>)
     encode_compact_len(call.nullifiers.len(), &mut encoded);
     for nullifier in &call.nullifiers {
         encoded.extend_from_slice(nullifier);
     }
 
-    // Encode commitments (BoundedVec<[u8;32], MaxCommitmentsPerBatch>)
+    // Encode commitments (BoundedVec<[u8;48], MaxCommitmentsPerBatch>)
     encode_compact_len(call.commitments.len(), &mut encoded);
     for commitment in &call.commitments {
         encoded.extend_from_slice(commitment);
@@ -710,7 +710,7 @@ pub fn encode_batch_shielded_transfer_call(
         encoded.extend_from_slice(note);
     }
 
-    // Encode anchor ([u8; 32])
+    // Encode anchor ([u8; 48])
     encoded.extend_from_slice(&call.anchor);
 
     // Encode total_fee (u128)
@@ -764,13 +764,13 @@ pub fn encode_shielded_transfer_unsigned_call(
     // Encode proof (StarkProof is Vec<u8>)
     encode_compact_vec(&call.proof, &mut encoded);
 
-    // Encode nullifiers (BoundedVec<[u8;32], _>)
+    // Encode nullifiers (BoundedVec<[u8;48], _>)
     encode_compact_len(call.nullifiers.len(), &mut encoded);
     for nullifier in &call.nullifiers {
         encoded.extend_from_slice(nullifier);
     }
 
-    // Encode commitments (BoundedVec<[u8;32], _>)
+    // Encode commitments (BoundedVec<[u8;48], _>)
     encode_compact_len(call.commitments.len(), &mut encoded);
     for commitment in &call.commitments {
         encoded.extend_from_slice(commitment);
@@ -790,7 +790,7 @@ pub fn encode_shielded_transfer_unsigned_call(
         encoded.extend_from_slice(note);
     }
 
-    // Encode anchor ([u8; 32])
+    // Encode anchor ([u8; 48])
     encoded.extend_from_slice(&call.anchor);
 
     // Encode binding hash (BindingHash { data: [u8; 64] })

@@ -4,7 +4,7 @@ This document explains the attacker capabilities and design assumptions for each
 
 ## Global assumptions
 
-- **Post-quantum only**: Attackers may possess Shor/Grover-class quantum computers. We therefore forbid ECC/RSA and rely on ML-DSA/SLH-DSA signatures, ML-KEM encryption, and 256-bit symmetric primitives. Grover effectively halves hash security, so all hashes must be ≥256 bits to retain 128-bit security.
+- **Post-quantum only**: Attackers may possess Shor/Grover-class quantum computers. We therefore forbid ECC/RSA and rely on ML-DSA/SLH-DSA signatures, ML-KEM encryption, 256-bit symmetric primitives, and 48-byte (384-bit) digests for commitments and Merkle roots. Grover/BHT reductions are already accounted for with 384-bit collision targets.
 - **Transparent proving**: There is no trusted setup; proving soundness relies solely on collision resistance of the STARK-friendly hashes described in `DESIGN.md §2`. Compromise of a setup ceremony is out-of-scope because none exists.
 - **Adaptive adversaries**: Attackers can corrupt miners, mining pools, or wallets after observing traffic. Key rotation, nullifier privacy, and block template integrity must hold even with partial compromise.
 - **Proof-of-work fairness**: Hash-rate swings and rented rigs are assumed. Difficulty targeting plus share accounting must resist sudden 51% bursts for at least 10 minutes while alerts propagate to pool maintainers.
@@ -21,7 +21,7 @@ This document explains the attacker capabilities and design assumptions for each
 - **Soundness breaks via stale constraints**: Transaction/block circuits must include the latest nullifier/account rules. Circuit README + benchmarking harness describe how to recompile constraints and run proofs.
 - **Witness leakage**: Benchmarks never persist witness data to disk; they scrub buffers after proof verification to prevent info leaks during profiling.
 - **Proof bypass**: Production verification rejects missing STARK bytes or public inputs; legacy/fast paths are feature-gated and must not be enabled in production builds.
-- **Encoding malleability**: Commitments/nullifiers are 32-byte encodings of four field limbs; any limb ≥ field modulus is rejected to avoid alternate encodings.
+- **Encoding malleability**: Commitments/nullifiers are 48-byte encodings of six field limbs; any limb ≥ field modulus is rejected to avoid alternate encodings.
 
 ### `network/`
 
@@ -43,7 +43,7 @@ This document explains the attacker capabilities and design assumptions for each
 
 - **Signatures**: Target ≥ 128-bit PQ security (ML-DSA-65 / SLH-DSA-128f). Keys larger than spec are rejected.
 - **KEM**: ML-KEM-768 or higher. Shared secrets truncated to 256 bits of entropy.
-- **Hashes**: SHA-256/BLAKE3 externally, Poseidon-like field hash internally (width 3, 63 full rounds, NUMS constants). Minimum output 256 bits.
-- **Proving**: FRI queries sized for ≥110-bit classical security; Grover halves to ~55-bit, so recursion layers stack to recover ≥128-bit effective security.
+- **Hashes**: SHA-256/BLAKE3 externally, Poseidon2 field hash internally (width 12, rate 6, capacity 6, 48-byte outputs).
+- **Proving**: FRI parameters are set for ≥128-bit engineering soundness (log_blowup 4, num_queries 43, no grinding).
 
 When implementation shifts any of these values, update this document alongside the relevant design/method sections.

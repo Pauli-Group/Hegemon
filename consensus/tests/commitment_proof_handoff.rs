@@ -36,7 +36,7 @@ fn commitment_proof_handoff_accepts_matching_nullifiers() {
         assemble_pow_block(params).expect("assemble block");
 
     let lists = commitment_nullifier_lists(&block.transactions).expect("nullifier lists");
-    let proof_hashes = vec![[9u8; 32]; block.transactions.len()];
+    let proof_hashes = vec![[9u8; 48]; block.transactions.len()];
     let prover = CommitmentBlockProver::new();
     let proof = prover
         .prove_from_hashes_with_inputs(
@@ -79,7 +79,7 @@ fn commitment_proof_handoff_rejects_nullifier_mismatch() {
         assemble_pow_block(params).expect("assemble block");
 
     let lists = commitment_nullifier_lists(&block.transactions).expect("nullifier lists");
-    let proof_hashes = vec![[7u8; 32]; block.transactions.len()];
+    let proof_hashes = vec![[7u8; 48]; block.transactions.len()];
     let prover = CommitmentBlockProver::new();
     let proof = prover
         .prove_from_hashes_with_inputs(
@@ -93,7 +93,7 @@ fn commitment_proof_handoff_rejects_nullifier_mismatch() {
         )
         .expect("commitment proof");
 
-    block.transactions[0].nullifiers[0] = [99u8; 32];
+    block.transactions[0].nullifiers[0] = [99u8; 48];
     let err = verify_commitment_proof_payload(&block, &base_tree, &proof)
         .expect_err("nullifier mismatch should fail");
     assert!(matches!(err, ProofError::CommitmentProofInputsMismatch(_)));

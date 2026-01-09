@@ -123,7 +123,7 @@ pub struct ScannedNote {
     /// Position in the commitment tree.
     pub position: u64,
     /// Computed nullifier (if full viewing key available).
-    pub nullifier: Option<[u8; 32]>,
+    pub nullifier: Option<[u8; 48]>,
     /// Block height where found.
     pub block_height: Option<u64>,
 }

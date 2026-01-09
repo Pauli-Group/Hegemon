@@ -53,7 +53,7 @@ fn sample_witness() -> TransactionWitness {
             },
         ],
         sk_spend: [42u8; 32],
-        merkle_root: [0u8; 32],
+        merkle_root: [0u8; 48],
         fee: 5,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),

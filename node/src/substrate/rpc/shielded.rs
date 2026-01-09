@@ -217,10 +217,10 @@ pub trait ShieldedPoolService: Send + Sync {
     fn submit_shielded_transfer(
         &self,
         proof: Vec<u8>,
-        nullifiers: Vec<[u8; 32]>,
-        commitments: Vec<[u8; 32]>,
+        nullifiers: Vec<[u8; 48]>,
+        commitments: Vec<[u8; 48]>,
         encrypted_notes: Vec<Vec<u8>>,
-        anchor: [u8; 32],
+        anchor: [u8; 48],
         binding_hash: [u8; 64],
         stablecoin: Option<StablecoinPolicyBinding>,
         fee: u64,
@@ -234,7 +234,7 @@ pub trait ShieldedPoolService: Send + Sync {
         limit: usize,
         from_block: Option<u64>,
         to_block: Option<u64>,
-    ) -> Result<Vec<(u64, Vec<u8>, u64, [u8; 32])>, String>;
+    ) -> Result<Vec<(u64, Vec<u8>, u64, [u8; 48])>, String>;
 
     /// Get total encrypted note count
     fn encrypted_note_count(&self) -> u64;
@@ -243,16 +243,16 @@ pub trait ShieldedPoolService: Send + Sync {
     fn get_merkle_witness(
         &self,
         position: u64,
-    ) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), String>;
+    ) -> Result<(Vec<[u8; 48]>, Vec<bool>, [u8; 48]), String>;
 
     /// Get shielded pool status
     fn get_pool_status(&self) -> ShieldedPoolStatus;
 
     /// Check if nullifier is spent
-    fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool;
+    fn is_nullifier_spent(&self, nullifier: &[u8; 48]) -> bool;
 
     /// Check if anchor is valid
-    fn is_valid_anchor(&self, anchor: &[u8; 32]) -> bool;
+    fn is_valid_anchor(&self, anchor: &[u8; 48]) -> bool;
 
     /// Get current chain height
     fn chain_height(&self) -> u64;
@@ -299,10 +299,10 @@ where
         };
 
         // Decode nullifiers
-        let nullifiers: Result<Vec<[u8; 32]>, _> = request
+        let nullifiers: Result<Vec<[u8; 48]>, _> = request
             .nullifiers
             .iter()
-            .map(|n| hex_to_array32(n))
+            .map(|n| hex_to_array48(n))
             .collect();
         let nullifiers = match nullifiers {
             Ok(n) => n,
@@ -317,10 +317,10 @@ where
         };
 
         // Decode commitments
-        let commitments: Result<Vec<[u8; 32]>, _> = request
+        let commitments: Result<Vec<[u8; 48]>, _> = request
             .commitments
             .iter()
-            .map(|c| hex_to_array32(c))
+            .map(|c| hex_to_array48(c))
             .collect();
         let commitments = match commitments {
             Ok(c) => c,
@@ -356,7 +356,7 @@ where
         };
 
         // Decode anchor
-        let anchor = match hex_to_array32(&request.anchor) {
+        let anchor = match hex_to_array48(&request.anchor) {
             Ok(a) => a,
             Err(e) => {
                 return Ok(ShieldedTransferResponse {
@@ -383,7 +383,7 @@ where
 
         let stablecoin = match request.stablecoin.as_ref() {
             Some(binding) => {
-                let policy_hash = match hex_to_array32(&binding.policy_hash) {
+                let policy_hash = match hex_to_array48(&binding.policy_hash) {
                     Ok(value) => value,
                     Err(e) => {
                         return Ok(ShieldedTransferResponse {
@@ -394,7 +394,7 @@ where
                         });
                     }
                 };
-                let oracle_commitment = match hex_to_array32(&binding.oracle_commitment) {
+                let oracle_commitment = match hex_to_array48(&binding.oracle_commitment) {
                     Ok(value) => value,
                     Err(e) => {
                         return Ok(ShieldedTransferResponse {
@@ -405,7 +405,7 @@ where
                         });
                     }
                 };
-                let attestation_commitment = match hex_to_array32(&binding.attestation_commitment) {
+                let attestation_commitment = match hex_to_array48(&binding.attestation_commitment) {
                     Ok(value) => value,
                     Err(e) => {
                         return Ok(ShieldedTransferResponse {
@@ -523,7 +523,7 @@ where
     }
 
     async fn is_nullifier_spent(&self, nullifier: String) -> RpcResult<bool> {
-        let nf = hex_to_array32(&nullifier).map_err(|e| {
+        let nf = hex_to_array48(&nullifier).map_err(|e| {
             ErrorObjectOwned::owned(
                 jsonrpsee::types::error::INVALID_PARAMS_CODE,
                 format!("Invalid nullifier: {}", e),
@@ -534,7 +534,7 @@ where
     }
 
     async fn is_valid_anchor(&self, anchor: String) -> RpcResult<bool> {
-        let a = hex_to_array32(&anchor).map_err(|e| {
+        let a = hex_to_array48(&anchor).map_err(|e| {
             ErrorObjectOwned::owned(
                 jsonrpsee::types::error::INVALID_PARAMS_CODE,
                 format!("Invalid anchor: {}", e),
@@ -545,12 +545,12 @@ where
     }
 }
 
-fn hex_to_array32(hex_str: &str) -> Result<[u8; 32], String> {
+fn hex_to_array48(hex_str: &str) -> Result<[u8; 48], String> {
     let bytes = hex::decode(hex_str).map_err(|e| e.to_string())?;
-    if bytes.len() != 32 {
-        return Err(format!("expected 32 bytes, got {}", bytes.len()));
+    if bytes.len() != 48 {
+        return Err(format!("expected 48 bytes, got {}", bytes.len()));
     }
-    let mut out = [0u8; 32];
+    let mut out = [0u8; 48];
     out.copy_from_slice(&bytes);
     Ok(out)
 }
@@ -575,10 +575,10 @@ mod tests {
         fn submit_shielded_transfer(
             &self,
             _proof: Vec<u8>,
-            _nullifiers: Vec<[u8; 32]>,
-            _commitments: Vec<[u8; 32]>,
+            _nullifiers: Vec<[u8; 48]>,
+            _commitments: Vec<[u8; 48]>,
             _encrypted_notes: Vec<Vec<u8>>,
-            _anchor: [u8; 32],
+            _anchor: [u8; 48],
             _binding_hash: [u8; 64],
             _stablecoin: Option<StablecoinPolicyBinding>,
             _fee: u64,
@@ -593,10 +593,10 @@ mod tests {
             limit: usize,
             _from_block: Option<u64>,
             _to_block: Option<u64>,
-        ) -> Result<Vec<(u64, Vec<u8>, u64, [u8; 32])>, String> {
+        ) -> Result<Vec<(u64, Vec<u8>, u64, [u8; 48])>, String> {
             let notes: Vec<_> = (start..start + limit as u64)
                 .take(10)
-                .map(|i| (i, vec![i as u8; 32], 100 + i, [i as u8; 32]))
+                .map(|i| (i, vec![i as u8; 32], 100 + i, [i as u8; 48]))
                 .collect();
             Ok(notes)
         }
@@ -608,10 +608,10 @@ mod tests {
         fn get_merkle_witness(
             &self,
             _position: u64,
-        ) -> Result<(Vec<[u8; 32]>, Vec<bool>, [u8; 32]), String> {
-            let siblings: Vec<[u8; 32]> = (0..32).map(|i| [i; 32]).collect();
+        ) -> Result<(Vec<[u8; 48]>, Vec<bool>, [u8; 48]), String> {
+            let siblings: Vec<[u8; 48]> = (0..32).map(|i| [i; 48]).collect();
             let indices: Vec<bool> = (0..32).map(|i| i % 2 == 0).collect();
-            let root = [0x12; 32];
+            let root = [0x12; 48];
             Ok((siblings, indices, root))
         }
 
@@ -626,11 +626,11 @@ mod tests {
             }
         }
 
-        fn is_nullifier_spent(&self, nullifier: &[u8; 32]) -> bool {
+        fn is_nullifier_spent(&self, nullifier: &[u8; 48]) -> bool {
             nullifier[0] == 0
         }
 
-        fn is_valid_anchor(&self, anchor: &[u8; 32]) -> bool {
+        fn is_valid_anchor(&self, anchor: &[u8; 48]) -> bool {
             anchor[0] != 0
         }
 
@@ -656,13 +656,13 @@ mod tests {
 
         // Nullifier starting with 0 is "spent"
         let spent = rpc
-            .is_nullifier_spent(hex::encode([0u8; 32]))
+            .is_nullifier_spent(hex::encode([0u8; 48]))
             .await
             .unwrap();
         assert!(spent);
 
         // Nullifier starting with 1 is not spent
-        let mut nf = [0u8; 32];
+        let mut nf = [0u8; 48];
         nf[0] = 1;
         let not_spent = rpc.is_nullifier_spent(hex::encode(nf)).await.unwrap();
         assert!(!not_spent);
@@ -674,7 +674,7 @@ mod tests {
         let rpc = ShieldedRpc::new(service);
 
         // Anchor starting with non-zero is valid
-        let mut anchor = [0u8; 32];
+        let mut anchor = [0u8; 48];
         anchor[0] = 1;
         let valid = rpc.is_valid_anchor(hex::encode(anchor)).await.unwrap();
         assert!(valid);
@@ -707,13 +707,13 @@ mod tests {
 
         let request = ShieldedTransferRequest {
             proof: proof_base64,
-            nullifiers: vec![hex::encode([0x11u8; 32])],
-            commitments: vec![hex::encode([0x22u8; 32])],
+            nullifiers: vec![hex::encode([0x11u8; 48])],
+            commitments: vec![hex::encode([0x22u8; 48])],
             encrypted_notes: vec![base64::Engine::encode(
                 &base64::engine::general_purpose::STANDARD,
                 &[1, 2, 3, 4],
             )],
-            anchor: hex::encode([0x33u8; 32]),
+            anchor: hex::encode([0x33u8; 48]),
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
@@ -735,10 +735,10 @@ mod tests {
         // Invalid base64 proof
         let request = ShieldedTransferRequest {
             proof: "not-valid-base64!!!".to_string(),
-            nullifiers: vec![hex::encode([0x11u8; 32])],
-            commitments: vec![hex::encode([0x22u8; 32])],
+            nullifiers: vec![hex::encode([0x11u8; 48])],
+            commitments: vec![hex::encode([0x22u8; 48])],
             encrypted_notes: vec![],
-            anchor: hex::encode([0x33u8; 32]),
+            anchor: hex::encode([0x33u8; 48]),
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,
@@ -764,9 +764,9 @@ mod tests {
         let request = ShieldedTransferRequest {
             proof: proof_base64,
             nullifiers: vec!["0011223344".to_string()], // Too short
-            commitments: vec![hex::encode([0x22u8; 32])],
+            commitments: vec![hex::encode([0x22u8; 48])],
             encrypted_notes: vec![],
-            anchor: hex::encode([0x33u8; 32]),
+            anchor: hex::encode([0x33u8; 48]),
             binding_hash: hex::encode([0x44u8; 64]),
             fee: 0,
             value_balance: 0,

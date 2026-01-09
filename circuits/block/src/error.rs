@@ -1,6 +1,6 @@
 use protocol_versioning::VersionBinding;
 use thiserror::Error;
-use transaction_circuit::{hashing::Commitment, TransactionCircuitError};
+use transaction_circuit::{hashing_pq::Commitment, TransactionCircuitError};
 
 use state_merkle::MerkleError;
 

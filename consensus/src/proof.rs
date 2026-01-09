@@ -5,22 +5,18 @@ use crate::types::{
     compute_fee_commitment, compute_proof_commitment, compute_version_commitment, da_root,
 };
 use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, verify_block_commitment};
-#[cfg(feature = "legacy-recursion")]
-use block_circuit::{transaction_inputs_from_verifier_inputs, verify_recursive_proof};
-use crypto::hashes::{blake3_256, sha256};
+use crypto::hashes::blake3_384;
 use rayon::prelude::*;
 use std::collections::BTreeSet;
 use transaction_circuit::constants::MAX_INPUTS;
-use transaction_circuit::hashing::felt_to_bytes32;
-#[cfg(feature = "legacy-recursion")]
-use transaction_circuit::hashing::felts_to_bytes32;
+use transaction_circuit::hashing_pq::felts_to_bytes48;
 use transaction_circuit::keys::generate_keys;
-use transaction_circuit::proof::verify_rpo as verify_transaction_proof;
+use transaction_circuit::proof::verify as verify_transaction_proof;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitmentNullifierLists {
-    pub nullifiers: Vec<[u8; 32]>,
-    pub sorted_nullifiers: Vec<[u8; 32]>,
+    pub nullifiers: Vec<[u8; 48]>,
+    pub sorted_nullifiers: Vec<[u8; 48]>,
 }
 
 pub fn commitment_nullifier_lists(
@@ -38,19 +34,19 @@ pub fn commitment_nullifier_lists(
                 tx.nullifiers.len()
             )));
         }
-        if tx.nullifiers.contains(&[0u8; 32]) {
+        if tx.nullifiers.contains(&[0u8; 48]) {
             return Err(ProofError::CommitmentProofInputsMismatch(format!(
                 "transaction {index} includes zero nullifier"
             )));
         }
         nullifiers.extend_from_slice(&tx.nullifiers);
         nullifiers.extend(std::iter::repeat_n(
-            [0u8; 32],
+            [0u8; 48],
             MAX_INPUTS - tx.nullifiers.len(),
         ));
     }
 
-    if nullifiers.iter().all(|nf| *nf == [0u8; 32]) {
+    if nullifiers.iter().all(|nf| *nf == [0u8; 48]) {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "nullifier list must include at least one non-zero entry".to_string(),
         ));
@@ -80,12 +76,24 @@ pub fn verify_commitment_proof_payload(
         )));
     }
 
-    if proof.public_inputs.nullifiers != lists.nullifiers {
+    let proof_nullifiers: Vec<[u8; 48]> = proof
+        .public_inputs
+        .nullifiers
+        .iter()
+        .map(felts_to_bytes48)
+        .collect();
+    if proof_nullifiers != lists.nullifiers {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "nullifier list mismatch".to_string(),
         ));
     }
-    if proof.public_inputs.sorted_nullifiers != lists.sorted_nullifiers {
+    let proof_sorted_nullifiers: Vec<[u8; 48]> = proof
+        .public_inputs
+        .sorted_nullifiers
+        .iter()
+        .map(felts_to_bytes48)
+        .collect();
+    if proof_sorted_nullifiers != lists.sorted_nullifiers {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "sorted nullifier list mismatch".to_string(),
         ));
@@ -93,26 +101,30 @@ pub fn verify_commitment_proof_payload(
 
     let expected_da_root = da_root(&block.transactions, block.header.da_params())
         .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
-    if proof.public_inputs.da_root != expected_da_root {
+    let proof_da_root = felts_to_bytes48(&proof.public_inputs.da_root);
+    if proof_da_root != expected_da_root {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "da_root mismatch".to_string(),
         ));
     }
 
     let expected_nullifier_root = nullifier_root_from_list(&lists.nullifiers)?;
-    if proof.public_inputs.nullifier_root != expected_nullifier_root {
+    let proof_nullifier_root = felts_to_bytes48(&proof.public_inputs.nullifier_root);
+    if proof_nullifier_root != expected_nullifier_root {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "nullifier root mismatch".to_string(),
         ));
     }
 
-    if proof.public_inputs.starting_state_root != parent_commitment_tree.root() {
+    let proof_starting_root = felts_to_bytes48(&proof.public_inputs.starting_state_root);
+    if proof_starting_root != parent_commitment_tree.root() {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "starting state root mismatch".to_string(),
         ));
     }
     let expected_tree = apply_commitments(parent_commitment_tree, &block.transactions)?;
-    if proof.public_inputs.ending_state_root != expected_tree.root() {
+    let proof_ending_root = felts_to_bytes48(&proof.public_inputs.ending_state_root);
+    if proof_ending_root != expected_tree.root() {
         return Err(ProofError::CommitmentProofInputsMismatch(
             "ending state root mismatch".to_string(),
         ));
@@ -147,24 +159,6 @@ impl ProofVerifier for HashVerifier {
     {
         verify_commitments(block)?;
         apply_commitments(parent_commitment_tree, &block.transactions)
-    }
-}
-
-#[cfg(feature = "legacy-recursion")]
-#[derive(Clone, Debug, Default)]
-pub struct RecursiveProofVerifier;
-
-#[cfg(feature = "legacy-recursion")]
-impl ProofVerifier for RecursiveProofVerifier {
-    fn verify_block<BH>(
-        &self,
-        block: &Block<BH>,
-        parent_commitment_tree: &CommitmentTreeState,
-    ) -> Result<CommitmentTreeState, ProofError>
-    where
-        BH: HeaderProofExt,
-    {
-        verify_recursive_proof_payload(block, parent_commitment_tree)
     }
 }
 
@@ -223,7 +217,9 @@ impl ProofVerifier for ParallelProofVerifier {
         let expected_commitment =
             CommitmentBlockProver::commitment_from_proof_hashes(&proof_hashes)
                 .map_err(|err| ProofError::CommitmentProofInputsMismatch(err.to_string()))?;
-        if expected_commitment != commitment_proof.public_inputs.tx_proofs_commitment {
+        let proof_commitment =
+            felts_to_bytes48(&commitment_proof.public_inputs.tx_proofs_commitment);
+        if expected_commitment != proof_commitment {
             return Err(ProofError::CommitmentProofInputsMismatch(
                 "tx_proofs_commitment mismatch".to_string(),
             ));
@@ -244,15 +240,18 @@ impl ProofVerifier for ParallelProofVerifier {
                 Ok::<_, ProofError>(())
             })?;
 
-        let anchors: Vec<[u8; 32]> = transaction_proofs
+        let anchors: Vec<[u8; 48]> = transaction_proofs
             .iter()
             .map(|proof| proof.public_inputs.merkle_root)
             .collect();
 
+        let proof_starting_root =
+            felts_to_bytes48(&commitment_proof.public_inputs.starting_state_root);
+        let proof_ending_root = felts_to_bytes48(&commitment_proof.public_inputs.ending_state_root);
         verify_and_apply_tree_transition(
             parent_commitment_tree,
-            commitment_proof.public_inputs.starting_state_root,
-            commitment_proof.public_inputs.ending_state_root,
+            proof_starting_root,
+            proof_ending_root,
             &block.transactions,
             &anchors,
         )
@@ -321,122 +320,13 @@ where
     Ok(())
 }
 
-#[cfg(feature = "legacy-recursion")]
-pub fn verify_recursive_proof_payload<BH>(
-    block: &Block<BH>,
-    parent_commitment_tree: &CommitmentTreeState,
-) -> Result<CommitmentTreeState, ProofError>
-where
-    BH: HeaderProofExt,
-{
-    let proof = match block.recursive_proof.as_ref() {
-        Some(proof) => proof,
-        None => return apply_commitments(parent_commitment_tree, &block.transactions),
-    };
-    if block.transactions.is_empty() {
-        return Err(ProofError::UnexpectedRecursiveProof);
-    }
-    if proof.tx_count != block.header.transaction_count() {
-        return Err(ProofError::RecursiveProofCountMismatch);
-    }
-    if proof.tx_count as usize != block.transactions.len() {
-        return Err(ProofError::RecursiveProofCountMismatch);
-    }
-
-    let verifier_inputs = verify_recursive_proof(proof).map_err(|err| map_block_error(err))?;
-    if verifier_inputs.len() < block.transactions.len() || !verifier_inputs.len().is_power_of_two()
-    {
-        return Err(ProofError::RecursiveProofCountMismatch);
-    }
-    if verifier_inputs.len() != block.transactions.len() {
-        let tx_count = block.transactions.len();
-        if tx_count == 0 || verifier_inputs.is_empty() {
-            return Err(ProofError::RecursiveProofPaddingMismatch);
-        }
-        let last = &verifier_inputs[tx_count - 1];
-        let padding_ok = verifier_inputs[tx_count..].iter().all(|entry| {
-            entry.inner_public_inputs == last.inner_public_inputs
-                && entry.inner_pub_inputs_hash == last.inner_pub_inputs_hash
-                && entry.trace_commitment == last.trace_commitment
-                && entry.constraint_commitment == last.constraint_commitment
-                && entry.fri_commitments == last.fri_commitments
-                && entry.num_queries == last.num_queries
-                && entry.num_draws == last.num_draws
-                && entry.trace_partition_size == last.trace_partition_size
-                && entry.constraint_partition_size == last.constraint_partition_size
-                && entry.blowup_factor == last.blowup_factor
-                && entry.trace_length == last.trace_length
-                && entry.trace_width == last.trace_width
-                && entry.constraint_frame_width == last.constraint_frame_width
-                && entry.num_transition_constraints == last.num_transition_constraints
-                && entry.num_assertions == last.num_assertions
-                && entry.field_extension == last.field_extension
-        });
-        if !padding_ok {
-            return Err(ProofError::RecursiveProofPaddingMismatch);
-        }
-    }
-
-    let mut anchors = Vec::with_capacity(block.transactions.len());
-    for (index, tx) in block.transactions.iter().enumerate() {
-        let inner = transaction_inputs_from_verifier_inputs(&verifier_inputs[index])
-            .map_err(map_block_error)?;
-        anchors.push(felts_to_bytes32(&inner.merkle_root));
-        let expected_nullifiers: Vec<[u8; 32]> = inner
-            .nullifiers
-            .iter()
-            .map(felts_to_bytes32)
-            .filter(|value| *value != [0u8; 32])
-            .collect();
-        let expected_commitments: Vec<[u8; 32]> = inner
-            .commitments
-            .iter()
-            .map(felts_to_bytes32)
-            .filter(|value| *value != [0u8; 32])
-            .collect();
-
-        if expected_nullifiers != tx.nullifiers || expected_commitments != tx.commitments {
-            return Err(ProofError::RecursiveProofInputsMismatch(index));
-        }
-    }
-    verify_and_apply_tree_transition(
-        parent_commitment_tree,
-        proof.starting_root,
-        proof.ending_root,
-        &block.transactions,
-        &anchors,
-    )
-}
-
-#[cfg(feature = "legacy-recursion")]
-fn map_block_error(err: block_circuit::BlockError) -> ProofError {
-    match err {
-        block_circuit::BlockError::RecursiveProofHashMismatch => {
-            ProofError::RecursiveProofHashMismatch
-        }
-        block_circuit::BlockError::RecursiveProofVerification(message) => {
-            ProofError::RecursiveProofVerification(message)
-        }
-        block_circuit::BlockError::RecursiveProofCountMismatch => {
-            ProofError::RecursiveProofCountMismatch
-        }
-        block_circuit::BlockError::RecursiveProofPaddingMismatch => {
-            ProofError::RecursiveProofPaddingMismatch
-        }
-        block_circuit::BlockError::RecursiveProofInputsMismatch(index) => {
-            ProofError::RecursiveProofInputsMismatch(index)
-        }
-        other => ProofError::RecursiveProofVerification(other.to_string()),
-    }
-}
-
 fn apply_commitments(
     parent_commitment_tree: &CommitmentTreeState,
     transactions: &[crate::types::Transaction],
 ) -> Result<CommitmentTreeState, ProofError> {
     let mut tree = parent_commitment_tree.clone();
     for tx in transactions {
-        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 32]) {
+        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 48]) {
             tree.append(commitment)?;
         }
     }
@@ -445,7 +335,7 @@ fn apply_commitments(
 
 fn proof_hashes_from_transaction_proofs(
     proofs: &[transaction_circuit::TransactionProof],
-) -> Result<Vec<[u8; 32]>, ProofError> {
+) -> Result<Vec<[u8; 48]>, ProofError> {
     let mut hashes = Vec::with_capacity(proofs.len());
     for (index, proof) in proofs.iter().enumerate() {
         if proof.stark_proof.is_empty() {
@@ -454,7 +344,7 @@ fn proof_hashes_from_transaction_proofs(
                 message: "missing STARK proof bytes".to_string(),
             });
         }
-        hashes.push(blake3_256(&proof.stark_proof));
+        hashes.push(blake3_384(&proof.stark_proof));
     }
     Ok(hashes)
 }
@@ -471,11 +361,11 @@ fn verify_transaction_proof_inputs(
         });
     }
 
-    let expected_nullifiers: Vec<[u8; 32]> = proof
+    let expected_nullifiers: Vec<[u8; 48]> = proof
         .nullifiers
         .iter()
         .copied()
-        .filter(|value| *value != [0u8; 32])
+        .filter(|value| *value != [0u8; 48])
         .collect();
     if expected_nullifiers != tx.nullifiers {
         return Err(ProofError::TransactionProofInputsMismatch {
@@ -484,11 +374,11 @@ fn verify_transaction_proof_inputs(
         });
     }
 
-    let expected_commitments: Vec<[u8; 32]> = proof
+    let expected_commitments: Vec<[u8; 48]> = proof
         .commitments
         .iter()
         .copied()
-        .filter(|value| *value != [0u8; 32])
+        .filter(|value| *value != [0u8; 48])
         .collect();
     if expected_commitments != tx.commitments {
         return Err(ProofError::TransactionProofInputsMismatch {
@@ -497,8 +387,7 @@ fn verify_transaction_proof_inputs(
         });
     }
 
-    let expected_balance_tag = felt_to_bytes32(proof.public_inputs.balance_tag);
-    if expected_balance_tag != tx.balance_tag {
+    if proof.public_inputs.balance_tag != tx.balance_tag {
         return Err(ProofError::TransactionProofInputsMismatch {
             index,
             message: "balance tag mismatch".to_string(),
@@ -508,10 +397,10 @@ fn verify_transaction_proof_inputs(
     Ok(())
 }
 
-fn nullifier_root_from_list(nullifiers: &[[u8; 32]]) -> Result<[u8; 32], ProofError> {
+fn nullifier_root_from_list(nullifiers: &[[u8; 48]]) -> Result<[u8; 48], ProofError> {
     let mut entries = BTreeSet::new();
     for nf in nullifiers {
-        if *nf == [0u8; 32] {
+        if *nf == [0u8; 48] {
             continue;
         }
         if !entries.insert(*nf) {
@@ -521,20 +410,20 @@ fn nullifier_root_from_list(nullifiers: &[[u8; 32]]) -> Result<[u8; 32], ProofEr
         }
     }
 
-    let mut data = Vec::with_capacity(entries.len() * 32);
+    let mut data = Vec::with_capacity(entries.len() * 48);
     for nf in entries {
         data.extend_from_slice(&nf);
     }
 
-    Ok(sha256(&data))
+    Ok(blake3_384(&data))
 }
 
 fn verify_and_apply_tree_transition(
     parent_commitment_tree: &CommitmentTreeState,
-    proof_starting_root: [u8; 32],
-    proof_ending_root: [u8; 32],
+    proof_starting_root: [u8; 48],
+    proof_ending_root: [u8; 48],
     transactions: &[crate::types::Transaction],
-    anchors: &[[u8; 32]],
+    anchors: &[[u8; 48]],
 ) -> Result<CommitmentTreeState, ProofError> {
     if anchors.len() != transactions.len() {
         return Err(ProofError::Internal("anchor list length mismatch"));
@@ -555,7 +444,7 @@ fn verify_and_apply_tree_transition(
                 anchor: *anchor,
             });
         }
-        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 32]) {
+        for commitment in tx.commitments.iter().copied().filter(|c| *c != [0u8; 48]) {
             tree.append(commitment)?;
         }
     }
@@ -575,11 +464,11 @@ mod tests {
     use super::*;
     use protocol_versioning::DEFAULT_VERSION_BINDING;
 
-    fn tx_with_commitments(commitments: Vec<[u8; 32]>) -> crate::types::Transaction {
+    fn tx_with_commitments(commitments: Vec<[u8; 48]>) -> crate::types::Transaction {
         crate::types::Transaction::new(
             Vec::new(),
             commitments,
-            [42u8; 32],
+            [42u8; 48],
             DEFAULT_VERSION_BINDING,
             Vec::new(),
         )
@@ -588,11 +477,11 @@ mod tests {
     #[test]
     fn tree_transition_rejects_starting_root_mismatch() {
         let parent_tree = CommitmentTreeState::default();
-        let txs = vec![tx_with_commitments(vec![[1u8; 32]])];
+        let txs = vec![tx_with_commitments(vec![[1u8; 48]])];
         let anchors = vec![parent_tree.root()];
         let err = verify_and_apply_tree_transition(
             &parent_tree,
-            [9u8; 32],
+            [9u8; 48],
             parent_tree.root(),
             &txs,
             &anchors,
@@ -604,8 +493,8 @@ mod tests {
     #[test]
     fn tree_transition_rejects_invalid_anchor() {
         let parent_tree = CommitmentTreeState::default();
-        let txs = vec![tx_with_commitments(vec![[1u8; 32]])];
-        let anchors = vec![[7u8; 32]];
+        let txs = vec![tx_with_commitments(vec![[1u8; 48]])];
+        let anchors = vec![[7u8; 48]];
         let err = verify_and_apply_tree_transition(
             &parent_tree,
             parent_tree.root(),
@@ -620,12 +509,12 @@ mod tests {
     #[test]
     fn tree_transition_rejects_ending_root_mismatch() {
         let parent_tree = CommitmentTreeState::default();
-        let txs = vec![tx_with_commitments(vec![[1u8; 32]])];
+        let txs = vec![tx_with_commitments(vec![[1u8; 48]])];
         let anchors = vec![parent_tree.root()];
         let err = verify_and_apply_tree_transition(
             &parent_tree,
             parent_tree.root(),
-            [9u8; 32],
+            [9u8; 48],
             &txs,
             &anchors,
         )
@@ -636,10 +525,10 @@ mod tests {
     #[test]
     fn tree_transition_accepts_valid_update() {
         let parent_tree = CommitmentTreeState::default();
-        let txs = vec![tx_with_commitments(vec![[1u8; 32]])];
+        let txs = vec![tx_with_commitments(vec![[1u8; 48]])];
         let anchors = vec![parent_tree.root()];
         let mut expected = parent_tree.clone();
-        expected.append([1u8; 32]).expect("append");
+        expected.append([1u8; 48]).expect("append");
         let updated = verify_and_apply_tree_transition(
             &parent_tree,
             parent_tree.root(),

@@ -11,9 +11,11 @@ use crate::reward::{
     MAX_FUTURE_SKEW_MS, MEDIAN_TIME_WINDOW, RETARGET_WINDOW, block_subsidy, retarget_target,
     update_supply_digest,
 };
-use crate::types::{CoinbaseSource, ConsensusBlock, SupplyDigest, ValidatorId};
+use crate::types::{
+    CoinbaseSource, ConsensusBlock, SupplyDigest, ValidatorId, ValidatorSetCommitment,
+};
 use crate::version_policy::VersionSchedule;
-use crypto::hashes::sha256;
+use crypto::hashes::{blake3_384, sha256};
 use crypto::ml_dsa::{ML_DSA_SIGNATURE_LEN, MlDsaPublicKey, MlDsaSignature};
 use crypto::traits::VerifyKey;
 use num_bigint::BigUint;
@@ -50,7 +52,7 @@ impl PowNode {
 
 pub struct PowConsensus<V: ProofVerifier> {
     verifier: V,
-    miners: HashMap<ValidatorId, MlDsaPublicKey>,
+    miners: HashMap<ValidatorSetCommitment, (ValidatorId, MlDsaPublicKey)>,
     nodes: HashMap<[u8; 32], PowNode>,
     best: [u8; 32],
     version_schedule: VersionSchedule,
@@ -111,7 +113,11 @@ impl<V: ProofVerifier> PowConsensus<V> {
     ) -> Self {
         let miners = miner_keys
             .into_iter()
-            .map(|pk| (sha256(&pk.to_bytes()), pk))
+            .map(|pk| {
+                let id = sha256(&pk.to_bytes());
+                let commitment = blake3_384(&pk.to_bytes());
+                (commitment, (id, pk))
+            })
             .collect();
         let mut nodes = HashMap::new();
         nodes.insert(
@@ -165,10 +171,10 @@ impl<V: ProofVerifier> PowConsensus<V> {
             .pow
             .as_ref()
             .ok_or(ConsensusError::InvalidHeader("pow seal missing"))?;
-        let miner_id = block.header.validator_set_commitment;
-        let miner_key = self
+        let miner_commitment = block.header.validator_set_commitment;
+        let (miner_id, miner_key) = self
             .miners
-            .get(&miner_id)
+            .get(&miner_commitment)
             .ok_or(ConsensusError::ValidatorSetMismatch)?;
         if block.header.signature_aggregate.len() != ML_DSA_SIGNATURE_LEN {
             return Err(ConsensusError::InvalidHeader("pow signature length"));
@@ -178,7 +184,7 @@ impl<V: ProofVerifier> PowConsensus<V> {
         let signing_hash = block.header.signing_hash()?;
         miner_key.verify(&signing_hash, &signature).map_err(|_| {
             ConsensusError::SignatureVerificationFailed {
-                validator: miner_id,
+                validator: *miner_id,
             }
         })?;
 
@@ -306,18 +312,21 @@ impl<V: ProofVerifier> PowConsensus<V> {
     }
 
     pub fn miner_ids(&self) -> Vec<ValidatorId> {
-        self.miners.keys().copied().collect()
+        self.miners.values().map(|(id, _)| *id).collect()
     }
 
     pub fn has_miner(&self, id: &ValidatorId) -> bool {
-        self.miners.contains_key(id)
+        self.miners.values().any(|(miner_id, _)| miner_id == id)
     }
 
     /// Register a miner key so downstream verification can recover from
     /// mismatched validator sets (common in test reorg scenarios).
     pub fn ensure_miner(&mut self, key: &MlDsaPublicKey) -> ValidatorId {
         let id = sha256(&key.to_bytes());
-        self.miners.entry(id).or_insert_with(|| key.clone());
+        let commitment = blake3_384(&key.to_bytes());
+        self.miners
+            .entry(commitment)
+            .or_insert_with(|| (id, key.clone()));
         id
     }
 

@@ -11,24 +11,16 @@ extern crate alloc;
 pub mod constants;
 pub mod dimensions;
 pub mod hashing;
+pub mod hashing_pq;
+pub mod p3_air;
+pub mod p3_config;
+pub mod p3_verifier;
+pub mod poseidon2;
+pub mod poseidon2_constants;
 pub mod poseidon_constants;
-#[cfg(feature = "stark-verify")]
-mod rpo;
-pub mod stark_air;
-#[cfg(feature = "stark-verify")]
-pub mod stark_verifier;
 pub mod types;
 
-pub use hashing::Felt;
-pub use stark_air::{
-    TransactionAirStark, TransactionPublicInputsStark, CYCLE_LENGTH, MIN_TRACE_LENGTH, TRACE_WIDTH,
-};
-pub use types::{BalanceSlot, StablecoinPolicyBinding};
-
-#[cfg(feature = "stark-verify")]
-pub use stark_verifier::{
-    verify_transaction_proof, verify_transaction_proof_bytes, verify_transaction_proof_bytes_rpo,
-    verify_transaction_proof_rpo, TransactionVerifyError,
-};
-
 pub use constants::{compute_air_hash, expected_air_hash, CIRCUIT_VERSION};
+pub use hashing::Felt;
+pub use p3_air::{TransactionAirP3, TransactionPublicInputsP3};
+pub use types::{BalanceSlot, Commitment48, MerkleRoot48, Nullifier48, StablecoinPolicyBinding};

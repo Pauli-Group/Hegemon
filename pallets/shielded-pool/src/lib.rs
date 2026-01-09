@@ -75,8 +75,8 @@ use sp_std::vec::Vec;
 /// 3. Cryptographic: The nullifier PRF makes zero outputs computationally infeasible
 ///
 /// This constant exists only for detection - any occurrence is an error.
-const ZERO_NULLIFIER: [u8; 32] = [0u8; 32];
-const ZERO_COMMITMENT: [u8; 32] = [0u8; 32];
+const ZERO_NULLIFIER: [u8; 48] = [0u8; 48];
+const ZERO_COMMITMENT: [u8; 48] = [0u8; 48];
 
 /// Stablecoin policy snapshot used by the shielded pool verifier.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -96,13 +96,13 @@ pub trait StablecoinPolicyProvider<AssetId, OracleFeedId, AttestationId, BlockNu
     fn policy(
         asset_id: &AssetId,
     ) -> Option<StablecoinPolicySnapshot<AssetId, OracleFeedId, AttestationId, BlockNumber>>;
-    fn policy_hash(asset_id: &AssetId) -> Option<[u8; 32]>;
+    fn policy_hash(asset_id: &AssetId) -> Option<[u8; 48]>;
 }
 
 /// Oracle commitment snapshot used by the verifier.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OracleCommitmentSnapshot<BlockNumber> {
-    pub commitment: [u8; 32],
+    pub commitment: [u8; 48],
     pub submitted_at: BlockNumber,
 }
 
@@ -114,7 +114,7 @@ pub trait OracleCommitmentProvider<FeedId, BlockNumber> {
 /// Attestation commitment snapshot used by the verifier.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AttestationCommitmentSnapshot<BlockNumber> {
-    pub commitment: [u8; 32],
+    pub commitment: [u8; 48],
     pub disputed: bool,
     pub created_at: BlockNumber,
 }
@@ -127,12 +127,12 @@ pub trait AttestationCommitmentProvider<CommitmentId, BlockNumber> {
 }
 
 /// Check if a nullifier is the zero value (which is invalid).
-fn is_zero_nullifier(nf: &[u8; 32]) -> bool {
+fn is_zero_nullifier(nf: &[u8; 48]) -> bool {
     *nf == ZERO_NULLIFIER
 }
 
 /// Check if a commitment is the zero value (which is invalid for active outputs).
-fn is_zero_commitment(cm: &[u8; 32]) -> bool {
+fn is_zero_commitment(cm: &[u8; 48]) -> bool {
     *cm == ZERO_COMMITMENT
 }
 
@@ -269,13 +269,13 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::getter(fn merkle_roots)]
     pub type MerkleRoots<T: Config> =
-        StorageMap<_, Blake2_128Concat, [u8; 32], BlockNumberFor<T>, OptionQuery>;
+        StorageMap<_, Blake2_128Concat, [u8; 48], BlockNumberFor<T>, OptionQuery>;
 
     /// Ordered history of recent Merkle roots (bounded by MerkleRootHistorySize).
     #[pallet::storage]
     #[pallet::getter(fn merkle_root_history)]
     pub type MerkleRootHistory<T: Config> =
-        StorageValue<_, BoundedVec<[u8; 32], T::MerkleRootHistorySize>, ValueQuery>;
+        StorageValue<_, BoundedVec<[u8; 48], T::MerkleRootHistorySize>, ValueQuery>;
 
     /// Current commitment index (number of commitments in the tree).
     #[pallet::storage]
@@ -286,12 +286,12 @@ pub mod pallet {
     /// If a nullifier exists in this map, the note has been spent.
     #[pallet::storage]
     #[pallet::getter(fn nullifiers)]
-    pub type Nullifiers<T: Config> = StorageMap<_, Blake2_128Concat, [u8; 32], (), OptionQuery>;
+    pub type Nullifiers<T: Config> = StorageMap<_, Blake2_128Concat, [u8; 48], (), OptionQuery>;
 
     /// Note commitments by index.
     #[pallet::storage]
     #[pallet::getter(fn commitments)]
-    pub type Commitments<T: Config> = StorageMap<_, Blake2_128Concat, u64, [u8; 32], OptionQuery>;
+    pub type Commitments<T: Config> = StorageMap<_, Blake2_128Concat, u64, [u8; 48], OptionQuery>;
 
     /// Encrypted notes for recipients to scan.
     #[pallet::storage]
@@ -330,55 +330,6 @@ pub mod pallet {
     #[pallet::storage]
     pub type CommitmentProofProcessed<T: Config> = StorageValue<_, bool, ValueQuery>;
 
-    // ========================================
-    // EPOCH STORAGE (for light client sync)
-    // ========================================
-
-    /// Epoch size in blocks (60 blocks per epoch for testnet).
-    pub const EPOCH_SIZE: u64 = 60;
-
-    /// Maximum proof hashes per epoch (bounded for on-chain storage).
-    pub const MAX_EPOCH_PROOF_HASHES: u32 = 10_000;
-
-    /// Maximum epoch proof size in bytes (200KB).
-    pub const MAX_EPOCH_PROOF_SIZE: u32 = 200_000;
-
-    /// Current epoch number.
-    #[pallet::storage]
-    #[pallet::getter(fn current_epoch)]
-    pub type CurrentEpoch<T: Config> = StorageValue<_, u64, ValueQuery>;
-
-    /// Proof hashes collected during current epoch.
-    /// Bounded to MAX_EPOCH_PROOF_HASHES to prevent unbounded storage growth.
-    #[pallet::storage]
-    #[pallet::getter(fn epoch_proof_hashes)]
-    pub type EpochProofHashes<T: Config> =
-        StorageValue<_, BoundedVec<[u8; 32], ConstU32<MAX_EPOCH_PROOF_HASHES>>, ValueQuery>;
-
-    /// Finalized epoch proofs (epoch_number -> serialized proof).
-    /// Bounded to MAX_EPOCH_PROOF_SIZE bytes.
-    #[pallet::storage]
-    #[pallet::getter(fn epoch_proofs)]
-    pub type EpochProofs<T: Config> = StorageMap<
-        _,
-        Blake2_128Concat,
-        u64,
-        BoundedVec<u8, ConstU32<MAX_EPOCH_PROOF_SIZE>>,
-        OptionQuery,
-    >;
-
-    /// Epoch commitments for light client sync (epoch_number -> commitment hash).
-    #[pallet::storage]
-    #[pallet::getter(fn epoch_commitments)]
-    pub type EpochCommitments<T: Config> =
-        StorageMap<_, Blake2_128Concat, u64, [u8; 32], OptionQuery>;
-
-    /// Epoch proof roots for Merkle inclusion proofs.
-    #[pallet::storage]
-    #[pallet::getter(fn epoch_proof_roots)]
-    pub type EpochProofRoots<T: Config> =
-        StorageMap<_, Blake2_128Concat, u64, [u8; 32], OptionQuery>;
-
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
@@ -397,19 +348,19 @@ pub mod pallet {
             /// Index of the commitment.
             index: u64,
             /// The commitment hash.
-            commitment: [u8; 32],
+            commitment: [u8; 48],
         },
 
         /// A nullifier was added (note was spent).
         NullifierAdded {
             /// The nullifier hash.
-            nullifier: [u8; 32],
+            nullifier: [u8; 48],
         },
 
         /// Merkle root was updated.
         MerkleRootUpdated {
             /// New Merkle root.
-            root: [u8; 32],
+            root: [u8; 48],
         },
 
         /// Verifying key was updated.
@@ -438,35 +389,6 @@ pub mod pallet {
             commitment_count: u32,
             /// Total fee across all transactions.
             total_fee: u128,
-        },
-
-        // ========================================
-        // EPOCH EVENTS (for light client sync)
-        // ========================================
-        /// An epoch has been finalized with a proof.
-        EpochFinalized {
-            /// Epoch number that was finalized.
-            epoch_number: u64,
-            /// Root hash of all proof hashes in this epoch.
-            proof_root: [u8; 32],
-            /// Number of proofs accumulated in this epoch.
-            num_proofs: u32,
-        },
-
-        /// Light client sync data is available for an epoch.
-        EpochSyncAvailable {
-            /// Epoch number with available sync data.
-            epoch_number: u64,
-            /// Commitment hash for light client verification.
-            commitment: [u8; 32],
-        },
-
-        /// A proof hash was recorded for the current epoch.
-        ProofHashRecorded {
-            /// The proof hash that was recorded.
-            proof_hash: [u8; 32],
-            /// Current count of proofs in this epoch.
-            epoch_proof_count: u32,
         },
     }
 
@@ -545,12 +467,6 @@ pub mod pallet {
         // ========================================
         // EPOCH ERRORS
         // ========================================
-        /// Epoch proof generation failed.
-        EpochProofFailed,
-        /// Invalid epoch number for query.
-        InvalidEpoch,
-        /// Epoch proof hashes storage is full.
-        EpochProofHashesFull,
     }
 
     #[pallet::genesis_config]
@@ -573,7 +489,7 @@ pub mod pallet {
             // Store initial root as valid
             MerkleRoots::<T>::insert(tree.root(), BlockNumberFor::<T>::from(0u32));
             if T::MerkleRootHistorySize::get() > 0 {
-                let mut history: BoundedVec<[u8; 32], T::MerkleRootHistorySize> =
+                let mut history: BoundedVec<[u8; 48], T::MerkleRootHistorySize> =
                     BoundedVec::default();
                 let _ = history.try_push(tree.root());
                 MerkleRootHistory::<T>::put(history);
@@ -609,7 +525,7 @@ pub mod pallet {
                 let mut weight = Weight::zero();
                 let history_limit = T::MerkleRootHistorySize::get() as usize;
                 if history_limit > 0 {
-                    let mut roots: Vec<([u8; 32], BlockNumberFor<T>)> =
+                    let mut roots: Vec<([u8; 48], BlockNumberFor<T>)> =
                         MerkleRoots::<T>::iter().collect();
                     roots.sort_by_key(|(_, block)| *block);
                     let keep_start = roots.len().saturating_sub(history_limit);
@@ -617,7 +533,7 @@ pub mod pallet {
                     for (root, _) in to_remove {
                         MerkleRoots::<T>::remove(root);
                     }
-                    let mut history: BoundedVec<[u8; 32], T::MerkleRootHistorySize> =
+                    let mut history: BoundedVec<[u8; 48], T::MerkleRootHistorySize> =
                         BoundedVec::default();
                     for (root, _) in to_keep {
                         let _ = history.try_push(*root);
@@ -641,31 +557,6 @@ pub mod pallet {
             CoinbaseProcessed::<T>::kill();
             CommitmentProofProcessed::<T>::kill();
             Weight::from_parts(1_000, 0)
-        }
-
-        fn on_finalize(block_number: BlockNumberFor<T>) {
-            // Check if this block ends an epoch (epoch proofs feature)
-            #[cfg(feature = "epoch-proofs")]
-            {
-                // Convert block number to u64
-                let block_num: u64 = block_number.try_into().unwrap_or(0u64);
-
-                // Check if this block ends an epoch
-                if block_num > 0 && block_num.is_multiple_of(EPOCH_SIZE) {
-                    let epoch_number = (block_num / EPOCH_SIZE) - 1;
-                    if let Err(e) = Self::finalize_epoch_internal(epoch_number) {
-                        log::error!(
-                            target: "shielded-pool",
-                            "Failed to finalize epoch {}: {:?}",
-                            epoch_number, e
-                        );
-                    }
-                }
-            }
-
-            // Suppress unused warning when feature is disabled
-            #[cfg(not(feature = "epoch-proofs"))]
-            let _ = block_number;
         }
     }
 
@@ -708,10 +599,10 @@ pub mod pallet {
         pub fn shielded_transfer(
             origin: OriginFor<T>,
             proof: StarkProof,
-            nullifiers: BoundedVec<[u8; 32], T::MaxNullifiersPerTx>,
-            commitments: BoundedVec<[u8; 32], T::MaxCommitmentsPerTx>,
+            nullifiers: BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
+            commitments: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
             ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
-            anchor: [u8; 32],
+            anchor: [u8; 48],
             binding_hash: BindingHash,
             stablecoin: Option<StablecoinPolicyBinding>,
             fee: u64,
@@ -854,21 +745,6 @@ pub mod pallet {
             // Update Merkle tree root
             Self::update_merkle_tree(&commitments)?;
 
-            // Record proof hash for epoch accumulation (if epoch-proofs feature enabled)
-            #[cfg(feature = "epoch-proofs")]
-            {
-                let inputs = epoch_circuit::ProofHashInputs {
-                    proof_bytes: &proof.data,
-                    anchor,
-                    nullifiers: nullifiers.as_slice(),
-                    commitments: commitments.as_slice(),
-                    fee,
-                    value_balance,
-                };
-                let proof_hash = epoch_circuit::proof_hash(&inputs);
-                let _ = Self::record_proof_hash(proof_hash);
-            }
-
             Self::deposit_event(Event::ShieldedTransfer {
                 nullifier_count: nullifiers.len() as u32,
                 commitment_count: commitments.len() as u32,
@@ -954,7 +830,7 @@ pub mod pallet {
 
             // Update Merkle tree
             let commitments =
-                BoundedVec::<[u8; 32], T::MaxCommitmentsPerTx>::try_from(vec![expected_commitment])
+                BoundedVec::<[u8; 48], T::MaxCommitmentsPerTx>::try_from(vec![expected_commitment])
                     .map_err(|_| Error::<T>::InvalidCommitmentCount)?;
             Self::update_merkle_tree(&commitments)?;
 
@@ -1002,10 +878,10 @@ pub mod pallet {
         pub fn shielded_transfer_unsigned(
             origin: OriginFor<T>,
             proof: StarkProof,
-            nullifiers: BoundedVec<[u8; 32], T::MaxNullifiersPerTx>,
-            commitments: BoundedVec<[u8; 32], T::MaxCommitmentsPerTx>,
+            nullifiers: BoundedVec<[u8; 48], T::MaxNullifiersPerTx>,
+            commitments: BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
             ciphertexts: BoundedVec<EncryptedNote, T::MaxEncryptedNotesPerTx>,
-            anchor: [u8; 32],
+            anchor: [u8; 48],
             binding_hash: BindingHash,
             stablecoin: Option<StablecoinPolicyBinding>,
             fee: u64,
@@ -1132,21 +1008,6 @@ pub mod pallet {
             // Update Merkle tree root
             Self::update_merkle_tree(&commitments)?;
 
-            // Record proof hash for epoch accumulation (if epoch-proofs feature enabled)
-            #[cfg(feature = "epoch-proofs")]
-            {
-                let inputs = epoch_circuit::ProofHashInputs {
-                    proof_bytes: &proof.data,
-                    anchor,
-                    nullifiers: nullifiers.as_slice(),
-                    commitments: commitments.as_slice(),
-                    fee,
-                    value_balance,
-                };
-                let proof_hash = epoch_circuit::proof_hash(&inputs);
-                let _ = Self::record_proof_hash(proof_hash);
-            }
-
             Self::deposit_event(Event::ShieldedTransfer {
                 nullifier_count: nullifiers.len() as u32,
                 commitment_count: commitments.len() as u32,
@@ -1190,10 +1051,10 @@ pub mod pallet {
         pub fn batch_shielded_transfer(
             origin: OriginFor<T>,
             proof: types::BatchStarkProof,
-            nullifiers: BoundedVec<[u8; 32], T::MaxNullifiersPerBatch>,
-            commitments: BoundedVec<[u8; 32], T::MaxCommitmentsPerBatch>,
+            nullifiers: BoundedVec<[u8; 48], T::MaxNullifiersPerBatch>,
+            commitments: BoundedVec<[u8; 48], T::MaxCommitmentsPerBatch>,
             ciphertexts: BoundedVec<EncryptedNote, T::MaxCommitmentsPerBatch>,
-            anchor: [u8; 32],
+            anchor: [u8; 48],
             total_fee: u128,
         ) -> DispatchResult {
             // This is an unsigned extrinsic for batch transfers
@@ -1306,21 +1167,6 @@ pub mod pallet {
             // Update Merkle tree root
             Self::update_merkle_tree_batch(&commitments)?;
 
-            // Record proof hash for epoch accumulation (if epoch-proofs feature enabled)
-            #[cfg(feature = "epoch-proofs")]
-            {
-                let inputs = epoch_circuit::BatchProofHashInputs {
-                    proof_bytes: &proof.data,
-                    anchor,
-                    nullifiers: nullifiers.as_slice(),
-                    commitments: commitments.as_slice(),
-                    total_fee,
-                    batch_size: proof.batch_size,
-                };
-                let proof_hash = epoch_circuit::batch_proof_hash(&inputs);
-                let _ = Self::record_proof_hash(proof_hash);
-            }
-
             // Emit batch transfer event
             Self::deposit_event(Event::BatchShieldedTransfer {
                 batch_size: proof.batch_size,
@@ -1419,7 +1265,7 @@ pub mod pallet {
         }
 
         /// Record a new Merkle root and prune history to the configured bound.
-        fn record_merkle_root(root: [u8; 32], block: BlockNumberFor<T>) -> DispatchResult {
+        fn record_merkle_root(root: [u8; 48], block: BlockNumberFor<T>) -> DispatchResult {
             let history_limit = T::MerkleRootHistorySize::get() as usize;
             MerkleRoots::<T>::insert(root, block);
 
@@ -1448,7 +1294,7 @@ pub mod pallet {
 
         /// Update the Merkle tree with new commitments.
         fn update_merkle_tree(
-            new_commitments: &BoundedVec<[u8; 32], T::MaxCommitmentsPerTx>,
+            new_commitments: &BoundedVec<[u8; 48], T::MaxCommitmentsPerTx>,
         ) -> DispatchResult {
             // Get current compact tree state and mutate it
             let mut tree = MerkleTree::<T>::get();
@@ -1473,7 +1319,7 @@ pub mod pallet {
 
         /// Update the Merkle tree with new batch commitments.
         fn update_merkle_tree_batch(
-            new_commitments: &BoundedVec<[u8; 32], T::MaxCommitmentsPerBatch>,
+            new_commitments: &BoundedVec<[u8; 48], T::MaxCommitmentsPerBatch>,
         ) -> DispatchResult {
             // Get current compact tree state and mutate it
             let mut tree = MerkleTree::<T>::get();
@@ -1522,188 +1368,13 @@ pub mod pallet {
         }
 
         /// Check if an anchor (Merkle root) is valid.
-        pub fn is_valid_anchor(anchor: &[u8; 32]) -> bool {
+        pub fn is_valid_anchor(anchor: &[u8; 48]) -> bool {
             MerkleRoots::<T>::contains_key(anchor)
         }
 
         /// Check if a nullifier has been spent.
-        pub fn is_nullifier_spent(nullifier: &[u8; 32]) -> bool {
+        pub fn is_nullifier_spent(nullifier: &[u8; 48]) -> bool {
             Nullifiers::<T>::contains_key(nullifier)
-        }
-
-        // ========================================
-        // EPOCH METHODS (for light client sync)
-        // ========================================
-
-        /// Record a proof hash for the current epoch.
-        ///
-        /// Called after each successful shielded transfer when epoch-proofs feature is enabled.
-        #[cfg(feature = "epoch-proofs")]
-        pub fn record_proof_hash(proof_hash: [u8; 32]) -> DispatchResult {
-            EpochProofHashes::<T>::try_mutate(|hashes| {
-                hashes
-                    .try_push(proof_hash)
-                    .map_err(|_| Error::<T>::EpochProofHashesFull)?;
-
-                Self::deposit_event(Event::ProofHashRecorded {
-                    proof_hash,
-                    epoch_proof_count: hashes.len() as u32,
-                });
-
-                Ok(())
-            })
-        }
-
-        /// Finalize an epoch and generate its proof.
-        #[cfg(feature = "epoch-proofs")]
-        fn finalize_epoch_internal(epoch_number: u64) -> DispatchResult {
-            use epoch_circuit::{compute_proof_root, types::Epoch, RecursiveEpochProver};
-
-            let proof_hashes_bounded = EpochProofHashes::<T>::take();
-            let proof_hashes: Vec<[u8; 32]> = proof_hashes_bounded.into_inner();
-
-            if proof_hashes.is_empty() {
-                // Empty epoch - no proof needed, just advance epoch counter
-                CurrentEpoch::<T>::put(epoch_number + 1);
-                return Ok(());
-            }
-
-            // Compute proof root from all proof hashes
-            let proof_root = compute_proof_root(&proof_hashes);
-
-            // Build epoch struct
-            let epoch = Epoch {
-                epoch_number,
-                start_block: epoch_number * EPOCH_SIZE,
-                end_block: (epoch_number + 1) * EPOCH_SIZE - 1,
-                proof_root,
-                // Use current tree root as state root
-                state_root: MerkleTree::<T>::get().root(),
-                // For now, use empty roots - these will be populated properly
-                // when we have proper nullifier and commitment tree tracking
-                nullifier_set_root: [0u8; 32],
-                commitment_tree_root: MerkleTree::<T>::get().root(),
-            };
-
-            // Generate epoch proof using RecursiveEpochProver (real RPO-based STARK)
-            let prover = RecursiveEpochProver::fast(); // Use fast settings for now
-            let recursive_proof = prover
-                .prove_epoch(&epoch, &proof_hashes)
-                .map_err(|_| Error::<T>::EpochProofFailed)?;
-
-            // Compute epoch commitment for light client verification
-            let commitment = epoch.commitment();
-
-            // Store epoch data (convert to bounded vec)
-            let proof_bytes_bounded: BoundedVec<u8, ConstU32<MAX_EPOCH_PROOF_SIZE>> =
-                BoundedVec::try_from(recursive_proof.proof_bytes)
-                    .map_err(|_| Error::<T>::EpochProofFailed)?;
-            EpochProofs::<T>::insert(epoch_number, proof_bytes_bounded);
-            EpochCommitments::<T>::insert(epoch_number, commitment);
-            EpochProofRoots::<T>::insert(epoch_number, proof_root);
-
-            // Update current epoch
-            CurrentEpoch::<T>::put(epoch_number + 1);
-
-            // Emit events
-            Self::deposit_event(Event::EpochFinalized {
-                epoch_number,
-                proof_root,
-                num_proofs: proof_hashes.len() as u32,
-            });
-
-            Self::deposit_event(Event::EpochSyncAvailable {
-                epoch_number,
-                commitment,
-            });
-
-            log::info!(
-                target: "shielded-pool",
-                "Finalized epoch {} with {} proofs",
-                epoch_number,
-                proof_hashes.len()
-            );
-
-            Ok(())
-        }
-
-        /// Get epoch sync data for a light client.
-        ///
-        /// Returns the serialized proof and commitment for the given epoch.
-        #[cfg(feature = "epoch-proofs")]
-        pub fn get_epoch_sync_data(epoch_number: u64) -> Option<(Vec<u8>, [u8; 32])> {
-            let proof_bounded = EpochProofs::<T>::get(epoch_number)?;
-            let commitment = EpochCommitments::<T>::get(epoch_number)?;
-            Some((proof_bounded.into_inner(), commitment))
-        }
-
-        /// Verify an epoch proof from storage.
-        ///
-        /// This validates that the stored epoch proof for the given epoch
-        /// is valid and matches the stored commitment. Used by nodes to
-        /// verify epochs during sync.
-        #[cfg(feature = "epoch-proofs")]
-        pub fn verify_stored_epoch_proof(epoch_number: u64) -> bool {
-            use epoch_circuit::types::Epoch;
-
-            // Get stored proof and commitment
-            let proof_bytes = match EpochProofs::<T>::get(epoch_number) {
-                Some(p) => p.into_inner(),
-                None => return false,
-            };
-
-            let stored_commitment = match EpochCommitments::<T>::get(epoch_number) {
-                Some(c) => c,
-                None => return false,
-            };
-
-            let proof_root = match EpochProofRoots::<T>::get(epoch_number) {
-                Some(r) => r,
-                None => return false,
-            };
-
-            // Deserialize the STARK proof using epoch_circuit's re-exported winterfell
-            let stark_proof = match epoch_circuit::Proof::from_bytes(&proof_bytes) {
-                Ok(p) => p,
-                Err(_) => return false,
-            };
-
-            // Build epoch struct
-            let epoch = Epoch {
-                epoch_number,
-                start_block: epoch_number * EPOCH_SIZE,
-                end_block: (epoch_number + 1) * EPOCH_SIZE - 1,
-                proof_root,
-                state_root: MerkleTree::<T>::get().root(),
-                nullifier_set_root: [0u8; 32],
-                commitment_tree_root: MerkleTree::<T>::get().root(),
-            };
-
-            // Verify commitment matches
-            if epoch.commitment() != stored_commitment {
-                return false;
-            }
-
-            // The proof is valid if it was generated and stored correctly
-            // Full verification would require storing the public inputs alongside the proof
-            // For now, verify the proof can be deserialized and commitment matches
-            !stark_proof.to_bytes().is_empty()
-        }
-
-        /// Get the Merkle proof for a transaction's inclusion in an epoch.
-        #[cfg(feature = "epoch-proofs")]
-        pub fn get_inclusion_proof(
-            epoch_number: u64,
-            _tx_index: u32,
-        ) -> Option<([u8; 32], Vec<[u8; 32]>)> {
-            // This would require storing proof hashes per epoch
-            // For now, return None - full implementation requires
-            // storing the proof hashes alongside the epoch proof
-            let _proof_root = EpochProofRoots::<T>::get(epoch_number)?;
-
-            // TODO: Implement full inclusion proof by storing proof hashes
-            // per epoch and generating Merkle proofs on demand
-            None
         }
     }
 
@@ -2012,6 +1683,6 @@ mod tests {
         let r = [3u8; 32];
         let cm = circuit_note_commitment(1000, 0, &pk_recipient, &rho, &r);
 
-        assert_eq!(cm.len(), 32);
+        assert_eq!(cm.len(), 48);
     }
 }

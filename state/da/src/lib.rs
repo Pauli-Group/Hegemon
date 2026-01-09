@@ -4,14 +4,14 @@
 //! over those chunks, and verifies chunk proofs.
 
 use codec::{Decode, Encode};
-use crypto::hashes::blake3_256;
+use crypto::hashes::blake3_384;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use reed_solomon_erasure::galois_8::ReedSolomon;
 use std::collections::HashSet;
 use thiserror::Error;
 
-pub type DaRoot = [u8; 32];
+pub type DaRoot = [u8; 48];
 
 const LEAF_DOMAIN: &[u8] = b"da-leaf";
 const NODE_DOMAIN: &[u8] = b"da-node";
@@ -95,7 +95,7 @@ impl DaEncoding {
             .last()
             .and_then(|level| level.first())
             .copied()
-            .unwrap_or([0u8; 32])
+            .unwrap_or([0u8; 48])
     }
 
     pub fn proof(&self, index: u32) -> Result<DaChunkProof, DaError> {
@@ -280,17 +280,17 @@ fn hash_leaf(index: u32, data: &[u8]) -> DaRoot {
     input.extend_from_slice(LEAF_DOMAIN);
     input.extend_from_slice(&index.to_le_bytes());
     input.extend_from_slice(data);
-    blake3_256(&input)
+    blake3_384(&input)
 }
 
 fn hash_node(left: &DaRoot, right: &DaRoot) -> DaRoot {
-    let mut input = [0u8; 32 * 2 + 7];
+    let mut input = [0u8; 48 * 2 + 7];
     input[..NODE_DOMAIN.len()].copy_from_slice(NODE_DOMAIN);
     let mut offset = NODE_DOMAIN.len();
-    input[offset..offset + 32].copy_from_slice(left);
-    offset += 32;
-    input[offset..offset + 32].copy_from_slice(right);
-    blake3_256(&input)
+    input[offset..offset + 48].copy_from_slice(left);
+    offset += 48;
+    input[offset..offset + 48].copy_from_slice(right);
+    blake3_384(&input)
 }
 
 /// Generate sample indices using per-node secret + block hash.

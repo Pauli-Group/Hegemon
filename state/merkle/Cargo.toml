@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 thiserror = "1"
-transaction-circuit = { path = "../../circuits/transaction" }
+transaction-core = { path = "../../circuits/transaction-core" }
 
 [lints]
 workspace = true

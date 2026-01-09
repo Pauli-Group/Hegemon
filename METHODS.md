@@ -14,7 +14,7 @@ per proof. Think Sapling/Orchard style: fixed `M, N` for the base circuit, recur
 A **note** is conceptually:
 
 * `value` - integer (e.g. 64-bit, or 128-bit if you're paranoid)
-* `asset_id` - 64-bit label (u64) in the current circuit, encoded as a single field element inside the STARK. Commitments and nullifiers are serialized as 32-byte outputs with four 64-bit limbs (see §2). `0` = native coin (ZEC-like). Future circuit versions can widen this if needed.
+* `asset_id` - 64-bit label (u64) in the current circuit, encoded as a single field element inside the STARK. Commitments and nullifiers are serialized as 48-byte outputs with six 64-bit limbs for 384-bit capacity, and application-level types use 48-byte digests end-to-end. `0` = native coin (ZEC-like).
 * `pk_recipient` – an encoding of the recipient’s “note‑receiving” public data (tied to their incoming viewing key)
 * `rho` – per‑note secret (random)
 * `r` – commitment randomness
@@ -193,7 +193,7 @@ receipt alongside miner telemetry to keep the Go benchmarking harness under `con
 
 ## 3. The STARK arithmetization
 
-We don’t need to pick a specific scheme (Plonky2/Winterfell/etc.), but we do need the rough structure.
+We don’t need to pick a specific scheme (Plonky2/Plonky3/etc.), but we do need the rough structure.
 
 ### 3.1 Field and hash choices
 
@@ -232,6 +232,8 @@ You design one “join–split” circuit with:
   7. Balance equations.
 
 The exact low‑level shape depends on whether you use AIR (transition function on a trace) or PLONK‑style gates, but conceptually you have one STARK proof that “this whole finite state machine” executed correctly over your witness.
+
+In the Plonky3 implementation, the transaction AIR keeps fixed schedule data (Poseidon round flags, cycle markers, row-specific assertions) in explicit schedule columns inside the main trace. This preserves deterministic scheduling without relying on preprocessed trace columns for the transaction circuit, while other circuits can still use `builder.preprocessed()` where stable. The tradeoff is a wider trace for the transaction AIR, but it avoids the preprocessed-trace OOD mismatch seen in the 0.4.x backend.
 
 You might split this into:
 
@@ -472,37 +474,29 @@ Everything arithmetized in the STARK (commitments, Merkle hashes, PRFs) lives in
 
 #### 1.2 Internal hash / permutation
 
-Define a Poseidon-like permutation \(P: \mathbb{F}_p^t \to \mathbb{F}_p^t\):
-
-* Width \(t = 3\) (rate 2, capacity 1) for a small, STARK-friendly state.
-* S-box is \(x^5\) applied to every state element (full rounds only).
-* Rounds: \(R_F = 63\) full rounds, no partial rounds, which is conservative for 128-bit post-Grover security in this field.
-* Round constants and MDS matrix are generated via a NUMS scheme:
-  * Round constants: SHA-256(domain || round_be32 || pos_be32 || counter_be32), rejected if the 64-bit candidate is \(\ge p\).
-  * MDS: Cauchy matrix \((x_i - y_j)^{-1}\) with distinct \(x_i, y_j\) seeds derived by SHA-256(domain || label || counter_be32).
+Define a Poseidon2 permutation \(P: \mathbb{F}_p^t \to \mathbb{F}_p^t\) with width \(t = 12\) (rate 6, capacity 6), S-box \(x^7\), 8 full rounds + 22 partial rounds, and deterministic constants generated from the fixed seed `hegemon-tx-poseidon2-seed-2026!!`.
 
 We derive a field hash by sponge:
 
 \[
-H_f(x_0, \ldots, x_{k-1}) = \operatorname{Sponge}(P, \text{capacity}=1, \text{rate}=2, x_0, \ldots, x_{k-1})
+H_f(x_0, \ldots, x_{k-1}) = \operatorname{Sponge}(P, \text{capacity}=6, \text{rate}=6, x_0, \ldots, x_{k-1})
 \]
 
-For commitments, nullifiers, and Merkle nodes we emit four field elements: take `state[0]` and
-`state[1]`, apply one more permutation, then take `state[0]` and `state[1]` again. Single-field
-values (e.g., balance tags) still use the first state word.
+For commitments, nullifiers, and Merkle nodes we emit six field elements (48 bytes). Single-field values (e.g., balance tags) still use the first state word.
 
 Outside the circuit (for block headers, addresses, etc.) we can still use standard SHA-256 as a byte-oriented hash. Inside, we stick to \(H_f\).
 
 #### 1.3 Merkle tree
 
-* Each leaf: a four-limb commitment \(cm = (cm_0, cm_1, cm_2, cm_3)\) with \(cm_i \in \mathbb{F}_p\).
-* Parent hash: for children \(L, R\) (each 4 limbs), absorb the limbs in circuit order and output four limbs:
+* Each leaf: a commitment \(cm\) represented as six limbs (48 bytes).
+* Parent hash: for children \(L, R\) (each 6 limbs), absorb the limbs in circuit order and output the same limb count:
 
 \[
 \text{parent} = H_f(\text{domain}_{\text{merkle}}, L_0, L_1, L_2, L_3, R_0, R_1, R_2, R_3)
 \]
 
 where \(\text{domain}_{\text{merkle}}\) is a fixed field element.
+This formula applies with six limbs per child.
 
 * Tree depth: say 32 or 40 (gives capacity for \(2^{32}\)–\(2^{40}\) notes; you can always roll a new tree later via a transition proof).
 * Runtime keeps a bounded window of recent Merkle roots (`MerkleRootHistorySize`); anchors older than the window are invalid to cap state growth.
@@ -536,7 +530,7 @@ PQ network identities are derived from a 32-byte secret seed that must be genera
 
 #### 2.3 Note commitment
 
-Take the 1-word capacity / 8-word rate sponge and define
+Take the Poseidon2 sponge (width 12, rate 6, capacity 6) and define
 
 \[
 \begin{aligned}
@@ -549,8 +543,8 @@ cm = H_f(&\text{domain}_{cm},
 \end{aligned}
 \]
 
-The sponge emits four field elements \((cm_0, cm_1, cm_2, cm_3)\). On chain, commitments are
-serialized as 32 bytes by concatenating each 64-bit limb big-endian; a canonical encoding
+The sponge emits six field elements \((cm_0, cm_1, cm_2, cm_3, cm_4, cm_5)\). On chain, commitments are
+serialized as 48 bytes by concatenating each 64-bit limb big-endian; a canonical encoding
 requires each limb to be strictly less than the field modulus.
 
 #### 2.4 Nullifier
@@ -573,10 +567,10 @@ Define
 nf = H_f(\text{domain}_{nf}, nk, \text{pos}, \rho_0, \rho_1, \rho_2, \rho_3).
 \]
 
-The sponge emits four field elements \((nf_0, nf_1, nf_2, nf_3)\). On chain, the nullifier is the
-32-byte concatenation of those limbs, and canonical encodings reject any limb \(\ge p\).
+The sponge emits six field elements \((nf_0, nf_1, nf_2, nf_3, nf_4, nf_5)\). On chain, the nullifier is the
+48-byte concatenation of those limbs, and canonical encodings reject any limb \(\ge p\).
 
-This 4-limb encoding is protocol-breaking relative to the legacy 64-bit encoding; adopting it
+This 6-limb encoding is protocol-breaking relative to the legacy 32-byte encoding; adopting it
 requires a fresh genesis and wiping node databases and wallet stores.
 
 ### 3. Key / address hierarchy with ML-KEM
@@ -652,7 +646,7 @@ Sender:
 
 On chain per output:
 
-* `cm` as a 32-byte commitment (4 x 64-bit limbs, canonical encoding)
+* `cm` as a 48-byte commitment (6 x 64-bit limbs, canonical encoding)
 * `ct_kem` (≈1.1 KB)
 * `ct_aead` (|note_plain| + tag, say ≈100 bytes)
 * Optional small `scan_tag` if you want faster scanning.
@@ -673,9 +667,9 @@ Assume the base circuit handles up to `M` inputs (e.g., 4) and `N` outputs (e.g.
 
 The circuit's public inputs (fed into its transcript) are:
 
-* `root_before` - Merkle root anchor encoded as four field elements (32-byte canonical encoding).
-* For each input `i`: `input_active[i] ∈ {0,1}` and `nf_in[i]` is a 4-limb nullifier (inactive inputs must use all-zero limbs).
-* For each output `j`: `output_active[j] ∈ {0,1}` and `cm_out[j]` is a 4-limb commitment (inactive outputs must use all-zero limbs).
+* `root_before` - Merkle root anchor encoded as six field elements.
+* For each input `i`: `input_active[i] ∈ {0,1}` and `nf_in[i]` is a 6-limb nullifier, with inactive inputs using all-zero limbs.
+* For each output `j`: `output_active[j] ∈ {0,1}` and `cm_out[j]` is a 6-limb commitment, with inactive outputs using all-zero limbs.
 * `fee_native ∈ F_p` and `value_balance` split into a sign bit plus a 64-bit magnitude so all values fit in one field element.
   In production, `value_balance` is required to be zero because there is no transparent pool.
 
@@ -701,7 +695,7 @@ For each input `i`:
 * `pk_recipient_in[i]` as 4 field elements (32 bytes split into 4 x 64-bit limbs)
 * `rho_in[i]` as 4 field elements
 * `r_in[i]` as 4 field elements
-* Merkle auth path: `sibling_in[i][d]` is a 4-limb node for `d = 0 .. D-1`
+* Merkle auth path: `sibling_in[i][d]` is a 6-limb node for `d = 0 .. D-1`
 * `pos_in[i]` as a 64-bit field element used by the prover to order left/right siblings
 * The nullifier secret `sk_nf` (view-derived)
 
@@ -792,7 +786,7 @@ The node maintains a canonical commitment tree with current root `root_state`. A
 
 #### 6.3 Block circuit and proof
 
-The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same Poseidon-style hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. `TransactionProof::verify` rejects missing STARK proof bytes/public inputs in production builds; the legacy consistency checker is gated behind the `legacy-proof` feature for test fixtures only. On top of that, the `circuits/block` crate now treats commitment proofs as the default: `CommitmentBlockProver` builds a `CommitmentBlockProof` that commits to transaction proof hashes via a Poseidon sponge, and consensus verifies the commitment proof alongside parallel transaction-proof verification. The legacy recursion helpers live in `circuits/block::recursive` and remain available for dev/test maintenance only.
+The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same Poseidon-style hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. `TransactionProof::verify` rejects missing STARK proof bytes/public inputs in production builds; the legacy consistency checker is gated behind the `legacy-proof` feature for test fixtures only. On top of that, the `circuits/block` crate now treats commitment proofs as the default: `CommitmentBlockProver` builds a `CommitmentBlockProof` that commits to transaction proof hashes via a Poseidon sponge, and consensus verifies the commitment proof alongside parallel transaction-proof verification. Recursive proofs are currently removed; recursion runbooks are archived pending a Plonky3-native path.
 
 The commitment proof binds `tx_proofs_commitment` (derived from the ordered list of transaction proof hashes) and proves nullifier uniqueness in-circuit (a permutation check between the transaction-ordered nullifier list and its sorted copy, plus adjacent-inequality constraints). The proof also exposes starting/ending state roots, nullifier root, and DA root as public inputs, but consensus recomputes those values from the block’s transactions and the parent state and rejects any mismatch; this keeps the circuit within a small row budget while preserving full soundness.
 
@@ -802,12 +796,12 @@ Data availability uses a dedicated encoder in `state/da`. The block’s cipherte
 
 Define a block commitment circuit `C_commitment` with
 
-* Public inputs: `tx_proofs_commitment`, `root_prev`, `root_new`, `nullifier_root`, `da_root`, `tx_count`, plus the transaction-ordered nullifier list and its sorted copy (both length `tx_count * MAX_INPUTS`).
+* Public inputs: `tx_proofs_commitment`, `root_prev`, `root_new`, `nullifier_root`, `da_root`, `tx_count`, plus the transaction-ordered nullifier list and its sorted copy (both length `tx_count * MAX_INPUTS`). For Plonky3, the permutation challenges `(alpha, beta)` are included as public inputs derived from a Blake3 hash of the same inputs, and verifiers recompute them off-circuit to avoid embedding Blake3 inside the AIR.
 * Witness: the `tx_proof_hashes` and the nullifier columns (unsorted + sorted lists).
 
 Constraints in `C_commitment`:
 
-1. **Commit to proof hashes** – absorb proof-hash limbs into a Poseidon sponge and enforce the 4-limb commitment equals `tx_proofs_commitment`.
+1. **Commit to proof hashes** – absorb proof-hash limbs into a Poseidon sponge and enforce the 6-limb commitment equals `tx_proofs_commitment`.
 2. **Check nullifier uniqueness** – enforce a permutation check between the transaction-ordered nullifier list and its sorted copy, then require no adjacent equals in the sorted list (skipping zero padding).
 3. **Expose roots and DA** – carry `root_prev`, `root_new`, `nullifier_root`, and `da_root` as public inputs so consensus can recompute them from the block’s transactions and parent state and reject mismatches.
 
@@ -817,13 +811,13 @@ This yields a per-block proof `π_block` showing that the miner committed to the
 
 If you introduce a new transaction circuit version, update `C_block` so its verification step accepts both old and new proofs. After some time, consensus can reject new transactions with old-version proofs, but `C_block` retains backward verification code as long as necessary (or you drop it when you no longer need to accept old blocks).
 
-#### 6.5 Epoch proof hashes
+#### 6.5 Epoch proof hashes (removed)
 
-Epoch proofs for light client sync accumulate proof hashes that bind the STARK proof bytes to the public inputs required for verification (anchor, nullifiers, commitments, fee, and value balance). Batch proofs use the same scheme with batch metadata (`batch_size`, `total_fee`). The hash uses Blake3 with domain separation in `circuits/epoch/src/types.rs`; any change to transaction public input encoding must update that function so epoch inclusion proofs remain sound.
+Recursive epoch proofs were removed alongside the legacy recursion stack. Reintroducing them requires a Plonky3-native recursion design; until then, there are no epoch proof hashes in the live system.
 
 #### 6.6 Settlement batch proofs
 
-Settlement batch proofs bind instruction IDs and nullifiers into a Poseidon-based commitment. The public inputs are the instruction count, nullifier count, the padded instruction ID list (length `MAX_INSTRUCTIONS`), the padded nullifier list (length `MAX_NULLIFIERS`), and the commitment itself. The commitment is computed by absorbing input pairs into a Poseidon sponge initialized as `[domain_tag, 0, 1]`, adding each pair to the first two state elements, running the full-round permutation (`POSEIDON_ROUNDS = 63`) per absorb cycle, and repeating for the full padded input list. Nullifiers are Poseidon-derived from `(instruction_id, index)` under a distinct domain tag, then encoded as 32 bytes with four big-endian limbs; canonical encodings reject any limb \(\ge p\). Settlement verification rejects non-canonical encodings and uses the on-chain `StarkVerifierParams` (Blake3, 28 FRI queries, 16x blowup) to select acceptable proof options.
+Settlement batch proofs bind instruction IDs and nullifiers into a Poseidon2-based commitment. The public inputs are the instruction count, nullifier count, the padded instruction ID list (length `MAX_INSTRUCTIONS`), the padded nullifier list (length `MAX_NULLIFIERS`), and the commitment itself. The commitment is computed by absorbing input pairs into a Poseidon2 sponge initialized as `[domain_tag, 0, 1]`, adding each pair to the first two state elements, running the full-round permutation per absorb cycle, and repeating for the full padded input list. Nullifiers are Poseidon2-derived from `(instruction_id, index)` under a distinct domain tag, then encoded as 48 bytes with six big-endian limbs; canonical encodings reject any limb \(\ge p\). Settlement verification rejects non-canonical encodings and uses the on-chain `StarkVerifierParams` (Poseidon2-384, 43 FRI queries, 16x blowup) to select acceptable proof options.
 
 
 ---
@@ -837,9 +831,9 @@ Module layout:
 * `crypto::ml_dsa` – exposes `MlDsaSecretKey`, `MlDsaPublicKey`, and `MlDsaSignature` with `SigningKey`/`VerifyKey` trait implementations. Secret keys derive public keys by hashing with domain tag `ml-dsa-pk`, and signatures deterministically expand `ml-dsa-signature || pk || message` to 3293 bytes.
 * `crypto::slh_dsa` – mirrors the ML-DSA interface but with SLH-DSA key lengths (32 B public, 64 B secret, 17088 B signatures).
 * `crypto::ml_kem` – wraps Kyber-like encapsulation with `MlKemKeyPair`, `MlKemPublicKey`, and `MlKemCiphertext`. Encapsulation uses a seed to deterministically derive ciphertexts and shared secrets, while decapsulation recomputes the shared secret from stored public bytes.
-* `crypto::hashes` – contains `sha256`, `sha3_256`, `blake3_256`, a Poseidon-style permutation over the Goldilocks prime (width 3, 63 full rounds, NUMS constants), and helpers `commit_note`, `derive_prf_key`, and `derive_nullifier` (defaulting to BLAKE3 with SHA3 fallbacks) that apply the design’s domain tags (`"c"`, `"nk"`, `"nf"`). PQ address and note hashes now normalize on BLAKE3-256 by default while keeping SHA3-256 as an opt-in override for circuits that still expect it.
+* `crypto::hashes` – contains `sha256`, `sha3_256`, `blake3_256`, `blake3_384`, a Poseidon-style permutation over the Goldilocks prime (width 3, 63 full rounds, NUMS constants), and helpers `commit_note`, `derive_prf_key`, and `derive_nullifier` (defaulting to 48-byte BLAKE3-384 with SHA3-384 fallbacks via `commit_note_with`) that apply the design’s domain tags (`"c"`, `"nk"`, `"nf"`). PQ address hashes remain BLAKE3-256 by default while commitments/nullifiers normalize on 48-byte digests.
 * `pallet_identity` – stores session keys as a `SessionKey` enum (legacy AuthorityId or PQ-only Dilithium/Falcon). The runtime migration wraps any pre-upgrade `AuthorityId` into `SessionKey::Legacy` so existing operators inherit their keys; new registrations can supply PQ-only bundles through the same `register_did` call without a one-off rotate extrinsic.
-* `pallet_attestations` / `pallet_settlement` – persist `StarkVerifierParams` in storage with governance-controlled setters and runtime-upgrade initialization so on-chain STARK verification remains aligned with PQ hash choices. The runtime seeds attestations with Blake3 hashing, 28 FRI queries, a 4x blowup factor, and quadratic extension over Goldilocks; settlement uses the same hash/query budget but a 16x blowup factor to satisfy the Poseidon AIR degree constraints. With 256-bit digests, PQ collision resistance caps at ~85 bits unless digest sizes are widened. Governance can migrate to new parameters via the `set_verifier_params` call without redeploying code.
+* `pallet_attestations` / `pallet_settlement` – persist `StarkVerifierParams` in storage with governance-controlled setters and runtime-upgrade initialization so on-chain STARK verification remains aligned with PQ hash choices. The runtime seeds attestations with Poseidon2-384 hashing, 43 FRI queries, a 16x blowup factor, and quadratic extension over Goldilocks; settlement uses the same hash/query budget. With 384-bit digests, PQ collision resistance reaches ~128 bits. Governance can migrate to new parameters via the `set_verifier_params` call without redeploying code.
 
 The crate’s `tests/crypto_vectors.rs` fixture loads `tests/vectors.json` to assert byte-for-byte deterministic vectors covering:
 

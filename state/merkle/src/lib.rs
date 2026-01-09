@@ -5,7 +5,7 @@
 //! inserted leaves.
 
 use thiserror::Error;
-use transaction_circuit::hashing::{merkle_node_bytes, Commitment};
+use transaction_core::hashing_pq::{merkle_node_bytes, Commitment};
 
 /// Binary Merkle tree.
 const BRANCH_FACTOR: usize = 2;
@@ -35,7 +35,7 @@ impl CommitmentTree {
             return Err(MerkleError::InvalidDepth);
         }
         let mut default_nodes = Vec::with_capacity(depth + 1);
-        default_nodes.push([0u8; 32]);
+        default_nodes.push([0u8; 48]);
         for level in 0..depth {
             let prev = default_nodes[level];
             let next = merkle_node_bytes(&prev, &prev).expect("default nodes use canonical bytes");
@@ -157,8 +157,8 @@ mod tests {
         let mut tree = CommitmentTree::new(4).unwrap();
         let values: Vec<Commitment> = (0..8)
             .map(|v| {
-                let mut bytes = [0u8; 32];
-                bytes[24..32].copy_from_slice(&(v as u64 + 1).to_be_bytes());
+                let mut bytes = [0u8; 48];
+                bytes[40..48].copy_from_slice(&(v as u64 + 1).to_be_bytes());
                 bytes
             })
             .collect();

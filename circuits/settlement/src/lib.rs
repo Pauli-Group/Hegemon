@@ -7,25 +7,28 @@
 
 extern crate alloc;
 
-pub mod air;
 pub mod constants;
-pub mod hashing;
-#[cfg(feature = "std")]
-pub mod prover;
-#[cfg(feature = "stark-verify")]
-pub mod verifier;
+mod hashing;
+pub mod p3_air;
+pub mod p3_prover;
+pub mod p3_verifier;
 
-pub use air::{SettlementAir, SettlementPublicInputs};
 pub use hashing::{
-    bytes32_to_felts, commitment_from_inputs, felts_to_bytes32, is_canonical_bytes32,
-    nullifier_from_instruction, Commitment, Felt, HashFelt,
+    bytes48_to_felts, commitment_from_inputs, felts_to_bytes48, nullifier_from_instruction,
+};
+pub use p3_air::{Felt, HashFelt};
+pub use p3_air::{SettlementAirP3, SettlementPublicInputsP3};
+pub use p3_prover::{SettlementProofP3, SettlementProverP3};
+pub use p3_verifier::{
+    verify_settlement_proof_bytes_p3, verify_settlement_proof_p3, SettlementVerifyErrorP3,
 };
 
-#[cfg(feature = "std")]
-pub use prover::{default_proof_options, fast_proof_options, SettlementProver};
-
-#[cfg(feature = "stark-verify")]
-pub use verifier::{
-    verify_settlement_proof, verify_settlement_proof_bytes,
-    verify_settlement_proof_bytes_with_options, SettlementVerifyError,
+pub use p3_air::{
+    SettlementAirP3 as SettlementAir, SettlementPublicInputsP3 as SettlementPublicInputs,
+};
+pub use p3_prover::{SettlementProofP3 as SettlementProof, SettlementProverP3 as SettlementProver};
+pub use p3_verifier::{
+    verify_settlement_proof_bytes_p3 as verify_settlement_proof_bytes,
+    verify_settlement_proof_p3 as verify_settlement_proof,
+    SettlementVerifyErrorP3 as SettlementVerifyError,
 };

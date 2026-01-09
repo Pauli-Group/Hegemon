@@ -13,18 +13,18 @@ use sp_std::vec::Vec;
 /// can be tested without full storage.
 pub trait NullifierStore {
     /// Check if a nullifier exists in the set.
-    fn contains(&self, nullifier: &[u8; 32]) -> bool;
+    fn contains(&self, nullifier: &[u8; 48]) -> bool;
 
     /// Insert a nullifier into the set.
-    fn insert(&mut self, nullifier: [u8; 32]);
+    fn insert(&mut self, nullifier: [u8; 48]);
 
     /// Check if all nullifiers in a list are new (not in the set).
-    fn all_new(&self, nullifiers: &[[u8; 32]]) -> bool {
+    fn all_new(&self, nullifiers: &[[u8; 48]]) -> bool {
         nullifiers.iter().all(|nf| !self.contains(nf))
     }
 
     /// Insert multiple nullifiers atomically.
-    fn insert_batch(&mut self, nullifiers: &[[u8; 32]]) {
+    fn insert_batch(&mut self, nullifiers: &[[u8; 48]]) {
         for nf in nullifiers {
             self.insert(*nf);
         }
@@ -34,7 +34,7 @@ pub trait NullifierStore {
 /// In-memory nullifier store for testing.
 #[derive(Clone, Debug, Default)]
 pub struct MemoryNullifierStore {
-    nullifiers: Vec<[u8; 32]>,
+    nullifiers: Vec<[u8; 48]>,
 }
 
 impl MemoryNullifierStore {
@@ -55,11 +55,11 @@ impl MemoryNullifierStore {
 }
 
 impl NullifierStore for MemoryNullifierStore {
-    fn contains(&self, nullifier: &[u8; 32]) -> bool {
+    fn contains(&self, nullifier: &[u8; 48]) -> bool {
         self.nullifiers.contains(nullifier)
     }
 
-    fn insert(&mut self, nullifier: [u8; 32]) {
+    fn insert(&mut self, nullifier: [u8; 48]) {
         if !self.contains(&nullifier) {
             self.nullifiers.push(nullifier);
         }
@@ -72,9 +72,9 @@ pub enum NullifierValidation {
     /// All nullifiers are new and valid.
     Valid,
     /// One or more nullifiers are already spent.
-    AlreadySpent(Vec<[u8; 32]>),
+    AlreadySpent(Vec<[u8; 48]>),
     /// Duplicate nullifiers in the same transaction.
-    DuplicateInTx(Vec<[u8; 32]>),
+    DuplicateInTx(Vec<[u8; 48]>),
 }
 
 /// Validate a list of nullifiers.
@@ -84,7 +84,7 @@ pub enum NullifierValidation {
 /// 2. None already exist in the store
 pub fn validate_nullifiers<S: NullifierStore>(
     store: &S,
-    nullifiers: &[[u8; 32]],
+    nullifiers: &[[u8; 48]],
 ) -> NullifierValidation {
     // Check for duplicates within the list
     let mut seen = Vec::new();
@@ -123,7 +123,7 @@ mod tests {
     #[test]
     fn memory_store_insert_and_contains() {
         let mut store = MemoryNullifierStore::new();
-        let nf = [1u8; 32];
+        let nf = [1u8; 48];
 
         assert!(!store.contains(&nf));
 
@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn memory_store_no_duplicates() {
         let mut store = MemoryNullifierStore::new();
-        let nf = [1u8; 32];
+        let nf = [1u8; 48];
 
         store.insert(nf);
         store.insert(nf);
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn all_new_returns_true_for_new_nullifiers() {
         let store = MemoryNullifierStore::new();
-        let nullifiers = [[1u8; 32], [2u8; 32], [3u8; 32]];
+        let nullifiers = [[1u8; 48], [2u8; 48], [3u8; 48]];
 
         assert!(store.all_new(&nullifiers));
     }
@@ -155,8 +155,8 @@ mod tests {
     #[test]
     fn all_new_returns_false_for_existing() {
         let mut store = MemoryNullifierStore::new();
-        let nf1 = [1u8; 32];
-        let nf2 = [2u8; 32];
+        let nf1 = [1u8; 48];
+        let nf2 = [2u8; 48];
 
         store.insert(nf1);
 
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn insert_batch_works() {
         let mut store = MemoryNullifierStore::new();
-        let nullifiers = [[1u8; 32], [2u8; 32], [3u8; 32]];
+        let nullifiers = [[1u8; 48], [2u8; 48], [3u8; 48]];
 
         store.insert_batch(&nullifiers);
 
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn validate_nullifiers_valid() {
         let store = MemoryNullifierStore::new();
-        let nullifiers = [[1u8; 32], [2u8; 32]];
+        let nullifiers = [[1u8; 48], [2u8; 48]];
 
         assert_eq!(
             validate_nullifiers(&store, &nullifiers),
@@ -190,8 +190,8 @@ mod tests {
     #[test]
     fn validate_nullifiers_already_spent() {
         let mut store = MemoryNullifierStore::new();
-        let nf1 = [1u8; 32];
-        let nf2 = [2u8; 32];
+        let nf1 = [1u8; 48];
+        let nf2 = [2u8; 48];
 
         store.insert(nf1);
 
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn validate_nullifiers_duplicate_in_tx() {
         let store = MemoryNullifierStore::new();
-        let nf = [1u8; 32];
+        let nf = [1u8; 48];
 
         match validate_nullifiers(&store, &[nf, nf]) {
             NullifierValidation::DuplicateInTx(dups) => {

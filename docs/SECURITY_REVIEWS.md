@@ -9,14 +9,14 @@ We currently rely on:
 - **ML-DSA-65** (Dilithium3 profile) for miner rig identities, pool controller signatures, and block announcements.
 - **SLH-DSA** (SPHINCS+-SHA2-128f) for governance keys and long-lived pool treasury authorizations.
 - **ML-KEM-768** (Kyber) for encryption and key agreement on miner <-> pool control channels.
-- **Poseidon-like hash** inside the STARK AIR plus SHA-256/BLAKE3 externally for share commitments and nullifier derivations.
+- **Poseidon2-384** inside the STARK AIR for commitments/nullifiers/Merkle hashing (48-byte digests), plus SHA-256/BLAKE3 externally for protocol hashes and identifiers.
 
 Commissioning requirements:
 
 1. **Parameter validation brief** – Hand vendors `DESIGN.md §1` plus `crypto/README.md` (if updated) and request:
    - Side-channel considerations for deterministic RNG wrappers used in `crypto::ml_dsa`/`ml_kem`, with explicit coverage of rack-level miners that share chassis power/temperature envelopes.
    - State-of-the-art lattice reduction cost estimates for ML-DSA-65 and ML-KEM-768 under BKZ 2.0 and dual attacks with quantum sieving assumptions, highlighting replay risk if pool identities are rotated slowly.
-   - Hash/collision resistance assessments for the Poseidon width/rounds defined in `circuits/transaction/src/hashing.rs` and the SHA-256-based Merkle layers that encode miner share proofs.
+   - Hash/collision resistance assessments for Poseidon2 parameters/constants and the 48-byte commitment/nullifier/Merkle encodings used across circuits and pallets (see `circuits/transaction-core/src/poseidon2_constants.rs` and `circuits/transaction-core/src/hashing_pq.rs`).
 2. **Deliverables** – Require a written report with:
    - Attack models and concrete security estimates (bits) for each primitive plus explicit call-outs on miner impersonation or pool takeover implications.
    - Annotated diff suggestions mapped to function names (e.g., `crypto::hashes::poseidon::permutation`).
@@ -36,6 +36,30 @@ We separate audit scopes into three tracks so teams can bid independently:
 | Cryptography | `crypto/`, `circuits/transaction`, `circuits/block` | `DESIGN.md §1`, `METHODS.md §1-3`, formal specs under `circuits/formal/` | All proofs verified, parameter justifications signed off, new issues filed. |
 | Protocol / PoW coordination | `consensus/`, `protocol/`, `network/` | `DESIGN.md §2-4`, `consensus/spec/`, `consensus/spec/formal/` | PoW admission-control limits confirmed, miner share forgery tests documented, consensus doc updated with mitigations. |
 | Implementation & pool ops | `wallet/`, `network/`, `state/`, CLI tooling, `runbooks/` | `METHODS.md` operational sections, `runbooks/` | Continuous security tests pass on patched builds; new regression tests added for each finding with miner/pool reproduction steps. |
+
+## 2.1 Formal PQ Soundness Review (QROM)
+
+Engineering estimates (see `SECURITY.md`) are sufficient for “ship and measure”, but external claims of “128-bit post-quantum soundness” require a tighter, cited argument. This track is the scope for that work.
+
+Concrete steps and deliverables:
+
+1. **Freeze the exact protocol transcript** – Document the full non-interactive proof transcript: which objects are committed (trace, preprocessed trace, Merkle roots), which challenges are derived (and in what order), and what hash/permutation is used. Reference the concrete code paths in `circuits/*/src/p3_config.rs` and verifiers (`circuits/*/src/p3_verifier.rs`).
+2. **State the security model precisely** – Specify what is modeled as an oracle/permutation (e.g., Fiat–Shamir hash as a random oracle in the QROM; Poseidon2 as an ideal permutation or as a concrete primitive with best-known bounds), and what the adversary can query.
+3. **Bound statistical IOP soundness** – Use the cited FRI/DEEP-FRI/ALI literature to derive a concrete upper bound for the soundness error of the exact protocol variant we implement (including blowup factor, query count, and any DEEP/ALI composition parameters as used by Plonky3).
+4. **Account for Fiat–Shamir in the QROM** – Apply a QROM-secure Fiat–Shamir theorem appropriate for this proof system and write down the loss terms in terms of the number of oracle queries and the number of challenge rounds.
+5. **Account for commitment/hash binding in the quantum setting** – Bound the commitment/Merkle binding advantage in terms of the collision resistance of the sponge (capacity-based bounds and best-known quantum collision algorithms).
+6. **Compose the final bound** – Write the final “soundness error ≤ ε_total” statement as a sum of explicit terms (IOP + FS transform + hash binding). Translate that bound into “bits” via `-log2(ε_total)` under stated assumptions, and cross-check it against our engineering estimate.
+7. **Publish a reproducible parameter report** – Add a small script or test that prints the exact parameters used by each circuit (capacity/digest size, log_blowup, num_queries, etc.) so auditors can match the write-up to the code.
+8. **Independent review** – Commission a third-party cryptography review specifically for the proof soundness write-up and record it in the finding log below.
+
+Suggested starting references:
+
+- Fiat–Shamir in the QROM: https://eprint.iacr.org/2014/587
+- Post-quantum security of Fiat–Shamir: https://eprint.iacr.org/2017/398
+- STARK construction / ALI context: https://eprint.iacr.org/2018/046
+- DEEP-FRI: https://eprint.iacr.org/2019/336
+- Quantum collision finding (collision problem): https://arxiv.org/abs/quant-ph/9705002
+- Poseidon2: https://eprint.iacr.org/2023/323.pdf
 
 Audit execution steps:
 

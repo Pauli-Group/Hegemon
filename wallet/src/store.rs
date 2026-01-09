@@ -12,7 +12,7 @@ use chacha20poly1305::{
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use state_merkle::CommitmentTree;
-use transaction_circuit::{hashing::Commitment, note::NoteData};
+use transaction_circuit::{hashing_pq::Commitment, note::NoteData};
 use zeroize::Zeroize;
 
 use crate::address::ShieldedAddress;
@@ -21,12 +21,14 @@ use crate::keys::{DerivedKeys, RootSecret};
 use crate::notes::MemoPlaintext;
 use crate::viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};
 
-const FILE_VERSION: u32 = 3;
+const FILE_VERSION: u32 = 4;
 const KEY_LEN: usize = 32;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 /// Default tree depth - must match CIRCUIT_MERKLE_DEPTH in transaction-circuit.
 const DEFAULT_TREE_DEPTH: u32 = 32;
+
+type Commitment32 = [u8; 32];
 
 /// Wallet store - manages encrypted wallet state on disk.
 /// The encryption key is zeroized on drop to prevent key material from persisting in memory.
@@ -149,7 +151,11 @@ impl WalletStore {
                 let legacy: WalletStateV2 = bincode::deserialize(&plaintext)?;
                 legacy.into()
             }
-            3 => bincode::deserialize(&plaintext)?,
+            3 => {
+                let legacy: WalletStateV3 = bincode::deserialize(&plaintext)?;
+                legacy.into()
+            }
+            4 => bincode::deserialize(&plaintext)?,
             other => {
                 return Err(WalletError::Serialization(format!(
                     "unsupported wallet file version {other}"
@@ -393,7 +399,7 @@ impl WalletStore {
         })
     }
 
-    pub fn mark_nullifiers(&self, nullifiers: &HashSet<[u8; 32]>) -> Result<usize, WalletError> {
+    pub fn mark_nullifiers(&self, nullifiers: &HashSet<[u8; 48]>) -> Result<usize, WalletError> {
         let mut updated = 0;
         self.with_mut(|state| {
             for note in &mut state.notes {
@@ -545,7 +551,7 @@ impl WalletStore {
     pub fn record_pending_submission(
         &self,
         tx_id: [u8; 32],
-        nullifiers: Vec<[u8; 32]>,
+        nullifiers: Vec<[u8; 48]>,
         spent_note_indexes: Vec<usize>,
         recipients: Vec<TransferRecipient>,
         fee: u64,
@@ -568,7 +574,7 @@ impl WalletStore {
     pub fn refresh_pending(
         &self,
         latest_height: u64,
-        nullifiers: &HashSet<[u8; 32]>,
+        nullifiers: &HashSet<[u8; 48]>,
     ) -> Result<(), WalletError> {
         // Transactions older than this are considered expired (5 minutes)
         const PENDING_TIMEOUT_SECS: u64 = 300;
@@ -608,10 +614,10 @@ impl WalletStore {
 
                 // Check if transaction was mined (nullifiers on-chain)
                 // Skip zero-padded nullifiers when checking
-                let real_nullifiers: Vec<&[u8; 32]> = tx
+                let real_nullifiers: Vec<&[u8; 48]> = tx
                     .nullifiers
                     .iter()
-                    .filter(|nf| **nf != [0u8; 32])
+                    .filter(|nf| **nf != [0u8; 48])
                     .collect();
                 if !real_nullifiers.is_empty()
                     && real_nullifiers.iter().all(|nf| nullifiers.contains(*nf))
@@ -752,8 +758,8 @@ struct WalletStateV1 {
 impl From<WalletStateV1> for WalletState {
     fn from(state: WalletStateV1) -> Self {
         let to_commitment = |value: u64| {
-            let mut bytes = [0u8; 32];
-            bytes[24..32].copy_from_slice(&value.to_be_bytes());
+            let mut bytes = [0u8; 48];
+            bytes[40..48].copy_from_slice(&value.to_be_bytes());
             bytes
         };
         WalletState {
@@ -777,6 +783,12 @@ impl From<WalletStateV1> for WalletState {
     }
 }
 
+fn widen_bytes32(value: &Commitment32) -> Commitment {
+    let mut out = [0u8; 48];
+    out[16..].copy_from_slice(value);
+    out
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct WalletStateV2 {
     mode: WalletMode,
@@ -790,7 +802,7 @@ struct WalletStateV2 {
     next_address_index: u32,
     notes: Vec<TrackedNote>,
     pending: Vec<PendingTransaction>,
-    commitments: Vec<Commitment>,
+    commitments: Vec<Commitment32>,
     next_commitment_index: u64,
     next_ciphertext_index: u64,
     last_synced_height: u64,
@@ -802,6 +814,7 @@ struct WalletStateV2 {
 
 impl From<WalletStateV2> for WalletState {
     fn from(state: WalletStateV2) -> Self {
+        let commitments = state.commitments.iter().map(widen_bytes32).collect();
         WalletState {
             mode: state.mode,
             tree_depth: state.tree_depth,
@@ -813,11 +826,135 @@ impl From<WalletStateV2> for WalletState {
             next_address_index: state.next_address_index,
             notes: state.notes,
             pending: state.pending,
-            commitments: state.commitments,
+            commitments,
             next_commitment_index: state.next_commitment_index,
             next_ciphertext_index: state.next_ciphertext_index,
             last_synced_height: state.last_synced_height,
             outgoing_disclosures: state.outgoing_disclosures,
+            genesis_hash: state.genesis_hash,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TrackedNoteV3 {
+    note: RecoveredNote,
+    position: u64,
+    ciphertext_index: u64,
+    #[serde(with = "serde_option_bytes32")]
+    nullifier: Option<Commitment32>,
+    spent: bool,
+    pending_spend: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PendingTransactionV3 {
+    #[serde(with = "serde_bytes32")]
+    tx_id: [u8; 32],
+    #[serde(with = "serde_vec_bytes32")]
+    nullifiers: Vec<Commitment32>,
+    spent_note_indexes: Vec<usize>,
+    submitted_at: u64,
+    status: PendingStatus,
+    #[serde(default)]
+    recipients: Vec<TransferRecipient>,
+    #[serde(default)]
+    fee: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct OutgoingDisclosureRecordV3 {
+    #[serde(with = "serde_bytes32")]
+    tx_id: [u8; 32],
+    output_index: u32,
+    recipient_address: String,
+    note: NoteData,
+    #[serde(with = "serde_bytes32")]
+    commitment: Commitment32,
+    #[serde(default)]
+    memo: Option<MemoPlaintext>,
+    #[serde(with = "serde_bytes32")]
+    genesis_hash: [u8; 32],
+    created_at: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV3 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNoteV3>,
+    pending: Vec<PendingTransactionV3>,
+    commitments: Vec<Commitment32>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecordV3>,
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+}
+
+impl From<WalletStateV3> for WalletState {
+    fn from(state: WalletStateV3) -> Self {
+        WalletState {
+            mode: state.mode,
+            tree_depth: state.tree_depth,
+            root_secret: state.root_secret,
+            derived: state.derived,
+            incoming: state.incoming,
+            full_viewing_key: state.full_viewing_key,
+            outgoing: state.outgoing,
+            next_address_index: state.next_address_index,
+            notes: state
+                .notes
+                .into_iter()
+                .map(|note| TrackedNote {
+                    note: note.note,
+                    position: note.position,
+                    ciphertext_index: note.ciphertext_index,
+                    nullifier: note.nullifier.as_ref().map(widen_bytes32),
+                    spent: note.spent,
+                    pending_spend: note.pending_spend,
+                })
+                .collect(),
+            pending: state
+                .pending
+                .into_iter()
+                .map(|pending| PendingTransaction {
+                    tx_id: pending.tx_id,
+                    nullifiers: pending.nullifiers.iter().map(widen_bytes32).collect(),
+                    spent_note_indexes: pending.spent_note_indexes,
+                    submitted_at: pending.submitted_at,
+                    status: pending.status,
+                    recipients: pending.recipients,
+                    fee: pending.fee,
+                })
+                .collect(),
+            commitments: state.commitments.iter().map(widen_bytes32).collect(),
+            next_commitment_index: state.next_commitment_index,
+            next_ciphertext_index: state.next_ciphertext_index,
+            last_synced_height: state.last_synced_height,
+            outgoing_disclosures: state
+                .outgoing_disclosures
+                .into_iter()
+                .map(|record| OutgoingDisclosureRecord {
+                    tx_id: record.tx_id,
+                    output_index: record.output_index,
+                    recipient_address: record.recipient_address,
+                    note: record.note,
+                    commitment: widen_bytes32(&record.commitment),
+                    memo: record.memo,
+                    genesis_hash: record.genesis_hash,
+                    created_at: record.created_at,
+                })
+                .collect(),
             genesis_hash: state.genesis_hash,
         }
     }
@@ -836,6 +973,7 @@ struct WalletState {
     next_address_index: u32,
     notes: Vec<TrackedNote>,
     pending: Vec<PendingTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
     commitments: Vec<Commitment>,
     next_commitment_index: u64,
     next_ciphertext_index: u64,
@@ -853,8 +991,8 @@ struct TrackedNote {
     note: RecoveredNote,
     position: u64,
     ciphertext_index: u64,
-    #[serde(with = "serde_option_bytes32")]
-    nullifier: Option<[u8; 32]>,
+    #[serde(with = "serde_option_bytes48")]
+    nullifier: Option<[u8; 48]>,
     spent: bool,
     pending_spend: bool,
 }
@@ -863,8 +1001,8 @@ struct TrackedNote {
 pub struct PendingTransaction {
     #[serde(with = "serde_bytes32")]
     pub tx_id: [u8; 32],
-    #[serde(with = "serde_vec_bytes32")]
-    pub nullifiers: Vec<[u8; 32]>,
+    #[serde(with = "serde_vec_bytes48")]
+    pub nullifiers: Vec<[u8; 48]>,
     pub spent_note_indexes: Vec<usize>,
     pub submitted_at: u64,
     pub status: PendingStatus,
@@ -902,8 +1040,8 @@ pub struct OutgoingDisclosureDraft {
     pub output_index: u32,
     pub recipient_address: String,
     pub note: NoteData,
-    #[serde(with = "serde_bytes32")]
-    pub commitment: [u8; 32],
+    #[serde(with = "serde_bytes48")]
+    pub commitment: [u8; 48],
     #[serde(default)]
     pub memo: Option<MemoPlaintext>,
 }
@@ -915,8 +1053,8 @@ pub struct OutgoingDisclosureRecord {
     pub output_index: u32,
     pub recipient_address: String,
     pub note: NoteData,
-    #[serde(with = "serde_bytes32")]
-    pub commitment: [u8; 32],
+    #[serde(with = "serde_bytes48")]
+    pub commitment: [u8; 48],
     #[serde(default)]
     pub memo: Option<MemoPlaintext>,
     #[serde(with = "serde_bytes32")]
@@ -1101,6 +1239,91 @@ mod serde_vec_bytes32 {
     }
 }
 
+mod serde_bytes48 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &[u8; 48], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_bytes(value)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 48], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes: Vec<u8> = Deserialize::deserialize(deserializer)?;
+        if bytes.len() != 48 {
+            return Err(serde::de::Error::custom("expected 48 bytes"));
+        }
+        let mut out = [0u8; 48];
+        out.copy_from_slice(&bytes);
+        Ok(out)
+    }
+}
+
+mod serde_option_bytes48 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &Option<[u8; 48]>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(bytes) => serializer.serialize_some(&serde_bytes::Bytes::new(bytes)),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<[u8; 48]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<Vec<u8>> = Option::<Vec<u8>>::deserialize(deserializer)?;
+        opt.map(|bytes| {
+            if bytes.len() != 48 {
+                return Err(serde::de::Error::custom("expected 48 bytes"));
+            }
+            let mut out = [0u8; 48];
+            out.copy_from_slice(&bytes);
+            Ok(out)
+        })
+        .transpose()
+    }
+}
+
+mod serde_vec_bytes48 {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(values: &[[u8; 48]], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let wrapped: Vec<_> = values
+            .iter()
+            .map(|bytes| serde_bytes::Bytes::new(bytes))
+            .collect();
+        wrapped.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<[u8; 48]>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wrapped: Vec<serde_bytes::ByteBuf> = Vec::deserialize(deserializer)?;
+        Ok(wrapped
+            .into_iter()
+            .map(|buf| {
+                let data = buf.into_vec();
+                let mut out = [0u8; 48];
+                out.copy_from_slice(&data);
+                out
+            })
+            .collect())
+    }
+}
+
 mod serde_bytes_vec {
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -1151,7 +1374,7 @@ mod tests {
         let ciphertext = crate::notes::NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
         let recovered = ivk.decrypt_note(&ciphertext).unwrap();
         let commitment =
-            transaction_circuit::hashing::felts_to_bytes32(&recovered.note_data.commitment());
+            transaction_circuit::hashing_pq::felts_to_bytes48(&recovered.note_data.commitment());
         store.append_commitments(&[(0, commitment)]).unwrap();
         store.register_ciphertext_index(0).unwrap();
         store
@@ -1199,14 +1422,14 @@ mod tests {
             .expect("full viewing key should migrate");
         let rho = [5u8; 32];
         let position = 7u64;
-        let expected = transaction_circuit::hashing::nullifier_bytes(
-            transaction_circuit::hashing::prf_key(&keys.view.nullifier_key()),
+        let expected = transaction_circuit::hashing_pq::nullifier_bytes(
+            transaction_circuit::hashing_pq::prf_key(&keys.view.nullifier_key()),
             &rho,
             position,
         );
         assert_eq!(fvk.compute_nullifier(&rho, position), expected);
-        let legacy = transaction_circuit::hashing::nullifier_bytes(
-            transaction_circuit::hashing::prf_key(&keys.spend.to_bytes()),
+        let legacy = transaction_circuit::hashing_pq::nullifier_bytes(
+            transaction_circuit::hashing_pq::prf_key(&keys.spend.to_bytes()),
             &rho,
             position,
         );

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::error::ConsensusError;
 use crate::header::BlockHeader;
 use crate::types::{ValidatorId, ValidatorSetCommitment};
-use crypto::hashes::sha256;
+use crypto::hashes::{blake3_384, sha256};
 use crypto::ml_dsa::{ML_DSA_PUBLIC_KEY_LEN, ML_DSA_SIGNATURE_LEN, MlDsaPublicKey, MlDsaSignature};
 use crypto::traits::VerifyKey;
 #[derive(Clone, Debug)]
@@ -81,7 +81,7 @@ impl ValidatorSet {
             data.extend_from_slice(&stake.to_le_bytes());
             data.push(slashed as u8);
         }
-        sha256(&data)
+        blake3_384(&data)
     }
 
     pub fn validator(&self, id: &ValidatorId) -> Option<&Validator> {

@@ -24,7 +24,7 @@ use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use frame_support::traits::{
     ConstU128, ConstU32, ConstU64, ConstU8, Currency as CurrencyTrait, VariantCount,
 };
-use frame_support::weights::IdentityFee;
+use frame_support::weights::{constants::WEIGHT_REF_TIME_PER_SECOND, IdentityFee, Weight};
 use frame_support::BoundedVec;
 pub use frame_support::{construct_runtime, parameter_types};
 use frame_system as system;
@@ -39,7 +39,7 @@ use sp_runtime::traits::{
     SaturatedConversion, Verify,
 };
 use sp_runtime::{
-    generic, AccountId32, DispatchError, FixedU128, MultiAddress, Permill, RuntimeDebug,
+    generic, AccountId32, DispatchError, FixedU128, MultiAddress, Perbill, Permill, RuntimeDebug,
 };
 use sp_std::vec::Vec;
 
@@ -884,6 +884,14 @@ parameter_types! {
     pub const BlockHashCount: u64 = 250;
     #[allow(deprecated)]
     pub const Version: sp_version::RuntimeVersion = VERSION;
+    pub RuntimeBlockWeights: system::limits::BlockWeights = system::limits::BlockWeights::with_sensible_defaults(
+        Weight::from_parts(4u64 * WEIGHT_REF_TIME_PER_SECOND, u64::MAX),
+        Perbill::from_percent(75),
+    );
+    pub RuntimeBlockLength: system::limits::BlockLength = system::limits::BlockLength::max_with_normal_ratio(
+        4 * 1024 * 1024,
+        Perbill::from_percent(75),
+    );
     pub const SS58Prefix: u16 = 42;
     pub const MinimumPeriod: u64 = 5;
     pub const ExistentialDeposit: u128 = 1;
@@ -899,8 +907,8 @@ parameter_types! {
 
 impl system::Config for Runtime {
     type BaseCallFilter = frame_support::traits::Everything;
-    type BlockWeights = ();
-    type BlockLength = ();
+    type BlockWeights = RuntimeBlockWeights;
+    type BlockLength = RuntimeBlockLength;
     type DbWeight = frame_support::weights::constants::RocksDbWeight;
     type RuntimeOrigin = RuntimeOrigin;
     type RuntimeCall = RuntimeCall;
@@ -1185,14 +1193,14 @@ parameter_types! {
     pub const DefaultAttestationVerifierParams: pallet_attestations::StarkVerifierParams =
         pallet_attestations::StarkVerifierParams {
             hash: pallet_attestations::StarkHashFunction::Blake3,
-            fri_queries: 28,
-            blowup_factor: 4,
+            fri_queries: 43,
+            blowup_factor: 16,
             security_bits: 128,
         };
     pub const DefaultSettlementVerifierParams: pallet_settlement::StarkVerifierParams =
         pallet_settlement::StarkVerifierParams {
             hash: pallet_settlement::StarkHashFunction::Blake3,
-            fri_queries: 28,
+            fri_queries: 43,
             blowup_factor: 16,
             security_bits: 128,
         };
@@ -1366,7 +1374,7 @@ parameter_types! {
     pub const MaxPendingInstructions: u32 = 16;
     pub const MaxParticipants: u32 = 8;
     pub const MaxNullifiers: u32 = 4;
-    pub const MaxSettlementProof: u32 = 16384;
+    pub const MaxSettlementProof: u32 = 65536;
     pub const DefaultVerificationKey: u32 = 0;
 }
 
@@ -1485,7 +1493,7 @@ impl pallet_shielded_pool::StablecoinPolicyProvider<u32, u32, u64, BlockNumber>
         })
     }
 
-    fn policy_hash(asset_id: &u32) -> Option<[u8; 32]> {
+    fn policy_hash(asset_id: &u32) -> Option<[u8; 48]> {
         pallet_stablecoin_policy::PolicyHashes::<Runtime>::get(asset_id)
     }
 }
@@ -1500,10 +1508,10 @@ impl pallet_shielded_pool::OracleCommitmentProvider<u32, BlockNumber>
         let feed = pallet_oracles::Feeds::<Runtime>::get(feed_id)?;
         let record = feed.latest_commitment?;
         let bytes = record.commitment.to_vec();
-        if bytes.len() != 32 {
+        if bytes.len() != 48 {
             return None;
         }
-        let mut commitment = [0u8; 32];
+        let mut commitment = [0u8; 48];
         commitment.copy_from_slice(&bytes);
         Some(pallet_shielded_pool::OracleCommitmentSnapshot {
             commitment,
@@ -1521,10 +1529,10 @@ impl pallet_shielded_pool::AttestationCommitmentProvider<u64, BlockNumber>
     ) -> Option<pallet_shielded_pool::AttestationCommitmentSnapshot<BlockNumber>> {
         let record = pallet_attestations::Commitments::<Runtime>::get(commitment_id)?;
         let bytes = record.root.to_vec();
-        if bytes.len() != 32 {
+        if bytes.len() != 48 {
             return None;
         }
-        let mut commitment = [0u8; 32];
+        let mut commitment = [0u8; 48];
         commitment.copy_from_slice(&bytes);
         let disputed = record.dispute != pallet_attestations::DisputeStatus::None;
         Some(pallet_shielded_pool::AttestationCommitmentSnapshot {
@@ -1719,7 +1727,7 @@ sp_api::impl_runtime_apis! {
         fn get_encrypted_notes(
             start: u64,
             limit: u32,
-        ) -> sp_std::vec::Vec<(u64, sp_std::vec::Vec<u8>, u64, [u8; 32])> {
+        ) -> sp_std::vec::Vec<(u64, sp_std::vec::Vec<u8>, u64, [u8; 48])> {
             // Fetch encrypted notes from ShieldedPool pallet storage
             let mut notes = sp_std::vec::Vec::new();
             let end = start.saturating_add(limit as u64);
@@ -1754,7 +1762,7 @@ sp_api::impl_runtime_apis! {
 
         fn get_merkle_witness(
             position: u64,
-        ) -> Result<(sp_std::vec::Vec<[u8; 32]>, sp_std::vec::Vec<bool>, [u8; 32]), ()> {
+        ) -> Result<(sp_std::vec::Vec<[u8; 48]>, sp_std::vec::Vec<bool>, [u8; 48]), ()> {
             // Get the Merkle tree from storage
             let tree = pallet_shielded_pool::MerkleTree::<Runtime>::get();
 
@@ -1798,11 +1806,11 @@ sp_api::impl_runtime_apis! {
             Ok((siblings, indices, root))
         }
 
-        fn is_nullifier_spent(nullifier: [u8; 32]) -> bool {
+        fn is_nullifier_spent(nullifier: [u8; 48]) -> bool {
             pallet_shielded_pool::Nullifiers::<Runtime>::contains_key(nullifier)
         }
 
-        fn is_valid_anchor(anchor: [u8; 32]) -> bool {
+        fn is_valid_anchor(anchor: [u8; 48]) -> bool {
             pallet_shielded_pool::MerkleRoots::<Runtime>::contains_key(anchor)
         }
 
@@ -1810,7 +1818,7 @@ sp_api::impl_runtime_apis! {
             pallet_shielded_pool::PoolBalance::<Runtime>::get()
         }
 
-        fn merkle_root() -> [u8; 32] {
+        fn merkle_root() -> [u8; 48] {
             pallet_shielded_pool::MerkleTree::<Runtime>::get().root()
         }
 
@@ -1823,7 +1831,7 @@ sp_api::impl_runtime_apis! {
             pallet_shielded_pool::Nullifiers::<Runtime>::iter().count() as u64
         }
 
-        fn list_nullifiers() -> Vec<[u8; 32]> {
+        fn list_nullifiers() -> Vec<[u8; 48]> {
             // Iterate all nullifiers and collect their keys
             pallet_shielded_pool::Nullifiers::<Runtime>::iter_keys().collect()
         }
@@ -1832,7 +1840,7 @@ sp_api::impl_runtime_apis! {
             pallet_shielded_pool::MerkleTree::<Runtime>::get()
         }
 
-        fn merkle_root_history() -> sp_std::vec::Vec<[u8; 32]> {
+        fn merkle_root_history() -> sp_std::vec::Vec<[u8; 48]> {
             pallet_shielded_pool::MerkleRootHistory::<Runtime>::get().into_inner()
         }
     }

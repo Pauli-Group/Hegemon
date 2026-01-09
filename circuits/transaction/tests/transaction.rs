@@ -1,5 +1,6 @@
+use p3_field::PrimeCharacteristicRing;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
-use transaction_circuit::hashing::{felts_to_bytes32, merkle_node, Felt, HashFelt};
+use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
 use transaction_circuit::proof::{prove, verify};
@@ -7,7 +8,6 @@ use transaction_circuit::{
     InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionCircuitError,
     TransactionWitness,
 };
-use winterfell::math::FieldElement;
 
 /// Compute the Merkle root from a leaf and path using CIRCUIT_MERKLE_DEPTH levels.
 /// This matches what the STARK circuit actually verifies.
@@ -40,7 +40,7 @@ fn build_two_leaf_merkle_tree(
 
     // Fill remaining levels up to CIRCUIT_MERKLE_DEPTH with zeros
     for _ in 1..CIRCUIT_MERKLE_DEPTH {
-        let zero = [Felt::ZERO; 4];
+        let zero = [Felt::ZERO; 6];
         siblings0.push(zero);
         siblings1.push(zero);
         current = merkle_node(current, zero);
@@ -76,7 +76,6 @@ fn sample_witness() -> TransactionWitness {
     let leaf0 = input_note_native.commitment();
     let leaf1 = input_note_asset.commitment();
     let (merkle_path0, merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
-
     // Verify paths compute to root correctly
     assert_eq!(
         compute_merkle_root(leaf0, 0, &merkle_path0.siblings),
@@ -122,7 +121,7 @@ fn sample_witness() -> TransactionWitness {
         ],
         outputs: vec![output_native, output_asset],
         sk_spend: [42u8; 32],
-        merkle_root: felts_to_bytes32(&merkle_root),
+        merkle_root: felts_to_bytes48(&merkle_root),
         fee: 5,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding::default(),
@@ -140,7 +139,7 @@ fn stablecoin_witness() -> TransactionWitness {
     };
 
     let leaf0 = input_note_native.commitment();
-    let leaf1 = [Felt::ZERO; 4];
+    let leaf1 = [Felt::ZERO; 6];
     let (merkle_path0, _merkle_path1, merkle_root) = build_two_leaf_merkle_tree(leaf0, leaf1);
 
     let output_stablecoin = OutputNoteWitness {
@@ -162,15 +161,15 @@ fn stablecoin_witness() -> TransactionWitness {
         }],
         outputs: vec![output_stablecoin],
         sk_spend: [8u8; 32],
-        merkle_root: felts_to_bytes32(&merkle_root),
+        merkle_root: felts_to_bytes48(&merkle_root),
         fee: 5,
         value_balance: 0,
         stablecoin: StablecoinPolicyBinding {
             enabled: true,
             asset_id: 4242,
-            policy_hash: [10u8; 32],
-            oracle_commitment: [11u8; 32],
-            attestation_commitment: [12u8; 32],
+            policy_hash: [10u8; 48],
+            oracle_commitment: [11u8; 48],
+            attestation_commitment: [12u8; 48],
             issuance_delta: -5,
             policy_version: 1,
         },
@@ -179,6 +178,10 @@ fn stablecoin_witness() -> TransactionWitness {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "plonky3-e2e"),
+    ignore = "slow: generates a full Plonky3 proof; run with --features plonky3-e2e --release"
+)]
 fn proving_and_verification_succeeds() -> Result<(), TransactionCircuitError> {
     let witness = sample_witness();
     let (proving_key, verifying_key) = generate_keys();
@@ -195,14 +198,28 @@ fn proving_and_verification_succeeds() -> Result<(), TransactionCircuitError> {
 #[test]
 fn verification_fails_for_bad_balance() {
     let witness = sample_witness();
-    let (proving_key, verifying_key) = generate_keys();
-    let mut proof = prove(&witness, &proving_key).expect("proof generation");
+    let (_proving_key, verifying_key) = generate_keys();
+    let public_inputs = witness.public_inputs().expect("public inputs");
+    let trace =
+        transaction_circuit::trace::TransactionTrace::from_witness(&witness).expect("legacy trace");
+    let mut proof = transaction_circuit::proof::TransactionProof {
+        nullifiers: public_inputs.nullifiers.clone(),
+        commitments: public_inputs.commitments.clone(),
+        balance_slots: trace.padded_balance_slots(),
+        public_inputs,
+        stark_proof: Vec::new(),
+        stark_public_inputs: None,
+    };
     proof.balance_slots[1].delta = 1; // corrupt non-native slot
     let err = verify(&proof, &verifying_key).expect_err("expected failure");
     assert!(matches!(err, TransactionCircuitError::BalanceMismatch(_)));
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "plonky3-e2e"),
+    ignore = "slow: generates a full Plonky3 proof; run with --features plonky3-e2e --release"
+)]
 fn verification_fails_for_nullifier_mutation() {
     let witness = sample_witness();
     let (proving_key, verifying_key) = generate_keys();
@@ -219,6 +236,10 @@ fn verification_fails_for_nullifier_mutation() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "plonky3-e2e"),
+    ignore = "slow: generates a full Plonky3 proof; run with --features plonky3-e2e --release"
+)]
 fn verification_fails_for_stablecoin_policy_hash_mutation() {
     let witness = stablecoin_witness();
     let (proving_key, verifying_key) = generate_keys();

@@ -1,11 +1,8 @@
 use std::time::Instant;
 
-use consensus::types::{BalanceTag, Commitment, Transaction as ConsensusTransaction};
+use consensus::types::{BalanceTag, Commitment, Nullifier, Transaction as ConsensusTransaction};
 use protocol_versioning::VersionBinding;
-use transaction_circuit::{
-    hashing::{felt_to_bytes32, Felt},
-    proof::TransactionProof,
-};
+use transaction_circuit::proof::TransactionProof;
 
 #[derive(Clone, Debug)]
 pub struct ValidatedTransaction {
@@ -15,7 +12,7 @@ pub struct ValidatedTransaction {
     pub fee: u64,
     pub timestamp: Instant,
     pub commitments: Vec<Commitment>,
-    pub nullifiers: Vec<[u8; 32]>,
+    pub nullifiers: Vec<Nullifier>,
     pub ciphertexts: Vec<Vec<u8>>,
 }
 
@@ -34,10 +31,6 @@ impl ValidatedTransaction {
     }
 }
 
-pub fn balance_tag_bytes(tag: Felt) -> BalanceTag {
-    felt_to_bytes32(tag)
-}
-
 pub fn proof_to_transaction(
     proof: &TransactionProof,
     version: VersionBinding,
@@ -48,15 +41,15 @@ pub fn proof_to_transaction(
         .commitments
         .iter()
         .copied()
-        .filter(|value| *value != [0u8; 32])
+        .filter(|value| *value != [0u8; 48])
         .collect();
-    let nullifiers: Vec<[u8; 32]> = proof
+    let nullifiers: Vec<Nullifier> = proof
         .public_inputs
         .nullifiers
         .iter()
         .copied()
-        .filter(|value| *value != [0u8; 32])
+        .filter(|value| *value != [0u8; 48])
         .collect();
-    let balance_tag = balance_tag_bytes(proof.public_inputs.balance_tag);
+    let balance_tag: BalanceTag = proof.public_inputs.balance_tag;
     ConsensusTransaction::new(nullifiers, commitments, balance_tag, version, ciphertexts)
 }

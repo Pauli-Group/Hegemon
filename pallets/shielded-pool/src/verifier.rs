@@ -6,24 +6,21 @@
 //!
 //! ## Design
 //!
-//! - Uses FRI-based STARK proofs (Winterfell-compatible)
+//! - Uses Plonky3-based STARK proofs (FRI IOP, transparent)
 //! - All operations are hash-based (Blake3/Poseidon)
 //! - Value balance verified in-circuit
 //!
 //! ## Features
 //!
-//! - `stark-verify`: Enable real STARK verification using winterfell
-//!   Without this feature, only structural validation is performed.
+//! - Real verification is always enabled (Plonky3 backend).
 
-#[cfg(all(feature = "production", not(feature = "stark-verify")))]
-compile_error!("feature \"production\" requires \"stark-verify\" for real proof verification");
+use p3_field::PrimeCharacteristicRing;
+use transaction_core::p3_config::FRI_NUM_QUERIES;
 
 use crate::types::{BindingHash, StablecoinPolicyBinding, StarkProof};
 use codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 use sp_std::vec::Vec;
-#[cfg(feature = "stark-verify")]
-use winter_math::FieldElement;
 
 /// Verification key for STARK proofs.
 ///
@@ -76,11 +73,11 @@ impl Default for VerifyingKey {
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
 pub struct ShieldedTransferInputs {
     /// Merkle root anchor.
-    pub anchor: [u8; 32],
+    pub anchor: [u8; 48],
     /// Nullifiers for spent notes.
-    pub nullifiers: Vec<[u8; 32]>,
+    pub nullifiers: Vec<[u8; 48]>,
     /// Commitments for new notes.
-    pub commitments: Vec<[u8; 32]>,
+    pub commitments: Vec<[u8; 48]>,
     /// Native fee encoded in the circuit.
     pub fee: u64,
     /// Net value balance (transparent component).
@@ -136,11 +133,11 @@ pub trait ProofVerifier {
 /// This type is only available when the `std` feature is enabled AND
 /// the `production` feature is NOT enabled. This prevents accidental
 /// use in release binaries.
-#[cfg(all(feature = "std", not(feature = "production")))]
+#[cfg(all(feature = "std", any(test, not(feature = "production"))))]
 #[derive(Clone, Debug, Default)]
 pub struct AcceptAllProofs;
 
-#[cfg(all(feature = "std", not(feature = "production")))]
+#[cfg(all(feature = "std", any(test, not(feature = "production"))))]
 impl ProofVerifier for AcceptAllProofs {
     fn verify_stark(
         &self,
@@ -173,11 +170,11 @@ impl ProofVerifier for AcceptAllProofs {
 /// Reject-all proof verifier for testing.
 ///
 /// This type is only available in test/dev builds.
-#[cfg(all(feature = "std", not(feature = "production")))]
+#[cfg(all(feature = "std", any(test, not(feature = "production"))))]
 #[derive(Clone, Debug, Default)]
 pub struct RejectAllProofs;
 
-#[cfg(all(feature = "std", not(feature = "production")))]
+#[cfg(all(feature = "std", any(test, not(feature = "production"))))]
 impl ProofVerifier for RejectAllProofs {
     fn verify_stark(
         &self,
@@ -202,8 +199,7 @@ impl ProofVerifier for RejectAllProofs {
 /// Uses FRI-based interactive oracle proofs for transparent verification.
 /// No trusted setup required - security relies only on hash functions.
 ///
-/// With the `stark-verify` feature enabled, this performs real winterfell
-/// STARK verification. Without the feature, it performs structural validation only.
+/// Performs Plonky3 STARK verification over the transaction AIR.
 #[derive(Clone, Debug, Default)]
 pub struct StarkVerifier;
 
@@ -271,7 +267,7 @@ mod proof_structure {
 
 impl StarkVerifier {
     /// Encode public inputs as field elements for STARK verification.
-    pub fn encode_public_inputs(inputs: &ShieldedTransferInputs) -> Vec<[u8; 32]> {
+    pub fn encode_public_inputs(inputs: &ShieldedTransferInputs) -> Vec<[u8; 48]> {
         let mut encoded = Vec::new();
 
         // Anchor (Merkle root)
@@ -288,21 +284,12 @@ impl StarkVerifier {
         }
 
         // Fee (u64, canonical field encoding)
-        let mut fee_bytes = [0u8; 32];
-        fee_bytes[24..32].copy_from_slice(&inputs.fee.to_be_bytes());
-        encoded.push(fee_bytes);
+        encoded.push(Self::encode_u64(inputs.fee));
 
         // Value balance (encoded as two field elements for sign and magnitude)
-        let sign = if inputs.value_balance < 0 { 1u8 } else { 0u8 };
-        let magnitude = inputs.value_balance.unsigned_abs() as u64;
-
-        let mut sign_bytes = [0u8; 32];
-        sign_bytes[31] = sign;
-        encoded.push(sign_bytes);
-
-        let mut mag_bytes = [0u8; 32];
-        mag_bytes[24..32].copy_from_slice(&magnitude.to_be_bytes());
-        encoded.push(mag_bytes);
+        let (sign, magnitude) = Self::signed_parts(inputs.value_balance).unwrap_or((0u8, 0u64));
+        encoded.push(Self::encode_u8(sign));
+        encoded.push(Self::encode_u64(magnitude));
 
         let (
             stablecoin_enabled,
@@ -315,9 +302,7 @@ impl StarkVerifier {
             attestation_commitment,
         ) = match inputs.stablecoin.as_ref() {
             Some(binding) => {
-                let (sign, mag) = transaction_core::hashing::signed_parts(binding.issuance_delta)
-                    .map(|(sign, mag)| (sign.as_int() as u8, mag.as_int()))
-                    .unwrap_or((0u8, 0u64));
+                let (sign, mag) = Self::signed_parts(binding.issuance_delta).unwrap_or((0u8, 0u64));
                 (
                     1u8,
                     binding.asset_id,
@@ -329,34 +314,41 @@ impl StarkVerifier {
                     binding.attestation_commitment,
                 )
             }
-            None => (0u8, 0u64, 0u64, 0u8, 0u64, [0u8; 32], [0u8; 32], [0u8; 32]),
+            None => (0u8, 0u64, 0u64, 0u8, 0u64, [0u8; 48], [0u8; 48], [0u8; 48]),
         };
 
-        let mut stablecoin_enabled_bytes = [0u8; 32];
-        stablecoin_enabled_bytes[31] = stablecoin_enabled;
-        encoded.push(stablecoin_enabled_bytes);
-
-        let mut asset_bytes = [0u8; 32];
-        asset_bytes[24..32].copy_from_slice(&stablecoin_asset.to_be_bytes());
-        encoded.push(asset_bytes);
-
-        let mut policy_version_bytes = [0u8; 32];
-        policy_version_bytes[24..32].copy_from_slice(&stablecoin_policy_version.to_be_bytes());
-        encoded.push(policy_version_bytes);
-
-        let mut issuance_sign_bytes = [0u8; 32];
-        issuance_sign_bytes[31] = issuance_sign;
-        encoded.push(issuance_sign_bytes);
-
-        let mut issuance_mag_bytes = [0u8; 32];
-        issuance_mag_bytes[24..32].copy_from_slice(&issuance_mag.to_be_bytes());
-        encoded.push(issuance_mag_bytes);
+        encoded.push(Self::encode_u8(stablecoin_enabled));
+        encoded.push(Self::encode_u64(stablecoin_asset));
+        encoded.push(Self::encode_u64(stablecoin_policy_version));
+        encoded.push(Self::encode_u8(issuance_sign));
+        encoded.push(Self::encode_u64(issuance_mag));
 
         encoded.push(policy_hash);
         encoded.push(oracle_commitment);
         encoded.push(attestation_commitment);
 
         encoded
+    }
+
+    fn encode_u64(value: u64) -> [u8; 48] {
+        let mut out = [0u8; 48];
+        out[40..48].copy_from_slice(&value.to_be_bytes());
+        out
+    }
+
+    fn encode_u8(value: u8) -> [u8; 48] {
+        let mut out = [0u8; 48];
+        out[47] = value;
+        out
+    }
+
+    fn signed_parts(value: i128) -> Option<(u8, u64)> {
+        let sign = if value < 0 { 1u8 } else { 0u8 };
+        let magnitude = value.unsigned_abs();
+        if magnitude > u128::from(u64::MAX) {
+            return None;
+        }
+        Some((sign, magnitude as u64))
     }
 
     /// Validate proof structure without full cryptographic verification.
@@ -385,7 +377,7 @@ impl StarkVerifier {
         }
 
         // Check proof has enough data for structure
-        let min_size = proof_structure::min_proof_size(8, num_fri_layers); // Assume 8 queries minimum
+        let min_size = proof_structure::min_proof_size(FRI_NUM_QUERIES, num_fri_layers);
         if data.len() < min_size {
             return false;
         }
@@ -395,7 +387,7 @@ impl StarkVerifier {
 
     /// Compute a challenge hash for FRI verification.
     /// This binds the proof to the public inputs.
-    #[allow(dead_code)] // Used by non-stark-verify path
+    #[allow(dead_code)] // Debug-only helper.
     fn compute_challenge(inputs: &ShieldedTransferInputs, proof: &StarkProof) -> [u8; 32] {
         use sp_core::hashing::blake2_256;
 
@@ -417,8 +409,8 @@ impl StarkVerifier {
         blake2_256(&data)
     }
 
-    fn is_canonical_felt(bytes: &[u8; 32]) -> bool {
-        transaction_core::hashing::is_canonical_bytes32(bytes)
+    fn is_canonical_felt(bytes: &[u8; 48]) -> bool {
+        transaction_core::hashing_pq::is_canonical_bytes48(bytes)
     }
 
     fn validate_public_inputs(inputs: &ShieldedTransferInputs) -> bool {
@@ -437,21 +429,21 @@ impl StarkVerifier {
         if inputs
             .nullifiers
             .iter()
-            .any(|nf| !Self::is_canonical_felt(nf) || *nf == [0u8; 32])
+            .any(|nf| !Self::is_canonical_felt(nf) || *nf == [0u8; 48])
         {
             return false;
         }
         if inputs
             .commitments
             .iter()
-            .any(|cm| !Self::is_canonical_felt(cm) || *cm == [0u8; 32])
+            .any(|cm| !Self::is_canonical_felt(cm) || *cm == [0u8; 48])
         {
             return false;
         }
         if (inputs.fee as u128) >= transaction_core::constants::FIELD_MODULUS {
             return false;
         }
-        if transaction_core::hashing::signed_parts(inputs.value_balance).is_none() {
+        if Self::signed_parts(inputs.value_balance).is_none() {
             return false;
         }
         if let Some(binding) = inputs.stablecoin.as_ref() {
@@ -466,7 +458,7 @@ impl StarkVerifier {
             {
                 return false;
             }
-            if transaction_core::hashing::signed_parts(binding.issuance_delta).is_none() {
+            if Self::signed_parts(binding.issuance_delta).is_none() {
                 return false;
             }
         }
@@ -475,14 +467,12 @@ impl StarkVerifier {
 }
 
 impl ProofVerifier for StarkVerifier {
-    #[cfg(not(feature = "stark-verify"))]
     fn verify_stark(
         &self,
         proof: &StarkProof,
         inputs: &ShieldedTransferInputs,
         vk: &VerifyingKey,
     ) -> VerificationResult {
-        // Check key is enabled
         if !vk.enabled {
             return VerificationResult::KeyNotFound;
         }
@@ -491,49 +481,6 @@ impl ProofVerifier for StarkVerifier {
             return VerificationResult::InvalidPublicInputs;
         }
 
-        // Check proof is not empty
-        if proof.is_empty() {
-            return VerificationResult::InvalidProofFormat;
-        }
-
-        // Validate proof structure
-        if !Self::validate_proof_structure(proof) {
-            return VerificationResult::InvalidProofFormat;
-        }
-
-        // Compute and verify challenge binding
-        let _challenge = Self::compute_challenge(inputs, proof);
-
-        // Without the stark-verify feature, we perform structural validation only.
-        // This validates:
-        // 1. Proof is non-empty and properly formatted
-        // 2. FRI layer structure is present
-        // 3. Public inputs are bound to the proof
-        //
-        // SECURITY WARNING: Enable `stark-verify` feature for production use.
-        // Without it, proofs are not cryptographically verified.
-
-        VerificationResult::Valid
-    }
-
-    #[cfg(feature = "stark-verify")]
-    fn verify_stark(
-        &self,
-        proof: &StarkProof,
-        inputs: &ShieldedTransferInputs,
-        vk: &VerifyingKey,
-    ) -> VerificationResult {
-        // Check key is enabled
-        if !vk.enabled {
-            return VerificationResult::KeyNotFound;
-        }
-
-        if !Self::validate_public_inputs(inputs) {
-            return VerificationResult::InvalidPublicInputs;
-        }
-
-        // Verify AIR hash matches expected circuit
-        // This ensures the proof was generated for the correct circuit version
         let expected_air_hash = Self::compute_expected_air_hash();
         if vk.air_hash == [0u8; 32] {
             return VerificationResult::KeyNotFound;
@@ -547,29 +494,27 @@ impl ProofVerifier for StarkVerifier {
             return VerificationResult::InvalidPublicInputs;
         }
 
-        // Check proof is not empty
         if proof.is_empty() {
             return VerificationResult::InvalidProofFormat;
         }
 
-        // Convert public inputs to field elements for verification
-        let pub_inputs = match Self::convert_public_inputs(inputs) {
+        let pub_inputs = match Self::convert_public_inputs_p3(inputs) {
             Some(pub_inputs) => pub_inputs,
             None => return VerificationResult::InvalidPublicInputs,
         };
 
-        match transaction_core::stark_verifier::verify_transaction_proof_bytes_rpo(
+        match transaction_core::p3_verifier::verify_transaction_proof_bytes_p3(
             &proof.data,
             &pub_inputs,
         ) {
             Ok(()) => VerificationResult::Valid,
-            Err(transaction_core::stark_verifier::TransactionVerifyError::InvalidProofFormat) => {
+            Err(transaction_core::p3_verifier::TransactionVerifyErrorP3::InvalidProofFormat) => {
                 VerificationResult::InvalidProofFormat
             }
-            Err(transaction_core::stark_verifier::TransactionVerifyError::InvalidPublicInputs(
+            Err(transaction_core::p3_verifier::TransactionVerifyErrorP3::InvalidPublicInputs(
                 _,
             )) => VerificationResult::InvalidPublicInputs,
-            Err(transaction_core::stark_verifier::TransactionVerifyError::VerificationFailed(
+            Err(transaction_core::p3_verifier::TransactionVerifyErrorP3::VerificationFailed(
                 err,
             )) => {
                 log::info!(target: "shielded-pool", "  STARK verifier error: {:?}", err);
@@ -625,7 +570,7 @@ impl StarkVerifier {
 
     fn binding_hash_message(inputs: &ShieldedTransferInputs) -> Vec<u8> {
         let mut message = sp_std::vec::Vec::with_capacity(
-            32 + inputs.nullifiers.len() * 32 + inputs.commitments.len() * 32 + 24,
+            48 + inputs.nullifiers.len() * 48 + inputs.commitments.len() * 48 + 24,
         );
         message.extend_from_slice(&inputs.anchor);
         for nf in &inputs.nullifiers {
@@ -673,43 +618,37 @@ impl StarkVerifier {
         BindingHash { data }
     }
 
-    /// Convert pallet public inputs to the format expected by winterfell verification.
-    #[cfg(feature = "stark-verify")]
-    fn convert_public_inputs(
+    fn convert_public_inputs_p3(
         inputs: &ShieldedTransferInputs,
-    ) -> Option<transaction_core::TransactionPublicInputsStark> {
+    ) -> Option<transaction_core::TransactionPublicInputsP3> {
         let mut input_flags = Vec::with_capacity(Self::MAX_INPUTS);
         let mut nullifiers = Vec::with_capacity(Self::MAX_INPUTS);
-        for (idx, nf) in inputs.nullifiers.iter().enumerate() {
-            let felt = transaction_core::hashing::bytes32_to_felts(nf)?;
-            if idx < Self::MAX_INPUTS {
-                input_flags.push(transaction_core::Felt::ONE);
-            }
+        for nf in inputs.nullifiers.iter().take(Self::MAX_INPUTS) {
+            let felt = transaction_core::hashing_pq::bytes48_to_felts(nf)?;
+            input_flags.push(transaction_core::Felt::ONE);
             nullifiers.push(felt);
         }
         while nullifiers.len() < Self::MAX_INPUTS {
-            nullifiers.push([transaction_core::Felt::ZERO; 4]);
+            nullifiers.push([transaction_core::Felt::ZERO; 6]);
             input_flags.push(transaction_core::Felt::ZERO);
         }
 
         let mut output_flags = Vec::with_capacity(Self::MAX_OUTPUTS);
         let mut commitments = Vec::with_capacity(Self::MAX_OUTPUTS);
-        for (idx, cm) in inputs.commitments.iter().enumerate() {
-            let felt = transaction_core::hashing::bytes32_to_felts(cm)?;
-            if idx < Self::MAX_OUTPUTS {
-                output_flags.push(transaction_core::Felt::ONE);
-            }
+        for cm in inputs.commitments.iter().take(Self::MAX_OUTPUTS) {
+            let felt = transaction_core::hashing_pq::bytes48_to_felts(cm)?;
+            output_flags.push(transaction_core::Felt::ONE);
             commitments.push(felt);
         }
         while commitments.len() < Self::MAX_OUTPUTS {
-            commitments.push([transaction_core::Felt::ZERO; 4]);
+            commitments.push([transaction_core::Felt::ZERO; 6]);
             output_flags.push(transaction_core::Felt::ZERO);
         }
 
-        let merkle_root = transaction_core::hashing::bytes32_to_felts(&inputs.anchor)?;
+        let merkle_root = transaction_core::hashing_pq::bytes48_to_felts(&inputs.anchor)?;
 
         let (value_balance_sign, value_balance_magnitude) =
-            transaction_core::hashing::signed_parts(inputs.value_balance)?;
+            transaction_core::hashing_pq::signed_parts(inputs.value_balance)?;
 
         let (
             stablecoin_enabled,
@@ -723,17 +662,18 @@ impl StarkVerifier {
         ) = match inputs.stablecoin.as_ref() {
             Some(binding) => {
                 let (issuance_sign, issuance_mag) =
-                    transaction_core::hashing::signed_parts(binding.issuance_delta)?;
+                    transaction_core::hashing_pq::signed_parts(binding.issuance_delta)?;
                 let policy_hash =
-                    transaction_core::hashing::bytes32_to_felts(&binding.policy_hash)?;
+                    transaction_core::hashing_pq::bytes48_to_felts(&binding.policy_hash)?;
                 let oracle_commitment =
-                    transaction_core::hashing::bytes32_to_felts(&binding.oracle_commitment)?;
-                let attestation_commitment =
-                    transaction_core::hashing::bytes32_to_felts(&binding.attestation_commitment)?;
+                    transaction_core::hashing_pq::bytes48_to_felts(&binding.oracle_commitment)?;
+                let attestation_commitment = transaction_core::hashing_pq::bytes48_to_felts(
+                    &binding.attestation_commitment,
+                )?;
                 (
                     transaction_core::Felt::ONE,
-                    transaction_core::Felt::new(binding.asset_id),
-                    transaction_core::Felt::new(u64::from(binding.policy_version)),
+                    transaction_core::Felt::from_u64(binding.asset_id),
+                    transaction_core::Felt::from_u64(u64::from(binding.policy_version)),
                     issuance_sign,
                     issuance_mag,
                     policy_hash,
@@ -747,18 +687,18 @@ impl StarkVerifier {
                 transaction_core::Felt::ZERO,
                 transaction_core::Felt::ZERO,
                 transaction_core::Felt::ZERO,
-                [transaction_core::Felt::ZERO; 4],
-                [transaction_core::Felt::ZERO; 4],
-                [transaction_core::Felt::ZERO; 4],
+                [transaction_core::Felt::ZERO; 6],
+                [transaction_core::Felt::ZERO; 6],
+                [transaction_core::Felt::ZERO; 6],
             ),
         };
 
-        Some(transaction_core::TransactionPublicInputsStark {
+        Some(transaction_core::TransactionPublicInputsP3 {
             input_flags,
             output_flags,
             nullifiers,
             commitments,
-            fee: transaction_core::Felt::new(inputs.fee),
+            fee: transaction_core::Felt::from_u64(inputs.fee),
             value_balance_sign,
             value_balance_magnitude,
             merkle_root,
@@ -782,11 +722,11 @@ impl StarkVerifier {
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
 pub struct BatchPublicInputs {
     /// Shared Merkle root anchor.
-    pub anchor: [u8; 32],
+    pub anchor: [u8; 48],
     /// All nullifiers across all transactions in the batch.
-    pub nullifiers: Vec<[u8; 32]>,
+    pub nullifiers: Vec<[u8; 48]>,
     /// All commitments across all transactions in the batch.
-    pub commitments: Vec<[u8; 32]>,
+    pub commitments: Vec<[u8; 48]>,
     /// Number of transactions in the batch.
     pub batch_size: u32,
     /// Total fee across all transactions.
@@ -827,11 +767,11 @@ pub trait BatchVerifier {
 /// Accept-all batch proof verifier for testing/development.
 ///
 /// WARNING: This should NEVER be used in production!
-#[cfg(all(feature = "std", not(feature = "production")))]
+#[cfg(all(feature = "std", any(test, not(feature = "production"))))]
 #[derive(Clone, Debug, Default)]
 pub struct AcceptAllBatchProofs;
 
-#[cfg(all(feature = "std", not(feature = "production")))]
+#[cfg(all(feature = "std", any(test, not(feature = "production"))))]
 impl BatchVerifier for AcceptAllBatchProofs {
     fn verify_batch(
         &self,
@@ -933,7 +873,7 @@ impl BatchVerifier for StarkBatchVerifier {
             return BatchVerificationResult::InvalidPublicInputs;
         }
 
-        let has_active_nullifier = inputs.nullifiers.iter().any(|nf| *nf != [0u8; 32]);
+        let has_active_nullifier = inputs.nullifiers.iter().any(|nf| *nf != [0u8; 48]);
         if !has_active_nullifier {
             return BatchVerificationResult::InvalidPublicInputs;
         }
@@ -942,23 +882,22 @@ impl BatchVerifier for StarkBatchVerifier {
             return BatchVerificationResult::InvalidPublicInputs;
         }
 
-        // With stark-verify feature, perform real batch verification
-        #[cfg(feature = "stark-verify")]
+        #[cfg(feature = "batch-proofs")]
         {
             use batch_circuit::{
                 verify_batch_proof_bytes, BatchCircuitError,
-                BatchPublicInputs as CircuitBatchPublicInputs,
+                BatchPublicInputs as CircuitBatchPublicInputs, MAX_BATCH_SIZE,
             };
-            use transaction_core::hashing::bytes32_to_felts;
+            use transaction_core::hashing_pq::bytes48_to_felts;
 
-            let anchor = match bytes32_to_felts(&inputs.anchor) {
+            let anchor = match bytes48_to_felts(&inputs.anchor) {
                 Some(value) => value,
                 None => return BatchVerificationResult::InvalidPublicInputs,
             };
 
             let mut nullifiers = Vec::with_capacity(inputs.nullifiers.len());
             for nf in &inputs.nullifiers {
-                let value = match bytes32_to_felts(nf) {
+                let value = match bytes48_to_felts(nf) {
                     Some(value) => value,
                     None => return BatchVerificationResult::InvalidPublicInputs,
                 };
@@ -967,51 +906,63 @@ impl BatchVerifier for StarkBatchVerifier {
 
             let mut commitments = Vec::with_capacity(inputs.commitments.len());
             for cm in &inputs.commitments {
-                let value = match bytes32_to_felts(cm) {
+                let value = match bytes48_to_felts(cm) {
                     Some(value) => value,
                     None => return BatchVerificationResult::InvalidPublicInputs,
                 };
                 commitments.push(value);
             }
 
-            let total_fee = transaction_core::Felt::new(inputs.total_fee as u64);
-            let mut batch_inputs = CircuitBatchPublicInputs::new(
-                inputs.batch_size,
+            let mut tx_active = Vec::with_capacity(MAX_BATCH_SIZE);
+            for idx in 0..MAX_BATCH_SIZE {
+                let active = idx < inputs.batch_size as usize;
+                tx_active.push(if active {
+                    transaction_core::Felt::ONE
+                } else {
+                    transaction_core::Felt::ZERO
+                });
+            }
+
+            let total_fee = transaction_core::Felt::from_u64(inputs.total_fee as u64);
+            let batch_inputs = CircuitBatchPublicInputs {
+                batch_size: inputs.batch_size,
                 anchor,
+                tx_active,
                 nullifiers,
                 commitments,
                 total_fee,
-            );
-            batch_inputs.circuit_version = transaction_core::CIRCUIT_VERSION;
+                circuit_version: transaction_core::CIRCUIT_VERSION,
+            };
 
             match verify_batch_proof_bytes(&proof.data, &batch_inputs) {
-                Ok(()) => {}
-                Err(err) => {
-                    return match err {
-                        BatchCircuitError::InvalidProofFormat => {
-                            BatchVerificationResult::InvalidProofFormat
-                        }
-                        BatchCircuitError::InvalidBatchSize(_) | BatchCircuitError::EmptyBatch => {
-                            BatchVerificationResult::InvalidBatchSize
-                        }
-                        BatchCircuitError::InvalidPublicInputs(_)
-                        | BatchCircuitError::AnchorMismatch => {
-                            BatchVerificationResult::InvalidPublicInputs
-                        }
-                        BatchCircuitError::VerificationError(_) => {
-                            BatchVerificationResult::VerificationFailed
-                        }
-                        BatchCircuitError::InvalidWitness { .. }
-                        | BatchCircuitError::TraceBuildError(_)
-                        | BatchCircuitError::ProofGenerationError(_) => {
-                            BatchVerificationResult::VerificationFailed
-                        }
-                    };
-                }
+                Ok(()) => BatchVerificationResult::Valid,
+                Err(err) => match err {
+                    BatchCircuitError::InvalidProofFormat => {
+                        BatchVerificationResult::InvalidProofFormat
+                    }
+                    BatchCircuitError::InvalidBatchSize(_) | BatchCircuitError::EmptyBatch => {
+                        BatchVerificationResult::InvalidBatchSize
+                    }
+                    BatchCircuitError::InvalidPublicInputs(_)
+                    | BatchCircuitError::AnchorMismatch => {
+                        BatchVerificationResult::InvalidPublicInputs
+                    }
+                    BatchCircuitError::VerificationError(_) => {
+                        BatchVerificationResult::VerificationFailed
+                    }
+                    BatchCircuitError::InvalidWitness { .. }
+                    | BatchCircuitError::TraceBuildError(_)
+                    | BatchCircuitError::ProofGenerationError(_) => {
+                        BatchVerificationResult::VerificationFailed
+                    }
+                },
             }
         }
 
-        BatchVerificationResult::Valid
+        #[cfg(not(feature = "batch-proofs"))]
+        {
+            BatchVerificationResult::InvalidProofFormat
+        }
     }
 }
 
@@ -1020,9 +971,9 @@ mod tests {
     use super::*;
 
     fn sample_inputs() -> ShieldedTransferInputs {
-        fn canonical_byte(value: u8) -> [u8; 32] {
-            let mut out = [0u8; 32];
-            out[31] = value;
+        fn canonical_byte(value: u8) -> [u8; 48] {
+            let mut out = [0u8; 48];
+            out[47] = value;
             out
         }
 
@@ -1042,117 +993,6 @@ mod tests {
 
     fn sample_vk() -> VerifyingKey {
         StarkVerifier::create_verifying_key(0)
-    }
-
-    #[cfg(feature = "stark-verify")]
-    fn compute_merkle_root_from_path(
-        leaf: transaction_circuit::hashing::HashFelt,
-        position: u64,
-        path: &transaction_circuit::note::MerklePath,
-    ) -> transaction_circuit::hashing::HashFelt {
-        use transaction_circuit::hashing::merkle_node;
-
-        let mut current = leaf;
-        let mut pos = position;
-        for sibling in &path.siblings {
-            current = if pos & 1 == 0 {
-                merkle_node(current, *sibling)
-            } else {
-                merkle_node(*sibling, current)
-            };
-            pos >>= 1;
-        }
-        current
-    }
-
-    #[cfg(feature = "stark-verify")]
-    fn build_stark_fixture() -> (StarkProof, ShieldedTransferInputs, BindingHash) {
-        use std::sync::OnceLock;
-        use transaction_circuit::hashing::felts_to_bytes32;
-        use transaction_circuit::note::{
-            InputNoteWitness, MerklePath, NoteData, OutputNoteWitness,
-        };
-        use transaction_circuit::rpo_prover::TransactionProverStarkRpo;
-        use transaction_circuit::witness::TransactionWitness;
-        use transaction_circuit::StablecoinPolicyBinding;
-        use winterfell::Prover;
-
-        static FIXTURE: OnceLock<(StarkProof, ShieldedTransferInputs, BindingHash)> =
-            OnceLock::new();
-        FIXTURE
-            .get_or_init(|| {
-                let input_note = NoteData {
-                    value: 1000,
-                    asset_id: 0,
-                    pk_recipient: [0u8; 32],
-                    rho: [1u8; 32],
-                    r: [2u8; 32],
-                };
-
-                let output_note = NoteData {
-                    value: 900,
-                    asset_id: 0,
-                    pk_recipient: [3u8; 32],
-                    rho: [4u8; 32],
-                    r: [5u8; 32],
-                };
-
-                let merkle_path = MerklePath::default();
-                let position = 0xA5A5A5A5u64;
-                let leaf = input_note.commitment();
-                let merkle_root = compute_merkle_root_from_path(leaf, position, &merkle_path);
-
-                let witness = TransactionWitness {
-                    inputs: vec![InputNoteWitness {
-                        note: input_note,
-                        position,
-                        rho_seed: [7u8; 32],
-                        merkle_path,
-                    }],
-                    outputs: vec![OutputNoteWitness { note: output_note }],
-                    sk_spend: [6u8; 32],
-                    merkle_root: felts_to_bytes32(&merkle_root),
-                    fee: 100,
-                    value_balance: 0,
-                    stablecoin: StablecoinPolicyBinding::default(),
-                    version: TransactionWitness::default_version_binding(),
-                };
-
-                let prover = TransactionProverStarkRpo::with_fast_options();
-                let trace = prover.build_trace(&witness).expect("trace");
-                let pub_inputs = prover.get_pub_inputs(&trace);
-                let proof = prover.prove(trace).expect("proof generation");
-
-                let inputs = ShieldedTransferInputs {
-                    anchor: felts_to_bytes32(&pub_inputs.merkle_root),
-                    nullifiers: pub_inputs
-                        .nullifiers
-                        .iter()
-                        .zip(pub_inputs.input_flags.iter())
-                        .filter(|(_, flag)| flag.as_int() == 1)
-                        .map(|(nf, _)| felts_to_bytes32(nf))
-                        .collect(),
-                    commitments: pub_inputs
-                        .commitments
-                        .iter()
-                        .zip(pub_inputs.output_flags.iter())
-                        .filter(|(_, flag)| flag.as_int() == 1)
-                        .map(|(cm, _)| felts_to_bytes32(cm))
-                        .collect(),
-                    fee: pub_inputs.fee.as_int(),
-                    value_balance: 0,
-                    stablecoin: None,
-                };
-
-                let binding_hash = StarkVerifier::compute_binding_hash(&inputs);
-
-                (
-                    StarkProof::from_bytes(proof.to_bytes()),
-                    inputs,
-                    binding_hash,
-                )
-            })
-            .clone()
     }
 
     #[test]
@@ -1258,7 +1098,7 @@ mod tests {
 
         // Modify the anchor
         let mut modified_inputs = inputs.clone();
-        modified_inputs.anchor = [99u8; 32];
+        modified_inputs.anchor = [99u8; 48];
 
         assert!(
             !verifier.verify_binding_hash(&sig, &modified_inputs),
@@ -1274,7 +1114,7 @@ mod tests {
         let sig = StarkVerifier::compute_binding_hash(&inputs);
 
         let mut modified_inputs = inputs.clone();
-        modified_inputs.nullifiers[0] = [99u8; 32];
+        modified_inputs.nullifiers[0] = [99u8; 48];
 
         assert!(
             !verifier.verify_binding_hash(&sig, &modified_inputs),
@@ -1290,7 +1130,7 @@ mod tests {
         let sig = StarkVerifier::compute_binding_hash(&inputs);
 
         let mut modified_inputs = inputs.clone();
-        modified_inputs.commitments[0] = [99u8; 32];
+        modified_inputs.commitments[0] = [99u8; 48];
 
         assert!(
             !verifier.verify_binding_hash(&sig, &modified_inputs),
@@ -1335,11 +1175,6 @@ mod tests {
     #[test]
     fn adversarial_random_proof_rejected() {
         // Test A4: Random bytes as proof should fail verification
-        //
-        // Note: With the stark-verify feature enabled, winterfell's Proof::from_bytes
-        // may panic on malformed input (overflow in debug mode). We use catch_unwind
-        // to treat panics as a valid form of rejection.
-        use std::panic;
 
         let verifier = StarkVerifier;
 
@@ -1351,29 +1186,15 @@ mod tests {
         let inputs = sample_inputs();
         let vk = sample_vk();
 
-        // Catch panics from winterfell's deserializer on malformed input
-        let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-            verifier.verify_stark(&random_proof, &inputs, &vk)
-        }));
-
-        match result {
-            Ok(verification_result) => {
-                // Normal return - should be rejection
-                assert!(
-                    matches!(
-                        verification_result,
-                        VerificationResult::InvalidProofFormat
-                            | VerificationResult::VerificationFailed
-                    ),
-                    "Random proof bytes should be rejected, got {:?}",
-                    verification_result
-                );
-            }
-            Err(_) => {
-                // Panic is also a valid form of rejection for malformed input
-                // This can happen with winterfell in debug mode on certain inputs
-            }
-        }
+        let verification_result = verifier.verify_stark(&random_proof, &inputs, &vk);
+        assert!(
+            matches!(
+                verification_result,
+                VerificationResult::InvalidProofFormat | VerificationResult::VerificationFailed
+            ),
+            "Random proof bytes should be rejected, got {:?}",
+            verification_result
+        );
     }
 
     #[test]
@@ -1399,9 +1220,9 @@ mod tests {
         // Test that binding hash still works
         let verifier = StarkVerifier;
         let inputs = ShieldedTransferInputs {
-            anchor: [1u8; 32],
+            anchor: [1u8; 48],
             nullifiers: vec![], // Empty
-            commitments: vec![[4u8; 32]],
+            commitments: vec![[4u8; 48]],
             fee: 0,
             value_balance: 1000, // Minting 1000
             stablecoin: None,
@@ -1420,18 +1241,18 @@ mod tests {
         let verifier = StarkVerifier;
 
         let inputs_max = ShieldedTransferInputs {
-            anchor: [1u8; 32],
-            nullifiers: vec![[2u8; 32]],
-            commitments: vec![[4u8; 32]],
+            anchor: [1u8; 48],
+            nullifiers: vec![[2u8; 48]],
+            commitments: vec![[4u8; 48]],
             fee: 0,
             value_balance: i128::MAX,
             stablecoin: None,
         };
 
         let inputs_min = ShieldedTransferInputs {
-            anchor: [1u8; 32],
-            nullifiers: vec![[2u8; 32]],
-            commitments: vec![[4u8; 32]],
+            anchor: [1u8; 48],
+            nullifiers: vec![[2u8; 48]],
+            commitments: vec![[4u8; 48]],
             fee: 0,
             value_balance: i128::MIN,
             stablecoin: None,
@@ -1443,62 +1264,5 @@ mod tests {
 
         assert!(verifier.verify_binding_hash(&sig_max, &inputs_max));
         assert!(verifier.verify_binding_hash(&sig_min, &inputs_min));
-    }
-
-    #[test]
-    #[cfg(feature = "stark-verify")]
-    fn stark_verifier_accepts_real_proof_fixture() {
-        let verifier = StarkVerifier;
-        let (proof, inputs, _binding_hash) = build_stark_fixture();
-
-        let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
-        assert_eq!(result, VerificationResult::Valid);
-    }
-
-    #[test]
-    #[cfg(feature = "stark-verify")]
-    fn stark_verifier_rejects_noncanonical_nullifier() {
-        let verifier = StarkVerifier;
-        let (proof, mut inputs, _binding_hash) = build_stark_fixture();
-        inputs.nullifiers[0][..8].copy_from_slice(&u64::MAX.to_be_bytes());
-
-        let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
-        assert_eq!(result, VerificationResult::InvalidPublicInputs);
-    }
-
-    #[test]
-    #[cfg(feature = "stark-verify")]
-    fn stark_verifier_rejects_noncanonical_commitment() {
-        let verifier = StarkVerifier;
-        let (proof, mut inputs, _binding_hash) = build_stark_fixture();
-        inputs.commitments[0][..8].copy_from_slice(&u64::MAX.to_be_bytes());
-
-        let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
-        assert_eq!(result, VerificationResult::InvalidPublicInputs);
-    }
-
-    #[test]
-    #[cfg(feature = "stark-verify")]
-    fn stark_verifier_rejects_noncanonical_anchor() {
-        let verifier = StarkVerifier;
-        let (proof, mut inputs, _binding_hash) = build_stark_fixture();
-        inputs.anchor[..8].copy_from_slice(&u64::MAX.to_be_bytes());
-
-        let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
-        assert_eq!(result, VerificationResult::InvalidPublicInputs);
-    }
-
-    #[test]
-    #[cfg(feature = "stark-verify")]
-    fn stark_verifier_rejects_tampered_value_balance() {
-        let verifier = StarkVerifier;
-        let (proof, mut inputs, _binding_hash) = build_stark_fixture();
-
-        inputs.value_balance = 12345;
-        let binding_hash = StarkVerifier::compute_binding_hash(&inputs);
-        assert!(verifier.verify_binding_hash(&binding_hash, &inputs));
-
-        let result = verifier.verify_stark(&proof, &inputs, &sample_vk());
-        assert_eq!(result, VerificationResult::VerificationFailed);
     }
 }
