@@ -1,0 +1,31 @@
+{
+  "name": "hegemon-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "@types/node": "^20.17.30",
+    "@types/react": "^18.3.20",
+    "@types/react-dom": "^18.3.5",
+    "autoprefixer": "^10.4.20",
+    "electron": "^31.2.0",
+    "electron-vite": "^2.1.0",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.2",
+    "vite": "^5.4.12"
+  }
+}

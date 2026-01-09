@@ -17,6 +17,7 @@ members = [
     "pq-noise",
     "wallet",
     "wallet/bench",
+    "walletd",
     "pallets/fee-model",
     "pallets/identity",
     "pallets/attestations",
