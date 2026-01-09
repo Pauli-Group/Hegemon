@@ -1,5 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type {
   WalletDisclosureCreateResult,
@@ -21,6 +23,7 @@ type WalletdResponse = {
   ok: boolean;
   result?: any;
   error?: string;
+  error_code?: string;
 };
 
 type WalletdMode = 'open' | 'create';
@@ -133,27 +136,28 @@ export class WalletdClient {
   }
 
   private async ensureProcess(storePath: string, passphrase: string, mode: WalletdMode): Promise<void> {
+    const resolvedPath = expandHomePath(storePath);
     if (
       this.process &&
-      this.storePath === storePath &&
+      this.storePath === resolvedPath &&
       this.passphrase === passphrase &&
       this.mode === mode
     ) {
       return;
     }
 
-    if (mode === 'open' && !existsSync(storePath)) {
+    if (mode === 'open' && !existsSync(resolvedPath)) {
       throw new Error('Wallet store not found.');
     }
-    if (mode === 'create' && existsSync(storePath)) {
+    if (mode === 'create' && existsSync(resolvedPath)) {
       throw new Error('Wallet store already exists.');
     }
 
     await this.stop();
 
     const walletdPath = resolveBinaryPath('walletd');
-    this.process = spawn(walletdPath, ['--store', storePath, '--mode', mode]);
-    this.storePath = storePath;
+    this.process = spawn(walletdPath, ['--store', resolvedPath, '--mode', mode]);
+    this.storePath = resolvedPath;
     this.passphrase = passphrase;
     this.mode = mode;
 
@@ -198,7 +202,14 @@ export class WalletdClient {
     if (response.ok) {
       pending.resolve(response.result ?? null);
     } else {
-      pending.reject(new Error(response.error || 'walletd error'));
+      const message = response.error || 'walletd error';
+      const error = new Error(
+        response.error_code ? `${message} (${response.error_code})` : message
+      );
+      if (response.error_code) {
+        (error as { code?: string }).code = response.error_code;
+      }
+      pending.reject(error);
     }
   }
 
@@ -213,3 +224,13 @@ export class WalletdClient {
     this.mode = null;
   }
 }
+
+const expandHomePath = (value: string) => {
+  if (value === '~') {
+    return homedir();
+  }
+  if (value.startsWith('~/')) {
+    return join(homedir(), value.slice(2));
+  }
+  return value;
+};

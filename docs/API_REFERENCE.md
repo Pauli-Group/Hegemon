@@ -44,6 +44,14 @@ p budgets.
 - `wallet::rpc::TransactionBundle` and shielded-transfer payloads use `binding_hash` (a 64-byte hash commitment), not a signature.
 - `wallet/bench` binary crate (`wallet-bench`) accepts `--iterations` and reports note construction/sec, nullifier derivations/sec, and encryption throughput.
 
+## `walletd/`
+
+- `walletd` is a sidecar daemon that speaks newline-delimited JSON over stdin/stdout for GUI clients.
+- Requests: `{ id, method, params }`. Responses: `{ id, ok, result?, error?, error_code? }`. `error_code` is snake_case.
+- `status.get` returns `protocolVersion`, `capabilities`, `walletMode`, `storePath`, balances, pending entries, note summary, and `genesisHash`.
+- `sync.once`, `tx.send`, `disclosure.create`, and `disclosure.verify` mirror the wallet CLI flows without log parsing.
+- The daemon holds an exclusive `<store>.lock` file to prevent concurrent access to the same wallet store.
+
 ## Runtime pallets (identity, attestations, settlement)
 
 - `pallet-identity`
@@ -53,6 +61,16 @@ p budgets.
   - Default runtime constants seed attestations with Poseidon2-384 hashing, 43 FRI queries, a 16x blowup factor, and quadratic extension over Goldilocks. With 384-bit digests, PQ collision resistance reaches ~128 bits. Calling `set_verifier_params` is the documented migration path for tightening soundness or swapping hashes without redeploying the pallets.
 
 ## Node RPC endpoints
+
+Hegemon-specific RPC methods exposed on the Substrate JSON-RPC server:
+
+- `hegemon_miningStatus() -> MiningStatus`
+- `hegemon_startMining(params?: { threads: number }) -> MiningControlResponse`
+- `hegemon_stopMining() -> MiningControlResponse`
+- `hegemon_consensusStatus() -> ConsensusStatus`
+- `hegemon_telemetry() -> TelemetrySnapshot`
+- `hegemon_storageFootprint() -> StorageFootprint`
+- `hegemon_nodeConfig() -> NodeConfigSnapshot` (base path, chain spec identity, listen addresses, PQ settings)
 
 Block validity and data-availability RPC methods exposed by the Substrate node:
 

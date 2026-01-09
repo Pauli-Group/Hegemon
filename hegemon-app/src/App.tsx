@@ -7,7 +7,7 @@ import type {
   WalletStatus
 } from './types';
 
-const defaultStorePath = '/tmp/hegemon-wallet';
+const defaultStorePath = '~/hegemon-wallet';
 const contactsKey = 'hegemon.contacts';
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
@@ -218,11 +218,13 @@ const buildDefaultConnection = (): NodeConnection => ({
   wsUrl: 'ws://127.0.0.1:9944',
   httpUrl: 'http://127.0.0.1:9944',
   dev: true,
-  tmp: true,
+  tmp: false,
+  basePath: '~/.hegemon-node',
   rpcPort: 9944,
   p2pPort: 30333,
   mineThreads: 1,
-  miningIntent: false
+  miningIntent: false,
+  rpcMethods: 'safe'
 });
 
 export default function App() {
@@ -476,6 +478,17 @@ export default function App() {
       setNodeError('Set a miner address before enabling mining.');
       return;
     }
+    if (activeConnection.tmp) {
+      const confirmed = window.confirm('Temp storage deletes node data on shutdown. Continue?');
+      if (!confirmed) {
+        return;
+      }
+    } else if (!activeConnection.basePath) {
+      const confirmed = window.confirm('No base path set. The node will use its default data directory. Continue?');
+      if (!confirmed) {
+        return;
+      }
+    }
     setNodeBusy(true);
     setNodeError(null);
     try {
@@ -487,10 +500,14 @@ export default function App() {
         tmp: activeConnection.tmp,
         rpcPort: activeConnection.rpcPort,
         p2pPort: activeConnection.p2pPort,
+        listenAddr: activeConnection.listenAddr || undefined,
         minerAddress: activeConnection.minerAddress || undefined,
         mineThreads: activeConnection.mineThreads,
         mineOnStart: activeConnection.miningIntent,
-        seeds: activeConnection.seeds || undefined
+        seeds: activeConnection.seeds || undefined,
+        rpcExternal: activeConnection.rpcExternal,
+        rpcMethods: activeConnection.rpcMethods,
+        nodeName: activeConnection.nodeName || undefined
       });
       await refreshNode();
     } catch (error) {
@@ -865,7 +882,15 @@ export default function App() {
                       <input
                         value={activeConnection.basePath ?? ''}
                         onChange={(event) => updateActiveConnection({ basePath: event.target.value })}
-                        placeholder="~/.hegemon/node"
+                        placeholder="~/.hegemon-node"
+                      />
+                    </label>
+                    <label className="space-y-2">
+                      <span className="label">Node name</span>
+                      <input
+                        value={activeConnection.nodeName ?? ''}
+                        onChange={(event) => updateActiveConnection({ nodeName: event.target.value })}
+                        placeholder="AliceBootNode"
                       />
                     </label>
                     <label className="space-y-2">
@@ -889,6 +914,24 @@ export default function App() {
                         }}
                       />
                     </label>
+                    <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(activeConnection.rpcExternal)}
+                        onChange={(event) => updateActiveConnection({ rpcExternal: event.target.checked })}
+                      />
+                      RPC external (exposes HTTP to network)
+                    </label>
+                    <label className="space-y-2">
+                      <span className="label">RPC methods</span>
+                      <select
+                        value={activeConnection.rpcMethods ?? 'safe'}
+                        onChange={(event) => updateActiveConnection({ rpcMethods: event.target.value as NodeConnection['rpcMethods'] })}
+                      >
+                        <option value="safe">safe</option>
+                        <option value="unsafe">unsafe</option>
+                      </select>
+                    </label>
                     <label className="space-y-2">
                       <span className="label">P2P port</span>
                       <input
@@ -897,6 +940,14 @@ export default function App() {
                           const nextPort = Number.parseInt(event.target.value, 10);
                           updateActiveConnection({ p2pPort: Number.isNaN(nextPort) ? undefined : nextPort });
                         }}
+                      />
+                    </label>
+                    <label className="space-y-2">
+                      <span className="label">Listen address</span>
+                      <input
+                        value={activeConnection.listenAddr ?? ''}
+                        onChange={(event) => updateActiveConnection({ listenAddr: event.target.value })}
+                        placeholder="/ip4/0.0.0.0/tcp/30333"
                       />
                     </label>
                     <label className="space-y-2 md:col-span-2">
@@ -955,6 +1006,21 @@ export default function App() {
                   {activeConnection.dev && !activeConnection.chainSpecPath ? (
                     <p className="text-sm text-surfaceMuted">
                       Multi-machine networks require a shared chainspec. See runbooks/two_person_testnet.md for details.
+                    </p>
+                  ) : null}
+                  {activeConnection.listenAddr ? (
+                    <p className="text-sm text-surfaceMuted">
+                      Listen address overrides the P2P port setting.
+                    </p>
+                  ) : null}
+                  {activeConnection.rpcExternal || activeConnection.rpcMethods === 'unsafe' ? (
+                    <p className="text-sm text-guard">
+                      External RPC and unsafe methods expose control surfaces. Restrict with firewalls and only use on trusted networks.
+                    </p>
+                  ) : null}
+                  {activeConnection.tmp ? (
+                    <p className="text-sm text-guard">
+                      Temp storage deletes chain data on shutdown. Use a base path for persistence.
                     </p>
                   ) : null}
                 </>
@@ -1170,7 +1236,7 @@ export default function App() {
             <button className="secondary" onClick={handleWalletStatus} disabled={walletBusy}>
               Status
             </button>
-            <button className="secondary" onClick={handleWalletSync} disabled={walletBusy}>
+            <button className="secondary" onClick={() => handleWalletSync()} disabled={walletBusy}>
               Sync
             </button>
           </div>

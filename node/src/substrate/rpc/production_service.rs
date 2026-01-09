@@ -38,6 +38,7 @@
 //! let rpc_deps = FullDeps {
 //!     service: Arc::new(service),
 //!     pow_handle: pow_handle.clone(),
+//!     node_config,
 //!     deny_unsafe: false,
 //!     recursive_block_proof_store: recursive_block_proof_store.clone(),
 //!     commitment_block_proof_store: commitment_block_proof_store.clone(),

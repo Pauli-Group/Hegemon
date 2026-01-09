@@ -15,6 +15,7 @@
 //! | `hegemon_consensusStatus` | Get consensus layer status               |
 //! | `hegemon_telemetry`       | Get node telemetry metrics               |
 //! | `hegemon_storageFootprint`| Get storage usage statistics             |
+//! | `hegemon_nodeConfig`      | Get node config snapshot                 |
 
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
@@ -115,6 +116,38 @@ pub struct StorageFootprint {
     pub nullifiers_bytes: u64,
 }
 
+/// Node config snapshot
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeConfigSnapshot {
+    /// Node name (if configured)
+    pub node_name: String,
+    /// Chain spec identifier
+    pub chain_spec_id: String,
+    /// Chain spec name
+    pub chain_spec_name: String,
+    /// Chain type (dev, local, live, custom)
+    pub chain_type: String,
+    /// Base path for node data
+    pub base_path: String,
+    /// P2P listen address
+    pub p2p_listen_addr: String,
+    /// RPC listen address
+    pub rpc_listen_addr: String,
+    /// RPC methods setting (safe/unsafe/auto)
+    pub rpc_methods: String,
+    /// Whether RPC is exposed beyond localhost
+    pub rpc_external: bool,
+    /// PQ bootstrap nodes (ip:port)
+    pub bootstrap_nodes: Vec<String>,
+    /// Require PQ connections
+    pub require_pq: bool,
+    /// PQ handshake verbose logging enabled
+    pub pq_verbose: bool,
+    /// Maximum peers allowed
+    pub max_peers: u32,
+}
+
 /// Hegemon RPC API trait definition
 ///
 /// This trait defines all the custom RPC endpoints for the Hegemon node.
@@ -167,6 +200,13 @@ pub trait HegemonApi {
     /// of the node's persistent storage.
     #[method(name = "storageFootprint")]
     async fn storage_footprint(&self) -> RpcResult<StorageFootprint>;
+
+    /// Get node configuration snapshot
+    ///
+    /// Returns the effective node configuration the process is running with,
+    /// including chain spec identity, base path, listen addresses, and PQ settings.
+    #[method(name = "nodeConfig")]
+    async fn node_config(&self) -> RpcResult<NodeConfigSnapshot>;
 }
 
 /// Trait for mining handle operations
@@ -209,6 +249,7 @@ pub trait HegemonService: Send + Sync {
 pub struct HegemonRpc<S, P> {
     service: Arc<S>,
     pow_handle: P,
+    config_snapshot: NodeConfigSnapshot,
 }
 
 impl<S, P> HegemonRpc<S, P>
@@ -217,10 +258,11 @@ where
     P: MiningHandle + Clone + Send + Sync + 'static,
 {
     /// Create a new Hegemon RPC handler
-    pub fn new(service: Arc<S>, pow_handle: P) -> Self {
+    pub fn new(service: Arc<S>, pow_handle: P, config_snapshot: NodeConfigSnapshot) -> Self {
         Self {
             service,
             pow_handle,
+            config_snapshot,
         }
     }
 }
@@ -297,6 +339,10 @@ where
         self.service.storage_footprint().map_err(|e| {
             ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e, None::<()>)
         })
+    }
+
+    async fn node_config(&self) -> RpcResult<NodeConfigSnapshot> {
+        Ok(self.config_snapshot.clone())
     }
 }
 
@@ -396,11 +442,29 @@ mod tests {
         }
     }
 
+    fn mock_config() -> NodeConfigSnapshot {
+        NodeConfigSnapshot {
+            node_name: "MockNode".to_string(),
+            chain_spec_id: "dev".to_string(),
+            chain_spec_name: "Development".to_string(),
+            chain_type: "dev".to_string(),
+            base_path: "/tmp/hegemon-node".to_string(),
+            p2p_listen_addr: "0.0.0.0:30333".to_string(),
+            rpc_listen_addr: "127.0.0.1:9944".to_string(),
+            rpc_methods: "safe".to_string(),
+            rpc_external: false,
+            bootstrap_nodes: vec!["1.2.3.4:30333".to_string()],
+            require_pq: true,
+            pq_verbose: false,
+            max_peers: 50,
+        }
+    }
+
     #[tokio::test]
     async fn test_mining_status() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle);
+        let rpc = HegemonRpc::new(service, handle, mock_config());
 
         let status = rpc.mining_status().await.unwrap();
         assert!(!status.is_mining);
@@ -411,7 +475,7 @@ mod tests {
     async fn test_start_stop_mining() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle);
+        let rpc = HegemonRpc::new(service, handle, mock_config());
 
         // Start mining
         let result = rpc
@@ -431,7 +495,7 @@ mod tests {
     async fn test_consensus_status() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle);
+        let rpc = HegemonRpc::new(service, handle, mock_config());
 
         let status = rpc.consensus_status().await.unwrap();
         assert_eq!(status.height, 100);
@@ -443,11 +507,25 @@ mod tests {
     async fn test_telemetry() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle);
+        let rpc = HegemonRpc::new(service, handle, mock_config());
 
         let snapshot = rpc.telemetry().await.unwrap();
         assert_eq!(snapshot.uptime_secs, 3600);
         assert_eq!(snapshot.tx_count, 1000);
+    }
+
+    #[tokio::test]
+    async fn test_node_config_snapshot() {
+        let service = Arc::new(MockService);
+        let handle = MockMiningHandle::new();
+        let rpc = HegemonRpc::new(service, handle, mock_config());
+
+        let config = rpc.node_config().await.unwrap();
+        assert_eq!(config.node_name, "MockNode");
+        assert_eq!(config.chain_spec_id, "dev");
+        assert_eq!(config.rpc_methods, "safe");
+        assert!(!config.rpc_external);
+        assert_eq!(config.bootstrap_nodes.len(), 1);
     }
 
     // ============================================================================
@@ -458,7 +536,7 @@ mod tests {
     async fn test_storage_footprint() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle);
+        let rpc = HegemonRpc::new(service, handle, mock_config());
 
         let footprint = rpc.storage_footprint().await.unwrap();
         assert_eq!(footprint.total_bytes, 1024 * 1024 * 100);
@@ -472,7 +550,7 @@ mod tests {
     async fn test_mining_lifecycle() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle);
+        let rpc = HegemonRpc::new(service, handle, mock_config());
 
         // Initial state: not mining
         let status = rpc.mining_status().await.unwrap();
@@ -506,7 +584,7 @@ mod tests {
     async fn test_consensus_status_fields() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle);
+        let rpc = HegemonRpc::new(service, handle, mock_config());
 
         let status = rpc.consensus_status().await.unwrap();
 
@@ -524,7 +602,7 @@ mod tests {
     async fn test_telemetry_fields() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle);
+        let rpc = HegemonRpc::new(service, handle, mock_config());
 
         let snapshot = rpc.telemetry().await.unwrap();
 
@@ -542,7 +620,7 @@ mod tests {
     async fn test_start_mining_with_default_threads() {
         let service = Arc::new(MockService);
         let handle = MockMiningHandle::new();
-        let rpc = HegemonRpc::new(service, handle);
+        let rpc = HegemonRpc::new(service, handle, mock_config());
 
         // Start mining with no params (should use default threads)
         let result = rpc.start_mining(None).await.unwrap();

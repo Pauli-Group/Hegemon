@@ -125,7 +125,8 @@ use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
 use crate::substrate::rpc::{
     BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer, HegemonRpc,
-    ProductionRpcService, ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
+    NodeConfigSnapshot, ProductionRpcService, ShieldedApiServer, ShieldedRpc, WalletApiServer,
+    WalletRpc,
 };
 use crate::substrate::transaction_pool::{
     SubstrateTransactionPoolWrapper, TransactionPoolBridge, TransactionPoolConfig,
@@ -4598,8 +4599,28 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         // Hegemon Custom RPCs
         // =====================================================================
 
+        let config_snapshot = NodeConfigSnapshot {
+            node_name: config.network.node_name.clone(),
+            chain_spec_id: config.chain_spec.id().to_string(),
+            chain_spec_name: config.chain_spec.name().to_string(),
+            chain_type: format!("{:?}", config.chain_spec.chain_type()).to_lowercase(),
+            base_path: config.base_path.path().display().to_string(),
+            p2p_listen_addr: pq_service_config.listen_addr.to_string(),
+            rpc_listen_addr: rpc_listen_addr.to_string(),
+            rpc_methods: format!("{:?}", config.rpc.methods).to_lowercase(),
+            rpc_external: !rpc_listen_addr.ip().is_loopback(),
+            bootstrap_nodes: pq_service_config
+                .bootstrap_nodes
+                .iter()
+                .map(|addr| addr.to_string())
+                .collect(),
+            require_pq: pq_service_config.require_pq,
+            pq_verbose: pq_service_config.verbose_logging,
+            max_peers: pq_service_config.max_peers as u32,
+        };
+
         // Add Hegemon RPC (mining, consensus, telemetry)
-        let hegemon_rpc = HegemonRpc::new(rpc_service.clone(), pow_handle.clone());
+        let hegemon_rpc = HegemonRpc::new(rpc_service.clone(), pow_handle.clone(), config_snapshot);
         if let Err(e) = module.merge(hegemon_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Hegemon RPC");
         } else {

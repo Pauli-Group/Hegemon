@@ -1,5 +1,6 @@
+use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
@@ -8,6 +9,7 @@ use disclosure_circuit::{
     prove_payment_disclosure, verify_payment_disclosure, PaymentDisclosureClaim,
     PaymentDisclosureProofBundle, PaymentDisclosureWitness,
 };
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::runtime::Builder as RuntimeBuilder;
@@ -29,6 +31,8 @@ use wallet::{
     substrate_rpc::SubstrateRpcClient,
     ConsolidationPlan, MAX_INPUTS,
 };
+
+const PROTOCOL_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WalletdMode {
@@ -52,6 +56,49 @@ struct RequestEnvelope {
     params: Value,
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WalletdErrorCode {
+    InvalidRequest,
+    InvalidParams,
+    UnknownMethod,
+    WalletNotFound,
+    WalletAlreadyExists,
+    StoreLocked,
+    PassphraseEmpty,
+    WatchOnly,
+    ConsolidationRequired,
+    GenesisMismatch,
+    AnchorInvalid,
+    MerklePathInvalid,
+    ProofInvalid,
+    RpcConnectionFailed,
+    SyncFailed,
+    TransactionFailed,
+    InternalError,
+}
+
+#[derive(Debug)]
+struct WalletdError {
+    code: WalletdErrorCode,
+    message: String,
+}
+
+type WalletdResult<T> = std::result::Result<T, WalletdError>;
+
+impl WalletdError {
+    fn new(code: WalletdErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    fn internal(err: impl std::fmt::Display) -> Self {
+        Self::new(WalletdErrorCode::InternalError, err.to_string())
+    }
+}
+
 #[derive(Serialize)]
 struct ResponseEnvelope {
     id: Value,
@@ -60,11 +107,33 @@ struct ResponseEnvelope {
     result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<WalletdErrorCode>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WalletCapabilities {
+    disclosure: bool,
+    auto_consolidate: bool,
+    notes_summary: bool,
+    error_codes: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WalletModeLabel {
+    Full,
+    WatchOnly,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WalletStatusResponse {
+    protocol_version: u32,
+    capabilities: WalletCapabilities,
+    wallet_mode: WalletModeLabel,
+    store_path: String,
     primary_address: String,
     last_synced_height: u64,
     balances: Vec<BalanceEntry>,
@@ -113,6 +182,11 @@ struct NoteSummary {
 struct ConsolidationPlanSummary {
     txs_needed: u64,
     blocks_needed: u64,
+}
+
+struct StoreLock {
+    _file: File,
+    _path: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -183,10 +257,13 @@ fn main() -> Result<()> {
         .to_string();
 
     if passphrase.is_empty() {
-        anyhow::bail!("passphrase is empty");
+        let err = WalletdError::new(WalletdErrorCode::PassphraseEmpty, "passphrase is empty");
+        anyhow::bail!(err.message);
     }
 
-    let store = Arc::new(open_store(&store_path, &passphrase, mode)?);
+    let (store, _store_lock) =
+        open_store(&store_path, &passphrase, mode).map_err(|err| anyhow!(err.message))?;
+    let store = Arc::new(store);
     let runtime = RuntimeBuilder::new_multi_thread()
         .enable_all()
         .build()
@@ -209,12 +286,13 @@ fn main() -> Result<()> {
         }
 
         let response = match serde_json::from_str::<RequestEnvelope>(&line) {
-            Ok(request) => handle_request(&runtime, store.clone(), request),
+            Ok(request) => handle_request(&runtime, store.clone(), &store_path, request),
             Err(err) => ResponseEnvelope {
                 id: Value::Null,
                 ok: false,
                 result: None,
                 error: Some(format!("invalid request: {err}")),
+                error_code: Some(WalletdErrorCode::InvalidRequest),
             },
         };
 
@@ -252,53 +330,93 @@ fn parse_args() -> Result<(String, WalletdMode)> {
     Ok((store_path, mode))
 }
 
-fn open_store(store_path: &str, passphrase: &str, mode: WalletdMode) -> Result<WalletStore> {
-    let exists = Path::new(store_path).exists();
-    match mode {
+fn open_store(
+    store_path: &str,
+    passphrase: &str,
+    mode: WalletdMode,
+) -> WalletdResult<(WalletStore, StoreLock)> {
+    let store_path = Path::new(store_path);
+    let lock = acquire_store_lock(store_path)?;
+    let exists = store_path.exists();
+    let store = match mode {
         WalletdMode::Open => {
             if !exists {
-                anyhow::bail!("wallet store not found");
+                return Err(WalletdError::new(
+                    WalletdErrorCode::WalletNotFound,
+                    "wallet store not found",
+                ));
             }
-            WalletStore::open(store_path, passphrase).context("failed to open wallet store")
+            WalletStore::open(store_path, passphrase)
+                .context("failed to open wallet store")
+                .map_err(WalletdError::internal)?
         }
         WalletdMode::Create => {
             if exists {
-                anyhow::bail!("wallet store already exists");
+                return Err(WalletdError::new(
+                    WalletdErrorCode::WalletAlreadyExists,
+                    "wallet store already exists",
+                ));
             }
-            WalletStore::create_full(store_path, passphrase).context("failed to create wallet store")
+            WalletStore::create_full(store_path, passphrase)
+                .context("failed to create wallet store")
+                .map_err(WalletdError::internal)?
         }
+    };
+    Ok((store, lock))
+}
+
+fn acquire_store_lock(store_path: &Path) -> WalletdResult<StoreLock> {
+    let lock_path = PathBuf::from(format!("{}.lock", store_path.display()));
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&lock_path)
+        .map_err(WalletdError::internal)?;
+    if let Err(err) = file.try_lock_exclusive() {
+        if err.kind() == io::ErrorKind::WouldBlock {
+            return Err(WalletdError::new(
+                WalletdErrorCode::StoreLocked,
+                "wallet store is already open in another process",
+            ));
+        }
+        return Err(WalletdError::internal(err));
     }
+    Ok(StoreLock {
+        _file: file,
+        _path: lock_path,
+    })
 }
 
 fn handle_request(
     runtime: &tokio::runtime::Runtime,
     store: Arc<WalletStore>,
+    store_path: &str,
     request: RequestEnvelope,
 ) -> ResponseEnvelope {
-    let result = (|| -> Result<Value> {
+    let result = (|| -> WalletdResult<Value> {
         match request.method.as_str() {
-            "status.get" => serde_json::to_value(status_get(&store)?).map_err(anyhow::Error::from),
+            "status.get" => to_json(status_get(&store, store_path)?),
             "sync.once" => {
                 let params: SyncParams = parse_params(request.params)?;
-                serde_json::to_value(sync_once(runtime, store, params)?)
-                    .map_err(anyhow::Error::from)
+                to_json(sync_once(runtime, store, params)?)
             }
             "tx.send" => {
                 let params: SendParams = parse_params(request.params)?;
-                serde_json::to_value(tx_send(runtime, store, params)?)
-                    .map_err(anyhow::Error::from)
+                to_json(tx_send(runtime, store, params)?)
             }
             "disclosure.create" => {
                 let params: DisclosureCreateParams = parse_params(request.params)?;
-                serde_json::to_value(disclosure_create(runtime, store, params)?)
-                    .map_err(anyhow::Error::from)
+                to_json(disclosure_create(runtime, store, params)?)
             }
             "disclosure.verify" => {
                 let params: DisclosureVerifyParams = parse_params(request.params)?;
-                serde_json::to_value(disclosure_verify(runtime, params)?)
-                    .map_err(anyhow::Error::from)
+                to_json(disclosure_verify(runtime, params)?)
             }
-            _ => Err(anyhow!("unknown method {}", request.method)),
+            _ => Err(WalletdError::new(
+                WalletdErrorCode::UnknownMethod,
+                format!("unknown method {}", request.method),
+            )),
         }
     })();
 
@@ -308,37 +426,54 @@ fn handle_request(
             ok: true,
             result: Some(value),
             error: None,
+            error_code: None,
         },
         Err(err) => ResponseEnvelope {
             id: request.id,
             ok: false,
             result: None,
-            error: Some(err.to_string()),
+            error: Some(err.message),
+            error_code: Some(err.code),
         },
     }
 }
 
-fn parse_params<T: for<'de> Deserialize<'de>>(params: Value) -> Result<T> {
-    serde_json::from_value(params).map_err(|err| anyhow!("invalid params: {err}"))
+fn parse_params<T: for<'de> Deserialize<'de>>(params: Value) -> WalletdResult<T> {
+    serde_json::from_value(params).map_err(|err| {
+        WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            format!("invalid params: {err}"),
+        )
+    })
 }
 
-fn status_get(store: &Arc<WalletStore>) -> Result<WalletStatusResponse> {
-    let mode = store.mode()?;
-    let balances = store.balances()?;
-    let pending_balances = store.pending_balances()?;
-    let latest = store.last_synced_height()?;
-    let pending_txs = store.pending_transactions()?;
+fn to_json<T: Serialize>(value: T) -> WalletdResult<Value> {
+    serde_json::to_value(value).map_err(WalletdError::internal)
+}
+
+fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<WalletStatusResponse> {
+    let mode = store.mode().map_err(WalletdError::internal)?;
+    let balances = store.balances().map_err(WalletdError::internal)?;
+    let pending_balances = store.pending_balances().map_err(WalletdError::internal)?;
+    let latest = store
+        .last_synced_height()
+        .map_err(WalletdError::internal)?;
+    let pending_txs = store
+        .pending_transactions()
+        .map_err(WalletdError::internal)?;
 
     let primary_address = if mode == WalletMode::Full {
         store
-            .derived_keys()?
+            .derived_keys()
+            .map_err(WalletdError::internal)?
             .and_then(|keys| keys.address(0).ok())
             .and_then(|mat| mat.shielded_address().encode().ok())
     } else {
         store
             .incoming_key()
+            .map_err(WalletdError::internal)?
+            .shielded_address(0)
             .ok()
-            .and_then(|ivk| ivk.shielded_address(0).ok())
             .and_then(|addr| addr.encode().ok())
     }
     .unwrap_or_else(|| "—".to_string());
@@ -379,10 +514,23 @@ fn status_get(store: &Arc<WalletStore>) -> Result<WalletStatusResponse> {
 
     let notes = summarize_notes(store)?;
     let genesis_hash = store
-        .genesis_hash()?
+        .genesis_hash()
+        .map_err(WalletdError::internal)?
         .map(|hash| format!("0x{}", hex::encode(hash)));
 
     Ok(WalletStatusResponse {
+        protocol_version: PROTOCOL_VERSION,
+        capabilities: WalletCapabilities {
+            disclosure: true,
+            auto_consolidate: true,
+            notes_summary: true,
+            error_codes: true,
+        },
+        wallet_mode: match mode {
+            WalletMode::Full => WalletModeLabel::Full,
+            WalletMode::WatchOnly => WalletModeLabel::WatchOnly,
+        },
+        store_path: store_path.to_string(),
         primary_address,
         last_synced_height: latest,
         balances: balance_entries,
@@ -392,9 +540,11 @@ fn status_get(store: &Arc<WalletStore>) -> Result<WalletStatusResponse> {
     })
 }
 
-fn summarize_notes(store: &Arc<WalletStore>) -> Result<Option<NoteSummary>> {
+fn summarize_notes(store: &Arc<WalletStore>) -> WalletdResult<Option<NoteSummary>> {
     let asset_id = transaction_circuit::constants::NATIVE_ASSET_ID;
-    let spendable_notes = store.spendable_notes(asset_id)?;
+    let spendable_notes = store
+        .spendable_notes(asset_id)
+        .map_err(WalletdError::internal)?;
     let count = spendable_notes.len();
     if count <= MAX_INPUTS {
         return Ok(Some(NoteSummary {
@@ -458,18 +608,27 @@ fn sync_once(
     runtime: &tokio::runtime::Runtime,
     store: Arc<WalletStore>,
     params: SyncParams,
-) -> Result<SyncResponse> {
+) -> WalletdResult<SyncResponse> {
     runtime.block_on(async {
         let client = Arc::new(
             SubstrateRpcClient::connect(&params.ws_url)
                 .await
-                .map_err(|e| anyhow!("Failed to connect: {e}"))?,
+                .map_err(|e| {
+                    WalletdError::new(
+                        WalletdErrorCode::RpcConnectionFailed,
+                        format!("Failed to connect: {e}"),
+                    )
+                })?,
         );
 
         let engine = AsyncWalletSyncEngine::new(client, store.clone())
             .with_skip_genesis_check(params.force_rescan);
-        let outcome = engine.sync_once().await.map_err(|e| anyhow!(e.to_string()))?;
-        let new_height = store.last_synced_height()?;
+        let outcome = engine.sync_once().await.map_err(|e| {
+            WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string())
+        })?;
+        let new_height = store
+            .last_synced_height()
+            .map_err(WalletdError::internal)?;
         Ok(SyncResponse {
             new_height,
             commitments: outcome.commitments,
@@ -484,21 +643,37 @@ fn tx_send(
     runtime: &tokio::runtime::Runtime,
     store: Arc<WalletStore>,
     params: SendParams,
-) -> Result<SendResponse> {
-    if store.mode()? == WalletMode::WatchOnly {
-        anyhow::bail!("watch-only wallets cannot send");
+) -> WalletdResult<SendResponse> {
+    if store
+        .mode()
+        .map_err(WalletdError::internal)?
+        == WalletMode::WatchOnly
+    {
+        return Err(WalletdError::new(
+            WalletdErrorCode::WatchOnly,
+            "watch-only wallets cannot send",
+        ));
     }
 
     runtime.block_on(async {
         let client = Arc::new(
             SubstrateRpcClient::connect(&params.ws_url)
                 .await
-                .map_err(|e| anyhow!("Failed to connect: {e}"))?,
+                .map_err(|e| {
+                    WalletdError::new(
+                        WalletdErrorCode::RpcConnectionFailed,
+                        format!("Failed to connect: {e}"),
+                    )
+                })?,
         );
         let engine = AsyncWalletSyncEngine::new(client.clone(), store.clone());
-        engine.sync_once().await.map_err(|e| anyhow!(e.to_string()))?;
+        engine.sync_once().await.map_err(|e| {
+            WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string())
+        })?;
 
-        let recipients = parse_recipients(&params.recipients)?;
+        let recipients = parse_recipients(&params.recipients).map_err(|err| {
+            WalletdError::new(WalletdErrorCode::InvalidParams, err.to_string())
+        })?;
         let metadata = transfer_recipients_from_specs(&params.recipients);
         let output_asset = recipients
             .first()
@@ -506,7 +681,9 @@ fn tx_send(
             .unwrap_or(transaction_circuit::constants::NATIVE_ASSET_ID);
 
         if output_asset == transaction_circuit::constants::NATIVE_ASSET_ID {
-            let mut notes = store.spendable_notes(0)?;
+            let mut notes = store
+                .spendable_notes(0)
+                .map_err(WalletdError::internal)?;
             notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
             let total_needed = recipients.iter().map(|r| r.value).sum::<u64>() + params.fee;
             let mut selected_count = 0;
@@ -521,20 +698,33 @@ fn tx_send(
             let plan = ConsolidationPlan::estimate(selected_count);
             if !plan.is_empty() {
                 if !params.auto_consolidate {
-                    anyhow::bail!("note consolidation required before sending");
+                    return Err(WalletdError::new(
+                        WalletdErrorCode::ConsolidationRequired,
+                        "note consolidation required before sending",
+                    ));
                 }
                 wallet::execute_consolidation(store.clone(), &client, total_needed, params.fee, true)
                     .await
-                    .map_err(|e| anyhow!("Consolidation failed: {e}"))?;
+                    .map_err(|e| {
+                        WalletdError::new(
+                            WalletdErrorCode::TransactionFailed,
+                            format!("Consolidation failed: {e}"),
+                        )
+                    })?;
             }
         }
 
         precheck_nullifiers(&store, &client, &recipients, params.fee)
             .await
-            .map_err(|e| anyhow!(e.to_string()))?;
+            .map_err(|e| {
+                WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+            })?;
 
-        let built = build_transaction(&store, &recipients, params.fee)?;
-        store.mark_notes_pending(&built.spent_note_indexes, true)?;
+        let built = build_transaction(&store, &recipients, params.fee)
+            .map_err(|e| WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string()))?;
+        store
+            .mark_notes_pending(&built.spent_note_indexes, true)
+            .map_err(WalletdError::internal)?;
 
         let result = client
             .submit_shielded_transfer_unsigned(&built.bundle)
@@ -542,11 +732,18 @@ fn tx_send(
 
         match result {
             Ok(tx_hash) => {
-                let genesis_hash = match store.genesis_hash()? {
+                let genesis_hash = match store.genesis_hash().map_err(WalletdError::internal)? {
                     Some(hash) => hash,
                     None => {
-                        let metadata = client.get_chain_metadata().await?;
-                        store.set_genesis_hash(metadata.genesis_hash)?;
+                        let metadata = client.get_chain_metadata().await.map_err(|e| {
+                            WalletdError::new(
+                                WalletdErrorCode::RpcConnectionFailed,
+                                e.to_string(),
+                            )
+                        })?;
+                        store
+                            .set_genesis_hash(metadata.genesis_hash)
+                            .map_err(WalletdError::internal)?;
                         metadata.genesis_hash
                     }
                 };
@@ -554,22 +751,29 @@ fn tx_send(
                     tx_hash,
                     genesis_hash,
                     built.outgoing_disclosures.clone(),
-                )?;
+                )
+                .map_err(WalletdError::internal)?;
                 store.record_pending_submission(
                     tx_hash,
                     built.nullifiers.clone(),
                     built.spent_note_indexes.clone(),
                     metadata.clone(),
                     params.fee,
-                )?;
+                )
+                .map_err(WalletdError::internal)?;
                 Ok(SendResponse {
                     tx_hash: format!("0x{}", hex::encode(tx_hash)),
                     recipients: metadata,
                 })
             }
             Err(err) => {
-                store.mark_notes_pending(&built.spent_note_indexes, false)?;
-                Err(anyhow!("Transaction submission failed: {err}"))
+                store
+                    .mark_notes_pending(&built.spent_note_indexes, false)
+                    .map_err(WalletdError::internal)?;
+                Err(WalletdError::new(
+                    WalletdErrorCode::TransactionFailed,
+                    format!("Transaction submission failed: {err}"),
+                ))
             }
         }
     })
@@ -579,9 +783,16 @@ fn disclosure_create(
     runtime: &tokio::runtime::Runtime,
     store: Arc<WalletStore>,
     params: DisclosureCreateParams,
-) -> Result<DisclosurePackage> {
-    if store.mode()? == WalletMode::WatchOnly {
-        anyhow::bail!("watch-only wallets cannot create payment proofs");
+) -> WalletdResult<DisclosurePackage> {
+    if store
+        .mode()
+        .map_err(WalletdError::internal)?
+        == WalletMode::WatchOnly
+    {
+        return Err(WalletdError::new(
+            WalletdErrorCode::WatchOnly,
+            "watch-only wallets cannot create payment proofs",
+        ));
     }
 
     let tx_id = parse_hex_32(&params.tx_id)?;
@@ -590,14 +801,28 @@ fn disclosure_create(
         let client = Arc::new(
             SubstrateRpcClient::connect(&params.ws_url)
                 .await
-                .map_err(|e| anyhow!("Failed to connect: {e}"))?,
+                .map_err(|e| {
+                    WalletdError::new(
+                        WalletdErrorCode::RpcConnectionFailed,
+                        format!("Failed to connect: {e}"),
+                    )
+                })?,
         );
         let engine = AsyncWalletSyncEngine::new(client.clone(), store.clone());
-        engine.sync_once().await.map_err(|e| anyhow!(e.to_string()))?;
+        engine
+            .sync_once()
+            .await
+            .map_err(|e| WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string()))?;
 
         let record = store
-            .find_outgoing_disclosure(&tx_id, params.output)?
-            .ok_or_else(|| anyhow!("no outgoing disclosure record for tx output"))?;
+            .find_outgoing_disclosure(&tx_id, params.output)
+            .map_err(WalletdError::internal)?
+            .ok_or_else(|| {
+                WalletdError::new(
+                    WalletdErrorCode::InvalidParams,
+                    "no outgoing disclosure record for tx output",
+                )
+            })?;
 
         let expected_commitment = note_commitment_bytes(
             record.note.value,
@@ -607,7 +832,10 @@ fn disclosure_create(
             &record.note.r,
         );
         if expected_commitment != record.commitment {
-            anyhow::bail!("stored disclosure record has mismatched commitment");
+            return Err(WalletdError::new(
+                WalletdErrorCode::ProofInvalid,
+                "stored disclosure record has mismatched commitment",
+            ));
         }
 
         let claim = PaymentDisclosureClaim {
@@ -621,15 +849,31 @@ fn disclosure_create(
             r: record.note.r,
         };
         let proof_bundle = prove_payment_disclosure(&claim, &witness)
-            .map_err(|e| anyhow!("proof generation failed: {e}"))?;
+            .map_err(|e| {
+                WalletdError::new(
+                    WalletdErrorCode::ProofInvalid,
+                    format!("proof generation failed: {e}"),
+                )
+            })?;
 
         let leaf_index = store
-            .find_commitment_index(record.commitment)?
-            .ok_or_else(|| anyhow!("commitment not found in wallet tree"))?;
-        let tree = store.commitment_tree()?;
+            .find_commitment_index(record.commitment)
+            .map_err(WalletdError::internal)?
+            .ok_or_else(|| {
+                WalletdError::new(
+                    WalletdErrorCode::InvalidParams,
+                    "commitment not found in wallet tree",
+                )
+            })?;
+        let tree = store.commitment_tree().map_err(WalletdError::internal)?;
         let auth_path = tree
             .authentication_path(leaf_index as usize)
-            .map_err(|e| anyhow!("merkle path error: {e}"))?;
+            .map_err(|e| {
+                WalletdError::new(
+                    WalletdErrorCode::ProofInvalid,
+                    format!("merkle path error: {e}"),
+                )
+            })?;
         let anchor = tree.root();
         let siblings = auth_path;
 
@@ -662,19 +906,36 @@ fn disclosure_create(
 fn disclosure_verify(
     runtime: &tokio::runtime::Runtime,
     params: DisclosureVerifyParams,
-) -> Result<DisclosureVerifyResponse> {
+) -> WalletdResult<DisclosureVerifyResponse> {
     let package = params.package;
 
     let commitment_felt = bytes48_to_felts(&package.claim.commitment)
-        .ok_or_else(|| anyhow!("commitment is not a canonical field encoding"))?;
+        .ok_or_else(|| {
+            WalletdError::new(
+                WalletdErrorCode::InvalidParams,
+                "commitment is not a canonical field encoding",
+            )
+        })?;
     let anchor_felt = bytes48_to_felts(&package.confirmation.anchor)
-        .ok_or_else(|| anyhow!("anchor is not a canonical field encoding"))?;
+        .ok_or_else(|| {
+            WalletdError::new(
+                WalletdErrorCode::InvalidParams,
+                "anchor is not a canonical field encoding",
+            )
+        })?;
     let sibling_felts = package
         .confirmation
         .siblings
         .iter()
-        .map(|bytes| bytes48_to_felts(bytes).ok_or_else(|| anyhow!("non-canonical merkle sibling")))
-        .collect::<Result<_, _>>()?;
+        .map(|bytes| {
+            bytes48_to_felts(bytes).ok_or_else(|| {
+                WalletdError::new(
+                    WalletdErrorCode::InvalidParams,
+                    "non-canonical merkle sibling",
+                )
+            })
+        })
+        .collect::<WalletdResult<Vec<_>>>()?;
 
     let merkle_path = MerklePath {
         siblings: sibling_felts,
@@ -684,25 +945,48 @@ fn disclosure_verify(
         package.confirmation.leaf_index,
         anchor_felt,
     ) {
-        anyhow::bail!("merkle path verification failed");
+        return Err(WalletdError::new(
+            WalletdErrorCode::MerklePathInvalid,
+            "merkle path verification failed",
+        ));
     }
 
     runtime.block_on(async {
         let client = SubstrateRpcClient::connect(&params.ws_url)
             .await
-            .map_err(|e| anyhow!("Failed to connect: {e}"))?;
-        let metadata = client.get_chain_metadata().await?;
+            .map_err(|e| {
+                WalletdError::new(
+                    WalletdErrorCode::RpcConnectionFailed,
+                    format!("Failed to connect: {e}"),
+                )
+            })?;
+        let metadata = client.get_chain_metadata().await.map_err(|e| {
+            WalletdError::new(WalletdErrorCode::RpcConnectionFailed, e.to_string())
+        })?;
         if metadata.genesis_hash != package.chain.genesis_hash {
-            anyhow::bail!("genesis hash mismatch");
+            return Err(WalletdError::new(
+                WalletdErrorCode::GenesisMismatch,
+                "genesis hash mismatch",
+            ));
         }
-        let anchor_valid = client.is_valid_anchor(&package.confirmation.anchor).await?;
+        let anchor_valid = client
+            .is_valid_anchor(&package.confirmation.anchor)
+            .await
+            .map_err(|e| {
+                WalletdError::new(WalletdErrorCode::RpcConnectionFailed, e.to_string())
+            })?;
         if !anchor_valid {
-            anyhow::bail!("anchor is not valid on chain");
+            return Err(WalletdError::new(
+                WalletdErrorCode::AnchorInvalid,
+                "anchor is not valid on chain",
+            ));
         }
-        Ok::<_, anyhow::Error>(())
+        Ok::<_, WalletdError>(())
     })?;
 
-    let proof_bytes = decode_base64(&package.proof.bytes)?;
+    let proof_bytes = decode_base64(&package.proof.bytes).map_err(|e| {
+        WalletdError::new(WalletdErrorCode::InvalidParams, e.to_string())
+    })?;
     let bundle = PaymentDisclosureProofBundle {
         claim: PaymentDisclosureClaim {
             value: package.claim.value,
@@ -714,7 +998,9 @@ fn disclosure_verify(
         air_hash: package.proof.air_hash,
     };
 
-    verify_payment_disclosure(&bundle).map_err(|e| anyhow!(e.to_string()))?;
+    verify_payment_disclosure(&bundle).map_err(|e| {
+        WalletdError::new(WalletdErrorCode::ProofInvalid, e.to_string())
+    })?;
 
     Ok(DisclosureVerifyResponse {
         verified: true,
@@ -727,11 +1013,16 @@ fn disclosure_verify(
     })
 }
 
-fn parse_hex_32(input: &str) -> Result<[u8; 32]> {
+fn parse_hex_32(input: &str) -> WalletdResult<[u8; 32]> {
     let trimmed = input.strip_prefix("0x").unwrap_or(input);
-    let bytes = hex::decode(trimmed).map_err(|e| anyhow!("invalid hex: {e}"))?;
+    let bytes = hex::decode(trimmed).map_err(|e| {
+        WalletdError::new(WalletdErrorCode::InvalidParams, format!("invalid hex: {e}"))
+    })?;
     if bytes.len() != 32 {
-        anyhow::bail!("expected 32-byte hex value");
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            "expected 32-byte hex value",
+        ));
     }
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
