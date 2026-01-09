@@ -26,7 +26,10 @@ pub const MAX_COMMITMENTS_PER_TX: u32 = 2;
 /// Proof size is configuration-dependent (FRI params, trace width/rows, hash digest).
 /// We cap proofs to prevent DoS via oversized extrinsics while still allowing
 /// production Plonky3 proofs to fit within runtime block length limits.
-pub const STARK_PROOF_MAX_SIZE: usize = 10 * 1024 * 1024;
+///
+/// Note: Production Plonky3 transaction proofs are ~350–500KB today; this limit is a DoS
+/// guardrail, not a target size.
+pub const STARK_PROOF_MAX_SIZE: usize = 2 * 1024 * 1024;
 
 /// Size of a binding hash.
 pub const BINDING_HASH_SIZE: usize = 64;
