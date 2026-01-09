@@ -88,8 +88,9 @@ export default function ShieldedPoolPage() {
     );
   }
 
+  // HGM uses 8 decimal places (like Bitcoin satoshis)
   const formattedBalance = poolData
-    ? (BigInt(poolData.poolBalance) / BigInt(10 ** 12)).toString()
+    ? (Number(BigInt(poolData.poolBalance)) / 1e8).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : "0";
 
   return (
@@ -117,7 +118,7 @@ export default function ShieldedPoolPage() {
           icon={Hash}
         />
         <StatCard
-          label="Pool Balance"
+          label="Shielded Supply"
           value={`${formattedBalance} HGM`}
           icon={Coins}
         />
