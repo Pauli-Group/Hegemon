@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::error::WalletError;
-use crate::rpc::{CiphertextEntry, WalletRpcClient};
+use crate::rpc::WalletRpcClient;
 use crate::store::WalletStore;
 
 pub struct WalletSyncEngine<'a> {
@@ -23,6 +23,9 @@ impl<'a> WalletSyncEngine<'a> {
         let mut outcome = SyncOutcome::default();
         let note_status = self.rpc.note_status()?;
         self.store.set_tree_depth(note_status.depth as u32)?;
+
+        let ivk = self.store.incoming_key()?;
+
         let mut commitment_cursor = self.store.next_commitment_index()?;
         while commitment_cursor < note_status.leaf_count {
             let entries = self.rpc.commitments(commitment_cursor, self.page_limit)?;
@@ -44,10 +47,26 @@ impl<'a> WalletSyncEngine<'a> {
             if entries.is_empty() {
                 break;
             }
+
+            let start_index = ciphertext_cursor;
+            let mut expected = start_index;
+            let mut recovered = Vec::with_capacity(entries.len());
             for entry in entries {
+                if entry.index != expected {
+                    return Err(WalletError::InvalidState("ciphertext index mismatch"));
+                }
                 outcome.ciphertexts += 1;
-                self.process_ciphertext(entry, &mut outcome)?;
+                recovered.push(match ivk.decrypt_note(&entry.ciphertext) {
+                    Ok(note) => Some(note),
+                    Err(WalletError::NoteMismatch(_)) => None,
+                    Err(err) => return Err(err),
+                });
+                expected = expected
+                    .checked_add(1)
+                    .ok_or(WalletError::InvalidState("ciphertext index overflow"))?;
             }
+
+            outcome.recovered += self.store.apply_ciphertext_batch(start_index, recovered)?;
             ciphertext_cursor = self.store.next_ciphertext_index()?;
         }
 
@@ -58,26 +77,6 @@ impl<'a> WalletSyncEngine<'a> {
         self.store.refresh_pending(latest.height, &nullifier_set)?;
         self.store.set_last_synced_height(latest.height)?;
         Ok(outcome)
-    }
-
-    fn process_ciphertext(
-        &self,
-        entry: CiphertextEntry,
-        outcome: &mut SyncOutcome,
-    ) -> Result<(), WalletError> {
-        let CiphertextEntry { index, ciphertext } = entry;
-        let ivk = self.store.incoming_key()?;
-        match ivk.decrypt_note(&ciphertext) {
-            Ok(recovered) => {
-                if self.store.record_recovered_note(recovered, index, index)? {
-                    outcome.recovered += 1;
-                }
-            }
-            Err(WalletError::NoteMismatch(_)) => {}
-            Err(err) => return Err(err),
-        }
-        self.store.register_ciphertext_index(index)?;
-        Ok(())
     }
 }
 

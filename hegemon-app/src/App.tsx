@@ -417,25 +417,26 @@ export default function App() {
           });
           summaries[connection.id] = summary;
         } catch (error) {
-            summaries[connection.id] = {
-              connectionId: connection.id,
-              label: connection.label,
-              reachable: false,
-              isLocal: connection.mode === 'local',
-              peers: null,
-              isSyncing: null,
-              bestBlock: null,
-              bestNumber: null,
-              genesisHash: null,
-              mining: null,
-              miningThreads: null,
-              hashRate: null,
-              blocksFound: null,
-              difficulty: null,
-              blockHeight: null,
-              supplyDigest: null,
-              storage: null,
-              telemetry: null,
+          summaries[connection.id] = {
+            connectionId: connection.id,
+            label: connection.label,
+            reachable: false,
+            isLocal: connection.mode === 'local',
+            peers: null,
+            isSyncing: null,
+            bestBlock: null,
+            bestNumber: null,
+            genesisHash: null,
+            mining: null,
+            miningThreads: null,
+            hashRate: null,
+            blocksFound: null,
+            difficulty: null,
+            blockHeight: null,
+            supplyDigest: null,
+            storage: null,
+            telemetry: null,
+            config: null,
             updatedAt: new Date().toISOString(),
             error: error instanceof Error ? error.message : 'Summary failed'
           };
@@ -1110,6 +1111,54 @@ export default function App() {
                 Net: {formatBytes(activeSummary?.telemetry?.networkRxBytes)} / {formatBytes(activeSummary?.telemetry?.networkTxBytes)}
               </p>
               <p className="text-sm text-surfaceMuted">Memory: {formatBytes(activeSummary?.telemetry?.memoryBytes)}</p>
+            </div>
+            <div className="rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4 space-y-1">
+              <p className="label">Config</p>
+              <p className="text-sm text-surfaceMuted">Node: {activeSummary?.config?.nodeName || 'N/A'}</p>
+              <p className="text-sm text-surfaceMuted">
+                Chain:{' '}
+                {activeSummary?.config?.chainSpecName
+                  ? `${activeSummary.config.chainSpecName} (${activeSummary.config.chainSpecId})`
+                  : 'N/A'}
+              </p>
+              <p className="text-sm text-surfaceMuted">Chain type: {activeSummary?.config?.chainType || 'N/A'}</p>
+              <p className="text-sm text-surfaceMuted">
+                Base path:{' '}
+                <span className="mono break-all" title={activeSummary?.config?.basePath || ''}>
+                  {activeSummary?.config?.basePath || 'N/A'}
+                </span>
+              </p>
+              <p className="text-sm text-surfaceMuted">
+                P2P listen:{' '}
+                <span className="mono break-all" title={activeSummary?.config?.p2pListenAddr || ''}>
+                  {activeSummary?.config?.p2pListenAddr || 'N/A'}
+                </span>
+              </p>
+              <p className="text-sm text-surfaceMuted">
+                RPC listen:{' '}
+                <span className="mono break-all" title={activeSummary?.config?.rpcListenAddr || ''}>
+                  {activeSummary?.config?.rpcListenAddr || 'N/A'}
+                </span>
+              </p>
+              <p className="text-sm text-surfaceMuted">
+                RPC methods:{' '}
+                {activeSummary?.config?.rpcMethods
+                  ? `${activeSummary.config.rpcMethods} (${activeSummary.config.rpcExternal ? 'external' : 'local'})`
+                  : 'N/A'}
+              </p>
+              <p className="text-sm text-surfaceMuted">
+                PQ: {activeSummary?.config?.requirePq ? 'Required' : activeSummary?.config ? 'Optional' : 'N/A'}{' '}
+                {activeSummary?.config?.pqVerbose ? '(verbose)' : ''}
+              </p>
+              <p className="text-sm text-surfaceMuted">Max peers: {formatNumber(activeSummary?.config?.maxPeers)}</p>
+              <p className="text-sm text-surfaceMuted">
+                Bootstraps:{' '}
+                <span className="mono break-all" title={(activeSummary?.config?.bootstrapNodes ?? []).join(', ')}>
+                  {activeSummary?.config?.bootstrapNodes?.length
+                    ? activeSummary.config.bootstrapNodes.join(', ')
+                    : 'N/A'}
+                </span>
+              </p>
             </div>
           </div>
 

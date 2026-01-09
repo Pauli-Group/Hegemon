@@ -3,10 +3,17 @@
 use crate::error::{PqNoiseError, Result};
 use crate::noise::NoiseCipher;
 use crate::types::{PeerId, RemotePeer, SessionKeys};
+use bincode::Options;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
+const SESSION_MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
+
+fn session_bincode() -> impl Options {
+    bincode::DefaultOptions::new().with_limit(SESSION_MAX_FRAME_LEN as u64)
+}
 
 /// A secure, encrypted session established after a successful PQ handshake
 pub struct SecureSession<S> {
@@ -36,7 +43,7 @@ where
         is_initiator: bool,
     ) -> Result<Self> {
         let mut codec = LengthDelimitedCodec::new();
-        codec.set_max_frame_length(16 * 1024 * 1024); // 16 MB max frame
+        codec.set_max_frame_length(SESSION_MAX_FRAME_LEN); // 16 MB max frame
 
         let stream = Framed::new(socket, codec);
         let cipher = NoiseCipher::new(&keys, is_initiator)?;
@@ -101,7 +108,7 @@ where
 
     /// Send a serializable message
     pub async fn send_message<M: serde::Serialize>(&mut self, message: &M) -> Result<()> {
-        let data = bincode::serialize(message)?;
+        let data = session_bincode().serialize(message)?;
         self.send(&data).await
     }
 
@@ -109,7 +116,7 @@ where
     pub async fn recv_message<M: serde::de::DeserializeOwned>(&mut self) -> Result<Option<M>> {
         match self.recv().await? {
             Some(data) => {
-                let message = bincode::deserialize(&data)?;
+                let message = session_bincode().deserialize(&data)?;
                 Ok(Some(message))
             }
             None => Ok(None),
