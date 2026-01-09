@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Hegemon Brand Colors */
+  --midnight: #0E1C36;
+  --ionosphere: #1BE7FF;
+  --amber: #F5A623;
+  --proof-green: #19B37E;
+  --guard-rail: #FF4E4E;
+  --neutral-light: #F4F7FB;
+  --neutral-mid: #E1E6EE;
+  
+  --background: var(--midnight);
+  --foreground: var(--neutral-light);
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+}
+
+/* Scrollbar styling for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--midnight);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--neutral-mid);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ionosphere);
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
