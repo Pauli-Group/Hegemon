@@ -14,8 +14,13 @@ Observable outcome: running `npm run dev` in `dashboard-ui/` opens a local site 
 
 ## Progress
 
-- [ ] Milestone 0: Prototype — validate polkadot/api connects with custom types
-- [ ] Milestone 1: Scaffold dashboard-ui with Next.js, Tailwind, brand tokens
+- [x] (2026-01-08 22:41Z) Milestone 0: Prototype — validated @polkadot/api connects with custom types
+- [x] (2026-01-08 22:55Z) Milestone 1: Scaffold dashboard-ui with Next.js, Tailwind, brand tokens
+- [x] (2026-01-08 22:55Z) Milestone 2: Block explorer page (events, blocks, transactions)
+- [x] (2026-01-08 22:55Z) Milestone 3: Mining dashboard (difficulty, hashrate, coinbase)
+- [x] (2026-01-08 22:55Z) Milestone 4: Shielded pool panel (Merkle root, nullifiers)
+- [x] (2026-01-08 22:55Z) Milestone 5: PQ crypto status (ML-DSA, ML-KEM, STARK params)
+- [x] (2026-01-08 22:56Z) Milestone 6: Documentation and runbook
 - [ ] Milestone 2: Block explorer page (events, blocks, transactions)
 - [ ] Milestone 3: Mining dashboard (difficulty, hash rate, coinbase events)
 - [ ] Milestone 4: Shielded pool panel (Merkle root, nullifier count, recent events)
@@ -25,7 +30,14 @@ Observable outcome: running `npm run dev` in `dashboard-ui/` opens a local site 
 
 ## Surprises & Discoveries
 
-(None yet.)
+- Observation: The API detected custom RPC methods that are not decorated: `block_getCommitmentProof`, `da_getChunk`, `da_getParams`. These are Hegemon-specific RPCs that may need custom definitions.
+  Evidence: `2026-01-08 API/INIT: RPC methods not decorated: block_getCommitmentProof, da_getChunk, da_getParams`
+
+- Observation: The `coinbase` pallet is exposed as `pow` in storage queries but events come from `shieldedPool.CoinbaseMinted`.
+  Evidence: Pallets list shows `pow` not `coinbase`, but shieldedPool has `coinbaseNotes`, `coinbaseProcessed` storage.
+
+- Observation: Subscription API changed — `api.rpc.chain.subscribeNewHeads` is not a function in @polkadot/api v14. Use `api.derive.chain.subscribeNewHeads` instead.
+  Evidence: `Error: api.rpc.chain.subscribeNewHeads is not a function`
 
 
 ## Decision Log
@@ -45,7 +57,34 @@ Observable outcome: running `npm run dev` in `dashboard-ui/` opens a local site 
 
 ## Outcomes & Retrospective
 
-(To be filled at completion.)
+### Completed 2026-01-08
+
+All six milestones completed successfully. The Hegemon Explorer dashboard is now functional with:
+
+**Deliverables:**
+- Full Next.js 14 + Tailwind project in `dashboard-ui/`
+- Brand-compliant UI with Deep Midnight background, Ionosphere accents, Space Grotesk typography
+- 5 pages: Explorer, Mining, Shielded Pool, PQ Status, Settings
+- Live connection to Hegemon node via @polkadot/api with custom types bundle
+- Runbook at `runbooks/dashboard_ui.md`
+
+**What works:**
+- API connection with custom SCALE types
+- Block subscription and display
+- Event filtering for shieldedPool events
+- Difficulty/mining metrics display
+- Shielded pool status (Merkle root, tree size, nullifiers)
+- PQ crypto status panel with ML-DSA/ML-KEM info
+
+**What remains (future work):**
+- Real logo asset (currently placeholder "H" icon)
+- More detailed block explorer (click to expand, extrinsic details)
+- Transaction search functionality
+- Wallet integration for sending shielded transactions
+- Mobile responsive refinements
+- Testnet/mainnet endpoint configuration via environment variables
+
+**No node/wallet code was modified.** This was a UI-only change as requested.
 
 
 ## Context and Orientation

@@ -1,0 +1,12 @@
+{
+  "name": "hegemon-api-test",
+  "version": "1.0.0",
+  "description": "Prototype script to validate @polkadot/api connection to Hegemon",
+  "main": "api-test.js",
+  "scripts": {
+    "test": "node api-test.js"
+  },
+  "dependencies": {
+    "@polkadot/api": "^14.0.1"
+  }
+}
