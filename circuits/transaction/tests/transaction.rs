@@ -200,8 +200,8 @@ fn verification_fails_for_bad_balance() {
     let witness = sample_witness();
     let (_proving_key, verifying_key) = generate_keys();
     let public_inputs = witness.public_inputs().expect("public inputs");
-    let trace = transaction_circuit::trace::TransactionTrace::from_witness(&witness)
-        .expect("legacy trace");
+    let trace =
+        transaction_circuit::trace::TransactionTrace::from_witness(&witness).expect("legacy trace");
     let mut proof = transaction_circuit::proof::TransactionProof {
         nullifiers: public_inputs.nullifiers.clone(),
         commitments: public_inputs.commitments.clone(),

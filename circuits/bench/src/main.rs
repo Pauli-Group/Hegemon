@@ -183,8 +183,7 @@ fn run_benchmark(iterations: usize, prove: bool, _tree_depth: usize) -> Result<B
 
     let tx_log_num_quotient_chunks = tx_log_chunks.unwrap_or(0);
     let tx_log_blowup_used = FRI_LOG_BLOWUP.max(tx_log_num_quotient_chunks);
-    let fri_conjectured_soundness_bits =
-        tx_log_blowup_used * FRI_NUM_QUERIES + FRI_POW_BITS;
+    let fri_conjectured_soundness_bits = tx_log_blowup_used * FRI_NUM_QUERIES + FRI_POW_BITS;
 
     let poseidon2_width = transaction_circuit::constants::POSEIDON2_WIDTH;
     let poseidon2_rate = transaction_circuit::constants::POSEIDON2_RATE;
