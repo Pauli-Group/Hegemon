@@ -19,13 +19,15 @@ Observable outcome: running `npm run dev` in `dashboard-ui/` opens a local site 
 - [x] (2026-01-08 22:55Z) Milestone 2: Block explorer page (events, blocks, transactions)
 - [x] (2026-01-08 22:55Z) Milestone 3: Mining dashboard (difficulty, hashrate, coinbase)
 - [x] (2026-01-08 22:55Z) Milestone 4: Shielded pool panel (Merkle root, nullifiers)
-- [x] (2026-01-08 22:55Z) Milestone 5: PQ crypto status (ML-DSA, ML-KEM, STARK params)
+- [x] (2026-01-08 22:55Z) Milestone 5: PQ crypto status — REMOVED as not useful
 - [x] (2026-01-08 22:56Z) Milestone 6: Documentation and runbook
 - [x] (2026-01-08 23:40Z) Bugfix: Fixed subscription API (use polling instead of subscribeNewHeads)
 - [x] (2026-01-08 23:42Z) Bugfix: Fixed decimal precision (use 10^8 not 10^12 for HGM units)
-- [ ] Polish: Add `.gitignore` entries for dashboard-ui build artifacts
-- [ ] Polish: Mobile responsive refinements
-- [ ] Polish: Real logo asset (currently placeholder "H" icon)
+- [x] (2026-01-08 23:50Z) Polish: Add `.gitignore` entries for dashboard-ui build artifacts
+- [x] (2026-01-08 23:51Z) Polish: Real logo asset (hegemon-atlas-emblem.svg from docs/assets)
+- [x] (2026-01-08 23:51Z) Polish: Environment variable for node endpoint (NEXT_PUBLIC_NODE_ENDPOINT)
+
+**STATUS: COMPLETE**
 
 
 ## Surprises & Discoveries
@@ -64,30 +66,30 @@ Observable outcome: running `npm run dev` in `dashboard-ui/` opens a local site 
 
 ### Completed 2026-01-08
 
-All six milestones completed successfully. The Hegemon Explorer dashboard is now functional with:
+All milestones completed successfully. The Hegemon Explorer dashboard is fully functional.
 
 **Deliverables:**
 - Full Next.js 14 + Tailwind project in `dashboard-ui/`
 - Brand-compliant UI with Deep Midnight background, Ionosphere accents, Space Grotesk typography
-- 5 pages: Explorer, Mining, Shielded Pool, PQ Status, Settings
-- Live connection to Hegemon node via @polkadot/api with custom types bundle
+- 4 pages: Explorer, Mining, Shielded Pool, Settings (PQ Status removed as not useful)
+- Real logo from `docs/assets/hegemon-atlas-emblem.svg`
+- Live connection to Hegemon node via @polkadot/api
+- Environment variable support (`NEXT_PUBLIC_NODE_ENDPOINT`)
 - Runbook at `runbooks/dashboard_ui.md`
+- `.gitignore` entries for node_modules and build artifacts
 
 **What works:**
-- API connection with custom SCALE types
-- Block subscription and display
-- Event filtering for shieldedPool events
-- Difficulty/mining metrics display
+- API connection and polling (no subscription API available)
+- Live block height, shielded supply, commitment count
+- Difficulty and mining metrics display
 - Shielded pool status (Merkle root, tree size, nullifiers)
-- PQ crypto status panel with ML-DSA/ML-KEM info
+- Correct decimal formatting (10^8 base units, not 10^12)
 
-**What remains (future work):**
-- Real logo asset (currently placeholder "H" icon)
+**Future work (not blocking):**
 - More detailed block explorer (click to expand, extrinsic details)
 - Transaction search functionality
 - Wallet integration for sending shielded transactions
 - Mobile responsive refinements
-- Testnet/mainnet endpoint configuration via environment variables
 
 **No node/wallet code was modified.** This was a UI-only change as requested.
 

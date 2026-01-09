@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { 
   Blocks, 
@@ -24,10 +25,14 @@ export function Nav() {
     <nav className="fixed top-0 left-0 right-0 h-16 bg-midnight border-b border-neutral-mid/20 z-50">
       <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between">
         {/* Logo */}
-        <Link href="/" className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-ionosphere/20 flex items-center justify-center">
-            <span className="text-ionosphere font-bold text-lg">H</span>
-          </div>
+        <Link href="/" className="flex items-center gap-2">
+          <Image 
+            src="/hegemon-atlas-emblem.svg" 
+            alt="Hegemon" 
+            width={32} 
+            height={32}
+            className="h-8 w-8"
+          />
           <span className="text-xl font-semibold text-neutral-light">
             Hegemon
           </span>
