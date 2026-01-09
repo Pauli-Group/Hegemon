@@ -8,14 +8,33 @@
 
 body {
   @apply bg-midnight text-surface;
+  background-image:
+    radial-gradient(800px 420px at 12% -10%, rgba(27, 231, 255, 0.16), transparent 60%),
+    radial-gradient(900px 520px at 90% 0%, rgba(14, 28, 54, 0.9), transparent 65%),
+    linear-gradient(180deg, rgba(14, 28, 54, 0.98), rgba(7, 13, 24, 0.96));
+  background-attachment: fixed;
 }
 
 input, textarea, select {
-  @apply bg-surfaceMuted/10 border border-surfaceMuted/20 text-surface rounded-lg px-3 py-2;
+  @apply bg-surfaceMuted/10 border border-surfaceMuted/20 text-surface rounded-lg px-3 py-2 transition outline-none ring-1 ring-transparent;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  @apply border-ionosphere/60 ring-2 ring-ionosphere/40;
 }
 
 button {
-  @apply rounded-lg px-4 py-2 font-medium transition;
+  @apply rounded-lg px-4 py-2 font-medium transition outline-none ring-1 ring-transparent;
+}
+
+button:focus-visible {
+  @apply ring-2 ring-ionosphere/40;
+}
+
+button:disabled {
+  @apply opacity-60 cursor-not-allowed;
 }
 
 button.primary {
@@ -31,7 +50,91 @@ button.danger {
 }
 
 .card {
-  @apply bg-surfaceMuted/10 border border-surfaceMuted/15 rounded-2xl p-6 shadow-panel;
+  @apply bg-surfaceMuted/10 border border-surfaceMuted/15 rounded-2xl p-6 shadow-panel backdrop-blur-sm;
+}
+
+.panel {
+  @apply rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4;
+}
+
+.chip {
+  @apply rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.22em] border border-surfaceMuted/30 text-surfaceMuted bg-surfaceMuted/10 transition;
+}
+
+.chip[aria-pressed='true'] {
+  @apply border-ionosphere/60 bg-ionosphere/20 text-surface;
+}
+
+.chip-static {
+  @apply rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.22em] border border-surfaceMuted/20 text-surfaceMuted/90 bg-surfaceMuted/10;
+}
+
+.status-pill {
+  @apply inline-flex items-center rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.24em] border;
+}
+
+.status-pill.ok {
+  @apply text-ionosphere border-ionosphere/40 bg-ionosphere/10;
+}
+
+.status-pill.warn {
+  @apply text-amber border-amber/40 bg-amber/10;
+}
+
+.status-pill.error {
+  @apply text-guard border-guard/40 bg-guard/10;
+}
+
+.status-pill.neutral {
+  @apply text-surfaceMuted border-surfaceMuted/30 bg-surfaceMuted/10;
+}
+
+.status-dot {
+  @apply inline-block h-2 w-2 rounded-full;
+}
+
+.status-dot.ok {
+  @apply bg-ionosphere;
+}
+
+.status-dot.warn {
+  @apply bg-amber;
+}
+
+.status-dot.error {
+  @apply bg-guard;
+}
+
+.status-dot.neutral {
+  @apply bg-surfaceMuted/60;
+}
+
+.badge {
+  @apply text-[10px] uppercase tracking-[0.2em] px-2 py-1 rounded-full border border-surfaceMuted/20 text-surfaceMuted;
+}
+
+.badge.level-error {
+  @apply text-guard border-guard/40 bg-guard/10;
+}
+
+.badge.level-warn {
+  @apply text-amber border-amber/40 bg-amber/10;
+}
+
+.badge.level-info {
+  @apply text-surfaceMuted border-surfaceMuted/30 bg-surfaceMuted/10;
+}
+
+.badge.level-debug {
+  @apply text-surfaceMuted/70 border-surfaceMuted/20 bg-surfaceMuted/5;
+}
+
+.badge.badge-category {
+  @apply text-surfaceMuted border-surfaceMuted/20 bg-surfaceMuted/10;
+}
+
+.badge.badge-highlight {
+  @apply font-medium;
 }
 
 .label {
@@ -40,4 +143,46 @@ button.danger {
 
 .mono {
   @apply font-mono text-sm;
+}
+
+.log-row {
+  @apply items-start;
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.reveal {
+  animation: reveal 0.5s ease-out both;
+  animation-delay: var(--delay, 0ms);
+}
+
+.delay-1 {
+  --delay: 40ms;
+}
+
+.delay-2 {
+  --delay: 120ms;
+}
+
+.delay-3 {
+  --delay: 200ms;
+}
+
+.delay-4 {
+  --delay: 280ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal {
+    animation: none;
+  }
 }

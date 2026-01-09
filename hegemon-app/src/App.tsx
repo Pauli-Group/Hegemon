@@ -43,6 +43,18 @@ type LogEntry = {
   highlight?: string;
 };
 
+const logCategoryOrder: LogCategory[] = ['mining', 'sync', 'network', 'consensus', 'storage', 'rpc', 'other'];
+
+const logCategoryLabels: Record<LogCategory, string> = {
+  mining: 'Mining',
+  sync: 'Sync',
+  network: 'Network',
+  consensus: 'Consensus',
+  storage: 'Storage',
+  rpc: 'RPC',
+  other: 'Other'
+};
+
 const toBaseUnits = (value: string) => {
   const parsed = Number.parseFloat(value);
   if (Number.isNaN(parsed) || !Number.isFinite(parsed)) {
@@ -374,7 +386,42 @@ export default function App() {
     return activeSummary.isSyncing ? 'Syncing' : 'Healthy';
   }, [activeSummary]);
 
+  const healthTone = !activeSummary
+    ? 'neutral'
+    : !activeSummary.reachable
+      ? 'error'
+      : activeSummary.isSyncing
+        ? 'warn'
+        : 'ok';
+
+  const updatedAtLabel = activeSummary?.updatedAt
+    ? new Date(activeSummary.updatedAt).toLocaleTimeString()
+    : 'N/A';
+
   const logEntries = useMemo(() => nodeLogs.map((line, index) => parseLogLine(line, index)), [nodeLogs]);
+
+  const logHighlights = useMemo(() => {
+    const highlights = logEntries.filter((entry) => entry.highlight);
+    return highlights.slice(-6).reverse();
+  }, [logEntries]);
+
+  const logCategoryStats = useMemo(() => {
+    return logEntries.reduce<Record<LogCategory, number>>(
+      (acc, entry) => {
+        acc[entry.category] += 1;
+        return acc;
+      },
+      {
+        mining: 0,
+        sync: 0,
+        network: 0,
+        consensus: 0,
+        storage: 0,
+        rpc: 0,
+        other: 0
+      }
+    );
+  }, [logEntries]);
 
   const filteredLogEntries = useMemo(() => {
     const search = logSearch.trim().toLowerCase();
@@ -783,7 +830,7 @@ export default function App() {
       </header>
 
       <div className="max-w-6xl mx-auto grid gap-8 mt-10">
-        <section className="card space-y-6">
+        <section className="card reveal delay-1 space-y-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="label">Node</p>
@@ -1030,10 +1077,21 @@ export default function App() {
           )}
         </section>
 
-        <section className="card space-y-6">
-          <div>
-            <p className="label">Node</p>
-            <h2 className="text-2xl font-semibold">Operations</h2>
+        <section className="card reveal delay-2 space-y-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="label">Node</p>
+              <h2 className="text-2xl font-semibold">Operations</h2>
+              <p className="text-sm text-surfaceMuted">
+                Active: {activeConnection?.label ?? 'No connection'} ({activeConnection?.mode ?? 'n/a'}) | Updated {updatedAtLabel}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
+              <span className="text-xs text-surfaceMuted">
+                Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}
+              </span>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-3">
@@ -1052,12 +1110,26 @@ export default function App() {
             </button>
           </div>
 
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4">
-              <p className="label">Status</p>
-              <p className="text-lg font-medium">{healthLabel}</p>
-              <p className="text-sm text-surfaceMuted">Peers: {formatNumber(activeSummary?.peers)}</p>
-              <p className="text-sm text-surfaceMuted">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="panel">
+              <p className="label">Health</p>
+              <div className="flex items-center gap-2">
+                <span className={`status-dot ${healthTone}`} />
+                <p className="text-lg font-medium">{healthLabel}</p>
+              </div>
+              <p className="text-xs text-surfaceMuted">Updated {updatedAtLabel}</p>
+            </div>
+            <div className="panel">
+              <p className="label">Height</p>
+              <p className="text-lg font-medium">{formatNumber(activeSummary?.bestNumber)}</p>
+              <p className="text-xs text-surfaceMuted mono truncate" title={activeSummary?.bestBlock ?? ''}>
+                {activeSummary?.bestBlock ?? 'N/A'}
+              </p>
+            </div>
+            <div className="panel">
+              <p className="label">Peers</p>
+              <p className="text-lg font-medium">{formatNumber(activeSummary?.peers)}</p>
+              <p className="text-xs text-surfaceMuted">
                 Syncing: {activeSummary?.isSyncing === null || activeSummary?.isSyncing === undefined
                   ? 'N/A'
                   : activeSummary.isSyncing
@@ -1065,12 +1137,7 @@ export default function App() {
                     : 'No'}
               </p>
             </div>
-            <div className="rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4">
-              <p className="label">Best block</p>
-              <p className="text-lg font-medium">{formatNumber(activeSummary?.bestNumber)}</p>
-              <p className="text-sm text-surfaceMuted mono truncate">{activeSummary?.bestBlock ?? 'N/A'}</p>
-            </div>
-            <div className="rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4">
+            <div className="panel">
               <p className="label">Mining</p>
               <p className="text-lg font-medium">
                 {activeSummary?.mining === null || activeSummary?.mining === undefined
@@ -1079,20 +1146,32 @@ export default function App() {
                     ? 'Active'
                     : 'Idle'}
               </p>
+              <p className="text-xs text-surfaceMuted">Hash rate: {formatHashRate(activeSummary?.hashRate)}</p>
+            </div>
+            <div className="panel">
+              <p className="label">Storage</p>
+              <p className="text-lg font-medium">{formatBytes(activeSummary?.storage?.totalBytes)}</p>
+              <p className="text-xs text-surfaceMuted">State: {formatBytes(activeSummary?.storage?.stateBytes)}</p>
+            </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="panel">
+              <p className="label">Mining details</p>
               <p className="text-sm text-surfaceMuted">Threads: {activeSummary?.miningThreads ?? 'N/A'}</p>
               <p className="text-sm text-surfaceMuted">Hash rate: {formatHashRate(activeSummary?.hashRate)}</p>
               <p className="text-sm text-surfaceMuted">Blocks found: {formatNumber(activeSummary?.blocksFound)}</p>
               <p className="text-sm text-surfaceMuted">Difficulty: {formatNumber(activeSummary?.difficulty)}</p>
+              <p className="text-sm text-surfaceMuted">Block height: {formatNumber(activeSummary?.blockHeight)}</p>
             </div>
-            <div className="rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4">
-              <p className="label">Storage</p>
-              <p className="text-lg font-medium">{formatBytes(activeSummary?.storage?.totalBytes)}</p>
+            <div className="panel">
+              <p className="label">Storage breakdown</p>
               <p className="text-sm text-surfaceMuted">Blocks: {formatBytes(activeSummary?.storage?.blocksBytes)}</p>
               <p className="text-sm text-surfaceMuted">State: {formatBytes(activeSummary?.storage?.stateBytes)}</p>
               <p className="text-sm text-surfaceMuted">Txs: {formatBytes(activeSummary?.storage?.transactionsBytes)}</p>
               <p className="text-sm text-surfaceMuted">Nullifiers: {formatBytes(activeSummary?.storage?.nullifiersBytes)}</p>
             </div>
-            <div className="rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4">
+            <div className="panel">
               <p className="label">Consensus</p>
               <p className="text-sm text-surfaceMuted">
                 Genesis: <span className="mono" title={activeSummary?.genesisHash ?? ''}>{formatHash(activeSummary?.genesisHash)}</span>
@@ -1101,7 +1180,7 @@ export default function App() {
                 Supply digest: <span className="mono" title={activeSummary?.supplyDigest ?? ''}>{formatHash(activeSummary?.supplyDigest)}</span>
               </p>
             </div>
-            <div className="rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4">
+            <div className="panel">
               <p className="label">Telemetry</p>
               <p className="text-lg font-medium">{formatDuration(activeSummary?.telemetry?.uptimeSecs)}</p>
               <p className="text-sm text-surfaceMuted">Blocks imported: {formatNumber(activeSummary?.telemetry?.blocksImported)}</p>
@@ -1112,7 +1191,7 @@ export default function App() {
               </p>
               <p className="text-sm text-surfaceMuted">Memory: {formatBytes(activeSummary?.telemetry?.memoryBytes)}</p>
             </div>
-            <div className="rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4 space-y-1">
+            <div className="panel md:col-span-2 space-y-1">
               <p className="label">Config</p>
               <p className="text-sm text-surfaceMuted">Node: {activeSummary?.config?.nodeName || 'N/A'}</p>
               <p className="text-sm text-surfaceMuted">
@@ -1165,7 +1244,7 @@ export default function App() {
           {nodeError && <p className="text-guard">{nodeError}</p>}
         </section>
 
-        <section className="card space-y-6">
+        <section className="card reveal delay-3 space-y-6">
           <div>
             <p className="label">Node</p>
             <h2 className="text-2xl font-semibold">Connection health</h2>
@@ -1174,10 +1253,16 @@ export default function App() {
           <div className="grid gap-3 md:grid-cols-2">
             {connections.map((connection) => {
               const summary = nodeSummaries[connection.id];
+              const isOnline = Boolean(summary?.reachable);
               return (
-                <div key={connection.id} className="rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4">
-                  <p className="label">{summary?.label ?? connection.label}</p>
-                  <p className="text-lg font-medium">{summary?.reachable ? 'Online' : 'Offline'}</p>
+                <div key={connection.id} className="panel">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="label">{summary?.label ?? connection.label}</p>
+                    <span className={`status-pill ${isOnline ? 'ok' : 'error'}`}>
+                      {isOnline ? 'Online' : 'Offline'}
+                    </span>
+                  </div>
+                  <p className="text-sm text-surfaceMuted">Mode: {connection.mode}</p>
                   <p className="text-sm text-surfaceMuted">Height: {formatNumber(summary?.bestNumber)}</p>
                   <p className="text-sm text-surfaceMuted">Peers: {formatNumber(summary?.peers)}</p>
                 </div>
@@ -1186,38 +1271,80 @@ export default function App() {
           </div>
         </section>
 
-        <section className="card space-y-6">
+        <section className="card reveal delay-4 space-y-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="label">Console</p>
               <h2 className="text-2xl font-semibold">Node Console</h2>
+              <p className="text-sm text-surfaceMuted">
+                Structured logs and milestone events for the active connection.
+              </p>
             </div>
-            <div className="flex flex-wrap gap-2 text-sm text-surfaceMuted">
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={logFilterInfo} onChange={(event) => setLogFilterInfo(event.target.checked)} />
+            <div className="flex flex-wrap gap-2">
+              <button className="chip" type="button" aria-pressed={logFilterInfo} onClick={() => setLogFilterInfo((prev) => !prev)}>
                 Info
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={logFilterWarn} onChange={(event) => setLogFilterWarn(event.target.checked)} />
+              </button>
+              <button className="chip" type="button" aria-pressed={logFilterWarn} onClick={() => setLogFilterWarn((prev) => !prev)}>
                 Warn
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={logFilterError} onChange={(event) => setLogFilterError(event.target.checked)} />
+              </button>
+              <button className="chip" type="button" aria-pressed={logFilterError} onClick={() => setLogFilterError((prev) => !prev)}>
                 Error
-              </label>
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={logFilterDebug} onChange={(event) => setLogFilterDebug(event.target.checked)} />
+              </button>
+              <button className="chip" type="button" aria-pressed={logFilterDebug} onClick={() => setLogFilterDebug((prev) => !prev)}>
                 Debug
-              </label>
+              </button>
             </div>
           </div>
 
-          <label className="space-y-2">
-            <span className="label">Search logs</span>
-            <input value={logSearch} onChange={(event) => setLogSearch(event.target.value)} placeholder="Filter by phrase" />
-          </label>
+          <div className="grid gap-4 lg:grid-cols-3">
+            <div className="panel space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="label">Key events</p>
+                <span className="text-xs text-surfaceMuted">{logHighlights.length} recent</span>
+              </div>
+              {activeConnection?.mode !== 'local' ? (
+                <p className="text-sm text-surfaceMuted">Connect to a local node to stream logs.</p>
+              ) : logHighlights.length ? (
+                <div className="space-y-2">
+                  {logHighlights.map((entry) => (
+                    <div key={entry.id} className="flex items-start gap-3 text-sm">
+                      <span className="mono text-surfaceMuted">{entry.timestamp ?? '--:--:--'}</span>
+                      <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
+                      <span className="text-surfaceMuted">{entry.message}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-surfaceMuted">No highlight events yet.</p>
+              )}
+            </div>
+            <div className="panel space-y-4 lg:col-span-2">
+              <div>
+                <p className="label">Channels</p>
+                <div className="flex flex-wrap gap-2">
+                  {logCategoryOrder.map((category) => (
+                    <span key={category} className="chip-static">
+                      {logCategoryLabels[category]} {formatNumber(logCategoryStats[category])}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <label className="space-y-2">
+                <span className="label">Search logs</span>
+                <input
+                  type="search"
+                  value={logSearch}
+                  onChange={(event) => setLogSearch(event.target.value)}
+                  placeholder="Filter by phrase or module"
+                />
+              </label>
+              <p className="text-xs text-surfaceMuted">
+                Showing {formatNumber(nodeLogs.length)} lines (newest at bottom).
+              </p>
+            </div>
+          </div>
 
-          <div className="bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4 h-80 overflow-auto">
+          <div className="panel h-80 overflow-auto">
             {activeConnection?.mode !== 'local' && (
               <p className="text-sm text-surfaceMuted">Logs are only available for local nodes started from this app.</p>
             )}
@@ -1225,13 +1352,13 @@ export default function App() {
               <div className="space-y-2">
                 {filteredLogEntries.length === 0 && <p className="text-sm text-surfaceMuted">No matching logs.</p>}
                 {filteredLogEntries.map((entry) => (
-                  <div key={entry.id} className="flex gap-3 text-sm">
+                  <div key={entry.id} className="flex flex-wrap gap-3 text-sm log-row">
                     <span className="mono text-surfaceMuted">{entry.timestamp ?? '--:--:--'}</span>
-                    <span className="text-xs uppercase tracking-widest text-surfaceMuted">{entry.level}</span>
-                    <span className="text-xs uppercase tracking-widest text-surfaceMuted">{entry.category}</span>
+                    <span className={`badge level-${entry.level}`}>{entry.level}</span>
+                    <span className="badge badge-category">{logCategoryLabels[entry.category]}</span>
                     <span className="mono flex-1">{entry.message}</span>
                     {entry.highlight ? (
-                      <span className="text-xs uppercase tracking-widest text-amber">{entry.highlight}</span>
+                      <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
                     ) : null}
                   </div>
                 ))}

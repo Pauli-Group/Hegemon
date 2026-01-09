@@ -24,6 +24,7 @@ This app is a GUI wrapper over existing Rust components (`hegemon-node` and the 
 - [x] Milestone 4: Wallet integration v2 (replace parsing with `walletd` sidecar protocol).
 - [x] Milestone 5: Wallet UX hardening (address book, consolidation UI, disclosure UI).
 - [x] (2026-01-09) Milestone 6: Node console hardening (structured logs, filters, runbook-aligned operations, multi-node connections).
+- [x] (2026-01-09) Refresh Milestone 6 UI with HIG-aligned status strips, log highlights, filter chips, and subtle motion.
 - [x] (2026-01-09) Milestone 7: Packaging and distribution (bundle binaries, signing, updates).
 - [x] (2026-01-09) Backend integration hardening (walletd protocol versioning + error codes + store lock, node config RPC snapshot).
 
@@ -90,6 +91,10 @@ This app is a GUI wrapper over existing Rust components (`hegemon-node` and the 
   Rationale: The app should be able to introspect the running node without scraping logs or guessing CLI flags.
   Date/Author: 2026-01-09 / Agent
 
+- Decision: Present node status as a scannable status strip with log highlights and chip filters.
+  Rationale: This aligns with Apple HIG clarity/deference and supports operator workflows that require quick, reliable situational awareness.
+  Date/Author: 2026-01-09 / Agent
+
 
 ## Outcomes & Retrospective
 
@@ -100,6 +105,7 @@ This app is a GUI wrapper over existing Rust components (`hegemon-node` and the 
 - 2026-01-09: Added genesis mismatch warnings, remote RPC safety notes, and expanded node telemetry/mining panels in the desktop UI.
 - 2026-01-09: Added explicit listen-addr and RPC exposure controls plus persistent base-path defaults to keep node data safe.
 - 2026-01-09: Added walletd protocol versioning/error codes with store locking and a node config RPC snapshot to harden app ↔ backend integration.
+- 2026-01-09: Refreshed the Node console UI with a status strip, log highlights, channel counters, and HIG-aligned filters to improve operator scanning.
 
 
 ## Context and Orientation
@@ -360,3 +366,4 @@ Core JS dependencies belong in `hegemon-app/package.json` and should stay minima
 Change note (2026-01-09): updated the plan to remove the standalone explorer/mining page and focus on a Node console + Wallet-only app, per the latest product direction.
 Change note (2026-01-09): added flexible multi-node connection support to match varied deployment workflows without hard-coded roles.
 Change note (2026-01-09): recorded backend integration hardening (walletd protocol versioning/error codes/locks, node config RPC) so the plan reflects the current app-facing contracts.
+Change note (2026-01-09): refreshed Milestone 6 guidance to emphasize HIG-aligned console layout, log highlights, and operator-focused scannability after reapplying UI changes locally.
