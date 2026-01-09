@@ -25,8 +25,11 @@
 //! ## Security
 //!
 //! STARK proofs rely only on collision-resistant hash functions, making them
-//! resistant to quantum attacks. The trade-off is larger proof sizes (~20-50KB)
+//! resistant to quantum attacks. The trade-off is larger proof sizes (hundreds of kB)
 //! compared to Groth16 (~200 bytes), but this is acceptable for quantum resistance.
+//!
+//! Note: With 48-byte digests and a 128-bit PQ target, current Plonky3 transaction proofs are
+//! hundreds of kB (≈357KB in the release `TransactionAirP3` e2e test).
 
 use std::time::{Duration, Instant};
 
@@ -43,10 +46,18 @@ use crate::error::WalletError;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StarkProverConfig {
     /// FRI blowup factor (higher = more security, larger proofs).
-    /// Default: 8 (128-bit security).
+    ///
+    /// Note: Plonky3 FRI parameters are currently compile-time constants in
+    /// `transaction_core::p3_config`; this field is advisory/UX-only today.
+    ///
+    /// Default: 16 (log_blowup = 4).
     pub blowup_factor: usize,
     /// Number of FRI query rounds.
-    /// Default: 32 (128-bit security).
+    ///
+    /// Note: Plonky3 FRI parameters are currently compile-time constants in
+    /// `transaction_core::p3_config`; this field is advisory/UX-only today.
+    ///
+    /// Default: 32 (128-bit engineering target at log_blowup = 4).
     pub num_queries: usize,
     /// Enable proof grinding (PoW on proof for size reduction).
     /// Default: false (not needed for transactions).
@@ -63,7 +74,7 @@ pub struct StarkProverConfig {
 impl Default for StarkProverConfig {
     fn default() -> Self {
         Self {
-            blowup_factor: 8,
+            blowup_factor: 16,
             num_queries: 32,
             enable_grinding: false,
             grinding_bits: 0,
@@ -134,7 +145,7 @@ impl StarkProverConfig {
             .unwrap_or(false);
         if !cfg!(debug_assertions) && !allow_fast {
             cfg.num_queries = cfg.num_queries.max(32);
-            cfg.blowup_factor = cfg.blowup_factor.max(8);
+            cfg.blowup_factor = cfg.blowup_factor.max(16);
         }
 
         cfg
@@ -335,7 +346,7 @@ mod tests {
     #[test]
     fn test_config_defaults() {
         let config = StarkProverConfig::default();
-        assert_eq!(config.blowup_factor, 8);
+        assert_eq!(config.blowup_factor, 16);
         assert_eq!(config.num_queries, 32);
         assert!(!config.enable_grinding);
     }
@@ -357,7 +368,7 @@ mod tests {
     #[test]
     fn test_prover_creation() {
         let prover = StarkProver::with_defaults();
-        assert_eq!(prover.config().blowup_factor, 8);
+        assert_eq!(prover.config().blowup_factor, 16);
     }
 
     #[test]

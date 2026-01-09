@@ -168,7 +168,7 @@ Concretely:
   * Highly parallelizable (good for GPU/prover markets).
 * Verifier:
 
-  * Maybe ~tens of milliseconds, proof sizes in the tens of kB (we accept ZK/STARK size inflation vs SNARK).
+  * Proof sizes are materially larger than SNARKs; with 48-byte digests and a 128-bit PQ target, single-transaction Plonky3 proofs are currently hundreds of kB (≈357KB for the release `TransactionAirP3` e2e test).
 
 **Lesson from Zcash:** we do *not* change proving systems mid-flight if we can avoid it. We pick one transparent, STARK-ish scheme and stick with it, using recursion for evolution rather than entire new pools.
 

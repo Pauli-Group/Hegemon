@@ -178,6 +178,10 @@ fn stablecoin_witness() -> TransactionWitness {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "plonky3-e2e"),
+    ignore = "slow: generates a full Plonky3 proof; run with --features plonky3-e2e --release"
+)]
 fn proving_and_verification_succeeds() -> Result<(), TransactionCircuitError> {
     let witness = sample_witness();
     let (proving_key, verifying_key) = generate_keys();
@@ -194,14 +198,28 @@ fn proving_and_verification_succeeds() -> Result<(), TransactionCircuitError> {
 #[test]
 fn verification_fails_for_bad_balance() {
     let witness = sample_witness();
-    let (proving_key, verifying_key) = generate_keys();
-    let mut proof = prove(&witness, &proving_key).expect("proof generation");
+    let (_proving_key, verifying_key) = generate_keys();
+    let public_inputs = witness.public_inputs().expect("public inputs");
+    let trace = transaction_circuit::trace::TransactionTrace::from_witness(&witness)
+        .expect("legacy trace");
+    let mut proof = transaction_circuit::proof::TransactionProof {
+        nullifiers: public_inputs.nullifiers.clone(),
+        commitments: public_inputs.commitments.clone(),
+        balance_slots: trace.padded_balance_slots(),
+        public_inputs,
+        stark_proof: Vec::new(),
+        stark_public_inputs: None,
+    };
     proof.balance_slots[1].delta = 1; // corrupt non-native slot
     let err = verify(&proof, &verifying_key).expect_err("expected failure");
     assert!(matches!(err, TransactionCircuitError::BalanceMismatch(_)));
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "plonky3-e2e"),
+    ignore = "slow: generates a full Plonky3 proof; run with --features plonky3-e2e --release"
+)]
 fn verification_fails_for_nullifier_mutation() {
     let witness = sample_witness();
     let (proving_key, verifying_key) = generate_keys();
@@ -218,6 +236,10 @@ fn verification_fails_for_nullifier_mutation() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "plonky3-e2e"),
+    ignore = "slow: generates a full Plonky3 proof; run with --features plonky3-e2e --release"
+)]
 fn verification_fails_for_stablecoin_policy_hash_mutation() {
     let witness = stablecoin_witness();
     let (proving_key, verifying_key) = generate_keys();

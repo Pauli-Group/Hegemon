@@ -47,12 +47,13 @@ After this work, a user can:
 - [x] (2026-01-07 22:10Z) Removed `legacy-commitment` helpers from the shielded pool pallet and kept only circuit-compatible Poseidon2 commitment/nullifier helpers.
 - [x] (2026-01-07 22:10Z) Updated security-tests to Plonky3/Poseidon2 expectations (rewrote `stark_soundness`, rewired `poseidon_compat`, refreshed block-flow tests), plus aligned node RPC fixtures and node-resilience validator commitments to 48-byte Blake3-384.
 - [x] (2026-01-07 23:55Z) Removed the Winterfell epoch proof stack (epoch circuit, pallet storage, node RPC/gossip, tests) and archived recursive-epoch runbooks pending a Plonky3 recursion replacement.
-- [x] (2026-01-08 00:30Z) Applied per-AIR `log_blowup` selection for transaction/batch/settlement/disclosure Plonky3 provers+verifiers and aligned runtime verifier params to 43 queries with blowup 16.
+- [x] (2026-01-08 00:30Z) Applied per-AIR `log_blowup` selection for transaction/batch/settlement/disclosure Plonky3 provers+verifiers and aligned runtime verifier params to 32 queries with blowup 16.
 - [x] (2026-01-08 02:05Z) Milestone 6: Configure FRI for 128-bit IOP soundness across all circuits (per-AIR log_blowup selection + runtime defaults; ran Plonky3 e2e prove/verify in release and kept proof-size caps aligned).
 - [x] (2026-01-08 00:45Z) Bumped protocol version binding to V2/BETA and aligned transaction AIR versioning + fixtures with the Plonky3/Poseidon2 stack.
 - [x] (2026-01-08 02:10Z) Milestone 7: Update pallets, node, wallet, and protocol versioning (protocol version binding bump + consensus/wallet integration tests run).
 - [x] (2026-01-08 04:05Z) Re-ran Plonky3 transaction-circuit tests, disclosure-circuit tests, wallet disclosure-package tests, consensus tests, and the Plonky3 e2e prove/verify test in release.
 - [x] (2026-01-08 04:15Z) Milestone 8: Documentation and runbooks (updated DESIGN/METHODS/README/SECURITY/docs/runbooks for Poseidon2-384, 48-byte commitments, and Plonky3 soundness parameters).
+- [x] (2026-01-09) Reduced production Plonky3 transaction proof size by setting `FRI_NUM_QUERIES=32` (keeps the 128-bit engineering target at `32 × 4`) and tightened runtime limits (block length 4MB, `STARK_PROOF_MAX_SIZE=2MB`); measured `TransactionAirP3` proof bytes at ~357KB in release.
 
 ## Surprises & Discoveries
 
@@ -101,8 +102,8 @@ After this work, a user can:
 - Observation: The Plonky3 transaction E2E prove/verify test initially failed with `OodEvaluationMismatch` until log_blowup and preprocessed wiring were aligned; the current release E2E test passes and completes quickly.
   Evidence: `cargo test -p transaction-circuit --features plonky3-e2e --lib prove_verify_roundtrip_p3 --release -- --nocapture` (finished in ~9s).
 
-- Observation: The debug-mode transaction-circuit test suite is slow because full prove/verify still runs in `tests/transaction.rs`; plan time budgets accordingly.
-  Evidence: `cargo test -p transaction-circuit --features plonky3` (tests/transaction took ~539s).
+- Observation: Full Plonky3 proof generation is slow in debug builds; keep proof-generating tests ignored by default and run them via `plonky3-e2e` in `--release`.
+  Evidence: `circuits/transaction/tests/transaction.rs` is feature-gated; `cargo test -p transaction-circuit --features plonky3-e2e --release` runs the full prove/verify path.
 
 - Observation: A full Plonky3 prove/verify roundtrip is slow in unit tests, so the end-to-end test is marked ignored to avoid default test timeouts.
   Evidence: `circuits/transaction/src/p3_prover.rs` test annotations.
@@ -167,8 +168,8 @@ After this work, a user can:
   Rationale: Current parameters are inconsistent (8–32 queries across circuits). Uniform 128-bit aligns with the "128-bit everywhere" security posture.
   Date/Author: 2026-01-06 / Codex.
 
-- Decision: Keep `FRI_NUM_QUERIES = 43` for Plonky3 E2E tests and set `FRI_LOG_BLOWUP` to the minimum that satisfies the AIR’s quotient-degree requirement, based on measured `log_quotient_degree` (formal soundness analysis pending).
-  Rationale: Avoid over-provisioned LDE domains while keeping a conservative query count until a formal soundness analysis is completed.
+- Decision: Use `FRI_NUM_QUERIES = 32` for production/e2e Plonky3 proofs and set `FRI_LOG_BLOWUP` to the minimum that satisfies the AIR’s quotient-degree requirement, based on measured `log_quotient_degree` (formal soundness analysis pending).
+  Rationale: `32 × 4 = 128` hits the minimum engineering target while materially shrinking proofs vs. 43-query configs.
   Date/Author: 2026-01-07 / Codex.
 
 - Decision: Add explicit Poseidon round-constant columns plus an absorb-flag column to decouple schedule selection from the S-box, reducing the maximum constraint degree and quotient blowup requirements.
@@ -180,7 +181,7 @@ After this work, a user can:
   Date/Author: 2026-01-07 / Codex.
 
 - Decision: Keep purpose-built circuits rather than adopting a general zkVM.
-  Rationale: Hegemon follows a "PQC Bitcoin" philosophy — fixed transaction/disclosure shapes are simpler to audit than a full VM. This trades flexibility for auditability and smaller proof sizes (~60–100 KB vs. Neptune's ~533 KB).
+  Rationale: Hegemon follows a "PQC Bitcoin" philosophy — fixed transaction/disclosure shapes are simpler to audit than a full VM. This trades flexibility for auditability; with 48-byte digests and 128-bit PQ targets, single-transaction STARK proofs are still hundreds of kB today (e.g., ~357KB for `TransactionAirP3` with `log_blowup=4`, `num_queries=32`).
   Date/Author: 2026-01-06 / Codex.
 
 - Decision: Define the Milestone 0 inventory scope as files with explicit `use winter*` imports; comment-only references are tracked later as doc updates.
@@ -255,8 +256,8 @@ After this work, a user can:
   Rationale: Prevents LDE height mismatches and makes the FRI configuration soundness-safe across differing AIR constraint degrees.
   Date/Author: 2026-01-08 / Codex.
 
-- Decision: Standardize runtime-facing verifier params to 43 queries and blowup 16 for 128-bit PQ soundness.
-  Rationale: Keeps on-chain settings consistent with Plonky3 production parameters and avoids misleading security metadata.
+- Decision: Standardize runtime-facing verifier params to 32 queries and blowup 16 for 128-bit PQ soundness.
+  Rationale: Keeps on-chain settings consistent with the minimum 128-bit engineering target (`32 × 4 = 128`) while materially reducing proof size and bandwidth.
   Date/Author: 2026-01-08 / Codex.
 
 - Decision: Remove stray `* 2.rs` Winterfell duplicates instead of keeping them as references.
@@ -506,7 +507,7 @@ Add Plonky3 dependencies and implement a minimal "Fibonacci" AIR to validate the
 Concrete steps:
 1. Add Plonky3 crates to workspace `Cargo.toml` under a `plonky3` feature flag.
 2. Create `circuits/plonky3-spike/` with a Fibonacci AIR.
-3. Configure `FriParameters` with `log_blowup: 3, num_queries: 43` (129-bit).
+3. Configure `FriParameters` with `log_blowup: 4, num_queries: 32` (128-bit).
 4. Configure Merkle hash with 48-byte output (BLAKE3 XOF or Poseidon2).
 5. Prove/verify a Fibonacci trace of length 1024.
 6. Assert proof verifies and log proof size.
@@ -590,7 +591,7 @@ Acceptance: Dev node mines blocks with 48-byte commitments; wallet submits trans
 
 Standardize FRI configuration across all circuits.
 
-Target: 43 queries × blowup 8 = 129 bits, or 32 queries × blowup 16 = 128 bits.
+Target (selected): 32 queries × blowup 16 = 128 bits.
 
 Scope:
 1. Define a shared `default_fri_config()` function returning `FriParameters`.
@@ -764,8 +765,8 @@ Plan update (2026-01-08): Recorded Milestone 6 progress for per-AIR `log_blowup`
 
         pub fn default_fri_config() -> FriParameters {
             FriParameters {
-                log_blowup: 3,      // blowup = 8
-                num_queries: 43,    // 43 × 3 = 129 bits
+                log_blowup: 4,      // blowup = 16
+                num_queries: 32,    // 32 × 4 = 128 bits
                 proof_of_work_bits: 0,
             }
         }

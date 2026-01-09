@@ -18,16 +18,19 @@ pub const DIGEST_ELEMS: usize = 6;
 pub const POSEIDON2_WIDTH: usize = crate::constants::POSEIDON2_WIDTH;
 pub const POSEIDON2_RATE: usize = crate::constants::POSEIDON2_RATE;
 
-// Test builds use lower FRI parameters unless the e2e feature is enabled.
-#[cfg(all(test, not(feature = "plonky3-e2e")))]
-pub const FRI_LOG_BLOWUP: usize = 4;
-#[cfg(any(not(test), feature = "plonky3-e2e"))]
+// Debug builds use lower FRI parameters unless the e2e feature is enabled.
+//
+// Note: `cfg(test)` does not apply to dependency crates, so use `debug_assertions` to keep
+// integration tests fast while ensuring release builds always use production parameters.
+#[cfg(all(debug_assertions, not(feature = "plonky3-e2e")))]
+pub const FRI_LOG_BLOWUP: usize = 3;
+#[cfg(any(not(debug_assertions), feature = "plonky3-e2e"))]
 pub const FRI_LOG_BLOWUP: usize = 4;
 
-#[cfg(all(test, not(feature = "plonky3-e2e")))]
+#[cfg(all(debug_assertions, not(feature = "plonky3-e2e")))]
 pub const FRI_NUM_QUERIES: usize = 8;
-#[cfg(any(not(test), feature = "plonky3-e2e"))]
-pub const FRI_NUM_QUERIES: usize = 43;
+#[cfg(any(not(debug_assertions), feature = "plonky3-e2e"))]
+pub const FRI_NUM_QUERIES: usize = 32;
 
 pub const FRI_POW_BITS: usize = 0;
 

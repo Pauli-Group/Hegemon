@@ -1129,7 +1129,25 @@ mod tests {
         let prover = TransactionProverP3::new();
         let trace = prover.build_trace(&witness).expect("trace build");
         let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
+        let pub_inputs_vec = pub_inputs.to_vec();
+        let log_chunks = get_log_num_quotient_chunks::<Val, _>(
+            &TransactionAirP3,
+            0,
+            pub_inputs_vec.len(),
+            0,
+        );
+        let log_blowup = transaction_core::p3_config::FRI_LOG_BLOWUP.max(log_chunks);
+        let num_queries = transaction_core::p3_config::FRI_NUM_QUERIES;
         let proof = prover.prove(trace, &pub_inputs);
+        let proof_bytes = postcard::to_allocvec(&proof).expect("serialize proof");
+        println!(
+            "p3 tx proof: bytes={}, degree_bits={}, log_chunks={}, log_blowup={}, num_queries={}",
+            proof_bytes.len(),
+            proof.degree_bits,
+            log_chunks,
+            log_blowup,
+            num_queries
+        );
         verify_transaction_proof_p3(&proof, &pub_inputs).expect("verification should pass");
     }
 

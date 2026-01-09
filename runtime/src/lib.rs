@@ -889,7 +889,7 @@ parameter_types! {
         Perbill::from_percent(75),
     );
     pub RuntimeBlockLength: system::limits::BlockLength = system::limits::BlockLength::max_with_normal_ratio(
-        16 * 1024 * 1024,
+        4 * 1024 * 1024,
         Perbill::from_percent(75),
     );
     pub const SS58Prefix: u16 = 42;
