@@ -122,7 +122,7 @@ HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet
   --dev \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
-  --port 30333 \
+  --listen-addr /ip4/0.0.0.0/tcp/30333 \
   --rpc-port 9944 \
   --rpc-external \
   --rpc-methods safe \
