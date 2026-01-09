@@ -94,8 +94,10 @@ export default function ExplorerPage() {
 
         // Get shielded pool stats
         const poolBal = await api.query.shieldedPool.poolBalance();
-        const formatted = (BigInt(poolBal.toString()) / BigInt(10 ** 12)).toLocaleString();
-        setPoolBalance(formatted);
+        const rawBalance = BigInt(poolBal.toString());
+        // HGM uses 8 decimal places (like Bitcoin satoshis), not 12
+        const wholeUnits = Number(rawBalance) / 1e8;
+        setPoolBalance(wholeUnits.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 
         const commitIdx = await api.query.shieldedPool.commitmentIndex();
         setCommitmentCount((commitIdx as unknown as { toNumber: () => number }).toNumber());
@@ -156,7 +158,7 @@ export default function ExplorerPage() {
           icon={Clock}
         />
         <StatCard
-          label="Pool Balance"
+          label="Shielded Supply"
           value={`${poolBalance} HGM`}
           icon={Shield}
         />
