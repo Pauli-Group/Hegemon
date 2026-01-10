@@ -18,12 +18,12 @@ This refresh must remain a real app (not a mockup): every screen is wired to the
 
 - [x] (2026-01-10) Drafted the UX + brand refresh ExecPlan.
 - [ ] UX audit: map tasks and failure modes.
-- [ ] Build App Shell: nav + global status.
-- [ ] Build Overview workspace: “command center”.
-- [ ] Extract reusable UI components and tokens.
-- [ ] Rebuild Node workspace around “operate + observe”.
-- [ ] Rebuild Wallet/Send workspaces around “safe funds flow”.
-- [ ] Rebuild Console workspace as timeline + diagnostics.
+- [x] (2026-01-10) Build App Shell: nav + global status.
+- [x] (2026-01-10) Build Overview workspace: “command center”.
+- [ ] (2026-01-10) Extract reusable UI components and tokens (completed: shell/nav/status/action-link primitives; remaining: formal form/status/timeline component library).
+- [x] (2026-01-10) Rebuild Node workspace around “operate + observe”.
+- [x] (2026-01-10) Rebuild Wallet/Send workspaces around “safe funds flow”.
+- [x] (2026-01-10) Rebuild Console workspace as timeline + diagnostics.
 - [ ] Add E2E + visual regression harness for Electron.
 - [ ] Polish pass: copy, empty states, motion, a11y.
 
@@ -50,6 +50,14 @@ This refresh must remain a real app (not a mockup): every screen is wired to the
 
 - Decision: Use `react-router-dom` for workspace navigation, with a temporary “Legacy” route during migration.
   Rationale: Clear URL-ish state improves debuggability in Electron, keeps workspaces isolated, and makes incremental migration straightforward.
+  Date/Author: 2026-01-10 / Agent
+
+- Decision: Use `HashRouter` for navigation in Electron.
+  Rationale: Hash-based routing avoids file:// path issues in packaged Electron builds while keeping URLs human-readable.
+  Date/Author: 2026-01-10 / Agent
+
+- Decision: Persist UI mode (new vs legacy) in localStorage with an in-app toggle.
+  Rationale: Operators can fall back to the legacy layout without losing app state while parity is verified.
   Date/Author: 2026-01-10 / Agent
 
 
@@ -255,3 +263,5 @@ Renderer constraints:
 External processes:
 
 - Dev mode expects `target/release/hegemon-node` and `target/release/walletd` per `hegemon-app/electron/binPaths.ts`.
+
+Change note (2026-01-10): Updated Progress to reflect completed shell/workspace work and recorded routing/UI-mode decisions made during implementation.

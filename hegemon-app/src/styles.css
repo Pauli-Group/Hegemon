@@ -57,6 +57,62 @@ button.danger {
   @apply rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4;
 }
 
+.app-shell {
+  @apply min-h-screen flex flex-col lg:flex-row;
+}
+
+.app-sidebar {
+  @apply w-full lg:w-64 shrink-0 border-b lg:border-b-0 lg:border-r border-surfaceMuted/10 bg-midnight/70 backdrop-blur-xl p-6 space-y-6 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto;
+}
+
+.app-body {
+  @apply flex-1 flex flex-col;
+}
+
+.app-main {
+  @apply flex-1 px-6 py-6;
+}
+
+.status-bar {
+  @apply sticky top-0 z-20 bg-midnight/80 border-b border-surfaceMuted/10 backdrop-blur-xl px-6 py-4;
+}
+
+.status-grid {
+  @apply grid gap-4 lg:grid-cols-3;
+}
+
+.status-group {
+  @apply space-y-1;
+}
+
+.nav-link {
+  @apply block rounded-xl px-3 py-2 transition border border-transparent;
+}
+
+.nav-link:hover {
+  @apply bg-surfaceMuted/10 border-surfaceMuted/20;
+}
+
+.nav-link-active {
+  @apply bg-ionosphere/15 border-ionosphere/40;
+}
+
+.action-link {
+  @apply inline-flex items-center justify-center rounded-lg px-4 py-2 font-medium transition outline-none ring-1 ring-transparent;
+}
+
+.action-link:focus-visible {
+  @apply ring-2 ring-ionosphere/40;
+}
+
+.action-link.primary {
+  @apply bg-ionosphere text-midnight hover:bg-ionosphere/80;
+}
+
+.action-link.secondary {
+  @apply bg-surfaceMuted/10 text-surface hover:bg-surfaceMuted/20;
+}
+
 .chip {
   @apply rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.22em] border border-surfaceMuted/30 text-surfaceMuted bg-surfaceMuted/10 transition;
 }
