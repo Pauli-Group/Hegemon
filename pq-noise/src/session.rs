@@ -162,8 +162,8 @@ mod tests {
         let initiator_identity = LocalIdentity::generate(b"session-test-initiator");
         let responder_identity = LocalIdentity::generate(b"session-test-responder");
 
-        let initiator_config = PqNoiseConfig::new(initiator_identity.clone(), false);
-        let responder_config = PqNoiseConfig::new(responder_identity.clone(), false);
+        let initiator_config = PqNoiseConfig::new(initiator_identity.clone());
+        let responder_config = PqNoiseConfig::new(responder_identity.clone());
 
         // Perform handshake
         let mut initiator_hs = PqHandshake::new(initiator_config);
@@ -232,8 +232,8 @@ mod tests {
         let identity1 = LocalIdentity::generate(b"stats-test-1");
         let identity2 = LocalIdentity::generate(b"stats-test-2");
 
-        let config1 = PqNoiseConfig::new(identity1.clone(), false);
-        let config2 = PqNoiseConfig::new(identity2.clone(), false);
+        let config1 = PqNoiseConfig::new(identity1.clone());
+        let config2 = PqNoiseConfig::new(identity2.clone());
 
         // Quick handshake
         let mut hs1 = PqHandshake::new(config1);

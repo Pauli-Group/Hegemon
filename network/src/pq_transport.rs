@@ -13,8 +13,6 @@ use tokio::net::TcpStream;
 /// Configuration for PQ-secure transport
 #[derive(Clone, Debug)]
 pub struct PqTransportConfig {
-    /// Whether to require PQ handshake (reject non-PQ peers)
-    pub require_pq: bool,
     /// Handshake timeout
     pub handshake_timeout: Duration,
     /// Enable verbose logging of handshake details
@@ -24,7 +22,6 @@ pub struct PqTransportConfig {
 impl Default for PqTransportConfig {
     fn default() -> Self {
         Self {
-            require_pq: true, // Default to secure
             handshake_timeout: Duration::from_secs(30),
             verbose_logging: false,
         }
@@ -35,7 +32,6 @@ impl PqTransportConfig {
     /// Create a development configuration (less strict)
     pub fn development() -> Self {
         Self {
-            require_pq: false,
             handshake_timeout: Duration::from_secs(30),
             verbose_logging: true,
         }
@@ -44,17 +40,16 @@ impl PqTransportConfig {
     /// Create a production configuration (requires PQ)
     pub fn production() -> Self {
         Self {
-            require_pq: true,
             handshake_timeout: Duration::from_secs(30),
             verbose_logging: false,
         }
     }
 }
 
-/// PQ-enhanced peer identity that can perform hybrid handshakes
+/// PQ peer identity for post-quantum handshakes
 pub struct PqPeerIdentity {
-    /// Legacy identity for compatibility
-    legacy: PeerIdentity,
+    /// Local identity for peer ID derivation
+    identity: PeerIdentity,
     /// PQ noise configuration
     pq_config: PqNoiseConfig,
     /// Transport configuration
@@ -64,14 +59,14 @@ pub struct PqPeerIdentity {
 impl PqPeerIdentity {
     /// Create a new PQ peer identity from a seed
     pub fn new(seed: &[u8], transport_config: PqTransportConfig) -> Self {
-        let legacy = PeerIdentity::generate(seed);
+        let identity = PeerIdentity::generate(seed);
         let local_identity = pq_noise::types::LocalIdentity::generate(seed);
 
-        let pq_config = PqNoiseConfig::new(local_identity, transport_config.require_pq)
-            .with_timeout(transport_config.handshake_timeout);
+        let pq_config =
+            PqNoiseConfig::new(local_identity).with_timeout(transport_config.handshake_timeout);
 
         Self {
-            legacy,
+            identity,
             pq_config: if transport_config.verbose_logging {
                 pq_config.with_verbose_logging()
             } else {
@@ -83,12 +78,7 @@ impl PqPeerIdentity {
 
     /// Get the peer ID
     pub fn peer_id(&self) -> PeerId {
-        self.legacy.peer_id()
-    }
-
-    /// Get the legacy identity for compatibility
-    pub fn legacy(&self) -> &PeerIdentity {
-        &self.legacy
+        self.identity.peer_id()
     }
 
     /// Create a PQ transport from this identity
@@ -96,9 +86,8 @@ impl PqPeerIdentity {
         PqTransport::new(self.pq_config.clone())
     }
 
-    /// Whether PQ is required for connections
-    pub fn requires_pq(&self) -> bool {
-        self.transport_config.require_pq
+    pub fn transport_config(&self) -> &PqTransportConfig {
+        &self.transport_config
     }
 }
 
@@ -148,19 +137,11 @@ pub async fn upgrade_inbound(
             Ok(PqSecureConnection::new(session, peer_id, addr))
         }
         Err(e) => {
-            if identity.requires_pq() {
-                tracing::warn!(
-                    addr = %addr,
-                    error = %e,
-                    "Rejecting non-PQ peer (require_pq=true)"
-                );
-            } else {
-                tracing::warn!(
-                    addr = %addr,
-                    error = %e,
-                    "PQ handshake failed"
-                );
-            }
+            tracing::warn!(
+                addr = %addr,
+                error = %e,
+                "PQ handshake failed"
+            );
             Err(NetworkError::Handshake("PQ handshake failed"))
         }
     }
@@ -224,18 +205,6 @@ impl PqSecureConnection {
     }
 }
 
-/// Connection mode: Legacy (current implementation) or PQ-secure
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ConnectionMode {
-    /// Use legacy handshake (current implementation)
-    Legacy,
-    /// Use PQ-secure handshake with ML-KEM-768
-    PqSecure,
-    /// Try PQ first, fall back to legacy if not supported
-    #[default]
-    Hybrid,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,19 +256,14 @@ mod tests {
         let id1 = identity.peer_id();
         let id2 = identity.peer_id();
         assert_eq!(id1, id2);
-
-        // Should require PQ by default
-        assert!(identity.requires_pq());
     }
 
     #[test]
     fn test_transport_config() {
         let dev = PqTransportConfig::development();
-        assert!(!dev.require_pq);
         assert!(dev.verbose_logging);
 
         let prod = PqTransportConfig::production();
-        assert!(prod.require_pq);
         assert!(!prod.verbose_logging);
     }
 }

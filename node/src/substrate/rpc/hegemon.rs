@@ -140,8 +140,6 @@ pub struct NodeConfigSnapshot {
     pub rpc_external: bool,
     /// PQ bootstrap nodes (ip:port)
     pub bootstrap_nodes: Vec<String>,
-    /// Require PQ connections
-    pub require_pq: bool,
     /// PQ handshake verbose logging enabled
     pub pq_verbose: bool,
     /// Maximum peers allowed
@@ -454,7 +452,6 @@ mod tests {
             rpc_methods: "safe".to_string(),
             rpc_external: false,
             bootstrap_nodes: vec!["1.2.3.4:30333".to_string()],
-            require_pq: true,
             pq_verbose: false,
             max_peers: 50,
         }

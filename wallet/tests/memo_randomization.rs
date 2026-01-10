@@ -6,7 +6,7 @@ use tempfile::tempdir;
 #[path = "../src/bin/wallet.rs"]
 mod wallet_bin;
 
-use wallet::api::RecipientSpec;
+use wallet::RecipientSpec;
 use wallet_bin::randomize_recipient_specs;
 
 #[test]

@@ -100,27 +100,13 @@ pub fn derive_coinbase_r(public_seed: &[u8; 32]) -> [u8; 32] {
     result
 }
 
-/// Compute coinbase note commitment (circuit-compatible).
+/// Extract recipient public key from a diversified address.
 ///
-/// This uses the deterministic rho/r derived from the public seed.
-/// commitment = circuit_note_commitment(recipient, value, rho, r)
-/// where rho/r are derived from the public seed.
-#[deprecated(
-    since = "0.2.0",
-    note = "Use circuit_coinbase_commitment for ZK-compatible commitments"
-)]
-pub fn coinbase_commitment(
-    recipient: &[u8; DIVERSIFIED_ADDRESS_SIZE],
-    value: u64,
-    public_seed: &[u8; 32],
-) -> [u8; 48] {
-    // Extract pk_recipient from the 43-byte recipient format
-    // Layout: version(1) + diversifier_index(4) + pk_recipient(32) + tag(6)
+/// Layout: version(1) + diversifier_index(4) + pk_recipient(32) + tag(6)
+pub fn pk_recipient_from_address(recipient: &[u8; DIVERSIFIED_ADDRESS_SIZE]) -> [u8; 32] {
     let mut pk_recipient = [0u8; 32];
     pk_recipient.copy_from_slice(&recipient[5..37]);
-
-    // Use circuit-compatible commitment
-    circuit_coinbase_commitment(&pk_recipient, value, public_seed, 0)
+    pk_recipient
 }
 
 /// Compute coinbase note commitment (CIRCUIT-COMPATIBLE).

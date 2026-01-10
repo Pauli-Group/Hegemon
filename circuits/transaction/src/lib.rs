@@ -13,9 +13,9 @@
 //! For batching multiple transactions into a single proof, see the `batch-circuit` crate.
 //! The `dimensions` module provides shared trace layout calculations.
 //!
-//! ## Legacy API
+//! ## Implementation
 //!
-//! Legacy backend modules have been removed. Plonky3 is the sole backend.
+//! Plonky3 is the sole backend.
 
 pub mod constants;
 pub mod dimensions;

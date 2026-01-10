@@ -219,7 +219,6 @@ impl PqTransport {
 /// Transport configuration builder
 pub struct PqTransportBuilder {
     identity_seed: Option<Vec<u8>>,
-    require_pq: bool,
     handshake_timeout: Duration,
     verbose_logging: bool,
 }
@@ -235,7 +234,6 @@ impl PqTransportBuilder {
     pub fn new() -> Self {
         Self {
             identity_seed: None,
-            require_pq: true,
             handshake_timeout: Duration::from_secs(30),
             verbose_logging: false,
         }
@@ -244,12 +242,6 @@ impl PqTransportBuilder {
     /// Set the identity seed
     pub fn identity_seed(mut self, seed: impl Into<Vec<u8>>) -> Self {
         self.identity_seed = Some(seed.into());
-        self
-    }
-
-    /// Set whether PQ is required
-    pub fn require_pq(mut self, require: bool) -> Self {
-        self.require_pq = require;
         self
     }
 
@@ -274,7 +266,6 @@ impl PqTransportBuilder {
         let identity = crate::types::LocalIdentity::generate(&seed);
         let config = PqNoiseConfig {
             identity,
-            require_pq: self.require_pq,
             handshake_timeout: self.handshake_timeout,
             max_handshake_message_size: 16 * 1024,
             verbose_logging: self.verbose_logging,
@@ -296,8 +287,8 @@ mod tests {
         let initiator_identity = LocalIdentity::generate(b"transport-test-initiator");
         let responder_identity = LocalIdentity::generate(b"transport-test-responder");
 
-        let initiator_config = PqNoiseConfig::new(initiator_identity, false);
-        let responder_config = PqNoiseConfig::new(responder_identity, false);
+        let initiator_config = PqNoiseConfig::new(initiator_identity);
+        let responder_config = PqNoiseConfig::new(responder_identity);
 
         let initiator_transport = PqTransport::new(initiator_config);
         let responder_transport = PqTransport::new(responder_config);
@@ -335,8 +326,8 @@ mod tests {
         let initiator_identity = LocalIdentity::generate(b"tcp-test-initiator");
         let responder_identity = LocalIdentity::generate(b"tcp-test-responder");
 
-        let initiator_config = PqNoiseConfig::new(initiator_identity, false);
-        let responder_config = PqNoiseConfig::new(responder_identity, false);
+        let initiator_config = PqNoiseConfig::new(initiator_identity);
+        let responder_config = PqNoiseConfig::new(responder_identity);
 
         let initiator_transport = PqTransport::new(initiator_config);
         let responder_transport = PqTransport::new(responder_config);
@@ -366,7 +357,6 @@ mod tests {
     async fn test_transport_builder() {
         let transport = PqTransportBuilder::new()
             .identity_seed(b"builder-test-seed")
-            .require_pq(false)
             .handshake_timeout(Duration::from_secs(10))
             .verbose()
             .build()
@@ -416,7 +406,7 @@ mod tests {
         }
 
         let identity = LocalIdentity::generate(b"timeout-test");
-        let config = PqNoiseConfig::new(identity, false).with_timeout(Duration::from_millis(50));
+        let config = PqNoiseConfig::new(identity).with_timeout(Duration::from_millis(50));
 
         let transport = PqTransport::new(config);
 

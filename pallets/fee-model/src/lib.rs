@@ -537,7 +537,6 @@ mod tests {
 
     impl pallet_identity::Config for TestRuntime {
         type RuntimeEvent = RuntimeEvent;
-        type AuthorityId = u64;
         type CredentialSchemaId = TestSchema;
         type RoleId = TestRole;
         type AdminOrigin = frame_system::EnsureSigned<u64>;

@@ -400,7 +400,6 @@ done
 |----------|---------|-------------|
 | `HEGEMON_MINE` | `0` | Enable mining (`1` = enabled) |
 | `HEGEMON_MINE_THREADS` | `1` | Number of mining threads |
-| `HEGEMON_REQUIRE_PQ` | `true` | Require PQ-secure connections |
 | `HEGEMON_PQ_VERBOSE` | `false` | Verbose PQ handshake logging |
 | `HEGEMON_BLOCK_TIME_MS` | `10000` | Target block time in milliseconds |
 | `PROPTEST_MAX_CASES` | `256` | Property test iterations |
@@ -434,9 +433,6 @@ HEGEMON_PQ_VERBOSE=1 cargo run --release -p hegemon-node --features substrate --
 # Check for firewall issues (macOS)
 sudo pfctl -sr | grep "block"
 
-# Try with hybrid mode (allows legacy fallback)
-cargo run --release -p hegemon-node --features substrate -- \
-  --dev --tmp --hybrid-pq
 ```
 
 ### No Blocks Being Mined

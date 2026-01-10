@@ -21,7 +21,6 @@ This guide walks you through setting up a peer-to-peer HEGEMON network between y
 
 > **Important:** Only port **30333** needs to be forwarded in your router. Port 9944 is for local RPC access (`127.0.0.1:9944`) and should NOT be exposed to the internet for security reasons.
 >
-> **Note:** If using the legacy `hegemon` binary instead of Substrate, use ports **9000** (P2P) and **8080** (API).
 
 ---
 
@@ -311,7 +310,6 @@ cargo run -p wallet --bin wallet -- tx-craft \
 |----------|---------|-------------|
 | `HEGEMON_MINE` | `0` | Set to `1` to enable mining |
 | `HEGEMON_MINE_THREADS` | `1` | Number of CPU threads for mining |
-| `HEGEMON_REQUIRE_PQ` | `true` | Require post-quantum secure connections |
 | `HEGEMON_PQ_VERBOSE` | `false` | Enable verbose PQ handshake logging |
 | `HEGEMON_SEEDS` | *(unset)* | Comma-separated seed peers (`IP:port`, `host:port`) |
 | `HEGEMON_BLOCK_TIME_MS` | `10000` | Target block time in milliseconds |
@@ -345,14 +343,7 @@ sudo iptables -L -n
 - Use an online port checker (e.g., portchecker.co)
 - Make sure your node is running when you test
 
-**4. Try hybrid PQ mode (allows legacy fallback):**
-
-```bash
-cargo run --release -p hegemon-node --features substrate -- \
-  --dev ... --hybrid-pq
-```
-
-**5. Enable verbose PQ logging:**
+**4. Enable verbose PQ logging:**
 
 ```bash
 HEGEMON_PQ_VERBOSE=1 cargo run --release -p hegemon-node --features substrate -- --dev ...

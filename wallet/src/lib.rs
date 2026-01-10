@@ -1,5 +1,4 @@
 pub mod address;
-pub mod api;
 pub mod async_sync;
 pub mod consolidate;
 pub mod disclosure;
@@ -9,6 +8,7 @@ pub mod keys;
 pub mod metadata;
 pub mod notes;
 pub mod prover;
+pub mod recipients;
 pub mod rpc;
 pub mod scanner;
 mod serde_bytes48;
@@ -29,6 +29,7 @@ pub use extrinsic::{
 pub use keys::{AddressKeyMaterial, DerivedKeys, RootSecret, SpendKey, ViewKey};
 pub use notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 pub use prover::{ProofResult, ProverStats, StarkProver, StarkProverConfig};
+pub use recipients::{parse_recipients, transfer_recipients_from_specs, RecipientSpec};
 pub use rpc::TransactionBundle;
 pub use scanner::{
     NoteScanner, PositionedNote, ScanResult, ScannedNote, ScannerConfig, ScannerStats,
@@ -40,7 +41,7 @@ pub use store::{
     SpendableNote, TransferRecipient, WalletMode, WalletStore,
 };
 pub use substrate_rpc::{BlockingSubstrateRpcClient, SubstrateRpcClient, SubstrateRpcConfig};
-pub use sync::{SyncOutcome, WalletSyncEngine};
+pub use sync::SyncOutcome;
 pub use tx_builder::{
     build_stablecoin_burn, build_transaction, build_transaction_with_binding, precheck_nullifiers,
     precheck_nullifiers_with_binding, BuiltTransaction, Recipient,

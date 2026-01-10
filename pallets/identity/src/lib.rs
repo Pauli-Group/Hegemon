@@ -9,7 +9,6 @@ use frame_support::pallet_prelude::*;
 use frame_support::traits::EnsureOrigin;
 use frame_support::weights::Weight;
 use frame_system::ensure_signed;
-use sp_runtime::traits::MaybeSerializeDeserialize;
 use sp_runtime::RuntimeDebug;
 use sp_std::convert::TryInto;
 use sp_std::fmt::{Debug, Formatter};
@@ -74,7 +73,7 @@ pub mod pallet {
     use frame_system::ensure_signed;
     use frame_system::pallet_prelude::{BlockNumberFor, OriginFor};
 
-    pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(1);
+    pub const STORAGE_VERSION: StorageVersion = StorageVersion::new(2);
 
     #[pallet::pallet]
     #[pallet::storage_version(STORAGE_VERSION)]
@@ -84,14 +83,6 @@ pub mod pallet {
     pub trait Config: frame_system::Config {
         #[allow(deprecated, clippy::let_unit_value)]
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-        type AuthorityId: Parameter
-            + Member
-            + MaxEncodedLen
-            + TypeInfo
-            + MaybeSerializeDeserialize
-            + Clone
-            + Eq
-            + Default;
         type CredentialSchemaId: Parameter
             + Member
             + MaxEncodedLen
@@ -152,8 +143,6 @@ pub mod pallet {
     #[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
     #[scale_info(skip_type_params(T))]
     pub enum SessionKey<T: Config> {
-        /// Legacy key for migration compatibility.
-        Legacy(T::AuthorityId),
         /// Post-quantum signature key (ML-DSA/SLH-DSA).
         PostQuantum {
             algorithm: PqSignatureAlgorithm,
@@ -166,7 +155,6 @@ pub mod pallet {
     impl<T: Config> Debug for SessionKey<T> {
         fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
             match self {
-                SessionKey::Legacy(_) => f.write_str("Legacy"),
                 SessionKey::PostQuantum { algorithm, key } => f
                     .debug_struct("PostQuantum")
                     .field("algorithm", algorithm)
@@ -200,16 +188,6 @@ pub mod pallet {
             }
         }
     }
-
-    #[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
-    #[scale_info(skip_type_params(T))]
-    pub struct LegacyDidDetails<T: Config> {
-        pub document: BoundedVec<u8, T::MaxDidDocLength>,
-        pub tags: BoundedVec<IdentityTag<T>, T::MaxIdentityTags>,
-        pub session_key: Option<T::AuthorityId>,
-    }
-
-    impl<T: Config> DecodeWithMemTracking for LegacyDidDetails<T> {}
 
     /// Credential schema metadata.
     #[derive(Clone, Encode, Decode, PartialEq, Eq, TypeInfo, MaxEncodedLen)]
@@ -370,14 +348,8 @@ pub mod pallet {
             }
 
             if on_chain < STORAGE_VERSION {
-                Dids::<T>::translate(|_, legacy: LegacyDidDetails<T>| {
-                    Some(DidDetails::new(
-                        legacy.document,
-                        legacy.tags,
-                        legacy.session_key.map(SessionKey::Legacy),
-                    ))
-                });
-                SessionKeys::<T>::translate(|_, key: T::AuthorityId| Some(SessionKey::Legacy(key)));
+                let _ = Dids::<T>::clear(u32::MAX, None);
+                let _ = SessionKeys::<T>::clear(u32::MAX, None);
 
                 STORAGE_VERSION.put::<Pallet<T>>();
                 let from_encoded = on_chain.encode();

@@ -769,7 +769,6 @@ checksum = "edca88bc138befd0323b20752846e6587272d3b03b0343c8ea28a6f819e6e71f"
 dependencies = [
  "async-trait",
  "axum-core",
- "axum-macros",
  "base64",
  "bytes",
  "futures-util",
@@ -818,17 +817,6 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "axum-macros"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57d123550fa8d071b7255cb0cc04dc302baa6c8c4a79f55701552684d8399bce"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.111",
 ]
 
 [[package]]
@@ -8088,9 +8076,7 @@ dependencies = [
  "base64",
  "bytes",
  "encoding_rs",
- "futures-channel",
  "futures-core",
- "futures-util",
  "h2 0.4.12",
  "http 1.4.0",
  "http-body 1.0.1",
@@ -11970,7 +11956,6 @@ dependencies = [
  "anyhow",
  "argon2",
  "assert_cmd",
- "axum",
  "base64",
  "batch-circuit",
  "bech32",
@@ -11989,7 +11974,6 @@ dependencies = [
  "predicates",
  "proptest",
  "rand 0.8.5",
- "reqwest",
  "rpassword",
  "scale-info",
  "serde",
@@ -12004,7 +11988,6 @@ dependencies = [
  "tokio",
  "transaction-circuit",
  "twox-hash",
- "url",
  "zeroize",
 ]
 

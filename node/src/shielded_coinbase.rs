@@ -9,7 +9,7 @@ use wallet::address::ShieldedAddress;
 use crypto::note_encryption::{NoteCiphertext, NotePlaintext};
 
 use pallet_shielded_pool::{
-    commitment::coinbase_commitment as pallet_coinbase_commitment,
+    commitment::{circuit_coinbase_commitment, pk_recipient_from_address},
     types::{
         CoinbaseNoteData, EncryptedNote, DIVERSIFIED_ADDRESS_SIZE, ENCRYPTED_NOTE_SIZE,
         ML_KEM_CIPHERTEXT_LEN,
@@ -200,17 +200,14 @@ fn extract_recipient_address(
     Ok(recipient)
 }
 
-/// Compute coinbase commitment using the pallet's Poseidon-based algorithm
-///
-/// This delegates to the pallet's commitment::coinbase_commitment function
-/// to ensure the commitment matches what the pallet expects during verification.
+/// Compute coinbase commitment using the pallet's Poseidon-based algorithm.
 fn compute_coinbase_commitment(
     recipient: &[u8; DIVERSIFIED_ADDRESS_SIZE],
     amount: u64,
     public_seed: &[u8; 32],
 ) -> [u8; 48] {
-    // Use the pallet's commitment function directly
-    pallet_coinbase_commitment(recipient, amount, public_seed)
+    let pk_recipient = pk_recipient_from_address(recipient);
+    circuit_coinbase_commitment(&pk_recipient, amount, public_seed, 0)
 }
 
 /// Parse a shielded address from Bech32m string
