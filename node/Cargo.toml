@@ -99,7 +99,6 @@ frame-support = { workspace = true, features = ["std"], optional = true }
 
 [features]
 default = ["substrate"]
-test-utils = []
 production = ["substrate", "runtime/production", "pallet-shielded-pool/production"]
 fast-proofs = ["block-circuit?/fast-proofs"]
 
