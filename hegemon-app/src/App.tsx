@@ -8,7 +8,7 @@ import type {
   WalletStatus
 } from './types';
 
-const defaultStorePath = '~/hegemon-wallet';
+const defaultStorePath = '~/.hegemon-wallet';
 const contactsKey = 'hegemon.contacts';
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
@@ -583,9 +583,18 @@ export default function App() {
     }
   };
 
+  const resolveStorePath = () => {
+    const trimmed = storePath.trim();
+    if (!trimmed) {
+      throw new Error('Wallet store path is required.');
+    }
+    return trimmed;
+  };
+
   const refreshWalletStatus = async () => {
     try {
-      const status = await window.hegemon.wallet.status(storePath, passphrase, true);
+      const resolvedStorePath = resolveStorePath();
+      const status = await window.hegemon.wallet.status(resolvedStorePath, passphrase, true);
       setWalletStatus(status);
       setWalletError(null);
     } catch (error) {
@@ -597,7 +606,8 @@ export default function App() {
     setWalletBusy(true);
     setWalletError(null);
     try {
-      const status = await window.hegemon.wallet.init(storePath, passphrase);
+      const resolvedStorePath = resolveStorePath();
+      const status = await window.hegemon.wallet.init(resolvedStorePath, passphrase);
       setWalletStatus(status);
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet init failed.');
@@ -610,7 +620,8 @@ export default function App() {
     setWalletBusy(true);
     setWalletError(null);
     try {
-      const status = await window.hegemon.wallet.restore(storePath, passphrase);
+      const resolvedStorePath = resolveStorePath();
+      const status = await window.hegemon.wallet.restore(resolvedStorePath, passphrase);
       setWalletStatus(status);
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet open failed.');
@@ -640,7 +651,8 @@ export default function App() {
       if (forceOverride) {
         setForceRescan(true);
       }
-      const result = await window.hegemon.wallet.sync(storePath, passphrase, wsUrl, rescan);
+      const resolvedStorePath = resolveStorePath();
+      const result = await window.hegemon.wallet.sync(resolvedStorePath, passphrase, wsUrl, rescan);
       setWalletSyncOutput(JSON.stringify(result, null, 2));
       await refreshWalletStatus();
     } catch (error) {
@@ -666,7 +678,7 @@ export default function App() {
         throw new Error('Wallet connection is offline. Select a reachable node or fix the RPC endpoint.');
       }
       const request = {
-        storePath,
+        storePath: resolveStorePath(),
         passphrase,
         wsUrl,
         recipients: [
@@ -725,7 +737,7 @@ export default function App() {
         throw new Error('Output index must be a number.');
       }
       const result: WalletDisclosureCreateResult = await window.hegemon.wallet.disclosureCreate(
-        storePath,
+        resolveStorePath(),
         passphrase,
         wsUrl,
         disclosureTxId,
@@ -745,7 +757,7 @@ export default function App() {
     try {
       const parsed = JSON.parse(disclosureInput);
       const result: WalletDisclosureVerifyResult = await window.hegemon.wallet.disclosureVerify(
-        storePath,
+        resolveStorePath(),
         passphrase,
         wsUrl,
         parsed
@@ -819,28 +831,23 @@ export default function App() {
     { path: '/console', label: 'Console', description: 'Diagnostics' }
   ];
 
-  const GenesisMismatchBanner = () => {
-    if (!genesisMismatch) {
-      return null;
-    }
-    return (
-      <div className="rounded-xl border border-amber/40 bg-amber/10 p-4 space-y-2">
-        <p className="text-sm text-surface">
-          Genesis mismatch between the wallet store and the selected node. Choose the correct node or force a rescan.
-        </p>
-        <p className="text-sm text-surfaceMuted mono">
-          Wallet: {formatHash(walletGenesis)} | Node: {formatHash(walletNodeGenesis)}
-        </p>
-        <button className="secondary" onClick={() => handleWalletSync(true)} disabled={walletBusy}>
-          Force rescan
-        </button>
-      </div>
-    );
-  };
+  const GenesisMismatchBanner = genesisMismatch ? (
+    <div className="rounded-xl border border-amber/40 bg-amber/10 p-4 space-y-2">
+      <p className="text-sm text-surface">
+        Genesis mismatch between the wallet store and the selected node. Choose the correct node or force a rescan.
+      </p>
+      <p className="text-sm text-surfaceMuted mono">
+        Wallet: {formatHash(walletGenesis)} | Node: {formatHash(walletNodeGenesis)}
+      </p>
+      <button className="secondary" onClick={() => handleWalletSync(true)} disabled={walletBusy}>
+        Force rescan
+      </button>
+    </div>
+  ) : null;
 
-  const WalletErrorBanner = () => (walletError ? <p className="text-guard">{walletError}</p> : null);
+  const WalletErrorBanner = walletError ? <p className="text-guard">{walletError}</p> : null;
 
-  const StatusBar = () => (
+  const StatusBar = (
     <div className="status-bar">
       <div className="status-grid">
         <div className="status-group">
@@ -889,7 +896,7 @@ export default function App() {
     </div>
   );
 
-  const OverviewWorkspace = () => (
+  const OverviewWorkspace = (
     <div className="mx-auto w-full max-w-6xl space-y-8">
       <header className="space-y-3">
         <p className="label">Overview</p>
@@ -899,7 +906,7 @@ export default function App() {
         </p>
       </header>
 
-      {genesisMismatch ? <GenesisMismatchBanner /> : null}
+      {GenesisMismatchBanner}
 
       <div className="grid gap-6 xl:grid-cols-3">
         <section className="card space-y-4">
@@ -1028,7 +1035,7 @@ export default function App() {
     </div>
   );
 
-  const NodeConnectionsSection = () => (
+  const NodeConnectionsSection = (
     <section className="card space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -1277,7 +1284,7 @@ export default function App() {
     </section>
   );
 
-  const NodeOperationsSection = () => (
+  const NodeOperationsSection = (
     <section className="card space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -1440,7 +1447,7 @@ export default function App() {
     </section>
   );
 
-  const ConnectionHealthSection = () => (
+  const ConnectionHealthSection = (
     <section className="card space-y-6">
       <div>
         <p className="label">Node</p>
@@ -1469,7 +1476,7 @@ export default function App() {
     </section>
   );
 
-  const NodeConsoleSection = () => (
+  const NodeConsoleSection = (
     <section className="card space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -1580,7 +1587,7 @@ export default function App() {
     </section>
   );
 
-  const WalletStoreSection = () => (
+  const WalletStoreSection = (
     <section className="card space-y-6">
       <div>
         <p className="label">Wallet</p>
@@ -1633,7 +1640,7 @@ export default function App() {
         </p>
       )}
 
-      {genesisMismatch ? <GenesisMismatchBanner /> : null}
+      {GenesisMismatchBanner}
 
       <div className="rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4 space-y-3">
         <div className="flex items-center justify-between">
@@ -1685,11 +1692,11 @@ export default function App() {
         </div>
       </div>
 
-      <WalletErrorBanner />
+      {WalletErrorBanner}
     </section>
   );
 
-  const WalletOutputSection = () => (
+  const WalletOutputSection = (
     <section className="card space-y-6">
       <div>
         <p className="label">Operations</p>
@@ -1712,7 +1719,7 @@ export default function App() {
     </section>
   );
 
-  const SendPreflightSection = () => (
+  const SendPreflightSection = (
     <section className="card space-y-4">
       <div>
         <p className="label">Send</p>
@@ -1750,7 +1757,7 @@ export default function App() {
     </section>
   );
 
-  const SendSection = () => (
+  const SendSection = (
     <section className="card space-y-6">
       <div>
         <p className="label">Send</p>
@@ -1810,11 +1817,11 @@ export default function App() {
         Send shielded transaction
       </button>
       {sendBlockedReason ? <p className="text-sm text-guard">{sendBlockedReason}</p> : null}
-      <WalletErrorBanner />
+      {WalletErrorBanner}
     </section>
   );
 
-  const ContactsSection = () => (
+  const ContactsSection = (
     <section className="card space-y-6">
       <div>
         <p className="label">Address book</p>
@@ -1869,7 +1876,7 @@ export default function App() {
     </section>
   );
 
-  const DisclosureGenerateSection = () => (
+  const DisclosureGenerateSection = (
     <section className="card space-y-6">
       <div>
         <p className="label">Disclosure</p>
@@ -1891,11 +1898,11 @@ export default function App() {
       <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
         {walletDisclosureOutput || 'N/A'}
       </pre>
-      <WalletErrorBanner />
+      {WalletErrorBanner}
     </section>
   );
 
-  const DisclosureVerifySection = () => (
+  const DisclosureVerifySection = (
     <section className="card space-y-6">
       <div>
         <p className="label">Disclosure</p>
@@ -1911,11 +1918,11 @@ export default function App() {
       <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
         {walletDisclosureVerifyOutput || 'N/A'}
       </pre>
-      <WalletErrorBanner />
+      {WalletErrorBanner}
     </section>
   );
 
-  const NodeWorkspace = () => (
+  const NodeWorkspace = (
     <div className="mx-auto w-full max-w-6xl space-y-8">
       <header className="space-y-3">
         <p className="label">Node</p>
@@ -1924,44 +1931,44 @@ export default function App() {
       </header>
       <div className="grid gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-1">
-          <NodeConnectionsSection />
-          <ConnectionHealthSection />
+          {NodeConnectionsSection}
+          {ConnectionHealthSection}
         </div>
         <div className="space-y-6 xl:col-span-2">
-          <NodeOperationsSection />
+          {NodeOperationsSection}
         </div>
       </div>
     </div>
   );
 
-  const WalletWorkspace = () => (
+  const WalletWorkspace = (
     <div className="mx-auto w-full max-w-6xl space-y-8">
       <header className="space-y-3">
         <p className="label">Wallet</p>
         <h1 className="text-headline font-semibold tracking-tight">Shielded Store</h1>
         <p className="text-surfaceMuted max-w-2xl">Initialize, unlock, and sync your shielded wallet store.</p>
       </header>
-      <WalletStoreSection />
-      <WalletOutputSection />
+      {WalletStoreSection}
+      {WalletOutputSection}
     </div>
   );
 
-  const SendWorkspace = () => (
+  const SendWorkspace = (
     <div className="mx-auto w-full max-w-6xl space-y-8">
       <header className="space-y-3">
         <p className="label">Send</p>
         <h1 className="text-headline font-semibold tracking-tight">Shielded Transfer</h1>
         <p className="text-surfaceMuted max-w-2xl">Prepare, validate, and send a shielded transaction.</p>
       </header>
-      <SendPreflightSection />
+      {SendPreflightSection}
       <div className="grid gap-6 xl:grid-cols-2">
-        <SendSection />
-        <ContactsSection />
+        {SendSection}
+        {ContactsSection}
       </div>
     </div>
   );
 
-  const DisclosureWorkspace = () => (
+  const DisclosureWorkspace = (
     <div className="mx-auto w-full max-w-6xl space-y-8">
       <header className="space-y-3">
         <p className="label">Disclosure</p>
@@ -1969,20 +1976,20 @@ export default function App() {
         <p className="text-surfaceMuted max-w-2xl">Generate and verify disclosure proofs without leaving the desktop app.</p>
       </header>
       <div className="grid gap-6 xl:grid-cols-2">
-        <DisclosureGenerateSection />
-        <DisclosureVerifySection />
+        {DisclosureGenerateSection}
+        {DisclosureVerifySection}
       </div>
     </div>
   );
 
-  const ConsoleWorkspace = () => (
+  const ConsoleWorkspace = (
     <div className="mx-auto w-full max-w-6xl space-y-8">
       <header className="space-y-3">
         <p className="label">Console</p>
         <h1 className="text-headline font-semibold tracking-tight">Diagnostics Timeline</h1>
         <p className="text-surfaceMuted max-w-2xl">Track events, search logs, and investigate anomalies.</p>
       </header>
-      <NodeConsoleSection />
+      {NodeConsoleSection}
     </div>
   );
 
@@ -2020,16 +2027,16 @@ export default function App() {
           </nav>
         </aside>
         <div className="app-body">
-          <StatusBar />
+          {StatusBar}
           <main className="app-main">
             <Routes>
               <Route path="/" element={<Navigate to="/overview" replace />} />
-              <Route path="/overview" element={<OverviewWorkspace />} />
-              <Route path="/node" element={<NodeWorkspace />} />
-              <Route path="/wallet" element={<WalletWorkspace />} />
-              <Route path="/send" element={<SendWorkspace />} />
-              <Route path="/disclosure" element={<DisclosureWorkspace />} />
-              <Route path="/console" element={<ConsoleWorkspace />} />
+              <Route path="/overview" element={OverviewWorkspace} />
+              <Route path="/node" element={NodeWorkspace} />
+              <Route path="/wallet" element={WalletWorkspace} />
+              <Route path="/send" element={SendWorkspace} />
+              <Route path="/disclosure" element={DisclosureWorkspace} />
+              <Route path="/console" element={ConsoleWorkspace} />
               <Route path="*" element={<Navigate to="/overview" replace />} />
             </Routes>
           </main>
