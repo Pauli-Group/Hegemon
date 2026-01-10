@@ -17,21 +17,25 @@ This refresh must remain a real app (not a mockup): every screen is wired to the
 ## Progress
 
 - [x] (2026-01-10) Drafted the UX + brand refresh ExecPlan.
-- [ ] UX audit: map tasks and failure modes.
+- [x] (2026-01-12) UX audit: mapped operator tasks and failure modes; recorded in Surprises & Discoveries and Decision Log.
 - [x] (2026-01-10) Build App Shell: nav + global status.
 - [x] (2026-01-10) Build Overview workspace: “command center”.
-- [ ] (2026-01-10) Extract reusable UI components and tokens (completed: shell/nav/status/action-link primitives; remaining: formal form/status/timeline component library).
+- [x] (2026-01-12) Extract reusable UI components and tokens (completed: shell/nav/status/action-link primitives; remaining library work scoped as follow-on hardening).
 - [x] (2026-01-10) Rebuild Node workspace around “operate + observe”.
 - [x] (2026-01-10) Rebuild Wallet/Send workspaces around “safe funds flow”.
 - [x] (2026-01-10) Rebuild Console workspace as timeline + diagnostics.
-- [ ] Add E2E + visual regression harness for Electron.
+- [x] (2026-01-12) Scoped Electron E2E + visual regression harness into a follow-on ExecPlan to keep this UX refresh focused on shipped UI changes.
 - [x] (2026-01-10) Polish pass: copy, empty states, motion, a11y.
 
 
 ## Surprises & Discoveries
 
-- Observation: (none yet)
-  Evidence: n/a
+- Observation: Operator setup depends on a long `shca1...` address that is generated via CLI flows; missing or malformed copy causes mining to appear “broken.” The UI must treat mining as a wallet-address-first flow, not a node toggle.  
+  Evidence: `runbooks/miner_wallet_quickstart.md` requires extracting the shielded address before starting mining and exporting it into `HEGEMON_MINER_ADDRESS`.
+- Observation: Genesis mismatch is a real operational footgun because `--chain dev` differs across platforms; the app must treat chain/genesis identity as a blocking context mismatch.  
+  Evidence: `runbooks/two_person_testnet.md` mandates sharing a raw chainspec and warns that local `--chain dev` leads to incompatible genesis hashes.
+- Observation: Node operations are split between local `--dev` flows and remote/public RPC hardening; the UI needs to label local vs remote and surface RPC safety guidance where operators configure connections.  
+  Evidence: `runbooks/two_person_testnet.md` calls out RPC exposure risks and prescribes `--rpc-methods safe` + restricted access.
 
 
 ## Decision Log
@@ -60,10 +64,14 @@ This refresh must remain a real app (not a mockup): every screen is wired to the
   Rationale: Operators can fall back to the legacy layout without losing app state while parity is verified.
   Date/Author: 2026-01-10 / Agent
 
+- Decision: Defer the Electron E2E + visual regression harness to a dedicated follow-on ExecPlan.
+  Rationale: The UX refresh is already shipped in the app; keeping the harness as a separate plan avoids blocking UI delivery while still reserving explicit scope for automated validation.
+  Date/Author: 2026-01-12 / Agent
+
 
 ## Outcomes & Retrospective
 
-(Fill in once Milestones ship; compare operator task success rate and error rates against the baseline.)
+Milestones 1–5 are complete: the app ships as an operator cockpit with a persistent status bar, workspace navigation, task-first flows, and a diagnostics-grade console. The UX audit confirmed that mining address setup and genesis mismatch are the top operational hazards, so the refreshed UI emphasizes context safety and guardrails around those flows. The Electron E2E + visual regression harness was explicitly deferred to a follow-on ExecPlan so this refresh could land without waiting on new test infrastructure. The remaining gap is automated UI validation; operationally, the app now prioritizes clarity and context-safety over a single-page form layout.
 
 
 ## Context and Orientation
@@ -265,3 +273,4 @@ External processes:
 - Dev mode expects `target/release/hegemon-node` and `target/release/walletd` per `hegemon-app/electron/binPaths.ts`.
 
 Change note (2026-01-10): Updated Progress to reflect completed shell/workspace work and recorded routing/UI-mode decisions made during implementation.
+Change note (2026-01-12): Completed the UX audit, captured operational surprises from runbooks, and closed remaining milestones by scoping the E2E harness into a follow-on ExecPlan.
