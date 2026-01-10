@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, session } from 'electron';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NodeManager } from './nodeManager';
@@ -18,6 +18,42 @@ import type {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const nodeManager = new NodeManager();
 const walletdClient = new WalletdClient();
+const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
+
+const buildContentSecurityPolicy = (devUrl?: string) => {
+  const defaultSrc = ["'self'"];
+  const scriptSrc = ["'self'"];
+  const styleSrc = ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'];
+  const fontSrc = ["'self'", 'https://fonts.gstatic.com', 'data:'];
+  const imgSrc = ["'self'", 'data:', 'blob:'];
+  const connectSrc = ["'self'"];
+
+  if (devUrl) {
+    scriptSrc.push("'unsafe-inline'");
+    try {
+      const origin = new URL(devUrl).origin;
+      defaultSrc.push(origin);
+      scriptSrc.push(origin);
+      styleSrc.push(origin);
+      connectSrc.push(origin);
+      connectSrc.push(origin.replace(/^http/, 'ws'));
+    } catch {
+      // Ignore malformed dev URL.
+    }
+  }
+
+  return [
+    `default-src ${defaultSrc.join(' ')}`,
+    `script-src ${scriptSrc.join(' ')}`,
+    `style-src ${styleSrc.join(' ')}`,
+    `font-src ${fontSrc.join(' ')}`,
+    `img-src ${imgSrc.join(' ')}`,
+    `connect-src ${connectSrc.join(' ')}`,
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'"
+  ].join('; ');
+};
 
 const createWindow = () => {
   const win = new BrowserWindow({
@@ -33,12 +69,23 @@ const createWindow = () => {
 
   if (process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL);
+  } else if (process.env.ELECTRON_RENDERER_URL) {
+    win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'));
   }
 };
 
 app.whenReady().then(() => {
+  const csp = buildContentSecurityPolicy(devServerUrl);
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [csp]
+      }
+    });
+  });
   createWindow();
 
   app.on('activate', () => {
