@@ -166,6 +166,21 @@ export class WalletdClient {
     const reader = createInterface({ input: this.process.stdout });
     reader.on('line', (line) => this.handleResponseLine(line));
 
+    this.process.on('error', (error) => {
+      const message =
+        (error as NodeJS.ErrnoException).code === 'ENOENT'
+          ? `walletd binary not found at ${walletdPath}`
+          : `walletd failed to start: ${error.message}`;
+      for (const pending of this.pending.values()) {
+        pending.reject(new Error(message));
+      }
+      this.pending.clear();
+      this.process = null;
+      this.storePath = null;
+      this.passphrase = null;
+      this.mode = null;
+    });
+
     this.process.stderr.on('data', (data) => {
       console.error(`walletd: ${data.toString()}`);
     });

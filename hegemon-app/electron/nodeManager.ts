@@ -89,6 +89,14 @@ export class NodeManager extends EventEmitter {
 
     this.process.stdout.on('data', (data) => this.appendLogs(data.toString()));
     this.process.stderr.on('data', (data) => this.appendLogs(data.toString()));
+    this.process.on('error', (error) => {
+      const message =
+        (error as NodeJS.ErrnoException).code === 'ENOENT'
+          ? `Node binary not found at ${nodePath}`
+          : `Node failed to start: ${error.message}`;
+      this.appendLogs(message);
+      this.process = null;
+    });
     this.process.on('exit', (code) => {
       this.appendLogs(`Node exited with code ${code ?? 'unknown'}`);
       this.process = null;
