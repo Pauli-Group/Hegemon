@@ -13,7 +13,6 @@ const contactsKey = 'hegemon.contacts';
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
 const walletConnectionKey = 'hegemon.walletConnection';
-const uiModeKey = 'hegemon.uiMode';
 
 const makeId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -245,12 +244,6 @@ export default function App() {
   const [connections, setConnections] = useState<NodeConnection[]>([]);
   const [activeConnectionId, setActiveConnectionId] = useState('');
   const [walletConnectionId, setWalletConnectionId] = useState('');
-  const [uiMode, setUiMode] = useState<'new' | 'legacy'>(() => {
-    if (typeof window === 'undefined') {
-      return 'new';
-    }
-    return window.localStorage.getItem(uiModeKey) === 'legacy' ? 'legacy' : 'new';
-  });
   const [nodeSummaries, setNodeSummaries] = useState<Record<string, NodeSummary>>({});
   const [nodeLogs, setNodeLogs] = useState<string[]>([]);
   const [nodeBusy, setNodeBusy] = useState(false);
@@ -336,10 +329,6 @@ export default function App() {
     }
     window.localStorage.setItem(walletConnectionKey, walletConnectionId);
   }, [walletConnectionId]);
-
-  useEffect(() => {
-    window.localStorage.setItem(uiModeKey, uiMode);
-  }, [uiMode]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(contactsKey);
@@ -830,13 +819,6 @@ export default function App() {
     { path: '/console', label: 'Console', description: 'Diagnostics' }
   ];
 
-  const handleSetUiMode = (mode: 'new' | 'legacy') => {
-    setUiMode(mode);
-    if (typeof window !== 'undefined') {
-      window.location.hash = mode === 'legacy' ? '#/legacy' : '#/overview';
-    }
-  };
-
   const GenesisMismatchBanner = () => {
     if (!genesisMismatch) {
       return null;
@@ -863,56 +845,56 @@ export default function App() {
       <div className="status-grid">
         <div className="status-group">
           <p className="label">Node</p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
-            <span className="text-sm font-medium">{activeConnection?.label ?? 'No connection'}</span>
+            <span className="text-sm font-medium text-surface">{activeConnection?.label ?? 'No connection'}</span>
             <span className="badge">{activeConnection?.mode ?? 'n/a'}</span>
           </div>
-          <p className="text-xs text-surfaceMuted mono break-all" title={activeConnection?.wsUrl ?? ''}>
+          <p className="text-xs text-surfaceMuted/80 mono break-all mt-1" title={activeConnection?.wsUrl ?? ''}>
             {activeConnection?.wsUrl ?? 'N/A'}
           </p>
-          <p className="text-xs text-surfaceMuted">
+          <p className="text-xs text-surfaceMuted/70 mt-0.5">
             Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}
           </p>
         </div>
         <div className="status-group">
           <p className="label">Wallet</p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
-            <span className="text-sm font-medium">{walletConnection?.label ?? 'No connection'}</span>
+            <span className="text-sm font-medium text-surface">{walletConnection?.label ?? 'No connection'}</span>
             <span className={`status-pill ${walletConnectionTone}`}>{walletConnectionLabel}</span>
           </div>
-          <p className="text-xs text-surfaceMuted">
+          <p className="text-xs text-surfaceMuted/80 mt-1">
             Store:{' '}
             <span className="mono break-all" title={storePath}>
               {storePath}
             </span>
           </p>
-          <p className="text-xs text-surfaceMuted">
+          <p className="text-xs text-surfaceMuted/70 mt-0.5">
             Height {formatNumber(walletSummary?.bestNumber)} · Last synced {formatNumber(walletStatus?.lastSyncedHeight)}
           </p>
         </div>
         <div className="status-group">
           <p className="label">Chain</p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className={`status-pill ${chainTone}`}>{chainLabel}</span>
-            <span className="text-xs text-surfaceMuted">Genesis {formatHash(walletNodeGenesis ?? walletGenesis)}</span>
+            <span className="text-xs text-surfaceMuted/80 mono">Genesis {formatHash(walletNodeGenesis ?? walletGenesis)}</span>
           </div>
-          <p className="text-xs text-surfaceMuted">
+          <p className="text-xs text-surfaceMuted/70 mt-1">
             Mining {activeSummary?.mining ? 'Active' : 'Idle'} · Supply {formatHash(activeSummary?.supplyDigest)}
           </p>
-          <p className="text-xs text-surfaceMuted">Hash rate {formatHashRate(activeSummary?.hashRate)}</p>
+          <p className="text-xs text-surfaceMuted/70 mt-0.5">Hash rate {formatHashRate(activeSummary?.hashRate)}</p>
         </div>
       </div>
     </div>
   );
 
   const OverviewWorkspace = () => (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
-      <header className="space-y-2">
+    <div className="mx-auto w-full max-w-6xl space-y-8">
+      <header className="space-y-3">
         <p className="label">Overview</p>
-        <h1 className="text-3xl font-semibold">Command Center</h1>
-        <p className="text-surfaceMuted">
+        <h1 className="text-headline font-semibold tracking-tight">Command Center</h1>
+        <p className="text-surfaceMuted max-w-2xl">
           Keep the node, wallet, and chain context visible while you decide your next move.
         </p>
       </header>
@@ -923,36 +905,38 @@ export default function App() {
         <section className="card space-y-4">
           <div>
             <p className="label">Node</p>
-            <h2 className="text-2xl font-semibold">Status</h2>
-            <p className="text-sm text-surfaceMuted">
+            <h2 className="text-title font-semibold">Status</h2>
+            <p className="text-sm text-surfaceMuted/80 mt-1">
               Active: {activeConnection?.label ?? 'No connection'} ({activeConnection?.mode ?? 'n/a'})
             </p>
           </div>
           <div className="space-y-2 text-sm text-surfaceMuted">
             <div className="flex items-center gap-2">
               <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
-              <span>Updated {updatedAtLabel}</span>
+              <span className="text-surfaceMuted/70">Updated {updatedAtLabel}</span>
             </div>
             <p>Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}</p>
             <p>
               Mining {activeSummary?.mining ? 'Active' : 'Idle'} · Hash rate {formatHashRate(activeSummary?.hashRate)}
             </p>
-            <p>Supply digest {formatHash(activeSummary?.supplyDigest)}</p>
+            <p className="mono text-xs">Supply digest {formatHash(activeSummary?.supplyDigest)}</p>
           </div>
         </section>
 
         <section className="card space-y-4">
           <div>
             <p className="label">Wallet</p>
-            <h2 className="text-2xl font-semibold">Readiness</h2>
-            <p className="text-sm text-surfaceMuted">{storePath}</p>
+            <h2 className="text-title font-semibold">Readiness</h2>
+            <p className="text-sm text-surfaceMuted/80 mono mt-1">{storePath}</p>
           </div>
           <div className="space-y-2 text-sm text-surfaceMuted">
             <div className="flex items-center gap-2">
               <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
-              <span>{walletConnectionLabel}</span>
+              <span className="text-surfaceMuted/70">{walletConnectionLabel}</span>
             </div>
-            <p>Balance {hgmBalance ? formatHgm(hgmBalance.total) : 'N/A'}</p>
+            <p className="font-medium text-surface">
+              Balance {hgmBalance ? formatHgm(hgmBalance.total) : 'N/A'}
+            </p>
             <p>Last synced height {formatNumber(walletStatus?.lastSyncedHeight)}</p>
             {walletStatus?.notes?.needsConsolidation && walletStatus.notes.plan ? (
               <p className="text-amber">Consolidation needed (~{walletStatus.notes.plan.txsNeeded} txs).</p>
@@ -963,18 +947,18 @@ export default function App() {
         <section className="card space-y-4">
           <div>
             <p className="label">Chain</p>
-            <h2 className="text-2xl font-semibold">Context</h2>
+            <h2 className="text-title font-semibold">Context</h2>
           </div>
           <div className="space-y-2 text-sm text-surfaceMuted">
             <p>
-              Node genesis <span className="mono">{formatHash(walletNodeGenesis)}</span>
+              Node genesis <span className="mono text-xs">{formatHash(walletNodeGenesis)}</span>
             </p>
             <p>
-              Wallet genesis <span className="mono">{formatHash(walletGenesis)}</span>
+              Wallet genesis <span className="mono text-xs">{formatHash(walletGenesis)}</span>
             </p>
             <p>
               Chain spec{' '}
-              <span className="mono">
+              <span className="mono text-xs">
                 {activeSummary?.config?.chainSpecName
                   ? `${activeSummary.config.chainSpecName} (${activeSummary.config.chainSpecId})`
                   : 'N/A'}
@@ -989,7 +973,7 @@ export default function App() {
         <section className="card space-y-4">
           <div>
             <p className="label">Actions</p>
-            <h2 className="text-2xl font-semibold">Quick moves</h2>
+            <h2 className="text-title font-semibold">Quick moves</h2>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <button className="primary" onClick={handleNodeStart} disabled={nodeBusy || activeConnection?.mode !== 'local'}>
@@ -1017,20 +1001,27 @@ export default function App() {
         <section className="card space-y-4">
           <div>
             <p className="label">Events</p>
-            <h2 className="text-2xl font-semibold">Recent activity</h2>
+            <h2 className="text-title font-semibold">Recent activity</h2>
           </div>
           {logHighlights.length ? (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {logHighlights.slice(0, 5).map((entry) => (
                 <div key={entry.id} className="flex items-start gap-3 text-sm">
-                  <span className="mono text-surfaceMuted">{entry.timestamp ?? '--:--:--'}</span>
+                  <span className="mono text-surfaceMuted/60 text-xs">{entry.timestamp ?? '--:--:--'}</span>
                   <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
-                  <span className="text-surfaceMuted">{entry.message}</span>
+                  <span className="text-surfaceMuted/80 text-xs truncate">{entry.message}</span>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-surfaceMuted">No highlight events yet.</p>
+            <div className="empty-state py-8">
+              <div className="empty-state-icon">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <p className="empty-state-description">No highlight events yet. Start a node to see activity.</p>
+            </div>
           )}
         </section>
       </div>
@@ -1042,11 +1033,11 @@ export default function App() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="label">Node</p>
-          <h2 className="text-2xl font-semibold">Connections</h2>
+          <h2 className="text-title font-semibold">Connections</h2>
         </div>
         <div className="flex gap-2">
-          <button className="secondary" onClick={handleAddConnection}>Add connection</button>
-          <button className="danger" onClick={handleRemoveConnection} disabled={connections.length <= 1}>Remove</button>
+          <button className="secondary text-sm" onClick={handleAddConnection}>Add connection</button>
+          <button className="danger text-sm" onClick={handleRemoveConnection} disabled={connections.length <= 1}>Remove</button>
         </div>
       </div>
 
@@ -1291,14 +1282,14 @@ export default function App() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="label">Node</p>
-          <h2 className="text-2xl font-semibold">Operations</h2>
-          <p className="text-sm text-surfaceMuted">
+          <h2 className="text-title font-semibold">Operations</h2>
+          <p className="text-sm text-surfaceMuted/80 mt-1">
             Active: {activeConnection?.label ?? 'No connection'} ({activeConnection?.mode ?? 'n/a'}) | Updated {updatedAtLabel}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
-          <span className="text-xs text-surfaceMuted">
+          <span className="text-xs text-surfaceMuted/70">
             Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}
           </span>
         </div>
@@ -1453,7 +1444,7 @@ export default function App() {
     <section className="card space-y-6">
       <div>
         <p className="label">Node</p>
-        <h2 className="text-2xl font-semibold">Connection health</h2>
+        <h2 className="text-title font-semibold">Connection health</h2>
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
@@ -1483,12 +1474,12 @@ export default function App() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="label">Console</p>
-          <h2 className="text-2xl font-semibold">Node Console</h2>
-          <p className="text-sm text-surfaceMuted">
+          <h2 className="text-title font-semibold">Node Console</h2>
+          <p className="text-sm text-surfaceMuted/80 mt-1">
             Structured logs and milestone events for the active connection.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-1.5">
           <button className="chip" type="button" aria-pressed={logFilterInfo} onClick={() => setLogFilterInfo((prev) => !prev)}>
             Info
           </button>
@@ -1515,21 +1506,23 @@ export default function App() {
           ) : logHighlights.length ? (
             <div className="space-y-2">
               {logHighlights.map((entry) => (
-                <div key={entry.id} className="flex items-start gap-3 text-sm">
-                  <span className="mono text-surfaceMuted">{entry.timestamp ?? '--:--:--'}</span>
+                <div key={entry.id} className="flex items-start gap-3 text-sm px-2 py-1 rounded-lg hover:bg-surfaceMuted/5 transition-colors">
+                  <span className="mono text-surfaceMuted/60 text-xs">{entry.timestamp ?? '--:--:--'}</span>
                   <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
-                  <span className="text-surfaceMuted">{entry.message}</span>
+                  <span className="text-surfaceMuted/80 text-xs truncate">{entry.message}</span>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-sm text-surfaceMuted">No highlight events yet.</p>
+            <div className="text-center py-6">
+              <p className="text-sm text-surfaceMuted/60">No highlight events yet.</p>
+            </div>
           )}
         </div>
         <div className="panel space-y-4 lg:col-span-2">
           <div>
             <p className="label">Channels</p>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-1.5 mt-2">
               {logCategoryOrder.map((category) => (
                 <span key={category} className="chip-static">
                   {logCategoryLabels[category]} {formatNumber(logCategoryStats[category])}
@@ -1546,7 +1539,7 @@ export default function App() {
               placeholder="Filter by phrase or module"
             />
           </label>
-          <p className="text-xs text-surfaceMuted">
+          <p className="text-[11px] text-surfaceMuted/60">
             Showing {formatNumber(nodeLogs.length)} lines (newest at bottom).
           </p>
         </div>
@@ -1554,17 +1547,28 @@ export default function App() {
 
       <div className="panel h-80 overflow-auto">
         {activeConnection?.mode !== 'local' && (
-          <p className="text-sm text-surfaceMuted">Logs are only available for local nodes started from this app.</p>
+          <div className="empty-state py-10">
+            <div className="empty-state-icon">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
+              </svg>
+            </div>
+            <p className="empty-state-description">Logs are only available for local nodes started from this app.</p>
+          </div>
         )}
         {activeConnection?.mode === 'local' && (
-          <div className="space-y-2">
-            {filteredLogEntries.length === 0 && <p className="text-sm text-surfaceMuted">No matching logs.</p>}
+          <div className="space-y-1">
+            {filteredLogEntries.length === 0 && (
+              <div className="text-center py-10">
+                <p className="text-sm text-surfaceMuted/60">No matching logs.</p>
+              </div>
+            )}
             {filteredLogEntries.map((entry) => (
-              <div key={entry.id} className="flex flex-wrap gap-3 text-sm log-row">
-                <span className="mono text-surfaceMuted">{entry.timestamp ?? '--:--:--'}</span>
+              <div key={entry.id} className="flex flex-wrap gap-3 text-sm log-row px-2 py-1.5 rounded-lg">
+                <span className="mono text-surfaceMuted/50 text-xs">{entry.timestamp ?? '--:--:--'}</span>
                 <span className={`badge level-${entry.level}`}>{entry.level}</span>
                 <span className="badge badge-category">{logCategoryLabels[entry.category]}</span>
-                <span className="mono flex-1">{entry.message}</span>
+                <span className="mono flex-1 text-surfaceMuted/90 text-xs">{entry.message}</span>
                 {entry.highlight ? (
                   <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
                 ) : null}
@@ -1580,7 +1584,7 @@ export default function App() {
     <section className="card space-y-6">
       <div>
         <p className="label">Wallet</p>
-        <h2 className="text-2xl font-semibold">Shielded Store</h2>
+        <h2 className="text-title font-semibold">Shielded Store</h2>
       </div>
 
       <div className="grid gap-4">
@@ -1689,7 +1693,7 @@ export default function App() {
     <section className="card space-y-6">
       <div>
         <p className="label">Operations</p>
-        <h2 className="text-2xl font-semibold">Wallet Output</h2>
+        <h2 className="text-title font-semibold">Wallet Output</h2>
       </div>
       <div className="grid gap-3">
         <div>
@@ -1712,8 +1716,8 @@ export default function App() {
     <section className="card space-y-4">
       <div>
         <p className="label">Send</p>
-        <h2 className="text-2xl font-semibold">Preflight check</h2>
-        <p className="text-sm text-surfaceMuted">Confirm wallet + chain context before sending.</p>
+        <h2 className="text-title font-semibold">Preflight check</h2>
+        <p className="text-sm text-surfaceMuted/80 mt-1">Confirm wallet + chain context before sending.</p>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <div className="panel space-y-2">
@@ -1750,7 +1754,7 @@ export default function App() {
     <section className="card space-y-6">
       <div>
         <p className="label">Send</p>
-        <h2 className="text-2xl font-semibold">Shielded Transfer</h2>
+        <h2 className="text-title font-semibold">Shielded Transfer</h2>
       </div>
       <div className="grid gap-4">
         <label className="space-y-2">
@@ -1814,7 +1818,7 @@ export default function App() {
     <section className="card space-y-6">
       <div>
         <p className="label">Address book</p>
-        <h2 className="text-2xl font-semibold">Contacts</h2>
+        <h2 className="text-title font-semibold">Contacts</h2>
       </div>
       <div className="grid gap-3">
         <label className="space-y-2">
@@ -1837,9 +1841,18 @@ export default function App() {
       </div>
 
       <div className="space-y-3">
-        {contacts.length === 0 && <p className="text-sm text-surfaceMuted">No contacts saved yet.</p>}
+        {contacts.length === 0 && (
+          <div className="empty-state py-8">
+            <div className="empty-state-icon">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+              </svg>
+            </div>
+            <p className="empty-state-description">No contacts saved yet. Add your first recipient above.</p>
+          </div>
+        )}
         {contacts.map((contact) => (
-          <div key={contact.id} className="border border-surfaceMuted/10 rounded-xl p-4 bg-midnight/40">
+          <div key={contact.id} className="border border-surfaceMuted/10 rounded-xl p-4 bg-midnight/50 hover:bg-midnight/60 transition-colors">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-lg font-medium">{contact.name}</p>
@@ -1860,7 +1873,7 @@ export default function App() {
     <section className="card space-y-6">
       <div>
         <p className="label">Disclosure</p>
-        <h2 className="text-2xl font-semibold">Generate proof</h2>
+        <h2 className="text-title font-semibold">Generate proof</h2>
       </div>
       <div className="grid gap-4">
         <label className="space-y-2">
@@ -1886,7 +1899,7 @@ export default function App() {
     <section className="card space-y-6">
       <div>
         <p className="label">Disclosure</p>
-        <h2 className="text-2xl font-semibold">Verify proof</h2>
+        <h2 className="text-title font-semibold">Verify proof</h2>
       </div>
       <label className="space-y-2">
         <span className="label">Disclosure JSON</span>
@@ -1903,11 +1916,11 @@ export default function App() {
   );
 
   const NodeWorkspace = () => (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
-      <header className="space-y-2">
+    <div className="mx-auto w-full max-w-6xl space-y-8">
+      <header className="space-y-3">
         <p className="label">Node</p>
-        <h1 className="text-3xl font-semibold">Operate + Observe</h1>
-        <p className="text-surfaceMuted">Run local nodes, manage connections, and monitor telemetry.</p>
+        <h1 className="text-headline font-semibold tracking-tight">Operate + Observe</h1>
+        <p className="text-surfaceMuted max-w-2xl">Run local nodes, manage connections, and monitor telemetry.</p>
       </header>
       <div className="grid gap-6 xl:grid-cols-3">
         <div className="space-y-6 xl:col-span-1">
@@ -1922,11 +1935,11 @@ export default function App() {
   );
 
   const WalletWorkspace = () => (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
-      <header className="space-y-2">
+    <div className="mx-auto w-full max-w-6xl space-y-8">
+      <header className="space-y-3">
         <p className="label">Wallet</p>
-        <h1 className="text-3xl font-semibold">Shielded Store</h1>
-        <p className="text-surfaceMuted">Initialize, unlock, and sync your shielded wallet store.</p>
+        <h1 className="text-headline font-semibold tracking-tight">Shielded Store</h1>
+        <p className="text-surfaceMuted max-w-2xl">Initialize, unlock, and sync your shielded wallet store.</p>
       </header>
       <WalletStoreSection />
       <WalletOutputSection />
@@ -1934,11 +1947,11 @@ export default function App() {
   );
 
   const SendWorkspace = () => (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
-      <header className="space-y-2">
+    <div className="mx-auto w-full max-w-6xl space-y-8">
+      <header className="space-y-3">
         <p className="label">Send</p>
-        <h1 className="text-3xl font-semibold">Shielded Transfer</h1>
-        <p className="text-surfaceMuted">Prepare, validate, and send a shielded transaction.</p>
+        <h1 className="text-headline font-semibold tracking-tight">Shielded Transfer</h1>
+        <p className="text-surfaceMuted max-w-2xl">Prepare, validate, and send a shielded transaction.</p>
       </header>
       <SendPreflightSection />
       <div className="grid gap-6 xl:grid-cols-2">
@@ -1949,11 +1962,11 @@ export default function App() {
   );
 
   const DisclosureWorkspace = () => (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
-      <header className="space-y-2">
+    <div className="mx-auto w-full max-w-6xl space-y-8">
+      <header className="space-y-3">
         <p className="label">Disclosure</p>
-        <h1 className="text-3xl font-semibold">Audit Packages</h1>
-        <p className="text-surfaceMuted">Generate and verify disclosure proofs without leaving the desktop app.</p>
+        <h1 className="text-headline font-semibold tracking-tight">Audit Packages</h1>
+        <p className="text-surfaceMuted max-w-2xl">Generate and verify disclosure proofs without leaving the desktop app.</p>
       </header>
       <div className="grid gap-6 xl:grid-cols-2">
         <DisclosureGenerateSection />
@@ -1963,100 +1976,51 @@ export default function App() {
   );
 
   const ConsoleWorkspace = () => (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
-      <header className="space-y-2">
-        <p className="label">Console</p>
-        <h1 className="text-3xl font-semibold">Diagnostics Timeline</h1>
-        <p className="text-surfaceMuted">Track events, search logs, and investigate anomalies.</p>
-      </header>
-      <NodeConsoleSection />
-    </div>
-  );
-
-  const LegacyWorkspace = () => (
     <div className="mx-auto w-full max-w-6xl space-y-8">
-      <header className="space-y-2">
-        <p className="label">Legacy</p>
-        <h1 className="text-3xl font-semibold">Single-page Console</h1>
-        <p className="text-surfaceMuted">The previous layout is preserved here during the transition.</p>
+      <header className="space-y-3">
+        <p className="label">Console</p>
+        <h1 className="text-headline font-semibold tracking-tight">Diagnostics Timeline</h1>
+        <p className="text-surfaceMuted max-w-2xl">Track events, search logs, and investigate anomalies.</p>
       </header>
-      <NodeConnectionsSection />
-      <NodeOperationsSection />
-      <ConnectionHealthSection />
       <NodeConsoleSection />
-      <WalletStoreSection />
-      <div className="grid gap-8 xl:grid-cols-2">
-        <SendSection />
-        <ContactsSection />
-      </div>
-      <div className="grid gap-8 xl:grid-cols-2">
-        <DisclosureGenerateSection />
-        <DisclosureVerifySection />
-      </div>
-      <WalletOutputSection />
     </div>
   );
 
   return (
     <HashRouter>
       <div className="app-shell">
-        <aside className="app-sidebar">
-          <div className="space-y-2">
-            <p className="label">Hegemon</p>
-            <h1 className="text-xl font-semibold">Core Console</h1>
-            <p className="text-xs text-surfaceMuted">Quantum-resistant operations</p>
+        <aside className="app-sidebar relative">
+          <div className="space-y-1">
+            <p className="label text-ionosphere/80">Hegemon</p>
+            <h1 className="text-xl font-semibold tracking-tight">Core Console</h1>
+            <p className="text-[11px] text-surfaceMuted/70 tracking-wide">Quantum-resistant operations</p>
           </div>
-          <nav className="space-y-1">
+          <nav className="space-y-1 pt-2">
             {navItems.map((item) => (
               <NavLink
                 key={item.path}
                 to={item.path}
                 className={({ isActive }) => `nav-link${isActive ? ' nav-link-active' : ''}`}
               >
-                <div>
+                <div className="pl-2">
                   <p className="text-sm font-medium text-surface">{item.label}</p>
-                  <p className="text-xs text-surfaceMuted">{item.description}</p>
+                  <p className="text-[11px] text-surfaceMuted/70">{item.description}</p>
                 </div>
               </NavLink>
             ))}
           </nav>
-          <div className="panel space-y-3">
-            <p className="label">UI mode</p>
-            <div className="flex gap-2">
-              <button
-                className={uiMode === 'new' ? 'primary px-3 py-1 text-xs' : 'secondary px-3 py-1 text-xs'}
-                onClick={() => handleSetUiMode('new')}
-              >
-                New
-              </button>
-              <button
-                className={uiMode === 'legacy' ? 'primary px-3 py-1 text-xs' : 'secondary px-3 py-1 text-xs'}
-                onClick={() => handleSetUiMode('legacy')}
-              >
-                Legacy
-              </button>
-            </div>
-            <p className="text-xs text-surfaceMuted">Switch layouts without losing state.</p>
-            <NavLink to="/legacy" className={({ isActive }) => `nav-link${isActive ? ' nav-link-active' : ''}`}>
-              <div>
-                <p className="text-sm font-medium text-surface">Legacy view</p>
-                <p className="text-xs text-surfaceMuted">Full single-page console</p>
-              </div>
-            </NavLink>
-          </div>
         </aside>
         <div className="app-body">
           <StatusBar />
           <main className="app-main">
             <Routes>
-              <Route path="/" element={<Navigate to={uiMode === 'legacy' ? '/legacy' : '/overview'} replace />} />
+              <Route path="/" element={<Navigate to="/overview" replace />} />
               <Route path="/overview" element={<OverviewWorkspace />} />
               <Route path="/node" element={<NodeWorkspace />} />
               <Route path="/wallet" element={<WalletWorkspace />} />
               <Route path="/send" element={<SendWorkspace />} />
               <Route path="/disclosure" element={<DisclosureWorkspace />} />
               <Route path="/console" element={<ConsoleWorkspace />} />
-              <Route path="/legacy" element={<LegacyWorkspace />} />
               <Route path="*" element={<Navigate to="/overview" replace />} />
             </Routes>
           </main>

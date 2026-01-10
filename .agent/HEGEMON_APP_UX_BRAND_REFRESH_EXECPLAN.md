@@ -25,7 +25,7 @@ This refresh must remain a real app (not a mockup): every screen is wired to the
 - [x] (2026-01-10) Rebuild Wallet/Send workspaces around “safe funds flow”.
 - [x] (2026-01-10) Rebuild Console workspace as timeline + diagnostics.
 - [ ] Add E2E + visual regression harness for Electron.
-- [ ] Polish pass: copy, empty states, motion, a11y.
+- [x] (2026-01-10) Polish pass: copy, empty states, motion, a11y.
 
 
 ## Surprises & Discoveries
