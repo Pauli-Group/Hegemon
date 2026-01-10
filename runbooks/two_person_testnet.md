@@ -348,7 +348,3 @@ To validate the commitment-proof + DA RPC flow end-to-end, use:
 - `runbooks/commitment_proof_da_e2e.md`
 
 ---
-
-## Legacy: Testing Recursive Epoch Proofs (Phase 3d)
-
-Recursive epoch proofs were removed during the Plonky3 migration. This section is archived until a new recursion path is introduced.
