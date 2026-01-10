@@ -581,43 +581,6 @@ export default function App() {
     }
   };
 
-  const handleMiningToggle = async () => {
-    if (!activeConnection) {
-      return;
-    }
-    if (activeConnection.mode === 'remote' && !activeConnection.allowRemoteMining) {
-      setNodeError('Remote mining control is disabled for this connection.');
-      return;
-    }
-    if (!activeSummary) {
-      return;
-    }
-    if (!activeSummary.mining && activeConnection.mode === 'local' && !activeConnection.minerAddress) {
-      setNodeError('Set a miner address before enabling mining.');
-      return;
-    }
-    if (activeConnection.mode === 'remote') {
-      const confirmed = window.confirm('Toggle mining on the remote node?');
-      if (!confirmed) {
-        return;
-      }
-    }
-    setNodeBusy(true);
-    try {
-      const httpUrl = deriveHttpUrl(activeConnection.wsUrl, activeConnection.httpUrl);
-      await window.hegemon.node.setMining({
-        enabled: !activeSummary.mining,
-        threads: activeConnection.mineThreads,
-        httpUrl
-      });
-      await refreshNode();
-    } catch (error) {
-      setNodeError(error instanceof Error ? error.message : 'Failed to toggle mining.');
-    } finally {
-      setNodeBusy(false);
-    }
-  };
-
   const refreshWalletStatus = async () => {
     try {
       const status = await window.hegemon.wallet.status(storePath, passphrase, true);
@@ -649,19 +612,6 @@ export default function App() {
       setWalletStatus(status);
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet open failed.');
-    } finally {
-      setWalletBusy(false);
-    }
-  };
-
-  const handleWalletStatus = async () => {
-    setWalletBusy(true);
-    setWalletError(null);
-    try {
-      const status = await window.hegemon.wallet.status(storePath, passphrase, true);
-      setWalletStatus(status);
-    } catch (error) {
-      setWalletError(error instanceof Error ? error.message : 'Wallet status failed.');
     } finally {
       setWalletBusy(false);
     }
@@ -814,10 +764,13 @@ export default function App() {
   };
 
   const walletSummary = walletConnection ? nodeSummaries[walletConnection.id] : null;
-  const canControlMining = activeConnection?.mode === 'local' || activeConnection?.allowRemoteMining;
+  const walletReady = Boolean(walletStatus);
   const walletGenesis = walletStatus?.genesisHash ?? null;
   const walletNodeGenesis = walletSummary?.genesisHash ?? null;
   const genesisMismatch = Boolean(walletGenesis && walletNodeGenesis && walletGenesis !== walletNodeGenesis);
+  const miningHint = activeSummary?.mining
+    ? 'Mining is active. To change mining settings, stop the node, update Auto-start mining under Advanced settings, then restart.'
+    : 'Mining is configured at launch. Enable Auto-start mining under Advanced settings and restart the node to mine.';
 
   return (
     <div className="min-h-screen bg-midnight text-surface px-6 py-8">
@@ -1101,14 +1054,8 @@ export default function App() {
             <button className="secondary" onClick={handleNodeStop} disabled={nodeBusy || activeConnection?.mode !== 'local'}>
               Stop node
             </button>
-            <button
-              className="secondary"
-              onClick={handleMiningToggle}
-              disabled={nodeBusy || !activeSummary || !activeSummary.reachable || !canControlMining}
-            >
-              {activeSummary?.mining ? 'Stop mining' : 'Start mining'}
-            </button>
           </div>
+          <p className="text-sm text-surfaceMuted">{miningHint}</p>
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <div className="panel">
@@ -1409,13 +1356,15 @@ export default function App() {
             <button className="secondary" onClick={handleWalletRestore} disabled={walletBusy}>
               Open wallet
             </button>
-            <button className="secondary" onClick={handleWalletStatus} disabled={walletBusy}>
-              Status
-            </button>
-            <button className="secondary" onClick={() => handleWalletSync()} disabled={walletBusy}>
+            <button className="secondary" onClick={() => handleWalletSync()} disabled={walletBusy || !walletReady}>
               Sync
             </button>
           </div>
+          {!walletReady && (
+            <p className="text-sm text-surfaceMuted">
+              Open or init a wallet to enable sync and transfers.
+            </p>
+          )}
 
           {genesisMismatch ? (
             <div className="rounded-xl border border-amber/40 bg-amber/10 p-4 space-y-2">
@@ -1534,7 +1483,7 @@ export default function App() {
               Auto-consolidate notes if needed
             </label>
           </div>
-          <button className="primary" onClick={handleWalletSend} disabled={walletBusy}>
+          <button className="primary" onClick={handleWalletSend} disabled={walletBusy || !walletReady}>
             Send shielded transaction
           </button>
         </section>
@@ -1600,7 +1549,7 @@ export default function App() {
               <input value={disclosureOutput} onChange={(event) => setDisclosureOutput(event.target.value)} />
             </label>
           </div>
-          <button className="secondary" onClick={handleDisclosureCreate} disabled={walletBusy}>
+          <button className="secondary" onClick={handleDisclosureCreate} disabled={walletBusy || !walletReady}>
             Create disclosure package
           </button>
           <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
@@ -1617,7 +1566,7 @@ export default function App() {
             <span className="label">Disclosure JSON</span>
             <textarea rows={8} value={disclosureInput} onChange={(event) => setDisclosureInput(event.target.value)} />
           </label>
-          <button className="secondary" onClick={handleDisclosureVerify} disabled={walletBusy}>
+          <button className="secondary" onClick={handleDisclosureVerify} disabled={walletBusy || !walletReady}>
             Verify disclosure package
           </button>
           <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
