@@ -1990,12 +1990,21 @@ export default function App() {
     <HashRouter>
       <div className="app-shell">
         <aside className="app-sidebar relative">
-          <div className="space-y-1">
-            <p className="label text-ionosphere/80">Hegemon</p>
-            <h1 className="text-xl font-semibold tracking-tight">Core Console</h1>
-            <p className="text-[11px] text-surfaceMuted/70 tracking-wide">Quantum-resistant operations</p>
+          <div className="flex items-center gap-3">
+            <svg width="40" height="40" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Hegemon emblem">
+              <path d="M100 40 L45 160 L155 160 Z" fill="none" stroke="#F5A623" strokeWidth="12"/>
+              <path d="M100 40 L45 160 L155 160 Z" fill="#F5A623" opacity="0.15"/>
+              <circle cx="100" cy="100" r="48" fill="none" stroke="#F5A623" strokeWidth="8"/>
+              <circle cx="100" cy="100" r="38" fill="#F5A623" opacity="0.08"/>
+              <line x1="70" y1="70" x2="130" y2="130" stroke="#F5A623" strokeWidth="2" opacity="0.4"/>
+              <line x1="70" y1="130" x2="130" y2="70" stroke="#F5A623" strokeWidth="2" opacity="0.4"/>
+            </svg>
+            <div>
+              <h1 className="text-lg font-semibold tracking-tight">Hegemon</h1>
+              <p className="text-[10px] text-surfaceMuted/70 uppercase tracking-[0.15em]">Core Console</p>
+            </div>
           </div>
-          <nav className="space-y-1 pt-2">
+          <nav className="space-y-1 pt-4">
             {navItems.map((item) => (
               <NavLink
                 key={item.path}
