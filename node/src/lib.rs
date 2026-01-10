@@ -23,13 +23,6 @@ pub mod pow;
 pub mod telemetry;
 pub mod transaction;
 
-#[cfg(feature = "test-utils")]
-pub mod api;
-/// Legacy node test utilities (compatibility shims).
-#[cfg(feature = "test-utils")]
-pub mod storage;
-#[cfg(feature = "test-utils")]
-pub mod test_utils;
 
 /// Shielded coinbase encryption module (only available with substrate feature)
 #[cfg(feature = "substrate")]
@@ -48,6 +41,3 @@ pub mod shielded_coinbase;
 pub mod substrate;
 
 pub use pow::{PowConfig, PowEvent, PowHandle, PowVerifier, PowVerifyError};
-
-#[cfg(feature = "test-utils")]
-pub use test_utils::{MinerAction, NodeHandle, NodeService};

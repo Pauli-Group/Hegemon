@@ -13,7 +13,7 @@ network = { path = "../network" }
 wallet = { path = "../wallet" }
 pallet-shielded-pool = { path = "../pallets/shielded-pool" }
 protocol-versioning = { path = "../protocol/versioning" }
-hegemon-node = { path = "../node", features = ["test-utils"] }
+hegemon-node = { path = "../node" }
 consensus = { path = "../consensus" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 tempfile = "3"
@@ -37,49 +37,12 @@ sp-core = { workspace = true, features = ["std"], optional = true }
 default = []
 # Enable substrate-based tests (requires hegemon-node substrate feature)
 substrate = ["sp-core", "hegemon-node/substrate"]
-# Enable legacy node integration tests (require refactored NodeService API)
-legacy-node-tests = []
 # Enable fast STARK options in transaction-circuit (development only).
 stark-fast = []
 
 [[test]]
 name = "security_pipeline"
 path = "security_pipeline.rs"
-
-[[test]]
-name = "node_wallet_daemon"
-path = "node_wallet_daemon.rs"
-required-features = ["legacy-node-tests"]
-
-[[test]]
-name = "node_gossip"
-path = "node_gossip.rs"
-required-features = ["legacy-node-tests"]
-
-[[test]]
-name = "node_resilience"
-path = "node_resilience.rs"
-required-features = ["legacy-node-tests"]
-
-[[test]]
-name = "mining_integration"
-path = "mining_integration.rs"
-required-features = ["legacy-node-tests"]
-
-[[test]]
-name = "p2p_pq"
-path = "p2p_pq.rs"
-required-features = ["legacy-node-tests"]
-
-[[test]]
-name = "wallet_e2e"
-path = "wallet_e2e.rs"
-required-features = ["legacy-node-tests"]
-
-[[test]]
-name = "pq_network_integration"
-path = "pq_network_integration.rs"
-required-features = ["legacy-node-tests"]
 
 [[test]]
 name = "multi_node_substrate"
