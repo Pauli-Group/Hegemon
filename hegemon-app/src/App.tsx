@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { HashRouter, Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import type {
   NodeConnection,
   NodeSummary,
@@ -12,6 +13,7 @@ const contactsKey = 'hegemon.contacts';
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
 const walletConnectionKey = 'hegemon.walletConnection';
+const uiModeKey = 'hegemon.uiMode';
 
 const makeId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -243,6 +245,12 @@ export default function App() {
   const [connections, setConnections] = useState<NodeConnection[]>([]);
   const [activeConnectionId, setActiveConnectionId] = useState('');
   const [walletConnectionId, setWalletConnectionId] = useState('');
+  const [uiMode, setUiMode] = useState<'new' | 'legacy'>(() => {
+    if (typeof window === 'undefined') {
+      return 'new';
+    }
+    return window.localStorage.getItem(uiModeKey) === 'legacy' ? 'legacy' : 'new';
+  });
   const [nodeSummaries, setNodeSummaries] = useState<Record<string, NodeSummary>>({});
   const [nodeLogs, setNodeLogs] = useState<string[]>([]);
   const [nodeBusy, setNodeBusy] = useState(false);
@@ -261,6 +269,7 @@ export default function App() {
   const [walletDisclosureVerifyOutput, setWalletDisclosureVerifyOutput] = useState<string>('');
   const [walletBusy, setWalletBusy] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
+  const [addressCopied, setAddressCopied] = useState(false);
 
   const [storePath, setStorePath] = useState(defaultStorePath);
   const [passphrase, setPassphrase] = useState('test-pass');
@@ -327,6 +336,10 @@ export default function App() {
     }
     window.localStorage.setItem(walletConnectionKey, walletConnectionId);
   }, [walletConnectionId]);
+
+  useEffect(() => {
+    window.localStorage.setItem(uiModeKey, uiMode);
+  }, [uiMode]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(contactsKey);
@@ -617,6 +630,19 @@ export default function App() {
     }
   };
 
+  const handleCopyAddress = async () => {
+    if (!walletStatus?.primaryAddress) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(walletStatus.primaryAddress);
+      setAddressCopied(true);
+      window.setTimeout(() => setAddressCopied(false), 2000);
+    } catch {
+      setWalletError('Failed to copy address.');
+    }
+  };
+
   const handleWalletSync = async (forceOverride?: boolean) => {
     setWalletBusy(true);
     setWalletError(null);
@@ -643,6 +669,12 @@ export default function App() {
       const fee = toBaseUnits(sendFee);
       if (!amount || !fee) {
         throw new Error('Amount and fee must be valid numbers.');
+      }
+      if (genesisMismatch) {
+        throw new Error('Genesis mismatch between wallet and node. Switch nodes or force a rescan before sending.');
+      }
+      if (walletSummary?.reachable === false) {
+        throw new Error('Wallet connection is offline. Select a reachable node or fix the RPC endpoint.');
       }
       const request = {
         storePath,
@@ -771,832 +803,1265 @@ export default function App() {
   const miningHint = activeSummary?.mining
     ? 'Mining is active. To change mining settings, stop the node, update Auto-start mining under Advanced settings, then restart.'
     : 'Mining is configured at launch. Enable Auto-start mining under Advanced settings and restart the node to mine.';
+  const walletConnectionTone =
+    walletSummary?.reachable === true ? 'ok' : walletSummary?.reachable === false ? 'error' : 'neutral';
+  const walletConnectionLabel =
+    walletSummary?.reachable === true ? 'Online' : walletSummary?.reachable === false ? 'Offline' : 'Unknown';
+  const walletTone = walletError ? 'error' : walletReady ? 'ok' : 'warn';
+  const walletStateLabel = walletError ? 'Error' : walletReady ? 'Ready' : 'Locked';
+  const chainTone = genesisMismatch ? 'error' : walletGenesis && walletNodeGenesis ? 'ok' : 'neutral';
+  const chainLabel = genesisMismatch ? 'Mismatch' : walletGenesis && walletNodeGenesis ? 'Match' : 'Unknown';
+  const hgmBalance = walletStatus?.balances?.find((balance) => balance.assetId === 0) ?? null;
+  const sendBlockedReason = !walletReady
+    ? 'Open or init a wallet to send funds.'
+    : walletSummary?.reachable === false
+      ? 'Wallet connection is offline. Select a reachable node or fix the RPC endpoint.'
+      : genesisMismatch
+        ? 'Genesis mismatch between the wallet store and the selected node.'
+        : null;
+  const canSend = !walletBusy && !sendBlockedReason;
 
-  return (
-    <div className="min-h-screen bg-midnight text-surface px-6 py-8">
-      <header className="max-w-6xl mx-auto space-y-2">
-        <p className="label">Hegemon Desktop</p>
-        <h1 className="text-3xl font-semibold">Node + Wallet Console</h1>
+  const navItems = [
+    { path: '/overview', label: 'Overview', description: 'Command center' },
+    { path: '/node', label: 'Node', description: 'Operate + observe' },
+    { path: '/wallet', label: 'Wallet', description: 'Store + sync' },
+    { path: '/send', label: 'Send', description: 'Shielded transfers' },
+    { path: '/disclosure', label: 'Disclosure', description: 'Audit proofs' },
+    { path: '/console', label: 'Console', description: 'Diagnostics' }
+  ];
+
+  const handleSetUiMode = (mode: 'new' | 'legacy') => {
+    setUiMode(mode);
+    if (typeof window !== 'undefined') {
+      window.location.hash = mode === 'legacy' ? '#/legacy' : '#/overview';
+    }
+  };
+
+  const GenesisMismatchBanner = () => {
+    if (!genesisMismatch) {
+      return null;
+    }
+    return (
+      <div className="rounded-xl border border-amber/40 bg-amber/10 p-4 space-y-2">
+        <p className="text-sm text-surface">
+          Genesis mismatch between the wallet store and the selected node. Choose the correct node or force a rescan.
+        </p>
+        <p className="text-sm text-surfaceMuted mono">
+          Wallet: {formatHash(walletGenesis)} | Node: {formatHash(walletNodeGenesis)}
+        </p>
+        <button className="secondary" onClick={() => handleWalletSync(true)} disabled={walletBusy}>
+          Force rescan
+        </button>
+      </div>
+    );
+  };
+
+  const WalletErrorBanner = () => (walletError ? <p className="text-guard">{walletError}</p> : null);
+
+  const StatusBar = () => (
+    <div className="status-bar">
+      <div className="status-grid">
+        <div className="status-group">
+          <p className="label">Node</p>
+          <div className="flex items-center gap-2">
+            <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
+            <span className="text-sm font-medium">{activeConnection?.label ?? 'No connection'}</span>
+            <span className="badge">{activeConnection?.mode ?? 'n/a'}</span>
+          </div>
+          <p className="text-xs text-surfaceMuted mono break-all" title={activeConnection?.wsUrl ?? ''}>
+            {activeConnection?.wsUrl ?? 'N/A'}
+          </p>
+          <p className="text-xs text-surfaceMuted">
+            Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}
+          </p>
+        </div>
+        <div className="status-group">
+          <p className="label">Wallet</p>
+          <div className="flex items-center gap-2">
+            <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
+            <span className="text-sm font-medium">{walletConnection?.label ?? 'No connection'}</span>
+            <span className={`status-pill ${walletConnectionTone}`}>{walletConnectionLabel}</span>
+          </div>
+          <p className="text-xs text-surfaceMuted">
+            Store:{' '}
+            <span className="mono break-all" title={storePath}>
+              {storePath}
+            </span>
+          </p>
+          <p className="text-xs text-surfaceMuted">
+            Height {formatNumber(walletSummary?.bestNumber)} · Last synced {formatNumber(walletStatus?.lastSyncedHeight)}
+          </p>
+        </div>
+        <div className="status-group">
+          <p className="label">Chain</p>
+          <div className="flex items-center gap-2">
+            <span className={`status-pill ${chainTone}`}>{chainLabel}</span>
+            <span className="text-xs text-surfaceMuted">Genesis {formatHash(walletNodeGenesis ?? walletGenesis)}</span>
+          </div>
+          <p className="text-xs text-surfaceMuted">
+            Mining {activeSummary?.mining ? 'Active' : 'Idle'} · Supply {formatHash(activeSummary?.supplyDigest)}
+          </p>
+          <p className="text-xs text-surfaceMuted">Hash rate {formatHashRate(activeSummary?.hashRate)}</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  const OverviewWorkspace = () => (
+    <div className="mx-auto w-full max-w-6xl space-y-6">
+      <header className="space-y-2">
+        <p className="label">Overview</p>
+        <h1 className="text-3xl font-semibold">Command Center</h1>
         <p className="text-surfaceMuted">
-          Operate local or remote nodes, manage your shielded wallet, and keep mining and sync operations in one place.
+          Keep the node, wallet, and chain context visible while you decide your next move.
         </p>
       </header>
 
-      <div className="max-w-6xl mx-auto grid gap-8 mt-10">
-        <section className="card reveal delay-1 space-y-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="label">Node</p>
-              <h2 className="text-2xl font-semibold">Connections</h2>
-            </div>
-            <div className="flex gap-2">
-              <button className="secondary" onClick={handleAddConnection}>Add connection</button>
-              <button className="danger" onClick={handleRemoveConnection} disabled={connections.length <= 1}>Remove</button>
-            </div>
-          </div>
+      {genesisMismatch ? <GenesisMismatchBanner /> : null}
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <label className="space-y-2">
-              <span className="label">Active connection</span>
-              <select
-                value={activeConnectionId}
-                onChange={(event) => setActiveConnectionId(event.target.value)}
-              >
-                {connections.map((connection) => (
-                  <option key={connection.id} value={connection.id}>
-                    {connection.label} ({connection.mode})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="space-y-2">
-              <span className="label">Label</span>
-              <input
-                value={activeConnection?.label ?? ''}
-                onChange={(event) => updateActiveConnection({ label: event.target.value })}
-              />
-            </label>
-            <label className="space-y-2">
-              <span className="label">Mode</span>
-              <select
-                value={activeConnection?.mode ?? 'local'}
-                onChange={(event) => updateActiveConnection({ mode: event.target.value as NodeConnection['mode'] })}
-              >
-                <option value="local">Local</option>
-                <option value="remote">Remote</option>
-              </select>
-            </label>
-            <label className="space-y-2">
-              <span className="label">WebSocket URL</span>
-              <input
-                value={activeConnection?.wsUrl ?? ''}
-                onChange={(event) => updateActiveConnection({ wsUrl: event.target.value })}
-              />
-            </label>
-            <label className="space-y-2">
-              <span className="label">HTTP URL</span>
-              <input
-                value={activeConnection?.httpUrl ?? ''}
-                onChange={(event) => updateActiveConnection({ httpUrl: event.target.value })}
-                placeholder="http://127.0.0.1:9944"
-              />
-            </label>
-            {activeConnection?.mode === 'remote' ? (
-              <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-                <input
-                  type="checkbox"
-                  checked={Boolean(activeConnection.allowRemoteMining)}
-                  onChange={(event) => updateActiveConnection({ allowRemoteMining: event.target.checked })}
-                />
-                Allow remote mining control
-              </label>
-            ) : null}
-          </div>
-          {activeConnection?.mode === 'remote' ? (
+      <div className="grid gap-6 xl:grid-cols-3">
+        <section className="card space-y-4">
+          <div>
+            <p className="label">Node</p>
+            <h2 className="text-2xl font-semibold">Status</h2>
             <p className="text-sm text-surfaceMuted">
-              Remote RPC should be restricted and authenticated. Review runbooks/two_person_testnet.md before exposing RPC.
+              Active: {activeConnection?.label ?? 'No connection'} ({activeConnection?.mode ?? 'n/a'})
             </p>
-          ) : null}
-
-          {activeConnection?.mode === 'local' && (
-            <div className="space-y-4">
-              <button
-                className="secondary"
-                onClick={() => setShowAdvancedNode((prev) => !prev)}
-              >
-                {showAdvancedNode ? 'Hide advanced settings' : 'Show advanced settings'}
-              </button>
-
-              {showAdvancedNode && (
-                <>
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <label className="space-y-2">
-                      <span className="label">Chain spec path</span>
-                      <input
-                        value={activeConnection.chainSpecPath ?? ''}
-                        onChange={(event) => updateActiveConnection({ chainSpecPath: event.target.value })}
-                        placeholder="config/dev-chainspec.json"
-                      />
-                    </label>
-                    <label className="space-y-2">
-                      <span className="label">Base path</span>
-                      <input
-                        value={activeConnection.basePath ?? ''}
-                        onChange={(event) => updateActiveConnection({ basePath: event.target.value })}
-                        placeholder="~/.hegemon-node"
-                      />
-                    </label>
-                    <label className="space-y-2">
-                      <span className="label">Node name</span>
-                      <input
-                        value={activeConnection.nodeName ?? ''}
-                        onChange={(event) => updateActiveConnection({ nodeName: event.target.value })}
-                        placeholder="AliceBootNode"
-                      />
-                    </label>
-                    <label className="space-y-2">
-                      <span className="label">RPC port</span>
-                      <input
-                        value={activeConnection.rpcPort?.toString() ?? ''}
-                        onChange={(event) => {
-                          const nextPort = Number.parseInt(event.target.value, 10);
-                          updateActiveConnection((conn) => {
-                            const port = Number.isNaN(nextPort) ? undefined : nextPort;
-                            const updates: Partial<NodeConnection> = { rpcPort: port };
-                            if (conn.wsUrl.startsWith('ws://127.0.0.1:') || conn.wsUrl.startsWith('ws://localhost:')) {
-                              const host = conn.wsUrl.includes('localhost') ? 'localhost' : '127.0.0.1';
-                              if (port) {
-                                updates.wsUrl = `ws://${host}:${port}`;
-                                updates.httpUrl = `http://${host}:${port}`;
-                              }
-                            }
-                            return updates;
-                          });
-                        }}
-                      />
-                    </label>
-                    <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(activeConnection.rpcExternal)}
-                        onChange={(event) => updateActiveConnection({ rpcExternal: event.target.checked })}
-                      />
-                      RPC external (exposes HTTP to network)
-                    </label>
-                    <label className="space-y-2">
-                      <span className="label">RPC methods</span>
-                      <select
-                        value={activeConnection.rpcMethods ?? 'safe'}
-                        onChange={(event) => updateActiveConnection({ rpcMethods: event.target.value as NodeConnection['rpcMethods'] })}
-                      >
-                        <option value="safe">safe</option>
-                        <option value="unsafe">unsafe</option>
-                      </select>
-                    </label>
-                    <label className="space-y-2">
-                      <span className="label">P2P port</span>
-                      <input
-                        value={activeConnection.p2pPort?.toString() ?? ''}
-                        onChange={(event) => {
-                          const nextPort = Number.parseInt(event.target.value, 10);
-                          updateActiveConnection({ p2pPort: Number.isNaN(nextPort) ? undefined : nextPort });
-                        }}
-                      />
-                    </label>
-                    <label className="space-y-2">
-                      <span className="label">Listen address</span>
-                      <input
-                        value={activeConnection.listenAddr ?? ''}
-                        onChange={(event) => updateActiveConnection({ listenAddr: event.target.value })}
-                        placeholder="/ip4/0.0.0.0/tcp/30333"
-                      />
-                    </label>
-                    <label className="space-y-2 md:col-span-2">
-                      <span className="label">Seeds (HEGEMON_SEEDS)</span>
-                      <input
-                        value={activeConnection.seeds ?? ''}
-                        onChange={(event) => updateActiveConnection({ seeds: event.target.value })}
-                        placeholder="1.2.3.4:30333,5.6.7.8:30333"
-                      />
-                    </label>
-                    <label className="space-y-2 md:col-span-2">
-                      <span className="label">Miner address</span>
-                      <input
-                        value={activeConnection.minerAddress ?? ''}
-                        onChange={(event) => updateActiveConnection({ minerAddress: event.target.value })}
-                        placeholder="shca1..."
-                      />
-                    </label>
-                    <label className="space-y-2">
-                      <span className="label">Mine threads</span>
-                      <input
-                        value={activeConnection.mineThreads?.toString() ?? ''}
-                        onChange={(event) => {
-                          const nextValue = Number.parseInt(event.target.value, 10);
-                          updateActiveConnection({ mineThreads: Number.isNaN(nextValue) ? undefined : nextValue });
-                        }}
-                      />
-                    </label>
-                    <div className="flex items-center gap-3">
-                      <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(activeConnection.dev)}
-                          onChange={(event) => updateActiveConnection({ dev: event.target.checked })}
-                        />
-                        Dev mode
-                      </label>
-                      <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(activeConnection.tmp)}
-                          onChange={(event) => updateActiveConnection({ tmp: event.target.checked })}
-                        />
-                        Temp storage
-                      </label>
-                      <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(activeConnection.miningIntent)}
-                          onChange={(event) => updateActiveConnection({ miningIntent: event.target.checked })}
-                        />
-                        Auto-start mining
-                      </label>
-                    </div>
-                  </div>
-                  {activeConnection.dev && !activeConnection.chainSpecPath ? (
-                    <p className="text-sm text-surfaceMuted">
-                      Multi-machine networks require a shared chainspec. See runbooks/two_person_testnet.md for details.
-                    </p>
-                  ) : null}
-                  {activeConnection.listenAddr ? (
-                    <p className="text-sm text-surfaceMuted">
-                      Listen address overrides the P2P port setting.
-                    </p>
-                  ) : null}
-                  {activeConnection.rpcExternal || activeConnection.rpcMethods === 'unsafe' ? (
-                    <p className="text-sm text-guard">
-                      External RPC and unsafe methods expose control surfaces. Restrict with firewalls and only use on trusted networks.
-                    </p>
-                  ) : null}
-                  {activeConnection.tmp ? (
-                    <p className="text-sm text-guard">
-                      Temp storage deletes chain data on shutdown. Use a base path for persistence.
-                    </p>
-                  ) : null}
-                </>
-              )}
+          </div>
+          <div className="space-y-2 text-sm text-surfaceMuted">
+            <div className="flex items-center gap-2">
+              <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
+              <span>Updated {updatedAtLabel}</span>
             </div>
-          )}
+            <p>Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}</p>
+            <p>
+              Mining {activeSummary?.mining ? 'Active' : 'Idle'} · Hash rate {formatHashRate(activeSummary?.hashRate)}
+            </p>
+            <p>Supply digest {formatHash(activeSummary?.supplyDigest)}</p>
+          </div>
         </section>
 
-        <section className="card reveal delay-2 space-y-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="label">Node</p>
-              <h2 className="text-2xl font-semibold">Operations</h2>
-              <p className="text-sm text-surfaceMuted">
-                Active: {activeConnection?.label ?? 'No connection'} ({activeConnection?.mode ?? 'n/a'}) | Updated {updatedAtLabel}
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
-              <span className="text-xs text-surfaceMuted">
-                Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}
-              </span>
-            </div>
+        <section className="card space-y-4">
+          <div>
+            <p className="label">Wallet</p>
+            <h2 className="text-2xl font-semibold">Readiness</h2>
+            <p className="text-sm text-surfaceMuted">{storePath}</p>
           </div>
+          <div className="space-y-2 text-sm text-surfaceMuted">
+            <div className="flex items-center gap-2">
+              <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
+              <span>{walletConnectionLabel}</span>
+            </div>
+            <p>Balance {hgmBalance ? formatHgm(hgmBalance.total) : 'N/A'}</p>
+            <p>Last synced height {formatNumber(walletStatus?.lastSyncedHeight)}</p>
+            {walletStatus?.notes?.needsConsolidation && walletStatus.notes.plan ? (
+              <p className="text-amber">Consolidation needed (~{walletStatus.notes.plan.txsNeeded} txs).</p>
+            ) : null}
+          </div>
+        </section>
 
-          <div className="flex flex-wrap gap-3">
+        <section className="card space-y-4">
+          <div>
+            <p className="label">Chain</p>
+            <h2 className="text-2xl font-semibold">Context</h2>
+          </div>
+          <div className="space-y-2 text-sm text-surfaceMuted">
+            <p>
+              Node genesis <span className="mono">{formatHash(walletNodeGenesis)}</span>
+            </p>
+            <p>
+              Wallet genesis <span className="mono">{formatHash(walletGenesis)}</span>
+            </p>
+            <p>
+              Chain spec{' '}
+              <span className="mono">
+                {activeSummary?.config?.chainSpecName
+                  ? `${activeSummary.config.chainSpecName} (${activeSummary.config.chainSpecId})`
+                  : 'N/A'}
+              </span>
+            </p>
+            <p>Mining {activeSummary?.mining ? 'Active' : 'Idle'}</p>
+          </div>
+        </section>
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <section className="card space-y-4">
+          <div>
+            <p className="label">Actions</p>
+            <h2 className="text-2xl font-semibold">Quick moves</h2>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
             <button className="primary" onClick={handleNodeStart} disabled={nodeBusy || activeConnection?.mode !== 'local'}>
               Start node
             </button>
             <button className="secondary" onClick={handleNodeStop} disabled={nodeBusy || activeConnection?.mode !== 'local'}>
               Stop node
             </button>
-          </div>
-          <p className="text-sm text-surfaceMuted">{miningHint}</p>
-
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <div className="panel">
-              <p className="label">Health</p>
-              <div className="flex items-center gap-2">
-                <span className={`status-dot ${healthTone}`} />
-                <p className="text-lg font-medium">{healthLabel}</p>
-              </div>
-              <p className="text-xs text-surfaceMuted">Updated {updatedAtLabel}</p>
-            </div>
-            <div className="panel">
-              <p className="label">Height</p>
-              <p className="text-lg font-medium">{formatNumber(activeSummary?.bestNumber)}</p>
-              <p className="text-xs text-surfaceMuted mono truncate" title={activeSummary?.bestBlock ?? ''}>
-                {activeSummary?.bestBlock ?? 'N/A'}
-              </p>
-            </div>
-            <div className="panel">
-              <p className="label">Peers</p>
-              <p className="text-lg font-medium">{formatNumber(activeSummary?.peers)}</p>
-              <p className="text-xs text-surfaceMuted">
-                Syncing: {activeSummary?.isSyncing === null || activeSummary?.isSyncing === undefined
-                  ? 'N/A'
-                  : activeSummary.isSyncing
-                    ? 'Yes'
-                    : 'No'}
-              </p>
-            </div>
-            <div className="panel">
-              <p className="label">Mining</p>
-              <p className="text-lg font-medium">
-                {activeSummary?.mining === null || activeSummary?.mining === undefined
-                  ? 'N/A'
-                  : activeSummary.mining
-                    ? 'Active'
-                    : 'Idle'}
-              </p>
-              <p className="text-xs text-surfaceMuted">Hash rate: {formatHashRate(activeSummary?.hashRate)}</p>
-            </div>
-            <div className="panel">
-              <p className="label">Storage</p>
-              <p className="text-lg font-medium">{formatBytes(activeSummary?.storage?.totalBytes)}</p>
-              <p className="text-xs text-surfaceMuted">State: {formatBytes(activeSummary?.storage?.stateBytes)}</p>
-            </div>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="panel">
-              <p className="label">Mining details</p>
-              <p className="text-sm text-surfaceMuted">Threads: {activeSummary?.miningThreads ?? 'N/A'}</p>
-              <p className="text-sm text-surfaceMuted">Hash rate: {formatHashRate(activeSummary?.hashRate)}</p>
-              <p className="text-sm text-surfaceMuted">Blocks found: {formatNumber(activeSummary?.blocksFound)}</p>
-              <p className="text-sm text-surfaceMuted">Difficulty: {formatNumber(activeSummary?.difficulty)}</p>
-              <p className="text-sm text-surfaceMuted">Block height: {formatNumber(activeSummary?.blockHeight)}</p>
-            </div>
-            <div className="panel">
-              <p className="label">Storage breakdown</p>
-              <p className="text-sm text-surfaceMuted">Blocks: {formatBytes(activeSummary?.storage?.blocksBytes)}</p>
-              <p className="text-sm text-surfaceMuted">State: {formatBytes(activeSummary?.storage?.stateBytes)}</p>
-              <p className="text-sm text-surfaceMuted">Txs: {formatBytes(activeSummary?.storage?.transactionsBytes)}</p>
-              <p className="text-sm text-surfaceMuted">Nullifiers: {formatBytes(activeSummary?.storage?.nullifiersBytes)}</p>
-            </div>
-            <div className="panel">
-              <p className="label">Consensus</p>
-              <p className="text-sm text-surfaceMuted">
-                Genesis: <span className="mono" title={activeSummary?.genesisHash ?? ''}>{formatHash(activeSummary?.genesisHash)}</span>
-              </p>
-              <p className="text-sm text-surfaceMuted">
-                Supply digest: <span className="mono" title={activeSummary?.supplyDigest ?? ''}>{formatHash(activeSummary?.supplyDigest)}</span>
-              </p>
-            </div>
-            <div className="panel">
-              <p className="label">Telemetry</p>
-              <p className="text-lg font-medium">{formatDuration(activeSummary?.telemetry?.uptimeSecs)}</p>
-              <p className="text-sm text-surfaceMuted">Blocks imported: {formatNumber(activeSummary?.telemetry?.blocksImported)}</p>
-              <p className="text-sm text-surfaceMuted">Blocks mined: {formatNumber(activeSummary?.telemetry?.blocksMined)}</p>
-              <p className="text-sm text-surfaceMuted">Transactions: {formatNumber(activeSummary?.telemetry?.txCount)}</p>
-              <p className="text-sm text-surfaceMuted">
-                Net: {formatBytes(activeSummary?.telemetry?.networkRxBytes)} / {formatBytes(activeSummary?.telemetry?.networkTxBytes)}
-              </p>
-              <p className="text-sm text-surfaceMuted">Memory: {formatBytes(activeSummary?.telemetry?.memoryBytes)}</p>
-            </div>
-            <div className="panel md:col-span-2 space-y-1">
-              <p className="label">Config</p>
-              <p className="text-sm text-surfaceMuted">Node: {activeSummary?.config?.nodeName || 'N/A'}</p>
-              <p className="text-sm text-surfaceMuted">
-                Chain:{' '}
-                {activeSummary?.config?.chainSpecName
-                  ? `${activeSummary.config.chainSpecName} (${activeSummary.config.chainSpecId})`
-                  : 'N/A'}
-              </p>
-              <p className="text-sm text-surfaceMuted">Chain type: {activeSummary?.config?.chainType || 'N/A'}</p>
-              <p className="text-sm text-surfaceMuted">
-                Base path:{' '}
-                <span className="mono break-all" title={activeSummary?.config?.basePath || ''}>
-                  {activeSummary?.config?.basePath || 'N/A'}
-                </span>
-              </p>
-              <p className="text-sm text-surfaceMuted">
-                P2P listen:{' '}
-                <span className="mono break-all" title={activeSummary?.config?.p2pListenAddr || ''}>
-                  {activeSummary?.config?.p2pListenAddr || 'N/A'}
-                </span>
-              </p>
-              <p className="text-sm text-surfaceMuted">
-                RPC listen:{' '}
-                <span className="mono break-all" title={activeSummary?.config?.rpcListenAddr || ''}>
-                  {activeSummary?.config?.rpcListenAddr || 'N/A'}
-                </span>
-              </p>
-              <p className="text-sm text-surfaceMuted">
-                RPC methods:{' '}
-                {activeSummary?.config?.rpcMethods
-                  ? `${activeSummary.config.rpcMethods} (${activeSummary.config.rpcExternal ? 'external' : 'local'})`
-                  : 'N/A'}
-              </p>
-              <p className="text-sm text-surfaceMuted">
-                PQ: {activeSummary?.config?.requirePq ? 'Required' : activeSummary?.config ? 'Optional' : 'N/A'}{' '}
-                {activeSummary?.config?.pqVerbose ? '(verbose)' : ''}
-              </p>
-              <p className="text-sm text-surfaceMuted">Max peers: {formatNumber(activeSummary?.config?.maxPeers)}</p>
-              <p className="text-sm text-surfaceMuted">
-                Bootstraps:{' '}
-                <span className="mono break-all" title={(activeSummary?.config?.bootstrapNodes ?? []).join(', ')}>
-                  {activeSummary?.config?.bootstrapNodes?.length
-                    ? activeSummary.config.bootstrapNodes.join(', ')
-                    : 'N/A'}
-                </span>
-              </p>
-            </div>
-          </div>
-
-          {nodeError && <p className="text-guard">{nodeError}</p>}
-        </section>
-
-        <section className="card reveal delay-3 space-y-6">
-          <div>
-            <p className="label">Node</p>
-            <h2 className="text-2xl font-semibold">Connection health</h2>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2">
-            {connections.map((connection) => {
-              const summary = nodeSummaries[connection.id];
-              const isOnline = Boolean(summary?.reachable);
-              return (
-                <div key={connection.id} className="panel">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="label">{summary?.label ?? connection.label}</p>
-                    <span className={`status-pill ${isOnline ? 'ok' : 'error'}`}>
-                      {isOnline ? 'Online' : 'Offline'}
-                    </span>
-                  </div>
-                  <p className="text-sm text-surfaceMuted">Mode: {connection.mode}</p>
-                  <p className="text-sm text-surfaceMuted">Height: {formatNumber(summary?.bestNumber)}</p>
-                  <p className="text-sm text-surfaceMuted">Peers: {formatNumber(summary?.peers)}</p>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-
-        <section className="card reveal delay-4 space-y-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="label">Console</p>
-              <h2 className="text-2xl font-semibold">Node Console</h2>
-              <p className="text-sm text-surfaceMuted">
-                Structured logs and milestone events for the active connection.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button className="chip" type="button" aria-pressed={logFilterInfo} onClick={() => setLogFilterInfo((prev) => !prev)}>
-                Info
-              </button>
-              <button className="chip" type="button" aria-pressed={logFilterWarn} onClick={() => setLogFilterWarn((prev) => !prev)}>
-                Warn
-              </button>
-              <button className="chip" type="button" aria-pressed={logFilterError} onClick={() => setLogFilterError((prev) => !prev)}>
-                Error
-              </button>
-              <button className="chip" type="button" aria-pressed={logFilterDebug} onClick={() => setLogFilterDebug((prev) => !prev)}>
-                Debug
-              </button>
-            </div>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-3">
-            <div className="panel space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="label">Key events</p>
-                <span className="text-xs text-surfaceMuted">{logHighlights.length} recent</span>
-              </div>
-              {activeConnection?.mode !== 'local' ? (
-                <p className="text-sm text-surfaceMuted">Connect to a local node to stream logs.</p>
-              ) : logHighlights.length ? (
-                <div className="space-y-2">
-                  {logHighlights.map((entry) => (
-                    <div key={entry.id} className="flex items-start gap-3 text-sm">
-                      <span className="mono text-surfaceMuted">{entry.timestamp ?? '--:--:--'}</span>
-                      <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
-                      <span className="text-surfaceMuted">{entry.message}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-surfaceMuted">No highlight events yet.</p>
-              )}
-            </div>
-            <div className="panel space-y-4 lg:col-span-2">
-              <div>
-                <p className="label">Channels</p>
-                <div className="flex flex-wrap gap-2">
-                  {logCategoryOrder.map((category) => (
-                    <span key={category} className="chip-static">
-                      {logCategoryLabels[category]} {formatNumber(logCategoryStats[category])}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <label className="space-y-2">
-                <span className="label">Search logs</span>
-                <input
-                  type="search"
-                  value={logSearch}
-                  onChange={(event) => setLogSearch(event.target.value)}
-                  placeholder="Filter by phrase or module"
-                />
-              </label>
-              <p className="text-xs text-surfaceMuted">
-                Showing {formatNumber(nodeLogs.length)} lines (newest at bottom).
-              </p>
-            </div>
-          </div>
-
-          <div className="panel h-80 overflow-auto">
-            {activeConnection?.mode !== 'local' && (
-              <p className="text-sm text-surfaceMuted">Logs are only available for local nodes started from this app.</p>
-            )}
-            {activeConnection?.mode === 'local' && (
-              <div className="space-y-2">
-                {filteredLogEntries.length === 0 && <p className="text-sm text-surfaceMuted">No matching logs.</p>}
-                {filteredLogEntries.map((entry) => (
-                  <div key={entry.id} className="flex flex-wrap gap-3 text-sm log-row">
-                    <span className="mono text-surfaceMuted">{entry.timestamp ?? '--:--:--'}</span>
-                    <span className={`badge level-${entry.level}`}>{entry.level}</span>
-                    <span className="badge badge-category">{logCategoryLabels[entry.category]}</span>
-                    <span className="mono flex-1">{entry.message}</span>
-                    {entry.highlight ? (
-                      <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="card space-y-6">
-          <div>
-            <p className="label">Wallet</p>
-            <h2 className="text-2xl font-semibold">Shielded Store</h2>
-          </div>
-
-          <div className="grid gap-4">
-            <label className="space-y-2">
-              <span className="label">Store path</span>
-              <input value={storePath} onChange={(event) => setStorePath(event.target.value)} />
-            </label>
-            <label className="space-y-2">
-              <span className="label">Passphrase</span>
-              <input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} />
-            </label>
-            <label className="space-y-2">
-              <span className="label">Wallet connection</span>
-              <select value={walletConnectionId} onChange={(event) => setWalletConnectionId(event.target.value)}>
-                {connections.map((connection) => (
-                  <option key={connection.id} value={connection.id}>
-                    {connection.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="space-y-2">
-              <span className="label">WebSocket URL</span>
-              <input value={wsUrl} onChange={(event) => setWsUrl(event.target.value)} />
-            </label>
-            <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-              <input type="checkbox" checked={forceRescan} onChange={(event) => setForceRescan(event.target.checked)} />
-              Force rescan on next sync
-            </label>
-          </div>
-
-          <div className="flex flex-wrap gap-3">
-            <button className="primary" onClick={handleWalletInit} disabled={walletBusy}>
-              Init wallet
-            </button>
-            <button className="secondary" onClick={handleWalletRestore} disabled={walletBusy}>
-              Open wallet
-            </button>
             <button className="secondary" onClick={() => handleWalletSync()} disabled={walletBusy || !walletReady}>
-              Sync
+              Sync wallet
             </button>
+            <Link className="action-link secondary" to="/send">
+              Send transfer
+            </Link>
+            <Link className="action-link secondary" to="/node">
+              Node operations
+            </Link>
+            <Link className="action-link secondary" to="/console">
+              Open console
+            </Link>
           </div>
-          {!walletReady && (
-            <p className="text-sm text-surfaceMuted">
-              Open or init a wallet to enable sync and transfers.
-            </p>
-          )}
-
-          {genesisMismatch ? (
-            <div className="rounded-xl border border-amber/40 bg-amber/10 p-4 space-y-2">
-              <p className="text-sm text-surface">
-                Genesis mismatch between the wallet store and the selected node. Choose the correct node or force a rescan.
-              </p>
-              <p className="text-sm text-surfaceMuted mono">
-                Wallet: {formatHash(walletGenesis)} | Node: {formatHash(walletNodeGenesis)}
-              </p>
-              <button className="secondary" onClick={() => handleWalletSync(true)} disabled={walletBusy}>
-                Force rescan
-              </button>
-            </div>
-          ) : null}
-
-          <div className="rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4 space-y-3">
-            <div>
-              <p className="label">Primary address</p>
-              <p className="mono break-all">{walletStatus?.primaryAddress ?? 'N/A'}</p>
-            </div>
-            <div>
-              <p className="label">Balances</p>
-              <div className="space-y-1">
-                {walletStatus?.balances?.length ? (
-                  walletStatus.balances.map((balance) => (
-                    <div key={balance.assetId} className="flex justify-between text-sm">
-                      <span>{balance.label}</span>
-                      <span className="mono">
-                        {balance.assetId === 0 ? formatHgm(balance.total) : balance.total.toLocaleString()}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-sm text-surfaceMuted">No balances yet.</p>
-                )}
-              </div>
-            </div>
-            <div>
-              <p className="label">Notes</p>
-              {walletStatus?.notes ? (
-                <p className="text-sm text-surfaceMuted">
-                  {walletStatus.notes.spendableCount} spendable notes, max {walletStatus.notes.maxInputs} inputs.
-                  {walletStatus.notes.needsConsolidation && walletStatus.notes.plan ? (
-                    <span className="text-amber"> Consolidation needed (~{walletStatus.notes.plan.txsNeeded} txs).</span>
-                  ) : null}
-                </p>
-              ) : (
-                <p className="text-sm text-surfaceMuted">No note summary.</p>
-              )}
-            </div>
-            <div>
-              <p className="label">Connected to</p>
-              <p className="text-sm text-surfaceMuted">
-                {walletConnection?.label ?? 'N/A'} (height {formatNumber(walletSummary?.bestNumber)})
-              </p>
-            </div>
-          </div>
-
-          {walletError && <p className="text-guard">{walletError}</p>}
-        </section>
-      </div>
-
-      <div className="max-w-6xl mx-auto grid gap-8 mt-8 xl:grid-cols-2">
-        <section className="card space-y-6">
-          <div>
-            <p className="label">Send</p>
-            <h2 className="text-2xl font-semibold">Shielded Transfer</h2>
-          </div>
-          <div className="grid gap-4">
-            <label className="space-y-2">
-              <span className="label">Recipient address</span>
-              <textarea
-                rows={3}
-                value={recipientAddress}
-                onChange={(event) => setRecipientAddress(event.target.value)}
-                placeholder="shca1..."
-              />
-            </label>
-            {contacts.length > 0 && (
-              <label className="space-y-2">
-                <span className="label">Address book</span>
-                <select
-                  value=""
-                  onChange={(event) => {
-                    const contact = contacts.find((entry) => entry.id === event.target.value);
-                    if (contact) {
-                      setRecipientAddress(contact.address);
-                    }
-                  }}
-                >
-                  <option value="">Select a contact</option>
-                  {contacts.map((contact) => (
-                    <option key={contact.id} value={contact.id}>
-                      {contact.name} - {formatAddress(contact.address)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-2">
-                <span className="label">Amount (HGM)</span>
-                <input value={sendAmount} onChange={(event) => setSendAmount(event.target.value)} placeholder="0.50" />
-              </label>
-              <label className="space-y-2">
-                <span className="label">Fee (HGM)</span>
-                <input value={sendFee} onChange={(event) => setSendFee(event.target.value)} placeholder="0.01" />
-              </label>
-            </div>
-            <label className="space-y-2">
-              <span className="label">Memo</span>
-              <textarea rows={2} value={sendMemo} onChange={(event) => setSendMemo(event.target.value)} />
-            </label>
-            <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-              <input type="checkbox" checked={autoConsolidate} onChange={(event) => setAutoConsolidate(event.target.checked)} />
-              Auto-consolidate notes if needed
-            </label>
-          </div>
-          <button className="primary" onClick={handleWalletSend} disabled={walletBusy || !walletReady}>
-            Send shielded transaction
-          </button>
+          {sendBlockedReason ? <p className="text-xs text-amber">{sendBlockedReason}</p> : null}
         </section>
 
-        <section className="card space-y-6">
+        <section className="card space-y-4">
           <div>
-            <p className="label">Address book</p>
-            <h2 className="text-2xl font-semibold">Contacts</h2>
+            <p className="label">Events</p>
+            <h2 className="text-2xl font-semibold">Recent activity</h2>
           </div>
-          <div className="grid gap-3">
-            <label className="space-y-2">
-              <span className="label">Name</span>
-              <input value={newContactName} onChange={(event) => setNewContactName(event.target.value)} />
-            </label>
-            <label className="space-y-2">
-              <span className="label">Address</span>
-              <input value={newContactAddress} onChange={(event) => setNewContactAddress(event.target.value)} placeholder="shca1..." />
-            </label>
-            <label className="space-y-2">
-              <span className="label">Notes</span>
-              <input value={newContactNotes} onChange={(event) => setNewContactNotes(event.target.value)} placeholder="How verified, context, etc." />
-            </label>
-            <label className="flex items-center gap-2 text-sm text-surfaceMuted">
-              <input type="checkbox" checked={newContactVerified} onChange={(event) => setNewContactVerified(event.target.checked)} />
-              Verified out of band
-            </label>
-            <button className="secondary" onClick={handleAddContact}>Add contact</button>
-          </div>
-
-          <div className="space-y-3">
-            {contacts.length === 0 && <p className="text-sm text-surfaceMuted">No contacts saved yet.</p>}
-            {contacts.map((contact) => (
-              <div key={contact.id} className="border border-surfaceMuted/10 rounded-xl p-4 bg-midnight/40">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-lg font-medium">{contact.name}</p>
-                    <p className="mono text-sm text-surfaceMuted">{formatAddress(contact.address)}</p>
-                  </div>
-                  <button className="danger" onClick={() => handleRemoveContact(contact.id)}>Remove</button>
+          {logHighlights.length ? (
+            <div className="space-y-2">
+              {logHighlights.slice(0, 5).map((entry) => (
+                <div key={entry.id} className="flex items-start gap-3 text-sm">
+                  <span className="mono text-surfaceMuted">{entry.timestamp ?? '--:--:--'}</span>
+                  <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
+                  <span className="text-surfaceMuted">{entry.message}</span>
                 </div>
-                <p className="text-sm text-surfaceMuted">Verified: {contact.verified ? 'Yes' : 'No'}</p>
-                {contact.notes && <p className="text-sm text-surfaceMuted">Notes: {contact.notes}</p>}
-                {contact.lastUsed && <p className="text-sm text-surfaceMuted">Last used: {new Date(contact.lastUsed).toLocaleString()}</p>}
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-
-      <div className="max-w-6xl mx-auto grid gap-8 mt-8 xl:grid-cols-2">
-        <section className="card space-y-6">
-          <div>
-            <p className="label">Disclosure</p>
-            <h2 className="text-2xl font-semibold">Generate proof</h2>
-          </div>
-          <div className="grid gap-4">
-            <label className="space-y-2">
-              <span className="label">Transaction hash</span>
-              <input value={disclosureTxId} onChange={(event) => setDisclosureTxId(event.target.value)} placeholder="0x..." />
-            </label>
-            <label className="space-y-2">
-              <span className="label">Output index</span>
-              <input value={disclosureOutput} onChange={(event) => setDisclosureOutput(event.target.value)} />
-            </label>
-          </div>
-          <button className="secondary" onClick={handleDisclosureCreate} disabled={walletBusy || !walletReady}>
-            Create disclosure package
-          </button>
-          <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
-            {walletDisclosureOutput || 'N/A'}
-          </pre>
-        </section>
-
-        <section className="card space-y-6">
-          <div>
-            <p className="label">Disclosure</p>
-            <h2 className="text-2xl font-semibold">Verify proof</h2>
-          </div>
-          <label className="space-y-2">
-            <span className="label">Disclosure JSON</span>
-            <textarea rows={8} value={disclosureInput} onChange={(event) => setDisclosureInput(event.target.value)} />
-          </label>
-          <button className="secondary" onClick={handleDisclosureVerify} disabled={walletBusy || !walletReady}>
-            Verify disclosure package
-          </button>
-          <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
-            {walletDisclosureVerifyOutput || 'N/A'}
-          </pre>
-        </section>
-      </div>
-
-      <div className="max-w-6xl mx-auto grid gap-8 mt-8 xl:grid-cols-2">
-        <section className="card space-y-6">
-          <div>
-            <p className="label">Operations</p>
-            <h2 className="text-2xl font-semibold">Wallet Output</h2>
-          </div>
-          <div className="grid gap-3">
-            <div>
-              <p className="label">Sync</p>
-              <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
-                {walletSyncOutput || 'N/A'}
-              </pre>
+              ))}
             </div>
-            <div>
-              <p className="label">Send</p>
-              <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
-                {walletSendOutput || 'N/A'}
-              </pre>
-            </div>
-          </div>
+          ) : (
+            <p className="text-sm text-surfaceMuted">No highlight events yet.</p>
+          )}
         </section>
       </div>
     </div>
+  );
+
+  const NodeConnectionsSection = () => (
+    <section className="card space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="label">Node</p>
+          <h2 className="text-2xl font-semibold">Connections</h2>
+        </div>
+        <div className="flex gap-2">
+          <button className="secondary" onClick={handleAddConnection}>Add connection</button>
+          <button className="danger" onClick={handleRemoveConnection} disabled={connections.length <= 1}>Remove</button>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <label className="space-y-2">
+          <span className="label">Active connection</span>
+          <select
+            value={activeConnectionId}
+            onChange={(event) => setActiveConnectionId(event.target.value)}
+          >
+            {connections.map((connection) => (
+              <option key={connection.id} value={connection.id}>
+                {connection.label} ({connection.mode})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-2">
+          <span className="label">Label</span>
+          <input
+            value={activeConnection?.label ?? ''}
+            onChange={(event) => updateActiveConnection({ label: event.target.value })}
+          />
+        </label>
+        <label className="space-y-2">
+          <span className="label">Mode</span>
+          <select
+            value={activeConnection?.mode ?? 'local'}
+            onChange={(event) => updateActiveConnection({ mode: event.target.value as NodeConnection['mode'] })}
+          >
+            <option value="local">Local</option>
+            <option value="remote">Remote</option>
+          </select>
+        </label>
+        <label className="space-y-2">
+          <span className="label">WebSocket URL</span>
+          <input
+            value={activeConnection?.wsUrl ?? ''}
+            onChange={(event) => updateActiveConnection({ wsUrl: event.target.value })}
+          />
+        </label>
+        <label className="space-y-2">
+          <span className="label">HTTP URL</span>
+          <input
+            value={activeConnection?.httpUrl ?? ''}
+            onChange={(event) => updateActiveConnection({ httpUrl: event.target.value })}
+            placeholder="http://127.0.0.1:9944"
+          />
+        </label>
+        {activeConnection?.mode === 'remote' ? (
+          <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+            <input
+              type="checkbox"
+              checked={Boolean(activeConnection.allowRemoteMining)}
+              onChange={(event) => updateActiveConnection({ allowRemoteMining: event.target.checked })}
+            />
+            Allow remote mining control
+          </label>
+        ) : null}
+      </div>
+      {activeConnection?.mode === 'remote' ? (
+        <p className="text-sm text-surfaceMuted">
+          Remote RPC should be restricted and authenticated. Review runbooks/two_person_testnet.md before exposing RPC.
+        </p>
+      ) : null}
+
+      {activeConnection?.mode === 'local' && (
+        <div className="space-y-4">
+          <button
+            className="secondary"
+            onClick={() => setShowAdvancedNode((prev) => !prev)}
+          >
+            {showAdvancedNode ? 'Hide advanced settings' : 'Show advanced settings'}
+          </button>
+
+          {showAdvancedNode && (
+            <>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="label">Chain spec path</span>
+                  <input
+                    value={activeConnection.chainSpecPath ?? ''}
+                    onChange={(event) => updateActiveConnection({ chainSpecPath: event.target.value })}
+                    placeholder="config/dev-chainspec.json"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="label">Base path</span>
+                  <input
+                    value={activeConnection.basePath ?? ''}
+                    onChange={(event) => updateActiveConnection({ basePath: event.target.value })}
+                    placeholder="~/.hegemon-node"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="label">Node name</span>
+                  <input
+                    value={activeConnection.nodeName ?? ''}
+                    onChange={(event) => updateActiveConnection({ nodeName: event.target.value })}
+                    placeholder="AliceBootNode"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="label">RPC port</span>
+                  <input
+                    value={activeConnection.rpcPort?.toString() ?? ''}
+                    onChange={(event) => {
+                      const nextPort = Number.parseInt(event.target.value, 10);
+                      updateActiveConnection((conn) => {
+                        const port = Number.isNaN(nextPort) ? undefined : nextPort;
+                        const updates: Partial<NodeConnection> = { rpcPort: port };
+                        if (conn.wsUrl.startsWith('ws://127.0.0.1:') || conn.wsUrl.startsWith('ws://localhost:')) {
+                          const host = conn.wsUrl.includes('localhost') ? 'localhost' : '127.0.0.1';
+                          if (port) {
+                            updates.wsUrl = `ws://${host}:${port}`;
+                            updates.httpUrl = `http://${host}:${port}`;
+                          }
+                        }
+                        return updates;
+                      });
+                    }}
+                  />
+                </label>
+                <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(activeConnection.rpcExternal)}
+                    onChange={(event) => updateActiveConnection({ rpcExternal: event.target.checked })}
+                  />
+                  RPC external (exposes HTTP to network)
+                </label>
+                <label className="space-y-2">
+                  <span className="label">RPC methods</span>
+                  <select
+                    value={activeConnection.rpcMethods ?? 'safe'}
+                    onChange={(event) => updateActiveConnection({ rpcMethods: event.target.value as NodeConnection['rpcMethods'] })}
+                  >
+                    <option value="safe">safe</option>
+                    <option value="unsafe">unsafe</option>
+                  </select>
+                </label>
+                <label className="space-y-2">
+                  <span className="label">P2P port</span>
+                  <input
+                    value={activeConnection.p2pPort?.toString() ?? ''}
+                    onChange={(event) => {
+                      const nextPort = Number.parseInt(event.target.value, 10);
+                      updateActiveConnection({ p2pPort: Number.isNaN(nextPort) ? undefined : nextPort });
+                    }}
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="label">Listen address</span>
+                  <input
+                    value={activeConnection.listenAddr ?? ''}
+                    onChange={(event) => updateActiveConnection({ listenAddr: event.target.value })}
+                    placeholder="/ip4/0.0.0.0/tcp/30333"
+                  />
+                </label>
+                <label className="space-y-2 md:col-span-2">
+                  <span className="label">Seeds (HEGEMON_SEEDS)</span>
+                  <input
+                    value={activeConnection.seeds ?? ''}
+                    onChange={(event) => updateActiveConnection({ seeds: event.target.value })}
+                    placeholder="1.2.3.4:30333,5.6.7.8:30333"
+                  />
+                </label>
+                <label className="space-y-2 md:col-span-2">
+                  <span className="label">Miner address</span>
+                  <input
+                    value={activeConnection.minerAddress ?? ''}
+                    onChange={(event) => updateActiveConnection({ minerAddress: event.target.value })}
+                    placeholder="shca1..."
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="label">Mine threads</span>
+                  <input
+                    value={activeConnection.mineThreads?.toString() ?? ''}
+                    onChange={(event) => {
+                      const nextValue = Number.parseInt(event.target.value, 10);
+                      updateActiveConnection({ mineThreads: Number.isNaN(nextValue) ? undefined : nextValue });
+                    }}
+                  />
+                </label>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(activeConnection.dev)}
+                      onChange={(event) => updateActiveConnection({ dev: event.target.checked })}
+                    />
+                    Dev mode
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(activeConnection.tmp)}
+                      onChange={(event) => updateActiveConnection({ tmp: event.target.checked })}
+                    />
+                    Temp storage
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(activeConnection.miningIntent)}
+                      onChange={(event) => updateActiveConnection({ miningIntent: event.target.checked })}
+                    />
+                    Auto-start mining
+                  </label>
+                </div>
+              </div>
+              {activeConnection.dev && !activeConnection.chainSpecPath ? (
+                <p className="text-sm text-surfaceMuted">
+                  Multi-machine networks require a shared chainspec. See runbooks/two_person_testnet.md for details.
+                </p>
+              ) : null}
+              {activeConnection.listenAddr ? (
+                <p className="text-sm text-surfaceMuted">
+                  Listen address overrides the P2P port setting.
+                </p>
+              ) : null}
+              {activeConnection.rpcExternal || activeConnection.rpcMethods === 'unsafe' ? (
+                <p className="text-sm text-guard">
+                  External RPC and unsafe methods expose control surfaces. Restrict with firewalls and only use on trusted networks.
+                </p>
+              ) : null}
+              {activeConnection.tmp ? (
+                <p className="text-sm text-guard">
+                  Temp storage deletes chain data on shutdown. Use a base path for persistence.
+                </p>
+              ) : null}
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  );
+
+  const NodeOperationsSection = () => (
+    <section className="card space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="label">Node</p>
+          <h2 className="text-2xl font-semibold">Operations</h2>
+          <p className="text-sm text-surfaceMuted">
+            Active: {activeConnection?.label ?? 'No connection'} ({activeConnection?.mode ?? 'n/a'}) | Updated {updatedAtLabel}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
+          <span className="text-xs text-surfaceMuted">
+            Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <button className="primary" onClick={handleNodeStart} disabled={nodeBusy || activeConnection?.mode !== 'local'}>
+          Start node
+        </button>
+        <button className="secondary" onClick={handleNodeStop} disabled={nodeBusy || activeConnection?.mode !== 'local'}>
+          Stop node
+        </button>
+      </div>
+      <p className="text-sm text-surfaceMuted">{miningHint}</p>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="panel">
+          <p className="label">Health</p>
+          <div className="flex items-center gap-2">
+            <span className={`status-dot ${healthTone}`} />
+            <p className="text-lg font-medium">{healthLabel}</p>
+          </div>
+          <p className="text-xs text-surfaceMuted">Updated {updatedAtLabel}</p>
+        </div>
+        <div className="panel">
+          <p className="label">Height</p>
+          <p className="text-lg font-medium">{formatNumber(activeSummary?.bestNumber)}</p>
+          <p className="text-xs text-surfaceMuted mono truncate" title={activeSummary?.bestBlock ?? ''}>
+            {activeSummary?.bestBlock ?? 'N/A'}
+          </p>
+        </div>
+        <div className="panel">
+          <p className="label">Peers</p>
+          <p className="text-lg font-medium">{formatNumber(activeSummary?.peers)}</p>
+          <p className="text-xs text-surfaceMuted">
+            Syncing: {activeSummary?.isSyncing === null || activeSummary?.isSyncing === undefined
+              ? 'N/A'
+              : activeSummary.isSyncing
+                ? 'Yes'
+                : 'No'}
+          </p>
+        </div>
+        <div className="panel">
+          <p className="label">Mining</p>
+          <p className="text-lg font-medium">
+            {activeSummary?.mining === null || activeSummary?.mining === undefined
+              ? 'N/A'
+              : activeSummary.mining
+                ? 'Active'
+                : 'Idle'}
+          </p>
+          <p className="text-xs text-surfaceMuted">Hash rate: {formatHashRate(activeSummary?.hashRate)}</p>
+        </div>
+        <div className="panel">
+          <p className="label">Storage</p>
+          <p className="text-lg font-medium">{formatBytes(activeSummary?.storage?.totalBytes)}</p>
+          <p className="text-xs text-surfaceMuted">State: {formatBytes(activeSummary?.storage?.stateBytes)}</p>
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="panel">
+          <p className="label">Mining details</p>
+          <p className="text-sm text-surfaceMuted">Threads: {activeSummary?.miningThreads ?? 'N/A'}</p>
+          <p className="text-sm text-surfaceMuted">Hash rate: {formatHashRate(activeSummary?.hashRate)}</p>
+          <p className="text-sm text-surfaceMuted">Blocks found: {formatNumber(activeSummary?.blocksFound)}</p>
+          <p className="text-sm text-surfaceMuted">Difficulty: {formatNumber(activeSummary?.difficulty)}</p>
+          <p className="text-sm text-surfaceMuted">Block height: {formatNumber(activeSummary?.blockHeight)}</p>
+        </div>
+        <div className="panel">
+          <p className="label">Storage breakdown</p>
+          <p className="text-sm text-surfaceMuted">Blocks: {formatBytes(activeSummary?.storage?.blocksBytes)}</p>
+          <p className="text-sm text-surfaceMuted">State: {formatBytes(activeSummary?.storage?.stateBytes)}</p>
+          <p className="text-sm text-surfaceMuted">Txs: {formatBytes(activeSummary?.storage?.transactionsBytes)}</p>
+          <p className="text-sm text-surfaceMuted">Nullifiers: {formatBytes(activeSummary?.storage?.nullifiersBytes)}</p>
+        </div>
+        <div className="panel">
+          <p className="label">Consensus</p>
+          <p className="text-sm text-surfaceMuted">
+            Genesis: <span className="mono" title={activeSummary?.genesisHash ?? ''}>{formatHash(activeSummary?.genesisHash)}</span>
+          </p>
+          <p className="text-sm text-surfaceMuted">
+            Supply digest: <span className="mono" title={activeSummary?.supplyDigest ?? ''}>{formatHash(activeSummary?.supplyDigest)}</span>
+          </p>
+        </div>
+        <div className="panel">
+          <p className="label">Telemetry</p>
+          <p className="text-lg font-medium">{formatDuration(activeSummary?.telemetry?.uptimeSecs)}</p>
+          <p className="text-sm text-surfaceMuted">Blocks imported: {formatNumber(activeSummary?.telemetry?.blocksImported)}</p>
+          <p className="text-sm text-surfaceMuted">Blocks mined: {formatNumber(activeSummary?.telemetry?.blocksMined)}</p>
+          <p className="text-sm text-surfaceMuted">Transactions: {formatNumber(activeSummary?.telemetry?.txCount)}</p>
+          <p className="text-sm text-surfaceMuted">
+            Net: {formatBytes(activeSummary?.telemetry?.networkRxBytes)} / {formatBytes(activeSummary?.telemetry?.networkTxBytes)}
+          </p>
+          <p className="text-sm text-surfaceMuted">Memory: {formatBytes(activeSummary?.telemetry?.memoryBytes)}</p>
+        </div>
+        <div className="panel md:col-span-2 space-y-1">
+          <p className="label">Config</p>
+          <p className="text-sm text-surfaceMuted">Node: {activeSummary?.config?.nodeName || 'N/A'}</p>
+          <p className="text-sm text-surfaceMuted">
+            Chain:{' '}
+            {activeSummary?.config?.chainSpecName
+              ? `${activeSummary.config.chainSpecName} (${activeSummary.config.chainSpecId})`
+              : 'N/A'}
+          </p>
+          <p className="text-sm text-surfaceMuted">Chain type: {activeSummary?.config?.chainType || 'N/A'}</p>
+          <p className="text-sm text-surfaceMuted">
+            Base path:{' '}
+            <span className="mono break-all" title={activeSummary?.config?.basePath || ''}>
+              {activeSummary?.config?.basePath || 'N/A'}
+            </span>
+          </p>
+          <p className="text-sm text-surfaceMuted">
+            P2P listen:{' '}
+            <span className="mono break-all" title={activeSummary?.config?.p2pListenAddr || ''}>
+              {activeSummary?.config?.p2pListenAddr || 'N/A'}
+            </span>
+          </p>
+          <p className="text-sm text-surfaceMuted">
+            RPC listen:{' '}
+            <span className="mono break-all" title={activeSummary?.config?.rpcListenAddr || ''}>
+              {activeSummary?.config?.rpcListenAddr || 'N/A'}
+            </span>
+          </p>
+          <p className="text-sm text-surfaceMuted">
+            RPC methods:{' '}
+            {activeSummary?.config?.rpcMethods
+              ? `${activeSummary.config.rpcMethods} (${activeSummary.config.rpcExternal ? 'external' : 'local'})`
+              : 'N/A'}
+          </p>
+          <p className="text-sm text-surfaceMuted">
+            PQ: {activeSummary?.config?.requirePq ? 'Required' : activeSummary?.config ? 'Optional' : 'N/A'}{' '}
+            {activeSummary?.config?.pqVerbose ? '(verbose)' : ''}
+          </p>
+          <p className="text-sm text-surfaceMuted">Max peers: {formatNumber(activeSummary?.config?.maxPeers)}</p>
+          <p className="text-sm text-surfaceMuted">
+            Bootstraps:{' '}
+            <span className="mono break-all" title={(activeSummary?.config?.bootstrapNodes ?? []).join(', ')}>
+              {activeSummary?.config?.bootstrapNodes?.length
+                ? activeSummary.config.bootstrapNodes.join(', ')
+                : 'N/A'}
+            </span>
+          </p>
+        </div>
+      </div>
+
+      {nodeError && <p className="text-guard">{nodeError}</p>}
+    </section>
+  );
+
+  const ConnectionHealthSection = () => (
+    <section className="card space-y-6">
+      <div>
+        <p className="label">Node</p>
+        <h2 className="text-2xl font-semibold">Connection health</h2>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        {connections.map((connection) => {
+          const summary = nodeSummaries[connection.id];
+          const isOnline = Boolean(summary?.reachable);
+          return (
+            <div key={connection.id} className="panel">
+              <div className="flex items-center justify-between gap-3">
+                <p className="label">{summary?.label ?? connection.label}</p>
+                <span className={`status-pill ${isOnline ? 'ok' : 'error'}`}>
+                  {isOnline ? 'Online' : 'Offline'}
+                </span>
+              </div>
+              <p className="text-sm text-surfaceMuted">Mode: {connection.mode}</p>
+              <p className="text-sm text-surfaceMuted">Height: {formatNumber(summary?.bestNumber)}</p>
+              <p className="text-sm text-surfaceMuted">Peers: {formatNumber(summary?.peers)}</p>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+
+  const NodeConsoleSection = () => (
+    <section className="card space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="label">Console</p>
+          <h2 className="text-2xl font-semibold">Node Console</h2>
+          <p className="text-sm text-surfaceMuted">
+            Structured logs and milestone events for the active connection.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button className="chip" type="button" aria-pressed={logFilterInfo} onClick={() => setLogFilterInfo((prev) => !prev)}>
+            Info
+          </button>
+          <button className="chip" type="button" aria-pressed={logFilterWarn} onClick={() => setLogFilterWarn((prev) => !prev)}>
+            Warn
+          </button>
+          <button className="chip" type="button" aria-pressed={logFilterError} onClick={() => setLogFilterError((prev) => !prev)}>
+            Error
+          </button>
+          <button className="chip" type="button" aria-pressed={logFilterDebug} onClick={() => setLogFilterDebug((prev) => !prev)}>
+            Debug
+          </button>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="panel space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="label">Key events</p>
+            <span className="text-xs text-surfaceMuted">{logHighlights.length} recent</span>
+          </div>
+          {activeConnection?.mode !== 'local' ? (
+            <p className="text-sm text-surfaceMuted">Connect to a local node to stream logs.</p>
+          ) : logHighlights.length ? (
+            <div className="space-y-2">
+              {logHighlights.map((entry) => (
+                <div key={entry.id} className="flex items-start gap-3 text-sm">
+                  <span className="mono text-surfaceMuted">{entry.timestamp ?? '--:--:--'}</span>
+                  <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
+                  <span className="text-surfaceMuted">{entry.message}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-surfaceMuted">No highlight events yet.</p>
+          )}
+        </div>
+        <div className="panel space-y-4 lg:col-span-2">
+          <div>
+            <p className="label">Channels</p>
+            <div className="flex flex-wrap gap-2">
+              {logCategoryOrder.map((category) => (
+                <span key={category} className="chip-static">
+                  {logCategoryLabels[category]} {formatNumber(logCategoryStats[category])}
+                </span>
+              ))}
+            </div>
+          </div>
+          <label className="space-y-2">
+            <span className="label">Search logs</span>
+            <input
+              type="search"
+              value={logSearch}
+              onChange={(event) => setLogSearch(event.target.value)}
+              placeholder="Filter by phrase or module"
+            />
+          </label>
+          <p className="text-xs text-surfaceMuted">
+            Showing {formatNumber(nodeLogs.length)} lines (newest at bottom).
+          </p>
+        </div>
+      </div>
+
+      <div className="panel h-80 overflow-auto">
+        {activeConnection?.mode !== 'local' && (
+          <p className="text-sm text-surfaceMuted">Logs are only available for local nodes started from this app.</p>
+        )}
+        {activeConnection?.mode === 'local' && (
+          <div className="space-y-2">
+            {filteredLogEntries.length === 0 && <p className="text-sm text-surfaceMuted">No matching logs.</p>}
+            {filteredLogEntries.map((entry) => (
+              <div key={entry.id} className="flex flex-wrap gap-3 text-sm log-row">
+                <span className="mono text-surfaceMuted">{entry.timestamp ?? '--:--:--'}</span>
+                <span className={`badge level-${entry.level}`}>{entry.level}</span>
+                <span className="badge badge-category">{logCategoryLabels[entry.category]}</span>
+                <span className="mono flex-1">{entry.message}</span>
+                {entry.highlight ? (
+                  <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+
+  const WalletStoreSection = () => (
+    <section className="card space-y-6">
+      <div>
+        <p className="label">Wallet</p>
+        <h2 className="text-2xl font-semibold">Shielded Store</h2>
+      </div>
+
+      <div className="grid gap-4">
+        <label className="space-y-2">
+          <span className="label">Store path</span>
+          <input value={storePath} onChange={(event) => setStorePath(event.target.value)} />
+        </label>
+        <label className="space-y-2">
+          <span className="label">Passphrase</span>
+          <input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} />
+        </label>
+        <label className="space-y-2">
+          <span className="label">Wallet connection</span>
+          <select value={walletConnectionId} onChange={(event) => setWalletConnectionId(event.target.value)}>
+            {connections.map((connection) => (
+              <option key={connection.id} value={connection.id}>
+                {connection.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-2">
+          <span className="label">WebSocket URL</span>
+          <input value={wsUrl} onChange={(event) => setWsUrl(event.target.value)} />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+          <input type="checkbox" checked={forceRescan} onChange={(event) => setForceRescan(event.target.checked)} />
+          Force rescan on next sync
+        </label>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <button className="primary" onClick={handleWalletInit} disabled={walletBusy}>
+          Init wallet
+        </button>
+        <button className="secondary" onClick={handleWalletRestore} disabled={walletBusy}>
+          Open wallet
+        </button>
+        <button className="secondary" onClick={() => handleWalletSync()} disabled={walletBusy || !walletReady}>
+          Sync
+        </button>
+      </div>
+      {!walletReady && (
+        <p className="text-sm text-surfaceMuted">
+          Open or init a wallet to enable sync and transfers.
+        </p>
+      )}
+
+      {genesisMismatch ? <GenesisMismatchBanner /> : null}
+
+      <div className="rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="label">Primary address</p>
+          <button
+            className="secondary px-3 py-1 text-xs"
+            onClick={handleCopyAddress}
+            disabled={!walletStatus?.primaryAddress}
+          >
+            {addressCopied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+        <p className="mono break-all">{walletStatus?.primaryAddress ?? 'N/A'}</p>
+        <div>
+          <p className="label">Balances</p>
+          <div className="space-y-1">
+            {walletStatus?.balances?.length ? (
+              walletStatus.balances.map((balance) => (
+                <div key={balance.assetId} className="flex justify-between text-sm">
+                  <span>{balance.label}</span>
+                  <span className="mono">
+                    {balance.assetId === 0 ? formatHgm(balance.total) : balance.total.toLocaleString()}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-surfaceMuted">No balances yet.</p>
+            )}
+          </div>
+        </div>
+        <div>
+          <p className="label">Notes</p>
+          {walletStatus?.notes ? (
+            <p className="text-sm text-surfaceMuted">
+              {walletStatus.notes.spendableCount} spendable notes, max {walletStatus.notes.maxInputs} inputs.
+              {walletStatus.notes.needsConsolidation && walletStatus.notes.plan ? (
+                <span className="text-amber"> Consolidation needed (~{walletStatus.notes.plan.txsNeeded} txs).</span>
+              ) : null}
+            </p>
+          ) : (
+            <p className="text-sm text-surfaceMuted">No note summary.</p>
+          )}
+        </div>
+        <div>
+          <p className="label">Connected to</p>
+          <p className="text-sm text-surfaceMuted">
+            {walletConnection?.label ?? 'N/A'} (height {formatNumber(walletSummary?.bestNumber)})
+          </p>
+        </div>
+      </div>
+
+      <WalletErrorBanner />
+    </section>
+  );
+
+  const WalletOutputSection = () => (
+    <section className="card space-y-6">
+      <div>
+        <p className="label">Operations</p>
+        <h2 className="text-2xl font-semibold">Wallet Output</h2>
+      </div>
+      <div className="grid gap-3">
+        <div>
+          <p className="label">Sync</p>
+          <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
+            {walletSyncOutput || 'N/A'}
+          </pre>
+        </div>
+        <div>
+          <p className="label">Send</p>
+          <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
+            {walletSendOutput || 'N/A'}
+          </pre>
+        </div>
+      </div>
+    </section>
+  );
+
+  const SendPreflightSection = () => (
+    <section className="card space-y-4">
+      <div>
+        <p className="label">Send</p>
+        <h2 className="text-2xl font-semibold">Preflight check</h2>
+        <p className="text-sm text-surfaceMuted">Confirm wallet + chain context before sending.</p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="panel space-y-2">
+          <p className="label">Wallet</p>
+          <div className="flex items-center gap-2">
+            <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
+            <span className="text-sm text-surfaceMuted">{walletConnectionLabel}</span>
+          </div>
+          <p className="text-sm text-surfaceMuted">Last synced height {formatNumber(walletStatus?.lastSyncedHeight)}</p>
+          <p className="text-sm text-surfaceMuted">Balance {hgmBalance ? formatHgm(hgmBalance.total) : 'N/A'}</p>
+        </div>
+        <div className="panel space-y-2">
+          <p className="label">Chain</p>
+          <div className="flex items-center gap-2">
+            <span className={`status-pill ${chainTone}`}>{chainLabel}</span>
+            <span className="text-xs text-surfaceMuted">Genesis {formatHash(walletNodeGenesis ?? walletGenesis)}</span>
+          </div>
+          <p className="text-sm text-surfaceMuted">RPC {walletConnection?.wsUrl ?? 'N/A'}</p>
+          <p className="text-sm text-surfaceMuted">Height {formatNumber(walletSummary?.bestNumber)}</p>
+        </div>
+      </div>
+      {walletStatus?.notes?.needsConsolidation && walletStatus.notes.plan ? (
+        <p className="text-sm text-amber">Consolidation needed (~{walletStatus.notes.plan.txsNeeded} txs).</p>
+      ) : null}
+      {sendBlockedReason ? (
+        <p className="text-sm text-guard">{sendBlockedReason}</p>
+      ) : (
+        <p className="text-sm text-proof">Ready to send.</p>
+      )}
+    </section>
+  );
+
+  const SendSection = () => (
+    <section className="card space-y-6">
+      <div>
+        <p className="label">Send</p>
+        <h2 className="text-2xl font-semibold">Shielded Transfer</h2>
+      </div>
+      <div className="grid gap-4">
+        <label className="space-y-2">
+          <span className="label">Recipient address</span>
+          <textarea
+            rows={3}
+            value={recipientAddress}
+            onChange={(event) => setRecipientAddress(event.target.value)}
+            placeholder="shca1..."
+          />
+        </label>
+        {contacts.length > 0 && (
+          <label className="space-y-2">
+            <span className="label">Address book</span>
+            <select
+              value=""
+              onChange={(event) => {
+                const contact = contacts.find((entry) => entry.id === event.target.value);
+                if (contact) {
+                  setRecipientAddress(contact.address);
+                }
+              }}
+            >
+              <option value="">Select a contact</option>
+              {contacts.map((contact) => (
+                <option key={contact.id} value={contact.id}>
+                  {contact.name} - {formatAddress(contact.address)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="space-y-2">
+            <span className="label">Amount (HGM)</span>
+            <input value={sendAmount} onChange={(event) => setSendAmount(event.target.value)} placeholder="0.50" />
+          </label>
+          <label className="space-y-2">
+            <span className="label">Fee (HGM)</span>
+            <input value={sendFee} onChange={(event) => setSendFee(event.target.value)} placeholder="0.01" />
+          </label>
+        </div>
+        <label className="space-y-2">
+          <span className="label">Memo</span>
+          <textarea rows={2} value={sendMemo} onChange={(event) => setSendMemo(event.target.value)} />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+          <input type="checkbox" checked={autoConsolidate} onChange={(event) => setAutoConsolidate(event.target.checked)} />
+          Auto-consolidate notes if needed
+        </label>
+      </div>
+      <button className="primary" onClick={handleWalletSend} disabled={!canSend}>
+        Send shielded transaction
+      </button>
+      {sendBlockedReason ? <p className="text-sm text-guard">{sendBlockedReason}</p> : null}
+      <WalletErrorBanner />
+    </section>
+  );
+
+  const ContactsSection = () => (
+    <section className="card space-y-6">
+      <div>
+        <p className="label">Address book</p>
+        <h2 className="text-2xl font-semibold">Contacts</h2>
+      </div>
+      <div className="grid gap-3">
+        <label className="space-y-2">
+          <span className="label">Name</span>
+          <input value={newContactName} onChange={(event) => setNewContactName(event.target.value)} />
+        </label>
+        <label className="space-y-2">
+          <span className="label">Address</span>
+          <input value={newContactAddress} onChange={(event) => setNewContactAddress(event.target.value)} placeholder="shca1..." />
+        </label>
+        <label className="space-y-2">
+          <span className="label">Notes</span>
+          <input value={newContactNotes} onChange={(event) => setNewContactNotes(event.target.value)} placeholder="How verified, context, etc." />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+          <input type="checkbox" checked={newContactVerified} onChange={(event) => setNewContactVerified(event.target.checked)} />
+          Verified out of band
+        </label>
+        <button className="secondary" onClick={handleAddContact}>Add contact</button>
+      </div>
+
+      <div className="space-y-3">
+        {contacts.length === 0 && <p className="text-sm text-surfaceMuted">No contacts saved yet.</p>}
+        {contacts.map((contact) => (
+          <div key={contact.id} className="border border-surfaceMuted/10 rounded-xl p-4 bg-midnight/40">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-lg font-medium">{contact.name}</p>
+                <p className="mono text-sm text-surfaceMuted">{formatAddress(contact.address)}</p>
+              </div>
+              <button className="danger" onClick={() => handleRemoveContact(contact.id)}>Remove</button>
+            </div>
+            <p className="text-sm text-surfaceMuted">Verified: {contact.verified ? 'Yes' : 'No'}</p>
+            {contact.notes && <p className="text-sm text-surfaceMuted">Notes: {contact.notes}</p>}
+            {contact.lastUsed && <p className="text-sm text-surfaceMuted">Last used: {new Date(contact.lastUsed).toLocaleString()}</p>}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+
+  const DisclosureGenerateSection = () => (
+    <section className="card space-y-6">
+      <div>
+        <p className="label">Disclosure</p>
+        <h2 className="text-2xl font-semibold">Generate proof</h2>
+      </div>
+      <div className="grid gap-4">
+        <label className="space-y-2">
+          <span className="label">Transaction hash</span>
+          <input value={disclosureTxId} onChange={(event) => setDisclosureTxId(event.target.value)} placeholder="0x..." />
+        </label>
+        <label className="space-y-2">
+          <span className="label">Output index</span>
+          <input value={disclosureOutput} onChange={(event) => setDisclosureOutput(event.target.value)} />
+        </label>
+      </div>
+      <button className="secondary" onClick={handleDisclosureCreate} disabled={walletBusy || !walletReady}>
+        Create disclosure package
+      </button>
+      <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
+        {walletDisclosureOutput || 'N/A'}
+      </pre>
+      <WalletErrorBanner />
+    </section>
+  );
+
+  const DisclosureVerifySection = () => (
+    <section className="card space-y-6">
+      <div>
+        <p className="label">Disclosure</p>
+        <h2 className="text-2xl font-semibold">Verify proof</h2>
+      </div>
+      <label className="space-y-2">
+        <span className="label">Disclosure JSON</span>
+        <textarea rows={8} value={disclosureInput} onChange={(event) => setDisclosureInput(event.target.value)} />
+      </label>
+      <button className="secondary" onClick={handleDisclosureVerify} disabled={walletBusy || !walletReady}>
+        Verify disclosure package
+      </button>
+      <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
+        {walletDisclosureVerifyOutput || 'N/A'}
+      </pre>
+      <WalletErrorBanner />
+    </section>
+  );
+
+  const NodeWorkspace = () => (
+    <div className="mx-auto w-full max-w-6xl space-y-6">
+      <header className="space-y-2">
+        <p className="label">Node</p>
+        <h1 className="text-3xl font-semibold">Operate + Observe</h1>
+        <p className="text-surfaceMuted">Run local nodes, manage connections, and monitor telemetry.</p>
+      </header>
+      <div className="grid gap-6 xl:grid-cols-3">
+        <div className="space-y-6 xl:col-span-1">
+          <NodeConnectionsSection />
+          <ConnectionHealthSection />
+        </div>
+        <div className="space-y-6 xl:col-span-2">
+          <NodeOperationsSection />
+        </div>
+      </div>
+    </div>
+  );
+
+  const WalletWorkspace = () => (
+    <div className="mx-auto w-full max-w-6xl space-y-6">
+      <header className="space-y-2">
+        <p className="label">Wallet</p>
+        <h1 className="text-3xl font-semibold">Shielded Store</h1>
+        <p className="text-surfaceMuted">Initialize, unlock, and sync your shielded wallet store.</p>
+      </header>
+      <WalletStoreSection />
+      <WalletOutputSection />
+    </div>
+  );
+
+  const SendWorkspace = () => (
+    <div className="mx-auto w-full max-w-6xl space-y-6">
+      <header className="space-y-2">
+        <p className="label">Send</p>
+        <h1 className="text-3xl font-semibold">Shielded Transfer</h1>
+        <p className="text-surfaceMuted">Prepare, validate, and send a shielded transaction.</p>
+      </header>
+      <SendPreflightSection />
+      <div className="grid gap-6 xl:grid-cols-2">
+        <SendSection />
+        <ContactsSection />
+      </div>
+    </div>
+  );
+
+  const DisclosureWorkspace = () => (
+    <div className="mx-auto w-full max-w-6xl space-y-6">
+      <header className="space-y-2">
+        <p className="label">Disclosure</p>
+        <h1 className="text-3xl font-semibold">Audit Packages</h1>
+        <p className="text-surfaceMuted">Generate and verify disclosure proofs without leaving the desktop app.</p>
+      </header>
+      <div className="grid gap-6 xl:grid-cols-2">
+        <DisclosureGenerateSection />
+        <DisclosureVerifySection />
+      </div>
+    </div>
+  );
+
+  const ConsoleWorkspace = () => (
+    <div className="mx-auto w-full max-w-6xl space-y-6">
+      <header className="space-y-2">
+        <p className="label">Console</p>
+        <h1 className="text-3xl font-semibold">Diagnostics Timeline</h1>
+        <p className="text-surfaceMuted">Track events, search logs, and investigate anomalies.</p>
+      </header>
+      <NodeConsoleSection />
+    </div>
+  );
+
+  const LegacyWorkspace = () => (
+    <div className="mx-auto w-full max-w-6xl space-y-8">
+      <header className="space-y-2">
+        <p className="label">Legacy</p>
+        <h1 className="text-3xl font-semibold">Single-page Console</h1>
+        <p className="text-surfaceMuted">The previous layout is preserved here during the transition.</p>
+      </header>
+      <NodeConnectionsSection />
+      <NodeOperationsSection />
+      <ConnectionHealthSection />
+      <NodeConsoleSection />
+      <WalletStoreSection />
+      <div className="grid gap-8 xl:grid-cols-2">
+        <SendSection />
+        <ContactsSection />
+      </div>
+      <div className="grid gap-8 xl:grid-cols-2">
+        <DisclosureGenerateSection />
+        <DisclosureVerifySection />
+      </div>
+      <WalletOutputSection />
+    </div>
+  );
+
+  return (
+    <HashRouter>
+      <div className="app-shell">
+        <aside className="app-sidebar">
+          <div className="space-y-2">
+            <p className="label">Hegemon</p>
+            <h1 className="text-xl font-semibold">Core Console</h1>
+            <p className="text-xs text-surfaceMuted">Quantum-resistant operations</p>
+          </div>
+          <nav className="space-y-1">
+            {navItems.map((item) => (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={({ isActive }) => `nav-link${isActive ? ' nav-link-active' : ''}`}
+              >
+                <div>
+                  <p className="text-sm font-medium text-surface">{item.label}</p>
+                  <p className="text-xs text-surfaceMuted">{item.description}</p>
+                </div>
+              </NavLink>
+            ))}
+          </nav>
+          <div className="panel space-y-3">
+            <p className="label">UI mode</p>
+            <div className="flex gap-2">
+              <button
+                className={uiMode === 'new' ? 'primary px-3 py-1 text-xs' : 'secondary px-3 py-1 text-xs'}
+                onClick={() => handleSetUiMode('new')}
+              >
+                New
+              </button>
+              <button
+                className={uiMode === 'legacy' ? 'primary px-3 py-1 text-xs' : 'secondary px-3 py-1 text-xs'}
+                onClick={() => handleSetUiMode('legacy')}
+              >
+                Legacy
+              </button>
+            </div>
+            <p className="text-xs text-surfaceMuted">Switch layouts without losing state.</p>
+            <NavLink to="/legacy" className={({ isActive }) => `nav-link${isActive ? ' nav-link-active' : ''}`}>
+              <div>
+                <p className="text-sm font-medium text-surface">Legacy view</p>
+                <p className="text-xs text-surfaceMuted">Full single-page console</p>
+              </div>
+            </NavLink>
+          </div>
+        </aside>
+        <div className="app-body">
+          <StatusBar />
+          <main className="app-main">
+            <Routes>
+              <Route path="/" element={<Navigate to={uiMode === 'legacy' ? '/legacy' : '/overview'} replace />} />
+              <Route path="/overview" element={<OverviewWorkspace />} />
+              <Route path="/node" element={<NodeWorkspace />} />
+              <Route path="/wallet" element={<WalletWorkspace />} />
+              <Route path="/send" element={<SendWorkspace />} />
+              <Route path="/disclosure" element={<DisclosureWorkspace />} />
+              <Route path="/console" element={<ConsoleWorkspace />} />
+              <Route path="/legacy" element={<LegacyWorkspace />} />
+              <Route path="*" element={<Navigate to="/overview" replace />} />
+            </Routes>
+          </main>
+        </div>
+      </div>
+    </HashRouter>
   );
 }
