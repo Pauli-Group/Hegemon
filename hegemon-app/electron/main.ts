@@ -25,7 +25,7 @@ const createWindow = () => {
     height: 820,
     backgroundColor: '#0E1C36',
     webPreferences: {
-      preload: join(__dirname, 'preload/index.js'),
+      preload: join(__dirname, '../preload/preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false
     }

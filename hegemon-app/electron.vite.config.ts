@@ -4,18 +4,34 @@ import { resolve } from 'node:path';
 
 export default defineConfig({
   main: {
-    entry: resolve(__dirname, 'electron/main.ts')
+    build: {
+      lib: {
+        entry: resolve(__dirname, 'electron/main.ts'),
+        formats: ['cjs'],
+        fileName: 'main'
+      }
+    }
   },
   preload: {
-    input: {
-      index: resolve(__dirname, 'electron/preload.ts')
+    build: {
+      lib: {
+        entry: resolve(__dirname, 'electron/preload.ts'),
+        formats: ['cjs'],
+        fileName: 'preload'
+      }
     }
   },
   renderer: {
     plugins: [react()],
+    root: __dirname,
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src')
+      }
+    },
+    build: {
+      rollupOptions: {
+        input: resolve(__dirname, 'index.html')
       }
     }
   }
