@@ -101,12 +101,6 @@ impl From<bincode::Error> for WalletError {
     }
 }
 
-impl From<reqwest::Error> for WalletError {
-    fn from(err: reqwest::Error) -> Self {
-        Self::Http(err.to_string())
-    }
-}
-
 impl From<std::io::Error> for WalletError {
     fn from(err: std::io::Error) -> Self {
         Self::Serialization(err.to_string())

@@ -1291,7 +1291,6 @@ impl pallet_identity::CredentialProofVerifier<AccountId, u32> for RuntimeAttesta
 
 impl pallet_identity::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
-    type AuthorityId = Public;
     type CredentialSchemaId = u32;
     type RoleId = u32;
     type AdminOrigin = frame_system::EnsureRootWithSuccess<AccountId, RootAccount>;

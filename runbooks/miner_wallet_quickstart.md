@@ -99,13 +99,14 @@ Both nodes should see each other as peers and sync blocks.
 After mining some blocks, sync your wallet to detect received notes:
 
 ```bash
-./target/release/wallet sync --store ~/.hegemon-wallet --passphrase "your-secure-passphrase" \
-  --rpc http://127.0.0.1:9944
+./target/release/wallet substrate-sync --store ~/.hegemon-wallet --passphrase "your-secure-passphrase" \
+  --ws-url ws://127.0.0.1:9944
 ```
 
 Check your balance:
 ```bash
-./target/release/wallet balance --store ~/.hegemon-wallet --passphrase "your-secure-passphrase"
+./target/release/wallet status --store ~/.hegemon-wallet --passphrase "your-secure-passphrase" \
+  --ws-url ws://127.0.0.1:9944
 ```
 
 Each mined block adds ~4.98 HEG to your shielded balance (subject to halving every ~4 years).

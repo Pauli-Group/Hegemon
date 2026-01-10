@@ -18,7 +18,6 @@ use transaction_circuit::{
     note::MerklePath,
 };
 use wallet::{
-    api::{parse_recipients, transfer_recipients_from_specs, RecipientSpec},
     async_sync::AsyncWalletSyncEngine,
     build_transaction,
     disclosure::{
@@ -26,10 +25,10 @@ use wallet::{
         DisclosurePackage, DisclosureProof,
     },
     notes::MemoPlaintext,
-    precheck_nullifiers,
+    parse_recipients, precheck_nullifiers,
     store::{PendingStatus, TransferRecipient, WalletMode, WalletStore},
     substrate_rpc::SubstrateRpcClient,
-    ConsolidationPlan, MAX_INPUTS,
+    transfer_recipients_from_specs, ConsolidationPlan, RecipientSpec, MAX_INPUTS,
 };
 
 const PROTOCOL_VERSION: u32 = 1;

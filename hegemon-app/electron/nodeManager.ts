@@ -190,7 +190,6 @@ export class NodeManager extends EventEmitter {
             rpcMethods: String(nodeConfig.rpcMethods ?? ''),
             rpcExternal: Boolean(nodeConfig.rpcExternal ?? false),
             bootstrapNodes: Array.isArray(nodeConfig.bootstrapNodes) ? nodeConfig.bootstrapNodes : [],
-            requirePq: Boolean(nodeConfig.requirePq ?? false),
             pqVerbose: Boolean(nodeConfig.pqVerbose ?? false),
             maxPeers: Number(nodeConfig.maxPeers ?? 0)
           }

@@ -30,20 +30,11 @@ pub const PQ_PROTOCOL_V1: &str = "/hegemon/pq/1";
 /// Block announcement protocol (PQ version)
 pub const BLOCK_ANNOUNCES_PQ: &str = "/hegemon/block-announces/pq/1";
 
-/// Block announcement protocol (legacy/transition version)
-pub const BLOCK_ANNOUNCES_LEGACY: &str = "/hegemon/block-announces/1";
-
 /// Transaction propagation protocol (PQ version)
 pub const TRANSACTIONS_PQ: &str = "/hegemon/transactions/pq/1";
 
-/// Transaction propagation protocol (legacy/transition version)
-pub const TRANSACTIONS_LEGACY: &str = "/hegemon/transactions/1";
-
 /// Sync protocol (PQ version)
 pub const SYNC_PQ: &str = "/hegemon/sync/pq/1";
-
-/// Sync protocol (legacy/transition version)
-pub const SYNC_LEGACY: &str = "/hegemon/sync/1";
 
 /// State request protocol
 pub const STATE_REQUEST: &str = "/hegemon/state/1";

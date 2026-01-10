@@ -108,10 +108,7 @@ pub mod pallet {
     pub const INITIAL_REWARD: u64 =
         (S_MAX as u128 * T_BLOCK_SECONDS as u128 / (2 * Y_EPOCH as u128 * T_YEAR as u128)) as u64;
 
-    /// Legacy constant for backwards compatibility
-    pub const INITIAL_SUBSIDY: u64 = INITIAL_REWARD;
-
-    /// Legacy halving interval - now derived from BLOCKS_PER_EPOCH
+    /// Halving interval in blocks (derived from BLOCKS_PER_EPOCH)
     pub const HALVING_INTERVAL: u64 = BLOCKS_PER_EPOCH;
 
     /// Maximum supply (alias for S_MAX)

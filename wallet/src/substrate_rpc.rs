@@ -4,10 +4,9 @@
 //! nodes using the jsonrpsee library. It implements the wallet-specific RPC methods
 //! defined in the `hegemon_*` namespace.
 //!
-//! # Migration from HTTP
+//! # WebSocket RPC
 //!
-//! This replaces the previous HTTP-based `WalletRpcClient` with a WebSocket client
-//! that supports:
+//! The client uses WebSocket RPC for wallet-specific methods and supports:
 //! - Persistent connections with automatic reconnection
 //! - Block subscriptions for real-time sync
 //! - Full async/await support
@@ -1484,8 +1483,7 @@ struct AttestationCommitmentSnapshot {
 
 /// Blocking wrapper for SubstrateRpcClient
 ///
-/// Provides a blocking API for use in synchronous contexts,
-/// compatible with the existing WalletRpcClient interface.
+/// Provides a blocking API for use in synchronous contexts.
 #[derive(Clone)]
 pub struct BlockingSubstrateRpcClient {
     inner: Arc<SubstrateRpcClient>,

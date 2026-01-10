@@ -52,7 +52,6 @@ export type NodeConfigSnapshot = {
   rpcMethods: string;
   rpcExternal: boolean;
   bootstrapNodes: string[];
-  requirePq: boolean;
   pqVerbose: boolean;
   maxPeers: number;
 };

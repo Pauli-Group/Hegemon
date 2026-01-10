@@ -1421,7 +1421,7 @@ export default function App() {
               : 'N/A'}
           </p>
           <p className="text-sm text-surfaceMuted">
-            PQ: {activeSummary?.config?.requirePq ? 'Required' : activeSummary?.config ? 'Optional' : 'N/A'}{' '}
+            PQ: {activeSummary?.config ? 'Enabled (PQ-only)' : 'N/A'}{' '}
             {activeSummary?.config?.pqVerbose ? '(verbose)' : ''}
           </p>
           <p className="text-sm text-surfaceMuted">Max peers: {formatNumber(activeSummary?.config?.maxPeers)}</p>

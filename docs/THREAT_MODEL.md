@@ -20,7 +20,7 @@ This document explains the attacker capabilities and design assumptions for each
 
 - **Soundness breaks via stale constraints**: Transaction/block circuits must include the latest nullifier/account rules. Circuit README + benchmarking harness describe how to recompile constraints and run proofs.
 - **Witness leakage**: Benchmarks never persist witness data to disk; they scrub buffers after proof verification to prevent info leaks during profiling.
-- **Proof bypass**: Production verification rejects missing STARK bytes or public inputs; legacy/fast paths are feature-gated and must not be enabled in production builds.
+- **Proof bypass**: Production verification rejects missing STARK bytes or public inputs; no legacy/fast paths are available in production builds.
 - **Encoding malleability**: Commitments/nullifiers are 48-byte encodings of six field limbs; any limb ≥ field modulus is rejected to avoid alternate encodings.
 
 ### `network/`
