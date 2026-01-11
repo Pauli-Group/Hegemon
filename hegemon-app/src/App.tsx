@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HashRouter, Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import type {
   Contact,
@@ -15,6 +15,9 @@ const contactsKey = 'hegemon.contacts';
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
 const walletConnectionKey = 'hegemon.walletConnection';
+const walletAutoLockEnabledKey = 'hegemon.walletAutoLockEnabled';
+const walletAutoLockMinutesKey = 'hegemon.walletAutoLockMinutes';
+const minWalletPassphraseLength = 12;
 
 const normalizeTxId = (value: string | null | undefined) => {
   if (!value) {
@@ -33,6 +36,8 @@ const makeId = () => {
   }
   return `conn-${Math.random().toString(36).slice(2, 10)}`;
 };
+
+const clampAutoLockMinutes = (value: number) => Math.min(Math.max(value, 1), 120);
 
 type LogLevel = 'info' | 'warn' | 'error' | 'debug';
 
@@ -375,6 +380,26 @@ const buildDefaultConnection = (): NodeConnection => ({
   rpcMethods: 'safe'
 });
 
+const buildTestnetConnection = (): NodeConnection => ({
+  id: makeId(),
+  label: 'Testnet node',
+  mode: 'local',
+  wsUrl: 'ws://127.0.0.1:9944',
+  httpUrl: 'http://127.0.0.1:9944',
+  dev: false,
+  tmp: false,
+  basePath: '~/.hegemon-node-testnet',
+  rpcPort: 9944,
+  p2pPort: 30333,
+  mineThreads: 1,
+  miningIntent: false,
+  rpcMethods: 'safe',
+  chainSpecPath: 'testnet',
+  seeds: 'hegemon.pauli.group:30333'
+});
+
+const buildDefaultConnections = () => [buildDefaultConnection(), buildTestnetConnection()];
+
 export default function App() {
   const [connections, setConnections] = useState<NodeConnection[]>([]);
   const [activeConnectionId, setActiveConnectionId] = useState('');
@@ -405,9 +430,15 @@ export default function App() {
   const [disclosureCopyError, setDisclosureCopyError] = useState<string | null>(null);
 
   const [storePath, setStorePath] = useState(defaultStorePath);
-  const [passphrase, setPassphrase] = useState('test-pass');
+  const [createPassphrase, setCreatePassphrase] = useState('');
+  const [createPassphraseConfirm, setCreatePassphraseConfirm] = useState('');
+  const [openPassphrase, setOpenPassphrase] = useState('');
+  const [activePassphrase, setActivePassphrase] = useState<string | null>(null);
   const [wsUrl, setWsUrl] = useState('ws://127.0.0.1:9944');
   const [forceRescan, setForceRescan] = useState(false);
+  const [autoLockEnabled, setAutoLockEnabled] = useState(true);
+  const [autoLockMinutes, setAutoLockMinutes] = useState(15);
+  const lastActivityRef = useRef(Date.now());
 
   const [recipientAddress, setRecipientAddress] = useState('');
   const [sendAmount, setSendAmount] = useState('');
@@ -451,11 +482,34 @@ export default function App() {
         return;
       }
     }
-    const fallback = buildDefaultConnection();
-    setConnections([fallback]);
-    setActiveConnectionId(fallback.id);
-    setWalletConnectionId(fallback.id);
+    const fallback = buildDefaultConnections();
+    setConnections(fallback);
+    const defaultId = fallback[0]?.id ?? '';
+    setActiveConnectionId(defaultId);
+    setWalletConnectionId(defaultId);
   }, []);
+
+  useEffect(() => {
+    const storedEnabled = window.localStorage.getItem(walletAutoLockEnabledKey);
+    if (storedEnabled !== null) {
+      setAutoLockEnabled(storedEnabled === 'true');
+    }
+    const storedMinutes = window.localStorage.getItem(walletAutoLockMinutesKey);
+    if (storedMinutes) {
+      const parsed = Number.parseInt(storedMinutes, 10);
+      if (!Number.isNaN(parsed)) {
+        setAutoLockMinutes(clampAutoLockMinutes(parsed));
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(walletAutoLockEnabledKey, String(autoLockEnabled));
+  }, [autoLockEnabled]);
+
+  useEffect(() => {
+    window.localStorage.setItem(walletAutoLockMinutesKey, String(clampAutoLockMinutes(autoLockMinutes)));
+  }, [autoLockMinutes]);
 
   useEffect(() => {
     if (connections.length === 0) {
@@ -819,7 +873,19 @@ export default function App() {
     return trimmed;
   };
 
-  const refreshWalletStatus = async () => {
+  const requireActivePassphrase = () => {
+    if (!activePassphrase) {
+      throw new Error('Wallet is locked. Open or init the store first.');
+    }
+    return activePassphrase;
+  };
+
+  const refreshWalletStatus = async (overridePassphrase?: string) => {
+    const passphrase = overridePassphrase ?? activePassphrase;
+    if (!passphrase) {
+      setWalletStatus(null);
+      return;
+    }
     try {
       const resolvedStorePath = resolveStorePath();
       const status = await window.hegemon.wallet.status(resolvedStorePath, passphrase, true);
@@ -830,7 +896,12 @@ export default function App() {
     }
   };
 
-  const refreshDisclosureRecords = async () => {
+  const refreshDisclosureRecords = async (overridePassphrase?: string) => {
+    const passphrase = overridePassphrase ?? activePassphrase;
+    if (!passphrase) {
+      setDisclosureRecords([]);
+      return;
+    }
     setDisclosureListBusy(true);
     try {
       const resolvedStorePath = resolveStorePath();
@@ -854,9 +925,19 @@ export default function App() {
     setWalletError(null);
     try {
       const resolvedStorePath = resolveStorePath();
-      const status = await window.hegemon.wallet.init(resolvedStorePath, passphrase);
+      if (createPassphrase.length < minWalletPassphraseLength) {
+        throw new Error(`Passphrase must be at least ${minWalletPassphraseLength} characters.`);
+      }
+      if (createPassphrase !== createPassphraseConfirm) {
+        throw new Error('Passphrases do not match.');
+      }
+      const status = await window.hegemon.wallet.init(resolvedStorePath, createPassphrase);
       setWalletStatus(status);
-      await refreshDisclosureRecords();
+      setActivePassphrase(createPassphrase);
+      setCreatePassphrase('');
+      setCreatePassphraseConfirm('');
+      setOpenPassphrase('');
+      await refreshDisclosureRecords(createPassphrase);
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet init failed.');
     } finally {
@@ -869,15 +950,73 @@ export default function App() {
     setWalletError(null);
     try {
       const resolvedStorePath = resolveStorePath();
-      const status = await window.hegemon.wallet.restore(resolvedStorePath, passphrase);
+      if (!openPassphrase.trim()) {
+        throw new Error('Enter the wallet passphrase to open the store.');
+      }
+      const status = await window.hegemon.wallet.restore(resolvedStorePath, openPassphrase);
       setWalletStatus(status);
-      await refreshDisclosureRecords();
+      setActivePassphrase(openPassphrase);
+      setOpenPassphrase('');
+      setCreatePassphrase('');
+      setCreatePassphraseConfirm('');
+      await refreshDisclosureRecords(openPassphrase);
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet open failed.');
     } finally {
       setWalletBusy(false);
     }
   };
+
+  const handleWalletLock = useCallback(async () => {
+    setWalletBusy(true);
+    setWalletError(null);
+    try {
+      await window.hegemon.wallet.lock();
+    } catch (error) {
+      setWalletError(error instanceof Error ? error.message : 'Wallet lock failed.');
+    } finally {
+      setWalletBusy(false);
+      setWalletStatus(null);
+      setActivePassphrase(null);
+      setCreatePassphrase('');
+      setCreatePassphraseConfirm('');
+      setOpenPassphrase('');
+      setWalletSyncOutput('');
+      setWalletSendOutput('');
+      setWalletDisclosureOutput('');
+      setWalletDisclosureVerifyOutput('');
+      setDisclosureRecords([]);
+      setSelectedDisclosureKey(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!autoLockEnabled || !activePassphrase) {
+      return;
+    }
+    const updateActivity = () => {
+      lastActivityRef.current = Date.now();
+    };
+    const events: Array<keyof WindowEventMap> = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'focus'];
+    events.forEach((event) => window.addEventListener(event, updateActivity, { passive: true }));
+    updateActivity();
+
+    const timeoutMs = clampAutoLockMinutes(autoLockMinutes) * 60_000;
+    const interval = window.setInterval(() => {
+      if (walletBusy) {
+        lastActivityRef.current = Date.now();
+        return;
+      }
+      if (Date.now() - lastActivityRef.current >= timeoutMs) {
+        void handleWalletLock();
+      }
+    }, 30_000);
+
+    return () => {
+      events.forEach((event) => window.removeEventListener(event, updateActivity));
+      window.clearInterval(interval);
+    };
+  }, [autoLockEnabled, activePassphrase, autoLockMinutes, handleWalletLock, walletBusy]);
 
   const handleCopyAddress = async () => {
     if (!walletStatus?.primaryAddress) {
@@ -915,6 +1054,7 @@ export default function App() {
       if (forceOverride) {
         setForceRescan(true);
       }
+      const passphrase = requireActivePassphrase();
       const resolvedStorePath = resolveStorePath();
       const result = await window.hegemon.wallet.sync(resolvedStorePath, passphrase, wsUrl, rescan);
       setWalletSyncOutput(JSON.stringify(result, null, 2));
@@ -951,6 +1091,7 @@ export default function App() {
       }
 
       setWalletBusy(true);
+      const passphrase = requireActivePassphrase();
       const resolvedStorePath = resolveStorePath();
       const recipients = [
         {
@@ -1133,6 +1274,7 @@ export default function App() {
       if (!disclosureTxId.trim()) {
         throw new Error('Transaction hash is required.');
       }
+      const passphrase = requireActivePassphrase();
       const outputIndex = Number.parseInt(disclosureOutput, 10);
       if (Number.isNaN(outputIndex)) {
         throw new Error('Output index must be a number.');
@@ -1158,6 +1300,7 @@ export default function App() {
     setWalletBusy(true);
     setWalletError(null);
     try {
+      const passphrase = requireActivePassphrase();
       const parsed = parseDisclosureInput(disclosureInput);
       const result: WalletDisclosureVerifyResult = await window.hegemon.wallet.disclosureVerify(
         resolveStorePath(),
@@ -1199,8 +1342,21 @@ export default function App() {
     }
   };
 
+  const createPassphraseTooShort =
+    createPassphrase.length > 0 && createPassphrase.length < minWalletPassphraseLength;
+  const createPassphraseMismatch =
+    createPassphraseConfirm.length > 0 && createPassphrase !== createPassphraseConfirm;
+  const canInitWallet =
+    !walletBusy &&
+    createPassphrase.length >= minWalletPassphraseLength &&
+    createPassphraseConfirm.length > 0 &&
+    !createPassphraseTooShort &&
+    !createPassphraseMismatch;
+  const canOpenWallet = !walletBusy && Boolean(openPassphrase.trim());
+
   const walletSummary = walletConnection ? nodeSummaries[walletConnection.id] : null;
-  const walletReady = Boolean(walletStatus);
+  const walletReady = Boolean(walletStatus && activePassphrase);
+  const walletUnlocked = Boolean(activePassphrase);
   const walletGenesis = walletStatus?.genesisHash ?? null;
   const walletNodeGenesis = walletSummary?.genesisHash ?? null;
   const genesisMismatch = Boolean(walletGenesis && walletNodeGenesis && walletGenesis !== walletNodeGenesis);
@@ -1240,7 +1396,7 @@ export default function App() {
   const walletConnectionLabel =
     walletSummary?.reachable === true ? 'Online' : walletSummary?.reachable === false ? 'Offline' : 'Unknown';
   const walletTone = walletError ? 'error' : walletReady ? 'ok' : 'warn';
-  const walletStateLabel = walletError ? 'Error' : walletReady ? 'Ready' : 'Locked';
+  const walletStateLabel = walletError ? 'Error' : walletReady ? 'Ready' : walletUnlocked ? 'Unlocked' : 'Locked';
   const chainTone = genesisMismatch ? 'error' : walletGenesis && walletNodeGenesis ? 'ok' : 'neutral';
   const chainLabel = genesisMismatch ? 'Mismatch' : walletGenesis && walletNodeGenesis ? 'Match' : 'Unknown';
   const hgmBalance = walletStatus?.balances?.find((balance) => balance.assetId === 0) ?? null;
@@ -1707,7 +1863,7 @@ export default function App() {
             <>
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-2">
-                  <span className="label">Chain spec path</span>
+                  <span className="label">Chain spec (path or name)</span>
                   <input
                     value={activeConnection.chainSpecPath ?? ''}
                     onChange={(event) => updateActiveConnection({ chainSpecPath: event.target.value })}
@@ -2193,40 +2349,129 @@ export default function App() {
           <span className="label">Store path</span>
           <input value={storePath} onChange={(event) => setStorePath(event.target.value)} />
         </label>
-        <label className="space-y-2">
-          <span className="label">Passphrase</span>
-          <input type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} />
-        </label>
-        <label className="space-y-2">
-          <span className="label">Wallet connection</span>
-          <select value={walletConnectionId} onChange={(event) => setWalletConnectionId(event.target.value)}>
-            {connections.map((connection) => (
-              <option key={connection.id} value={connection.id}>
-                {connection.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="space-y-2">
-          <span className="label">WebSocket URL</span>
-          <input value={wsUrl} onChange={(event) => setWsUrl(event.target.value)} />
-        </label>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="panel space-y-3">
+            <div>
+              <p className="label">Create wallet</p>
+              <p className="text-sm text-surfaceMuted">New store with a strong passphrase.</p>
+              <p className="text-xs text-surfaceMuted">Passphrases cannot be recovered. Store it securely.</p>
+            </div>
+            <label className="space-y-2">
+              <span className="label">Passphrase</span>
+              <input
+                type="password"
+                value={createPassphrase}
+                onChange={(event) => setCreatePassphrase(event.target.value)}
+                placeholder={`Minimum ${minWalletPassphraseLength} characters`}
+              />
+            </label>
+            <label className="space-y-2">
+              <span className="label">Confirm passphrase</span>
+              <input
+                type="password"
+                value={createPassphraseConfirm}
+                onChange={(event) => setCreatePassphraseConfirm(event.target.value)}
+              />
+            </label>
+            {createPassphraseTooShort ? (
+              <p className="text-xs text-guard">
+                Passphrase must be at least {minWalletPassphraseLength} characters.
+              </p>
+            ) : null}
+            {createPassphraseMismatch ? (
+              <p className="text-xs text-guard">Passphrases do not match.</p>
+            ) : null}
+            <button className="primary" onClick={handleWalletInit} disabled={!canInitWallet}>
+              Create wallet
+            </button>
+          </div>
+
+          <div className="panel space-y-3">
+            <div>
+              <p className="label">Open wallet</p>
+              <p className="text-sm text-surfaceMuted">Unlock an existing store to sync and send.</p>
+            </div>
+            <label className="space-y-2">
+              <span className="label">Passphrase</span>
+              <input
+                type="password"
+                value={openPassphrase}
+                onChange={(event) => setOpenPassphrase(event.target.value)}
+              />
+            </label>
+            <button className="secondary" onClick={handleWalletRestore} disabled={!canOpenWallet}>
+              Open wallet
+            </button>
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="space-y-2">
+            <span className="label">Wallet connection</span>
+            <select value={walletConnectionId} onChange={(event) => setWalletConnectionId(event.target.value)}>
+              {connections.map((connection) => (
+                <option key={connection.id} value={connection.id}>
+                  {connection.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-2">
+            <span className="label">WebSocket URL</span>
+            <input value={wsUrl} onChange={(event) => setWsUrl(event.target.value)} />
+          </label>
+        </div>
         <label className="flex items-center gap-2 text-sm text-surfaceMuted">
           <input type="checkbox" checked={forceRescan} onChange={(event) => setForceRescan(event.target.checked)} />
           Force rescan on next sync
         </label>
-      </div>
 
-      <div className="flex flex-wrap gap-3">
-        <button className="primary" onClick={handleWalletInit} disabled={walletBusy}>
-          Init wallet
-        </button>
-        <button className="secondary" onClick={handleWalletRestore} disabled={walletBusy}>
-          Open wallet
-        </button>
-        <button className="secondary" onClick={() => handleWalletSync()} disabled={walletBusy || !walletReady}>
-          Sync
-        </button>
+        <div className="panel space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="label">Session</p>
+              <p className="text-sm text-surfaceMuted">Status {walletStateLabel.toLowerCase()}.</p>
+            </div>
+            <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button className="secondary" onClick={() => handleWalletSync()} disabled={walletBusy || !walletReady}>
+              Sync
+            </button>
+            <button className="secondary" onClick={handleWalletLock} disabled={walletBusy || !activePassphrase}>
+              Lock wallet
+            </button>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="flex items-center gap-2 text-sm text-surfaceMuted">
+              <input
+                type="checkbox"
+                checked={autoLockEnabled}
+                onChange={(event) => setAutoLockEnabled(event.target.checked)}
+              />
+              Auto-lock after inactivity
+            </label>
+            <label className="space-y-2">
+              <span className="label">Timeout (minutes)</span>
+              <input
+                type="number"
+                min={1}
+                max={120}
+                value={autoLockMinutes}
+                onChange={(event) => {
+                  const nextValue = Number.parseInt(event.target.value, 10);
+                  if (!Number.isNaN(nextValue)) {
+                    setAutoLockMinutes(clampAutoLockMinutes(nextValue));
+                  }
+                }}
+                disabled={!autoLockEnabled}
+              />
+            </label>
+          </div>
+          <p className="text-xs text-surfaceMuted">
+            Auto-lock stops walletd and clears the in-memory passphrase.
+          </p>
+        </div>
       </div>
       {!walletReady && (
         <p className="text-sm text-surfaceMuted">

@@ -30,6 +30,7 @@ export type HegemonApi = {
     sync: (storePath: string, passphrase: string, wsUrl: string, forceRescan?: boolean) => Promise<WalletSyncResult>;
     send: (request: WalletSendRequest) => Promise<WalletSendResult>;
     sendPlan: (request: WalletSendPlanRequest) => Promise<WalletSendPlanResult>;
+    lock: () => Promise<void>;
     disclosureCreate: (
       storePath: string,
       passphrase: string,

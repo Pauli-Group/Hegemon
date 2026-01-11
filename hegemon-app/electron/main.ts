@@ -294,6 +294,10 @@ ipcMain.handle('wallet:sendPlan', async (_event, request: WalletSendPlanRequest)
   return walletdClient.sendPlan(request) as Promise<WalletSendPlanResult>;
 });
 
+ipcMain.handle('wallet:lock', async () => {
+  await walletdClient.stop();
+});
+
 ipcMain.handle(
   'wallet:disclosureCreate',
   async (
