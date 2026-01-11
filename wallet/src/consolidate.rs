@@ -114,19 +114,29 @@ impl ConsolidationPlan {
         let txs_needed = note_count - MAX_INPUTS;
         // We cannot spend newly-created notes in the same block because the transaction
         // membership proof anchors to a prior commitment tree root. That means consolidation
-        // happens in "rounds": submit a batch of disjoint 2->1 merges, wait for confirmation,
+        // happens in rounds: submit a batch of disjoint 2->1 merges, wait for confirmation,
         // then repeat.
         //
-        // Our wallet implementation caps each round by both transaction count and an on-chain
-        // block-size budget, so estimate blocks as ceil(txs_needed / txs_per_round).
-        let txs_per_round = std::cmp::max(
+        // Estimate block count (rounds) with a simple simulation using the same per-round caps
+        // used by the wallet: max txs per round and a conservative block-size byte budget.
+        let txs_per_round_cap = std::cmp::max(
             1,
             std::cmp::min(
                 CONSOLIDATION_MAX_TXS_PER_BATCH,
                 CONSOLIDATION_MAX_BATCH_BYTES / DEFAULT_BUNDLE_BYTES_ESTIMATE,
             ),
         );
-        let blocks_needed = txs_needed.div_ceil(txs_per_round);
+        let mut remaining_notes = note_count;
+        let mut blocks_needed = 0usize;
+        while remaining_notes > MAX_INPUTS {
+            let pairs_available = remaining_notes / 2;
+            let merges_this_round = std::cmp::min(pairs_available, txs_per_round_cap);
+            if merges_this_round == 0 {
+                break;
+            }
+            remaining_notes = remaining_notes.saturating_sub(merges_this_round);
+            blocks_needed = blocks_needed.saturating_add(1);
+        }
 
         Self {
             note_count,
@@ -388,6 +398,8 @@ mod tests {
         // 10 notes -> 2 notes: 8 txs
         let plan = ConsolidationPlan::estimate(10);
         assert_eq!(plan.txs_needed, 8);
+        // With disjoint 2->1 merges per round: 10 -> 5 -> 3 -> 2
+        assert_eq!(plan.blocks_needed, 3);
     }
 
     #[test]
@@ -395,5 +407,15 @@ mod tests {
         // 65 notes -> 2 notes: 63 txs
         let plan = ConsolidationPlan::estimate(65);
         assert_eq!(plan.txs_needed, 63);
+        assert!(plan.blocks_needed > 0);
+    }
+
+    #[test]
+    fn test_estimate_seven_notes_rounds() {
+        // 7 notes -> 2 notes: 5 txs
+        let plan = ConsolidationPlan::estimate(7);
+        assert_eq!(plan.txs_needed, 5);
+        // With disjoint 2->1 merges per round: 7 -> 4 -> 2
+        assert_eq!(plan.blocks_needed, 2);
     }
 }
