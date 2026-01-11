@@ -4,6 +4,7 @@ import type {
   NodeSummary,
   NodeSummaryRequest,
   WalletDisclosureCreateResult,
+  WalletDisclosureRecord,
   WalletDisclosureVerifyResult,
   WalletSendRequest,
   WalletSendResult,
@@ -38,6 +39,7 @@ export type HegemonApi = {
       wsUrl: string,
       packageJson: object
     ) => Promise<WalletDisclosureVerifyResult>;
+    disclosureList: (storePath: string, passphrase: string) => Promise<WalletDisclosureRecord[]>;
   };
 };
 

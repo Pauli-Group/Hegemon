@@ -8,6 +8,7 @@ import type {
   NodeMiningRequest,
   NodeStartOptions,
   NodeSummaryRequest,
+  WalletDisclosureRecord,
   WalletDisclosureCreateResult,
   WalletDisclosureVerifyResult,
   WalletSendRequest,
@@ -198,3 +199,7 @@ ipcMain.handle(
     ) as Promise<WalletDisclosureVerifyResult>;
   }
 );
+
+ipcMain.handle('wallet:disclosureList', async (_event, storePath: string, passphrase: string) => {
+  return walletdClient.disclosureList(storePath, passphrase) as Promise<WalletDisclosureRecord[]>;
+});

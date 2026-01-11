@@ -26,7 +26,7 @@ use wallet::{
     },
     notes::MemoPlaintext,
     parse_recipients, precheck_nullifiers,
-    store::{PendingStatus, TransferRecipient, WalletMode, WalletStore},
+    store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
     substrate_rpc::SubstrateRpcClient,
     transfer_recipients_from_specs, ConsolidationPlan, RecipientSpec, MAX_INPUTS,
 };
@@ -163,6 +163,19 @@ struct PendingEntry {
     fee: u64,
     status: String,
     confirmations: u64,
+    created_at: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DisclosureRecord {
+    tx_id: String,
+    output_index: u32,
+    recipient_address: String,
+    value: u64,
+    asset_id: u64,
+    memo: Option<String>,
+    commitment: String,
     created_at: String,
 }
 
@@ -413,6 +426,7 @@ fn handle_request(
                 let params: DisclosureVerifyParams = parse_params(request.params)?;
                 to_json(disclosure_verify(runtime, params)?)
             }
+            "disclosure.list" => to_json(disclosure_list(&store)?),
             _ => Err(WalletdError::new(
                 WalletdErrorCode::UnknownMethod,
                 format!("unknown method {}", request.method),
@@ -599,6 +613,44 @@ fn render_pending(tx: &wallet::PendingTransaction, latest_height: u64) -> Pendin
                     .expect("unix epoch")
                     .to_rfc3339()
             }),
+    }
+}
+
+fn disclosure_list(store: &Arc<WalletStore>) -> WalletdResult<Vec<DisclosureRecord>> {
+    let records = store.outgoing_disclosures().map_err(WalletdError::internal)?;
+    Ok(records.iter().map(render_disclosure).collect())
+}
+
+fn render_disclosure(record: &OutgoingDisclosureRecord) -> DisclosureRecord {
+    DisclosureRecord {
+        tx_id: format!("0x{}", hex::encode(record.tx_id)),
+        output_index: record.output_index,
+        recipient_address: record.recipient_address.clone(),
+        value: record.note.value,
+        asset_id: record.note.asset_id,
+        memo: memo_to_string(&record.memo),
+        commitment: format!("0x{}", hex::encode(record.commitment)),
+        created_at: Utc
+            .timestamp_opt(record.created_at as i64, 0)
+            .single()
+            .map(|t| t.to_rfc3339())
+            .unwrap_or_else(|| {
+                Utc.timestamp_opt(0, 0)
+                    .single()
+                    .expect("unix epoch")
+                    .to_rfc3339()
+            }),
+    }
+}
+
+fn memo_to_string(memo: &Option<MemoPlaintext>) -> Option<String> {
+    let memo = memo.as_ref()?;
+    if memo.as_bytes().is_empty() {
+        return None;
+    }
+    match String::from_utf8(memo.as_bytes().to_vec()) {
+        Ok(value) => Some(value),
+        Err(_) => Some(format!("base64:{}", encode_base64(memo.as_bytes()))),
     }
 }
 
