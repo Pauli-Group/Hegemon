@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('hegemon', {
       ipcRenderer.invoke('wallet:sync', storePath, passphrase, wsUrl, forceRescan),
     send: (request: WalletSendRequest) => ipcRenderer.invoke('wallet:send', request),
     sendPlan: (request: WalletSendPlanRequest) => ipcRenderer.invoke('wallet:sendPlan', request),
+    lock: () => ipcRenderer.invoke('wallet:lock'),
     disclosureCreate: (
       storePath: string,
       passphrase: string,
