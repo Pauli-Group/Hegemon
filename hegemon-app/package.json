@@ -5,7 +5,7 @@
   "type": "module",
   "main": "out/main/main.cjs",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node scripts/dev.mjs",
     "build": "electron-vite build",
     "package": "electron-vite build && electron-builder --dir",
     "dist": "electron-vite build && electron-builder",

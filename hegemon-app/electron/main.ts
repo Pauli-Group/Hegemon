@@ -28,6 +28,12 @@ const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_S
 const contactsFileName = 'contacts.json';
 let contactsWriteQueue: Promise<void> = Promise.resolve();
 
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.hegemon.desktop');
+}
+
+app.setName('Hegemon');
+
 const resolveContactsPath = () => join(app.getPath('appData'), 'Hegemon', contactsFileName);
 
 const resolveLegacyContactsPaths = () => {
@@ -211,6 +217,11 @@ const createWindow = () => {
 };
 
 app.whenReady().then(() => {
+  app.setAboutPanelOptions({
+    applicationName: 'Hegemon',
+    applicationVersion: app.getVersion()
+  });
+
   const csp = buildContentSecurityPolicy(devServerUrl);
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
