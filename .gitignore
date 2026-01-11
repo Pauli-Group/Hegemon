@@ -1,4 +1,5 @@
 target/
+bin/
 wallet-demo-artifacts/
 node.db/
 *.db
