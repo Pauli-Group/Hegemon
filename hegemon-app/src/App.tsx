@@ -1051,6 +1051,16 @@ export default function App() {
   const walletGenesis = walletStatus?.genesisHash ?? null;
   const walletNodeGenesis = walletSummary?.genesisHash ?? null;
   const genesisMismatch = Boolean(walletGenesis && walletNodeGenesis && walletGenesis !== walletNodeGenesis);
+  const nodeIsLocal = activeConnection?.mode === 'local';
+  const nodeIsRunning = nodeIsLocal && Boolean(activeSummary?.reachable);
+  const nodeToggleLabel = nodeBusy
+    ? nodeIsRunning
+      ? 'Stopping...'
+      : 'Starting...'
+    : nodeIsRunning
+      ? 'Stop node'
+      : 'Start node';
+  const nodeToggleClass = nodeIsRunning ? 'secondary' : 'primary';
   const miningHint = activeSummary?.mining
     ? 'Mining is active. To change mining settings, stop the node, update Auto-start mining under Advanced settings, then restart.'
     : 'Mining is configured at launch. Enable Auto-start mining under Advanced settings and restart the node to mine.';
@@ -1367,11 +1377,12 @@ export default function App() {
             <h2 className="text-title font-semibold">Quick moves</h2>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <button className="primary" onClick={handleNodeStart} disabled={nodeBusy || activeConnection?.mode !== 'local'}>
-              Start node
-            </button>
-            <button className="secondary" onClick={handleNodeStop} disabled={nodeBusy || activeConnection?.mode !== 'local'}>
-              Stop node
+            <button
+              className={nodeToggleClass}
+              onClick={nodeIsRunning ? handleNodeStop : handleNodeStart}
+              disabled={nodeBusy || !nodeIsLocal}
+            >
+              {nodeToggleLabel}
             </button>
             <button className="secondary" onClick={() => handleWalletSync()} disabled={walletBusy || !walletReady}>
               Sync wallet
@@ -1687,11 +1698,12 @@ export default function App() {
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <button className="primary" onClick={handleNodeStart} disabled={nodeBusy || activeConnection?.mode !== 'local'}>
-          Start node
-        </button>
-        <button className="secondary" onClick={handleNodeStop} disabled={nodeBusy || activeConnection?.mode !== 'local'}>
-          Stop node
+        <button
+          className={nodeToggleClass}
+          onClick={nodeIsRunning ? handleNodeStop : handleNodeStart}
+          disabled={nodeBusy || !nodeIsLocal}
+        >
+          {nodeToggleLabel}
         </button>
       </div>
       <p className="text-sm text-surfaceMuted">{miningHint}</p>
@@ -2358,7 +2370,7 @@ export default function App() {
   );
 
   const DisclosureRecordsSection = (
-    <section className="card space-y-4">
+    <section className="card flex flex-col gap-4 min-h-0 h-full">
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="label">Disclosure</p>
@@ -2376,7 +2388,7 @@ export default function App() {
         </button>
       </div>
       {disclosureGroups.length === 0 ? (
-        <div className="empty-state py-8">
+        <div className="empty-state py-8 flex-1 flex flex-col items-center justify-center">
           <div className="empty-state-icon">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m6 4a10 10 0 11-20 0 10 10 0 0120 0z" />
@@ -2385,7 +2397,7 @@ export default function App() {
           <p className="empty-state-description">No outgoing disclosure records yet.</p>
         </div>
       ) : (
-        <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+        <div className="space-y-3 flex-1 min-h-0 overflow-y-auto pr-1">
           {disclosureGroups.map((group) => (
             <div key={group.txId} className="rounded-xl border border-surfaceMuted/10 bg-midnight/40 p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -2490,7 +2502,7 @@ export default function App() {
           {disclosureCopied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4 max-h-48 overflow-y-auto">
+      <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4 min-h-48 max-h-[40vh] overflow-y-auto">
         {walletDisclosureOutput || 'N/A'}
       </pre>
       {disclosureCopyError ? <p className="text-guard text-sm">{disclosureCopyError}</p> : null}
@@ -2574,7 +2586,7 @@ export default function App() {
         <h1 className="text-headline font-semibold tracking-tight">Audit Packages</h1>
         <p className="text-surfaceMuted max-w-2xl">Generate and verify disclosure proofs without leaving the desktop app.</p>
       </header>
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-6 xl:grid-cols-2 items-stretch">
         {DisclosureRecordsSection}
         <div className="space-y-6">
           {DisclosureGenerateSection}
