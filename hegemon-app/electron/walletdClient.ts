@@ -35,6 +35,7 @@ export class WalletdClient {
   private storePath: string | null = null;
   private passphrase: string | null = null;
   private mode: WalletdMode | null = null;
+  private stderrBuffer: string[] = [];
 
   async status(storePath: string, passphrase: string): Promise<WalletStatus> {
     return this.request('status.get', {}, storePath, passphrase, 'open');
@@ -156,45 +157,50 @@ export class WalletdClient {
     await this.stop();
 
     const walletdPath = resolveBinaryPath('walletd');
-    this.process = spawn(walletdPath, ['--store', resolvedPath, '--mode', mode]);
+    const process = spawn(walletdPath, ['--store', resolvedPath, '--mode', mode]);
+    this.process = process;
     this.storePath = resolvedPath;
     this.passphrase = passphrase;
     this.mode = mode;
+    this.stderrBuffer = [];
 
-    this.process.stdin.write(`${passphrase}\n`);
+    process.stdin.write(`${passphrase}\n`);
 
-    const reader = createInterface({ input: this.process.stdout });
-    reader.on('line', (line) => this.handleResponseLine(line));
+    const reader = createInterface({ input: process.stdout });
+    reader.on('line', (line) => {
+      if (this.process !== process) {
+        return;
+      }
+      this.handleResponseLine(line);
+    });
 
-    this.process.on('error', (error) => {
+    process.on('error', (error) => {
+      if (this.process !== process) {
+        return;
+      }
       const message =
         (error as NodeJS.ErrnoException).code === 'ENOENT'
           ? `walletd binary not found at ${walletdPath}`
           : `walletd failed to start: ${error.message}`;
-      for (const pending of this.pending.values()) {
-        pending.reject(new Error(message));
-      }
-      this.pending.clear();
-      this.process = null;
-      this.storePath = null;
-      this.passphrase = null;
-      this.mode = null;
+      this.rejectPending(new Error(message));
+      this.clearProcessState();
     });
 
-    this.process.stderr.on('data', (data) => {
+    process.stderr.on('data', (data) => {
+      if (this.process !== process) {
+        return;
+      }
+      this.appendStderr(data);
       console.error(`walletd: ${data.toString()}`);
     });
 
-    this.process.on('exit', (code) => {
-      const error = new Error(`walletd exited with code ${code ?? 'unknown'}`);
-      for (const pending of this.pending.values()) {
-        pending.reject(error);
+    process.on('exit', (code, signal) => {
+      if (this.process !== process) {
+        return;
       }
-      this.pending.clear();
-      this.process = null;
-      this.storePath = null;
-      this.passphrase = null;
-      this.mode = null;
+      const error = this.buildExitError(code, signal);
+      this.rejectPending(error);
+      this.clearProcessState();
     });
   }
 
@@ -229,14 +235,81 @@ export class WalletdClient {
   }
 
   async stop(): Promise<void> {
-    if (this.process) {
-      this.process.kill('SIGINT');
-      this.process = null;
+    const process = this.process;
+    if (!process) {
+      this.rejectPending(new Error('walletd stopped'));
+      this.clearProcessState();
+      return;
+    }
+
+    this.rejectPending(new Error('walletd stopped'));
+    this.clearProcessState();
+
+    const exitPromise = new Promise<void>((resolve) => {
+      process.once('exit', () => resolve());
+      process.once('error', () => resolve());
+    });
+
+    process.kill('SIGINT');
+
+    const timeout = new Promise<void>((resolve) => {
+      setTimeout(() => resolve(), 1500);
+    });
+
+    await Promise.race([exitPromise, timeout]);
+  }
+
+  private rejectPending(error: Error) {
+    for (const pending of this.pending.values()) {
+      pending.reject(error);
     }
     this.pending.clear();
+  }
+
+  private clearProcessState() {
+    this.process = null;
     this.storePath = null;
     this.passphrase = null;
     this.mode = null;
+    this.stderrBuffer = [];
+  }
+
+  private appendStderr(data: Buffer) {
+    const lines = data
+      .toString()
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (!lines.length) {
+      return;
+    }
+    this.stderrBuffer.push(...lines);
+    if (this.stderrBuffer.length > 8) {
+      this.stderrBuffer = this.stderrBuffer.slice(-8);
+    }
+  }
+
+  private buildExitError(code: number | null, signal: NodeJS.Signals | null) {
+    const summary = this.formatStderrSummary();
+    const detail = summary ? `: ${summary}` : '';
+    const suffix = signal ? ` (signal ${signal})` : '';
+    return new Error(`walletd exited with code ${code ?? 'unknown'}${suffix}${detail}`);
+  }
+
+  private formatStderrSummary() {
+    if (!this.stderrBuffer.length) {
+      return '';
+    }
+    const lines = this.stderrBuffer.filter(Boolean);
+    if (!lines.length) {
+      return '';
+    }
+    const first = lines[0];
+    const last = lines[lines.length - 1].replace(/^\d+:\s*/, '');
+    if (lines.length > 1 && last && last !== first) {
+      return `${first} (${last})`;
+    }
+    return first;
   }
 }
 
