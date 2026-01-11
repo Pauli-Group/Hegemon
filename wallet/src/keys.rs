@@ -104,7 +104,6 @@ impl ViewKey {
         material.extend_from_slice(diversifier);
         blake3_256(&material)
     }
-
 }
 
 /// Encryption seed - used for deriving ML-KEM keypairs.

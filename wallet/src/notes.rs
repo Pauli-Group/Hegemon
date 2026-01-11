@@ -104,8 +104,7 @@ pub const PALLET_CIPHERTEXT_SIZE: usize = 579;
 /// Size of the ML-KEM ciphertext
 pub const PALLET_KEM_CIPHERTEXT_SIZE: usize = 1088;
 /// Total size of the pallet encrypted note bytes
-pub const PALLET_ENCRYPTED_NOTE_SIZE: usize =
-    PALLET_CIPHERTEXT_SIZE + PALLET_KEM_CIPHERTEXT_SIZE;
+pub const PALLET_ENCRYPTED_NOTE_SIZE: usize = PALLET_CIPHERTEXT_SIZE + PALLET_KEM_CIPHERTEXT_SIZE;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NoteCiphertext {
