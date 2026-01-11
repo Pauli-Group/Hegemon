@@ -396,7 +396,7 @@ where
                 .map_err(|_| "Failed to convert commitments")?;
 
         // Convert encrypted notes to EncryptedNote structs
-        // Expected format: [ciphertext (611 bytes)][kem_ciphertext (1088 bytes)]
+        // Expected format: [ciphertext][kem_ciphertext]
         let required_len = ENCRYPTED_NOTE_SIZE + ML_KEM_CIPHERTEXT_LEN;
         let mut enc_notes = Vec::with_capacity(encrypted_notes.len());
         for note_bytes in encrypted_notes {

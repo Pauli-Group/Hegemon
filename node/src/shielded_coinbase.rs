@@ -53,21 +53,12 @@ pub fn encrypt_coinbase_note(
     let mut kem_randomness = [0u8; 32];
     OsRng.fill_bytes(&mut kem_randomness);
 
-    // Debug: log the address_tag being used for encryption
-    tracing::info!(
-        address_tag = %hex::encode(&address.address_tag),
-        pk_recipient = %hex::encode(&address.pk_recipient),
-        diversifier_index = address.diversifier_index,
-        "Encrypting coinbase with address_tag"
-    );
-
     // Encrypt the note
     let ciphertext = NoteCiphertext::encrypt(
         &address.pk_enc,
         address.pk_recipient,
         address.version,
         address.diversifier_index,
-        address.address_tag,
         &note,
         &kem_randomness,
     )
@@ -112,14 +103,14 @@ fn convert_to_pallet_format(
     ciphertext: &NoteCiphertext,
 ) -> Result<EncryptedNote, CoinbaseEncryptionError> {
     // The pallet format is:
-    // ciphertext: [u8; 611] - concatenation of note_payload + memo_payload + metadata
+    // ciphertext: [u8; 579] - concatenation of note_payload + memo_payload + metadata
     // kem_ciphertext: [u8; 1088] - ML-KEM ciphertext
 
     // Build the main ciphertext field
     let mut ciphertext_bytes = [0u8; ENCRYPTED_NOTE_SIZE];
 
     // Layout: version(1) + diversifier_index(4) + note_payload_len(4) + note_payload +
-    //         memo_payload_len(4) + memo_payload + hint_tag(32)
+    //         memo_payload_len(4) + memo_payload
     let mut offset = 0;
 
     ciphertext_bytes[offset] = ciphertext.version;
@@ -129,10 +120,10 @@ fn convert_to_pallet_format(
         .copy_from_slice(&ciphertext.diversifier_index.to_le_bytes());
     offset += 4;
 
-    // Note + memo payloads must fit before the trailing 32-byte hint tag.
+    // Note + memo payloads must fit in the ciphertext container.
     let note_len = ciphertext.note_payload.len();
     let memo_len = ciphertext.memo_payload.len();
-    let max_payload = ENCRYPTED_NOTE_SIZE - 32 - 5 - 8;
+    let max_payload = ENCRYPTED_NOTE_SIZE - 5 - 8;
     if note_len + memo_len > max_payload {
         return Err(CoinbaseEncryptionError::EncryptionFailed(format!(
             "Encrypted note payloads too large: note={} memo={} max_total={}",
@@ -162,10 +153,6 @@ fn convert_to_pallet_format(
             .copy_from_slice(&ciphertext.memo_payload[..memo_len]);
     }
 
-    // Hint tag at the end
-    let hint_start = ENCRYPTED_NOTE_SIZE - 32;
-    ciphertext_bytes[hint_start..].copy_from_slice(&ciphertext.hint_tag);
-
     // KEM ciphertext
     let mut kem_ciphertext = [0u8; ML_KEM_CIPHERTEXT_LEN];
     if ciphertext.kem_ciphertext.len() != ML_KEM_CIPHERTEXT_LEN {
@@ -191,11 +178,10 @@ fn extract_recipient_address(
 ) -> Result<[u8; DIVERSIFIED_ADDRESS_SIZE], CoinbaseEncryptionError> {
     let mut recipient = [0u8; DIVERSIFIED_ADDRESS_SIZE];
 
-    // Layout: version(1) + diversifier_index(4) + pk_recipient(32) + first 6 bytes of address_tag
+    // Layout: version(1) + diversifier_index(4) + pk_recipient(32)
     recipient[0] = address.version;
     recipient[1..5].copy_from_slice(&address.diversifier_index.to_le_bytes());
     recipient[5..37].copy_from_slice(&address.pk_recipient);
-    recipient[37..43].copy_from_slice(&address.address_tag[0..6]);
 
     Ok(recipient)
 }
@@ -249,7 +235,6 @@ mod tests {
             diversifier_index: 0,
             pk_recipient: [0u8; 32],
             pk_enc: keypair.public_key(),
-            address_tag: [0u8; 32],
         };
 
         let block_hash = [1u8; 32];
@@ -282,7 +267,6 @@ mod tests {
             [3u8; 32],
             1,
             0,
-            [4u8; 32],
             &note,
             &kem_randomness,
         )

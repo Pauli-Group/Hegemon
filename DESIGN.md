@@ -344,14 +344,14 @@ A **shielded address** contains:
 * A **KEM public key** `pk_enc` (for ML-KEM).
 * An **address-id / diversifier** derived from `sk_view` via PRF.
 
-You can have multiple diversified addresses derived from the same underlying key material (like Zcash’s diversified addresses), but each is defined by basically: `(pk_enc, addr_tag)` where `addr_tag = H("addr" || sk_view || index)`.
+You can have multiple diversified addresses derived from the same underlying key material (like Zcash’s diversified addresses). Each address binds the ML-KEM public key and recipient key derived from a diversifier index.
 
 ### 4.3 Wallet crate implementation
 
 The repository now contains a `wallet` crate that wires these ideas into code:
 
 * `wallet/src/keys.rs` defines `RootSecret`, `DerivedKeys`, and `AddressKeyMaterial`. A SHA-256-based HKDF (`wallet-hkdf`) produces `sk_spend`, `sk_view`, `sk_enc`, and `sk_derive`, and diversified addresses are computed deterministically from `(sk_view, sk_enc, sk_derive, index)`.
-* `wallet/src/address.rs` encodes addresses as Bech32m (`shca1…`) strings that bundle the version, diversifier index, ML-KEM public key, `pk_recipient`, and a 32-byte hint tag. Decoding performs the inverse mapping so senders can rebuild the ML-KEM key and note metadata.
+* `wallet/src/address.rs` encodes addresses as Bech32m (`shca1…`) strings that bundle the version, diversifier index, ML-KEM public key, and `pk_recipient`. Decoding performs the inverse mapping so senders can rebuild the ML-KEM key and note metadata.
 * `wallet/src/notes.rs` handles ML-KEM encapsulation plus ChaCha20-Poly1305 AEAD wrapping for both the note payload and memo. The shared secret is expanded with a domain-separated label (`wallet-aead`) so note payloads and memos use independent nonces/keys.
 * `walletd/` is a sidecar daemon that opens a wallet store and exposes a versioned newline-delimited JSON protocol over stdin/stdout so GUI clients (like `hegemon-app`) can drive sync, send, and disclosure workflows without re-implementing cryptography. The protocol includes capability discovery plus structured error codes, and `walletd` enforces an exclusive lock file alongside the store to prevent concurrent access.
 * `wallet/src/viewing.rs` exposes `IncomingViewingKey`, `OutgoingViewingKey`, and `FullViewingKey`. Incoming keys decrypt ciphertexts and rebuild `NoteData`/`InputNoteWitness` objects for the transaction circuit, outgoing keys let wallets audit their own sent notes, and full viewing keys add the view-derived nullifier key (`vk_nf = BLAKE3("view_nf" || sk_view)`) needed for spentness tracking.

@@ -56,7 +56,7 @@ impl TransactionBundle {
         }
         let mut encoded = Vec::with_capacity(ciphertexts.len());
         for ct in ciphertexts {
-            // Use pallet-compatible format (1699 bytes) instead of bincode
+            // Use pallet-compatible format instead of bincode
             encoded.push(ct.to_pallet_bytes()?);
         }
         Ok(Self {
@@ -75,7 +75,7 @@ impl TransactionBundle {
     pub fn decode_notes(&self) -> Result<Vec<NoteCiphertext>, WalletError> {
         let mut notes = Vec::with_capacity(self.ciphertexts.len());
         for bytes in &self.ciphertexts {
-            // Decode from pallet format (1699 bytes)
+            // Decode from pallet format
             notes.push(NoteCiphertext::from_pallet_bytes(bytes)?);
         }
         Ok(notes)

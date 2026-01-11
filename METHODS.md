@@ -321,10 +321,9 @@ To derive per‑address KEM keys *deterministically*:
 Then an **address** is:
 
 ```text
-addr_d = EncAddr(version || d || pk_enc(d) || addr_tag(d))
+addr_d = EncAddr(version || d || pk_recipient(d) || pk_enc(d))
 ```
-
-where `addr_tag(d)` is a public tag used to help scanning (see below).
+where `pk_recipient(d)` is derived from the viewing key and the diversifier.
 
 Wallet exports:
 
@@ -360,25 +359,15 @@ For each output note to `addr_d`:
    * `cm` – the note commitment (public)
    * `ct` – KEM ciphertext
    * `C_note` – AEAD ciphertext
-   * an *optional* short **hint tag** `t` to speed up scanning:
-
-     ```text
-     t = Hg("hint" || Hf(d || some randomness))
-     ```
-
-   (Hint tags are a place where you can get fancy; simplest is “none”: just brute‑force all notes.)
 
 **Scanning with incoming viewing key:**
 
 A wallet with `vk_incoming`:
 
 * Knows `sk_derive`, so can recompute each `sk_enc(d)` and `pk_enc(d)` for its diversified addresses.
-* For each new note on chain:
+* For each new note on chain, try decapsulation with every `sk_enc(d)` you care about; if decap succeeds and the AEAD tag verifies, it’s yours.
 
-  * Option A (simple / expensive): try decapsulation with every `sk_enc(d)` you care about; if decap succeeds and the AEAD tag verifies, it’s yours.
-  * Option B (with hint tags): interpret `t` as a small filter that lets you narrow the set of candidate `d` for which you bother trying KEM decaps.
-
-Given that ML‑KEM decapsulation is not *that* expensive and users don’t have thousands of addresses typically, Option A is acceptable in v1. The scanning cost is similar order of magnitude to Sapling’s trial decryption.
+Given that ML‑KEM decapsulation is not *that* expensive and users don’t have thousands of addresses typically, trial decryption is acceptable in v1. The scanning cost is similar order of magnitude to Sapling’s trial decryption.
 
 **Full viewing key** `vk_full`:
 
@@ -392,11 +381,11 @@ nullifiers for spentness tracking without embedding `sk_spend`.
 
 ### 4.5 Implementation details
 
-*Key derivations and addresses.* `wallet/src/keys.rs` implements `RootSecret::derive()` using the domain-separated label `wallet-hkdf` and SHA-256 to expand `(label || sk_root)` into the 32-byte subkeys for spend/view/enc/diversifier. `AddressKeyMaterial` then uses `addr-seed` and `addr-tag` labels to deterministically derive the ML-KEM key pair and 32-byte hint tag for each diversifier index. `wallet/src/address.rs` serializes `(version, index, pk_recipient, pk_enc, hint_tag)` as a Bech32m string (HRP `shca`) so senders can round-trip addresses through QR codes or the CLI.
+*Key derivations and addresses.* `wallet/src/keys.rs` implements `RootSecret::derive()` using the domain-separated label `wallet-hkdf` and SHA-256 to expand `(label || sk_root)` into the 32-byte subkeys for spend/view/enc/diversifier. `AddressKeyMaterial` then uses `addr-seed` plus the diversifier index to deterministically derive the ML-KEM key pair; `pk_recipient` is derived from the view key and diversifier. `wallet/src/address.rs` serializes `(version, index, pk_recipient, pk_enc)` as a Bech32m string (HRP `shca`) so senders can round-trip addresses through QR codes or the CLI.
 
-*Note encryption.* `wallet/src/notes.rs` consumes the recipient’s Bech32 data, runs ML-KEM encapsulation with a random seed, and stretches the shared secret into two ChaCha20-Poly1305 keys via `expand_to_length("wallet-aead", shared_secret || label, 44)`. The first 32 bytes drive the AEAD key and the final 12 bytes form the nonce so both note payload and memo use disjoint key/nonce pairs. Ciphertexts record the diversifier index, hint tag, and ML-KEM ciphertext so incoming viewing keys can reconstruct the exact `AddressKeyMaterial` needed for decryption.
+*Note encryption.* `wallet/src/notes.rs` consumes the recipient’s Bech32 data, runs ML-KEM encapsulation with a random seed, and stretches the shared secret into two ChaCha20-Poly1305 keys via `expand_to_length("wallet-aead", shared_secret || label, 44)`. The first 32 bytes drive the AEAD key and the final 12 bytes form the nonce so both note payload and memo use disjoint key/nonce pairs. Ciphertexts record the version, diversifier index, and ML-KEM ciphertext so incoming viewing keys can reconstruct the exact `AddressKeyMaterial` needed for decryption.
 
-*Viewing keys and nullifiers.* `wallet/src/viewing.rs` defines `IncomingViewingKey` (scan + decrypt), `OutgoingViewingKey` (derive address tags/pk_recipient for audit), and `FullViewingKey` (incoming + nullifier key). Full viewing keys store the view-derived nullifier key `sk_nf = BLAKE3("view_nf" || sk_view)`, letting watch-only tooling compute chain nullifiers without exposing the spend key itself. `RecoveredNote::to_input_witness` converts decrypted notes into `transaction_circuit::note::InputNoteWitness` values by reusing the same `NoteData` and taking the best-effort `rho_seed = rho` placeholder until the circuit’s derivation is finalized.
+*Viewing keys and nullifiers.* `wallet/src/viewing.rs` defines `IncomingViewingKey` (scan + decrypt), `OutgoingViewingKey` (derive `pk_recipient` for audit), and `FullViewingKey` (incoming + nullifier key). Full viewing keys store the view-derived nullifier key `sk_nf = BLAKE3("view_nf" || sk_view)`, letting watch-only tooling compute chain nullifiers without exposing the spend key itself. `RecoveredNote::to_input_witness` converts decrypted notes into `transaction_circuit::note::InputNoteWitness` values by reusing the same `NoteData` and taking the best-effort `rho_seed = rho` placeholder until the circuit’s derivation is finalized.
 
 *CLI, daemon, and fixtures.* `wallet/src/bin/wallet.rs` now ships three families of commands:
 
@@ -597,28 +586,28 @@ To get multiple addresses from one wallet, for diversifier index \(i \in \{0, \l
 
 ```
 div_i      = SHA256("div" || sk_view || i)   // 256 bits
-addr_tag_i = div_i                            // 256 bits, used directly
+pk_recipient_i = H(sk_view || div_i)         // 256 bits
 (pk_enc_i, sk_enc_i) = MLKEM.KeyGen(seed = sk_enc || encode(i))
 ```
 
 The address \(\text{Addr}_i\) is then
 
 ```
-Addr_i = Encode(version || i || pk_enc_i || addr_tag_i)
+Addr_i = Encode(version || i || pk_recipient_i || pk_enc_i)
 ```
 
 The wallet stores `sk_spend`, `sk_view`, and either `sk_enc` or all `sk_enc_i` derived on demand.
 
 #### 3.3 Viewing keys
 
-* Incoming Viewing Key (IVK): `ivk = (sk_view, sk_enc)` can recompute all `addr_tag_i` and `sk_enc_i`, decrypt all notes, and see all incoming funds.
+* Incoming Viewing Key (IVK): `ivk = (sk_view, sk_enc)` can recompute all `pk_recipient_i` and `sk_enc_i`, decrypt all notes, and see all incoming funds.
 * Full Viewing Key (FVK): `fvk = (sk_view, sk_enc, vk_nf)` where `vk_nf = BLAKE3("view_nf" || sk_view)`.
 
 In the circuit we derive `nk = H_f(domain_nk, ssk_0, \ldots, ssk_3)` from the view-derived nullifier secret, and for viewing we derive `vk_nf` with the `view_nf` domain tag so watch-only wallets can detect spent notes without embedding `sk_spend`.
 
 ### 4. Note encryption details
 
-Given recipient \(\text{Addr}_i\) with `(pk_enc_i, addr_tag_i)`:
+Given recipient \(\text{Addr}_i\) with `(pk_enc_i, pk_recipient_i)`:
 
 #### 4.1 Plaintext
 
@@ -631,7 +620,6 @@ note_plain = (
   rho:    32 bytes,
   r:      32 bytes,
   addr_i: 32-bit index i,
-  tag:    32 bytes (addr_tag_i),
   maybe extra fields (memo pointer, etc.)
 )
 ```
@@ -649,7 +637,6 @@ On chain per output:
 * `cm` as a 48-byte commitment (6 x 64-bit limbs, canonical encoding)
 * `ct_kem` (≈1.1 KB)
 * `ct_aead` (|note_plain| + tag, say ≈100 bytes)
-* Optional small `scan_tag` if you want faster scanning.
 
 Recipient with IVK/FVK:
 
