@@ -3,6 +3,7 @@ import type {
   NodeStartOptions,
   NodeSummary,
   NodeSummaryRequest,
+  Contact,
   WalletDisclosureCreateResult,
   WalletDisclosureRecord,
   WalletDisclosureVerifyResult,
@@ -40,6 +41,10 @@ export type HegemonApi = {
       packageJson: object
     ) => Promise<WalletDisclosureVerifyResult>;
     disclosureList: (storePath: string, passphrase: string) => Promise<WalletDisclosureRecord[]>;
+  };
+  contacts: {
+    list: () => Promise<Contact[] | null>;
+    save: (contacts: Contact[]) => Promise<void>;
   };
 };
 

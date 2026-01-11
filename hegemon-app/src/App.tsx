@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { HashRouter, Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import type {
+  Contact,
   NodeConnection,
   NodeSummary,
   WalletDisclosureCreateResult,
@@ -20,15 +21,6 @@ const makeId = () => {
     return crypto.randomUUID();
   }
   return `conn-${Math.random().toString(36).slice(2, 10)}`;
-};
-
-type Contact = {
-  id: string;
-  name: string;
-  address: string;
-  verified: boolean;
-  notes?: string;
-  lastUsed?: string;
 };
 
 type LogLevel = 'info' | 'warn' | 'error' | 'debug';
@@ -192,6 +184,33 @@ const formatHash = (value: string | null | undefined) => {
   return `${value.slice(0, 10)}...${value.slice(-8)}`;
 };
 
+const parseDisclosureInput = (input: string) => {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    throw new Error('Disclosure JSON is required.');
+  }
+  const parseJson = (value: string) => JSON.parse(value);
+  try {
+    const parsed = parseJson(trimmed);
+    if (typeof parsed === 'string') {
+      return parseJson(parsed);
+    }
+    return parsed;
+  } catch (error) {
+    const firstBrace = trimmed.indexOf('{');
+    const lastBrace = trimmed.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace > firstBrace) {
+      const candidate = trimmed.slice(firstBrace, lastBrace + 1);
+      try {
+        return parseJson(candidate);
+      } catch {
+      }
+    }
+    const message = error instanceof Error ? error.message : 'Invalid disclosure JSON.';
+    throw new Error(`Disclosure JSON is invalid. Paste the full package JSON. ${message}`);
+  }
+};
+
 const parseTimestamp = (value?: string | null) => {
   if (!value) {
     return 0;
@@ -350,6 +369,8 @@ export default function App() {
   const [walletBusy, setWalletBusy] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [addressCopied, setAddressCopied] = useState(false);
+  const [disclosureCopied, setDisclosureCopied] = useState(false);
+  const [disclosureCopyError, setDisclosureCopyError] = useState<string | null>(null);
 
   const [storePath, setStorePath] = useState(defaultStorePath);
   const [passphrase, setPassphrase] = useState('test-pass');
@@ -363,6 +384,8 @@ export default function App() {
   const [autoConsolidate, setAutoConsolidate] = useState(true);
 
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [contactsLoaded, setContactsLoaded] = useState(false);
+  const [contactsError, setContactsError] = useState<string | null>(null);
   const [newContactName, setNewContactName] = useState('');
   const [newContactAddress, setNewContactAddress] = useState('');
   const [newContactNotes, setNewContactNotes] = useState('');
@@ -423,19 +446,64 @@ export default function App() {
   }, [walletConnectionId]);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem(contactsKey);
-    if (stored) {
+    let cancelled = false;
+    const loadContacts = async () => {
+      setContactsError(null);
       try {
-        setContacts(JSON.parse(stored));
-      } catch (error) {
-        setContacts([]);
+        const stored = await window.hegemon.contacts.list();
+        if (cancelled) {
+          return;
+        }
+        if (stored !== null) {
+          setContacts(stored);
+          return;
+        }
+        const legacy = window.localStorage.getItem(contactsKey);
+        if (!legacy) {
+          return;
+        }
+        try {
+          const parsed = JSON.parse(legacy);
+          if (Array.isArray(parsed)) {
+            setContacts(parsed);
+            await window.hegemon.contacts.save(parsed);
+            window.localStorage.removeItem(contactsKey);
+          }
+        } catch {
+          if (!cancelled) {
+            setContactsError('Failed to migrate legacy contacts.');
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setContactsError('Failed to load contacts.');
+        }
+      } finally {
+        if (!cancelled) {
+          setContactsLoaded(true);
+        }
       }
-    }
+    };
+    loadContacts();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem(contactsKey, JSON.stringify(contacts));
-  }, [contacts]);
+    if (!contactsLoaded) {
+      return;
+    }
+    const persistContacts = async () => {
+      try {
+        await window.hegemon.contacts.save(contacts);
+        setContactsError(null);
+      } catch {
+        setContactsError('Failed to save contacts.');
+      }
+    };
+    void persistContacts();
+  }, [contacts, contactsLoaded]);
 
   useEffect(() => {
     if (!walletStatus) {
@@ -763,6 +831,21 @@ export default function App() {
     }
   };
 
+  const handleCopyDisclosureOutput = async () => {
+    setDisclosureCopyError(null);
+    if (!walletDisclosureOutput) {
+      setDisclosureCopyError('Generate a disclosure package first.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(walletDisclosureOutput);
+      setDisclosureCopied(true);
+      window.setTimeout(() => setDisclosureCopied(false), 2000);
+    } catch {
+      setDisclosureCopyError('Failed to copy disclosure package.');
+    }
+  };
+
   const handleWalletSync = async (forceOverride?: boolean) => {
     setWalletBusy(true);
     setWalletError(null);
@@ -909,6 +992,8 @@ export default function App() {
         outputIndex
       );
       setWalletDisclosureOutput(JSON.stringify(result, null, 2));
+      setDisclosureCopied(false);
+      setDisclosureCopyError(null);
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Disclosure create failed.');
     } finally {
@@ -920,7 +1005,7 @@ export default function App() {
     setWalletBusy(true);
     setWalletError(null);
     try {
-      const parsed = JSON.parse(disclosureInput);
+      const parsed = parseDisclosureInput(disclosureInput);
       const result: WalletDisclosureVerifyResult = await window.hegemon.wallet.disclosureVerify(
         resolveStorePath(),
         passphrase,
@@ -1144,6 +1229,7 @@ export default function App() {
   ) : null;
 
   const WalletErrorBanner = walletError ? <p className="text-guard">{walletError}</p> : null;
+  const ContactsErrorBanner = contactsError ? <p className="text-guard text-sm">{contactsError}</p> : null;
 
   const StatusBar = (
     <div className="status-bar">
@@ -2267,6 +2353,7 @@ export default function App() {
           </div>
         ))}
       </div>
+      {ContactsErrorBanner}
     </section>
   );
 
@@ -2298,7 +2385,7 @@ export default function App() {
           <p className="empty-state-description">No outgoing disclosure records yet.</p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
           {disclosureGroups.map((group) => (
             <div key={group.txId} className="rounded-xl border border-surfaceMuted/10 bg-midnight/40 p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -2393,9 +2480,20 @@ export default function App() {
       <button className="secondary" onClick={handleDisclosureCreate} disabled={walletBusy || !walletReady}>
         Create disclosure package
       </button>
-      <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
+      <div className="flex items-center justify-between">
+        <span className="label">Disclosure package</span>
+        <button
+          className="secondary px-3 py-1 text-xs"
+          onClick={handleCopyDisclosureOutput}
+          disabled={!walletDisclosureOutput}
+        >
+          {disclosureCopied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4 max-h-48 overflow-y-auto">
         {walletDisclosureOutput || 'N/A'}
       </pre>
+      {disclosureCopyError ? <p className="text-guard text-sm">{disclosureCopyError}</p> : null}
       {WalletErrorBanner}
     </section>
   );
@@ -2477,11 +2575,11 @@ export default function App() {
         <p className="text-surfaceMuted max-w-2xl">Generate and verify disclosure proofs without leaving the desktop app.</p>
       </header>
       <div className="grid gap-6 xl:grid-cols-2">
+        {DisclosureRecordsSection}
         <div className="space-y-6">
-          {DisclosureRecordsSection}
           {DisclosureGenerateSection}
+          {DisclosureVerifySection}
         </div>
-        {DisclosureVerifySection}
       </div>
     </div>
   );

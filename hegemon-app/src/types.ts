@@ -170,6 +170,15 @@ export type WalletDisclosureRecord = {
   createdAt: string;
 };
 
+export type Contact = {
+  id: string;
+  name: string;
+  address: string;
+  verified: boolean;
+  notes?: string;
+  lastUsed?: string;
+};
+
 export type NodeStartOptions = {
   connectionId?: string;
   chainSpecPath?: string;

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, nativeImage, session } from 'electron';
 import { existsSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NodeManager } from './nodeManager';
@@ -8,6 +9,7 @@ import type {
   NodeMiningRequest,
   NodeStartOptions,
   NodeSummaryRequest,
+  Contact,
   WalletDisclosureRecord,
   WalletDisclosureCreateResult,
   WalletDisclosureVerifyResult,
@@ -21,6 +23,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const nodeManager = new NodeManager();
 const walletdClient = new WalletdClient();
 const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
+const contactsFileName = 'contacts.json';
 
 const buildContentSecurityPolicy = (devUrl?: string) => {
   const defaultSrc = ["'self'"];
@@ -60,10 +63,39 @@ const buildContentSecurityPolicy = (devUrl?: string) => {
 const resolveIconPath = () => {
   const iconFile =
     process.platform === 'win32' ? 'icon.ico' : process.platform === 'darwin' ? 'icon.icns' : 'icon.png';
-  const packagedIcon = join(process.resourcesPath, iconFile);
-  const devIcon = join(process.cwd(), 'build', iconFile);
-  const iconPath = app.isPackaged ? packagedIcon : devIcon;
-  return existsSync(iconPath) ? iconPath : null;
+  const candidates = app.isPackaged
+    ? [join(process.resourcesPath, iconFile)]
+    : [
+        join(app.getAppPath(), 'build', iconFile),
+        join(process.cwd(), 'build', iconFile),
+        join(__dirname, '..', '..', 'build', iconFile)
+      ];
+  const iconPath = candidates.find((candidate) => existsSync(candidate));
+  return iconPath ?? null;
+};
+
+const loadContacts = async (): Promise<Contact[] | null> => {
+  const filePath = join(app.getPath('userData'), contactsFileName);
+  try {
+    const raw = await readFile(filePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code === 'ENOENT') {
+        return null;
+      }
+    }
+    console.error('Failed to load contacts.', error);
+    return [];
+  }
+};
+
+const saveContacts = async (contacts: Contact[]) => {
+  const filePath = join(app.getPath('userData'), contactsFileName);
+  await mkdir(dirname(filePath), { recursive: true });
+  await writeFile(filePath, JSON.stringify(contacts, null, 2), 'utf-8');
 };
 
 const createWindow = () => {
@@ -203,4 +235,15 @@ ipcMain.handle(
 
 ipcMain.handle('wallet:disclosureList', async (_event, storePath: string, passphrase: string) => {
   return walletdClient.disclosureList(storePath, passphrase) as Promise<WalletDisclosureRecord[]>;
+});
+
+ipcMain.handle('contacts:list', async () => {
+  return loadContacts();
+});
+
+ipcMain.handle('contacts:save', async (_event, contacts: Contact[]) => {
+  if (!Array.isArray(contacts)) {
+    throw new Error('Contacts payload must be an array.');
+  }
+  await saveContacts(contacts);
 });

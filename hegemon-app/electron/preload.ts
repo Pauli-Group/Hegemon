@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
+  Contact,
   NodeMiningRequest,
   NodeStartOptions,
   NodeSummaryRequest,
@@ -37,5 +38,9 @@ contextBridge.exposeInMainWorld('hegemon', {
     ) => ipcRenderer.invoke('wallet:disclosureVerify', storePath, passphrase, wsUrl, packageJson),
     disclosureList: (storePath: string, passphrase: string) =>
       ipcRenderer.invoke('wallet:disclosureList', storePath, passphrase)
+  },
+  contacts: {
+    list: () => ipcRenderer.invoke('contacts:list'),
+    save: (contacts: Contact[]) => ipcRenderer.invoke('contacts:save', contacts)
   }
 });
