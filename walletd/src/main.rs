@@ -29,6 +29,7 @@ use wallet::{
     store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
     substrate_rpc::SubstrateRpcClient,
     transfer_recipients_from_specs, ConsolidationPlan, RecipientSpec, MAX_INPUTS,
+    WalletError,
 };
 
 const PROTOCOL_VERSION: u32 = 1;
@@ -227,11 +228,32 @@ struct SendParams {
     auto_consolidate: bool,
 }
 
+#[derive(Deserialize)]
+struct TxPlanParams {
+    recipients: Vec<RecipientSpec>,
+    fee: u64,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SendResponse {
     tx_hash: String,
     recipients: Vec<TransferRecipient>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TxPlanResponse {
+    asset_id: u64,
+    total_needed: u64,
+    available_value: u64,
+    wallet_note_count: u64,
+    selected_note_count: u64,
+    selected_value: u64,
+    max_inputs: u64,
+    sufficient_funds: bool,
+    needs_consolidation: bool,
+    plan: Option<ConsolidationPlanSummary>,
 }
 
 #[derive(Deserialize)]
@@ -358,9 +380,28 @@ fn open_store(
                     "wallet store not found",
                 ));
             }
-            WalletStore::open(store_path, passphrase)
-                .context("failed to open wallet store")
-                .map_err(WalletdError::internal)?
+            WalletStore::open(store_path, passphrase).map_err(|err| match err {
+                WalletError::DecryptionFailure => WalletdError::new(
+                    WalletdErrorCode::InternalError,
+                    "failed to open wallet store: wrong passphrase (or wallet file is corrupted)",
+                ),
+                WalletError::Serialization(msg)
+                    if msg.contains("unsupported wallet file version") =>
+                {
+                    WalletdError::new(
+                        WalletdErrorCode::InternalError,
+                        format!("failed to open wallet store: {msg}"),
+                    )
+                }
+                WalletError::Serialization(msg) => WalletdError::new(
+                    WalletdErrorCode::InternalError,
+                    format!("failed to open wallet store: {msg} (wallet file may be corrupted)"),
+                ),
+                other => WalletdError::new(
+                    WalletdErrorCode::InternalError,
+                    format!("failed to open wallet store: {other}"),
+                ),
+            })?
         }
         WalletdMode::Create => {
             if exists {
@@ -413,6 +454,10 @@ fn handle_request(
             "sync.once" => {
                 let params: SyncParams = parse_params(request.params)?;
                 to_json(sync_once(runtime, store, params)?)
+            }
+            "tx.plan" => {
+                let params: TxPlanParams = parse_params(request.params)?;
+                to_json(tx_plan(&store, params)?)
             }
             "tx.send" => {
                 let params: SendParams = parse_params(request.params)?;
@@ -729,14 +774,48 @@ fn tx_send(
             let mut notes = store.spendable_notes(0).map_err(WalletdError::internal)?;
             notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
             let total_needed = recipients.iter().map(|r| r.value).sum::<u64>() + params.fee;
-            let mut selected_count = 0;
-            let mut selected_value = 0u64;
-            for note in &notes {
-                if selected_value >= total_needed {
+            let available_value: u64 = notes.iter().map(|note| note.recovered.note.value).sum();
+            let mut selected_count = 0usize;
+            let mut required_value = total_needed;
+            let mut last_selected_count: Option<usize> = None;
+            for _ in 0..32 {
+                let mut selected_value = 0u64;
+                let mut next_selected_count = 0usize;
+                for note in &notes {
+                    if selected_value >= required_value {
+                        break;
+                    }
+                    selected_value += note.recovered.note.value;
+                    next_selected_count += 1;
+                }
+                selected_count = next_selected_count;
+
+                if selected_value < required_value {
+                    return Err(WalletdError::new(
+                        WalletdErrorCode::TransactionFailed,
+                        WalletError::InsufficientFunds {
+                            needed: required_value,
+                            available: available_value,
+                        }
+                        .to_string(),
+                    ));
+                }
+
+                if last_selected_count == Some(selected_count) {
                     break;
                 }
-                selected_value += note.recovered.note.value;
-                selected_count += 1;
+                last_selected_count = Some(selected_count);
+
+                let txs_needed = selected_count.saturating_sub(MAX_INPUTS) as u64;
+                let fee_budget = txs_needed.saturating_mul(params.fee);
+                let next_required_value = match total_needed.checked_add(fee_budget) {
+                    Some(value) => value,
+                    None => break,
+                };
+                if next_required_value <= required_value {
+                    break;
+                }
+                required_value = next_required_value;
             }
             let plan = ConsolidationPlan::estimate(selected_count);
             if !plan.is_empty() {
@@ -751,7 +830,7 @@ fn tx_send(
                     &client,
                     total_needed,
                     params.fee,
-                    true,
+                    false,
                 )
                 .await
                 .map_err(|e| {
@@ -822,6 +901,129 @@ fn tx_send(
                 ))
             }
         }
+    })
+}
+
+fn tx_plan(store: &Arc<WalletStore>, params: TxPlanParams) -> WalletdResult<TxPlanResponse> {
+    if store.mode().map_err(WalletdError::internal)? == WalletMode::WatchOnly {
+        return Err(WalletdError::new(
+            WalletdErrorCode::WatchOnly,
+            "watch-only wallets cannot send",
+        ));
+    }
+
+    let recipients = parse_recipients(&params.recipients)
+        .map_err(|err| WalletdError::new(WalletdErrorCode::InvalidParams, err.to_string()))?;
+
+    let output_asset = recipients
+        .first()
+        .map(|recipient| recipient.asset_id)
+        .unwrap_or(transaction_circuit::constants::NATIVE_ASSET_ID);
+
+    if output_asset != transaction_circuit::constants::NATIVE_ASSET_ID {
+        return Ok(TxPlanResponse {
+            asset_id: output_asset,
+            total_needed: recipients.iter().map(|r| r.value).sum::<u64>(),
+            available_value: 0,
+            wallet_note_count: 0,
+            selected_note_count: 0,
+            selected_value: 0,
+            max_inputs: MAX_INPUTS as u64,
+            sufficient_funds: true,
+            needs_consolidation: false,
+            plan: None,
+        });
+    }
+
+    let mut notes = store.spendable_notes(output_asset).map_err(WalletdError::internal)?;
+    notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
+
+    let wallet_note_count = notes.len();
+    let available_value: u64 = notes.iter().map(|note| note.recovered.note.value).sum();
+    let total_needed = recipients.iter().map(|r| r.value).sum::<u64>() + params.fee;
+
+    if available_value < total_needed {
+        return Ok(TxPlanResponse {
+            asset_id: output_asset,
+            total_needed,
+            available_value,
+            wallet_note_count: wallet_note_count as u64,
+            selected_note_count: wallet_note_count as u64,
+            selected_value: available_value,
+            max_inputs: MAX_INPUTS as u64,
+            sufficient_funds: false,
+            needs_consolidation: false,
+            plan: None,
+        });
+    }
+
+    let mut selected_count = 0usize;
+    let mut selected_value = 0u64;
+    let mut required_value = total_needed;
+    let mut last_selected_count: Option<usize> = None;
+    for _ in 0..32 {
+        selected_count = 0;
+        selected_value = 0;
+        for note in &notes {
+            if selected_value >= required_value {
+                break;
+            }
+            selected_value += note.recovered.note.value;
+            selected_count += 1;
+        }
+
+        if selected_value < required_value {
+            return Ok(TxPlanResponse {
+                asset_id: output_asset,
+                total_needed,
+                available_value,
+                wallet_note_count: wallet_note_count as u64,
+                selected_note_count: wallet_note_count as u64,
+                selected_value: available_value,
+                max_inputs: MAX_INPUTS as u64,
+                sufficient_funds: false,
+                needs_consolidation: false,
+                plan: None,
+            });
+        }
+
+        if last_selected_count == Some(selected_count) {
+            break;
+        }
+        last_selected_count = Some(selected_count);
+
+        let txs_needed = selected_count.saturating_sub(MAX_INPUTS) as u64;
+        let fee_budget = txs_needed.saturating_mul(params.fee);
+        let next_required_value = match total_needed.checked_add(fee_budget) {
+            Some(value) => value,
+            None => break,
+        };
+        if next_required_value <= required_value {
+            break;
+        }
+        required_value = next_required_value;
+    }
+
+    let plan = ConsolidationPlan::estimate(selected_count);
+    let needs_consolidation = !plan.is_empty();
+    Ok(TxPlanResponse {
+        asset_id: output_asset,
+        total_needed,
+        available_value,
+        wallet_note_count: wallet_note_count as u64,
+        selected_note_count: selected_count as u64,
+        selected_value,
+        max_inputs: MAX_INPUTS as u64,
+        sufficient_funds: true,
+        needs_consolidation,
+        plan: if needs_consolidation {
+            Some(ConsolidationPlanSummary {
+                txs_needed: plan.txs_needed as u64,
+                blocks_needed: plan.blocks_needed as u64,
+            })
+        } else {
+            None
+        },
     })
 }
 

@@ -7,6 +7,8 @@ import type {
   WalletDisclosureCreateResult,
   WalletDisclosureRecord,
   WalletDisclosureVerifyResult,
+  WalletSendPlanRequest,
+  WalletSendPlanResult,
   WalletSendRequest,
   WalletSendResult,
   WalletStatus,
@@ -74,6 +76,16 @@ export class WalletdClient {
         fee: request.fee,
         auto_consolidate: request.autoConsolidate
       },
+      request.storePath,
+      request.passphrase,
+      'open'
+    );
+  }
+
+  async sendPlan(request: WalletSendPlanRequest): Promise<WalletSendPlanResult> {
+    return this.request(
+      'tx.plan',
+      { recipients: request.recipients, fee: request.fee },
       request.storePath,
       request.passphrase,
       'open'
@@ -210,14 +222,19 @@ export class WalletdClient {
   }
 
   private handleResponseLine(line: string) {
-    if (!line.trim()) {
+    const trimmed = line.trim();
+    if (!trimmed) {
       return;
     }
     let response: WalletdResponse;
     try {
-      response = JSON.parse(line) as WalletdResponse;
-    } catch (error) {
-      console.error('walletd invalid response', error);
+      response = JSON.parse(trimmed) as WalletdResponse;
+    } catch {
+      if (!trimmed.startsWith('{')) {
+        console.warn(`walletd stdout: ${trimmed}`);
+        return;
+      }
+      console.error(`walletd invalid JSON response: ${trimmed}`);
       return;
     }
     const pending = this.pending.get(response.id);
@@ -296,9 +313,14 @@ export class WalletdClient {
 
   private buildExitError(code: number | null, signal: NodeJS.Signals | null) {
     const summary = this.formatStderrSummary();
-    const detail = summary ? `: ${summary}` : '';
+    if (summary) {
+      const cleaned = summary.replace(/^Error:\s*/, '').trim();
+      if (cleaned) {
+        return new Error(cleaned);
+      }
+    }
     const suffix = signal ? ` (signal ${signal})` : '';
-    return new Error(`walletd exited with code ${code ?? 'unknown'}${suffix}${detail}`);
+    return new Error(`walletd exited with code ${code ?? 'unknown'}${suffix}`);
   }
 
   private formatStderrSummary() {

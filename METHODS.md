@@ -661,7 +661,28 @@ Recipient with IVK/FVK:
 
 ### 5. Main “join–split” circuit in detail
 
-Assume the base circuit handles up to `M` inputs (e.g., 4) and `N` outputs (e.g., 4). Per transaction, you produce one STARK proof for these `M + N` notes.
+The base transaction circuit in this repository is fixed-size:
+
+* `MAX_INPUTS = 2` input notes (spends)
+* `MAX_OUTPUTS = 2` output notes (creates)
+
+(See `circuits/transaction-core/src/constants.rs`.)
+
+Per transaction, you produce one STARK proof that covers up to `MAX_INPUTS + MAX_OUTPUTS` notes. This fixed-size design keeps proof sizes and verifier costs bounded, but it means a wallet cannot directly spend more than 2 notes in a single transaction.
+
+#### 5.0 Note consolidation and block-size-aware batching
+
+When a wallet needs more than `MAX_INPUTS` notes to cover a payment (amount + fee), it must first **consolidate**: perform one or more self-transfers that merge 2 notes into 1 note, reducing the number of notes needed for the final send.
+
+Important constraint: the transaction membership proof anchors to a prior commitment-tree root, so a note created in a transaction cannot be spent again until it is mined and the wallet has synced a later root. That makes consolidation inherently multi-block: it proceeds in **rounds**.
+
+The wallet therefore uses a round-based workflow:
+
+1. Pick just enough notes to cover the target value (including a fee budget for the consolidation transactions themselves).
+2. Submit a batch of disjoint 2→1 consolidation transactions in one round, capped by (a) a maximum transactions-per-round and (b) a conservative on-chain block-size budget.
+3. Wait for confirmation, sync, and repeat until the selected notes fit within `MAX_INPUTS`.
+
+This does not change the total number of required consolidation transactions in the worst case (with 2→1 merges it is still `note_count - MAX_INPUTS`), but it reduces wall-clock time by letting miners include multiple independent merges in the same block when space permits. The batch-size budget must stay below the runtime block length (see `runtime/src/lib.rs`).
 
 #### 5.1 Public inputs
 

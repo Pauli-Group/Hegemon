@@ -16,6 +16,17 @@ const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
 const walletConnectionKey = 'hegemon.walletConnection';
 
+const normalizeTxId = (value: string | null | undefined) => {
+  if (!value) {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return trimmed.replace(/^0x/i, '').toLowerCase();
+};
+
 const makeId = () => {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     return crypto.randomUUID();
@@ -74,6 +85,8 @@ type ActivityEntry = {
   confirmations?: number;
   error?: string;
   consolidationExpected?: number;
+  consolidationSubmitted?: number;
+  consolidationConfirmed?: number;
   steps?: ActivityStep[];
 };
 
@@ -81,6 +94,14 @@ type DisclosureGroup = {
   txId: string;
   createdAt: string;
   outputs: WalletDisclosureRecord[];
+};
+
+type NodeTransitionAction = 'starting' | 'stopping';
+
+type NodeTransition = {
+  action: NodeTransitionAction;
+  connectionId: string;
+  startedAt: number;
 };
 
 const logCategoryOrder: LogCategory[] = ['mining', 'sync', 'network', 'consensus', 'storage', 'rpc', 'other'];
@@ -353,6 +374,7 @@ export default function App() {
   const [nodeSummaries, setNodeSummaries] = useState<Record<string, NodeSummary>>({});
   const [nodeLogs, setNodeLogs] = useState<string[]>([]);
   const [nodeBusy, setNodeBusy] = useState(false);
+  const [nodeTransition, setNodeTransition] = useState<NodeTransition | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
   const [showAdvancedNode, setShowAdvancedNode] = useState(false);
   const [logFilterInfo, setLogFilterInfo] = useState(true);
@@ -385,6 +407,7 @@ export default function App() {
 
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [contactsLoaded, setContactsLoaded] = useState(false);
+  const [contactsSaving, setContactsSaving] = useState(false);
   const [contactsError, setContactsError] = useState<string | null>(null);
   const [newContactName, setNewContactName] = useState('');
   const [newContactAddress, setNewContactAddress] = useState('');
@@ -489,21 +512,6 @@ export default function App() {
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!contactsLoaded) {
-      return;
-    }
-    const persistContacts = async () => {
-      try {
-        await window.hegemon.contacts.save(contacts);
-        setContactsError(null);
-      } catch {
-        setContactsError('Failed to save contacts.');
-      }
-    };
-    void persistContacts();
-  }, [contacts, contactsLoaded]);
 
   useEffect(() => {
     if (!walletStatus) {
@@ -686,6 +694,40 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [connections, activeConnectionId]);
 
+  const transitionReachable = nodeTransition ? nodeSummaries[nodeTransition.connectionId]?.reachable : undefined;
+
+  useEffect(() => {
+    if (!nodeTransition) {
+      return;
+    }
+    if (nodeTransition.action === 'starting' && transitionReachable) {
+      setNodeTransition(null);
+      return;
+    }
+    if (nodeTransition.action === 'stopping' && transitionReachable === false) {
+      setNodeTransition(null);
+    }
+  }, [nodeTransition, transitionReachable]);
+
+  useEffect(() => {
+    if (!nodeTransition) {
+      return;
+    }
+    const timeoutMs = nodeTransition.action === 'starting' ? 30_000 : 15_000;
+    const timer = window.setTimeout(() => {
+      setNodeTransition((prev) => {
+        if (!prev) {
+          return prev;
+        }
+        if (prev.action !== nodeTransition.action || prev.connectionId !== nodeTransition.connectionId) {
+          return prev;
+        }
+        return null;
+      });
+    }, timeoutMs);
+    return () => window.clearTimeout(timer);
+  }, [nodeTransition]);
+
   const handleNodeStart = async () => {
     if (!activeConnection || activeConnection.mode !== 'local') {
       setNodeError('Select a local connection to start a node.');
@@ -706,6 +748,7 @@ export default function App() {
         return;
       }
     }
+    setNodeTransition({ action: 'starting', connectionId: activeConnection.id, startedAt: Date.now() });
     setNodeBusy(true);
     setNodeError(null);
     try {
@@ -728,6 +771,7 @@ export default function App() {
       });
       await refreshNode();
     } catch (error) {
+      setNodeTransition(null);
       setNodeError(error instanceof Error ? error.message : 'Failed to start node.');
     } finally {
       setNodeBusy(false);
@@ -739,11 +783,13 @@ export default function App() {
       setNodeError('Select a local connection to stop a node.');
       return;
     }
+    setNodeTransition({ action: 'stopping', connectionId: activeConnection.id, startedAt: Date.now() });
     setNodeBusy(true);
     try {
       await window.hegemon.node.stop();
       await refreshNode();
     } catch (error) {
+      setNodeTransition(null);
       setNodeError(error instanceof Error ? error.message : 'Failed to stop node.');
     } finally {
       setNodeBusy(false);
@@ -868,7 +914,6 @@ export default function App() {
 
   const handleWalletSend = async () => {
     let attemptId: string | null = null;
-    setWalletBusy(true);
     setWalletError(null);
     try {
       const amount = toBaseUnits(sendAmount);
@@ -883,9 +928,55 @@ export default function App() {
         throw new Error('Wallet connection is offline. Select a reachable node or fix the RPC endpoint.');
       }
 
+      setWalletBusy(true);
       const resolvedStorePath = resolveStorePath();
-      const consolidationExpected =
-        autoConsolidate && walletStatus?.notes?.plan?.txsNeeded ? walletStatus.notes.plan.txsNeeded : undefined;
+      const recipients = [
+        {
+          address: recipientAddress,
+          value: amount,
+          asset_id: 0,
+          memo: sendMemo || null
+        }
+      ];
+
+      const plan = await window.hegemon.wallet.sendPlan({
+        storePath: resolvedStorePath,
+        passphrase,
+        recipients,
+        fee
+      });
+
+      if (!plan.sufficientFunds) {
+        throw new Error(`Insufficient funds: have ${formatHgm(plan.availableValue)}, need ${formatHgm(plan.totalNeeded)}.`);
+      }
+
+      let autoConsolidateForSend = autoConsolidate;
+      const consolidationEstimate = plan.needsConsolidation ? plan.plan?.txsNeeded : undefined;
+
+      if (plan.needsConsolidation && !autoConsolidateForSend) {
+        const noteContext = `This send needs ${plan.selectedNoteCount} notes (wallet has ${plan.walletNoteCount}, max ${plan.maxInputs} inputs/tx).`;
+        const estimateLine = consolidationEstimate ? `\n\nEstimated consolidation transactions: ~${consolidationEstimate}.` : '';
+        const confirmed = window.confirm(
+          `Note consolidation is required before sending.\n\n${noteContext}${estimateLine}\n\nEnable auto-consolidate and proceed?`
+        );
+        if (!confirmed) {
+          return;
+        }
+        autoConsolidateForSend = true;
+        setAutoConsolidate(true);
+      }
+
+      if (autoConsolidateForSend && consolidationEstimate && consolidationEstimate > 25) {
+        const noteContext = `This send needs ${plan.selectedNoteCount} notes (wallet has ${plan.walletNoteCount}, max ${plan.maxInputs} inputs/tx).`;
+        const confirmed = window.confirm(
+          `This send will trigger note consolidation.\n\n${noteContext}\n\nEstimated consolidation transactions: ~${consolidationEstimate}.\n\nProceed?`
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
+
+      const consolidationExpected = autoConsolidateForSend ? consolidationEstimate : undefined;
       attemptId = makeId();
       const createdAt = new Date().toISOString();
       const attempt: SendAttempt = {
@@ -905,21 +996,15 @@ export default function App() {
         storePath: resolvedStorePath,
         passphrase,
         wsUrl,
-        recipients: [
-          {
-            address: recipientAddress,
-            value: amount,
-            asset_id: 0,
-            memo: sendMemo || null
-          }
-        ],
+        recipients,
         fee,
-        autoConsolidate
+        autoConsolidate: autoConsolidateForSend
       };
       const result = await window.hegemon.wallet.send(request);
+      const normalizedTxId = normalizeTxId(result.txHash) ?? result.txHash;
       setSendAttempts((prev) =>
         prev.map((entry) =>
-          entry.id === attemptId ? { ...entry, status: 'pending', txId: result.txHash } : entry
+          entry.id === attemptId ? { ...entry, status: 'pending', txId: normalizedTxId } : entry
         )
       );
       setWalletSendOutput(JSON.stringify(result, null, 2));
@@ -943,8 +1028,8 @@ export default function App() {
     }
   };
 
-  const handleAddContact = () => {
-    if (!newContactName || !newContactAddress) {
+  const handleAddContact = async () => {
+    if (!contactsLoaded || contactsSaving || !newContactName || !newContactAddress) {
       return;
     }
     const newEntry: Contact = {
@@ -955,15 +1040,40 @@ export default function App() {
       notes: newContactNotes || undefined,
       lastUsed: undefined
     };
-    setContacts((prev) => [newEntry, ...prev]);
-    setNewContactName('');
-    setNewContactAddress('');
-    setNewContactNotes('');
-    setNewContactVerified(false);
+    const nextContacts = [newEntry, ...contacts];
+
+    setContactsSaving(true);
+    try {
+      await window.hegemon.contacts.save(nextContacts);
+      setContacts(nextContacts);
+      setContactsError(null);
+      setNewContactName('');
+      setNewContactAddress('');
+      setNewContactNotes('');
+      setNewContactVerified(false);
+    } catch {
+      setContactsError('Failed to save contacts.');
+    } finally {
+      setContactsSaving(false);
+    }
   };
 
-  const handleRemoveContact = (id: string) => {
-    setContacts((prev) => prev.filter((entry) => entry.id !== id));
+  const handleRemoveContact = async (id: string) => {
+    if (!contactsLoaded || contactsSaving) {
+      return;
+    }
+    const nextContacts = contacts.filter((entry) => entry.id !== id);
+
+    setContactsSaving(true);
+    try {
+      await window.hegemon.contacts.save(nextContacts);
+      setContacts(nextContacts);
+      setContactsError(null);
+    } catch {
+      setContactsError('Failed to save contacts.');
+    } finally {
+      setContactsSaving(false);
+    }
   };
 
   const handleSelectDisclosure = (record: WalletDisclosureRecord) => {
@@ -1052,15 +1162,33 @@ export default function App() {
   const walletNodeGenesis = walletSummary?.genesisHash ?? null;
   const genesisMismatch = Boolean(walletGenesis && walletNodeGenesis && walletGenesis !== walletNodeGenesis);
   const nodeIsLocal = activeConnection?.mode === 'local';
+  const nodeTransitionAction =
+    nodeTransition && activeConnection && nodeTransition.connectionId === activeConnection.id ? nodeTransition.action : null;
   const nodeIsRunning = nodeIsLocal && Boolean(activeSummary?.reachable);
-  const nodeToggleLabel = nodeBusy
-    ? nodeIsRunning
-      ? 'Stopping...'
-      : 'Starting...'
-    : nodeIsRunning
-      ? 'Stop node'
-      : 'Start node';
-  const nodeToggleClass = nodeIsRunning ? 'secondary' : 'primary';
+  const nodeToggleDisabled = nodeBusy || !nodeIsLocal || nodeTransitionAction !== null;
+  const nodeToggleClass = nodeIsRunning || nodeTransitionAction === 'stopping' ? 'secondary' : 'primary';
+  const nodeToggleLabel = nodeTransitionAction ? (
+    <span className="inline-flex items-center gap-1">
+      {nodeTransitionAction === 'starting' ? 'Starting' : 'Stopping'}
+      <span className="loading-dots" aria-hidden="true">
+        ...
+      </span>
+    </span>
+  ) : nodeIsRunning ? (
+    'Stop node'
+  ) : (
+    'Start node'
+  );
+  const handleNodeToggle = () => {
+    if (nodeToggleDisabled) {
+      return;
+    }
+    if (nodeIsRunning) {
+      void handleNodeStop();
+      return;
+    }
+    void handleNodeStart();
+  };
   const miningHint = activeSummary?.mining
     ? 'Mining is active. To change mining settings, stop the node, update Auto-start mining under Advanced settings, then restart.'
     : 'Mining is configured at launch. Enable Auto-start mining under Advanced settings and restart the node to mine.';
@@ -1087,7 +1215,10 @@ export default function App() {
   const pendingByTxId = useMemo(() => {
     const map = new Map<string, typeof pendingTransactions[number]>();
     pendingTransactions.forEach((entry) => {
-      map.set(entry.txId, entry);
+      const normalized = normalizeTxId(entry.txId);
+      if (normalized) {
+        map.set(normalized, entry);
+      }
     });
     return map;
   }, [pendingTransactions]);
@@ -1098,7 +1229,7 @@ export default function App() {
   );
 
   const activityEntries = useMemo(() => {
-    const consolidated = pendingTransactions.filter(
+    const consolidationEntries = pendingTransactions.filter(
       (entry) => entry.memo?.toLowerCase() === 'consolidation'
     );
     const pendingEntries: ActivityEntry[] = pendingTransactions.map((entry) => ({
@@ -1110,47 +1241,52 @@ export default function App() {
       fee: entry.fee,
       memo: entry.memo ?? undefined,
       status: entry.status === 'confirmed' ? 'confirmed' : 'pending',
-      txId: entry.txId,
+      txId: normalizeTxId(entry.txId) ?? entry.txId,
       confirmations: entry.confirmations
     }));
 
     const sortedAttempts = [...attemptsForStore].sort(
       (a, b) => parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt)
     );
+    const consolidationTxIds = new Set<string>();
     const attemptEntries: ActivityEntry[] = sortedAttempts.map((attempt, index) => {
       const windowEnd = index > 0 ? sortedAttempts[index - 1]?.createdAt : null;
       const pending = attempt.txId ? pendingByTxId.get(attempt.txId) : null;
       const status = pending ? (pending.status === 'confirmed' ? 'confirmed' : 'pending') : attempt.status;
       const expectedSteps = attempt.consolidationExpected ?? 0;
-      const matchingSteps = consolidated
+      const matchingSteps = consolidationEntries
         .filter((entry) => parseTimestamp(entry.createdAt) >= parseTimestamp(attempt.createdAt))
         .filter((entry) =>
           windowEnd ? parseTimestamp(entry.createdAt) < parseTimestamp(windowEnd) : true
         )
         .sort((a, b) => parseTimestamp(a.createdAt) - parseTimestamp(b.createdAt));
-      const stepCount = Math.max(expectedSteps, matchingSteps.length);
-      const steps: ActivityStep[] =
-        stepCount > 0
-          ? Array.from({ length: stepCount }, (_value, index) => {
-              const match = matchingSteps[index];
-              const stepStatus = match
-                ? match.status === 'confirmed'
-                  ? 'confirmed'
-                  : 'pending'
-                : attempt.status === 'failed'
-                  ? 'failed'
-                  : attempt.status === 'confirmed'
-                    ? 'confirmed'
-                    : 'processing';
-              return {
-                id: `${attempt.id}-step-${index}`,
-                label: `Consolidation ${index + 1} of ${stepCount}`,
-                status: stepStatus,
-                txId: match?.txId,
-                confirmations: match?.confirmations
-              };
-            })
-          : [];
+
+      matchingSteps.forEach((match) => {
+        const normalized = normalizeTxId(match.txId);
+        if (normalized) {
+          consolidationTxIds.add(normalized);
+        }
+      });
+
+      const consolidationSubmitted = matchingSteps.length;
+      const consolidationConfirmed = matchingSteps.filter((match) => match.status === 'confirmed').length;
+
+      const displayLimit = 3;
+      const displaySteps = matchingSteps.slice(-displayLimit);
+      const displayOffset = matchingSteps.length - displaySteps.length;
+      const steps: ActivityStep[] = displaySteps.map((match, displayIndex) => {
+        const stepIndex = displayOffset + displayIndex + 1;
+        const label = expectedSteps
+          ? `Consolidation tx ${stepIndex} of ~${expectedSteps}`
+          : `Consolidation tx ${stepIndex}`;
+        return {
+          id: `${attempt.id}-step-${stepIndex}`,
+          label,
+          status: match.status === 'confirmed' ? 'confirmed' : 'pending',
+          txId: normalizeTxId(match.txId) ?? match.txId,
+          confirmations: match.confirmations
+        };
+      });
 
       return {
         id: attempt.id,
@@ -1161,11 +1297,13 @@ export default function App() {
         fee: attempt.fee,
         memo: attempt.memo,
         status,
-        txId: pending?.txId ?? attempt.txId,
+        txId: normalizeTxId(pending?.txId) ?? attempt.txId,
         confirmations: pending?.confirmations,
         error: attempt.error,
         consolidationExpected: expectedSteps || undefined,
-        steps
+        consolidationSubmitted: consolidationSubmitted || undefined,
+        consolidationConfirmed: consolidationSubmitted ? consolidationConfirmed : undefined,
+        steps: steps.length ? steps : undefined
       };
     });
 
@@ -1174,9 +1312,10 @@ export default function App() {
         .map((entry) => entry.txId)
         .filter((entry): entry is string => Boolean(entry))
     );
+    const coveredTxIds = new Set([...attemptTxIds, ...consolidationTxIds]);
     const merged = [
       ...attemptEntries,
-      ...pendingEntries.filter((entry) => !entry.txId || !attemptTxIds.has(entry.txId))
+      ...pendingEntries.filter((entry) => !entry.txId || !coveredTxIds.has(entry.txId))
     ];
     merged.sort((a, b) => parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt));
     return merged;
@@ -1339,8 +1478,10 @@ export default function App() {
               Balance {hgmBalance ? formatHgm(hgmBalance.total) : 'N/A'}
             </p>
             <p>Last synced height {formatNumber(walletStatus?.lastSyncedHeight)}</p>
-            {walletStatus?.notes?.needsConsolidation && walletStatus.notes.plan ? (
-              <p className="text-amber">Consolidation needed (~{walletStatus.notes.plan.txsNeeded} txs).</p>
+            {walletStatus?.notes?.needsConsolidation ? (
+              <p className="text-amber">
+                Wallet has {walletStatus.notes.spendableCount} notes (max {walletStatus.notes.maxInputs} inputs/tx). Some sends may require consolidation.
+              </p>
             ) : null}
           </div>
         </section>
@@ -1379,8 +1520,8 @@ export default function App() {
           <div className="grid gap-3 sm:grid-cols-2">
             <button
               className={nodeToggleClass}
-              onClick={nodeIsRunning ? handleNodeStop : handleNodeStart}
-              disabled={nodeBusy || !nodeIsLocal}
+              onClick={handleNodeToggle}
+              disabled={nodeToggleDisabled}
             >
               {nodeToggleLabel}
             </button>
@@ -1700,8 +1841,8 @@ export default function App() {
       <div className="flex flex-wrap gap-3">
         <button
           className={nodeToggleClass}
-          onClick={nodeIsRunning ? handleNodeStop : handleNodeStart}
-          disabled={nodeBusy || !nodeIsLocal}
+          onClick={handleNodeToggle}
+          disabled={nodeToggleDisabled}
         >
           {nodeToggleLabel}
         </button>
@@ -2072,8 +2213,8 @@ export default function App() {
           {walletStatus?.notes ? (
             <p className="text-sm text-surfaceMuted">
               {walletStatus.notes.spendableCount} spendable notes, max {walletStatus.notes.maxInputs} inputs.
-              {walletStatus.notes.needsConsolidation && walletStatus.notes.plan ? (
-                <span className="text-amber"> Consolidation needed (~{walletStatus.notes.plan.txsNeeded} txs).</span>
+              {walletStatus.notes.needsConsolidation ? (
+                <span className="text-amber"> Some sends may require consolidation.</span>
               ) : null}
             </p>
           ) : (
@@ -2142,8 +2283,13 @@ export default function App() {
           <p className="text-sm text-surfaceMuted">Height {formatNumber(walletSummary?.bestNumber)}</p>
         </div>
       </div>
-      {walletStatus?.notes?.needsConsolidation && walletStatus.notes.plan ? (
-        <p className="text-sm text-amber">Consolidation needed (~{walletStatus.notes.plan.txsNeeded} txs).</p>
+      {walletStatus?.notes ? (
+        <p className="text-sm text-surfaceMuted">
+          Notes: {walletStatus.notes.spendableCount} spendable · max {walletStatus.notes.maxInputs} inputs/tx.
+          {walletStatus.notes.needsConsolidation ? (
+            <span className="text-amber"> Some sends may require consolidation.</span>
+          ) : null}
+        </p>
       ) : null}
       {sendBlockedReason ? (
         <p className="text-sm text-guard">{sendBlockedReason}</p>
@@ -2206,7 +2352,7 @@ export default function App() {
         </label>
         <label className="flex items-center gap-2 text-sm text-surfaceMuted">
           <input type="checkbox" checked={autoConsolidate} onChange={(event) => setAutoConsolidate(event.target.checked)} />
-          Auto-consolidate notes if needed
+          Auto-consolidate notes if needed (can take many txs)
         </label>
       </div>
       <button className="primary" onClick={handleWalletSend} disabled={!canSend}>
@@ -2279,29 +2425,37 @@ export default function App() {
                     </div>
                   ) : null}
                   {entry.error ? <p className="text-xs text-guard">{entry.error}</p> : null}
-                  {entry.steps && entry.steps.length > 0 ? (
+                  {entry.consolidationExpected || entry.consolidationSubmitted ? (
                     <div className="mt-3 space-y-2 border-l border-surfaceMuted/15 pl-4">
                       <p className="text-[10px] uppercase tracking-[0.2em] text-surfaceMuted/70">
-                        {entry.steps.some((step) => Boolean(step.txId))
-                          ? 'Consolidation steps'
-                          : 'Consolidation steps (estimated)'}
+                        Note consolidation
                       </p>
-                      {entry.steps.map((step) => (
-                        <div key={step.id} className="flex items-center justify-between gap-3 text-xs">
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`flex h-6 w-6 items-center justify-center rounded-full border text-[9px] font-semibold ${activityStatusClasses[step.status]} ${step.status === 'processing' ? 'animate-pulse-slow' : ''}`}
-                            >
-                              {activityStatusSymbols[step.status]}
-                            </span>
-                            <span className="text-surfaceMuted">{step.label}</span>
-                          </div>
-                          <div className="text-surfaceMuted">
-                            {step.txId ? `Tx ${formatHash(step.txId)}` : activityStatusLabels[step.status]}
-                            {step.confirmations !== undefined ? ` · ${step.confirmations} conf` : ''}
-                          </div>
+                      <p className="text-xs text-surfaceMuted">
+                        {entry.consolidationSubmitted
+                          ? `${entry.consolidationConfirmed ?? 0}/${entry.consolidationSubmitted} confirmed`
+                          : 'Preparing consolidation…'}
+                        {entry.consolidationExpected ? ` · ~${entry.consolidationExpected} txs expected` : ''}
+                      </p>
+                      {entry.steps ? (
+                        <div className="space-y-2 pt-1">
+                          {entry.steps.map((step) => (
+                            <div key={step.id} className="flex items-center justify-between gap-3 text-xs">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`flex h-6 w-6 items-center justify-center rounded-full border text-[9px] font-semibold ${activityStatusClasses[step.status]} ${step.status === 'processing' ? 'animate-pulse-slow' : ''}`}
+                                >
+                                  {activityStatusSymbols[step.status]}
+                                </span>
+                                <span className="text-surfaceMuted">{step.label}</span>
+                              </div>
+                              <div className="text-surfaceMuted">
+                                {step.txId ? `Tx ${formatHash(step.txId)}` : activityStatusLabels[step.status]}
+                                {step.confirmations !== undefined ? ` · ${step.confirmations} conf` : ''}
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -2336,7 +2490,9 @@ export default function App() {
           <input type="checkbox" checked={newContactVerified} onChange={(event) => setNewContactVerified(event.target.checked)} />
           Verified out of band
         </label>
-        <button className="secondary" onClick={handleAddContact}>Add contact</button>
+        <button className="secondary" onClick={handleAddContact} disabled={!contactsLoaded || contactsSaving}>
+          {!contactsLoaded ? 'Loading…' : contactsSaving ? 'Saving…' : 'Add contact'}
+        </button>
       </div>
 
       <div className="space-y-3">
@@ -2357,7 +2513,9 @@ export default function App() {
                 <p className="text-lg font-medium">{contact.name}</p>
                 <p className="mono text-sm text-surfaceMuted">{formatAddress(contact.address)}</p>
               </div>
-              <button className="danger" onClick={() => handleRemoveContact(contact.id)}>Remove</button>
+              <button className="danger" onClick={() => handleRemoveContact(contact.id)} disabled={contactsSaving}>
+                Remove
+              </button>
             </div>
             <p className="text-sm text-surfaceMuted">Verified: {contact.verified ? 'Yes' : 'No'}</p>
             {contact.notes && <p className="text-sm text-surfaceMuted">Notes: {contact.notes}</p>}
