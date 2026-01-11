@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, nativeImage, session } from 'electron';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NodeManager } from './nodeManager';
@@ -13,6 +13,8 @@ import type {
   WalletDisclosureRecord,
   WalletDisclosureCreateResult,
   WalletDisclosureVerifyResult,
+  WalletSendPlanRequest,
+  WalletSendPlanResult,
   WalletSendRequest,
   WalletSendResult,
   WalletStatus,
@@ -24,6 +26,50 @@ const nodeManager = new NodeManager();
 const walletdClient = new WalletdClient();
 const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
 const contactsFileName = 'contacts.json';
+let contactsWriteQueue: Promise<void> = Promise.resolve();
+
+const resolveContactsPath = () => join(app.getPath('appData'), 'Hegemon', contactsFileName);
+
+const resolveLegacyContactsPaths = () => {
+  const appData = app.getPath('appData');
+  const stable = resolveContactsPath();
+  const candidates = [
+    join(app.getPath('userData'), contactsFileName),
+    join(appData, 'hegemon-app', contactsFileName),
+    join(appData, 'Hegemon Core', contactsFileName),
+    join(appData, 'Electron', contactsFileName)
+  ];
+  return candidates.filter((candidate) => candidate !== stable);
+};
+
+const migrateContactsIfNeeded = async (destinationPath: string) => {
+  if (existsSync(destinationPath)) {
+    return;
+  }
+  for (const legacyPath of resolveLegacyContactsPaths()) {
+    if (!existsSync(legacyPath)) {
+      continue;
+    }
+    try {
+      const raw = await readFile(legacyPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        continue;
+      }
+      await mkdir(dirname(destinationPath), { recursive: true });
+      try {
+        await rename(legacyPath, destinationPath);
+      } catch (error) {
+        console.warn('Failed to move legacy contacts file, falling back to copy.', error);
+        await writeFile(destinationPath, JSON.stringify(parsed, null, 2), 'utf-8');
+      }
+      console.info(`Migrated contacts from ${legacyPath} to ${destinationPath}.`);
+      return;
+    } catch (error) {
+      console.warn(`Failed to migrate contacts from ${legacyPath}.`, error);
+    }
+  }
+};
 
 const buildContentSecurityPolicy = (devUrl?: string) => {
   const defaultSrc = ["'self'"];
@@ -89,11 +135,24 @@ const loadAppIcon = () => {
 };
 
 const loadContacts = async (): Promise<Contact[] | null> => {
-  const filePath = join(app.getPath('userData'), contactsFileName);
+  const filePath = resolveContactsPath();
+  await migrateContactsIfNeeded(filePath);
   try {
     const raw = await readFile(filePath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      const stamped = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = join(app.getPath('userData'), `${contactsFileName}.corrupt-${stamped}`);
+      try {
+        await rename(filePath, backupPath);
+      } catch (renameError) {
+        console.warn('Failed to backup corrupt contacts file.', renameError);
+      }
+      console.warn(`Contacts file was corrupt. Backed up to ${backupPath}.`, error);
+      return [];
+    }
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error) {
       const err = error as NodeJS.ErrnoException;
@@ -107,9 +166,21 @@ const loadContacts = async (): Promise<Contact[] | null> => {
 };
 
 const saveContacts = async (contacts: Contact[]) => {
-  const filePath = join(app.getPath('userData'), contactsFileName);
-  await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, JSON.stringify(contacts, null, 2), 'utf-8');
+  const filePath = resolveContactsPath();
+  const payload = JSON.stringify(contacts, null, 2);
+
+  const nextWrite = contactsWriteQueue.then(async () => {
+    await mkdir(dirname(filePath), { recursive: true });
+    const tmpPath = `${filePath}.tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    await writeFile(tmpPath, payload, 'utf-8');
+    await rename(tmpPath, filePath);
+  });
+
+  contactsWriteQueue = nextWrite.catch((error) => {
+    console.error('Failed to save contacts.', error);
+  });
+
+  return nextWrite;
 };
 
 const createWindow = () => {
@@ -206,6 +277,10 @@ ipcMain.handle('wallet:sync', async (
 
 ipcMain.handle('wallet:send', async (_event, request: WalletSendRequest) => {
   return walletdClient.send(request) as Promise<WalletSendResult>;
+});
+
+ipcMain.handle('wallet:sendPlan', async (_event, request: WalletSendPlanRequest) => {
+  return walletdClient.sendPlan(request) as Promise<WalletSendPlanResult>;
 });
 
 ipcMain.handle(

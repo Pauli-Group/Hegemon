@@ -279,6 +279,23 @@ button.danger:hover:not(:disabled) {
   50% { opacity: 0.6; }
 }
 
+.loading-dots {
+  @apply inline-block overflow-hidden align-bottom;
+  width: 0;
+  animation: loading-dots 1.2s steps(4, end) infinite;
+}
+
+@keyframes loading-dots {
+  to { width: 1.5em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-dots {
+    animation: none;
+    width: 1.5em;
+  }
+}
+
 .badge {
   @apply text-[10px] uppercase tracking-[0.18em] px-2 py-1 rounded-full border border-surfaceMuted/20 text-surfaceMuted font-medium;
   transition: background-color var(--transition-fast), border-color var(--transition-fast);

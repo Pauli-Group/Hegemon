@@ -218,3 +218,23 @@ export type WalletSendRequest = {
   fee: number;
   autoConsolidate: boolean;
 };
+
+export type WalletSendPlanRequest = {
+  storePath: string;
+  passphrase: string;
+  recipients: Array<{ address: string; value: number; asset_id: number; memo?: string | null }>;
+  fee: number;
+};
+
+export type WalletSendPlanResult = {
+  assetId: number;
+  totalNeeded: number;
+  availableValue: number;
+  walletNoteCount: number;
+  selectedNoteCount: number;
+  selectedValue: number;
+  maxInputs: number;
+  sufficientFunds: boolean;
+  needsConsolidation: boolean;
+  plan?: { txsNeeded: number; blocksNeeded: number } | null;
+};

@@ -9,6 +9,8 @@ import type {
   WalletDisclosureVerifyResult,
   WalletSendRequest,
   WalletSendResult,
+  WalletSendPlanRequest,
+  WalletSendPlanResult,
   WalletStatus,
   WalletSyncResult
 } from './types';
@@ -27,6 +29,7 @@ export type HegemonApi = {
     status: (storePath: string, passphrase: string, noSync?: boolean) => Promise<WalletStatus>;
     sync: (storePath: string, passphrase: string, wsUrl: string, forceRescan?: boolean) => Promise<WalletSyncResult>;
     send: (request: WalletSendRequest) => Promise<WalletSendResult>;
+    sendPlan: (request: WalletSendPlanRequest) => Promise<WalletSendPlanResult>;
     disclosureCreate: (
       storePath: string,
       passphrase: string,

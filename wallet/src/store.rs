@@ -623,9 +623,20 @@ impl WalletStore {
         latest_height: u64,
         nullifiers: &HashSet<[u8; 48]>,
     ) -> Result<(), WalletError> {
-        // Transactions older than this are considered expired (5 minutes)
-        const PENDING_TIMEOUT_SECS: u64 = 300;
+        // Pending timeout: keep consolidation transactions around much longer because a large
+        // consolidation can legitimately span many blocks.
+        const DEFAULT_PENDING_TIMEOUT_SECS: u64 = 300;
+        const DEFAULT_CONSOLIDATION_PENDING_TIMEOUT_SECS: u64 = 12 * 60 * 60;
         let now = current_timestamp();
+
+        let pending_timeout_secs = std::env::var("WALLET_PENDING_TIMEOUT_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_PENDING_TIMEOUT_SECS);
+        let consolidation_timeout_secs = std::env::var("WALLET_CONSOLIDATION_PENDING_TIMEOUT_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_CONSOLIDATION_PENDING_TIMEOUT_SECS);
 
         self.with_mut(|state| {
             let mut expired_indexes: Vec<usize> = Vec::new();
@@ -678,7 +689,17 @@ impl WalletStore {
                             note.pending_spend = false;
                         }
                     }
-                } else if now.saturating_sub(tx.submitted_at) > PENDING_TIMEOUT_SECS {
+                } else {
+                    let is_consolidation = tx
+                        .recipients
+                        .iter()
+                        .any(|recipient| recipient.memo.as_deref() == Some("consolidation"));
+                    let timeout_secs = if is_consolidation {
+                        consolidation_timeout_secs
+                    } else {
+                        pending_timeout_secs
+                    };
+                    if now.saturating_sub(tx.submitted_at) > timeout_secs {
                     // Transaction expired - release locked notes
                     for &idx in &tx.spent_note_indexes {
                         if let Some(note) = state.notes.get_mut(idx) {
@@ -689,6 +710,7 @@ impl WalletStore {
                         }
                     }
                     expired_indexes.push(i);
+                    }
                 }
             }
 
@@ -755,7 +777,10 @@ impl WalletStore {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let tmp = self.path.with_extension("tmp");
+        let mut tmp_suffix = [0u8; 8];
+        OsRng.fill_bytes(&mut tmp_suffix);
+        let tmp_id = u64::from_le_bytes(tmp_suffix);
+        let tmp = self.path.with_extension(format!("tmp-{tmp_id:x}"));
         fs::write(&tmp, &bytes)?;
         fs::rename(&tmp, &self.path)?;
         Ok(())

@@ -4,6 +4,7 @@ import type {
   NodeMiningRequest,
   NodeStartOptions,
   NodeSummaryRequest,
+  WalletSendPlanRequest,
   WalletSendRequest
 } from '../src/types';
 
@@ -23,6 +24,7 @@ contextBridge.exposeInMainWorld('hegemon', {
     sync: (storePath: string, passphrase: string, wsUrl: string, forceRescan?: boolean) =>
       ipcRenderer.invoke('wallet:sync', storePath, passphrase, wsUrl, forceRescan),
     send: (request: WalletSendRequest) => ipcRenderer.invoke('wallet:send', request),
+    sendPlan: (request: WalletSendPlanRequest) => ipcRenderer.invoke('wallet:sendPlan', request),
     disclosureCreate: (
       storePath: string,
       passphrase: string,
