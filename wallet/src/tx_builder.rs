@@ -571,7 +571,9 @@ pub fn build_consolidation_transaction(
             "consolidation notes must be distinct",
         ));
     }
-    if note_a.recovered.note.asset_id != NATIVE_ASSET_ID || note_b.recovered.note.asset_id != NATIVE_ASSET_ID {
+    if note_a.recovered.note.asset_id != NATIVE_ASSET_ID
+        || note_b.recovered.note.asset_id != NATIVE_ASSET_ID
+    {
         return Err(WalletError::InvalidArgument(
             "consolidation only supports native asset notes",
         ));

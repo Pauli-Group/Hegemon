@@ -9498,7 +9498,6 @@ dependencies = [
 name = "security-tests"
 version = "0.1.0"
 dependencies = [
- "axum",
  "bincode",
  "block-circuit",
  "consensus",
@@ -9523,7 +9522,6 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "transaction-circuit",
- "url",
  "wallet",
 ]
 

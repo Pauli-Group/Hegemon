@@ -394,7 +394,7 @@ nullifiers for spentness tracking without embedding `sk_spend`.
 * Substrate RPC wallet management (`substrate-sync`, `substrate-daemon`, `substrate-send`, `substrate-batch-send` gated behind the `batch-proofs` feature) that use the WebSocket RPC for live wallets. `wallet substrate-send` records outgoing disclosure records inside the encrypted store so on-demand payment proofs can be generated later.
   * Compliance tooling (`payment-proof create`, `payment-proof verify`, `payment-proof purge`) that emits disclosure packages and verifies them against Merkle inclusion plus `hegemon_isValidAnchor` and the chain genesis hash.
 
-JSON fixtures for transaction inputs/recipients still follow the `transaction_circuit` `serde` representation so the witness builder plugs directly into existing proving code. `wallet/tests/cli.rs` exercises the offline commands via `cargo_bin_cmd!`, `wallet/tests/rpc_flow.rs` spins up a lightweight test node for send/receive flows, and `wallet/tests/disclosure_package.rs` covers payment-proof package generation plus tamper rejection without requiring a live node. The disclosure circuit itself is tested under `circuits/disclosure/tests/disclosure.rs`.
+JSON fixtures for transaction inputs/recipients still follow the `transaction_circuit` `serde` representation so the witness builder plugs directly into existing proving code. `wallet/tests/cli.rs` exercises the offline commands via `cargo_bin_cmd!`, and `wallet/tests/disclosure_package.rs` covers payment-proof package generation plus tamper rejection without requiring a live node. The disclosure circuit itself is tested under `circuits/disclosure/tests/disclosure.rs`.
 
 ---
 
@@ -863,7 +863,6 @@ Implementation hygiene now mirrors the layout introduced in `DESIGN.md §6` and 
    - `cargo test -p synthetic-crypto` for deterministic PQ primitive vectors.
    - `cargo test -p transaction-circuit && cargo test -p block-circuit` for circuit constraints.
    - `cargo test -p wallet` for CLI/integration fixtures.
-   - `cargo test -p wallet --test rpc_flow` spins up the lightweight test node and runs the RPC-driven send/receive/nullifier flow between a full wallet and a watch-only wallet.
 4. **Benchmarks (smoke mode)**:
    - `cargo run -p circuits-bench -- --smoke --prove --json` – validates witness → proof → block aggregation loop.
    - `cargo run -p wallet-bench -- --smoke --json` – stresses key derivation, encryption, and nullifier derivations.

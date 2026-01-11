@@ -28,8 +28,7 @@ use wallet::{
     parse_recipients, precheck_nullifiers,
     store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
     substrate_rpc::SubstrateRpcClient,
-    transfer_recipients_from_specs, ConsolidationPlan, RecipientSpec, MAX_INPUTS,
-    WalletError,
+    transfer_recipients_from_specs, ConsolidationPlan, RecipientSpec, WalletError, MAX_INPUTS,
 };
 
 const PROTOCOL_VERSION: u32 = 1;
@@ -662,7 +661,9 @@ fn render_pending(tx: &wallet::PendingTransaction, latest_height: u64) -> Pendin
 }
 
 fn disclosure_list(store: &Arc<WalletStore>) -> WalletdResult<Vec<DisclosureRecord>> {
-    let records = store.outgoing_disclosures().map_err(WalletdError::internal)?;
+    let records = store
+        .outgoing_disclosures()
+        .map_err(WalletdError::internal)?;
     Ok(records.iter().map(render_disclosure).collect())
 }
 
@@ -935,7 +936,9 @@ fn tx_plan(store: &Arc<WalletStore>, params: TxPlanParams) -> WalletdResult<TxPl
         });
     }
 
-    let mut notes = store.spendable_notes(output_asset).map_err(WalletdError::internal)?;
+    let mut notes = store
+        .spendable_notes(output_asset)
+        .map_err(WalletdError::internal)?;
     notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
 
     let wallet_note_count = notes.len();

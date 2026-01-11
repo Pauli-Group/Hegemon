@@ -235,7 +235,9 @@ pub async fn execute_consolidation(
 
         let mut pair_index = 0usize;
         while pair_index < max_txs {
-            if pair_index > 0 && batch_bytes.saturating_add(bundle_bytes_estimate) > CONSOLIDATION_MAX_BATCH_BYTES {
+            if pair_index > 0
+                && batch_bytes.saturating_add(bundle_bytes_estimate) > CONSOLIDATION_MAX_BATCH_BYTES
+            {
                 if verbose {
                     println!("  Stopping batch early to stay under block size budget.");
                 }
@@ -273,7 +275,9 @@ pub async fn execute_consolidation(
                 max_txs = max_txs.min(adjusted_by_bytes);
             }
 
-            if pair_index > 0 && batch_bytes.saturating_add(tx_bytes) > CONSOLIDATION_MAX_BATCH_BYTES {
+            if pair_index > 0
+                && batch_bytes.saturating_add(tx_bytes) > CONSOLIDATION_MAX_BATCH_BYTES
+            {
                 if verbose {
                     println!("  Stopping batch early to stay under block size budget.");
                 }
@@ -291,17 +295,21 @@ pub async fn execute_consolidation(
             let hash = match submit_result {
                 Ok(hash) => Some(hash),
                 Err(WalletError::Rpc(msg))
-                    if msg.contains("Priority is too low") || msg.contains("already in the pool") =>
+                    if msg.contains("Priority is too low")
+                        || msg.contains("already in the pool") =>
                 {
                     if verbose {
-                        println!("    Note: tx appears already in pool; waiting for confirmation...");
+                        println!(
+                            "    Note: tx appears already in pool; waiting for confirmation..."
+                        );
                     }
                     None
                 }
                 Err(err) => {
                     store.mark_notes_pending(&built.spent_note_indexes, false)?;
                     if !batch_nullifiers.is_empty() {
-                        let _ = wait_for_nullifiers_spent(&engine, rpc, &store, &batch_nullifiers).await;
+                        let _ = wait_for_nullifiers_spent(&engine, rpc, &store, &batch_nullifiers)
+                            .await;
                     }
                     return Err(err);
                 }
@@ -335,7 +343,8 @@ pub async fn execute_consolidation(
             pair_index = pair_index.saturating_add(1);
         }
 
-        let confirmed_height = wait_for_nullifiers_spent(&engine, rpc, &store, &batch_nullifiers).await?;
+        let confirmed_height =
+            wait_for_nullifiers_spent(&engine, rpc, &store, &batch_nullifiers).await?;
         if verbose {
             println!("  Confirmed round (observed at block {})", confirmed_height);
         }

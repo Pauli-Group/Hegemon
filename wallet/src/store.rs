@@ -700,16 +700,16 @@ impl WalletStore {
                         pending_timeout_secs
                     };
                     if now.saturating_sub(tx.submitted_at) > timeout_secs {
-                    // Transaction expired - release locked notes
-                    for &idx in &tx.spent_note_indexes {
-                        if let Some(note) = state.notes.get_mut(idx) {
-                            // Only release if not actually spent on-chain
-                            if !note.spent {
-                                note.pending_spend = false;
+                        // Transaction expired - release locked notes
+                        for &idx in &tx.spent_note_indexes {
+                            if let Some(note) = state.notes.get_mut(idx) {
+                                // Only release if not actually spent on-chain
+                                if !note.spent {
+                                    note.pending_spend = false;
+                                }
                             }
                         }
-                    }
-                    expired_indexes.push(i);
+                        expired_indexes.push(i);
                     }
                 }
             }

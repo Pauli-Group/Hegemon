@@ -68,13 +68,11 @@ impl ShieldedAddress {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
         let expected_len = 1 + 4 + 32 + ML_KEM_PUBLIC_KEY_LEN;
         if bytes.len() != expected_len {
-            return Err(WalletError::AddressEncoding(
-                format!(
-                    "invalid address length: expected {} bytes, got {}",
-                    expected_len,
-                    bytes.len()
-                ),
-            ));
+            return Err(WalletError::AddressEncoding(format!(
+                "invalid address length: expected {} bytes, got {}",
+                expected_len,
+                bytes.len()
+            )));
         }
         let version = bytes[0];
         let mut index_bytes = [0u8; 4];
