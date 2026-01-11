@@ -47,6 +47,10 @@ Observable outcome: running `npm run dev` in `hegemon-app/` shows a Transaction 
   Rationale: Wallet consolidation already tags interim outputs with that memo, so the UI can surface them without new backend state.  
   Date/Author: 2026-01-10 / Agent
 
+- Decision: Treat `unknown_method` errors for `disclosure.list` as a compatibility signal and silently return an empty list.  
+  Rationale: Prevents older walletd binaries from blocking wallet open while still encouraging rebuild for full disclosure history.  
+  Date/Author: 2026-01-10 / Agent
+
 ## Outcomes & Retrospective
 
 TBD after implementation.
@@ -132,4 +136,4 @@ Expose this on the renderer API as:
 
 Use the existing `WalletStatus.pending` list for historical outgoing transactions, and in-memory send attempts for immediate feedback and failed submissions.
 
-Plan update note (2026-01-10): Marked completed milestones and added the consolidation-memo discovery and decision after implementing the IPC + UI changes so the plan reflects shipped progress.
+Plan update note (2026-01-10): Marked completed milestones and added the consolidation-memo discovery and compatibility decision after implementing IPC + UI changes so the plan reflects shipped progress.

@@ -58,7 +58,8 @@ const buildContentSecurityPolicy = (devUrl?: string) => {
 };
 
 const resolveIconPath = () => {
-  const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
+  const iconFile =
+    process.platform === 'win32' ? 'icon.ico' : process.platform === 'darwin' ? 'icon.icns' : 'icon.png';
   const packagedIcon = join(process.resourcesPath, iconFile);
   const devIcon = join(process.cwd(), 'build', iconFile);
   const iconPath = app.isPackaged ? packagedIcon : devIcon;

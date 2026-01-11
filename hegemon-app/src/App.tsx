@@ -708,7 +708,13 @@ export default function App() {
       const records = await window.hegemon.wallet.disclosureList(resolvedStorePath, passphrase);
       setDisclosureRecords(records);
     } catch (error) {
-      setWalletError(error instanceof Error ? error.message : 'Disclosure list failed.');
+      const message = error instanceof Error ? error.message : 'Disclosure list failed.';
+      const code = (error as { code?: string }).code;
+      if (code === 'unknown_method' || message.includes('unknown method disclosure.list')) {
+        setDisclosureRecords([]);
+        return;
+      }
+      setWalletError(message);
     } finally {
       setDisclosureListBusy(false);
     }
