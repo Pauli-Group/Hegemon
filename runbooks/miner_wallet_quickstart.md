@@ -8,39 +8,43 @@ Use this runbook to stand up mining nodes and verify they are producing blocks w
 - Build the binaries:
   ```bash
   make node
-  cargo build --release -p hegemon-wallet
+  cargo build --release -p walletd
   ```
 
 ## 2. Create or restore a wallet
 
-Create a new wallet:
+Create a new wallet store (walletd):
 ```bash
-./target/release/wallet init --store ~/.hegemon-wallet --passphrase "your-secure-passphrase"
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-secure-passphrase" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode create
 ```
 
-**Important:** Save the mnemonic phrase securely—it's your only recovery method.
+**Important:** Back up the store path and passphrase. walletd does not emit a mnemonic.
 
-Restore from existing mnemonic:
+To initialize from an existing root secret or viewing key, use the wallet CLI:
 ```bash
-./target/release/wallet restore --store ~/.hegemon-wallet --passphrase "your-secure-passphrase"
-# Enter your 24-word mnemonic when prompted
+cargo build --release -p wallet
+./target/release/wallet init --store ~/.hegemon-wallet --passphrase "your-secure-passphrase" --root-hex <HEX>
+# Or: --viewing-key /path/to/ivk.json
 ```
 
 ## 3. Get your shielded address
 
 View your wallet status to get your shielded address:
 ```bash
-./target/release/wallet status --store ~/.hegemon-wallet --passphrase "your-secure-passphrase"
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-secure-passphrase" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
+  | jq '.result'
 ```
 
 Output includes:
-- **Shielded Address**: A ~2KB bech32m string starting with `shca1...` 
+- **primaryAddress**: A ~2KB bech32m string starting with `shca1...`
 
 Export the shielded address for mining:
 ```bash
-export HEGEMON_MINER_ADDRESS=$(./target/release/wallet status \
-  --store ~/.hegemon-wallet --passphrase "your-secure-passphrase" 2>/dev/null \
-  | grep "Shielded Address" | awk '{print $3}')
+export HEGEMON_MINER_ADDRESS=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-secure-passphrase" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
+  | jq -r '.result.primaryAddress')
 ```
 
 ## 4. Start a mining node
@@ -99,14 +103,15 @@ Both nodes should see each other as peers and sync blocks.
 After mining some blocks, sync your wallet to detect received notes:
 
 ```bash
-./target/release/wallet substrate-sync --store ~/.hegemon-wallet --passphrase "your-secure-passphrase" \
-  --ws-url ws://127.0.0.1:9944
+printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"ws://127.0.0.1:9944","force_rescan":false}}\n' "your-secure-passphrase" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode open
 ```
 
 Check your balance:
 ```bash
-./target/release/wallet status --store ~/.hegemon-wallet --passphrase "your-secure-passphrase" \
-  --ws-url ws://127.0.0.1:9944
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-secure-passphrase" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
+  | jq '.result'
 ```
 
 Each mined block adds ~4.98 HEG to your shielded balance (subject to halving every ~4 years).
