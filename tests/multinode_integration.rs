@@ -814,7 +814,7 @@ mod live_node_tests {
 }
 
 // ============================================================================
-// Legacy single-node tests (for when you just have one node running)
+// Single-node tests (for when you just have one node running)
 // ============================================================================
 
 #[cfg(test)]

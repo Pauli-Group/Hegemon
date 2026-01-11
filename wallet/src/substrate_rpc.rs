@@ -4,10 +4,9 @@
 //! nodes using the jsonrpsee library. It implements the wallet-specific RPC methods
 //! defined in the `hegemon_*` namespace.
 //!
-//! # Migration from HTTP
+//! # WebSocket RPC
 //!
-//! This replaces the previous HTTP-based `WalletRpcClient` with a WebSocket client
-//! that supports:
+//! The client uses WebSocket RPC for wallet-specific methods and supports:
 //! - Persistent connections with automatic reconnection
 //! - Block subscriptions for real-time sync
 //! - Full async/await support
@@ -205,14 +204,14 @@ pub struct TransactionResponse {
 /// Parse a NoteCiphertext from the pallet's on-chain format.
 ///
 /// The pallet stores encrypted notes as:
-/// - ciphertext[611]: version(1) + diversifier_index(4) + note_len(4) + note_payload +
-///                    memo_len(4) + memo_payload + padding + hint_tag(32)
+/// - ciphertext[579]: version(1) + diversifier_index(4) + note_len(4) + note_payload +
+///                    memo_len(4) + memo_payload + padding
 /// - kem_ciphertext[1088]: ML-KEM ciphertext
 ///
-/// Total: 1699 bytes
+/// Total: 1667 bytes
 fn parse_pallet_encrypted_note(bytes: &[u8]) -> Result<NoteCiphertext, WalletError> {
-    const CIPHERTEXT_SIZE: usize = 611;
-    const KEM_CIPHERTEXT_SIZE: usize = 1088;
+    const CIPHERTEXT_SIZE: usize = crate::notes::PALLET_CIPHERTEXT_SIZE;
+    const KEM_CIPHERTEXT_SIZE: usize = crate::notes::PALLET_KEM_CIPHERTEXT_SIZE;
     const EXPECTED_SIZE: usize = CIPHERTEXT_SIZE + KEM_CIPHERTEXT_SIZE;
 
     if bytes.len() != EXPECTED_SIZE {
@@ -244,7 +243,7 @@ fn parse_pallet_encrypted_note(bytes: &[u8]) -> Result<NoteCiphertext, WalletErr
     ) as usize;
     offset += 4;
 
-    if offset + note_len > CIPHERTEXT_SIZE - 32 {
+    if offset + note_len + 4 > CIPHERTEXT_SIZE {
         return Err(WalletError::Serialization(format!(
             "Note payload too large: {} bytes at offset {}",
             note_len, offset
@@ -261,16 +260,11 @@ fn parse_pallet_encrypted_note(bytes: &[u8]) -> Result<NoteCiphertext, WalletErr
     ) as usize;
     offset += 4;
 
-    let memo_payload = if memo_len > 0 && offset + memo_len <= CIPHERTEXT_SIZE - 32 {
+    let memo_payload = if memo_len > 0 && offset + memo_len <= CIPHERTEXT_SIZE {
         ciphertext_bytes[offset..offset + memo_len].to_vec()
     } else {
         Vec::new()
     };
-
-    // Hint tag is at the end of the 611-byte ciphertext
-    let hint_tag_start = CIPHERTEXT_SIZE - 32;
-    let mut hint_tag = [0u8; 32];
-    hint_tag.copy_from_slice(&ciphertext_bytes[hint_tag_start..]);
 
     Ok(NoteCiphertext {
         version,
@@ -278,7 +272,6 @@ fn parse_pallet_encrypted_note(bytes: &[u8]) -> Result<NoteCiphertext, WalletErr
         kem_ciphertext,
         note_payload,
         memo_payload,
-        hint_tag,
     })
 }
 
@@ -1484,8 +1477,7 @@ struct AttestationCommitmentSnapshot {
 
 /// Blocking wrapper for SubstrateRpcClient
 ///
-/// Provides a blocking API for use in synchronous contexts,
-/// compatible with the existing WalletRpcClient interface.
+/// Provides a blocking API for use in synchronous contexts.
 #[derive(Clone)]
 pub struct BlockingSubstrateRpcClient {
     inner: Arc<SubstrateRpcClient>,

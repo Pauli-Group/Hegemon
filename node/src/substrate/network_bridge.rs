@@ -31,21 +31,15 @@
 //! ```
 
 use codec::{Decode, Encode};
-use network::{
-    PeerId, PqNetworkEvent, BLOCK_ANNOUNCES_LEGACY, BLOCK_ANNOUNCES_PQ, SYNC_LEGACY, SYNC_PQ,
-    TRANSACTIONS_LEGACY, TRANSACTIONS_PQ,
-};
+use network::{PeerId, PqNetworkEvent, BLOCK_ANNOUNCES_PQ, SYNC_PQ, TRANSACTIONS_PQ};
 use state_da::DaChunkProof;
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
 
 /// Protocol identifiers for block-related messages (re-exported for convenience)
 pub const BLOCK_ANNOUNCE_PROTOCOL: &str = BLOCK_ANNOUNCES_PQ;
-pub const BLOCK_ANNOUNCE_PROTOCOL_LEGACY: &str = BLOCK_ANNOUNCES_LEGACY;
 pub const TRANSACTIONS_PROTOCOL: &str = TRANSACTIONS_PQ;
-pub const TRANSACTIONS_PROTOCOL_LEGACY: &str = TRANSACTIONS_LEGACY;
 pub const SYNC_PROTOCOL: &str = SYNC_PQ;
-pub const SYNC_PROTOCOL_LEGACY: &str = SYNC_LEGACY;
 /// Data-availability chunk request/response protocol (PQ version).
 pub const DA_CHUNKS_PROTOCOL: &str = "/hegemon/da/chunks/pq/1";
 
@@ -389,15 +383,15 @@ impl NetworkBridge {
 
     /// Handle incoming message from peer
     async fn handle_message(&mut self, peer_id: &PeerId, protocol: &str, data: &[u8]) {
-        // Match both PQ and legacy protocol variants
+        // Match PQ protocol variants
         match protocol {
-            p if p == BLOCK_ANNOUNCE_PROTOCOL || p == BLOCK_ANNOUNCE_PROTOCOL_LEGACY => {
+            p if p == BLOCK_ANNOUNCE_PROTOCOL => {
                 self.handle_block_announce(peer_id, data).await;
             }
-            p if p == TRANSACTIONS_PROTOCOL || p == TRANSACTIONS_PROTOCOL_LEGACY => {
+            p if p == TRANSACTIONS_PROTOCOL => {
                 self.handle_transactions(peer_id, data).await;
             }
-            p if p == SYNC_PROTOCOL || p == SYNC_PROTOCOL_LEGACY => {
+            p if p == SYNC_PROTOCOL => {
                 self.handle_sync_message(peer_id, data).await;
             }
             p if p == DA_CHUNKS_PROTOCOL => {

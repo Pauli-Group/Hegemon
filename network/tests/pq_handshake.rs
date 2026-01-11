@@ -3,9 +3,7 @@
 //! Tests for the post-quantum secure peer-to-peer communication layer.
 
 use network::p2p::WireMessage;
-use network::{
-    ConnectionMode, PqPeerIdentity, PqTransportConfig, upgrade_inbound, upgrade_outbound,
-};
+use network::{PqPeerIdentity, PqTransportConfig, upgrade_inbound, upgrade_outbound};
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
 
@@ -103,9 +101,6 @@ async fn test_pq_handshake_production_config() {
     let node1 = PqPeerIdentity::new(b"prod-node-1", PqTransportConfig::production());
     let node2 = PqPeerIdentity::new(b"prod-node-2", PqTransportConfig::production());
 
-    assert!(node1.requires_pq());
-    assert!(node2.requires_pq());
-
     let responder_handle = tokio::spawn(async move {
         let (socket, peer_addr) = listener.accept().await.unwrap();
         upgrade_inbound(&node2, socket, peer_addr).await
@@ -189,27 +184,13 @@ fn test_peer_id_deterministic() {
 #[test]
 fn test_transport_config_options() {
     let default_config = PqTransportConfig::default();
-    assert!(default_config.require_pq);
     assert_eq!(default_config.handshake_timeout, Duration::from_secs(30));
 
     let dev_config = PqTransportConfig::development();
-    assert!(!dev_config.require_pq);
     assert!(dev_config.verbose_logging);
 
     let prod_config = PqTransportConfig::production();
-    assert!(prod_config.require_pq);
     assert!(!prod_config.verbose_logging);
-}
-
-/// Test ConnectionMode enum
-#[test]
-fn test_connection_mode() {
-    assert_eq!(ConnectionMode::default(), ConnectionMode::Hybrid);
-
-    // Verify all modes exist
-    let _legacy = ConnectionMode::Legacy;
-    let _pq = ConnectionMode::PqSecure;
-    let _hybrid = ConnectionMode::Hybrid;
 }
 
 /// Test that PQ handshake completes within acceptable latency on localhost

@@ -68,7 +68,7 @@ use std::sync::Arc;
 
 pub use block::{BlockApiServer, BlockRpc};
 pub use da::{DaApiServer, DaRpc};
-pub use hegemon::{HegemonApiServer, HegemonRpc, HegemonService, MiningHandle};
+pub use hegemon::{HegemonApiServer, HegemonRpc, HegemonService, MiningHandle, NodeConfigSnapshot};
 pub use production_service::ProductionRpcService;
 pub use shielded::{ShieldedApiServer, ShieldedPoolService, ShieldedRpc};
 pub use shielded_service::MockShieldedPoolService;
@@ -86,6 +86,8 @@ pub struct FullDeps<S, P> {
     pub service: Arc<S>,
     /// PoW mining handle
     pub pow_handle: P,
+    /// Node configuration snapshot
+    pub node_config: hegemon::NodeConfigSnapshot,
     /// Whether to deny unsafe RPC calls
     pub deny_unsafe: bool,
     /// In-memory commitment block proof store
@@ -118,7 +120,7 @@ where
     let mut module = RpcModule::new(());
 
     // Add Hegemon RPC (mining, consensus, telemetry)
-    let hegemon_rpc = HegemonRpc::new(deps.service.clone(), deps.pow_handle);
+    let hegemon_rpc = HegemonRpc::new(deps.service.clone(), deps.pow_handle, deps.node_config);
     module.merge(hegemon_rpc.into_rpc())?;
 
     // Add Wallet RPC (notes, commitments, proofs)

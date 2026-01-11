@@ -27,7 +27,7 @@
 //! │  ┌─────────────────────────▼─────────────────────────────────┐  │
 //! │  │              PQ Transport Layer                            │  │
 //! │  │  ┌─────────────────────────────────────────────────────┐  │  │
-//! │  │  │  SubstratePqTransport (hybrid handshake)            │  │  │
+//! │  │  │  SubstratePqTransport (PQ-only handshake)           │  │  │
 //! │  │  └─────────────────────────────────────────────────────┘  │  │
 //! │  └───────────────────────────────────────────────────────────┘  │
 //! │                            │                                    │
@@ -67,8 +67,6 @@ pub struct PqNetworkBackendConfig {
     pub bootstrap_nodes: Vec<SocketAddr>,
     /// Maximum number of peers
     pub max_peers: usize,
-    /// Whether to require PQ handshake
-    pub require_pq: bool,
     /// Connection timeout
     pub connection_timeout: Duration,
     /// Enable verbose logging
@@ -81,7 +79,6 @@ impl Default for PqNetworkBackendConfig {
             listen_addr: "0.0.0.0:30333".parse().unwrap(),
             bootstrap_nodes: Vec::new(),
             max_peers: 50,
-            require_pq: true,
             connection_timeout: Duration::from_secs(30),
             verbose_logging: false,
         }
@@ -95,7 +92,6 @@ impl PqNetworkBackendConfig {
             listen_addr: "127.0.0.1:30333".parse().unwrap(),
             bootstrap_nodes: Vec::new(),
             max_peers: 25,
-            require_pq: false,
             connection_timeout: Duration::from_secs(30),
             verbose_logging: true,
         }
@@ -107,7 +103,6 @@ impl PqNetworkBackendConfig {
             listen_addr: "0.0.0.0:30333".parse().unwrap(),
             bootstrap_nodes: Vec::new(),
             max_peers: 50,
-            require_pq: true,
             connection_timeout: Duration::from_secs(30),
             verbose_logging: false,
         }
@@ -119,7 +114,6 @@ impl PqNetworkBackendConfig {
             listen_addr: "0.0.0.0:30333".parse().unwrap(),
             bootstrap_nodes: Vec::new(),
             max_peers: 100,
-            require_pq: true,
             connection_timeout: Duration::from_secs(60),
             verbose_logging: false,
         }
@@ -189,7 +183,6 @@ impl PqNetworkBackend {
     /// Create a new PQ network backend
     pub fn new(identity: &PqPeerIdentity, config: PqNetworkBackendConfig) -> Self {
         let transport_config = SubstratePqTransportConfig {
-            require_pq: config.require_pq,
             connection_timeout: config.connection_timeout,
             handshake_timeout: Duration::from_secs(30),
             verbose_logging: config.verbose_logging,
@@ -908,11 +901,10 @@ mod tests {
     #[tokio::test]
     async fn test_network_backend_config() {
         let dev = PqNetworkBackendConfig::development();
-        assert!(!dev.require_pq);
         assert!(dev.verbose_logging);
 
         let testnet = PqNetworkBackendConfig::testnet();
-        assert!(testnet.require_pq);
+        assert!(!testnet.verbose_logging);
 
         let mainnet = PqNetworkBackendConfig::mainnet();
         assert_eq!(mainnet.max_peers, 100);

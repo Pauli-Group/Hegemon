@@ -74,10 +74,6 @@ impl OutgoingViewingKey {
         }
     }
 
-    pub fn address_tag(&self, index: u32) -> [u8; 32] {
-        self.view_key.address_tag(index)
-    }
-
     pub fn pk_recipient(&self, index: u32) -> [u8; 32] {
         let diversifier = self.diversifier_key.derive(index);
         self.view_key.pk_recipient(&diversifier)
@@ -182,8 +178,8 @@ mod tests {
         assert_eq!(nullifier, again);
         let ovk = OutgoingViewingKey::from_keys(&keys);
         assert_eq!(
-            ovk.address_tag(recovered.diversifier_index),
-            recovered.address.address_tag
+            ovk.pk_recipient(recovered.diversifier_index),
+            recovered.address.pk_recipient
         );
     }
 }

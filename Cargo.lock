@@ -769,7 +769,6 @@ checksum = "edca88bc138befd0323b20752846e6587272d3b03b0343c8ea28a6f819e6e71f"
 dependencies = [
  "async-trait",
  "axum-core",
- "axum-macros",
  "base64",
  "bytes",
  "futures-util",
@@ -818,17 +817,6 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
-]
-
-[[package]]
-name = "axum-macros"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57d123550fa8d071b7255cb0cc04dc302baa6c8c4a79f55701552684d8399bce"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.111",
 ]
 
 [[package]]
@@ -3579,7 +3567,7 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "hegemon-node"
-version = "0.5.1-alpha"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8088,9 +8076,7 @@ dependencies = [
  "base64",
  "bytes",
  "encoding_rs",
- "futures-channel",
  "futures-core",
- "futures-util",
  "h2 0.4.12",
  "http 1.4.0",
  "http-body 1.0.1",
@@ -9512,7 +9498,6 @@ dependencies = [
 name = "security-tests"
 version = "0.1.0"
 dependencies = [
- "axum",
  "bincode",
  "block-circuit",
  "consensus",
@@ -9537,7 +9522,6 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
  "transaction-circuit",
- "url",
  "wallet",
 ]
 
@@ -11965,12 +11949,11 @@ dependencies = [
 
 [[package]]
 name = "wallet"
-version = "0.5.1-alpha"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "argon2",
  "assert_cmd",
- "axum",
  "base64",
  "batch-circuit",
  "bech32",
@@ -11989,7 +11972,6 @@ dependencies = [
  "predicates",
  "proptest",
  "rand 0.8.5",
- "reqwest",
  "rpassword",
  "scale-info",
  "serde",
@@ -12004,7 +11986,6 @@ dependencies = [
  "tokio",
  "transaction-circuit",
  "twox-hash",
- "url",
  "zeroize",
 ]
 
@@ -12019,6 +12000,22 @@ dependencies = [
  "serde",
  "serde_json",
  "synthetic-crypto",
+ "wallet",
+]
+
+[[package]]
+name = "walletd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "disclosure-circuit",
+ "fs2",
+ "hex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "transaction-circuit",
  "wallet",
 ]
 

@@ -1,12 +1,13 @@
 # Two-Person Testnet Guide
 
-This guide walks through setting up a two-node Hegemon network where both participants can mine blocks, earn coinbase rewards directly to their shielded wallets, and send private transactions to each other using the CLI wallet.
+This guide walks through setting up a two-node Hegemon network where both participants can mine blocks, earn coinbase rewards directly to their shielded wallets, and send private transactions to each other using walletd.
 
 ## Prerequisites
 
 Both participants need:
-- The `hegemon-node` and `wallet` binaries (build with `cargo build -p hegemon-node -p wallet --release`)
+- The `hegemon-node` and `walletd` binaries (build with `cargo build -p hegemon-node -p walletd --release`)
 - Port 30333 TCP forwarded if behind NAT
+- `jq` for parsing walletd JSON output
 
 ## Network Info
 
@@ -77,7 +78,7 @@ If you expose the RPC port to the internet, treat it as a production surface:
 
 ## Quick Start (Recommended)
 
-Use the interactive script that handles wallet creation and node startup:
+Use the interactive script that handles walletd store creation and node startup:
 
 ```bash
 ./scripts/start-mining.sh
@@ -85,7 +86,7 @@ Use the interactive script that handles wallet creation and node startup:
 
 The script will:
 1. Check for existing wallet/node data and ask if you want to keep or wipe it
-2. Create a new wallet if needed (prompts for passphrase)
+2. Create a new wallet store if needed (prompts for passphrase)
 3. Start the mining node with your shielded address configured
 
 To connect to the boot node, set `BOOTNODE` before running:
@@ -98,11 +99,16 @@ BOOTNODE="hegemon.pauli.group:30333" ./scripts/start-mining.sh
 
 ## Manual Setup (Alice - Boot Node)
 
+walletd reads the passphrase from stdin (first line), then JSON requests. The examples below use `jq` to parse responses.
+
 ### 1. Initialize Wallet
 
 ```bash
-./target/release/wallet init --store ~/.hegemon-wallet --passphrase "CHANGE_ME"
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "CHANGE_ME" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode create
 ```
+
+If the store already exists, swap `--mode create` for `--mode open`.
 
 ### 2. Generate Chain Spec (do this ONCE)
 
@@ -117,12 +123,14 @@ The command below extracts your shielded address (offline) and starts mining:
 
 ```bash
 HEGEMON_MINE=1 \
-HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
+HEGEMON_MINER_ADDRESS=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "CHANGE_ME" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
+  | jq -r '.result.primaryAddress') \
 ./target/release/hegemon-node \
   --dev \
   --base-path ~/.hegemon-node \
   --chain config/dev-chainspec.json \
-  --port 30333 \
+  --listen-addr /ip4/0.0.0.0/tcp/30333 \
   --rpc-port 9944 \
   --rpc-external \
   --rpc-methods safe \
@@ -132,10 +140,12 @@ HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet
 ### 4. Check Balance (after mining some blocks)
 
 ```bash
-./target/release/wallet status --store ~/.hegemon-wallet --passphrase "CHANGE_ME"
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "CHANGE_ME" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
+  | jq '.result'
 ```
 
-Look for the line starting with `Shielded Address: shca1...` and your balance.
+Look for `primaryAddress` (`shca1...`) and your balances.
 
 ### 4. Share Your IP Address
 
@@ -163,13 +173,14 @@ curl -s -d '{"id":1,"jsonrpc":"2.0","method":"system_health"}' \
 
 Either build from source or get the binary from Alice:
 ```bash
-cargo build -p hegemon-node -p wallet --release
+cargo build -p hegemon-node -p walletd --release
 ```
 
 ### 2. Initialize Wallet
 
 ```bash
-./target/release/wallet init --store ~/.hegemon-wallet --passphrase "BOB_CHANGE_ME"
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "BOB_CHANGE_ME" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode create
 ```
 
 ### 3. Start Node (Connect to Boot Node)
@@ -179,7 +190,9 @@ mkdir -p ~/.hegemon-node
 
 HEGEMON_MINE=1 \
 HEGEMON_SEEDS="hegemon.pauli.group:30333" \
-HEGEMON_MINER_ADDRESS=$(./target/release/wallet status --store ~/.hegemon-wallet --passphrase "BOB_CHANGE_ME" --no-sync 2>/dev/null | grep "Shielded Address:" | awk '{print $3}') \
+HEGEMON_MINER_ADDRESS=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "BOB_CHANGE_ME" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
+  | jq -r '.result.primaryAddress') \
 ./target/release/hegemon-node \
   --dev \
   --base-path ~/.hegemon-node \
@@ -214,15 +227,15 @@ curl -s -d '{"id":1,"jsonrpc":"2.0","method":"chain_getHeader"}' \
 Both participants run:
 
 ```bash
-./target/release/wallet substrate-sync \
-  --store ~/.hegemon-wallet \
-  --ws-url ws://127.0.0.1:9944 \
-  --passphrase "YOUR_PASSPHRASE"
+printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"ws://127.0.0.1:9944","force_rescan":false}}\n' "YOUR_PASSPHRASE" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode open
 ```
 
 Check balance:
 ```bash
-./target/release/wallet status --store ~/.hegemon-wallet --passphrase "YOUR_PASSPHRASE"
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "YOUR_PASSPHRASE" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
+  | jq '.result'
 ```
 
 You should see coinbase rewards accumulating (~4.98 HEG per block you mined).
@@ -235,7 +248,9 @@ You should see coinbase rewards accumulating (~4.98 HEG per block you mined).
 
 Bob runs:
 ```bash
-./target/release/wallet status --store ~/.hegemon-wallet --passphrase "BOB_CHANGE_ME"
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "BOB_CHANGE_ME" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
+  | jq -r '.result.primaryAddress'
 ```
 
 They send you their shielded address.
@@ -257,24 +272,22 @@ Create `recipients.json`:
 ### 3. Send Shielded Transaction
 
 ```bash
-./target/release/wallet substrate-send \
-  --store ~/.hegemon-wallet \
-  --auto-consolidate \
-  --ws-url ws://127.0.0.1:9944 \
-  --recipients recipients.json \
-  --passphrase "YOUR_PASSPHRASE" \
+REQ=$(jq -nc --arg ws "ws://127.0.0.1:9944" --argjson recipients "$(jq -c '.' recipients.json)" \
+  '{id:1,method:"tx.send",params:{ws_url:$ws,recipients:$recipients,fee:0,auto_consolidate:true}}')
+printf '%s\n%s\n' "YOUR_PASSPHRASE" "$REQ" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode open
 ```
 
 ### 4. Bob Receives
 
 Bob syncs and checks:
 ```bash
-./target/release/wallet substrate-sync \
-  --store ~/.hegemon-wallet \
-  --passphrase "BOB_CHANGE_ME" \
-  --ws-url ws://127.0.0.1:9944
+printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"ws://127.0.0.1:9944","force_rescan":false}}\n' "BOB_CHANGE_ME" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode open
 
-./target/release/wallet status --store ~/.hegemon-wallet --passphrase "BOB_CHANGE_ME"
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "BOB_CHANGE_ME" \
+  | ./target/release/walletd --store ~/.hegemon-wallet --mode open \
+  | jq '.result'
 ```
 
 They should see the incoming shielded funds!
@@ -309,7 +322,7 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 - Wait for block confirmation (~60 seconds)
 - Re-sync wallet
 - Check node logs for extrinsic errors
-- If you hit `Need X notes but max is 2`, re-run `wallet substrate-send` with `--auto-consolidate` (it submits X-2 consolidation txs and can take multiple blocks)
+- If you hit `consolidation_required`, re-run `tx.send` with `auto_consolidate: true` (it submits X-2 consolidation txs and can take multiple blocks)
 - If you hit `Invalid Transaction: Transaction would exhaust the block limits`, your shielded transfer extrinsic (mostly the STARK proof bytes) exceeded the runtime max extrinsic size. Fix: rebuild the node/runtime, regenerate `config/dev-chainspec.json`, and restart with a fresh `--base-path` (or `--tmp`).
 
 ### Invalid Transaction: `Custom error: 6`
@@ -328,11 +341,13 @@ Note: Signing transactions in the browser requires the PQ wallet extension (not 
 
 | Command | Description |
 |---------|-------------|
-| `wallet init` | Create new wallet |
-| `wallet status` | Show addresses and balances |
-| `wallet substrate-sync` | Sync with node |
-| `wallet substrate-send` | Send shielded transaction |
-| `wallet export-viewing-key` | Export keys for watch-only |
+| `walletd --mode create` + `status.get` | Create new wallet store |
+| `walletd status.get` | Show addresses and balances |
+| `walletd sync.once` | Sync with node |
+| `walletd tx.send` | Send shielded transaction |
+| `walletd disclosure.create` | Create payment proof |
+
+Note: `walletd` does not expose viewing-key export yet; use `wallet export-viewing-key` if needed.
 
 ---
 
@@ -348,7 +363,3 @@ To validate the commitment-proof + DA RPC flow end-to-end, use:
 - `runbooks/commitment_proof_da_e2e.md`
 
 ---
-
-## Legacy: Testing Recursive Epoch Proofs (Phase 3d)
-
-Recursive epoch proofs were removed during the Plonky3 migration. This section is archived until a new recursion path is introduced.

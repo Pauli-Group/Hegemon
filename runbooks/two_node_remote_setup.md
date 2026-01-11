@@ -21,7 +21,6 @@ This guide walks you through setting up a peer-to-peer HEGEMON network between y
 
 > **Important:** Only port **30333** needs to be forwarded in your router. Port 9944 is for local RPC access (`127.0.0.1:9944`) and should NOT be exposed to the internet for security reasons.
 >
-> **Note:** If using the legacy `hegemon` binary instead of Substrate, use ports **9000** (P2P) and **8080** (API).
 
 ---
 
@@ -266,47 +265,54 @@ This ensures both nodes can reconnect if either restarts.
 
 ## Sending Transactions
 
-### Option A: Using the Dashboard
+### Option A: Using the Desktop App
 
-The embedded dashboard is served on the RPC port. Open in your browser:
+Use the Hegemon desktop app (`hegemon-app/`) from your local machine:
 
-```
-http://127.0.0.1:9944
-```
+1. Add a remote connection to the node's RPC endpoint (for example `ws://<NODE_IP>:9944`).
+2. Create or open a wallet store.
+3. Sync the wallet and send funds to your friend's address.
 
-Use the wallet tab to:
-1. Generate or import a wallet
-2. View your shielded balance (from mining rewards)
-3. Send funds to your friend's address
-
-### Option B: Using the Wallet CLI
+### Option B: Using walletd
 
 ```bash
+# Build walletd if needed
+cargo build --release -p walletd
+
 # Check wallet status
-cargo run -p wallet --bin wallet -- status \
-  --store /tmp/my-hegemon-node/wallet \
-  --passphrase "your-passphrase"
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-passphrase" \
+  | ./target/release/walletd --store /tmp/my-hegemon-node/wallet --mode open \
+  | jq '.result'
 
 # Generate a receiving address
-cargo run -p wallet --bin wallet -- generate --count 1 --out my-address.json
-cat my-address.json | jq '.addresses[0].address'
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-passphrase" \
+  | ./target/release/walletd --store /tmp/my-hegemon-node/wallet --mode open \
+  | jq -r '.result.primaryAddress'
 ```
 
 Share the generated address with your friend to receive funds.
 
-### Crafting a Transaction
+### Send a Transaction (walletd)
 
 ```bash
-# Create a transaction to send funds
-cargo run -p wallet --bin wallet -- tx-craft \
-  --root <YOUR_ROOT_SECRET> \
-  --inputs inputs.json \
-  --recipients recipients.json \
-  --merkle-root <CURRENT_MERKLE_ROOT> \
-  --fee 1 \
-  --witness-out witness.json \
-  --ciphertext-out ciphertext.json
+cat > recipients.json <<'JSON'
+[
+  {
+    "address": "<FRIEND_SHIELDED_ADDRESS>",
+    "value": 100000000,
+    "asset_id": 0,
+    "memo": "remote setup transfer"
+  }
+]
+JSON
+
+REQ=$(jq -nc --arg ws "ws://127.0.0.1:9944" --argjson recipients "$(jq -c '.' recipients.json)" \
+  '{id:1,method:"tx.send",params:{ws_url:$ws,recipients:$recipients,fee:0,auto_consolidate:true}}')
+printf '%s\n%s\n' "your-passphrase" "$REQ" \
+  | ./target/release/walletd --store /tmp/my-hegemon-node/wallet --mode open
 ```
+
+Offline transaction crafting (`wallet tx-craft`) is not exposed by walletd yet.
 
 ---
 
@@ -316,7 +322,6 @@ cargo run -p wallet --bin wallet -- tx-craft \
 |----------|---------|-------------|
 | `HEGEMON_MINE` | `0` | Set to `1` to enable mining |
 | `HEGEMON_MINE_THREADS` | `1` | Number of CPU threads for mining |
-| `HEGEMON_REQUIRE_PQ` | `true` | Require post-quantum secure connections |
 | `HEGEMON_PQ_VERBOSE` | `false` | Enable verbose PQ handshake logging |
 | `HEGEMON_SEEDS` | *(unset)* | Comma-separated seed peers (`IP:port`, `host:port`) |
 | `HEGEMON_BLOCK_TIME_MS` | `10000` | Target block time in milliseconds |
@@ -350,14 +355,7 @@ sudo iptables -L -n
 - Use an online port checker (e.g., portchecker.co)
 - Make sure your node is running when you test
 
-**4. Try hybrid PQ mode (allows legacy fallback):**
-
-```bash
-cargo run --release -p hegemon-node --features substrate -- \
-  --dev ... --hybrid-pq
-```
-
-**5. Enable verbose PQ logging:**
+**4. Enable verbose PQ logging:**
 
 ```bash
 HEGEMON_PQ_VERBOSE=1 cargo run --release -p hegemon-node --features substrate -- --dev ...

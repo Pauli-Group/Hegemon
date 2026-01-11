@@ -26,7 +26,7 @@
 //! use pq_noise::{PqNoiseConfig, PqHandshake};
 //!
 //! // Create configuration
-//! let config = PqNoiseConfig::new(identity_keypair, true);
+//! let config = PqNoiseConfig::new(identity_keypair);
 //!
 //! // Perform handshake (initiator side)
 //! let (session, peer_id) = PqHandshake::initiator(&config, stream).await?;

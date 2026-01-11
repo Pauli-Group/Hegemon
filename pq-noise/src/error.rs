@@ -37,7 +37,7 @@ pub enum PqNoiseError {
     #[error("operation timed out")]
     Timeout,
 
-    /// Peer rejected (e.g., non-PQ peer when require_pq is set)
+    /// Peer rejected during handshake
     #[error("peer rejected: {0}")]
     PeerRejected(String),
 }

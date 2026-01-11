@@ -1,12 +1,11 @@
 [package]
 name = "wallet"
-version = "0.5.1-alpha"
+version = "0.6.0"
 edition = "2021"
 
 [dependencies]
 anyhow = "1"
 argon2 = "0.5"
-axum = { version = "0.7", default-features = false, features = ["macros", "json", "query", "http1", "tokio"] }
 base64 = "0.22"
 bech32 = "0.9"
 bincode = "1"
@@ -21,7 +20,6 @@ frame-metadata = "23"
 hex = "0.4"
 jsonrpsee = { version = "0.24", features = ["ws-client", "client"] }
 rand = { version = "0.8", features = ["std"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "rustls-tls"] }
 rpassword = "7.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -37,7 +35,6 @@ disclosure-circuit = { path = "../circuits/disclosure" }
 batch-circuit = { path = "../circuits/batch", default-features = false, features = ["plonky3"], optional = true }
 synthetic-crypto = { path = "../crypto" }
 twox-hash = "1.6"
-url = "2"
 zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]

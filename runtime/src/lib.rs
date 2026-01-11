@@ -873,7 +873,7 @@ pub const VERSION: sp_version::RuntimeVersion = sp_version::RuntimeVersion {
     spec_name: sp_runtime::create_runtime_str!("synthetic-hegemonic"),
     impl_name: sp_runtime::create_runtime_str!("synthetic-hegemonic"),
     authoring_version: 1,
-    spec_version: 2,
+    spec_version: 3,
     impl_version: 1,
     apis: RUNTIME_API_VERSIONS,
     transaction_version: 1,
@@ -1291,7 +1291,6 @@ impl pallet_identity::CredentialProofVerifier<AccountId, u32> for RuntimeAttesta
 
 impl pallet_identity::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
-    type AuthorityId = Public;
     type CredentialSchemaId = u32;
     type RoleId = u32;
     type AdminOrigin = frame_system::EnsureRootWithSuccess<AccountId, RootAccount>;
@@ -1737,8 +1736,8 @@ sp_api::impl_runtime_apis! {
                     if let Some(commitment) = pallet_shielded_pool::Commitments::<Runtime>::get(index) {
                         // Block height not tracked per-note, use current block
                         let block = frame_system::Pallet::<Runtime>::block_number();
-                        // Return FULL encrypted note: ciphertext (611) + kem_ciphertext (1088) = 1699 bytes
-                        // The wallet needs both to decrypt the note
+                        // Return FULL encrypted note: ciphertext + kem_ciphertext bytes.
+                        // The wallet needs both to decrypt the note.
                         let mut full_note = sp_std::vec::Vec::with_capacity(
                             encrypted_note.ciphertext.len() + encrypted_note.kem_ciphertext.len()
                         );

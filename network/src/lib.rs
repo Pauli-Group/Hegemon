@@ -27,14 +27,13 @@ pub use network_backend::{
 };
 pub use peer_store::{PeerStore, PeerStoreConfig};
 pub use pq_transport::{
-    ConnectionMode, PqPeerIdentity, PqSecureConnection, PqTransportConfig, upgrade_inbound,
-    upgrade_outbound,
+    PqPeerIdentity, PqSecureConnection, PqTransportConfig, upgrade_inbound, upgrade_outbound,
 };
 pub use protocol::{
-    BLOCK_ANNOUNCES_LEGACY, BLOCK_ANNOUNCES_PQ, NegotiationResult, NotificationProtocolConfig,
-    PQ_PROTOCOL_V1, ProtocolNegotiationConfig, ProtocolSecurityLevel, ProtocolType, SYNC_LEGACY,
-    SYNC_PQ, TRANSACTIONS_LEGACY, TRANSACTIONS_PQ, is_pq_protocol, negotiate_protocol,
-    protocol_security_level, protocol_type, supported_protocols,
+    BLOCK_ANNOUNCES_PQ, NegotiationResult, NotificationProtocolConfig, PQ_PROTOCOL_V1,
+    ProtocolNegotiationConfig, ProtocolSecurityLevel, ProtocolType, SYNC_PQ, TRANSACTIONS_PQ,
+    is_pq_protocol, negotiate_protocol, protocol_security_level, protocol_type,
+    supported_protocols,
 };
 pub use service::RelayConfig;
 pub use service::{P2PService, ProtocolHandle};

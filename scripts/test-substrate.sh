@@ -144,19 +144,11 @@ cmd_substrate() {
 cmd_pq() {
     log_section "Running PQ Network Tests"
     
-    log_info "Running pq_network_integration tests..."
-    if cargo test -p security-tests --test pq_network_integration -- --nocapture; then
-        log_success "PQ network tests passed (19 tests)"
+    log_info "Running network crate tests..."
+    if cargo test -p network -- --nocapture; then
+        log_success "PQ network tests passed"
     else
         log_error "PQ network tests failed"
-        exit 1
-    fi
-    
-    log_info "Running p2p_pq tests (serial execution for stability)..."
-    if cargo test -p security-tests --test p2p_pq -- --nocapture --test-threads=1; then
-        log_success "P2P PQ tests passed"
-    else
-        log_error "P2P PQ tests failed"
         exit 1
     fi
 }

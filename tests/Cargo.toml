@@ -13,13 +13,12 @@ network = { path = "../network" }
 wallet = { path = "../wallet" }
 pallet-shielded-pool = { path = "../pallets/shielded-pool" }
 protocol-versioning = { path = "../protocol/versioning" }
-hegemon-node = { path = "../node", features = ["test-utils"] }
+hegemon-node = { path = "../node" }
 consensus = { path = "../consensus" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 tempfile = "3"
 rand = "0.8"
 hex = "0.4"
-url = "2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures = "0.3"
 bincode = "1.3"
@@ -27,7 +26,6 @@ sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_bytes = "0.11"
-axum = "0.7"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 p3-field = { workspace = true }
 p3-goldilocks = { workspace = true }
@@ -37,49 +35,12 @@ sp-core = { workspace = true, features = ["std"], optional = true }
 default = []
 # Enable substrate-based tests (requires hegemon-node substrate feature)
 substrate = ["sp-core", "hegemon-node/substrate"]
-# Enable legacy node integration tests (require refactored NodeService API)
-legacy-node-tests = []
 # Enable fast STARK options in transaction-circuit (development only).
 stark-fast = []
 
 [[test]]
 name = "security_pipeline"
 path = "security_pipeline.rs"
-
-[[test]]
-name = "node_wallet_daemon"
-path = "node_wallet_daemon.rs"
-required-features = ["legacy-node-tests"]
-
-[[test]]
-name = "node_gossip"
-path = "node_gossip.rs"
-required-features = ["legacy-node-tests"]
-
-[[test]]
-name = "node_resilience"
-path = "node_resilience.rs"
-required-features = ["legacy-node-tests"]
-
-[[test]]
-name = "mining_integration"
-path = "mining_integration.rs"
-required-features = ["legacy-node-tests"]
-
-[[test]]
-name = "p2p_pq"
-path = "p2p_pq.rs"
-required-features = ["legacy-node-tests"]
-
-[[test]]
-name = "wallet_e2e"
-path = "wallet_e2e.rs"
-required-features = ["legacy-node-tests"]
-
-[[test]]
-name = "pq_network_integration"
-path = "pq_network_integration.rs"
-required-features = ["legacy-node-tests"]
 
 [[test]]
 name = "multi_node_substrate"

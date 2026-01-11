@@ -19,7 +19,6 @@
   },
   "extensions": {
     "powBits": 24,
-    "requirePq": true,
     "targetBlockTimeMs": 60000
   },
   "_comment": "This is a placeholder chain spec. Run 'hegemon-node build-spec --chain=testnet' to generate the actual spec."

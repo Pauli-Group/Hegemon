@@ -1564,7 +1564,7 @@ const SELECTOR_COLUMNS: [usize; 16] = [
 ];
 
 // ================================================================================================
-// LEGACY POSEIDON HELPERS (width 3, used by non-transaction circuits)
+// POSEIDON HELPERS (width 3, used by non-transaction circuits)
 // ================================================================================================
 
 #[inline]

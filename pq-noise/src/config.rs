@@ -9,10 +9,6 @@ pub struct PqNoiseConfig {
     /// Local identity for signing and key exchange
     pub identity: LocalIdentity,
 
-    /// Whether to require post-quantum handshake
-    /// If true, reject peers that don't support PQ
-    pub require_pq: bool,
-
     /// Handshake timeout
     pub handshake_timeout: Duration,
 
@@ -25,10 +21,9 @@ pub struct PqNoiseConfig {
 
 impl PqNoiseConfig {
     /// Create a new configuration
-    pub fn new(identity: LocalIdentity, require_pq: bool) -> Self {
+    pub fn new(identity: LocalIdentity) -> Self {
         Self {
             identity,
-            require_pq,
             handshake_timeout: Duration::from_secs(30),
             max_handshake_message_size: 16 * 1024, // 16 KB
             verbose_logging: false,
@@ -37,12 +32,12 @@ impl PqNoiseConfig {
 
     /// Create a development configuration (less strict)
     pub fn development(seed: &[u8]) -> Self {
-        Self::new(LocalIdentity::generate(seed), false)
+        Self::new(LocalIdentity::generate(seed)).with_verbose_logging()
     }
 
     /// Create a production configuration (requires PQ)
     pub fn production(seed: &[u8]) -> Self {
-        Self::new(LocalIdentity::generate(seed), true)
+        Self::new(LocalIdentity::generate(seed))
     }
 
     /// Set the handshake timeout
@@ -66,7 +61,6 @@ impl PqNoiseConfig {
 /// Builder for PqNoiseConfig
 pub struct PqNoiseConfigBuilder {
     identity: Option<LocalIdentity>,
-    require_pq: bool,
     handshake_timeout: Duration,
     max_handshake_message_size: usize,
     verbose_logging: bool,
@@ -83,7 +77,6 @@ impl PqNoiseConfigBuilder {
     pub fn new() -> Self {
         Self {
             identity: None,
-            require_pq: true, // Default to secure
             handshake_timeout: Duration::from_secs(30),
             max_handshake_message_size: 16 * 1024,
             verbose_logging: false,
@@ -93,12 +86,6 @@ impl PqNoiseConfigBuilder {
     /// Set the local identity
     pub fn identity(mut self, identity: LocalIdentity) -> Self {
         self.identity = Some(identity);
-        self
-    }
-
-    /// Set whether PQ is required
-    pub fn require_pq(mut self, require: bool) -> Self {
-        self.require_pq = require;
         self
     }
 
@@ -126,7 +113,6 @@ impl PqNoiseConfigBuilder {
 
         Ok(PqNoiseConfig {
             identity,
-            require_pq: self.require_pq,
             handshake_timeout: self.handshake_timeout,
             max_handshake_message_size: self.max_handshake_message_size,
             verbose_logging: self.verbose_logging,

@@ -233,16 +233,14 @@ impl ExtrinsicBuilder {
         // eprintln!("DEBUG CALL: after commitments, encoded size = {}", encoded.len());
 
         // Encode encrypted notes (BoundedVec<EncryptedNote, _>)
-        // EncryptedNote has ciphertext: [u8; 611] and kem_ciphertext: [u8; 1088] = 1699 bytes total
-        const PALLET_ENCRYPTED_NOTE_SIZE: usize = 611 + 1088;
         // eprintln!("DEBUG CALL: encrypted_notes count = {}", call.encrypted_notes.len());
         encode_compact_len(call.encrypted_notes.len(), &mut encoded);
         for note in &call.encrypted_notes {
             // The encrypted note must be exactly ciphertext + kem_ciphertext
-            if note.len() != PALLET_ENCRYPTED_NOTE_SIZE {
+            if note.len() != crate::notes::PALLET_ENCRYPTED_NOTE_SIZE {
                 return Err(WalletError::Serialization(format!(
                     "Encrypted note wrong size: expected {} bytes, got {}",
-                    PALLET_ENCRYPTED_NOTE_SIZE,
+                    crate::notes::PALLET_ENCRYPTED_NOTE_SIZE,
                     note.len()
                 )));
             }
@@ -697,13 +695,12 @@ pub fn encode_batch_shielded_transfer_call(
     }
 
     // Encode encrypted notes (BoundedVec<EncryptedNote, MaxCommitmentsPerBatch>)
-    const PALLET_ENCRYPTED_NOTE_SIZE: usize = 611 + 1088;
     encode_compact_len(call.encrypted_notes.len(), &mut encoded);
     for note in &call.encrypted_notes {
-        if note.len() != PALLET_ENCRYPTED_NOTE_SIZE {
+        if note.len() != crate::notes::PALLET_ENCRYPTED_NOTE_SIZE {
             return Err(WalletError::Serialization(format!(
                 "Encrypted note wrong size: expected {} bytes, got {}",
-                PALLET_ENCRYPTED_NOTE_SIZE,
+                crate::notes::PALLET_ENCRYPTED_NOTE_SIZE,
                 note.len()
             )));
         }
@@ -777,13 +774,12 @@ pub fn encode_shielded_transfer_unsigned_call(
     }
 
     // Encode encrypted notes (BoundedVec<EncryptedNote, _>)
-    const PALLET_ENCRYPTED_NOTE_SIZE: usize = 611 + 1088;
     encode_compact_len(call.encrypted_notes.len(), &mut encoded);
     for note in &call.encrypted_notes {
-        if note.len() != PALLET_ENCRYPTED_NOTE_SIZE {
+        if note.len() != crate::notes::PALLET_ENCRYPTED_NOTE_SIZE {
             return Err(WalletError::Serialization(format!(
                 "Encrypted note wrong size: expected {} bytes, got {}",
-                PALLET_ENCRYPTED_NOTE_SIZE,
+                crate::notes::PALLET_ENCRYPTED_NOTE_SIZE,
                 note.len()
             )));
         }

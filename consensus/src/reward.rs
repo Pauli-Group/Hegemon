@@ -35,7 +35,7 @@ pub const MAX_SUPPLY: u64 = 21_000_000 * COIN;
 pub const INITIAL_SUBSIDY: u64 =
     (MAX_SUPPLY as u128 * T_BLOCK_SECONDS as u128 / (2 * Y_EPOCH as u128 * T_YEAR as u128)) as u64;
 
-/// Legacy halving interval - now derived from BLOCKS_PER_EPOCH
+/// Halving interval derived from BLOCKS_PER_EPOCH
 pub const HALVING_INTERVAL: u64 = BLOCKS_PER_EPOCH;
 
 /// Target block time in milliseconds (60 seconds / 1 minute).

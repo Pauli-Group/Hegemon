@@ -37,15 +37,16 @@ pub const BINDING_HASH_SIZE: usize = 64;
 /// Size of the memo field in bytes.
 pub const MEMO_SIZE: usize = 512;
 
-/// Size of the encrypted note ciphertext.
-/// Recipient (43) + Value (8) + Rcm (32) + Memo (512) + AEAD overhead (16)
-pub const ENCRYPTED_NOTE_SIZE: usize = 611;
+/// Size of the encrypted note ciphertext container.
+/// Layout: version(1) + diversifier_index(4) + note_len(4) + note_payload +
+/// memo_len(4) + memo_payload + padding.
+pub const ENCRYPTED_NOTE_SIZE: usize = 579;
 
 /// Size of the ML-KEM-768 ciphertext for key encapsulation.
 pub const ML_KEM_CIPHERTEXT_LEN: usize = 1088;
 
 /// Diversified address size (post-quantum compatible).
-pub const DIVERSIFIED_ADDRESS_SIZE: usize = 43;
+pub const DIVERSIFIED_ADDRESS_SIZE: usize = 37;
 
 /// Commitment bytes (48-byte PQ sponge output).
 pub type Commitment = [u8; 48];
@@ -409,7 +410,7 @@ mod tests {
         // Create a test note with known data
         let mut note = EncryptedNote::default();
         note.ciphertext[0] = 0xAB;
-        note.ciphertext[610] = 0xCD;
+        note.ciphertext[ENCRYPTED_NOTE_SIZE - 1] = 0xCD;
         note.kem_ciphertext[0] = 0xEF;
         note.kem_ciphertext[1087] = 0x99;
 
@@ -428,7 +429,7 @@ mod tests {
         let decoded = EncryptedNote::decode(&mut &encoded[..]).expect("Should decode successfully");
 
         assert_eq!(decoded.ciphertext[0], 0xAB);
-        assert_eq!(decoded.ciphertext[610], 0xCD);
+        assert_eq!(decoded.ciphertext[ENCRYPTED_NOTE_SIZE - 1], 0xCD);
         assert_eq!(decoded.kem_ciphertext[0], 0xEF);
         assert_eq!(decoded.kem_ciphertext[1087], 0x99);
     }

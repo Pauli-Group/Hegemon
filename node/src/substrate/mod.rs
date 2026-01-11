@@ -23,7 +23,7 @@
 //! This phase implements PQ-Noise networking (NOT libp2p):
 //!
 //! IMPORTANT: This node uses a custom PQ (post-quantum) network layer.
-//! - No libp2p - all references to libp2p are legacy/compatibility stubs
+//! - No libp2p - all peer transport uses the PQ network layer
 //! - Bootnodes: Use HEGEMON_SEEDS env var with IP:port format
 //! - Peer count: Use system_health RPC, NOT system_peers
 //! - Peer IDs: 32-byte PQ keys, not libp2p PeerIds

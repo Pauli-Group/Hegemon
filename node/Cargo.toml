@@ -1,6 +1,6 @@
 [package]
 name = "hegemon-node"
-version = "0.5.1-alpha"
+version = "0.6.0"
 edition = "2021"
 authors = ["Pauli Group Inc."]
 description = "Hegemon PQ-secure blockchain node"
@@ -99,7 +99,6 @@ frame-support = { workspace = true, features = ["std"], optional = true }
 
 [features]
 default = ["substrate"]
-test-utils = []
 production = ["substrate", "runtime/production", "pallet-shielded-pool/production"]
 fast-proofs = ["block-circuit?/fast-proofs"]
 

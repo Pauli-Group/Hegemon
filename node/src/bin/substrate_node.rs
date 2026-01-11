@@ -11,8 +11,6 @@
 //! # Phase 3.5 Status
 //!
 //! Added PQ networking CLI flags:
-//! - `--require-pq`: Require PQ-secure connections for all peers
-//! - `--hybrid-pq`: Allow hybrid mode (prefer PQ, allow legacy)
 //! - `--pq-verbose`: Enable verbose PQ handshake logging
 
 fn main() -> sc_cli::Result<()> {
@@ -39,16 +37,6 @@ mod cli {
         #[command(flatten)]
         pub run: sc_cli::RunCmd,
 
-        /// Require PQ-secure connections for all peers.
-        /// Non-PQ peers will be rejected.
-        #[arg(long, default_value = "true")]
-        pub require_pq: bool,
-
-        /// Enable hybrid mode: prefer PQ but allow legacy connections.
-        /// Only effective when --require-pq is false.
-        #[arg(long, default_value = "false")]
-        pub hybrid_pq: bool,
-
         /// Enable verbose PQ handshake logging.
         /// Useful for debugging PQ transport issues.
         #[arg(long, default_value = "false")]
@@ -62,10 +50,6 @@ mod cli {
     /// PQ network configuration derived from CLI arguments
     #[derive(Debug, Clone)]
     pub struct PqCliConfig {
-        /// Whether PQ is required
-        pub require_pq: bool,
-        /// Whether hybrid mode is enabled
-        pub hybrid_pq: bool,
         /// Whether verbose logging is enabled
         pub verbose: bool,
     }
@@ -74,8 +58,6 @@ mod cli {
         /// Get PQ network configuration from CLI arguments
         pub fn pq_config(&self) -> PqCliConfig {
             PqCliConfig {
-                require_pq: self.require_pq,
-                hybrid_pq: self.hybrid_pq,
                 verbose: self.pq_verbose,
             }
         }
@@ -149,8 +131,6 @@ mod cli {
         // Log PQ configuration
         let pq_config = cli.pq_config();
         tracing::info!(
-            require_pq = %pq_config.require_pq,
-            hybrid_pq = %pq_config.hybrid_pq,
             pq_verbose = %pq_config.verbose,
             "PQ network configuration"
         );

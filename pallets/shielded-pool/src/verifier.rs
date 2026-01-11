@@ -51,7 +51,6 @@ pub struct VerifyingKey {
     pub circuit_id: [u8; 32],
 }
 
-// Keep legacy field name for compatibility
 impl VerifyingKey {
     pub fn key_hash(&self) -> [u8; 32] {
         self.air_hash

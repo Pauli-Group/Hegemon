@@ -358,8 +358,8 @@ mod tests {
         let initiator_identity = LocalIdentity::generate(b"test-initiator-seed");
         let responder_identity = LocalIdentity::generate(b"test-responder-seed");
 
-        let initiator_config = PqNoiseConfig::new(initiator_identity.clone(), false);
-        let responder_config = PqNoiseConfig::new(responder_identity.clone(), false);
+        let initiator_config = PqNoiseConfig::new(initiator_identity.clone());
+        let responder_config = PqNoiseConfig::new(responder_identity.clone());
 
         // Step 1: Initiator creates InitHello
         let mut initiator = PqHandshake::new(initiator_config);
@@ -421,8 +421,8 @@ mod tests {
         let initiator_identity = LocalIdentity::generate(b"test-initiator-2");
         let responder_identity = LocalIdentity::generate(b"test-responder-2");
 
-        let initiator_config = PqNoiseConfig::new(initiator_identity, false);
-        let responder_config = PqNoiseConfig::new(responder_identity, false);
+        let initiator_config = PqNoiseConfig::new(initiator_identity);
+        let responder_config = PqNoiseConfig::new(responder_identity);
 
         let mut initiator = PqHandshake::new(initiator_config);
         let init_hello = initiator.initiator_hello().unwrap();
@@ -448,8 +448,8 @@ mod tests {
         let initiator_identity = LocalIdentity::generate(b"test-initiator-3");
         let responder_identity = LocalIdentity::generate(b"test-responder-3");
 
-        let initiator_config = PqNoiseConfig::new(initiator_identity, false);
-        let responder_config = PqNoiseConfig::new(responder_identity, false);
+        let initiator_config = PqNoiseConfig::new(initiator_identity);
+        let responder_config = PqNoiseConfig::new(responder_identity);
 
         let mut initiator = PqHandshake::new(initiator_config);
         let init_hello = initiator.initiator_hello().unwrap();
