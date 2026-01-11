@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeImage, session } from 'electron';
+import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NodeManager } from './nodeManager';
@@ -55,17 +56,32 @@ const buildContentSecurityPolicy = (devUrl?: string) => {
   ].join('; ');
 };
 
+const resolveIconPath = () => {
+  const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
+  const packagedIcon = join(process.resourcesPath, iconFile);
+  const devIcon = join(process.cwd(), 'build', iconFile);
+  const iconPath = app.isPackaged ? packagedIcon : devIcon;
+  return existsSync(iconPath) ? iconPath : null;
+};
+
 const createWindow = () => {
+  const iconPath = resolveIconPath();
+  const windowIcon = iconPath ? nativeImage.createFromPath(iconPath) : undefined;
   const win = new BrowserWindow({
     width: 1280,
     height: 820,
     backgroundColor: '#0E1C36',
+    icon: windowIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false
     }
   });
+
+  if (process.platform === 'darwin' && windowIcon) {
+    app.dock.setIcon(windowIcon);
+  }
 
   if (process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL);
