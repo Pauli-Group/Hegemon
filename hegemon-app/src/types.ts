@@ -159,6 +159,17 @@ export type WalletDisclosureVerifyResult = {
   chain: string;
 };
 
+export type WalletDisclosureRecord = {
+  txId: string;
+  outputIndex: number;
+  recipientAddress: string;
+  value: number;
+  assetId: number;
+  memo?: string | null;
+  commitment: string;
+  createdAt: string;
+};
+
 export type NodeStartOptions = {
   connectionId?: string;
   chainSpecPath?: string;

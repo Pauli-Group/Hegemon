@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type {
   WalletDisclosureCreateResult,
+  WalletDisclosureRecord,
   WalletDisclosureVerifyResult,
   WalletSendRequest,
   WalletSendResult,
@@ -108,6 +109,10 @@ export class WalletdClient {
       passphrase,
       'open'
     );
+  }
+
+  async disclosureList(storePath: string, passphrase: string): Promise<WalletDisclosureRecord[]> {
+    return this.request('disclosure.list', {}, storePath, passphrase, 'open');
   }
 
   private async request(

@@ -4,6 +4,7 @@ import type {
   NodeConnection,
   NodeSummary,
   WalletDisclosureCreateResult,
+  WalletDisclosureRecord,
   WalletDisclosureVerifyResult,
   WalletStatus
 } from './types';
@@ -42,6 +43,52 @@ type LogEntry = {
   message: string;
   raw: string;
   highlight?: string;
+};
+
+type ActivityStatus = 'processing' | 'pending' | 'confirmed' | 'failed';
+
+type SendAttempt = {
+  id: string;
+  storePath: string;
+  createdAt: string;
+  recipient: string;
+  amount: number;
+  fee: number;
+  memo?: string;
+  status: ActivityStatus;
+  txId?: string;
+  error?: string;
+  consolidationExpected?: number;
+};
+
+type ActivityStep = {
+  id: string;
+  label: string;
+  status: ActivityStatus;
+  txId?: string;
+  confirmations?: number;
+};
+
+type ActivityEntry = {
+  id: string;
+  source: 'attempt' | 'wallet';
+  createdAt: string;
+  recipient: string;
+  amount: number;
+  fee: number;
+  memo?: string;
+  status: ActivityStatus;
+  txId?: string;
+  confirmations?: number;
+  error?: string;
+  consolidationExpected?: number;
+  steps?: ActivityStep[];
+};
+
+type DisclosureGroup = {
+  txId: string;
+  createdAt: string;
+  outputs: WalletDisclosureRecord[];
 };
 
 const logCategoryOrder: LogCategory[] = ['mining', 'sync', 'network', 'consensus', 'storage', 'rpc', 'other'];
@@ -143,6 +190,46 @@ const formatHash = (value: string | null | undefined) => {
     return value;
   }
   return `${value.slice(0, 10)}...${value.slice(-8)}`;
+};
+
+const parseTimestamp = (value?: string | null) => {
+  if (!value) {
+    return 0;
+  }
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const formatTimestamp = (value?: string | null) => {
+  if (!value) {
+    return 'N/A';
+  }
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return value;
+  }
+  return new Date(parsed).toLocaleString();
+};
+
+const activityStatusSymbols: Record<ActivityStatus, string> = {
+  processing: '...',
+  pending: '...',
+  confirmed: '✓',
+  failed: 'X'
+};
+
+const activityStatusLabels: Record<ActivityStatus, string> = {
+  processing: 'Processing',
+  pending: 'Pending',
+  confirmed: 'Confirmed',
+  failed: 'Failed'
+};
+
+const activityStatusClasses: Record<ActivityStatus, string> = {
+  processing: 'border-ionosphere/40 text-ionosphere bg-ionosphere/10',
+  pending: 'border-ionosphere/30 text-ionosphere/80 bg-ionosphere/5',
+  confirmed: 'border-ionosphere/40 text-ionosphere bg-ionosphere/15',
+  failed: 'border-guard/40 text-guard bg-guard/10'
 };
 
 const deriveHttpUrl = (wsUrl: string, httpUrl?: string) => {
@@ -284,6 +371,11 @@ export default function App() {
   const [disclosureTxId, setDisclosureTxId] = useState('');
   const [disclosureOutput, setDisclosureOutput] = useState('0');
   const [disclosureInput, setDisclosureInput] = useState('');
+  const [disclosureRecords, setDisclosureRecords] = useState<WalletDisclosureRecord[]>([]);
+  const [disclosureListBusy, setDisclosureListBusy] = useState(false);
+  const [selectedDisclosureKey, setSelectedDisclosureKey] = useState<string | null>(null);
+
+  const [sendAttempts, setSendAttempts] = useState<SendAttempt[]>([]);
 
   useEffect(() => {
     const storedConnections = window.localStorage.getItem(connectionsKey);
@@ -344,6 +436,13 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem(contactsKey, JSON.stringify(contacts));
   }, [contacts]);
+
+  useEffect(() => {
+    if (!walletStatus) {
+      setDisclosureRecords([]);
+      setSelectedDisclosureKey(null);
+    }
+  }, [walletStatus]);
 
   const activeConnection = useMemo(
     () => connections.find((connection) => connection.id === activeConnectionId) ?? null,
@@ -602,6 +701,19 @@ export default function App() {
     }
   };
 
+  const refreshDisclosureRecords = async () => {
+    setDisclosureListBusy(true);
+    try {
+      const resolvedStorePath = resolveStorePath();
+      const records = await window.hegemon.wallet.disclosureList(resolvedStorePath, passphrase);
+      setDisclosureRecords(records);
+    } catch (error) {
+      setWalletError(error instanceof Error ? error.message : 'Disclosure list failed.');
+    } finally {
+      setDisclosureListBusy(false);
+    }
+  };
+
   const handleWalletInit = async () => {
     setWalletBusy(true);
     setWalletError(null);
@@ -609,6 +721,7 @@ export default function App() {
       const resolvedStorePath = resolveStorePath();
       const status = await window.hegemon.wallet.init(resolvedStorePath, passphrase);
       setWalletStatus(status);
+      await refreshDisclosureRecords();
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet init failed.');
     } finally {
@@ -623,6 +736,7 @@ export default function App() {
       const resolvedStorePath = resolveStorePath();
       const status = await window.hegemon.wallet.restore(resolvedStorePath, passphrase);
       setWalletStatus(status);
+      await refreshDisclosureRecords();
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet open failed.');
     } finally {
@@ -655,6 +769,7 @@ export default function App() {
       const result = await window.hegemon.wallet.sync(resolvedStorePath, passphrase, wsUrl, rescan);
       setWalletSyncOutput(JSON.stringify(result, null, 2));
       await refreshWalletStatus();
+      await refreshDisclosureRecords();
     } catch (error) {
       setWalletError(error instanceof Error ? error.message : 'Wallet sync failed.');
     } finally {
@@ -663,6 +778,7 @@ export default function App() {
   };
 
   const handleWalletSend = async () => {
+    let attemptId: string | null = null;
     setWalletBusy(true);
     setWalletError(null);
     try {
@@ -677,8 +793,27 @@ export default function App() {
       if (walletSummary?.reachable === false) {
         throw new Error('Wallet connection is offline. Select a reachable node or fix the RPC endpoint.');
       }
+
+      const resolvedStorePath = resolveStorePath();
+      const consolidationExpected =
+        autoConsolidate && walletStatus?.notes?.plan?.txsNeeded ? walletStatus.notes.plan.txsNeeded : undefined;
+      attemptId = makeId();
+      const createdAt = new Date().toISOString();
+      const attempt: SendAttempt = {
+        id: attemptId,
+        storePath: resolvedStorePath,
+        createdAt,
+        recipient: recipientAddress.trim(),
+        amount,
+        fee,
+        memo: sendMemo || undefined,
+        status: 'processing',
+        consolidationExpected
+      };
+      setSendAttempts((prev) => [attempt, ...prev].slice(0, 50));
+
       const request = {
-        storePath: resolveStorePath(),
+        storePath: resolvedStorePath,
         passphrase,
         wsUrl,
         recipients: [
@@ -693,12 +828,26 @@ export default function App() {
         autoConsolidate
       };
       const result = await window.hegemon.wallet.send(request);
+      setSendAttempts((prev) =>
+        prev.map((entry) =>
+          entry.id === attemptId ? { ...entry, status: 'pending', txId: result.txHash } : entry
+        )
+      );
       setWalletSendOutput(JSON.stringify(result, null, 2));
       setRecipientAddress('');
       setSendAmount('');
       setSendMemo('');
       await refreshWalletStatus();
+      await refreshDisclosureRecords();
     } catch (error) {
+      if (attemptId) {
+        const message = error instanceof Error ? error.message : 'Wallet send failed.';
+        setSendAttempts((prev) =>
+          prev.map((entry) =>
+            entry.id === attemptId ? { ...entry, status: 'failed', error: message } : entry
+          )
+        );
+      }
       setWalletError(error instanceof Error ? error.message : 'Wallet send failed.');
     } finally {
       setWalletBusy(false);
@@ -728,10 +877,20 @@ export default function App() {
     setContacts((prev) => prev.filter((entry) => entry.id !== id));
   };
 
+  const handleSelectDisclosure = (record: WalletDisclosureRecord) => {
+    const key = `${record.txId}:${record.outputIndex}`;
+    setSelectedDisclosureKey(key);
+    setDisclosureTxId(record.txId);
+    setDisclosureOutput(String(record.outputIndex));
+  };
+
   const handleDisclosureCreate = async () => {
     setWalletBusy(true);
     setWalletError(null);
     try {
+      if (!disclosureTxId.trim()) {
+        throw new Error('Transaction hash is required.');
+      }
       const outputIndex = Number.parseInt(disclosureOutput, 10);
       if (Number.isNaN(outputIndex)) {
         throw new Error('Output index must be a number.');
@@ -821,6 +980,139 @@ export default function App() {
         ? 'Genesis mismatch between the wallet store and the selected node.'
         : null;
   const canSend = !walletBusy && !sendBlockedReason;
+
+  const normalizedStorePath = storePath.trim();
+  const pendingTransactions = walletStatus?.pending ?? [];
+  const pendingByTxId = useMemo(() => {
+    const map = new Map<string, typeof pendingTransactions[number]>();
+    pendingTransactions.forEach((entry) => {
+      map.set(entry.txId, entry);
+    });
+    return map;
+  }, [pendingTransactions]);
+
+  const attemptsForStore = useMemo(
+    () => sendAttempts.filter((attempt) => attempt.storePath === normalizedStorePath),
+    [sendAttempts, normalizedStorePath]
+  );
+
+  const activityEntries = useMemo(() => {
+    const consolidated = pendingTransactions.filter(
+      (entry) => entry.memo?.toLowerCase() === 'consolidation'
+    );
+    const pendingEntries: ActivityEntry[] = pendingTransactions.map((entry) => ({
+      id: entry.txId,
+      source: 'wallet',
+      createdAt: entry.createdAt,
+      recipient: entry.address,
+      amount: entry.amount,
+      fee: entry.fee,
+      memo: entry.memo ?? undefined,
+      status: entry.status === 'confirmed' ? 'confirmed' : 'pending',
+      txId: entry.txId,
+      confirmations: entry.confirmations
+    }));
+
+    const sortedAttempts = [...attemptsForStore].sort(
+      (a, b) => parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt)
+    );
+    const attemptEntries: ActivityEntry[] = sortedAttempts.map((attempt, index) => {
+      const windowEnd = index > 0 ? sortedAttempts[index - 1]?.createdAt : null;
+      const pending = attempt.txId ? pendingByTxId.get(attempt.txId) : null;
+      const status = pending ? (pending.status === 'confirmed' ? 'confirmed' : 'pending') : attempt.status;
+      const expectedSteps = attempt.consolidationExpected ?? 0;
+      const matchingSteps = consolidated
+        .filter((entry) => parseTimestamp(entry.createdAt) >= parseTimestamp(attempt.createdAt))
+        .filter((entry) =>
+          windowEnd ? parseTimestamp(entry.createdAt) < parseTimestamp(windowEnd) : true
+        )
+        .sort((a, b) => parseTimestamp(a.createdAt) - parseTimestamp(b.createdAt));
+      const stepCount = Math.max(expectedSteps, matchingSteps.length);
+      const steps: ActivityStep[] =
+        stepCount > 0
+          ? Array.from({ length: stepCount }, (_value, index) => {
+              const match = matchingSteps[index];
+              const stepStatus = match
+                ? match.status === 'confirmed'
+                  ? 'confirmed'
+                  : 'pending'
+                : attempt.status === 'failed'
+                  ? 'failed'
+                  : attempt.status === 'confirmed'
+                    ? 'confirmed'
+                    : 'processing';
+              return {
+                id: `${attempt.id}-step-${index}`,
+                label: `Consolidation ${index + 1} of ${stepCount}`,
+                status: stepStatus,
+                txId: match?.txId,
+                confirmations: match?.confirmations
+              };
+            })
+          : [];
+
+      return {
+        id: attempt.id,
+        source: 'attempt',
+        createdAt: attempt.createdAt,
+        recipient: attempt.recipient,
+        amount: attempt.amount,
+        fee: attempt.fee,
+        memo: attempt.memo,
+        status,
+        txId: pending?.txId ?? attempt.txId,
+        confirmations: pending?.confirmations,
+        error: attempt.error,
+        consolidationExpected: expectedSteps || undefined,
+        steps
+      };
+    });
+
+    const attemptTxIds = new Set(
+      attemptEntries
+        .map((entry) => entry.txId)
+        .filter((entry): entry is string => Boolean(entry))
+    );
+    const merged = [
+      ...attemptEntries,
+      ...pendingEntries.filter((entry) => !entry.txId || !attemptTxIds.has(entry.txId))
+    ];
+    merged.sort((a, b) => parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt));
+    return merged;
+  }, [attemptsForStore, pendingTransactions, pendingByTxId]);
+
+  const sendInFlight = attemptsForStore.some((attempt) => attempt.status === 'processing');
+
+  const disclosureGroups = useMemo(() => {
+    const grouped = new Map<string, WalletDisclosureRecord[]>();
+    disclosureRecords.forEach((record) => {
+      const existing = grouped.get(record.txId) ?? [];
+      existing.push(record);
+      grouped.set(record.txId, existing);
+    });
+    const groups: DisclosureGroup[] = Array.from(grouped.entries()).map(([txId, outputs]) => {
+      const sorted = [...outputs].sort(
+        (a, b) => parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt)
+      );
+      return {
+        txId,
+        createdAt: sorted[0]?.createdAt ?? '',
+        outputs: sorted
+      };
+    });
+    return groups.sort((a, b) => parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt));
+  }, [disclosureRecords]);
+
+  const selectedDisclosure = useMemo(() => {
+    if (!selectedDisclosureKey) {
+      return null;
+    }
+    const [txId, outputIndex] = selectedDisclosureKey.split(':');
+    const output = Number.parseInt(outputIndex, 10);
+    return disclosureRecords.find(
+      (record) => record.txId === txId && record.outputIndex === output
+    ) ?? null;
+  }, [disclosureRecords, selectedDisclosureKey]);
 
   const navItems = [
     { path: '/overview', label: 'Overview', description: 'Command center' },
@@ -1814,10 +2106,106 @@ export default function App() {
         </label>
       </div>
       <button className="primary" onClick={handleWalletSend} disabled={!canSend}>
-        Send shielded transaction
+        {sendInFlight ? 'Sending...' : 'Send shielded transaction'}
       </button>
       {sendBlockedReason ? <p className="text-sm text-guard">{sendBlockedReason}</p> : null}
       {WalletErrorBanner}
+    </section>
+  );
+
+  const TransactionActivitySection = (
+    <section className="card space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="label">Transactions</p>
+          <h2 className="text-title font-semibold">Activity</h2>
+          <p className="text-sm text-surfaceMuted/80">
+            Outgoing transfers show up immediately. Sync to confirm mined status.
+          </p>
+        </div>
+        <button
+          className="secondary px-3 py-1 text-xs"
+          onClick={() => handleWalletSync()}
+          disabled={!walletReady || walletBusy}
+        >
+          Sync now
+        </button>
+      </div>
+      {activityEntries.length === 0 ? (
+        <div className="empty-state py-8">
+          <div className="empty-state-icon">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m6 4a10 10 0 11-20 0 10 10 0 0120 0z" />
+            </svg>
+          </div>
+          <p className="empty-state-description">No outgoing transactions yet.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {activityEntries.map((entry) => (
+            <div key={entry.id} className="rounded-xl border border-surfaceMuted/10 bg-midnight/40 p-4 space-y-3">
+              <div className="flex items-start gap-3">
+                <div
+                  className={`flex h-10 w-10 items-center justify-center rounded-full border text-[11px] font-semibold ${activityStatusClasses[entry.status]} ${entry.status === 'processing' ? 'animate-pulse-slow' : ''}`}
+                >
+                  {activityStatusSymbols[entry.status]}
+                </div>
+                <div className="flex-1 space-y-2">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-medium">
+                        Sent {formatHgm(entry.amount)} to {formatAddress(entry.recipient || 'Unknown')}
+                      </p>
+                      <p className="text-xs text-surfaceMuted">
+                        Fee {formatHgm(entry.fee)}
+                        {entry.memo ? ` · Memo: ${entry.memo}` : ''}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-surfaceMuted">{formatTimestamp(entry.createdAt)}</p>
+                      <p className="text-xs text-surfaceMuted">{activityStatusLabels[entry.status]}</p>
+                    </div>
+                  </div>
+                  {entry.txId ? (
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-surfaceMuted">
+                      <span className="mono">Tx {formatHash(entry.txId)}</span>
+                      {entry.confirmations !== undefined ? (
+                        <span>{entry.confirmations} confirmations</span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {entry.error ? <p className="text-xs text-guard">{entry.error}</p> : null}
+                  {entry.steps && entry.steps.length > 0 ? (
+                    <div className="mt-3 space-y-2 border-l border-surfaceMuted/15 pl-4">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-surfaceMuted/70">
+                        {entry.steps.some((step) => Boolean(step.txId))
+                          ? 'Consolidation steps'
+                          : 'Consolidation steps (estimated)'}
+                      </p>
+                      {entry.steps.map((step) => (
+                        <div key={step.id} className="flex items-center justify-between gap-3 text-xs">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`flex h-6 w-6 items-center justify-center rounded-full border text-[9px] font-semibold ${activityStatusClasses[step.status]} ${step.status === 'processing' ? 'animate-pulse-slow' : ''}`}
+                            >
+                              {activityStatusSymbols[step.status]}
+                            </span>
+                            <span className="text-surfaceMuted">{step.label}</span>
+                          </div>
+                          <div className="text-surfaceMuted">
+                            {step.txId ? `Tx ${formatHash(step.txId)}` : activityStatusLabels[step.status]}
+                            {step.confirmations !== undefined ? ` · ${step.confirmations} conf` : ''}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 
@@ -1876,6 +2264,86 @@ export default function App() {
     </section>
   );
 
+  const DisclosureRecordsSection = (
+    <section className="card space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="label">Disclosure</p>
+          <h2 className="text-title font-semibold">Outgoing outputs</h2>
+          <p className="text-sm text-surfaceMuted/80">
+            Select a transaction output to generate a disclosure package.
+          </p>
+        </div>
+        <button
+          className="secondary px-3 py-1 text-xs"
+          onClick={refreshDisclosureRecords}
+          disabled={!walletReady || walletBusy || disclosureListBusy}
+        >
+          {disclosureListBusy ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
+      {disclosureGroups.length === 0 ? (
+        <div className="empty-state py-8">
+          <div className="empty-state-icon">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m6 4a10 10 0 11-20 0 10 10 0 0120 0z" />
+            </svg>
+          </div>
+          <p className="empty-state-description">No outgoing disclosure records yet.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {disclosureGroups.map((group) => (
+            <div key={group.txId} className="rounded-xl border border-surfaceMuted/10 bg-midnight/40 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Tx {formatHash(group.txId)}</p>
+                  <p className="text-xs text-surfaceMuted">
+                    {formatTimestamp(group.createdAt)} · {group.outputs.length} outputs
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {group.outputs.map((record) => {
+                  const key = `${record.txId}:${record.outputIndex}`;
+                  const selected = key === selectedDisclosureKey;
+                  return (
+                    <button
+                      key={key}
+                      className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${
+                        selected
+                          ? 'border-ionosphere/40 bg-ionosphere/10 text-surface'
+                          : 'border-surfaceMuted/10 bg-midnight/50 text-surfaceMuted'
+                      }`}
+                      onClick={() => handleSelectDisclosure(record)}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium">
+                            Output {record.outputIndex} · {formatAddress(record.recipientAddress)}
+                          </p>
+                          <p className="text-xs text-surfaceMuted">
+                            {record.memo ? `Memo: ${record.memo}` : 'No memo'}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-medium">{formatHgm(record.value)}</p>
+                          <p className="text-xs text-surfaceMuted">
+                            {record.assetId === 0 ? 'HGM' : `Asset ${record.assetId}`}
+                          </p>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+
   const DisclosureGenerateSection = (
     <section className="card space-y-6">
       <div>
@@ -1883,13 +2351,37 @@ export default function App() {
         <h2 className="text-title font-semibold">Generate proof</h2>
       </div>
       <div className="grid gap-4">
+        {selectedDisclosure ? (
+          <div className="rounded-xl border border-ionosphere/20 bg-ionosphere/10 p-3 text-sm">
+            <p className="font-medium text-surface">Selected output</p>
+            <p className="text-xs text-surfaceMuted">
+              Tx {formatHash(selectedDisclosure.txId)} · Output {selectedDisclosure.outputIndex}
+            </p>
+            <p className="text-xs text-surfaceMuted">
+              {formatHgm(selectedDisclosure.value)} to {formatAddress(selectedDisclosure.recipientAddress)}
+            </p>
+          </div>
+        ) : null}
         <label className="space-y-2">
           <span className="label">Transaction hash</span>
-          <input value={disclosureTxId} onChange={(event) => setDisclosureTxId(event.target.value)} placeholder="0x..." />
+          <input
+            value={disclosureTxId}
+            onChange={(event) => {
+              setDisclosureTxId(event.target.value);
+              setSelectedDisclosureKey(null);
+            }}
+            placeholder="0x..."
+          />
         </label>
         <label className="space-y-2">
           <span className="label">Output index</span>
-          <input value={disclosureOutput} onChange={(event) => setDisclosureOutput(event.target.value)} />
+          <input
+            value={disclosureOutput}
+            onChange={(event) => {
+              setDisclosureOutput(event.target.value);
+              setSelectedDisclosureKey(null);
+            }}
+          />
         </label>
       </div>
       <button className="secondary" onClick={handleDisclosureCreate} disabled={walletBusy || !walletReady}>
@@ -1963,7 +2455,10 @@ export default function App() {
       {SendPreflightSection}
       <div className="grid gap-6 xl:grid-cols-2">
         {SendSection}
-        {ContactsSection}
+        <div className="space-y-6">
+          {TransactionActivitySection}
+          {ContactsSection}
+        </div>
       </div>
     </div>
   );
@@ -1976,7 +2471,10 @@ export default function App() {
         <p className="text-surfaceMuted max-w-2xl">Generate and verify disclosure proofs without leaving the desktop app.</p>
       </header>
       <div className="grid gap-6 xl:grid-cols-2">
-        {DisclosureGenerateSection}
+        <div className="space-y-6">
+          {DisclosureRecordsSection}
+          {DisclosureGenerateSection}
+        </div>
         {DisclosureVerifySection}
       </div>
     </div>

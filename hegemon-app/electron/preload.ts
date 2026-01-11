@@ -1,5 +1,10 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { NodeMiningRequest, NodeStartOptions, NodeSummaryRequest, WalletSendRequest } from '../src/types';
+import type {
+  NodeMiningRequest,
+  NodeStartOptions,
+  NodeSummaryRequest,
+  WalletSendRequest
+} from '../src/types';
 
 contextBridge.exposeInMainWorld('hegemon', {
   node: {
@@ -29,6 +34,8 @@ contextBridge.exposeInMainWorld('hegemon', {
       passphrase: string,
       wsUrl: string,
       packageJson: object
-    ) => ipcRenderer.invoke('wallet:disclosureVerify', storePath, passphrase, wsUrl, packageJson)
+    ) => ipcRenderer.invoke('wallet:disclosureVerify', storePath, passphrase, wsUrl, packageJson),
+    disclosureList: (storePath: string, passphrase: string) =>
+      ipcRenderer.invoke('wallet:disclosureList', storePath, passphrase)
   }
 });
