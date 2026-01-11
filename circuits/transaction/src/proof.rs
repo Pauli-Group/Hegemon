@@ -107,7 +107,7 @@ pub fn prove(
 ) -> Result<TransactionProof, TransactionCircuitError> {
     witness.validate()?;
 
-    let legacy_trace = TransactionTrace::from_witness(witness)?;
+    let trace = TransactionTrace::from_witness(witness)?;
     let public_inputs = witness.public_inputs()?;
 
     let prover = TransactionProverP3::new();
@@ -126,7 +126,7 @@ pub fn prove(
     Ok(TransactionProof {
         nullifiers,
         commitments,
-        balance_slots: legacy_trace.padded_balance_slots(),
+        balance_slots: trace.padded_balance_slots(),
         public_inputs,
         stark_proof,
         stark_public_inputs: Some(serialized_inputs),
@@ -135,8 +135,7 @@ pub fn prove(
 
 /// Verify a transaction proof.
 ///
-/// If the proof has STARK proof bytes and public inputs, this performs real cryptographic verification.
-/// Otherwise, it falls back to checking public input consistency (for legacy proofs).
+/// This performs real STARK proof verification and requires proof bytes plus public inputs.
 pub fn verify(
     proof: &TransactionProof,
     _verifying_key: &VerifyingKey,

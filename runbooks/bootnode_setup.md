@@ -90,8 +90,6 @@ listen_addresses = ["/ip4/0.0.0.0/tcp/30333", "/ip6/::/tcp/30333"]
 
 # CRITICAL: ML-KEM only, NO X25519 fallback
 handshake_protocol = "ml-kem-768"
-require_pq_handshake = true
-allow_legacy_handshake = false
 
 # Connection limits
 max_peers = 50
@@ -212,7 +210,6 @@ User=hegemon
 Group=hegemon
 
 # Environment
-Environment="HEGEMON_PQ_REQUIRE=true"
 Environment="RUST_LOG=info"
 Environment="RUST_BACKTRACE=1"
 
@@ -388,8 +385,7 @@ sudo systemctl start hegemon-bootnode
 Before going live, verify:
 
 - [ ] ML-DSA-65 node key generated (NOT Ed25519)
-- [ ] `require_pq_handshake = true` in config
-- [ ] `allow_legacy_handshake = false` in config
+- [ ] `handshake_protocol = "ml-kem-768"` in config
 - [ ] Firewall allows only port 30333 publicly
 - [ ] Service runs as non-root user
 - [ ] Prometheus metrics accessible internally

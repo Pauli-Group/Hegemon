@@ -1,0 +1,499 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --transition-fast: 150ms ease-out;
+  --transition-base: 180ms ease-out;
+  --transition-slow: 200ms ease-out;
+}
+
+body {
+  @apply bg-midnight text-surface antialiased;
+  background-image:
+    radial-gradient(800px 420px at 12% -10%, rgba(27, 231, 255, 0.12), transparent 60%),
+    radial-gradient(900px 520px at 90% 0%, rgba(14, 28, 54, 0.9), transparent 65%),
+    linear-gradient(180deg, rgba(14, 28, 54, 0.98), rgba(7, 13, 24, 0.96));
+  background-attachment: fixed;
+}
+
+/* Focus ring utility for a11y */
+.focus-ring {
+  @apply outline-none ring-2 ring-ionosphere/50 ring-offset-2 ring-offset-midnight;
+}
+
+input, textarea, select {
+  @apply bg-surfaceMuted/10 border border-surfaceMuted/20 text-surface rounded-lg px-3 py-2 outline-none ring-1 ring-transparent w-full;
+  transition: border-color var(--transition-base), box-shadow var(--transition-base), background-color var(--transition-fast);
+}
+
+input[type="checkbox"] {
+  @apply w-4 h-4 rounded cursor-pointer flex-shrink-0;
+}
+
+input:hover,
+textarea:hover,
+select:hover {
+  @apply bg-surfaceMuted/20 border-surfaceMuted/30;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  @apply border-ionosphere/60 ring-2 ring-ionosphere/30 bg-surfaceMuted/20;
+}
+
+input::placeholder,
+textarea::placeholder {
+  @apply text-surfaceMuted/50;
+}
+
+button {
+  @apply rounded-lg px-4 py-2 font-medium outline-none ring-1 ring-transparent whitespace-nowrap;
+  transition: background-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-base);
+}
+
+button:focus-visible {
+  @apply ring-2 ring-ionosphere/50 ring-offset-2 ring-offset-midnight;
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+button:disabled {
+  @apply opacity-50 cursor-not-allowed;
+}
+
+button.primary {
+  @apply bg-ionosphere text-midnight hover:bg-ionosphere/80 shadow-sm;
+}
+
+button.primary:hover:not(:disabled) {
+  box-shadow: 0 4px 12px rgba(27, 231, 255, 0.25);
+}
+
+button.secondary {
+  @apply bg-surfaceMuted/10 text-surface border border-surfaceMuted/20 hover:bg-surfaceMuted/20 hover:border-surfaceMuted/30;
+}
+
+button.danger {
+  @apply bg-guard/90 text-surface hover:bg-guard shadow-sm;
+}
+
+button.danger:hover:not(:disabled) {
+  box-shadow: 0 4px 12px rgba(255, 78, 78, 0.25);
+}
+
+.card {
+  @apply bg-surfaceMuted/5 border border-surfaceMuted/10 rounded-2xl p-6 shadow-panel backdrop-blur-sm;
+  transition: border-color var(--transition-base), box-shadow var(--transition-slow);
+}
+
+.card:hover {
+  @apply border-surfaceMuted/20;
+}
+
+.panel {
+  @apply rounded-xl bg-midnight/50 border border-surfaceMuted/10 p-4;
+  transition: background-color var(--transition-fast), border-color var(--transition-base);
+}
+
+.panel:hover {
+  @apply bg-midnight/60 border-surfaceMuted/20;
+}
+
+.app-shell {
+  @apply min-h-screen flex flex-col lg:flex-row;
+}
+
+.app-sidebar {
+  @apply w-full lg:w-64 shrink-0 border-b lg:border-b-0 lg:border-r border-surfaceMuted/10 bg-midnight/80 backdrop-blur-2xl p-6 space-y-6 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto;
+}
+
+.app-sidebar::before {
+  content: '';
+  @apply absolute inset-0 bg-gradient-to-b from-ionosphere/5 to-transparent pointer-events-none;
+  border-radius: inherit;
+}
+
+.app-body {
+  @apply flex-1 flex flex-col;
+}
+
+.app-main {
+  @apply flex-1 px-6 py-8;
+}
+
+.status-bar {
+  @apply sticky top-0 z-20 bg-midnight/80 border-b border-surfaceMuted/10 backdrop-blur-2xl px-6 py-4;
+  box-shadow: 0 1px 0 rgba(27, 231, 255, 0.05);
+}
+
+.status-grid {
+  @apply grid gap-4 lg:grid-cols-3;
+}
+
+.status-group {
+  @apply space-y-1;
+}
+
+.nav-link {
+  @apply block rounded-xl px-3 py-3 border border-transparent relative overflow-hidden;
+  transition: background-color var(--transition-fast), border-color var(--transition-base), transform var(--transition-fast);
+}
+
+.nav-link:hover {
+  @apply bg-surfaceMuted/10 border-surfaceMuted/20;
+}
+
+.nav-link:active {
+  transform: scale(0.98);
+}
+
+.nav-link-active {
+  @apply bg-ionosphere/10 border-ionosphere/30;
+}
+
+.nav-link-active::before {
+  content: '';
+  @apply absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-ionosphere rounded-full;
+}
+
+.action-link {
+  @apply inline-flex items-center justify-center rounded-lg px-4 py-2 font-medium outline-none ring-1 ring-transparent;
+  transition: background-color var(--transition-fast), transform var(--transition-fast), box-shadow var(--transition-base);
+}
+
+.action-link:focus-visible {
+  @apply ring-2 ring-ionosphere/50 ring-offset-2 ring-offset-midnight;
+}
+
+.action-link:active {
+  transform: scale(0.97);
+}
+
+.action-link.primary {
+  @apply bg-ionosphere text-midnight hover:bg-ionosphere/80 shadow-sm;
+}
+
+.action-link.primary:hover {
+  box-shadow: 0 4px 12px rgba(27, 231, 255, 0.25);
+}
+
+.action-link.secondary {
+  @apply bg-surfaceMuted/10 text-surface border border-surfaceMuted/20 hover:bg-surfaceMuted/20 hover:border-surfaceMuted/30;
+}
+
+.chip {
+  @apply rounded-full px-3 py-1.5 text-[11px] uppercase tracking-[0.22em] border border-surfaceMuted/30 text-surfaceMuted bg-surfaceMuted/10 cursor-pointer select-none;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+}
+
+.chip:hover {
+  @apply bg-surfaceMuted/20 border-surfaceMuted/40;
+}
+
+.chip:active {
+  transform: scale(0.95);
+}
+
+.chip[aria-pressed='true'] {
+  @apply border-ionosphere/60 bg-ionosphere/20 text-ionosphere;
+}
+
+.chip-static {
+  @apply rounded-full px-3 py-1.5 text-[11px] uppercase tracking-[0.22em] border border-surfaceMuted/20 text-surfaceMuted/80 bg-surfaceMuted/5;
+}
+
+.status-pill {
+  @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] uppercase tracking-[0.22em] border font-medium;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.status-pill::before {
+  content: '';
+  @apply w-1.5 h-1.5 rounded-full;
+}
+
+.status-pill.ok {
+  @apply text-ionosphere border-ionosphere/30 bg-ionosphere/10;
+}
+
+.status-pill.ok::before {
+  @apply bg-ionosphere shadow-[0_0_6px_rgba(27,231,255,0.5)];
+}
+
+.status-pill.warn {
+  @apply text-amber border-amber/30 bg-amber/10;
+}
+
+.status-pill.warn::before {
+  @apply bg-amber shadow-[0_0_6px_rgba(245,166,35,0.5)];
+}
+
+.status-pill.error {
+  @apply text-guard border-guard/30 bg-guard/10;
+}
+
+.status-pill.error::before {
+  @apply bg-guard shadow-[0_0_6px_rgba(255,78,78,0.5)];
+}
+
+.status-pill.neutral {
+  @apply text-surfaceMuted border-surfaceMuted/20 bg-surfaceMuted/10;
+}
+
+.status-pill.neutral::before {
+  @apply bg-surfaceMuted/60;
+}
+
+.status-dot {
+  @apply inline-block h-2 w-2 rounded-full;
+  transition: box-shadow var(--transition-base);
+}
+
+.status-dot.ok {
+  @apply bg-ionosphere;
+  box-shadow: 0 0 8px rgba(27, 231, 255, 0.6);
+}
+
+.status-dot.warn {
+  @apply bg-amber;
+  box-shadow: 0 0 8px rgba(245, 166, 35, 0.6);
+}
+
+.status-dot.error {
+  @apply bg-guard;
+  box-shadow: 0 0 8px rgba(255, 78, 78, 0.6);
+  animation: pulse-error 2s ease-in-out infinite;
+}
+
+.status-dot.neutral {
+  @apply bg-surfaceMuted/60;
+}
+
+@keyframes pulse-error {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.loading-dots {
+  @apply inline-block overflow-hidden align-bottom;
+  width: 0;
+  animation: loading-dots 1.2s steps(4, end) infinite;
+}
+
+@keyframes loading-dots {
+  to { width: 1.5em; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-dots {
+    animation: none;
+    width: 1.5em;
+  }
+}
+
+.badge {
+  @apply text-[10px] uppercase tracking-[0.18em] px-2 py-1 rounded-full border border-surfaceMuted/20 text-surfaceMuted font-medium;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.badge.level-error {
+  @apply text-guard border-guard/30 bg-guard/10;
+}
+
+.badge.level-warn {
+  @apply text-amber border-amber/30 bg-amber/10;
+}
+
+.badge.level-info {
+  @apply text-surfaceMuted border-surfaceMuted/20 bg-surfaceMuted/10;
+}
+
+.badge.level-debug {
+  @apply text-surfaceMuted/60 border-surfaceMuted/20 bg-surfaceMuted/5;
+}
+
+.badge.badge-category {
+  @apply text-surfaceMuted/80 border-surfaceMuted/20 bg-surfaceMuted/10;
+}
+
+.badge.badge-highlight {
+  @apply font-semibold;
+}
+
+.label {
+  @apply text-[11px] uppercase tracking-[0.2em] text-surfaceMuted font-medium block;
+}
+
+/* Form field wrapper for label + input pairs */
+label.space-y-2 {
+  @apply block;
+}
+
+label.space-y-2 > span.label {
+  @apply mb-2;
+}
+
+.mono {
+  @apply font-mono text-sm leading-relaxed;
+}
+
+.log-row {
+  @apply items-start;
+  transition: background-color var(--transition-fast);
+}
+
+.log-row:hover {
+  @apply bg-surfaceMuted/5 rounded-lg;
+}
+
+/* Shimmer animation for loading states */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.shimmer {
+  @apply bg-surfaceMuted/10 rounded-lg;
+  background: linear-gradient(
+    90deg,
+    rgba(225, 230, 238, 0.05) 0%,
+    rgba(225, 230, 238, 0.12) 50%,
+    rgba(225, 230, 238, 0.05) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.shimmer-text {
+  @apply h-4 rounded;
+}
+
+.shimmer-block {
+  @apply h-20 rounded-xl;
+}
+
+/* Toast animations */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.96);
+  }
+}
+
+.toast {
+  animation: toast-in 180ms ease-out;
+}
+
+.toast-exit {
+  animation: toast-out 180ms ease-out forwards;
+}
+
+/* Reveal animation */
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.reveal {
+  animation: reveal 400ms ease-out both;
+  animation-delay: var(--delay, 0ms);
+}
+
+.delay-1 {
+  --delay: 50ms;
+}
+
+.delay-2 {
+  --delay: 100ms;
+}
+
+.delay-3 {
+  --delay: 150ms;
+}
+
+.delay-4 {
+  --delay: 200ms;
+}
+
+.delay-5 {
+  --delay: 250ms;
+}
+
+/* Empty state styling */
+.empty-state {
+  @apply text-center py-12 px-6;
+}
+
+.empty-state-icon {
+  @apply mx-auto mb-4 w-12 h-12 rounded-full bg-surfaceMuted/10 flex items-center justify-center text-surfaceMuted/60;
+}
+
+.empty-state-title {
+  @apply text-lg font-medium text-surface mb-2;
+}
+
+.empty-state-description {
+  @apply text-sm text-surfaceMuted max-w-sm mx-auto;
+}
+
+/* Improved scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-midnight/50 rounded-full;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-surfaceMuted/20 rounded-full;
+  transition: background-color var(--transition-fast);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-surfaceMuted/30;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .shimmer,
+  .toast,
+  .toast-exit {
+    animation: none;
+  }
+  
+  .status-dot.error {
+    animation: none;
+  }
+}

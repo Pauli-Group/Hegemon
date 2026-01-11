@@ -160,12 +160,14 @@ if grep -q "blowup.*=.*[0-7]" circuits/transaction/src/*.rs 2>/dev/null | grep -
 fi
 echo "✅ PASS (manual review recommended)"
 
-# 14. Verify PQ handshake is required
-echo -n "Checking PQ handshake requirement... "
-if grep -q "HEGEMON_PQ_REQUIRE\|require_pq" network/src/*.rs 2>/dev/null; then
+# 14. Verify PQ-only protocol definitions
+echo -n "Checking PQ-only protocols... "
+if grep -q "PQ_PROTOCOL_V1" network/src/protocol.rs 2>/dev/null && ! grep -q "LEGACY" network/src/protocol.rs 2>/dev/null; then
     echo "✅ PASS"
 else
-    echo "⚠️ WARNING: PQ requirement flag not found"
+    echo "❌ FAILED"
+    echo "PQ-only protocol constants missing or legacy protocols still present!"
+    exit 1
 fi
 
 # 15. Verify no test-only features in release

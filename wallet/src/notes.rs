@@ -100,9 +100,11 @@ impl NotePlaintext {
 }
 
 /// Size of the ciphertext portion in pallet format
-const PALLET_CIPHERTEXT_SIZE: usize = 611;
+pub const PALLET_CIPHERTEXT_SIZE: usize = 579;
 /// Size of the ML-KEM ciphertext
-const PALLET_KEM_CIPHERTEXT_SIZE: usize = 1088;
+pub const PALLET_KEM_CIPHERTEXT_SIZE: usize = 1088;
+/// Total size of the pallet encrypted note bytes
+pub const PALLET_ENCRYPTED_NOTE_SIZE: usize = PALLET_CIPHERTEXT_SIZE + PALLET_KEM_CIPHERTEXT_SIZE;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NoteCiphertext {
@@ -114,8 +116,6 @@ pub struct NoteCiphertext {
     pub note_payload: Vec<u8>,
     #[serde(with = "serde_bytes_vec")]
     pub memo_payload: Vec<u8>,
-    #[serde(with = "serde_bytes32")]
-    pub hint_tag: [u8; 32],
 }
 
 impl NoteCiphertext {
@@ -128,14 +128,13 @@ impl NoteCiphertext {
             kem_ciphertext: vec![0u8; PALLET_KEM_CIPHERTEXT_SIZE],
             note_payload: vec![],
             memo_payload: vec![],
-            hint_tag: [0u8; 32],
         }
     }
 
-    /// Convert to pallet-compatible format (611 + 1088 = 1699 bytes)
+    /// Convert to pallet-compatible format (579 + 1088 = 1667 bytes)
     ///
     /// The pallet's EncryptedNote type uses fixed-size arrays:
-    /// - ciphertext: [u8; 611] containing version, diversifier_index, note/memo payloads, hint_tag
+    /// - ciphertext: [u8; 579] containing version, diversifier_index, note/memo payloads
     /// - kem_ciphertext: [u8; 1088] for ML-KEM
     pub fn to_pallet_bytes(&self) -> Result<Vec<u8>, WalletError> {
         if self.kem_ciphertext.len() != PALLET_KEM_CIPHERTEXT_SIZE {
@@ -146,7 +145,7 @@ impl NoteCiphertext {
             )));
         }
 
-        // Build the 611-byte ciphertext portion
+        // Build the 579-byte ciphertext portion
         let mut ciphertext = [0u8; PALLET_CIPHERTEXT_SIZE];
         let mut offset = 0;
 
@@ -158,10 +157,10 @@ impl NoteCiphertext {
         ciphertext[offset..offset + 4].copy_from_slice(&self.diversifier_index.to_le_bytes());
         offset += 4;
 
-        // Note + memo payloads must fit before the trailing 32-byte hint tag.
+        // Note + memo payloads must fit in the ciphertext container.
         let note_len = self.note_payload.len();
         let memo_len = self.memo_payload.len();
-        let max_payload = PALLET_CIPHERTEXT_SIZE - 32 - 5 - 8; // hint + version/diversifier + 2 length fields
+        let max_payload = PALLET_CIPHERTEXT_SIZE - 5 - 8; // version/diversifier + 2 length fields
         if note_len + memo_len > max_payload {
             return Err(WalletError::Serialization(format!(
                 "Encrypted note payloads too large: note={} memo={} max_total={}",
@@ -187,21 +186,17 @@ impl NoteCiphertext {
             ciphertext[offset..offset + memo_len].copy_from_slice(&self.memo_payload[..memo_len]);
         }
 
-        // Hint tag at the end (last 32 bytes)
-        let hint_start = PALLET_CIPHERTEXT_SIZE - 32;
-        ciphertext[hint_start..].copy_from_slice(&self.hint_tag);
-
         // Combine ciphertext + kem_ciphertext
-        let mut result = Vec::with_capacity(PALLET_CIPHERTEXT_SIZE + PALLET_KEM_CIPHERTEXT_SIZE);
+        let mut result = Vec::with_capacity(PALLET_ENCRYPTED_NOTE_SIZE);
         result.extend_from_slice(&ciphertext);
         result.extend_from_slice(&self.kem_ciphertext);
 
         Ok(result)
     }
 
-    /// Parse from pallet-compatible format (611 + 1088 = 1699 bytes)
+    /// Parse from pallet-compatible format (579 + 1088 = 1667 bytes)
     pub fn from_pallet_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
-        const EXPECTED_SIZE: usize = PALLET_CIPHERTEXT_SIZE + PALLET_KEM_CIPHERTEXT_SIZE;
+        const EXPECTED_SIZE: usize = PALLET_ENCRYPTED_NOTE_SIZE;
 
         if bytes.len() != EXPECTED_SIZE {
             return Err(WalletError::Serialization(format!(
@@ -232,7 +227,7 @@ impl NoteCiphertext {
         ) as usize;
         offset += 4;
 
-        if offset + note_len > PALLET_CIPHERTEXT_SIZE - 32 {
+        if offset + note_len + 4 > PALLET_CIPHERTEXT_SIZE {
             return Err(WalletError::Serialization(format!(
                 "Note payload too large: {} bytes at offset {}",
                 note_len, offset
@@ -249,16 +244,11 @@ impl NoteCiphertext {
         ) as usize;
         offset += 4;
 
-        let memo_payload = if memo_len > 0 && offset + memo_len <= PALLET_CIPHERTEXT_SIZE - 32 {
+        let memo_payload = if memo_len > 0 && offset + memo_len <= PALLET_CIPHERTEXT_SIZE {
             ciphertext_bytes[offset..offset + memo_len].to_vec()
         } else {
             Vec::new()
         };
-
-        // Hint tag is at the end (last 32 bytes)
-        let hint_tag_start = PALLET_CIPHERTEXT_SIZE - 32;
-        let mut hint_tag = [0u8; 32];
-        hint_tag.copy_from_slice(&ciphertext_bytes[hint_tag_start..]);
 
         Ok(Self {
             version,
@@ -266,7 +256,6 @@ impl NoteCiphertext {
             kem_ciphertext,
             note_payload,
             memo_payload,
-            hint_tag,
         })
     }
 
@@ -284,7 +273,6 @@ impl NoteCiphertext {
             address.pk_recipient,
             address.version,
             address.diversifier_index,
-            address.address_tag,
             &crypto_note,
             &kem_seed,
         )
@@ -300,9 +288,6 @@ impl NoteCiphertext {
         if material.diversifier_index != self.diversifier_index {
             return Err(WalletError::NoteMismatch("diversifier index mismatch"));
         }
-        if material.addr_tag != self.hint_tag {
-            return Err(WalletError::NoteMismatch("address tag mismatch"));
-        }
 
         let crypto_ct = self.to_crypto();
         let crypto_note = crypto_ct
@@ -310,7 +295,6 @@ impl NoteCiphertext {
                 material.secret_key(),
                 material.pk_recipient,
                 material.diversifier_index,
-                material.addr_tag,
             )
             .map_err(|_| WalletError::DecryptionFailure)?;
 
@@ -336,7 +320,6 @@ impl NoteCiphertext {
             kem_ciphertext: self.kem_ciphertext.clone(),
             note_payload: self.note_payload.clone(),
             memo_payload: self.memo_payload.clone(),
-            hint_tag: self.hint_tag,
         }
     }
 
@@ -347,7 +330,6 @@ impl NoteCiphertext {
             kem_ciphertext: crypto.kem_ciphertext,
             note_payload: crypto.note_payload,
             memo_payload: crypto.memo_payload,
-            hint_tag: crypto.hint_tag,
         }
     }
 }
@@ -445,7 +427,10 @@ mod tests {
         let recovered = NoteCiphertext::from_bytes(&bytes).unwrap();
 
         assert_eq!(recovered.version, ciphertext.version);
-        assert_eq!(recovered.hint_tag, ciphertext.hint_tag);
+        assert_eq!(recovered.diversifier_index, ciphertext.diversifier_index);
+        assert_eq!(recovered.kem_ciphertext, ciphertext.kem_ciphertext);
+        assert_eq!(recovered.note_payload, ciphertext.note_payload);
+        assert_eq!(recovered.memo_payload, ciphertext.memo_payload);
     }
 
     #[test]

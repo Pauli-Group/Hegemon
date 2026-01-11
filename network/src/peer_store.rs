@@ -253,7 +253,7 @@ mod tests {
         let path = temp_path("peer_store");
         let mut store = PeerStore::new(PeerStoreConfig {
             path: path.clone(),
-            ttl: Duration::from_millis(10),
+            ttl: Duration::from_secs(5),
             max_entries: 16,
         });
 
@@ -264,14 +264,19 @@ mod tests {
         store.record_learned([stale]).unwrap();
 
         // Force the stale entry to age out on reload.
+        let now = SystemTime::now();
         if let Some(entry) = store.entries.get_mut(&stale) {
-            entry.last_updated = SystemTime::now() - Duration::from_millis(100);
+            entry.last_updated = now - Duration::from_secs(2);
+        }
+        if let Some(entry) = store.entries.get_mut(&active) {
+            entry.last_updated = now;
+            entry.last_connected = Some(now);
         }
         store.persist().unwrap();
 
         let mut reloaded = PeerStore::new(PeerStoreConfig {
             path: path.clone(),
-            ttl: Duration::from_millis(50),
+            ttl: Duration::from_secs(1),
             max_entries: 16,
         });
         reloaded.load().unwrap();

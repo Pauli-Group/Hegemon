@@ -52,7 +52,6 @@
   },
   "extensions": {
     "powBits": 32,
-    "requirePq": true,
     "targetBlockTimeMs": 60000,
     "handshakeProtocol": "ml-kem-768",
     "signatureScheme": "ml-dsa-65"

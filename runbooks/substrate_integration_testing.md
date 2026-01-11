@@ -103,26 +103,17 @@ cargo test -p security-tests --test multi_node_substrate --features substrate
 # test result: ok. 9 passed; 0 failed; 4 ignored
 ```
 
-### 1.3 PQ Network Integration Tests (19 tests)
+### 1.3 PQ Network Tests (network crate)
 
 ```bash
-# Run PQ network transport tests
-cargo test -p security-tests --test pq_network_integration
+# Run PQ network transport and handshake tests
+cargo test -p network
 
-# Expected: 19 tests pass
+# Expected: All network tests pass
 # Duration: ~1-2 minutes
 ```
 
-### 1.4 P2P PQ Handshake Tests
-
-```bash
-# Run P2P post-quantum handshake tests
-cargo test -p security-tests --test p2p_pq
-
-# Expected: All handshake tests pass
-```
-
-### 1.5 Security Pipeline Tests
+### 1.4 Security Pipeline Tests
 
 ```bash
 # Run cross-component security tests
@@ -409,7 +400,6 @@ done
 |----------|---------|-------------|
 | `HEGEMON_MINE` | `0` | Enable mining (`1` = enabled) |
 | `HEGEMON_MINE_THREADS` | `1` | Number of mining threads |
-| `HEGEMON_REQUIRE_PQ` | `true` | Require PQ-secure connections |
 | `HEGEMON_PQ_VERBOSE` | `false` | Verbose PQ handshake logging |
 | `HEGEMON_BLOCK_TIME_MS` | `10000` | Target block time in milliseconds |
 | `PROPTEST_MAX_CASES` | `256` | Property test iterations |
@@ -443,9 +433,6 @@ HEGEMON_PQ_VERBOSE=1 cargo run --release -p hegemon-node --features substrate --
 # Check for firewall issues (macOS)
 sudo pfctl -sr | grep "block"
 
-# Try with hybrid mode (allows legacy fallback)
-cargo run --release -p hegemon-node --features substrate -- \
-  --dev --tmp --hybrid-pq
 ```
 
 ### No Blocks Being Mined
@@ -539,7 +526,7 @@ substrate-tests:
     - name: Run Substrate tests
       run: cargo test -p security-tests --test multi_node_substrate --features substrate
     - name: Run PQ network tests
-      run: cargo test -p security-tests --test pq_network_integration
+      run: cargo test -p network
 ```
 
 ---
@@ -552,8 +539,7 @@ cargo build --release -p hegemon-node --features substrate
 
 # === AUTOMATED TESTS ===
 cargo test -p security-tests --test multi_node_substrate --features substrate
-cargo test -p security-tests --test pq_network_integration
-cargo test -p security-tests --test p2p_pq
+cargo test -p network
 
 # === SINGLE NODE ===
 HEGEMON_MINE=1 cargo run --release -p hegemon-node --features substrate -- --dev --tmp

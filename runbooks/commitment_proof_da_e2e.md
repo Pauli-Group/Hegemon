@@ -9,11 +9,13 @@ If you want the fully automated flow (tmux + wallet creation + RPC queries), run
 HEGEMON_E2E_FORCE=1 ./scripts/commitment_proof_da_e2e_tmux.sh
 ```
 
+Note: the tmux script still uses the legacy `wallet` CLI. Build `wallet` if you run it, or follow the walletd steps below.
+
 ## 1. Build the binaries
 
 ```bash
 make node
-cargo build --release -p wallet
+cargo build --release -p walletd
 ```
 
 If you plan to use fast proving (`HEGEMON_WALLET_PROVER_FAST=1` / `HEGEMON_ACCEPT_FAST_PROOFS=1`)
@@ -27,16 +29,18 @@ make node-fast
 ## 2. Create miner + recipient wallets
 
 ```bash
-./target/release/wallet init --store /tmp/hegemon-wallet-a --passphrase "testwallet1"
-./target/release/wallet init --store /tmp/hegemon-wallet-b --passphrase "testwallet2"
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "testwallet1" \
+  | ./target/release/walletd --store /tmp/hegemon-wallet-a --mode create
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "testwallet2" \
+  | ./target/release/walletd --store /tmp/hegemon-wallet-b --mode create
 ```
 
 Fetch the miner’s shielded address:
 
 ```bash
-HEGEMON_MINER_ADDRESS=$(./target/release/wallet status \
-  --store /tmp/hegemon-wallet-a --passphrase "testwallet1" --no-sync \
-  | rg "Shielded Address" | awk '{print $3}')
+HEGEMON_MINER_ADDRESS=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "testwallet1" \
+  | ./target/release/walletd --store /tmp/hegemon-wallet-a --mode open \
+  | jq -r '.result.primaryAddress')
 ```
 
 ## 3. Start the dev node with commitment proofs enabled
@@ -57,9 +61,8 @@ Tip: for background runs, redirect logs to a file so you can capture the `DA enc
 ## 4. Sync the miner wallet
 
 ```bash
-HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/wallet substrate-sync \
-  --store /tmp/hegemon-wallet-a --passphrase "testwallet1" \
-  --ws-url ws://127.0.0.1:9944 --force-rescan
+printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"ws://127.0.0.1:9944","force_rescan":true}}\n' "testwallet1" \
+  | HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/walletd --store /tmp/hegemon-wallet-a --mode open
 ```
 
 ## 5. Prepare a recipients file
@@ -67,9 +70,9 @@ HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/wallet substrate-sync \
 Get the recipient address:
 
 ```bash
-RECIPIENT=$(./target/release/wallet status \
-  --store /tmp/hegemon-wallet-b --passphrase "testwallet2" --no-sync \
-  | rg "Shielded Address" | awk '{print $3}')
+RECIPIENT=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "testwallet2" \
+  | ./target/release/walletd --store /tmp/hegemon-wallet-b --mode open \
+  | jq -r '.result.primaryAddress')
 ```
 
 Create a recipients JSON (1 HGM = 100000000 units):
@@ -90,10 +93,10 @@ EOF
 ## 6. Send a shielded transfer
 
 ```bash
-HEGEMON_WALLET_PROVER_FAST=1 HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/wallet substrate-send \
-  --store /tmp/hegemon-wallet-a --passphrase "testwallet1" \
-  --recipients /tmp/hegemon-recipients-e2e.json \
-  --ws-url ws://127.0.0.1:9944
+REQ=$(jq -nc --arg ws "ws://127.0.0.1:9944" --argjson recipients "$(jq -c '.' /tmp/hegemon-recipients-e2e.json)" \
+  '{id:1,method:"tx.send",params:{ws_url:$ws,recipients:$recipients,fee:0,auto_consolidate:true}}')
+printf '%s\n%s\n' "testwallet1" "$REQ" \
+  | HEGEMON_WALLET_PROVER_FAST=1 HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/walletd --store /tmp/hegemon-wallet-a --mode open
 ```
 
 Unset `HEGEMON_WALLET_PROVER_FAST` and `HEGEMON_ACCEPT_FAST_PROOFS` to use full-security proving parameters.
@@ -150,9 +153,8 @@ curl -s -H "Content-Type: application/json" \
 ## 9. Verify recipient saw the note (optional)
 
 ```bash
-HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/wallet substrate-sync \
-  --store /tmp/hegemon-wallet-b --passphrase "testwallet2" \
-  --ws-url ws://127.0.0.1:9944 --force-rescan
+printf '%s\n{"id":1,"method":"sync.once","params":{"ws_url":"ws://127.0.0.1:9944","force_rescan":true}}\n' "testwallet2" \
+  | HEGEMON_ACCEPT_FAST_PROOFS=1 ./target/release/walletd --store /tmp/hegemon-wallet-b --mode open
 ```
 
 The recipient wallet should report a new note after the transfer is mined.

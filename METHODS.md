@@ -321,10 +321,9 @@ To derive per‑address KEM keys *deterministically*:
 Then an **address** is:
 
 ```text
-addr_d = EncAddr(version || d || pk_enc(d) || addr_tag(d))
+addr_d = EncAddr(version || d || pk_recipient(d) || pk_enc(d))
 ```
-
-where `addr_tag(d)` is a public tag used to help scanning (see below).
+where `pk_recipient(d)` is derived from the viewing key and the diversifier.
 
 Wallet exports:
 
@@ -360,25 +359,15 @@ For each output note to `addr_d`:
    * `cm` – the note commitment (public)
    * `ct` – KEM ciphertext
    * `C_note` – AEAD ciphertext
-   * an *optional* short **hint tag** `t` to speed up scanning:
-
-     ```text
-     t = Hg("hint" || Hf(d || some randomness))
-     ```
-
-   (Hint tags are a place where you can get fancy; simplest is “none”: just brute‑force all notes.)
 
 **Scanning with incoming viewing key:**
 
 A wallet with `vk_incoming`:
 
 * Knows `sk_derive`, so can recompute each `sk_enc(d)` and `pk_enc(d)` for its diversified addresses.
-* For each new note on chain:
+* For each new note on chain, try decapsulation with every `sk_enc(d)` you care about; if decap succeeds and the AEAD tag verifies, it’s yours.
 
-  * Option A (simple / expensive): try decapsulation with every `sk_enc(d)` you care about; if decap succeeds and the AEAD tag verifies, it’s yours.
-  * Option B (with hint tags): interpret `t` as a small filter that lets you narrow the set of candidate `d` for which you bother trying KEM decaps.
-
-Given that ML‑KEM decapsulation is not *that* expensive and users don’t have thousands of addresses typically, Option A is acceptable in v1. The scanning cost is similar order of magnitude to Sapling’s trial decryption.
+Given that ML‑KEM decapsulation is not *that* expensive and users don’t have thousands of addresses typically, trial decryption is acceptable in v1. The scanning cost is similar order of magnitude to Sapling’s trial decryption.
 
 **Full viewing key** `vk_full`:
 
@@ -392,20 +381,20 @@ nullifiers for spentness tracking without embedding `sk_spend`.
 
 ### 4.5 Implementation details
 
-*Key derivations and addresses.* `wallet/src/keys.rs` implements `RootSecret::derive()` using the domain-separated label `wallet-hkdf` and SHA-256 to expand `(label || sk_root)` into the 32-byte subkeys for spend/view/enc/diversifier. `AddressKeyMaterial` then uses `addr-seed` and `addr-tag` labels to deterministically derive the ML-KEM key pair and 32-byte hint tag for each diversifier index. `wallet/src/address.rs` serializes `(version, index, pk_recipient, pk_enc, hint_tag)` as a Bech32m string (HRP `shca`) so senders can round-trip addresses through QR codes or the CLI.
+*Key derivations and addresses.* `wallet/src/keys.rs` implements `RootSecret::derive()` using the domain-separated label `wallet-hkdf` and SHA-256 to expand `(label || sk_root)` into the 32-byte subkeys for spend/view/enc/diversifier. `AddressKeyMaterial` then uses `addr-seed` plus the diversifier index to deterministically derive the ML-KEM key pair; `pk_recipient` is derived from the view key and diversifier. `wallet/src/address.rs` serializes `(version, index, pk_recipient, pk_enc)` as a Bech32m string (HRP `shca`) so senders can round-trip addresses through QR codes or the CLI.
 
-*Note encryption.* `wallet/src/notes.rs` consumes the recipient’s Bech32 data, runs ML-KEM encapsulation with a random seed, and stretches the shared secret into two ChaCha20-Poly1305 keys via `expand_to_length("wallet-aead", shared_secret || label, 44)`. The first 32 bytes drive the AEAD key and the final 12 bytes form the nonce so both note payload and memo use disjoint key/nonce pairs. Ciphertexts record the diversifier index, hint tag, and ML-KEM ciphertext so incoming viewing keys can reconstruct the exact `AddressKeyMaterial` needed for decryption.
+*Note encryption.* `wallet/src/notes.rs` consumes the recipient’s Bech32 data, runs ML-KEM encapsulation with a random seed, and stretches the shared secret into two ChaCha20-Poly1305 keys via `expand_to_length("wallet-aead", shared_secret || label, 44)`. The first 32 bytes drive the AEAD key and the final 12 bytes form the nonce so both note payload and memo use disjoint key/nonce pairs. Ciphertexts record the version, diversifier index, and ML-KEM ciphertext so incoming viewing keys can reconstruct the exact `AddressKeyMaterial` needed for decryption.
 
-*Viewing keys and nullifiers.* `wallet/src/viewing.rs` defines `IncomingViewingKey` (scan + decrypt), `OutgoingViewingKey` (derive address tags/pk_recipient for audit), and `FullViewingKey` (incoming + nullifier key). Full viewing keys store the view-derived nullifier key `sk_nf = BLAKE3("view_nf" || sk_view)`, letting watch-only tooling compute chain nullifiers without exposing the spend key itself. `RecoveredNote::to_input_witness` converts decrypted notes into `transaction_circuit::note::InputNoteWitness` values by reusing the same `NoteData` and taking the best-effort `rho_seed = rho` placeholder until the circuit’s derivation is finalized.
+*Viewing keys and nullifiers.* `wallet/src/viewing.rs` defines `IncomingViewingKey` (scan + decrypt), `OutgoingViewingKey` (derive `pk_recipient` for audit), and `FullViewingKey` (incoming + nullifier key). Full viewing keys store the view-derived nullifier key `sk_nf = BLAKE3("view_nf" || sk_view)`, letting watch-only tooling compute chain nullifiers without exposing the spend key itself. `RecoveredNote::to_input_witness` converts decrypted notes into `transaction_circuit::note::InputNoteWitness` values by reusing the same `NoteData` and taking the best-effort `rho_seed = rho` placeholder until the circuit’s derivation is finalized.
 
 *CLI, daemon, and fixtures.* `wallet/src/bin/wallet.rs` now ships three families of commands:
 
   * Offline helpers (`generate`, `address`, `tx-craft`, `scan`) that mirror the deterministic witness tooling described in DESIGN.md.
-  * Legacy HTTP RPC wallet management (`init`, `sync`, `daemon`, `status`, `send`, `export-viewing-key`). `wallet init` writes an encrypted store (Argon2 + ChaCha20-Poly1305) containing the root secret or an imported viewing key. `wallet sync` and `wallet daemon` talk to `/wallet/{commitments,ciphertexts,nullifiers}` plus `/wallet/notes` and `/blocks/latest` to maintain a local Merkle tree/nullifier set, while `wallet send` crafts witnesses, proves them locally, and submits a `TransactionBundle` to `/transactions` before tracking the pending nullifiers.
+* Wallet management over Substrate RPC (`wallet init`, `wallet substrate-sync`, `wallet substrate-daemon`, `wallet substrate-send`, `wallet status`, `wallet export-viewing-key`). `wallet init` writes an encrypted store (Argon2 + ChaCha20-Poly1305) containing the root secret or an imported viewing key. `wallet substrate-sync` and `wallet substrate-daemon` use WebSocket RPC to fetch commitments/ciphertexts/nullifiers and maintain a local Merkle tree/nullifier set, while `wallet substrate-send` crafts witnesses, proves them locally, and submits a shielded transfer before tracking pending nullifiers.
 * Substrate RPC wallet management (`substrate-sync`, `substrate-daemon`, `substrate-send`, `substrate-batch-send` gated behind the `batch-proofs` feature) that use the WebSocket RPC for live wallets. `wallet substrate-send` records outgoing disclosure records inside the encrypted store so on-demand payment proofs can be generated later.
   * Compliance tooling (`payment-proof create`, `payment-proof verify`, `payment-proof purge`) that emits disclosure packages and verifies them against Merkle inclusion plus `hegemon_isValidAnchor` and the chain genesis hash.
 
-JSON fixtures for transaction inputs/recipients still follow the `transaction_circuit` `serde` representation so the witness builder plugs directly into existing proving code. `wallet/tests/cli.rs` exercises the offline commands via `cargo_bin_cmd!`, `wallet/tests/rpc_flow.rs` spins up a lightweight test node for send/receive flows, and `wallet/tests/disclosure_package.rs` covers payment-proof package generation plus tamper rejection without requiring a live node. The disclosure circuit itself is tested under `circuits/disclosure/tests/disclosure.rs`.
+JSON fixtures for transaction inputs/recipients still follow the `transaction_circuit` `serde` representation so the witness builder plugs directly into existing proving code. `wallet/tests/cli.rs` exercises the offline commands via `cargo_bin_cmd!`, and `wallet/tests/disclosure_package.rs` covers payment-proof package generation plus tamper rejection without requiring a live node. The disclosure circuit itself is tested under `circuits/disclosure/tests/disclosure.rs`.
 
 ---
 
@@ -597,28 +586,28 @@ To get multiple addresses from one wallet, for diversifier index \(i \in \{0, \l
 
 ```
 div_i      = SHA256("div" || sk_view || i)   // 256 bits
-addr_tag_i = div_i                            // 256 bits, used directly
+pk_recipient_i = H(sk_view || div_i)         // 256 bits
 (pk_enc_i, sk_enc_i) = MLKEM.KeyGen(seed = sk_enc || encode(i))
 ```
 
 The address \(\text{Addr}_i\) is then
 
 ```
-Addr_i = Encode(version || i || pk_enc_i || addr_tag_i)
+Addr_i = Encode(version || i || pk_recipient_i || pk_enc_i)
 ```
 
 The wallet stores `sk_spend`, `sk_view`, and either `sk_enc` or all `sk_enc_i` derived on demand.
 
 #### 3.3 Viewing keys
 
-* Incoming Viewing Key (IVK): `ivk = (sk_view, sk_enc)` can recompute all `addr_tag_i` and `sk_enc_i`, decrypt all notes, and see all incoming funds.
+* Incoming Viewing Key (IVK): `ivk = (sk_view, sk_enc)` can recompute all `pk_recipient_i` and `sk_enc_i`, decrypt all notes, and see all incoming funds.
 * Full Viewing Key (FVK): `fvk = (sk_view, sk_enc, vk_nf)` where `vk_nf = BLAKE3("view_nf" || sk_view)`.
 
 In the circuit we derive `nk = H_f(domain_nk, ssk_0, \ldots, ssk_3)` from the view-derived nullifier secret, and for viewing we derive `vk_nf` with the `view_nf` domain tag so watch-only wallets can detect spent notes without embedding `sk_spend`.
 
 ### 4. Note encryption details
 
-Given recipient \(\text{Addr}_i\) with `(pk_enc_i, addr_tag_i)`:
+Given recipient \(\text{Addr}_i\) with `(pk_enc_i, pk_recipient_i)`:
 
 #### 4.1 Plaintext
 
@@ -631,7 +620,6 @@ note_plain = (
   rho:    32 bytes,
   r:      32 bytes,
   addr_i: 32-bit index i,
-  tag:    32 bytes (addr_tag_i),
   maybe extra fields (memo pointer, etc.)
 )
 ```
@@ -649,7 +637,6 @@ On chain per output:
 * `cm` as a 48-byte commitment (6 x 64-bit limbs, canonical encoding)
 * `ct_kem` (≈1.1 KB)
 * `ct_aead` (|note_plain| + tag, say ≈100 bytes)
-* Optional small `scan_tag` if you want faster scanning.
 
 Recipient with IVK/FVK:
 
@@ -661,7 +648,28 @@ Recipient with IVK/FVK:
 
 ### 5. Main “join–split” circuit in detail
 
-Assume the base circuit handles up to `M` inputs (e.g., 4) and `N` outputs (e.g., 4). Per transaction, you produce one STARK proof for these `M + N` notes.
+The base transaction circuit in this repository is fixed-size:
+
+* `MAX_INPUTS = 2` input notes (spends)
+* `MAX_OUTPUTS = 2` output notes (creates)
+
+(See `circuits/transaction-core/src/constants.rs`.)
+
+Per transaction, you produce one STARK proof that covers up to `MAX_INPUTS + MAX_OUTPUTS` notes. This fixed-size design keeps proof sizes and verifier costs bounded, but it means a wallet cannot directly spend more than 2 notes in a single transaction.
+
+#### 5.0 Note consolidation and block-size-aware batching
+
+When a wallet needs more than `MAX_INPUTS` notes to cover a payment (amount + fee), it must first **consolidate**: perform one or more self-transfers that merge 2 notes into 1 note, reducing the number of notes needed for the final send.
+
+Important constraint: the transaction membership proof anchors to a prior commitment-tree root, so a note created in a transaction cannot be spent again until it is mined and the wallet has synced a later root. That makes consolidation inherently multi-block: it proceeds in **rounds**.
+
+The wallet therefore uses a round-based workflow:
+
+1. Pick just enough notes to cover the target value (including a fee budget for the consolidation transactions themselves).
+2. Submit a batch of disjoint 2→1 consolidation transactions in one round, capped by (a) a maximum transactions-per-round and (b) a conservative on-chain block-size budget.
+3. Wait for confirmation, sync, and repeat until the selected notes fit within `MAX_INPUTS`.
+
+This does not change the total number of required consolidation transactions in the worst case (with 2→1 merges it is still `note_count - MAX_INPUTS`), but it reduces wall-clock time by letting miners include multiple independent merges in the same block when space permits. The batch-size budget must stay below the runtime block length (see `runtime/src/lib.rs`).
 
 #### 5.1 Public inputs
 
@@ -786,7 +794,7 @@ The node maintains a canonical commitment tree with current root `root_state`. A
 
 #### 6.3 Block circuit and proof
 
-The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same Poseidon-style hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. `TransactionProof::verify` rejects missing STARK proof bytes/public inputs in production builds; the legacy consistency checker is gated behind the `legacy-proof` feature for test fixtures only. On top of that, the `circuits/block` crate now treats commitment proofs as the default: `CommitmentBlockProver` builds a `CommitmentBlockProof` that commits to transaction proof hashes via a Poseidon sponge, and consensus verifies the commitment proof alongside parallel transaction-proof verification. Recursive proofs are currently removed; recursion runbooks are archived pending a Plonky3-native path.
+The repository now wires this design into executable modules. The `state/merkle` crate implements an append-only `CommitmentTree` that precomputes default subtrees, stores per-level node vectors, and exposes efficient `append`, `extend`, and `authentication_path` helpers. It uses the same Poseidon-style hashing domain as the transaction circuit, ensuring leaf commitments and tree updates are consistent with the ZK statement. `TransactionProof::verify` rejects missing STARK proof bytes/public inputs in production builds. On top of that, the `circuits/block` crate now treats commitment proofs as the default: `CommitmentBlockProver` builds a `CommitmentBlockProof` that commits to transaction proof hashes via a Poseidon sponge, and consensus verifies the commitment proof alongside parallel transaction-proof verification. Recursive proofs are currently removed; recursion runbooks are archived pending a Plonky3-native path.
 
 The commitment proof binds `tx_proofs_commitment` (derived from the ordered list of transaction proof hashes) and proves nullifier uniqueness in-circuit (a permutation check between the transaction-ordered nullifier list and its sorted copy, plus adjacent-inequality constraints). The proof also exposes starting/ending state roots, nullifier root, and DA root as public inputs, but consensus recomputes those values from the block’s transactions and the parent state and rejects any mismatch; this keeps the circuit within a small row budget while preserving full soundness.
 
@@ -813,7 +821,7 @@ If you introduce a new transaction circuit version, update `C_block` so its veri
 
 #### 6.5 Epoch proof hashes (removed)
 
-Recursive epoch proofs were removed alongside the legacy recursion stack. Reintroducing them requires a Plonky3-native recursion design; until then, there are no epoch proof hashes in the live system.
+Recursive epoch proofs were removed alongside the previous recursion stack. Reintroducing them requires a Plonky3-native recursion design; until then, there are no epoch proof hashes in the live system.
 
 #### 6.6 Settlement batch proofs
 
@@ -832,7 +840,7 @@ Module layout:
 * `crypto::slh_dsa` – mirrors the ML-DSA interface but with SLH-DSA key lengths (32 B public, 64 B secret, 17088 B signatures).
 * `crypto::ml_kem` – wraps Kyber-like encapsulation with `MlKemKeyPair`, `MlKemPublicKey`, and `MlKemCiphertext`. Encapsulation uses a seed to deterministically derive ciphertexts and shared secrets, while decapsulation recomputes the shared secret from stored public bytes.
 * `crypto::hashes` – contains `sha256`, `sha3_256`, `blake3_256`, `blake3_384`, a Poseidon-style permutation over the Goldilocks prime (width 3, 63 full rounds, NUMS constants), and helpers `commit_note`, `derive_prf_key`, and `derive_nullifier` (defaulting to 48-byte BLAKE3-384 with SHA3-384 fallbacks via `commit_note_with`) that apply the design’s domain tags (`"c"`, `"nk"`, `"nf"`). PQ address hashes remain BLAKE3-256 by default while commitments/nullifiers normalize on 48-byte digests.
-* `pallet_identity` – stores session keys as a `SessionKey` enum (legacy AuthorityId or PQ-only Dilithium/Falcon). The runtime migration wraps any pre-upgrade `AuthorityId` into `SessionKey::Legacy` so existing operators inherit their keys; new registrations can supply PQ-only bundles through the same `register_did` call without a one-off rotate extrinsic.
+* `pallet_identity` – stores optional PQ session keys as `SessionKey::PostQuantum` (Dilithium/Falcon). New registrations supply PQ bundles through the `register_did` call without a one-off rotate extrinsic.
 * `pallet_attestations` / `pallet_settlement` – persist `StarkVerifierParams` in storage with governance-controlled setters and runtime-upgrade initialization so on-chain STARK verification remains aligned with PQ hash choices. The runtime seeds attestations with Poseidon2-384 hashing, 43 FRI queries, a 16x blowup factor, and quadratic extension over Goldilocks; settlement uses the same hash/query budget. With 384-bit digests, PQ collision resistance reaches ~128 bits. Governance can migrate to new parameters via the `set_verifier_params` call without redeploying code.
 
 The crate’s `tests/crypto_vectors.rs` fixture loads `tests/vectors.json` to assert byte-for-byte deterministic vectors covering:
@@ -855,7 +863,6 @@ Implementation hygiene now mirrors the layout introduced in `DESIGN.md §6` and 
    - `cargo test -p synthetic-crypto` for deterministic PQ primitive vectors.
    - `cargo test -p transaction-circuit && cargo test -p block-circuit` for circuit constraints.
    - `cargo test -p wallet` for CLI/integration fixtures.
-   - `cargo test -p wallet --test rpc_flow` spins up the lightweight test node and runs the RPC-driven send/receive/nullifier flow between a full wallet and a watch-only wallet.
 4. **Benchmarks (smoke mode)**:
    - `cargo run -p circuits-bench -- --smoke --prove --json` – validates witness → proof → block aggregation loop.
    - `cargo run -p wallet-bench -- --smoke --json` – stresses key derivation, encryption, and nullifier derivations.
@@ -889,7 +896,8 @@ All jobs operate on Ubuntu runners with Rust stable, Go 1.21, and clang-format i
 Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md) whenever you need a reproducible demo:
 
 1. Launch the Substrate-based `hegemon-node` binary with `HEGEMON_MINE=1` and `--dev` for fast block times. The node exposes JSON-RPC on port 9944 and P2P on port 30333 by default. Run `make node` to build.
-2. Connect the dashboard UI to the node RPC endpoint to view live telemetry.
+2. Connect the desktop app or Polkadot.js Apps to the node RPC endpoint to view live telemetry. When using the desktop app, prefer a persistent base path (avoid `--tmp`), and set `--listen-addr /ip4/0.0.0.0/tcp/30333` only when you intend to accept IPv4 peer traffic. Expose RPC externally only on trusted networks.
+   The desktop app is organized into Overview, Node, Wallet, Send, Disclosure, and Console workspaces. Its global status bar always shows the active node, wallet store, and genesis hash so operators can detect mismatches before sending or mining.
 3. For multi-node setups, start additional nodes with `--bootnodes /ip4/127.0.0.1/tcp/30333` pointing to the first node.
 
 ### Security assurance workflow

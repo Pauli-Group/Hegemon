@@ -1,5 +1,8 @@
 # Changelog
 
+## v0.6.0 - 2026-01-09
+- Version bump: `hegemon-node` and `wallet` are now `0.6.0`.
+
 ## v0.5-alpha - 2026-01-06
 - Scalability architecture pivot: commitment block proofs + parallel transaction-proof verification (supersedes legacy recursive proofs as the default validity path).
 - Block production + RPC plumbing for commitment proofs (including `block_getCommitmentProof`) and DA chunk retrieval (`da_getParams`, `da_getChunk`).

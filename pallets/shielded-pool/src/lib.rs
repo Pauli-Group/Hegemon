@@ -809,12 +809,7 @@ pub mod pallet {
 
             // Verify the commitment matches the plaintext data
             // This ensures the miner can't claim more than stated
-            #[allow(deprecated)]
-            let expected_commitment = commitment::coinbase_commitment(
-                &coinbase_data.recipient_address,
-                coinbase_data.amount,
-                &coinbase_data.public_seed,
-            );
+            let expected_commitment = Self::expected_coinbase_commitment(&coinbase_data);
             ensure!(
                 coinbase_data.commitment == expected_commitment,
                 Error::<T>::InvalidCoinbaseCommitment
@@ -1204,6 +1199,17 @@ pub mod pallet {
             Ok(())
         }
 
+        fn expected_coinbase_commitment(coinbase_data: &types::CoinbaseNoteData) -> [u8; 48] {
+            let pk_recipient =
+                commitment::pk_recipient_from_address(&coinbase_data.recipient_address);
+            commitment::circuit_coinbase_commitment(
+                &pk_recipient,
+                coinbase_data.amount,
+                &coinbase_data.public_seed,
+                0,
+            )
+        }
+
         fn ensure_stablecoin_binding(
             stablecoin: &Option<StablecoinPolicyBinding>,
         ) -> Result<(), Error<T>> {
@@ -1417,12 +1423,7 @@ pub mod pallet {
                 }
 
                 // Verify commitment matches plaintext data
-                #[allow(deprecated)]
-                let expected = commitment::coinbase_commitment(
-                    &coinbase_data.recipient_address,
-                    coinbase_data.amount,
-                    &coinbase_data.public_seed,
-                );
+                let expected = Self::expected_coinbase_commitment(coinbase_data);
                 if coinbase_data.commitment != expected {
                     return Err(sp_inherents::MakeFatalError::from(()));
                 }
@@ -1624,12 +1625,7 @@ pub mod pallet {
                     if Self::ensure_coinbase_subsidy(coinbase_data.amount).is_err() {
                         return InvalidTransaction::Custom(9).into();
                     }
-                    #[allow(deprecated)]
-                    let expected_commitment = commitment::coinbase_commitment(
-                        &coinbase_data.recipient_address,
-                        coinbase_data.amount,
-                        &coinbase_data.public_seed,
-                    );
+                    let expected_commitment = Self::expected_coinbase_commitment(coinbase_data);
                     if coinbase_data.commitment != expected_commitment {
                         return InvalidTransaction::BadProof.into();
                     }

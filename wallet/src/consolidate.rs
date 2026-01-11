@@ -5,10 +5,9 @@
 
 use crate::async_sync::AsyncWalletSyncEngine;
 use crate::error::WalletError;
-use crate::notes::MemoPlaintext;
 use crate::store::{TransferRecipient, WalletStore};
 use crate::substrate_rpc::SubstrateRpcClient;
-use crate::tx_builder::{build_transaction, Recipient};
+use crate::tx_builder::build_consolidation_transaction;
 use std::sync::Arc;
 
 /// Native asset ID (HGM)
@@ -19,6 +18,77 @@ pub const MAX_INPUTS: usize = 2;
 
 const CONFIRMATION_POLL_SECS: u64 = 3;
 const CONFIRMATION_TIMEOUT_SECS: u64 = 600;
+
+const DEFAULT_BUNDLE_BYTES_ESTIMATE: usize = 220_000;
+const CONSOLIDATION_MAX_TXS_PER_BATCH: usize = 16;
+const CONSOLIDATION_MAX_BATCH_BYTES: usize = 1_500_000;
+
+fn estimate_bundle_bytes(bundle: &crate::rpc::TransactionBundle) -> usize {
+    let ciphertext_bytes: usize = bundle.ciphertexts.iter().map(|ct| ct.len()).sum();
+    bundle.proof_bytes.len()
+        + bundle.nullifiers.len() * 48
+        + bundle.commitments.len() * 48
+        + ciphertext_bytes
+        + 48
+        + 64
+        + 8
+        + 16
+}
+
+fn select_notes_for_target(
+    notes: &[crate::store::SpendableNote],
+    target_value: u64,
+    fee_per_tx: u64,
+) -> Result<(Vec<crate::store::SpendableNote>, u64, u64), WalletError> {
+    let available: u64 = notes.iter().map(|note| note.value()).sum();
+    if available < target_value {
+        return Err(WalletError::InsufficientFunds {
+            needed: target_value,
+            available,
+        });
+    }
+
+    let mut required = target_value;
+    let mut last_selected_count: Option<usize> = None;
+    for _ in 0..32 {
+        let mut selected = Vec::new();
+        let mut selected_value = 0u64;
+        for note in notes {
+            if selected_value >= required {
+                break;
+            }
+            selected.push(note.clone());
+            selected_value = selected_value.saturating_add(note.value());
+        }
+
+        if selected_value < required {
+            return Err(WalletError::InsufficientFunds {
+                needed: required,
+                available: selected_value,
+            });
+        }
+
+        let selected_count = selected.len();
+        if last_selected_count == Some(selected_count) {
+            return Ok((selected, selected_value, required));
+        }
+        last_selected_count = Some(selected_count);
+
+        let txs_needed = selected_count.saturating_sub(MAX_INPUTS) as u64;
+        let fee_budget = txs_needed.saturating_mul(fee_per_tx);
+        let next_required = target_value
+            .checked_add(fee_budget)
+            .ok_or(WalletError::InvalidArgument("fee overflow"))?;
+        if next_required <= required {
+            return Ok((selected, selected_value, required));
+        }
+        required = next_required;
+    }
+
+    Err(WalletError::InvalidState(
+        "failed to converge consolidation selection",
+    ))
+}
 
 /// A consolidation plan - for display/estimation only
 #[derive(Debug, Clone)]
@@ -42,11 +112,31 @@ impl ConsolidationPlan {
         }
 
         let txs_needed = note_count - MAX_INPUTS;
-        // Each tx needs ~1 block to confirm before next can use its output
-        // But we can submit multiple txs spending different notes in same block
-        // Worst case: txs_needed blocks. Best case with parallelism: log2(N) blocks
-        // For simplicity, estimate 1 tx per block (sequential submission)
-        let blocks_needed = txs_needed;
+        // We cannot spend newly-created notes in the same block because the transaction
+        // membership proof anchors to a prior commitment tree root. That means consolidation
+        // happens in rounds: submit a batch of disjoint 2->1 merges, wait for confirmation,
+        // then repeat.
+        //
+        // Estimate block count (rounds) with a simple simulation using the same per-round caps
+        // used by the wallet: max txs per round and a conservative block-size byte budget.
+        let txs_per_round_cap = std::cmp::max(
+            1,
+            std::cmp::min(
+                CONSOLIDATION_MAX_TXS_PER_BATCH,
+                CONSOLIDATION_MAX_BATCH_BYTES / DEFAULT_BUNDLE_BYTES_ESTIMATE,
+            ),
+        );
+        let mut remaining_notes = note_count;
+        let mut blocks_needed = 0usize;
+        while remaining_notes > MAX_INPUTS {
+            let pairs_available = remaining_notes / 2;
+            let merges_this_round = std::cmp::min(pairs_available, txs_per_round_cap);
+            if merges_this_round == 0 {
+                break;
+            }
+            remaining_notes = remaining_notes.saturating_sub(merges_this_round);
+            blocks_needed = blocks_needed.saturating_add(1);
+        }
 
         Self {
             note_count,
@@ -77,7 +167,8 @@ pub async fn execute_consolidation(
     verbose: bool,
 ) -> Result<(), WalletError> {
     let engine = AsyncWalletSyncEngine::new(rpc.clone(), store.clone());
-    let mut iteration = 0;
+    let mut iteration: u64 = 0;
+    let mut bundle_bytes_estimate = DEFAULT_BUNDLE_BYTES_ESTIMATE;
 
     loop {
         // Step 1: Fresh sync each iteration
@@ -86,24 +177,10 @@ pub async fn execute_consolidation(
         // Step 2: Select only notes needed for target_value
         // Sort by value descending - prefer larger notes (including consolidated ones)
         let mut notes = store.spendable_notes(NATIVE_ASSET_ID)?;
-        notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
+        notes.sort_by(|a, b| b.value().cmp(&a.value()));
 
-        let mut selected = Vec::new();
-        let mut selected_value = 0u64;
-        for note in &notes {
-            selected.push(note.clone());
-            selected_value += note.recovered.note.value;
-            if selected_value >= target_value {
-                break;
-            }
-        }
-
-        if selected_value < target_value {
-            return Err(WalletError::InsufficientFunds {
-                needed: target_value,
-                available: selected_value,
-            });
-        }
+        let (selected, _selected_value, required_value) =
+            select_notes_for_target(&notes, target_value, fee_per_tx)?;
 
         // Check if done - only need to consolidate selected notes
         if selected.len() <= MAX_INPUTS {
@@ -117,112 +194,160 @@ pub async fn execute_consolidation(
             return Ok(());
         }
 
-        iteration += 1;
+        iteration = iteration.saturating_add(1);
         if verbose && iteration == 1 {
-            let txs_needed = selected.len() - MAX_INPUTS;
+            let txs_needed = selected.len().saturating_sub(MAX_INPUTS);
             println!(
-                "Consolidating {} notes to cover {} HGM -> ~{} transactions needed",
+                "Consolidating {} notes to cover {} HGM...",
                 selected.len(),
-                target_value as f64 / 100_000_000.0,
-                txs_needed
+                target_value as f64 / 100_000_000.0
             );
+            if required_value > target_value {
+                println!(
+                    "  (includes ~{} HGM reserved for consolidation fees)",
+                    (required_value.saturating_sub(target_value)) as f64 / 100_000_000.0
+                );
+            }
+            println!("  ~{} consolidation transactions needed", txs_needed);
         }
 
-        // Step 3: Merge first two selected notes
-        let note_0 = &selected[0];
-        let note_1 = &selected[1];
-
-        let total = note_0.recovered.note.value + note_1.recovered.note.value;
-        if total <= fee_per_tx {
-            return Err(WalletError::InsufficientFunds {
-                needed: fee_per_tx,
-                available: total,
-            });
+        let pairs_available = selected.len() / 2;
+        let mut max_txs = pairs_available.min(CONSOLIDATION_MAX_TXS_PER_BATCH);
+        if max_txs == 0 {
+            return Err(WalletError::InvalidState(
+                "insufficient notes available for consolidation pairing",
+            ));
         }
 
-        let self_address = store.primary_address()?;
-        let recipient = Recipient {
-            address: self_address,
-            value: total - fee_per_tx,
-            asset_id: NATIVE_ASSET_ID,
-            memo: MemoPlaintext::default(),
-        };
+        let max_by_bytes = std::cmp::max(1, CONSOLIDATION_MAX_BATCH_BYTES / bundle_bytes_estimate);
+        max_txs = max_txs.min(max_by_bytes);
 
-        if verbose {
+        if verbose && max_txs > 1 {
             println!(
-                "[{}/~{}] Merging {} HGM + {} HGM -> {} HGM",
-                iteration,
-                selected.len() - MAX_INPUTS,
-                note_0.recovered.note.value as f64 / 100_000_000.0,
-                note_1.recovered.note.value as f64 / 100_000_000.0,
-                (total - fee_per_tx) as f64 / 100_000_000.0
+                "  Submitting up to {} consolidation txs this round (block budget ~{} KiB)",
+                max_txs,
+                CONSOLIDATION_MAX_BATCH_BYTES / 1024
             );
         }
 
-        // Build and submit
-        let built = build_transaction(&*store, &[recipient], fee_per_tx)?;
+        let mut batch_nullifiers: Vec<[u8; 48]> = Vec::new();
+        let mut batch_bytes = 0usize;
 
-        // Lock notes before submission so we don't double-spend locally if we loop/retry.
-        store.mark_notes_pending(&built.spent_note_indexes, true)?;
-
-        let outgoing_disclosures = built.outgoing_disclosures.clone();
-        let submit_result = rpc.submit_shielded_transfer_unsigned(&built.bundle).await;
-        let hash = match submit_result {
-            Ok(hash) => hash,
-            Err(WalletError::Rpc(msg))
-                if msg.contains("Priority is too low") || msg.contains("already in the pool") =>
+        let mut pair_index = 0usize;
+        while pair_index < max_txs {
+            if pair_index > 0
+                && batch_bytes.saturating_add(bundle_bytes_estimate) > CONSOLIDATION_MAX_BATCH_BYTES
             {
                 if verbose {
-                    println!(
-                        "  Note: tx appears already in pool; waiting for confirmation ({}s timeout)...",
-                        CONFIRMATION_TIMEOUT_SECS
-                    );
+                    println!("  Stopping batch early to stay under block size budget.");
                 }
-                match wait_for_nullifiers_spent(&engine, rpc, &store, &built.nullifiers).await {
-                    Ok(_) => continue,
-                    Err(err) => {
-                        store.mark_notes_pending(&built.spent_note_indexes, false)?;
-                        return Err(err);
+                break;
+            }
+
+            let note_0 = &selected[pair_index * 2];
+            let note_1 = &selected[pair_index * 2 + 1];
+            let total = note_0.value().saturating_add(note_1.value());
+            if total <= fee_per_tx {
+                return Err(WalletError::InsufficientFunds {
+                    needed: fee_per_tx,
+                    available: total,
+                });
+            }
+
+            if verbose {
+                println!(
+                    "  [{}/~{}] Merging {} HGM + {} HGM -> {} HGM",
+                    pair_index + 1,
+                    max_txs,
+                    note_0.value() as f64 / 100_000_000.0,
+                    note_1.value() as f64 / 100_000_000.0,
+                    (total - fee_per_tx) as f64 / 100_000_000.0
+                );
+            }
+
+            let built = build_consolidation_transaction(&*store, note_0, note_1, fee_per_tx)?;
+            let tx_bytes = estimate_bundle_bytes(&built.bundle).max(64 * 1024);
+
+            if pair_index == 0 {
+                bundle_bytes_estimate = tx_bytes;
+                let adjusted_by_bytes =
+                    std::cmp::max(1, CONSOLIDATION_MAX_BATCH_BYTES / bundle_bytes_estimate);
+                max_txs = max_txs.min(adjusted_by_bytes);
+            }
+
+            if pair_index > 0
+                && batch_bytes.saturating_add(tx_bytes) > CONSOLIDATION_MAX_BATCH_BYTES
+            {
+                if verbose {
+                    println!("  Stopping batch early to stay under block size budget.");
+                }
+                break;
+            }
+
+            batch_bytes = batch_bytes.saturating_add(tx_bytes);
+            bundle_bytes_estimate = tx_bytes;
+
+            store.mark_notes_pending(&built.spent_note_indexes, true)?;
+
+            let outgoing_disclosures = built.outgoing_disclosures.clone();
+            let submit_result = rpc.submit_shielded_transfer_unsigned(&built.bundle).await;
+
+            let hash = match submit_result {
+                Ok(hash) => Some(hash),
+                Err(WalletError::Rpc(msg))
+                    if msg.contains("Priority is too low")
+                        || msg.contains("already in the pool") =>
+                {
+                    if verbose {
+                        println!(
+                            "    Note: tx appears already in pool; waiting for confirmation..."
+                        );
                     }
+                    None
                 }
-            }
-            Err(err) => {
-                store.mark_notes_pending(&built.spent_note_indexes, false)?;
-                return Err(err);
-            }
-        };
+                Err(err) => {
+                    store.mark_notes_pending(&built.spent_note_indexes, false)?;
+                    if !batch_nullifiers.is_empty() {
+                        let _ = wait_for_nullifiers_spent(&engine, rpc, &store, &batch_nullifiers)
+                            .await;
+                    }
+                    return Err(err);
+                }
+            };
 
-        if verbose {
-            println!("  Submitted: 0x{}", hex::encode(&hash[..8]));
+            if let Some(hash) = hash {
+                if verbose {
+                    println!("    Submitted: 0x{}", hex::encode(&hash[..8]));
+                }
+
+                if let Some(genesis_hash) = store.genesis_hash()? {
+                    store.record_outgoing_disclosures(hash, genesis_hash, outgoing_disclosures)?;
+                }
+
+                let recipient_address = store.primary_address()?.encode()?;
+                store.record_pending_submission(
+                    hash,
+                    built.nullifiers.clone(),
+                    built.spent_note_indexes.clone(),
+                    vec![TransferRecipient {
+                        address: recipient_address,
+                        value: total.saturating_sub(fee_per_tx),
+                        asset_id: NATIVE_ASSET_ID,
+                        memo: Some("consolidation".to_string()),
+                    }],
+                    fee_per_tx,
+                )?;
+            }
+
+            batch_nullifiers.extend_from_slice(&built.nullifiers);
+            pair_index = pair_index.saturating_add(1);
         }
 
-        if let Some(genesis_hash) = store.genesis_hash()? {
-            store.record_outgoing_disclosures(hash, genesis_hash, outgoing_disclosures)?;
-        }
-
-        // Track pending tx so locked notes can be released on timeout/reorgs.
-        let recipient_address = store.primary_address()?.encode()?;
-        store.record_pending_submission(
-            hash,
-            built.nullifiers.clone(),
-            built.spent_note_indexes.clone(),
-            vec![TransferRecipient {
-                address: recipient_address,
-                value: total - fee_per_tx,
-                asset_id: NATIVE_ASSET_ID,
-                memo: Some("consolidation".to_string()),
-            }],
-            fee_per_tx,
-        )?;
-
-        // Step 4: Wait until the transaction is actually mined (not just "a new block exists").
         let confirmed_height =
-            wait_for_nullifiers_spent(&engine, rpc, &store, &built.nullifiers).await?;
+            wait_for_nullifiers_spent(&engine, rpc, &store, &batch_nullifiers).await?;
         if verbose {
-            println!("  Confirmed (observed at block {})", confirmed_height);
+            println!("  Confirmed round (observed at block {})", confirmed_height);
         }
-
-        // Step 5: Loop back to sync and check again
     }
 }
 
@@ -282,6 +407,8 @@ mod tests {
         // 10 notes -> 2 notes: 8 txs
         let plan = ConsolidationPlan::estimate(10);
         assert_eq!(plan.txs_needed, 8);
+        // With disjoint 2->1 merges per round: 10 -> 5 -> 3 -> 2
+        assert_eq!(plan.blocks_needed, 3);
     }
 
     #[test]
@@ -289,5 +416,15 @@ mod tests {
         // 65 notes -> 2 notes: 63 txs
         let plan = ConsolidationPlan::estimate(65);
         assert_eq!(plan.txs_needed, 63);
+        assert!(plan.blocks_needed > 0);
+    }
+
+    #[test]
+    fn test_estimate_seven_notes_rounds() {
+        // 7 notes -> 2 notes: 5 txs
+        let plan = ConsolidationPlan::estimate(7);
+        assert_eq!(plan.txs_needed, 5);
+        // With disjoint 2->1 merges per round: 7 -> 4 -> 2
+        assert_eq!(plan.blocks_needed, 2);
     }
 }

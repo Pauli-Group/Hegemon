@@ -18,8 +18,6 @@ pub struct ShieldedAddress {
     pub pk_recipient: [u8; 32],
     #[serde(with = "serde_mlkem_pk")]
     pub pk_enc: MlKemPublicKey,
-    #[serde(with = "serde_bytes32")]
-    pub address_tag: [u8; 32],
 }
 
 impl Default for ShieldedAddress {
@@ -31,7 +29,6 @@ impl Default for ShieldedAddress {
             diversifier_index: 0,
             pk_recipient: [0u8; 32],
             pk_enc: keypair.public_key(),
-            address_tag: [0u8; 32],
         }
     }
 }
@@ -60,20 +57,22 @@ impl ShieldedAddress {
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(1 + 4 + 32 + ML_KEM_PUBLIC_KEY_LEN + 32);
+        let mut out = Vec::with_capacity(1 + 4 + 32 + ML_KEM_PUBLIC_KEY_LEN);
         out.push(self.version);
         out.extend_from_slice(&self.diversifier_index.to_le_bytes());
         out.extend_from_slice(&self.pk_recipient);
         out.extend_from_slice(self.pk_enc.as_bytes());
-        out.extend_from_slice(&self.address_tag);
         out
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
-        if bytes.len() != 1 + 4 + 32 + ML_KEM_PUBLIC_KEY_LEN + 32 {
-            return Err(WalletError::AddressEncoding(
-                "invalid address length".into(),
-            ));
+        let expected_len = 1 + 4 + 32 + ML_KEM_PUBLIC_KEY_LEN;
+        if bytes.len() != expected_len {
+            return Err(WalletError::AddressEncoding(format!(
+                "invalid address length: expected {} bytes, got {}",
+                expected_len,
+                bytes.len()
+            )));
         }
         let version = bytes[0];
         let mut index_bytes = [0u8; 4];
@@ -85,14 +84,11 @@ impl ShieldedAddress {
         let pk_end = pk_start + ML_KEM_PUBLIC_KEY_LEN;
         let pk_enc = MlKemPublicKey::from_bytes(&bytes[pk_start..pk_end])
             .map_err(|err| WalletError::AddressEncoding(err.to_string()))?;
-        let mut address_tag = [0u8; 32];
-        address_tag.copy_from_slice(&bytes[pk_end..]);
         Ok(Self {
             version,
             diversifier_index,
             pk_recipient,
             pk_enc,
-            address_tag,
         })
     }
 }

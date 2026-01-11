@@ -2,10 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc};
-use std::thread;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
@@ -18,7 +16,6 @@ use disclosure_circuit::{
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::net::TcpListener;
 use tokio::runtime::Builder as RuntimeBuilder;
 use transaction_circuit::{
     hashing_pq::{bytes48_to_felts, is_canonical_bytes48, note_commitment_bytes},
@@ -26,11 +23,8 @@ use transaction_circuit::{
     witness::TransactionWitness,
     StablecoinPolicyBinding,
 };
-use url::Url;
-
 use wallet::{
     address::ShieldedAddress,
-    api::{self, RecipientSpec},
     async_sync::AsyncWalletSyncEngine,
     build_stablecoin_burn, build_transaction, build_transaction_with_binding,
     disclosure::{
@@ -39,14 +33,13 @@ use wallet::{
     },
     keys::{DerivedKeys, RootSecret},
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
-    precheck_nullifiers_with_binding,
-    rpc::WalletRpcClient,
+    parse_recipients, precheck_nullifiers_with_binding,
     store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
     substrate_rpc::SubstrateRpcClient,
-    sync::WalletSyncEngine,
+    transfer_recipients_from_specs,
     tx_builder::Recipient,
     viewing::{IncomingViewingKey, OutgoingViewingKey},
-    WalletError,
+    RecipientSpec, WalletError,
 };
 
 #[derive(Parser)]
@@ -98,13 +91,9 @@ enum Commands {
         out: Option<PathBuf>,
     },
     Init(InitArgs),
-    /// Sync wallet using legacy HTTP RPC (deprecated, use substrate-sync)
-    Sync(SyncArgs),
     /// Sync wallet using Substrate WebSocket RPC
     #[command(name = "substrate-sync")]
     SubstrateSync(SubstrateSyncArgs),
-    /// Run daemon using legacy HTTP RPC (deprecated, use substrate-daemon)
-    Daemon(DaemonArgs),
     /// Run daemon using Substrate WebSocket RPC with real-time subscriptions
     #[command(name = "substrate-daemon")]
     SubstrateDaemon(SubstrateDaemonArgs),
@@ -113,8 +102,6 @@ enum Commands {
     /// Print account ID (hex) for signed extrinsics
     #[command(name = "account-id")]
     AccountId(StoreArgs),
-    /// Send using legacy HTTP RPC (deprecated, use substrate-send)
-    Send(SendArgs),
     /// Send using Substrate WebSocket RPC
     #[command(name = "substrate-send")]
     SubstrateSend(SubstrateSendArgs),
@@ -147,36 +134,6 @@ struct InitArgs {
 }
 
 #[derive(Parser)]
-struct SyncArgs {
-    #[arg(long)]
-    store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
-    #[arg(long)]
-    rpc_url: String,
-    #[arg(long)]
-    auth_token: String,
-}
-
-#[derive(Parser)]
-struct DaemonArgs {
-    #[arg(long)]
-    store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
-    #[arg(long)]
-    rpc_url: String,
-    #[arg(long)]
-    auth_token: String,
-    #[arg(long, default_value_t = 10)]
-    interval_secs: u64,
-    #[arg(long)]
-    http_listen: Option<SocketAddr>,
-}
-
-#[derive(Parser)]
 struct StoreArgs {
     #[arg(long)]
     store: PathBuf,
@@ -198,25 +155,6 @@ struct StatusArgs {
     /// Skip sync and show cached status
     #[arg(long, default_value_t = false)]
     no_sync: bool,
-}
-
-#[derive(Parser)]
-struct SendArgs {
-    #[arg(long)]
-    store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
-    #[arg(long)]
-    rpc_url: String,
-    #[arg(long)]
-    auth_token: String,
-    #[arg(long)]
-    recipients: PathBuf,
-    #[arg(long, default_value_t = 0)]
-    fee: u64,
-    #[arg(long, default_value_t = false)]
-    randomize_memo_order: bool,
 }
 
 #[derive(Parser)]
@@ -328,9 +266,6 @@ struct SubstrateDaemonArgs {
     /// Only sync on finalized blocks (more reliable but slower)
     #[arg(long, default_value_t = false)]
     finalized_only: bool,
-    /// HTTP API listen address (optional)
-    #[arg(long)]
-    http_listen: Option<SocketAddr>,
 }
 
 /// Arguments for Substrate WebSocket send
@@ -511,13 +446,10 @@ fn main() -> Result<()> {
         }),
         Commands::Scan { ivk, ledger, out } => cmd_scan(&ivk, &ledger, out.as_deref()),
         Commands::Init(args) => cmd_init(args),
-        Commands::Sync(args) => cmd_sync(args),
         Commands::SubstrateSync(args) => cmd_substrate_sync(args),
-        Commands::Daemon(args) => cmd_daemon(args),
         Commands::SubstrateDaemon(args) => cmd_substrate_daemon(args),
         Commands::Status(args) => cmd_status(args),
         Commands::AccountId(args) => cmd_account_id(args),
-        Commands::Send(args) => cmd_send(args),
         Commands::SubstrateSend(args) => cmd_substrate_send(args),
         Commands::SubstrateBatchSend(args) => cmd_substrate_batch_send(args),
         Commands::StablecoinMint(args) => cmd_stablecoin_mint(args),
@@ -651,33 +583,6 @@ fn cmd_init(args: InitArgs) -> Result<()> {
         println!("first address: {}", map_wallet(address.encode())?);
     }
     Ok(())
-}
-
-fn cmd_sync(args: SyncArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
-    let store = WalletStore::open(&args.store, &passphrase)?;
-    let client = rpc_client(&args.rpc_url, &args.auth_token)?;
-    let engine = WalletSyncEngine::new(&client, &store);
-    let outcome = engine.sync_once()?;
-    print_sync_outcome(&outcome);
-    Ok(())
-}
-
-fn cmd_daemon(args: DaemonArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
-    let store = Arc::new(WalletStore::open(&args.store, &passphrase)?);
-    let client = Arc::new(rpc_client(&args.rpc_url, &args.auth_token)?);
-    if let Some(addr) = args.http_listen {
-        spawn_wallet_api(addr, store.clone(), client.clone())?;
-    }
-    let engine = WalletSyncEngine::new(client.as_ref(), store.as_ref());
-    loop {
-        match engine.sync_once() {
-            Ok(outcome) => print_sync_outcome(&outcome),
-            Err(err) => eprintln!("sync error: {}", err),
-        }
-        thread::sleep(Duration::from_secs(args.interval_secs));
-    }
 }
 
 fn cmd_status(args: StatusArgs) -> Result<()> {
@@ -873,44 +778,6 @@ fn cmd_account_id(args: StoreArgs) -> Result<()> {
     } else {
         anyhow::bail!("No derived keys found in wallet")
     }
-}
-
-fn cmd_send(args: SendArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
-    let store = WalletStore::open(&args.store, &passphrase)?;
-    if store.mode()? == WalletMode::WatchOnly {
-        anyhow::bail!("watch-only wallets cannot send");
-    }
-    let client = rpc_client(&args.rpc_url, &args.auth_token)?;
-    let engine = WalletSyncEngine::new(&client, &store);
-    engine.sync_once()?;
-    let specs: Vec<RecipientSpec> = read_json(&args.recipients)?;
-    let randomized_specs = randomize_recipient_specs(&specs, args.randomize_memo_order);
-    let recipients = parse_recipients(&randomized_specs).map_err(|err| anyhow!(err.to_string()))?;
-    let metadata = transfer_recipients_from_specs(&randomized_specs);
-    let built = build_transaction(&store, &recipients, args.fee)?;
-    let outgoing_disclosures = built.outgoing_disclosures.clone();
-    store.mark_notes_pending(&built.spent_note_indexes, true)?;
-    match client.submit_transaction(&built.bundle) {
-        Ok(tx_id) => {
-            if let Some(genesis_hash) = store.genesis_hash()? {
-                store.record_outgoing_disclosures(tx_id, genesis_hash, outgoing_disclosures)?;
-            }
-            store.record_pending_submission(
-                tx_id,
-                built.nullifiers.clone(),
-                built.spent_note_indexes.clone(),
-                metadata,
-                args.fee,
-            )?;
-            println!("submitted transaction {}", hex::encode(tx_id));
-        }
-        Err(err) => {
-            store.mark_notes_pending(&built.spent_note_indexes, false)?;
-            return Err(anyhow!(err));
-        }
-    }
-    Ok(())
 }
 
 fn cmd_export_viewing_key(args: ExportArgs) -> Result<()> {
@@ -1331,7 +1198,7 @@ fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
         let mut total_value = 0u64;
 
         for (i, path) in args.recipients.iter().enumerate() {
-            let specs: Vec<api::RecipientSpec> = read_json(path)?;
+            let specs: Vec<RecipientSpec> = read_json(path)?;
             let recipients =
                 parse_recipients(&specs).map_err(|e| anyhow!("Recipients file {}: {}", i, e))?;
             let tx_value: u64 = recipients.iter().map(|r| r.value).sum();
@@ -1571,18 +1438,6 @@ fn cmd_substrate_daemon(args: SubstrateDaemonArgs) -> Result<()> {
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
         println!("Connected to Substrate node!");
-
-        // Optionally spawn HTTP API
-        if let Some(addr) = args.http_listen {
-            let store_clone = store.clone();
-            let client_clone = client.clone();
-            tokio::spawn(async move {
-                if let Err(e) = spawn_substrate_wallet_api(addr, store_clone, client_clone).await {
-                    eprintln!("HTTP API error: {}", e);
-                }
-            });
-            println!("Wallet HTTP API listening on http://{}", addr);
-        }
 
         // Create sync engine
         let engine = AsyncWalletSyncEngine::new(client, store);
@@ -2028,22 +1883,6 @@ fn cmd_stablecoin_burn(args: StablecoinBurnArgs) -> Result<()> {
     })
 }
 
-/// Spawn wallet HTTP API with Substrate RPC backend
-async fn spawn_substrate_wallet_api(
-    addr: SocketAddr,
-    _store: Arc<WalletStore>,
-    _client: Arc<SubstrateRpcClient>,
-) -> Result<()> {
-    // For now, just bind and serve a minimal health endpoint
-    // Full API integration would require updating the api module
-    let app = axum::Router::new().route("/health", axum::routing::get(|| async { "ok" }));
-
-    let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
-
-    Ok(())
-}
-
 fn parse_root(hex_str: &str) -> Result<RootSecret> {
     let bytes = hex::decode(hex_str.trim())?;
     if bytes.len() != 32 {
@@ -2075,27 +1914,6 @@ fn print_sync_outcome(outcome: &wallet::SyncOutcome) {
     );
 }
 
-fn rpc_client(url: &str, token: &str) -> Result<WalletRpcClient> {
-    let parsed = Url::parse(url).map_err(|err| anyhow!("invalid rpc url: {}", err))?;
-    Ok(WalletRpcClient::new(parsed, token.to_string())?)
-}
-
-fn parse_recipients(specs: &[RecipientSpec]) -> Result<Vec<Recipient>, WalletError> {
-    specs
-        .iter()
-        .map(|spec| {
-            let address = ShieldedAddress::decode(&spec.address)?;
-            let memo = MemoPlaintext::new(spec.memo.clone().unwrap_or_default().into_bytes());
-            Ok(Recipient {
-                address,
-                value: spec.value,
-                asset_id: spec.asset_id,
-                memo,
-            })
-        })
-        .collect()
-}
-
 pub(crate) fn randomize_recipient_specs(
     specs: &[RecipientSpec],
     randomize: bool,
@@ -2113,57 +1931,6 @@ pub(crate) fn randomize_recipient_specs(
 
 fn has_distinct_specs(specs: &[RecipientSpec]) -> bool {
     specs.windows(2).any(|window| window[0] != window[1])
-}
-
-fn transfer_recipients_from_specs(specs: &[RecipientSpec]) -> Vec<TransferRecipient> {
-    specs
-        .iter()
-        .map(|spec| TransferRecipient {
-            address: spec.address.clone(),
-            value: spec.value,
-            asset_id: spec.asset_id,
-            memo: spec.memo.clone(),
-        })
-        .collect()
-}
-
-fn spawn_wallet_api(
-    addr: SocketAddr,
-    store: Arc<WalletStore>,
-    client: Arc<WalletRpcClient>,
-) -> Result<()> {
-    let (ready_tx, ready_rx) = mpsc::channel::<Result<(), anyhow::Error>>();
-    thread::Builder::new()
-        .name("wallet-http".into())
-        .spawn(move || {
-            let runtime = match RuntimeBuilder::new_multi_thread().enable_all().build() {
-                Ok(rt) => rt,
-                Err(err) => {
-                    let _ = ready_tx.send(Err(anyhow!(err)));
-                    return;
-                }
-            };
-            let state = api::ApiState::new(store, client, None);
-            let app = api::wallet_router(state);
-            runtime.block_on(async move {
-                match TcpListener::bind(addr).await {
-                    Ok(listener) => {
-                        let _ = ready_tx.send(Ok(()));
-                        if let Err(err) = axum::serve(listener, app).await {
-                            eprintln!("wallet http server exited: {}", err);
-                        }
-                    }
-                    Err(err) => {
-                        let _ = ready_tx.send(Err(anyhow!(err)));
-                    }
-                }
-            });
-        })?;
-    ready_rx
-        .recv()
-        .map_err(|_| anyhow!("wallet http thread failed to report readiness"))??;
-    println!("wallet http api listening on http://{addr}");
-    Ok(())
 }
 
 struct TxCraftParams<'a> {

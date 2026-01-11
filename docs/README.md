@@ -7,6 +7,7 @@ This `docs/` tree centralizes contributor-facing material for the Hegemon monore
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) – day-to-day workflows, required toolchains, CI entry points, and benchmarking instructions.
 - [`THREAT_MODEL.md`](THREAT_MODEL.md) – explicit attacker assumptions, post-quantum (PQ) security margins, and mitigations for each subsystem.
 - [`API_REFERENCE.md`](API_REFERENCE.md) – high-level overview of the Rust, Go, and (future) C++ APIs with links into `crypto/`, `circuits/`, `consensus/`, and `wallet/` implementations.
+- [`CONSENSUS_AUDIT.md`](CONSENSUS_AUDIT.md) – spec ↔ implementation reconciliation for `hegemon-node`, plus consensus invariants that should be enforced in CI.
 - [`USER_PRIVACY_GUIDELINES.md`](USER_PRIVACY_GUIDELINES.md) – end-user playbook for protecting wallet keys, node operations, and selective-disclosure workflows.
 - [`COMPLIANCE_ARCHITECTURE.md`](COMPLIANCE_ARCHITECTURE.md) – how HEGEMON accommodates regulatory requirements (Travel Rule, sanctions screening, selective disclosure) without compromising privacy or introducing backdoors.
 - [`CHAIN_SPECS.md`](CHAIN_SPECS.md) – chain specification checklists for Testnet0/1/2 and pre-mainnet, including bootstrapping keys and the path to remove `sudo`.

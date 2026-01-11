@@ -553,6 +553,138 @@ pub fn build_stablecoin_burn(
     })
 }
 
+/// Build a consolidation transaction that spends exactly two notes and creates exactly one output.
+///
+/// This is used by `wallet::execute_consolidation` to safely parallelize merges without the
+/// automatic coin-selection selecting unintended inputs.
+pub fn build_consolidation_transaction(
+    store: &WalletStore,
+    note_a: &SpendableNote,
+    note_b: &SpendableNote,
+    fee: u64,
+) -> Result<BuiltTransaction, WalletError> {
+    if store.mode()? == WalletMode::WatchOnly {
+        return Err(WalletError::WatchOnly);
+    }
+    if note_a.index == note_b.index {
+        return Err(WalletError::InvalidArgument(
+            "consolidation notes must be distinct",
+        ));
+    }
+    if note_a.recovered.note.asset_id != NATIVE_ASSET_ID
+        || note_b.recovered.note.asset_id != NATIVE_ASSET_ID
+    {
+        return Err(WalletError::InvalidArgument(
+            "consolidation only supports native asset notes",
+        ));
+    }
+
+    let total = note_a.value().saturating_add(note_b.value());
+    if total <= fee {
+        return Err(WalletError::InsufficientFunds {
+            needed: fee,
+            available: total,
+        });
+    }
+
+    let derived = store
+        .derived_keys()?
+        .ok_or(WalletError::InvalidState("missing derived keys"))?;
+    let fvk = store
+        .full_viewing_key()?
+        .ok_or(WalletError::InvalidState("missing viewing key"))?;
+
+    let address = store.primary_address()?;
+    let recipient = Recipient {
+        address: address.clone(),
+        value: total.saturating_sub(fee),
+        asset_id: NATIVE_ASSET_ID,
+        memo: MemoPlaintext::default(),
+    };
+
+    let mut rng = OsRng;
+    let (output, ciphertext, note) = build_output(&recipient, &mut rng)?;
+    let recipient_address = address.encode()?;
+    let memo = if note.memo.as_bytes().is_empty() {
+        None
+    } else {
+        Some(note.memo.clone())
+    };
+    let commitment = felts_to_bytes48(&output.note.commitment());
+    let outgoing_disclosures = vec![OutgoingDisclosureDraft {
+        output_index: 0,
+        recipient_address,
+        note: output.note.clone(),
+        commitment,
+        memo,
+    }];
+
+    let tree = store.commitment_tree()?;
+
+    let mut inputs = Vec::new();
+    let mut nullifiers = Vec::new();
+    for note in [note_a.clone(), note_b.clone()] {
+        let auth_path = tree
+            .authentication_path(note.position as usize)
+            .map_err(|e| WalletError::Serialization(format!("merkle path error: {e}")))?;
+
+        let mut siblings = Vec::with_capacity(auth_path.len());
+        for sibling in auth_path.iter() {
+            let felts = bytes48_to_felts(sibling).ok_or(WalletError::InvalidState(
+                "non-canonical merkle sibling encoding",
+            ))?;
+            siblings.push(felts);
+        }
+
+        let merkle_path = transaction_circuit::note::MerklePath { siblings };
+        let mut input_witness = note.recovered.to_input_witness(note.position);
+        input_witness.merkle_path = merkle_path;
+        inputs.push(input_witness);
+        nullifiers.push(fvk.compute_nullifier(&note.recovered.note.rho, note.position));
+    }
+
+    let witness = TransactionWitness {
+        inputs,
+        outputs: vec![output],
+        sk_spend: derived.view.nullifier_key(),
+        merkle_root: tree.root(),
+        fee,
+        value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: TransactionWitness::default_version_binding(),
+    };
+
+    let prover = build_stark_prover();
+    let proof_result = prover.prove(&witness)?;
+
+    let binding_hash = compute_binding_hash(
+        &proof_result.anchor,
+        &proof_result.nullifiers,
+        &proof_result.commitments,
+        proof_result.fee,
+        proof_result.value_balance,
+    );
+
+    let bundle = TransactionBundle::new(
+        proof_result.proof_bytes,
+        proof_result.nullifiers.to_vec(),
+        proof_result.commitments.to_vec(),
+        &[ciphertext],
+        proof_result.anchor,
+        binding_hash,
+        proof_result.fee,
+        proof_result.value_balance,
+        witness.stablecoin.clone(),
+    )?;
+
+    Ok(BuiltTransaction {
+        bundle,
+        nullifiers: proof_result.nullifiers.to_vec(),
+        spent_note_indexes: vec![note_a.index, note_b.index],
+        outgoing_disclosures,
+    })
+}
+
 /// Compute binding hash for transaction commitment.
 ///
 /// Returns the 64-byte binding hash of the public inputs:

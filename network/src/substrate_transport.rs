@@ -83,8 +83,6 @@ pub struct SubstratePqTransport {
 /// Configuration for Substrate PQ transport
 #[derive(Clone, Debug)]
 pub struct SubstratePqTransportConfig {
-    /// Whether PQ handshake is required (reject non-PQ peers)
-    pub require_pq: bool,
     /// Connection timeout
     pub connection_timeout: Duration,
     /// Handshake timeout
@@ -98,7 +96,6 @@ pub struct SubstratePqTransportConfig {
 impl Default for SubstratePqTransportConfig {
     fn default() -> Self {
         Self {
-            require_pq: true,
             connection_timeout: Duration::from_secs(30),
             handshake_timeout: Duration::from_secs(30),
             verbose_logging: false,
@@ -108,10 +105,9 @@ impl Default for SubstratePqTransportConfig {
 }
 
 impl SubstratePqTransportConfig {
-    /// Create development configuration (less strict)
+    /// Create development configuration (verbose logging)
     pub fn development() -> Self {
         Self {
-            require_pq: false,
             connection_timeout: Duration::from_secs(30),
             handshake_timeout: Duration::from_secs(30),
             verbose_logging: true,
@@ -122,7 +118,6 @@ impl SubstratePqTransportConfig {
     /// Create production configuration (requires PQ)
     pub fn production() -> Self {
         Self {
-            require_pq: true,
             connection_timeout: Duration::from_secs(60),
             handshake_timeout: Duration::from_secs(30),
             verbose_logging: false,
@@ -133,7 +128,6 @@ impl SubstratePqTransportConfig {
     /// Create testnet configuration
     pub fn testnet() -> Self {
         Self {
-            require_pq: true,
             connection_timeout: Duration::from_secs(30),
             handshake_timeout: Duration::from_secs(30),
             verbose_logging: false,
@@ -152,7 +146,6 @@ impl SubstratePqTransport {
     /// Build from identity seed
     pub fn from_seed(seed: &[u8], config: SubstratePqTransportConfig) -> Self {
         let pq_config = PqTransportConfig {
-            require_pq: config.require_pq,
             handshake_timeout: config.handshake_timeout,
             verbose_logging: config.verbose_logging,
         };
@@ -419,15 +412,13 @@ mod tests {
     #[tokio::test]
     async fn test_substrate_transport_config() {
         let dev = SubstratePqTransportConfig::development();
-        assert!(!dev.require_pq);
         assert!(dev.verbose_logging);
 
         let prod = SubstratePqTransportConfig::production();
-        assert!(prod.require_pq);
         assert!(!prod.verbose_logging);
 
         let testnet = SubstratePqTransportConfig::testnet();
-        assert!(testnet.require_pq);
+        assert!(!testnet.verbose_logging);
     }
 
     #[tokio::test]

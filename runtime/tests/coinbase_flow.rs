@@ -57,9 +57,13 @@ fn coinbase_note_data(
     recipient: [u8; DIVERSIFIED_ADDRESS_SIZE],
     public_seed: [u8; 32],
 ) -> CoinbaseNoteData {
-    #[allow(deprecated)]
-    let commitment =
-        pallet_shielded_pool::commitment::coinbase_commitment(&recipient, amount, &public_seed);
+    let pk_recipient = pallet_shielded_pool::commitment::pk_recipient_from_address(&recipient);
+    let commitment = pallet_shielded_pool::commitment::circuit_coinbase_commitment(
+        &pk_recipient,
+        amount,
+        &public_seed,
+        0,
+    );
     CoinbaseNoteData {
         commitment,
         encrypted_note: EncryptedNote::default(),

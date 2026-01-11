@@ -86,7 +86,6 @@ pub struct NoteCiphertext {
     pub kem_ciphertext: Vec<u8>,
     pub note_payload: Vec<u8>,
     pub memo_payload: Vec<u8>,
-    pub hint_tag: [u8; 32],
 }
 
 /// Internal payload structure for serialization
@@ -143,7 +142,6 @@ impl NoteCiphertext {
     /// * `pk_recipient` - Recipient's 32-byte recipient key (for commitment)
     /// * `version` - Address version byte
     /// * `diversifier_index` - Address diversifier index
-    /// * `address_tag` - Address hint tag (32 bytes)
     /// * `note` - Note plaintext to encrypt
     /// * `kem_randomness` - 32 bytes of randomness for KEM encapsulation
     pub fn encrypt(
@@ -151,7 +149,6 @@ impl NoteCiphertext {
         pk_recipient: [u8; 32],
         version: u8,
         diversifier_index: u32,
-        address_tag: [u8; 32],
         note: &NotePlaintext,
         kem_randomness: &[u8; 32],
     ) -> Result<Self, CryptoError> {
@@ -169,7 +166,7 @@ impl NoteCiphertext {
         let payload_bytes = payload.to_bytes();
 
         // Build AAD
-        let aad = build_aad(version, diversifier_index, &address_tag);
+        let aad = build_aad(version, diversifier_index);
 
         // Encrypt note payload
         let note_payload = encrypt_payload(&shared, b"note-aead", &payload_bytes, &aad)?;
@@ -183,7 +180,6 @@ impl NoteCiphertext {
             kem_ciphertext: kem_ct.to_bytes().to_vec(),
             note_payload,
             memo_payload,
-            hint_tag: address_tag,
         })
     }
 
@@ -193,19 +189,12 @@ impl NoteCiphertext {
     /// * `sk_enc` - Recipient's ML-KEM secret key
     /// * `expected_pk_recipient` - Expected pk_recipient to verify against
     /// * `expected_diversifier_index` - Expected diversifier index
-    /// * `expected_tag` - Expected address tag
     pub fn decrypt(
         &self,
         sk_enc: &MlKemSecretKey,
         expected_pk_recipient: [u8; 32],
         expected_diversifier_index: u32,
-        expected_tag: [u8; 32],
     ) -> Result<NotePlaintext, CryptoError> {
-        // Verify hint tag matches
-        if self.hint_tag != expected_tag {
-            return Err(CryptoError::DecryptionFailed("address tag mismatch".into()));
-        }
-
         // Verify diversifier index
         if self.diversifier_index != expected_diversifier_index {
             return Err(CryptoError::DecryptionFailed(
@@ -218,7 +207,7 @@ impl NoteCiphertext {
         let shared = sk_enc.decapsulate(&kem_ct)?;
 
         // Build AAD
-        let aad = build_aad(self.version, self.diversifier_index, &self.hint_tag);
+        let aad = build_aad(self.version, self.diversifier_index);
 
         // Decrypt note payload
         let payload_bytes = decrypt_payload(&shared, b"note-aead", &self.note_payload, &aad)?;
@@ -254,15 +243,14 @@ impl NoteCiphertext {
         out.extend_from_slice(&self.note_payload);
         out.extend_from_slice(&(self.memo_payload.len() as u32).to_le_bytes());
         out.extend_from_slice(&self.memo_payload);
-        out.extend_from_slice(&self.hint_tag);
         out
     }
 
     /// Deserialize from bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
-        if bytes.len() < 1 + 4 + 4 + 4 + 4 + 32 {
+        if bytes.len() < 1 + 4 + 4 + 4 + 4 {
             return Err(CryptoError::InvalidLength {
-                expected: 1 + 4 + 4 + 4 + 4 + 32,
+                expected: 1 + 4 + 4 + 4 + 4,
                 actual: bytes.len(),
             });
         }
@@ -303,16 +291,6 @@ impl NoteCiphertext {
             });
         }
         let memo_payload = bytes[offset..offset + memo_len].to_vec();
-        offset += memo_len;
-
-        if bytes.len() < offset + 32 {
-            return Err(CryptoError::InvalidLength {
-                expected: offset + 32,
-                actual: bytes.len(),
-            });
-        }
-        let mut hint_tag = [0u8; 32];
-        hint_tag.copy_from_slice(&bytes[offset..offset + 32]);
 
         Ok(Self {
             version,
@@ -320,7 +298,6 @@ impl NoteCiphertext {
             kem_ciphertext,
             note_payload,
             memo_payload,
-            hint_tag,
         })
     }
 }
@@ -366,11 +343,10 @@ fn derive_aead_material(
     (key, nonce)
 }
 
-fn build_aad(version: u8, index: u32, tag: &[u8; 32]) -> Vec<u8> {
-    let mut aad = Vec::with_capacity(1 + 4 + 32);
+fn build_aad(version: u8, index: u32) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(1 + 4);
     aad.push(version);
     aad.extend_from_slice(&index.to_le_bytes());
-    aad.extend_from_slice(tag);
     aad
 }
 
@@ -389,7 +365,6 @@ mod tests {
         let pk_recipient = [42u8; 32];
         let version = 1u8;
         let diversifier_index = 0u32;
-        let address_tag = [7u8; 32];
 
         let note = NotePlaintext::new(1000, 0, [1u8; 32], [2u8; 32], b"test memo".to_vec());
 
@@ -400,14 +375,13 @@ mod tests {
             pk_recipient,
             version,
             diversifier_index,
-            address_tag,
             &note,
             &kem_randomness,
         )
         .unwrap();
 
         let decrypted = ciphertext
-            .decrypt(&sk_enc, pk_recipient, diversifier_index, address_tag)
+            .decrypt(&sk_enc, pk_recipient, diversifier_index)
             .unwrap();
 
         assert_eq!(decrypted.value, note.value);
@@ -437,8 +411,7 @@ mod tests {
         let note = NotePlaintext::new(500, 1, [3u8; 32], [4u8; 32], b"memo".to_vec());
 
         let ciphertext =
-            NoteCiphertext::encrypt(&pk_enc, [5u8; 32], 1, 0, [6u8; 32], &note, &[7u8; 32])
-                .unwrap();
+            NoteCiphertext::encrypt(&pk_enc, [5u8; 32], 1, 0, &note, &[7u8; 32]).unwrap();
 
         let bytes = ciphertext.to_bytes();
         let recovered = NoteCiphertext::from_bytes(&bytes).unwrap();
@@ -448,6 +421,5 @@ mod tests {
         assert_eq!(recovered.kem_ciphertext, ciphertext.kem_ciphertext);
         assert_eq!(recovered.note_payload, ciphertext.note_payload);
         assert_eq!(recovered.memo_payload, ciphertext.memo_payload);
-        assert_eq!(recovered.hint_tag, ciphertext.hint_tag);
     }
 }

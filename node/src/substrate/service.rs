@@ -124,7 +124,7 @@ use crate::substrate::mining_worker::{
 use crate::substrate::network::{PqNetworkConfig, PqNetworkKeypair};
 use crate::substrate::network_bridge::NetworkBridgeBuilder;
 use crate::substrate::rpc::{
-    BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer, HegemonRpc,
+    BlockApiServer, BlockRpc, DaApiServer, DaRpc, HegemonApiServer, HegemonRpc, NodeConfigSnapshot,
     ProductionRpcService, ShieldedApiServer, ShieldedRpc, WalletApiServer, WalletRpc,
 };
 use crate::substrate::transaction_pool::{
@@ -2096,8 +2096,6 @@ fn wire_pow_block_import(
 /// PQ network configuration for the node service
 #[derive(Clone, Debug)]
 pub struct PqServiceConfig {
-    /// Whether PQ is required for all connections
-    pub require_pq: bool,
     /// Enable verbose PQ handshake logging
     pub verbose_logging: bool,
     /// Listen address for P2P
@@ -2111,7 +2109,6 @@ pub struct PqServiceConfig {
 impl Default for PqServiceConfig {
     fn default() -> Self {
         Self {
-            require_pq: true,
             verbose_logging: false,
             listen_addr: "0.0.0.0:30333".parse().unwrap(),
             bootstrap_nodes: Vec::new(),
@@ -2129,16 +2126,11 @@ impl PqServiceConfig {
     /// 3. Defaults
     ///
     /// Environment variables:
-    /// - `HEGEMON_REQUIRE_PQ`: Require PQ connections (default: true)
     /// - `HEGEMON_PQ_VERBOSE`: Enable verbose logging (default: false)
     /// - `HEGEMON_SEEDS`: Comma-separated list of seed peers (IP:port)
     /// - `HEGEMON_LISTEN_ADDR`: Listen address (overrides --port)
     /// - `HEGEMON_MAX_PEERS`: Maximum peers (default: 50)
     pub fn from_config(config: &Configuration) -> Self {
-        let require_pq = std::env::var("HEGEMON_REQUIRE_PQ")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(true);
-
         let verbose = std::env::var("HEGEMON_PQ_VERBOSE")
             .map(|v| v == "1" || v.to_lowercase() == "true")
             .unwrap_or(false);
@@ -2247,55 +2239,10 @@ impl PqServiceConfig {
         tracing::info!(
             listen_addr = %listen_addr,
             max_peers = max_peers,
-            require_pq = require_pq,
             "PQ service config initialized"
         );
 
         Self {
-            require_pq,
-            verbose_logging: verbose,
-            bootstrap_nodes,
-            listen_addr,
-            max_peers,
-        }
-    }
-
-    /// Create from environment variables only (legacy, use from_config when possible)
-    pub fn from_env() -> Self {
-        let require_pq = std::env::var("HEGEMON_REQUIRE_PQ")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(true);
-
-        let verbose = std::env::var("HEGEMON_PQ_VERBOSE")
-            .map(|v| v == "1" || v.to_lowercase() == "true")
-            .unwrap_or(false);
-
-        let bootstrap_nodes: Vec<std::net::SocketAddr> = std::env::var("HEGEMON_SEEDS")
-            .map(|s| {
-                s.split(',')
-                    .filter_map(|addr| {
-                        let addr = addr.trim();
-                        if addr.is_empty() {
-                            return None;
-                        }
-                        addr.parse().ok()
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let listen_addr = std::env::var("HEGEMON_LISTEN_ADDR")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_else(|| "0.0.0.0:30333".parse().unwrap());
-
-        let max_peers = std::env::var("HEGEMON_MAX_PEERS")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(50);
-
-        Self {
-            require_pq,
             verbose_logging: verbose,
             bootstrap_nodes,
             listen_addr,
@@ -2548,7 +2495,7 @@ fn load_or_create_da_sampling_secret(config: &Configuration) -> Result<[u8; 32],
 }
 
 // =============================================================================
-// LEGACY PartialComponents AND new_partial() REMOVED
+// Prior PartialComponents/new_partial() removed in favor of new_full_with_client.
 // =============================================================================
 // The scaffold mode structs and functions have been removed.
 // Use PartialComponentsWithClient and new_partial_with_client() instead.
@@ -2805,7 +2752,6 @@ pub fn new_partial_with_client(
         enable_pq_transport: true,
         max_peers: pq_service_config.max_peers as u32,
         connection_timeout_secs: 30,
-        require_pq: pq_service_config.require_pq,
         verbose_logging: pq_service_config.verbose_logging,
     };
 
@@ -2825,7 +2771,6 @@ pub fn new_partial_with_client(
     // Create PQ peer identity and transport
 
     let pq_transport_config = PqTransportConfig {
-        require_pq: pq_service_config.require_pq,
         handshake_timeout: std::time::Duration::from_secs(30),
         verbose_logging: pq_service_config.verbose_logging,
     };
@@ -2833,7 +2778,6 @@ pub fn new_partial_with_client(
     let pq_identity = PqPeerIdentity::new(&transport_seed, pq_transport_config.clone());
 
     let substrate_transport_config = SubstratePqTransportConfig {
-        require_pq: pq_service_config.require_pq,
         connection_timeout: std::time::Duration::from_secs(30),
         handshake_timeout: std::time::Duration::from_secs(30),
         verbose_logging: pq_service_config.verbose_logging,
@@ -2844,7 +2788,6 @@ pub fn new_partial_with_client(
 
     tracing::info!(
         pq_peer_id = %hex::encode(pq_transport.local_peer_id()),
-        require_pq = %pq_service_config.require_pq,
         "Hegemon node with full client initialized"
     );
 
@@ -2939,7 +2882,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         best_number = %client.chain_info().best_number,
         best_hash = %client.chain_info().best_hash,
         pq_enabled = %network_config.enable_pq_transport,
-        require_pq = %pq_service_config.require_pq,
         "Hegemon node started with FULL SUBSTRATE CLIENT"
     );
 
@@ -3082,7 +3024,6 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
             listen_addr: pq_service_config.listen_addr,
             bootstrap_nodes: pq_service_config.bootstrap_nodes.clone(),
             max_peers: pq_service_config.max_peers,
-            require_pq: pq_service_config.require_pq,
             connection_timeout: std::time::Duration::from_secs(30),
             verbose_logging: pq_service_config.verbose_logging,
         };
@@ -3279,12 +3220,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     // Handle sync protocol messages
                                     use crate::substrate::network_bridge::{
                                         BlockAnnounce, DaChunkProtocolMessage, BLOCK_ANNOUNCE_PROTOCOL,
-                                        BLOCK_ANNOUNCE_PROTOCOL_LEGACY, DA_CHUNKS_PROTOCOL,
-                                        SYNC_PROTOCOL, SYNC_PROTOCOL_LEGACY,
+                                        DA_CHUNKS_PROTOCOL, SYNC_PROTOCOL,
                                     };
                                     use crate::substrate::network_bridge::SyncMessage;
                                     // Handle sync protocol messages
-                                    if protocol == SYNC_PROTOCOL || protocol == SYNC_PROTOCOL_LEGACY {
+                                    if protocol == SYNC_PROTOCOL {
                                         // Decode using SyncMessage wrapper for unambiguous request/response distinction
                                         if let Ok(msg) = SyncMessage::decode(&mut &data[..]) {
                                             match msg {
@@ -3421,7 +3361,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         }
                                     }
                                     // Handle block announce messages - update peer's best height
-                                    else if protocol == BLOCK_ANNOUNCE_PROTOCOL || protocol == BLOCK_ANNOUNCE_PROTOCOL_LEGACY {
+                                    else if protocol == BLOCK_ANNOUNCE_PROTOCOL {
                                         if let Ok(announce) = BlockAnnounce::decode(&mut &data[..]) {
                                             let peer_best = announce.number;
                                             tracing::info!(
@@ -4598,8 +4538,27 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
         // Hegemon Custom RPCs
         // =====================================================================
 
+        let config_snapshot = NodeConfigSnapshot {
+            node_name: config.network.node_name.clone(),
+            chain_spec_id: config.chain_spec.id().to_string(),
+            chain_spec_name: config.chain_spec.name().to_string(),
+            chain_type: format!("{:?}", config.chain_spec.chain_type()).to_lowercase(),
+            base_path: config.base_path.path().display().to_string(),
+            p2p_listen_addr: pq_service_config.listen_addr.to_string(),
+            rpc_listen_addr: rpc_listen_addr.to_string(),
+            rpc_methods: format!("{:?}", config.rpc.methods).to_lowercase(),
+            rpc_external: !rpc_listen_addr.ip().is_loopback(),
+            bootstrap_nodes: pq_service_config
+                .bootstrap_nodes
+                .iter()
+                .map(|addr| addr.to_string())
+                .collect(),
+            pq_verbose: pq_service_config.verbose_logging,
+            max_peers: pq_service_config.max_peers as u32,
+        };
+
         // Add Hegemon RPC (mining, consensus, telemetry)
-        let hegemon_rpc = HegemonRpc::new(rpc_service.clone(), pow_handle.clone());
+        let hegemon_rpc = HegemonRpc::new(rpc_service.clone(), pow_handle.clone(), config_snapshot);
         if let Err(e) = module.merge(hegemon_rpc.into_rpc()) {
             tracing::warn!(error = %e, "Failed to merge Hegemon RPC");
         } else {
@@ -4777,15 +4736,8 @@ mod tests {
     #[test]
     fn test_pq_service_config_default() {
         let config = PqServiceConfig::default();
-        assert!(config.require_pq);
         assert!(!config.verbose_logging);
         assert_eq!(config.max_peers, 50);
-    }
-
-    #[test]
-    fn test_pq_service_config_from_env() {
-        // This test depends on environment, so just verify it doesn't panic
-        let _config = PqServiceConfig::from_env();
     }
 }
 

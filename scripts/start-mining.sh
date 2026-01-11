@@ -7,15 +7,19 @@ NODE_PATH="${HEGEMON_NODE_PATH:-$HOME/.hegemon-node}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 NODE_BIN="${PROJECT_ROOT}/target/release/hegemon-node"
-WALLET_BIN="${PROJECT_ROOT}/target/release/wallet"
+WALLETD_BIN="${PROJECT_ROOT}/target/release/walletd"
 
 echo "=== Hegemon Mining Setup ==="
 echo ""
 
 # Check binaries exist
-if [[ ! -x "$NODE_BIN" ]] || [[ ! -x "$WALLET_BIN" ]]; then
+if [[ ! -x "$NODE_BIN" ]] || [[ ! -x "$WALLETD_BIN" ]]; then
     echo "ERROR: Binaries not found. Build first with:"
-    echo "  cargo build -p hegemon-node -p wallet --release"
+    echo "  cargo build -p hegemon-node -p walletd --release"
+    exit 1
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: python3 is required to parse walletd output."
     exit 1
 fi
 
@@ -60,19 +64,32 @@ if ! $WALLET_EXISTS; then
         echo "ERROR: Passphrase cannot be empty."
         exit 1
     fi
-    
-    "$WALLET_BIN" init --store "$WALLET_PATH" --passphrase "$PASSPHRASE"
+    WALLET_MODE="create"
     echo ""
-    echo "Wallet created at $WALLET_PATH"
+    echo "Wallet store will be created at $WALLET_PATH"
 else
     read -s -p "Enter wallet passphrase: " PASSPHRASE
     echo ""
+    WALLET_MODE="open"
 fi
 
 # Get shielded address
 echo ""
 echo "Fetching shielded address..."
-SHIELDED_ADDR=$("$WALLET_BIN" status --store "$WALLET_PATH" --passphrase "$PASSPHRASE" 2>/dev/null | grep "Shielded Address:" | awk '{print $3}')
+STATUS_JSON=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "$PASSPHRASE" \
+    | "$WALLETD_BIN" --store "$WALLET_PATH" --mode "$WALLET_MODE")
+SHIELDED_ADDR=$(printf '%s' "$STATUS_JSON" | python3 - <<'PY'
+import json
+import sys
+
+data = sys.stdin.read()
+try:
+    obj = json.loads(data) if data.strip() else {}
+except Exception:
+    obj = {}
+print((obj.get("result") or {}).get("primaryAddress", ""))
+PY
+)
 
 if [[ -z "$SHIELDED_ADDR" ]]; then
     echo "ERROR: Could not get shielded address. Check passphrase."
@@ -103,11 +120,21 @@ NODE_ARGS=(
     --base-path "$NODE_PATH"
     --chain config/dev-chainspec.json
     --rpc-port 9944
-    --rpc-cors all
-    --unsafe-rpc-external
+    --rpc-methods "${HEGEMON_RPC_METHODS:-safe}"
     --listen-addr /ip4/0.0.0.0/tcp/30333
     --name "HegemonMiner"
 )
+
+# RPC hardening: default is localhost-only, safe methods.
+# To explicitly expose RPC beyond localhost (not recommended), set:
+#   HEGEMON_RPC_EXTERNAL=1 HEGEMON_RPC_CORS=<origin> ./scripts/start-mining.sh
+if [[ "${HEGEMON_RPC_EXTERNAL:-0}" == "1" || "${HEGEMON_RPC_EXTERNAL:-}" == "true" ]]; then
+    echo "WARNING: RPC is exposed beyond localhost. Use firewalls/VPN and keep --rpc-methods safe." >&2
+    NODE_ARGS+=(--rpc-external)
+fi
+if [[ -n "${HEGEMON_RPC_CORS:-}" ]]; then
+    NODE_ARGS+=(--rpc-cors "${HEGEMON_RPC_CORS}")
+fi
 
 # Handle bootnode connection
 # BOOTNODE can be either:

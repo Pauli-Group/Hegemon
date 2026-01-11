@@ -13,8 +13,8 @@
 //! │  │                   sc-network                                ││
 //! │  │  ┌─────────────────┐   ┌──────────────────────────────────┐ ││
 //! │  │  │   Protocols     │   │     Notification Protocols       │ ││
-//! │  │  │  - sync         │   │  - /hegemon/block-announces/1    │ ││
-//! │  │  │  - transactions │   │  - /hegemon/transactions/1       │ ││
+//! │  │  │  - sync         │   │  - /hegemon/block-announces/pq/1 │ ││
+//! │  │  │  - transactions │   │  - /hegemon/transactions/pq/1    │ ││
 //! │  │  └─────────────────┘   └──────────────────────────────────┘ ││
 //! │  └─────────────────────────────────────────────────────────────┘│
 //! │                            │                                    │
@@ -59,13 +59,13 @@ use std::time::Duration;
 /// Network protocol identifiers for Hegemon
 pub mod protocols {
     /// Block announcement protocol
-    pub const BLOCK_ANNOUNCES: &str = "/hegemon/block-announces/1";
+    pub const BLOCK_ANNOUNCES: &str = "/hegemon/block-announces/pq/1";
     /// Transaction propagation protocol
-    pub const TRANSACTIONS: &str = "/hegemon/transactions/1";
+    pub const TRANSACTIONS: &str = "/hegemon/transactions/pq/1";
     /// PQ handshake negotiation protocol
-    pub const PQ_HANDSHAKE: &str = "/hegemon/pq-handshake/1";
+    pub const PQ_HANDSHAKE: &str = "/hegemon/pq/1";
     /// Sync protocol
-    pub const SYNC: &str = "/hegemon/sync/1";
+    pub const SYNC: &str = "/hegemon/sync/pq/1";
 }
 
 /// Configuration for PQ-secure Substrate networking
@@ -81,8 +81,6 @@ pub struct PqNetworkConfig {
     pub max_peers: u32,
     /// Connection timeout in seconds
     pub connection_timeout_secs: u64,
-    /// Whether to require PQ handshake for all peers
-    pub require_pq: bool,
     /// Enable verbose handshake logging
     pub verbose_logging: bool,
 }
@@ -95,7 +93,6 @@ impl Default for PqNetworkConfig {
             enable_pq_transport: true,
             max_peers: 50,
             connection_timeout_secs: 30,
-            require_pq: true,
             verbose_logging: false,
         }
     }
@@ -110,7 +107,6 @@ impl PqNetworkConfig {
             enable_pq_transport: true,
             max_peers: 25,
             connection_timeout_secs: 30,
-            require_pq: false,
             verbose_logging: true,
         }
     }
@@ -123,7 +119,6 @@ impl PqNetworkConfig {
             enable_pq_transport: true,
             max_peers: 50,
             connection_timeout_secs: 30,
-            require_pq: true,
             verbose_logging: false,
         }
     }
@@ -136,7 +131,6 @@ impl PqNetworkConfig {
             enable_pq_transport: true,
             max_peers: 100,
             connection_timeout_secs: 60,
-            require_pq: true,
             verbose_logging: false,
         }
     }
@@ -325,15 +319,13 @@ mod tests {
     #[test]
     fn test_pq_network_config() {
         let dev = PqNetworkConfig::development();
-        assert!(!dev.require_pq);
         assert!(dev.verbose_logging);
 
         let testnet = PqNetworkConfig::testnet();
-        assert!(testnet.require_pq);
         assert!(!testnet.verbose_logging);
 
         let mainnet = PqNetworkConfig::mainnet();
-        assert!(mainnet.require_pq);
+        assert!(!mainnet.verbose_logging);
         assert_eq!(mainnet.max_peers, 100);
     }
 
