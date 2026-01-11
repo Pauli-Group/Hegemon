@@ -291,7 +291,6 @@ impl NoteCiphertext {
             });
         }
         let memo_payload = bytes[offset..offset + memo_len].to_vec();
-        offset += memo_len;
 
         Ok(Self {
             version,
