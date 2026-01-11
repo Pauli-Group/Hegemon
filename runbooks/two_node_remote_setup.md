@@ -273,34 +273,46 @@ Use the Hegemon desktop app (`hegemon-app/`) from your local machine:
 2. Create or open a wallet store.
 3. Sync the wallet and send funds to your friend's address.
 
-### Option B: Using the Wallet CLI
+### Option B: Using walletd
 
 ```bash
+# Build walletd if needed
+cargo build --release -p walletd
+
 # Check wallet status
-cargo run -p wallet --bin wallet -- status \
-  --store /tmp/my-hegemon-node/wallet \
-  --passphrase "your-passphrase"
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-passphrase" \
+  | ./target/release/walletd --store /tmp/my-hegemon-node/wallet --mode open \
+  | jq '.result'
 
 # Generate a receiving address
-cargo run -p wallet --bin wallet -- generate --count 1 --out my-address.json
-cat my-address.json | jq '.addresses[0].address'
+printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "your-passphrase" \
+  | ./target/release/walletd --store /tmp/my-hegemon-node/wallet --mode open \
+  | jq -r '.result.primaryAddress'
 ```
 
 Share the generated address with your friend to receive funds.
 
-### Crafting a Transaction
+### Send a Transaction (walletd)
 
 ```bash
-# Create a transaction to send funds
-cargo run -p wallet --bin wallet -- tx-craft \
-  --root <YOUR_ROOT_SECRET> \
-  --inputs inputs.json \
-  --recipients recipients.json \
-  --merkle-root <CURRENT_MERKLE_ROOT> \
-  --fee 1 \
-  --witness-out witness.json \
-  --ciphertext-out ciphertext.json
+cat > recipients.json <<'JSON'
+[
+  {
+    "address": "<FRIEND_SHIELDED_ADDRESS>",
+    "value": 100000000,
+    "asset_id": 0,
+    "memo": "remote setup transfer"
+  }
+]
+JSON
+
+REQ=$(jq -nc --arg ws "ws://127.0.0.1:9944" --argjson recipients "$(jq -c '.' recipients.json)" \
+  '{id:1,method:"tx.send",params:{ws_url:$ws,recipients:$recipients,fee:0,auto_consolidate:true}}')
+printf '%s\n%s\n' "your-passphrase" "$REQ" \
+  | ./target/release/walletd --store /tmp/my-hegemon-node/wallet --mode open
 ```
+
+Offline transaction crafting (`wallet tx-craft`) is not exposed by walletd yet.
 
 ---
 

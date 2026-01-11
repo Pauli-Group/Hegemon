@@ -8,7 +8,7 @@ Run these once on a fresh clone (repo root):
 
     make setup
     make node
-    cargo build --release -p wallet
+    cargo build --release -p walletd
 
 ## Demo steps
 
@@ -16,21 +16,25 @@ Terminal A (start the dev node with mining enabled):
 
     export ALICE_STORE=/tmp/hegemon-alice.wallet
     export ALICE_PW="alice-pass"
-    ./target/release/wallet init --store "$ALICE_STORE" --passphrase "$ALICE_PW"
-    export ALICE_ADDR=$(./target/release/wallet status --store "$ALICE_STORE" --passphrase "$ALICE_PW" --ws-url ws://127.0.0.1:9944 --no-sync | awk '/Shielded Address/ {print $3}')
+    export ALICE_ADDR=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "$ALICE_PW" \
+      | ./target/release/walletd --store "$ALICE_STORE" --mode create \
+      | jq -r '.result.primaryAddress')
     HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS="$ALICE_ADDR" ./target/release/hegemon-node --dev --tmp
 
 Terminal B (create an exchange wallet and address):
 
     export EX_STORE=/tmp/hegemon-exchange.wallet
     export EX_PW="exchange-pass"
-    ./target/release/wallet init --store "$EX_STORE" --passphrase "$EX_PW"
-    export EX_ADDR=$(./target/release/wallet status --store "$EX_STORE" --passphrase "$EX_PW" --ws-url ws://127.0.0.1:9944 --no-sync | awk '/Shielded Address/ {print $3}')
+    export EX_ADDR=$(printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "$EX_PW" \
+      | ./target/release/walletd --store "$EX_STORE" --mode create \
+      | jq -r '.result.primaryAddress')
     echo "$EX_ADDR"
 
 Wait until Alice has funds (Terminal B):
 
-    ./target/release/wallet status --store "$ALICE_STORE" --passphrase "$ALICE_PW" --ws-url ws://127.0.0.1:9944
+    printf '%s\n{"id":1,"method":"status.get","params":{}}\n' "$ALICE_PW" \
+      | ./target/release/walletd --store "$ALICE_STORE" --mode open \
+      | jq '.result'
 
 Send 1.0 HGM to the exchange address (Terminal B):
 
@@ -53,20 +57,30 @@ Send 1.0 HGM to the exchange address (Terminal B):
     json.dump(data, open(path, "w", encoding="utf-8"), indent=2)
     print("wrote", path)
     PY
-    ./target/release/wallet substrate-send --store "$ALICE_STORE" --passphrase "$ALICE_PW" --ws-url ws://127.0.0.1:9944 --recipients /tmp/recipients_exchange.json --fee 0
+    REQ=$(jq -nc --arg ws "ws://127.0.0.1:9944" --argjson recipients "$(jq -c '.' /tmp/recipients_exchange.json)" \
+      '{id:1,method:"tx.send",params:{ws_url:$ws,recipients:$recipients,fee:0,auto_consolidate:true}}')
+    export TX_HASH=$(printf '%s\n%s\n' "$ALICE_PW" "$REQ" \
+      | ./target/release/walletd --store "$ALICE_STORE" --mode open \
+      | jq -r '.result.txHash')
 
-Capture the transaction hash from the output (line starting with `TX Hash:`), then generate the disclosure package:
+Generate the disclosure package:
 
-    export TX_HASH=0xREPLACE_WITH_TX_HASH
-    ./target/release/wallet payment-proof create --store "$ALICE_STORE" --passphrase "$ALICE_PW" --ws-url ws://127.0.0.1:9944 --tx "$TX_HASH" --output 0 --out /tmp/payment_proof.json
+    DISCLOSURE_REQ=$(jq -nc --arg ws "ws://127.0.0.1:9944" --arg tx "$TX_HASH" \
+      '{id:1,method:"disclosure.create",params:{ws_url:$ws,tx_id:$tx,output:0}}')
+    printf '%s\n%s\n' "$ALICE_PW" "$DISCLOSURE_REQ" \
+      | ./target/release/walletd --store "$ALICE_STORE" --mode open \
+      | jq '.result' > /tmp/payment_proof.json
 
 Verify as the exchange (Terminal B):
 
-    ./target/release/wallet payment-proof verify --proof /tmp/payment_proof.json --ws-url ws://127.0.0.1:9944 --credit-ledger /tmp/credited_deposits.jsonl --case-id DEMO-001
+    VERIFY_REQ=$(jq -nc --arg ws "ws://127.0.0.1:9944" --slurpfile pkg /tmp/payment_proof.json \
+      '{id:1,method:"disclosure.verify",params:{ws_url:$ws,package:$pkg[0]}}')
+    printf '%s\n%s\n' "$EX_PW" "$VERIFY_REQ" \
+      | ./target/release/walletd --store "$EX_STORE" --mode open
 
 Expected output includes a line like:
 
-    VERIFIED paid value=100000000 asset_id=0 to=shca1... commitment=0x... anchor=0x... chain=0x...
+    "verified": true, "recipientAddress": "shca1...", "value": 100000000, "assetId": 0
 
 Tamper test (edit the value and verify failure):
 
@@ -78,8 +92,11 @@ Tamper test (edit the value and verify failure):
     json.dump(data, open(path, "w", encoding="utf-8"), indent=2)
     print("tampered", path)
     PY
-    ./target/release/wallet payment-proof verify --proof /tmp/payment_proof.json --ws-url ws://127.0.0.1:9944
+    VERIFY_REQ=$(jq -nc --arg ws "ws://127.0.0.1:9944" --slurpfile pkg /tmp/payment_proof.json \
+      '{id:1,method:"disclosure.verify",params:{ws_url:$ws,package:$pkg[0]}}')
+    printf '%s\n%s\n' "$EX_PW" "$VERIFY_REQ" \
+      | ./target/release/walletd --store "$EX_STORE" --mode open
 
 Optional cleanup (purge stored disclosure records):
 
-    ./target/release/wallet payment-proof purge --store "$ALICE_STORE" --passphrase "$ALICE_PW" --all
+walletd does not expose purge yet. Delete the store or use `wallet payment-proof purge`.
