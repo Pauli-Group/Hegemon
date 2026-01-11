@@ -60,18 +60,32 @@ const buildContentSecurityPolicy = (devUrl?: string) => {
   ].join('; ');
 };
 
-const resolveIconPath = () => {
-  const iconFile =
-    process.platform === 'win32' ? 'icon.ico' : process.platform === 'darwin' ? 'icon.icns' : 'icon.png';
-  const candidates = app.isPackaged
-    ? [join(process.resourcesPath, iconFile)]
-    : [
-        join(app.getAppPath(), 'build', iconFile),
-        join(process.cwd(), 'build', iconFile),
-        join(__dirname, '..', '..', 'build', iconFile)
-      ];
-  const iconPath = candidates.find((candidate) => existsSync(candidate));
-  return iconPath ?? null;
+const resolveIconCandidates = () => {
+  const iconFiles =
+    process.platform === 'darwin'
+      ? ['icon.icns', 'icon.png']
+      : process.platform === 'win32'
+        ? ['icon.ico', 'icon.png']
+        : ['icon.png'];
+  const basePaths = app.isPackaged
+    ? [process.resourcesPath]
+    : [join(app.getAppPath(), 'build'), join(process.cwd(), 'build'), join(__dirname, '..', '..', 'build')];
+  return basePaths.flatMap((basePath) => iconFiles.map((iconFile) => join(basePath, iconFile)));
+};
+
+const loadAppIcon = () => {
+  const candidates = resolveIconCandidates();
+  for (const candidate of candidates) {
+    if (!existsSync(candidate)) {
+      continue;
+    }
+    const image = nativeImage.createFromPath(candidate);
+    if (!image.isEmpty()) {
+      return image;
+    }
+  }
+  console.warn('Hegemon icon not found. Using default Electron icon.');
+  return null;
 };
 
 const loadContacts = async (): Promise<Contact[] | null> => {
@@ -99,8 +113,7 @@ const saveContacts = async (contacts: Contact[]) => {
 };
 
 const createWindow = () => {
-  const iconPath = resolveIconPath();
-  const windowIcon = iconPath ? nativeImage.createFromPath(iconPath) : undefined;
+  const windowIcon = loadAppIcon() ?? undefined;
   const win = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -114,7 +127,7 @@ const createWindow = () => {
   });
 
   if (process.platform === 'darwin' && windowIcon) {
-    app.dock.setIcon(windowIcon);
+    app.dock?.setIcon(windowIcon);
   }
 
   if (process.env.VITE_DEV_SERVER_URL) {
