@@ -61,7 +61,11 @@ type SendAttempt = {
   status: ActivityStatus;
   txId?: string;
   error?: string;
+  notesNeeded?: number;
+  walletNoteCount?: number;
+  maxInputs?: number;
   consolidationExpected?: number;
+  consolidationExpectedBlocks?: number;
 };
 
 type ActivityStep = {
@@ -84,7 +88,11 @@ type ActivityEntry = {
   txId?: string;
   confirmations?: number;
   error?: string;
+  notesNeeded?: number;
+  walletNoteCount?: number;
+  maxInputs?: number;
   consolidationExpected?: number;
+  consolidationExpectedBlocks?: number;
   consolidationSubmitted?: number;
   consolidationConfirmed?: number;
   steps?: ActivityStep[];
@@ -382,6 +390,7 @@ export default function App() {
   const [logFilterError, setLogFilterError] = useState(true);
   const [logFilterDebug, setLogFilterDebug] = useState(false);
   const [logSearch, setLogSearch] = useState('');
+  const [logNewestFirst, setLogNewestFirst] = useState(true);
 
   const [walletStatus, setWalletStatus] = useState<WalletStatus | null>(null);
   const [walletSyncOutput, setWalletSyncOutput] = useState<string>('');
@@ -389,6 +398,7 @@ export default function App() {
   const [walletDisclosureOutput, setWalletDisclosureOutput] = useState<string>('');
   const [walletDisclosureVerifyOutput, setWalletDisclosureVerifyOutput] = useState<string>('');
   const [walletBusy, setWalletBusy] = useState(false);
+  const [walletSyncQueued, setWalletSyncQueued] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [addressCopied, setAddressCopied] = useState(false);
   const [disclosureCopied, setDisclosureCopied] = useState(false);
@@ -621,6 +631,11 @@ export default function App() {
       return true;
     });
   }, [logEntries, logFilterDebug, logFilterInfo, logFilterWarn, logFilterError, logSearch]);
+
+  const displayedLogEntries = useMemo(
+    () => (logNewestFirst ? [...filteredLogEntries].reverse() : filteredLogEntries),
+    [filteredLogEntries, logNewestFirst]
+  );
 
   const refreshNode = async () => {
     if (!connections.length) {
@@ -912,6 +927,13 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    if (!walletBusy && walletSyncQueued) {
+      setWalletSyncQueued(false);
+      void handleWalletSync();
+    }
+  }, [walletBusy, walletSyncQueued]);
+
   const handleWalletSend = async () => {
     let attemptId: string | null = null;
     setWalletError(null);
@@ -952,10 +974,21 @@ export default function App() {
 
       let autoConsolidateForSend = autoConsolidate;
       const consolidationEstimate = plan.needsConsolidation ? plan.plan?.txsNeeded : undefined;
+      const consolidationBlocksEstimate = plan.needsConsolidation ? plan.plan?.blocksNeeded : undefined;
 
       if (plan.needsConsolidation && !autoConsolidateForSend) {
         const noteContext = `This send needs ${plan.selectedNoteCount} notes (wallet has ${plan.walletNoteCount}, max ${plan.maxInputs} inputs/tx).`;
-        const estimateLine = consolidationEstimate ? `\n\nEstimated consolidation transactions: ~${consolidationEstimate}.` : '';
+        const estimateLine = consolidationEstimate
+          ? `\n\nEstimated consolidation: ~${consolidationEstimate} tx${
+              consolidationBlocksEstimate
+                ? ` across ~${consolidationBlocksEstimate} blocks`
+                : ''
+            }${
+              consolidationBlocksEstimate && consolidationBlocksEstimate > 0
+                ? ` (~${(consolidationEstimate / consolidationBlocksEstimate).toFixed(1)} tx/block)`
+                : ''
+            }.`
+          : '';
         const confirmed = window.confirm(
           `Note consolidation is required before sending.\n\n${noteContext}${estimateLine}\n\nEnable auto-consolidate and proceed?`
         );
@@ -968,8 +1001,14 @@ export default function App() {
 
       if (autoConsolidateForSend && consolidationEstimate && consolidationEstimate > 25) {
         const noteContext = `This send needs ${plan.selectedNoteCount} notes (wallet has ${plan.walletNoteCount}, max ${plan.maxInputs} inputs/tx).`;
+        const estimateLine =
+          consolidationBlocksEstimate && consolidationBlocksEstimate > 0
+            ? `Estimated consolidation: ~${consolidationEstimate} tx across ~${consolidationBlocksEstimate} blocks (~${(
+                consolidationEstimate / consolidationBlocksEstimate
+              ).toFixed(1)} tx/block).`
+            : `Estimated consolidation: ~${consolidationEstimate} tx.`;
         const confirmed = window.confirm(
-          `This send will trigger note consolidation.\n\n${noteContext}\n\nEstimated consolidation transactions: ~${consolidationEstimate}.\n\nProceed?`
+          `This send will trigger note consolidation.\n\n${noteContext}\n\n${estimateLine}\n\nProceed?`
         );
         if (!confirmed) {
           return;
@@ -988,7 +1027,11 @@ export default function App() {
         fee,
         memo: sendMemo || undefined,
         status: 'processing',
-        consolidationExpected
+        notesNeeded: plan.selectedNoteCount,
+        walletNoteCount: plan.walletNoteCount,
+        maxInputs: plan.maxInputs,
+        consolidationExpected,
+        consolidationExpectedBlocks: autoConsolidateForSend ? consolidationBlocksEstimate : undefined
       };
       setSendAttempts((prev) => [attempt, ...prev].slice(0, 50));
 
@@ -1300,7 +1343,11 @@ export default function App() {
         txId: normalizeTxId(pending?.txId) ?? attempt.txId,
         confirmations: pending?.confirmations,
         error: attempt.error,
+        notesNeeded: attempt.notesNeeded,
+        walletNoteCount: attempt.walletNoteCount,
+        maxInputs: attempt.maxInputs,
         consolidationExpected: expectedSteps || undefined,
+        consolidationExpectedBlocks: attempt.consolidationExpectedBlocks,
         consolidationSubmitted: consolidationSubmitted || undefined,
         consolidationConfirmed: consolidationSubmitted ? consolidationConfirmed : undefined,
         steps: steps.length ? steps : undefined
@@ -2083,9 +2130,19 @@ export default function App() {
               placeholder="Filter by phrase or module"
             />
           </label>
-          <p className="text-[11px] text-surfaceMuted/60">
-            Showing {formatNumber(nodeLogs.length)} lines (newest at bottom).
-          </p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[11px] text-surfaceMuted/60">
+              Showing {formatNumber(nodeLogs.length)} lines (newest {logNewestFirst ? 'first' : 'last'}).
+            </p>
+            <button
+              className="chip"
+              type="button"
+              aria-pressed={logNewestFirst}
+              onClick={() => setLogNewestFirst((prev) => !prev)}
+            >
+              Newest first
+            </button>
+          </div>
         </div>
       </div>
 
@@ -2102,12 +2159,12 @@ export default function App() {
         )}
         {activeConnection?.mode === 'local' && (
           <div className="space-y-1">
-            {filteredLogEntries.length === 0 && (
+            {displayedLogEntries.length === 0 && (
               <div className="text-center py-10">
                 <p className="text-sm text-surfaceMuted/60">No matching logs.</p>
               </div>
             )}
-            {filteredLogEntries.map((entry) => (
+            {displayedLogEntries.map((entry) => (
               <div key={entry.id} className="flex flex-wrap gap-3 text-sm log-row px-2 py-1.5 rounded-lg">
                 <span className="mono text-surfaceMuted/50 text-xs">{entry.timestamp ?? '--:--:--'}</span>
                 <span className={`badge level-${entry.level}`}>{entry.level}</span>
@@ -2363,6 +2420,26 @@ export default function App() {
     </section>
   );
 
+  const handleActivitySync = () => {
+    if (!walletReady) {
+      return;
+    }
+    if (walletBusy) {
+      setWalletSyncQueued(true);
+      return;
+    }
+    void handleWalletSync();
+  };
+
+  const activitySyncDisabled = !walletReady || (walletBusy && !sendInFlight) || walletSyncQueued;
+  const activitySyncLabel = !walletBusy
+    ? 'Sync now'
+    : sendInFlight
+      ? walletSyncQueued
+        ? 'Sync queued'
+        : 'Queue sync'
+      : 'Syncing...';
+
   const TransactionActivitySection = (
     <section className="card space-y-4">
       <div className="flex items-start justify-between gap-4">
@@ -2372,13 +2449,20 @@ export default function App() {
           <p className="text-sm text-surfaceMuted/80">
             Outgoing transfers show up immediately. Sync to confirm mined status.
           </p>
+          {sendInFlight ? (
+            <p className="text-xs text-surfaceMuted/70 mt-1">
+              Sending is in progress. Sync requests run after submission finishes.
+            </p>
+          ) : walletSyncQueued ? (
+            <p className="text-xs text-surfaceMuted/70 mt-1">Sync is queued and will start when the wallet is ready.</p>
+          ) : null}
         </div>
         <button
           className="secondary px-3 py-1 text-xs"
-          onClick={() => handleWalletSync()}
-          disabled={!walletReady || walletBusy}
+          onClick={handleActivitySync}
+          disabled={activitySyncDisabled}
         >
-          Sync now
+          {activitySyncLabel}
         </button>
       </div>
       {activityEntries.length === 0 ? (
@@ -2430,11 +2514,24 @@ export default function App() {
                       <p className="text-[10px] uppercase tracking-[0.2em] text-surfaceMuted/70">
                         Note consolidation
                       </p>
+                      {entry.notesNeeded !== undefined &&
+                      entry.walletNoteCount !== undefined &&
+                      entry.maxInputs !== undefined ? (
+                        <p className="text-xs text-surfaceMuted">
+                          Needs {entry.notesNeeded} notes (wallet has {entry.walletNoteCount}, max {entry.maxInputs} inputs/tx).
+                        </p>
+                      ) : null}
                       <p className="text-xs text-surfaceMuted">
                         {entry.consolidationSubmitted
                           ? `${entry.consolidationConfirmed ?? 0}/${entry.consolidationSubmitted} confirmed`
                           : 'Preparing consolidation…'}
                         {entry.consolidationExpected ? ` · ~${entry.consolidationExpected} txs expected` : ''}
+                        {entry.consolidationExpectedBlocks ? ` · ~${entry.consolidationExpectedBlocks} blocks` : ''}
+                        {entry.consolidationExpected &&
+                        entry.consolidationExpectedBlocks &&
+                        entry.consolidationExpectedBlocks > 0
+                          ? ` (~${(entry.consolidationExpected / entry.consolidationExpectedBlocks).toFixed(1)} tx/block)`
+                          : ''}
                       </p>
                       {entry.steps ? (
                         <div className="space-y-2 pt-1">
