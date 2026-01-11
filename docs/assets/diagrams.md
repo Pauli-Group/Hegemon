@@ -106,9 +106,10 @@ flowchart TD
     SK_SPEND -->|H "nk"| NK[nk<br/>Nullifier key]
     NK -->|H "nf" + rho + pos| NF[Nullifiers]
 
-    SK_VIEW --> ADDR_TAG[addr_tag_i<br/>Address tags]
     SK_ENC --> ML_KEM_KEYS[ML-KEM keypairs<br/>per diversifier]
     SK_DERIVE --> DIV[Diversified addresses]
+    SK_VIEW --> PK_RECIP[pk_recipient_i<br/>Recipient key]
+    DIV --> PK_RECIP
 
     subgraph Viewing Keys
         IVK[Incoming VK<br/>sk_view + sk_enc]
@@ -124,7 +125,7 @@ flowchart TD
 
     DIV --> ADDR[Shielded Address<br/>shca1...]
     ML_KEM_KEYS --> ADDR
-    ADDR_TAG --> ADDR
+    PK_RECIP --> ADDR
 ```
 
 ---

@@ -1161,7 +1161,7 @@ mod tests {
         drop(store);
         let reopened = WalletStore::open(&path, "passphrase").unwrap();
         let addr2 = reopened.next_address().unwrap();
-        assert_ne!(addr1.address_tag, addr2.address_tag);
+        assert_ne!(addr1.pk_recipient, addr2.pk_recipient);
     }
 
     #[test]

@@ -102,7 +102,7 @@ pub fn derive_coinbase_r(public_seed: &[u8; 32]) -> [u8; 32] {
 
 /// Extract recipient public key from a diversified address.
 ///
-/// Layout: version(1) + diversifier_index(4) + pk_recipient(32) + tag(6)
+/// Layout: version(1) + diversifier_index(4) + pk_recipient(32)
 pub fn pk_recipient_from_address(recipient: &[u8; DIVERSIFIED_ADDRESS_SIZE]) -> [u8; 32] {
     let mut pk_recipient = [0u8; 32];
     pk_recipient.copy_from_slice(&recipient[5..37]);

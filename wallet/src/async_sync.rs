@@ -165,8 +165,6 @@ impl AsyncWalletSyncEngine {
                         "[DEBUG] Ciphertext #{}: version={} div_idx={}",
                         entry.index, entry.ciphertext.version, entry.ciphertext.diversifier_index
                     );
-                    eprintln!("  hint_tag: {}", hex::encode(&entry.ciphertext.hint_tag));
-                    eprintln!("  expected addr_tag: {}", hex::encode(&material.addr_tag));
                     eprintln!("  expected version: {}", material.version());
                     eprintln!(
                         "  version match: {}",
@@ -176,10 +174,6 @@ impl AsyncWalletSyncEngine {
                         "  div_idx match: {}",
                         entry.ciphertext.diversifier_index == material.diversifier_index
                     );
-                    eprintln!(
-                        "  tag match: {}",
-                        entry.ciphertext.hint_tag == material.addr_tag
-                    );
                 }
 
                 recovered.push(match ivk.decrypt_note(&entry.ciphertext) {
@@ -188,6 +182,12 @@ impl AsyncWalletSyncEngine {
                         // Note not for this wallet, skip
                         if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
                             eprintln!("  -> NoteMismatch: {}", reason);
+                        }
+                        None
+                    }
+                    Err(WalletError::DecryptionFailure) => {
+                        if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
+                            eprintln!("  -> DecryptionFailure (not for this wallet)");
                         }
                         None
                     }

@@ -16,10 +16,10 @@ Non-goals (explicit): this does not make “Bitcoin-length” addresses. The dom
 
 ## Progress
 
-- [x] (2026-01-11) Surveyed current hint-tag plumbing and documented all impacted modules.
-- [ ] Milestone 1: Remove hint tags from `crypto` note encryption (types, AAD, serialization).
-- [ ] Milestone 2: Remove hint tags from `wallet` (key derivation, address format, note formats) and make wallet sync robust without tag prefiltering.
-- [ ] Milestone 3: Remove hint tags from `node` coinbase encryption and from on-chain types/constants; bump runtime version and regenerate chainspec; restart chain from genesis.
+- [x] (2026-01-11 01:30Z) Surveyed current hint-tag plumbing and documented all impacted modules.
+- [x] (2026-01-11 02:10Z) Milestone 1: Remove hint tags from `crypto` note encryption (types, AAD, serialization).
+- [x] (2026-01-11 02:20Z) Milestone 2: Remove hint tags from `wallet` (key derivation, address format, note formats) and make wallet sync robust without tag prefiltering.
+- [ ] Milestone 3: Remove hint tags from `node` coinbase encryption and from on-chain types/constants; bump runtime version and regenerate chainspec; restart chain from genesis. (completed: code changes + spec_version bump; remaining: regenerate chainspec + fresh chain reset)
 - [ ] Milestone 4: Update app surfaces (`walletd`, `hegemon-app`) and all tests to match the new formats; ensure no tag references remain.
 - [ ] Milestone 5: End-to-end validation on a fresh chain (mine → sync → send → receive) plus repo-wide grep confirming tags never existed.
 
@@ -429,4 +429,3 @@ At the end of this plan, these “no-tag” interfaces must exist and be used ev
 * Pallet constants and formats:
   * `pallet_shielded_pool::types::ENCRYPTED_NOTE_SIZE == 579`
   * `pallet_shielded_pool::types::DIVERSIFIED_ADDRESS_SIZE == 37`
-

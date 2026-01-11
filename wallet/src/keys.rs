@@ -105,13 +105,6 @@ impl ViewKey {
         blake3_256(&material)
     }
 
-    pub fn address_tag(&self, index: u32) -> [u8; KEY_SIZE] {
-        let mut hasher = Sha256::new();
-        hasher.update(b"addr-tag");
-        hasher.update(self.0);
-        hasher.update(index.to_le_bytes());
-        hasher.finalize().into()
-    }
 }
 
 /// Encryption seed - used for deriving ML-KEM keypairs.
@@ -150,7 +143,6 @@ pub struct AddressKeyMaterial {
     pub diversifier_index: u32,
     diversifier: [u8; KEY_SIZE],
     pub pk_recipient: [u8; KEY_SIZE],
-    pub addr_tag: [u8; KEY_SIZE],
     keypair: MlKemKeyPair,
 }
 
@@ -163,13 +155,11 @@ impl AddressKeyMaterial {
     ) -> Result<Self, WalletError> {
         let diversifier = diversifier_key.derive(index);
         let pk_recipient = view.pk_recipient(&diversifier);
-        let addr_tag = view.address_tag(index);
         let keypair = encryption.derive_keypair(&diversifier, index);
         Ok(Self {
             diversifier_index: index,
             diversifier,
             pk_recipient,
-            addr_tag,
             keypair,
         })
     }
@@ -180,7 +170,6 @@ impl AddressKeyMaterial {
             diversifier_index: self.diversifier_index,
             pk_recipient: self.pk_recipient,
             pk_enc: self.keypair.public_key(),
-            address_tag: self.addr_tag,
         }
     }
 
@@ -268,6 +257,5 @@ mod tests {
         let shield = addr.shielded_address();
         assert_eq!(shield.diversifier_index, 5);
         assert_eq!(shield.pk_recipient, addr.pk_recipient);
-        assert_eq!(shield.address_tag, addr.addr_tag);
     }
 }
