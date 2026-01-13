@@ -154,7 +154,10 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 use tokio::sync::{oneshot, Mutex};
 
@@ -2908,6 +2911,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
     // Track PQ network handle for mining worker
     let mut pq_network_handle: Option<PqNetworkHandle> = None;
+    let peer_count = Arc::new(AtomicUsize::new(0));
 
     tracing::info!(
         chain = %chain_name,
@@ -3121,6 +3125,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let client_for_network = client.clone();
                 let da_chunk_store_for_handler = Arc::clone(&da_chunk_store);
                 let da_request_tracker_for_handler = Arc::clone(&da_request_tracker);
+                let peer_count_for_rpc = Arc::clone(&peer_count);
 
                 // Spawn the PQ network event handler task with sync integration
                 task_manager.spawn_handle().spawn(
@@ -3165,6 +3170,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     {
                                         let mut sync = sync_service_clone.lock().await;
                                         sync.on_peer_connected(peer_id);
+                                        peer_count_for_rpc
+                                            .store(sync.peer_count(), Ordering::Relaxed);
                                     }
 
                                     // Send our best block to the new peer so they know our chain tip
@@ -3242,6 +3249,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     {
                                         let mut sync = sync_service_clone.lock().await;
                                         sync.on_peer_disconnected(&peer_id);
+                                        peer_count_for_rpc
+                                            .store(sync.peer_count(), Ordering::Relaxed);
                                     }
                                     tracing::info!(
                                         peer_id = %hex::encode(peer_id),
@@ -3411,6 +3420,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
                                 }
                                 PqNetworkEvent::Stopped => {
+                                    peer_count_for_rpc.store(0, Ordering::Relaxed);
                                     tracing::info!("PQ network stopped");
                                     break;
                                 }
@@ -4360,7 +4370,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let rpc_deny_unsafe = sc_rpc_server::utils::deny_unsafe(&rpc_listen_addr, &config.rpc.methods);
 
     // Create production RPC service with client access
-    let rpc_service = Arc::new(ProductionRpcService::new(client.clone()));
+    let rpc_service = Arc::new(ProductionRpcService::new(
+        client.clone(),
+        Arc::clone(&peer_count),
+    ));
 
     // Create RPC module with all extensions
     let rpc_module = {
