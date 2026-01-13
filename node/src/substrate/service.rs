@@ -154,7 +154,10 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 use tokio::sync::{oneshot, Mutex};
 
@@ -1410,9 +1413,37 @@ where
 
 /// Type alias for the inherent data providers creator
 ///
-/// PoW import checks use this to supply timestamp inherent data when
-/// validating blocks during import.
-type PowInherentProviders = (sp_timestamp::InherentDataProvider,);
+/// PoW import checks use this to supply timestamp inherent data and to
+/// gracefully handle shielded coinbase inherent validation during import.
+#[derive(Clone, Copy, Default)]
+pub struct ShieldedCoinbaseInherentErrorHandler;
+
+#[async_trait::async_trait]
+impl InherentDataProvider for ShieldedCoinbaseInherentErrorHandler {
+    async fn provide_inherent_data(
+        &self,
+        _inherent_data: &mut InherentData,
+    ) -> Result<(), sp_inherents::Error> {
+        Ok(())
+    }
+
+    async fn try_handle_error(
+        &self,
+        identifier: &sp_inherents::InherentIdentifier,
+        _error: &[u8],
+    ) -> Option<Result<(), sp_inherents::Error>> {
+        if identifier == &pallet_shielded_pool::SHIELDED_COINBASE_INHERENT_IDENTIFIER {
+            Some(Ok(()))
+        } else {
+            None
+        }
+    }
+}
+
+type PowInherentProviders = (
+    sp_timestamp::InherentDataProvider,
+    ShieldedCoinbaseInherentErrorHandler,
+);
 type PowInherentDataProviders = fn(
     <runtime::Block as sp_runtime::traits::Block>::Hash,
     (),
@@ -2711,7 +2742,12 @@ pub fn new_partial_with_client(
                 > + Send,
         >,
     > {
-        Box::pin(async move { Ok((sp_timestamp::InherentDataProvider::from_system_time(),)) })
+        Box::pin(async move {
+            Ok((
+                sp_timestamp::InherentDataProvider::from_system_time(),
+                ShieldedCoinbaseInherentErrorHandler,
+            ))
+        })
     }
 
     // Create the PoW block import wrapper
@@ -2875,6 +2911,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
 
     // Track PQ network handle for mining worker
     let mut pq_network_handle: Option<PqNetworkHandle> = None;
+    let peer_count = Arc::new(AtomicUsize::new(0));
 
     tracing::info!(
         chain = %chain_name,
@@ -3088,6 +3125,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                 let client_for_network = client.clone();
                 let da_chunk_store_for_handler = Arc::clone(&da_chunk_store);
                 let da_request_tracker_for_handler = Arc::clone(&da_request_tracker);
+                let peer_count_for_rpc = Arc::clone(&peer_count);
 
                 // Spawn the PQ network event handler task with sync integration
                 task_manager.spawn_handle().spawn(
@@ -3132,6 +3170,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     {
                                         let mut sync = sync_service_clone.lock().await;
                                         sync.on_peer_connected(peer_id);
+                                        peer_count_for_rpc
+                                            .store(sync.peer_count(), Ordering::Relaxed);
                                     }
 
                                     // Send our best block to the new peer so they know our chain tip
@@ -3209,6 +3249,8 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     {
                                         let mut sync = sync_service_clone.lock().await;
                                         sync.on_peer_disconnected(&peer_id);
+                                        peer_count_for_rpc
+                                            .store(sync.peer_count(), Ordering::Relaxed);
                                     }
                                     tracing::info!(
                                         peer_id = %hex::encode(peer_id),
@@ -3378,6 +3420,7 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     }
                                 }
                                 PqNetworkEvent::Stopped => {
+                                    peer_count_for_rpc.store(0, Ordering::Relaxed);
                                     tracing::info!("PQ network stopped");
                                     break;
                                 }
@@ -3606,6 +3649,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 blocks
                             };
 
+                            let mut downloaded_blocks = downloaded_blocks;
+                            downloaded_blocks.sort_by_key(|block| block.number);
+                            let mut deferred_blocks = Vec::new();
+
                             for downloaded in downloaded_blocks {
                                 // Decode the header
                                 let mut header = match runtime::Header::decode(&mut &downloaded.header[..]) {
@@ -3633,6 +3680,31 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let block_number = *header.number();
                                 let parent_hash = *header.parent_hash();
 
+                                match block_import_client.header(parent_hash) {
+                                    Ok(Some(_)) => {}
+                                    Ok(None) => {
+                                        tracing::debug!(
+                                            peer = %hex::encode(&downloaded.from_peer),
+                                            block_number,
+                                            parent = %hex::encode(parent_hash.as_bytes()),
+                                            "Deferring synced block until parent is available"
+                                        );
+                                        deferred_blocks.push(downloaded);
+                                        continue;
+                                    }
+                                    Err(err) => {
+                                        tracing::warn!(
+                                            peer = %hex::encode(&downloaded.from_peer),
+                                            block_number,
+                                            parent = %hex::encode(parent_hash.as_bytes()),
+                                            error = %err,
+                                            "Failed to query parent header; deferring block"
+                                        );
+                                        deferred_blocks.push(downloaded);
+                                        continue;
+                                    }
+                                }
+
                                 let mut commitment_block_proof = None;
                                 if proof_verification_enabled {
                                     commitment_block_proof = match verify_proof_carrying_block(
@@ -3644,6 +3716,17 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                     ) {
                                         Ok(proof) => proof,
                                         Err(err) => {
+                                            if err.contains("UnknownBlock") {
+                                                tracing::debug!(
+                                                    peer = %hex::encode(&downloaded.from_peer),
+                                                    block_number,
+                                                    parent = %hex::encode(parent_hash.as_bytes()),
+                                                    error = %err,
+                                                    "Deferring synced block (parent state not ready)"
+                                                );
+                                                deferred_blocks.push(downloaded);
+                                                continue;
+                                            }
                                             tracing::warn!(
                                                 peer = %hex::encode(&downloaded.from_peer),
                                                 block_number,
@@ -3661,30 +3744,20 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                 let mut block_hash = [0u8; 32];
                                 block_hash.copy_from_slice(post_hash.as_bytes());
 
-                                let mut da_encoding = match sample_da_for_block(
-                                    downloaded.from_peer,
-                                    block_hash,
-                                    da_sampling_secret_for_import,
-                                    &extrinsics,
-                                    da_params_for_import,
-                                    &pq_handle_for_da_import,
-                                    &da_request_tracker_for_import,
-                                    da_sample_timeout_for_import,
-                                )
-                                .await
-                                {
-                                    Ok(encoding) => Some(encoding),
-                                    Err(err) => {
-                                        tracing::warn!(
-                                            peer = %hex::encode(&downloaded.from_peer),
-                                            block_number,
-                                            error = %err,
-                                            "Rejecting synced block (DA sampling failed)"
-                                        );
-                                        blocks_failed += 1;
-                                        continue;
-                                    }
-                                };
+                                let mut da_encoding =
+                                    match build_da_encoding_from_extrinsics(&extrinsics, da_params_for_import) {
+                                        Ok(encoding) => Some(encoding),
+                                        Err(err) => {
+                                            tracing::warn!(
+                                                peer = %hex::encode(&downloaded.from_peer),
+                                                block_number,
+                                                error = %err,
+                                                "Rejecting synced block (DA encoding failed)"
+                                            );
+                                            blocks_failed += 1;
+                                            continue;
+                                        }
+                                    };
 
                                 // CRITICAL: Extract the seal from header digest and move to post_digests
                                 // PowBlockImport expects the seal in post_digests.last(), not in header.digest()
@@ -3845,6 +3918,11 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
                                         );
                                     }
                                 }
+                            }
+
+                            if !deferred_blocks.is_empty() {
+                                let mut sync = sync_service_for_import.lock().await;
+                                sync.requeue_downloaded(deferred_blocks);
                             }
 
                             // ============================================================
@@ -4292,7 +4370,10 @@ pub async fn new_full_with_client(config: Configuration) -> Result<TaskManager, 
     let rpc_deny_unsafe = sc_rpc_server::utils::deny_unsafe(&rpc_listen_addr, &config.rpc.methods);
 
     // Create production RPC service with client access
-    let rpc_service = Arc::new(ProductionRpcService::new(client.clone()));
+    let rpc_service = Arc::new(ProductionRpcService::new(
+        client.clone(),
+        Arc::clone(&peer_count),
+    ));
 
     // Create RPC module with all extensions
     let rpc_module = {

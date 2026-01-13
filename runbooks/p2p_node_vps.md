@@ -47,6 +47,7 @@ Create an environment file for node options:
 ```bash
 sudo tee /etc/default/hegemon-node <<'ENV'
 NODE_NAME=my-vps-node
+# Note: Substrate node names cannot contain '.' or '@' (use '-' / '_' instead).
 NODE_BASE_PATH=/var/lib/hegemon-node
 NODE_RPC_EXTERNAL=--rpc-external
 NODE_RPC_CORS=--rpc-cors all
