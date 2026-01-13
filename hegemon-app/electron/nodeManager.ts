@@ -154,7 +154,7 @@ export class NodeManager extends EventEmitter {
       label: request.label,
       reachable: true,
       isLocal,
-      peers: Number(consensus?.peers ?? health?.peers ?? 0),
+      peers: Math.max(Number(consensus?.peers ?? 0), Number(health?.peers ?? 0)),
       isSyncing: Boolean(consensus?.syncing ?? health?.isSyncing ?? false),
       bestBlock: consensus?.best_hash ?? null,
       bestNumber: consensus?.height ?? null,
