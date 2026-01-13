@@ -13,7 +13,7 @@ When a node syncs from a peer, it should import blocks in order without failing 
 - [x] (2026-01-13 11:58Z) Review sync import path and verify where proof verification and DA sampling run for downloaded blocks.
 - [x] (2026-01-13 11:58Z) Draft service-layer changes to sort downloaded blocks, defer blocks with missing parents, and avoid DA sampling during sync by deriving DA encoding locally.
 - [x] (2026-01-13 12:00Z) Add a requeue API to `node/src/substrate/sync.rs` so deferred blocks can be retried without re-downloading.
-- [ ] (2026-01-13 12:02Z) Commit code changes and rebuild on VPS (completed: local `make node`; remaining: commit + VPS build).
+- [ ] (2026-01-13 12:03Z) Commit code changes and rebuild on VPS (completed: local `make node` + git commit; remaining: VPS build).
 - [ ] (2026-01-13 11:58Z) Deploy the new binary to the VPS, wipe the VPS chain data, restart the service, and confirm sync progresses.
 - [ ] (2026-01-13 11:58Z) Reboot the VPS after confirming the new sync behavior.
 
@@ -90,3 +90,4 @@ The method must push blocks back into `self.downloaded_blocks` without increment
 Plan update: Initial ExecPlan created to guide sync import stabilization and VPS deployment. Reason: change spans sync ordering, proof verification, and DA handling, so it qualifies as a significant behavioral fix.
 Plan update: Marked requeue API as implemented after adding `requeue_downloaded` to `node/src/substrate/sync.rs`. Reason: keep progress section accurate for the new method.
 Plan update: Noted local rebuild completion and split remaining commit/VPS build work in Progress. Reason: reflect the actual state after running `make node` locally.
+Plan update: Recorded that the code changes are now committed locally. Reason: keep the Progress section aligned with the repository state.
