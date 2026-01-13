@@ -377,7 +377,8 @@ const buildDefaultConnection = (): NodeConnection => ({
   p2pPort: 30333,
   mineThreads: 1,
   miningIntent: false,
-  rpcMethods: 'safe'
+  rpcMethods: 'safe',
+  seeds: 'hegemon.pauli.group:30333'
 });
 
 const buildTestnetConnection = (): NodeConnection => ({
