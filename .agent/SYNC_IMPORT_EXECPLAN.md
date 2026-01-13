@@ -77,7 +77,10 @@ Requeueing blocks is safe to repeat because it only reorders pending downloads w
 
 ## Artifacts and Notes
 
-No artifacts yet.
+RPC check after reboot (height advancing):
+
+    curl -s -H "Content-Type: application/json" --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"chain_getHeader\"}" http://127.0.0.1:9944
+    {"jsonrpc":"2.0","id":1,"result":{"parentHash":"0x12f912ac41abd006666c3ed8f093bcdd5aff123942c67324e56d11e97fde7c38","number":"0x7f3","stateRoot":"0xcba7e85c4eb052cae607a146fa717c09d2cc5a67c88b0bf048f5404a8d1f5d66","extrinsicsRoot":"0xd49c0c5736291fad3d2df09cfcaecff35d08e4c6c233f4065b75c12a8c9689a7","digest":{"logs":["0x05706f775fb0368c8aac32030000b683041d000000035ee9911e606a9f649d7605fec909282466fd51197189116e9faa8a6c"]}}}
 
 ## Interfaces and Dependencies
 
@@ -94,3 +97,4 @@ Plan update: Recorded that the code changes are now committed locally. Reason: k
 Plan update: Marked VPS rebuild and deployment steps complete after pulling, building, installing, wiping data, and restarting the service. Reason: sync is progressing past prior stall height.
 Plan update: Marked VPS reboot complete after confirming service came back up and continued syncing. Reason: user requested a reboot once the fix was live.
 Plan update: Added Outcomes & Retrospective summary after completing the sync fix and VPS rollout. Reason: reflect completion and remaining monitoring.
+Plan update: Added an RPC artifact showing the post-reboot height advancing. Reason: capture validation evidence in the plan.
