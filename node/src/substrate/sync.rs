@@ -293,6 +293,45 @@ where
         blocks
     }
 
+    /// Requeue downloaded blocks for another import attempt.
+    ///
+    /// This keeps deferred blocks in front of newly downloaded ones without
+    /// updating stats or sync progress.
+    pub fn requeue_downloaded(&mut self, mut blocks: Vec<DownloadedBlock>) {
+        if blocks.is_empty() {
+            return;
+        }
+
+        let available = MAX_IMPORT_BUFFER.saturating_sub(self.downloaded_blocks.len());
+        if available == 0 {
+            tracing::warn!(
+                count = blocks.len(),
+                "Requeue buffer full; dropping deferred blocks"
+            );
+            return;
+        }
+
+        if blocks.len() > available {
+            tracing::warn!(
+                count = blocks.len(),
+                available,
+                "Requeue buffer at capacity; dropping excess deferred blocks"
+            );
+            blocks.truncate(available);
+        }
+
+        let count = blocks.len();
+        for block in blocks.into_iter().rev() {
+            self.downloaded_blocks.push_front(block);
+        }
+
+        tracing::info!(
+            count,
+            queue_len = self.downloaded_blocks.len(),
+            "Requeued deferred blocks for import"
+        );
+    }
+
     /// Get our best block number
     pub fn best_number(&self) -> u64 {
         let info = self.client.info();
