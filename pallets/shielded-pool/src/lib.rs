@@ -1187,6 +1187,10 @@ pub mod pallet {
         fn ensure_coinbase_subsidy(amount: u64) -> DispatchResult {
             let block_number = frame_system::Pallet::<T>::block_number();
             let height: u64 = block_number.try_into().unwrap_or(0);
+            Self::ensure_coinbase_subsidy_for_height(amount, height)
+        }
+
+        fn ensure_coinbase_subsidy_for_height(amount: u64, height: u64) -> DispatchResult {
             let max_subsidy = pallet_coinbase::block_subsidy(height);
             ensure!(
                 amount <= max_subsidy,
@@ -1414,11 +1418,11 @@ pub mod pallet {
         ) -> Result<(), Self::Error> {
             // Validate the inherent call
             if let Call::mint_coinbase { coinbase_data } = call {
-                if CoinbaseProcessed::<T>::get() {
-                    return Err(sp_inherents::MakeFatalError::from(()));
-                }
-
-                if Self::ensure_coinbase_subsidy(coinbase_data.amount).is_err() {
+                // check_inherent runs against the parent state, so validate against the
+                // next block height instead of the current one.
+                let parent_height = frame_system::Pallet::<T>::block_number();
+                let height: u64 = parent_height.try_into().unwrap_or(0).saturating_add(1);
+                if Self::ensure_coinbase_subsidy_for_height(coinbase_data.amount, height).is_err() {
                     return Err(sp_inherents::MakeFatalError::from(()));
                 }
 
