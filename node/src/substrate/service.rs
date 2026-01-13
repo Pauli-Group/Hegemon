@@ -1413,7 +1413,7 @@ where
 /// PoW import checks use this to supply timestamp inherent data and to
 /// gracefully handle shielded coinbase inherent validation during import.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct ShieldedCoinbaseInherentErrorHandler;
+pub struct ShieldedCoinbaseInherentErrorHandler;
 
 #[async_trait::async_trait]
 impl InherentDataProvider for ShieldedCoinbaseInherentErrorHandler {
