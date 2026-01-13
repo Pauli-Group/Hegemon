@@ -1410,9 +1410,37 @@ where
 
 /// Type alias for the inherent data providers creator
 ///
-/// PoW import checks use this to supply timestamp inherent data when
-/// validating blocks during import.
-type PowInherentProviders = (sp_timestamp::InherentDataProvider,);
+/// PoW import checks use this to supply timestamp inherent data and to
+/// gracefully handle shielded coinbase inherent validation during import.
+#[derive(Clone, Copy, Default)]
+struct ShieldedCoinbaseInherentErrorHandler;
+
+#[async_trait::async_trait]
+impl InherentDataProvider for ShieldedCoinbaseInherentErrorHandler {
+    async fn provide_inherent_data(
+        &self,
+        _inherent_data: &mut InherentData,
+    ) -> Result<(), sp_inherents::Error> {
+        Ok(())
+    }
+
+    async fn try_handle_error(
+        &self,
+        identifier: &sp_inherents::InherentIdentifier,
+        _error: &[u8],
+    ) -> Option<Result<(), sp_inherents::Error>> {
+        if identifier == &pallet_shielded_pool::SHIELDED_COINBASE_INHERENT_IDENTIFIER {
+            Some(Ok(()))
+        } else {
+            None
+        }
+    }
+}
+
+type PowInherentProviders = (
+    sp_timestamp::InherentDataProvider,
+    ShieldedCoinbaseInherentErrorHandler,
+);
 type PowInherentDataProviders = fn(
     <runtime::Block as sp_runtime::traits::Block>::Hash,
     (),
@@ -2711,7 +2739,12 @@ pub fn new_partial_with_client(
                 > + Send,
         >,
     > {
-        Box::pin(async move { Ok((sp_timestamp::InherentDataProvider::from_system_time(),)) })
+        Box::pin(async move {
+            Ok((
+                sp_timestamp::InherentDataProvider::from_system_time(),
+                ShieldedCoinbaseInherentErrorHandler,
+            ))
+        })
     }
 
     // Create the PoW block import wrapper
