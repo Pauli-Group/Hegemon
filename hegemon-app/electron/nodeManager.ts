@@ -1,7 +1,9 @@
+import { app } from 'electron';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import type { NodeStartOptions, NodeSummary, NodeSummaryRequest } from '../src/types';
 import { resolveBinaryPath } from './binPaths';
 
@@ -31,12 +33,13 @@ export class NodeManager extends EventEmitter {
 
     const nodePath = resolveBinaryPath('hegemon-node');
     const args: string[] = [];
-    const chainSpecPath = expandHomePath(options.chainSpecPath);
+    const chainSpecPath = resolveChainSpecPath(options.chainSpecPath);
     const basePath = expandHomePath(options.basePath);
 
     if (chainSpecPath) {
       args.push('--chain', chainSpecPath);
-    } else if (options.dev) {
+    }
+    if (options.dev) {
       args.push('--dev');
     }
 
@@ -281,4 +284,35 @@ const expandHomePath = (value?: string) => {
     return join(homedir(), value.slice(2));
   }
   return value;
+};
+
+const resolveChainSpecPath = (value?: string) => {
+  const expanded = expandHomePath(value);
+  if (!expanded) {
+    return undefined;
+  }
+  if (isAbsolute(expanded)) {
+    return expanded;
+  }
+
+  const candidates = [
+    resolve(process.cwd(), expanded),
+    resolve(process.cwd(), '..', expanded),
+    resolve(process.cwd(), '..', '..', expanded),
+    resolve(app.getAppPath(), expanded),
+    resolve(app.getAppPath(), '..', expanded),
+    resolve(app.getAppPath(), '..', '..', expanded),
+    resolve(process.resourcesPath, expanded)
+  ];
+
+  const leafName = basename(expanded);
+  candidates.push(resolve(process.resourcesPath, 'config', leafName), resolve(process.resourcesPath, leafName));
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return expanded;
 };

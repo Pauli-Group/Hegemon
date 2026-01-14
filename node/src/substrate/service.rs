@@ -2158,7 +2158,7 @@ impl PqServiceConfig {
     ///
     /// Environment variables:
     /// - `HEGEMON_PQ_VERBOSE`: Enable verbose logging (default: false)
-    /// - `HEGEMON_SEEDS`: Comma-separated list of seed peers (IP:port)
+    /// - `HEGEMON_SEEDS`: Comma-separated list of seed peers (host[:port], defaults to 30333)
     /// - `HEGEMON_LISTEN_ADDR`: Listen address (overrides --port)
     /// - `HEGEMON_MAX_PEERS`: Maximum peers (default: 50)
     pub fn from_config(config: &Configuration) -> Self {
@@ -2167,7 +2167,8 @@ impl PqServiceConfig {
             .unwrap_or(false);
 
         // Parse bootstrap/seed nodes from environment
-        // Supports both IP:port and hostname:port formats
+        // Supports IP:port, hostname:port, and host/IP without port (defaults to 30333).
+        const DEFAULT_P2P_PORT: u16 = 30333;
         let bootstrap_nodes: Vec<std::net::SocketAddr> = std::env::var("HEGEMON_SEEDS")
             .map(|s| {
                 s.split(',')
@@ -2180,28 +2181,69 @@ impl PqServiceConfig {
                         if let Ok(sock_addr) = addr.parse() {
                             return Some(sock_addr);
                         }
-                        // If that fails, try DNS resolution (for hostname:port)
-                        match std::net::ToSocketAddrs::to_socket_addrs(&addr) {
-                            Ok(mut addrs) => {
-                                if let Some(resolved) = addrs.next() {
-                                    tracing::info!(
-                                        addr = %addr,
-                                        resolved = %resolved,
-                                        "Resolved seed hostname"
-                                    );
-                                    Some(resolved)
-                                } else {
-                                    tracing::warn!(
-                                        addr = %addr,
-                                        "DNS resolved but no addresses returned"
-                                    );
-                                    None
-                                }
+                        if let Ok(ip_addr) = addr.parse::<std::net::IpAddr>() {
+                            return Some(std::net::SocketAddr::new(ip_addr, DEFAULT_P2P_PORT));
+                        }
+                        // If that fails, try DNS resolution (for hostname[:port])
+                        let resolve_host = |target: &str| -> Result<
+                            Option<std::net::SocketAddr>,
+                            std::io::Error,
+                        > {
+                            std::net::ToSocketAddrs::to_socket_addrs(target)
+                                .map(|mut addrs| addrs.next())
+                        };
+
+                        match resolve_host(addr) {
+                            Ok(Some(resolved)) => {
+                                tracing::info!(
+                                    addr = %addr,
+                                    resolved = %resolved,
+                                    "Resolved seed hostname"
+                                );
+                                Some(resolved)
                             }
-                            Err(e) => {
+                            Ok(None) => {
                                 tracing::warn!(
                                     addr = %addr,
-                                    error = %e,
+                                    "DNS resolved but no addresses returned"
+                                );
+                                None
+                            }
+                            Err(err) => {
+                                if !addr.contains(':') {
+                                    let with_port = format!("{addr}:{DEFAULT_P2P_PORT}");
+                                    return match resolve_host(&with_port) {
+                                        Ok(Some(resolved)) => {
+                                            tracing::info!(
+                                                addr = %addr,
+                                                resolved = %resolved,
+                                                default_port = DEFAULT_P2P_PORT,
+                                                "Resolved seed hostname with default port"
+                                            );
+                                            Some(resolved)
+                                        }
+                                        Ok(None) => {
+                                            tracing::warn!(
+                                                addr = %addr,
+                                                default_port = DEFAULT_P2P_PORT,
+                                                "DNS resolved but no addresses returned"
+                                            );
+                                            None
+                                        }
+                                        Err(err) => {
+                                            tracing::warn!(
+                                                addr = %addr,
+                                                default_port = DEFAULT_P2P_PORT,
+                                                error = %err,
+                                                "Failed to resolve seed address"
+                                            );
+                                            None
+                                        }
+                                    };
+                                }
+                                tracing::warn!(
+                                    addr = %addr,
+                                    error = %err,
                                     "Failed to resolve seed address"
                                 );
                                 None
