@@ -235,7 +235,10 @@ pub fn new_test_ext() -> TestExternalities {
 mod tests {
     use super::*;
     use crate::pallet::{MerkleTree as MerkleTreeStorage, Nullifiers as NullifiersStorage, Pallet};
-    use crate::types::{BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof};
+    use crate::types::{
+        BindingHash, EncryptedNote, StablecoinPolicyBinding, StarkProof, CRYPTO_SUITE_GAMMA,
+        NOTE_ENCRYPTION_VERSION,
+    };
     use frame_support::traits::Hooks;
     use frame_support::{assert_noop, assert_ok, BoundedVec};
     use sp_runtime::traits::ValidateUnsigned;
@@ -252,7 +255,10 @@ mod tests {
     }
 
     fn valid_encrypted_note() -> EncryptedNote {
-        EncryptedNote::default()
+        let mut note = EncryptedNote::default();
+        note.ciphertext[0] = NOTE_ENCRYPTION_VERSION;
+        note.ciphertext[1..3].copy_from_slice(&CRYPTO_SUITE_GAMMA.to_le_bytes());
+        note
     }
 
     fn valid_coinbase_data(amount: u64) -> crate::types::CoinbaseNoteData {
