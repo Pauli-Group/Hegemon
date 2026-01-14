@@ -91,6 +91,12 @@ impl ShieldedAddress {
                 .try_into()
                 .map_err(|_| WalletError::AddressEncoding("crypto suite parse failed".into()))?,
         );
+        if crypto_suite != CRYPTO_SUITE_GAMMA {
+            return Err(WalletError::AddressEncoding(format!(
+                "unsupported crypto suite: {}",
+                crypto_suite
+            )));
+        }
         let mut index_bytes = [0u8; 4];
         index_bytes.copy_from_slice(&bytes[3..7]);
         let diversifier_index = u32::from_le_bytes(index_bytes);
@@ -176,5 +182,18 @@ mod tests {
         let encoded = address.encode().unwrap();
         let decoded = crate::address::ShieldedAddress::decode(&encoded).unwrap();
         assert_eq!(address, decoded);
+    }
+
+    #[test]
+    fn decode_rejects_unknown_crypto_suite() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let keys = RootSecret::from_rng(&mut rng).derive();
+        let address = keys.address(1).unwrap().shielded_address();
+        let mut bytes = address.to_bytes();
+        let mut suite = u16::from_le_bytes([bytes[1], bytes[2]]);
+        suite = suite.wrapping_add(1);
+        bytes[1..3].copy_from_slice(&suite.to_le_bytes());
+        let result = crate::address::ShieldedAddress::from_bytes(&bytes);
+        assert!(result.is_err());
     }
 }

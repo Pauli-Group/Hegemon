@@ -381,9 +381,9 @@ nullifiers for spentness tracking without embedding `sk_spend`.
 
 ### 4.5 Implementation details
 
-*Key derivations and addresses.* `wallet/src/keys.rs` implements `RootSecret::derive()` using the domain-separated label `wallet-hkdf` and SHA-256 to expand `(label || sk_root)` into the 32-byte subkeys for spend/view/enc/diversifier. `AddressKeyMaterial` then uses `addr-seed` plus the diversifier index to deterministically derive the ML-KEM key pair; `pk_recipient` is derived from the view key and diversifier. `wallet/src/address.rs` serializes `(version, index, pk_recipient, pk_enc)` as a Bech32m string (HRP `shca`) so senders can round-trip addresses through QR codes or the CLI.
+*Key derivations and addresses.* `wallet/src/keys.rs` implements `RootSecret::derive()` using the domain-separated label `wallet-hkdf` and SHA-256 to expand `(label || sk_root)` into the 32-byte subkeys for spend/view/enc/diversifier. `AddressKeyMaterial` then uses `addr-seed` plus the diversifier index to deterministically derive the ML-KEM key pair; `pk_recipient` is derived from the view key and diversifier. `wallet/src/address.rs` serializes `(version, crypto_suite, index, pk_recipient, pk_enc)` as a Bech32m string (HRP `shca`) so senders can round-trip addresses through QR codes or the CLI.
 
-*Note encryption.* `wallet/src/notes.rs` consumes the recipient’s Bech32 data, runs ML-KEM encapsulation with a random seed, and stretches the shared secret into two ChaCha20-Poly1305 keys via `expand_to_length("wallet-aead", shared_secret || label, 44)`. The first 32 bytes drive the AEAD key and the final 12 bytes form the nonce so both note payload and memo use disjoint key/nonce pairs. Ciphertexts record the version, diversifier index, and ML-KEM ciphertext so incoming viewing keys can reconstruct the exact `AddressKeyMaterial` needed for decryption.
+*Note encryption.* `wallet/src/notes.rs` consumes the recipient’s Bech32 data, runs ML-KEM encapsulation with a random seed, and stretches the shared secret into two ChaCha20-Poly1305 keys via `expand_to_length("wallet-aead", shared_secret || label || crypto_suite, 44)`. The first 32 bytes drive the AEAD key and the final 12 bytes form the nonce so both note payload and memo use disjoint key/nonce pairs. Ciphertexts record the version, crypto suite, diversifier index, and ML-KEM ciphertext so incoming viewing keys can reconstruct the exact `AddressKeyMaterial` needed for decryption. The AEAD AAD binds `(version, crypto_suite, diversifier_index)` so header tampering fails authentication.
 
 *Viewing keys and nullifiers.* `wallet/src/viewing.rs` defines `IncomingViewingKey` (scan + decrypt), `OutgoingViewingKey` (derive `pk_recipient` for audit), and `FullViewingKey` (incoming + nullifier key). Full viewing keys store the view-derived nullifier key `sk_nf = BLAKE3("view_nf" || sk_view)`, letting watch-only tooling compute chain nullifiers without exposing the spend key itself. `RecoveredNote::to_input_witness` converts decrypted notes into `transaction_circuit::note::InputNoteWitness` values by reusing the same `NoteData` and taking the best-effort `rho_seed = rho` placeholder until the circuit’s derivation is finalized.
 
@@ -429,16 +429,15 @@ The current implementation wires those abstractions into code:
 
 ### 5.2 Algorithm agility
 
-Keys include algorithm identifiers:
+Addresses include a crypto-suite identifier:
 
-* For KEM: `kem_id` ∈ {ML‑KEM‑768, ML‑KEM‑v2, …}
-* For signatures: `sig_id` ∈ {ML‑DSA‑65xx, SLH‑DSA‑1xx, …}
+* `crypto_suite` ∈ {ML‑KEM‑1024, ML‑KEM‑v2, …} for the note-encryption KEM+AEAD parameters.
 
-Addresses encode these IDs. The join–split circuit doesn’t care; it just treats `asset_id` and `pk_recipient` as opaque bytes. Only the *note encryption/decryption* layer and wallet code depend on the KEM.
+Signatures are versioned via the protocol’s `VersionBinding` rather than the address format. The join–split circuit doesn’t care; it just treats `asset_id` and `pk_recipient` as opaque bytes. Only the *note encryption/decryption* layer and wallet code depend on the crypto suite.
 
 On algorithm deprecation:
 
-* Consensus can forbid new transactions with, say, `kem_id = ML‑KEM‑768` after block X, but still allow spends of existing notes for some grace period.
+* Consensus can forbid new transactions with, say, `crypto_suite = ML‑KEM‑1024` after block X, but still allow spends of existing notes for some grace period.
 * You can also add a “must migrate by height H” rule for certain key types, enforced by a special migration circuit.
 
 ---
@@ -494,7 +493,7 @@ This formula applies with six limbs per child.
 
 To have something specific in mind:
 
-* KEM: ML-KEM-768 (Kyber-768 equivalent) with \(|pk| \approx 1184\) bytes, \(|ct| \approx 1088\) bytes, 192-bit classical and roughly 96-bit post-quantum security.
+* KEM: ML-KEM-1024 (Kyber-1024 equivalent) with \(|pk| \approx 1568\) bytes, \(|ct| \approx 1568\) bytes, 256-bit classical and roughly 128-bit post-quantum security.
 * Signature: ML-DSA-65xx (Dilithium-level) or category-3 equivalent with approximately 2–3 KB signatures and 1–2 KB public keys. Runtime extrinsics and PoW seals reuse this scheme through `runtime::PqSignature`/`PqPublic`, hashing PQ public keys with BLAKE2 into SS58-prefix-42 AccountId32 values so address encoding stays stable while signatures grow.
 
 We do not need signatures inside the shielded circuit, only for block authentication and possibly transaction-level authentication.
@@ -593,8 +592,10 @@ pk_recipient_i = H(sk_view || div_i)         // 256 bits
 The address \(\text{Addr}_i\) is then
 
 ```
-Addr_i = Encode(version || i || pk_recipient_i || pk_enc_i)
+Addr_i = Encode(version || crypto_suite || i || pk_recipient_i || pk_enc_i)
 ```
+
+Today, `version = 2` and `crypto_suite = CRYPTO_SUITE_GAMMA` (ML-KEM-1024).
 
 The wallet stores `sk_spend`, `sk_view`, and either `sk_enc` or all `sk_enc_i` derived on demand.
 
@@ -607,7 +608,7 @@ In the circuit we derive `nk = H_f(domain_nk, ssk_0, \ldots, ssk_3)` from the vi
 
 ### 4. Note encryption details
 
-Given recipient \(\text{Addr}_i\) with `(pk_enc_i, pk_recipient_i)`:
+Given recipient \(\text{Addr}_i\) with `(version, crypto_suite, diversifier_index, pk_enc_i, pk_recipient_i)`:
 
 #### 4.1 Plaintext
 
@@ -616,27 +617,29 @@ Plaintext structure:
 ```
 note_plain = (
   v:      uint64,
-  a:      32 bytes,
+  a:      uint64,
   rho:    32 bytes,
   r:      32 bytes,
-  addr_i: 32-bit index i,
-  maybe extra fields (memo pointer, etc.)
+  pk_recipient: 32 bytes
 )
 ```
+
+The memo is a separate AEAD payload encrypted under the same shared secret.
 
 #### 4.2 KEM + AEAD
 
 Sender:
 
 1. `(ct_kem, ss) = MLKEM.Encaps(pk_enc_i)`
-2. `k = HKDF(ss, info = "note_enc" || txid || output_index)`
-3. `ct_aead = AEAD_Enc(k, nonce, note_plain, ad = txid || output_index)`
+2. `(k, nonce) = HKDF("wallet-aead", ss || label || crypto_suite)`
+3. `ct_note = AEAD_Enc(k_note, nonce_note, note_plain, ad = version || crypto_suite || diversifier_index)`
+4. `ct_memo = AEAD_Enc(k_memo, nonce_memo, memo, ad = version || crypto_suite || diversifier_index)`
 
 On chain per output:
 
 * `cm` as a 48-byte commitment (6 x 64-bit limbs, canonical encoding)
-* `ct_kem` (≈1.1 KB)
-* `ct_aead` (|note_plain| + tag, say ≈100 bytes)
+* `ct_kem` (~1.5 KB for ML-KEM-1024), SCALE-encoded with a compact length prefix and validated against `crypto_suite`
+* `ct_note` and `ct_memo` packed into the 579-byte ciphertext container with the header fields above
 
 Recipient with IVK/FVK:
 

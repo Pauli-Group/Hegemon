@@ -18,7 +18,7 @@
 //!
 //! All operations use post-quantum cryptography:
 //! - **STARK proofs**: Hash-based, transparent setup
-//! - **ML-KEM-768**: Lattice-based note encryption
+//! - **ML-KEM-1024**: Lattice-based note encryption
 //! - **Poseidon hash**: STARK-friendly Merkle tree
 
 use jsonrpsee::core::RpcResult;

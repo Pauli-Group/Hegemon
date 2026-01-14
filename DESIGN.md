@@ -33,10 +33,10 @@ are:
 * **Cryptographic payload sizes** – ML-DSA/ML-KEM artifacts are orders of magnitude larger than the ECC keys, signatures, and
   ECIES ciphertexts Zcash uses today. Even though the spend circuit keeps Sapling’s “prove key knowledge inside the ZK proof”
   model (so there are no per-input signatures), block headers, miner identities, and the note encryption layer all absorb PQ
-  size bloat: ML-DSA-65 pk = 1,952 B vs ~32 B Ed25519, signatures = 3,293 B vs ~64 B, ML-KEM ciphertexts = 1,088 B vs
-  ~80–100 B for Jubjub-based ECIES. Runtime AccountIds hash PQ public keys with BLAKE2 into SS58-compatible 32-byte identifiers
-  so extrinsic signing and PoW seal verification share the same PQ scheme without changing address encoding. Network/consensus
-  plumbing must therefore expect materially larger payloads.
+  size bloat: ML-DSA-65 pk = 1,952 B vs ~32 B Ed25519, signatures = 3,293 B vs ~64 B, ML-KEM ciphertexts (note encryption)
+  = 1,568 B vs ~80–100 B for Jubjub-based ECIES. Runtime AccountIds hash PQ public keys with BLAKE2 into SS58-compatible 32-byte
+  identifiers so extrinsic signing and PoW seal verification share the same PQ scheme without changing address encoding.
+  Network/consensus plumbing must therefore expect materially larger payloads.
 * **Proof sizes and verification latency** – Trading Groth16/Halo2 for a transparent STARK stack removes the trusted setup but
   makes proofs much chunkier: tens of kilobytes with verifier runtimes in the tens of milliseconds, versus sub-kilobyte Groth16
   proofs with millisecond verification. The spend circuit, memo ciphertexts, and block propagation logic all need to budget for
@@ -79,19 +79,19 @@ So: signatures are *mostly* a consensus/network thing, not something you see for
 
 For note encryption and any “view key” derivation:
 
-* Use **ML-KEM (Kyber, FIPS 203)** as the KEM to establish shared secrets. ([NIST][1])
+* Use **ML-KEM-1024 (Kyber, FIPS 203)** as the KEM to establish shared secrets. ([NIST][1])
 * Use a standard AEAD like **AES-256-GCM** or **ChaCha20-Poly1305**:
 
   * Symmetric is already “quantum-ok” modulo Grover; 256-bit keys give you ~128-bit quantum security.
 
 Design pattern:
 
-* Each address has a long-term **KEM public key** `pk_enc`.
+* Each address has a long-term **KEM public key** `pk_enc` and an explicit `crypto_suite` identifier.
 * For each note, sender:
 
-  * generates an ephemeral KEM keypair,
   * encapsulates to `pk_enc`,
-  * runs a KDF on the shared secret to get the AEAD key and per-note diversifier.
+  * runs a KDF on the shared secret plus `crypto_suite` to get the AEAD key and nonce,
+  * authenticates `(address_version, crypto_suite, diversifier_index)` as AEAD AAD.
 
 This is directly analogous to ECIES-style note encryption in Zcash, but with ML-KEM.
 
@@ -138,7 +138,7 @@ The repository now includes a standalone Rust crate at `crypto/` that collects t
 
 * `ml_dsa` – deterministic key generation, signing, verification, and serialization helpers sized to ML-DSA-65 (Dilithium3) keys (pk = 1952 B, sk = 4000 B, sig = 3293 B).
 * `slh_dsa` – the analogous interface for SLH-DSA (SPHINCS+-SHA2-128f) with pk = 32 B, sk = 64 B, signature = 17088 B.
-* `ml_kem` – Kyber-768-style encapsulation/decapsulation with pk = 1184 B, sk = 2400 B, ciphertext = 1088 B, shared secret = 32 B.
+* `ml_kem` – Kyber-1024-style encapsulation/decapsulation with pk = 1568 B, sk = 3168 B, ciphertext = 1568 B, shared secret = 32 B.
 * `hashes` – SHA-256, SHA3-256, BLAKE3-256, and a Poseidon-inspired permutation over the Goldilocks prime using width 3, 63 full rounds, and NUMS-generated round constants/MDS (SHA-256 domain separation + Cauchy matrix), plus helpers for commitments (`b"c"` tag), PRF key derivation (`b"nk"`), and nullifiers (`b"nf"`) that default to BLAKE3 with SHA3 fallbacks for STARK-friendly domains. The Plonky3 transaction AIR uses Poseidon2 (width 12, rate 6, capacity 6) for in-circuit commitments and nullifiers, producing 48-byte outputs for PQ soundness; application-level types now use 48-byte digests end-to-end.
 
 Everything derives deterministic test vectors using a ChaCha20-based RNG seeded via SHA-256 so that serialization and domain separation match the simple hash-based definitions above. Integration tests under `crypto/tests/` lock in the byte-level expectations for key generation, signing, verification, KEM encapsulation/decapsulation, and commitment/nullifier derivation.
@@ -341,18 +341,19 @@ Everything is done via hash-based PRFs / KDFs; no ECC.
 A **shielded address** contains:
 
 * A version byte (for future evolution).
+* A **crypto suite** identifier (the note-encryption parameter set).
 * A **KEM public key** `pk_enc` (for ML-KEM).
 * An **address-id / diversifier** derived from `sk_view` via PRF.
 
-You can have multiple diversified addresses derived from the same underlying key material (like Zcash’s diversified addresses). Each address binds the ML-KEM public key and recipient key derived from a diversifier index.
+You can have multiple diversified addresses derived from the same underlying key material (like Zcash’s diversified addresses). Each address binds the crypto suite, ML-KEM public key, and recipient key derived from a diversifier index.
 
 ### 4.3 Wallet crate implementation
 
 The repository now contains a `wallet` crate that wires these ideas into code:
 
 * `wallet/src/keys.rs` defines `RootSecret`, `DerivedKeys`, and `AddressKeyMaterial`. A SHA-256-based HKDF (`wallet-hkdf`) produces `sk_spend`, `sk_view`, `sk_enc`, and `sk_derive`, and diversified addresses are computed deterministically from `(sk_view, sk_enc, sk_derive, index)`.
-* `wallet/src/address.rs` encodes addresses as Bech32m (`shca1…`) strings that bundle the version, diversifier index, ML-KEM public key, and `pk_recipient`. Decoding performs the inverse mapping so senders can rebuild the ML-KEM key and note metadata.
-* `wallet/src/notes.rs` handles ML-KEM encapsulation plus ChaCha20-Poly1305 AEAD wrapping for both the note payload and memo. The shared secret is expanded with a domain-separated label (`wallet-aead`) so note payloads and memos use independent nonces/keys.
+* `wallet/src/address.rs` encodes addresses as Bech32m (`shca1…`) strings that bundle the version, crypto suite, diversifier index, ML-KEM public key, and `pk_recipient`. Decoding performs the inverse mapping so senders can rebuild the ML-KEM key and note metadata.
+* `wallet/src/notes.rs` handles ML-KEM encapsulation plus ChaCha20-Poly1305 AEAD wrapping for both the note payload and memo. The shared secret is expanded with a domain-separated label (`wallet-aead`) plus the crypto suite so note payloads and memos use independent nonces/keys and suite-confusion fails authentication.
 * `walletd/` is a sidecar daemon that opens a wallet store and exposes a versioned newline-delimited JSON protocol over stdin/stdout so GUI clients (like `hegemon-app`) can drive sync, send, and disclosure workflows without re-implementing cryptography. The protocol includes capability discovery plus structured error codes, and `walletd` enforces an exclusive lock file alongside the store to prevent concurrent access.
 * `wallet/src/viewing.rs` exposes `IncomingViewingKey`, `OutgoingViewingKey`, and `FullViewingKey`. Incoming keys decrypt ciphertexts and rebuild `NoteData`/`InputNoteWitness` objects for the transaction circuit, outgoing keys let wallets audit their own sent notes, and full viewing keys add the view-derived nullifier key (`vk_nf = BLAKE3("view_nf" || sk_view)`) needed for spentness tracking.
 * `wallet/src/bin/wallet.rs` ships a CLI with the following flow:
@@ -403,8 +404,8 @@ We can hard-bake in lessons from the whole “quantum-recoverability” ZIP saga
    * Recursion allows a new circuit to verify old proofs, so we can move from “Circuit v1” to “Circuit v2” without spinning up a new pool.
 2. **Algorithm agility** for KEM/signatures:
 
-   * Address versioning encodes `(KEM_id, Sig_id)`.
-   * Wallets can rotate to, say, ML-KEM-v2 or a code-based KEM if lattices get scary.
+   * Address versioning encodes a `crypto_suite` identifier for note encryption.
+   * Wallets can rotate to, say, ML-KEM-v2 or a code-based KEM if lattices get scary; signatures continue to follow the protocol version bindings.
 3. **Escape hatch**:
 
    * If some PQ primitive looks shaky, nodes can:

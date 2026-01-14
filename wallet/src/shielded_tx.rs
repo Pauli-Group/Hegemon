@@ -6,14 +6,14 @@
 //! - Input note selection
 //! - Output note creation
 //! - STARK proof generation
-//! - Note encryption (ML-KEM-768)
+//! - Note encryption (ML-KEM-1024)
 //! - Transaction signing (ML-DSA-65 binding)
 //!
 //! ## Post-Quantum Security
 //!
 //! All cryptographic operations use post-quantum primitives:
 //! - **STARK proofs**: Hash-based, transparent setup, quantum-resistant
-//! - **ML-KEM-768**: Lattice-based key encapsulation (FIPS 203)
+//! - **ML-KEM-1024**: Lattice-based key encapsulation (FIPS 203)
 //! - **ML-DSA-65**: Lattice-based signatures (FIPS 204)
 //! - **Poseidon hash**: Algebraic hash for STARK circuits
 //!
