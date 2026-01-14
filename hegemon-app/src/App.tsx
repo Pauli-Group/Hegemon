@@ -371,6 +371,7 @@ const buildDefaultConnection = (): NodeConnection => ({
   wsUrl: 'ws://127.0.0.1:9944',
   httpUrl: 'http://127.0.0.1:9944',
   dev: true,
+  chainSpecPath: 'config/dev-chainspec.json',
   tmp: false,
   basePath: '~/.hegemon-node',
   rpcPort: 9944,
@@ -378,7 +379,7 @@ const buildDefaultConnection = (): NodeConnection => ({
   mineThreads: 1,
   miningIntent: false,
   rpcMethods: 'safe',
-  seeds: 'hegemon.pauli.group:30333'
+  seeds: 'hegemon.pauli.group'
 });
 
 const buildTestnetConnection = (): NodeConnection => ({
@@ -396,10 +397,33 @@ const buildTestnetConnection = (): NodeConnection => ({
   miningIntent: false,
   rpcMethods: 'safe',
   chainSpecPath: 'testnet',
-  seeds: 'hegemon.pauli.group:30333'
+  seeds: 'hegemon.pauli.group'
 });
 
 const buildDefaultConnections = () => [buildDefaultConnection(), buildTestnetConnection()];
+
+const normalizeConnection = (connection: NodeConnection): NodeConnection => {
+  const isDefaultLocal =
+    connection.mode === 'local' &&
+    connection.label === 'Local node' &&
+    (!connection.basePath || connection.basePath === '~/.hegemon-node');
+  const isDefaultTestnet =
+    connection.mode === 'local' &&
+    connection.label === 'Testnet node' &&
+    (!connection.basePath || connection.basePath === '~/.hegemon-node-testnet');
+
+  let next = connection;
+
+  if (isDefaultLocal && connection.dev && !connection.chainSpecPath) {
+    next = { ...next, chainSpecPath: 'config/dev-chainspec.json' };
+  }
+
+  if ((isDefaultLocal || isDefaultTestnet) && connection.seeds === 'hegemon.pauli.group:30333') {
+    next = { ...next, seeds: 'hegemon.pauli.group' };
+  }
+
+  return next;
+};
 
 export default function App() {
   const [connections, setConnections] = useState<NodeConnection[]>([]);
@@ -471,11 +495,16 @@ export default function App() {
       try {
         const parsed = JSON.parse(storedConnections) as NodeConnection[];
         if (parsed.length) {
-          setConnections(parsed);
+          const normalized = parsed.map(normalizeConnection);
+          setConnections(normalized);
           const storedActive = window.localStorage.getItem(activeConnectionKey);
           const storedWallet = window.localStorage.getItem(walletConnectionKey);
-          setActiveConnectionId(storedActive && parsed.find((conn) => conn.id === storedActive) ? storedActive : parsed[0].id);
-          setWalletConnectionId(storedWallet && parsed.find((conn) => conn.id === storedWallet) ? storedWallet : parsed[0].id);
+          setActiveConnectionId(
+            storedActive && normalized.find((conn) => conn.id === storedActive) ? storedActive : normalized[0].id
+          );
+          setWalletConnectionId(
+            storedWallet && normalized.find((conn) => conn.id === storedWallet) ? storedWallet : normalized[0].id
+          );
           return;
         }
       } catch (error) {
